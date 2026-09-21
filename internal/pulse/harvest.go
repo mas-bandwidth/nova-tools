@@ -658,6 +658,21 @@ func cardContract(cardPath string) string {
 	return strings.TrimSpace(firstNonEmpty(strings.Split(string(raw), "\n")))
 }
 
+// kindFromContract extracts the card kind from line 1 of the card contract if recognizable.
+func kindFromContract(contract string) string {
+	parts := strings.Fields(contract)
+	for i, p := range parts {
+		clean := strings.TrimSuffix(p, ":")
+		if IsV2Kind(clean) {
+			return clean
+		}
+		if i > 5 {
+			break
+		}
+	}
+	return ""
+}
+
 // classify reads a card's RESULT.md and returns its disposition and the push details.
 // done -> pushed unless the branch is main or a pro card lacks a red: line (refused).
 func classify(jobDir string, c CardRow, contract string) (state, branch, repo string, resultLines []string) {
@@ -701,15 +716,55 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 		t := strings.TrimSpace(l)
 		if strings.HasPrefix(t, "BRANCH ") {
 			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH "))
+		} else if strings.HasPrefix(t, "BRANCH: ") {
+			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH: "))
 		}
 		if strings.HasPrefix(t, "REPO ") {
 			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO "))
+			repo = strings.TrimPrefix(repo, "github.com/")
+		} else if strings.HasPrefix(t, "REPO: ") {
+			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO: "))
 			repo = strings.TrimPrefix(repo, "github.com/")
 		}
 	}
 	if branch == "" || branch == "main" || branch == "master" {
 		return "mismatch", branch, repo, lines
 	}
+
+	// Validate v2 result envelopes when present (CHECK: line or v2 card kind)
+	hasV2Check := false
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "CHECK:") || strings.HasPrefix(t, "CHECK ") {
+			hasV2Check = true
+			chk := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "CHECK:"), "CHECK "))
+			if chk != "pass" && strings.HasPrefix(line2, "DONE") {
+				// Failed or unrun check cannot be accepted as done
+				return "mismatch", branch, repo, lines
+			}
+		}
+	}
+
+	kind := kindFromContract(contract)
+	if kind == "" {
+		for _, l := range lines {
+			t := strings.TrimSpace(l)
+			if strings.HasPrefix(t, "KIND:") || strings.HasPrefix(t, "KIND ") {
+				k := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "KIND:"), "KIND "))
+				if IsV2Kind(k) {
+					kind = k
+					break
+				}
+			}
+		}
+	}
+
+	if hasV2Check || IsV2Kind(kind) {
+		if _, err := ValidateResultV2(body, kind); err != nil {
+			return "mismatch", branch, repo, lines
+		}
+	}
+
 	if c.Model == "pro" && !hasRedLine(lines) {
 		return "refused", branch, repo, lines
 	}

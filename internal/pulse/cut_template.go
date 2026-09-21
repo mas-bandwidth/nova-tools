@@ -15,6 +15,12 @@ const DefaultDiffCap = 6144
 // MaxDiffCap is the 64 KB upper bound on inlined diffs.
 const MaxDiffCap = 65536
 
+// MaxResultEnvelopeSize is the 64 KB upper bound on RESULT.md files.
+const MaxResultEnvelopeSize = 65536
+
+// MaxResultBodySize is the 32 KB upper bound on human evidence bodies.
+const MaxResultBodySize = 32768
+
 // CardV2Kinds is the canonical list of card kinds supported by Card Template v2 (A4).
 var CardV2Kinds = []string{"recut", "fix", "port", "docs-guard", "report", "read"}
 
@@ -48,7 +54,8 @@ func TurnBudgetV2(kind string) int {
 
 // InlineDiff inlines a prior diff, capping it at capBytes (default 6 KB) and
 // appending a notice naming omitted bytes if truncated (A1).
-func InlineDiff(diff string, capBytes int) string {
+// If an artifactPath is supplied, it is named in the notice; otherwise no unverified mirror claim is made.
+func InlineDiff(diff string, capBytes int, artifactPath ...string) string {
 	if diff == "" {
 		return ""
 	}
@@ -59,8 +66,12 @@ func InlineDiff(diff string, capBytes int) string {
 		return diff
 	}
 	omitted := len(diff) - capBytes
-	return fmt.Sprintf("%s\n... [inlined diff capped at %d bytes; omitted %d bytes; full diff retained in mirror]",
-		diff[:capBytes], capBytes, omitted)
+	loc := ""
+	if len(artifactPath) > 0 && strings.TrimSpace(artifactPath[0]) != "" {
+		loc = fmt.Sprintf("; full diff retained at %s", strings.TrimSpace(artifactPath[0]))
+	}
+	return fmt.Sprintf("%s\n... [inlined diff capped at %d bytes; omitted %d bytes%s]",
+		diff[:capBytes], capBytes, omitted, loc)
 }
 
 // KindClauses returns the exactly three specific conditions for a card kind (A6).
@@ -100,7 +111,7 @@ func KindClauses(kind string) [3]string {
 		return [3]string{
 			"Read and write only: do not run go build, go test, or any toolchain commands.",
 			"Quote every held rule verbatim with file:line; emit only findings at or above the declared severity floor.",
-			"Do not read outside declared read scope and the test's package; write the typed verdict line last.",
+			"Write the typed verdict line last; do not omit findings to force a clean pass.",
 		}
 	default:
 		return [3]string{
@@ -119,6 +130,7 @@ type CardV2Input struct {
 	Title         string // clean title
 	Branch        string // working branch
 	Base          string // base branch or commit sha
+	BaseSHA       string // base commit sha (A2)
 	Location      string // spec or code location (file:line)
 	TestPackage   string // test package path
 	TestFunction  string // test function name
@@ -126,12 +138,18 @@ type CardV2Input struct {
 	Paths         string // declared write scope
 	ReviewerLine  string // reviewer's typed disposition line (A1)
 	PriorDiff     string // prior diff to inline (A1)
+	DiffArtifact  string // artifact location of full prior diff (A1)
 	FailingOutput string // failing test output or red line (A1)
 	PreflightCmd  string // preflight command (A3, default: make preflight)
 	Floor         string // severity floor for read (default: HIGH)
 	PR            int    // PR number if applicable
 	Issue         int    // Issue number if applicable
 	Head          string // Head commit sha if applicable
+	Body          string // task description / body
+	HoldLine      string // hold verdict line for recut
+	HoldFile      string // hold file path
+	Remains       string // named remains for recut
+	Applied       string // applied patch status
 }
 
 // cleanTitle strips multi-line PR bodies, trailers, and noisy footers (A5).
@@ -168,14 +186,25 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	fmt.Fprintf(&b, "RESULT CARD-%d sha=<sha12> %s %s: %s\n", in.Number, repoShortName, in.Kind, oneline.Escape(title))
 
 	// Header instructions with Turn budget (A4)
-	fmt.Fprintf(&b, "You are a worker. Turn budget: %d turns. Deadline is the machinery's.\n", budget)
-	b.WriteString("Read scope: Do not read outside PATHS and the test's package.\n\n")
+	fmt.Fprintf(&b, "You are a worker. Turn budget: %d turns. Deadline is the machinery's.\n\n", budget)
 
 	// Target & Scope (A2)
 	b.WriteString("## Target & Scope\n")
 	fmt.Fprintf(&b, "REPO: %s\n", in.Repo)
+	if in.PR > 0 {
+		fmt.Fprintf(&b, "PR: %d\n", in.PR)
+	}
+	if in.Issue > 0 {
+		fmt.Fprintf(&b, "ISSUE: %d\n", in.Issue)
+	}
+	if in.Head != "" {
+		fmt.Fprintf(&b, "HEAD: %s\n", in.Head)
+	}
 	if in.Base != "" {
 		fmt.Fprintf(&b, "BASE: %s\n", in.Base)
+	}
+	if in.BaseSHA != "" {
+		fmt.Fprintf(&b, "BASE_SHA: %s\n", in.BaseSHA)
 	}
 	if in.Branch != "" {
 		fmt.Fprintf(&b, "BRANCH: %s\n", in.Branch)
@@ -196,7 +225,27 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	if in.Paths != "" {
 		fmt.Fprintf(&b, "PATHS: %s\n", in.Paths)
 	}
-	b.WriteString("Read scope: Do not read outside PATHS and the test's package.\n\n")
+	if in.Remains != "" {
+		fmt.Fprintf(&b, "REMAINS: %s\n", in.Remains)
+	}
+	if in.HoldLine != "" {
+		fmt.Fprintf(&b, "HOLD: %s\n", in.HoldLine)
+	}
+	if in.HoldFile != "" {
+		fmt.Fprintf(&b, "HOLD_FILE: %s\n", in.HoldFile)
+	}
+	if in.Applied != "" {
+		fmt.Fprintf(&b, "APPLIED: %s\n", in.Applied)
+	}
+	// Agreed contextual read scope (7b39c06)
+	b.WriteString("Read scope: Contextual reads are permitted for callers, callees, contracts, fixtures, build inputs, and reverse dependents needed to verify the task.\n\n")
+
+	// Task description (if provided)
+	if bodyText := strings.TrimSpace(in.Body); bodyText != "" {
+		b.WriteString("## Task\n")
+		b.WriteString(bodyText)
+		b.WriteString("\n\n")
+	}
 
 	// Inlined Evidence (A1)
 	hasEvidence := strings.TrimSpace(in.ReviewerLine) != "" ||
@@ -211,7 +260,7 @@ func RenderCardV2(in CardV2Input) (string, error) {
 			fmt.Fprintf(&b, "Failing test output:\n%s\n\n", failing)
 		}
 		if diff := strings.TrimSpace(in.PriorDiff); diff != "" {
-			fmt.Fprintf(&b, "Prior diff:\n%s\n\n", InlineDiff(diff, DefaultDiffCap))
+			fmt.Fprintf(&b, "Prior diff:\n%s\n\n", InlineDiff(diff, DefaultDiffCap, in.DiffArtifact))
 		}
 	}
 
@@ -223,16 +272,23 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	}
 	b.WriteString("\n")
 
-	// Preflight line (A3)
+	// Preflight line (A3) - coherent with read / report rules
 	b.WriteString("## Preflight\n")
-	fmt.Fprintf(&b, "Before writing RESULT.md, run the class-rule preflight on the current tip: %s and fix what it names.\n\n", preflight)
+	switch in.Kind {
+	case "read":
+		b.WriteString("Before writing RESULT.md, verify that every quoted rule has file:line and severity meets the declared floor.\n\n")
+	case "report":
+		b.WriteString("Before writing RESULT.md, verify that all reported observations have exact command, file:line, or measurement evidence.\n\n")
+	default:
+		fmt.Fprintf(&b, "Before writing RESULT.md, run the class-rule preflight on the current tip: %s and fix what it names.\n\n", preflight)
+	}
 
 	// RESULT.md Fill-in Template (A7)
 	b.WriteString("## RESULT.md Fill-in Template\n")
 	b.WriteString(ResultTemplateV2(in.Kind))
 	b.WriteString("\n\n")
 
-	// Exemplar per kind (A7)
+	// Exemplar per kind (A7) - format illustration
 	b.WriteString(fmt.Sprintf("## Exemplar (%s)\n", in.Kind))
 	b.WriteString(ResultExemplarV2(in.Kind))
 	b.WriteString("\n")
@@ -248,14 +304,15 @@ func RenderCardV2(in CardV2Input) (string, error) {
 
 // ResultTemplateV2 returns the fill-in skeleton for a kind (A7).
 // Preserves terminal words DONE, ABSTAIN, BLOCKED; requires CHECK: pass|fail|not-run.
+// Emits live harvest space-delimited wire shape (BRANCH <branch>, REPO <repo>, PATHS <paths>).
 func ResultTemplateV2(kind string) string {
 	var b strings.Builder
-	b.WriteString("RESULT <line 1 of this card verbatim>\n")
+	b.WriteString("<line 1 of this card verbatim>\n")
 	b.WriteString("<DONE | ABSTAIN <why> | BLOCKED <why>>\n")
 	b.WriteString("CHECK: <pass | fail | not-run>\n")
-	b.WriteString("BRANCH: <working branch>\n")
-	b.WriteString("REPO: <owner>/<name>\n")
-	b.WriteString("PATHS: <space-separated list of modified files>\n")
+	b.WriteString("BRANCH <working branch>\n")
+	b.WriteString("REPO <owner>/<name>\n")
+	b.WriteString("PATHS <space-separated list of modified files>\n")
 
 	switch kind {
 	case "read":
@@ -296,21 +353,23 @@ func ResultTemplateV2(kind string) string {
 	return b.String()
 }
 
-// ResultExemplarV2 returns one complete, concrete 10/10 exemplar for each kind (A7).
-// Demonstrates Stella's architectural boundaries:
+// ResultExemplarV2 returns one format illustration for each kind (A7).
+// Format illustration only; not observed evidence or historical review provenance.
+// Demonstrates syntax and architectural boundaries:
 // 1. Status preserves DONE/ABSTAIN/BLOCKED.
 // 2. Separate typed CHECK conclusion.
 // 3. Verified/Landed never appear as worker result words.
 // 4. Worker claims distinct from machinery facts.
+// 5. Uses wire-compatible space-delimited BRANCH, REPO, PATHS headers.
 func ResultExemplarV2(kind string) string {
 	switch kind {
 	case "read":
 		return `RESULT CARD-100 sha=a1b2c3d4e5f6 nova-tools read: read PR 812 at abc123def456
 DONE
 CHECK: pass
-BRANCH: worker/read-812
-REPO: mas-bandwidth/nova-tools
-PATHS: internal/pulse/cut.go
+BRANCH worker/read-812
+REPO mas-bandwidth/nova-tools
+PATHS internal/pulse/cut.go
 ## Head
 findings: 1
 floor: HIGH
@@ -324,9 +383,9 @@ PR812: HOLD head=abc123def456 repo=mas-bandwidth/nova-tools
 		return `RESULT CARD-101 sha=b2c3d4e5f6a1 nova-tools recut: fix boundary handling in cut
 DONE
 CHECK: pass
-BRANCH: emma/fix-boundary-recut
-REPO: mas-bandwidth/nova-tools
-PATHS: internal/pulse/cut.go internal/pulse/cut_test.go
+BRANCH emma/fix-boundary-recut
+REPO mas-bandwidth/nova-tools
+PATHS internal/pulse/cut.go internal/pulse/cut_test.go
 RED: go test ./internal/pulse -run TestBoundary failed with nil pointer dereference
 GREEN: go test ./internal/pulse -run TestBoundary passed in 0.04s
 ## Gates
@@ -341,9 +400,9 @@ GREEN: go test ./internal/pulse -run TestBoundary passed in 0.04s
 		return `RESULT CARD-102 sha=c3d4e5f6a1b2 serialize port: port varint encoder to rust
 DONE
 CHECK: pass
-BRANCH: emma/port-varint-rs
-REPO: mas-bandwidth/serialize
-PATHS: serialize.rs/src/varint.rs serialize.rs/tests/varint_test.rs
+BRANCH emma/port-varint-rs
+REPO mas-bandwidth/serialize
+PATHS serialize.rs/src/varint.rs serialize.rs/tests/varint_test.rs
 RED: cargo test test_varint_parity failed: reference vector mismatch at byte 3
 GREEN: cargo test test_varint_parity passed: 48/48 test vectors identical to C++ reference
 ## Gates
@@ -358,9 +417,9 @@ GREEN: cargo test test_varint_parity passed: 48/48 test vectors identical to C++
 		return `RESULT CARD-103 sha=d4e5f6a1b2c3 nova-tools docs-guard: verify spec-swarm CLI flags
 DONE
 CHECK: pass
-BRANCH: emma/docs-guard-swarm
-REPO: mas-bandwidth/nova-tools
-PATHS: docs/SPEC-SWARM.md
+BRANCH emma/docs-guard-swarm
+REPO mas-bandwidth/nova-tools
+PATHS docs/SPEC-SWARM.md
 ## Verification
 | target | check | state |
 | --- | --- | --- |
@@ -376,9 +435,9 @@ PATHS: docs/SPEC-SWARM.md
 		return `RESULT CARD-104 sha=e5f6a1b2c3d4 nova-tools report: measure harvest throughput
 DONE
 CHECK: pass
-BRANCH: worker/report-throughput
-REPO: mas-bandwidth/nova-tools
-PATHS: reports/2026-09-21-harvest.tsv
+BRANCH worker/report-throughput
+REPO mas-bandwidth/nova-tools
+PATHS reports/2026-09-21-harvest.tsv
 ## Probes
 | probe | command | result |
 | --- | --- | --- |
@@ -391,9 +450,9 @@ Harvest latency stays under 150ms across 100 iterations with zero heap growth.`
 		return `RESULT CARD-105 sha=f6a1b2c3d4e5 nova-tools fix: null pointer on empty queue
 DONE
 CHECK: pass
-BRANCH: emma/fix-nil-queue
-REPO: mas-bandwidth/nova-tools
-PATHS: internal/pulse/queue.go internal/pulse/queue_test.go
+BRANCH emma/fix-nil-queue
+REPO mas-bandwidth/nova-tools
+PATHS internal/pulse/queue.go internal/pulse/queue_test.go
 RED: go test ./internal/pulse -run TestEmptyQueueDoesNotPanic panic: runtime error: invalid memory address
 GREEN: go test ./internal/pulse -run TestEmptyQueueDoesNotPanic passed in 0.02s
 ## Gates
@@ -419,16 +478,51 @@ type ResultEnvelopeV2 struct {
 	Body             string            // Human evidence body
 }
 
+// KnownResultV2Headers defines the allowed typed headers before markdown sections.
+var KnownResultV2Headers = map[string]bool{
+	"CHECK":     true,
+	"BRANCH":    true,
+	"REPO":      true,
+	"PATHS":     true,
+	"KIND":      true,
+	"SCHEMA":    true,
+	"ATTEMPT":   true,
+	"HEAD":      true,
+	"PR":        true,
+	"ISSUE":     true,
+	"BASE":      true,
+	"BASE-SHA":  true,
+	"BASE_SHA":  true,
+	"HOLD":      true,
+	"HOLD_FILE": true,
+	"RED":       true,
+	"GREEN":     true,
+	"LOCATION":  true,
+	"COMMAND":   true,
+	"TEST":      true,
+	"APPLIED":   true,
+	"REMAINS":   true,
+}
+
 // ValidateResultV2 parses and strictly validates a RESULT.md against v2 envelope rules.
 // Enforces Stella's architectural boundaries:
+// - Envelope size capped at MaxResultEnvelopeSize (64 KB).
 // - Status enum must strictly be DONE, ABSTAIN, BLOCKED.
 // - Separate typed CHECK: pass|fail|not-run line required.
+// - Status DONE strictly requires CHECK: pass (refuses failed-check DONE).
 // - Verified and Landed are rejected as worker result statuses.
 // - Duplicate, unknown, or oversized fields (>4096 bytes) are refused.
+// - Malformed non-header lines before markdown body are refused.
 // - Worker-authored DISPOSITION never mints friend approval.
+// - Human evidence body bounded by MaxResultBodySize (32 KB).
 func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 	var env ResultEnvelopeV2
 	env.Fields = make(map[string]string)
+
+	if len(raw) > MaxResultEnvelopeSize {
+		return env, fmt.Errorf("RESULT.md exceeds maximum size limit of %d bytes (got %d)", MaxResultEnvelopeSize, len(raw))
+	}
+
 	lines := strings.Split(raw, "\n")
 	if len(lines) < 3 {
 		return env, fmt.Errorf("RESULT.md v2 wants at least 3 lines, got %d", len(lines))
@@ -472,12 +566,30 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 		if len(ln) > 4096 {
 			return env, fmt.Errorf("line %d exceeds 4096-byte field limit", i+1)
 		}
+
+		var key, val string
 		colon := strings.IndexByte(ln, ':')
-		if colon <= 0 {
-			continue
+		space := strings.IndexByte(ln, ' ')
+
+		// Parse either KEY: VAL or KEY VAL
+		if colon > 0 && (space < 0 || colon < space) {
+			key = strings.ToUpper(strings.TrimSpace(ln[:colon]))
+			val = strings.TrimSpace(ln[colon+1:])
+		} else if space > 0 {
+			candidateKey := strings.ToUpper(strings.TrimSpace(ln[:space]))
+			if KnownResultV2Headers[candidateKey] {
+				key = candidateKey
+				val = strings.TrimSpace(ln[space+1:])
+			} else {
+				return env, fmt.Errorf("unknown header field %q at line %d", candidateKey, i+1)
+			}
+		} else {
+			return env, fmt.Errorf("malformed header line %d: %q", i+1, ln)
 		}
-		key := strings.ToUpper(strings.TrimSpace(ln[:colon]))
-		val := strings.TrimSpace(ln[colon+1:])
+
+		if !KnownResultV2Headers[key] {
+			return env, fmt.Errorf("unknown header field %q at line %d", key, i+1)
+		}
 
 		if seenKeys[key] {
 			return env, fmt.Errorf("duplicate field %q at line %d", key, i+1)
@@ -504,9 +616,31 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 		return env, fmt.Errorf("RESULT.md v2 requires a typed `CHECK: <pass|fail|not-run>` line")
 	}
 
+	// Status DONE strictly requires CHECK pass
+	if env.Status == "DONE" && env.Check != "pass" {
+		return env, fmt.Errorf("line 2 status DONE cannot be combined with CHECK %s (wants pass)", env.Check)
+	}
+
+	// For non-read/non-report kinds, require BRANCH, REPO, and PATHS
+	if kind != "read" && kind != "report" && kind != "" {
+		if env.Branch == "" {
+			return env, fmt.Errorf("RESULT.md v2 for %s requires BRANCH line", kind)
+		}
+		if env.Repo == "" {
+			return env, fmt.Errorf("RESULT.md v2 for %s requires REPO line", kind)
+		}
+		if env.Paths == "" {
+			return env, fmt.Errorf("RESULT.md v2 for %s requires PATHS line", kind)
+		}
+	}
+
 	// Capture remaining body as human evidence
 	if bodyStart < len(lines) {
-		env.Body = strings.Join(lines[bodyStart:], "\n")
+		bodyContent := strings.Join(lines[bodyStart:], "\n")
+		if len(bodyContent) > MaxResultBodySize {
+			return env, fmt.Errorf("RESULT.md evidence body exceeds %d bytes (got %d)", MaxResultBodySize, len(bodyContent))
+		}
+		env.Body = bodyContent
 	}
 
 	// Authority Boundary: Parsing worker-authored DISPOSITION must never mint friend approval

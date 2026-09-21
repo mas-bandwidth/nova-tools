@@ -292,6 +292,11 @@ func renderKindCard(in CutKindInput, n int, body string, diffContent string) str
 				failingOut = string(raw)
 			}
 		}
+		testPkg := in.TestPackage
+		testFunc := in.TestFunction
+		if testPkg == "" && in.TestName != "" {
+			testPkg = in.TestName
+		}
 		card, err := RenderCardV2(CardV2Input{
 			Kind:          in.Kind,
 			Number:        n,
@@ -299,18 +304,25 @@ func renderKindCard(in CutKindInput, n int, body string, diffContent string) str
 			Title:         in.Title,
 			Branch:        in.Branch,
 			Base:          in.Base,
+			BaseSHA:       in.BaseSHA,
 			Location:      in.Location,
-			TestPackage:   in.TestPackage,
-			TestFunction:  in.TestFunction,
+			TestPackage:   testPkg,
+			TestFunction:  testFunc,
 			TestCommand:   in.TestCommand,
 			Paths:         in.Paths,
 			ReviewerLine:  in.ReviewerLine,
 			PriorDiff:     priorDiff,
+			DiffArtifact:  in.PriorDiff,
 			FailingOutput: failingOut,
 			PreflightCmd:  in.PreflightCmd,
 			PR:            in.PR,
 			Issue:         in.Issue,
 			Head:          in.Head,
+			Body:          body,
+			HoldLine:      in.HoldLine,
+			HoldFile:      in.HoldFile,
+			Remains:       in.Remains,
+			Applied:       in.Applied,
 		})
 		if err == nil {
 			return card
