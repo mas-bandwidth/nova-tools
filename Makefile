@@ -79,7 +79,7 @@ help:
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
-	@echo "make preflight   fast lint, fmt, vet, and targeted unit tests"
+	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
@@ -141,8 +141,7 @@ vet-windows:
 lint: fmt vet vet-laws
 
 # preflight is the standard check for swarm cards and developers (#2498 S4):
-# fast lint (gofmt, go vet) and targeted unit tests, catching defects before
-# submitting a card or opening a PR.
+# gofmt + go vet + go test -count=1
 preflight: PKGS ?= $(CL_PKGS)
 preflight:
 	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
@@ -169,7 +168,7 @@ test:
 	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
-	$(GO) test -count=1 $(PKGS)
+	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
 test-short:
 	$(GO) test -short -count=1 -timeout 12m $(PKGS)

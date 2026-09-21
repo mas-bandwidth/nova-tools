@@ -1,18 +1,16 @@
 #!/usr/bin/env bash
-# tools/preflight.sh: fast lint, gofmt check, go vet, and targeted unit test suite.
+# tools/preflight.sh: preflight check: gofmt + go vet + go test -count=1.
 #
 # Part of Swarm Cards v2 (#2498 Item S4).
-# One standard preflight entry: a card that runs preflight catches lint/fmt/test
-# before submitting, preventing gate failures on dev.
+# One standard preflight entry: runs gofmt check, go vet, and targeted unit tests,
+# catching defects before submitting a card or opening a PR.
 #
 # Usage:
 #   ./tools/preflight.sh [flags] [packages...]
 #
 # Flags:
 #   -h, --help       Show usage and exit
-#   --lint-only      Run gofmt check and go vet; skip unit tests
-#   --no-test        Alias for --lint-only
-#   -run <pattern>   Filter tests by regexp (passed to go test)
+#   -run <pattern>   Filter tests by regexp
 #   --run <pattern>  Alias for -run
 #
 # Environment variables:
@@ -20,7 +18,7 @@
 #   GOFMT            gofmt command (default: gofmt)
 #   PKGS             Package set when none given on CLI (default: ./cmd/... ./internal/...)
 #   RUN              Test regex filter if not given via -run
-#   NOVA_TEST_NO_HOST Host seam safety guard (default: 1)
+#   NOVA_TEST_NO_HOST Safe test seam guard (default: 1)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -30,7 +28,6 @@ GO="${GO:-go}"
 GOFMT="${GOFMT:-gofmt}"
 export NOVA_TEST_NO_HOST="${NOVA_TEST_NO_HOST:-1}"
 
-RUN_TESTS=true
 RUN_PATTERN=""
 declare -a TARGET_PKGS=()
 
@@ -39,13 +36,11 @@ while [ $# -gt 0 ]; do
     -h|--help)
       echo "Usage: $0 [flags] [packages...]"
       echo ""
-      echo "Runs fast lint (gofmt check, go vet) and targeted unit tests."
+      echo "Runs preflight: gofmt check, go vet, and targeted unit tests."
       echo ""
       echo "Flags:"
       echo "  -h, --help        Show this help and exit"
-      echo "  --lint-only       Run gofmt and go vet only; skip unit tests"
-      echo "  --no-test         Alias for --lint-only"
-      echo "  -run <pattern>    Filter unit tests by regex (passed to go test)"
+      echo "  -run <pattern>    Filter unit tests by regex"
       echo "  --run <pattern>   Alias for -run"
       echo ""
       echo "Environment variables:"
@@ -55,10 +50,6 @@ while [ $# -gt 0 ]; do
       echo "  RUN               Test regex filter"
       echo "  NOVA_TEST_NO_HOST Safe test seam guard (default: 1)"
       exit 0
-      ;;
-    --lint-only|--no-test)
-      RUN_TESTS=false
-      shift
       ;;
     -run|--run)
       if [ $# -lt 2 ]; then
@@ -95,20 +86,16 @@ echo "=== [2/3] Preflight: go vet ($PKGS) ==="
 "$GO" vet $PKGS
 echo "go vet: OK"
 
-if [ "$RUN_TESTS" = true ]; then
-  echo "=== [3/3] Preflight: targeted unit tests ($PKGS) ==="
-  declare -a test_args=(-count=1)
-  if [ -n "$RUN_PATTERN" ]; then
-    test_args+=(-run "$RUN_PATTERN")
-  elif [ -n "${RUN:-}" ]; then
-    test_args+=(-run "$RUN")
-  fi
-  # shellcheck disable=SC2086
-  "$GO" test "${test_args[@]}" $PKGS
-  echo "unit tests: OK"
-else
-  echo "=== [3/3] Preflight: unit tests skipped (--lint-only) ==="
+echo "=== [3/3] Preflight: targeted unit tests ($PKGS) ==="
+declare -a test_args=()
+if [ -n "$RUN_PATTERN" ]; then
+  test_args+=(RUN="$RUN_PATTERN")
+elif [ -n "${RUN:-}" ]; then
+  test_args+=(RUN="$RUN")
 fi
+# shellcheck disable=SC2086
+make test-full PKGS="$PKGS" "${test_args[@]}"
+echo "unit tests: OK"
 
 echo "=== Preflight: ALL CHECKS PASSED ==="
 exit 0
