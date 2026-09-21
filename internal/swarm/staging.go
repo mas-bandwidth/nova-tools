@@ -104,6 +104,10 @@ func CheckStagedTree(jobRoot string) error {
 	if err != nil {
 		return fmt.Errorf("staged tree %s: %v", jobRoot, err)
 	}
+	rootResolved, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		rootResolved = root
+	}
 	var refused error
 	walkErr := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || refused != nil {
@@ -130,7 +134,7 @@ func CheckStagedTree(jobRoot string) error {
 		}
 		// A chain of inside links can still walk out: ask the kernel where the
 		// whole chain lands, where it lands anywhere at all.
-		if resolved, verr := filepath.EvalSymlinks(path); verr == nil && escapes(resolved, root) {
+		if resolved, verr := filepath.EvalSymlinks(path); verr == nil && escapes(resolved, rootResolved) {
 			refused = fmt.Errorf("staged tree holds symlink %s resolving outside the job root; refusing %s", rel, path)
 		}
 		return nil
