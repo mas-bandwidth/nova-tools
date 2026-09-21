@@ -57,7 +57,8 @@
                (:file "src/request-line")
                (:file "src/replays-verdict-state")
                (:file "src/replays-notes")
-               (:file "src/dedup-root")))
+               (:file "src/dedup-root")
+               ))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -97,4 +98,5 @@
                 (:file "tests/replays-fleet-stale-tokens")
                 (:file "tests/replays-lease-durability")
                 (:file "tests/replays-e08-render-file")
-                (:file "tests/replays-new-verb-door")))
+                (:file "tests/replays-new-verb-door")
+                ))

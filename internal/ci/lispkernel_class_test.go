@@ -1,6 +1,7 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -145,5 +146,44 @@ func TestEveryKernelSourceIsACompiledComponent(t *testing.T) {
 	sort.Strings(stale)
 	for _, s := range stale {
 		t.Errorf("notCompiled in this file still names a file whose debt is paid: %s. Delete the entry; a ledger nobody prunes is read as current.", s)
+	}
+}
+
+// TestNoAsdComponentSharesTheClosingLine is the rule that ends the shared last
+// line of lisp/nova-work/nova-work.asd.
+//
+// THE HURT (nova-tools#1947, measured 2026-09-19 on dev@23d9698b): thirteen open
+// nova-work pull requests all conflicted on `lisp/nova-work/nova-work.asd` and
+// nine of the twelve measured conflicted on that file and on no other file at
+// all. Each `:components` list carried its closing parens on the last component
+// line (`(:file "tests/replays-fleet-stale-tokens")))`, so any two branches
+// that each append a component rewrite the same line. The resolution is always
+// the union of both sides, but git cannot know that, so every pair conflicts
+// forever at quadratic cost.
+//
+// The rule: no line that names a `(:file ...)` component may also carry the
+// list/system closing parens. Each component stands on its own line and the
+// closers stand on lines of their own, so appending a component inserts lines
+// before the closers instead of rewriting the line that carries them. Load
+// order is unchanged: this test reads only the shape, never the order; whether
+// the system as named loads is `make test-lisp`'s business.
+func TestNoAsdComponentSharesTheClosingLine(t *testing.T) {
+	t.Parallel()
+
+	root := repoRoot(t)
+	asd := readFile(t, filepath.Join(root, "lisp", "nova-work", "nova-work.asd"))
+
+	var shared []string
+	for i, line := range strings.Split(asd, "\n") {
+		if !strings.Contains(line, "(:file") {
+			continue
+		}
+		if strings.HasSuffix(strings.TrimSpace(line), "))") {
+			shared = append(shared, fmt.Sprintf("line %d: %s", i+1, strings.TrimSpace(line)))
+		}
+	}
+	sort.Strings(shared)
+	for _, s := range shared {
+		t.Errorf("lisp/nova-work/nova-work.asd has a shared last line: %s shares its (:file ...) component with the :components/system closing parens, so every pair of nova-work branches that append a component rewrites the same line and conflicts forever; put each component on its own line and the closing parens on lines of their own", s)
 	}
 }
