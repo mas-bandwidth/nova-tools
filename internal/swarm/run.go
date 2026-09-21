@@ -786,6 +786,10 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	}
 	cmd := exec.Command(in.Supervisor, supervisorArgs...)
 	cmd.Stdout, cmd.Stderr = nil, nil
+	// The bench's own git config stops at the job boundary: the supervisor and
+	// everything it spawns read the staged clone's local config, never the
+	// bench's (SPEC-TOOLWORK §3 rule 1, #1665).
+	cmd.Env = append(os.Environ(), StagingGitEnv()...)
 	if log, err := os.OpenFile(filepath.Join(jobDir, "supervisor.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
 		cmd.Stdout, cmd.Stderr = log, log
 		defer log.Close()
@@ -894,6 +898,13 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 	// move, and a directory that exists only because something else needed a path under
 	// it is a directory that disappears when that something changes.
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		return err
+	}
+	// STAGING (SPEC-TOOLWORK §3 rules 1-2, #1665): the pool's identity, the
+	// clone's local git config, and no way out of the job root -- before the
+	// worker starts, so a pool with no identity row and a tree with a way out
+	// are both refused at launch rather than run under nobody's name.
+	if err := StageJob(in.Pool.Dir, jobDir, filepath.Join(jobDir, "repo")); err != nil {
 		return err
 	}
 	if _, err := in.Worker.WriteHarnessConfig(slot); err != nil {
