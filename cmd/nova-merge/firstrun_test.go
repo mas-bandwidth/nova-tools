@@ -205,11 +205,33 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 	}
 }
 
-// (c) The README's `### First run` transcript, checked against the tool: every transcript
-// line must match a line the tool actually printed, by event prefix and field names in
-// order. Shas, paths and counts are a run's own business and are deliberately not
-// compared, so the transcript stays a document rather than becoming a fixture.
-func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+// (c) The `### First run` transcript of docs/TESTS.md is EXECUTED: every documented
+// command is run, in order, in one lane, and its whole output is compared with the block
+// written under it -- same number of lines, same lines, same order.
+//
+// WHAT THIS REPLACES, AND WHAT IT FOUND. The old test collected the SHAPES a command
+// printed into a `printed map[string]bool` and asked whether each documented line was in
+// it, so a line the document DROPPED removed a lookup rather than an assertion. The
+// rehearsal block had dropped one: the tool prints a leading
+//
+//	INIT NOTE the repository's default branch could not be read from ...
+//
+// and the document showed the three lines under it and not that one, while the section's
+// own prose says "Both lines below are executed by cmd/nova-merge/firstrun_test.go". That
+// is issue #1638, reproduced on space and on the Studio.
+//
+// TWO STREAMS. The two NOTE lines are on standard ERROR and the two OK lines on standard
+// output, so the block is written to #1570's convention (a line opening `! ` is standard
+// error) and the streams are compared apart. `# Stderr: whole` says the marked lines are
+// ALL this command writes there: a NOTE is a finding about the reader's own repository,
+// not narration, and a transcript that quietly lost one would be hiding it.
+//
+// THE THREE PATHS ARE DECLARED, NOT SUBSTITUTED IN SILENCE. A reader types `./lane`,
+// `./rehearsal-lane` and `"$PWD/rehearsal.git"`; this lab gives each one a directory under
+// t.TempDir(), and the tool prints the path back on `lane=` and inside the INIT NOTE. Each
+// is one onboarding.Path norm, so what is not compared is three names a reader of a
+// failure message is shown, rather than a rewrite that happened out of sight.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
@@ -219,45 +241,49 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l := firstRunLab(t)
-	var printed map[string]bool
-	seen := map[string]int{}
-	for _, line := range lines {
-		if cmd, ok := strings.CutPrefix(line, "$ "); ok {
-			exit, stdout, stderr := l.run(l.localize(strings.Fields(cmd)[1:])...)
-			if exit == 2 {
-				t.Fatalf("the README command %q does not run: exit 2, stderr: %s", line, stderr)
-			}
-			printed = map[string]bool{}
-			for _, out := range strings.Split(stdout+"\n"+stderr, "\n") {
-				if s := onboarding.Shape(out); s != "" {
-					printed[s] = true
-				}
-			}
-			continue
-		}
-		s := onboarding.Shape(line)
-		if s == "" {
-			continue
-		}
-		if printed == nil {
-			t.Fatalf("transcript line before any command: %q", line)
-		}
-		if !printed[s] {
-			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
-		}
-		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	steps, err := onboarding.Steps("nova-merge", lines)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// Two INIT OK and three STATUS OK: the REHEARSAL against a bare repository of the
-	// reader's own comes first (nova-tools #116), and then the live form. A transcript
-	// that shows the live push without the rehearsal in front of it is the document
-	// Johnny pasted.
-	for prefix, want := range map[string]int{"INIT OK": 2, "STATUS OK": 3, "STATUS NOTE": 1, "ADD OK": 1, "STATUS ENTRY": 1} {
-		if seen[prefix] != want {
-			t.Errorf("docs/CLI.md First run shows %d %s lines, want %d", seen[prefix], prefix, want)
-		}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-merge command; this test would pass by running nothing")
+	}
+
+	l := firstRunLab(t)
+	rehearsalLane := filepath.Join(l.dir, "rehearsal-lane")
+	norms := []onboarding.Norm{
+		onboarding.Path("$PWD/rehearsal.git", l.rehearsalRemote()),
+		onboarding.Path("./rehearsal-lane", rehearsalLane),
+		onboarding.Path("./lane", l.lane),
+		// The entry's head is an object id this lab's fixture invented on this
+		// run; everything else on the STATUS ENTRY line is compared.
+		onboarding.HexID("head", 12),
+	}
+	for _, p := range onboarding.Execute(steps, l.documented(rehearsalLane), norms...) {
+		t.Error(p)
 	}
 }
+
+// documented runs one line of the transcript through the lab, giving the reader's three
+// paths this run's directories -- see localize, which is the substitution the document's
+// norms above declare on the other side.
+func (l *lab) documented(rehearsalLane string) onboarding.Runner {
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		if s.Stdin != "" {
+			return onboarding.Result{}, errReadsNothing
+		}
+		code, stdout, stderr := l.run(l.localize(s.Args)...)
+		return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
+	}
+}
+
+type readsNothing struct{}
+
+func (readsNothing) Error() string {
+	return "nova-merge reads no stdin; a `< path` in its transcript is the document's bug"
+}
+
+var errReadsNothing = readsNothing{}
 
 // THE FIRST RUN IS A PUSH, AND THE DOCUMENT A STRANGER PASTES FROM HAS TO SAY SO.
 //

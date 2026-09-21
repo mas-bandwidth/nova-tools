@@ -461,9 +461,9 @@ outside the wall and dies inside it is missing a `--read`"*
 **What those rules do not hold.** They say how to let a toolchain through the wall; none
 says **which toolchains this repository's own gate needs**, none proves a bench can run
 that gate **inside** the wall, and nothing ties a card's result to a bench that was ever
-shown able to produce one. The receipts: `/usr/bin/cc` and `/usr/bin/c++` fail inside
-the wall on macOS because the profile denies `/var/db/xcode_select_link`, which also
-kills every `make` target at parse time (#1557); `native` shares the Go caches but never
+shown able to produce one. The receipts: `/usr/bin/cc` and `/usr/bin/c++` failed inside
+the wall on macOS because the profile denied `/var/db/xcode_select_link`, which also
+killed every `make` target at parse time (#1557, repaired in the darwin profile); `native` shares the Go caches but never
 reads the Go toolchain, so a Go card printed `rc=0 harness=ok` having compiled nothing
 (#1465); the harness fence ignores `read_roots` (#1463); on Linux the wall refuses
 `/tmp`, which dotnet hard-codes (#1495), `policy` prints the darwin profile under
@@ -794,6 +794,7 @@ the worker never sees and cannot edit.
    | `rebase` | replays one of our own open PRs onto the base, changing nothing | the PR's own changed files, computed by `cut` from the PR at its pinned head | hygiene, positive, and **range equality**: `git range-diff` pairs every commit, and each pair's patch-id is equal except in files git reported conflicted during the replay; those files are exempt from equality, so they are **listed by name on the read card** and are what the reader reads | one line changed in a file that did **not** conflict: the gate rejects `rebase-drift` | `rebase-drift`, `commit-dropped`, `commit-added` |
    | `sweep` | applies one mechanical class fix at every site the class test names | up to 8 globs, plus `FILES: <n>`, the most files the diff may touch | hygiene, positive, and the seed form **only**: the class test landed first and the sweep changes no test file, so the shape check would say `no-test` and range `mutate` would exit 2 `no-tests-changed` — neither is declared for this kind | **two** seeds, each one edit: the first and the last changed site (path order) reverted alone; the class test in `TEST:` goes red **naming that site** — a class test that samples is found out | `site-not-seen`, `over-files` |
    | `mutation-kill` | writes the test that kills one surviving mutant | test files only | hygiene, shape, positive, and the diff is test-only | the card's own `SEED:` patch (the mutant, written by the card writer into the card, `edits=1` asserted at `cut`) applied with `mutate --seed`: the new test is red with it and green without | `mutant-survives`, `non-test-change` |
+   | `guard` | reverts one commit's non-test files and records whether the named tests go red (#2042) | the commit's own files | none: the control IS the card | `nova-review guard`: `GUARDED` when tests go red, `UNGUARDED` when they stay green, `COMPILER-HELD` when the revert does not compile, `NOT-APPLICABLE` when the file is excluded on this OS | — |
    | `read`, `probe`, `text`, `tone` | read and report | none: `PATHS: none` | `none` | none; the `HARVEST` row says `gate=none` | — |
 
 3. **A kind's gate is declared in the tool, in one table, and printed.**
@@ -923,7 +924,8 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    reader releases it with the verb; no comment, typed or not, clears it (Q10). Two per-run
    waivers exist, each printed on every line with its
    reason and neither touching the lane's records: `--no-require-holds --reason <text>` waives
-   the forge sources whole, XOR `--reviewers`; `--untyped-comments=ignore --reason <text>` makes
+   the forge sources whole, XOR `--reviewers`, and `--lane` is required on both sides (a waiver
+   with no lane is leftover `--ignore-hold`, #1896); `--untyped-comments=ignore --reason <text>` makes
    untyped comments not a hold for that run. The escape for a holder who
    cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, and the
    receipt names the commit and not the reader.
@@ -976,7 +978,8 @@ login naming the current head; still held); `a-forge-approved-review-releases-no
 `a-scoped-approve-record-does-not-satisfy-needs-read`;
 `untyped-comments-ignore-is-per-run-printed-and-carries-a-reason`;
 `no-require-holds-waives-the-forge-sources-only-and-is-printed`;
-`reviewers-xor-no-require-holds`; `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
+`reviewers-xor-no-require-holds`; `no-require-holds-without-lane-refuses`;
+`removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`;
 `land-refuses-a-hold-posted-after-batch-ok` (the receipt is #1572's timeline);
 `sweep-and-react-never-enqueue-a-held-pr`. A class test, `toolwork-names-only-tests-reading-3-demands`,
 asserts every test name in this paragraph appears in reading 3's list, so the two texts cannot
