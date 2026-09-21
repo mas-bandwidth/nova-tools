@@ -176,7 +176,7 @@ now refused by name, listing the kinds there are (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone; run: nova-check help
 ```
 
 ```
