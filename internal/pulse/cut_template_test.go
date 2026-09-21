@@ -1,7 +1,13 @@
 package pulse
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -308,6 +314,12 @@ func TestCardTemplateV2A7ResultTemplateAndExemplar(t *testing.T) {
 		if !strings.Contains(card, "## Exemplar") {
 			t.Errorf("kind %s missing Exemplar section:\n%s", k, card)
 		}
+		if !strings.Contains(card, "(Format illustration only; not observed evidence or historical review provenance.)") {
+			t.Errorf("kind %s missing format illustration provenance notice in exemplar section:\n%s", k, card)
+		}
+		if !strings.Contains(card, "SCHEMA: v2") {
+			t.Errorf("kind %s missing SCHEMA: v2 in template/exemplar:\n%s", k, card)
+		}
 		if !strings.Contains(card, "CHECK: pass|fail|not-run") && !strings.Contains(card, "CHECK: pass") {
 			t.Errorf("kind %s missing separate typed check conclusion (CHECK: pass):\n%s", k, card)
 		}
@@ -345,6 +357,7 @@ func TestValidateResultV2StellaBoundaries(t *testing.T) {
 	// Validates versioned common envelope against Stella's architectural boundaries.
 	validFixResult := `RESULT CARD-500 sha=1234567890ab mas-bandwidth/nova-tools fix: test
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/test-fix
 REPO mas-bandwidth/nova-tools
@@ -362,6 +375,9 @@ GREEN: go test ./internal/pulse -run TestFoo passed (0.05s)
 	}
 	if res.Status != "DONE" {
 		t.Errorf("res.Status = %q, want DONE", res.Status)
+	}
+	if res.Schema != "v2" {
+		t.Errorf("res.Schema = %q, want v2", res.Schema)
 	}
 	if res.Check != "pass" {
 		t.Errorf("res.Check = %q, want pass", res.Check)
@@ -387,10 +403,14 @@ GREEN: go test ./internal/pulse -run TestFoo passed (0.05s)
 		t.Errorf("ValidateResultV2 accepted result with duplicate CHECK: line")
 	}
 
-	// 4. Failed-check DONE must be refused
+	// 4. Failed-check DONE is accepted as a valid wire envelope representing a Returned attempt
 	failedCheckDone := strings.Replace(validFixResult, "CHECK: pass\n", "CHECK: fail\n", 1)
-	if _, err := ValidateResultV2(failedCheckDone, "fix"); err == nil {
-		t.Errorf("ValidateResultV2 accepted failed-check DONE")
+	resFailed, err := ValidateResultV2(failedCheckDone, "fix")
+	if err != nil {
+		t.Errorf("ValidateResultV2 rejected failed-check DONE (wants valid wire format for Returned): %v", err)
+	}
+	if resFailed.Status != "DONE" || resFailed.Check != "fail" {
+		t.Errorf("expected Status=DONE, Check=fail, got %q, %q", resFailed.Status, resFailed.Check)
 	}
 
 	// 5. Unknown fields before markdown header must be refused
@@ -421,6 +441,7 @@ GREEN: go test ./internal/pulse -run TestFoo passed (0.05s)
 	// 9. Worker claims strictly separate from authority: worker-authored DISPOSITION does not mint friend approval
 	readResultWithDisp := `RESULT CARD-501 sha=1234567890ab mas-bandwidth/nova-tools read: test
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/test-read
 REPO mas-bandwidth/nova-tools
@@ -439,6 +460,43 @@ DISPOSITION who=Worker verdict=APPROVE score=10/10
 	}
 	if readRes.IsFriendApproval {
 		t.Errorf("worker-authored DISPOSITION was permitted to mint friend approval")
+	}
+
+	// 10. Missing or invalid SCHEMA version
+	noSchema := strings.Replace(validFixResult, "SCHEMA: v2\n", "", 1)
+	if _, err := ValidateResultV2(noSchema, "fix"); err == nil {
+		t.Errorf("ValidateResultV2 accepted result with missing SCHEMA: line")
+	}
+	badSchema := strings.Replace(validFixResult, "SCHEMA: v2\n", "SCHEMA: v3\n", 1)
+	if _, err := ValidateResultV2(badSchema, "fix"); err == nil {
+		t.Errorf("ValidateResultV2 accepted unsupported SCHEMA: v3")
+	}
+
+	// 11. ABSTAIN and BLOCKED envelopes are validated before state branching
+	abstainResult := `RESULT CARD-502 sha=1234567890ab mas-bandwidth/nova-tools fix: test
+ABSTAIN cannot reproduce defect
+SCHEMA: v2
+CHECK: not-run
+REPO mas-bandwidth/nova-tools
+`
+	resAbstain, err := ValidateResultV2(abstainResult, "fix")
+	if err != nil {
+		t.Fatalf("ValidateResultV2 rejected valid ABSTAIN envelope: %v", err)
+	}
+	if resAbstain.Status != "ABSTAIN" {
+		t.Errorf("resAbstain.Status = %q, want ABSTAIN", resAbstain.Status)
+	}
+
+	// Oversized ABSTAIN must be refused
+	hugeAbstain := abstainResult + strings.Repeat("# Extra text\n", 5000)
+	if _, err := ValidateResultV2(hugeAbstain, "fix"); err == nil {
+		t.Errorf("ValidateResultV2 accepted oversized ABSTAIN envelope (>64KB)")
+	}
+
+	// Malformed header in ABSTAIN must be refused
+	malformedAbstain := strings.Replace(abstainResult, "CHECK: not-run\n", "CHECK: not-run\nILLEGAL_FIELD: val\n", 1)
+	if _, err := ValidateResultV2(malformedAbstain, "fix"); err == nil {
+		t.Errorf("ValidateResultV2 accepted ABSTAIN with illegal header")
 	}
 }
 
@@ -513,6 +571,7 @@ func TestHarvestV2RoundTrip(t *testing.T) {
 	// Simulate worker writing valid v2 RESULT.md matching template
 	filledResult := fmt.Sprintf(`%s
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/fix-roundtrip
 REPO mas-bandwidth/nova-tools
@@ -541,17 +600,189 @@ GREEN: test passed
 		t.Errorf("classifyResult repo = %q, want mas-bandwidth/nova-tools", repo)
 	}
 
-	// Negative control 1: failed-check with DONE must return mismatch
+	// Control 1: failed-check with DONE is classified as "returned", withholds push/landing eligibility (branch=""), and does not auto-retry
 	failedResult := strings.Replace(filledResult, "CHECK: pass\n", "CHECK: fail\n", 1)
-	failState, _, _, _ := classifyResult(row, contractLine, failedResult)
-	if failState != "mismatch" {
-		t.Errorf("classifyResult accepted failed-check DONE as state = %q, want mismatch", failState)
+	failState, failBranch, _, _ := classifyResult(row, contractLine, failedResult)
+	if failState != "returned" {
+		t.Errorf("classifyResult accepted failed-check DONE as state = %q, want returned", failState)
+	}
+	if failBranch != "" {
+		t.Errorf("classifyResult for failed-check DONE granted push eligibility branch = %q, want empty", failBranch)
 	}
 
-	// Negative control 2: unknown header field must return mismatch
+	// Control 2: unknown header field must return mismatch
 	unknownResult := strings.Replace(filledResult, "CHECK: pass\n", "CHECK: pass\nILLEGAL_HEADER: value\n", 1)
 	unkState, _, _, _ := classifyResult(row, contractLine, unknownResult)
 	if unkState != "mismatch" {
 		t.Errorf("classifyResult accepted unknown header field as state = %q, want mismatch", unkState)
+	}
+}
+
+func TestLegacyRecutCardPreservesSemantics(t *testing.T) {
+	// A legacy card generated before v2 with kind "recut" carries "recut:" on line 1,
+	// but does NOT declare SCHEMA: v2 and does NOT carry a CHECK: line.
+	// It must pass through classifyResult without being forced through v2 CHECK validation.
+	legacyContract := "RESULT CARD-101 sha=b2c3d4e5f6a1 nova-tools recut: fix boundary handling in cut"
+	legacyBody := legacyContract + `
+DONE
+BRANCH emma/legacy-recut-branch
+REPO mas-bandwidth/nova-tools
+PATHS internal/pulse/cut.go
+RED: test failed
+GREEN: test passed
+## Evidence
+Notes from prior attempt.
+`
+	row := CardRow{Label: "card-101", Card: "card-101.md"}
+	state, branch, repo, _ := classifyResult(row, legacyContract, legacyBody)
+	if state != "done" {
+		t.Errorf("legacy recut card failed with state = %q, want done", state)
+	}
+	if branch != "emma/legacy-recut-branch" {
+		t.Errorf("legacy recut card branch = %q, want emma/legacy-recut-branch", branch)
+	}
+	if repo != "mas-bandwidth/nova-tools" {
+		t.Errorf("legacy recut card repo = %q, want mas-bandwidth/nova-tools", repo)
+	}
+}
+
+func TestEnvelopeOnlyFieldExtraction(t *testing.T) {
+	// Verifies that classifyResult extracts effective fields ONLY from the header envelope.
+	// Quoted lines or examples in markdown evidence must remain data and never override header fields.
+	contractLine := "RESULT CARD-300 sha=abcdef123456 mas-bandwidth/nova-tools fix: test extraction"
+	body := contractLine + `
+DONE
+SCHEMA: v2
+CHECK: pass
+BRANCH emma/real-branch
+REPO mas-bandwidth/nova-tools
+PATHS internal/pulse/cut.go
+## Evidence
+Quoted command or example from another card:
+BRANCH worker/quoted-fake-branch
+REPO other/quoted-fake-repo
+`
+	row := CardRow{Label: "card-300", Card: "card-300.md"}
+	state, branch, repo, _ := classifyResult(row, contractLine, body)
+	if state != "done" {
+		t.Errorf("state = %q, want done", state)
+	}
+	if branch != "emma/real-branch" {
+		t.Errorf("branch = %q, want emma/real-branch (evidence body overrode header!)", branch)
+	}
+	if repo != "mas-bandwidth/nova-tools" {
+		t.Errorf("repo = %q, want mas-bandwidth/nova-tools", repo)
+	}
+}
+
+func TestImmutableDiffArtifactRetention(t *testing.T) {
+	// Verifies that diff artifacts > 6KB are retained immutably in card directory
+	// and locators with digests are recorded in card markdown, for both literal and file inputs.
+	queueDir := t.TempDir()
+	outDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(queueDir, "NEXT"), []byte("10\n"), 0o644); err != nil {
+		t.Fatalf("failed to write NEXT: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(queueDir, "lanes", "small"), 0o755); err != nil {
+		t.Fatalf("failed to create lane: %v", err)
+	}
+
+	// 1. Literal diff > 6 KB
+	bigDiff := strings.Repeat("diff --git a/foo.go b/foo.go\n+some changed code line\n", 200)
+	sum := sha256.Sum256([]byte(bigDiff))
+	expectedDigest := "sha256:" + hex.EncodeToString(sum[:])
+
+	in := CutKindInput{
+		Kind:         "recut",
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test diff retention literal",
+		V2:           true,
+		Out:          outDir,
+		Queue:        queueDir,
+		PriorDiff:    bigDiff,
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+		PreflightCmd: "make preflight",
+	}
+	code := CutKind(in)
+	if code != 0 {
+		t.Fatalf("CutKind failed for literal diff: code %d", code)
+	}
+
+	cardPath := filepath.Join(outDir, "card-10.md")
+	diffPath := filepath.Join(outDir, "card-10.diff")
+
+	cardBytes, err := os.ReadFile(cardPath)
+	if err != nil {
+		t.Fatalf("card not written: %v", err)
+	}
+	retainedBytes, err := os.ReadFile(diffPath)
+	if err != nil {
+		t.Fatalf("diff artifact not retained: %v", err)
+	}
+	if string(retainedBytes) != bigDiff {
+		t.Errorf("retained diff content does not match input diff")
+	}
+	if !strings.Contains(string(cardBytes), expectedDigest) {
+		t.Errorf("card missing expected digest %s:\n%s", expectedDigest, string(cardBytes))
+	}
+	if !strings.Contains(string(cardBytes), diffPath) {
+		t.Errorf("card missing retained diff path %s:\n%s", diffPath, string(cardBytes))
+	}
+	if !strings.Contains(string(cardBytes), fmt.Sprintf("omitted %d bytes", len(strings.TrimSpace(bigDiff))-DefaultDiffCap)) {
+		t.Errorf("card missing omitted bytes notice:\n%s", string(cardBytes))
+	}
+
+	// 2. File diff > 6 KB
+	diffFile := filepath.Join(t.TempDir(), "input.patch")
+	if err := os.WriteFile(diffFile, []byte(bigDiff), 0o644); err != nil {
+		t.Fatalf("failed to write diffFile: %v", err)
+	}
+	gitDir := t.TempDir()
+	cmd := exec.Command("git", "init")
+	cmd.Dir = gitDir
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git init failed: %v", err)
+	}
+
+	in2 := CutKindInput{
+		Kind:         "recut",
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test diff retention file",
+		V2:           true,
+		Out:          outDir,
+		Queue:        queueDir,
+		DiffFile:     diffFile,
+		Dir:          gitDir,
+		Stdout:       io.Discard,
+		Stderr:       io.Discard,
+		PreflightCmd: "make preflight",
+	}
+	code = CutKind(in2)
+	if code != 0 {
+		t.Fatalf("CutKind failed for file diff: code %d", code)
+	}
+	card11Path := filepath.Join(outDir, "card-11.md")
+	diff11Path := filepath.Join(outDir, "card-11.diff")
+
+	card11Bytes, err := os.ReadFile(card11Path)
+	if err != nil {
+		t.Fatalf("card-11 not written: %v", err)
+	}
+	retained11Bytes, err := os.ReadFile(diff11Path)
+	if err != nil {
+		t.Fatalf("diff artifact 11 not retained: %v", err)
+	}
+	if string(retained11Bytes) != bigDiff {
+		t.Errorf("retained diff 11 content does not match input diff")
+	}
+	if !strings.Contains(string(card11Bytes), diff11Path) {
+		t.Errorf("card-11 missing retained diff path %s:\n%s", diff11Path, string(card11Bytes))
+	}
+	if !strings.Contains(string(card11Bytes), expectedDigest) {
+		t.Errorf("card-11 missing expected digest %s:\n%s", expectedDigest, string(card11Bytes))
+	}
+	if !strings.Contains(string(card11Bytes), fmt.Sprintf("omitted %d bytes", len(strings.TrimSpace(bigDiff))-DefaultDiffCap)) {
+		t.Errorf("card-11 missing omitted bytes notice:\n%s", string(card11Bytes))
 	}
 }

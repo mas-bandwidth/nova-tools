@@ -54,7 +54,8 @@ func TurnBudgetV2(kind string) int {
 
 // InlineDiff inlines a prior diff, capping it at capBytes (default 6 KB) and
 // appending a notice naming omitted bytes if truncated (A1).
-// If an artifactPath is supplied, it is named in the notice; otherwise no unverified mirror claim is made.
+// If an artifactPath is supplied, it is named in the notice with its digest;
+// otherwise no unverified mirror claim is made and the digest is disclosed.
 func InlineDiff(diff string, capBytes int, artifactPath ...string) string {
 	if diff == "" {
 		return ""
@@ -66,9 +67,18 @@ func InlineDiff(diff string, capBytes int, artifactPath ...string) string {
 		return diff
 	}
 	omitted := len(diff) - capBytes
+	sum := sha256.Sum256([]byte(diff))
+	digest := "sha256:" + hex.EncodeToString(sum[:])
 	loc := ""
 	if len(artifactPath) > 0 && strings.TrimSpace(artifactPath[0]) != "" {
-		loc = fmt.Sprintf("; full diff retained at %s", strings.TrimSpace(artifactPath[0]))
+		ap := strings.TrimSpace(artifactPath[0])
+		if strings.Contains(ap, "sha256:") {
+			loc = fmt.Sprintf("; full diff retained at %s", ap)
+		} else {
+			loc = fmt.Sprintf("; full diff retained at %s (%s)", ap, digest)
+		}
+	} else {
+		loc = fmt.Sprintf("; digest %s; artifact unreferenced", digest)
 	}
 	return fmt.Sprintf("%s\n... [inlined diff capped at %d bytes; omitted %d bytes%s]",
 		diff[:capBytes], capBytes, omitted, loc)
@@ -290,6 +300,7 @@ func RenderCardV2(in CardV2Input) (string, error) {
 
 	// Exemplar per kind (A7) - format illustration
 	b.WriteString(fmt.Sprintf("## Exemplar (%s)\n", in.Kind))
+	b.WriteString("(Format illustration only; not observed evidence or historical review provenance.)\n\n")
 	b.WriteString(ResultExemplarV2(in.Kind))
 	b.WriteString("\n")
 
@@ -309,6 +320,7 @@ func ResultTemplateV2(kind string) string {
 	var b strings.Builder
 	b.WriteString("<line 1 of this card verbatim>\n")
 	b.WriteString("<DONE | ABSTAIN <why> | BLOCKED <why>>\n")
+	b.WriteString("SCHEMA: v2\n")
 	b.WriteString("CHECK: <pass | fail | not-run>\n")
 	b.WriteString("BRANCH <working branch>\n")
 	b.WriteString("REPO <owner>/<name>\n")
@@ -366,6 +378,7 @@ func ResultExemplarV2(kind string) string {
 	case "read":
 		return `RESULT CARD-100 sha=a1b2c3d4e5f6 nova-tools read: read PR 812 at abc123def456
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH worker/read-812
 REPO mas-bandwidth/nova-tools
@@ -382,6 +395,7 @@ PR812: HOLD head=abc123def456 repo=mas-bandwidth/nova-tools
 	case "recut":
 		return `RESULT CARD-101 sha=b2c3d4e5f6a1 nova-tools recut: fix boundary handling in cut
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/fix-boundary-recut
 REPO mas-bandwidth/nova-tools
@@ -399,6 +413,7 @@ GREEN: go test ./internal/pulse -run TestBoundary passed in 0.04s
 	case "port":
 		return `RESULT CARD-102 sha=c3d4e5f6a1b2 serialize port: port varint encoder to rust
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/port-varint-rs
 REPO mas-bandwidth/serialize
@@ -416,6 +431,7 @@ GREEN: cargo test test_varint_parity passed: 48/48 test vectors identical to C++
 	case "docs-guard":
 		return `RESULT CARD-103 sha=d4e5f6a1b2c3 nova-tools docs-guard: verify spec-swarm CLI flags
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/docs-guard-swarm
 REPO mas-bandwidth/nova-tools
@@ -434,6 +450,7 @@ PATHS docs/SPEC-SWARM.md
 	case "report":
 		return `RESULT CARD-104 sha=e5f6a1b2c3d4 nova-tools report: measure harvest throughput
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH worker/report-throughput
 REPO mas-bandwidth/nova-tools
@@ -449,6 +466,7 @@ Harvest latency stays under 150ms across 100 iterations with zero heap growth.`
 	default: // fix
 		return `RESULT CARD-105 sha=f6a1b2c3d4e5 nova-tools fix: null pointer on empty queue
 DONE
+SCHEMA: v2
 CHECK: pass
 BRANCH emma/fix-nil-queue
 REPO mas-bandwidth/nova-tools
@@ -469,6 +487,8 @@ GREEN: go test ./internal/pulse -run TestEmptyQueueDoesNotPanic passed in 0.02s
 type ResultEnvelopeV2 struct {
 	ContractLine     string
 	Status           string // DONE, ABSTAIN, BLOCKED
+	Schema           string // e.g. "v2"
+	Attempt          string // e.g. "1"
 	Check            string // pass, fail, not-run
 	Branch           string
 	Repo             string
@@ -509,7 +529,7 @@ var KnownResultV2Headers = map[string]bool{
 // - Envelope size capped at MaxResultEnvelopeSize (64 KB).
 // - Status enum must strictly be DONE, ABSTAIN, BLOCKED.
 // - Separate typed CHECK: pass|fail|not-run line required.
-// - Status DONE strictly requires CHECK: pass (refuses failed-check DONE).
+// - Status DONE with failed check is accepted as a valid wire envelope (representing a Returned attempt).
 // - Verified and Landed are rejected as worker result statuses.
 // - Duplicate, unknown, or oversized fields (>4096 bytes) are refused.
 // - Malformed non-header lines before markdown body are refused.
@@ -598,6 +618,10 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 		env.Fields[key] = val
 
 		switch key {
+		case "SCHEMA":
+			env.Schema = val
+		case "ATTEMPT":
+			env.Attempt = val
 		case "CHECK":
 			if val != "pass" && val != "fail" && val != "not-run" {
 				return env, fmt.Errorf("CHECK wants pass, fail, or not-run, got %q", val)
@@ -612,22 +636,25 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 		}
 	}
 
+	if env.Schema == "" {
+		return env, fmt.Errorf("RESULT.md v2 requires a typed `SCHEMA: v2` line")
+	}
+	if env.Schema != "v2" {
+		return env, fmt.Errorf("unsupported SCHEMA %q (wants v2)", env.Schema)
+	}
 	if env.Check == "" {
 		return env, fmt.Errorf("RESULT.md v2 requires a typed `CHECK: <pass|fail|not-run>` line")
 	}
-
-	// Status DONE strictly requires CHECK pass
-	if env.Status == "DONE" && env.Check != "pass" {
-		return env, fmt.Errorf("line 2 status DONE cannot be combined with CHECK %s (wants pass)", env.Check)
+	if env.Repo == "" {
+		return env, fmt.Errorf("RESULT.md v2 requires a REPO line")
 	}
 
-	// For non-read/non-report kinds, require BRANCH, REPO, and PATHS
-	if kind != "read" && kind != "report" && kind != "" {
+	// For DONE status on non-read/non-report kinds, require BRANCH and PATHS.
+	// ABSTAIN and BLOCKED envelopes are validated for version, status, check, repo and bounds
+	// without demanding working branch or modified paths.
+	if env.Status == "DONE" && kind != "read" && kind != "report" && kind != "" {
 		if env.Branch == "" {
 			return env, fmt.Errorf("RESULT.md v2 for %s requires BRANCH line", kind)
-		}
-		if env.Repo == "" {
-			return env, fmt.Errorf("RESULT.md v2 for %s requires REPO line", kind)
 		}
 		if env.Paths == "" {
 			return env, fmt.Errorf("RESULT.md v2 for %s requires PATHS line", kind)
