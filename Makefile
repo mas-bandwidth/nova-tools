@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
 
 help:
 	@echo "make help        this list"
@@ -79,6 +79,7 @@ help:
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
+	@echo "make preflight   fast lint, fmt, vet, and targeted unit tests"
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
@@ -138,6 +139,13 @@ vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
 lint: fmt vet vet-laws
+
+# preflight is the standard check for swarm cards and developers (#2498 S4):
+# fast lint (gofmt, go vet) and targeted unit tests, catching defects before
+# submitting a card or opening a PR.
+preflight: PKGS ?= $(CL_PKGS)
+preflight:
+	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
 # The fast tier. The package set is the one ci.yml's test-packages job reads out
 # of the source with `go list ./cmd/... ./internal/...`, minus the darwin-only
