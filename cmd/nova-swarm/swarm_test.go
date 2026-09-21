@@ -55,6 +55,7 @@ func newBench(t *testing.T) *bench {
 	if err := os.MkdirAll(b.pool, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(b.pool, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	// The three binaries are built ONCE for the whole package, not once per bench. Thirty
 	// benches building them each saturated the machine, and a dispatcher that cannot start
 	// a child inside its deadline turns a contract test into a race: three tests that kill
