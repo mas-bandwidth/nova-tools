@@ -114,9 +114,22 @@ func (m Mind) Owns(lane string) bool {
 	return false
 }
 
-// Registry is the ladder: every mind, in height then name order.
+// Rule is one committed constant answer: for a KIND, the rung a person has
+// found is always right, who committed it, and the log summary date it came
+// from. Promotion is a person's commit and never the tool's, so a rule with no
+// `by` is refused at load (SPEC-DECIDE housekeeping H1).
+type Rule struct {
+	Kind string `json:"kind"`
+	Rung string `json:"rung"`
+	By   string `json:"by"`
+	From string `json:"from,omitempty"`
+}
+
+// Registry is the ladder: every mind, in height then name order, and the
+// committed rules that answer a kind without a call.
 type Registry struct {
 	Minds []Mind `json:"minds"`
+	Rules []Rule `json:"rules,omitempty"`
 }
 
 // DefaultRegistry is the embedded ladder, the one a bench with no registry file
@@ -200,6 +213,29 @@ func ParseRegistry(data []byte) (*Registry, error) {
 		}
 		return reg.Minds[i].Name < reg.Minds[j].Name
 	})
+	seenRules := make(map[string]bool, len(reg.Rules))
+	for i := range reg.Rules {
+		r := &reg.Rules[i]
+		r.Kind = strings.TrimSpace(r.Kind)
+		r.Rung = strings.TrimSpace(r.Rung)
+		r.By = strings.TrimSpace(r.By)
+		r.From = strings.TrimSpace(r.From)
+		switch {
+		case r.Kind == "":
+			return nil, fmt.Errorf("decide: bad registry: rule %d names no kind", i+1)
+		case !KnownKind(r.Kind):
+			return nil, fmt.Errorf("decide: bad registry: rule for kind %q, want one of %s", r.Kind, strings.Join(Kinds, ", "))
+		case r.Rung == "":
+			return nil, fmt.Errorf("decide: bad registry: rule for %s names no rung", r.Kind)
+		case !seen[r.Rung]:
+			return nil, fmt.Errorf("decide: bad registry: rule for %s names rung %q, which the registry does not hold", r.Kind, r.Rung)
+		case r.By == "":
+			return nil, fmt.Errorf("decide: bad registry: rule for %s names no by; a policy rule with no by is refused at load", r.Kind)
+		case seenRules[r.Kind]:
+			return nil, fmt.Errorf("decide: bad registry: kind %s is ruled twice", r.Kind)
+		}
+		seenRules[r.Kind] = true
+	}
 	return &reg, nil
 }
 
@@ -222,6 +258,17 @@ func (r *Registry) ByName(name string) (Mind, bool) {
 		}
 	}
 	return Mind{}, false
+}
+
+// RuleFor is the committed rule for a kind, if the registry holds one. A kind
+// is ruled at most once, so the first match is the only match.
+func (r *Registry) RuleFor(kind string) (Rule, bool) {
+	for _, rule := range r.Rules {
+		if rule.Kind == kind {
+			return rule, true
+		}
+	}
+	return Rule{}, false
 }
 
 // AtHeight is every mind on one rung, in name order.

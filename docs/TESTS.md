@@ -36,6 +36,33 @@ section carries it, read an unmarked line as *not yet checked* rather than as
 mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
 the tool writes to standard error.
 
+**Preconditions: what a step needs that the machine may not have.** Some steps
+cannot run everywhere, and a reader is owed that before the fence rather than by
+a failure. A section states each one in a single line of its own prose,
+beginning with a keyword, exactly as `Platform:` already does:
+
+- `Platform:` — the machine the block was recorded on, and what a different
+  machine prints instead. Already in use under [`## nova-sandbox`](#nova-sandbox)
+  and [`## nova-swarm`](#nova-swarm), and checked by
+  `internal/ci/firstrun_platform_test.go`.
+- `Requires:` — something a step needs that the machine running it may not have,
+  and in a sandboxed test bench must sometimes *not* have: a key, a forge
+  credential, a posting credential, or another tool's binary. The line names the
+  thing and the verbs it gates.
+
+A harness that cannot meet a stated precondition reports
+`SKIP-PRECONDITION <verb> why=<the stated line>` and that step is not a defect.
+A section counts as clean when every step it could run is clean and every step
+it skipped names a precondition stated here. **A step skipped for a reason this
+file does not state is a defect in this file, not a pass** — being able to tell
+those two apart is the whole value of writing the line down.
+
+Four `Requires:` lines are owed today, one per section, from the same dogfood
+run: `## nova-decide` (the ladder block routes through JEV and wants
+`JEV_API_KEY`), `## nova-merge` (`init` pushes, and wants a forge credential),
+`## nova-post` (`send` wants a posting credential) and `## nova-secrets` (two
+steps invoke `nova-check`, which is a different tool's binary).
+
 ## nova-bus
 
 Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
@@ -156,11 +183,11 @@ PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nov
 PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
 PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
 PROBE STEP name=read_root expect=allow got=allow path=/Users/me/bin/nova-sandbox
-PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /Users/me/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ cmd=sh
+SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ ancestors=11 cmd=sh gpu=none
 cat: /Users/me/.config/anthropic/env: Operation not permitted
 ```
 
@@ -264,7 +291,7 @@ it does not hold is refused by name rather than left to unlock nothing (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -541,8 +568,6 @@ DECIDE REFUSED reason=no-arguments --questions is required, refusing to guess; r
 $ nova-decide version
 nova-decide v0.16.0-dev.c839379e.0.20260919154525-3c3efc0e155c darwin/arm64 go1.27.1
 ```
-
-### The ladder of minds
 
 `route`, `help` and `log` need no key and no network with `--no-jev`: the rules
 alone answer, the same way every time. These lines were produced by running the

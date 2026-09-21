@@ -118,6 +118,8 @@ sources --unattributed prints the path stems that were SEEN and matched no rule,
 first, capped by --max. That listing is what other=<pct>% on a day line is made of, and it
 is the evidence for improving the --repos file.
 
+  cp -R cmd/nova-tokens/testdata/example-bench/. . && cp ./transcripts/window.jsonl ./session.jsonl && mkdir -p ./out
+
 example:
   nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
   nova-tokens check --out ./out
