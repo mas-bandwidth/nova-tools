@@ -701,8 +701,9 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 		forgeVs, err := host.Verdicts(n, opts)
 		if err != nil {
 			if !in.noRequireHolds {
-				return nil, nil, batchRefused(stderr, fmt.Errorf(
-					"pull request %d's comments and reviews could not be read, and the hold read is on: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+				dropped = append(dropped, n)
+				fmt.Fprintf(stderr, "BATCH DROP #%d reason=\"comments could not be read: %s\"\n", n, oneline.Err(err))
+				continue
 			}
 		} else if !in.noRequireHolds {
 			vs = append(vs, forgeVs...)

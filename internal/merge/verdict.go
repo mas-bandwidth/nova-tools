@@ -235,28 +235,36 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	}
 
 	lines := strings.Split(clean, "\n")
+	hasTypedApprove := false
 	for _, l := range lines {
 		typedWho, typedHead, verdict, scope, ok := ParseDispositionLine(l)
-		if ok && strings.EqualFold(verdict, "HOLD") {
-			resolvedWho, _ := rs.ResolveWho(login, typedWho)
-			h := typedHead
-			if h == "" {
-				h = currentHead
+		if ok {
+			if strings.EqualFold(verdict, "HOLD") {
+				resolvedWho, _ := rs.ResolveWho(login, typedWho)
+				h := typedHead
+				v := Verdict{
+					ID:     fmt.Sprintf("comment:%d", id),
+					Who:    resolvedWho,
+					Word:   "hold",
+					Head:   h,
+					At:     at,
+					Source: "comment-rule",
+					Scope:  scope,
+					RawID:  id,
+					Conf:   "-",
+					Kind:   "line",
+				}
+				return v, true
 			}
-			v := Verdict{
-				ID:     fmt.Sprintf("comment:%d", id),
-				Who:    resolvedWho,
-				Word:   "hold",
-				Head:   h,
-				At:     at,
-				Source: "comment-rule",
-				Scope:  scope,
-				RawID:  id,
-				Conf:   "-",
-				Kind:   "line",
+			if strings.EqualFold(verdict, "APPROVE") {
+				hasTypedApprove = true
 			}
-			return v, true
 		}
+	}
+	if hasTypedApprove {
+		// Strictly no comment promotion to APPROVE: keep typed APPROVE inert and
+		// stop HOLD-heading or untyped pending fall-through (#2454).
+		return Verdict{}, false
 	}
 
 	// A typed APPROVE (nova-tools #2550), read BEFORE the untyped hold-shape check below
@@ -382,7 +390,7 @@ func approveVerdict(id int64, login string, lines []string, at string, rs *Revie
 }
 
 // ParseReview converts a GitHub pull request review into a Verdict.
-func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string) (Verdict, bool) {
+func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string, ignoreUntyped bool) (Verdict, bool) {
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
 	}
@@ -430,7 +438,14 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 		return Verdict{}, false
 	default:
 		// COMMENTED review: inspect body like comment
-		return ParseComment(id, login, rawBody, submittedAt, rs, author, currentHead, false)
+		v, ok := ParseComment(id, login, rawBody, submittedAt, rs, author, currentHead, ignoreUntyped)
+		if ok {
+			v.ID = fmt.Sprintf("review:%d", id)
+			if v.Word == "hold" && v.Source == "comment-rule" {
+				v.Source = "review"
+			}
+		}
+		return v, ok
 	}
 }
 
@@ -601,8 +616,17 @@ func UnreleasedHolds(holds []Verdict, reads []Read, currentHead, author string, 
 				if rec.At <= h.At {
 					continue
 				}
+				if len(rec.Releases) > 0 {
+					// When explicit release IDs are supplied, only those exact IDs are released.
+					// Do not release all of the author's holds.
+					if releasesContains(rec.Releases, h.ID) {
+						released = true
+						break
+					}
+					continue
+				}
 				if rec.Scope == "" {
-					// Unscoped APPROVE releases every hold of that who
+					// Unscoped APPROVE (without explicit release IDs) releases every hold of that who
 					released = true
 					break
 				}
@@ -849,7 +873,7 @@ func ParseForgeVerdicts(comments, reviews string, n int, rs *ReviewerSet, author
 		return nil, fmt.Errorf("pull request %d's reviews did not answer JSON this tool can read: %w", n, err)
 	}
 	for _, r := range rawReviews {
-		if v, ok := ParseReview(r.ID, r.User.Login, r.Body, r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead); ok {
+		if v, ok := ParseReview(r.ID, r.User.Login, r.Body, r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead, ignoreUntyped); ok {
 			out = append(out, v)
 		}
 	}
