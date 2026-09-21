@@ -560,7 +560,7 @@ rollup, no scan, no parse and no replay: nothing below touches a node."
     (let* ((state (kernel-state kernel))
            (open (wstate-root-open state))
            (scope (wstate-revision state))
-           (unit "items"))
+           (unit "leaves"))
       (values open unit scope
               ;; The two counts are what THIS ask measured, not a literal.
               (format nil "QUERY OK ask=size scope=~D unit=~A open=~D parses=~D replays=~D"
