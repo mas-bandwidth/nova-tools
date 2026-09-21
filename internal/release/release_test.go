@@ -39,9 +39,13 @@ type fakeForge struct {
 	failTag   error
 	failHead  error
 	failFiles error
+	// headCalls counts the reads of the forge, so a test can assert that a
+	// gate said to be in front of the forge really is in front of it.
+	headCalls int
 }
 
 func (f *fakeForge) HeadSHA(_ context.Context, _, branch string) (string, error) {
+	f.headCalls++
 	if f.failHead != nil {
 		return "", f.failHead
 	}
