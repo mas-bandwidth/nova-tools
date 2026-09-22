@@ -55,6 +55,16 @@ func TestScoreCardHoldsAnUnknownAcceptanceEvenWhenAResultExists(t *testing.T) {
 	}
 }
 
+func TestAcceptanceUnknownHoldsAnEmptyMarker(t *testing.T) {
+	job := t.TempDir()
+	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !AcceptanceUnknown(job) {
+		t.Fatal("an empty marker was treated as reconciled")
+	}
+}
+
 func TestAcceptanceUnknownFailsClosedWhenTheMarkerCannotBeRead(t *testing.T) {
 	job := t.TempDir()
 	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {

@@ -64,7 +64,9 @@ func AcceptanceUnknown(job string) bool {
 	}
 	raw, err := os.ReadFile(filepath.Join(job, "provider-acceptance"))
 	if err == nil {
-		return strings.TrimSpace(string(raw)) == "unknown"
+		// A present marker is a hold until a reconciler writes the one
+		// release word. Empty and unrecognized text are not a release.
+		return strings.TrimSpace(string(raw)) != "reconciled"
 	}
 	if !os.IsNotExist(err) {
 		return true

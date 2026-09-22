@@ -804,10 +804,10 @@ func Batch(in BatchInput) int {
 	// row that names ONE reason token (issue #461), so the packet is the whole read.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain, idle, stalled, partial int
-		holds                                 []string
-		totalIn, totalOut                     int
-		total                                 float64
+		done, abstain, held, idle, stalled, partial int
+		holds                                       []string
+		totalIn, totalOut                           int
+		total                                       float64
 	)
 	type row struct {
 		label    string
@@ -929,6 +929,7 @@ func Batch(in BatchInput) int {
 			continue
 		}
 		if state == "hold" {
+			held++
 			continue
 		}
 		abstain++
@@ -979,6 +980,9 @@ func Batch(in BatchInput) int {
 	// past n + 12 lines whatever the batch holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	if held > 0 {
+		fmt.Fprintf(in.Stdout, " held=%d", held)
+	}
 	// partial=<n> IS THE FLOOR SAYING IT IS A FLOOR. Every card whose numbers came from the
 	// harness store rather than from its own usage row was killed mid-turn, and the turn in
 	// flight carries no tokens object anywhere -- the provider charged for it and no
@@ -1057,7 +1061,7 @@ func Batch(in BatchInput) int {
 		}
 	}
 
-	if abstain == 0 && len(holds) == 0 {
+	if abstain == 0 && held == 0 && len(holds) == 0 {
 		return 0
 	}
 	return 1

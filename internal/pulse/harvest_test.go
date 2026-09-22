@@ -237,6 +237,21 @@ func TestHarvestUnknownAcceptanceDoesNotRetry(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("unknown\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// A pool result that would otherwise publish. The slot marker has to win.
+	id := "20260922T000000Z-lost"
+	if err := os.MkdirAll(filepath.Join(root, "pool", "done"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pool", "reports", id), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	done := "RESULT lost sha=lll\nDONE\nBRANCH rowan/lost\nREPO owner/repo\n"
+	if err := os.WriteFile(filepath.Join(root, "pool", "done", id+".task"), []byte(done), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pool", "reports", id, "RESULT.md"), []byte(done), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	out, errOut := runHarvest(t, root)
 	if strings.Contains(out, "retry=1") || strings.Contains(out, "pushed=1") {

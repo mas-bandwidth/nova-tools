@@ -215,7 +215,7 @@ func Harvest(in HarvestInput) int {
 		// to pool/reports/<id>/RESULT.md with the task file in
 		// pool/{done,failed}/<id>.task. A pool card is never under the slot
 		// job directory, so without this it is never harvested.
-		if state != "done" {
+		if state != "done" && state != "unknown" {
 			if ps, pb, pr, pl, pd := classifyPool(in.Root, c, contract); ps != "" {
 				state, branch, repo, resultLines, jobDir = ps, pb, pr, pl, pd
 			} else if state == "abstain" && !isDir(jobDir) {

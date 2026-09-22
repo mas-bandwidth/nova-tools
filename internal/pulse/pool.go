@@ -138,8 +138,10 @@ func readSources(path string) ([]source, error) {
 	return srcs, nil
 }
 
-// readSeen returns the set of (source,id) already carded, running or pr; a retry state is
-// not in the returned set, so a rewritten card is pooled again (rule 2).
+// readSeen returns the set of (source,id) already carded, running, pr, or held.
+// A retry state is not in the returned set, so a rewritten card is pooled again
+// (rule 2). A hold is not a retry: the provider read may have been accepted,
+// and the source stays out until a reconciler changes the seen state.
 func readSeen(root string) (map[string]bool, error) {
 	seen := map[string]bool{}
 	raw, err := os.ReadFile(filepath.Join(root, "seen.tsv"))
@@ -158,7 +160,7 @@ func readSeen(root string) (map[string]bool, error) {
 		if len(parts) < 3 {
 			continue
 		}
-		if parts[2] == "carded" || parts[2] == "running" || parts[2] == "pr" {
+		if parts[2] == "carded" || parts[2] == "running" || parts[2] == "pr" || parts[2] == "hold" {
 			seen[parts[0]+"\x00"+parts[1]] = true
 		}
 	}

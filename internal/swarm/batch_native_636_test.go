@@ -79,6 +79,28 @@ func TestCard8909BatchRunsNativeWithNoRunner(t *testing.T) {
 	}
 }
 
+func TestBatchUnknownAcceptanceDoesNotExitZero(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	tsv := card636(t, dir, "card-u")
+	runner := runnerDoing(t, dir, "runner",
+		runnerStep{Op: "write", Path: "{job}/provider-acceptance", Body: "unknown\n"},
+		runnerStep{Op: "write", Path: "{job}/RESULT.md", Body: "{line1}\nDONE\n"},
+		runnerStep{Op: "stdout", Body: "NATIVE INCOMPLETE why=unknown-acceptance\n"},
+	)
+	var out, errb bytes.Buffer
+	code := Batch(BatchInput{
+		ID: "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Stdout: &out, Stderr: &errb,
+	})
+	if code == 0 {
+		t.Fatalf("an unknown acceptance exited 0:\n%s\n%s", out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "HOLD reason=unknown-acceptance") || !strings.Contains(out.String(), "held=1") {
+		t.Fatalf("the batch did not count the hold:\n%s", out.String())
+	}
+}
+
 // TestCard8909BatchRefusesWithNeitherRunnerNorHarness: one refusal naming both doors.
 func TestCard8909BatchRefusesWithNeitherRunnerNorHarness(t *testing.T) {
 	dir := t.TempDir()
