@@ -229,7 +229,7 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 func TestHarvestUnknownAcceptanceDoesNotRetry(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/9")
+	fakeGH(t, specs, arglog, "https://example.invalid/owner/repo/pull/9")
 
 	addCard(t, root, "lost", "1", "flash", "RESULT lost sha=lll",
 		"RESULT lost sha=lll\nDONE\nBRANCH rowan/lost\nREPO owner/repo\n")
