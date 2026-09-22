@@ -23,10 +23,12 @@ func relaunch(in HarvestInput) int {
 	// `PULSE POOL EMPTY` printed over the top of it. They are already cut cards: they do
 	// not want rendering from a template, they want admitting.
 	queuePath := filepath.Join(in.Root, "queue.tsv")
-	queued := readQueuedCards(queuePath)
+	seen, _ := readSeen(in.Root)
+	queued := dropHeldCards(in.Root, readQueuedCards(queuePath), seen)
 
 	ordered := readCandidates(filepath.Join(in.Root, "next.tsv"))
 	ordered = append(ordered, readCandidates(filepath.Join(in.Root, "pool.tsv"))...)
+	ordered = dropHeldCandidates(in.Root, ordered, seen)
 
 	if len(queued) == 0 && len(ordered) == 0 {
 		fmt.Fprintf(in.Stdout, "PULSE POOL EMPTY in-flight=0\n")
@@ -73,6 +75,30 @@ func relaunch(in HarvestInput) int {
 	}
 
 	return runLaunchSubprocess(in, filepath.Join(in.Root, "cards.tsv"), slots, deadline)
+}
+
+func dropHeldCards(root string, cards []CardRow, seen map[string]bool) []CardRow {
+	var out []CardRow
+	for _, c := range cards {
+		kind, id, _, ok := lookupIdentity(root, c.Label)
+		if ok && seen[kind+"\x00"+id] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+func dropHeldCandidates(root string, cands []PoolRow, seen map[string]bool) []PoolRow {
+	var out []PoolRow
+	for _, c := range cands {
+		kind, id, _, ok := lookupIdentity(root, c.ID)
+		if ok && seen[kind+"\x00"+id] {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // readQueuedCards reads the table `launch --queue` writes: label<TAB>model<TAB>card, the

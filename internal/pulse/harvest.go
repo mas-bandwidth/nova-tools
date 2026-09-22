@@ -1012,7 +1012,11 @@ func readUSD(path string) string {
 // writeSeen appends or updates a seen.tsv row: source<TAB>id<TAB>state.
 func writeSeen(root string, c CardRow, state string) {
 	path := filepath.Join(root, "seen.tsv")
-	line := fmt.Sprintf("%s\t%s\t%s\n", "card", c.Label, state)
+	kind, id := "card", c.Label
+	if k, i, _, ok := lookupIdentity(root, c.Label); ok {
+		kind, id = k, i
+	}
+	line := fmt.Sprintf("%s\t%s\t%s\n", kind, id, state)
 	existing, _ := os.ReadFile(path)
 	var b strings.Builder
 	b.Write(existing)

@@ -77,6 +77,7 @@ func Pool(in PoolInput) int {
 	}
 
 	var rows []PoolRow
+	var ident []admitted
 	counts := map[string]int{}
 	seenCount := 0
 	planCount := 0
@@ -94,7 +95,15 @@ func Pool(in PoolInput) int {
 				break
 			}
 			rows = append(rows, r)
+			ident = append(ident, admitted{Kind: s.kind, ID: r.ID, Label: r.ID, Attempt: 1})
 			counts[sourceCountKey(s.kind)]++
+		}
+	}
+	if in.Root != "" {
+		if err := writeIdentity(in.Root, ident); err != nil {
+			fmt.Fprintf(in.Stderr, "POOL REFUSED root=%s: %s (identity.tsv could not be written)\n",
+				oneline.Field(in.Root), oneline.Err(err))
+			return 2
 		}
 	}
 
@@ -136,6 +145,42 @@ func readSources(path string) ([]source, error) {
 		srcs = append(srcs, source{kind: kind, locator: locator, template: template})
 	}
 	return srcs, nil
+}
+
+// admitted is one candidate's identity, written when pool admits it, so a later
+// hold can name the same source kind and id the next pool looks up.
+type admitted struct {
+	Kind    string
+	ID      string
+	Label   string
+	Attempt int
+}
+
+func writeIdentity(root string, rows []admitted) error {
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	var b strings.Builder
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%s\t%s\t%s\t%d\n", r.Kind, r.ID, r.Label, r.Attempt)
+	}
+	return os.WriteFile(filepath.Join(root, "identity.tsv"), []byte(b.String()), 0o644)
+}
+
+func lookupIdentity(root, label string) (kind, id string, attempt int, ok bool) {
+	raw, err := os.ReadFile(filepath.Join(root, "identity.tsv"))
+	if err != nil {
+		return "", "", 0, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 4 || parts[2] != label {
+			continue
+		}
+		n, _ := strconv.Atoi(parts[3])
+		return parts[0], parts[1], n, true
+	}
+	return "", "", 0, false
 }
 
 // readSeen returns the set of (source,id) already carded, running, pr, or held.
