@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -261,8 +262,8 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(mark) != "unknown\n" {
-		t.Fatalf("provider-acceptance = %q, want unknown", mark)
+	if string(mark) != oneline.Escape("unknown\n") {
+		t.Fatalf("provider-acceptance = %q, want the escaped marker", mark)
 	}
 	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err == nil {
 		t.Fatal("a lost response must not publish a result")

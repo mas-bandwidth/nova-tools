@@ -822,12 +822,12 @@ func writeUnknownFile(path, body string) error {
 	if err != nil {
 		return err
 	}
-	n, werr := io.WriteString(f, body)
+	n, werr := fmt.Fprintf(f, "%s", oneline.Escape(body))
 	cerr := f.Close()
 	if werr != nil {
 		return werr
 	}
-	if n != len(body) {
+	if n != len(oneline.Escape(body)) {
 		return fmt.Errorf("%s: short write", path)
 	}
 	return cerr
