@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -531,7 +532,20 @@ func Certify(in CertifyInput) int {
 		}
 		build := in.Build
 		if build == "" && !in.DryRun {
-			build = machineBuild(in, m)
+			var bErr error
+			build, bErr = machineBuild(in, m)
+			if bErr != nil {
+				fail++
+				fmt.Fprintf(in.Stderr, "CERTIFY %s build FAIL evidence=%s\n",
+					oneline.Field(m.Name), oneline.Quote(oneline.Cap(bErr.Error(), EvidenceCap)))
+				continue
+			}
+		}
+		if build != "" && build != "-" && !IsValidBuildVersion(build) {
+			fail++
+			fmt.Fprintf(in.Stderr, "CERTIFY %s build FAIL evidence=%s\n",
+				oneline.Field(m.Name), oneline.Quote(fmt.Sprintf("invalid build version %q", build)))
+			continue
 		}
 		if build == "" {
 			build = "-"
@@ -787,9 +801,16 @@ func workloadsFor(loads []Workload, m Machine) []Workload {
 // machineBuild asks the machine what nova-merge it is running. The build is half of what
 // makes a certificate current, so it is read FROM the machine and never assumed: `release
 // adopt` changes it, and a certificate written before an adopt must not survive it.
-func machineBuild(in CertifyInput, m Machine) string {
-	out, _ := runScript(in, m, "build", BuildScript)
-	return BuildVersion(out)
+func machineBuild(in CertifyInput, m Machine) (string, error) {
+	out, err := runScript(in, m, "build", BuildScript)
+	if err != nil {
+		return "", fmt.Errorf("machine build probe failed: %w", err)
+	}
+	ver := BuildVersion(out)
+	if ver == "" {
+		return "", fmt.Errorf("no valid build version in output: %q", strings.TrimSpace(out))
+	}
+	return ver, nil
 }
 
 // BuildScript is the one question every certification asks first: what build is installed
@@ -797,21 +818,79 @@ func machineBuild(in CertifyInput, m Machine) string {
 // two spellings of it would be two answers.
 const BuildScript = "# nova-certify workload build\nnova-merge version 2>&1 || true\n"
 
-// BuildVersion reads the version token out of a `nova-merge version` line. The token, not
-// the line: `nova-merge v0.17.0` and `v0.17.0` are the same build, and a certificate keyed
-// on the whole line would expire when the banner changed.
+// IsValidBuildVersion reports whether tok is a recognized build version format
+// (a semantic version tag like v0.17.0, a vcs timestamp-revision like
+// 20260921145725-c1670c8884cd[-dirty], a 12-to-40 character hex revision, or devel).
+// Diagnostic strings, error messages, and SSH banners are rejected.
+func IsValidBuildVersion(tok string) bool {
+	clean := strings.Trim(tok, "(),\"'")
+	if clean == "devel" {
+		return true
+	}
+	// Semver tag: v<digit>...
+	if len(clean) >= 2 && clean[0] == 'v' && clean[1] >= '0' && clean[1] <= '9' {
+		for i := 0; i < len(clean); i++ {
+			c := clean[i]
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+') {
+				return false
+			}
+		}
+		return true
+	}
+	// Timestamp-hash: 14 digits + '-' + 12 hex digits (optional -dirty)
+	withoutDirty := strings.TrimSuffix(clean, "-dirty")
+	if len(withoutDirty) == 27 && withoutDirty[14] == '-' {
+		allDigits := true
+		for i := 0; i < 14; i++ {
+			if withoutDirty[i] < '0' || withoutDirty[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits && isHex(withoutDirty[15:]) {
+			return true
+		}
+	}
+	// 12 to 40 hex character git revision
+	if len(withoutDirty) >= 12 && len(withoutDirty) <= 40 && isHex(withoutDirty) {
+		return true
+	}
+	return false
+}
+
+func isHex(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// BuildVersion reads the version token out of a `nova-merge version` output.
+// It searches each line for a valid build version token and rejects SSH banners,
+// diagnostic messages, and error text. If no valid version is found, it returns "".
 func BuildVersion(out string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		for _, f := range strings.Fields(line) {
-			if len(f) > 1 && f[0] == 'v' && f[1] >= '0' && f[1] <= '9' {
-				return f
+		// If the line parses as a four-token buildinfo.Line, inspect its version field.
+		if f, ok := buildinfo.Parse(line); ok && IsValidBuildVersion(f.Version) {
+			return f.Version
+		}
+		// Otherwise inspect individual fields in the line.
+		for _, tok := range strings.Fields(line) {
+			clean := strings.Trim(tok, "(),\"'")
+			if IsValidBuildVersion(clean) {
+				return clean
 			}
 		}
-		return oneline.Field(line)
 	}
 	return ""
 }
