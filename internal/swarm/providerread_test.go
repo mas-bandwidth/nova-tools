@@ -35,8 +35,16 @@ func TestApplyProviderReadDeadlineWritesBothAndKeepsTheKey(t *testing.T) {
 	}
 }
 
+func TestApplyProviderReadDeadlineLeavesAnUnreadableConfig(t *testing.T) {
+	in := []byte(`not json`)
+	out := ApplyProviderReadDeadline(in, "deepseek")
+	if string(out) != string(in) {
+		t.Fatalf("an unreadable config was rewritten:\n%s", out)
+	}
+}
+
 func TestApplyProviderReadDeadlineCreatesAMissingProvider(t *testing.T) {
-	out := ApplyProviderReadDeadline([]byte(`{"$schema":"https://opencode.ai/config.json"}`), "deepseek")
+	out := ApplyProviderReadDeadline([]byte(`{}`), "deepseek")
 	if !strings.Contains(string(out), `"headerTimeout"`) || !strings.Contains(string(out), `"chunkTimeout"`) {
 		t.Fatalf("a built-in provider with no entry got no deadline:\n%s", out)
 	}
@@ -59,8 +67,9 @@ func TestALostResponseIsNotALaunchFailure(t *testing.T) {
 		}
 	}
 	if _, ok := ProviderLaunchFailure([]byte("Unexpected server error ref=err_fake")); !ok {
-		t.Fatal("a server error before the work began is still a launch failure")
+		t.Fatal("the inherited classifier still matches a server-error tail")
 	}
+	// The match is the tail text. It is not evidence the provider never accepted the request.
 	if LostResponse([]byte("Unexpected server error ref=err_fake")) {
 		t.Fatal("a server error is not a lost response")
 	}

@@ -83,7 +83,8 @@ type nativeRunResult struct {
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
-	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	end          string            // the end the usage row records: done, failed, wall, or unknown
+	lost         bool              // the provider read died after the request may have been accepted
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled        bool              // the idle watch ended the run, not the deadline and not the child
@@ -649,11 +650,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		close(stopWatch)
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
-		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
-		// block below refines it to `wall` when the machinery, not the model, stopped the
-		// card (issue #644's follow-up).
+		tail := readSince(outLog, before)
+		// A socket that went quiet after the request may have been accepted is
+		// UNKNOWN. The usage row says so before anything else can call the
+		// attempt done or failed, and the run does not launch again.
+		// (stella-6b51d37c8d7d, stella-9eb933ee0205)
+		lost := swarm.LostResponse(tail)
 		res.end = swarm.EndDone
-		if res.rc != 0 {
+		if lost {
+			res.end = swarm.EndUnknown
+			res.lost = true
+		} else if res.rc != 0 {
 			res.end = swarm.EndFailed
 		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
@@ -664,13 +671,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		tail := readSince(outLog, before)
-		// A socket that went quiet after the request may have been accepted is
-		// UNKNOWN. Ending it is the deadline in the job config. Launching the
-		// card again would send the request twice. (stella-6b51d37c8d7d)
-		if swarm.LostResponse(tail) {
+		if lost {
+			// The usage row has no end column. This file is the durable mark
+			// the later reader needs: the request may have been accepted.
+			acc := filepath.Join(jobDir, "provider-acceptance")
+			if err := os.WriteFile(acc, []byte("unknown\n"), 0o644); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance mark could not be written: %s\n", oneline.Escape(err.Error()))
+			}
 			break
 		}
+		// Inherited grace retry. The tail and the elapsed time do not prove the
+		// provider never accepted the request. A lost response does not take
+		// this path.
 		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
@@ -726,18 +738,22 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
-	res.end = swarm.EndDone
-	if res.rc != 0 {
-		res.end = swarm.EndFailed
+	if res.lost {
+		res.end = swarm.EndUnknown
+	} else {
+		res.end = swarm.EndDone
+		if res.rc != 0 {
+			res.end = swarm.EndFailed
+		}
 	}
-	if (res.wallRefusal != swarm.WallRefusal{}) {
+	if !res.lost && (res.wallRefusal != swarm.WallRefusal{}) {
 		res.end = swarm.EndWall
 	}
 	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
 	// `no-result` -- the token for a MODEL that chose to publish nothing -- and a card the
 	// machinery stopped never had the chance. One is written for it, naming what the watch
 	// saw, and it carries no findings head, so it can never be counted as work done.
-	if res.idled {
+	if !res.lost && res.idled {
 		res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", res.idleEnd.Idle.Seconds())
 		if res.idleEnd.Refused {
@@ -1427,7 +1443,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		body = swarm.ApplyProviderReadDeadline(body, provider)
 	}
 	if !merged && notes != nil {
-		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
+		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules and the provider read deadlines were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
 	}
 	sum := sha256.Sum256(body)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")

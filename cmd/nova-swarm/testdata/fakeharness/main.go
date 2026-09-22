@@ -218,6 +218,12 @@ func main() {
 	// the retry kept the task and harvested the second attempt's result. FAKE-5XX always
 	// fails, so a test can prove the third fast failure is filed `end=provider`. Both are
 	// checked before FAKE-5XX by their longer names, since `directive` matches a prefix.
+	// A read that died after the request may have been accepted. The line is the
+	// harness's own timeout words. The machinery must record unknown and not launch again.
+	if _, ok := directive(prompt, "FAKE-LOST-RESPONSE"); ok {
+		fmt.Fprintln(os.Stderr, "SSE read timed out")
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
 		if launchCount(job) <= 1 {
 			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")

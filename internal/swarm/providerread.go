@@ -25,12 +25,13 @@ import (
 // (ProviderLaunchFailure). stella-6b51d37c8d7d.
 
 // ProviderHeaderTimeout is how long the socket may sit before response headers.
-// It is under the 90s a black-holed attempt may cost the card.
+// It is a silence timer, not an overall attempt deadline: a stream that keeps
+// sending is not cut off by it. It is under the 90s a black-holed attempt may cost.
 const ProviderHeaderTimeout = 45 * time.Second
 
 // ProviderChunkTimeout is how long the socket may sit between SSE chunks.
-// Same bound: one attempt ends in under 90s. A second launch is not started
-// from this timeout.
+// Same shape as the header timer: silence, not the whole attempt. A second
+// launch is not started from this timeout.
 const ProviderChunkTimeout = 45 * time.Second
 
 // providerReadBudget is the card's allowance for one black-holed attempt.

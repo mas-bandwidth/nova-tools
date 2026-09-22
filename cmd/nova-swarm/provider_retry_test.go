@@ -10,10 +10,10 @@ import (
 	"time"
 )
 
-// A LAUNCH THAT DIES FAST ON A PROVIDER 5XX IS RETRIED (issue #900). The provider answered
-// before the work began and the slot was spent on nothing; these tests hold the three facts
-// the card names -- the retry keeps the task, the usage rows carry attempt=1,2,3, and a slow
-// failure is not retried -- against the fake harness and no provider.
+// A LAUNCH THAT DIES FAST ON A PROVIDER 5XX IS RETRIED (issue #900). These tests hold the
+// inherited grace path: the retry keeps the task, the usage rows carry attempt=1,2,3, and a
+// slow failure is not retried. The tail text is not evidence the provider never accepted
+// the request.
 
 // poolUsageRow reads one pool usage row by job id.
 func poolUsageRow(t *testing.T, pool, id string) map[string]string {
@@ -222,5 +222,58 @@ func TestNativeRetriesAProvider5xxLaunch(t *testing.T) {
 	}
 	if got := strings.Split(rows[1], "\t")[usdAt]; got != "-" {
 		t.Errorf("an unreported usd stays a dash, got %q", got)
+	}
+}
+
+// A lost response is one launch, and the usage row stays unknown. The fake
+// harness prints the timeout and exits. It does not prove the installed
+// OpenCode consumer honors headerTimeout; it proves this loop does not turn
+// that tail into done or failed, and does not start a second launch.
+func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "lost-response"
+	var errOut bytes.Buffer
+	res, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: label,
+		card:    []byte("FAKE-LAUNCHES\nFAKE-LOST-RESPONSE\n"),
+		slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("native run exits 0, got %d:\n%s", code, errOut.String())
+	}
+	if !res.lost || res.end != "unknown" {
+		t.Fatalf("lost=%v end=%s, want a retained unknown", res.lost, res.end)
+	}
+	jobDir := filepath.Join(slot, "jobs", label)
+	launches, err := os.ReadFile(filepath.Join(jobDir, "launches"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(launches), "launch"); n != 1 {
+		t.Fatalf("a lost response launched %d times, want 1:\n%s", n, launches)
+	}
+	mark, err := os.ReadFile(filepath.Join(jobDir, "provider-acceptance"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mark) != "unknown\n" {
+		t.Fatalf("provider-acceptance = %q, want unknown", mark)
+	}
+	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err == nil {
+		t.Fatal("a lost response must not publish a result")
+	}
+}
+
+func TestNativeLostResponseLineSaysUnknownAcceptance(t *testing.T) {
+	out := nativeVerdict(t, "lost", "FAKE-LOST-RESPONSE\n")
+	if strings.Contains(out, "NATIVE OK") {
+		t.Fatalf("a lost response said OK:\n%s", out)
+	}
+	if !strings.Contains(out, "why=unknown-acceptance") {
+		t.Fatalf("the verdict did not keep unknown-acceptance:\n%s", out)
+	}
+	if strings.Contains(out, "why=no-result") || strings.Contains(out, "why=rc") {
+		t.Fatalf("a lost response was filed as an ordinary incomplete:\n%s", out)
 	}
 }

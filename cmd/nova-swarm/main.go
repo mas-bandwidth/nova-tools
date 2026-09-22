@@ -1867,13 +1867,19 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// failed -- every other field is byte-for-byte the same, so a reader that parses
 	// fields still reads them all.
 	verdict, why := "OK", ""
-	switch harnessState := orElse(res.harness, "silent"); {
-	case harnessState == "silent":
-		verdict, why = "INCOMPLETE", "harness-silent"
-	case !nativeLeftAResult(res.job):
-		verdict, why = "INCOMPLETE", "no-result"
-	case res.rc != 0:
-		verdict, why = "INCOMPLETE", "rc"
+	if res.lost {
+		// The request may have been accepted and the response was lost. That is
+		// not a delivered card and not an ordinary failure the coordinator may retry.
+		verdict, why = "INCOMPLETE", "unknown-acceptance"
+	} else {
+		switch harnessState := orElse(res.harness, "silent"); {
+		case harnessState == "silent":
+			verdict, why = "INCOMPLETE", "harness-silent"
+		case !nativeLeftAResult(res.job):
+			verdict, why = "INCOMPLETE", "no-result"
+		case res.rc != 0:
+			verdict, why = "INCOMPLETE", "rc"
+		}
 	}
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
