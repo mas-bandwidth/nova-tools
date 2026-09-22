@@ -17,9 +17,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// textKinds are the three text-only templates: read, text and tone. Their cards carry the
+// textKinds are the text-only templates: read, text, tone and report. Their cards carry the
 // no-build line and are routed to any model that can hold them (SPEC-PULSE rule 6 and 7).
-var textKinds = map[string]bool{"read": true, "text": true, "tone": true}
+var textKinds = map[string]bool{"read": true, "text": true, "tone": true, "report": true}
 
 // SlotDash is the cards.tsv slot every cut card carries until launch allocates one.
 const SlotDash = "-"
@@ -186,7 +186,7 @@ func locatorUnresolvable(locator string) string {
 	return ""
 }
 
-// modelFor decides the model by kind and nowhere else: read/text/tone -> flash, the rest ->
+// modelFor decides the model by kind and nowhere else: read/text/tone/report -> flash, the rest ->
 // pro, with --local naming an ollama/<tag> override for read and text (SPEC-PULSE rule 7).
 // A models.tsv may name only one of the two ids; the cards that would take the missing model
 // hold to the one the table names, so `flash <id>` alone is the spend rule "flash only".
@@ -280,12 +280,13 @@ var costOrder = map[string]int{"zero": 0, "flat": 1, "metered": 2}
 // ladder (read -> text -> code -> replay).
 var capOrder = map[string]int{"read": 0, "text": 1, "code": 2, "replay": 3}
 
-// requiredCaps is what each card kind needs a route to cover: read, text and tone any
+// requiredCaps is what each card kind needs a route to cover: read, text, tone and report any
 // reading-capable model, fix and drift a code model, replay a replay model.
 var requiredCaps = map[string][]string{
 	"read":   {"read", "text", "replay"},
 	"text":   {"read", "text", "replay"},
 	"tone":   {"read", "text", "replay"},
+	"report": {"read", "text", "replay"},
 	"fix":    {"code"},
 	"drift":  {"code"},
 	"replay": {"replay"},
@@ -495,7 +496,7 @@ func renderCard(tmpl string, row PoolRow) (string, string) {
 	}
 	if textKinds[row.Kind] {
 		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
-			return "", "rule 6: the text template lacks the no-build line (read, text and tone cards must state `Do not run go build, go test or any toolchain`)"
+			return "", "rule 6: the text template lacks the no-build line (read, text, tone and report cards must state `Do not run go build, go test or any toolchain`)"
 		}
 	} else {
 		if !strings.Contains(strings.ToLower(rendered), "red line") || !strings.Contains(strings.ToLower(rendered), "green line") {
@@ -531,8 +532,8 @@ func countSteps(lines []string) int {
 	return n
 }
 
-// turnBudget is the step count each kind may spend: the read family (read, text, tone) gets
-// 8 turns, the writing family (fix, replay, drift) 20 (#855).
+// turnBudget is the step count each kind may spend: the read family (read, text, tone,
+// report) gets 8 turns, the writing family (fix, replay, drift) 20 (#855).
 func turnBudget(kind string) int {
 	if textKinds[kind] {
 		return 8
