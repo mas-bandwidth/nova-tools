@@ -23,8 +23,9 @@ import (
 	"time"
 )
 
-// nativeAsked runs one card through `native` with the fake harness and returns the job
-// directory beside stdout and stderr, because the report this card is about is a FILE.
+// nativeAsked runs one card through `native` with the fake harness and returns the
+// results directory beside stdout and stderr. The report is a file, and once the card
+// ends the job directory that held it is gone (#2379).
 func nativeAsked(t *testing.T, label, card string) (job, stdout, stderr string) {
 	t.Helper()
 	windowsIsNotABench(t)
@@ -40,7 +41,9 @@ func nativeAsked(t *testing.T, label, card string) (job, stdout, stderr string) 
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"},
 		strings.NewReader(""), &out, &errBuf, time.Now())
-	return filepath.Join(slot, "jobs", label), out.String(), errBuf.String()
+	// The report is read from the results store: native removes the job directory
+	// once that store holds it (#2379).
+	return filepath.Join(root, "results", label), out.String(), errBuf.String()
 }
 
 // THE SHAPE ITSELF: the harness says its last word, it is a question, and the process

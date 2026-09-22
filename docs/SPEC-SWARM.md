@@ -2760,6 +2760,22 @@ pids it started, and it never matches a process by its command line: that is how
 the worker starts, it is named in the prompt, and everything the worker clones,
 scratches or reports goes under it.
 
+**And it is removed by the tool that ends the card** (nova-tools #2379). When
+`nova-swarm native` has finished the child and printed its verdict, it copies
+the job's regular files — `RESULT.md` (including one published under `repo/`),
+`usage.tsv`, the harness log, notes — and the slot's `native.log` into
+`<root>/results/<label>/`, which is under the `--root` the caller already
+named. A commit the clone holds that is not already in its remote-tracking
+base, and a `BRANCH` line whose ref is not already in that base, are written
+to `branch.bundle` in that same directory. The bundle is verified, and its
+listed tips have to be those commits. Only then are `<slot>/jobs/<label>` and
+`<slot>/tmp/<label>` removed. The shared cache under `<root>/cache` and the
+bench mirror `~/nova-bench/mirror` are never in that removal. A copy that does
+not hash back, a bundle that does not list the commit, or a `BRANCH` that is
+not a ref in the clone keeps the directory: a branch that resolves nowhere
+else is not deleted. A harness-written result with no such commit, and a run
+that exits with no `RESULT.md`, are removed at once after the logs are stored.
+
 **And the operating system now holds that sentence, not only the prompt.** Every
 job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md, "the two callers": this
 tool is its dispatcher caller). The seam is the launch transaction of rule 18:

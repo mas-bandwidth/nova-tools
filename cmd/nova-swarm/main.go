@@ -1938,6 +1938,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
 		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
 	}
+	// THE JOB DIRECTORY GOES WITH THE CARD (nova-tools #2379). The wall line above
+	// has already read the clone. What remains is stored under <root>/results/<label>
+	// and checked, and only then is the directory removed. A check that fails keeps it.
+	stored := releaseNativeJob(cfg, res, stderr)
 	// THE END THE WATCH GAVE THE CARD, in the words of what it actually saw. A card the
 	// wall stopped says so; a card that simply went still says THAT, on a line that is
 	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
@@ -1949,7 +1953,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
 		}
 		if res.blockedPath != "" {
-			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
+			path := res.blockedPath
+			if stored != "" {
+				path = filepath.Join(stored, "RESULT.md")
+			}
+			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(path))
 		}
 	}
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now

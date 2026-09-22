@@ -201,7 +201,7 @@ func TestUnrelatedLeasesSurviveTheDeadline(t *testing.T) {
 	rc := run(nativeArgs(nativeHarness(t), cardPath, slot, root, store, "3s"),
 		strings.NewReader(""), &stdout, &stderr, time.Now())
 
-	if _, err := os.Stat(jobFile(slot, "argv")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "results", "shared-label", "argv")); err != nil {
 		t.Fatalf("the harness never started, so this test never reached a deadline: %v\n%s%s", err, stdout.String(), stderr.String())
 	}
 	if rc != 1 {
