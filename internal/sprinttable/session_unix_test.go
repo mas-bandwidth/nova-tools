@@ -88,7 +88,7 @@ func helperEnv(role string) []string {
 
 func TestRefreshSurvivesUnitProcessGroupKill(t *testing.T) {
 	pid := startRefresh(t, true)
-	sid, err := syscall.Getsid(pid)
+	sid, err := getsid(pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestRefreshSurvivesUnitProcessGroupKill(t *testing.T) {
 
 func TestRefreshInTheUnitGroupDiesWithTheUnit(t *testing.T) {
 	pid := startRefresh(t, false)
-	sid, err := syscall.Getsid(pid)
+	sid, err := getsid(pid)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,6 +229,17 @@ func reapUnit(pidfile string) {
 		return
 	}
 	_ = syscall.Kill(pid, syscall.SIGKILL)
+}
+
+// getsid is the session id of pid. syscall.Getsid is the BSD wrapper and is
+// not in the Linux syscall package; SYS_GETSID is the call that wrapper makes,
+// and Linux has the number.
+func getsid(pid int) (int, error) {
+	sid, _, errno := syscall.RawSyscall(syscall.SYS_GETSID, uintptr(pid), 0, 0)
+	if errno != 0 {
+		return 0, errno
+	}
+	return int(sid), nil
 }
 
 func readPID(path string) <-chan int {
