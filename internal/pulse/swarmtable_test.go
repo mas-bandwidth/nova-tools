@@ -308,6 +308,12 @@ func TestRowAndTableAgreeOverTheWire(t *testing.T) {
 	if err := os.WriteFile(since, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The stamp's mtime is the clock, so everything written after it counts. A filesystem
+	// with second granularity would otherwise make a same-second write ambiguous.
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(since, old, old); err != nil {
+		t.Fatal(err)
+	}
 	results := filepath.Join(dir, "results")
 	writeResult(t, filepath.Join(results, "card-1", "RESULT.md"), "RESULT: DONE\n")
 	writeResult(t, filepath.Join(results, "card-2", "RESULT.md"), "RESULT: BLOCKED\n")
