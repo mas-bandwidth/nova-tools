@@ -2735,6 +2735,76 @@ and failing that the origin of the clone the queue sits in, named on a
 with a repo that did not answer it says that instead — they are different
 facts, and the page used to print the first for both.
 
+### event and fold
+
+The card event stream and its record (nova-tools #2563). Every card transition
+XADDs one entry to `cards:done` on the fleet Redis; one consumer folds the stream
+into a SQLite file, and that file — not a `find` over job directories — is where
+`done`, `ok`, `fail` and the money come from.
+
+```
+nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
+nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
+```
+
+**What rides the stream.** `label`, `attempt`, `bench`, `model`, `route`,
+`event`, `tokens_in`, `tokens_out`, `usd`, `pr`, `head`, `at` — ids and counts,
+nothing else. **There is one stream.** These are fields added to `cards:done`,
+the stream `nova-work record` and `nova-work events` already read under their own
+groups; the fold reads it under `fold`, and its SQLite file is a view of that
+stream that `--rebuild` recomputes, never a second record. **An absent cost stays
+absent**: a `--tokens-in`, `--tokens-out` or `--usd` that is not given is not
+written, the fold stores NULL, and the report prints a dash, because a writer
+that did not know the cost has not reported a zero. An entry written before the
+fields were added carries no `event`; the fold counts it as skipped rather than
+guessing it into `ok` or `fail`. The diff, the test, the prompt, the transcript and the disposition
+stay in git, and a field over 200 bytes or carrying a control character is
+**refused at the door** rather than trusted to the writer. That is Johnny's rule
+in `reports/redis-for-nova-tools-2026-09-21.md` section 8, made mechanical: core
+Redis types only (XADD, XREADGROUP, XAUTOCLAIM, XACK, XRANGE), every query in the
+fold, so the hot store never becomes the database and Valkey stays a drop-in.
+
+**The password is never a flag.** `--password-env` names the variable it is
+already in, which on the fleet is what `nova-secrets exec --only` leaves behind.
+Nothing prints it, and it never reaches an argv a `ps` can read.
+
+```
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
+  nova-pulse event --store <host:port> --user bench --label card-42 --event ok \
+    --bench studio --model fable --route studio --tokens-in 12000 --tokens-out 900 --usd 0.11
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
+  nova-pulse fold --store <host:port> --user bench --db ~/nova-fold/ev.sqlite --interval 1s
+```
+
+`event` is the line today's bash writers each emit until they are Go: the
+launcher writes `queued`, `leased` and `started`; `nova-swarm` writes `ok`,
+`fail` and `asked` with `usage.tsv`'s row; harvest writes `harvested` and `pr`;
+the lander writes `landed`. `--print` renders the entry and writes nothing,
+which is how a writer is debugged with no store in the room.
+
+`fold` holds the loop: `--interval 1s` between passes, `--once` for a single
+one. Each pass reclaims what the group holds unacked (XAUTOCLAIM, so a fold that
+was killed and restarted under a new consumer name takes its predecessor's work
+back), then takes new entries, writes them in ONE transaction, and XACKs **only
+after the transaction commits**. The event id is the primary key of every table,
+so a redelivery is a no-op: kill the fold half way through a hundred DONEs,
+restart it, and the count is a hundred.
+
+`--rebuild` replays the whole stream from its first entry into a file that does
+not exist yet, reading the stream itself and never the group, so a rebuild never
+consumes what the running fold has not folded. No row carries a fold timestamp,
+which is why a rebuild's rows are the incremental fold's rows byte for byte.
+
+`--init`, `--report` and `--dump` read the file with no store at all: the schema,
+the views as TSV blocks, and every row deterministically ordered.
+
+The tables are `attempts` (the card's own life), `reads` (a friend's read of a
+PR) and `landings` (the lander's merge). The views are `by_model_route` (rows,
+ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
+`by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
+cost per USEFUL card, so a dearer model that lands beats a cheap one that does
+not.
+
 ## nova-review
 
 One bounded, exact-revision **review packet** at the review layer, specified in
