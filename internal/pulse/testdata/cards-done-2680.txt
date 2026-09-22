@@ -1,0 +1,46 @@
+# cards:done fixture for nova-tools #2680. One stream entry per line.
+# The day under test is 2026-09-22. A card that is OK and not landed is not useful.
+
+# OK, and it even carries a pr number. That is not a landing.
+label=card-ok bench=studio event=ok at=2026-09-22T16:00:00Z pr=999
+
+# OK, pull request opened (pr and the issue's spelling pullreq), then merged.
+# The landing names no bench; it joins the pullreq's bench. The card also
+# receipted an issue and is still one useful card, not two.
+label=card-landed bench=studio event=ok at=2026-09-22T16:05:00Z
+label=card-landed bench=studio event=pr at=2026-09-22T16:06:00Z pr=2700
+label=card-landed event=pullreq at=2026-09-22T16:06:30Z pr=2700
+label=card-landed event=landed at=2026-09-22T17:00:00Z pr=2700 head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+label=card-landed bench=studio event=receipted-issue at=2026-09-22T17:05:00Z
+
+# OK and a pull request opened, never merged. Not useful.
+label=card-open-pr bench=studio event=ok at=2026-09-22T16:10:00Z
+label=card-open-pr bench=studio event=pullreq at=2026-09-22T16:11:00Z pr=2701
+
+# A verified defect is useful and is not a merged pull request. Restated once,
+# still one card.
+label=card-defect bench=studio event=verified-defect at=2026-09-22T18:00:00Z
+label=card-defect bench=studio event=verified-defect at=2026-09-22T18:00:01Z
+
+# A receipted issue is useful and is not a merged pull request.
+label=card-issue bench=studio event=receipted-issue at=2026-09-22T18:30:00Z
+
+# Not verified, not receipted: not useful.
+label=card-raw-defect bench=studio event=defect at=2026-09-22T18:40:00Z
+label=card-raw-issue bench=studio event=issue at=2026-09-22T18:45:00Z
+
+# OK today, merged yesterday. Today's row counts the OK and not the landing.
+label=card-old-land bench=studio event=ok at=2026-09-22T12:00:00Z
+label=card-old-land event=landed at=2026-09-21T23:00:00Z pr=2699
+
+# A failure and a queueing are neither OK nor useful.
+label=card-fail bench=studio event=fail at=2026-09-22T19:00:00Z
+label=card-queued bench=studio event=queued at=2026-09-22T19:05:00Z
+
+# Another bench. The landing is delivered twice and counts once.
+label=card-hulk bench=hulk event=ok at=2026-09-22T15:00:00Z
+label=card-hulk bench=hulk event=landed at=2026-09-22T15:30:00Z pr=2710 head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+label=card-hulk bench=hulk event=landed at=2026-09-22T15:30:01Z pr=2710 head=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+
+# A landing that names no bench and no card that does is not a row.
+label=card-nowhere event=landed at=2026-09-22T15:00:00Z pr=1
