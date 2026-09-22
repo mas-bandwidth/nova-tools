@@ -34,7 +34,7 @@ var sprintCard0922 = []string{
 	"LEG: go",
 	"REPO: mas-bandwidth/nova-tools",
 	"BASE: dev",
-	"base-repo: https://github.com/mas-bandwidth/nova-tools.git",
+	"base-repo: https://example.com/mas-bandwidth/nova-tools.git",
 	"base-sha: af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d",
 	"PATHS: internal/pulse/harveststale.go internal/pulse/harveststale_test.go",
 	"FILES: 2",
@@ -86,7 +86,7 @@ func TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine(t *testing.T) {
 			card: card(
 				"RESULT: CARD-2605 do the thing",
 				"KIND: fix-red",
-				"base-repo: https://github.com/mas-bandwidth/nova-tools.git",
+				"base-repo: https://example.com/mas-bandwidth/nova-tools.git",
 				"base-sha: af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d",
 				"PATHS: internal/swarm/lintheader.go",
 				"TEST: internal/swarm TestCardHeaderBlockRunsToTheFirstLineThatIsNotAKeyLine",
