@@ -79,7 +79,7 @@ type KeeperUnit struct {
 	Name                 string            // "dealer", "backpressure", "harvest", "sprint"
 	Label                string            // e.g. "com.mas-bandwidth.nova-dealer"
 	Description          string            // Engine description
-	ProgramArguments     []string          // Command line arguments (e.g. ["/bin/zsh", "-lc", "exec ..."])
+	ProgramArguments     []string          // Command line arguments (e.g. ["/bin/bash", "-c", "exec ..."])
 	WorkingDirectory     string            // Working directory
 	StandardOutPath      string            // stdout log file path
 	StandardErrorPath    string            // stderr log file path
@@ -182,8 +182,8 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			Label:       cfg.LabelPrefix + KeeperUnitDealer,
 			Description: "nova keeper dealer engine: moves cards from ready queues into per-bench queues",
 			ProgramArguments: []string{
-				"/bin/zsh",
-				"-lc",
+				"/bin/bash",
+				"-c",
 				fmt.Sprintf("exec %s/card-dealer", cfg.BinDir),
 			},
 			WorkingDirectory:     cfg.WorkDir,
@@ -198,8 +198,8 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			Label:       cfg.LabelPrefix + KeeperUnitBackpressure,
 			Description: "nova keeper backpressure engine: throttles bulk card launches to match reading debt",
 			ProgramArguments: []string{
-				"/bin/zsh",
-				"-lc",
+				"/bin/bash",
+				"-c",
 				fmt.Sprintf("exec %s/backpressure --cap 40", cfg.BinDir),
 			},
 			WorkingDirectory:     cfg.WorkDir,
@@ -214,8 +214,8 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			Label:       cfg.LabelPrefix + KeeperUnitHarvest,
 			Description: "nova keeper harvest engine: folds finished cards into pushed branches and PRs",
 			ProgramArguments: []string{
-				"/bin/zsh",
-				"-lc",
+				"/bin/bash",
+				"-c",
 				fmt.Sprintf("exec %s/harvest-priority --loop 240", cfg.BinDir),
 			},
 			WorkingDirectory:     cfg.WorkDir,
@@ -230,8 +230,8 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			Label:       cfg.LabelPrefix + KeeperUnitSprint,
 			Description: "nova keeper sprint engine: monitors fleet capacity, throughput and sprint tables",
 			ProgramArguments: []string{
-				"/bin/zsh",
-				"-lc",
+				"/bin/bash",
+				"-c",
 				fmt.Sprintf("exec %s/sprint-table 10", cfg.BinDir),
 			},
 			WorkingDirectory:     cfg.WorkDir,

@@ -65,8 +65,20 @@ func TestKeeperUnitsContainDealerBackpressureHarvestSprint(t *testing.T) {
 		if u.Label != expectedLabel {
 			t.Errorf("unit %s label = %q, want %q", u.Name, u.Label, expectedLabel)
 		}
-		if len(u.ProgramArguments) == 0 {
-			t.Errorf("unit %s has empty ProgramArguments", u.Name)
+		if len(u.ProgramArguments) < 2 {
+			t.Errorf("unit %s has empty or short ProgramArguments: %v", u.Name, u.ProgramArguments)
+		} else {
+			if u.ProgramArguments[0] != "/bin/bash" {
+				t.Errorf("unit %s ProgramArguments[0] = %q, want /bin/bash (never zsh)", u.Name, u.ProgramArguments[0])
+			}
+			if u.ProgramArguments[1] != "-c" {
+				t.Errorf("unit %s ProgramArguments[1] = %q, want -c", u.Name, u.ProgramArguments[1])
+			}
+			for _, arg := range u.ProgramArguments {
+				if strings.Contains(arg, "zsh") {
+					t.Errorf("unit %s ProgramArguments contains forbidden zsh: %v", u.Name, u.ProgramArguments)
+				}
+			}
 		}
 		if u.WorkingDirectory != cfg.WorkDir {
 			t.Errorf("unit %s WorkingDirectory = %q, want %q", u.Name, u.WorkingDirectory, cfg.WorkDir)
@@ -117,6 +129,12 @@ func TestKeeperUnitsPlistXMLValidation(t *testing.T) {
 		}
 		if !strings.Contains(xmlContent, "<key>Label</key>\n\t<string>"+u.Label+"</string>") && !strings.Contains(xmlContent, "<key>Label</key><string>"+u.Label+"</string>") {
 			t.Errorf("unit %s xml missing Label %s: %s", u.Name, u.Label, xmlContent)
+		}
+		if strings.Contains(xmlContent, "zsh") {
+			t.Errorf("unit %s xml contains forbidden zsh: %s", u.Name, xmlContent)
+		}
+		if !strings.Contains(xmlContent, "<string>/bin/bash</string>") {
+			t.Errorf("unit %s xml missing <string>/bin/bash</string>: %s", u.Name, xmlContent)
 		}
 
 		if hasPlutil {
