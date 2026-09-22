@@ -3,10 +3,12 @@ package pulse
 import (
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
+	"unicode"
 
+	// Aliased: `hygiene` is already a type in this package (hygiene.go:94).
+	pathglob "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -31,19 +33,46 @@ func staleBaseRefusal(dir, destURL, target, head string, globs []string, declare
 	if strings.TrimSpace(head) == "" {
 		head = "HEAD"
 	}
+	// MISSING IS ITS OWN VERDICT (#2547). A target nobody could read proves
+	// nothing about the branch, and a refusal shaped like a DIFFER over an empty
+	// ref reads, to every script downstream, as "the diff was walked and it was
+	// bad". It says MISSING, and it carries no `files=` list, because there is no
+	// offender list to carry.
 	oid, err := pinAuthorizedTarget(dir, destURL, target)
 	if err != nil {
-		return fmt.Errorf("stale-base unread: %s", oneline.Err(err))
+		return fmt.Errorf("stale-base MISSING target=%s: the authorized destination's target could not be fetched or pinned, so no diff was walked: %s",
+			field(target), oneline.Err(err))
 	}
 	bad, rng, err := staleBaseOffenders(dir, oid, head, globs, declared)
 	if err != nil {
-		return fmt.Errorf("stale-base unread: %s", oneline.Err(err))
+		return fmt.Errorf("stale-base MISSING range=%s: the diff could not be read, so no verdict was reached: %s",
+			field(rng), oneline.Err(err))
 	}
 	if len(bad) == 0 {
 		return nil
 	}
-	return fmt.Errorf("stale-base files=%s range=%s: git diff against the current target contains paths the card did not declare; rebase onto the current target before harvest",
-		field(joinOffenders(bad)), field(rng))
+	// THE REFUSAL PRINTS BOTH SIDES OF THE COMPARISON (#2547). `files=` alone sent
+	// a reader to the branch to guess: on 2026-09-22 the offender list WAS the
+	// card's own PATHS line, and nothing in the message said what the walk had
+	// understood the declaration to be. `declared=` is the globs as parsed, so a
+	// PATHS line the parser read as one unsplit glob is visible in the refusal
+	// itself rather than after an hour of detective work.
+	return fmt.Errorf("stale-base files=%s declared=%s range=%s: %d path(s) in `git diff --name-only %s` match no declared PATHS glob (they are the files= list); rebase onto the current target before harvest",
+		field(joinOffenders(bad)), field(declaredSummary(globs, declared)), field(rng), len(bad), rng)
+}
+
+// declaredSummary is what the walk judged against, for the refusal line. An
+// absent PATHS line and a `PATHS: none` are different facts and are named
+// differently: the first means the card declared nothing, the second means the
+// card declared that it changes nothing.
+func declaredSummary(globs []string, declared bool) string {
+	if !declared {
+		return "no-PATHS-line"
+	}
+	if len(globs) == 0 {
+		return "none"
+	}
+	return joinOffenders(globs)
 }
 
 func pinAuthorizedTarget(dir, destURL, target string) (string, error) {
@@ -190,15 +219,38 @@ func parsePATHS(text string) (globs []string, declared bool) {
 		if rest == "" || rest == "none" {
 			return nil, true
 		}
-		for _, g := range strings.Split(rest, ",") {
-			g = strings.TrimSpace(g)
-			if g != "" && g != "none" {
+		for _, g := range splitDeclared(rest) {
+			if g != "none" {
 				globs = append(globs, g)
 			}
 		}
 		return globs, true
 	}
 	return nil, false
+}
+
+// splitDeclared cuts a PATHS: value into entries on COMMAS AND WHITESPACE BOTH
+// (#2547).
+//
+// `docs/WORKER-CARDS.md` and `internal/swarm/lintheader.go` spell the line
+// `PATHS: <glob>[, <glob>...]`, and splitting on commas alone is what that
+// grammar says. The cutter in the field writes the entries separated by spaces —
+// `PATHS: docs/EVAL-MERGE-QUEUE.md internal/docs/eval_merge_queue_test.go` — and
+// on 2026-09-22 that turned the whole line into ONE glob, which contains a space
+// and therefore matches no path in any repository. Every declared file then came
+// back as an offender, and fourteen finished cards were refused every pass with
+// a `files=` list identical to their own PATHS line.
+//
+// Reading both separators is not a widening of the guard. A repository path with
+// a space in it cannot be expressed by either grammar, so the only diffs the old
+// split could ever have cleared are diffs this one clears too; what it can no
+// longer do is silently judge a whole line as one unmatchable glob. The rule
+// that a card's bound is validated (`hygiene.ValidatePaths`, at `cut`) is
+// unchanged and lives where it always did.
+func splitDeclared(rest string) []string {
+	return strings.FieldsFunc(rest, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
 }
 
 func declaredCovers(globs []string, p string) bool {
@@ -211,31 +263,43 @@ func declaredCovers(globs []string, p string) bool {
 	return false
 }
 
+// matchDeclared answers whether ONE declared PATHS entry covers one
+// repo-relative path.
+//
+// THE GLOB HALF IS `hygiene.MatchGlob` (imported as `pathglob`, because this
+// package already has a type of that name) AND NOT A SECOND COPY OF IT. This file
+// carried its own `**`-aware matcher, character for character the one in
+// `internal/hygiene/glob.go`, which is the arrangement that comment warns
+// against in so many words: "a second matcher would be a second definition".
+// `internal/pulse` sits above `internal/hygiene` (internal/hygiene/kinds.txt),
+// so the call is the right way round. The S7 wall, `cut`'s validation and this
+// refusal now answer from one matcher.
+//
+// THE DIRECTORY HALF IS NEW (#2547). A card that writes `PATHS: internal/secrets`
+// means the directory, and on 2026-09-22 `internal/secrets/recovery_key_test.go`
+// was refused as undeclared against exactly that line. The spec's own spelling
+// for a directory is `internal/secrets/**` (`hygiene.MatchGlob`: "`a/**` matches
+// `a/b` and `a/b/c`; it also matches `a` itself, which is what a card naming a
+// directory means by it"), and nothing in `docs/SPEC-TOOLWORK.md` §4 rule 4 or
+// `docs/WORKER-CARDS.md` gives a meaning to a bare directory name or to a
+// trailing slash. So both are read here as the directory they name.
+//
+// The prefix rule is confined to a WILDCARD-FREE entry, and it cannot widen a
+// bound: no repository holds both a file at `a/b` and a file under `a/b/`, so an
+// entry that is a strict path prefix of a changed path could only ever have been
+// meant as a directory. An entry carrying a wildcard is left entirely to
+// hygiene.MatchGlob, whose `**` already spans segments.
 func matchDeclared(glob, p string) bool {
-	return matchDeclaredSegs(strings.Split(glob, "/"), strings.Split(p, "/"))
-}
-
-func matchDeclaredSegs(pat, segs []string) bool {
-	for len(pat) > 0 {
-		if pat[0] == "**" {
-			if len(pat) == 1 {
-				return true
-			}
-			for i := 0; i <= len(segs); i++ {
-				if matchDeclaredSegs(pat[1:], segs[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(segs) == 0 {
-			return false
-		}
-		ok, err := path.Match(pat[0], segs[0])
-		if err != nil || !ok {
-			return false
-		}
-		pat, segs = pat[1:], segs[1:]
+	glob = strings.ReplaceAll(strings.TrimSpace(glob), `\`, `/`)
+	glob = strings.TrimSuffix(glob, "/")
+	if glob == "" {
+		return false
 	}
-	return len(segs) == 0
+	if pathglob.MatchGlob(glob, p) {
+		return true
+	}
+	if strings.ContainsAny(glob, "*?[") {
+		return false
+	}
+	return strings.HasPrefix(p, glob+"/")
 }
