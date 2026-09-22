@@ -923,8 +923,9 @@ func TestCardTemplateV2A10SymbolAndRedWhen(t *testing.T) {
 	}
 }
 
-func TestValidateCardV2CutterLint(t *testing.T) {
-	validCard := `RESULT CARD-151 sha=123456789abc tools fix: test card
+// cardV2Header is the typed head of a hand-written v2 card fixture: everything the
+// lint demands except the operative region.
+const cardV2Header = `RESULT CARD-151 sha=123456789abc tools fix: test card
 You are a worker. Turn budget: 20 turns. Deadline is the machinery's.
 
 ## Target & Scope
@@ -934,6 +935,25 @@ ATTEMPT: 1
 SYMBOL: TableFixedReport
 RED-WHEN: test asserts self-written buffer without calling runtime
 `
+
+// cardV2With builds a v2 card fixture from prose and the lines of one operative region.
+// Prose lands outside the region; the operative lines land inside the fenced block.
+func cardV2With(prose string, operative ...string) string {
+	var b strings.Builder
+	b.WriteString(cardV2Header)
+	if prose != "" {
+		b.WriteString("## Task\n" + prose + "\n\n")
+	}
+	b.WriteString("## Run\n" + OperativeRegionMarker + "\n```sh\n")
+	for _, l := range operative {
+		b.WriteString(l + "\n")
+	}
+	b.WriteString("```\n")
+	return b.String()
+}
+
+func TestValidateCardV2CutterLint(t *testing.T) {
+	validCard := cardV2With("", "go test ./internal/pulse -run TestBoundary")
 	if err := ValidateCardV2(validCard); err != nil {
 		t.Errorf("ValidateCardV2 rejected valid card: %v", err)
 	}
@@ -968,21 +988,114 @@ RED-WHEN: test asserts self-written buffer without calling runtime
 		t.Errorf("ValidateCardV2 accepted card without SCHEMA: v2: err=%v", err)
 	}
 
-	// Forbidden operative git add -A (A4)
-	gitAddACard := validCard + "STEP 3. git add -A && git commit\n"
-	if err := ValidateCardV2(gitAddACard); err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
-		t.Errorf("ValidateCardV2 accepted card containing operative 'git add -A': err=%v", err)
+}
+
+// TestValidateCardV2OperativeRegionBoundary is the A4 boundary Stella asked for on #2522:
+// the lint reads the card's structured operative region and nothing else, and nothing
+// inside that region is exempt. Her exact bypass case is the first row.
+func TestValidateCardV2OperativeRegionBoundary(t *testing.T) {
+	stellaBypass := "STEP: git add -A && git commit # do not run again"
+	quotedEvidence := "Task: remove `git add -A` and `git add --all` from deploy.sh.\n" +
+		"> Reviewer verdict: never run git add -A; stage declared PATHS only.\n" +
+		"HOLD: the deploy script still runs git add --all at line 12."
+
+	cases := []struct {
+		name   string
+		card   string
+		refuse bool
+		want   string // substring the refusal must name
+	}{
+		{
+			name:   "stella bypass inside the region: the trailing comment does not neutralize it",
+			card:   cardV2With("", stellaBypass),
+			refuse: true,
+			want:   `forbidden operative broad staging "git add -A"`,
+		},
+		{
+			name:   "the same text as prose is read, never run",
+			card:   cardV2With(stellaBypass, "go test ./internal/pulse -run TestBoundary"),
+			refuse: false,
+		},
+		{
+			name:   "quoted evidence, a blockquote and a HOLD line in prose all pass",
+			card:   cardV2With(quotedEvidence, "go test ./internal/pulse -run TestBoundary"),
+			refuse: false,
+		},
+		{
+			name:   "sh -c wrapping inside the region is refused",
+			card:   cardV2With("", `sh -c "git add -A"`),
+			refuse: true,
+			want:   `forbidden operative broad staging "git add -A"`,
+		},
+		{
+			name:   "a PATHS-scoped add inside the region passes",
+			card:   cardV2With("", "git add test/foo.c"),
+			refuse: false,
+		},
+		{
+			name:   "a relative PATHS-scoped add is not git add dot",
+			card:   cardV2With("", "git add ./internal/pulse/cut.go"),
+			refuse: false,
+		},
+		{
+			name:   "git add --all inside the region is refused",
+			card:   cardV2With("", "git add --all && git commit -m fix"),
+			refuse: true,
+			want:   `forbidden operative broad staging "git add --all"`,
+		},
+		{
+			name:   "git add dot inside the region is refused",
+			card:   cardV2With("", "git add . && git commit -m fix"),
+			refuse: true,
+			want:   `forbidden operative broad staging "git add ."`,
+		},
+		{
+			name:   "extra whitespace is not a spelling the lint misses",
+			card:   cardV2With("", "git  add   -A"),
+			refuse: true,
+			want:   `forbidden operative broad staging "git add -A"`,
+		},
+		{
+			name:   "an empty region is the right region for a card that runs nothing",
+			card:   cardV2With(quotedEvidence),
+			refuse: false,
+		},
+		{
+			name:   "a card with no region at all is refused, naming the region",
+			card:   cardV2Header + "## Task\nrun the tests and report.\n",
+			refuse: true,
+			want:   `carries no operative region`,
+		},
+		{
+			name:   "a region marker with no fenced block is refused",
+			card:   cardV2Header + "## Run\n" + OperativeRegionMarker + "\ngit add -A\n",
+			refuse: true,
+			want:   "no fenced block follows",
+		},
+		{
+			name:   "an unterminated region is refused",
+			card:   cardV2Header + "## Run\n" + OperativeRegionMarker + "\n```sh\ngo test ./internal/pulse\n",
+			refuse: true,
+			want:   "never closed",
+		},
 	}
 
-	gitAddAllCard := validCard + "STEP 3. git add --all && git commit\n"
-	if err := ValidateCardV2(gitAddAllCard); err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
-		t.Errorf("ValidateCardV2 accepted card containing operative 'git add --all': err=%v", err)
-	}
-
-	// Permitted quoted evidence: RED-WHEN naming git add -A, HOLD, Inlined Evidence, backtick quotes
-	quotedEvidenceCard := validCard + "RED-WHEN: cutter lint fails on 'git add -A'\nHOLD: remove git add -A\nTask: remove `git add -A`\n"
-	if err := ValidateCardV2(quotedEvidenceCard); err != nil {
-		t.Errorf("ValidateCardV2 rejected card quoting 'git add -A' as evidence: %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateCardV2(tc.card)
+			if tc.refuse {
+				if err == nil {
+					t.Fatalf("ValidateCardV2 accepted the card; want a refusal naming %q\n%s", tc.want, tc.card)
+				}
+				if !strings.Contains(err.Error(), tc.want) {
+					t.Fatalf("refusal %q does not name %q", err.Error(), tc.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ValidateCardV2 refused a card it must accept: %v\n%s", err, tc.card)
+			}
+		})
 	}
 }
 
@@ -1009,6 +1122,14 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 	}
 	if !strings.Contains(card, "Commit rule: Stage declared PATHS only; notes and scratch live outside repo/.") {
 		t.Errorf("RenderCardV2 missing A4 commit rule:\n%s", card)
+	}
+	// The rendered card carries its operative region, and the one test command is in it.
+	region, err := OperativeRegion(card)
+	if err != nil {
+		t.Fatalf("rendered card has no usable operative region: %v\n%s", err, card)
+	}
+	if len(region) == 0 || !strings.Contains(region[0].Text, "go test ./internal/pulse -run TestFoo") {
+		t.Errorf("operative region does not carry the test command: %+v", region)
 	}
 
 	// Legitimate repair card quoting 'git add -A' as evidence must be accepted (Stella A4)
@@ -1038,7 +1159,7 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		t.Errorf("RenderCardV2 dropped task text:\n%s", repairCard)
 	}
 
-	// Card with operative broad staging in COMMAND must be refused
+	// A test command carrying broad staging lands in the operative region and is refused there.
 	_, err = RenderCardV2(CardV2Input{
 		Kind:         "fix",
 		Number:       155,
@@ -1054,14 +1175,39 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		Symbol:       "ValidateCardV2",
 		RedWhen:      "staging entire working tree",
 	})
-	if err == nil || !strings.Contains(err.Error(), "COMMAND contains forbidden operative broad staging") {
-		t.Errorf("RenderCardV2 accepted card with git add -A in COMMAND: err=%v", err)
+	if err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
+		t.Errorf("RenderCardV2 accepted card with git add -A in the test command: err=%v", err)
 	}
 
-	// Card containing operative broad staging in body must be refused
-	_, err = RenderCardV2(CardV2Input{
+	// The same text in the task body is prose: the worker reads it, never runs it, and
+	// the lint does not read prose at all (Stella, #2522).
+	proseCard, err := RenderCardV2(CardV2Input{
 		Kind:         "fix",
 		Number:       156,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test quoted git add",
+		Branch:       "emma/commit-rule-prose",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestFoo",
+		TestCommand:  "go test ./internal/pulse -run TestFoo",
+		Paths:        "internal/pulse/cut.go",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "git add -A accepted",
+		Body:         "The card under repair said: STEP: git add -A && git commit # do not run again",
+	})
+	if err != nil {
+		t.Errorf("RenderCardV2 refused a card quoting 'git add -A' in prose: %v", err)
+	}
+	if !strings.Contains(proseCard, "STEP: git add -A && git commit # do not run again") {
+		t.Errorf("RenderCardV2 did not preserve the quoted evidence complete:\n%s", proseCard)
+	}
+
+	// A body that declares its own operative region is operative, wherever it sits.
+	_, err = RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       157,
 		Repo:         "mas-bandwidth/nova-tools",
 		Title:        "test forbidden git add",
 		Branch:       "emma/commit-rule-bad",
@@ -1073,10 +1219,10 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		Paths:        "internal/pulse/cut.go",
 		Symbol:       "ValidateCardV2",
 		RedWhen:      "git add -A accepted",
-		Body:         "STEP 3. git add -A && git commit -m 'oops'",
+		Body:         OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```",
 	})
 	if err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
-		t.Errorf("RenderCardV2 accepted card with git add -A in body: err=%v", err)
+		t.Errorf("RenderCardV2 accepted a body-declared operative region running git add -A: err=%v", err)
 	}
 }
 

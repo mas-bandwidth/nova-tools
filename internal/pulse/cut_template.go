@@ -24,6 +24,18 @@ const MaxResultBodySize = 32768
 // CardV2Kinds is the canonical list of card kinds supported by Card Template v2 (A4).
 var CardV2Kinds = []string{"recut", "fix", "port", "docs-guard", "report", "read"}
 
+// OperativeRegionMarker opens a v2 card's operative region (A4). A line that is
+// exactly this marker, followed by a fenced block, declares that the lines inside
+// the fence are the only commands the worker may execute. Every other line of the
+// card — task text, inlined evidence, conditions, exemplars — is prose the worker
+// reads and never runs.
+const OperativeRegionMarker = "RUN:"
+
+// broadStagingSpellings are the exact operative spellings the cutter lint refuses
+// inside an operative region. The list is closed on purpose: it is three commands,
+// not a natural-language blacklist and not a shell parser.
+var broadStagingSpellings = []string{"git add -A", "git add --all", "git add ."}
+
 // IsV2Kind reports whether a kind is one of the Card Template v2 kinds.
 func IsV2Kind(kind string) bool {
 	for _, k := range CardV2Kinds {
@@ -174,6 +186,31 @@ func cleanTitle(title string) string {
 	return first
 }
 
+// operativeCommandsFor returns the commands a v2 card of this kind may execute, in
+// the order the worker runs them. A read card runs nothing, so its operative region
+// is present and empty — the region is the card's structure, not a reward for having
+// commands. A command that would break out of the fenced region is refused at render
+// time rather than written into a card the lint would then have to guess about.
+func operativeCommandsFor(in CardV2Input, preflight string) ([]string, error) {
+	var cmds []string
+	if in.Kind != "read" {
+		if c := strings.TrimSpace(in.TestCommand); c != "" {
+			cmds = append(cmds, c)
+		}
+		if in.Kind != "report" {
+			if p := strings.TrimSpace(preflight); p != "" {
+				cmds = append(cmds, p)
+			}
+		}
+	}
+	for _, c := range cmds {
+		if strings.Contains(c, "\n") || strings.Contains(c, "```") {
+			return nil, fmt.Errorf("CardV2Input command %q may not contain a newline or a code fence (the operative region is one command per line inside one fenced block)", c)
+		}
+	}
+	return cmds, nil
+}
+
 // RenderCardV2 renders a complete Card Template v2 meeting all A1–A7 and A10 requirements.
 func RenderCardV2(in CardV2Input) (string, error) {
 	if in.Repo == "" {
@@ -312,6 +349,20 @@ func RenderCardV2(in CardV2Input) (string, error) {
 		fmt.Fprintf(&b, "Before writing RESULT.md, run the class-rule preflight on the current tip: %s and fix what it names.\n\n", preflight)
 	}
 
+	// Operative region (A4): the one structured place a v2 card carries commands.
+	cmds, err := operativeCommandsFor(in, preflight)
+	if err != nil {
+		return "", err
+	}
+	b.WriteString("## Run\n")
+	b.WriteString("The fenced block below is this card's operative region: its lines are the only commands you may execute. Everything else in this card is prose — read it, quote it, never run it.\n")
+	b.WriteString(OperativeRegionMarker + "\n")
+	b.WriteString("```sh\n")
+	for _, c := range cmds {
+		b.WriteString(c + "\n")
+	}
+	b.WriteString("```\n\n")
+
 	// RESULT.md Fill-in Template (A7)
 	b.WriteString("## RESULT.md Fill-in Template\n")
 	b.WriteString(ResultTemplateV2(in.Kind))
@@ -337,7 +388,24 @@ func RenderCardV2(in CardV2Input) (string, error) {
 }
 
 // ValidateCardV2 validates that a card conforms to Card Template v2 (A4, A10).
-// Cutter lint refuses any card missing SYMBOL: or RED-WHEN:, or containing forbidden 'git add -A'.
+//
+// The lint's contract is narrow, and this is the whole of it: a v2 card must declare
+// SCHEMA: v2, a non-empty SYMBOL: and a non-empty RED-WHEN:, and must carry exactly the
+// one structured operative region described by OperativeRegionMarker; the lint then reads
+// only the lines inside that region and refuses the card when one of them contains
+// git add -A, git add --all or git add . as a whole argument.
+//
+// What it does NOT do, stated so no caller infers more than it checks:
+//   - It never reads prose. Quoted evidence, a HOLD line, a reviewer verdict, a prior diff,
+//     and advice such as "do not run git add -A" live outside the region and always pass.
+//   - It never exempts an operative line. A trailing comment, surrounding quotes, a
+//     backtick span or an `sh -c "…"` wrapper does not make a line inside the region
+//     non-operative; `STEP: git add -A && git commit # do not run again` is refused.
+//   - It does not enforce PATHS-only staging. What a worker actually stages is a separate
+//     staged-diff/commit boundary check (Stella, #2522); a card lint reads text, and no
+//     amount of reading text can promise what a process did.
+//   - It is not a shell parser. It compares whitespace-normalized operative lines against
+//     three exact spellings, and says so rather than implying it understands shell.
 func ValidateCardV2(cardText string) error {
 	lines := strings.Split(cardText, "\n")
 	hasSchemaV2 := false
@@ -367,128 +435,101 @@ func ValidateCardV2(cardText string) error {
 	if !hasRedWhen || redWhenVal == "" {
 		return fmt.Errorf("cutter lint: card missing required RED-WHEN: declaration (every v2 card must declare the falsifiable condition that makes the test red)")
 	}
-	if err := checkOperativeBroadStaging(cardText); err != nil {
+	region, err := OperativeRegion(cardText)
+	if err != nil {
 		return err
 	}
+	for _, l := range region {
+		if spelling, ok := broadStaging(l.Text); ok {
+			return fmt.Errorf("cutter lint: operative region line %d contains forbidden operative broad staging %q: %q (commit rule: stage declared PATHS only; a trailing comment, quoting or an sh -c wrapper does not make a line in the region non-operative — move the text outside the region if you only mean to quote it)",
+				l.Number, spelling, strings.TrimSpace(l.Text))
+		}
+	}
 	return nil
 }
 
-// checkOperativeBroadStaging inspects a card for forbidden broad staging instructions
-// (git add -A or git add --all) while allowing quoted task/evidence fields (A4).
-// Quoted evidence in RED-WHEN:, HOLD:, ## Inlined Evidence, markdown blockquotes,
-// fenced code blocks, or quoted spans (`...`, "...") is permitted.
-func checkOperativeBroadStaging(cardText string) error {
+// OperativeLine is one command line of a card's operative region, with the card line
+// number a refusal names.
+type OperativeLine struct {
+	Number int
+	Text   string
+}
+
+// OperativeRegion returns the command lines of a v2 card's operative region, which is a
+// line that is exactly OperativeRegionMarker followed by a fenced block. Everything
+// outside such a block is prose and is never returned. A card that carries no region, or
+// whose region is not a terminated fenced block, is refused: a v2 card states its
+// commands in one structured place or it does not state them at all.
+func OperativeRegion(cardText string) ([]OperativeLine, error) {
 	lines := strings.Split(cardText, "\n")
-	inEvidenceSection := false
-	inCodeBlock := false
-
-	for _, rawLine := range lines {
-		trimmed := strings.TrimSpace(rawLine)
-
-		// Track section headers
-		if strings.HasPrefix(trimmed, "## Inlined Evidence") {
-			inEvidenceSection = true
-			continue
-		} else if strings.HasPrefix(trimmed, "## ") {
-			inEvidenceSection = false
-		}
-
-		// Skip entire Inlined Evidence section
-		if inEvidenceSection {
+	var out []OperativeLine
+	found := false
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != OperativeRegionMarker {
 			continue
 		}
-
-		// Track fenced code blocks (``` ... ```)
-		if strings.HasPrefix(trimmed, "```") {
-			inCodeBlock = !inCodeBlock
-			continue
+		open := i + 1
+		for open < len(lines) && strings.TrimSpace(lines[open]) == "" {
+			open++
 		}
-		if inCodeBlock {
-			continue
+		if open >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[open]), "```") {
+			return nil, fmt.Errorf("cutter lint: card line %d opens an operative region with %q but no fenced block follows (write the commands inside ``` ... ``` on the next line)", i+1, OperativeRegionMarker)
 		}
-
-		// Skip metadata citation/evidence fields
-		if strings.HasPrefix(trimmed, "RED-WHEN:") ||
-			strings.HasPrefix(trimmed, "HOLD:") ||
-			strings.HasPrefix(trimmed, "HOLD_FILE:") ||
-			strings.HasPrefix(trimmed, "REMAINS:") ||
-			strings.HasPrefix(trimmed, "SYMBOL:") {
-			continue
-		}
-
-		// Blockquotes are quoted evidence
-		if strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-
-		// Check COMMAND header: operative execution command
-		if strings.HasPrefix(trimmed, "COMMAND:") {
-			cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))
-			if containsBroadStaging(cmd) {
-				return fmt.Errorf("cutter lint: COMMAND contains forbidden operative broad staging 'git add -A' (commit rule: stage declared PATHS only)")
+		closed := false
+		j := open + 1
+		for ; j < len(lines); j++ {
+			if strings.TrimSpace(lines[j]) == "```" {
+				closed = true
+				break
 			}
-			continue
+			out = append(out, OperativeLine{Number: j + 1, Text: lines[j]})
 		}
-
-		// Ignore lines if they don't contain broad staging tokens
-		if !containsBroadStaging(trimmed) {
-			continue
+		if !closed {
+			return nil, fmt.Errorf("cutter lint: the operative region opened at card line %d is never closed by ``` (an unterminated region has no boundary, so nothing in it can be checked)", i+1)
 		}
+		found = true
+		i = j
+	}
+	if !found {
+		return nil, fmt.Errorf("cutter lint: card carries no operative region; every v2 card must carry one — a line %q followed by a fenced block whose lines are the only commands the worker may execute (an empty block is the right region for a card that runs nothing)", OperativeRegionMarker)
+	}
+	return out, nil
+}
 
-		// Strip inline quotes and backticks to separate quoted evidence from operative commands
-		stripped := stripQuotedSpans(trimmed)
-		if containsBroadStaging(stripped) {
-			if !isRemovalOrEvidenceContext(stripped) {
-				return fmt.Errorf("cutter lint: card contains forbidden operative broad staging 'git add -A' (commit rule: stage declared PATHS only, never git add -A; notes live outside repo/)")
+// broadStaging reports whether an operative line runs one of the three broad staging
+// spellings, and which. The line is compared with its whitespace runs collapsed, so
+// `git  add   -A` is the same command as `git add -A`; nothing else about the line is
+// interpreted, and nothing about it exempts it.
+func broadStaging(line string) (string, bool) {
+	norm := strings.Join(strings.Fields(line), " ")
+	for _, spelling := range broadStagingSpellings {
+		from := 0
+		for {
+			k := strings.Index(norm[from:], spelling)
+			if k < 0 {
+				break
 			}
+			at := from + k
+			end := at + len(spelling)
+			// Only the `git add .` spelling needs an argument boundary, so that a
+			// PATHS-scoped `git add ./internal/pulse/cut.go` is not read as `git add .`.
+			if !strings.HasSuffix(spelling, ".") || endsArgument(norm, end) {
+				return spelling, true
+			}
+			from = at + 1
 		}
 	}
-	return nil
+	return "", false
 }
 
-func containsBroadStaging(s string) bool {
-	return strings.Contains(s, "git add -A") || strings.Contains(s, "git add --all")
-}
-
-func stripQuotedSpans(s string) string {
-	s = stripBetween(s, '`', '`')
-	s = stripBetween(s, '"', '"')
-	s = stripBetween(s, '\'', '\'')
-	s = stripBetween(s, '“', '”')
-	return s
-}
-
-func stripBetween(s string, open, close rune) string {
-	var b strings.Builder
-	inQuote := false
-	for _, r := range s {
-		if !inQuote && r == open {
-			inQuote = true
-			continue
-		}
-		if inQuote && r == close {
-			inQuote = false
-			continue
-		}
-		if !inQuote {
-			b.WriteRune(r)
-		}
+// endsArgument reports whether index i ends a shell word in s.
+func endsArgument(s string, i int) bool {
+	if i >= len(s) {
+		return true
 	}
-	return b.String()
-}
-
-func isRemovalOrEvidenceContext(s string) bool {
-	lower := strings.ToLower(s)
-	evidenceVerbs := []string{
-		"remove ", "delete ", "drop ", "eliminate ", "fix ", "fixing ",
-		"refuse ", "refusing ", "reject ", "rejecting ", "forbid ", "forbidden ",
-		"never ", "do not ", "don't ", "avoid ", "stop ", "prohibit ",
-		"without ", "instead of ", "replaces ", "revert ", "quoting ", "quoted ",
-	}
-	for _, verb := range evidenceVerbs {
-		if strings.Contains(lower, verb) {
-			return true
-		}
+	switch s[i] {
+	case ' ', '\t', ';', '&', '|', ')', '"', '\'', '`':
+		return true
 	}
 	return false
 }

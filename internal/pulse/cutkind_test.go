@@ -474,3 +474,82 @@ func TestCutKindV2Templates(t *testing.T) {
 		t.Errorf("Legacy card missing legacy contract line:\n%s", legacyCard)
 	}
 }
+
+// TestCutKindV2OperativeRegionBoundary runs Stella's A4 boundary through the real cutter
+// (#2522): a card whose task body QUOTES broad staging is cut, and a card whose task body
+// declares an operative region that RUNS it is refused, with no card written.
+func TestCutKindV2OperativeRegionBoundary(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+	bodyFile := func(name, text string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	quoted := "Repair the deploy script.\n" +
+		"The card under repair said: STEP: git add -A && git commit # do not run again\n" +
+		"> Reviewer verdict: never run `git add --all`; stage declared PATHS only."
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2522,
+		Title:        "quote the bypass as evidence",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "an operative git add -A passes the cutter lint",
+		BodyFile:     bodyFile("quoted-body.md", quoted),
+		Out:          filepath.Join(dir, "quoted"),
+		Queue:        queue,
+	})
+	if code != 0 {
+		t.Fatalf("cut refused a card that only quotes broad staging (code %d): %s", code, errs)
+	}
+	if !strings.Contains(card, "STEP: git add -A && git commit # do not run again") {
+		t.Errorf("cut did not preserve the quoted evidence complete:\n%s", card)
+	}
+	region, err := OperativeRegion(card)
+	if err != nil {
+		t.Fatalf("cut card has no usable operative region: %v\n%s", err, card)
+	}
+	if len(region) != 2 {
+		t.Errorf("operative region wants the test command and the preflight, got %+v", region)
+	}
+
+	operative := OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```"
+	outDir := filepath.Join(dir, "operative")
+	codeBad, _, errsBad, badCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2523,
+		Title:        "run the bypass",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "an operative git add -A passes the cutter lint",
+		BodyFile:     bodyFile("operative-body.md", operative),
+		Out:          outDir,
+		Queue:        queue,
+	})
+	if codeBad != 2 {
+		t.Fatalf("cut accepted an operative git add -A (code %d), want 2", codeBad)
+	}
+	if !strings.Contains(errsBad, "forbidden operative broad staging") {
+		t.Errorf("refusal does not name the broad staging: %q", errsBad)
+	}
+	if badCard != "" {
+		t.Errorf("cut wrote a card it refused:\n%s", badCard)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(outDir, "card-*.md")); len(matches) != 0 {
+		t.Errorf("cut left a refused card behind: %v", matches)
+	}
+}
