@@ -8,7 +8,10 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -218,6 +221,26 @@ func main() {
 	// the retry kept the task and harvested the second attempt's result. FAKE-5XX always
 	// fails, so a test can prove the third fast failure is filed `end=provider`. Both are
 	// checked before FAKE-5XX by their longer names, since `directive` matches a prefix.
+	// A read that died after the request may have been accepted. The line is the
+	// harness's own timeout words. The machinery must record unknown and not launch again.
+	if _, ok := directive(prompt, "FAKE-LOST-RESPONSE"); ok {
+		fmt.Fprintln(os.Stderr, "SSE read timed out")
+		os.Exit(1)
+	}
+	// FAKE-PROVIDER-READ posts once to the baseURL in the job config, which the
+	// run has pointed at its own proxy. A body that contains "ok" is success.
+	// A failed read is tried once more, the way a harness retries a dropped
+	// socket, and then this process stays up: the measured harness did not
+	// exit when its socket stalled, so the run has to end it.
+	if _, ok := directive(prompt, "FAKE-PROVIDER-READ"); ok {
+		if err := readProvider(modelFromArgs(os.Args[1:])); err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: provider read failed")
+			time.Sleep(time.Hour)
+			os.Exit(1)
+		}
+		publish(job, prompt, 0, notesRead(job, prompt))
+		os.Exit(0)
+	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
 		if launchCount(job) <= 1 {
 			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")
@@ -599,6 +622,89 @@ func emitTimeline() {
 		time.Sleep(2 * time.Millisecond)
 		fmt.Println(s[1])
 	}
+}
+
+// readProvider posts to the model's baseURL. It tries twice. The second try is
+// how a harness retries a dropped socket; the proxy must not open a second
+// upstream request after a silent body. The error text is fixed so a stall
+// cannot be classified as a launch failure by words this process invented.
+func readProvider(model string) error {
+	var last error
+	for i := 0; i < 2; i++ {
+		last = readProviderOnce(model)
+		if last == nil {
+			return nil
+		}
+	}
+	return last
+}
+
+func readProviderOnce(model string) error {
+	base, err := providerBaseURL(model)
+	if err != nil {
+		return err
+	}
+	if job := os.Getenv("NOVA_SWARM_JOB"); job != "" {
+		f, openErr := os.OpenFile(filepath.Join(job, "provider-url"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if openErr == nil {
+			fmt.Fprintln(f, base)
+			f.Close()
+		}
+	}
+	req, err := http.NewRequest(http.MethodPost, base, strings.NewReader(`{"input":"card"}`))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	client := &http.Client{Transport: &http.Transport{Proxy: nil, DisableCompression: true}}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "ok") {
+		return fmt.Errorf("provider read failed")
+	}
+	return nil
+}
+
+func providerBaseURL(model string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(os.Getenv("HOME"), ".config", "opencode", "opencode.json"))
+	if err != nil {
+		return "", err
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return "", err
+	}
+	provider := model
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		provider = model[:i]
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, _ := providers[provider].(map[string]any)
+	opts, _ := entry["options"].(map[string]any)
+	base, _ := opts["baseURL"].(string)
+	if base == "" {
+		return "", fmt.Errorf("no baseURL")
+	}
+	return base, nil
+}
+
+func modelFromArgs(args []string) string {
+	for i, a := range args {
+		if a == "--model" && i+1 < len(args) {
+			return args[i+1]
+		}
+		if strings.HasPrefix(a, "--model=") {
+			return strings.TrimPrefix(a, "--model=")
+		}
+	}
+	return ""
 }
 
 // checkInvocation is what a real harness requires of its argv: its own subcommand, the

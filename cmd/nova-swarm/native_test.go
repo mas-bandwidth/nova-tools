@@ -494,7 +494,7 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 		}
-		assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+		assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
 		copied := filepath.Join(slot, "data", ".config", "opencode", "opencode.json")
 		st, err := os.Stat(copied)
 		if err != nil {
@@ -512,8 +512,11 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if res.configSHA != wantSHA {
 			t.Errorf("the run records the sha8 of the bytes the child saw: %q, want %q", res.configSHA, wantSHA)
 		}
-		if !strings.Contains(string(body), `"baseURL": "http://localhost:11434/v1"`) {
-			t.Errorf("the carried provider reaches the child:\n%s", body)
+		if !strings.Contains(string(body), `"baseURL": "http://127.0.0.1:`) {
+			t.Errorf("the child dials the read-deadline proxy, not the configured upstream:\n%s", body)
+		}
+		if strings.Contains(string(body), "localhost:11434") {
+			t.Errorf("the child still dials the upstream directly:\n%s", body)
 		}
 		if !strings.Contains(string(body), `"external_directory"`) {
 			t.Errorf("the job's fence rules are in the config the child reads:\n%s", body)
@@ -660,7 +663,10 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	if res.configSHA != wantSHA {
 		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
 	}
-	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+	assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
+	if strings.Contains(string(written), "localhost:11434") {
+		t.Errorf("the child still dials the upstream directly:\n%s", written)
+	}
 }
 
 // TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
