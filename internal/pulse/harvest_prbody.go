@@ -201,14 +201,37 @@ func constructPRBody(resultLines []string, report string, prov Provenance) strin
 }
 
 // boundPRBody truncates body to max bytes, ensuring MaxBodyBytes is cleanly respected.
+// If fullBody contains a provenance table, the table is preserved intact at the end
+// by truncating the content preceding it.
 func boundPRBody(fullBody string, max int) string {
 	if max <= 0 {
 		max = 4096
 	}
-	if len(fullBody) > max {
-		return fullBody[:max]
+	if len(fullBody) <= max {
+		return fullBody
 	}
-	return fullBody
+
+	idx := strings.LastIndex(fullBody, "| model | route | bench | cost |")
+	if idx == -1 {
+		idx = strings.LastIndex(fullBody, "| Model | Route | Bench | Cost |")
+	}
+	if idx != -1 {
+		table := fullBody[idx:]
+		prefix := strings.TrimRight(fullBody[:idx], "\n")
+		needed := len(table) + 2 // for "\n\n"
+		if max > needed {
+			allowedPrefix := max - needed
+			if len(prefix) > allowedPrefix {
+				prefix = strings.TrimRight(prefix[:allowedPrefix], "\n")
+			}
+			if prefix != "" {
+				return prefix + "\n\n" + table
+			}
+			return table
+		}
+	}
+
+	return fullBody[:max]
 }
 
 // buildPRBody constructs the bounded PR body (a prefix of what was constructed/scanned).

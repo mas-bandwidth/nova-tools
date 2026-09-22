@@ -174,10 +174,15 @@ func TestBoundPRBody_MaxBodyBytesRespect(t *testing.T) {
 		if len(bounded) > max {
 			t.Fatalf("bounded body length %d exceeds max %d", len(bounded), max)
 		}
-		if !strings.HasPrefix(fullBody, bounded) {
+		if idx := strings.LastIndex(bounded, "| model | route | bench | cost |"); idx != -1 {
+			prefix := strings.TrimRight(bounded[:idx], "\n")
+			if !strings.HasPrefix(fullBody, prefix) {
+				t.Fatalf("bounded body prefix at max %d is not a prefix of fullBody", max)
+			}
+		} else if !strings.HasPrefix(fullBody, bounded) {
 			t.Fatalf("bounded body at max %d is not a prefix of fullBody", max)
 		}
-		// For max >= 300, the essential core (line 1, DONE, red, green) is preserved
+		// For max >= 300, essential core (line 1, DONE, red) and provenance table are preserved
 		if max >= 300 {
 			if !strings.Contains(bounded, "RESULT bounds-test") {
 				t.Fatalf("contract line missing at max %d", max)
@@ -188,6 +193,12 @@ func TestBoundPRBody_MaxBodyBytesRespect(t *testing.T) {
 			if !strings.Contains(bounded, "red: TestBound: red-line-verbatim") {
 				t.Fatalf("verbatim red line missing at max %d", max)
 			}
+			if !strings.Contains(bounded, prov.Table()) {
+				t.Fatalf("provenance table missing at max %d", max)
+			}
+		}
+		// For max >= 500, green line is also fully accommodated alongside the table
+		if max >= 500 {
 			if !strings.Contains(bounded, "green: TestBound: green-line-verbatim") {
 				t.Fatalf("verbatim green line missing at max %d", max)
 			}
@@ -198,6 +209,81 @@ func TestBoundPRBody_MaxBodyBytesRespect(t *testing.T) {
 	boundedDefault := boundPRBody(fullBody, 0)
 	if len(boundedDefault) > 4096 {
 		t.Fatalf("default max body length %d exceeds 4096", len(boundedDefault))
+	}
+}
+
+func TestBoundPRBody_OversizedReportPreservesProvenanceTable(t *testing.T) {
+	contract := "RESULT test-oversized sha=998877665544 — test oversized report preserves provenance"
+	red := "red: TestOversized: fail"
+	green := "green: TestOversized PASS: pass"
+	resultLines := []string{
+		contract,
+		"DONE",
+		"BRANCH emma/oversized",
+		"REPO mas-bandwidth/nova-tools",
+		red,
+		green,
+	}
+
+	// 100KB report to far exceed 4096 bytes and default 60KB
+	oversizedReport := "CLAIM: big report\n" + strings.Repeat("detail line in long report\n", 4000)
+	prov := Provenance{
+		Model: "gemini-2.5-pro",
+		Route: "google/gemini",
+		Bench: "studio",
+		Cost:  "$0.0500",
+	}
+
+	fullBody := constructPRBody(resultLines, oversizedReport, prov)
+	if len(fullBody) < 100000 {
+		t.Fatalf("fullBody length %d expected > 100000", len(fullBody))
+	}
+
+	// Test with 4096 limit
+	bounded := boundPRBody(fullBody, 4096)
+	if len(bounded) > 4096 {
+		t.Fatalf("bounded length %d exceeds max 4096", len(bounded))
+	}
+
+	wantTable := prov.Table()
+	if !strings.HasSuffix(bounded, wantTable) {
+		t.Fatalf("bounded body does not have provenance table at the end:\n%s", bounded)
+	}
+
+	if !strings.Contains(bounded, contract) {
+		t.Fatalf("contract line missing in bounded body")
+	}
+	if !strings.Contains(bounded, "DONE") {
+		t.Fatalf("DONE missing in bounded body")
+	}
+	if !strings.Contains(bounded, red) {
+		t.Fatalf("red line missing in bounded body")
+	}
+	if !strings.Contains(bounded, green) {
+		t.Fatalf("green line missing in bounded body")
+	}
+
+	// Invariant check passes
+	if err := checkPRBodyInvariants(bounded, fullBody, 4096, contract, red, green); err != nil {
+		t.Fatalf("checkPRBodyInvariants failed: %v", err)
+	}
+
+	// Also test with default max (0 -> 4096)
+	boundedDefault := boundPRBody(fullBody, 0)
+	if len(boundedDefault) > 4096 {
+		t.Fatalf("boundedDefault length %d exceeds 4096", len(boundedDefault))
+	}
+	if !strings.HasSuffix(boundedDefault, wantTable) {
+		t.Fatalf("boundedDefault does not have provenance table at the end")
+	}
+
+	// Also test with a larger max like 60KB (61440)
+	bounded60k := boundPRBody(fullBody, 60*1024)
+	if len(bounded60k) > 60*1024 {
+		t.Fatalf("bounded60k length %d exceeds 60KB", len(bounded60k))
+	}
+	if !strings.HasSuffix(bounded60k, wantTable) {
+		t.Fatalf("bounded60k does not have provenance table at the end")
 	}
 }
 
@@ -547,7 +633,24 @@ func checkPRBodyInvariants(body string, scannedText string, maxBytes int, wantCo
 		return fmt.Errorf("length %d exceeds MaxBodyBytes %d", len(body), maxBytes)
 	}
 	if !strings.HasPrefix(scannedText, body) {
-		return fmt.Errorf("PR body is not a prefix of scanned text")
+		idx := strings.LastIndex(body, "| model | route | bench | cost |")
+		if idx == -1 {
+			idx = strings.LastIndex(body, "| Model | Route | Bench | Cost |")
+		}
+		tableIdx := strings.LastIndex(scannedText, "| model | route | bench | cost |")
+		if tableIdx == -1 {
+			tableIdx = strings.LastIndex(scannedText, "| Model | Route | Bench | Cost |")
+		}
+		if idx == -1 || tableIdx == -1 {
+			return fmt.Errorf("PR body is not a prefix of scanned text")
+		}
+		prefix := strings.TrimRight(body[:idx], "\n")
+		if !strings.HasPrefix(scannedText, prefix) {
+			return fmt.Errorf("PR body is not a prefix of scanned text")
+		}
+		if body[idx:] != scannedText[tableIdx:] {
+			return fmt.Errorf("PR body is not a prefix of scanned text")
+		}
 	}
 	lines := strings.Split(body, "\n")
 	if len(lines) < 2 {
