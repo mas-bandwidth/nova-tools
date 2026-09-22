@@ -1653,9 +1653,9 @@ func TestCutTemplateApplyDependsOn(t *testing.T) {
 		},
 		{
 			name: "legacy template with neither PATHS nor TEST is untouched",
-			tmpl: "RESULT label sha=123456789012\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://github.com/o/r.git . && git checkout -b b\n",
+			tmpl: "RESULT label sha=123456789012\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://example.com/o/r.git . && git checkout -b b\n",
 			deps: []string{"tools-01"},
-			want: "RESULT label sha=123456789012\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://github.com/o/r.git . && git checkout -b b\n",
+			want: "RESULT label sha=123456789012\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://example.com/o/r.git . && git checkout -b b\n",
 		},
 	}
 
@@ -1680,7 +1680,7 @@ func TestCutTemplateRoundtripAndValidationControls(t *testing.T) {
 		"LEG: go",
 		"REPO: mas-bandwidth/nova-tools",
 		"BASE: dev",
-		"base-repo: https://github.com/mas-bandwidth/nova-tools.git",
+		"base-repo: https://example.com/mas-bandwidth/nova-tools.git",
 		"base-sha: af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d",
 		"PATHS: internal/pulse/harveststale.go, internal/pulse/harveststale_test.go",
 		"DEPENDS-ON: -",
@@ -1698,7 +1698,7 @@ func TestCutTemplateRoundtripAndValidationControls(t *testing.T) {
 		"LEG: go",
 		"REPO: mas-bandwidth/nova-tools",
 		"BASE: dev",
-		"base-repo: https://github.com/mas-bandwidth/nova-tools.git",
+		"base-repo: https://example.com/mas-bandwidth/nova-tools.git",
 		"base-sha: af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d",
 		"PATHS: internal/pulse/harveststale.go, internal/pulse/harveststale_test.go",
 		"FILES: 2",

@@ -23,7 +23,7 @@ func TestCutDependsOnFlag(t *testing.T) {
 KIND: fix
 PATHS: internal/pulse/cut.go
 TEST: ./internal/pulse/ TestCut
-STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
+STEP 1. mkdir -p scratch && git clone -q https://example.com/<source>.git . && git checkout -b <branch>
 red line
 green line
 STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
