@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -24,6 +25,12 @@ import (
 // id is checked against the lineup only when one was handed over. With no lineup
 // the lint does not guess which ids exist, the way `paused` does not guess a kind
 // is paused when no trust file was handed over.
+//
+// A reference is `<owner>/<repo>#<n>`: one slash, then `#` and digits
+// (`mas-bandwidth/nova-tools#2550`). The lint checks that shape and does not look
+// it up in the lineup; the cutter resolves whether the issue or PR exists.
+// A space (`nova-tools #2550`) is not that shape and is refused by name. A word
+// the lineup does not hold (`dogfood`) is refused by name as an unknown card id.
 //
 // The lineup file is the sprint's ORDER.tsv shape, or one id per line. A header
 // row that names `depends-on` is not a card. The id column is the one named `id`,
@@ -91,6 +98,10 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 			selfs = append(selfs, id)
 			continue
 		}
+		// A reference is shape only. It is not a lineup id, and not this card's id.
+		if dependsReferenceRE.MatchString(id) {
+			continue
+		}
 		if !oneCardID(id) {
 			bad = append(bad, id)
 			continue
@@ -100,13 +111,13 @@ func LintCardDepends(raw []byte, lineup Lineup) []CardHeaderFinding {
 		}
 	}
 	if len(bad) > 0 {
-		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id", strings.Join(bad, ", ")))
+		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not a card id or an owner/repo#n reference", quoteDepends(bad)))
 	}
 	if len(selfs) > 0 {
 		add(f.line, fmt.Sprintf("DEPENDS-ON: %s names this card's own id", strings.Join(selfs, ", ")))
 	}
 	if len(unknowns) > 0 {
-		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not in the lineup", strings.Join(unknowns, ", ")))
+		add(f.line, fmt.Sprintf("DEPENDS-ON: %s is not in the lineup", quoteDepends(unknowns)))
 	}
 	return out
 }
@@ -136,10 +147,24 @@ func firstLine(raw []byte) string {
 	return strings.TrimRight(string(line), "\r")
 }
 
+// dependsReferenceRE is `<owner>/<repo>#<n>`: exactly one slash, then `#` and digits.
+// `mas-bandwidth/nova-tools#2550` matches. `nova-tools #2550` does not (a space).
+// `nova-tools#2550` does not (no slash). `a/b/c#1` does not (two slashes).
+var dependsReferenceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*#[0-9]+$`)
+
 // oneCardID is one dependency token. `-` is the whole-line declaration, never an
 // entry in the list. An entry with whitespace is two words, not an id.
 func oneCardID(id string) bool {
 	return id != "-" && len(strings.Fields(id)) == 1
+}
+
+// quoteDepends names each refused entry, so the drift says which token it refused.
+func quoteDepends(ids []string) string {
+	q := make([]string, len(ids))
+	for i, id := range ids {
+		q[i] = fmt.Sprintf("%q", id)
+	}
+	return strings.Join(q, ", ")
 }
 
 func splitDepends(value string) (ids []string, empty bool) {

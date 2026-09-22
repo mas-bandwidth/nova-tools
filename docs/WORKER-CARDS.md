@@ -407,7 +407,10 @@ the key existed is not refused for lacking it unless `--typed` is passed. It wan
 contract line. `-` passes: the card depends on nothing. The card's own id is the first
 word of its contract line, and a `DEPENDS-ON` that names that word is refused. An id is
 unknown only when `--lineup <file>` is handed over and the id is not in it; with no
-lineup the lint does not guess which ids exist.
+lineup the lint does not guess which ids exist. An `owner/repo#n` reference — one
+slash, then `#` and digits, as in `mas-bandwidth/nova-tools#2550` — is checked for
+shape only and is not looked up in the lineup. A space (`nova-tools #2550`) or
+anything else (`dogfood`) is refused by name.
 
 ## Open
 

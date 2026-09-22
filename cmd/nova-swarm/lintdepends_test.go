@@ -97,6 +97,32 @@ func TestLintTypedDependsOnDashPasses(t *testing.T) {
 	}
 }
 
+func TestLintTypedDependsOnReferencePasses(t *testing.T) {
+	card := dependsOnCard(t, "ref.card", "DEPENDS-ON: mas-bandwidth/nova-tools#2550")
+	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
+	if exit != 0 || !strings.Contains(stdout, "LINT OK card=ref.card") {
+		t.Fatalf("owner/repo#n passes and is not looked up in the lineup, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if strings.Contains(stdout, "depends-on") || strings.Contains(stdout, "mas-bandwidth/nova-tools#2550") {
+		t.Fatalf("a reference is not a drift:\n%s", stdout)
+	}
+}
+
+func TestLintTypedRefusesASpaceAndDogfood(t *testing.T) {
+	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
+	card := dependsOnCard(t, "space.card", "DEPENDS-ON: nova-tools #2550")
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
+	if exit != 2 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "nova-tools #2550") {
+		t.Fatalf("nova-tools #2550 (a space) is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	card = dependsOnCard(t, "dog.card", "DEPENDS-ON: dogfood")
+	exit, stdout, stderr = runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
+	if exit != 2 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "dogfood") {
+		t.Fatalf("dogfood is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+}
+
 func TestLintTypedDependsOnKnownIDPasses(t *testing.T) {
 	card := dependsOnCard(t, "known.card", "DEPENDS-ON: other-card, third-card")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\nthird-card\tother-card\n")

@@ -52,6 +52,38 @@ func TestLintDependsDashPasses(t *testing.T) {
 	}
 }
 
+func TestLintDependsReferenceIsNotLookedUp(t *testing.T) {
+	const ref = "mas-bandwidth/nova-tools#2550"
+	lineup := Lineup{"other-card": true}
+	if _, ok := lineup[ref]; ok {
+		t.Fatal("the fixture lineup must not contain the reference")
+	}
+	if fs := LintCardDepends(dependsHeader(ref), lineup); len(fs) != 0 {
+		t.Fatalf("owner/repo#n passes and is not looked up in the lineup, got %v", fs)
+	}
+}
+
+func TestLintDependsRefusesASpaceAndDogfood(t *testing.T) {
+	lineup := Lineup{"other-card": true}
+	fs := LintCardDepends(dependsHeader("nova-tools #2550"), lineup)
+	if len(fs) == 0 || !dependsNames(fs, "nova-tools #2550") {
+		t.Fatalf("nova-tools #2550 (a space) is refused by name, got %v", fs)
+	}
+	fs = LintCardDepends(dependsHeader("dogfood"), lineup)
+	if len(fs) == 0 || !dependsNames(fs, "dogfood") {
+		t.Fatalf("dogfood is refused by name, got %v", fs)
+	}
+}
+
+func dependsNames(fs []CardHeaderFinding, name string) bool {
+	for _, f := range fs {
+		if f.Check == "depends-on" && strings.Contains(f.Excerpt, name) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestLintDependsKnownIDPasses(t *testing.T) {
 	lineup := Lineup{"other-card": true, "third-card": true}
 	if fs := LintCardDepends(dependsHeader("other-card, third-card"), lineup); len(fs) != 0 {
