@@ -35,6 +35,8 @@ func TestCardTemplateV2A1InlineEvidence(t *testing.T) {
 		ReviewerLine:  revLine,
 		PriorDiff:     shortDiff,
 		FailingOutput: failingOut,
+		Symbol:        "TestBoundary",
+		RedWhen:       "boundary_test.go:42: expected error, got nil",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed: %v", err)
@@ -69,6 +71,8 @@ func TestCardTemplateV2A1InlineEvidence(t *testing.T) {
 		Paths:        "internal/pulse/cut.go",
 		PriorDiff:    largeDiff,
 		DiffArtifact: "artifacts/diff-102.patch",
+		Symbol:       "TestBoundary",
+		RedWhen:      "large diff test fails",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed with large diff: %v", err)
@@ -95,6 +99,8 @@ func TestCardTemplateV2A2NamedPlaceAndTestCommand(t *testing.T) {
 		TestFunction: "TestEmptyQueueDoesNotPanic",
 		TestCommand:  "go test ./internal/pulse -run TestEmptyQueueDoesNotPanic",
 		Paths:        "internal/pulse/queue.go internal/pulse/queue_test.go",
+		Symbol:       "TestEmptyQueueDoesNotPanic",
+		RedWhen:      "nil pointer on empty queue",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed: %v", err)
@@ -139,6 +145,8 @@ func TestCardTemplateV2A3PreflightLine(t *testing.T) {
 		TestCommand:  "go test ./internal/pulse -run TestCut",
 		Paths:        "internal/pulse/cut.go",
 		PreflightCmd: "make preflight",
+		Symbol:       "TestCut",
+		RedWhen:      "preflight check fails",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed: %v", err)
@@ -153,12 +161,14 @@ func TestCardTemplateV2A3PreflightLine(t *testing.T) {
 
 	// Read card: must NOT demand make preflight (read-only)
 	readCard, err := RenderCardV2(CardV2Input{
-		Kind:   "read",
-		Number: 105,
-		Repo:   "mas-bandwidth/nova-tools",
-		Title:  "review card",
-		PR:     2522,
-		Head:   "0526ea67fcf4ccad48f7fe573ccfbcf3a6f39745",
+		Kind:    "read",
+		Number:  105,
+		Repo:    "mas-bandwidth/nova-tools",
+		Title:   "review card",
+		PR:      2522,
+		Head:    "0526ea67fcf4ccad48f7fe573ccfbcf3a6f39745",
+		Symbol:  "ValidateResultV2",
+		RedWhen: "invalid envelope accepted",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed for read card: %v", err)
@@ -199,6 +209,8 @@ func TestCardTemplateV2A4PerKindTemplatesAndTurnBudgets(t *testing.T) {
 			TestFunction: "TestFoo",
 			TestCommand:  "go test ./pkg -run TestFoo",
 			Paths:        "foo.go",
+			Symbol:       "TestFoo",
+			RedWhen:      "kind test fails",
 		})
 		if err != nil {
 			t.Fatalf("RenderCardV2 failed for kind %s: %v", kind, err)
@@ -226,6 +238,8 @@ func TestCardTemplateV2A5NoQuotedPRBodiesOrFooters(t *testing.T) {
 		TestFunction: "TestClean",
 		TestCommand:  "go test ./internal/pulse -run TestClean",
 		Paths:        "internal/pulse/cut.go",
+		Symbol:       "TestClean",
+		RedWhen:      "noisy text in title",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed: %v", err)
@@ -272,6 +286,8 @@ func TestCardTemplateV2A6ThreeClausesPerKind(t *testing.T) {
 			TestFunction: "TestFoo",
 			TestCommand:  "go test ./pkg -run TestFoo",
 			Paths:        "foo.go",
+			Symbol:       "TestFoo",
+			RedWhen:      "clause test fails",
 		})
 		if err != nil {
 			t.Fatalf("RenderCardV2 failed for kind %s: %v", k, err)
@@ -304,6 +320,8 @@ func TestCardTemplateV2A7ResultTemplateAndExemplar(t *testing.T) {
 			TestFunction: "TestFoo",
 			TestCommand:  "go test ./pkg -run TestFoo",
 			Paths:        "foo.go",
+			Symbol:       "TestFoo",
+			RedWhen:      "exemplar test fails",
 		})
 		if err != nil {
 			t.Fatalf("RenderCardV2 failed for kind %s: %v", k, err)
@@ -532,6 +550,8 @@ func TestRenderCardIdentityRetention(t *testing.T) {
 		Body:          "This is the required task body text that must never be dropped.",
 		ReviewerLine:  "DISPOSITION who=stella verdict=HOLD",
 		FailingOutput: "FAIL: TestMixedMessage",
+		Symbol:        "Verdict",
+		RedWhen:       "FAIL: TestMixedMessage",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed: %v", err)
@@ -569,6 +589,8 @@ func TestHarvestV2RoundTrip(t *testing.T) {
 		TestFunction: "TestCut",
 		TestCommand:  "go test ./internal/pulse -run TestCut",
 		Paths:        "internal/pulse/cut.go",
+		Symbol:       "TestCut",
+		RedWhen:      "roundtrip test fails",
 	})
 	if err != nil {
 		t.Fatalf("RenderCardV2 failed: %v", err)
@@ -722,6 +744,8 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 		Stdout:       io.Discard,
 		Stderr:       io.Discard,
 		PreflightCmd: "make preflight",
+		Symbol:       "FixedLoad",
+		RedWhen:      "wire buffer corrupted",
 	}
 	code := CutKind(in)
 	if code != 0 {
@@ -776,6 +800,8 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 		Stdout:       io.Discard,
 		Stderr:       io.Discard,
 		PreflightCmd: "make preflight",
+		Symbol:       "FixedLoad",
+		RedWhen:      "wire buffer corrupted",
 	}
 	code = CutKind(in2)
 	if code != 0 {
@@ -820,6 +846,8 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 		Stdout:       io.Discard,
 		Stderr:       &conflictErr,
 		PreflightCmd: "make preflight",
+		Symbol:       "FixedLoad",
+		RedWhen:      "wire buffer corrupted",
 	}
 	if code := CutKind(inConflict); code != 2 {
 		t.Errorf("CutKind with conflicting diff inputs returned code %d, want 2", code)
@@ -849,6 +877,8 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 		Stdout:       io.Discard,
 		Stderr:       &unwriteErr,
 		PreflightCmd: "make preflight",
+		Symbol:       "FixedLoad",
+		RedWhen:      "wire buffer corrupted",
 	}
 	if code := CutKind(inUnwritable); code != 2 {
 		t.Errorf("CutKind to unwritable destination returned code %d, want 2", code)
@@ -859,5 +889,129 @@ func TestImmutableDiffArtifactRetention(t *testing.T) {
 	// Ensure no card claiming a retained artifact was written
 	if files, err := os.ReadDir(unwritableOut); err == nil && len(files) > 0 {
 		t.Errorf("CutKind wrote files to unwritable directory: %v", files)
+	}
+}
+
+func TestCardTemplateV2A10SymbolAndRedWhen(t *testing.T) {
+	// A10: Every card must carry SYMBOL: and RED-WHEN:.
+	// Cutter lint refuses a card without them.
+	card, err := RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       150,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test symbol and red when",
+		Branch:       "emma/test-a10",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestCut",
+		TestCommand:  "go test ./internal/pulse -run TestCut",
+		Paths:        "internal/pulse/cut.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "FixedLoad",
+		RedWhen:      "wire buffer corrupted or uninitialized",
+	})
+	if err != nil {
+		t.Fatalf("RenderCardV2 failed: %v", err)
+	}
+
+	if !strings.Contains(card, "SYMBOL: FixedLoad") {
+		t.Errorf("card missing expected SYMBOL: line:\n%s", card)
+	}
+	if !strings.Contains(card, "RED-WHEN: wire buffer corrupted or uninitialized") {
+		t.Errorf("card missing expected RED-WHEN: line:\n%s", card)
+	}
+}
+
+func TestValidateCardV2CutterLint(t *testing.T) {
+	validCard := `RESULT CARD-151 sha=123456789abc tools fix: test card
+You are a worker. Turn budget: 20 turns. Deadline is the machinery's.
+
+## Target & Scope
+REPO: mas-bandwidth/nova-tools
+SCHEMA: v2
+ATTEMPT: 1
+SYMBOL: TableFixedReport
+RED-WHEN: test asserts self-written buffer without calling runtime
+`
+	if err := ValidateCardV2(validCard); err != nil {
+		t.Errorf("ValidateCardV2 rejected valid card: %v", err)
+	}
+
+	// Missing SYMBOL
+	missingSymbol := strings.Replace(validCard, "SYMBOL: TableFixedReport\n", "", 1)
+	if err := ValidateCardV2(missingSymbol); err == nil || !strings.Contains(err.Error(), "missing required SYMBOL:") {
+		t.Errorf("ValidateCardV2 accepted card without SYMBOL: err=%v", err)
+	}
+
+	// Empty SYMBOL
+	emptySymbol := strings.Replace(validCard, "SYMBOL: TableFixedReport\n", "SYMBOL: \n", 1)
+	if err := ValidateCardV2(emptySymbol); err == nil || !strings.Contains(err.Error(), "missing required SYMBOL:") {
+		t.Errorf("ValidateCardV2 accepted card with empty SYMBOL: err=%v", err)
+	}
+
+	// Missing RED-WHEN
+	missingRedWhen := strings.Replace(validCard, "RED-WHEN: test asserts self-written buffer without calling runtime\n", "", 1)
+	if err := ValidateCardV2(missingRedWhen); err == nil || !strings.Contains(err.Error(), "missing required RED-WHEN:") {
+		t.Errorf("ValidateCardV2 accepted card without RED-WHEN: err=%v", err)
+	}
+
+	// Empty RED-WHEN
+	emptyRedWhen := strings.Replace(validCard, "RED-WHEN: test asserts self-written buffer without calling runtime\n", "RED-WHEN: \n", 1)
+	if err := ValidateCardV2(emptyRedWhen); err == nil || !strings.Contains(err.Error(), "missing required RED-WHEN:") {
+		t.Errorf("ValidateCardV2 accepted card with empty RED-WHEN: err=%v", err)
+	}
+
+	// Missing SCHEMA: v2
+	missingSchema := strings.Replace(validCard, "SCHEMA: v2\n", "", 1)
+	if err := ValidateCardV2(missingSchema); err == nil || !strings.Contains(err.Error(), "missing required SCHEMA: v2") {
+		t.Errorf("ValidateCardV2 accepted card without SCHEMA: v2: err=%v", err)
+	}
+}
+
+func TestRenderCardV2RefusesMissingSymbolOrRedWhen(t *testing.T) {
+	baseInput := CardV2Input{
+		Kind:         "fix",
+		Number:       152,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test refusal",
+		Branch:       "emma/test-refusal",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestCut",
+		TestCommand:  "go test ./internal/pulse -run TestCut",
+		Paths:        "internal/pulse/cut.go",
+		PreflightCmd: "make preflight",
+	}
+
+	// Missing Symbol
+	noSym := baseInput
+	noSym.RedWhen = "some failure"
+	if _, err := RenderCardV2(noSym); err == nil || !strings.Contains(err.Error(), "requires Symbol") {
+		t.Errorf("RenderCardV2 accepted input without Symbol: err=%v", err)
+	}
+
+	// Empty Symbol
+	emptySym := baseInput
+	emptySym.Symbol = "   "
+	emptySym.RedWhen = "some failure"
+	if _, err := RenderCardV2(emptySym); err == nil || !strings.Contains(err.Error(), "requires Symbol") {
+		t.Errorf("RenderCardV2 accepted input with whitespace Symbol: err=%v", err)
+	}
+
+	// Missing RedWhen
+	noRed := baseInput
+	noRed.Symbol = "FixedLoad"
+	if _, err := RenderCardV2(noRed); err == nil || !strings.Contains(err.Error(), "requires RedWhen") {
+		t.Errorf("RenderCardV2 accepted input without RedWhen: err=%v", err)
+	}
+
+	// Empty RedWhen
+	emptyRed := baseInput
+	emptyRed.Symbol = "FixedLoad"
+	emptyRed.RedWhen = "   "
+	if _, err := RenderCardV2(emptyRed); err == nil || !strings.Contains(err.Error(), "requires RedWhen") {
+		t.Errorf("RenderCardV2 accepted input with whitespace RedWhen: err=%v", err)
 	}
 }

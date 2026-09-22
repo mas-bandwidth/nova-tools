@@ -315,6 +315,8 @@ func TestCutKindV2Templates(t *testing.T) {
 		PriorDiff:     "--- a/old\n+++ b/new\n",
 		FailingOutput: "panic: nil pointer",
 		PreflightCmd:  "make preflight",
+		Symbol:        "TestBoundary",
+		RedWhen:       "panic: nil pointer",
 		Out:           filepath.Join(dir, "recut"),
 		Queue:         queue,
 	})
@@ -348,6 +350,8 @@ func TestCutKindV2Templates(t *testing.T) {
 		TestCommand:  "go test ./internal/pulse -run TestQueue",
 		Paths:        "internal/pulse/queue.go",
 		PreflightCmd: "make preflight",
+		Symbol:       "QueuePop",
+		RedWhen:      "empty queue panics",
 		Out:          filepath.Join(dir, "fix-v2"),
 		Queue:        queue,
 	})
@@ -357,7 +361,54 @@ func TestCutKindV2Templates(t *testing.T) {
 	if !strings.Contains(fixCard, "COMMAND: go test ./internal/pulse -run TestQueue") {
 		t.Errorf("fix v2 missing COMMAND:\n%s", fixCard)
 	}
+	if !strings.Contains(fixCard, "SYMBOL: QueuePop") {
+		t.Errorf("fix v2 missing SYMBOL:\n%s", fixCard)
+	}
+	if !strings.Contains(fixCard, "RED-WHEN: empty queue panics") {
+		t.Errorf("fix v2 missing RED-WHEN:\n%s", fixCard)
+	}
 	if !strings.Contains(fixCard, "## Exemplar (fix)") {
 		t.Errorf("fix v2 missing exemplar:\n%s", fixCard)
+	}
+
+	// 3. V2=true without Symbol or RedWhen is refused by cutter lint
+	codeNoSym, _, errsNoSym, _ := cutKind(t, CutKindInput{
+		Kind:        "fix",
+		V2:          true,
+		Repo:        "mas-bandwidth/nova-tools",
+		Issue:       124,
+		Title:       "missing symbol v2",
+		Location:    "internal/pulse/queue.go:10",
+		TestCommand: "go test ./internal/pulse -run TestQueue",
+		Paths:       "internal/pulse/queue.go",
+		RedWhen:     "some red condition",
+		Out:         filepath.Join(dir, "fix-v2-nosym"),
+		Queue:       queue,
+	})
+	if codeNoSym != 2 {
+		t.Errorf("CutKind without --symbol returned %d, want 2", codeNoSym)
+	}
+	if !strings.Contains(errsNoSym, "--symbol is required for a v2 card") {
+		t.Errorf("expected error about --symbol, got %q", errsNoSym)
+	}
+
+	codeNoRed, _, errsNoRed, _ := cutKind(t, CutKindInput{
+		Kind:        "fix",
+		V2:          true,
+		Repo:        "mas-bandwidth/nova-tools",
+		Issue:       125,
+		Title:       "missing red-when v2",
+		Location:    "internal/pulse/queue.go:10",
+		TestCommand: "go test ./internal/pulse -run TestQueue",
+		Paths:       "internal/pulse/queue.go",
+		Symbol:      "QueuePop",
+		Out:         filepath.Join(dir, "fix-v2-nored"),
+		Queue:       queue,
+	})
+	if codeNoRed != 2 {
+		t.Errorf("CutKind without --red-when returned %d, want 2", codeNoRed)
+	}
+	if !strings.Contains(errsNoRed, "--red-when is required for a v2 card") {
+		t.Errorf("expected error about --red-when, got %q", errsNoRed)
 	}
 }

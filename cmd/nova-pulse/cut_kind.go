@@ -64,6 +64,8 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	testPkg := f.fs.String("test-pkg", "", "")
 	testFunc := f.fs.String("test-func", "", "")
 	attempt := f.fs.Int("attempt", 0, "")
+	symbol := f.fs.String("symbol", "", "")
+	redWhen := f.fs.String("red-when", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -86,6 +88,6 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 		V2: *v2, Location: *location, TestPackage: *testPkg, TestFunction: *testFunc,
 		TestCommand: *testCmd, ReviewerLine: *reviewerLine,
 		PriorDiff: *priorDiff, FailingOutput: *failingOutput, PreflightCmd: *preflightCmd,
-		Attempt: *attempt,
+		Attempt: *attempt, Symbol: *symbol, RedWhen: *redWhen,
 	})
 }

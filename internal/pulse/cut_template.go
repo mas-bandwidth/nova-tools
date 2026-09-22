@@ -132,7 +132,7 @@ func KindClauses(kind string) [3]string {
 	}
 }
 
-// CardV2Input carries all parameters needed to render a Card Template v2 (A1-A7).
+// CardV2Input carries all parameters needed to render a Card Template v2 (A1-A7, A10).
 type CardV2Input struct {
 	Kind          string // fix, recut, port, docs-guard, report, read
 	Number        int    // card number
@@ -161,6 +161,8 @@ type CardV2Input struct {
 	Remains       string // named remains for recut
 	Applied       string // applied patch status
 	Attempt       int    // attempt number (default: 1)
+	Symbol        string // runtime entrypoint, type, or function symbol exercised (A10)
+	RedWhen       string // falsifiable condition / failure mode that makes test red (A10)
 }
 
 // cleanTitle strips multi-line PR bodies, trailers, and noisy footers (A5).
@@ -172,13 +174,19 @@ func cleanTitle(title string) string {
 	return first
 }
 
-// RenderCardV2 renders a complete Card Template v2 meeting all A1–A7 requirements.
+// RenderCardV2 renders a complete Card Template v2 meeting all A1–A7 and A10 requirements.
 func RenderCardV2(in CardV2Input) (string, error) {
 	if in.Repo == "" {
 		return "", fmt.Errorf("CardV2Input requires Repo")
 	}
 	if in.Kind == "" {
 		return "", fmt.Errorf("CardV2Input requires Kind")
+	}
+	if strings.TrimSpace(in.Symbol) == "" {
+		return "", fmt.Errorf("CardV2Input requires Symbol (A10: every card must declare the runtime symbol or entrypoint)")
+	}
+	if strings.TrimSpace(in.RedWhen) == "" {
+		return "", fmt.Errorf("CardV2Input requires RedWhen (A10: every card must declare the falsifiable condition that makes the test red)")
 	}
 	budget := TurnBudgetV2(in.Kind)
 	title := cleanTitle(in.Title)
@@ -199,7 +207,7 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	// Header instructions with Turn budget (A4)
 	fmt.Fprintf(&b, "You are a worker. Turn budget: %d turns. Deadline is the machinery's.\n\n", budget)
 
-	// Target & Scope (A2)
+	// Target & Scope (A2, A10)
 	b.WriteString("## Target & Scope\n")
 	fmt.Fprintf(&b, "REPO: %s\n", in.Repo)
 	fmt.Fprintf(&b, "SCHEMA: v2\n")
@@ -208,6 +216,8 @@ func RenderCardV2(in CardV2Input) (string, error) {
 		attempt = 1
 	}
 	fmt.Fprintf(&b, "ATTEMPT: %d\n", attempt)
+	fmt.Fprintf(&b, "SYMBOL: %s\n", in.Symbol)
+	fmt.Fprintf(&b, "RED-WHEN: %s\n", in.RedWhen)
 	if in.PR > 0 {
 		fmt.Fprintf(&b, "PR: %d\n", in.PR)
 	}
@@ -317,7 +327,45 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	sum := sha256.Sum256([]byte(body))
 	sha12 := hex.EncodeToString(sum[:])[:12]
 	lines[0] = fmt.Sprintf("RESULT CARD-%d sha=%s %s %s: %s", in.Number, sha12, repoShortName, in.Kind, oneline.Escape(title))
-	return strings.Join(lines, "\n"), nil
+	card := strings.Join(lines, "\n")
+	if err := ValidateCardV2(card); err != nil {
+		return "", err
+	}
+	return card, nil
+}
+
+// ValidateCardV2 validates that a card conforms to Card Template v2 (A10).
+// Cutter lint refuses any card missing SYMBOL: or RED-WHEN:.
+func ValidateCardV2(cardText string) error {
+	lines := strings.Split(cardText, "\n")
+	hasSchemaV2 := false
+	hasSymbol := false
+	hasRedWhen := false
+	var symbolVal, redWhenVal string
+
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if trimmed == "SCHEMA: v2" {
+			hasSchemaV2 = true
+		} else if strings.HasPrefix(trimmed, "SYMBOL:") {
+			hasSymbol = true
+			symbolVal = strings.TrimSpace(strings.TrimPrefix(trimmed, "SYMBOL:"))
+		} else if strings.HasPrefix(trimmed, "RED-WHEN:") {
+			hasRedWhen = true
+			redWhenVal = strings.TrimSpace(strings.TrimPrefix(trimmed, "RED-WHEN:"))
+		}
+	}
+
+	if !hasSchemaV2 {
+		return fmt.Errorf("cutter lint: card missing required SCHEMA: v2 declaration")
+	}
+	if !hasSymbol || symbolVal == "" {
+		return fmt.Errorf("cutter lint: card missing required SYMBOL: declaration (every v2 card must declare the runtime entrypoint or symbol)")
+	}
+	if !hasRedWhen || redWhenVal == "" {
+		return fmt.Errorf("cutter lint: card missing required RED-WHEN: declaration (every v2 card must declare the falsifiable condition that makes the test red)")
+	}
+	return nil
 }
 
 // ResultTemplateV2 returns the fill-in skeleton for a kind (A7).

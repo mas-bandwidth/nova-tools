@@ -77,6 +77,8 @@ type CutKindInput struct {
 	FailingOutput string // inlined failing test output (A1)
 	PreflightCmd  string // preflight command line (A3)
 	Attempt       int    // attempt number (default: 1)
+	Symbol        string // runtime entrypoint, type, or function symbol exercised (A10)
+	RedWhen       string // falsifiable condition / failure mode that makes test red (A10)
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -209,6 +211,14 @@ func cutKindProblem(in CutKindInput) string {
 		return "--out is required (pass the directory the card is written into, usually <queue>/pending)"
 	case strings.TrimSpace(in.DiffFile) != "" && strings.TrimSpace(in.PriorDiff) != "":
 		return "conflicting diff inputs: --diff-file and --prior-diff cannot both be specified"
+	}
+	if in.V2 {
+		if strings.TrimSpace(in.Symbol) == "" {
+			return "--symbol is required for a v2 card; every card must declare the runtime symbol or entrypoint (pass --symbol <name>)"
+		}
+		if strings.TrimSpace(in.RedWhen) == "" {
+			return "--red-when is required for a v2 card; every card must declare the falsifiable condition that makes the test red (pass --red-when <condition>)"
+		}
 	}
 	switch in.Kind {
 	case "read":
@@ -357,6 +367,8 @@ func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diff
 			Remains:       in.Remains,
 			Applied:       in.Applied,
 			Attempt:       in.Attempt,
+			Symbol:        in.Symbol,
+			RedWhen:       in.RedWhen,
 		})
 		if err == nil {
 			return card
