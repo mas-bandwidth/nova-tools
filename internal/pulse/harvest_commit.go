@@ -33,12 +33,13 @@ const MaxChangedFileBytes = 1048576
 const MaxReportFoldBytes = 1500
 
 var (
-	reDoneVerdict = regexp.MustCompile(`^DONE\b`)
-	reScratchDrop = regexp.MustCompile(`(^|/)notes\.txt$|^notes/|^\.nova-sandbox-tmp/|\.(class|o|obj|pyc|exe)$|(^|/)a\.out$`)
-	reBaseSHA     = regexp.MustCompile(`\bsha=([0-9a-f]{7,40})\b`)
-	reRecutLabel  = regexp.MustCompile(`^recut-([a-zA-Z0-9_-]+)-([0-9]+)-.*`)
-	rePriorLine   = regexp.MustCompile(`(?i)^prior[: ]`)
-	reClaimLine   = regexp.MustCompile(`(?i)^claim[: ]`)
+	reDoneVerdict       = regexp.MustCompile(`^DONE\b`)
+	reFindingRedVerdict = regexp.MustCompile(`^FINDING-RED\b`)
+	reScratchDrop       = regexp.MustCompile(`(^|/)notes\.txt$|^notes/|^\.nova-sandbox-tmp/|\.(class|o|obj|pyc|exe)$|(^|/)a\.out$`)
+	reBaseSHA           = regexp.MustCompile(`\bsha=([0-9a-f]{7,40})\b`)
+	reRecutLabel        = regexp.MustCompile(`^recut-([a-zA-Z0-9_-]+)-([0-9]+)-.*`)
+	rePriorLine         = regexp.MustCompile(`(?i)^prior[: ]`)
+	reClaimLine         = regexp.MustCompile(`(?i)^claim[: ]`)
 )
 
 var draftOnlyPrefixes = []string{
@@ -139,6 +140,15 @@ func IsDoneLine(line string) bool {
 	return reDoneVerdict.MatchString(strings.TrimSpace(line))
 }
 
+// harvestableVerdict is a RESULT line 2 the commit step rebases and harvests.
+// DONE is a finished card. FINDING-RED is a finished card whose verdict is the
+// finding (#2648): it rebases the same way, and the PR body is the RESULT, so
+// the verdict is carried there. DONEish and ABSTAIN are neither.
+func harvestableVerdict(line string) bool {
+	s := strings.TrimSpace(line)
+	return reDoneVerdict.MatchString(s) || reFindingRedVerdict.MatchString(s)
+}
+
 // DiscoverCommitJobs finds all job directories with a RESULT.md under root.
 func DiscoverCommitJobs(root string) []string {
 	var jobs []string
@@ -211,7 +221,7 @@ func CommitStep(in CommitStepInput) ([]string, error) {
 }
 
 // CommitJob executes the harvest commit step for a single job directory.
-// It verifies RESULT.md line 2 matches prefix 'DONE', verifies the git repository,
+// It verifies RESULT.md line 2 is DONE or FINDING-RED, verifies the git repository,
 // refuses changed files > 1 MB, moves card scratch aside, checks out the declared branch,
 // commits with line 1 of RESULT.md as message, drops scratch files added in base..HEAD,
 // rebases onto moved target if needed, folds REPORT.md up to 1500 bytes into RESULT.md,
@@ -286,7 +296,7 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 
 	line1 := strings.TrimSpace(firstNonEmpty(resLines))
 	line2 := strings.TrimSpace(resLines[1])
-	if !IsDoneLine(line2) {
+	if !harvestableVerdict(line2) {
 		emit(fmt.Sprintf("SKIP %s reason=not-done line2=%q", label, line2))
 		return lines, nil
 	}
@@ -513,7 +523,10 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 		if s, _ := runner.Run(repoDir, "status", "--short"); strings.TrimSpace(s) == "" {
 			mm2 := resolveTargetRemote(repoDir, in.MirrorDir, rr2)
 			if !branchExistsInRemote(repoDir, mm2, declaredBranch, runner) {
-				if _, err := runner.Run(repoDir, "fetch", "-q", mm2, "refs/heads/"+base); err == nil {
+				// The mirror's refs are the pass's earlier refresh. Dev moves
+				// during the run, so the rebase fetches the remote itself, now.
+				live := liveBaseRemote(repoDir, in.MirrorDir, rr2, runner)
+				if _, err := runner.Run(repoDir, "fetch", "-q", live, "refs/heads/"+base); err == nil {
 					if _, err := runner.Run(repoDir, "merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD"); err != nil {
 						// target moved!
 						if _, err := runner.Run(repoDir, "-c", "user.name="+user, "-c", "user.email="+email, "rebase", "-q", "FETCH_HEAD"); err == nil {
@@ -773,6 +786,33 @@ func isScratchFile(p string) bool {
 		}
 	}
 	return false
+}
+
+// liveBaseRemote is the URL of the base ref at rebase time. A mirror directory
+// refreshed earlier in the pass is not that URL: its refs/heads stay where the
+// refresh left them while dev moves. The mirror's origin is the remote. With
+// no mirror, the job clone's origin is that remote.
+func liveBaseRemote(repoDir, mirrorDir, repoName string, runner GitRunner) string {
+	if mirrorDir != "" {
+		mPath := filepath.Join(mirrorDir, repoName+".git")
+		if fi, err := os.Stat(mPath); err == nil && fi.IsDir() {
+			if u := originURL(mPath, runner); u != "" {
+				return u
+			}
+		}
+	}
+	if u := originURL(repoDir, runner); u != "" {
+		return u
+	}
+	return "origin"
+}
+
+func originURL(dir string, runner GitRunner) string {
+	out, err := runner.Run(dir, "remote", "get-url", "origin")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 func resolveTargetRemote(repoDir, mirrorDir, repoName string) string {
