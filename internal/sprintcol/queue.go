@@ -1,13 +1,15 @@
 // Package sprintcol is one column of the unified sprint table (nova-tools #2682).
 //
 // The table ticks once a second, and a tick is a store read. This package is
-// the queue column only: the length of the dealer's stream q:<friend>. It is
-// not the renderer (#2681) and it does not poll GitHub. An empty stream is
-// zero. A missing store is a refusal. Neither is a reason to list pull requests.
+// the queue column only: how many tasks the dealer currently has on
+// q:<friend>:front and q:<friend> (nova-tools #2677). It is not the renderer
+// (#2681) and it does not poll GitHub. An empty queue is zero. A missing
+// store is a refusal. Neither is a reason to list pull requests.
 package sprintcol
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -17,22 +19,28 @@ import (
 const (
 	// Name is the column this package renders.
 	Name = "queue"
-	// QueuePrefix is the dealer's stream. The key is q:<friend>.
+	// QueuePrefix is the dealer's stream prefix. The bulk key is q:<friend>.
 	QueuePrefix = "q:"
+	// FrontSuffix is the priority stream beside the bulk one: q:<friend>:front.
+	FrontSuffix = ":front"
+	// FieldTask is the dealer field that carries the task id. An entry without
+	// one is not a queued task.
+	FieldTask = "task"
 )
 
-// Cell is one friend's queue column. N is the stream length. Zero is an
-// empty queue, not a guess, and not a GitHub result.
+// Cell is one friend's queue column. N is the live queue: distinct task ids
+// across the front stream and the bulk stream. Zero is an empty queue, not a
+// guess, and not a GitHub result.
 type Cell struct {
 	Column  string
 	Subject string
 	N       int64
 }
 
-// Store is the fixture or the fleet Redis. XLen is the length of one stream:
-// zero when the key is absent, an error when the key is some other type.
+// Store is the fixture or the fleet Redis. XRange reads one stream. A missing
+// stream is empty. A key of some other type is an error.
 type Store interface {
-	XLen(ctx context.Context, stream string) (int64, error)
+	XRange(ctx context.Context, stream, start, stop string) ([]redis.XMessage, error)
 }
 
 // GitHub is the poll this column used to be: a list of open pull requests.
@@ -54,9 +62,11 @@ type Queue struct{}
 // Name is the column name.
 func (Queue) Name() string { return Name }
 
-// Render reads q:<friend> with one XLEN. gh is not called. A friend name that
+// Render counts the live queue on q:<friend>:front and q:<friend>. A task id
+// is kept once, the front stream first, so a later copy does not add another.
+// An entry with no task id is skipped. gh is not called. A friend name that
 // is not one token is refused before the store, so a colon cannot select a
-// different key.
+// different key. The count is not XLEN of either stream.
 func (Queue) Render(ctx context.Context, store Store, gh GitHub, friend string) (Cell, error) {
 	if ctx == nil {
 		return Cell{}, fmt.Errorf("queue column needs a context; it does not call GitHub")
@@ -69,18 +79,72 @@ func (Queue) Render(ctx context.Context, store Store, gh GitHub, friend string) 
 	}
 	// gh stays unused on purpose. Calling it would make the one-second tick a poll.
 	_ = gh
-	n, err := store.XLen(ctx, QueuePrefix+friend)
+	n, err := countLive(ctx, store, friend)
 	if err != nil {
-		return Cell{}, fmt.Errorf("xlen q:%s: %w", friend, err)
-	}
-	if n < 0 {
-		return Cell{}, fmt.Errorf("xlen q:%s returned %d", friend, n)
+		return Cell{}, err
 	}
 	return Cell{Column: Name, Subject: friend, N: n}, nil
 }
 
+// queueKeys are the two streams the dealer writes for this friend: the
+// priority stream, then the bulk stream.
+func queueKeys(friend string) (front, bulk string) {
+	return QueuePrefix + friend + FrontSuffix, QueuePrefix + friend
+}
+
+// countLive is the column #2677 specifies. The front stream is read first.
+// A task id already seen is not counted again. An entry with no task id is
+// not a dealt task. A missing stream is empty, not an error, and not a reason
+// to read the other stream's raw length.
+func countLive(ctx context.Context, store Store, friend string) (int64, error) {
+	front, bulk := queueKeys(friend)
+	seen := map[string]struct{}{}
+	var n int64
+	for _, stream := range []string{front, bulk} {
+		msgs, err := store.XRange(ctx, stream, "-", "+")
+		if err != nil {
+			if errors.Is(err, redis.Nil) {
+				continue
+			}
+			return 0, fmt.Errorf("read %s: %w", stream, err)
+		}
+		for _, m := range msgs {
+			id := taskID(valueOf(m.Values, FieldTask))
+			if id == "" {
+				continue
+			}
+			if _, ok := seen[id]; ok {
+				continue
+			}
+			seen[id] = struct{}{}
+			n++
+		}
+	}
+	return n, nil
+}
+
+func valueOf(values map[string]any, field string) any {
+	if values == nil {
+		return nil
+	}
+	return values[field]
+}
+
+func taskID(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(t)
+	case []byte:
+		return strings.TrimSpace(string(t))
+	default:
+		return strings.TrimSpace(fmt.Sprint(t))
+	}
+}
+
 // checkFriend accepts one token: letters, digits, hyphen, underscore.
-// Anything else would change which key XLEN reads.
+// Anything else would change which keys are read.
 func checkFriend(name string) error {
 	if name == "" {
 		return fmt.Errorf("friend name is empty; the queue key is q:<friend>")
@@ -126,12 +190,19 @@ func (r *Redis) Close() error {
 	return r.rdb.Close()
 }
 
-// XLen is one XLEN. A missing stream is zero.
-func (r *Redis) XLen(ctx context.Context, stream string) (int64, error) {
+// XRange is one XRANGE. A missing stream is empty.
+func (r *Redis) XRange(ctx context.Context, stream, start, stop string) ([]redis.XMessage, error) {
 	if r == nil || r.rdb == nil {
-		return 0, fmt.Errorf("store is not open")
+		return nil, fmt.Errorf("store is not open")
 	}
-	return r.rdb.XLen(ctx, stream).Result()
+	msgs, err := r.rdb.XRange(ctx, stream, start, stop).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return msgs, nil
 }
 
 var (
