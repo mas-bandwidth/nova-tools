@@ -2664,6 +2664,7 @@ files and a cached `gh` step, at most `--max` lines per capped kind (default
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
@@ -2672,6 +2673,13 @@ STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
 ```
+
+`FAILURES` splits attempt results. `gateway` is an attempt that ended with no
+model turn: a provider gateway 5xx, or no tokens and no recorded error on an
+attempt that still failed. That attempt does not increment `card_fail`.
+`card_fail` is the card's own verdict (abstain, blocked) and every other failed
+attempt. `QUEUE failed=` is still the count of cards in the failed directory,
+not this split. The same two fields are on `status --oneline`.
 
 `WIDTH` prints one line per bench in `--roots` (running jobs, slots, load and
 headroom from each bench's slot files); `--roots` is the scope — a bench or
@@ -2964,7 +2972,7 @@ nova-swarm cost     --pool <dir> [--max <n>]                                    
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
-nova-swarm lint     --card <file> [--typed] [--trust <file>] [--max <n>] | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
+nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
 ```
 
 ### The card lint
@@ -2978,8 +2986,9 @@ header tokens of `docs/SPEC-TOOLWORK.md` §5 rule 1.
 | --- | --- |
 | `--card <file>` | the card to read. Required unless `--rules` is given |
 | `--rules` | print `LINT RULE <check> remedy=<what it wants>` for every check and exit 0. It takes no card, because the question is asked before there is one, and it is the one listing a bench with a clone months behind its binary can still read (#1464) |
-| `--typed` | apply the typed-header tokens to a card that declares **no** typed line at all. Without it a card with no header is left to the older rules, which is what every card written before §5 is |
+| `--typed` | apply the typed-header tokens to a card that declares **no** typed line at all. Without it a card with no header is left to the older rules, which is what every card written before §5 is. Under `--typed` the card also carries `DEPENDS-ON: <card-id>[, ...]` or `DEPENDS-ON: -` (#2636) |
 | `--trust <file>` | a file of `TRUST kind=<kind> … state=<trial\|trusted\|paused>` lines in the shape `nova-pulse trust` prints; it is what the `paused` token reads. With no file there is no paused kind and the lint says nothing rather than guessing |
+| `--lineup <file>` | the lineup `depends-on` checks ids against, and only together with `--typed`. One card id per line, or a TSV whose id column is named `id`, `card`, `card-id` or `label` — otherwise the first column — and a header row that names `depends-on` is not a card. With no file an id is not called unknown |
 | `--max <n>` | bound the printed drifts, default 20, `0` for all. Over the bound it adds one `LINT MORE` line naming the remedy; it never changes the verdict |
 
 Output, and what a caller does with it:

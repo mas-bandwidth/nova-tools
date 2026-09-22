@@ -364,6 +364,7 @@ occupation beyond that offer.
 
 const pulseRead = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
 Do not run go build, go test or any toolchain; read and write only.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
@@ -373,6 +374,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseFix = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Make the fix; report the red line and then the green line, one row per item.
@@ -381,6 +383,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseText = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
 Do not run go build, go test or any toolchain; read and write only.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
@@ -390,6 +393,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseReplay = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Replay the rule; report the red line and then the green line, one row per item.
@@ -398,6 +402,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseDrift = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
 STEP 2. Close the drift; report the red line and then the green line, one row per item.
@@ -406,6 +411,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.
 
 const pulseTone = `RESULT <label> sha=<sha12>
 You are a worker. The deadline is the machinery's.
+You are unattended; never ask a question; decide and record the decision in RESULT.md.
 Do not run go build, go test or any toolchain; read and write only.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints a head.
