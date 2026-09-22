@@ -3,35 +3,30 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"strings"
 )
 
 // gitProcesses lists live git processes from /proc. A pid that disappears between
-// readdir and the read is skipped: it is not an owner. A pid that is still there
-// and whose comm, cmdline, or cwd cannot be read is an incomplete scan, not an
-// empty process, and the lock stays.
+// readdir and the read is skipped: it is not an owner. A zombie git has an empty
+// cmdline and is skipped the same way. A pid that is still live and whose metadata
+// cannot be read does not stop the scan; the lock stays only when the finished
+// scan has no known owner of this checkout.
 func gitProcesses() ([]gitProc, error) {
 	entries, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil, ownershipUnknownErr("proc unreadable")
 	}
-	var procs []gitProc
+	var views []procView
 	for _, e := range entries {
 		pid := e.Name()
 		if !allDigits(pid) {
 			continue
 		}
-		p, skip, perr := gitProcFromView(readProcView(pid))
-		if perr != nil {
-			return nil, perr
-		}
-		if skip {
-			continue
-		}
-		procs = append(procs, p)
+		views = append(views, readProcView(pid))
 	}
-	return procs, nil
+	return classifyViews(views)
 }
 
 func readProcView(pid string) procView {
@@ -52,6 +47,17 @@ func readProcView(pid string) procView {
 		return v
 	}
 	v.cmdline = raw
+	// An empty cmdline is how a zombie git looks. State Z or X is dead, and a
+	// pid that vanished while we were reading it is dead too. A live process
+	// with an empty cmdline is not: that stays unclassified unless its cwd places it.
+	if len(splitNUL(raw)) == 0 {
+		dead, derr := linuxProcDead(pid)
+		if os.IsNotExist(derr) {
+			v.dead = true
+		} else if derr == nil {
+			v.dead = dead
+		}
+	}
 	cwd, err := os.Readlink("/proc/" + pid + "/cwd")
 	if err != nil {
 		v.cwdErr = err
@@ -59,6 +65,21 @@ func readProcView(pid string) procView {
 	}
 	v.cwd = cwd
 	return v
+}
+
+// linuxProcDead reports whether pid is a zombie or already dead. ENOENT means
+// the pid vanished, which the caller treats as dead. Any other error means the
+// state could not be read; the caller must not invent "dead" from that.
+func linuxProcDead(pid string) (bool, error) {
+	raw, err := os.ReadFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return false, err
+	}
+	dead, ok := procStatDead(string(raw))
+	if !ok {
+		return false, fmt.Errorf("stat")
+	}
+	return dead, nil
 }
 
 func allDigits(s string) bool {

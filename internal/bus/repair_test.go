@@ -247,6 +247,79 @@ func TestStaleLockStaysWhenProcessInspectionIsDenied(t *testing.T) {
 	assertLockKept(t, lock, cleared, err)
 }
 
+// An empty cmdline is a dead git (a zombie) until the state says the process is
+// still live. A dead one must not block cleanup of an unused lock, and must not
+// hide a known owner later in the same scan. A live one that still cannot be
+// placed stays unknown, and that diagnostic stays one short line.
+func TestEmptyCmdlineDeadProcessDoesNotBlockLockCleanup(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	if dead, ok := procStatDead("12 (git) Z 1 1"); !ok || !dead {
+		t.Fatalf("zombie stat: dead=%v ok=%v", dead, ok)
+	}
+	if dead, ok := procStatDead("12 (git defunct) X 1"); !ok || !dead {
+		t.Fatalf("dead stat: dead=%v ok=%v", dead, ok)
+	}
+	if dead, ok := procStatDead("12 (git) S 1 1"); !ok || dead {
+		t.Fatalf("sleeping stat was dead: dead=%v ok=%v", dead, ok)
+	}
+
+	_, skip, err := gitProcFromView(procView{comm: "git\n", dead: true})
+	if err != nil || !skip {
+		t.Fatalf("dead empty cmdline: skip=%v err=%v, want skipped and no error", skip, err)
+	}
+
+	dir, lock := oldIndexLock(t)
+	ownerCmd := []byte("git\x00-C\x00" + dir + "\x00status")
+	procs, err := classifyViews([]procView{
+		{comm: "git\n"},
+		{comm: "git\n", cmdline: ownerCmd, cwd: dir},
+	})
+	if len(procs) != 1 {
+		t.Fatalf("empty cmdline hid the later owner: procs=%+v err=%v", procs, err)
+	}
+	owns, oerr := gitOwnsCheckoutScan(dir, func() ([]gitProc, error) {
+		return procs, err
+	})
+	if oerr != nil || !owns {
+		t.Fatalf("known owner was not recognized behind an empty cmdline: owns=%v err=%v", owns, oerr)
+	}
+	kept, kerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
+		return procs, err
+	})
+	if kerr != nil || kept {
+		t.Fatalf("owner's lock: cleared=%v err=%v, want kept", kept, kerr)
+	}
+	if _, statErr := os.Lstat(lock); statErr != nil {
+		t.Fatalf("owner's lock is gone: %v", statErr)
+	}
+
+	unused, unusedLock := oldIndexLock(t)
+	deadProcs, deadErr := classifyViews([]procView{{comm: "git\n", dead: true}})
+	if deadErr != nil || len(deadProcs) != 0 {
+		t.Fatalf("dead cmdline stayed in the scan: procs=%+v err=%v", deadProcs, deadErr)
+	}
+	cleared, cerr := clearStaleIndexLock(unused, time.Now(), func() ([]gitProc, error) {
+		return deadProcs, deadErr
+	})
+	if cerr != nil || !cleared {
+		t.Fatalf("unused lock blocked by a dead cmdline: cleared=%v err=%v", cleared, cerr)
+	}
+	if _, statErr := os.Lstat(unusedLock); !os.IsNotExist(statErr) {
+		t.Fatalf("unused lock still present: %v", statErr)
+	}
+
+	live, liveLock := oldIndexLock(t)
+	_, liveErr := classifyViews([]procView{{comm: "git\n"}})
+	if liveErr == nil || strings.Contains(liveErr.Error(), "\n") || len(liveErr.Error()) > ownershipDiagCap || !strings.HasPrefix(liveErr.Error(), ownershipUnknown) {
+		t.Fatalf("live empty cmdline diagnostic is not bounded: %q", liveErr)
+	}
+	cleared, cerr = clearStaleIndexLock(live, time.Now(), func() ([]gitProc, error) {
+		return nil, liveErr
+	})
+	assertLockKept(t, liveLock, cleared, cerr)
+}
+
 func TestProcOwnsRequiresAPathBoundary(t *testing.T) {
 	names := []string{"/bus"}
 	if !procOwns(names, gitProc{command: "git -C /bus status"}) {

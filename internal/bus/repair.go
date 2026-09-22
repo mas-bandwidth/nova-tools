@@ -450,6 +450,8 @@ func procReadFailed(err error) (vanished bool, unknown error) {
 }
 
 // procView is one process's metadata as a scanner managed to read it, errors included.
+// dead is a zombie or an otherwise exited process: an empty cmdline on a dead
+// process is not a live git whose metadata could not be read.
 type procView struct {
 	commErr error
 	comm    string
@@ -457,11 +459,30 @@ type procView struct {
 	cmdline []byte
 	cwdErr  error
 	cwd     string
+	dead    bool
+}
+
+// procStatDead reads the state character out of /proc/pid/stat. Z and X are not
+// live processes. ok is false when the line is not a stat line.
+func procStatDead(stat string) (dead bool, ok bool) {
+	i := strings.LastIndex(stat, ")")
+	if i < 0 || i+2 >= len(stat) || stat[i+1] != ' ' {
+		return false, false
+	}
+	switch stat[i+2] {
+	case 'Z', 'X':
+		return true, true
+	default:
+		return false, true
+	}
 }
 
 // gitProcFromView classifies one process. skip means it is not a live git this
-// scan has to place (it vanished, or it is not git). An error means the process
-// is still present and its metadata could not be read, so ownership is unknown.
+// scan has to place (it vanished, it is dead, or it is not git). An error means
+// the process is still live and its metadata could not be read, so ownership of
+// that one process is unknown. The caller still classifies the rest of the scan:
+// one empty cmdline must not hide a later owner, and must not by itself answer
+// "nobody owns this checkout".
 func gitProcFromView(v procView) (gitProc, bool, error) {
 	if v.commErr != nil {
 		vanished, uerr := procReadFailed(v.commErr)
@@ -486,10 +507,11 @@ func gitProcFromView(v procView) (gitProc, bool, error) {
 		}
 	}
 	args := splitNUL(v.cmdline)
-	p := gitProc{command: strings.Join(args, " "), args: args}
-	if len(args) == 0 {
-		return gitProc{}, false, ownershipUnknownErr("cmdline empty")
+	// A dead git's cmdline is empty. That is not an unreadable live process.
+	if v.cmdErr == nil && len(args) == 0 && v.dead {
+		return gitProc{}, true, nil
 	}
+	p := gitProc{command: strings.Join(args, " "), args: args}
 	if v.cwdErr != nil {
 		vanished, uerr := procReadFailed(v.cwdErr)
 		if vanished {
@@ -499,6 +521,9 @@ func gitProcFromView(v procView) (gitProc, bool, error) {
 			if commandLocatesAbsolutely(p) {
 				return p, false, nil
 			}
+			if len(args) == 0 {
+				return gitProc{}, false, ownershipUnknownErr("cmdline empty")
+			}
 			return gitProc{}, false, uerr
 		}
 	}
@@ -506,11 +531,36 @@ func gitProcFromView(v procView) (gitProc, bool, error) {
 		if commandLocatesAbsolutely(p) {
 			return p, false, nil
 		}
+		if len(args) == 0 {
+			return gitProc{}, false, ownershipUnknownErr("cmdline empty")
+		}
 		return gitProc{}, false, ownershipUnknownErr("cwd unreadable")
 	}
 	p.cwd = v.cwd
 	p.cwdKnown = true
 	return p, false, nil
+}
+
+// classifyViews finishes the scan. A process that cannot be classified is remembered
+// and the rest are still classified, so a known owner later in the list is not dropped
+// on the floor because an earlier cmdline was empty.
+func classifyViews(views []procView) ([]gitProc, error) {
+	var procs []gitProc
+	var unknown error
+	for _, v := range views {
+		p, skip, err := gitProcFromView(v)
+		if err != nil {
+			if unknown == nil {
+				unknown = err
+			}
+			continue
+		}
+		if skip {
+			continue
+		}
+		procs = append(procs, p)
+	}
+	return procs, unknown
 }
 
 func splitNUL(b []byte) []string {
@@ -547,14 +597,16 @@ func gitOwnsCheckoutScan(dir string, scan func() ([]gitProc, error)) (bool, erro
 	if err != nil {
 		return false, err
 	}
-	procs, err := scan()
-	if err != nil {
-		return false, err
-	}
+	procs, scanErr := scan()
 	for _, p := range procs {
 		if procOwns(names, p) {
+			// A known owner answers the question. An unclassified process elsewhere
+			// in the same scan does not un-answer it, and does not hide it.
 			return true, nil
 		}
+	}
+	if scanErr != nil {
+		return false, scanErr
 	}
 	for _, p := range procs {
 		if !p.cwdKnown && !commandLocatesAbsolutely(p) {
