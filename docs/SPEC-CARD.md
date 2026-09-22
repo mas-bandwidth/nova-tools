@@ -14,6 +14,10 @@ marked *Amended for HOLD 5783178167* — (a) and (b) clause 3, (c) clause 6, (d)
 clause 9, and (f) the three former Open items: bare-directory PATHS (clause 4), lowercase keys
 (clause 2) and the COMMIT RULE representation (clause 7). Open 1 is the only item left open.
 
+**Clause 10 added at #2636** (stacked on #2625 at `3ae8e1db`): every card declares `DEPENDS-ON:`,
+and the dealer's READY rule is normative. The edits it makes to clauses 2, 8 and 9 and to the
+summary are each marked *Amended at #2636*.
+
 **Roles.** Stella: contract review. Emma: cutter implementation coordination. Rowan: adoption.
 
 **What this governs.** A card is the whole of what a worker is handed. For a card that declares
@@ -88,6 +92,12 @@ fires on the COMMIT RULE sentence every card carries on purpose: with only three
 exempting only the two keys the launchers read keeps one canonical spelling per key, and refusing
 by name while reading on means a stray casing never truncates the header. On the 59: 0 change
 (no other lowercase key in any block).
+*Amended at #2636:* `DEPENDS-ON:` (clause 10) is a block key under every rule above: canonical
+uppercase, hyphenated as `DONE-WHEN:` and `NO-SUBAGENTS:` are (so #2607's one-word key shape and
+`headerKeyRE`, `lintheader.go:95`, already read it), once, inside the block. A `DEPENDS-ON:` line
+below the block is stranded and refused by name; one inside a fenced block is quoted evidence and
+declares nothing. On the 59: each block grows by one line and still ends by line 26, inside
+reader 5's 40-line window.
 
 ## 3. Kinds
 
@@ -273,7 +283,8 @@ directory, clause 4).
 
 Every reader of a card's structure calls the same versioned parser: the cutter, `nova-swarm lint`,
 harvest's PATHS enforcement, batch admission's card-shape check, the launcher scripts'
-base-pin read, and `bin/sprint-stage`'s re-pin and insertion. Where a reader cannot call the parser (a shell script), the contract states the
+base-pin read, `bin/sprint-stage`'s re-pin and insertion, and the dealer's READY test
+(clause 10). Where a reader cannot call the parser (a shell script), the contract states the
 exact literal shape it depends on and a class test asserts the parser emits it. A reader not on
 this list is a defect in the list, not an exemption. Every reader returns the same structured
 diagnostic (rule, field/line, remedy). METHODS/help/spec output derives from its rule definitions
@@ -287,6 +298,12 @@ where appropriate. No separate regex repair in each producer/consumer.
 | 4 | admission: `swarm.cardShapeFailure` | `internal/swarm/batch.go:2116` | for `opencode/` and `deepseek/` models: a line beginning `STEP 1` in the **first 15 lines** (`hasStep1`, `:2173`), no all-capitals first line, no "launcher" in lines 1-3 |
 | 5 | launchers | `rowan-tools/bin/launchers/*-native-{darwin,bench}.sh:30-31` (70 scripts carry the read at `ff32176`) | lowercase `base-repo:` / `base-sha:` in the **first 40 lines** |
 | 6 | stage: `bin/sprint-stage` | lines 24, 29, 37 | `^BASE: `, `^base-sha: `; inserts DONE-WHEN/NO-SUBAGENTS at the anchor `^RUN: ` → `^TEST: ` → `^KIND: ` |
+| 7 | dealer: `sprint.Ready` + `deal.Plan` | #2624 at `1e5e0227`, `internal/sprint/refill.go:75`, `internal/deal/deal.go:290` | a task's `depends_on` and `paths`, comma lists in the Redis task hash (`internal/sprint/redis.go:168-169`), written from the `--depends-on`/`--paths` arguments (`cmd/nova-pulse/sprint.go:210`), not from a card |
+
+Clause 10's key has three of these readers. The cutter (reader 1) writes it from the lineup's
+`depends-on` column or the nova-work sexp edges; the lint (reader 2) refuses a card without it,
+naming the key, and refuses a self or unknown entry; the dealer (reader 7) reads it, with PATHS,
+as the parser returns them from the card. Readers 3-6 do not read it.
 
 The literal shape reader 5 depends on: `base-repo: <url>` and `base-sha: <40 hex>`, lowercase, in
 the first 40 lines, both or neither (clause 2 puts them in the block, which ends well before
@@ -311,6 +328,8 @@ no-separate-regex sentences are kept.
 *Amended for HOLD 5783178167 (d, former Open 4):* `bin/sprint-stage` is promoted from a listed
 candidate to the sixth normative reader, with idempotent re-pin and the literal-shape class
 checks required before adoption.
+*Amended at #2636:* the dealer is the seventh reader, and the paragraph after the table names
+which readers write, refuse and read `DEPENDS-ON:`.
 *Why reader 4 matters most:* it is in no earlier draft of #2608. The 59 write steps as
 `## STEP 1.` around line 30, so admission refuses every one of them on every opencode/deepseek
 route (the dogfood saw `ADMIT REFUSED … card-shape`), and a v2 card with no numbered STEPs, which
@@ -330,23 +349,29 @@ if semantic requirements were removed.
 The contract is accepted when, in one run at the pinned head:
 
 1. **The migrated 59 exit 0 at both entry points**, and the migration is mechanical and
-   reviewable: PATHS commas (59), TEST (14), KIND (1), a `## Run` section (59), and one
-   hand-rewritten card (`01c`). Identity and evidence are untouched: line 1, `base-sha`, SYMBOL,
+   reviewable: PATHS commas (59), TEST (14), KIND (1), a `## Run` section (59), `DEPENDS-ON`
+   (59, clause 10), and one hand-rewritten card (`01c`). Identity and evidence are untouched: line 1, `base-sha`, SYMBOL,
    RED-WHEN, DONE-WHEN and the inlined findings. Measured today under the contract simulated:
    **57/59**; the two that do not pass are `01c` (clause 6: RUN is prose) and `tools-20`
    (clause 7: refused for a string it quotes), named fixes, not migration failures.
+   *Amended at #2636:* the 57/59 was measured before clause 10. Under it every one of the 35
+   named dependencies is written as a card id or a reference (clause 10), so the expected count
+   stays 57/59, provided the lineup carries the dogfood conform card; without it the ten cards
+   that name it are refused as unknown and the count is 47/59 (arithmetic, not measured).
 2. **The cutter re-emits `card-tools-03-stale-base-false-positive` byte-for-byte from structured
    input** — Stella's choice (5783178167). It is a positive roundtrip: the expected bytes are
    fixture P, `accept.md`, which is that card migrated under this contract, so the one file is
    both what the cutter must render and what both entry points must accept; any byte of
    difference fails it.
-3. **The two fixtures below pass as a class test in CI**, not only on a bench.
+3. **The three fixtures below pass as a class test in CI**, not only on a bench.
 
 *Changed from 2fb4393:* "replay the exact 59 owned card inputs through cutter and consumer,
 preserving their identity/evidence" is replaced by items 1-3 (Rowan's replacement); the rest is
 kept.
 *Amended for HOLD 5783178167 (e, former Open 5):* item 2 names the card and binds it to
 `accept.md`.
+*Amended at #2636:* item 1 gains `DEPENDS-ON` and the count it moves; item 3 binds the third
+fixture, D.
 *Why:* the replay is not runnable. The 59 carry 24 distinct header keys; `RenderCardV2` at
 `9ee8155` can emit 8 (`SCHEMA`, `ATTEMPT`, `REPO`, `BASE`, `PATHS`, `TEST`, `SYMBOL`,
 `RED-WHEN`), writes `BASE_SHA:` where the launchers read `base-sha:`, and has no input field for
@@ -355,7 +380,7 @@ kept.
 
 ### The fixtures
 
-Both live at `cmd/nova-pulse/testdata/card-contract-2608/` and are called at both entry points:
+All three live at `cmd/nova-pulse/testdata/card-contract-2608/` and are called at both entry points:
 the producer's validator (`pulse.ValidateCardV2` + `OperativeRegion`) and the consumer's lint
 (`swarm.LintCardHeader` + `lintCard`, on the command line `nova-swarm lint --card <file> --typed`).
 The class test calls the functions; a file-taking producer command (`nova-pulse cut --validate
@@ -364,8 +389,9 @@ its own output, so the CLI spelling for the producer is Emma's to name.
 
 **P — `accept.md`** (also the clause 9 item 2 roundtrip target).
 `card-tools-03-stale-base-false-positive.md` from the 59, migrated and
-otherwise byte-for-byte: PATHS with a comma (line 11, and the RESULT template's `PATHS` line), and
-a `## Run` section whose command equals the `RUN:` header key. Both entry points **exit 0 and
+otherwise byte-for-byte: PATHS with a comma (line 11, and the RESULT template's `PATHS` line),
+`DEPENDS-ON: -` on line 12 (ORDER.tsv gives `tools-03` `-`), and a `## Run` section whose
+command equals the `RUN:` header key. Both entry points **exit 0 and
 print no diagnostic**. One property per line:
 
 - the header block is contiguous from line 2 and nothing is stranded (reader 2);
@@ -376,7 +402,8 @@ print no diagnostic**. One property per line:
 - TEST is one package and one Go test name (clause 5);
 - exactly one `## Run` region, whose command equals the `RUN:` header key (clause 6);
 - `SCHEMA: v2` is read from line 3 and the RESULT template's copy is not a duplicate (clauses 1, 2);
-- it is the positive control for N: the same card, one character different.
+- `DEPENDS-ON: -` is on line 12, inside the block, standing alone (clause 10);
+- it is the positive control for N and D: the same card, one character or one line different.
 
 **N — `refuse-paths-space.md`.** P byte-for-byte with one edit: the comma on line 11 becomes a
 space. Both entry points **exit 2** and print the same line, differing only in the `card=`/file
@@ -391,10 +418,108 @@ fields — compared as one string after the prefix is stripped. Not "both refuse
 the same reason, in the same words, at the same line. This rule is chosen because both sides are
 silently clean on it today.
 
+**D — `refuse-depends-on-missing.md`.** P byte-for-byte with one edit: line 12, `DEPENDS-ON: -`,
+is removed (so D is byte-for-byte the P of #2625 at `3ae8e1db`). Both entry points **exit 2** and
+print the same line, differing only in the `card=`/file prefix:
+
+```
+depends-on-declared: 1: no DEPENDS-ON: line under the contract line: a v2 card declares what it waits for, or that it waits for nothing remedy=DEPENDS-ON: <card-id or owner/repo#n>[, ...], or DEPENDS-ON: - when the card waits for nothing
+```
+
+Line 1 follows the lint's convention for an absent key (`kind-declared` names line 1 for a card
+with no `KIND:`, `lintheader.go:245-246`). The assertion is N's: rule token, line, text and
+remedy, compared as one string after the prefix is stripped. This rule is chosen because both
+sides are silently clean on it today: neither the lint nor the producer knows the key.
+
 *Baseline, measured on `dev` at `1e1e5fb9` (2026-09-22):* `nova-swarm lint --card <f> --typed`
-exits 2 on **both** fixtures with the same eight drifts (`clone-step`, `steps-numbered`,
+exits 2 on **all three** fixtures with the same eight drifts (`clone-step`, `steps-numbered`,
 `scratch-absolute`, `result-last`, PATHS/TEST/SOURCE stranded below a block that ends at the
-lowercase `base-repo:` on line 9, `kind-declared` on `fix`). Nothing in the output tells P from N.
+lowercase `base-repo:` on line 9, `kind-declared` on `fix`); D's line numbers after line 11 are
+one lower. No line names `DEPENDS-ON`. Nothing in the output tells P from N, or P from D.
+
+## 10. DEPENDS-ON
+
+Every v2 card declares `DEPENDS-ON:` in its header block (clause 2). Its value is a
+comma-separated list of entries, or the single token `-`, which declares that the card waits for
+nothing. An entry is one of two forms:
+
+- a **card id** — the id the lineup names the card by, which is the id on the card's own line 1
+  (`tools-01-harvest-commit-core`; never the file name `card-tools-01-…` and never a short form
+  such as `tools-01`);
+- a **reference** — `<owner>/<repo>#<n>`, an issue or a PR on GitHub
+  (`mas-bandwidth/nova-tools#2550`; never `nova-tools #2550`, never a bare `#2550`).
+
+Entries are separated as clause 4 separates PATHS: by commas, never by whitespace. `-` stands
+alone: `-` beside an entry, an empty entry between commas and an entry listed twice are refused
+by name.
+
+A card without the key is refused by name, with a remedy naming the forms; absence never means
+`-`. A card naming its own id is refused. A card id that is not the id of a card in the lineup
+the card was cut from is refused as unknown, with the entry quoted; how the lint's command line
+is handed the lineup is Emma's to name, as clause 4 leaves the tree. The lint checks a
+reference's shape; the cutter resolves it and refuses one that names neither an issue nor a PR.
+Anything else — a policy gate such as `dogfood CONFORMS <verb>`, prose, a URL — is not an entry
+and is refused by name. A gate that work must wait for is cut as a card, and the waiting cards
+name that card's id. A cycle cannot be seen from one card: the cutter, which holds the whole
+lineup, refuses a lineup whose DEPENDS-ON edges form one, naming the cycle.
+
+The cutter writes the key from the lineup's `depends-on` column, or, for a card cut from the
+nova-work graph, from its edges in `docs/roadmaps/nova-work.sexp`, expanding a short form to the
+one lineup id it names and a `<repo> #<n>` note to its reference. A model never writes it, and
+the cutter never supplies `-` for a source row that names nothing: that is a cut error.
+
+**The dealer's rule is normative here.** A card is **READY** when (a) every DEPENDS-ON entry is
+**LANDED** — a card when it is merged into the card's target base (`REPO`/`BASE`), clause 7's
+Landed; a PR reference when the PR is merged; an issue reference when the issue is closed. OK,
+reviewed, verified or an open PR is not LANDED — and (b) its PATHS (clause 4) are disjoint from
+the PATHS of every card in flight, where in flight is handed out and neither LANDED nor closed.
+Disjointness is decided by the hygiene matching clause 4 reuses; `PATHS: none` is disjoint from
+every list. At every tick the dealer hands out the **highest-priority READY card**. Priority is
+the lineup's leverage tier, ties broken by the lineup's row order. A card that is not READY is
+passed over, not waited on: it keeps its place, is tested again at the next tick, and the dealer
+hands out the next READY card in priority order, so a serial head never blocks the queue. An
+entry that can no longer land — a PR closed without merging, a card closed unlanded — is
+reported by name at every tick, never silently passed over forever. The
+dealer reads DEPENDS-ON and PATHS as the shared parser returns them from the card (clause 8,
+reader 7); a task record's `depends_on` and `paths` are written from that parse, never retyped.
+
+The dealer's control: three cards with disjoint PATHS in priority order A, B, C, where B declares
+`DEPENDS-ON: A` and C declares `DEPENDS-ON: -`. The dealer hands out A, then C while A is in
+flight, then B only after A lands; while A is OK but unmerged, B is not handed out.
+
+*New at #2636:* not in `2fb4393`; clauses 2, 8 and 9 and the summary are amended to carry it.
+*Why:* Glenn, 2026-09-22 4:26 PM: "We will work on them in priority order *except* when we are
+going serial due to dependencies, then we will pick unrelated things that are next in priority
+order." Measured the same afternoon: `ORDER.tsv` (sprint-tools) carries depends-on for 35/59;
+0/59 card files carry a dependency key; the 598 schema cells of 2026-09-21 carried none, and the
+python/lua/squirrel legs duplicated work. The dealer at #2624 (`1e5e0227`) counts how many open
+tasks each one unblocks (`sprint.Ready`, `internal/sprint/refill.go:75-93`) but still puts a task
+whose dependency is open into the ready set, and nothing on its route tests PATHS against work in
+flight. LANDED and not OK because an OK card's branch is not in the base a dependent card is cut
+from: the dependent is cut against code that is not there, and its PR cannot merge. Disjoint
+PATHS because two cards editing one file in flight together make two PRs, and the second is a
+recut.
+*Amended at #2636, the coordinator's ruling (20:28Z):* references are an entry form, and the
+`dogfood CONFORMS` gates become one card, so no named dependency of the 59 is left undecided.
+*Why a closed PR is reported:* `rowan-tools #132`, named by 7 of the 59, was closed as superseded
+by #134-#138; #137 and #138 were then closed unmerged and replaced by #139 (merged 20:22Z). A
+card naming #138 would wait forever.
+*Effect on the 59:* all 59 gain the line, from `ORDER.tsv`: 24 `-` and 35 named, every one
+expressible:
+
+| source in `ORDER.tsv` | cards | written as |
+|---|---|---|
+| lineup cards only, by short form (16 distinct, `tools-01` … `tools-53a`) | 16 | the full lineup id, each resolving to exactly one card |
+| `dogfood CONFORMS <verb>` (`tools-10`, `26`-`31`, `33`-`35`; `tools-26` also `tools-01`) | 10 | `tools-54-dogfood-conform-matrix`, a card the lineup gains (the 60th; it fills the CONFORMS lines of `reports/dogfood-matrix-2026-09-22.md`, and must not name `tools-35`, whose card depends on it, or the cutter refuses the cycle) |
+| `rowan-tools #132` (`tools-38`-`44`; `38` also `tools-37`, `42` also `tools-17`) | 7 | `mas-bandwidth/rowan-tools#139`, the PR that merged the tree #132 described |
+| `nova-tools #2550` (`tools-50`, also `tools-24`, `tools-25`) | 1 | `mas-bandwidth/nova-tools#2550` (an issue: LANDED when closed) |
+| `nova-tools #2522` (`tools-52`) | 1 | `mas-bandwidth/nova-tools#2522` (a PR: LANDED when merged) |
+
+Expected (arithmetic, not measured): 57/59 accepted at both entry points, as before clause 10,
+once the lineup carries `tools-54`. At the first tick, on dependencies alone (PATHS not yet
+applied), **29/59** can be READY: the 24 `-` cards and the 5 whose only entry is
+`mas-bandwidth/rowan-tools#139`, merged (`tools-39`, `40`, `41`, `43`, `44`); `nova-tools#2550`
+is open and `nova-tools#2522` is unmerged.
 
 ---
 
@@ -409,6 +534,9 @@ lowercase `base-repo:` on line 9, `kind-declared` on `fix`). Nothing in the outp
 | clause 6 | 59 | a `## Run` section each; `01c` rewritten by hand |
 | clause 7 | 1 | `tools-20` stops being refused for text it quotes |
 | **net, measured (simulated)** | **57/59** | `01c` and `tools-20` are the two named fixes |
+| clause 10 | 59 | each gains `DEPENDS-ON:` from `ORDER.tsv`: 24 `-`, 35 named; 16 cards only, 10 the dogfood conform card `tools-54`, 7 `mas-bandwidth/rowan-tools#139`, 2 `mas-bandwidth/nova-tools#…` references |
+| **net with clause 10 (arithmetic)** | **57/59** | accepted, once the lineup carries `tools-54` (47/59 without it); not measured |
+| **READY at the first tick (arithmetic)** | **29/59** | the 24 `-` cards and the 5 waiting only on the merged `rowan-tools#139`; before PATHS disjointness |
 
 ## Open — not decided by this text
 
@@ -421,7 +549,9 @@ Each is a question the sources leave open or a place they conflict; none is sett
 
 Decided at the HOLD 5783178167 revision, and no longer open: 2 bare-directory PATHS (clause 4),
 3 lowercase keys (clause 2), 4 sprint-stage as the sixth reader (clause 8), 5 the round-tripped
-card (clause 9 item 2), and the COMMIT RULE representation (clause 7).
+card (clause 9 item 2), and the COMMIT RULE representation (clause 7). Decided at #2636: a
+dependency that is not a lineup card is a `<owner>/<repo>#<n>` reference or is cut as a card
+(clause 10).
 
 ## Lineage
 
@@ -444,3 +574,9 @@ card (clause 9 item 2), and the COMMIT RULE representation (clause 7).
 - rowan-fa780df52148 — Rowan's resolved rules on the bus (the adapter, `01c` only, the optional
   single-line echo, sprint-stage as reader 6), agreeing with Stella's comment; written into
   clauses 3, 6 and 8 at the revision after `c05fa17b`.
+- mas-bandwidth/nova-tools #2636 — clause 10, DEPENDS-ON on every card and the dealer's READY
+  rule, with fixture D; stacked on #2625 at `3ae8e1db`. Glenn, 2026-09-22 4:26 PM: "We will work
+  on them in priority order *except* when we are going serial due to dependencies, then we will
+  pick unrelated things that are next in priority order." Then: "Do all cards have dependency
+  information?" Measured: no (clause 10, *Why*). The coordinator's ruling at 20:28Z: references
+  are an entry form; the `dogfood CONFORMS` gates become one card.
