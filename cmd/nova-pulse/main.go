@@ -69,6 +69,8 @@ nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
+nova-pulse pitstop set   --state pause|resume [--except <verb>[,<verb>...]] [--store <host:port>] [--user <name>] [--password-env <NAME>] [--key <name>]
+nova-pulse pitstop check <verb> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--key <name>]
 nova-pulse version
 nova-pulse help
 
@@ -329,6 +331,21 @@ runners=<n> or WAKE FAIL <bench> <stage> <reason>. sleep refuses while any of
 the bench's runners is busy (SLEEP REFUSED <bench> busy=<n>) and otherwise sets
 idle sleep, printing SLEEP <bench> idle=<m>. Both take the benches as a
 repeatable --bench or as bare arguments.
+
+pitstop is the fleet stop (#2414, replacing bin/pitstop from #2022): one Redis SET
+keyed --key <name> (default pitstop) on the fleet store. set pause --except <verbs>
+DELs the key and SADDs the closed set of nova-pulse verbs (launch, harvest, fill, sweep,
+reap, cut) MINUS the --except list; set resume DELs the key. check <verb> SISMEMBERs
+the key and prints one PITSTOP CHECK line, exit 3 when paused and 0 when open -- so a
+bench-side launcher reads the exit code the way the bash script read STOP-*: a non-zero
+exit means "do not proceed", and a store it cannot reach is also 3 (never 0). The key
+is the only state: one DEL is one reset and one SADD is one pause, so a bench that races
+a set with a check reads either the old state or the new one, never a half-built one.
+
+example:
+  nova-pulse pitstop set --state pause --except harvest --store 100.115.99.19:6380
+  nova-pulse pitstop set --state resume --store 100.115.99.19:6380
+  nova-pulse pitstop check launch --store 100.115.99.19:6380
 `
 
 // refuse is what an unusable invocation costs: one line naming what was wrong and the door
@@ -404,6 +421,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "width":
 		fmt.Fprintf(stderr, "nova-pulse %s: not implemented in this card\n", cmd)
 		return 2
+	case "pitstop":
+		return cmdPitstop(rest, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "nova-pulse: unknown subcommand %q\n", cmd)
 	return 2
