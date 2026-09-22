@@ -256,6 +256,37 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 	}
 }
 
+// cut-accepts-kind-report: a report is a text kind, so a text template is cut, and
+// `text` still is. A nonsense kind on that same template is refused, not guessed.
+func TestCutAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
+	code, stdout, stderr, out, _ := runCut(t, map[string]string{"report": readTemplate, "text": readTemplate},
+		"mas-bandwidth/nova-tools\t1\treport\tTitle\treport\nmas-bandwidth/nova-tools\t2\ttext\tTitle\ttext\n")
+	if code != 0 {
+		t.Fatalf("report and text are kinds cut accepts: exit %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
+	}
+	if strings.Contains(stderr, "CUT REFUSED") {
+		t.Fatalf("cut refused a declared text kind: %s", stderr)
+	}
+	for _, name := range []string{"1.md", "2.md"} {
+		raw, err := os.ReadFile(filepath.Join(out, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "Do not run go build") {
+			t.Fatalf("%s is not a text card:\n%s", name, raw)
+		}
+	}
+
+	code, _, stderr, out, _ = runCut(t, map[string]string{"report": readTemplate},
+		"mas-bandwidth/nova-tools\t1\tnot-a-real-kind\tTitle\treport\n")
+	if code != 2 || !strings.Contains(stderr, "CUT REFUSED") {
+		t.Fatalf("a nonsense kind is refused: exit %d stderr=%q", code, stderr)
+	}
+	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+		t.Fatal("a nonsense kind wrote a card")
+	}
+}
+
 // cutModelByKind: model is decided by the cost table -- flash (read|text|replay) on
 // read/text/tone/replay, pro (code) on fix/drift -- never by kind alone.
 func TestCutModelByKind(t *testing.T) {
