@@ -2601,6 +2601,82 @@ directory and a liveness rule, and a lane clone is neither. Nor can a lane clone
 scratch is swept, by age or by name — it holds a branch, and a branch may be the only copy of
 somebody's work. That is why the rule is the narrowest one still worth having.
 
+### wait
+
+```
+nova-pulse wait --until <cond> [args...] [--every <d>] [--timeout <d>] [--bus <clone>] [--store <host:port>] [--store-user <name>] [--password-env <NAME>] [-- <cmd>...]
+```
+
+`wait` is the one waiter: poll until a condition holds, then act. It replaces
+`bin/wait-for` and the ad-hoc waiters typed into a tool shell — a dozen on
+2026-09-21, four of which broke on zsh word splitting, globs or `$(...)`
+quoting, and one of which silently never fired (#2546).
+
+Six conditions:
+
+| `--until` | holds when |
+| --- | --- |
+| `process-gone <pattern>` | no process the pattern names is running |
+| `file-has <path> <regex>` | a line of the file matches the regex |
+| `file-exists <path>` | the path is there — **an empty file counts** |
+| `pr-check <repo> <n> <state>` | the PR's checks are `green`, `red`, `pending` or `none`, or the PR itself is `merged` or `closed` (one `gh pr view` per poll) |
+| `redis-key <key> <value>` | the store's key carries the value; `*` asks only that the key exist (needs `--store`) |
+| `bus-note <id>` | somebody other than the sender has **replied** to the note (needs `--bus`) |
+
+`--every` and `--timeout` take a bare whole number of seconds — the shape
+`bin/wait-for --every 20` took — or a duration (`1s`, `500ms`, `2m`). They
+default to `20s` and `30m`. Exit **0** when the condition held, **2** on
+timeout and **2** on a refusal, with ONE receipt line either way: `WAIT HELD`
+on stdout, `WAIT TIMEOUT` on stderr, each carrying the condition, the spend,
+the poll count and the evidence — the matched line, the live process, the
+answering note, the value read.
+
+```
+WAIT HELD until=file-has args="./harvest.log LANDED #[0-9]+" spent=40s polls=3 evidence="LANDED #1234 head=5f544272a1b0"
+WAIT TIMEOUT until=pr-check args="mas-bandwidth/nova-tools 2546 green" timeout=30m spent=30m polls=91 last="state=OPEN checks=pending"
+```
+
+Everything after a bare `--` is a command run once the condition holds. Its
+argv is passed through untouched — no shell — and **its exit status becomes the
+verb's**: a harvest that failed must not read as a wait that succeeded.
+
+The arguments are parsed by hand rather than by Go's `flag`, because `--until`
+takes a condition *and its arguments* and `flag` stops at the first non-flag
+word: `--until file-has ./log 'RE' --every 5s` would have left `--every` as a
+positional argument nobody read, and a verb that silently ignores the interval
+it was given is the same class of bug as the zsh one-liners. An unknown flag is
+refused by name.
+
+**`process-gone` matches argv[0] and argv[1] only**, whole and by basename, and
+excludes this process, its ancestors and its descendants. Both halves are
+load-bearing and both come from measured hangs: a waiter carries the pattern it
+waits on as an argument, so `pgrep -f` found *itself*; bash forks an identical
+copy of a script for each pipeline stage, so the waiter found its own child
+(darwin, 2026-09-22); and procps matches an ancestor of the `pgrep` process
+where the BSD `pgrep` does not, which is the self-match that killed the
+coordinator's shell four times on 2026-09-21. The `wait-for.bats` controls for
+both are ported to Go tests over a written process table, so each platform's
+shape is asserted on every platform.
+
+**`file-exists` holds on an empty file and `bin/wait-for file` did not.** The
+old mode wanted a *non-empty* path, because the thing it waited on was a
+`RESULT.md` a card creates and then writes. Porting a `wait-for file X` line
+wants `--until file-has X .` — any byte.
+
+**`redis-key` polls.** Redis has no blocking read for a string key: `BLPOP` and
+`XREAD BLOCK` are the list and stream forms, and blocking on a `GET` would need
+keyspace notifications this instance does not have. The blocking read belongs to
+the event stream (#2563), where the store really does allow one. The password
+comes from `$NOVA_REDIS_BENCH_PASSWORD` (`--password-env` names another
+variable), the way `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD` supplies
+it; it is never a flag, never a file and never on a receipt.
+
+**On the bus, heard is not answered.** A receipt in another lane says the note
+was read; the wait goes on, and the timeout receipt says `heard by <lane>` so an
+expired wait on an acknowledged note does not read like a note nobody opened. A
+reply in the sender's own lane is not an answer either — the bus's answered rule
+is per reader, and asking the sender's lane would make every note self-answering.
+
 ### status
 
 ```
