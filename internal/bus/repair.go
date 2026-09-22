@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,13 @@ type WaitRecovery struct {
 // clock a verb freezes in tests: a frozen September would call a lock written today
 // either ancient or not yet born, and both answers are lies.
 func ClearStaleIndexLock(dir string, now time.Time) (bool, error) {
+	return clearStaleIndexLock(dir, now, gitProcesses)
+}
+
+// clearStaleIndexLock is ClearStaleIndexLock with the process scan supplied.
+// A test hands back an incomplete scan — a cwd git with no -C whose cwd could
+// not be read, or a permission error — and the lock must still be here afterwards.
+func clearStaleIndexLock(dir string, now time.Time, scan func() ([]gitProc, error)) (bool, error) {
 	lock, err := indexLockPath(dir)
 	if err != nil {
 		return false, err
@@ -62,7 +70,7 @@ func ClearStaleIndexLock(dir string, now time.Time) (bool, error) {
 	if age <= staleIndexLockAge {
 		return false, nil
 	}
-	owns, err := gitOwnsCheckout(dir)
+	owns, err := gitOwnsCheckoutScan(dir, scan)
 	if err != nil {
 		// Not knowing is not the same as knowing the lock is leftover. Leave it.
 		return false, err
@@ -397,22 +405,149 @@ func existsInTree(dir, rev, rel string) (bool, error) {
 	return false, err
 }
 
-// gitProc is one live git process: its command line, its argv when the OS gives it to us
-// separated, and its current directory when we could read one.
-type gitProc struct {
-	command string
-	args    []string
+// ownershipDiagCap is how long the "we could not tell" sentence may be. The refusal
+// that carries it is one line; a ps or lsof transcript is not a diagnostic.
+const ownershipDiagCap = 200
+
+// ownershipUnknown is the sentence every incomplete scan returns. The reason after
+// the colon is short and has no newline: cwd unreadable, lsof failed, a permission
+// error collapsed onto one line.
+const ownershipUnknown = "cannot tell whether a git process owns this checkout"
+
+func ownershipUnknownErr(why string) error {
+	why = boundDiag(why)
+	msg := ownershipUnknown
+	if why != "" {
+		msg += ": " + why
+	}
+	if len(msg) > ownershipDiagCap {
+		msg = msg[:ownershipDiagCap]
+	}
+	return errors.New(msg)
+}
+
+// boundDiag folds a scanner error onto one short line. The raw text of ps or lsof
+// is not included by callers; this only caps whatever reason they already chose.
+func boundDiag(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > 120 {
+		s = s[:120]
+	}
+	return s
+}
+
+// procReadFailed separates a process that is gone from one that is still there
+// and cannot be inspected. ENOENT is gone: it is not an owner. Any other error
+// is an inspection denial, and the lock stays.
+func procReadFailed(err error) (vanished bool, unknown error) {
+	if err == nil {
+		return false, nil
+	}
+	if os.IsNotExist(err) {
+		return true, nil
+	}
+	return false, ownershipUnknownErr(err.Error())
+}
+
+// procView is one process's metadata as a scanner managed to read it, errors included.
+type procView struct {
+	commErr error
+	comm    string
+	cmdErr  error
+	cmdline []byte
+	cwdErr  error
 	cwd     string
+}
+
+// gitProcFromView classifies one process. skip means it is not a live git this
+// scan has to place (it vanished, or it is not git). An error means the process
+// is still present and its metadata could not be read, so ownership is unknown.
+func gitProcFromView(v procView) (gitProc, bool, error) {
+	if v.commErr != nil {
+		vanished, uerr := procReadFailed(v.commErr)
+		if uerr != nil {
+			return gitProc{}, false, uerr
+		}
+		if vanished {
+			return gitProc{}, true, nil
+		}
+	}
+	name := strings.TrimSpace(v.comm)
+	if name != "git" && name != "git.exe" {
+		return gitProc{}, true, nil
+	}
+	if v.cmdErr != nil {
+		vanished, uerr := procReadFailed(v.cmdErr)
+		if uerr != nil {
+			return gitProc{}, false, uerr
+		}
+		if vanished {
+			return gitProc{}, true, nil
+		}
+	}
+	args := splitNUL(v.cmdline)
+	p := gitProc{command: strings.Join(args, " "), args: args}
+	if len(args) == 0 {
+		return gitProc{}, false, ownershipUnknownErr("cmdline empty")
+	}
+	if v.cwdErr != nil {
+		vanished, uerr := procReadFailed(v.cwdErr)
+		if vanished {
+			return gitProc{}, true, nil
+		}
+		if uerr != nil {
+			if commandLocatesAbsolutely(p) {
+				return p, false, nil
+			}
+			return gitProc{}, false, uerr
+		}
+	}
+	if v.cwd == "" {
+		if commandLocatesAbsolutely(p) {
+			return p, false, nil
+		}
+		return gitProc{}, false, ownershipUnknownErr("cwd unreadable")
+	}
+	p.cwd = v.cwd
+	p.cwdKnown = true
+	return p, false, nil
+}
+
+func splitNUL(b []byte) []string {
+	parts := strings.Split(string(b), "\x00")
+	var out []string
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// gitProc is one live git process: its command line, its argv when the OS gives it to us
+// separated, and its current directory when we could read one. cwdKnown is false when
+// the cwd could not be read. An empty cwd with cwdKnown false is not "this git is
+// nowhere"; it is "we do not know", and the lock stays unless the command line itself
+// names an absolute work tree.
+type gitProc struct {
+	command  string
+	args     []string
+	cwd      string
+	cwdKnown bool
 }
 
 // gitOwnsCheckout reports whether a live git process is operating on dir. An error means
 // the question could not be answered, which the caller treats as "do not remove the lock".
 func gitOwnsCheckout(dir string) (bool, error) {
+	return gitOwnsCheckoutScan(dir, gitProcesses)
+}
+
+func gitOwnsCheckoutScan(dir string, scan func() ([]gitProc, error)) (bool, error) {
 	names, err := ownerNames(dir)
 	if err != nil {
 		return false, err
 	}
-	procs, err := gitProcesses()
+	procs, err := scan()
 	if err != nil {
 		return false, err
 	}
@@ -421,7 +556,36 @@ func gitOwnsCheckout(dir string) (bool, error) {
 			return true, nil
 		}
 	}
+	for _, p := range procs {
+		if !p.cwdKnown && !commandLocatesAbsolutely(p) {
+			return false, ownershipUnknownErr("cwd unreadable")
+		}
+	}
 	return false, nil
+}
+
+// commandLocatesAbsolutely reports whether the command line names an absolute work
+// tree or git dir of its own, so a missing cwd is not what the ownership decision
+// depends on. A relative -C still depends on the cwd and does not count.
+func commandLocatesAbsolutely(p gitProc) bool {
+	args := p.args
+	if len(args) == 0 && p.command != "" {
+		args = strings.Fields(p.command)
+	}
+	for i, a := range args {
+		switch {
+		case a == "-C" || a == "--git-dir" || a == "--work-tree":
+			if i+1 >= len(args) {
+				return false
+			}
+			return filepath.IsAbs(args[i+1])
+		case strings.HasPrefix(a, "--git-dir=") || strings.HasPrefix(a, "--work-tree="):
+			return filepath.IsAbs(a[strings.IndexByte(a, '=')+1:])
+		case strings.HasPrefix(a, "-C") && len(a) > 2:
+			return filepath.IsAbs(a[2:])
+		}
+	}
+	return false
 }
 
 // ownerNames is every spelling of the checkout and its git directory that a process list

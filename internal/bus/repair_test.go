@@ -124,6 +124,129 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	}
 }
 
+// oldIndexLock is a checkout whose index.lock is already past the 60s bound.
+// Age alone must not be why a later assertion keeps or removes it.
+func oldIndexLock(t *testing.T) (dir, lock string) {
+	t.Helper()
+	dir = cloneBus(t, bareBus(t))
+	var err error
+	lock, err = indexLockPath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(lock, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	when := time.Now().Add(-2 * time.Minute)
+	if err := os.Chtimes(lock, when, when); err != nil {
+		t.Fatal(err)
+	}
+	return dir, lock
+}
+
+func assertLockKept(t *testing.T, lock string, cleared bool, err error) {
+	t.Helper()
+	if cleared {
+		t.Fatal("the old lock was removed")
+	}
+	if _, statErr := os.Lstat(lock); statErr != nil {
+		t.Fatalf("the old lock is gone: %v", statErr)
+	}
+	if err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
+		t.Fatalf("diagnostic = %v, want a %q reason", err, ownershipUnknown)
+	}
+	if strings.Contains(err.Error(), "\n") || len(err.Error()) > ownershipDiagCap {
+		t.Fatalf("diagnostic is not bounded: %q", err)
+	}
+}
+
+// A git started inside the checkout, with no -C, is visible only by its cwd.
+// The old lock stays. A scan that claims to have looked and did not see it is a failure.
+func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	dir, lock := oldIndexLock(t)
+	cmd := exec.Command("git", "cat-file", "--batch")
+	cmd.Dir = dir
+	if strings.Contains(strings.Join(cmd.Args, " "), "-C") {
+		t.Fatalf("the fixture git carries -C: %q", cmd.Args)
+	}
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	})
+	deadline := time.Now().Add(testWaitBound())
+	saw := false
+	for {
+		owns, oerr := gitOwnsCheckout(dir)
+		if oerr != nil {
+			t.Fatalf("a live cwd git with no -C was an incomplete scan, not an owner: %v", oerr)
+		}
+		if owns {
+			saw = true
+			break
+		}
+		if time.Now().After(deadline) {
+			procs, _ := gitProcesses()
+			t.Fatalf("cwd git with no -C was invisible; procs=%+v", procs)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !saw {
+		t.Fatal("cwd git with no -C was not recorded as an owner")
+	}
+	cleared, err := ClearStaleIndexLock(dir, time.Now())
+	if err != nil || cleared {
+		t.Fatalf("cleared=%v err=%v, want the lock left because the cwd git owns the checkout", cleared, err)
+	}
+	if _, statErr := os.Lstat(lock); statErr != nil {
+		t.Fatalf("the old lock is gone: %v", statErr)
+	}
+}
+
+// The scan saw a live git with no -C and could not read its cwd. That is not "no owner".
+func TestStaleLockStaysWhenCwdInspectionFails(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	dir, lock := oldIndexLock(t)
+	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
+		return []gitProc{{command: "git cat-file --batch", cwdKnown: false}}, nil
+	})
+	assertLockKept(t, lock, cleared, err)
+}
+
+// A still-present process whose metadata cannot be read is not a process that
+// vanished. Permission denied keeps the lock; ENOENT is skipped and is not that error.
+func TestStaleLockStaysWhenProcessInspectionIsDenied(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	dir, lock := oldIndexLock(t)
+	_, skip, verr := gitProcFromView(procView{commErr: os.ErrNotExist})
+	if verr != nil || !skip {
+		t.Fatalf("a vanished process: skip=%v err=%v, want skipped and no error", skip, verr)
+	}
+	_, _, perr := gitProcFromView(procView{comm: "git\n", cmdErr: os.ErrPermission})
+	if perr == nil {
+		t.Fatal("permission denied on cmdline was treated as a vanished process")
+	}
+	cleared, err := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
+		return nil, perr
+	})
+	assertLockKept(t, lock, cleared, err)
+}
+
 func TestProcOwnsRequiresAPathBoundary(t *testing.T) {
 	names := []string{"/bus"}
 	if !procOwns(names, gitProc{command: "git -C /bus status"}) {

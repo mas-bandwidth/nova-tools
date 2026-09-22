@@ -3,6 +3,7 @@
 package bus
 
 import (
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -10,18 +11,26 @@ import (
 
 // gitProcesses lists live git processes. ps -ww is the command line, wide enough that a
 // checkout path is not cut off mid-spelling; lsof supplies the cwd for a git that was
-// started inside the checkout and so does not carry the path in its arguments. If lsof
-// cannot run, the command line is still enough for a git this tool started with -C, and
-// a process whose cwd we cannot see is not treated as absent when its arguments name the
-// checkout.
+// started inside the checkout and so does not carry -C. An lsof or ps failure is not an
+// empty cwd. A git with no absolute -C whose cwd we could not read makes the scan
+// unknown, and the lock stays.
 func gitProcesses() ([]gitProc, error) {
 	out, err := exec.Command("ps", "-axww", "-o", "pid=", "-o", "command=").Output()
 	if err != nil {
-		return nil, err
+		return nil, ownershipUnknownErr("ps failed")
 	}
-	cwds := darwinGitCwd()
+	cwds, cwdErr := darwinGitCwd()
+	return gitProcsFromPS(string(out), cwds, cwdErr, darwinPIDAlive)
+}
+
+// gitProcsFromPS turns one ps snapshot into git processes. cwdErr set means lsof did not
+// run; a pid missing from cwds after a successful lsof is checked with alive. A vanished
+// pid is skipped. A still-present git whose cwd is missing and whose command line does
+// not name an absolute work tree is an incomplete scan, not proof that nobody owns the
+// checkout.
+func gitProcsFromPS(psOut string, cwds map[string]string, cwdErr error, alive func(pid string) (bool, error)) ([]gitProc, error) {
 	var procs []gitProc
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(psOut, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -34,7 +43,32 @@ func gitProcesses() ([]gitProc, error) {
 		if !looksLikeGit(cmd) {
 			continue
 		}
-		procs = append(procs, gitProc{command: cmd, cwd: cwds[pid]})
+		p := gitProc{command: cmd}
+		if cwdErr != nil {
+			if !commandLocatesAbsolutely(p) {
+				return nil, ownershipUnknownErr("cwd unreadable")
+			}
+			procs = append(procs, p)
+			continue
+		}
+		cwd, found := cwds[pid]
+		if !found || cwd == "" {
+			still, aerr := alive(pid)
+			if aerr != nil {
+				return nil, ownershipUnknownErr(aerr.Error())
+			}
+			if !still {
+				continue
+			}
+			if !commandLocatesAbsolutely(p) {
+				return nil, ownershipUnknownErr("cwd unreadable")
+			}
+			procs = append(procs, p)
+			continue
+		}
+		p.cwd = cwd
+		p.cwdKnown = true
+		procs = append(procs, p)
 	}
 	return procs, nil
 }
@@ -48,10 +82,12 @@ func looksLikeGit(cmd string) bool {
 	return base == "git" || base == "git.exe"
 }
 
-func darwinGitCwd() map[string]string {
+// darwinGitCwd asks lsof for every git process's cwd. Failure is returned. It is not
+// an empty map: an empty map is a successful lsof that saw no git cwd.
+func darwinGitCwd() (map[string]string, error) {
 	out, err := exec.Command("lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn").Output()
 	if err != nil {
-		return nil
+		return nil, ownershipUnknownErr("lsof failed")
 	}
 	cwds := map[string]string{}
 	var pid string
@@ -68,5 +104,19 @@ func darwinGitCwd() map[string]string {
 			}
 		}
 	}
-	return cwds
+	return cwds, nil
+}
+
+// darwinPIDAlive reports whether pid is still in the process table. ps exiting 1 is
+// the verified-vanished answer. Any other failure is an inspection error.
+func darwinPIDAlive(pid string) (bool, error) {
+	out, err := exec.Command("ps", "-p", pid, "-o", "pid=").Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, err
+	}
+	return strings.TrimSpace(string(out)) != "", nil
 }
