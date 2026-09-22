@@ -104,7 +104,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    directory, never `../scratch`. `cut` refuses a template whose rendered card violates any
    of these — `CUT REFUSED template=<name>: <which>` — because a card that drifts here is a
    card that stalls.
-6. **Text-only templates forbid the build.** `read`, `text` and `tone` carry the line `Do not
+6. **Text-only templates forbid the build.** `read`, `text`, `tone` and `report` carry the line `Do not
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
    line then green line, one row per item.
@@ -113,8 +113,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    beside it is read the same way): one column per model, three rows — a `model` row naming
    each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
    `capability`, `read|text|code|replay`. Per
-   card class a model is capable when its capability covers the kind's (`read`, `text` and
-   `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
+   card class a model is capable when its capability covers the kind's (`read`, `text`,
+   `tone` and `report` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
    and `cut` picks the capable model with the lowest average cost per token — `zero` beats
    `flat` beats `metered`, ties broken by `usd per Mtok` — so routing is mechanical: local is
    zero, Go is flat, Zen is metered. It prints `route=<model> reason=<class>` on its
@@ -1348,7 +1348,7 @@ of thought no read needs.
 The rules:
 
 1. **`cut-steps-are-the-turn-budget`.** `cut` emits cards whose numbered step count is the
-   turn budget: a read-family card (`read`, `text`, `tone`) takes at most 8 turns, a
+   turn budget: a read-family card (`read`, `text`, `tone`, `report`) takes at most 8 turns, a
    writing-family card (`fix`, `replay`, `drift`) at most 20 turns. A template whose
    rendered card exceeds its budget is `CUT REFUSED template=<name>: <which>` naming the
    rule, and no card is written. The hurt that made it: the 1,434.6M cache-read tokens
