@@ -1172,6 +1172,13 @@ the first thing dropped under load. A window that exits, runs out of credit or
 is killed simply stops writing, and the key lapses within the TTL: there is no
 shutdown hook to forget to run, which is the whole point.
 
+Two flags sit beside that and change nothing when they are left off.
+`--window <time>` is the cap's reset time, stored as passed on
+`friend:<name>:window` — the beat does not read a clock to invent one — and
+`--width <n>` is how many children are in use now, on `friend:<name>:width`.
+Zero is a real count. A missing flag writes no key and does not fail the beat.
+Both keys carry the beat's TTL.
+
 `nova-wake presence --store <host:port> --bus <dir>` reads those keys back and
 prints one line for the swarm table:
 
@@ -1182,7 +1189,9 @@ friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · fredd
 
 `up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
 with the age of the last beat and its clock time, both from the untimed key;
-`none` is a friend who has never beaten. `AWAY` is the only word in capitals
+`none` is a friend who has never beaten. When `friend:<name>:window` or
+`friend:<name>:width` is present, that friend's phrase also carries
+`window=<time>` and `width=<n>`; a key that is absent adds nothing. `AWAY` is the only word in capitals
 because it is the only one that changes what the reader does next. The roster is the bus's —
 `--bus <dir>` reads its `participants.json`, `--participants <file>` names that
 file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
