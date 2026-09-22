@@ -1151,7 +1151,7 @@ func RenderTemplate(in CutTemplateInput) (string, string) {
 
 	lines := strings.Split(rendered, "\n")
 	line1 := strings.TrimSpace(lines[0])
-	if (!strings.HasPrefix(line1, "RESULT ") && !strings.HasPrefix(line1, "RESULT:")) || !strings.Contains(line1, "sha=") {
+	if (!strings.HasPrefix(line1, "RESULT ") && !strings.HasPrefix(line1, "RESULT: ") && !strings.HasPrefix(line1, "RESULT:")) || !strings.Contains(line1, "sha=") {
 		return "", "rule 5: line 1 is not the RESULT contract (line 1 must be `RESULT <label> sha=<sha12>`)"
 	}
 	if strings.Contains(rendered, "../scratch") {
