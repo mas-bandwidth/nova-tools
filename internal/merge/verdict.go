@@ -255,7 +255,7 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 				Conf:   "-",
 				Kind:   "line",
 			}
-			return v, true
+			return applyHoldPin(v, clean, currentHead), true
 		}
 	}
 
@@ -295,21 +295,21 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 		}
 	}
 	if holdLine != "" {
-		// SPEC-DECIDE lines 1037-1040: untyped comment binds to current head
-		head := currentHead
-		who := deriveHoldWho(holdLine)
+		// SPEC-DECIDE lines 1037-1040: an untyped comment with no pin binds to
+		// the current head. A sha= or head= on the first line is applyHoldPin.
+		who := attributeUntypedHold(clean, holdLine)
 		v := Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
 			Who:    who,
 			Word:   "hold",
-			Head:   head,
+			Head:   currentHead,
 			At:     at,
 			Source: "comment-rule",
 			RawID:  id,
 			Conf:   "-",
 			Kind:   "line",
 		}
-		return v, true
+		return applyHoldPin(v, clean, currentHead), true
 	}
 
 	// Untyped comment without hold
@@ -697,13 +697,66 @@ func releasesContains(releases []string, id string) bool {
 	return false
 }
 
-func firstNonEmptyLine(body string) string {
+func nonEmptyLines(body string) []string {
+	var out []string
 	for _, l := range strings.Split(body, "\n") {
 		if s := strings.TrimSpace(l); s != "" {
-			return s
+			out = append(out, s)
 		}
 	}
-	return ""
+	return out
+}
+
+func firstNonEmptyLine(body string) string {
+	lines := nonEmptyLines(body)
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0]
+}
+
+// firstLineHoldPin is the commit a HOLD pins itself to: the first sha=<7-40 hex>
+// or head=<7-40 hex> on the body's first non-blank line. Quotes and fences are
+// already gone. Empty means the line names no commit, and the HOLD is at head.
+var firstLineHoldPinRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?([0-9a-fA-F]{7,40})(?:[^0-9A-Za-z]|$)`)
+
+func firstLineHoldPin(clean string) string {
+	m := firstLineHoldPinRE.FindStringSubmatch(firstNonEmptyLine(clean))
+	if m == nil {
+		return ""
+	}
+	return strings.ToLower(m[1])
+}
+
+// applyHoldPin is nova-tools #2710 (#2612, #2611). A HOLD whose first line pins
+// sha= or head= to a commit that is not a prefix of the current head is a hold
+// on a different head: Word "stale-hold", not a hold here, and not an input to
+// release. No pin is unchanged. A pin that prefix-matches the head still holds.
+func applyHoldPin(v Verdict, clean, currentHead string) Verdict {
+	pin := firstLineHoldPin(clean)
+	// No current head means this call cannot say the pin is off head. Dropping
+	// the hold would fail open. GH.Verdicts with no VerdictOpts is that call.
+	if pin == "" || strings.TrimSpace(currentHead) == "" || headMatch(pin, currentHead) {
+		return v
+	}
+	v.Word = staleHoldWord
+	v.Head = pin
+	return v
+}
+
+const staleHoldWord = "stale-hold"
+
+// staleHoldReport is the lander's token without its kind prefix: "<id>(sha=<8>)".
+func staleHoldReport(v Verdict) string {
+	id := v.ID
+	if i := strings.LastIndex(id, ":"); i >= 0 {
+		id = id[i+1:]
+	}
+	pin := strings.ToLower(strings.TrimSpace(v.Head))
+	if len(pin) > 8 {
+		pin = pin[:8]
+	}
+	return id + "(sha=" + pin + ")"
 }
 
 func firstToken(line string) string {
@@ -817,6 +870,78 @@ func deriveHoldWho(line string) string {
 		return "unknown"
 	}
 	return normWho(m[1])
+}
+
+// friendNameRE is the fixed set hold_attrib scans, case-insensitively, as whole words.
+var friendNameRE = regexp.MustCompile(`(?i)\b(emma|stella|johnny|glenn)\b`)
+
+// holdPinTokenRE removes sha=/head= pins so the header can be asked whether
+// anything but a pin remains. A leading boundary is required, matching hold_pin.
+var holdPinTokenRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?[0-9a-fA-F]{7,40}"?`)
+
+// attributeUntypedHold is deriveHoldWho, plus the #2710 header rule for
+// "HOLD sha=<hex>" where the friend's name is not adjacent to HOLD. The header
+// is the rest of the first line after HOLD; if that rest is only pins and
+// punctuation, it extends to the next non-blank line. Exactly one friend name
+// attributes. Two names, or none, stay unknown: an unattributed HOLD stays held.
+// A name deriveHoldWho already reads ("HOLD — Stella", "Stella: HOLD") is kept.
+func attributeUntypedHold(clean, holdLine string) string {
+	if who := deriveHoldWho(holdLine); who != "unknown" {
+		return who
+	}
+	lines := nonEmptyLines(clean)
+	if len(lines) == 0 || !strings.EqualFold(firstToken(lines[0]), "HOLD") {
+		return "unknown"
+	}
+	rest := stripLeadingHoldWord(lines[0])
+	header := rest
+	if holdHeaderIsPinOnly(rest) && len(lines) > 1 {
+		header = rest + " " + lines[1]
+	}
+	names := friendNamesIn(header)
+	if len(names) == 1 {
+		return names[0]
+	}
+	return "unknown"
+}
+
+func stripLeadingHoldWord(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) >= 4 && strings.EqualFold(line[:4], "HOLD") {
+		rest := line[4:]
+		if rest == "" {
+			return rest
+		}
+		r := rest[0]
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return rest
+		}
+	}
+	return line
+}
+
+func holdHeaderIsPinOnly(rest string) bool {
+	stripped := holdPinTokenRE.ReplaceAllString(" "+rest, "")
+	for _, r := range stripped {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func friendNamesIn(s string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range friendNameRE.FindAllStringSubmatch(s, -1) {
+		n := normWho(m[1])
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
+	}
+	return out
 }
 
 // ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.

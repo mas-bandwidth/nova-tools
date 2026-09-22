@@ -37,9 +37,9 @@ func TestHoldReleaseMatchesTheFriendsNameCaseInsensitively(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reviewer fixture: %v", err)
 	}
-	// 12-character prefixes from the real #2587 log line; tails are padding, matching
-	// carriedhold_test.go's own convention, since merge.Short prints 12 characters.
-	headA := "6e00218d976d" + "0f1e2d3c4b5a69788796a5b4c3d2" // superseded (#2587's own held_at)
+	// Both lines pin head= to the current head. A pin off head is not a hold
+	// (#2710) and would make this pass without folding case; the case-fold is
+	// what has to release the hold.
 	headB := "40785e2ccb04" + "1b3c5d7e9f02468ace13579bdf02" // current (#2587's own head)
 
 	cases := []struct {
@@ -55,7 +55,7 @@ func TestHoldReleaseMatchesTheFriendsNameCaseInsensitively(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			comments := commentsJSON(t, []fixtureComment{
-				{ID: 1, Login: "johnny-gh", Body: holdWhoCase(tc.holdWho, headA), At: "2026-09-22T17:19:57Z"},
+				{ID: 1, Login: "johnny-gh", Body: holdWhoCase(tc.holdWho, headB), At: "2026-09-22T17:19:57Z"},
 				{ID: 2, Login: "johnny-gh", Body: approveWhoCase(tc.approveWho, headB), At: "2026-09-22T19:42:05Z"},
 			})
 			vs, err := ParseForgeVerdicts(comments, "[]", 2587, rs, "rowan-claude", headB, false)
@@ -74,7 +74,7 @@ func TestHoldReleaseMatchesTheFriendsNameCaseInsensitively(t *testing.T) {
 	t.Run("a different friend's APPROVE (who=emma) leaves the hold unreleased", func(t *testing.T) {
 		t.Parallel()
 		comments := commentsJSON(t, []fixtureComment{
-			{ID: 3, Login: "johnny-gh", Body: holdWhoCase("Johnny", headA), At: "2026-09-22T17:19:57Z"},
+			{ID: 3, Login: "johnny-gh", Body: holdWhoCase("Johnny", headB), At: "2026-09-22T17:19:57Z"},
 			{ID: 4, Login: "emma-gh", Body: approveWhoCase("emma", headB), At: "2026-09-22T19:42:05Z"},
 		})
 		vs, err := ParseForgeVerdicts(comments, "[]", 2587, rs, "rowan-claude", headB, false)

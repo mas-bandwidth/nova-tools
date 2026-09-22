@@ -59,8 +59,11 @@ func TestTheGateTakesAMemberWhoseCarriedHoldTheSameFriendApprovedAtHead(t *testi
 	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
 	head := l.heads[1]
 
+	// The hold is pinned at the current head. A pin off head is not a hold
+	// (#2710) and would make this pass without the later APPROVE; the release
+	// is what has to take the member.
 	comments := commentJSON2550(t, []struct{ Body, At string }{
-		{Body: "DISPOSITION who=emma head=" + supersededHead2550 + " verdict=HOLD\nnotes.txt is untracked in the cell.",
+		{Body: "DISPOSITION who=emma head=" + head + " verdict=HOLD\nnotes.txt is untracked in the cell.",
 			At: "2026-09-21T21:35:02Z"},
 		{Body: "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10", At: "2026-09-22T01:48:00Z"},
 		{Body: "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10", At: "2026-09-22T02:45:00Z"},
@@ -90,8 +93,11 @@ func TestTheGateTakesAMemberWhoseCarriedHoldWasReleasedByADifferentlyCasedApprov
 	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
 	head := l.heads[1]
 
+	// Both lines name the current head, so the fold has to match who=Emma to
+	// who=emma. A HOLD pinned at another head would be set aside (#2710)
+	// before case was ever compared.
 	comments := commentJSON2550(t, []struct{ Body, At string }{
-		{Body: "DISPOSITION who=Emma head=" + supersededHead2550 + " verdict=HOLD score=4/10\nsome finding.",
+		{Body: "DISPOSITION who=Emma head=" + head + " verdict=HOLD score=4/10\nsome finding.",
 			At: "2026-09-21T21:35:02Z"},
 		{Body: "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10", At: "2026-09-22T01:48:00Z"},
 	})
@@ -110,16 +116,16 @@ func TestTheGateTakesAMemberWhoseCarriedHoldWasReleasedByADifferentlyCasedApprov
 	contains(t, stdout, "dropped=none")
 }
 
-// The same fixture with the APPROVE taken away: the hold is still the last word its
-// author left, and the gate must still drop the member and still say carried=yes. The
-// fix releases a hold a friend answered, never a hold nobody answered.
-func TestTheGateStillDropsACarriedHoldNobodyAnsweredAtHead(t *testing.T) {
+// A HOLD whose head= is the pull request's current head still counts. Taking
+// the APPROVE away must still drop the member. carried=no: the pin is this head.
+func TestTheGateStillDropsAHoldPinnedAtHeadNobodyAnswered(t *testing.T) {
 	t.Parallel()
 	l := batchRepo(t)
 	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
+	head := l.heads[1]
 
 	comments := commentJSON2550(t, []struct{ Body, At string }{
-		{Body: "DISPOSITION who=emma head=" + supersededHead2550 + " verdict=HOLD\nnotes.txt is untracked in the cell.",
+		{Body: "DISPOSITION who=emma head=" + head + " verdict=HOLD\nnotes.txt is untracked in the cell.",
 			At: "2026-09-21T21:35:02Z"},
 	})
 	l.host.SetRawVerdicts(1, comments, "[]")
@@ -131,7 +137,32 @@ func TestTheGateStillDropsACarriedHoldNobodyAnsweredAtHead(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("batch exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
-	contains(t, stderr, fmt.Sprintf("BATCH DROP #1 reason=\"head %s carries an unreleased HOLD\" who=emma hold=comment:5767845547 source=comment-rule held_at=%s carried=yes",
-		merge.Short(l.heads[1]), merge.Short(supersededHead2550)))
+	contains(t, stderr, fmt.Sprintf("BATCH DROP #1 reason=\"head %s carries an unreleased HOLD\" who=emma hold=comment:5767845547 source=comment-rule held_at=%s carried=no",
+		merge.Short(head), merge.Short(head)))
 	contains(t, stdout, "dropped=1")
+}
+
+// nova-tools #2710: a HOLD whose first line pins head= to some other commit is
+// not a hold at the current head. The gate takes the member.
+func TestTheGateDoesNotDropAHoldPinnedOffTheCurrentHead(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
+
+	comments := commentJSON2550(t, []struct{ Body, At string }{
+		{Body: "DISPOSITION who=emma head=" + supersededHead2550 + " verdict=HOLD\nnotes.txt is untracked in the cell.",
+			At: "2026-09-21T21:35:02Z"},
+	})
+	l.host.SetRawVerdicts(1, comments, "[]")
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-2710", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "b2710"), "--base", "dev", "--timeout", "5m",
+		"--reviewers", revFile)
+
+	if exit != 0 {
+		t.Fatalf("the gate went red over a HOLD pinned at another head: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	absent(t, stderr, "BATCH DROP #1 ")
+	contains(t, stdout, "members=1")
+	contains(t, stdout, "dropped=none")
 }

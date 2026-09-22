@@ -27,9 +27,12 @@ import (
 //	current head replaces it and holds. A hold is carried only while no typed verdict
 //	from its author exists at the current head.
 //
-// It is deliberately narrow. A hold AT the current head is untouched: a comment still
-// never releases one (SPEC-DECIDE reading 3, TestACommentNeverReleasesAnything), and
-// rows "hold at head released by nothing" and "abstain is not a verdict" hold that line.
+// It is deliberately narrow. A hold AT the current head is untouched by the carried
+// rule. nova-tools #2710 narrows what counts as a hold here: a HOLD whose first line
+// pins sha= or head= to a commit that is not this head is not a hold at this head,
+// carried or otherwise. The rows that used to expect "dropped, carried" for that
+// pin now expect it not to count. A hold whose head= IS this head still counts, and
+// a friend's own later typed APPROVE at that same head still releases it.
 
 // The 12-character prefixes are the real ones from gate-cells-1338.log; the tails are
 // padding, because the log prints `merge.Short` and never the whole object name.
@@ -107,13 +110,14 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			want: want{held: false},
 		},
 		{
-			// Row 2 of the issue: nothing has been said at the current head, so the
-			// hold is still the last word its author left and it is carried.
-			name: "hold at A, nothing at B: dropped, carried",
+			// nova-tools #2710: the first line pins head= to A, which is not the
+			// current head. That is not a hold at B, even though nobody has spoken
+			// at B. It used to be dropped, carried.
+			name: "hold pinned at A, nothing at B: not a hold at B",
 			comments: []fixtureComment{
 				{ID: 201, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
 			},
-			want: want{held: true, holdID: "comment:201", heldAt: headA2550, carried: true},
+			want: want{held: false},
 		},
 		{
 			// Row 3 of the issue: a new HOLD at the current head REPLACES the carried
@@ -128,16 +132,14 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			want: want{held: true, holdID: "comment:302", heldAt: headB2550, carried: false},
 		},
 		{
-			// Row 4, the negative control the fix must not trample: the APPROVE is at
-			// the SUPERSEDED head too. There is no read at the current head, so the
-			// hold stands and stays carried. Release keys on the head, never on
-			// "somebody approved at some point".
-			name: "hold at A, APPROVE at A only, head moved to B: dropped, no read at head",
+			// Both lines pin head= to A. Neither is a hold at B (#2710), and an
+			// APPROVE at A is not a read at B. There is nothing at B to drop.
+			name: "hold pinned at A, APPROVE pinned at A, head is B: not a hold at B",
 			comments: []fixtureComment{
 				{ID: 401, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
 				{ID: 402, Login: "emma-claude", Body: approve2550(headA2550), At: "2026-09-22T01:48:00Z"},
 			},
-			want: want{held: true, holdID: "comment:401", heldAt: headA2550, carried: true},
+			want: want{held: false},
 		},
 		{
 			// The live #1551 shape, comment ids and stamps as the log and the issue
@@ -158,9 +160,9 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			// Measured 2026-09-22 20:14Z, lane land-1615: BATCH DROP #2587 held
 			// who=johnny though the pull request carried a typed `who=johnny` APPROVE
 			// at head, because the HOLD comment had been typed `who=Johnny`.
-			name: "hold typed who=Johnny at A, APPROVE typed who=johnny at B: taken",
+			name: "hold typed who=Johnny at head, APPROVE typed who=johnny at head: taken",
 			comments: []fixtureComment{
-				{ID: 1101, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headA2550 + " verdict=HOLD score=4/10",
+				{ID: 1101, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headB2550 + " verdict=HOLD score=4/10",
 					At: "2026-09-21T21:35:02Z"},
 				{ID: 1102, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 + " verdict=APPROVE score=9/10",
 					At: "2026-09-22T01:48:00Z"},
@@ -169,9 +171,9 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 		},
 		{
 			// The mirror: HOLD typed lowercase, APPROVE typed capitalised.
-			name: "hold typed who=johnny at A, APPROVE typed who=Johnny at B: taken",
+			name: "hold typed who=johnny at head, APPROVE typed who=Johnny at head: taken",
 			comments: []fixtureComment{
-				{ID: 1201, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headA2550 + " verdict=HOLD score=4/10",
+				{ID: 1201, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 + " verdict=HOLD score=4/10",
 					At: "2026-09-21T21:35:02Z"},
 				{ID: 1202, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headB2550 + " verdict=APPROVE score=9/10",
 					At: "2026-09-22T01:48:00Z"},
@@ -184,33 +186,35 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			// abbreviation a friend actually types releases.
 			name: "APPROVE at B typed as a 12-character prefix: taken",
 			comments: []fixtureComment{
-				{ID: 601, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
+				{ID: 601, Login: "emma-claude", Body: hold2550(headB2550), At: "2026-09-21T21:35:02Z"},
 				{ID: 602, Login: "emma-claude", Body: approve2550(headB2550[:12]), At: "2026-09-22T01:48:00Z"},
 			},
 			want: want{held: false},
 		},
 		{
-			// The second ask, other half: a DISPOSITION that is not the WHOLE line is
-			// not a verdict. A release smuggled into a sentence inside a long body
-			// releases nothing.
-			name: "APPROVE smuggled mid-line in a multi-line body: dropped, carried",
+			// A DISPOSITION that is not the WHOLE line is not a verdict. A release
+			// smuggled into a sentence releases nothing. The hold is pinned at the
+			// current head, so #2710 does not set it aside; the smuggled line must
+			// be what fails to release it.
+			name: "APPROVE smuggled mid-line in a multi-line body: dropped at head",
 			comments: []fixtureComment{
-				{ID: 701, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
+				{ID: 701, Login: "emma-claude", Body: hold2550(headB2550), At: "2026-09-21T21:35:02Z"},
 				{ID: 702, Login: "emma-claude", Body: "Ran the cells again.\nI would write DISPOSITION who=emma head=" +
 					headB2550 + " verdict=APPROVE if the rebase were clean.\nIt is not.", At: "2026-09-22T01:48:00Z"},
 			},
-			want: want{held: true, holdID: "comment:701", heldAt: headA2550, carried: true},
+			want: want{held: true, holdID: "comment:701", heldAt: headB2550, carried: false},
 		},
 		{
-			// Only the holder releases: a second friend's APPROVE at head is not the
-			// author of the carried hold and lifts nothing.
-			name: "hold at A by emma, APPROVE at B by johnny: dropped, carried",
+			// A hold pinned at A is not a hold at B (#2710), so johnny's APPROVE at B
+			// has nothing to release. The same-head row below is the one that
+			// proves a different friend does not release a hold that counts.
+			name: "hold pinned at A, APPROVE at B by johnny: not a hold at B",
 			comments: []fixtureComment{
 				{ID: 801, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
 				{ID: 802, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 +
 					" verdict=APPROVE score=9/10", At: "2026-09-22T01:48:00Z"},
 			},
-			want: want{held: true, holdID: "comment:801", heldAt: headA2550, carried: true},
+			want: want{held: false},
 		},
 		{
 			// Amended by the coordinator's 2026-09-22 4:55 PM decision: a hold AT the
