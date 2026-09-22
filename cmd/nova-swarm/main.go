@@ -1852,7 +1852,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 	res, code := nativeRun(cfg, stderr)
-	if code != 0 {
+	if code != 0 && !res.lost && !res.unrecorded {
 		return code
 	}
 	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
@@ -1866,15 +1866,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// the line is `NATIVE INCOMPLETE` and carries `why=` naming which of the three it
 	// failed -- every other field is byte-for-byte the same, so a reader that parses
 	// fields still reads them all.
-	verdict, why := "OK", ""
-	switch harnessState := orElse(res.harness, "silent"); {
-	case harnessState == "silent":
-		verdict, why = "INCOMPLETE", "harness-silent"
-	case !nativeLeftAResult(res.job):
-		verdict, why = "INCOMPLETE", "no-result"
-	case res.rc != 0:
-		verdict, why = "INCOMPLETE", "rc"
-	}
+	// The request may have been accepted and the response was lost. That is
+	// not a delivered card and not an ordinary failure the coordinator may retry.
+	verdict, why := nativeVerdictWhy(res)
 	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")), fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
 	if why != "" {
@@ -1907,6 +1901,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		if res.blockedPath != "" {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
+	}
+	if code != 0 {
+		return code
 	}
 	if res.rc != 0 {
 		if res.rc > 0 {
@@ -1974,6 +1971,25 @@ func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("--task %s is empty; it wants the task text", path)
 	}
 	return raw, nil
+}
+
+// nativeVerdictWhy is the word on the NATIVE line and the why= that follows it.
+// A lost provider body is unknown-acceptance, not a delivered card and not an
+// ordinary failure the coordinator may retry. The other three whys are the
+// ones a run earns when the harness did not answer with a result.
+func nativeVerdictWhy(res nativeRunResult) (verdict, why string) {
+	if res.lost {
+		return "INCOMPLETE", "unknown-acceptance"
+	}
+	switch harnessState := orElse(res.harness, "silent"); {
+	case harnessState == "silent":
+		return "INCOMPLETE", "harness-silent"
+	case !nativeLeftAResult(res.job):
+		return "INCOMPLETE", "no-result"
+	case res.rc != 0:
+		return "INCOMPLETE", "rc"
+	}
+	return "OK", ""
 }
 
 // nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
