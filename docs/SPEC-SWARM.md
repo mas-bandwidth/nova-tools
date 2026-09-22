@@ -1463,6 +1463,50 @@ model whose tool calls the harness never parsed (issue #591): no tool ran, nothi
 was written, the child exited 0 and the line said OK. `gather` scores such a card
 `ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
 
+**A card that ended by asking says so in a report, and `RESULT: ASKED` is that
+report's line 1** (issue #2548). A model whose final turn is a question to the
+operator — `Would you like me to proceed with moving RESULT.md into the nested
+repo and finalize the commit?`, canary run 3, 2026-09-22 — publishes nothing and
+is waiting for an answer nobody will type, because the card is unattended. **It
+does not hold its slot**: `opencode run` is non-interactive, it finishes the turn
+and exits 0, and the runtime dogfood of 2026-09-22 measured the whole run at
+5.22 s on hulk and 5.49 s on the Studio. What it leaves behind is a plain
+`no-result` — the token for a model that CHOSE to publish nothing — so a card
+that asked and a card that crashed into silence are one row to every reader.
+So `native` writes the report the card never wrote, at the job root:
+
+```
+RESULT: ASKED <the question, one line, bounded and escaped>
+asked: <label> ended its last turn with a question, published no report and committed nothing; ...
+written-by: nova-swarm native (the card published no report of its own)
+```
+
+**Four conditions, all of them necessary**, each one a different card this must
+not claim: the last line the CHILD wrote in `<job>/harness-output.log` ends with
+`?` once its decoration is trimmed, or opens `(?i)^(would you like|should i|do
+you want|shall i|can you confirm)` — the wall's own `SANDBOX ` lines are skipped
+there exactly as `harness=silent` skips them; the child **exited 0**, because a
+non-zero exit is already `rc=<n>` and a model that asked and then fell over is
+not waiting; **no `RESULT.md`** was found anywhere `gather` looks, because a card
+that published owns its report and a question in its last turn is then prose; and
+**`./repo` holds no commit past its base**, because a model that asked
+rhetorically and went on and committed the work answered its own question. The
+machinery's own ends come first: a card the idle watch ended, a manager
+terminated, or the wall or the harness's own fence stopped is THAT end, whatever
+its last line was.
+
+**The report is evidence of an absence, and never counted as work.** It carries
+no findings head, so it classes `plan-only` and never `ok` or `clean`; it never
+overwrites a report a card published; and the `NATIVE` line is **unchanged** by
+its existence — a card that did nothing but ask still reads `INCOMPLETE
+why=no-result`, because counting a report the machinery wrote would hand the word
+`OK` to a run that produced nothing, which is the fault that made the word earn
+itself (issue #1844). What the report buys is the two readings the absence could
+not carry: a requeue may treat `ASKED` like an idle kill and retry the card once
+on another route, and the ledger can count the questions per model. A bounded
+wait for an ANSWER — the question posted to the bus, one typed reply fed back as
+the next turn — is a separate card and is deliberately not this.
+
 **The wall's `SANDBOX OK` line is a producer's one-line record and `native` reads
 it as one** (issue #572). The wall renders `cwd=<dir>` through the same
 `internal/oneline` field encoding every path slot uses, so a job directory whose
