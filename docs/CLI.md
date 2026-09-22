@@ -2880,6 +2880,72 @@ ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
 `by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
 cost per USEFUL card, so a dearer model that lands beats a cheap one that does
 not.
+### sprint
+
+A SPRINT is any current bounded set of tasks toward a goal — friends, friends
+and swarm, or swarm only — and `sprint` answers the four questions asked of one:
+how far along it is, how long it still takes, where each task goes, and how good
+the estimates were. The normative document is
+[SPEC-SPRINT.md](SPEC-SPRINT.md); the store is the fleet Redis, core types only.
+
+```
+nova-pulse sprint open   --name <id> --goal <text> --store <host:port> [--store-user <name>] [--store-password-env <VAR>] [--planned-close <RFC3339>]
+nova-pulse sprint add    --name <id> --ref <ref> --kind <kind> --store <host:port> [--owner <name>] [--est <minutes>] [--paths <a,b>] [--depends-on <ids>] [--leg <name>] [--locality house|datacenter|any] [--isolation net|nonet] [--routes <a,b>] [--repo <o/n>] [--base <branch>] [--reader <name>] [--priority] [--id <id>] [--leased-at <RFC3339>]
+nova-pulse sprint status --store <host:port> [--name <id>] [--verbose] [--flip [--friends <a,b>]]
+nova-pulse sprint route  --store <host:port> (--task <id> | --name <id>) (--machines <file> | --friends <a,b> | --bus <dir>) [--apply] [--hand-over]
+nova-pulse sprint split  --store <host:port> --task <id> [--name <id>] [--apply]
+nova-pulse sprint refill --store <host:port> [--name <id>] (--machines <file> | --friends <a,b> | --bus <dir>) [--low-water <n>] [--dry-run]
+nova-pulse sprint wall   --store <host:port> [--name <id>] [--move <ids>] [--to <consumer>]
+nova-pulse sprint calibration --store <host:port> [--name <id>]
+nova-pulse sprint close  --store <host:port> --name <id> [--task <id> --evidence <text>] [--at <RFC3339>]
+```
+
+Every verb reaches the store through `--store <host:port>`, `--store-user`
+(default `bench`) and `--store-password-env` (default
+`NOVA_REDIS_BENCH_PASSWORD`): the password is read from the NAMED ENVIRONMENT
+VARIABLE and never from a flag, because a flag is in the process table. Run the
+verb under `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- …`, the way
+`bench-row` does, and the secret reaches this process and nothing else.
+
+**`status` is the line.** One active sprint prints exactly
+
+```
+14/23 61% -> ~4h
+```
+
+— the fraction, the percent, then the WALL: the longest lane under the
+dependency edges, never the sum of the work. More than one active sprint prints
+a table with the sprint name as the leftmost column. `--verbose` adds the COWS
+counts (`C=14 O=9 W=0`), the open items by owner and route, the critical lane
+and the tasks on it that could move. `--flip` asks the primary records — a pull
+request merged, an issue closed, a friend's typed line at head, a card landed on
+`ev:cards` — and closes what they say is closed, with the record as the
+evidence; nothing else ever closes a task.
+
+**`route` is the rule table**, applied mechanically and recorded with its
+reason: a live or security path goes to a friend; a read, a decision, a review
+or a ruling goes to a friend; anything else is matched field by field against
+the consumers table. A task whose paths span more than one package comes back
+`SPLIT-FIRST` with its seams named by file and is not routed until it is split.
+`--hand-over` is what an owner's yes looks like: the owner becomes the required
+READER and the router places the task on the emptiest consumer that can take it,
+so the typing moves and the verdict does not.
+
+**`refill`** tops every consumer's queue that has dropped below the low water
+mark (two) to its width — four for a friend, the bench's own number otherwise —
+from the sprint's open list, ownership first then age. It is the dealer's rule
+(`internal/deal`), the same one the card dealer calls, and a consumer whose
+heartbeat is not fresh takes nothing.
+
+**`wall`** prints the lanes and the Amdahl bound, and `--move <ids>` answers
+"what would the wall be if these moved?" without writing anything — the number
+to put in front of the owner before asking. **`calibration`** prints the
+estimator's error by kind and by owner over the closed tasks, with the estimate
+each kind's measurement argues for beside today's default.
+
+The consumers table is not a new file: a bench's capabilities are `key=value`
+tokens in its row's notes in the machines registry (`--machines`), and the
+friends are the bus roster (`--bus`) or a list of names (`--friends`).
 
 ## nova-review
 

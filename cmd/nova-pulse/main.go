@@ -66,6 +66,15 @@ nova-pulse fleet   standard --benches <file> --bench <name> [--machines <file>] 
 nova-pulse fleet   mirror --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   join --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
 nova-pulse fleet   sleep --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
+nova-pulse sprint open   --name <id> --goal <text> --store <host:port> [--store-user <name>] [--store-password-env <VAR>] [--planned-close <RFC3339>]
+nova-pulse sprint add    --name <id> --ref <ref> --kind <kind> --store <host:port> [--owner <name>] [--est <minutes>] [--paths <a,b>] [--depends-on <ids>] [--leg <name>] [--locality house|datacenter|any] [--isolation net|nonet] [--routes <a,b>] [--repo <o/n>] [--base <branch>] [--reader <name>] [--priority] [--id <id>] [--leased-at <RFC3339>]
+nova-pulse sprint status --store <host:port> [--name <id>] [--verbose] [--flip [--friends <a,b>]]
+nova-pulse sprint route  --store <host:port> (--task <id> | --name <id>) (--machines <file> | --friends <a,b> | --bus <dir>) [--apply] [--hand-over]
+nova-pulse sprint split  --store <host:port> --task <id> [--name <id>] [--apply]
+nova-pulse sprint refill --store <host:port> [--name <id>] (--machines <file> | --friends <a,b> | --bus <dir>) [--low-water <n>] [--dry-run]
+nova-pulse sprint wall   --store <host:port> [--name <id>] [--move <ids>] [--to <consumer>]
+nova-pulse sprint calibration --store <host:port> [--name <id>]
+nova-pulse sprint close  --store <host:port> --name <id> [--task <id> --evidence <text>] [--at <RFC3339>]
 nova-pulse wake    --bench <name>... --registry <file> [--timeout <duration, default 8m>]
 nova-pulse sleep   --bench <name>... [--idle <duration, default 30m>]
 nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
@@ -397,6 +406,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdHygiene(rest, stdout, stderr, now)
 	case "fleet":
 		return cmdFleet(rest, stdout, stderr)
+	case "sprint":
+		return cmdSprint(rest, stdout, stderr, now)
 	case "wake":
 		return cmdWake(rest, stdout, stderr)
 	case "sleep":
