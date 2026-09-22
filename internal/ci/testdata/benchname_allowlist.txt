@@ -28,3 +28,8 @@ internal/pulse/fillstore.go:StoreCapacity.Capacity the pulse.Capacity the fleet 
 cmd/nova-pulse/power.go:powerOnlineCount the Mac power verbs exist FOR the CI runner hosts: nova-pulse wake and sleep are how batman and superman are woken for the merge group and let sleep again (the fleet runs on solar). A runner host is the RIGHT answer here, so a bench guard would refuse the verb's whole purpose; they place no card and no load, only a magic packet and a runner-list read
 cmd/nova-pulse/power.go:powerBusyCount the same verbs, asking GitHub whether that runner host's runners are busy before letting it sleep
 cmd/nova-pulse/power.go:powerWakeFail formats one WAKE FAIL line for those verbs and touches no machine
+
+# `commit` (nova-tools #2549) runs ON a bench, over that bench's own job directories. It
+# opens no connection at all -- no ssh, no BenchShell, no registry to ask -- so the bench
+# name it takes is a LABEL for the verdict lines and never a machine it reaches.
+internal/pulse/harvestcommiteffect.go:insertBench puts `bench=<name>` on one already-formatted verdict line and touches nothing; `commit` is run ON the bench, reaches no machine, and the name is the operator's word for the log

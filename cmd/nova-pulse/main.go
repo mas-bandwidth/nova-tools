@@ -28,6 +28,7 @@ nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#
 nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
+nova-pulse commit  --root <swarm root> [--bench <name>] [--cards <dir>]... [--mirror [<o/n>=]<dir>]... [--draft-only <file>] [--base <branch>] [--max <n>] [--dry-run]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
@@ -87,6 +88,30 @@ example:
 ./cards.tsv and . there are a pulse root of your own; cmd/nova-pulse/testdata/example-pulse
 in this repo is a fixture the size of a first run, and every line above is run
 against it by the tests.
+
+commit is the harvest's mechanical pre-step, run ON a bench over its own job
+directories: for every <root>/*card-*/jobs/<label> whose RESULT.md line 2 begins
+with the word DONE and whose repo/ is a git repository, it sets the card's own
+files aside (RESULT.md notes.txt REPORT.md usage.tsv harness-output.log
+repo.bundle -- moved into the job directory, never committed and never deleted),
+checks out rowan/<label>, stages the CARD'S declared PATHS (with no card, the
+whole tree and a printed WARN), commits RESULT.md line 1, drops the scratch the
+card added in a follow-up commit, rebases onto the target the card names at its
+live tip when it has moved, and writes the BASE, BRANCH and prior lines the
+RESULT.md is missing. It prints ONE LINE PER VERDICT -- COMMITTED, SKIP, REFUSED,
+BRANCH-ONLY, SCRATCH-MOVED, SCRATCH-DROPPED, REBASED, REBASE-CONFLICT, BASE-LINE,
+BRANCH-LINE, PRIOR-LINE, REPORT-FOLDED -- and a COMMIT BENCH line with the counts.
+Two refusals are fences and not judgements: a changed file over 1 MB is refused by
+name, and so is a changed path that leaves the repository tree or carries the
+shape of a credential, printing the path and the shape and none of the content.
+--draft-only is a file of label prefixes, one per line, whose cards are drafts and
+are never committed. --dry-run changes nothing. It replaces bin/harvest-priority's
+$commit_step (nova-tools #2549), which was 5.8 KB of bash in a single-quoted
+string piped into ssh, broke three times in twelve hours and stranded DONE work
+silently each time.
+
+example:
+  nova-pulse commit --root "$HOME/rowan-working/tmp" --bench studio --cards "$HOME/rowan-working/tmp/cards" --mirror mas-bandwidth/nova-tools="$HOME/nova-bench/mirror/nova-tools.git" --draft-only "$HOME/rowan-working/queue/DRAFT-ONLY"
 
 manager is the manager tier: a bounded controller, no model call. Each cycle is
 wait, notes, harvest, triage, merge, refill and one MANAGER line; an unknown
@@ -291,6 +316,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return cmdCutKind(rest, stdout, stderr)
 		}
 		return cmdCut(rest, stdout, stderr)
+	case "commit":
+		return cmdCommit(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":

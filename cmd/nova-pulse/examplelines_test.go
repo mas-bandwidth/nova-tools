@@ -116,6 +116,12 @@ var leftOwedExampleLines = map[string]string{
 	// why: survey runs tools/bench-standard.sh over ssh on every bench in
 	// ./fleet.tsv; the file does not exist and no test may reach a machine.
 	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
+	// why: the line acts on the real $HOME's swarm root. Running it would check
+	// out branches in, and commit to, the caller's own live job clones, and the
+	// --draft-only list it names is the file that keeps friend-owned cards from
+	// being committed at all -- a missing one is a refusal on purpose, and a
+	// fixture cannot stand behind a stranger's working directory.
+	"nova-pulse commit --root \"$HOME/rowan-working/tmp\" --bench studio --cards \"$HOME/rowan-working/tmp/cards\" --mirror mas-bandwidth/nova-tools=\"$HOME/nova-bench/mirror/nova-tools.git\" --draft-only \"$HOME/rowan-working/queue/DRAFT-ONLY\"": "the line commits in the real $HOME's live job clones and names a DRAFT-ONLY list a stranger does not have; the verb is covered end to end by TestCommitVerb against a fixture swarm root instead",
 }
 
 // exampleBlockLines returns every command under an `example:` heading in a

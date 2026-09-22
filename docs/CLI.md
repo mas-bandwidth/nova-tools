@@ -2245,6 +2245,79 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 `internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
 `queue/control/machines.tsv`.
 
+### commit
+
+```
+nova-pulse commit --root <swarm root> [--bench <name>] [--cards <dir>]... [--mirror [<o/n>=]<dir>]... [--draft-only <file>] [--base <branch>] [--max <n>] [--dry-run]
+```
+
+`commit` is the harvest's **mechanical pre-step**, and it replaces
+`~/rowan-working/bin/harvest-priority`'s `$commit_step` (issue #2549): 5.8 KB of bash in a
+single-quoted string piped into `ssh <bench> bash -s`, which broke three times in twelve
+hours and stranded finished work silently each time — an unmatched glob under the Macs'
+zsh login shell (24 DONE cells never committed, no log line), a `case ... DONE\(*` that
+did not parse on the remote bash (no bench committed for seven hours), and a patch that
+broke the file itself. There was no test.
+
+**It is its own verb and not a first step of `harvest --bench`**, because the two run in
+different places. `commit` runs ON a bench, over that bench's own job directories and
+working trees. `harvest --bench` runs on the coordinator and reaches a bench only through
+the shell seam and a fetched ref; it never has the working tree this step has to stage,
+commit and rebase. Folding one into the other would mean shipping working-tree work back
+over the seam, which is the arrangement that broke.
+
+For every `<root>/<slot>/jobs/<label>` whose `RESULT.md` **line 2 begins with the word
+`DONE`** and whose `repo/` is a git repository, it:
+
+- **sets the card's own files aside** — `RESULT.md`, `notes.txt`, `REPORT.md`,
+  `usage.tsv`, `harness-output.log`, `repo.bundle` found in the working tree are MOVED to
+  `<job>/scratch-from-repo/`. Never committed, never deleted: refusing a whole job over
+  one of these left 88 DONE cells unharvested on 2026-09-21.
+- **checks out `rowan/<label>`** (`card-00-` stripped), held against the same branch rule
+  every push in this tool is held against — no trunk, no escape from the prefix.
+- **stages the CARD's declared `PATHS` and nothing else** (cards v2 A4, #2522). With no
+  card for the label there is nothing to stage by, so the whole tree is staged and a
+  `WARN` line says so; refusing there is how DONE work goes unharvested.
+- **commits `RESULT.md` line 1**, on one line, capped at 200 bytes.
+- **drops the scratch the card added** — `notes.txt`, `notes/`, `.nova-sandbox-tmp/`,
+  `*.class *.o *.obj *.pyc *.exe`, `a.out` added between the card's `sha=` and `HEAD` — in
+  a follow-up commit, so the branch carries the work and nothing else.
+- **rebases onto the target the card names**, fetched from `--mirror` at its live tip,
+  when the target has moved under the card. A replay that conflicts is aborted and printed
+  as `REBASE-CONFLICT`: that is author work, and the card is recut.
+- **writes the `BASE`, `BRANCH` and `prior:` lines** the `RESULT.md` is missing. WRITE,
+  not substitute: the bash used `sed "s#^BRANCH[: ].*#...#"`, which changes nothing when
+  the line is absent and exits 0, so `BRANCH-LINE report-nova-tools-2537-r1 -> ...` was
+  printed 94 times, once per pass, and never once took.
+- **folds `REPORT.md`** (at most 1500 bytes) into the `RESULT.md` the PR body is built
+  from.
+
+**Two refusals are fences and not judgements.** A changed file over 1 MB refuses the job
+and names the file. And the exfiltration fence (#2609): a changed path that leaves the
+repository tree (`../`, absolute, `~`) or carries the shape of a credential (`.ssh/`,
+`*.key`, `*.pem`, `id_*`, `auth.json`, `.env`, `nova-secrets/`) is refused with the path
+AND the shape printed; a staged file whose CONTENT matches a key shape is refused the same
+way, the index is reset, and neither ever prints a byte of what it matched.
+
+**Every verdict is one line.** `COMMITTED`, `SKIP`, `REFUSED`, `BRANCH-ONLY`,
+`SCRATCH-MOVED`, `SCRATCH-DROPPED`, `REBASED`, `REBASE-CONFLICT`, `BASE-LINE`,
+`BRANCH-LINE`, `PRIOR-LINE`, `REPORT-FOLDED`, `WARN`, `NOTE`, `DRY-RUN`, and a closing
+`COMMIT BENCH OK|RED bench=<n> jobs=<n> committed=<n> skipped=<n> refused=<n>
+rebased=<n> failed=<n> dry-run=<yes|no>`. The bash's driver grepped
+`^HARVEST (JOB|NO-COMMIT|REFUSED|BENCH)` and dropped every `SKIP`: the log holds 0 SKIP
+lines against 12,784 REFUSED while each studio pass reported `skipped=96`, so roughly 96
+verdicts per bench per pass went in the bin. Here the summary carries the counts as well,
+so a narrow grep downstream loses a line and never a fact.
+
+`--draft-only <file>` is a list of label prefixes, one per line, `#` a comment, whose
+cards are drafts and are never committed (Glenn 2026-09-21: friends build the tooling).
+The bash carried nine of them inline in the shell string. `--dry-run` prints and changes
+nothing. A `read-*` card commits nothing by rule.
+
+```
+nova-pulse commit --root "$HOME/rowan-working/tmp" --bench studio --cards "$HOME/rowan-working/tmp/cards" --mirror mas-bandwidth/nova-tools="$HOME/nova-bench/mirror/nova-tools.git" --draft-only "$HOME/rowan-working/queue/DRAFT-ONLY"
+```
+
 ### harvest
 
 ```
