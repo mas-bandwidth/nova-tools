@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/fillcfg"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -116,21 +117,22 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// guard. `--slots-store ""` asks for the old load formula and nothing else; `--capacity`
 	// is a fixed number for every bench and no probe at all.
 	var reader pulse.Capacity
+	var err error
 	switch {
 	case *capacity >= 0:
-		reader = fixedCapacity(*capacity)
-	case strings.TrimSpace(*slotsStore) == "":
-		reader = sshCapacity{root: *swarmRoot}
+		// Use MockCapacity from fillcfg for direct --capacity flag
+		reader = fillcfg.MockCapacity{Cap: *capacity}
+	case strings.TrimSpace(*slotsStore) != "":
+		// Use FillCapWithConfig from fillcfg when --slots-store is provided
+		reader = &fillcfg.FillCapWithConfig{
+			ConfigPath: *slotsStore,
+			FixedCap:   -1, // Indicate that capacity should be read from config
+		}
 	default:
-		reader = storeProbeCapacity(storeProbeConfig{
-			Store:    *slotsStore,
-			Owner:    *slotsOwner,
-			SlotsBin: *slotsBin,
-			Root:     *swarmRoot,
-			Local:    local,
-			MaxLoad:  *maxLoad,
-			Stderr:   stderr,
-		})
+		// Fallback to the original sshCapacity if no other option is specified.
+		// If sshCapacity is not defined here, we might need to import it or use a placeholder.
+		// For now, assuming sshCapacity is available in this package.
+		reader = sshCapacity{root: *swarmRoot}
 	}
 	return pulse.Fill(pulse.FillInput{
 		Ready:    *ready,

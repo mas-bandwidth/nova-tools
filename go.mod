@@ -1,4 +1,5 @@
 module github.com/mas-bandwidth/nova-tools
+internal/fillcfg github.com/mas-bandwidth/nova-tools/internal/fillcfg
 
 go 1.26.6
 
