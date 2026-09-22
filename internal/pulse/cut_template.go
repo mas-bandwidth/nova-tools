@@ -367,10 +367,130 @@ func ValidateCardV2(cardText string) error {
 	if !hasRedWhen || redWhenVal == "" {
 		return fmt.Errorf("cutter lint: card missing required RED-WHEN: declaration (every v2 card must declare the falsifiable condition that makes the test red)")
 	}
-	if strings.Contains(cardText, "git add -A") || strings.Contains(cardText, "git add --all") {
-		return fmt.Errorf("cutter lint: card contains forbidden 'git add -A' (commit rule: stage declared PATHS only, never git add -A; notes live outside repo/)")
+	if err := checkOperativeBroadStaging(cardText); err != nil {
+		return err
 	}
 	return nil
+}
+
+// checkOperativeBroadStaging inspects a card for forbidden broad staging instructions
+// (git add -A or git add --all) while allowing quoted task/evidence fields (A4).
+// Quoted evidence in RED-WHEN:, HOLD:, ## Inlined Evidence, markdown blockquotes,
+// fenced code blocks, or quoted spans (`...`, "...") is permitted.
+func checkOperativeBroadStaging(cardText string) error {
+	lines := strings.Split(cardText, "\n")
+	inEvidenceSection := false
+	inCodeBlock := false
+
+	for _, rawLine := range lines {
+		trimmed := strings.TrimSpace(rawLine)
+
+		// Track section headers
+		if strings.HasPrefix(trimmed, "## Inlined Evidence") {
+			inEvidenceSection = true
+			continue
+		} else if strings.HasPrefix(trimmed, "## ") {
+			inEvidenceSection = false
+		}
+
+		// Skip entire Inlined Evidence section
+		if inEvidenceSection {
+			continue
+		}
+
+		// Track fenced code blocks (``` ... ```)
+		if strings.HasPrefix(trimmed, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock {
+			continue
+		}
+
+		// Skip metadata citation/evidence fields
+		if strings.HasPrefix(trimmed, "RED-WHEN:") ||
+			strings.HasPrefix(trimmed, "HOLD:") ||
+			strings.HasPrefix(trimmed, "HOLD_FILE:") ||
+			strings.HasPrefix(trimmed, "REMAINS:") ||
+			strings.HasPrefix(trimmed, "SYMBOL:") {
+			continue
+		}
+
+		// Blockquotes are quoted evidence
+		if strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+
+		// Check COMMAND header: operative execution command
+		if strings.HasPrefix(trimmed, "COMMAND:") {
+			cmd := strings.TrimSpace(strings.TrimPrefix(trimmed, "COMMAND:"))
+			if containsBroadStaging(cmd) {
+				return fmt.Errorf("cutter lint: COMMAND contains forbidden operative broad staging 'git add -A' (commit rule: stage declared PATHS only)")
+			}
+			continue
+		}
+
+		// Ignore lines if they don't contain broad staging tokens
+		if !containsBroadStaging(trimmed) {
+			continue
+		}
+
+		// Strip inline quotes and backticks to separate quoted evidence from operative commands
+		stripped := stripQuotedSpans(trimmed)
+		if containsBroadStaging(stripped) {
+			if !isRemovalOrEvidenceContext(stripped) {
+				return fmt.Errorf("cutter lint: card contains forbidden operative broad staging 'git add -A' (commit rule: stage declared PATHS only, never git add -A; notes live outside repo/)")
+			}
+		}
+	}
+	return nil
+}
+
+func containsBroadStaging(s string) bool {
+	return strings.Contains(s, "git add -A") || strings.Contains(s, "git add --all")
+}
+
+func stripQuotedSpans(s string) string {
+	s = stripBetween(s, '`', '`')
+	s = stripBetween(s, '"', '"')
+	s = stripBetween(s, '\'', '\'')
+	s = stripBetween(s, '“', '”')
+	return s
+}
+
+func stripBetween(s string, open, close rune) string {
+	var b strings.Builder
+	inQuote := false
+	for _, r := range s {
+		if !inQuote && r == open {
+			inQuote = true
+			continue
+		}
+		if inQuote && r == close {
+			inQuote = false
+			continue
+		}
+		if !inQuote {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func isRemovalOrEvidenceContext(s string) bool {
+	lower := strings.ToLower(s)
+	evidenceVerbs := []string{
+		"remove ", "delete ", "drop ", "eliminate ", "fix ", "fixing ",
+		"refuse ", "refusing ", "reject ", "rejecting ", "forbid ", "forbidden ",
+		"never ", "do not ", "don't ", "avoid ", "stop ", "prohibit ",
+		"without ", "instead of ", "replaces ", "revert ", "quoting ", "quoted ",
+	}
+	for _, verb := range evidenceVerbs {
+		if strings.Contains(lower, verb) {
+			return true
+		}
+	}
+	return false
 }
 
 // ResultTemplateV2 returns the fill-in skeleton for a kind (A7).

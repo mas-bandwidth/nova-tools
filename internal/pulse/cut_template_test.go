@@ -968,15 +968,21 @@ RED-WHEN: test asserts self-written buffer without calling runtime
 		t.Errorf("ValidateCardV2 accepted card without SCHEMA: v2: err=%v", err)
 	}
 
-	// Forbidden git add -A (A4)
+	// Forbidden operative git add -A (A4)
 	gitAddACard := validCard + "STEP 3. git add -A && git commit\n"
-	if err := ValidateCardV2(gitAddACard); err == nil || !strings.Contains(err.Error(), "forbidden 'git add -A'") {
-		t.Errorf("ValidateCardV2 accepted card containing 'git add -A': err=%v", err)
+	if err := ValidateCardV2(gitAddACard); err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
+		t.Errorf("ValidateCardV2 accepted card containing operative 'git add -A': err=%v", err)
 	}
 
 	gitAddAllCard := validCard + "STEP 3. git add --all && git commit\n"
-	if err := ValidateCardV2(gitAddAllCard); err == nil || !strings.Contains(err.Error(), "forbidden 'git add -A'") {
-		t.Errorf("ValidateCardV2 accepted card containing 'git add --all': err=%v", err)
+	if err := ValidateCardV2(gitAddAllCard); err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
+		t.Errorf("ValidateCardV2 accepted card containing operative 'git add --all': err=%v", err)
+	}
+
+	// Permitted quoted evidence: RED-WHEN naming git add -A, HOLD, Inlined Evidence, backtick quotes
+	quotedEvidenceCard := validCard + "RED-WHEN: cutter lint fails on 'git add -A'\nHOLD: remove git add -A\nTask: remove `git add -A`\n"
+	if err := ValidateCardV2(quotedEvidenceCard); err != nil {
+		t.Errorf("ValidateCardV2 rejected card quoting 'git add -A' as evidence: %v", err)
 	}
 }
 
@@ -1005,10 +1011,57 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		t.Errorf("RenderCardV2 missing A4 commit rule:\n%s", card)
 	}
 
-	// Card containing git add -A in body must be refused by cutter lint
-	_, err = RenderCardV2(CardV2Input{
+	// Legitimate repair card quoting 'git add -A' as evidence must be accepted (Stella A4)
+	repairCard, err := RenderCardV2(CardV2Input{
 		Kind:         "fix",
 		Number:       154,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "remove git add -A from deploy script",
+		Branch:       "emma/fix-deploy-staging",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestFoo",
+		TestCommand:  "go test ./internal/pulse -run TestFoo",
+		Paths:        "internal/pulse/cut.go",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "cutter lint fails to refuse card containing 'git add -A'",
+		HoldLine:     "HOLD: remove git add -A from Makefile",
+		ReviewerLine: "Reviewer verdict: found broad staging git add -A in deploy script",
+		PriorDiff:    "--- a/deploy.sh\n+++ b/deploy.sh\n-git add -A\n+git add $PATHS",
+		Body:         "Task: remove `git add -A` and `git add --all` from deploy script. Quote: > do not run git add -A",
+	})
+	if err != nil {
+		t.Fatalf("RenderCardV2 rejected legitimate repair card quoting 'git add -A' as evidence: %v", err)
+	}
+	if !strings.Contains(repairCard, "remove `git add -A`") {
+		t.Errorf("RenderCardV2 dropped task text:\n%s", repairCard)
+	}
+
+	// Card with operative broad staging in COMMAND must be refused
+	_, err = RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       155,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test broad staging command",
+		Branch:       "emma/commit-rule-bad-cmd",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestFoo",
+		TestCommand:  "git add -A && go test ./...",
+		Paths:        "internal/pulse/cut.go",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "staging entire working tree",
+	})
+	if err == nil || !strings.Contains(err.Error(), "COMMAND contains forbidden operative broad staging") {
+		t.Errorf("RenderCardV2 accepted card with git add -A in COMMAND: err=%v", err)
+	}
+
+	// Card containing operative broad staging in body must be refused
+	_, err = RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       156,
 		Repo:         "mas-bandwidth/nova-tools",
 		Title:        "test forbidden git add",
 		Branch:       "emma/commit-rule-bad",
@@ -1022,7 +1075,7 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		RedWhen:      "git add -A accepted",
 		Body:         "STEP 3. git add -A && git commit -m 'oops'",
 	})
-	if err == nil || !strings.Contains(err.Error(), "forbidden 'git add -A'") {
+	if err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
 		t.Errorf("RenderCardV2 accepted card with git add -A in body: err=%v", err)
 	}
 }
