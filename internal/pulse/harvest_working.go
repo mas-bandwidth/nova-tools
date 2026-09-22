@@ -111,6 +111,15 @@ func HarvestWorking(in HarvestInput) int {
 		if _, err := os.Stat(filepath.Join(j.dir, ".harvested")); err == nil {
 			continue
 		}
+		if in.Commit {
+			CommitJob(CommitJobInput{
+				JobDir:       j.dir,
+				BranchPrefix: in.BranchPrefix,
+				DefaultBase:  in.Base,
+				MaxFileSize:  MaxChangedFileBytes,
+				Stdout:       in.Stdout,
+			})
+		}
 		out := r.one(j)
 		counts[out.class]++
 		pushed += out.pushed

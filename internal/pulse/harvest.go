@@ -74,6 +74,11 @@ type HarvestInput struct {
 	SinceStamp string
 	Timer      string
 
+	// Commit, when set, runs the mechanical commit step on each job before folding:
+	// commits DONE cards whose work is uncommitted, drops card scratch, sets aside card artifacts,
+	// rebases onto moved target, and updates RESULT.md headers.
+	Commit bool
+
 	// Effect, when set, is the publication gate. RESULT, harvest push and
 	// accept each verify the card fence epoch and a separate RUN action token
 	// at the effect owner's linearization. Nil keeps today's harvest.
