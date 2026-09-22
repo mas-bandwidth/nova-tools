@@ -18,7 +18,7 @@ import (
 // built with `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, so no credential is ever
 // in this tree and no unit test ever dials anything (AGENTS.md rule 2).
 //
-// Every key it writes is under `ev:test-<stamp>`, never `ev:cards`, so a live sprint's
+// Every key it writes is under `ev:test-<stamp>`, never `cards:done`, so a live sprint's
 // stream cannot be touched by a test run, and the stream is deleted at the end.
 const (
 	testEnable   = "NOVA_REDIS_TEST"
@@ -101,9 +101,9 @@ func TestAHundredDonesAgainstTheFleetStore(t *testing.T) {
 			Model:     []string{"fable", "sonnet"}[i%2],
 			Route:     []string{"studio", "hulk"}[i%2],
 			Kind:      OK,
-			TokensIn:  1000,
-			TokensOut: 100,
-			USD:       0.01,
+			TokensIn:  Int64(1000),
+			TokensOut: Int64(100),
+			USD:       Float64(0.01),
 		}); err != nil {
 			t.Fatalf("emitting DONE %d: %v", i, err)
 		}

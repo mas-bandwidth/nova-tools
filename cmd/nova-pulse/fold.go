@@ -1,6 +1,6 @@
 package main
 
-// The fold verb's flags: the one consumer that turns ev:cards into the SQLite record
+// The fold verb's flags: the one consumer that turns cards:done into the SQLite record
 // (nova-tools #2563). The queries live here and never in Redis (Johnny, section 8 of
 // reports/redis-for-nova-tools-2026-09-21.md), so the hot store stays a queue.
 

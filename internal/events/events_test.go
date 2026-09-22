@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +15,7 @@ var at = time.Date(2026, 9, 22, 14, 5, 0, 0, time.UTC)
 func okEvent() Event {
 	return Event{
 		Label: "card-42", Attempt: 1, Bench: "studio", Model: "fable", Route: "studio",
-		Kind: OK, TokensIn: 12000, TokensOut: 900, USD: 0.11, PR: "2563",
+		Kind: OK, TokensIn: Int64(12000), TokensOut: Int64(900), USD: Float64(0.11), PR: "2563",
 		Head: "5f544272a1b0", At: at,
 	}
 }
@@ -34,8 +35,8 @@ func TestValidateRefusesWhatMustNeverReachRedis(t *testing.T) {
 		{"unknown kind", func() Event { e := okEvent(); e.Kind = "done"; return e }(), "not one of"},
 		{"a payload in a field", func() Event { e := okEvent(); e.Head = strings.Repeat("d", maxFieldBytes+1); return e }(), "ids and counts only"},
 		{"a diff in a field", func() Event { e := okEvent(); e.Model = "--- a/x\n+++ b/x"; return e }(), "control character"},
-		{"a negative count", func() Event { e := okEvent(); e.TokensIn = -1; return e }(), "are counts"},
-		{"a negative price", func() Event { e := okEvent(); e.USD = -0.5; return e }(), "usd is a price"},
+		{"a negative count", func() Event { e := okEvent(); e.TokensIn = Int64(-1); return e }(), "are counts"},
+		{"a negative price", func() Event { e := okEvent(); e.USD = Float64(-0.5); return e }(), "usd is a price"},
 		{"a negative attempt", func() Event { e := okEvent(); e.Attempt = -2; return e }(), "attempt is a count"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,7 +70,7 @@ func TestFieldsAreTheIssuesNamesAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the entry back: %v", err)
 	}
-	if back != okEvent() {
+	if !reflect.DeepEqual(back, okEvent()) {
 		t.Fatalf("round trip = %+v, want %+v", back, okEvent())
 	}
 	if got := back.Day(); got != "2026-09-22" {
@@ -77,17 +78,53 @@ func TestFieldsAreTheIssuesNamesAndRoundTrip(t *testing.T) {
 	}
 }
 
-// A writer that omits a number it does not know is writing the truth, and a number that is
-// present and unreadable is a writer with a bug. The two are not the same answer.
-func TestMissingNumbersAreZeroAndBadNumbersAreRefused(t *testing.T) {
+// The one stream is cards:done (Rowan's ruling, accepted by Johnny 2026-09-22 17:16Z): the
+// event fields are added to that stream, not written to a second one beside it.
+func TestTheStreamIsCardsDone(t *testing.T) {
+	t.Parallel()
+
+	if Stream != "cards:done" {
+		t.Fatalf("events.Stream = %q, want cards:done: there is one stream, and it is the one record and ci already read", Stream)
+	}
+	if got := NewFakeStream().StreamName(); got != "cards:done" {
+		t.Fatalf("the fake stands for %q, want cards:done", got)
+	}
+}
+
+// An absent cost is not a zero cost. A writer that omits tokens or usd has not reported a
+// zero, so the entry read back carries NO number (nil), an event with no cost writes no such
+// field, and a number that is present and unreadable is a writer with a bug.
+func TestMissingCostStaysAbsentAndBadNumbersAreRefused(t *testing.T) {
 	t.Parallel()
 
 	e, err := FromFields(map[string]string{"label": "card-1", "event": "queued"})
 	if err != nil {
 		t.Fatalf("a queued entry with no numbers: %v", err)
 	}
-	if e.TokensIn != 0 || e.USD != 0 || !e.At.IsZero() {
-		t.Fatalf("missing fields = %+v, want zeroes", e)
+	if e.USD != nil || e.TokensIn != nil || e.TokensOut != nil {
+		t.Fatalf("missing cost read back as usd=%v tokens_in=%v tokens_out=%v, want all absent (nil), never 0", e.USD, e.TokensIn, e.TokensOut)
+	}
+	if !e.At.IsZero() {
+		t.Fatalf("missing at = %s, want zero", e.At)
+	}
+	fields := Event{Label: "card-1", Kind: Queued}.Fields()
+	for _, name := range []string{"usd", "tokens_in", "tokens_out"} {
+		if v, ok := fields[name]; ok {
+			t.Errorf("an event with no %s writes %s=%q; an absent cost is no field at all", name, name, v)
+		}
+	}
+	values := Event{Label: "card-1", Kind: Queued}.Values()
+	for i := 0; i < len(values); i += 2 {
+		if name := values[i].(string); name == "usd" || name == "tokens_in" || name == "tokens_out" {
+			t.Errorf("XADD would write %s=%v for an event with no cost", name, values[i+1])
+		}
+	}
+	zero, err := FromFields(map[string]string{"label": "card-1", "event": "ok", "usd": "0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zero.USD == nil || *zero.USD != 0 {
+		t.Fatalf("usd=0 read back as %v, want a reported zero: a zero a writer wrote is a zero", zero.USD)
 	}
 	if _, err := FromFields(map[string]string{"label": "card-1", "event": "ok", "usd": "eleven"}); err == nil {
 		t.Fatal("usd=eleven was accepted; an unreadable number is a writer with a bug")

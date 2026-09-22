@@ -1,7 +1,15 @@
 // Package events is the card event stream of nova-tools #2563 and the SQLite fold that is
-// its record: every card transition XADDs one entry to `ev:cards`, and one consumer folds
+// its record: every card transition XADDs one entry to `cards:done`, and one consumer folds
 // the stream into a SQLite file whose views answer "how many, how much, per model, per
 // route, per bench, per day".
+//
+// THERE IS ONE STREAM (Rowan's ruling on the bus 2026-09-22, accepted by Johnny 17:16Z).
+// `cards:done` is the stream internal/record and internal/ci already read; this package does
+// not mint a second one beside it, it adds the event fields to the entries of that stream.
+// The SQLite file is a fold of `cards:done` and nothing else: a view that `fold --rebuild`
+// can recompute from the stream at any moment, never a second source of truth. An entry
+// written before the fields were added carries no `event` field; the fold counts it as
+// skipped rather than guessing it into `ok` or `fail`.
 //
 // The division of labour is Johnny's (reports/redis-for-nova-tools-2026-09-21.md section 8,
 // adopted): Redis holds ids, counts and event ids and NOTHING else -- never a diff, a test,
@@ -27,7 +35,7 @@ import (
 // fold reads under, and MaxLen the approximate cap XADD trims to (MAXLEN ~ 1e6): a stream
 // that grows without a bound is a store that fills a disk no one is watching.
 const (
-	Stream = "ev:cards"
+	Stream = "cards:done"
 	Group  = "fold"
 	MaxLen = 1_000_000
 )
@@ -81,6 +89,10 @@ func (k Kind) Known() bool {
 
 // Event is one card transition. Every string field is an id or a name; every number is a
 // count or a price. There is no field for prose and that is the point.
+//
+// TokensIn, TokensOut and USD are pointers because an absent cost is not a zero cost (no
+// evidence is not negative evidence): nil means nobody reported the number, the entry then
+// carries no such field at all, and the fold stores NULL. A zero is a writer saying zero.
 type Event struct {
 	Label     string
 	Attempt   int
@@ -88,13 +100,17 @@ type Event struct {
 	Model     string
 	Route     string
 	Kind      Kind
-	TokensIn  int64
-	TokensOut int64
-	USD       float64
+	TokensIn  *int64
+	TokensOut *int64
+	USD       *float64
 	PR        string
 	Head      string
 	At        time.Time
 }
+
+// Int64 and Float64 are the one-line way to fill a reported number: Event{USD: Float64(0.11)}.
+func Int64(n int64) *int64       { return &n }
+func Float64(f float64) *float64 { return &f }
 
 // fieldNames are the stream's field names, in the order XADD writes them. They are the
 // names nova-tools #2563 spells, so a bash writer and this package agree on the wire.
@@ -128,11 +144,14 @@ func (e Event) Validate() error {
 	if e.Attempt < 0 {
 		return fmt.Errorf("attempt is a count, got %d", e.Attempt)
 	}
-	if e.TokensIn < 0 || e.TokensOut < 0 {
-		return fmt.Errorf("tokens_in and tokens_out are counts, got %d and %d", e.TokensIn, e.TokensOut)
+	if e.TokensIn != nil && *e.TokensIn < 0 {
+		return fmt.Errorf("tokens_in and tokens_out are counts, got tokens_in %d", *e.TokensIn)
 	}
-	if math.IsNaN(e.USD) || math.IsInf(e.USD, 0) || e.USD < 0 {
-		return fmt.Errorf("usd is a price in dollars, got %v", e.USD)
+	if e.TokensOut != nil && *e.TokensOut < 0 {
+		return fmt.Errorf("tokens_in and tokens_out are counts, got tokens_out %d", *e.TokensOut)
+	}
+	if e.USD != nil && (math.IsNaN(*e.USD) || math.IsInf(*e.USD, 0) || *e.USD < 0) {
+		return fmt.Errorf("usd is a price in dollars, got %v", *e.USD)
 	}
 	return nil
 }
@@ -161,42 +180,52 @@ func (e Event) Stamp(now time.Time) Event {
 	return e
 }
 
-// Values is the flat field/value list XADD writes, in fieldNames order.
+// Values is the flat field/value list XADD writes, in fieldNames order. A number nobody
+// reported is left out, so the entry has no such field rather than a zero.
 func (e Event) Values() []any {
 	f := e.Fields()
 	out := make([]any, 0, 2*len(fieldNames))
 	for _, name := range fieldNames {
-		out = append(out, name, f[name])
+		if v, ok := f[name]; ok {
+			out = append(out, name, v)
+		}
 	}
 	return out
 }
 
 // Fields is the entry as Redis stores it: every value a string, every name the one #2563
-// spells.
+// spells. tokens_in, tokens_out and usd are present only when the event carries them.
 func (e Event) Fields() map[string]string {
 	at := ""
 	if !e.At.IsZero() {
 		at = e.At.UTC().Format(time.RFC3339)
 	}
-	return map[string]string{
-		"label":      e.Label,
-		"attempt":    strconv.Itoa(e.Attempt),
-		"bench":      e.Bench,
-		"model":      e.Model,
-		"route":      e.Route,
-		"event":      string(e.Kind),
-		"tokens_in":  strconv.FormatInt(e.TokensIn, 10),
-		"tokens_out": strconv.FormatInt(e.TokensOut, 10),
-		"usd":        strconv.FormatFloat(e.USD, 'f', -1, 64),
-		"pr":         e.PR,
-		"head":       e.Head,
-		"at":         at,
+	f := map[string]string{
+		"label":   e.Label,
+		"attempt": strconv.Itoa(e.Attempt),
+		"bench":   e.Bench,
+		"model":   e.Model,
+		"route":   e.Route,
+		"event":   string(e.Kind),
+		"pr":      e.PR,
+		"head":    e.Head,
+		"at":      at,
 	}
+	if e.TokensIn != nil {
+		f["tokens_in"] = strconv.FormatInt(*e.TokensIn, 10)
+	}
+	if e.TokensOut != nil {
+		f["tokens_out"] = strconv.FormatInt(*e.TokensOut, 10)
+	}
+	if e.USD != nil {
+		f["usd"] = strconv.FormatFloat(*e.USD, 'f', -1, 64)
+	}
+	return f
 }
 
-// FromFields reads one stream entry back. A missing number is zero, because a bash writer
-// that omits a field it does not know is writing the truth; a number that is present and
-// unreadable is an error, because that is a writer with a bug.
+// FromFields reads one stream entry back. A missing tokens_in, tokens_out or usd stays
+// ABSENT (nil), because a writer that did not know the cost has not reported a zero cost; a
+// number that is present and unreadable is an error, because that is a writer with a bug.
 func FromFields(f map[string]string) (Event, error) {
 	e := Event{
 		Label: f["label"],
@@ -211,16 +240,18 @@ func FromFields(f map[string]string) (Event, error) {
 	if e.Attempt, err = atoiField(f, "attempt"); err != nil {
 		return Event{}, err
 	}
-	if e.TokensIn, err = atoi64Field(f, "tokens_in"); err != nil {
+	if e.TokensIn, err = optInt64Field(f, "tokens_in"); err != nil {
 		return Event{}, err
 	}
-	if e.TokensOut, err = atoi64Field(f, "tokens_out"); err != nil {
+	if e.TokensOut, err = optInt64Field(f, "tokens_out"); err != nil {
 		return Event{}, err
 	}
 	if raw := strings.TrimSpace(f["usd"]); raw != "" {
-		if e.USD, err = strconv.ParseFloat(raw, 64); err != nil {
+		usd, perr := strconv.ParseFloat(raw, 64)
+		if perr != nil {
 			return Event{}, fmt.Errorf("usd %q is not a number", raw)
 		}
+		e.USD = &usd
 	}
 	if raw := strings.TrimSpace(f["at"]); raw != "" {
 		when, perr := time.Parse(time.RFC3339, raw)
@@ -235,21 +266,27 @@ func FromFields(f map[string]string) (Event, error) {
 	return e, nil
 }
 
+// atoiField reads attempt, the one count whose absence is its zero: an entry that names no
+// attempt is the card's first.
 func atoiField(f map[string]string, name string) (int, error) {
-	n, err := atoi64Field(f, name)
-	return int(n), err
+	n, err := optInt64Field(f, name)
+	if n == nil {
+		return 0, err
+	}
+	return int(*n), err
 }
 
-func atoi64Field(f map[string]string, name string) (int64, error) {
+// optInt64Field is nil for an absent (or empty) field and an error for an unreadable one.
+func optInt64Field(f map[string]string, name string) (*int64, error) {
 	raw := strings.TrimSpace(f[name])
 	if raw == "" {
-		return 0, nil
+		return nil, nil
 	}
 	n, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%s %q is not a whole number", name, raw)
+		return nil, fmt.Errorf("%s %q is not a whole number", name, raw)
 	}
-	return n, nil
+	return &n, nil
 }
 
 // Day is the UTC date the event belongs to, or "" when it carries no stamp. It is computed
@@ -265,7 +302,15 @@ func (e Event) Day() string {
 func (e Event) Line(stream, id string) string {
 	return fmt.Sprintf("EVENT %s %s label=%s event=%s attempt=%d bench=%s model=%s route=%s usd=%s",
 		stream, id, e.Label, string(e.Kind), e.Attempt, dash(e.Bench), dash(e.Model), dash(e.Route),
-		strconv.FormatFloat(e.USD, 'f', -1, 64))
+		usdText(e.USD))
+}
+
+// usdText is the price as the receipt prints it: a dash when nobody reported one.
+func usdText(usd *float64) string {
+	if usd == nil {
+		return "-"
+	}
+	return strconv.FormatFloat(*usd, 'f', -1, 64)
 }
 
 func dash(s string) string {

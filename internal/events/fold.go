@@ -126,9 +126,10 @@ func (d *DB) Apply(ctx context.Context, entries []Entry) (inserted, skipped int,
 		if !e.At.IsZero() {
 			at = e.At.UTC().Format(time.RFC3339)
 		}
+		// A nil pointer is a nil argument, which is SQL NULL: an absent cost stays absent.
 		res, err := stmts[table(e.Kind)].ExecContext(ctx,
 			entry.ID, e.Label, e.Attempt, e.Bench, e.Model, e.Route, string(e.Kind),
-			e.TokensIn, e.TokensOut, e.USD, e.PR, e.Head, at, e.Day())
+			nullable(e.TokensIn), nullable(e.TokensOut), nullable(e.USD), e.PR, e.Head, at, e.Day())
 		if err != nil {
 			return 0, 0, fmt.Errorf("fold %s: %w", entry.ID, err)
 		}
@@ -140,6 +141,15 @@ func (d *DB) Apply(ctx context.Context, entries []Entry) (inserted, skipped int,
 		return 0, 0, err
 	}
 	return inserted, skipped, nil
+}
+
+// nullable turns an absent number into a nil driver argument (SQL NULL) and a reported one
+// into its value.
+func nullable[T int64 | float64](p *T) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
 
 // Count is how many rows the three tables hold together: the number Johnny's bar 3 asks for.
@@ -185,20 +195,36 @@ func dumpRows(w io.Writer, name string, rows *sql.Rows) error {
 		var (
 			id, label, bench, model, route, kind, pr, head, at, day string
 			attempt                                                 int
-			tokensIn, tokensOut                                     int64
-			usd                                                     float64
+			tokensIn, tokensOut                                     sql.NullInt64
+			usd                                                     sql.NullFloat64
 		)
 		if err := rows.Scan(&id, &label, &attempt, &bench, &model, &route, &kind,
 			&tokensIn, &tokensOut, &usd, &pr, &head, &at, &day); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n",
-			name, id, label, attempt, bench, model, route, kind, tokensIn, tokensOut,
-			strconv.FormatFloat(usd, 'f', -1, 64), pr, head, at, day); err != nil {
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			name, id, label, attempt, bench, model, route, kind, nullInt(tokensIn), nullInt(tokensOut),
+			nullFloat(usd), pr, head, at, day); err != nil {
 			return err
 		}
 	}
 	return rows.Err()
+}
+
+// nullInt and nullFloat render a NULL as a dash, the way cell does, so a dump tells "nobody
+// reported it" from "zero".
+func nullInt(n sql.NullInt64) string {
+	if !n.Valid {
+		return "-"
+	}
+	return strconv.FormatInt(n.Int64, 10)
+}
+
+func nullFloat(f sql.NullFloat64) string {
+	if !f.Valid {
+		return "-"
+	}
+	return strconv.FormatFloat(f.Float64, 'f', -1, 64)
 }
 
 // Report writes the views as TSV blocks: the numbers a coordinator reads and the numbers

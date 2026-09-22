@@ -38,7 +38,9 @@ func EmitOne(in EmitInput) int {
 	if in.Print {
 		fields := e.Fields()
 		for _, name := range fieldNames {
-			fmt.Fprintf(in.Stdout, "%s\t%s\n", name, fields[name])
+			if v, ok := fields[name]; ok {
+				fmt.Fprintf(in.Stdout, "%s\t%s\n", name, v)
+			}
 		}
 		fmt.Fprintln(in.Stdout, e.Line(streamOr(in.Stream), "(not written: --print)"))
 		return 0

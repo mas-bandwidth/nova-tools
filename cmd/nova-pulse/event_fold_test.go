@@ -51,7 +51,7 @@ func TestEventPrintShowsTheEntryAndWritesNothing(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb)
 	}
-	for _, want := range []string{"label\tcard-42", "event\tok", "usd\t0.11", "at\t2026-09-22T14:05:00Z", "EVENT ev:cards"} {
+	for _, want := range []string{"label\tcard-42", "event\tok", "usd\t0.11", "at\t2026-09-22T14:05:00Z", "EVENT cards:done"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stdout does not carry %q:\n%s", want, out)
 		}
@@ -127,5 +127,29 @@ func TestFoldRebuildRefusesAFileThatExists(t *testing.T) {
 	}
 	if !strings.Contains(errb, "already exists") || !strings.Contains(errb, "name a path that does not exist") {
 		t.Fatalf("stderr = %q, want it to name the file and the remedy", errb)
+	}
+}
+
+// A cost the writer did not give is absent from the entry, never a 0: no usd, tokens_in or
+// tokens_out line is printed, and the receipt's usd is a dash. A given zero is a zero.
+func TestEventWithoutACostWritesNoCostField(t *testing.T) {
+	code, out, errb := pulseRun(t, "event", "--label", "card-42", "--event", "queued", "--print")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb)
+	}
+	for _, absent := range []string{"usd\t", "tokens_in\t", "tokens_out\t"} {
+		if strings.Contains(out, absent) {
+			t.Errorf("an event with no cost printed a %q field:\n%s", absent, out)
+		}
+	}
+	if !strings.Contains(out, "usd=-") {
+		t.Errorf("the receipt does not print the absent usd as a dash:\n%s", out)
+	}
+	code, out, errb = pulseRun(t, "event", "--label", "card-42", "--event", "ok", "--usd", "0", "--print")
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, errb)
+	}
+	if !strings.Contains(out, "usd\t0\n") {
+		t.Errorf("--usd 0 is a reported zero and must be written:\n%s", out)
 	}
 }

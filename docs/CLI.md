@@ -2680,7 +2680,7 @@ facts, and the page used to print the first for both.
 ### event and fold
 
 The card event stream and its record (nova-tools #2563). Every card transition
-XADDs one entry to `ev:cards` on the fleet Redis; one consumer folds the stream
+XADDs one entry to `cards:done` on the fleet Redis; one consumer folds the stream
 into a SQLite file, and that file — not a `find` over job directories — is where
 `done`, `ok`, `fail` and the money come from.
 
@@ -2691,7 +2691,15 @@ nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password
 
 **What rides the stream.** `label`, `attempt`, `bench`, `model`, `route`,
 `event`, `tokens_in`, `tokens_out`, `usd`, `pr`, `head`, `at` — ids and counts,
-nothing else. The diff, the test, the prompt, the transcript and the disposition
+nothing else. **There is one stream.** These are fields added to `cards:done`,
+the stream `nova-work record` and `nova-work events` already read under their own
+groups; the fold reads it under `fold`, and its SQLite file is a view of that
+stream that `--rebuild` recomputes, never a second record. **An absent cost stays
+absent**: a `--tokens-in`, `--tokens-out` or `--usd` that is not given is not
+written, the fold stores NULL, and the report prints a dash, because a writer
+that did not know the cost has not reported a zero. An entry written before the
+fields were added carries no `event`; the fold counts it as skipped rather than
+guessing it into `ok` or `fail`. The diff, the test, the prompt, the transcript and the disposition
 stay in git, and a field over 200 bytes or carrying a control character is
 **refused at the door** rather than trusted to the writer. That is Johnny's rule
 in `reports/redis-for-nova-tools-2026-09-21.md` section 8, made mechanical: core

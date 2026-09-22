@@ -211,10 +211,13 @@ example:
   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
 
 event and fold are the card event stream and its record (nova-tools #2563). event
-XADDs one entry to ev:cards -- label, attempt, bench, model, route, event,
+XADDs one entry to cards:done -- label, attempt, bench, model, route, event,
 tokens_in, tokens_out, usd, pr, head, at, and nothing else, because Redis holds
-ids and counts while the diff, the test and the prompt stay in git. fold is the
-stream's one consumer: XREADGROUP under --group, a SQLite row keyed on the event
+ids and counts while the diff, the test and the prompt stay in git. A cost not
+given (--tokens-in, --tokens-out, --usd) is absent from the entry, never 0. There
+is one stream: the fold is a view of cards:done, rebuildable from it, not a
+second record. fold reads it under its own --group (record and events keep
+theirs): XREADGROUP, a SQLite row keyed on the event
 id, XACK only after the row is committed, so a fold that is killed and restarted
 loses nothing and folds nothing twice. --once is one pass, --rebuild replays the
 whole stream into a file that does not exist yet, and --init, --report and --dump

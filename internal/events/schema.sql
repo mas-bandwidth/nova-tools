@@ -1,4 +1,6 @@
--- schema.sql is the fold: what `ev:cards` becomes once it is a record rather than a queue.
+-- schema.sql is the fold: what `cards:done` becomes once it is a record rather than a queue.
+-- It is a FOLD of that one stream, not a second source of truth beside it: the stream is the
+-- record, and `nova-pulse fold --rebuild` recomputes this file from it at any moment.
 -- It is applied on every open, statement by statement in one transaction, and is idempotent:
 -- every table, index and view is IF NOT EXISTS and the version row is ON CONFLICT DO NOTHING.
 --
@@ -11,6 +13,10 @@
 -- NO ROW CARRIES A FOLD TIMESTAMP, on purpose. `at` is the writer's stamp and travels with
 -- the entry; a `folded_at` would make two folds of the same stream differ and there would be
 -- nothing left to compare a rebuild against.
+
+-- tokens_in, tokens_out and usd are NULLABLE with no default, on purpose: an entry that
+-- carries no cost has not reported a zero cost (no evidence is not negative evidence). SUM
+-- skips a NULL, and a sum over nothing but NULLs is NULL, which the report prints as a dash.
 
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY
@@ -27,9 +33,9 @@ CREATE TABLE IF NOT EXISTS attempts (
     model      TEXT    NOT NULL DEFAULT '',
     route      TEXT    NOT NULL DEFAULT '',
     kind       TEXT    NOT NULL,
-    tokens_in  INTEGER NOT NULL DEFAULT 0,
-    tokens_out INTEGER NOT NULL DEFAULT 0,
-    usd        REAL    NOT NULL DEFAULT 0,
+    tokens_in  INTEGER,
+    tokens_out INTEGER,
+    usd        REAL,
     pr         TEXT    NOT NULL DEFAULT '',
     head       TEXT    NOT NULL DEFAULT '',
     at         TEXT    NOT NULL DEFAULT '',
@@ -46,9 +52,9 @@ CREATE TABLE IF NOT EXISTS reads (
     model      TEXT    NOT NULL DEFAULT '',
     route      TEXT    NOT NULL DEFAULT '',
     kind       TEXT    NOT NULL,
-    tokens_in  INTEGER NOT NULL DEFAULT 0,
-    tokens_out INTEGER NOT NULL DEFAULT 0,
-    usd        REAL    NOT NULL DEFAULT 0,
+    tokens_in  INTEGER,
+    tokens_out INTEGER,
+    usd        REAL,
     pr         TEXT    NOT NULL DEFAULT '',
     head       TEXT    NOT NULL DEFAULT '',
     at         TEXT    NOT NULL DEFAULT '',
@@ -65,9 +71,9 @@ CREATE TABLE IF NOT EXISTS landings (
     model      TEXT    NOT NULL DEFAULT '',
     route      TEXT    NOT NULL DEFAULT '',
     kind       TEXT    NOT NULL,
-    tokens_in  INTEGER NOT NULL DEFAULT 0,
-    tokens_out INTEGER NOT NULL DEFAULT 0,
-    usd        REAL    NOT NULL DEFAULT 0,
+    tokens_in  INTEGER,
+    tokens_out INTEGER,
+    usd        REAL,
     pr         TEXT    NOT NULL DEFAULT '',
     head       TEXT    NOT NULL DEFAULT '',
     at         TEXT    NOT NULL DEFAULT '',
@@ -167,6 +173,6 @@ SELECT (SELECT count(DISTINCT label) FROM attempts)                             
        (SELECT count(*) FROM attempts WHERE kind = 'fail')                           AS fail,
        (SELECT count(*) FROM reads)                                                  AS reads,
        (SELECT count(*) FROM landings)                                               AS landed,
-       (SELECT round(COALESCE(sum(usd), 0), 6) FROM attempts)                        AS usd;
+       (SELECT round(sum(usd), 6) FROM attempts)                                     AS usd;
 
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT (version) DO NOTHING;

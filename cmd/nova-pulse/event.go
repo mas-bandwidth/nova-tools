@@ -1,6 +1,8 @@
 package main
 
-// The event verb's flags: one XADD to ev:cards per card transition (nova-tools #2563).
+// The event verb's flags: one XADD to cards:done per card transition (nova-tools #2563).
+// --tokens-in, --tokens-out and --usd that are not given are ABSENT from the entry, never 0:
+// a writer that does not know the cost has not reported a zero cost.
 // The card path is still bash in places -- the launcher, harvest, the lander -- so this verb
 // is the one line each of them writes until it is Go, and the Go writers call
 // internal/events directly.
@@ -10,6 +12,7 @@ package main
 // nothing here ever prints it.
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -62,6 +65,19 @@ func cmdEvent(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	given := map[string]bool{}
+	f.fs.Visit(func(fl *flag.Flag) { given[fl.Name] = true })
+	var inPtr, outPtr *int64
+	var usdPtr *float64
+	if given["tokens-in"] {
+		inPtr = events.Int64(*tokensIn)
+	}
+	if given["tokens-out"] {
+		outPtr = events.Int64(*tokensOut)
+	}
+	if given["usd"] {
+		usdPtr = events.Float64(*usd)
+	}
 	return events.EmitOne(events.EmitInput{
 		Addr:     *store,
 		Username: *user,
@@ -74,9 +90,9 @@ func cmdEvent(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Model:     *model,
 			Route:     *route,
 			Kind:      events.Kind(*kind),
-			TokensIn:  *tokensIn,
-			TokensOut: *tokensOut,
-			USD:       *usd,
+			TokensIn:  inPtr,
+			TokensOut: outPtr,
+			USD:       usdPtr,
 			PR:        *pr,
 			Head:      *head,
 			At:        stamp,

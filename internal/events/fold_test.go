@@ -37,7 +37,7 @@ func emitOK(t *testing.T, f *FakeStream, n int) {
 			Model:   models[i%len(models)],
 			Route:   benches[i%len(benches)],
 			Kind:    OK,
-			USD:     0.10,
+			USD:     Float64(0.10),
 			At:      at.Add(time.Duration(i) * time.Second),
 		})
 		if err != nil {
@@ -244,7 +244,7 @@ func TestViewsCountPerModelRoutePerBenchAndPerDay(t *testing.T) {
 	stream := NewFakeStream()
 	stream.Now = func() time.Time { return at }
 	emitOK(t, stream, 10) // 5 fable/studio and 5 sonnet/hulk, ten cents each
-	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Fail, Bench: "studio", Model: "fable", Route: "studio", USD: 0.05, At: at}); err != nil {
+	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Fail, Bench: "studio", Model: "fable", Route: "studio", USD: Float64(0.05), At: at}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Landed, PR: "2563", At: at}); err != nil {
@@ -299,12 +299,63 @@ func TestABadEntryIsSkippedAndCounted(t *testing.T) {
 		{ID: "1-0", Fields: okEvent().Fields()},
 		{ID: "2-0", Fields: map[string]string{"label": "card-2", "event": "eaten-by-a-bear"}},
 		{ID: "3-0", Fields: map[string]string{"label": "", "event": "ok"}},
+		// A cards:done entry written before the event fields were added: no `event`, so it is
+		// counted as skipped, never guessed into ok or fail.
+		{ID: "4-0", Fields: map[string]string{"label": "card-4", "bench": "studio", "exit": "0", "result": "OK"}},
 	})
 	if err != nil {
 		t.Fatalf("a batch holding a bad entry: %v", err)
 	}
-	if inserted != 1 || skipped != 2 {
-		t.Fatalf("inserted=%d skipped=%d, want 1 and 2", inserted, skipped)
+	if inserted != 1 || skipped != 3 {
+		t.Fatalf("inserted=%d skipped=%d, want 1 and 3", inserted, skipped)
+	}
+}
+
+// An absent cost folds to NULL, not 0: the dump prints a dash for it, a reported zero stays
+// 0, and a totals row over nothing priced is a dash rather than $0.
+func TestAMissingCostFoldsToNullNotZero(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openFold(t, "ev.sqlite")
+	if _, _, err := db.Apply(ctx, []Entry{
+		{ID: "1-0", Fields: map[string]string{"label": "card-1", "event": "queued"}},
+		{ID: "2-0", Fields: map[string]string{"label": "card-2", "event": "ok", "usd": "0", "tokens_in": "0", "tokens_out": "0"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var nulls, zeros int
+	if err := db.db.QueryRowContext(ctx, `SELECT count(*) FROM attempts WHERE usd IS NULL AND tokens_in IS NULL AND tokens_out IS NULL`).Scan(&nulls); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `SELECT count(*) FROM attempts WHERE usd = 0 AND tokens_in = 0 AND tokens_out = 0`).Scan(&zeros); err != nil {
+		t.Fatal(err)
+	}
+	if nulls != 1 || zeros != 1 {
+		t.Fatalf("NULL-cost rows=%d zero-cost rows=%d, want 1 and 1: the queued entry reported no cost, the ok entry reported zero", nulls, zeros)
+	}
+	var dump bytes.Buffer
+	if err := db.Dump(ctx, &dump); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dump.String(), "attempts\t1-0\tcard-1\t0\t\t\t\tqueued\t-\t-\t-\t") {
+		t.Errorf("the dump does not print the absent cost as dashes:\n%s", dump.String())
+	}
+	if !strings.Contains(dump.String(), "attempts\t2-0\tcard-2\t0\t\t\t\tok\t0\t0\t0\t") {
+		t.Errorf("the dump does not keep the reported zero:\n%s", dump.String())
+	}
+
+	unpriced := openFold(t, "unpriced.sqlite")
+	if _, _, err := unpriced.Apply(ctx, []Entry{{ID: "1-0", Fields: map[string]string{"label": "card-1", "event": "ok"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var report bytes.Buffer
+	if err := unpriced.Report(ctx, &report, 0); err != nil {
+		t.Fatal(err)
+	}
+	// cards rows done ok fail reads landed usd: the usd of a fold that holds no price is a dash.
+	if !strings.Contains(report.String(), "1\t1\t1\t1\t0\t0\t0\t-\n") {
+		t.Errorf("the totals row prices an unpriced fold; want usd as a dash:\n%s", report.String())
 	}
 }
 
