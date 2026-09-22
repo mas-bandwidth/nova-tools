@@ -1,10 +1,10 @@
 package friendrow
 
-// johnny has a beat and a width, so he is one row. emma has a width and a
-// last-seen stamp but no beat, and stella is declared with nothing: neither
-// is a presence. freddy has a beat and was not declared, so he is not a row
-// either. The declaration is the names, one per friend, the way a bench-row
-// is one bench.
+// johnny has a beat and the three counts, so he is one row. emma has a
+// width, a queue, a done and a last-seen stamp but no beat, and stella is
+// declared with nothing: neither is a presence. freddy has a beat and was
+// not declared, so he is not a row either. The declaration is the names,
+// one per friend, the way a bench-row is one bench.
 
 import (
 	"context"
@@ -40,7 +40,11 @@ func beatFixture() mapStore {
 	return mapStore{
 		"friend:johnny":       beatStamp,
 		"friend:johnny:width": "4",
+		"friend:johnny:queue": "5",
+		"friend:johnny:done":  "30",
 		"friend:emma:width":   "2",
+		"friend:emma:queue":   "1",
+		"friend:emma:done":    "9",
 		"friend:emma:last":    "2026-09-22T21:00:00Z",
 		"friend:freddy":       beatStamp,
 		"friend:freddy:width": "1",
@@ -52,7 +56,7 @@ func assertJohnnyRow(t *testing.T, rows []Row) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %+v, want one row; a missing beat must not invent a presence", rows)
 	}
-	want := Row{Name: "johnny", Beat: beatStamp, Width: 4, WidthOK: true}
+	want := Row{Name: "johnny", Beat: beatStamp, Width: 4, WidthOK: true, Queue: 5, QueueOK: true, Done: 30, DoneOK: true}
 	if rows[0] != want {
 		t.Fatalf("row = %+v, want %+v", rows[0], want)
 	}
@@ -81,7 +85,7 @@ func TestABeatAndAWidthAreOneRowAndAMissingBeatIsNotAPresence(t *testing.T) {
 
 // TestTheRedisReadIsTheSameRow proves the fleet client, not a second
 // implementation: the same keys through MGET are the same one row, and
-// emma's width without a beat is still not a presence.
+// emma's counts without a beat are still not a presence.
 func TestTheRedisReadIsTheSameRow(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -99,12 +103,56 @@ func TestTheRedisReadIsTheSameRow(t *testing.T) {
 	assertJohnnyRow(t, rows)
 }
 
+// TestReadOverMiniredisHoldingTheFourKeysReturnsQueueWorkingDoneAndUp is
+// the table's friend row. friend-row writes friend:<name>, :queue, :width
+// and :done. sprint-table-redis prints those as queue, working, done and
+// up. A friend whose beat is missing stays down, even with the three
+// counts left behind.
+func TestReadOverMiniredisHoldingTheFourKeysReturnsQueueWorkingDoneAndUp(t *testing.T) {
+	queue, err := QueueKey("Johnny")
+	if err != nil || queue != "friend:johnny:queue" {
+		t.Fatalf("QueueKey(Johnny) = %q, %v; want friend:johnny:queue", queue, err)
+	}
+	done, err := DoneKey("Johnny")
+	if err != nil || done != "friend:johnny:done" {
+		t.Fatalf("DoneKey(Johnny) = %q, %v; want friend:johnny:done", done, err)
+	}
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+	for k, v := range map[string]string{
+		"friend:johnny":       beatStamp,
+		"friend:johnny:queue": "5",
+		"friend:johnny:width": "4",
+		"friend:johnny:done":  "30",
+		"friend:emma:queue":   "1",
+		"friend:emma:width":   "2",
+		"friend:emma:done":    "9",
+	} {
+		if err := rdb.Set(ctx, k, v, 0).Err(); err != nil {
+			t.Fatalf("set %s: %v", k, err)
+		}
+	}
+	rows, err := Read(ctx, NewRedis(rdb), []string{"Johnny", "emma"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Row{Name: "johnny", Beat: beatStamp, Width: 4, WidthOK: true, Queue: 5, QueueOK: true, Done: 30, DoneOK: true}
+	if len(rows) != 1 || rows[0] != want {
+		t.Fatalf("rows = %+v, want one up row %+v (queue 5, working 4, done 30); counts without a beat are not up", rows, want)
+	}
+}
+
 // TestABeatWithNoWidthIsStillOneRow: presence is the beat. A missing width
 // is not zero children, and it does not drop the friend.
 func TestABeatWithNoWidthIsStillOneRow(t *testing.T) {
 	rows, err := Read(context.Background(), mapStore{
 		"friend:stella":       beatStamp,
 		"friend:stella:width": "many",
+		"friend:stella:queue": "many",
+		"friend:stella:done":  "many",
 	}, []string{"stella"})
 	if err != nil {
 		t.Fatal(err)
@@ -112,8 +160,8 @@ func TestABeatWithNoWidthIsStillOneRow(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("rows = %+v, want stella's beat even though the width is not a count", rows)
 	}
-	if rows[0].WidthOK || rows[0].Width != 0 {
-		t.Fatalf("width = %d ok=%v; a width that is not a count must not become zero", rows[0].Width, rows[0].WidthOK)
+	if rows[0].WidthOK || rows[0].Width != 0 || rows[0].QueueOK || rows[0].Queue != 0 || rows[0].DoneOK || rows[0].Done != 0 {
+		t.Fatalf("row = %+v; a count that is not a whole number must not become zero", rows[0])
 	}
 	if rows[0].Name != "stella" || rows[0].Beat != beatStamp {
 		t.Fatalf("row = %+v, want stella's beat", rows[0])
@@ -126,11 +174,13 @@ func TestWidthZeroIsACount(t *testing.T) {
 	rows, err := Read(context.Background(), mapStore{
 		"friend:stella":       beatStamp,
 		"friend:stella:width": "0",
+		"friend:stella:queue": "0",
+		"friend:stella:done":  "0",
 	}, []string{"stella"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := Row{Name: "stella", Beat: beatStamp, Width: 0, WidthOK: true}
+	want := Row{Name: "stella", Beat: beatStamp, Width: 0, WidthOK: true, Queue: 0, QueueOK: true, Done: 0, DoneOK: true}
 	if len(rows) != 1 || rows[0] != want {
 		t.Fatalf("rows = %+v, want %+v", rows, want)
 	}
