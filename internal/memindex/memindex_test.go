@@ -750,3 +750,33 @@ func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
 		})
 	}
 }
+
+func TestIssue2305(t *testing.T) {
+	fsys := fstest.MapFS{
+		".git/HEAD.md":       {Data: []byte("ref: refs/heads/main\n")},
+		".git/config.md":     {Data: []byte("this git config pretends to be a markdown file\n")},
+		".git/objects/md.md": {Data: []byte("a nested markdown inside git objects\n")},
+		"real.md":            {Data: []byte("---\nname: real-document\n---\n\nA real document that should be indexed into three separate chunks for the index.\n\nThe second paragraph is about the light and how it travels across water at night.\n\nThe third paragraph is about the diaphone and its nine hours of running.\n")},
+	}
+
+	c, err := Build(fsys, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	for _, ch := range c.Chunks {
+		if strings.HasPrefix(ch.File, ".git/") {
+			t.Errorf("chunk from .git/ reached the index: %s", ch.File)
+		}
+	}
+
+	for _, f := range c.Files {
+		if strings.HasPrefix(f, ".git/") {
+			t.Errorf(".git/ file listed in Files: %s", f)
+		}
+	}
+
+	if _, ok := c.ByClass[".git"]; ok {
+		t.Errorf(".git class appeared in ByClass -- git content reached the index")
+	}
+}
