@@ -52,9 +52,15 @@ var knownOutcomes = []string{"green", "red", "refused", "abandoned", "uncertain"
 // KnownOutcomes returns the attempt outcomes the grammar admits.
 func KnownOutcomes() []string { return append([]string(nil), knownOutcomes...) }
 
+// The two closed sets of A14. `:landed` (#2664) is the kind a PR the lander
+// carried into the base satisfies: merged, OR closed after an integration merge
+// with its content in the base, OR -- as `commit:<sha>` -- a commit reachable from
+// the base. Its predicate is `:merged-or-closed-in-base`; `:landed-in` is the
+// issue's spelling of the same predicate and reads the same.
 var (
-	knownAcceptanceKinds      = []string{"test", "job", "merged", "attested"}
-	knownAcceptancePredicates = []string{"passes", "succeeds", "merged-at", "attested-by"}
+	knownAcceptanceKinds      = []string{"test", "job", "merged", "attested", "landed"}
+	knownAcceptancePredicates = []string{"passes", "succeeds", "merged-at", "attested-by",
+		"merged-or-closed-in-base", "landed-in"}
 )
 
 // numericResources are the vector's dimensions that carry a count. A keyword
