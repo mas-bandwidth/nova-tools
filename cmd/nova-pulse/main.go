@@ -34,7 +34,7 @@ nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <sta
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
-nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status  --queue <dir> --roots <dirs> [--results-root <dir>] [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
@@ -690,6 +690,11 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("status")
 	queue := f.fs.String("queue", "", "")
 	roots := f.fs.String("roots", "", "")
+	// --results-root is where nova-swarm native published RESULT.md, usage.tsv
+	// and the report (issue #2632). When it is set, the spend is read from there
+	// and not from the job directories under --roots, which a sweep may already
+	// have deleted. Width still comes from --roots.
+	resultsRoot := f.fs.String("results-root", "", "")
 	slotsStore := f.fs.String("slots-store", "", "")
 	batches := f.fs.String("batches", "", "")
 	day := f.fs.String("day", "", "")
@@ -770,6 +775,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return pulse.StatusLine(pulse.StatusInput{
 			Queue:          *queue,
 			Roots:          *roots,
+			ResultsRoot:    *resultsRoot,
 			Day:            *day,
 			Max:            *max,
 			Timeout:        timeout,
@@ -781,6 +787,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return pulse.Status(pulse.StatusInput{
 		Queue:          *queue,
 		Roots:          *roots,
+		ResultsRoot:    *resultsRoot,
 		SlotsStores:    *slotsStore,
 		Batches:        *batches,
 		Day:            *day,
