@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -11,8 +12,10 @@ import (
 
 func sprintTestDeps(store *sprint.FakeStore) sprintDeps {
 	return sprintDeps{
-		open:    func(addr, user, password string) (sprint.Store, error) { return store, nil },
-		cards:   &sprint.FakeCards{},
+		open: func(addr, user, password string) (sprint.Store, error) { return store, nil },
+		cards: func(addr, user, password string) (sprint.Cards, error) {
+			return &sprint.FakeCards{}, nil
+		},
 		getenv:  func(string) string { return "" },
 		records: nil,
 	}
@@ -115,9 +118,11 @@ func TestStatusFlipClosesFromTheRecordAndNothingElse(t *testing.T) {
 	runVerb(t, store, testNow, append([]string{"add", "--name", "s", "--id", "out", "--ref", "cell-b@1", "--kind", "card"}, addr...)...)
 
 	deps := sprintTestDeps(store)
-	deps.cards = &sprint.FakeCards{Landings: map[string]sprint.Record{
-		"cell-a@1": {Closed: true, Evidence: "landed 0cda23d5", At: testNow},
-	}}
+	deps.cards = func(addr, user, password string) (sprint.Cards, error) {
+		return &sprint.FakeCards{Landings: map[string]sprint.Record{
+			"cell-a@1": {Closed: true, Evidence: "landed 0cda23d5", At: testNow},
+		}}, nil
+	}
 	var out, errOut bytes.Buffer
 	if code := runSprint(append([]string{"status", "--flip"}, addr...), &out, &errOut, testNow, deps); code != 0 {
 		t.Fatalf("exit %d: %s", code, errOut.String())
@@ -166,6 +171,47 @@ func TestTaskIDFromRefIsTheStoresKey(t *testing.T) {
 		if err := sprint.ValidateName("task", taskIDFrom(tc.ref)); err != nil {
 			t.Fatalf("the id made from %q is not a name the store takes: %v", tc.ref, err)
 		}
+	}
+}
+
+// TestRouteRefusesATaskWhoseDependencyIsOpen: #2636's control at the CLI seam -- `sprint
+// route` never hands out a task whose dependency has not closed landed or merged, and it is
+// not an error (the task waits, the command still exits 0 for everything else routable).
+func TestRouteRefusesATaskWhoseDependencyIsOpen(t *testing.T) {
+	store := sprint.NewFakeStore()
+	store.SetPresent("hulk", true)
+	addr := []string{"--store", "store.invalid:6380"}
+	runVerb(t, store, testNow, append([]string{"open", "--name", "s", "--goal", "g"}, addr...)...)
+	runVerb(t, store, testNow, append([]string{"add", "--name", "s", "--id", "a", "--ref", "o/n#1", "--kind", "fix", "--paths", "pkg/a.go"}, addr...)...)
+	runVerb(t, store, testNow, append([]string{"add", "--name", "s", "--id", "b", "--ref", "o/n#2", "--kind", "fix", "--paths", "pkg/b.go", "--depends-on", "a"}, addr...)...)
+
+	code, out, errOut := runVerb(t, store, testNow, append([]string{"route", "--task", "b", "--machines", machinesFixture()}, addr...)...)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "NOT READY b") || !strings.Contains(out, "depends on a") {
+		t.Fatalf("route did not refuse the blocked task:\n%s", out)
+	}
+
+	// a closes landed -- b routes normally now.
+	a, err := store.GetTask(context.Background(), "a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.State = sprint.StateClosed
+	a.Evidence = "o/n#1 merged abc123"
+	if err := store.PutTask(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runVerb(t, store, testNow, append([]string{"route", "--task", "b", "--machines", machinesFixture()}, addr...)...)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	if strings.Contains(out, "NOT READY") {
+		t.Fatalf("b is still refused once a landed:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "ROUTE b ->") {
+		t.Fatalf("b did not route once a landed:\n%s", out)
 	}
 }
 

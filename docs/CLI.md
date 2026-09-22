@@ -2975,6 +2975,7 @@ ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
 `by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
 cost per USEFUL card, so a dearer model that lands beats a cheap one that does
 not.
+
 ### sprint
 
 A SPRINT is any current bounded set of tasks toward a goal — friends, friends

@@ -31,6 +31,10 @@ type RefillResult struct {
 	// Unplaced are open tasks no present consumer matched, with the reason. They stay in
 	// the sprint: a task nobody can take is a fact to report, never a task to drop.
 	Unplaced map[string]string
+	// Blocked are open tasks READY excluded before the dealer ever saw them: an open
+	// dependency, or a path a working task already holds (#2636). Disjoint from Unplaced --
+	// a task is one or the other, never both.
+	Blocked map[string]string
 	// Depths are the queue depths before the refill, by consumer.
 	Depths map[string]int
 }
@@ -66,6 +70,14 @@ func (r RefillResult) Lines() []string {
 	for _, id := range unplaced {
 		out = append(out, fmt.Sprintf("UNPLACED %s %s", id, r.Unplaced[id]))
 	}
+	var blocked []string
+	for id := range r.Blocked {
+		blocked = append(blocked, id)
+	}
+	sort.Strings(blocked)
+	for _, id := range blocked {
+		out = append(out, fmt.Sprintf("BLOCKED %s %s", id, r.Blocked[id]))
+	}
 	return out
 }
 
@@ -96,6 +108,9 @@ func Ready(tasks []Task, now time.Time) []deal.Item {
 		if !t.Open() || t.State == StateWorking {
 			continue // a leased task is already somebody's; refill is for what is not
 		}
+		if Blocked(t, tasks) != "" {
+			continue // an open dependency, or a path a working task already holds: #2636
+		}
 		req := Requirements(t, now)
 		req.Unblocks = unblocks[t.ID]
 		created := t.CreatedAt
@@ -103,6 +118,22 @@ func Ready(tasks []Task, now time.Time) []deal.Item {
 			created = now
 		}
 		out = append(out, deal.Item{ID: t.ID, Req: req, Time: created})
+	}
+	return out
+}
+
+// BlockedTasks is every open, not-yet-working task Ready left out and why -- the dependency
+// still open, or the path a working task already holds. It is the companion Ready does not
+// itself report: a blocked task is a fact for the coordinator, never a task to drop.
+func BlockedTasks(tasks []Task) map[string]string {
+	out := map[string]string{}
+	for _, t := range tasks {
+		if !t.Open() || t.State == StateWorking {
+			continue
+		}
+		if reason := Blocked(t, tasks); reason != "" {
+			out[t.ID] = reason
+		}
 	}
 	return out
 }
@@ -138,7 +169,7 @@ func Refill(ctx context.Context, st Store, sprintName string, cs []deal.Capabili
 	for _, t := range tasks {
 		byID[t.ID] = t
 	}
-	result := RefillResult{Unplaced: map[string]string{}, Depths: depths}
+	result := RefillResult{Unplaced: map[string]string{}, Blocked: BlockedTasks(tasks), Depths: depths}
 	placed := map[string]bool{}
 	for _, p := range placements {
 		t := byID[p.ItemID]
