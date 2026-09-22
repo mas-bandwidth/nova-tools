@@ -37,22 +37,23 @@ func TestCountResultsReadsJobRootsAndTheResultsDirectory(t *testing.T) {
 	results := filepath.Join(dir, "results")
 	writeResult(t, filepath.Join(results, "card-7", "RESULT.md"), "RESULT: DONE\n")
 
-	done, ok, fail := CountResults([]string{root}, results, since)
-	if done != 3 || ok != 2 || fail != 1 {
-		t.Fatalf("done=%d ok=%d fail=%d, want 3/2/1", done, ok, fail)
+	c, present, err := CountResults([]string{root}, results, since)
+	if err != nil || !present || c.Done != 3 || c.OK != 2 || c.Fail != 1 {
+		t.Fatalf("done=%d ok=%d fail=%d present=%v err=%v, want 3/2/1", c.Done, c.OK, c.Fail, present, err)
 	}
 }
 
-// With no sprint stamp there is no sprint, and the counts are ZERO -- never "everything
-// ever", which on a bench with a year of job roots is a number nobody can act on.
+// With no sprint stamp there is no sprint, and the counts are ABSENT -- never "everything
+// ever", which on a bench with a year of job roots is a number nobody can act on, and never
+// a zero, which reads as a sprint in which nothing finished.
 func TestCountResultsWithNoSprintStampCountsNothing(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	results := filepath.Join(dir, "results")
 	writeResult(t, filepath.Join(results, "card-7", "RESULT.md"), "RESULT: DONE\n")
-	done, ok, fail := CountResults(nil, results, filepath.Join(dir, "no-such-stamp"))
-	if done != 0 || ok != 0 || fail != 0 {
-		t.Fatalf("done=%d ok=%d fail=%d, want zeros", done, ok, fail)
+	c, present, err := CountResults(nil, results, filepath.Join(dir, "no-such-stamp"))
+	if err != nil || present || c != (ResultCounts{}) {
+		t.Fatalf("done=%d ok=%d fail=%d present=%v err=%v, want absent", c.Done, c.OK, c.Fail, present, err)
 	}
 }
 
@@ -75,8 +76,8 @@ func TestCountResultsIgnoresWhatIsOlderThanTheSprint(t *testing.T) {
 	if err := os.Chtimes(since, hourAgo, hourAgo); err != nil {
 		t.Fatal(err)
 	}
-	if done, _, _ := CountResults(nil, results, since); done != 0 {
-		t.Fatalf("a result older than the stamp was counted: done=%d", done)
+	if c, present, err := CountResults(nil, results, since); err != nil || !present || c.Done != 0 {
+		t.Fatalf("a result older than the stamp was counted: done=%d present=%v err=%v", c.Done, present, err)
 	}
 }
 
@@ -110,9 +111,9 @@ func TestTheSameResultIsAFailWhereverItLives(t *testing.T) {
 			results := filepath.Join(dir, "results")
 			writeResult(t, filepath.Join(results, "card-7", "RESULT.md"), body)
 
-			done, ok, fail := CountResults([]string{root}, results, since)
-			if done != 2 || ok != 0 || fail != 2 {
-				t.Fatalf("%q under a job root and under results: done=%d ok=%d fail=%d, want 2/0/2", body, done, ok, fail)
+			c, _, err := CountResults([]string{root}, results, since)
+			if err != nil || c.Done != 2 || c.OK != 0 || c.Fail != 2 {
+				t.Fatalf("%q under a job root and under results: done=%d ok=%d fail=%d err=%v, want 2/0/2", body, c.Done, c.OK, c.Fail, err)
 			}
 		})
 	}
@@ -132,9 +133,9 @@ func TestAPlainDoneResultIsOK(t *testing.T) {
 	}
 	results := filepath.Join(dir, "results")
 	writeResult(t, filepath.Join(results, "card-7", "RESULT.md"), "label: card-7\nRESULT: DONE\nwritten-by: the harness\n")
-	done, ok, fail := CountResults(nil, results, since)
-	if done != 1 || ok != 1 || fail != 0 {
-		t.Fatalf("done=%d ok=%d fail=%d", done, ok, fail)
+	c, _, err := CountResults(nil, results, since)
+	if err != nil || c.Done != 1 || c.OK != 1 || c.Fail != 0 {
+		t.Fatalf("done=%d ok=%d fail=%d err=%v", c.Done, c.OK, c.Fail, err)
 	}
 }
 
@@ -146,15 +147,15 @@ func TestQueueCountsBothReadyDirectoriesAndToleratesAMissingOne(t *testing.T) {
 	writeResult(t, filepath.Join(dir, "ready", "card-1.md"), "x")
 	writeResult(t, filepath.Join(dir, "ready", "card-2.md"), "x")
 	writeResult(t, filepath.Join(dir, "ready", "notes.txt"), "not a card")
-	if got := countReadyCards(dir); got != 2 {
-		t.Fatalf("queue = %d, want 2 (only .md files, and a missing ready-pro is zero)", got)
+	if got, present, err := countReadyCards(dir); got != 2 || !present || err != nil {
+		t.Fatalf("queue = %d present=%v err=%v, want 2 (only .md files, and a missing ready-pro adds nothing)", got, present, err)
 	}
 	writeResult(t, filepath.Join(dir, "ready-pro", "card-3.md"), "x")
-	if got := countReadyCards(dir); got != 3 {
-		t.Fatalf("queue = %d, want 3", got)
+	if got, _, err := countReadyCards(dir); got != 3 || err != nil {
+		t.Fatalf("queue = %d err=%v, want 3", got, err)
 	}
-	if got := countReadyCards(""); got != 0 {
-		t.Fatalf("no queue directory is zero, got %d", got)
+	if got, present, err := countReadyCards(""); got != 0 || present || err != nil {
+		t.Fatalf("no queue directory is absent, got %d present=%v err=%v", got, present, err)
 	}
 }
 

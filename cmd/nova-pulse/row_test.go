@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -173,5 +174,33 @@ func TestRowAndSwarmTableAreInTheHelp(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("the help does not list %q", want)
 		}
+	}
+}
+
+// row --print over an unreadable queue prints `?` and says why, and exits non-zero: the
+// operator asking "why does my bench say 0?" gets "I could not read it", not a zero
+// (Stella HOLD 7 on #2622).
+func TestRowPrintSaysAnUnreadableQueueIsUnknown(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a 000-mode directory that this user cannot read")
+	}
+	dir := t.TempDir()
+	ready := filepath.Join(dir, "queue", "ready")
+	if err := os.MkdirAll(ready, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ready, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ready, 0o755) })
+	code, out, errb := runPulse(t, "row", "--print", "--host", "hulk", "--since", filepath.Join(dir, "no-stamp"),
+		"--queue", filepath.Join(dir, "queue"), "--results", filepath.Join(dir, "results"),
+		"--roots", dir, "--slots", filepath.Join(dir, "slots"))
+	if code == 0 {
+		t.Fatalf("an unreadable queue exited 0: %s", out)
+	}
+	if !strings.Contains(out, " queue=? ") || !strings.Contains(errb, "unavailable: queue: ") {
+		t.Fatalf("want queue=? and the reason: out=%s err=%s", out, errb)
 	}
 }

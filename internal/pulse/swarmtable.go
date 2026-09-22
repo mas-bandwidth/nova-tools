@@ -126,13 +126,15 @@ func RenderSwarmTable(st SwarmState, now time.Time) string {
 	rows := append([]BenchRow(nil), st.Rows...)
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Host < rows[j].Host })
 
-	var tq, tw, td, to, tf int
+	var tq, tw, tr columnTotal
+	var td, to, tf int
 	for _, r := range rows {
 		fmt.Fprintf(&b, swarmTableRowFmt, r.Host,
-			strconv.Itoa(r.Queue), strconv.Itoa(r.Working), strconv.Itoa(r.Done),
-			strconv.Itoa(r.OK), strconv.Itoa(r.Fail), strconv.Itoa(r.OKPct()), r.Load1)
-		tq += r.Queue
-		tw += r.Working
+			r.QueueCell(), r.WorkingCell(), r.DoneCell(),
+			r.OKCell(), r.FailCell(), r.OKPctCell(), r.Load1)
+		tq.add(r.Queue, r.QueueMark)
+		tw.add(r.Working, r.WorkingMark)
+		tr.add(0, r.ResultsMark)
 		td += r.Done
 		to += r.OK
 		tf += r.Fail
@@ -142,10 +144,19 @@ func RenderSwarmTable(st SwarmState, now time.Time) string {
 	if td > 0 {
 		totalPct = 100 * to / td
 	}
+	// done, ok, fail and ok% share one reader per row, so they share one total's mark.
 	fmt.Fprintf(&b, swarmTableTotalFmt, "total",
-		strconv.Itoa(tq), strconv.Itoa(tw), strconv.Itoa(td),
-		strconv.Itoa(to), strconv.Itoa(tf), strconv.Itoa(totalPct))
+		tq.text(), tw.text(), tr.textFor(td),
+		tr.textFor(to), tr.textFor(tf), tr.textFor(totalPct))
 	b.WriteString("\n")
+
+	// Why a `?` is a `?`: one line per unreadable source, with the bench that said it. A
+	// question mark with no reason beside it would send somebody to the bench to find out.
+	for _, r := range rows {
+		for _, u := range r.Unavailable {
+			fmt.Fprintf(&b, "unavailable: %s %s\n", r.Host, u)
+		}
+	}
 
 	total := st.Stuck.Total
 	if strings.TrimSpace(total) == "" {
@@ -170,6 +181,39 @@ func RenderSwarmTable(st SwarmState, now time.Time) string {
 		b.WriteString(st.Sprint.Line() + "\n")
 	}
 	return b.String()
+}
+
+// columnTotal sums one column across the rows. A `?` anywhere makes the total `?`: a sum
+// with an unknown part is unknown. A `-` adds nothing, and a column where EVERY row is `-`
+// totals `-`, because none of the benches took that count.
+type columnTotal struct {
+	sum, rows, absent int
+	unknown           bool
+}
+
+func (t *columnTotal) add(n int, mark string) {
+	t.rows++
+	switch mark {
+	case CellUnavailable:
+		t.unknown = true
+	case CellAbsent:
+		t.absent++
+	default:
+		t.sum += n
+	}
+}
+
+func (t columnTotal) text() string { return t.textFor(t.sum) }
+
+// textFor is the total cell for a number summed elsewhere under this column's marks.
+func (t columnTotal) textFor(n int) string {
+	switch {
+	case t.unknown:
+		return CellUnavailable
+	case t.rows > 0 && t.absent == t.rows:
+		return CellAbsent
+	}
+	return strconv.Itoa(n)
 }
 
 // shortAge is the age a presence line carries: seconds under a minute, minutes under an
@@ -240,9 +284,11 @@ func ReadSwarmState(ctx context.Context, r SwarmStoreReader, roster []string, no
 	return st, nil
 }
 
-// benchRowFromHash reads one pushed row. A field that is missing or unreadable is zero and
-// the host falls back to the key's own suffix, so a half-written row still shows up under
-// the right name instead of as a blank line.
+// benchRowFromHash reads one pushed row. The host falls back to the key's own suffix, so a
+// half-written row still shows up under the right name instead of as a blank line. A count
+// keeps the mark the bench pushed (`-` absent, `?` unreadable), and a count that is MISSING
+// or will not parse is `?`, never 0: the reader must not turn back into a zero what the
+// bench was careful not to call one.
 func benchRowFromHash(key string, h map[string]string) BenchRow {
 	host := h["host"]
 	if strings.TrimSpace(host) == "" {
@@ -252,17 +298,60 @@ func benchRowFromHash(key string, h map[string]string) BenchRow {
 	if strings.TrimSpace(load) == "" {
 		load = "-"
 	}
-	return BenchRow{
-		Host:    host,
-		Queue:   atoiOrZero(h["queue"]),
-		Working: atoiOrZero(h["working"]),
-		Done:    atoiOrZero(h["done"]),
-		OK:      atoiOrZero(h["ok"]),
-		Fail:    atoiOrZero(h["fail"]),
-		Load1:   load,
-		NCPU:    atoiOrZero(h["ncpu"]),
-		At:      h["at"],
+	r := BenchRow{
+		Host:  host,
+		Load1: load,
+		NCPU:  atoiOrZero(h["ncpu"]),
+		At:    h["at"],
 	}
+	r.Queue, r.QueueMark = cellFromHash(h["queue"])
+	r.Working, r.WorkingMark = cellFromHash(h["working"])
+	var doneMark, okMark, failMark string
+	r.Done, doneMark = cellFromHash(h["done"])
+	r.OK, okMark = cellFromHash(h["ok"])
+	r.Fail, failMark = cellFromHash(h["fail"])
+	// done, ok and fail are one reader's on the bench; the worst of the three marks stands
+	// for all of them, and the ints behind a mark are zeroed so no total counts them.
+	r.ResultsMark = worstMark(doneMark, okMark, failMark)
+	if r.ResultsMark != "" {
+		r.Done, r.OK, r.Fail = 0, 0, 0
+	}
+	for _, u := range strings.Split(h["unavailable"], "\n") {
+		if u = strings.TrimSpace(u); u != "" {
+			r.Unavailable = append(r.Unavailable, u)
+		}
+	}
+	return r
+}
+
+// cellFromHash is one pushed count: the number, or its mark.
+func cellFromHash(v string) (int, string) {
+	v = strings.TrimSpace(v)
+	switch v {
+	case CellAbsent:
+		return 0, CellAbsent
+	case CellUnavailable, "":
+		return 0, CellUnavailable
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 0 {
+		return 0, CellUnavailable
+	}
+	return n, ""
+}
+
+// worstMark is `?` over `-` over none.
+func worstMark(marks ...string) string {
+	worst := ""
+	for _, m := range marks {
+		if m == CellUnavailable {
+			return CellUnavailable
+		}
+		if m == CellAbsent {
+			worst = CellAbsent
+		}
+	}
+	return worst
 }
 
 func atoiOrZero(s string) int {

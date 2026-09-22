@@ -280,7 +280,7 @@ func TestCowsLine(t *testing.T) {
 }
 
 // A half-written row still shows up under the right name: the host falls back to the key's
-// own suffix and an unreadable count is zero, rather than a blank line on the table.
+// own suffix, and an unreadable count is `?` -- not a blank line, and not a zero.
 func TestAHalfWrittenRowStillNamesItsBench(t *testing.T) {
 	t.Parallel()
 	s := newFakeStore()
@@ -290,11 +290,11 @@ func TestAHalfWrittenRowStillNamesItsBench(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(st.Rows) != 1 || st.Rows[0].Host != "batman" || st.Rows[0].Queue != 0 {
+	if len(st.Rows) != 1 || st.Rows[0].Host != "batman" || st.Rows[0].QueueCell() != CellUnavailable {
 		t.Fatalf("got %+v", st.Rows)
 	}
-	if !strings.Contains(RenderSwarmTable(st, now), "batman") {
-		t.Fatal("the bench is not on the table")
+	if !strings.Contains(RenderSwarmTable(st, now), "batman     |     ? |") {
+		t.Fatalf("the bench is not on the table with a `?` queue:\n%s", RenderSwarmTable(st, now))
 	}
 }
 
@@ -336,7 +336,7 @@ func TestRowAndTableAgreeOverTheWire(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("row exit %d: %s", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "queue=2 working=0 done=2 ok=1 fail=1") {
+	if !strings.Contains(out.String(), "queue=2 working=- done=2 ok=1 fail=1") {
 		t.Fatalf("the row's own receipt: %s", out.String())
 	}
 

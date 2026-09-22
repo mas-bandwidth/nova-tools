@@ -2836,8 +2836,8 @@ renamed it on 2026-09-22: the per-bench table is the *swarm* table, and a
 *sprint* is a bounded task set whose COWS line rides at the bottom (#2593).
 
 Each bench runs `nova-pulse row`, which measures itself and pushes
-`bench:<host>` = `{host, queue, working, done, ok, fail, load1, ncpu, at}` once
-a second with a **five-second TTL**. A bench that stops pushing **vanishes**
+`bench:<host>` = `{host, queue, working, done, ok, fail, load1, ncpu, at,
+unavailable}` once a second with a **five-second TTL**. A bench that stops pushing **vanishes**
 from the table. That is the point: a row of zeros reads as a bench with nothing
 to do, which is how a fleet nobody could see looked healthy on 2026-09-17.
 
@@ -2883,10 +2883,30 @@ card changing column when its job directory was swept. The wider set is applied
 to both, and it is the one intentional difference from the numbers the shell
 printed.
 
+**A count nobody took is `-` or `?`, never `0`.** Each counted cell has three
+answers. The number, when its source was read. `-` when the source is
+intentionally not there: no `--queue` (or neither `ready/` nor `ready-pro/`
+under it), no slot store, no `SPRINT-START` (no sprint). `?` when the source is
+there and **could not be read** — a permission or I/O error on the queue, the
+slot store, the stamp, a job root or any directory or `RESULT.md` under one, or
+the results directory. `done`, `ok`, `fail` and `ok%` are one reader's and
+carry one mark. A `?` is said on stderr as `ROW UNAVAILABLE bench=<name>
+unavailable: <source>: <err>` (first tick, and whenever the reasons change),
+the ROW line gains `unavailable=<sources>`, and the row is **still pushed** with
+the `?` in it and the reasons in its `unavailable` field, so the bench stays on
+the table. `--once` and `--print` exit 4 when a source was unavailable (3 still
+wins when a push failed). On the table, a `?` in any row makes that column's
+total `?`; a `-` adds nothing, and a column that is `-` on every row totals `-`.
+Each reason is printed under the totals as `unavailable: <host> <source>:
+<err>`. A pushed count that is missing or will not parse reads back as `?`.
+Before Stella's HOLD on #2622 every one of these was `0`, and an unreadable
+queue or lease store rendered as a healthy idle bench.
+
 `--textfile <path>` additionally writes the same five counts as a node_exporter
 textfile-collector file (atomically: temp file, then rename), so the cards show
 up beside the load, memory and network collectors. The Redis push is unchanged
-by it.
+by it. A count that is `-` or `?` is **left out** of the textfile (no data),
+never written as `0`.
 
 `--print` measures and prints the row **without a store and without pushing** —
 what to run when the table says `0 done` and you want to know which of the four
