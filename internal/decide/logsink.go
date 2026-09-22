@@ -198,7 +198,8 @@ func (t tee) Close() error {
 // DecisionEvent is one log row as a `decide` event: decide_log's fields under
 // decide_log's names (internal/events/decide.go). The stamp is the entry's at;
 // the label is the unit, the id the whole stream joins on. A counter the
-// provider did not report stays absent, never zero. Free text (the reason, the
+// provider did not report stays absent, never zero, and so does a confidence or
+// a floor the row did not carry. Free text (the reason, the
 // refusal) is capped at the stream's field ceiling with a mark that says so;
 // the uncut text is in the JSON lines log. The evidence document does not
 // travel: its measured columns do.
@@ -218,7 +219,6 @@ func DecisionEvent(e Entry) (events.Event, error) {
 	if kind == "" {
 		kind = strings.TrimSpace(e.Evidence.Kind)
 	}
-	confidence, floor := e.Confidence, e.Floor
 	return events.Event{
 		Label:     e.Unit,
 		Kind:      events.Decide,
@@ -234,8 +234,8 @@ func DecisionEvent(e Entry) (events.Event, error) {
 			Lane:                events.Text(e.Evidence.LaneOwner),
 			RungTried:           events.Text(e.RungTried),
 			Height:              e.Height,
-			Confidence:          &confidence,
-			Floor:               &floor,
+			Confidence:          measuredCopy(e.Confidence),
+			Floor:               measuredCopy(e.Floor),
 			SteppedUp:           e.SteppedUp,
 			Escalated:           e.Escalated,
 			Designated:          e.Designated,
@@ -251,6 +251,16 @@ func DecisionEvent(e Entry) (events.Event, error) {
 			UsageFailed:         e.UsageFailed,
 		},
 	}, nil
+}
+
+// measuredCopy is a confidence or floor the row carried, copied so the event
+// never aliases the entry, and one it did not carry as the absence it is.
+func measuredCopy(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	c := *v
+	return &c
 }
 
 // counter is a reported count as the stream's counter, and an unreported one

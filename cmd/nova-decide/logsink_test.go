@@ -223,10 +223,10 @@ func TestRouteStoreWritesADecideEventTheFoldReads(t *testing.T) {
 func TestLogSummaryReadsTheLog(t *testing.T) {
 	entries := []decide.Entry{
 		{Time: "2026-09-18T10:00:00Z", Unit: "u1", Kind: "rebase", Evidence: decide.Unit{ID: "u1", Kind: "rebase", Files: 2},
-			RungTried: "flash", Confidence: 0.94, Floor: decide.DefaultFloor, Source: decide.SourceRules,
+			RungTried: "flash", Confidence: num(0.94), Floor: num(decide.DefaultFloor), Source: decide.SourceRules,
 			RowanPick: "flash", Wait: decide.WaitNone, Outcome: decide.OutcomeOK, RungSucceeded: "flash"},
 		{Time: "2026-09-18T10:01:00Z", Unit: "u2", Kind: "rebase", Evidence: decide.Unit{ID: "u2", Kind: "rebase", Files: 9},
-			RungTried: "flash", Confidence: 0.5, Floor: decide.DefaultFloor, Source: decide.SourceRules,
+			RungTried: "flash", Confidence: num(0.5), Floor: num(decide.DefaultFloor), Source: decide.SourceRules,
 			RowanPick: "flash", Wait: decide.WaitNone, Outcome: decide.OutcomeFailed},
 	}
 	path := filepath.Join(t.TempDir(), "decide.jsonl")
@@ -262,3 +262,6 @@ func TestLogSummaryReadsTheLog(t *testing.T) {
 		t.Errorf("two rows are two rows: %q", fileOut.String())
 	}
 }
+
+// num is a confidence or floor a row carries: present, so a pointer to it.
+func num(v float64) *float64 { return &v }

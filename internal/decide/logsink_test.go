@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,8 +27,8 @@ func sampleEntry() Entry {
 		Evidence:   Unit{ID: "u1", Kind: KindRebase, Files: 2, Packages: 1, Lanes: 1, LaneOwner: "decide"},
 		RungTried:  "flash",
 		Height:     0,
-		Confidence: 0.94,
-		Floor:      DefaultFloor,
+		Confidence: measured(0.94),
+		Floor:      measured(DefaultFloor),
 		Source:     SourceRules,
 		RowanPick:  "flash",
 		Wait:       WaitNone,
@@ -301,5 +302,75 @@ func TestFakeLogSinkKeepsTheOrder(t *testing.T) {
 	}
 	if len(rows) != 3 || rows[0].Unit != "a" || rows[2].Unit != "c" {
 		t.Fatalf("the rows are the record, in order: %+v", rows)
+	}
+}
+
+// Stella HOLD 7 at d4482049: the absent->NULL invariant on the LIVE writer
+// path. A JSON lines row that omitted confidence and floor goes through
+// ReadEntries, EventSink.Append and so DecisionEvent, onto cards:done, and the
+// fold stores NULL for both (a dash in the dump) -- never a present 0. The
+// control beside it: a row that CARRIED a zero confidence folds a 0.
+func TestAnOmittedConfidenceAndFloorFoldAsNullThroughDecisionEvent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "decide.jsonl")
+	lines := `{"time":"2026-09-18T10:00:00Z","unit":"absent","kind":"rebase","evidence":{"id":"absent","kind":"rebase"},"rung_tried":"flash","height":0,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash"}
+{"time":"2026-09-18T10:00:01Z","unit":"zero","kind":"rebase","evidence":{"id":"zero","kind":"rebase"},"rung_tried":"flash","height":0,"confidence":0,"floor":0,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash"}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadEntries(path)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("read %d rows (err %v), want 2", len(rows), err)
+	}
+
+	ev, err := DecisionEvent(rows[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"confidence", "floor"} {
+		if v, ok := ev.Fields()[name]; ok {
+			t.Errorf("the source row omitted %s but the event carries %s=%q; absent is not zero", name, name, v)
+		}
+	}
+	ev, err = DecisionEvent(rows[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"confidence", "floor"} {
+		if v, ok := ev.Fields()[name]; !ok || v != "0" {
+			t.Errorf("the source row carried %s=0 but the event has %s=%q present=%v; a written zero is a zero", name, name, v, ok)
+		}
+	}
+
+	stream := events.NewFakeStream()
+	sink := &EventSink{Emitter: stream, Bench: "hulk"}
+	for _, e := range rows {
+		if err := sink.Append(e); err != nil {
+			t.Fatalf("writing the decision: %v", err)
+		}
+	}
+	db, err := events.OpenDB(ctx, filepath.Join(t.TempDir(), "ev.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	folder := &events.Folder{Reader: stream, DB: db}
+	if err := folder.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := folder.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var dump bytes.Buffer
+	if err := db.Dump(ctx, &dump); err != nil {
+		t.Fatal(err)
+	}
+	// ... unit_id kind files packages lanes lane rung_tried height confidence floor ...
+	if !strings.Contains(dump.String(), "\tabsent\trebase\t0\t0\t0\t-\tflash\t0\t-\t-\t") {
+		t.Errorf("the omitted confidence and floor did not fold as NULL:\n%s", dump.String())
+	}
+	if !strings.Contains(dump.String(), "\tzero\trebase\t0\t0\t0\t-\tflash\t0\t0\t0\t") {
+		t.Errorf("the written zero confidence and floor did not fold as 0:\n%s", dump.String())
 	}
 }
