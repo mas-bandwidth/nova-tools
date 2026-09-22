@@ -160,7 +160,7 @@ usage:
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
-                      [--evaluate] [--base <branch>] [--write-status]
+                      [--evaluate] [--base <branch>] [--cache <dir>] [--write-status]
                       [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
@@ -252,16 +252,17 @@ guessed file: there is no default registry and no discovery.
 
 --evaluate derives done from each unit's :acceptance instead of its :status, through gh
 (nova-tools #2664). Two criteria are evaluable: (:kind :landed :subject "pr:<o/r>#<n>"
-:predicate :merged-or-closed-in-base) holds when the PR is merged, OR closed with every
-file of its head byte-identical on the base -- the lander's content-in-dev rule for a PR
-it closed after an integration merge, asked at the base tip and then at each of the last
-100 base commits whose subject names #<n> -- and :subject "commit:<sha>" holds when the
-commit is reachable from the base; (:kind :merged ... :predicate :merged-at) holds only when the
-PR is merged. The base is --base, else the set's :base, and one is required. Each
-evaluable criterion prints one SET EVAL line with holds=yes|no|unknown and a why=; a
-criterion gh could not answer is unknown and counts as not done. A unit is decided by its
-criteria when every one is evaluable or one fails; a unit naming only :test, :job or
-:attested criteria keeps its :status. Each question is asked once per run.
+:predicate :merged-or-closed-in-base) holds when the PR is merged, OR closed with its
+content in the base by the lander's rule -- git merge-tree --write-tree <base> <head>
+yields the base's own tree, so merging it changes nothing, which holds for a PR the lander
+combined with another -- and :subject "commit:<sha>" holds when the commit is reachable
+from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
+The merge runs in one blobless bare repository per repo under --cache. The base is
+--base, else the set's :base, and one is required. Each evaluable criterion prints one
+SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
+answer is unknown and counts as not done. A unit is decided by its criteria when every
+one is evaluable or one fails; a unit naming only :test, :job or :attested criteria keeps
+its :status. Each question is asked once per run.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
@@ -308,6 +309,8 @@ flags:
                   dimension or path that held it and the unit holding it).
   --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
   --base <branch> set check: the branch :landed means; default the set's :base.
+  --cache <dir>   set check: where --evaluate keeps one blobless bare repository per
+                  repo for the merge; default <user cache dir>/nova-work/landed.
   --write-status  set check: rewrite :status "open" to "landed" where every criterion
                   holds, in place, one line per unit; implies --evaluate.
   --out <dir>     plan expand: the directory to write one card per node into. Required;

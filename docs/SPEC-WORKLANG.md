@@ -492,10 +492,11 @@ refused now.
 
 *Amendment (#2664, 2026-09-22): `:landed`.* A unit's acceptance may also be `(:kind :landed :subject
 "pr:<owner/repo>#<n>" :predicate :merged-or-closed-in-base)` (`:landed-in` reads the same). It
-holds when the PR is merged, **or** closed with every file of its head byte-identical on the base —
-at the tip, or at a recent base commit whose subject names `#<n>`, which is where the lander's
-integration merge put it — **or**, as `:subject "commit:<sha>"`, when that commit is reachable from
-the base. The base is `set check --base`, else the set's `:base`. `nova-work set check --evaluate`
+holds when the PR is merged, **or** closed with its content in the base by the lander's rule —
+`git merge-tree --write-tree <base> <head>` yields the base's own tree, so merging it changes
+nothing, which also holds for a PR the lander combined with another (#2544 with #2614, #2645 into
+#2670) although no single base commit carries its head's files — **or**, as `:subject
+"commit:<sha>"`, when that commit is reachable from the base. The base is `set check --base`, else the set's `:base`. `nova-work set check --evaluate`
 resolves `:landed` and `:merged :merged-at` through `gh` and derives each unit's done from them
 rather than from `:status`; `--write-status` writes the verdict back as `:status "landed"`. A PR
 the lander closed fails `:merged-at`, which is why the kind exists (#2614 #2607 #2625 #2631

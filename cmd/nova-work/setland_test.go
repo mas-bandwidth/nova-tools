@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -37,41 +40,93 @@ func useFakeGH(t *testing.T, answers map[string]string) *fakeGH {
 	return f
 }
 
-// The forge of the landed fixture: #1 merged; #2 closed by the lander with its one
-// file identical on dev; #3 closed with its file differing on dev; #4 still open;
-// #5 closed by the lander, asked for by :merged :merged-at, which it fails; #6
-// closed by the lander, its file edited on dev since; commit abcdef1 is behind dev,
-// so reachable.
-func landedForge() map[string]string {
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com",
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// landedOrigin is the forge's repository on disk, in the #2544 shape: pull/2 and
+// pull/6 each edit one end of a.go, dev lands them COMBINED in one commit and then
+// edits a.go's middle, so no dev commit carries either head's a.go byte for byte
+// and merging either head into dev still changes nothing. pull/3 edits b.go, which
+// dev never took. landedGitURL points the merge here and --cache keeps the bare
+// repositories in the test's own temp dir.
+func landedOrigin(t *testing.T) map[int]string {
+	t.Helper()
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	put := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(msg string) string {
+		gitIn(t, dir, "add", "-A")
+		gitIn(t, dir, "commit", "-q", "-m", msg)
+		return gitIn(t, dir, "rev-parse", "HEAD")
+	}
+	aGo := func(edit map[int]string) string {
+		var b strings.Builder
+		for i := 1; i <= 9; i++ {
+			line, ok := edit[i]
+			if !ok {
+				line = strconv.Itoa(i)
+			}
+			b.WriteString(line + "\n")
+		}
+		return b.String()
+	}
+	put("a.go", aGo(nil))
+	put("b.go", "x\n")
+	m := commit("M")
+	heads := map[int]string{}
+	for n, edit := range map[int][2]string{
+		2: {"a.go", aGo(map[int]string{1: "1pr"})},
+		6: {"a.go", aGo(map[int]string{9: "9pr"})},
+		3: {"b.go", "y\n"},
+	} {
+		gitIn(t, dir, "checkout", "-q", "--detach", m)
+		put(edit[0], edit[1])
+		heads[n] = commit("pull")
+		gitIn(t, dir, "update-ref", "refs/pull/"+strconv.Itoa(n)+"/head", heads[n])
+	}
+	gitIn(t, dir, "checkout", "-q", "-b", "dev", m)
+	put("a.go", aGo(map[int]string{1: "1pr", 9: "9pr"}))
+	commit("land-1: 2 approved PRs (#2 #6)")
+	put("a.go", aGo(map[int]string{1: "1pr", 5: "5later", 9: "9pr"}))
+	commit("later")
+	gitIn(t, dir, "checkout", "-q", "--detach")
+	old := landedGitURL
+	landedGitURL = func(string) string { return "file://" + dir }
+	t.Cleanup(func() { landedGitURL = old })
+	return heads
+}
+
+// The forge of the landed fixture: #1 merged; #2 and #6 closed by the lander,
+// combined in one dev commit; #3 closed and never landed; #4 still open; #5 closed
+// by the lander, asked for by :merged :merged-at, which it fails; commit abcdef1 is
+// behind dev, so reachable.
+func landedForge(t *testing.T) map[string]string {
+	heads := landedOrigin(t)
+	closed := func(n int) string {
+		return `{"state":"closed","merged_at":null,"head":{"sha":"` + heads[n] + `"}}`
+	}
 	return map[string]string{
 		"api repos/o/r/pulls/1": `{"state":"closed","merged_at":"2026-09-22T10:00:00Z","merge_commit_sha":"m1","head":{"sha":"h1"}}`,
-		"api repos/o/r/pulls/2": `{"state":"closed","merged_at":null,"head":{"sha":"h2"}}`,
-		"api repos/o/r/pulls/3": `{"state":"closed","merged_at":null,"head":{"sha":"h3"}}`,
+		"api repos/o/r/pulls/2": closed(2),
+		"api repos/o/r/pulls/3": closed(3),
 		"api repos/o/r/pulls/4": `{"state":"open","merged_at":null,"head":{"sha":"h4"}}`,
 		"api repos/o/r/pulls/5": `{"state":"closed","merged_at":null,"head":{"sha":"h5"}}`,
-
-		"api --paginate repos/o/r/pulls/2/files?per_page=100": `[{"filename":"a.go","status":"modified","sha":"blobA"}]` +
-			`[{"filename":"gone.go","status":"removed","sha":"old"}]`,
-		"api --paginate repos/o/r/pulls/3/files?per_page=100": `[{"filename":"b.go","status":"modified","sha":"blobB-head"}]`,
-
-		"api repos/o/r/git/trees/dev?recursive=1": `{"sha":"t","truncated":false,"tree":[` +
-			`{"path":"a.go","type":"blob","sha":"blobA"},` +
-			`{"path":"b.go","type":"blob","sha":"blobB-dev"},` +
-			`{"path":"cmd","type":"tree","sha":"t2"}]}`,
+		"api repos/o/r/pulls/6": closed(6),
 
 		"api repos/o/r/compare/dev...abcdef1": `{"status":"behind"}`,
-
-		// dev's history: #30 is not #3, and the commit that does name #3 does not
-		// carry its bytes either, so #3 stays not landed; #6 moved on after its
-		// landing commit c7, which carried its bytes.
-		"api repos/o/r/commits?sha=dev&per_page=100": `[` +
-			`{"sha":"c9","commit":{"message":"later: edit a.go and b.go (#30)"}},` +
-			`{"sha":"c8","commit":{"message":"land-2: 1 approved PRs (#3)"}},` +
-			`{"sha":"c7","commit":{"message":"land-1: 2 approved PRs (#6 #2)\n\nbody"}}]`,
-		"api repos/o/r/git/trees/c8?recursive=1":              `{"truncated":false,"tree":[{"path":"b.go","type":"blob","sha":"blobB-other"}]}`,
-		"api repos/o/r/git/trees/c7?recursive=1":              `{"truncated":false,"tree":[{"path":"b.go","type":"blob","sha":"blobB-landed"}]}`,
-		"api repos/o/r/pulls/6":                               `{"state":"closed","merged_at":null,"head":{"sha":"h6"}}`,
-		"api --paginate repos/o/r/pulls/6/files?per_page=100": `[{"filename":"b.go","status":"modified","sha":"blobB-landed"}]`,
 	}
 }
 
@@ -87,7 +142,7 @@ const landedSet = `; the fixes-day shape: :pr, :status and one :acceptance crite
   ;; closed by the lander, content in dev
   (unit "closed-in" :pr 2 :status "open"
    :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#2" :predicate :landed-in)))
-  ;; closed, its file differs on dev
+  ;; closed, never landed: merging it would change dev
   (unit "closed-differs" :pr 3 :status "open"
    :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#3" :predicate :merged-or-closed-in-base)))
   ;; a :status nobody should trust: the PR is open
@@ -98,8 +153,8 @@ const landedSet = `; the fixes-day shape: :pr, :status and one :acceptance crite
   ;; a named commit reachable from dev
   (unit "commit" :status "open"
    :acceptance ((:id "c1" :kind :landed :subject "commit:abcdef1" :predicate :merged-or-closed-in-base)))
-  ;; closed by the lander; dev edited its file since, but the landing commit carried it
-  (unit "landed-then-moved" :pr 6 :status "open"
+  ;; the #2544 control: combined with #2 by the lander, dev edited since
+  (unit "combined-2544" :pr 6 :status "open"
    :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#6" :predicate :merged-or-closed-in-base)))
   ;; closed by the lander but asked for as merged: :merged-at fails it (#2664's negative)
   (unit "merged-at-closed" :pr 5 :status "open" :needs ("merged")
@@ -107,21 +162,21 @@ const landedSet = `; the fixes-day shape: :pr, :status and one :acceptance crite
 `
 
 func TestSetCheckEvaluateDerivesDoneFromCriteria(t *testing.T) {
-	forge := useFakeGH(t, landedForge())
+	forge := useFakeGH(t, landedForge(t))
 	path := write(t, "landed.sexp", landedSet)
-	code, stdout, stderr := runCLI(t, "set", "check", "--file", path, "--evaluate")
+	code, stdout, stderr := runCLI(t, "set", "check", "--file", path, "--evaluate", "--cache", t.TempDir())
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
 	for _, want := range []string{
 		"SET EVAL unit=merged criterion=c1 kind=landed subject=pr:o/r#1 holds=yes why=merged",
-		"SET EVAL unit=closed-in criterion=c1 kind=landed subject=pr:o/r#2 holds=yes why=content-in-base",
-		"SET EVAL unit=closed-differs criterion=c1 kind=landed subject=pr:o/r#3 holds=no why=differs:b.go",
+		"SET EVAL unit=closed-in criterion=c1 kind=landed subject=pr:o/r#2 holds=yes why=merge-changes-nothing",
+		"SET EVAL unit=closed-differs criterion=c1 kind=landed subject=pr:o/r#3 holds=no why=merge-changes-base",
 		"SET EVAL unit=open-pr criterion=c1 kind=landed subject=pr:o/r#4 holds=no why=open",
 		"SET EVAL unit=commit criterion=c1 kind=landed subject=commit:abcdef1 holds=yes why=reachable",
 		"SET EVAL unit=merged-at-closed criterion=c1 kind=merged subject=pr:o/r#5 holds=no why=not-merged",
-		"SET EVAL unit=landed-then-moved criterion=c1 kind=landed subject=pr:o/r#6 holds=yes why=content-in:c7",
-		// done: merged, closed-in, status-only, commit, landed-then-moved -- 5 of 8
+		"SET EVAL unit=combined-2544 criterion=c1 kind=landed subject=pr:o/r#6 holds=yes why=merge-changes-nothing",
+		// done: merged, closed-in, status-only, commit, combined-2544 -- 5 of 8
 		"SET OK units=8 ready=3 blocked=0 owned=0\nSET DONE done=5 percent=62\n",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -149,15 +204,15 @@ func TestSetCheckEvaluateDerivesDoneFromCriteria(t *testing.T) {
 	}
 }
 
-// A closed PR is done only on the lander's rule: its file differing on the base is
-// not done even when the file's :status says landed.
+// A closed PR is done only on the lander's rule: one whose merge would change the
+// base is not done even when the file's :status says landed.
 func TestSetCheckEvaluateClosedPRWhoseFileDiffersIsNotDone(t *testing.T) {
-	useFakeGH(t, landedForge())
+	useFakeGH(t, landedForge(t))
 	path := write(t, "one.sexp", `(work-set "one" :repo "o/r" :base "dev" :units (
 	  (unit "u" :status "landed"
 	   :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#3" :predicate :merged-or-closed-in-base)))))`)
-	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate")
-	if code != 0 || !strings.Contains(stdout, "holds=no why=differs:b.go") ||
+	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate", "--cache", t.TempDir())
+	if code != 0 || !strings.Contains(stdout, "holds=no why=merge-changes-base") ||
 		!strings.HasSuffix(stdout, "SET DONE done=0 percent=0\n") {
 		t.Errorf("exit %d\n%s", code, stdout)
 	}
@@ -170,7 +225,7 @@ func TestSetCheckEvaluateUnreachableForgeIsUnknown(t *testing.T) {
 	path := write(t, "one.sexp", `(work-set "one" :base "dev" :units (
 	  (unit "u" :status "landed"
 	   :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#9" :predicate :merged-or-closed-in-base)))))`)
-	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate")
+	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate", "--cache", t.TempDir())
 	if code != 0 || !strings.Contains(stdout, "holds=unknown why=error:gh:-Not-Found-(HTTP-404)") ||
 		!strings.HasSuffix(stdout, "SET DONE done=0 percent=0\n") {
 		t.Errorf("exit %d\n%s", code, stdout)
@@ -186,11 +241,11 @@ func TestSetCheckEvaluateBase(t *testing.T) {
 	body := `(work-set "b" :repo "o/r" :units (
 	  (unit "u" :acceptance ((:id "c1" :kind :landed :subject "commit:abcdef1" :predicate :landed-in)))))`
 	path := write(t, "b.sexp", body)
-	code, _, stderr := runCLI(t, "set", "check", "--file", path, "--evaluate")
+	code, _, stderr := runCLI(t, "set", "check", "--file", path, "--evaluate", "--cache", t.TempDir())
 	if code != 2 || !strings.Contains(stderr, "--base") {
 		t.Errorf("no base anywhere: exit %d, stderr %q; want 2 naming --base", code, stderr)
 	}
-	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate", "--base", "main")
+	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate", "--base", "main", "--cache", t.TempDir())
 	if code != 0 || !strings.Contains(stdout, "holds=no why=not-in-base") || forge.calls["api repos/o/r/compare/main...abcdef1"] != 1 {
 		t.Errorf("--base main: exit %d\n%s", code, stdout)
 	}
@@ -214,9 +269,10 @@ func TestSetDonePercentRoundsDown(t *testing.T) {
 // criteria all hold, and not one other byte: comments, spacing and order survive,
 // and a second run finds nothing to write.
 func TestSetCheckWriteStatusIsByteStable(t *testing.T) {
-	useFakeGH(t, landedForge())
+	useFakeGH(t, landedForge(t))
 	path := write(t, "landed.sexp", landedSet)
-	code, stdout, stderr := runCLI(t, "set", "check", "--file", path, "--write-status")
+	cache := t.TempDir()
+	code, stdout, stderr := runCLI(t, "set", "check", "--file", path, "--write-status", "--cache", cache)
 	if code != 0 {
 		t.Fatalf("exit = %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
@@ -225,7 +281,7 @@ func TestSetCheckWriteStatusIsByteStable(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := landedSet
-	for _, unit := range []string{"merged", "closed-in", "commit", "landed-then-moved"} {
+	for _, unit := range []string{"merged", "closed-in", "commit", "combined-2544"} {
 		before := `(unit "` + unit + `"`
 		i := strings.Index(want, before)
 		j := i + strings.Index(want[i:], `:status "open"`)
@@ -235,7 +291,7 @@ func TestSetCheckWriteStatusIsByteStable(t *testing.T) {
 		t.Errorf("the file moved past the four status values:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 	for _, line := range []string{"SET WROTE unit=merged status=landed", "SET WROTE unit=closed-in status=landed",
-		"SET WROTE unit=commit status=landed", "SET WROTE unit=landed-then-moved status=landed"} {
+		"SET WROTE unit=commit status=landed", "SET WROTE unit=combined-2544 status=landed"} {
 		if !strings.Contains(stdout, line) {
 			t.Errorf("stdout does not carry %q:\n%s", line, stdout)
 		}
@@ -260,7 +316,7 @@ func TestSetCheckWriteStatusIsByteStable(t *testing.T) {
 		t.Errorf("%d lines changed, want 4", changed)
 	}
 	// Idempotent: the second run writes nothing and the bytes stay put.
-	code, stdout, _ = runCLI(t, "set", "check", "--file", path, "--write-status")
+	code, stdout, _ = runCLI(t, "set", "check", "--file", path, "--write-status", "--cache", cache)
 	again, _ := os.ReadFile(path)
 	if code != 0 || strings.Contains(stdout, "SET WROTE") || string(again) != string(got) {
 		t.Errorf("second run: exit %d, rewrote:\n%s", code, stdout)

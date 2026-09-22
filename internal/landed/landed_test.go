@@ -3,8 +3,13 @@ package landed
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // forge is a canned gh: one stdout per argument line, every line counted. Nothing
@@ -27,43 +32,125 @@ func (f *forge) run(_ context.Context, args ...string) ([]byte, error) {
 	return []byte(out), nil
 }
 
-const tree = `{"truncated":false,"tree":[{"path":"a.go","type":"blob","sha":"A"},{"path":"old.go","type":"blob","sha":"O"}]}`
+func gitIn(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com",
+		"-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// origin builds the forge's repository on disk, the shape of 2026-09-22:
+//
+//	M        a.go = lines 1..9, b.go = x
+//	pull/1   M + a.go line 1 -> 1pr
+//	pull/2   M + a.go line 9 -> 9pr
+//	dev      M -> land (pulls 1, 2 COMBINED, and 5) -> later (a.go line 5, c.go rewritten)
+//	pull/3   M + b.go -> y                       (never landed)
+//	pull/4   M + a.go line 1 -> 1other           (conflicts with dev)
+//	pull/5   M + c.go = c1                       (landed; "later" rewrote c.go)
+//
+// No dev commit carries pull/1's or pull/2's a.go byte for byte -- the #2544 shape
+// -- and merging either into dev still changes nothing, so both landed.
+func origin(t *testing.T) (url string, heads map[int]string) {
+	t.Helper()
+	dir := t.TempDir()
+	gitIn(t, dir, "init", "-q", "-b", "main")
+	gitIn(t, dir, "config", "uploadpack.allowFilter", "true")
+	put := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	commit := func(msg string) string {
+		gitIn(t, dir, "add", "-A")
+		gitIn(t, dir, "commit", "-q", "-m", msg)
+		return gitIn(t, dir, "rev-parse", "HEAD")
+	}
+	put("a.go", lines(nil))
+	put("b.go", "x\n")
+	m := commit("M")
+	heads = map[int]string{}
+	branch := func(n int, name, body string) {
+		gitIn(t, dir, "checkout", "-q", "--detach", m)
+		put(name, body)
+		heads[n] = commit("pull")
+		gitIn(t, dir, "update-ref", "refs/pull/"+itoa(n)+"/head", heads[n])
+	}
+	branch(1, "a.go", lines(map[int]string{1: "1pr"}))
+	branch(2, "a.go", lines(map[int]string{9: "9pr"}))
+	branch(3, "b.go", "y\n")
+	branch(4, "a.go", lines(map[int]string{1: "1other"}))
+	branch(5, "c.go", "c1\n")
+	gitIn(t, dir, "update-ref", "refs/pull/7/head", heads[5])
+	gitIn(t, dir, "checkout", "-q", "-b", "dev", m)
+	put("a.go", lines(map[int]string{1: "1pr", 9: "9pr"}))
+	put("c.go", "c1\n")
+	heads[0] = commit("land-1: 3 approved PRs (#1 #2 #5)")
+	put("a.go", lines(map[int]string{1: "1pr", 5: "5later", 9: "9pr"}))
+	put("c.go", "c-rewritten\n")
+	commit("later")
+	gitIn(t, dir, "checkout", "-q", "--detach")
+	return "file://" + dir, heads
+}
+
+// lines is a.go: the numbers 1 to 9, one per line, with the edits given.
+func lines(edit map[int]string) string {
+	var b strings.Builder
+	for i := 1; i <= 9; i++ {
+		line, ok := edit[i]
+		if !ok {
+			line = strconv.Itoa(i)
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
+}
+
+func itoa(n int) string { return strconv.Itoa(n) }
+
+func closedAt(head string, at time.Time) string {
+	return `{"state":"closed","merged_at":null,"closed_at":"` + at.Format(time.RFC3339) + `","head":{"sha":"` + head + `"}}`
+}
 
 func closedPR(head string) string {
 	return `{"state":"closed","merged_at":null,"head":{"sha":"` + head + `"}}`
 }
 
-func TestLanded(t *testing.T) {
+func TestLandedIsTheLandersMergeRule(t *testing.T) {
+	url, heads := origin(t)
 	f := &forge{answers: map[string]string{
-		"api repos/o/r/git/trees/dev?recursive=1": tree,
-
-		"api repos/o/r/pulls/1":                               closedPR("h1"),
-		"api --paginate repos/o/r/pulls/1/files?per_page=100": `[{"filename":"a.go","status":"renamed","sha":"A","previous_filename":"old.go"}]`,
-		"api repos/o/r/pulls/2":                               closedPR("h2"),
-		"api --paginate repos/o/r/pulls/2/files?per_page=100": `[{"filename":"a.go","status":"added","sha":"A"},{"filename":"new.go","status":"added","sha":"N"}]`,
-		"api repos/o/r/pulls/3":                               closedPR("h3"),
-		"api --paginate repos/o/r/pulls/3/files?per_page=100": `[]`,
-		"api repos/o/r/pulls/4":                               closedPR("h4"),
-		"api --paginate repos/o/r/pulls/4/files?per_page=100": `[{"filename":"old.go","status":"removed","sha":"O"}]`,
-		"api repos/o/r/pulls/5":                               closedPR("h5"),
-		"api --paginate repos/o/r/pulls/5/files?per_page=100": `[{"filename":"a.go","status":"modified","sha":"A"}]`,
-		"api repos/o/r/commits?sha=dev&per_page=100":          `[{"sha":"c1","commit":{"message":"land: (#1 #22)"}}]`,
-		"api repos/o/r/git/trees/c1?recursive=1":              `{"truncated":false,"tree":[{"path":"a.go","type":"blob","sha":"A"},{"path":"old.go","type":"blob","sha":"O"}]}`,
+		"api repos/o/r/pulls/1": closedPR(heads[1]),
+		"api repos/o/r/pulls/2": closedPR(heads[2]),
+		"api repos/o/r/pulls/3": closedPR(heads[3]),
+		"api repos/o/r/pulls/4": closedPR(heads[4]),
+		"api repos/o/r/pulls/5": closedAt(heads[5], time.Now().UTC().Add(time.Minute)),
+		"api repos/o/r/pulls/7": closedAt(heads[5], time.Now().UTC().Add(-48*time.Hour)),
+		"api repos/o/r/pulls/8": `{"state":"closed","merged_at":"2026-09-22T00:00:00Z","head":{"sha":"abc"}}`,
+		"api repos/o/r/pulls/9": `{"state":"open","merged_at":null,"head":{"sha":"abc"}}`,
 	}}
-	e := New(f.run, "o/r", "dev")
+	e := New(f.run, "o/r", "dev", t.TempDir())
+	e.GitURL = func(string) string { return url }
 	ctx := context.Background()
 	for _, c := range []struct {
 		subject, word, why string
 	}{
-		// a rename whose old path is still on the base has not landed whole
-		{"pr:o/r#1", "no", "differs:old.go"},
-		// an added file the base does not hold
-		{"pr:o/r#2", "no", "differs:new.go"},
-		// a closed PR that touched nothing landed nothing
-		{"pr:o/r#3", "no", "no-files"},
-		// a removal the base still carries
-		{"pr:o/r#4", "no", "differs:old.go"},
-		{"pr:o/r#5", "yes", "content-in-base"},
+		// the #2544 control: combined with another PR, carried by no single commit
+		{"pr:o/r#1", "yes", "merge-changes-nothing"},
+		{"pr:o/r#2", "yes", "merge-changes-nothing"},
+		{"pr:o/r#3", "no", "merge-changes-base"},
+		{"pr:o/r#4", "no", "merge-conflicts"},
+		// dev rewrote what #5 added: the tip conflicts, the lander's commit in
+		// the landing window is where merging changed nothing
+		{"pr:o/r#5", "yes", "merge-changes-nothing-at:" + heads[0][:12]},
+		// the same head closed long before any base commit: no window, the tip's no
+		{"pr:o/r#7", "no", "merge-conflicts"},
+		{"pr:o/r#8", "yes", "merged"},
+		{"pr:o/r#9", "no", "open"},
 		{"pr:o/r#6", "unknown", "error:gh:-Not-Found-(HTTP-404)"},
 		{"pr:o/r", "unknown", `error:subject-"pr:o/r"-is-not-pr:<owner/repo>#<n>`},
 		{"pr:o/r/../x#1", "unknown", `error:subject-"pr:o/r/../x#1"-is-not-pr:<owner/repo>#<n>`},
@@ -74,35 +161,34 @@ func TestLanded(t *testing.T) {
 			t.Errorf("Landed(%q) = %s why=%s, want %s why=%s", c.subject, v.Word(), v.Why, c.word, c.why)
 		}
 	}
-	if n := f.calls["api repos/o/r/git/trees/dev?recursive=1"]; n != 1 {
-		t.Errorf("the base tree was fetched %d times, want once per run", n)
-	}
-	// asked again: every answer comes from the run's cache
-	before := len(f.calls)
+	// asked again: every answer comes from the run's cache, and gh is not asked
 	total := 0
 	for _, n := range f.calls {
 		total += n
 	}
-	e.Landed(ctx, "pr:o/r#5")
 	e.Landed(ctx, "pr:o/r#1")
+	e.Landed(ctx, "pr:o/r#3")
 	after := 0
 	for _, n := range f.calls {
 		after += n
 	}
-	if len(f.calls) != before || after != total {
+	if after != total {
 		t.Errorf("a repeated question reached gh: %d calls -> %d", total, after)
+	}
+	// A second run reuses the bare repository the first one made.
+	e2 := New(f.run, "o/r", "dev", e.Cache)
+	e2.GitURL = e.GitURL
+	if v := e2.Landed(ctx, "pr:o/r#2"); !v.Holds {
+		t.Errorf("second run over the same cache: %s why=%s", v.Word(), v.Why)
 	}
 }
 
-func TestLandedTruncatedTreeIsUnknown(t *testing.T) {
-	f := &forge{answers: map[string]string{
-		"api repos/o/r/git/trees/dev?recursive=1":             `{"truncated":true,"tree":[]}`,
-		"api repos/o/r/pulls/5":                               closedPR("h5"),
-		"api --paginate repos/o/r/pulls/5/files?per_page=100": `[{"filename":"a.go","status":"modified","sha":"A"}]`,
-	}}
-	v := New(f.run, "o/r", "dev").Landed(context.Background(), "pr:o/r#5")
-	if v.Known || v.Holds {
-		t.Errorf("a truncated tree cannot say a file is absent, yet the verdict is %s why=%s", v.Word(), v.Why)
+func TestLandedWithoutACacheIsUnknown(t *testing.T) {
+	_, heads := origin(t)
+	f := &forge{answers: map[string]string{"api repos/o/r/pulls/1": closedPR(heads[1])}}
+	v := New(f.run, "o/r", "dev", "").Landed(context.Background(), "pr:o/r#1")
+	if v.Known {
+		t.Errorf("no cache to merge in, yet the verdict is %s why=%s", v.Word(), v.Why)
 	}
 }
 
@@ -111,7 +197,7 @@ func TestMergedAt(t *testing.T) {
 		"api repos/o/r/pulls/1": `{"state":"closed","merged_at":"2026-09-22T00:00:00Z","merge_commit_sha":"abc123","head":{"sha":"def456"}}`,
 		"api repos/o/r/pulls/2": closedPR("h2"),
 	}}
-	e := New(f.run, "o/r", "dev")
+	e := New(f.run, "o/r", "dev", "")
 	ctx := context.Background()
 	for _, c := range []struct{ subject, word string }{
 		{"pr:o/r#1", "yes"},
@@ -135,7 +221,7 @@ func TestCommitReachable(t *testing.T) {
 		"api repos/p/q/compare/dev...bbbbbbb": `{"status":"behind"}`,
 		"api repos/o/r/compare/dev...ccccccc": `{"status":"ahead"}`,
 	}}
-	e := New(f.run, "o/r", "dev")
+	e := New(f.run, "o/r", "dev", "")
 	ctx := context.Background()
 	for _, c := range []struct{ subject, word string }{
 		{"commit:aaaaaaa", "yes"},
@@ -146,26 +232,7 @@ func TestCommitReachable(t *testing.T) {
 			t.Errorf("Landed(%q) = %s why=%s, want %s", c.subject, v.Word(), v.Why, c.word)
 		}
 	}
-	if v := New(f.run, "", "dev").Landed(ctx, "commit:aaaaaaa"); v.Known {
+	if v := New(f.run, "", "dev", "").Landed(ctx, "commit:aaaaaaa"); v.Known {
 		t.Errorf("a bare commit with no repo anywhere was answered: %s", v.Word())
-	}
-}
-
-func TestNamesPR(t *testing.T) {
-	for _, c := range []struct {
-		msg  string
-		n    int
-		want bool
-	}{
-		{"land-1600: 2 approved PRs (#2614 #2607) — gated", 2614, true},
-		{"land-1600: 2 approved PRs (#2614 #2607) — gated", 2607, true},
-		{"land-1600: 2 approved PRs (#2614 #2607) — gated", 26, false},
-		{"fix (#26140) and (#2614)", 2614, true},
-		{"subject\n\nbody names #2614", 2614, false},
-		{"#7", 7, true},
-	} {
-		if got := namesPR(c.msg, c.n); got != c.want {
-			t.Errorf("namesPR(%q, %d) = %v, want %v", c.msg, c.n, got, c.want)
-		}
 	}
 }

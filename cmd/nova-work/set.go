@@ -50,7 +50,7 @@ import (
 // a refusal naming the one that exists rather than a banner.
 func cmdSet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "check" {
-		return refuse(stderr, " set", "the verb is set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <ids>] [--ready] [--evaluate] [--base <branch>] [--write-status]")
+		return refuse(stderr, " set", "the verb is set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <ids>] [--ready] [--evaluate] [--base <branch>] [--cache <dir>] [--write-status]")
 	}
 	return cmdSetCheck(args[1:], stdout, stderr)
 }
@@ -66,6 +66,7 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 	ready := fs.Bool("ready", false, "print the mechanical ready set")
 	evaluateFlag := fs.Bool("evaluate", false, "derive done from each unit's :acceptance through gh")
 	baseFlag := fs.String("base", "", "the branch :landed means (default: the set's :base)")
+	cacheFlag := fs.String("cache", "", "where --evaluate keeps its bare repositories (default: the user cache dir)")
 	writeStatusFlag := fs.Bool("write-status", false, `rewrite :status "open" to "landed" where the criteria hold (implies --evaluate)`)
 	def := worklang.DefaultLimits()
 	maxBytes := fs.Int("max-bytes", def.MaxBytes, "byte ceiling")
@@ -114,7 +115,12 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, " set check", oneline.Err(err))
 		}
-		ev = landed.New(ghRunner, strings.TrimSpace(ws.Fields["repo"].Text()), base)
+		cache := strings.TrimSpace(*cacheFlag)
+		if cache == "" {
+			cache = defaultLandedCache()
+		}
+		ev = landed.New(ghRunner, strings.TrimSpace(ws.Fields["repo"].Text()), base, cache)
+		ev.GitURL = landedGitURL
 	}
 
 	// The criteria are evaluated before Check so one pass counts from them; their

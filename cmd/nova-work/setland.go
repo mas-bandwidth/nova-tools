@@ -7,6 +7,9 @@ package main
 //	(:kind :landed :subject "pr:<o/r>#<n>" :predicate :merged-or-closed-in-base)
 //	(:kind :merged :subject "pr:<o/r>#<n>" :predicate :merged-at)
 //
+// :landed on a closed PR is the lander's rule: merging its head into the base
+// changes nothing (git merge-tree --write-tree yields the base's own tree).
+//
 // A :test, :job or :attested criterion needs a record this verb does not read, so
 // it is left to the document: a unit is decided by evidence only when EVERY
 // criterion it names is evaluable, or when an evaluable one fails (a failed
@@ -33,8 +36,24 @@ import (
 )
 
 // ghRunner is the seam to the forge; the tests replace it and nothing in them
-// dials a network.
-var ghRunner landed.Runner = landed.GH
+// dials a network. landedGitURL is where the merge fetches a repo from: nil is
+// GitHub, and the tests point it at a repository in their own temp dir.
+var (
+	ghRunner     landed.Runner = landed.GH
+	landedGitURL func(repo string) string
+)
+
+// defaultLandedCache is <user cache dir>/nova-work/landed: the bare repositories
+// the lander's merge rule runs in are a cache, kept between runs so a repo's
+// history is fetched once. An unknown cache dir leaves it empty, and a closed PR's
+// criterion is then unknown rather than merged somewhere guessed.
+func defaultLandedCache() string {
+	dir, err := os.UserCacheDir()
+	if err != nil || dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "nova-work", "landed")
+}
 
 // evaluator is one criterion's resolver, or nil when set check cannot evaluate it.
 func evaluator(c worklang.Criterion) func(*landed.Evaluator, context.Context, string) landed.Verdict {
