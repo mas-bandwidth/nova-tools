@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"bytes"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,8 @@ import (
 
 func TestFunnelUnmeasuredSpendRecordedAsDash(t *testing.T) {
 	// Rule: Unmeasured spend recorded as "-", never manufactured zeros.
-	for _, input := range []string{"", "-", "unmeasured", "unknown", "none"} {
+	// Non-finite floats (NaN, Inf) must also be treated as unmeasured, never allowed into metrics.
+	for _, input := range []string{"", "-", "unmeasured", "unknown", "none", "NaN", "nan", "NAN", "+Inf", "-Inf", "Inf", "+inf", "-inf", "inf"} {
 		got := FormatSpend(input)
 		if got != "-" {
 			t.Errorf("FormatSpend(%q) = %q, want \"-\"", input, got)
@@ -292,5 +294,125 @@ func TestSprintFunnelCLIEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "FUNNEL admit=1") {
 		t.Errorf("report output missing admit=1: %s", out.String())
+	}
+}
+
+func TestFunnelNonFiniteFloatsHandledAsUnmeasured(t *testing.T) {
+	// Stella HOLD 7 regression: NaN and Inf must not enter MeasuredSpend,
+	// must be counted in UnmeasuredEvents, and must not break JSON encoding.
+	nonFiniteRecords := []FunnelRecord{
+		{Event: EventAdmit, Card: "c1", Attempt: "1", Spend: "NaN"},
+		{Event: EventLaunch, Card: "c1", Attempt: "1", Spend: "+Inf"},
+		{Event: EventHarvest, Card: "c1", Attempt: "1", Spend: "-Inf"},
+		{Event: EventGate, Card: "c1", Attempt: "1", Spend: "inf"},
+		{Event: EventLand, Card: "c1", Attempt: "1", Spend: "0.1000"},
+	}
+
+	summary := ComputeFunnelSummary(nonFiniteRecords)
+	// 4 non-finite records must be counted as unmeasured
+	if summary.UnmeasuredEvents != 4 {
+		t.Errorf("UnmeasuredEvents = %d, want 4", summary.UnmeasuredEvents)
+	}
+	// MeasuredSpend must only reflect the finite record
+	if summary.MeasuredSpend != 0.1000 {
+		t.Errorf("MeasuredSpend = %f, want 0.1000", summary.MeasuredSpend)
+	}
+	if !summary.HasMeasuredSpend {
+		t.Errorf("HasMeasuredSpend should be true from the finite record")
+	}
+	if summary.CostPerLanded != "0.1000" {
+		t.Errorf("CostPerLanded = %q, want \"0.1000\"", summary.CostPerLanded)
+	}
+
+	// JSON encoding of FunnelSummary must not fail with "json: unsupported value: NaN/Inf"
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("json.Marshal(summary) failed: %v", err)
+	}
+	if strings.Contains(string(data), "NaN") || strings.Contains(string(data), "Inf") {
+		t.Errorf("marshaled JSON contains non-finite float: %s", string(data))
+	}
+
+	// Verify all-non-finite records results in unmeasured report
+	allNonFinite := []FunnelRecord{
+		{Event: EventAdmit, Card: "c2", Attempt: "1", Spend: "NaN"},
+		{Event: EventLand, Card: "c2", Attempt: "1", Spend: "+Inf"},
+	}
+	summaryAll := ComputeFunnelSummary(allNonFinite)
+	if summaryAll.HasMeasuredSpend {
+		t.Errorf("HasMeasuredSpend should be false when all records are non-finite")
+	}
+	if summaryAll.UnmeasuredEvents != 2 {
+		t.Errorf("UnmeasuredEvents = %d, want 2", summaryAll.UnmeasuredEvents)
+	}
+	if summaryAll.CostPerLanded != "-" {
+		t.Errorf("CostPerLanded = %q, want \"-\"", summaryAll.CostPerLanded)
+	}
+	if _, err := json.Marshal(summaryAll); err != nil {
+		t.Fatalf("json.Marshal(summaryAll) failed: %v", err)
+	}
+
+	// End-to-end CLI report with JSON and recorded NaN/Inf spend
+	tmpDir := t.TempDir()
+	queueDir := filepath.Join(tmpDir, "queue")
+	var out, errb bytes.Buffer
+
+	// Record with --spend NaN
+	code := SprintFunnel(SprintFunnelInput{
+		Queue:   queueDir,
+		Action:  "record",
+		Event:   EventAdmit,
+		Card:    "card-nan",
+		Attempt: "1",
+		Spend:   "NaN",
+		Now:     func() time.Time { return time.Date(2026, 9, 21, 10, 0, 0, 0, time.UTC) },
+		Stdout:  &out,
+		Stderr:  &errb,
+	})
+	if code != 0 {
+		t.Fatalf("record with spend=NaN exit = %d; err=%s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "spend=-") {
+		t.Errorf("record output with spend=NaN did not format as '-': %s", out.String())
+	}
+
+	// Record with --spend +Inf
+	out.Reset()
+	code = SprintFunnel(SprintFunnelInput{
+		Queue:   queueDir,
+		Action:  "record",
+		Event:   EventLand,
+		Card:    "card-nan",
+		Attempt: "1",
+		Spend:   "+Inf",
+		Now:     func() time.Time { return time.Date(2026, 9, 21, 10, 1, 0, 0, time.UTC) },
+		Stdout:  &out,
+		Stderr:  &errb,
+	})
+	if code != 0 {
+		t.Fatalf("record with spend=+Inf exit = %d; err=%s", code, errb.String())
+	}
+
+	// Report with --json
+	out.Reset()
+	code = SprintFunnel(SprintFunnelInput{
+		Queue:  queueDir,
+		Action: "report",
+		JSON:   true,
+		Stdout: &out,
+		Stderr: &errb,
+	})
+	if code != 0 {
+		t.Fatalf("report with JSON exit = %d, want 0; err=%s", code, errb.String())
+	}
+	var decoded FunnelSummary
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("failed to decode JSON report output: %v; raw=%s", err, out.String())
+	}
+	if decoded.UnmeasuredEvents != 2 {
+		t.Errorf("decoded.UnmeasuredEvents = %d, want 2", decoded.UnmeasuredEvents)
+	}
+	if decoded.HasMeasuredSpend {
+		t.Errorf("decoded.HasMeasuredSpend should be false")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -90,7 +91,7 @@ func FormatSpend(s string) string {
 		return "-"
 	}
 	v, err := strconv.ParseFloat(trimmed, 64)
-	if err != nil || v < 0 {
+	if err != nil || v < 0 || math.IsNaN(v) || math.IsInf(v, 0) {
 		return "-"
 	}
 	return fmt.Sprintf("%.4f", v)
@@ -276,9 +277,11 @@ func ComputeFunnelSummary(records []FunnelRecord) FunnelSummary {
 
 		spend := r.Spend
 		if spend != "" && spend != "-" {
-			if v, err := strconv.ParseFloat(spend, 64); err == nil && v >= 0 {
+			if v, err := strconv.ParseFloat(spend, 64); err == nil && v >= 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
 				summary.MeasuredSpend += v
 				summary.HasMeasuredSpend = true
+			} else {
+				summary.UnmeasuredEvents++
 			}
 		} else {
 			summary.UnmeasuredEvents++
