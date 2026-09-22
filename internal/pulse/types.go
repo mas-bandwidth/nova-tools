@@ -13,11 +13,12 @@ type CardRow struct {
 // a title and the template to render it from. pool.tsv, queue.tsv and next.tsv all hold
 // candidates in the same five-field shape.
 type Candidate struct {
-	Source   string
-	ID       string
-	Kind     string
-	Title    string
-	Template string
+	Source    string
+	ID        string
+	Kind      string
+	Title     string
+	Template  string
+	DependsOn string
 }
 
 // PoolRow is a candidate as pool.tsv holds it: pool.tsv, queue.tsv and next.tsv share the

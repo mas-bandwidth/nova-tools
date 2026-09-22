@@ -503,3 +503,99 @@ func TestRetryMovesOneClassUp(t *testing.T) {
 		t.Fatalf("retry stdout=%q, want CUT ROUTE route=opencode/zen reason=metered", stdout)
 	}
 }
+
+// cut-depends-on-header (#2636): every v2 card declares DEPENDS-ON in its header block.
+// The cutter renders DEPENDS-ON: - when independent (empty or "-"), or DEPENDS-ON: a, b
+// when dependencies are provided, immediately after PATHS: (or TEST: when PATHS: is absent).
+func TestCutDependsOnHeader(t *testing.T) {
+	v2FixTemplate := `RESULT <label> sha=<sha12>
+KIND: fix
+SCHEMA: v2
+PATHS: internal/pulse/cut.go
+TEST: ./internal/pulse/ TestCut
+STEP 1. mkdir -p scratch && git clone -q https://example.com/<source>.git . && git checkout -b <branch>
+red line
+green line
+STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
+
+	tests := []struct {
+		name       string
+		deps       []string
+		poolLine   string
+		wantHeader string
+	}{
+		{
+			name:       "nil dependencies renders dash",
+			deps:       nil,
+			poolLine:   "mas-bandwidth/nova-tools\t1\tfix\tTitle\tfix\n",
+			wantHeader: "PATHS: internal/pulse/cut.go\nDEPENDS-ON: -\nTEST: ./internal/pulse/ TestCut",
+		},
+		{
+			name:       "dash dependency renders dash",
+			deps:       []string{"-"},
+			poolLine:   "mas-bandwidth/nova-tools\t1\tfix\tTitle\tfix\n",
+			wantHeader: "PATHS: internal/pulse/cut.go\nDEPENDS-ON: -\nTEST: ./internal/pulse/ TestCut",
+		},
+		{
+			name:       "provided dependencies rendered",
+			deps:       []string{"tools-01", "tools-04"},
+			poolLine:   "mas-bandwidth/nova-tools\t1\tfix\tTitle\tfix\n",
+			wantHeader: "PATHS: internal/pulse/cut.go\nDEPENDS-ON: tools-01, tools-04\nTEST: ./internal/pulse/ TestCut",
+		},
+		{
+			name:       "dependencies from pool 6th column",
+			deps:       nil,
+			poolLine:   "mas-bandwidth/nova-tools\t1\tfix\tTitle\tfix\ttools-02, tools-03\n",
+			wantHeader: "PATHS: internal/pulse/cut.go\nDEPENDS-ON: tools-02, tools-03\nTEST: ./internal/pulse/ TestCut",
+		},
+		{
+			name:       "CutInput.DependsOn overrides pool 6th column",
+			deps:       []string{"tools-99"},
+			poolLine:   "mas-bandwidth/nova-tools\t1\tfix\tTitle\tfix\ttools-02, tools-03\n",
+			wantHeader: "PATHS: internal/pulse/cut.go\nDEPENDS-ON: tools-99\nTEST: ./internal/pulse/ TestCut",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			td := t.TempDir()
+			tmpl := filepath.Join(td, "templates")
+			out := filepath.Join(td, "out")
+			root := filepath.Join(td, "root")
+			writeTemplates(t, tmpl, map[string]string{"fix": v2FixTemplate}, defaultBenches)
+			poolPath := filepath.Join(td, "pool.tsv")
+			if err := os.WriteFile(poolPath, []byte(tt.poolLine), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var stdout, stderr strings.Builder
+			code := Cut(CutInput{
+				Pool:      poolPath,
+				Templates: tmpl,
+				Out:       out,
+				Root:      root,
+				DependsOn: tt.deps,
+				Stdout:    &stdout,
+				Stderr:    &stderr,
+			})
+			if code != 0 {
+				t.Fatalf("Cut = %d, want 0; stderr=%s", code, stderr.String())
+			}
+			card, err := os.ReadFile(filepath.Join(out, "1.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cardStr := string(card)
+			if !strings.Contains(cardStr, tt.wantHeader) {
+				t.Errorf("card content does not contain expected header block:\nexpected:\n%s\nactual:\n%s", tt.wantHeader, cardStr)
+			}
+			// Verify line 1 hash matches sha256 of body
+			lines := strings.Split(cardStr, "\n")
+			body := strings.Join(lines[1:], "\n")
+			sum := sha256.Sum256([]byte(body))
+			wantLine1 := fmt.Sprintf("RESULT 1 sha=%s", hex.EncodeToString(sum[:])[:12])
+			if lines[0] != wantLine1 {
+				t.Errorf("line 1 hash mismatch: got %q, want %q", lines[0], wantLine1)
+			}
+		})
+	}
+}
