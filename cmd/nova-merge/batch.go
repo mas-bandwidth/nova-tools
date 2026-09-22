@@ -1087,17 +1087,27 @@ func writeTestStream(root, out string) (string, error) {
 	var last error
 	for n := highest + 1; n <= highest+testStreamTries; n++ {
 		path := filepath.Join(root, fmt.Sprintf("test-%d.jsonl", n))
-		// A name already there is an earlier round and is left alone. WriteFile
-		// would truncate it, so the stat is the exclusion.
-		if _, err := os.Lstat(path); err == nil {
-			last = fmt.Errorf("%s already exists", path)
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
+		// O_EXCL reserves the name. Two batches may share one --root and both
+		// pick test-1.jsonl; a stat and then a truncating write takes the file
+		// the other writer just created, and removing that path on a failed
+		// write deletes their stream. ErrExist is the only retry. The file is
+		// removed only when this call created it and the write or the close failed.
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				last = err
+				continue
+			}
 			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, err)
 		}
-		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+		_, werr := io.Copy(f, strings.NewReader(out))
+		cerr := f.Close()
+		if werr != nil || cerr != nil {
 			_ = os.Remove(path)
-			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, err)
+			if werr == nil {
+				werr = cerr
+			}
+			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, werr)
 		}
 		return path, nil
 	}
@@ -1107,9 +1117,9 @@ func writeTestStream(root, out string) (string, error) {
 	return "", fmt.Errorf("the test stream could not be written under %s: %w", root, last)
 }
 
-// testStreamTries is how many names writeTestStream will try past the highest round
-// already in the root. One is enough when this process is the only writer; the rest
-// are for a name taken between the listing and the create.
+// testStreamTries is how many exclusive creates writeTestStream will attempt.
+// One succeeds when this process is the only writer. The rest are ErrExist
+// retries: another batch in the same root took the name.
 const testStreamTries = 32
 
 // testStreamRound reads a round out of test-<round>.jsonl. A leading zero is not a

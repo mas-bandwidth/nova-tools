@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
@@ -242,6 +243,51 @@ func TestTestStreamRoundsDoNotReplaceEachOther(t *testing.T) {
 	}
 	if string(got) != "round-one\n" {
 		t.Fatalf("the first round was replaced: %q", got)
+	}
+}
+
+// Two differently named batches may share one --root. The writers reserve
+// test-<round>.jsonl with O_EXCL, so each keeps its own path and its own
+// bytes. A stat-then-truncate would hand both the same file.
+func TestConcurrentWritersSharingARootKeepDistinctStreams(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const n = 16
+	paths := make([]string, n)
+	payloads := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		payloads[i] = fmt.Sprintf("stream-%02d\n%s\n", i, strings.Repeat("abcdefghij", 20+i))
+		go func(i int) {
+			defer wg.Done()
+			paths[i], errs[i] = writeTestStream(dir, payloads[i])
+		}(i)
+	}
+	wg.Wait()
+	seen := map[string]bool{}
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("writer %d: %v", i, errs[i])
+		}
+		if !strings.HasPrefix(paths[i], dir+string(os.PathSeparator)) {
+			t.Fatalf("writer %d wrote outside the root: %s", i, paths[i])
+		}
+		if _, ok := testStreamRound(filepath.Base(paths[i])); !ok {
+			t.Fatalf("writer %d path %s is not test-<round>.jsonl", i, paths[i])
+		}
+		if seen[paths[i]] {
+			t.Fatalf("two writers got %s", paths[i])
+		}
+		seen[paths[i]] = true
+		got, err := os.ReadFile(paths[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != payloads[i] {
+			t.Fatalf("writer %d payload at %s is not intact (%d bytes, want %d)", i, paths[i], len(got), len(payloads[i]))
+		}
 	}
 }
 
