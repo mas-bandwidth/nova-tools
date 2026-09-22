@@ -8,6 +8,12 @@ out as one document. The 59-card sprint-stage HOLD stands until Stella and Emma 
 this exact revision and the gate in clause 9 is met. Nothing here authorises a recut, a staging
 run or a measurement campaign.
 
+**Amended for Stella's scoped HOLD** (#2625 comment 5783178167, at `c05fa17b`): the items she
+asked to be decided in this artifact are written into their clauses as normative text, each
+marked *Amended for HOLD 5783178167* — (a) and (b) clause 3, (c) clause 6, (d) clause 8, (e)
+clause 9, and (f) the three former Open items: bare-directory PATHS (clause 4), lowercase keys
+(clause 2) and the COMMIT RULE representation (clause 7). Open 1 is the only item left open.
+
 **Roles.** Stella: contract review. Emma: cutter implementation coordination. Rowan: adoption.
 
 **What this governs.** A card is the whole of what a worker is handed. For a card that declares
@@ -50,7 +56,11 @@ at the first non-empty line that is not one, blank lines skipped, unknown keys r
 headings, prose and fenced blocks come *after* the block and never inside it. Keys are canonical
 uppercase with two permanent exceptions, `base-repo:` and `base-sha:`, which are lowercase because
 70 launcher scripts read them case-sensitively from the card's first 40 lines; a card is refused
-if it carries one without the other. Duplicate or conflicting keys *inside the block* are refused;
+if it carries one without the other. Any other key in the block that is not canonical uppercase —
+lowercase or mixed case, known or unknown (`paths:`, `Paths:`, `source:`) — is refused by name,
+with its line and a remedy naming the uppercase spelling. The parser does not end the block at
+such a key: it reads on, so every later key is still read and diagnosed and nothing is stranded
+silently. Duplicate or conflicting keys *inside the block* are refused;
 an identically spelled line outside it is quoted evidence and declares nothing. A v2 card does not
 inherit the WORKER-CARDS prose rules `clone-step`, `steps-numbered`, `result-last` or
 `scratch-absolute`; the list is exhaustive and any rule not on it applies.
@@ -73,6 +83,11 @@ heading strands every typed key and leaves the stage step's anchor unmatched. `s
 fires on the COMMIT RULE sentence every card carries on purpose: with only three rules exempted,
 0/59 pass; with four, 57/59.
 *Effect on the 59:* 0 change under this wording; all 59 break under the `2fb4393` wording.
+*Amended for HOLD 5783178167 (f, former Open 3):* the lowercase-key sentence is added. *Why:*
+#2607 widens what *continues* the block (any one-word key in any case), not what a typed key *is*;
+exempting only the two keys the launchers read keeps one canonical spelling per key, and refusing
+by name while reading on means a stray casing never truncates the header. On the 59: 0 change
+(no other lowercase key in any block).
 
 ## 3. Kinds
 
@@ -82,17 +97,35 @@ do not equate `fix` with `fix-red` by a hidden alias. `MODE: script` describes e
 not another KIND. Unlisted cell/rule/spec2 producers need an explicit adapter/decision before
 recutting.
 
-This set **replaces** `internal/hygiene/kinds.txt`; it does not extend it. The names the current
-file holds and this set does not — `fix-red`, `transcript-test`, `sweep`, `mutation-kill`,
-`probe`, `text`, `tone` — are kept in the file as an explicit, dated deprecation block, and a card
-or branch carrying one is refused with `kind=<old> is retired; use <new>`, not with the generic
-"not a kind this toolchain declares". A card whose kind was `script` is `KIND: report` with
-`MODE: script` retained: its product is a receipt and it changes no file in any repository.
+This set is the name set a v2 card declares. It does not globally retire the names in
+`internal/hygiene/kinds.txt`, and no legacy consumer is removed by it: old names reach v2 only
+through a **versioned legacy-kind adapter**. The adapter is a dated mapping table, versioned by
+its date (`legacy-kinds 2026-09-22`), each row `<old kind> → <v2 kind>, removed <YYYY-MM-DD>`.
+A legacy (unversioned) card or branch carrying a mapped kind is read as its v2 kind and emits
+exactly one diagnostic naming the mapping and its removal date —
+`kind=<old> mapped to <new> by legacy-kinds 2026-09-22; mapping removed <date>` — never a silent
+alias and never the generic "not a kind this toolchain declares". A row is deleted only by a
+reviewed change on or after its removal date; after that the old name is refused by name. A row
+without a removal date fails the table's own class test. A kind in neither the v2 set nor the
+table is refused by name, as today. The adapter serves legacy input only: a v2 card carrying an
+old name is a producer error and is refused (clause 1: worker output cannot choose a weaker
+adapter).
 
-*Changed from 2fb4393:* the second paragraph is added (Rowan, amendments 3a and 3b).
+`script` has no adapter row. `MODE: script` is an execution mode, so `script` → `report` is not
+a kind mapping: it is the one-card migration of `card-tools-01c`, which is receipt-only — its
+product is a receipt, it changes no file in any repository, and it declares `PATHS: none` — and
+which becomes `KIND: report` with `MODE: script` retained. Any other card carrying `KIND: script`
+is refused by name and its kind is decided per card; it is never defaulted to `report`.
+
+*Changed from 2fb4393:* the second and third paragraphs are added.
+*Amended for HOLD 5783178167 (a, b):* Rowan's amendment 3a ("this set replaces `kinds.txt`";
+old names "refused with `kind=<old> is retired`") is replaced by the versioned adapter, which
+keeps the adapter clause 1 promises (stella-tools `f6e35e9`); amendment 3b's
+"a card whose kind was `script` is `KIND: report`" is restricted to receipt-only `01c`.
 *Why:* `kinds.txt` on `dev` holds a different ten; three names are in common, and
-`cmd/nova-check/hygiene.go` (`--kind`) refuses by that file. One of the 59 (`card-tools-01c`)
-carries `KIND: script`.
+`cmd/nova-check/hygiene.go` (`--kind`) refuses by that file, so a global replacement would
+refuse every open legacy branch at once. `script` is not in `kinds.txt`; one of the 59
+(`card-tools-01c`) carries `KIND: script`.
 *Effect on the 59:* `fix` 54 and `report` 4 unchanged; `script` 1 → `report`; `kind-declared`
 59 → 0.
 
@@ -100,12 +133,18 @@ carries `KIND: script`.
 
 Emit comma-separated repository-relative entries or the explicit `none` value. Parse once into a
 list and pass the same list to validation, staging checks and harvest. Reuse hygiene
-validation/matching. Emit `directory/**` canonically; agree any bare-directory migration
-explicitly. Never accept a whole multi-path string as one glob. Do not guess how to split a
+validation/matching. Emit `directory/**` canonically. Never accept a whole multi-path string as one glob. Do not guess how to split a
 filename containing spaces.
 
 An entry containing an unquoted space is refused by name, with the line and a remedy naming the
 comma form. It is never split on whitespace, never accepted as one glob, and never guessed at.
+
+A bare-directory entry — one that names a directory rather than a file or a glob, with or without
+a trailing `/` — is refused by name in the same way, with the line and a remedy naming
+`directory/**`. No entry point of a v2 card reads a bare directory as "everything under it". A
+trailing `/` is refused on its text alone; any other entry is a directory when it names a tree at
+the card's `base-sha`, so every entry point decides it against that tree, and how the lint's
+command line is handed the tree is Emma's to name, as clause 9 leaves the producer's spelling.
 
 Harvest's reader is bound by this clause: `pulse.parsePATHS` (`internal/pulse/harveststale.go:207`)
 reads the list the shared parser produces (clause 8), not its own scan of the card text.
@@ -123,6 +162,12 @@ and validates today.
 interim reading of cards cut before the contract, not the permanent parser (Johnny,
 johnny-09ab72b5b800): a v2 card is refused at the lint before harvest could split it, and the
 split is retired when harvest calls the shared parser.
+*Amended for HOLD 5783178167 (f, former Open 2):* the bare-directory paragraph is added and
+"agree any bare-directory migration explicitly" is removed. *Why:* #2598 reads a bare directory
+as everything under it only at harvest, as the interim reading of cards cut before the contract,
+and the review cited that reading as the weakness in #2547; the contract must not depend on it,
+and refusing it is the one rule that needs no identical bare-directory matching across lint,
+staging and harvest.
 *Effect on the 59:* all 59 change — 58 space → `a, b[, c…]`, 1 (`01c`) → `PATHS: none`. The
 widest card after migration declares 5 entries, so `maxPaths = 8` (`glob.go:22`) binds nothing.
 
@@ -147,10 +192,18 @@ check in the Run command and the control in DONE-WHEN. `test-named` 14 → 0.
 ## 6. Commands
 
 A v2 card's one operative authority is the fenced block of its single `## Run` section, opened by
-a bare `RUN:` marker line. The typed header MAY carry a `RUN:` key whose value is derived from,
-and must equal, the region's command line; it is an echo for the staging scripts and is refused on
-disagreement, exactly as `COMMAND:` is. A card carrying a `RUN:` header key and no region, or a
-region whose command differs from the key, is refused at both entry points.
+a bare `RUN:` marker line. The typed header MAY carry a `RUN:` key, and only when the region holds
+exactly one command line: its value is derived from that line and must equal it exactly — string
+equality, no normalisation — and disagreement is refused at both entry points, exactly as
+`COMMAND:` is. The echo is optional; a card without it is complete. A multiline region has **no**
+echo: a `RUN:` or `COMMAND:` header key on a card whose region holds more than one line is refused,
+and no entry point joins, quotes or flattens the lines into one. The region is the sole authority,
+so there is nothing to make lossless. A card carrying a `RUN:` header key and no region is refused
+at both entry points.
+
+Staging without the echo is part of this clause: `bin/sprint-stage` (clause 8, reader 6) then
+anchors on `^TEST: `, else `^KIND: `, both of which every v2 card carries (clauses 3, 5), and a
+class test stages a card with no echo and asserts the insertion lands inside the block.
 
 If `COMMAND` metadata is retained, derive it from the same structured input and reject
 disagreement. Do not create a second independently editable command authority. `MODE: script`
@@ -161,16 +214,20 @@ prose/markdown as argv or add an implicit shell.
 region's marker. It is not a header key, not a duplicate of the header's `RUN:` echo, and not a
 stranded key.
 *Changed from 2fb4393:* "The v2 operative Run region is the execution declaration" is replaced by
-the first paragraph (Rowan's wording, verbatim), which says which spelling exists and makes the
-header key a checked echo. The rest is kept.
+the first paragraph, which says which spelling exists and makes the header key a checked echo.
+The rest is kept.
+*Amended for HOLD 5783178167 (c):* Rowan's resolved rule (rowan-fa780df52148) replaces his
+earlier wording: the echo is optional, single-line only, exact equality; a multiline region has
+no echo and no lossy shell joining; the staging fallback without the echo is tested.
 *Why:* 59/59 carry `RUN: <command>` as a header key; 0/59 carry a `## Run` heading; `OperativeRegion`
 (#2522, `cut_template.go:506-517`) requires the heading and a bare `RUN:` line, so the producer
 refuses all 59 today. `bin/sprint-stage:29` anchors its DONE-WHEN/NO-SUBAGENTS insertion on
 `^RUN: ` (with the space), which the echo matches and the bare marker does not; without an echo it
 falls back to `^TEST: ` and `^KIND: `, which a v2 card carries (clauses 3, 5).
-*Effect on the 59:* all 59 gain a `## Run` section (mechanical: the `RUN:` value, one line);
-`card-tools-01c`'s RUN is prose ("bash, gh (read-only), and the nova-decide first-pass checker…")
-and is rewritten by hand.
+*Effect on the 59:* all 59 gain a `## Run` section (mechanical: the `RUN:` value, one line, so
+the header echo may stay and must equal it); `card-tools-01c`'s RUN is prose ("bash, gh
+(read-only), and the nova-decide first-pass checker…") and is rewritten by hand; if its region
+is multiline, its header `RUN:` is removed.
 
 ## 7. Existing invariants
 
@@ -182,19 +239,41 @@ actual PATHS enforcement.
 A rule that reads prose reads only the card's own instructions to the worker, never a fenced block,
 a quoted prior card, an inlined diff or other retained evidence.
 
+**The commit rule stays implicit, and its structured input is PATHS.** A v2 card carries no
+commit-rule key. The PATHS-only commit rule (A4) has one value for every v2 card — no card may
+opt out of it — and nothing A4 enforces reads a key: the cutter lint refuses `git add -A`,
+`git add --all` and `git add .` inside the `## Run` region (`ValidateCardV2`, #2522 at
+`9ee8155`, `internal/pulse/cut_template.go:462-465`), and what a worker actually staged is
+checked by harvest's staged-diff/commit boundary against the clause 4 list. The required
+structured input is therefore PATHS itself (clause 4; `none` explicit), which the rule is a
+function of. The worker's commit instruction — the `COMMIT RULE:` sentence on the 59, A4's
+fixed `Commit rule:` line in `RenderCardV2` (`cut_template.go:316`) — is prose rendered by the
+cutter from the clause 4 list and the branch the card names. It is not a key, not a second
+command authority and not a second PATHS list: no reader parses it, and harvest checks against
+PATHS, never against it. Under #2607's grammar a two-word `COMMIT RULE:` is not a key and ends
+the block; it is the first prose line, and a typed key after it is stranded and refused by name
+(clause 2), never silently dropped.
+
 *Changed from 2fb4393:* the second paragraph is added (Rowan, addition 7).
+*Amended for HOLD 5783178167 (f, COMMIT RULE):* the third paragraph is added. *Why implicit
+rather than a `COMMIT: paths-only` key:* A4's landed text renders the rule as a fixed prose
+line, not a key, and says its lint "does not enforce PATHS-only staging"; a key with one legal
+value would echo nothing harvest reads and add a missing-key failure that guards nothing, while
+PATHS is already required and is what the enforcement reads. On the 59: 0 change (each carries
+the sentence as the line after the block; nothing follows it).
 *Why:* `card-tools-20` is refused today by `no-sandbox` (`cmd/nova-swarm/lint.go:274-277`, a
 bare `strings.Contains(l, "nova-sandbox")` over every line) for naming `.nova-sandbox-tmp/` in
 its own task description. The measured case for "A4 text lint is not actual PATHS enforcement":
 `matchDeclared` (`internal/pulse/harveststale.go:292-305`) admits every file under a bare
-directory entry (#2547; after #2598 that is the intended reading of a bare directory, see Open 2).
+directory entry (#2547; #2598 made that the interim harvest reading, and a v2 card refuses a bare
+directory, clause 4).
 *Effect on the 59:* 1 (`tools-20`).
 
 ## 8. One implementation
 
 Every reader of a card's structure calls the same versioned parser: the cutter, `nova-swarm lint`,
-harvest's PATHS enforcement, batch admission's card-shape check, and the launcher scripts'
-base-pin read. Where a reader cannot call the parser (a shell script), the contract states the
+harvest's PATHS enforcement, batch admission's card-shape check, the launcher scripts'
+base-pin read, and `bin/sprint-stage`'s re-pin and insertion. Where a reader cannot call the parser (a shell script), the contract states the
 exact literal shape it depends on and a class test asserts the parser emits it. A reader not on
 this list is a defect in the list, not an exemption. Every reader returns the same structured
 diagnostic (rule, field/line, remedy). METHODS/help/spec output derives from its rule definitions
@@ -207,22 +286,39 @@ where appropriate. No separate regex repair in each producer/consumer.
 | 3 | harvest: `pulse.parsePATHS` | `internal/pulse/harveststale.go:207-230` | the first `PATHS:` **or `PATHS `** line anywhere in the text, at any indentation |
 | 4 | admission: `swarm.cardShapeFailure` | `internal/swarm/batch.go:2116` | for `opencode/` and `deepseek/` models: a line beginning `STEP 1` in the **first 15 lines** (`hasStep1`, `:2173`), no all-capitals first line, no "launcher" in lines 1-3 |
 | 5 | launchers | `rowan-tools/bin/launchers/*-native-{darwin,bench}.sh:30-31` (70 scripts carry the read at `ff32176`) | lowercase `base-repo:` / `base-sha:` in the **first 40 lines** |
+| 6 | stage: `bin/sprint-stage` | lines 24, 29, 37 | `^BASE: `, `^base-sha: `; inserts DONE-WHEN/NO-SUBAGENTS at the anchor `^RUN: ` → `^TEST: ` → `^KIND: ` |
 
 The literal shape reader 5 depends on: `base-repo: <url>` and `base-sha: <40 hex>`, lowercase, in
 the first 40 lines, both or neither (clause 2 puts them in the block, which ends well before
 line 40 on every card).
 
+**`bin/sprint-stage` is the sixth normative reader.** The literal shapes it depends on:
+`BASE: ` and `base-sha: ` at column 0 in the block, and an insertion anchor inside the block —
+`RUN: ` when the optional echo is present (clause 6), else `TEST: `, else `KIND: `. Its re-pin is
+**idempotent**: re-pinning a card that is already pinned changes at most the `base-sha:` value and
+inserts nothing. A key it inserts is inserted only when the block does not already carry that
+key under its canonical spelling — the presence test matches the spelling it inserts
+(`NO-SUBAGENTS:`, hyphen; today it tests `^NO SUBAGENTS:` with a space) — so a second re-pin
+produces a byte-identical card and never a duplicate `NO-SUBAGENTS:` or `DONE-WHEN:`, which
+clause 2 would refuse. Before adoption, a required class test asserts every literal window and
+anchor readers 5 and 6 depend on against a card the parser emits (the 40-line window, the two
+lowercase keys, each of the three anchors including the no-echo `TEST:`/`KIND:` fallback), and
+re-pins one card twice and asserts the second re-pin is a no-op.
+
 *Changed from 2fb4393:* "cutter and swarm lint call the same versioned parser/validator" is
-widened to all five readers, in Rowan's wording (the first three sentences above, verbatim); the
-diagnostic, METHODS and no-separate-regex sentences are kept.
+widened to all six readers (the first three sentences above); the diagnostic, METHODS and
+no-separate-regex sentences are kept.
+*Amended for HOLD 5783178167 (d, former Open 4):* `bin/sprint-stage` is promoted from a listed
+candidate to the sixth normative reader, with idempotent re-pin and the literal-shape class
+checks required before adoption.
 *Why reader 4 matters most:* it is in no earlier draft of #2608. The 59 write steps as
 `## STEP 1.` around line 30, so admission refuses every one of them on every opencode/deepseek
 route (the dogfood saw `ADMIT REFUSED … card-shape`), and a v2 card with no numbered STEPs, which
 clause 2 permits, is refused there with both linted entry points green.
-*A sixth reader, by this clause's own last sentence:* `bin/sprint-stage` (lines 24, 29, 37)
-reads `^BASE: `, `^base-sha: ` and the `^RUN: ` → `^TEST: ` → `^KIND: ` anchor. Clause 2's
-evidence names it; the accepted list of five does not. It is listed here so reviewers can confirm
-or strike it (Open 4).
+*Why reader 6:* clause 2's evidence names it, and by this clause's own sentence a reader not on
+the list is a defect in the list. Its re-pin defect is measured, not predicted: it tests
+`^NO SUBAGENTS:` (space) and inserts `NO-SUBAGENTS:` (hyphen), so every re-pin of a card already
+carrying `NO-SUBAGENTS:` adds a second one inside the block.
 
 ## 9. Acceptance
 
@@ -239,13 +335,18 @@ The contract is accepted when, in one run at the pinned head:
    RED-WHEN, DONE-WHEN and the inlined findings. Measured today under the contract simulated:
    **57/59**; the two that do not pass are `01c` (clause 6: RUN is prose) and `tools-20`
    (clause 7: refused for a string it quotes), named fixes, not migration failures.
-2. **The cutter re-emits one of the 59 byte-for-byte from structured input** — one card, chosen
-   by Stella.
+2. **The cutter re-emits `card-tools-03-stale-base-false-positive` byte-for-byte from structured
+   input** — Stella's choice (5783178167). It is a positive roundtrip: the expected bytes are
+   fixture P, `accept.md`, which is that card migrated under this contract, so the one file is
+   both what the cutter must render and what both entry points must accept; any byte of
+   difference fails it.
 3. **The two fixtures below pass as a class test in CI**, not only on a bench.
 
 *Changed from 2fb4393:* "replay the exact 59 owned card inputs through cutter and consumer,
 preserving their identity/evidence" is replaced by items 1-3 (Rowan's replacement); the rest is
 kept.
+*Amended for HOLD 5783178167 (e, former Open 5):* item 2 names the card and binds it to
+`accept.md`.
 *Why:* the replay is not runnable. The 59 carry 24 distinct header keys; `RenderCardV2` at
 `9ee8155` can emit 8 (`SCHEMA`, `ATTEMPT`, `REPO`, `BASE`, `PATHS`, `TEST`, `SYMBOL`,
 `RED-WHEN`), writes `BASE_SHA:` where the launchers read `base-sha:`, and has no input field for
@@ -261,7 +362,8 @@ The class test calls the functions; a file-taking producer command (`nova-pulse 
 <file>` in the review) exists neither on `dev` nor on #2522, which has `--validate-contract` over
 its own output, so the CLI spelling for the producer is Emma's to name.
 
-**P — `accept.md`.** `card-tools-03-stale-base-false-positive.md` from the 59, migrated and
+**P — `accept.md`** (also the clause 9 item 2 roundtrip target).
+`card-tools-03-stale-base-false-positive.md` from the 59, migrated and
 otherwise byte-for-byte: PATHS with a comma (line 11, and the RESULT template's `PATHS` line), and
 a `## Run` section whose command equals the `RUN:` header key. Both entry points **exit 0 and
 print no diagnostic**. One property per line:
@@ -301,7 +403,7 @@ lowercase `base-repo:` on line 9, `kind-declared` on `fix`). Nothing in the outp
 | change | cards | what changes |
 |---|---|---|
 | clause 2 | 0 | the 59 already have the contiguous line-2 block |
-| clause 3 | 1 | `KIND: script` → `KIND: report`, `MODE: script` kept |
+| clause 3 | 1 | `01c` only: `KIND: script` → `KIND: report`, `MODE: script` kept; no adapter row for `script` |
 | clause 4 | 59 | 58 space → comma; `01c` → `PATHS: none` |
 | clause 5 | 14 | 7 multi-package Go → one anchor; 7 non-Go → `TEST: none` + DONE-WHEN control |
 | clause 6 | 59 | a `## Run` section each; `01c` rewritten by hand |
@@ -312,23 +414,14 @@ lowercase `base-repo:` on line 9, `kind-declared` on `fix`). Nothing in the outp
 
 Each is a question the sources leave open or a place they conflict; none is settled by silence.
 
-1. **Retired kind → replacement table.** Clause 3 requires `kind=<old> is retired; use <new>` but
-   no source names `<new>` for `transcript-test`, `sweep`, `mutation-kill`, `probe`, `text`, `tone`.
-   The table is written in the deprecation block and reviewed with it.
-2. **Bare-directory PATHS entries.** `2fb4393` says "agree any bare-directory migration
-   explicitly". #2598 (merged) reads a bare directory at harvest as everything under it; the
-   review cited that same behaviour as the weakness in #2547. Canonical emission is `directory/**`;
-   whether the lint refuses a bare directory on a v2 card is not yet ruled.
-3. **Lowercase keys other than the two.** #2607 (open) lets any one-word key in any case continue
-   the block; clause 2 makes keys canonical uppercase with two exceptions. Whether another
-   lowercase key is refused or read past as unknown is not ruled. Under #2607's grammar
-   `COMMIT RULE:` (two words) is not a key and ends the block; on the 59 it is the last such line,
-   so nothing is stranded.
-4. **sprint-stage as a sixth reader** (clause 8). It also carries a defect clause 2 will surface:
-   it tests `^NO SUBAGENTS:` (space) but inserts `NO-SUBAGENTS:` (hyphen), so every re-pin of a
-   card that already carries `NO-SUBAGENTS:` adds a second one inside the block, which clause 2
-   refuses as a duplicate.
-5. **Which card the cutter round-trips** (clause 9 item 2): Stella's choice.
+1. **The rows of the legacy-kind adapter** (clause 3). The adapter, its diagnostic and its dated
+   form are decided; no source yet names the v2 kind or the removal date for `fix-red`,
+   `transcript-test`, `sweep`, `mutation-kill`, `probe`, `text`, `tone`. The rows are written in
+   the table and reviewed with it.
+
+Decided at the HOLD 5783178167 revision, and no longer open: 2 bare-directory PATHS (clause 4),
+3 lowercase keys (clause 2), 4 sprint-stage as the sixth reader (clause 8), 5 the round-tripped
+card (clause 9 item 2), and the COMMIT RULE representation (clause 7).
 
 ## Lineage
 
@@ -343,4 +436,11 @@ Each is a question the sources leave open or a place they conflict; none is sett
   nine clauses.
 - stella-7f0da424bf91 (17:33Z) — Stella asks for one exact amended shared artifact before
   implementation adoption or the 59-card recut; her disposition is pending.
-- This PR — the amended text, and the two fixtures of clause 9. No code.
+- This PR, mas-bandwidth/nova-tools #2625 — the amended text, and the two fixtures of clause 9. No
+  code.
+- Stella's scoped HOLD, #2625 comment 5783178167 (at `c05fa17b`) — agreement with the direction,
+  and the items to decide in this artifact before pinning; she selects card-tools-03 for the
+  roundtrip.
+- rowan-fa780df52148 — Rowan's resolved rules on the bus (the adapter, `01c` only, the optional
+  single-line echo, sprint-stage as reader 6), agreeing with Stella's comment; written into
+  clauses 3, 6 and 8 at the revision after `c05fa17b`.
