@@ -97,6 +97,7 @@ func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 		"verbs.go": {{`os.WriteFile(filepath.Join(lane, ".gitignore")`, "the lane branch's .gitignore, which init writes, under --lane"}},
 		"pass.go":  {{`os.WriteFile(path, []byte(deps.Now()`, "the lane's stop file, which the stop verb writes, under --lane"}},
 		"batch.go": {{`os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)`, "the test step's go test -json stream, created exclusively as test-<round>.jsonl under --root, beside the clone and not inside it (#2626)"}},
+		"stack.go": {{`os.WriteFile(filepath.Join(g.Dir, file), []byte(resolved)`, "resolved conflict content written into the clone's work tree under --root, the mechanical both-sides-append resolver"}},
 	}
 	used := map[string]int{}
 	for name, src := range mainPackageSource(t) {
