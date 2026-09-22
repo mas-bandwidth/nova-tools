@@ -1116,4 +1116,3 @@ func TestHarvestWorkingWithCommitStep(t *testing.T) {
 		t.Fatalf("uncommitted work was not committed when Commit: true, last commit = %q", logOut)
 	}
 }
-
