@@ -566,16 +566,34 @@ func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 }
 
 // addNeeds writes a needs edge to the named node, creating the node when the graph does
-// not hold it yet. The blocks edge is the same insert's inverse, so it is never written
-// separately.
+// not hold it yet. Needs are a set (#1788): a need named twice in one --needs list, a
+// need re-sent by a re-run and a copy the file already holds are each written once, so a
+// re-run leaves the file as it found it rather than a copy longer. The blocks edge is the
+// same insert's inverse, so it is never written separately.
 func addNeeds(nodes []jobs.Node, id string, needs []string) []jobs.Node {
 	for i := range nodes {
 		if nodes[i].ID == id {
-			nodes[i].Needs = append(nodes[i].Needs, needs...)
+			nodes[i].Needs = needsOnce(nodes[i].Needs, needs)
 			return nodes
 		}
 	}
-	return append(nodes, jobs.Node{ID: id, Needs: needs})
+	return append(nodes, jobs.Node{ID: id, Needs: needsOnce(nil, needs)})
+}
+
+// needsOnce returns the needs in held and then want with every id once, first occurrence
+// first. The file the verb writes holds each edge once, because the ready set counts
+// unmet needs and a duplicated edge is never decremented to zero.
+func needsOnce(held, want []string) []string {
+	seen := make(map[string]bool, len(held)+len(want))
+	var out []string
+	for _, dep := range append(append([]string(nil), held...), want...) {
+		if seen[dep] {
+			continue
+		}
+		seen[dep] = true
+		out = append(out, dep)
+	}
+	return out
 }
 
 func splitNeeds(list string) []string {
