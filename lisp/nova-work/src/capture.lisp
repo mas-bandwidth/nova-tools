@@ -27,13 +27,19 @@ limits; a queue that would grow past one refuses rather than growing
 
 (defstruct (capture-input (:constructor make-capture-input
                              (&key id kind expected-revision bytes records
-                                   source-pin)))
+                                   source-pin provider repository issue url
+                                   remote-revision)))
   id
   kind
   expected-revision
   bytes
   records
-  source-pin)
+  source-pin
+  provider
+  repository
+  issue
+  url
+  remote-revision)
 
 (defstruct (capture-stage (:constructor %make-capture-stage))
   registry
@@ -97,12 +103,35 @@ journal and made durable, then OPERATION OK is answered (SPEC-WORK.md:2721-2730)
   (reduce #'+ (capture-stage-inputs stage) :key #'capture-input-bytes
           :initial-value 0))
 
+(defun capture-issue-key (provider repository issue)
+  "The stable provider/repository/issue identity a capture stages and admits.
+The triple survives intake: repeated intake updates the existing correspondence
+instead of duplicating the work (SPEC-WORK.md:7569)."
+  (format nil "~A/~A#~A" provider repository issue))
+
+(defun capture-input-identity (input)
+  "The stable provider/repository/issue identity of a staged INPUT, or NIL when
+the input carries no issue triple."
+  (when (and (capture-input-provider input)
+             (capture-input-repository input)
+             (capture-input-issue input))
+    (capture-issue-key (capture-input-provider input)
+                       (capture-input-repository input)
+                       (capture-input-issue input))))
+
 (defun capture-stage-input (stage &key id kind (expected-revision 0)
-                                      (bytes 0) (records 1) source-pin)
+                                      (bytes 0) (records 1) source-pin
+                                      provider repository issue url
+                                      remote-revision)
   "Stage one source record, read outside the mutation loop. The staged input set
 and the staged-byte sum are bounded by the declared limits; a breach refuses
-and stages nothing (SPEC-WORK.md:2748-2753)."
-  (let ((limits (capture-stage-limits stage)))
+and stages nothing (SPEC-WORK.md:2748-2753). A staged issue keeps its stable
+provider/repository/issue identity with its current URL and last observed
+remote revision; repeated intake of the same identity updates the existing
+staged input instead of duplicating it (SPEC-WORK.md:7569)."
+  (let ((limits (capture-stage-limits stage))
+        (key (when (and provider repository issue)
+               (capture-issue-key provider repository issue))))
     (cond
       ((>= (capture-input-count stage) (getf limits :staged-inputs))
        (values nil (format nil "STAGE FAIL: staged inputs at the bound ~D"
@@ -110,13 +139,29 @@ and stages nothing (SPEC-WORK.md:2748-2753)."
       ((> (+ (capture-stage-bytes stage) bytes) (getf limits :staged-bytes))
        (values nil (format nil "STAGE FAIL: staged bytes over the bound ~D"
                            (getf limits :staged-bytes))))
+      ((and key (find key (capture-stage-inputs stage)
+                      :key #'capture-input-identity :test #'equal))
+       (let ((prior (find key (capture-stage-inputs stage)
+                          :key #'capture-input-identity :test #'equal)))
+         (setf (capture-input-expected-revision prior) expected-revision
+               (capture-input-url prior) url
+               (capture-input-remote-revision prior) remote-revision)
+         (values t (format nil "STAGE OK id=~A revision=~D identity=~A"
+                           id expected-revision key))))
       (t
        (push (make-capture-input :id id :kind kind
                                  :expected-revision expected-revision
                                  :bytes bytes :records records
-                                 :source-pin source-pin)
+                                 :source-pin source-pin
+                                 :provider provider :repository repository
+                                 :issue issue :url url
+                                 :remote-revision remote-revision)
              (capture-stage-inputs stage))
-       (values t (format nil "STAGE OK id=~A revision=~D" id expected-revision))))))
+       (values t (if key
+                     (format nil "STAGE OK id=~A revision=~D identity=~A"
+                             id expected-revision key)
+                     (format nil "STAGE OK id=~A revision=~D"
+                             id expected-revision)))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Admitting a validated result at an expected revision
@@ -141,9 +186,30 @@ writer. Retained results are bounded (SPEC-WORK.md:2748-2750, :2753)."
        (values nil "ADMIT FAIL: retained results at the bound"))
       (t
        (push (list :id id :revision current-revision :result result
-                   :source-pin (capture-input-source-pin input))
+                   :source-pin (capture-input-source-pin input)
+                   :provider (capture-input-provider input)
+                   :repository (capture-input-repository input)
+                   :issue (capture-input-issue input)
+                   :url (capture-input-url input)
+                   :remote-revision (capture-input-remote-revision input))
              (capture-stage-results stage))
        (values t (format nil "ADMIT OK id=~A revision=~D" id current-revision))))))
+
+(defun capture-result-identity (row)
+  "The stable provider/repository/issue identity a retained ROW was admitted
+with, or NIL when the row carries no issue triple (SPEC-WORK.md:7569)."
+  (when (and (getf row :provider) (getf row :repository) (getf row :issue))
+    (capture-issue-key (getf row :provider)
+                       (getf row :repository)
+                       (getf row :issue))))
+
+(defun capture-result-url (row)
+  "The current URL a retained ROW was admitted with."
+  (getf row :url))
+
+(defun capture-result-remote-revision (row)
+  "The last observed remote revision a retained ROW was admitted with."
+  (getf row :remote-revision))
 
 (defun capture-result-of (stage id)
   "The retained result for ID, or NIL."
