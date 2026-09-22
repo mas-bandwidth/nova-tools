@@ -60,10 +60,31 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 }
 
 // Addr normalizes what a caller spelled into host:port, or says why it cannot.
+//
+// Two spellings are refused rather than half-honoured, because either one
+// silently dropped is a credential or a channel leaked, not a convenience
+// lost:
+//
+//   - rediss:// asks for TLS. Nothing in this package dials TLS -- there is
+//     no tls.Config anywhere near Open -- so stripping the extra "s" used to
+//     hand back a plaintext host:port and dial it unencrypted with no word
+//     said. That is a silent downgrade, not a parse. It is refused instead.
+//   - user:pass@host:port carries a password in the URL. This package takes
+//     its password from PasswordEnv and nowhere else (see Open), so a
+//     password pasted into --store was never going to be used -- and left
+//     unexamined, it would ride along inside the "host:port" this function
+//     hands back, to be printed verbatim in the next log line or error. It is
+//     refused before that can happen.
 func Addr(addr string) (string, error) {
 	a := strings.TrimSpace(addr)
-	a = strings.TrimPrefix(strings.TrimPrefix(a, "redis://"), "rediss://")
+	if strings.HasPrefix(a, "rediss://") {
+		return "", fmt.Errorf("--store %s: rediss:// (TLS) is not supported -- use redis:// on the tailnet, or wait for TLS support", maskAddr(a))
+	}
+	a = strings.TrimPrefix(a, "redis://")
 	a = strings.TrimSuffix(a, "/")
+	if strings.Contains(a, "@") {
+		return "", fmt.Errorf("--store %s: userinfo (user:pass@) in the URL is not supported -- the password is never part of --store, set it via %s instead", maskAddr(a), PasswordEnv)
+	}
 	if a == "" {
 		return "", fmt.Errorf("--store is empty")
 	}
@@ -71,6 +92,20 @@ func Addr(addr string) (string, error) {
 		return "", fmt.Errorf("--store %s names no port; the fleet store is host:6380", a)
 	}
 	return a, nil
+}
+
+// maskAddr is the one place a --store value is made safe to print. Any
+// userinfo up to the last "@" is replaced with "***", so a password pasted
+// into the URL never reaches an error, a log line or stdout -- including the
+// refusal that names the mistake. Addr calls it on the raw input before that
+// input appears in any message; because Addr refuses userinfo outright, the
+// host:port it returns can never carry one, so Open and every caller that
+// prints Addr's result inherit the masking for free without calling it again.
+func maskAddr(addr string) string {
+	if i := strings.LastIndex(addr, "@"); i >= 0 {
+		return "***@" + addr[i+1:]
+	}
+	return addr
 }
 
 func isAuthError(err error) bool {

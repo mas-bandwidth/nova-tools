@@ -81,6 +81,47 @@ func TestBeatRefusesWhatItCannotGuess(t *testing.T) {
 	}
 }
 
+// TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret is the
+// synthetic control for comment 5782441213 on #2612: a rediss:// --store used
+// to be silently stripped to a plaintext host:port and dialled anyway, and a
+// user:pass@ URL was never parsed at all -- the password rode along inside
+// the address the beat then printed on its startup line. This drives the
+// verb's own flag parsing (cmdBeat, --once, no network: the fake opener never
+// dials) with all three shapes the comment named, and checks not just that
+// the two bad ones are refused, but that the refusal -- and every other byte
+// on stdout or stderr -- never contains the password, while the third,
+// ordinary shape still works.
+func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *testing.T) {
+	const secret = "hunter2"
+	for _, c := range []struct {
+		name       string
+		store      string
+		wantExit   int
+		wantErr    string // substring the refusal must name; "" when it should succeed
+		hasNetwork bool
+	}{
+		{"tls is refused", "rediss://store.invalid:6380", 2, "rediss:// (TLS) is not supported", false},
+		{"userinfo is refused", "redis://johnny:" + secret + "@store.invalid:6380", 2, "userinfo (user:pass@) in the URL is not supported", false},
+		{"a plain URL still works", "redis://store.invalid:6380", 0, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			st := presence.NewFakeStore(beatAt)
+			var out, errb bytes.Buffer
+			code := cmdBeat([]string{"--as", "johnny", "--store", c.store, "--once"},
+				&out, &errb, fakeStoreClock{st}, fakeOpener(st))
+			if code != c.wantExit {
+				t.Fatalf("exit %d; want %d (stdout=%q stderr=%q)", code, c.wantExit, out.String(), errb.String())
+			}
+			if c.wantErr != "" && !strings.Contains(errb.String(), c.wantErr) {
+				t.Fatalf("refusal = %q; want it to name %q", errb.String(), c.wantErr)
+			}
+			if strings.Contains(out.String(), secret) || strings.Contains(errb.String(), secret) {
+				t.Fatalf("stdout=%q stderr=%q; the password leaked", out.String(), errb.String())
+			}
+		})
+	}
+}
+
 func TestTheLoopKeepsBeatingThroughAStoreThatBlinked(t *testing.T) {
 	st := presence.NewFakeStore(beatAt)
 	// One good beat (calls 1 and 2), then a store that refuses four calls

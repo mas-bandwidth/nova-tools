@@ -2,6 +2,7 @@ package presence
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,75 @@ func TestAddrTakesHostPortAndRefusesAGuess(t *testing.T) {
 	for _, in := range []string{"", "   ", "store.invalid"} {
 		if got, err := Addr(in); err == nil {
 			t.Errorf("Addr(%q) = %q; want a refusal, because the fleet store is on 6380 and the default is 6379", in, got)
+		}
+	}
+}
+
+// TestAddrRefusesTLSAndUserinfoWithoutLeakingTheSecret is the synthetic
+// control for comment 5782441213 on #2612: a rediss:// address used to be
+// stripped of its extra "s" and dialled in plaintext with no word said, and a
+// user:pass@ address was never parsed at all -- it rode along inside the
+// "host:port" this function handed back, ready to be printed by the next
+// caller. Both are now refused, by name, and the refusal never carries the
+// password: no network is dialled here, Addr is pure string parsing.
+func TestAddrRefusesTLSAndUserinfoWithoutLeakingTheSecret(t *testing.T) {
+	const secret = "hunter2"
+	for _, c := range []struct {
+		name    string
+		in      string
+		wantErr string // substring the refusal must name
+	}{
+		{"tls", "rediss://store.invalid:6380", "rediss:// (TLS) is not supported"},
+		{"userinfo", "redis://friend:" + secret + "@store.invalid:6380", "userinfo (user:pass@) in the URL is not supported"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Addr(c.in)
+			if err == nil {
+				t.Fatalf("Addr(%q) = %q, <nil>; want a refusal", c.in, got)
+			}
+			if got != "" {
+				t.Errorf("Addr(%q) returned a usable address %q alongside the error; want none", c.in, got)
+			}
+			if !strings.Contains(err.Error(), c.wantErr) {
+				t.Errorf("Addr(%q) error = %q; want it to name %q", c.in, err.Error(), c.wantErr)
+			}
+			if strings.Contains(err.Error(), secret) {
+				t.Errorf("Addr(%q) error = %q; the password leaked", c.in, err.Error())
+			}
+		})
+	}
+}
+
+// TestAddrStillAcceptsAPlainURL is the table's third leg: refusing rediss://
+// and userinfo must not have touched the ordinary redis://host:port a caller
+// pastes every day.
+func TestAddrStillAcceptsAPlainURL(t *testing.T) {
+	got, err := Addr("redis://store.invalid:6380")
+	if err != nil {
+		t.Fatalf("Addr(plain redis://) = %v; want it to still work", err)
+	}
+	if got != "store.invalid:6380" {
+		t.Errorf("Addr(plain redis://) = %q; want %q", got, "store.invalid:6380")
+	}
+}
+
+// TestMaskAddrNeverPrintsTheUserinfo is maskAddr's own control: whatever a
+// caller hands it, the substring up to and including the last "@" never
+// reaches the output, because that substring is where a pasted password
+// lives.
+func TestMaskAddrNeverPrintsTheUserinfo(t *testing.T) {
+	const secret = "hunter2"
+	for _, c := range []struct{ in, want string }{
+		{"friend:" + secret + "@store.invalid:6380", "***@store.invalid:6380"},
+		{"store.invalid:6380", "store.invalid:6380"},
+		{"redis://friend:" + secret + "@store.invalid:6380", "***@store.invalid:6380"},
+	} {
+		got := maskAddr(c.in)
+		if got != c.want {
+			t.Errorf("maskAddr(%q) = %q; want %q", c.in, got, c.want)
+		}
+		if strings.Contains(got, secret) {
+			t.Errorf("maskAddr(%q) = %q; still carries the password", c.in, got)
 		}
 	}
 }
