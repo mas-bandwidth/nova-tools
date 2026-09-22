@@ -23,7 +23,7 @@ import (
 const usage = `nova-pulse: bounded open work, cut into cards and folded back, no model call (see docs/SPEC-PULSE.md)
 
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
-nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
+nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--depends-on <cards>] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
@@ -970,6 +970,7 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	history := f.fs.String("history", "", "")
 	probeBudget := f.fs.Int("probe-budget", 0, "")
 	validateContract := f.fs.Bool("validate-contract", false, "")
+	dependsOn := f.fs.String("depends-on", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -1002,6 +1003,10 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	var deps []string
+	if strings.TrimSpace(*dependsOn) != "" {
+		deps = pulse.ParseDependsOn(*dependsOn)
+	}
 	switch {
 	case *issue != "":
 		return pulse.CutValidated(pulse.CutValidatedInput{
@@ -1020,17 +1025,16 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 		})
 	}
 	return pulse.Cut(pulse.CutInput{
-		Pool:      *pool,
-		Templates: *templates,
-		Out:       *out,
-		Root:      *root,
-		Max:       *max,
-		Probe:     *probe,
-		History:   *history,
-		Budget:    *probeBudget,
-		// ValidateContract preflights the candidate locators before any card file is
-		// written, so a dead repo is refused at cut rather than after admission.
+		Pool:             *pool,
+		Templates:        *templates,
+		Out:              *out,
+		Root:             *root,
+		Max:              *max,
+		Probe:            *probe,
+		History:          *history,
+		Budget:           *probeBudget,
 		ValidateContract: *validateContract,
+		DependsOn:        deps,
 		Stdout:           stdout,
 		Stderr:           stderr,
 	})
