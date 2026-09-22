@@ -154,6 +154,31 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			want: want{held: false},
 		},
 		{
+			// nova-tools #2615 follow-up: the same-friend match is case-insensitive.
+			// Measured 2026-09-22 20:14Z, lane land-1615: BATCH DROP #2587 held
+			// who=johnny though the pull request carried a typed `who=johnny` APPROVE
+			// at head, because the HOLD comment had been typed `who=Johnny`.
+			name: "hold typed who=Johnny at A, APPROVE typed who=johnny at B: taken",
+			comments: []fixtureComment{
+				{ID: 1101, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headA2550 + " verdict=HOLD score=4/10",
+					At: "2026-09-21T21:35:02Z"},
+				{ID: 1102, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 + " verdict=APPROVE score=9/10",
+					At: "2026-09-22T01:48:00Z"},
+			},
+			want: want{held: false},
+		},
+		{
+			// The mirror: HOLD typed lowercase, APPROVE typed capitalised.
+			name: "hold typed who=johnny at A, APPROVE typed who=Johnny at B: taken",
+			comments: []fixtureComment{
+				{ID: 1201, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headA2550 + " verdict=HOLD score=4/10",
+					At: "2026-09-21T21:35:02Z"},
+				{ID: 1202, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headB2550 + " verdict=APPROVE score=9/10",
+					At: "2026-09-22T01:48:00Z"},
+			},
+			want: want{held: false},
+		},
+		{
 			// The second ask on the issue: an APPROVE's head= is matched against the
 			// whole 40-character head by the same prefix rule HOLD's head= gets, so the
 			// abbreviation a friend actually types releases.
