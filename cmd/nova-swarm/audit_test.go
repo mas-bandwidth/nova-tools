@@ -135,6 +135,16 @@ var swarmAudit = audit.Config{
 		// card files it places; it never writes to a stream, and every id it
 		// returns is put through oneline.Field before this package prints it.
 		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
+		// events (nova-tools #2563) writes the card-end entry to the ev:cards stream, and
+		// it IS a writer of this package's stream: `native` hands events.Writer the run's
+		// own stderr so a card that could not be measured says so. It cannot write past
+		// the escape, and the reason is mechanical rather than a promise -- events.Writer
+		// has exactly ONE print site, `note` (internal/events/writer.go), which renders
+		// the whole message through oneline.Escape before writing it, so a Redis error or
+		// a card label carrying a newline cannot split one skip into two lines. Nothing
+		// else in that package holds a writer: Emit goes to Redis, and Validate refuses a
+		// field with a control character in it before it ever reaches the store.
+		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the

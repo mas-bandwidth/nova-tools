@@ -144,6 +144,11 @@ type nativeRunResult struct {
 	idleEnd     swarm.IdleEnd // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled       bool          // the idle watch ended the run, not the deadline and not the child
 	blockedPath string        // the report the run wrote FOR a card that published none, "" when it wrote none
+	// usage is the LAST attempt's usage row, exactly as it was appended to usage.tsv. It
+	// is carried out of the run so the card-end event carries the numbers the row carries
+	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
+	// the provider store that could disagree with the file (nova-tools #2563 item 1).
+	usage swarm.UsageRow
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -800,7 +805,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
-		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
+		res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
 		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
 		// the terminated reason is carried out on the OK line.
 		if res.terminated {
@@ -1516,7 +1521,7 @@ func sameDir(a, b string) bool {
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
 // ended -- done, failed, or wall (issue #644's follow-up).
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, endWord string, errOut io.Writer) (reason, path string) {
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, endWord string, errOut io.Writer) (reason, path string, written swarm.UsageRow) {
 	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
 	rcCol := "-"
 	if rc >= 0 {
@@ -1553,12 +1558,12 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
 	if rr == "" {
-		return "", ""
+		return "", "", row
 	}
 	if storePath == "" {
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
-	return rr, storePath
+	return rr, storePath, row
 }
 
 // nativeRunSeq distinguishes invocations that share a process, which is what a

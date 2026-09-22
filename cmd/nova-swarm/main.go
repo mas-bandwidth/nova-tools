@@ -34,6 +34,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -67,7 +68,7 @@ usage:
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -1713,6 +1714,14 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// non-number and a zero in the same sentence: a card launched by `native` and a job
 	// launched by `run` can spend the same key, so they answer to the same rule.
 	tokensWord := f.fs.String("tokens", "", "")
+	// THE CARD-END EVENT (nova-tools #2563 item 1). --events-store names the fleet Redis
+	// this card's one `ok`/`fail` entry is XADDed to. It is OPTIONAL and it defaults to the
+	// environment -- NOVA_REDIS_ADDR, else NOVA_REDIS_HOST:NOVA_REDIS_PORT -- and the whole
+	// emit is SILENTLY SKIPPED unless NOVA_REDIS_BENCH_PASSWORD is also in the environment,
+	// where `nova-secrets exec --only` puts it. A bench that has not been given the store's
+	// password must still run cards, so there is no refusal here and no default host: see
+	// internal/events/writer.go. The password is never a flag and is never printed.
+	eventsStore := f.fs.String("events-store", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1966,6 +1975,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
+	// THE CARD-END ENTRY, after the receipt and after every report line, and BEFORE
+	// --sweep-now can remove the job directory: cardEndEvent's classification reads the
+	// card's own report from res.job (resultIsFailed), so the entry must be built while
+	// that directory still exists. The emit returns no error by construction
+	// (internal/events/writer.go) -- a store that is down costs one line on stderr and
+	// the exit code below is the run's own, untouched.
+	emitCardEnd(context.Background(), events.WriterOptions{
+		Addr: *eventsStore, Log: stderr, Timeout: nativeEventTimeout,
+	}, cfg, res, verdict, benchName())
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
@@ -1988,6 +2006,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	return 0
 }
+
+// nativeEventTimeout bounds the card-end emit. It is short on purpose: the card is already
+// finished and its slot lease is still held, so a store that is not answering must cost
+// seconds, never the grace the lease has left.
+const nativeEventTimeout = 5 * time.Second
 
 // ------------------------------------------------------------------------------- helpers
 
