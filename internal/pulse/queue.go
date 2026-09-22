@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -143,15 +144,160 @@ func (g *GitAndResultsChecker) IsDependencyMerged(dep string) (bool, string) {
 				}
 			}
 		}
-		// Check git log for issue/card mention on base branch
-		if out, err := g.RunGit(g.Repo, "log", g.BaseBranch, "-n", "100", "--grep="+dep); err == nil {
-			if len(strings.TrimSpace(out)) > 0 {
-				return true, fmt.Sprintf("commit referencing %s found on %s", dep, g.BaseBranch)
+		// Check git log for actual merge commit or card landing on base branch.
+		// A mere mention (e.g. "fixes #2484", "mention #2484") must NOT satisfy the check.
+		grepTarget := dep
+		if prNum := extractPRNumber(dep); prNum != "" {
+			grepTarget = "#" + prNum
+		}
+		if out, err := g.RunGit(g.Repo, "log", g.BaseBranch, "-n", "50", "--format=%s", "--grep="+grepTarget); err == nil {
+			for _, line := range strings.Split(out, "\n") {
+				subject := strings.TrimSpace(line)
+				if subject == "" {
+					continue
+				}
+				if IsCommitMergeOf(subject, dep) {
+					return true, fmt.Sprintf("commit merging %s found on %s: %s", dep, g.BaseBranch, subject)
+				}
 			}
 		}
 	}
 
 	return false, fmt.Sprintf("dependency %s not merged into %s", dep, g.BaseBranch)
+}
+
+var (
+	parenRegex   = regexp.MustCompile(`\(([^)]+)\)`)
+	mentionRegex = regexp.MustCompile(`(?i)\b(fix|fixes|fixed|see|ref|refs|close|closes|closed|mention|mentions|mentioned|against|issue|issues)\b`)
+)
+
+// extractPRNumber extracts the numeric PR number from a dependency reference such as
+// "#2484", "2484", "pr:2484", "pr/2484", "pull/2484", or "org/repo#2484".
+// Returns empty string if dep is not a PR reference.
+func extractPRNumber(dep string) string {
+	dep = strings.TrimSpace(dep)
+	if strings.Contains(dep, "#") {
+		parts := strings.Split(dep, "#")
+		candidate := parts[len(parts)-1]
+		if isAllDigits(candidate) && len(candidate) > 0 {
+			return candidate
+		}
+	}
+	for _, prefix := range []string{"pr:", "pr/", "pull/"} {
+		if strings.HasPrefix(dep, prefix) {
+			candidate := strings.TrimPrefix(dep, prefix)
+			if isAllDigits(candidate) && len(candidate) > 0 {
+				return candidate
+			}
+		}
+	}
+	if isAllDigits(dep) && len(dep) > 0 {
+		return dep
+	}
+	return ""
+}
+
+func isAllDigits(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func isCommitPRMerge(subject, prNum string) bool {
+	subject = strings.TrimSpace(subject)
+	prNum = strings.TrimSpace(prNum)
+	if subject == "" || prNum == "" {
+		return false
+	}
+	lower := strings.ToLower(subject)
+	if strings.HasPrefix(lower, "revert ") || strings.HasPrefix(lower, "revert:") || strings.HasPrefix(lower, "revert \"") {
+		return false
+	}
+
+	// 1. Merge pull request #<num> or Merge PR #<num>
+	reMerge := regexp.MustCompile(`(?i)^merge (?:pull request|pr) #` + regexp.QuoteMeta(prNum) + `(?:[^\d]|$)`)
+	if reMerge.MatchString(subject) {
+		return true
+	}
+
+	rePR := regexp.MustCompile(`(?:^|[^\w#])#` + regexp.QuoteMeta(prNum) + `(?:[^\d]|$)`)
+
+	// 2. Parenthesized squash merge or batch PR landing tag: (#<num>) or (#2502 #2484)
+	matches := parenRegex.FindAllStringSubmatch(subject, -1)
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		content := m[1]
+		// If it contains a mention verb (e.g. fixes, see, refs), it's an issue/PR cross-reference, not a squash merge tag
+		if mentionRegex.MatchString(content) {
+			continue
+		}
+		if rePR.MatchString(content) {
+			return true
+		}
+	}
+
+	// 3. Batch landing with "approved PRs"
+	if regexp.MustCompile(`(?i)\bapproved prs\b`).MatchString(subject) {
+		if rePR.MatchString(subject) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isCommitCardLanding(subject, dep string) bool {
+	subject = strings.TrimSpace(subject)
+	dep = strings.TrimSpace(dep)
+	if subject == "" || dep == "" {
+		return false
+	}
+	lower := strings.ToLower(subject)
+	if strings.HasPrefix(lower, "revert ") || strings.HasPrefix(lower, "revert:") || strings.HasPrefix(lower, "revert \"") {
+		return false
+	}
+
+	cands := []string{dep}
+	if !strings.HasPrefix(dep, "card-") {
+		cands = append(cands, "card-"+dep)
+	}
+
+	for _, cand := range cands {
+		escaped := regexp.QuoteMeta(cand)
+		// 1. RESULT <cand> followed by whitespace, colon, or end of string
+		reResult := regexp.MustCompile(`(?i)^result\s+` + escaped + `(?:[\s:]|$)`)
+		if reResult.MatchString(subject) {
+			return true
+		}
+		// 2. [<cand>] or <cand>: followed by whitespace or end of string
+		rePrefix := regexp.MustCompile(`(?i)^(?:\[` + escaped + `\]|` + escaped + `:)(?:[\s]|$)`)
+		if rePrefix.MatchString(subject) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsCommitMergeOf reports whether the commit subject represents an actual merge
+// or landing of dep (e.g. Merge pull request #<num>, squash merge (#<num>),
+// or anchored card landing RESULT <card> / <card>:), and not a mere mention
+// (e.g. "fixes #<num>", "mention #<num>").
+func IsCommitMergeOf(subject, dep string) bool {
+	prNum := extractPRNumber(dep)
+	if prNum != "" {
+		if isCommitPRMerge(subject, prNum) {
+			return true
+		}
+	}
+	return isCommitCardLanding(subject, dep)
 }
 
 // CheckCardDependencies checks all dependencies of the card at path.

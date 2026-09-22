@@ -173,3 +173,97 @@ func TestDependencyCheckerGitMock(t *testing.T) {
 		t.Errorf("expected feat-unmerged to be unsatisfied, got true: %s", reason)
 	}
 }
+
+func TestDependencyCheckerRejectsMereMentionAndAcceptsMergeCommit(t *testing.T) {
+	// Negative controls: commits merely mentioning #2484 or card-prereq must NOT satisfy the merge check
+	mereMentions := []struct {
+		subject string
+		dep     string
+	}{
+		{"feat: some work mentioning #2484", "#2484"},
+		{"fix: typo (fixes #2484)", "#2484"},
+		{"docs: see #2484 for details", "#2484"},
+		{"ref: update #2484", "#2484"},
+		{"closes #2484", "#2484"},
+		{"discussion on #2484", "#2484"},
+		{"revert: pulse: update dependencies (#2484)", "#2484"},
+		{"Revert \"pulse: update dependencies (#2484)\"", "#2484"},
+		{"pulse: update dependencies (#24840)", "#2484"},
+		{"feat: work mentioning card-prereq", "card-prereq"},
+		{"fix: typo (fixes card-prereq)", "card-prereq"},
+		{"card-other: depends on card-prereq", "card-prereq"},
+		{"RESULT card-prereq-extra sha=123", "card-prereq"},
+		{"card-prereq-extra: implement something", "card-prereq"},
+	}
+
+	for _, tc := range mereMentions {
+		if IsCommitMergeOf(tc.subject, tc.dep) {
+			t.Errorf("IsCommitMergeOf(%q, %q) = true, want false (mere mention should not satisfy merge check)", tc.subject, tc.dep)
+		}
+	}
+
+	// Positive controls: actual merge commits, squash PR tags, batch approved PRs, and card landings
+	realMerges := []struct {
+		subject string
+		dep     string
+	}{
+		{"Merge pull request #2484 from mas-bandwidth/emma/card-dependencies-2437", "#2484"},
+		{"Merge PR #2484 from mas-bandwidth/patch", "#2484"},
+		{"pulse: update dependencies (#2484)", "#2484"},
+		{"pulse: update dependencies (#2484)", "2484"},
+		{"pulse: update dependencies (#2484)", "mas-bandwidth/nova-tools#2484"},
+		{"tools-batch: approved PRs (#2502 #2484 #2523)", "#2484"},
+		{"tools-batch: approved PRs (#2502, #2484)", "#2484"},
+		{"tools-20260922T223544Z: 2 approved PRs (#2689 #2695) — gated on hulk by land-lane (#2709)", "#2689"},
+		{"tools-20260922T223544Z: 2 approved PRs (#2689 #2695) — gated on hulk by land-lane (#2709)", "#2709"},
+		{"merge: friend name is case-insensitive (#2615, #2631 follow-up)", "#2615"},
+		{"merge: friend name is case-insensitive (#2615, #2631 follow-up)", "#2631"},
+		{"RESULT card-prereq sha=abc1234 — green", "card-prereq"},
+		{"RESULT card-prereq: all green", "card-prereq"},
+		{"RESULT card-prereq", "card-prereq"},
+		{"RESULT card-prereq", "prereq"},
+		{"card-prereq: initial implementation", "card-prereq"},
+		{"[card-prereq] initial implementation", "card-prereq"},
+	}
+
+	for _, tc := range realMerges {
+		if !IsCommitMergeOf(tc.subject, tc.dep) {
+			t.Errorf("IsCommitMergeOf(%q, %q) = false, want true (real merge commit should satisfy merge check)", tc.subject, tc.dep)
+		}
+	}
+
+	// End-to-end GitAndResultsChecker test:
+	// A repo log containing only mere mentions should report dependency unmerged.
+	checkerMentionOnly := &GitAndResultsChecker{
+		Repo:       ".",
+		BaseBranch: "dev",
+		RunGit: func(dir string, args ...string) (string, error) {
+			sub := strings.Join(args, " ")
+			if strings.Contains(sub, "log dev") {
+				return "feat: some work mentioning #2484\nfix: typo (fixes #2484)\n", nil
+			}
+			return "", os.ErrNotExist
+		},
+	}
+	merged, reason := checkerMentionOnly.IsDependencyMerged("#2484")
+	if merged {
+		t.Fatalf("expected #2484 to be unsatisfied with only mere mentions, but got merged: %s", reason)
+	}
+
+	// A repo log containing an actual squash merge should report dependency merged.
+	checkerMerged := &GitAndResultsChecker{
+		Repo:       ".",
+		BaseBranch: "dev",
+		RunGit: func(dir string, args ...string) (string, error) {
+			sub := strings.Join(args, " ")
+			if strings.Contains(sub, "log dev") {
+				return "pulse: update dependencies (#2484)\n", nil
+			}
+			return "", os.ErrNotExist
+		},
+	}
+	merged, reason = checkerMerged.IsDependencyMerged("#2484")
+	if !merged {
+		t.Fatalf("expected #2484 to be satisfied with squash merge commit, but got unmerged: %s", reason)
+	}
+}
