@@ -32,6 +32,7 @@ package main
 // file, and the SET OK line still prints the counts.
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -40,6 +41,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
+	"github.com/mas-bandwidth/nova-tools/internal/landed"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -48,7 +50,7 @@ import (
 // a refusal naming the one that exists rather than a banner.
 func cmdSet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 || args[0] != "check" {
-		return refuse(stderr, " set", "the verb is set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <ids>] [--ready]")
+		return refuse(stderr, " set", "the verb is set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <ids>] [--ready] [--evaluate] [--base <branch>] [--write-status]")
 	}
 	return cmdSetCheck(args[1:], stdout, stderr)
 }
@@ -62,6 +64,9 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 	lanesFile := fs.String("lanes", "", "the lanes file a :lane must name")
 	doneList := fs.String("done", "", "comma-separated unit ids that are done")
 	ready := fs.Bool("ready", false, "print the mechanical ready set")
+	evaluateFlag := fs.Bool("evaluate", false, "derive done from each unit's :acceptance through gh")
+	baseFlag := fs.String("base", "", "the branch :landed means (default: the set's :base)")
+	writeStatusFlag := fs.Bool("write-status", false, `rewrite :status "open" to "landed" where the criteria hold (implies --evaluate)`)
 	def := worklang.DefaultLimits()
 	maxBytes := fs.Int("max-bytes", def.MaxBytes, "byte ceiling")
 	maxDepth := fs.Int("max-depth", def.MaxDepth, "nesting depth ceiling")
@@ -101,18 +106,48 @@ func cmdSetCheck(args []string, stdout, stderr io.Writer) int {
 		opts.Lanes, opts.LanesFile = names, *lanesFile
 	}
 
+	evaluating := *evaluateFlag || *writeStatusFlag
+	var whole map[string]bool
+	var ev *landed.Evaluator
+	if evaluating {
+		base, err := setBase(ws, *baseFlag)
+		if err != nil {
+			return refuse(stderr, " set check", oneline.Err(err))
+		}
+		ev = landed.New(ghRunner, strings.TrimSpace(ws.Fields["repo"].Text()), base)
+	}
+
+	// The criteria are evaluated before Check so one pass counts from them; their
+	// SET EVAL lines print after the findings, which are about the file itself.
+	var evalLines bytes.Buffer
+	if evaluating {
+		opts.Evidence, whole = evaluate(&evalLines, ws, ev)
+	}
 	findings, counts := ws.Check(opts)
 	for _, f := range findings {
 		writeFinding(stdout, f)
 	}
+	evalLines.WriteTo(stdout)
 	if *ready {
-		writeReady(stdout, ws, opts.Done)
+		writeReady(stdout, ws, ws.Decided(opts))
+	}
+	if *writeStatusFlag {
+		flips, err := writeStatus(*file, data, ws, whole)
+		if err != nil {
+			return refuse(stderr, " set check", oneline.Err(err))
+		}
+		for _, fl := range flips {
+			fmt.Fprintf(stdout, "SET WROTE unit=%s status=landed at=%d\n", oneline.Field(fl.unit), fl.at)
+		}
 	}
 	// The summary prints whether or not there were findings: a caller that wants
 	// the shape of the set gets it in the same breath as the defects, and
 	// units = ready + blocked + done closes the arithmetic.
 	fmt.Fprintf(stdout, "SET OK units=%d ready=%d blocked=%d owned=%d\n",
 		counts.Units, counts.Ready, counts.Blocked, counts.Owned)
+	// SET DONE is x/y z% from the tool rather than from awk over SET OK: done from
+	// the criteria under --evaluate, from :done/:status/--done otherwise.
+	fmt.Fprintf(stdout, "SET DONE done=%d percent=%d\n", counts.Done, percent(counts.Done, counts.Units))
 	if len(findings) > 0 {
 		return 1
 	}
@@ -143,7 +178,7 @@ func writeReady(stdout io.Writer, ws *worklang.WorkSet, done map[string]bool) {
 	// on it rather than silently granted.
 	a := jobs.New(nil)
 	defer a.Close()
-	units := ws.Ready(done)
+	units := ws.ReadyFrom(done)
 	for i, ad := range a.Admit(worklang.Requests(units)) {
 		u := units[i]
 		fmt.Fprintf(stdout, "SET READY unit=%s owner=%s lane=%s deadline=%s",
