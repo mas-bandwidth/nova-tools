@@ -265,7 +265,9 @@ func RenderCardV2(in CardV2Input) (string, error) {
 		fmt.Fprintf(&b, "APPLIED: %s\n", in.Applied)
 	}
 	// Agreed contextual read scope (7b39c06)
-	b.WriteString("Read scope: Contextual reads are permitted for callers, callees, contracts, fixtures, build inputs, and reverse dependents needed to verify the task.\n\n")
+	b.WriteString("Read scope: Contextual reads are permitted for callers, callees, contracts, fixtures, build inputs, and reverse dependents needed to verify the task.\n")
+	// Commit rule (A4): stages declared PATHS only, notes and scratch live outside repo/
+	b.WriteString("Commit rule: Stage declared PATHS only; notes and scratch live outside repo/.\n\n")
 
 	// Task description (if provided)
 	if bodyText := strings.TrimSpace(in.Body); bodyText != "" {
@@ -334,8 +336,8 @@ func RenderCardV2(in CardV2Input) (string, error) {
 	return card, nil
 }
 
-// ValidateCardV2 validates that a card conforms to Card Template v2 (A10).
-// Cutter lint refuses any card missing SYMBOL: or RED-WHEN:.
+// ValidateCardV2 validates that a card conforms to Card Template v2 (A4, A10).
+// Cutter lint refuses any card missing SYMBOL: or RED-WHEN:, or containing forbidden 'git add -A'.
 func ValidateCardV2(cardText string) error {
 	lines := strings.Split(cardText, "\n")
 	hasSchemaV2 := false
@@ -364,6 +366,9 @@ func ValidateCardV2(cardText string) error {
 	}
 	if !hasRedWhen || redWhenVal == "" {
 		return fmt.Errorf("cutter lint: card missing required RED-WHEN: declaration (every v2 card must declare the falsifiable condition that makes the test red)")
+	}
+	if strings.Contains(cardText, "git add -A") || strings.Contains(cardText, "git add --all") {
+		return fmt.Errorf("cutter lint: card contains forbidden 'git add -A' (commit rule: stage declared PATHS only, never git add -A; notes live outside repo/)")
 	}
 	return nil
 }

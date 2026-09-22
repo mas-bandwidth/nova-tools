@@ -967,6 +967,64 @@ RED-WHEN: test asserts self-written buffer without calling runtime
 	if err := ValidateCardV2(missingSchema); err == nil || !strings.Contains(err.Error(), "missing required SCHEMA: v2") {
 		t.Errorf("ValidateCardV2 accepted card without SCHEMA: v2: err=%v", err)
 	}
+
+	// Forbidden git add -A (A4)
+	gitAddACard := validCard + "STEP 3. git add -A && git commit\n"
+	if err := ValidateCardV2(gitAddACard); err == nil || !strings.Contains(err.Error(), "forbidden 'git add -A'") {
+		t.Errorf("ValidateCardV2 accepted card containing 'git add -A': err=%v", err)
+	}
+
+	gitAddAllCard := validCard + "STEP 3. git add --all && git commit\n"
+	if err := ValidateCardV2(gitAddAllCard); err == nil || !strings.Contains(err.Error(), "forbidden 'git add -A'") {
+		t.Errorf("ValidateCardV2 accepted card containing 'git add --all': err=%v", err)
+	}
+}
+
+func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
+	// A4: commit rule stages PATHS only, never git add -A; notes live outside repo/.
+	// DONE WHEN the cutter's lint refuses a card containing git add -A.
+	card, err := RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       153,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test commit rule",
+		Branch:       "emma/commit-rule",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestFoo",
+		TestCommand:  "go test ./internal/pulse -run TestFoo",
+		Paths:        "internal/pulse/cut.go",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "staging entire working tree",
+	})
+	if err != nil {
+		t.Fatalf("RenderCardV2 failed: %v", err)
+	}
+	if !strings.Contains(card, "Commit rule: Stage declared PATHS only; notes and scratch live outside repo/.") {
+		t.Errorf("RenderCardV2 missing A4 commit rule:\n%s", card)
+	}
+
+	// Card containing git add -A in body must be refused by cutter lint
+	_, err = RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       154,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test forbidden git add",
+		Branch:       "emma/commit-rule-bad",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestFoo",
+		TestCommand:  "go test ./internal/pulse -run TestFoo",
+		Paths:        "internal/pulse/cut.go",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "git add -A accepted",
+		Body:         "STEP 3. git add -A && git commit -m 'oops'",
+	})
+	if err == nil || !strings.Contains(err.Error(), "forbidden 'git add -A'") {
+		t.Errorf("RenderCardV2 accepted card with git add -A in body: err=%v", err)
+	}
 }
 
 func TestRenderCardV2RefusesMissingSymbolOrRedWhen(t *testing.T) {
