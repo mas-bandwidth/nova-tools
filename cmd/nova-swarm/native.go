@@ -14,6 +14,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -85,6 +86,11 @@ type nativeRunConfig struct {
 	// The verb itself always names one, derived from --root when --results-root
 	// is absent, because that root was already given.
 	resultsRoot string
+	// runID is this invocation's directory under <results-root>/<label>/. It is
+	// claimed once, shared by every attempt of this run, and never reused: a
+	// later invocation of the same label gets its own id, so attempt numbers
+	// that restart at 1 cannot overwrite the previous run (issue #2632).
+	runID string
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -630,6 +636,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	var bodyStall <-chan struct{}
 	if proxy != nil {
 		bodyStall = proxy.Stalled()
+	}
+	// Claim the run directory before any attempt writes into it. A second
+	// invocation of this label must not append onto the first run's usage or
+	// rename over its RESULT.md and report.
+	if cfg.resultsRoot != "" && safepath.NameOK(cfg.label) {
+		id, err := claimNativeResultsRun(cfg)
+		if err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: a results run directory could not be claimed under %s: %s\n", oneline.Field(cfg.resultsRoot), oneline.Escape(err.Error()))
+		} else {
+			cfg.runID = id
+		}
 	}
 	lastAttempt := 0
 	for attempt := 1; ; attempt++ {
@@ -1451,10 +1468,9 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 	}
 	// THE DURABLE COPY (issue #2632). The job file above is the working copy the
-	// batch still reads. The same row is also appended under the results root,
-	// one directory per attempt, so a sweep of the job does not take the spend
-	// with it. An empty results root is the direct-test shape and writes nothing
-	// else.
+	// batch still reads. The same row is also appended under this run's own
+	// attempt directory, so a later invocation cannot mix its usage into this
+	// one. An empty results root is the direct-test shape and writes nothing else.
 	if dir := nativeResultsAttemptDir(cfg, attempt); dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the results directory %s could not be made: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
@@ -1475,19 +1491,60 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 	return rr, storePath
 }
 
-// nativeResultsAttemptDir is <results-root>/<label>/<attempt>, or "" when this
-// run is not publishing outside the job. The label and the attempt are names,
-// not paths: a label that walks was already refused, and the attempt is the
-// decimal the launch loop counted.
+// nativeRunSeq distinguishes invocations that share a process, which is what a
+// test does when it runs the same label twice. The stamp and the pid
+// distinguish every other pair. Together they are one path element.
+var nativeRunSeq uint64
+
+func newNativeRunID() string {
+	n := atomic.AddUint64(&nativeRunSeq, 1)
+	return fmt.Sprintf("%d-%d-%d", time.Now().UTC().UnixNano(), os.Getpid(), n)
+}
+
+// claimNativeResultsRun creates <results-root>/<label>/<runID> exclusively.
+// Mkdir fails if the name is taken, and the next id is a different sequence
+// value, so two invocations cannot publish into one directory.
+func claimNativeResultsRun(cfg nativeRunConfig) (string, error) {
+	labelDir := filepath.Join(cfg.resultsRoot, cfg.label)
+	if err := os.MkdirAll(labelDir, 0o755); err != nil {
+		return "", err
+	}
+	var last error
+	for i := 0; i < 8; i++ {
+		id := newNativeRunID()
+		if !safepath.NameOK(id) {
+			last = fmt.Errorf("run id %s is not a name", id)
+			continue
+		}
+		err := os.Mkdir(filepath.Join(labelDir, id), 0o755)
+		if err == nil {
+			return id, nil
+		}
+		last = err
+		if os.IsExist(err) {
+			continue
+		}
+		return "", err
+	}
+	if last == nil {
+		last = fmt.Errorf("no free run directory")
+	}
+	return "", last
+}
+
+// nativeResultsAttemptDir is <results-root>/<label>/<runID>/<attempt>, or ""
+// when this run is not publishing outside the job. The run id is claimed once
+// per invocation; the attempt is the decimal the launch loop counted, and it
+// restarts at 1 every invocation, which is why it is not the identity.
 func nativeResultsAttemptDir(cfg nativeRunConfig, attempt int) string {
-	if strings.TrimSpace(cfg.resultsRoot) == "" || !safepath.NameOK(cfg.label) || attempt < 1 {
+	if strings.TrimSpace(cfg.resultsRoot) == "" || !safepath.NameOK(cfg.label) || !safepath.NameOK(cfg.runID) || attempt < 1 {
 		return ""
 	}
 	attemptName := strconv.Itoa(attempt)
 	if !safepath.NameOK(attemptName) {
 		return ""
 	}
-	return filepath.Join(cfg.resultsRoot, cfg.label, attemptName)
+	return filepath.Join(cfg.resultsRoot, cfg.label, cfg.runID, attemptName)
 }
 
 // publishNativeResults copies RESULT.md and the harness report into the attempt
@@ -1509,16 +1566,17 @@ func publishNativeResults(cfg nativeRunConfig, jobDir string, attempt int, errOu
 		fmt.Fprintf(errOut, "NATIVE NOTE: the results directory %s could not be made: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
 		return ""
 	}
+	// THE CAPTURE IS REQUIRED. A missing or unreadable harness-output.log is not
+	// an absent optional file: copying nothing and still reporting success is
+	// how --sweep-now deleted the only copy. Any error keeps the job.
+	reportFrom := filepath.Join(jobDir, "harness-output.log")
+	if err := copyRegularFile(reportFrom, filepath.Join(dir, "report")); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the report could not be published to %s: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+		return ""
+	}
 	if from, ok := swarm.FindCardResult(jobDir); ok {
 		if err := copyRegularFile(from, filepath.Join(dir, "RESULT.md")); err != nil {
 			fmt.Fprintf(errOut, "NATIVE NOTE: RESULT.md could not be published to %s: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
-			return ""
-		}
-	}
-	reportFrom := filepath.Join(jobDir, "harness-output.log")
-	if _, err := os.Lstat(reportFrom); err == nil {
-		if err := copyRegularFile(reportFrom, filepath.Join(dir, "report")); err != nil {
-			fmt.Fprintf(errOut, "NATIVE NOTE: the report could not be published to %s: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
 			return ""
 		}
 	}
