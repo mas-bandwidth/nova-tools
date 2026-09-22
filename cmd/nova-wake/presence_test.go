@@ -75,7 +75,7 @@ func TestBeatRefusesWhatItCannotGuess(t *testing.T) {
 	}{
 		{"no name", []string{"--store", "store.invalid:6380", "--once"}, "--as is required"},
 		{"no store", []string{"--as", "johnny", "--once"}, "--store is required"},
-		{"a bare host", []string{"--as", "johnny", "--store", "store.invalid", "--once"}, "names no port"},
+		{"a bare host", []string{"--as", "johnny", "--store", "store.invalid", "--once"}, "store address refused"},
 		{"a ttl inside the cadence", []string{"--as", "johnny", "--store", "store.invalid:6380", "--every", "30s", "--ttl", "20s", "--once"}, "is not longer than"},
 		{"a cadence that is not a duration", []string{"--as", "johnny", "--store", "store.invalid:6380", "--every", "soon", "--once"}, "is not a duration"},
 	} {
@@ -136,21 +136,41 @@ func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *test
 }
 
 // TestBeatStoreURLQueryParametersAreRefusedWithoutDialing is the CLI-level
-// control for comment 5783202393 on #2612: a plain redis://host:port?query
-// used to parse straight through Addr as a "clean" host:port carrying the
-// query -- secret included -- inside it. This drives the verb's own flag
-// parsing (cmdBeat, --once) for that exact shape and the same shape under
-// rediss://, through a counting opener that must stay at zero: the refusal
-// has to happen before cmdBeat ever calls open, or the "no network operation
-// occurs on a refused address" half of the control is not proven.
+// control for comment 5783425783 on #2612, and the two comments before it on
+// the same issue. The latest hole: a query VALUE containing "@" --
+// redis://store.invalid:6380?password=prefix@SYNTHETIC_SECRET, the exact
+// string from the comment -- still became a printed host, because the prior
+// repair's addrProblems took strings.LastIndex(s, "@") before it had found
+// the query boundary, mistook the query value's own "@" for the userinfo
+// delimiter, and printed everything after it as the host. This drives the
+// verb's own flag parsing (cmdBeat, --once) for that exact shape plus every
+// other shape comment 5783425783 asked for, through a counting opener that
+// must stay at zero: the refusal has to happen before cmdBeat ever calls
+// open, or the "no network operation occurs on a refused address" half of
+// the control is not proven. It also checks the refusal is refusedAddr byte
+// for byte, and that the two accepted forms in the same list -- a bare
+// host:port and an [ipv6]:port -- still parse and reach the opener.
 func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
-	const secret = "SECRET"
+	const secret = "SYNTHETIC_SECRET"
+	// Mirrors presence.refusedAddr, unexported on purpose: the CLI proves
+	// the refusal it prints against the same literal the package's own test
+	// checks Addr's error against byte for byte.
+	const wantRefusal = "store address refused: only host:port or redis://host:port is supported"
 	for _, c := range []struct {
-		name  string
-		store string
+		name     string
+		store    string
+		accepted bool
 	}{
-		{"redis with a query secret", "redis://h:6380?password=" + secret},
-		{"rediss with a query secret", "rediss://h:6380?password=" + secret},
+		// The exact synthetic URL from comment 5783425783.
+		{"query value containing @", "redis://store.invalid:6380?password=prefix@" + secret, false},
+		{"query value containing @, short host", "redis://h:6380?x=a@b", false},
+		{"userinfo before the host", "redis://a@b:6380", false},
+		{"port zero", "redis://h:0", false},
+		{"port above 65535", "redis://h:70000", false},
+		{"no port at all", "redis://h", false},
+		{"bare host:port", "h:6380", true},
+		{"redis:// host:port", "redis://h:6380", true},
+		{"bracketed ipv6 host:port", "[::1]:6380", true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			st := presence.NewFakeStore(beatAt)
@@ -158,17 +178,26 @@ func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
 			var out, errb bytes.Buffer
 			code := cmdBeat([]string{"--as", "johnny", "--store", c.store, "--once"},
 				&out, &errb, fakeStoreClock{st}, countingOpener(st, &dials))
+			if c.accepted {
+				if code != 0 {
+					t.Fatalf("exit %d; want 0 -- %q is a valid store address (stdout=%q stderr=%q)", code, c.store, out.String(), errb.String())
+				}
+				if dials != 1 {
+					t.Fatalf("dials = %d; want 1 -- an accepted --store must reach the opener", dials)
+				}
+				return
+			}
 			if code != 2 {
 				t.Fatalf("exit %d; want 2 (stdout=%q stderr=%q)", code, out.String(), errb.String())
 			}
-			if !strings.Contains(errb.String(), "store address refused") {
-				t.Fatalf("refusal = %q; want the generic grammar refusal", errb.String())
-			}
-			if !strings.Contains(errb.String(), "query") {
-				t.Fatalf("refusal = %q; want it to name the query", errb.String())
+			if !strings.Contains(errb.String(), wantRefusal) {
+				t.Fatalf("refusal = %q; want the constant refusal %q", errb.String(), wantRefusal)
 			}
 			if strings.Contains(out.String(), secret) || strings.Contains(errb.String(), secret) {
 				t.Fatalf("stdout=%q stderr=%q; the secret leaked", out.String(), errb.String())
+			}
+			if strings.Contains(out.String(), "store.invalid") || strings.Contains(errb.String(), "store.invalid") {
+				t.Fatalf("stdout=%q stderr=%q; the synthetic host leaked", out.String(), errb.String())
 			}
 			if dials != 0 {
 				t.Fatalf("dials = %d; want 0 -- a refused --store must never reach the opener", dials)

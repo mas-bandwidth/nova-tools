@@ -70,58 +70,80 @@ func TestAddrTakesHostPortAndRefusesAGuess(t *testing.T) {
 }
 
 // TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret is the
-// synthetic control for comment 5783202393 on #2612: maskAddr still echoed a
-// query secret in a rejected rediss:// URL (it only ever masked userinfo),
-// and a plain redis:// query string was never refused at all --
-// redis://host:port?password=SECRET parsed straight through as a "clean"
-// host:port carrying the secret inside it. The repair is a strict grammar --
-// exactly host:port or redis://host:port, nothing else -- so every one of
-// these shapes is refused by the same generic line, which never carries
-// anything of the input beyond the scheme name and the bare host. No network
-// is dialled here: Addr is pure string parsing.
+// synthetic control for comment 5783425783 on #2612, and the two comments
+// before it on the same issue: a query VALUE containing "@" --
+// redis://store.invalid:6380?password=prefix@SYNTHETIC_SECRET, the exact
+// string from the comment -- still became a printed host, because the prior
+// repair's addrProblems took strings.LastIndex(s, "@") over the raw
+// remainder before it had located the query boundary, so the "@" inside the
+// query value was mistaken for the userinfo delimiter and SYNTHETIC_SECRET
+// (everything after it) came back as the "host" the refusal named. Before
+// that, a plain query string went straight through unrefused, and before
+// that, maskAddr echoed a query secret through a rejected rediss:// URL. All
+// three were one class of bug: a message assembled from pieces of the input.
+// The repair drops assembly entirely -- refusedAddr is a constant, and
+// Addr's parse is structural (net.SplitHostPort plus a character-class and
+// range check), never a LastIndex/Index scan for a delimiter byte in the raw
+// string. This is pure string parsing: no network is dialled, and Stella's
+// synthetic secret and synthetic host never named a real credential.
 func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing.T) {
-	const secret = "SECRET"
-	for _, c := range []struct {
-		name    string
-		in      string
-		want    string // "" means Addr must refuse it; else the host:port it must parse to
-		wantBad []string
-	}{
-		{name: "rediss with a query secret", in: "rediss://h:6380?password=" + secret, wantBad: []string{"scheme", "query"}},
-		{name: "plain redis with a query secret", in: "redis://h:6380?password=" + secret, wantBad: []string{"query"}},
-		{name: "userinfo carrying a secret", in: "redis://u:" + secret + "@h:6380", wantBad: []string{"userinfo"}},
-		{name: "a path", in: "redis://h:6380/0", wantBad: []string{"path"}},
-		{name: "a fragment carrying a secret", in: "redis://h:6380#" + secret, wantBad: []string{"fragment"}},
-		{name: "bare host:port", in: "h:6380", want: "h:6380"},
-		{name: "redis:// host:port", in: "redis://h:6380", want: "h:6380"},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			got, err := Addr(c.in)
-			if c.want != "" {
-				if err != nil {
-					t.Fatalf("Addr(%q) = %v; want it to parse to %q", c.in, err, c.want)
-				}
-				if got != c.want {
-					t.Errorf("Addr(%q) = %q; want %q", c.in, got, c.want)
-				}
-				return
-			}
+	const secret = "SYNTHETIC_SECRET"
+	refusals := []string{
+		// The exact synthetic URL from comment 5783425783: a query value
+		// containing "@".
+		"redis://store.invalid:6380?password=prefix@" + secret,
+		"redis://h:6380?x=a@b",
+		"redis://a@b:6380",
+		"redis://h:0",       // port below the 1-65535 range
+		"redis://h:70000",   // port above the 1-65535 range
+		"redis://h",         // no port at all -- the same constant as every other refusal
+		"rediss://h:6380",   // a scheme other than redis
+		"redis://u:pass@h:6380",
+		"redis://h:6380/0",
+		"redis://h:6380#frag",
+	}
+	for _, in := range refusals {
+		t.Run(in, func(t *testing.T) {
+			got, err := Addr(in)
 			if err == nil {
-				t.Fatalf("Addr(%q) = %q, <nil>; want a refusal", c.in, got)
+				t.Fatalf("Addr(%q) = %q, <nil>; want a refusal", in, got)
 			}
 			if got != "" {
-				t.Errorf("Addr(%q) returned a usable address %q alongside the error; want none", c.in, got)
+				t.Errorf("Addr(%q) returned a usable address %q alongside the error; want none", in, got)
 			}
-			if !strings.Contains(err.Error(), "store address refused: only host:port or redis://host:port is supported") {
-				t.Errorf("Addr(%q) error = %q; want the one generic refusal", c.in, err.Error())
+			// Byte-for-byte equality to the constant is the real proof:
+			// refusedAddr is fixed at compile time from no part of addr, so
+			// equality alone means nothing of any input, sensitive or not,
+			// reached the message. This also checks explicitly for the
+			// tokens these particular inputs carry that a per-shape or
+			// LastIndex-built message (the two prior repairs) would have
+			// echoed -- the synthetic secret and synthetic host chief among
+			// them -- skipping only "redis", which the constant's own
+			// "redis://host:port" example legitimately contains.
+			if err.Error() != refusedAddr {
+				t.Errorf("Addr(%q) error = %q; want the constant refusal %q byte-for-byte, nothing else", in, err.Error(), refusedAddr)
 			}
-			for _, word := range c.wantBad {
-				if !strings.Contains(err.Error(), word) {
-					t.Errorf("Addr(%q) error = %q; want it to name %q", c.in, err.Error(), word)
+			for _, sensitive := range []string{secret, "store.invalid", "prefix", "password", "70000", "frag", "u:pass"} {
+				if strings.Contains(in, sensitive) && strings.Contains(err.Error(), sensitive) {
+					t.Errorf("Addr(%q) error = %q; contains input fragment %q", in, err.Error(), sensitive)
 				}
 			}
-			if strings.Contains(err.Error(), secret) {
-				t.Errorf("Addr(%q) error = %q; the secret leaked", c.in, err.Error())
+		})
+	}
+
+	accepted := []struct{ in, want string }{
+		{"h:6380", "h:6380"},
+		{"redis://h:6380", "h:6380"},
+		{"[::1]:6380", "[::1]:6380"},
+	}
+	for _, c := range accepted {
+		t.Run(c.in, func(t *testing.T) {
+			got, err := Addr(c.in)
+			if err != nil {
+				t.Fatalf("Addr(%q) = %v; want it to parse to %q", c.in, err, c.want)
+			}
+			if got != c.want {
+				t.Errorf("Addr(%q) = %q; want %q", c.in, got, c.want)
 			}
 		})
 	}

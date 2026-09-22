@@ -2,8 +2,11 @@ package presence
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -59,90 +62,99 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 	return &Redis{rdb: rdb}, nil
 }
 
-// Addr normalizes what a caller spelled into host:port, or says why it
-// cannot, under a grammar strict enough that no shape of --store can carry a
-// secret past this function: the only two spellings accepted are host:port
-// and redis://host:port, with no userinfo, no query, no path (a single bare
+// refusedAddr is the one refusal every bad --store gets, verbatim and with no
+// input folded in: not the scheme, not the host, not a name for what was
+// wrong. Comment 5783425783 (#2612) found the last hole in a message that
+// still built itself from the input: addrProblems took the LAST "@" in the
+// raw string before it ever found the query boundary, so a query VALUE that
+// happened to contain "@" -- redis://store.invalid:6380?password=prefix@SECRET
+// -- was cut at that "@" and everything after it, SECRET included, came back
+// as the "host" the refusal printed. Any parser that first looks for a
+// delimiter byte anywhere in the raw string and only then decides what
+// region it was in can be fooled the same way by that byte appearing inside
+// a region it hasn't found yet. A constant string has no such hole: it is
+// built from nothing, so there is nothing in it left to extract.
+const refusedAddr = "store address refused: only host:port or redis://host:port is supported"
+
+// Addr normalizes what a caller spelled into host:port, or refuses it with
+// refusedAddr, under a grammar strict enough that no shape of --store can
+// carry a secret past this function: the only two spellings accepted are
+// host:port and redis://host:port, structurally -- a host with none of
+// "@/?#" in it (a bracketed [ipv6] host may of course contain ":"), a colon,
+// and a port that is one to five ASCII digits naming 1-65535. A single bare
 // trailing "/" is tolerated as the empty path a URL library would normalize
-// away) and no fragment. Anything else is refused.
+// away; anything else, at any position, is refused. The refusal never
+// contains any byte of addr: it is the same constant for a bad scheme, a
+// bad host, a bad port and a value with no port at all, because a message
+// built from the input -- even just its host, even just its scheme -- is a
+// message a crafted input can aim.
 //
-// This replaced a looser Addr (comment 5782441213, #2612) that refused
-// rediss:// and user:pass@ by name but let everything else -- a query string
-// chief among them -- straight through: redis://host:port?password=SECRET
-// parsed as host:port="host:port?password=SECRET" and that whole string,
-// secret included, was the "clean" address handed back to be dialled,
-// printed on the beat's startup line and folded into the next error. Naming
-// each bad shape also meant echoing enough of it to prove the name, and
-// maskAddr -- built to make that echo safe -- only ever masked userinfo, so
-// the same query secret came back out through a rejected rediss:// URL too.
-//
-// The repair drops per-shape messages for one grammar and one refusal: a
-// value is either exactly host:port (optionally redis://-prefixed) or it is
-// refused with a generic line naming only the scheme and the bare host --
-// never the port, the userinfo, the query or the fragment, so there is
-// nothing left in the message a secret could hide inside.
+// This replaced two narrower repairs on the same bug (#2612): first an Addr
+// that refused rediss:// and user:pass@ by name but let a query string
+// straight through as part of a "clean" host:port; then one that named each
+// bad shape (scheme/userinfo/path/query/fragment) by scanning the raw string
+// for delimiter bytes with strings.LastIndex/Index -- which is exactly the
+// class of bug that let a query value's own "@" be mistaken for the
+// userinfo delimiter and its tail print as the host. Structural parsing --
+// split on the redis:// prefix, then require the remainder to fully match
+// host:port with nothing left over -- never asks "does this byte occur
+// somewhere", so no byte inside an otherwise-refused value can be
+// misattributed to a region that hasn't been located yet.
 func Addr(addr string) (string, error) {
 	a := strings.TrimSpace(addr)
 	if a == "" {
 		return "", fmt.Errorf("--store is empty")
 	}
 
-	scheme, rest := "", a
+	rest := a
 	if i := strings.Index(a, "://"); i >= 0 {
-		scheme, rest = a[:i], a[i+len("://"):]
+		scheme := a[:i]
+		if scheme != "redis" {
+			return "", errors.New(refusedAddr)
+		}
+		rest = a[i+len("://"):]
 	}
 	rest = strings.TrimSuffix(rest, "/") // a bare trailing "/" is an empty path, not a path
 
-	host, bad := addrProblems(rest)
-	if scheme != "" && scheme != "redis" {
-		bad = append([]string{"scheme"}, bad...)
-	}
-	if len(bad) > 0 {
-		schemeDesc := scheme
-		if schemeDesc == "" {
-			schemeDesc = "none"
-		}
-		return "", fmt.Errorf("store address refused: only host:port or redis://host:port is supported (got scheme=%s host=%s with %s)",
-			schemeDesc, host, strings.Join(bad, "/"))
-	}
-	if !strings.Contains(rest, ":") {
-		return "", fmt.Errorf("--store %s names no port; the fleet store is host:6380", rest)
+	if !validHostPort(rest) {
+		return "", errors.New(refusedAddr)
 	}
 	return rest, nil
 }
 
-// addrProblems reports the bare host a value names -- never more than the
-// host, so a caller can name what is wrong without printing what is wrong --
-// and which of userinfo, path, query and fragment are present in it. It never
-// returns the port, the userinfo, the query or the fragment themselves: only
-// their names, for a message, and the host, which nova-tools treats as public
-// (it is the thing everyone already reads off the sprint table).
-func addrProblems(rest string) (host string, bad []string) {
-	s := rest
-	if i := strings.LastIndex(s, "@"); i >= 0 {
-		bad = append(bad, "userinfo")
-		s = s[i+1:]
+// validHostPort reports whether s is structurally exactly host:port: a host
+// with none of "@/?#" (net.SplitHostPort itself handles the [ipv6]:port
+// bracket form, whose host may contain ":") and a port that is all ASCII
+// digits naming 1-65535. It never inspects s for a delimiter byte without
+// first knowing, from the split, which region that byte would be in.
+func validHostPort(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil {
+		return false
 	}
-	if strings.ContainsRune(s, '/') {
-		bad = append(bad, "path")
+	if host == "" || strings.ContainsAny(host, "@/?#") {
+		return false
 	}
-	if strings.ContainsRune(s, '?') {
-		bad = append(bad, "query")
+	return validPort(port)
+}
+
+// validPort reports whether s is one to five ASCII digits naming a port
+// from 1 to 65535 -- never a sign, never a decimal point, never anything a
+// query string or a fragment could still smuggle through as "numeric".
+func validPort(s string) bool {
+	if s == "" || len(s) > 5 {
+		return false
 	}
-	if strings.ContainsRune(s, '#') {
-		bad = append(bad, "fragment")
-	}
-	cut := len(s)
-	for _, sep := range []byte{'/', '?', '#'} {
-		if i := strings.IndexByte(s, sep); i >= 0 && i < cut {
-			cut = i
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
 		}
 	}
-	host = s[:cut]
-	if i := strings.IndexByte(host, ':'); i >= 0 {
-		host = host[:i]
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return false
 	}
-	return host, bad
+	return n >= 1 && n <= 65535
 }
 
 func isAuthError(err error) bool {
