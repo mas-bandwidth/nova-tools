@@ -94,10 +94,10 @@ func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing
 		"redis://store.invalid:6380?password=prefix@" + secret,
 		"redis://h:6380?x=a@b",
 		"redis://a@b:6380",
-		"redis://h:0",       // port below the 1-65535 range
-		"redis://h:70000",   // port above the 1-65535 range
-		"redis://h",         // no port at all -- the same constant as every other refusal
-		"rediss://h:6380",   // a scheme other than redis
+		"redis://h:0",     // port below the 1-65535 range
+		"redis://h:70000", // port above the 1-65535 range
+		"redis://h",       // no port at all -- the same constant as every other refusal
+		"rediss://h:6380", // a scheme other than redis
 		"redis://u:pass@h:6380",
 		"redis://h:6380/0",
 		"redis://h:6380#frag",
