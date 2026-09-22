@@ -356,3 +356,150 @@ func TestJobStorageMutationTeeth(t *testing.T) {
 		t.Fatalf("cache sentinel was destroyed by mutation attack: %v", err)
 	}
 }
+
+// TestRelocateJobResultsRefusesNestedOrOverlappingDest verifies that RelocateJobResults
+// and CleanupJobStorageAtCompletion reject destination directories that overlap with jobDir
+// (nested inside, identical to, or parent of jobDir) without moving or destroying files.
+func TestRelocateJobResultsRefusesNestedOrOverlappingDest(t *testing.T) {
+	root := t.TempDir()
+	slotDir := filepath.Join(root, "001")
+	jobDir := filepath.Join(slotDir, "jobs", "card-1")
+	tmpDir := filepath.Join(slotDir, "tmp", "card-1")
+	cloneDir := filepath.Join(jobDir, "repo")
+
+	if err := os.MkdirAll(cloneDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	testFile := filepath.Join(jobDir, "RESULT.md")
+	if err := os.WriteFile(testFile, []byte("PASS\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logFile := filepath.Join(jobDir, "harness-output.log")
+	if err := os.WriteFile(logFile, []byte("log content\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. resultsDir nested inside jobDir
+	nestedResults := filepath.Join(jobDir, "nested-results")
+	if err := swarm.RelocateJobResults(jobDir, nestedResults); err == nil {
+		t.Fatalf("RelocateJobResults succeeded with nested resultsDir %s", nestedResults)
+	}
+
+	// CleanupJobStorageAtCompletion must refuse and preserve jobDir
+	res, err := swarm.CleanupJobStorageAtCompletion(swarm.JobStorageCleanupOpts{
+		JobDir:     jobDir,
+		TmpDir:     tmpDir,
+		SlotDir:    slotDir,
+		Root:       root,
+		ResultsDir: nestedResults,
+		Label:      "card-1",
+	})
+	if err == nil {
+		t.Fatalf("CleanupJobStorageAtCompletion succeeded with nested resultsDir; want error")
+	}
+	if res.Cleaned {
+		t.Fatalf("CleanupJobStorageAtCompletion cleaned storage despite nested resultsDir error")
+	}
+	if _, err := os.Stat(testFile); err != nil {
+		t.Fatalf("RESULT.md was lost after nested resultsDir error: %v", err)
+	}
+	if _, err := os.Stat(jobDir); err != nil {
+		t.Fatalf("jobDir was deleted after nested resultsDir error: %v", err)
+	}
+
+	// 2. resultsDir identical to jobDir
+	if err := swarm.RelocateJobResults(jobDir, jobDir); err == nil {
+		t.Fatalf("RelocateJobResults succeeded when resultsDir == jobDir")
+	}
+
+	// 3. jobDir nested inside resultsDir
+	parentResults := filepath.Dir(jobDir)
+	if err := swarm.RelocateJobResults(jobDir, parentResults); err == nil {
+		t.Fatalf("RelocateJobResults succeeded when jobDir nested inside resultsDir")
+	}
+}
+
+// TestCleanupAtCompletionPreservesSourceWhenMoveFails verifies that if moving a durable
+// candidate fails during cleanup, the operation aborts, error is returned, and the
+// source files and job directory are preserved without deletion.
+func TestCleanupAtCompletionPreservesSourceWhenMoveFails(t *testing.T) {
+	root := t.TempDir()
+	slotDir := filepath.Join(root, "001")
+	jobDir := filepath.Join(slotDir, "jobs", "card-1")
+	tmpDir := filepath.Join(slotDir, "tmp", "card-1")
+	resultsDir := filepath.Join(root, "results", "card-1")
+	cloneDir := filepath.Join(jobDir, "repo")
+
+	for _, d := range []string{cloneDir, tmpDir, resultsDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resultContent := "PASS\nresult data\n"
+	usageContent := "job\tattempt\ncard-1\t1\n"
+	logContent := "harness output log\n"
+	reportContent := "# REPORT\nall green\n"
+	codeContent := "package main\n"
+
+	files := map[string]string{
+		"RESULT.md":          resultContent,
+		"usage.tsv":          usageContent,
+		"harness-output.log": logContent,
+		"REPORT.md":          reportContent,
+		"repo/main.go":       codeContent,
+	}
+	for relPath, content := range files {
+		p := filepath.Join(jobDir, relPath)
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Simulate move failure by making resultsDir unwriteable
+	if err := os.Chmod(resultsDir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.Chmod(resultsDir, 0o755)
+	})
+
+	res, err := swarm.CleanupJobStorageAtCompletion(swarm.JobStorageCleanupOpts{
+		JobDir:     jobDir,
+		TmpDir:     tmpDir,
+		SlotDir:    slotDir,
+		Root:       root,
+		ResultsDir: resultsDir,
+		Label:      "card-1",
+	})
+	if err == nil {
+		t.Fatalf("expected CleanupJobStorageAtCompletion to fail when resultsDir is unwriteable")
+	}
+	if res.Cleaned {
+		t.Fatalf("CleanupJobStorageAtCompletion reported Cleaned=true on move failure")
+	}
+
+	// Verify jobDir and tmpDir were NOT removed
+	if _, err := os.Stat(jobDir); err != nil {
+		t.Fatalf("jobDir was deleted despite failed move: %v", err)
+	}
+	if _, err := os.Stat(tmpDir); err != nil {
+		t.Fatalf("tmpDir was deleted despite failed move: %v", err)
+	}
+
+	// Verify all source files in jobDir are completely preserved
+	for relPath, wantContent := range files {
+		p := filepath.Join(jobDir, relPath)
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("source file %s was destroyed or unreadable in jobDir: %v", relPath, err)
+		}
+		if string(got) != wantContent {
+			t.Fatalf("source file %s content changed: got %q, want %q", relPath, string(got), wantContent)
+		}
+	}
+}

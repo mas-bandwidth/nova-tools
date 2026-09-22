@@ -168,11 +168,58 @@ func HasResultsMoved(jobDir, resultsDir string) bool {
 	return false
 }
 
+func evalExisting(p string) string {
+	at := filepath.Clean(p)
+	var trailing []string
+	for {
+		if realPath, err := filepath.EvalSymlinks(at); err == nil {
+			if len(trailing) == 0 {
+				return realPath
+			}
+			parts := append([]string{realPath}, trailing...)
+			return filepath.Join(parts...)
+		}
+		parent := filepath.Dir(at)
+		if parent == at {
+			return filepath.Clean(p)
+		}
+		trailing = append([]string{filepath.Base(at)}, trailing...)
+		at = parent
+	}
+}
+
+func pathsOverlap(a, b string) bool {
+	cleanA := filepath.Clean(a)
+	cleanB := filepath.Clean(b)
+	if cleanA == cleanB || isUnder(cleanA, cleanB) || isUnder(cleanB, cleanA) {
+		return true
+	}
+	evalA := evalExisting(cleanA)
+	evalB := evalExisting(cleanB)
+	if evalA == evalB || isUnder(evalA, evalB) || isUnder(evalB, evalA) {
+		return true
+	}
+	return false
+}
+
 // RelocateJobResults moves durable result files from jobDir to resultsDir.
 func RelocateJobResults(jobDir, resultsDir string) error {
 	if strings.TrimSpace(jobDir) == "" || strings.TrimSpace(resultsDir) == "" {
 		return fmt.Errorf("relocate results wants non-empty jobDir and resultsDir")
 	}
+
+	if pathsOverlap(jobDir, resultsDir) {
+		return fmt.Errorf("cannot relocate results: resultsDir %s overlaps jobDir %s", resultsDir, jobDir)
+	}
+
+	cleanJob := filepath.Clean(jobDir)
+	if _, err := os.Stat(cleanJob); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("stat jobDir %s: %w", jobDir, err)
+	}
+
 	if err := os.MkdirAll(resultsDir, 0o755); err != nil {
 		return fmt.Errorf("creating results dir %s: %w", resultsDir, err)
 	}
@@ -199,26 +246,32 @@ func RelocateJobResults(jobDir, resultsDir string) error {
 	}
 
 	entries, err := os.ReadDir(jobDir)
-	if err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			name := e.Name()
-			match := false
-			for _, c := range candidates {
-				if name == c {
-					match = true
-					break
-				}
-			}
-			if !match && strings.HasSuffix(name, ".md") {
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("reading jobDir %s: %w", jobDir, err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		match := false
+		for _, c := range candidates {
+			if name == c {
 				match = true
+				break
 			}
-			if match {
-				src := filepath.Join(jobDir, name)
-				dst := filepath.Join(resultsDir, name)
-				_ = moveOrCopy(src, dst)
+		}
+		if !match && strings.HasSuffix(name, ".md") {
+			match = true
+		}
+		if match {
+			src := filepath.Join(jobDir, name)
+			dst := filepath.Join(resultsDir, name)
+			if err := moveOrCopy(src, dst); err != nil {
+				return fmt.Errorf("relocating candidate %s to %s: %w", src, dst, err)
 			}
 		}
 	}
@@ -327,30 +380,31 @@ func CleanJobStorage(jobDir, tmpDir, slotDir, root, benchHome string) error {
 // harness-written failures (idle-reaped, wall-refused) where nothing is kept beyond RESULT.md
 // and harness log, remove the job directory including clone and sandbox tmp.
 func CleanupJobStorageAtCompletion(opts JobStorageCleanupOpts) (JobStorageCleanResult, error) {
-	resultsMoved := opts.ResultsMoved || HasResultsMoved(opts.JobDir, opts.ResultsDir)
+	targetResultsDir := opts.ResultsDir
+	if targetResultsDir == "" && (opts.ResultsMoved || opts.IsHarnessFailure) {
+		targetResultsDir = DefaultResultsDir(opts.BenchHome, opts.SlotDir, opts.Label)
+	}
 
+	resultsMoved := opts.ResultsMoved || HasResultsMoved(opts.JobDir, targetResultsDir)
 	shouldClean := resultsMoved || opts.IsHarnessFailure
-	if !shouldClean && opts.ResultsDir != "" {
+
+	if !shouldClean && targetResultsDir != "" {
 		// If a resultsDir is configured and card finished, relocate results
-		if err := RelocateJobResults(opts.JobDir, opts.ResultsDir); err == nil {
-			resultsMoved = true
-			shouldClean = true
+		if err := RelocateJobResults(opts.JobDir, targetResultsDir); err != nil {
+			return JobStorageCleanResult{Cleaned: false, ResultsMoved: false, ResultsDir: targetResultsDir}, fmt.Errorf("relocating job results: %w", err)
 		}
+		resultsMoved = true
+		shouldClean = true
+	} else if shouldClean && targetResultsDir != "" && strings.TrimSpace(opts.JobDir) != "" {
+		// If results were marked moved or harness failure, relocate any remaining durable files
+		if err := RelocateJobResults(opts.JobDir, targetResultsDir); err != nil {
+			return JobStorageCleanResult{Cleaned: false, ResultsMoved: false, ResultsDir: targetResultsDir}, fmt.Errorf("preserving durable results: %w", err)
+		}
+		resultsMoved = true
 	}
 
 	if !shouldClean {
 		return JobStorageCleanResult{Cleaned: false}, nil
-	}
-
-	targetResultsDir := opts.ResultsDir
-	if targetResultsDir == "" {
-		targetResultsDir = DefaultResultsDir(opts.BenchHome, opts.SlotDir, opts.Label)
-	}
-
-	// For harness-written failures, preserve RESULT.md and harness log in results store
-	if opts.IsHarnessFailure {
-		_ = RelocateJobResults(opts.JobDir, targetResultsDir)
-		resultsMoved = true
 	}
 
 	if opts.ReleaseLease != nil {
