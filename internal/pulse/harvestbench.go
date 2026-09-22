@@ -224,6 +224,18 @@ func harvestBench(in HarvestInput) int {
 				continue
 			}
 		}
+		// A report card is read and reported: its RESULT.md is the deliverable, so it
+		// carries no branch to push and no PR is opened for it (SPEC-TOOLWORK §5, the
+		// read-and-report kinds' HARVEST row, gate=none). It is still evaluated here and
+		// refused out loud with its kind named -- a report card that reached only the
+		// branch-prefix filter produced neither a JOB line nor a REFUSED line, and a
+		// coordinator cannot tell "not harvestable" from "not looked at" (#2537).
+		if strings.HasPrefix(label, "report-") {
+			skipped++
+			lines.Line(fmt.Sprintf("HARVEST REFUSED kind=report bench=%s label=%s reason=report-no-pr (a report card's deliverable is its RESULT.md; nothing is pushed and no PR is opened)",
+				field(in.Bench), field(label)))
+			continue
+		}
 		if branch == "" || !strings.HasPrefix(branch, prefix) {
 			skip("branch-prefix", fmt.Sprintf("branch=%s want=%s*", field(branch), field(prefix)))
 			continue
