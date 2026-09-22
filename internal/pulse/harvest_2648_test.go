@@ -299,3 +299,78 @@ func gitRefExists(dir, ref string) bool {
 	cmd := exec.Command("git", "-C", dir, "rev-parse", "-q", "--verify", ref)
 	return cmd.Run() == nil
 }
+
+// TestHarvestWorkingStaleBaseDropsTheTypedHarvestRef is the --working path's
+// control for the same remedy. It reaches the drop only through HarvestWorking.
+// The diff head is HEAD, which is what the refusal sentence's range ends with.
+// The typed Branch field the remedy reads is the card branch. A decoy ref at
+// refs/harvest/HEAD stays; only refs/harvest/<branch> is dropped.
+func TestHarvestWorkingStaleBaseDropsTheTypedHarvestRef(t *testing.T) {
+	b := newDestBench(t)
+	fakeTool(t, os.Getenv("NOVA_PULSE_FAKE_DIR"), "gh", fakeSpec{
+		Log:   b.arglog,
+		Rules: []fakeRule{{Arg: 2, Equals: "list", Stdout: "[]"}},
+	})
+
+	working := t.TempDir()
+	label := "wstale"
+	branch := "rowan/wstale"
+	job := wkJob(t, working, "guid-wstale", label,
+		"RESULT "+label+" sha=aaa\nDONE\nBRANCH "+branch+"\nREPO owner/repo\nBASE dev\nPATHS: card/fix.go\n")
+	realGit(t, "init", "-b", "dev", job)
+	realGit(t, "-C", job, "remote", "add", "origin", honestURL)
+	if err := os.MkdirAll(filepath.Join(job, "card"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "card", "fix.go"), []byte("package card\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit(t, "-C", job, "add", "card/fix.go")
+	realGit(t, "-C", job, "commit", "-m", "old target")
+	realGit(t, "-C", job, "checkout", "-b", branch)
+	if err := os.WriteFile(filepath.Join(job, "card", "fix.go"), []byte("package card\n\nfunc Fix() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit(t, "-C", job, "add", "card/fix.go")
+	realGit(t, "-C", job, "commit", "-m", "the card")
+	realGit(t, "-C", job, "checkout", "dev")
+	if err := os.MkdirAll(filepath.Join(job, "later"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "later", "merged.go"), []byte("package later\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	realGit(t, "-C", job, "add", "later/merged.go")
+	realGit(t, "-C", job, "commit", "-m", "later landing")
+	realGit(t, "-C", job, "push", "origin", "HEAD:dev")
+	realGit(t, "-C", job, "checkout", branch)
+
+	// The typed Branch field this path remedies is the card branch. refs/harvest/HEAD
+	// is the decoy a reader of the diff head (or of the sentence's `..HEAD`) would drop.
+	typed := "refs/harvest/" + branch
+	decoy := "refs/harvest/" + branchFromHead("HEAD")
+	realGit(t, "-C", job, "update-ref", typed, "HEAD")
+	realGit(t, "-C", job, "update-ref", decoy, "HEAD")
+
+	out, errs, code := wkRun(t, HarvestInput{
+		Working: working,
+		Base:    "dev",
+		Max:     20,
+		Clones:  []string{"owner/repo=" + b.honest},
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 (the stale base is still a refusal)\n%s\n%s", code, out, errs)
+	}
+	if strings.Contains(out, "class=fixed") || strings.Contains(out, "pushed=1") {
+		t.Fatalf("a stale-base working job was published:\n%s\n%s", out, errs)
+	}
+	if containsRef(refs(t, b.honest), "refs/heads/"+branch) {
+		t.Fatalf("the branch was pushed: %v", refs(t, b.honest))
+	}
+	if gitRefExists(job, typed) {
+		t.Fatalf("the ref named by the typed Branch field is still present: %s", typed)
+	}
+	if !gitRefExists(job, decoy) {
+		t.Fatalf("the card-branch ref was removed; the remedy followed something other than the typed Branch field")
+	}
+}
