@@ -459,3 +459,189 @@ func TestCommentSaysItLandsNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestPathishRecognizesRootFilesAndPaths verifies that pathish correctly
+// recognizes root files with extensions, extensionless paths, and paths with
+// both slashes and dots, while rejecting bare prose words.
+func TestPathishRecognizesRootFilesAndPaths(t *testing.T) {
+	cases := []struct {
+		tok  string
+		want bool
+	}{
+		// Root files with extensions
+		{"go.mod", true},
+		{"Cargo.toml", true},
+		{"package.json", true},
+		{"README.md", true},
+		{".gitignore", true},
+		// Extensionless paths
+		{"scripts/deploy", true},
+		{"bin/test", true},
+		// Paths with both slashes and extensions
+		{"internal/foo.go", true},
+		{"test/conformance/go/rows/R1.go", true},
+		// Wrapped tokens (quotes, backticks, brackets)
+		{"`go.mod`", true},
+		{"\"Cargo.toml\"", true},
+		{"'package.json'", true},
+		{"(internal/foo.go)", true},
+		{"[scripts/deploy]", true},
+		// Prose words (neither slash nor dot)
+		{"and", false},
+		{"plus", false},
+		{"fixed", false},
+		{"changes", false},
+		{"to", false},
+		// Empty / punctuation only
+		{"", false},
+		{",", false},
+		{"`", false},
+		{"()", false},
+	}
+	for _, tc := range cases {
+		got := prereview.Pathish(tc.tok)
+		if got != tc.want {
+			t.Errorf("Pathish(%q) = %v, want %v", tc.tok, got, tc.want)
+		}
+	}
+}
+
+// TestClaimsCheckWithGoMod tests claimsCheck with a PR claiming go.mod:
+// - Positive control: claims go.mod and diff matches -> claims:yes
+// - Negative control 1: claims go.mod but missing from diff -> claims:no
+// - Negative control 2: claims line has only prose -> claims:missing
+// - Negative control 3: no files line -> claims:missing
+func TestClaimsCheckWithGoMod(t *testing.T) {
+	// Positive control: claims go.mod and diff matches
+	prMatch := prereview.PR{
+		Repo:   repo,
+		Number: 1,
+		Head:   "deadbeef",
+		Body:   "RESULT test-cell\nDONE\nfiles: go.mod\n",
+		Files:  []string{"go.mod"},
+	}
+	cardMatch := prereview.InferCard(prMatch)
+	gotMatch := prereview.ClaimsCheck(prMatch, cardMatch)
+	if gotMatch.Result != prereview.Yes {
+		t.Fatalf("positive control: claims=%s (%s), want yes", gotMatch.Result, gotMatch.Reason)
+	}
+	if !strings.Contains(gotMatch.Reason, "all 1 files") {
+		t.Errorf("positive control reason %q does not match expected", gotMatch.Reason)
+	}
+	// Also check through Mechanical
+	if m := prereview.Mechanical(prMatch, cardMatch).Claims; m.Result != prereview.Yes {
+		t.Errorf("Mechanical claims=%s, want yes", m.Result)
+	}
+
+	// Negative control 1: claims go.mod but missing from diff -> claims:no
+	prMissing := prereview.PR{
+		Repo:   repo,
+		Number: 2,
+		Head:   "deadbeef",
+		Body:   "RESULT test-cell\nDONE\nfiles: go.mod\n",
+		Files:  []string{"other.go"},
+	}
+	cardMissing := prereview.InferCard(prMissing)
+	gotMissing := prereview.ClaimsCheck(prMissing, cardMissing)
+	if gotMissing.Result != prereview.No {
+		t.Fatalf("negative control (missing from diff): claims=%s (%s), want no", gotMissing.Result, gotMissing.Reason)
+	}
+	if !strings.Contains(gotMissing.Reason, "go.mod") {
+		t.Errorf("negative control reason %q does not name missing go.mod", gotMissing.Reason)
+	}
+
+	// Negative control 2: claims line has only prose words -> claims:missing
+	prProse := prereview.PR{
+		Repo:   repo,
+		Number: 3,
+		Head:   "deadbeef",
+		Body:   "RESULT test-cell\nDONE\nfiles: and plus\n",
+		Files:  []string{"go.mod"},
+	}
+	cardProse := prereview.InferCard(prProse)
+	gotProse := prereview.ClaimsCheck(prProse, cardProse)
+	if gotProse.Result != prereview.Missing {
+		t.Fatalf("negative control (prose only): claims=%s (%s), want missing", gotProse.Result, gotProse.Reason)
+	}
+
+	// Negative control 3: no files: line -> claims:missing
+	prNoLine := prereview.PR{
+		Repo:   repo,
+		Number: 4,
+		Head:   "deadbeef",
+		Body:   "RESULT test-cell\nDONE\n",
+		Files:  []string{"go.mod"},
+	}
+	cardNoLine := prereview.InferCard(prNoLine)
+	gotNoLine := prereview.ClaimsCheck(prNoLine, cardNoLine)
+	if gotNoLine.Result != prereview.Missing {
+		t.Fatalf("negative control (no files line): claims=%s (%s), want missing", gotNoLine.Result, gotNoLine.Reason)
+	}
+}
+
+// TestInferCardWithPreambleBeforeResult tests that InferCard locates RESULT
+// in pr.Body even when there is introductory text before RESULT, ensuring
+// that card.Result begins at RESULT and doneCheck checks line 2 of the RESULT
+// block rather than line 2 of the entire PR description.
+func TestInferCardWithPreambleBeforeResult(t *testing.T) {
+	pr := prereview.PR{
+		Repo:   repo,
+		Number: 999,
+		Head:   "1234567890abcdef1234567890abcdef12345678",
+		Title:  "Fix table and add conformance test",
+		Body: strings.Join([]string{
+			"Here is some pull request description.",
+			"This line explains the PR motivation in detail.",
+			"Another introductory paragraph before the machine block.",
+			"",
+			"RESULT cell-go-r42",
+			"DONE",
+			"cell: go/R42",
+			"files: test/conformance/go/rows/R42.go",
+		}, "\n"),
+		Files: []string{"test/conformance/go/rows/R42.go"},
+		Diff:  "+++ b/test/conformance/go/rows/R42.go\n+func TestR42() {}\n",
+	}
+
+	card := prereview.InferCard(pr)
+	if !strings.HasPrefix(card.Result, "RESULT") {
+		t.Fatalf("card.Result does not start with RESULT: %q", card.Result)
+	}
+	if card.PathsFrom != "pr-body-cell" {
+		t.Errorf("PathsFrom = %q, want pr-body-cell", card.PathsFrom)
+	}
+	if len(card.Paths) != 1 || card.Paths[0] != "test/conformance/go/**" {
+		t.Errorf("Paths = %v, want test/conformance/go/**", card.Paths)
+	}
+
+	// Mechanical checks must see DONE as line 2 of RESULT (not line 2 of body)
+	checks := prereview.Mechanical(pr, card)
+	if checks.Done.Result != prereview.Yes {
+		t.Errorf("done = %s (%s), want yes", checks.Done.Result, checks.Done.Reason)
+	}
+	if checks.Claims.Result != prereview.Yes {
+		t.Errorf("claims = %s (%s), want yes", checks.Claims.Result, checks.Claims.Reason)
+	}
+	if checks.Paths.Result != prereview.Yes {
+		t.Errorf("paths = %s (%s), want yes", checks.Paths.Result, checks.Paths.Reason)
+	}
+}
+
+// TestAppendLedgerCreatesParentDirectories verifies that AppendLedger ensures
+// parent directories exist with 0755 permissions before opening the ledger file.
+func TestAppendLedgerCreatesParentDirectories(t *testing.T) {
+	dir := t.TempDir()
+	nestedPath := filepath.Join(dir, "new-session", "deep", "dir", "ledger.jsonl")
+	d := prereview.Disposition{
+		Repo:    repo,
+		PR:      100,
+		Head:    "abc",
+		Verdict: prereview.Approve,
+	}
+	if err := prereview.AppendLedger(nestedPath, d); err != nil {
+		t.Fatalf("AppendLedger failed to create directories: %v", err)
+	}
+	if _, err := os.Stat(nestedPath); err != nil {
+		t.Fatalf("ledger file was not created: %v", err)
+	}
+}

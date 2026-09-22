@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -151,6 +152,9 @@ func AppendLedger(path string, d Disposition) error {
 	row, err := json.Marshal(d)
 	if err != nil {
 		return fmt.Errorf("prereview: encode ledger row: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("prereview: create ledger directory: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {

@@ -192,7 +192,11 @@ var branchCellRE = regexp.MustCompile(`(?i)^BRANCH\s+\S*?cell-([A-Za-z0-9+#]+)-(
 // happens to touch -- but it is a weaker one than a card's PATHS line, so
 // PathsFrom says which it is and the caller prints that.
 func InferCard(pr PR) Card {
-	c := Card{PathsFrom: "none", SymbolFrom: "none", Result: pr.Body}
+	result := pr.Body
+	if i := strings.Index(result, "RESULT"); i >= 0 {
+		result = result[i:]
+	}
+	c := Card{PathsFrom: "none", SymbolFrom: "none", Result: result}
 	lang := ""
 	from := ""
 	if m := cellRE.FindStringSubmatch(pr.Body); m != nil {
@@ -291,7 +295,7 @@ func pathish(tok string) bool {
 	if tok == "" {
 		return false
 	}
-	return strings.Contains(tok, "/") && strings.Contains(tok, ".")
+	return strings.Contains(tok, "/") || strings.Contains(tok, ".")
 }
 
 // claimsCheck: every file the RESULT's `files:` line names is in the diff. A
