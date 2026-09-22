@@ -44,8 +44,9 @@ usage:
                     stood; a floor above what the provider has ever answered
                     for that kind is refused)
 
-  nova-decide route --unit <json file|inline json> --usage <path> --log <path|postgres>
-                    [--dsn-env NOVA_DECIDE_LOG_DSN]
+  nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                    [--store <host:port> [--user <acl user>]
+                     [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                     [--registry <path>] [--floor 0.9] [--base-url <url>]
                     [--key-env JEV_API_KEY]
                     (--usage and --log are REQUIRED whenever jev is asked)
@@ -66,9 +67,7 @@ usage:
                    [--self-inflicted n] [--class-recurring] [--landing-moved]
                    [--uncertainty 0..1] [--asked-all-friends]
 
-  nova-decide log --log <path|postgres> --summary [--dsn-env <NAME>] [--registry <path>]
-  nova-decide log migrate [--dsn-env <NAME>]
-                    (install decide_log beside the card results; idempotent)
+  nova-decide log --log <path> --summary [--registry <path>]
 
   nova-decide review --repo <owner/name> --pr <n> [--card <file>]
                      [--post|--dry-run] [--ledger file|redis] [--ledger-path <jsonl>]
@@ -113,8 +112,7 @@ usage:
                       is the TSV fallback of the decisions table
   --kind <k>          read the decisions table for kind k and refuse a floor
                       with no rows behind it (rule 8)
-  --dsn <dsn>         decisions table DSN (a postgres:// URL, or a TSV path);
-                      default $NOVA_DSN
+  --dsn <path>        the decisions table: a TSV path; default $NOVA_DSN
   --floors <list>     comma-separated confidence floors to try
   --label <field>     field holding the outcome (default label)
   --choice <field>    field holding the decision (default decision)
@@ -160,16 +158,20 @@ opaque ids rather than any mind's name.
   --registry <path>   the registry of minds (name, lineage, height, kinds it is
                       designated for, owned lanes, availability, ask); the
                       embedded ladder when absent
-  --log <path|postgres>
-                      append this decision to the escalation log: a path (JSON
-                      lines) or the word postgres, the decide_log table beside
-                      the card results. REQUIRED when jev is asked, and the sink
-                      is opened BEFORE the call, so a table that will not open is
-                      a refusal rather than a call with nowhere to record it
-  --dsn-env <NAME>    with --log postgres: the environment variable the DSN
-                      arrives in (default NOVA_DECIDE_LOG_DSN), put there by
-                      nova-secrets exec --only <NAME>. There is no --dsn: a
-                      connection string carries a password and never goes on argv
+  --log <path>        append this decision to the escalation log, JSON lines.
+                      REQUIRED when jev is asked, and the sink is opened BEFORE
+                      the call, so a log that will not open is a refusal rather
+                      than a call with nowhere to record it
+  --store <host:port> also write the decision as one decide event on the
+                      cards:done stream of the fleet Redis, with decide_log's
+                      fields under decide_log's names; the fold keeps it in its
+                      decisions table (nova-pulse fold --report). Opened BEFORE
+                      the call, like --log
+  --user <name>       with --store: the ACL user
+  --password-env <NAME>
+                      with --store: the environment variable the password
+                      arrives in (default NOVA_REDIS_BENCH_PASSWORD), put there
+                      by nova-secrets exec --only <NAME>; never on argv
   --usage <path>      append what a provider call spent to this usage TSV, in
                       the fleet's own columns; a failed call is a row too, with
                       its cost unknown (a dash), never a zero. REQUIRED when jev
@@ -217,8 +219,7 @@ example:
   nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
   nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
   nova-decide log --log ./decide.jsonl --summary
-  nova-secrets exec --only NOVA_DECIDE_LOG_DSN -- nova-decide log migrate
-  nova-secrets exec --only NOVA_DECIDE_LOG_DSN -- nova-decide log --log postgres --summary
+  nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-decide route --unit-id card-41 --kind rebase --no-jev --log ./decide.jsonl --store 127.0.0.1:6379
 `
 
 // version is empty in every ordinary build and is the one override: a release
@@ -228,8 +229,8 @@ var version string
 // stdin is a var so tests can replace it; production reads the real stdin.
 var stdin io.Reader = os.Stdin
 
-// decisionsOpener opens the decisions table a DSN names. It is the seam a test
-// replaces with a fake driver, so no test needs a Postgres on a bench.
+// decisionsOpener opens the decisions table a path names. It is the seam a
+// test replaces with a fake driver.
 var decisionsOpener = func(dsn string) (decide.DecisionDriver, error) {
 	return decide.OpenDecisions(dsn)
 }
@@ -284,7 +285,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	baseURL := fs.String("base-url", decide.DefaultBaseURL, "Jev endpoint")
 	keyEnv := fs.String("key-env", decide.DefaultKeyEnv, "environment variable holding the key")
 	prefix := fs.String("prefix", "DECIDE", "first token of the one line printed")
-	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "decisions table DSN or TSV path; records each call")
+	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "the decisions table, a TSV path; records each call")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -464,7 +465,7 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nova-decide tune", flag.ContinueOnError)
 	decisions := fs.String("decisions", "", "JSONL decisions log; with --kind, the TSV fallback path (rule 8)")
 	kind := fs.String("kind", "", "read the decisions table for this kind and refuse a floor with no rows behind it")
-	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "decisions table DSN; default $NOVA_DSN")
+	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "the decisions table, a TSV path; default $NOVA_DSN")
 	floors := fs.String("floors", "0.5,0.7,0.8,0.9,0.95", "comma-separated confidence floors to try")
 	label := fs.String("label", "label", "field holding the outcome")
 	choice := fs.String("choice", "decision", "field holding the decision")

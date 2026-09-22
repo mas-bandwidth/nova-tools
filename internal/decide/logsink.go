@@ -1,91 +1,45 @@
-// The log has two sinks and one contract (Glenn 2026-09-18): "the decision and
-// escalation log lives in Postgres beside card results". A JSONL file is still
-// the log on a bench with no database, and it is still what routelog.go writes;
-// the table is the same rows in the same database as card_results, so a
-// decision and the card result it produced are one join away, and the token
-// report and the routing table read the decision rather than a scraped file.
+// The decision log has two sinks. The JSONL file at the path --log names is the
+// log as it has always been, on every bench, the whole row with its evidence;
+// routelog.go writes it and the summary reads it. The fleet's record of the
+// same decision is one `decide` event on the cards:done stream (nova-tools
+// #2623): written by internal/events, the writer every card transition goes
+// through, and folded into the `decisions` table of the SQLite fold, where the
+// calibration set is answered across benches.
 //
-// Nothing here rewrites the JSONL log. The sink is a seam BESIDE it: the file
-// sink is AppendEntry and ReadEntries, unchanged, behind an interface the
-// Postgres sink also satisfies. The summary is a projection of the rows and
-// reads the same off either one.
-//
-// The DSN never reaches the process on argv. It arrives in the environment,
-// under a name the caller gives with --dsn-env, put there by
-// `nova-secrets exec --only <NAME>`; a verb that is given no name refuses and
-// says which variable to set.
+// There was a third sink, the decide_log table. It is retired (#2623): the
+// stream carries the row, the fold is the table, and one writer means one
+// stream (Rowan + Johnny, 2026-09-22 17:16Z).
 package decide
 
 import (
-	"database/sql"
-	"encoding/json"
+	"context"
+	"errors"
 	"fmt"
-	"os"
-	"sort"
+	"io"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 )
-
-// PostgresLog is what --log is given to write the decision to the table rather
-// than to a file. Any other value is a path.
-const PostgresLog = "postgres"
-
-// LogDSNEnv is the environment variable a decision-log DSN is read from when
-// --dsn-env names none. It is the name `nova-secrets exec --only` is given, and
-// it is documented in docs/SPEC-DECIDE.md.
-const LogDSNEnv = "NOVA_DECIDE_LOG_DSN"
 
 // LogSink is where a decision row lands. Append is the one writer; Entries is
 // the read the summary is a projection of; Close releases whatever the sink
-// holds. A file sink holds nothing and a table sink holds a pool.
+// holds. A file sink holds nothing and an event sink holds a connection.
 type LogSink interface {
 	Append(e Entry) error
 	Entries() ([]Entry, error)
 	Close() error
 }
 
-// OpenLogSink opens the sink the name asks for: PostgresLog is the table, and
-// any other value is the path of the JSON lines log. An empty name is a
-// refusal, never a guess at a path -- the same refusal AppendEntry has always
-// made.
-//
-// dsnEnv is the environment variable the DSN arrives in; an empty dsnEnv means
-// LogDSNEnv. The DSN itself is never a parameter, so it is never on argv and
-// never in a process listing.
-func OpenLogSink(name, dsnEnv string) (LogSink, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, fmt.Errorf("decide: no log; refusing to guess one. Pass a path, or %s with the DSN in $%s", PostgresLog, dsnEnvOr(dsnEnv))
+// OpenLogSink opens the JSON lines log at a path. An empty path is a refusal,
+// never a guess at one -- the same refusal AppendEntry has always made.
+func OpenLogSink(path string) (LogSink, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, fmt.Errorf("decide: no log; refusing to guess one. Pass the path of the JSON lines log")
 	}
-	if name != PostgresLog {
-		return &FileSink{Path: name}, nil
-	}
-	dsn, err := LogDSN(dsnEnv)
-	if err != nil {
-		return nil, err
-	}
-	return OpenPostgresLog(dsn)
-}
-
-// LogDSN reads the DSN out of the environment under the name given, or
-// LogDSNEnv when none is. An unset or empty variable is a refusal that names
-// the variable and the one remedy.
-func LogDSN(dsnEnv string) (string, error) {
-	name := dsnEnvOr(dsnEnv)
-	dsn := strings.TrimSpace(os.Getenv(name))
-	if dsn == "" {
-		return "", fmt.Errorf("decide: $%s is not set; the decision log's DSN comes in on the environment, never on argv: nova-secrets exec --only %s -- nova-decide ...", name, name)
-	}
-	return dsn, nil
-}
-
-// dsnEnvOr is the name given, or the default.
-func dsnEnvOr(dsnEnv string) string {
-	if s := strings.TrimSpace(dsnEnv); s != "" {
-		return s
-	}
-	return LogDSNEnv
+	return &FileSink{Path: path}, nil
 }
 
 // FileSink is the log as it has always been: append-only JSON lines at a path
@@ -101,10 +55,8 @@ func (f *FileSink) Entries() ([]Entry, error) { return ReadEntries(f.Path) }
 // Close is a no-op: the file sink holds nothing open between rows.
 func (f *FileSink) Close() error { return nil }
 
-// FakeLogSink is the in-memory sink the unit tests run on. It is the same
-// interface the table implements, so the unit suite exercises the contract --
-// append, read back in order, an absent counter that stays absent -- without a
-// socket, and the tagged integration test is what keeps the fake honest.
+// FakeLogSink is the in-memory sink the unit tests run on: append, read back
+// in order, and a seam for a sink that fails.
 type FakeLogSink struct {
 	mu   sync.Mutex
 	rows []Entry
@@ -117,23 +69,14 @@ type FakeLogSink struct {
 // NewFakeLogSink returns an empty sink.
 func NewFakeLogSink() *FakeLogSink { return &FakeLogSink{} }
 
-// Append stores the row through the same shape the table writes, so a field the
-// table would lose is lost here too.
+// Append stores the row.
 func (f *FakeLogSink) Append(e Entry) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.AppendErr != nil {
 		return f.AppendErr
 	}
-	row, err := logRowFor(e)
-	if err != nil {
-		return err
-	}
-	stored, err := row.entry()
-	if err != nil {
-		return err
-	}
-	f.rows = append(f.rows, stored)
+	f.rows = append(f.rows, e)
 	return nil
 }
 
@@ -149,208 +92,173 @@ func (f *FakeLogSink) Entries() ([]Entry, error) {
 // Close is a no-op; the fake holds nothing.
 func (f *FakeLogSink) Close() error { return nil }
 
-// logRow is one row of decide_log in the table's own columns. It is the shape
-// the Postgres sink writes and scans, and it is a pure function of an Entry, so
-// the column mapping is tested without a database.
-type logRow struct {
-	TS                  time.Time
-	UnitID              string
-	Kind                string
-	Files               int
-	Packages            int
-	Lanes               int
-	Lane                string
-	RungTried           string
-	Height              int
-	Confidence          float64
-	Floor               float64
-	SteppedUp           bool
-	Escalated           bool
-	Designated          bool
-	Source              string
-	RowanPick           string
-	Reason              string
-	Wait                string
-	AwaitingTermination bool
-	Refusal             string
-	Outcome             string
-	RungSucceeded       string
-	Calls               int
-	// TokensIn and TokensOut are NullInt64 because a counter the provider did
-	// not report is SQL NULL. A zero is a measurement and is stored as one; an
-	// absence is an absence (SPEC-TOKENS rule 14).
-	TokensIn    sql.NullInt64
-	TokensOut   sql.NullInt64
-	UsageFailed bool
-	Evidence    []byte
+// EventSink writes each decision as one `decide` event through an Emitter:
+// the fleet store's RedisStore in the tool, the in-memory FakeStream in a test.
+// It is write-only. The decisions on the stream are read by the fold
+// (`nova-pulse fold`), never back through this sink.
+type EventSink struct {
+	Emitter events.Emitter
+	// Bench is the bench the decision was made on, when the caller knows it.
+	Bench string
+	// Timeout bounds one write; zero is ten seconds.
+	Timeout time.Duration
+	closer  io.Closer
 }
 
-// logRowFor renders one Entry as the table's row. A stamp that is not a time is
-// a refusal naming it: the durable record never takes a zero stamp for a
-// timestamp nobody could read.
-func logRowFor(e Entry) (logRow, error) {
-	stamp := strings.TrimSpace(e.Time)
-	var ts time.Time
-	if stamp == "" {
-		ts = time.Now().UTC()
-	} else {
+// OpenEventSink dials the fleet store at addr and returns the sink that writes
+// decisions to cards:done. The password comes from the caller's environment,
+// never from argv.
+func OpenEventSink(addr, user, password, bench string) (*EventSink, error) {
+	if strings.TrimSpace(addr) == "" {
+		return nil, fmt.Errorf("decide: no store; the decision event wants the fleet Redis as host:port")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	store, err := events.Open(ctx, events.Dial{Addr: addr, Username: user, Password: password})
+	if err != nil {
+		return nil, fmt.Errorf("decide: the decision stream: %w", err)
+	}
+	return &EventSink{Emitter: store, Bench: bench, closer: store}, nil
+}
+
+// Append writes the decision as one event on the stream.
+func (s *EventSink) Append(e Entry) error {
+	ev, err := DecisionEvent(e)
+	if err != nil {
+		return err
+	}
+	ev.Bench = s.Bench
+	timeout := s.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if _, err := s.Emitter.Emit(ctx, ev); err != nil {
+		return fmt.Errorf("decide: write the decision to %s: %w", events.Stream, err)
+	}
+	return nil
+}
+
+// Entries refuses: the stream is read by the fold, not by the writer.
+func (s *EventSink) Entries() ([]Entry, error) {
+	return nil, fmt.Errorf("decide: the decisions on %s are read by the fold (nova-pulse fold --report), not through the writer; pass --log <path> to read the JSON lines log", events.Stream)
+}
+
+// Close releases the store connection, if this sink dialed one.
+func (s *EventSink) Close() error {
+	if s.closer == nil {
+		return nil
+	}
+	return s.closer.Close()
+}
+
+// Tee is one sink over several: Append writes every one of them and reports
+// every one that failed, Entries reads the first, Close closes them all. A nil
+// sink is skipped, so a caller passes what it opened and nothing else.
+func Tee(sinks ...LogSink) LogSink {
+	var live []LogSink
+	for _, s := range sinks {
+		if s != nil {
+			live = append(live, s)
+		}
+	}
+	return tee(live)
+}
+
+type tee []LogSink
+
+func (t tee) Append(e Entry) error {
+	var errs []error
+	for _, s := range t {
+		if err := s.Append(e); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (t tee) Entries() ([]Entry, error) {
+	if len(t) == 0 {
+		return nil, fmt.Errorf("decide: no log to read")
+	}
+	return t[0].Entries()
+}
+
+func (t tee) Close() error {
+	var errs []error
+	for _, s := range t {
+		if err := s.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// DecisionEvent is one log row as a `decide` event: decide_log's fields under
+// decide_log's names (internal/events/decide.go). The stamp is the entry's at;
+// the label is the unit, the id the whole stream joins on. A counter the
+// provider did not report stays absent, never zero. Free text (the reason, the
+// refusal) is capped at the stream's field ceiling with a mark that says so;
+// the uncut text is in the JSON lines log. The evidence document does not
+// travel: its measured columns do.
+//
+// A stamp that is not a time is a refusal naming it: the record never takes a
+// zero stamp for a timestamp nobody could read.
+func DecisionEvent(e Entry) (events.Event, error) {
+	var at time.Time
+	if stamp := strings.TrimSpace(e.Time); stamp != "" {
 		parsed, err := time.Parse(time.RFC3339, stamp)
 		if err != nil {
-			return logRow{}, fmt.Errorf("decide: the log row for unit %s carries %q, which is not an RFC3339 time: %w", e.Unit, e.Time, err)
+			return events.Event{}, fmt.Errorf("decide: the decision for unit %s carries %q, which is not an RFC3339 time: %w", e.Unit, e.Time, err)
 		}
-		ts = parsed.UTC()
-	}
-	evidence, err := json.Marshal(e.Evidence)
-	if err != nil {
-		return logRow{}, fmt.Errorf("decide: encode the evidence for unit %s: %w", e.Unit, err)
+		at = parsed.UTC()
 	}
 	kind := strings.TrimSpace(e.Kind)
 	if kind == "" {
 		kind = strings.TrimSpace(e.Evidence.Kind)
 	}
-	return logRow{
-		TS:                  ts,
-		UnitID:              e.Unit,
-		Kind:                kind,
-		Files:               e.Evidence.Files,
-		Packages:            e.Evidence.Packages,
-		Lanes:               e.Evidence.Lanes,
-		Lane:                e.Evidence.LaneOwner,
-		RungTried:           e.RungTried,
-		Height:              e.Height,
-		Confidence:          e.Confidence,
-		Floor:               e.Floor,
-		SteppedUp:           e.SteppedUp,
-		Escalated:           e.Escalated,
-		Designated:          e.Designated,
-		Source:              e.Source,
-		RowanPick:           e.RowanPick,
-		Reason:              e.Reason,
-		Wait:                e.Wait,
-		AwaitingTermination: e.AwaitingTermination,
-		Refusal:             e.Refusal,
-		Outcome:             e.Outcome,
-		RungSucceeded:       e.RungSucceeded,
-		Calls:               e.Calls,
-		TokensIn:            nullTokens(e.TokensIn),
-		TokensOut:           nullTokens(e.TokensOut),
-		UsageFailed:         e.UsageFailed,
-		Evidence:            evidence,
+	confidence, floor := e.Confidence, e.Floor
+	return events.Event{
+		Label:     e.Unit,
+		Kind:      events.Decide,
+		TokensIn:  counter(e.TokensIn),
+		TokensOut: counter(e.TokensOut),
+		At:        at,
+		Decision: &events.Decision{
+			UnitID:              e.Unit,
+			Kind:                events.Text(kind),
+			Files:               e.Evidence.Files,
+			Packages:            e.Evidence.Packages,
+			Lanes:               e.Evidence.Lanes,
+			Lane:                events.Text(e.Evidence.LaneOwner),
+			RungTried:           events.Text(e.RungTried),
+			Height:              e.Height,
+			Confidence:          &confidence,
+			Floor:               &floor,
+			SteppedUp:           e.SteppedUp,
+			Escalated:           e.Escalated,
+			Designated:          e.Designated,
+			Source:              events.Text(e.Source),
+			RowanPick:           events.Text(e.RowanPick),
+			Reason:              events.Text(e.Reason),
+			Wait:                events.Text(e.Wait),
+			AwaitingTermination: e.AwaitingTermination,
+			Refusal:             events.Text(e.Refusal),
+			Outcome:             events.Text(e.Outcome),
+			RungSucceeded:       events.Text(e.RungSucceeded),
+			Calls:               e.Calls,
+			UsageFailed:         e.UsageFailed,
+		},
 	}, nil
 }
 
-// entry reads one row back as the Entry it was written from. The stamp comes
-// back in the same RFC3339 UTC spelling the JSONL log uses, so a summary over
-// the table and a summary over the file are the same text.
-func (r logRow) entry() (Entry, error) {
-	e := Entry{
-		Time:                r.TS.UTC().Format(time.RFC3339),
-		Unit:                r.UnitID,
-		Kind:                r.Kind,
-		RungTried:           r.RungTried,
-		Height:              r.Height,
-		Confidence:          r.Confidence,
-		Floor:               r.Floor,
-		SteppedUp:           r.SteppedUp,
-		Escalated:           r.Escalated,
-		Designated:          r.Designated,
-		Source:              r.Source,
-		RowanPick:           r.RowanPick,
-		Reason:              r.Reason,
-		Wait:                r.Wait,
-		AwaitingTermination: r.AwaitingTermination,
-		Refusal:             r.Refusal,
-		Outcome:             r.Outcome,
-		RungSucceeded:       r.RungSucceeded,
-		Calls:               r.Calls,
-		TokensIn:            tokensOrNil(r.TokensIn),
-		TokensOut:           tokensOrNil(r.TokensOut),
-		UsageFailed:         r.UsageFailed,
-	}
-	if len(r.Evidence) > 0 {
-		if err := json.Unmarshal(r.Evidence, &e.Evidence); err != nil {
-			return Entry{}, fmt.Errorf("decide: the log row for unit %s has evidence that is not one JSON object: %w", r.UnitID, err)
-		}
-	}
-	return e, nil
-}
-
-// nullTokens writes a reported counter as a number and an unreported one as
-// SQL NULL.
-func nullTokens(n *int) sql.NullInt64 {
+// counter is a reported count as the stream's counter, and an unreported one
+// as the absence it is.
+func counter(n *int) *int64 {
 	if n == nil {
-		return sql.NullInt64{}
-	}
-	return sql.NullInt64{Int64: int64(*n), Valid: true}
-}
-
-// tokensOrNil reads NULL back as the absence it is, and a number as the
-// measurement it is -- including a measured zero.
-func tokensOrNil(n sql.NullInt64) *int {
-	if !n.Valid {
 		return nil
 	}
-	v := int(n.Int64)
+	v := int64(*n)
 	return &v
-}
-
-// logColumns is the column order both the INSERT and the SELECT use, so the two
-// can never drift apart.
-var logColumns = []string{
-	"ts", "unit_id", "kind", "files", "packages", "lanes", "lane",
-	"rung_tried", "height", "confidence", "floor",
-	"stepped_up", "escalated", "designated", "source", "rowan_pick", "reason",
-	"wait", "awaiting_termination", "refusal",
-	"outcome", "rung_succeeded",
-	"calls", "tokens_in", "tokens_out", "usage_failed", "evidence",
-}
-
-// args is the row as the INSERT's parameters, in logColumns order.
-func (r logRow) args() []any {
-	return []any{
-		r.TS, r.UnitID, r.Kind, r.Files, r.Packages, r.Lanes, r.Lane,
-		r.RungTried, r.Height, r.Confidence, r.Floor,
-		r.SteppedUp, r.Escalated, r.Designated, r.Source, r.RowanPick, r.Reason,
-		r.Wait, r.AwaitingTermination, r.Refusal,
-		r.Outcome, r.RungSucceeded,
-		r.Calls, r.TokensIn, r.TokensOut, r.UsageFailed, r.Evidence,
-	}
-}
-
-// scanTargets is the row as the SELECT's destinations, in logColumns order.
-func (r *logRow) scanTargets() []any {
-	return []any{
-		&r.TS, &r.UnitID, &r.Kind, &r.Files, &r.Packages, &r.Lanes, &r.Lane,
-		&r.RungTried, &r.Height, &r.Confidence, &r.Floor,
-		&r.SteppedUp, &r.Escalated, &r.Designated, &r.Source, &r.RowanPick, &r.Reason,
-		&r.Wait, &r.AwaitingTermination, &r.Refusal,
-		&r.Outcome, &r.RungSucceeded,
-		&r.Calls, &r.TokensIn, &r.TokensOut, &r.UsageFailed, &r.Evidence,
-	}
-}
-
-// insertLog is the one INSERT, built from logColumns so the placeholders and
-// the columns are never counted by hand.
-func insertLog() string {
-	marks := make([]string, len(logColumns))
-	for i := range logColumns {
-		marks[i] = fmt.Sprintf("$%d", i+1)
-	}
-	return fmt.Sprintf("INSERT INTO decide_log (%s) VALUES (%s)",
-		strings.Join(logColumns, ", "), strings.Join(marks, ", "))
-}
-
-// selectLog is the one SELECT, in the order the rows were written: id ascending
-// is append order, which is what the JSONL log's own order is.
-func selectLog() string {
-	return fmt.Sprintf("SELECT %s FROM decide_log ORDER BY id ASC", strings.Join(logColumns, ", "))
-}
-
-// sortedNames is the migration files in the order they apply: by name, so 0001
-// runs before 0002 and the order is in the repository rather than in a list
-// somebody has to remember to edit.
-func sortedNames(names []string) []string {
-	out := append([]string(nil), names...)
-	sort.Strings(out)
-	return out
 }

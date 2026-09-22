@@ -9,9 +9,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
 
-// fakeDriver is the decisions table in memory: the fake the Postgres
-// subsection of SPEC-DECIDE and rule 8 are tested against, so no test needs a
-// Postgres on a bench and none dials the network.
+// fakeDriver is the decisions table in memory: the fake SPEC-DECIDE's
+// decisions-table subsection and rule 8 are tested against, so no test writes a
+// file it did not name and none dials the network.
 type fakeDriver struct {
 	mu   sync.Mutex
 	rows []decide.DecisionRow
@@ -38,7 +38,7 @@ func (f *fakeDriver) Rows(kind string) ([]decide.DecisionRow, error) {
 
 func (f *fakeDriver) Close() error { return nil }
 
-// The Postgres subsection's red test: a floor with no rows behind it is
+// The decisions-table subsection's red test: a floor with no rows behind it is
 // refused, naming the kind, and a row joins its confidence to the outcome that
 // followed (rule 8).
 func TestNovaDecideTuneRefusesAFloorWithNoRows(t *testing.T) {
