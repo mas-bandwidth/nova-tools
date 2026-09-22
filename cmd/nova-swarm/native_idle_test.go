@@ -242,6 +242,12 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
 		t.Fatalf("a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
 	}
+	if strings.Contains(stdout.String(), "why=unknown-acceptance") {
+		t.Fatalf("a card that went still is not an unknown provider acceptance:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(job, "provider-acceptance")); !os.IsNotExist(err) {
+		t.Fatalf("a quiet card wrote an acceptance mark: %v", err)
+	}
 }
 
 // TestNativeIdleReapsTheCardInsteadOfShootingIt keeps the REAL signal, because the point of

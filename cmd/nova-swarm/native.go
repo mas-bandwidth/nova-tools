@@ -65,6 +65,20 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// bodySilence is the gap, after response headers, with no body bytes, that
+	// ends the attempt UNKNOWN. Zero means ProviderBodySilence (45s). Production
+	// leaves it zero. A test may set a shorter gap so the suite does not wait 45s.
+	bodySilence time.Duration
+	// bodyAfter arms that gap. Nil means the timer inside readWithinSilence.
+	// A test passes a clock it can fire so the 45s gap is an event.
+	bodyAfter func(time.Duration) <-chan time.Time
+	// headerWait is how long the proxy waits for response headers after the
+	// request is written; expiry ends the attempt UNKNOWN. Zero means
+	// ProviderHeaderTimeout (45s). Production leaves it zero.
+	headerWait time.Duration
+	// onProxy receives the proxy once it is listening, before the child starts.
+	// Nil in production.
+	onProxy func(*swarm.ProviderProxy)
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -83,7 +97,9 @@ type nativeRunResult struct {
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
-	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	end          string            // the end the usage row records: done, failed, wall, or unknown
+	lost         bool              // the provider read died after the request may have been accepted
+	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled        bool              // the idle watch ended the run, not the deadline and not the child
@@ -441,10 +457,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		reads = swarm.CardReadPaths(cfg.card)
 	}
 	reads = append(reads, nativeReadRoots(cfg)...)
-	configSHA, reason := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
+	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
+		if proxy != nil {
+			_ = proxy.Close()
+		}
 		refuseNative(errOut, reason)
 		return nativeRunResult{}, 2
+	}
+	if proxy != nil {
+		defer proxy.Close()
+		if cfg.onProxy != nil {
+			cfg.onProxy(proxy)
+		}
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -575,6 +600,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	termCh := nativeTermCh()
 	defer stopNativeTerm(termCh)
+	// A nil channel blocks forever in the select, which is no proxy: a card
+	// with no provider baseURL is not given a body deadline it cannot reach.
+	var bodyStall <-chan struct{}
+	if proxy != nil {
+		bodyStall = proxy.Stalled()
+	}
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
 		cmd := exec.Command(runPath, runArgv...)
@@ -639,6 +670,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			<-done
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
+		case <-bodyStall:
+			// Headers arrived and then the body went silent, or the request
+			// was written and no headers came back inside the proxy's header
+			// wait. The measured harness kept running after its own
+			// timeouts, so the run reaps the card instead of waiting for it
+			// to notice, and does not launch it again.
+			deadline.Stop()
+			nativeReap(pgid, started, swarm.TerminateGrace)
+			<-done
+			res.rc = -1
+			res.lost = true
 		case <-termCh:
 			deadline.Stop()
 			nativeReap(pgid, started, swarm.TerminateGrace)
@@ -649,11 +691,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		close(stopWatch)
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
-		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
-		// block below refines it to `wall` when the machinery, not the model, stopped the
-		// card (issue #644's follow-up).
+		tail := readSince(outLog, before)
+		// A response that sent headers and then no body bytes is UNKNOWN, whether
+		// the harness printed its own timeout words or the proxy closed the
+		// body. The usage row says so before anything else can call the
+		// attempt done or failed, and the run does not launch again.
+		// (stella-6b51d37c8d7d, stella-9eb933ee0205)
+		lost := swarm.LostResponse(tail) || res.lost
+		if proxy != nil && proxy.Lost() {
+			lost = true
+		}
 		res.end = swarm.EndDone
-		if res.rc != 0 {
+		if lost {
+			res.end = swarm.EndUnknown
+			res.lost = true
+		} else if res.rc != 0 {
 			res.end = swarm.EndFailed
 		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
@@ -664,7 +716,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
+		if lost {
+			// The usage row has no end column. The marker is the handoff. If it
+			// cannot be written, the capture must carry the word. If neither
+			// file can be written, the run refuses: a quiet exit would be
+			// scored as an ordinary missing result and retried.
+			if err := persistUnknownFn(jobDir); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance could not be recorded: %s\n", oneline.Escape(err.Error()))
+				res.unrecorded = true
+			}
+			break
+		}
+		// Inherited grace retry. The tail and the elapsed time do not prove the
+		// provider never accepted the request. A lost response does not take
+		// this path.
+		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
@@ -719,18 +785,22 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
-	res.end = swarm.EndDone
-	if res.rc != 0 {
-		res.end = swarm.EndFailed
+	if res.lost {
+		res.end = swarm.EndUnknown
+	} else {
+		res.end = swarm.EndDone
+		if res.rc != 0 {
+			res.end = swarm.EndFailed
+		}
 	}
-	if (res.wallRefusal != swarm.WallRefusal{}) {
+	if !res.lost && (res.wallRefusal != swarm.WallRefusal{}) {
 		res.end = swarm.EndWall
 	}
 	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
 	// `no-result` -- the token for a MODEL that chose to publish nothing -- and a card the
 	// machinery stopped never had the chance. One is written for it, naming what the watch
 	// saw, and it carries no findings head, so it can never be counted as work done.
-	if res.idled {
+	if !res.lost && res.idled {
 		res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", res.idleEnd.Idle.Seconds())
 		if res.idleEnd.Refused {
@@ -779,7 +849,53 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	if res.unrecorded {
+		return res, 2
+	}
 	return res, 0
+}
+
+// persistUnknownFn is the handoff writer. A test of a failed disk sets it
+// and puts it back. The production function is persistUnknown.
+var persistUnknownFn = persistUnknown
+
+// persistUnknown writes the handoff the next reader holds on. The marker is
+// first. The two logs are the fallback. A short write or a failed close is
+// not a successful record. If none of them can be written, the caller still
+// prints the unknown verdict and then refuses the run.
+func persistUnknown(jobDir string) error {
+	acc := filepath.Join(jobDir, "provider-acceptance")
+	if err := writeUnknownFile(acc, "unknown\n"); err == nil {
+		return nil
+	} else {
+		var failed []string
+		failed = append(failed, err.Error())
+		line := "why=unknown-acceptance\n"
+		for _, name := range []string{"harness-output.log", "harness.log"} {
+			if werr := writeUnknownFile(filepath.Join(jobDir, name), line); werr != nil {
+				failed = append(failed, werr.Error())
+				continue
+			}
+			return nil
+		}
+		return fmt.Errorf("%s", strings.Join(failed, "; "))
+	}
+}
+
+func writeUnknownFile(path, body string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	n, werr := fmt.Fprintf(f, "%s", oneline.Escape(body))
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	if n != len(oneline.Escape(body)) {
+		return fmt.Errorf("%s: short write", path)
+	}
+	return cerr
 }
 
 // fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads
@@ -1415,7 +1531,7 @@ func copyAuth(src, provider, dataHome string) string {
 // best-effort and the copy is not -- and then the fence cannot be merged into it, which is
 // said once on stderr as a NATIVE NOTE rather than refused: a run with an unparseable config
 // is a run the caller has already chosen, and it is better fenced-by-default than not run.
-func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (sha8, reason string) {
+func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (string, string, *swarm.ProviderProxy) {
 	var raw []byte
 	configPath := cfg.configFile
 	switch {
@@ -1425,27 +1541,62 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	case configPath != "":
 		body, err := os.ReadFile(configPath)
 		if err != nil {
-			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
+			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error())), nil
 		}
 		if modelProviderMissingAuth(body, cfg.authFile, provider) {
 			return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile)))
+				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile))), nil
 		}
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	var proxy *swarm.ProviderProxy
+	if merged {
+		// headerTimeout and chunkTimeout are written for a harness that honors
+		// them. They are not the deadline: the measured OpenCode did not end a
+		// stall on them. The deadline is the proxy below, and only when the
+		// provider has an http baseURL the proxy can stand in front of.
+		body = swarm.ApplyProviderReadDeadline(body, provider)
+		upstream := swarm.ProviderBaseURL(body, provider)
+		if swarm.ProviderProxyEligible(upstream) {
+			silence := cfg.bodySilence
+			if silence <= 0 {
+				silence = swarm.ProviderBodySilence
+			}
+			opened, err := swarm.ListenProviderProxy(swarm.ProviderProxyConfig{
+				Upstream: upstream, Silence: silence, After: cfg.bodyAfter,
+				HeaderWait: cfg.headerWait,
+			})
+			if err != nil {
+				return "", fmt.Sprintf("the provider read proxy could not listen: %s", oneline.Escape(err.Error())), nil
+			}
+			pointed, ok := swarm.PointProviderAtProxy(body, provider, opened.HarnessURL())
+			if !ok {
+				_ = opened.Close()
+				return "", fmt.Sprintf("the provider %s could not be pointed at the read-deadline proxy", oneline.Field(provider)), nil
+			}
+			body = pointed
+			proxy = opened
+		}
+	}
 	if !merged && notes != nil {
-		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
+		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it and the provider request was not pointed at the read-deadline proxy; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
 	}
 	sum := sha256.Sum256(body)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error()))
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
 	}
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
-		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error())), nil
 	}
-	return hex.EncodeToString(sum[:])[:8], ""
+	return hex.EncodeToString(sum[:])[:8], "", proxy
 }
 
 // modelProviderMissingAuth reports whether the one provider this run will call -- the

@@ -804,10 +804,10 @@ func Batch(in BatchInput) int {
 	// row that names ONE reason token (issue #461), so the packet is the whole read.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain, idle, stalled, partial int
-		holds                                 []string
-		totalIn, totalOut                     int
-		total                                 float64
+		done, abstain, held, idle, stalled, partial int
+		holds                                       []string
+		totalIn, totalOut                           int
+		total                                       float64
 	)
 	type row struct {
 		label    string
@@ -928,6 +928,10 @@ func Batch(in BatchInput) int {
 			}
 			continue
 		}
+		if state == "hold" {
+			held++
+			continue
+		}
 		abstain++
 		if strings.HasPrefix(reason, "idle=") {
 			idle++
@@ -976,6 +980,9 @@ func Batch(in BatchInput) int {
 	// past n + 12 lines whatever the batch holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	if held > 0 {
+		fmt.Fprintf(in.Stdout, " held=%d", held)
+	}
 	// partial=<n> IS THE FLOOR SAYING IT IS A FLOOR. Every card whose numbers came from the
 	// harness store rather than from its own usage row was killed mid-turn, and the turn in
 	// flight carries no tokens object anywhere -- the provider charged for it and no
@@ -997,6 +1004,10 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stdout, line)
 	}
 	for _, r := range rows {
+		if r.state == "hold" {
+			fmt.Fprintf(in.Stdout, "%s slot=%d: HOLD reason=%s log=%d %s\n", oneline.Field(r.label), r.slot, oneline.Field(r.reason), r.logLines, r.tail)
+			continue
+		}
 		if r.state == "done" {
 			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
 			if r.tail != "" {
@@ -1050,7 +1061,7 @@ func Batch(in BatchInput) int {
 		}
 	}
 
-	if abstain == 0 && len(holds) == 0 {
+	if abstain == 0 && held == 0 && len(holds) == 0 {
 		return 0
 	}
 	return 1
@@ -1169,6 +1180,11 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
+	// A provider read that may have been accepted is not a missing result and not
+	// a finished card, even when a RESULT.md is sitting beside the marker.
+	if AcceptanceUnknown(job) {
+		return "hold", "unknown-acceptance", "job=" + job, ""
+	}
 	raw, err := readFileSteady(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		// A RESULT.md that is a symlink or a FIFO is refused by name, in the one line the
