@@ -677,6 +677,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			acc := filepath.Join(jobDir, "provider-acceptance")
 			if err := os.WriteFile(acc, []byte("unknown\n"), 0o644); err != nil {
 				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance mark could not be written: %s\n", oneline.Escape(err.Error()))
+				// The marker is the handoff. If it cannot be written, the
+				// capture still has to carry the word, or a later reader
+				// scores the card as an ordinary missing result and retries it.
+				note := filepath.Join(jobDir, "harness-output.log")
+				f, oerr := os.OpenFile(note, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+				if oerr != nil {
+					fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance line could not be written either: %s\n", oneline.Escape(oerr.Error()))
+				} else {
+					fmt.Fprintln(f, "why=unknown-acceptance")
+					f.Close()
+				}
 			}
 			break
 		}

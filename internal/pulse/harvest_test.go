@@ -226,6 +226,30 @@ func TestHarvestPushesOnlyOnLine1Match(t *testing.T) {
 	}
 }
 
+func TestHarvestUnknownAcceptanceDoesNotRetry(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	fakeGit(t, specs, arglog)
+	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/9")
+
+	addCard(t, root, "lost", "1", "flash", "RESULT lost sha=lll",
+		"RESULT lost sha=lll\nDONE\nBRANCH rowan/lost\nREPO owner/repo\n")
+	job := filepath.Join(root, "1", "jobs", "lost")
+	if err := os.WriteFile(filepath.Join(job, "provider-acceptance"), []byte("unknown\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, errOut := runHarvest(t, root)
+	if strings.Contains(out, "retry=1") || strings.Contains(out, "pushed=1") {
+		t.Fatalf("an unknown acceptance was retried or pushed:\n%s", out)
+	}
+	if !strings.Contains(errOut, "HARVEST HOLD label=lost reason=unknown-acceptance") {
+		t.Fatalf("the hold was not named:\n%s\n%s", out, errOut)
+	}
+	if raw, err := os.ReadFile(filepath.Join(root, "retry.tsv")); err == nil && strings.Contains(string(raw), "lost") {
+		t.Fatalf("retry.tsv named the unknown card:\n%s", raw)
+	}
+}
+
 func TestHarvestAbstainGoesToRetry(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)

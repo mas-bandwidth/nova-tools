@@ -928,6 +928,9 @@ func Batch(in BatchInput) int {
 			}
 			continue
 		}
+		if state == "hold" {
+			continue
+		}
 		abstain++
 		if strings.HasPrefix(reason, "idle=") {
 			idle++
@@ -997,6 +1000,10 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stdout, line)
 	}
 	for _, r := range rows {
+		if r.state == "hold" {
+			fmt.Fprintf(in.Stdout, "%s slot=%d: HOLD reason=%s log=%d %s\n", oneline.Field(r.label), r.slot, oneline.Field(r.reason), r.logLines, r.tail)
+			continue
+		}
 		if r.state == "done" {
 			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
 			if r.tail != "" {
@@ -1169,6 +1176,11 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
+	// A provider read that may have been accepted is not a missing result and not
+	// a finished card, even when a RESULT.md is sitting beside the marker.
+	if AcceptanceUnknown(job) {
+		return "hold", "unknown-acceptance", "job=" + job, ""
+	}
 	raw, err := readFileSteady(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		// A RESULT.md that is a symlink or a FIFO is refused by name, in the one line the

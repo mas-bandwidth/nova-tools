@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // HarvestInput is everything the harvest verb needs, held apart from command-line parsing
@@ -234,6 +235,9 @@ func Harvest(in HarvestInput) int {
 		case "mismatch":
 			mismatch++
 			writeSeen(in.Root, c, "mismatch")
+		case "unknown":
+			fmt.Fprintf(in.Stderr, "HARVEST HOLD label=%s reason=unknown-acceptance\n", field(c.Label))
+			writeSeen(in.Root, c, "hold")
 		case "abstain":
 			abstain++
 			retried++
@@ -627,6 +631,9 @@ func cardContract(cardPath string) string {
 // classify reads a card's RESULT.md and returns its disposition and the push details.
 // done -> pushed unless the branch is main or a pro card lacks a red: line (refused).
 func classify(jobDir string, c CardRow, contract string) (state, branch, repo string, resultLines []string) {
+	if swarm.AcceptanceUnknown(jobDir) {
+		return "unknown", "", "", nil
+	}
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
 	if err != nil {
 		return "abstain", "", "", nil

@@ -2,7 +2,10 @@ package swarm
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -48,6 +51,34 @@ var lostResponseRE = regexp.MustCompile(`(?i)SSE read timed out|headers timed ou
 // the card again on that signal.
 func LostResponse(tail []byte) bool {
 	return lostResponseRE.Match(tail)
+}
+
+// AcceptanceUnknown reports that this job's provider read may have been
+// accepted and then lost. The marker file is the record. A marker that cannot
+// be read is the same hold: a missing record must not become an ordinary
+// retry. The runner's own verdict line is the second record, for the run
+// whose marker could not be written.
+func AcceptanceUnknown(job string) bool {
+	if job == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "provider-acceptance"))
+	if err == nil {
+		return strings.TrimSpace(string(raw)) == "unknown"
+	}
+	if !os.IsNotExist(err) {
+		return true
+	}
+	for _, name := range []string{"harness.log", "harness-output.log"} {
+		logRaw, lerr := os.ReadFile(filepath.Join(job, name))
+		if lerr != nil {
+			continue
+		}
+		if strings.Contains(string(logRaw), "why=unknown-acceptance") {
+			return true
+		}
+	}
+	return false
 }
 
 // ApplyProviderReadDeadline returns the job config with the model's provider
