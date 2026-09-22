@@ -76,6 +76,38 @@ func (c Checks) all() []struct {
 	}
 }
 
+// named is the four under the names the JEV line prints them by, in its
+// order: donewhen (the RESULT's DONE line), selfcheck (the symbol check),
+// paths, claims.
+func (c Checks) named() []struct {
+	name string
+	c    Check
+} {
+	return []struct {
+		name string
+		c    Check
+	}{
+		{"donewhen", c.Done},
+		{"selfcheck", c.Symbol},
+		{"paths", c.Paths},
+		{"claims", c.Claims},
+	}
+}
+
+// Evidence is one line per check, in the JEV line's order: the name, the
+// answer and the reason the answer rests on.
+func (c Checks) Evidence() []string {
+	out := make([]string, 0, 4)
+	for _, e := range c.named() {
+		r := e.c.Result
+		if r == "" {
+			r = Missing
+		}
+		out = append(out, fmt.Sprintf("%s: %s -- %s", e.name, word(r), e.c.Reason))
+	}
+	return out
+}
+
 // Clear reports whether every check answered Yes. A Missing does not clear: a
 // check that could not run has not said the pull request is sound.
 func (c Checks) Clear() bool {
@@ -271,6 +303,14 @@ func pathsCheck(pr PR, card Card) Check {
 // "DONE (with notes)": the line is a machine's word, and a card that has to
 // qualify it has not finished.
 func doneCheck(pr PR, card Card) Check {
+	// A pull request whose body has no line starting RESULT is not a
+	// harvested card -- a friend's hand-written branch, a landing receipt --
+	// and it has no DONE line to read. That is missing, not a failure: on the
+	// first posted run's window the rule read line 2 of nineteen such bodies
+	// and "failed" every one (a heading, a blank, a bullet).
+	if card.Path == "" && !hasResultLine(pr.Body) {
+		return Check{Missing, "the body has no line starting RESULT, so there is no DONE line to read (not a harvested card)"}
+	}
 	text := resultText(pr, card)
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	if len(lines) < 2 {
@@ -280,7 +320,7 @@ func doneCheck(pr PR, card Card) Check {
 	if got == "DONE" {
 		return Check{Yes, "RESULT line 2 is bare DONE"}
 	}
-	return Check{No, "RESULT line 2 is " + oneline.Field(oneline.Cap(got, 80)) + ", not bare DONE"}
+	return Check{No, "RESULT line 2 is \"" + oneline.Escape(oneline.Cap(got, 80)) + "\", not bare DONE"}
 }
 
 // filesClaimRE is the RESULT's `files:` claim. The value runs to the next
@@ -331,4 +371,29 @@ func claimsCheck(pr PR, card Card) Check {
 	}
 	return Check{No, fmt.Sprintf("%d of %d files the RESULT claims are not in the diff: %s",
 		len(absent), claimed, oneline.Field(strings.Join(absent, ",")))}
+}
+
+// isCell reports whether the pull request is a conformance cell: its paths were
+// inferred from a cell leg, or it changes a file under test/conformance/.
+func isCell(pr PR, card Card) bool {
+	if card.PathsFrom == "pr-body-cell" || card.PathsFrom == "pr-body-branch" {
+		return true
+	}
+	for _, f := range pr.Files {
+		if strings.HasPrefix(f, "test/conformance/") {
+			return true
+		}
+	}
+	return false
+}
+
+// hasResultLine reports whether any line of the body starts with RESULT (a
+// leading quote or backtick allowed: harvest has written both).
+func hasResultLine(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(strings.TrimSpace(line), "\"'`"), "RESULT") {
+			return true
+		}
+	}
+	return false
 }

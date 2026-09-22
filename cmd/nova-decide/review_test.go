@@ -76,13 +76,13 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 	code := run([]string{"review", "--repo", "mas-bandwidth/schema", "--pr", "1488",
 		"--gh", gh, "--replay", cellData(t, "jev-2026-09-22"), "--ledger-path", ledger, "--table"}, &out, &errb)
 	if code != 3 {
-		t.Fatalf("exit=%d stderr=%s stdout=%s (a HOLD exits 3)", code, errb.String(), out.String())
+		t.Fatalf("exit=%d stderr=%s stdout=%s (a BOUNCE exits 3)", code, errb.String(), out.String())
 	}
 	line := out.String()
-	if !strings.Contains(line, "DISPOSITION who=jev head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=HOLD score=6/10") {
+	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,score:6 model=jev-latest cost=$- explain=") {
 		t.Fatalf("stdout = %q", line)
 	}
-	if !strings.Contains(line, "checks=symbol:yes,paths:yes,done:yes,claims:no") {
+	if !strings.Contains(line, "checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,score:6") {
 		t.Fatalf("the four checks are not on the line: %q", line)
 	}
 	if strings.Contains(argv(t, log), "pr comment") {
@@ -102,7 +102,7 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.PR != 1488 || d.Verdict != "HOLD" || d.Score != 6 || d.Posted {
+	if d.PR != 1488 || d.Verdict != "BOUNCE" || d.Score != 6 || d.Posted {
 		t.Fatalf("ledger row = %+v", d)
 	}
 	if d.RawScore == 0 {
@@ -122,10 +122,10 @@ func TestReviewPostPostsExactlyOneComment(t *testing.T) {
 	if n := strings.Count(calls, "pr comment"); n != 1 {
 		t.Fatalf("posted %d comments, want exactly 1: %s", n, calls)
 	}
-	if !strings.Contains(calls, "DISPOSITION who=jev") {
+	if !strings.Contains(calls, "--body JEV head=") || strings.Contains(calls, "DISPOSITION") {
 		t.Fatalf("the comment does not carry the typed line: %s", calls)
 	}
-	if !strings.Contains(calls, "LANDS NOTHING") {
+	if !strings.Contains(calls, "lands nothing") {
 		t.Fatalf("the comment does not say it lands nothing: %s", calls)
 	}
 }
@@ -193,10 +193,10 @@ func TestReviewNoJevSpendsNothing(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit=%d stderr=%s", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "score=-/10") {
+	if !strings.Contains(out.String(), "score=- ") {
 		t.Fatalf("an unscored pass must not print a number: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "verdict=HOLD") {
+	if !strings.Contains(out.String(), "verdict=UNSURE") {
 		t.Fatalf("an unscored pass holds: %q", out.String())
 	}
 }
