@@ -35,7 +35,9 @@ import (
 //
 //   - the block starts at line 2 and ends at the first non-empty line that is not
 //     `KEY: value`, blank lines skipped, unknown keys read past (cardheader.go:63-76);
-//   - the key is `^[A-Z][A-Z-]*:` at column 0 and nowhere else (cardheader.go:45);
+//   - the key is one word and a colon at column 0 and nowhere else:
+//     `^[A-Za-z][A-Za-z0-9-]*:`, any case (#2605, and see THE BLOCK IS EVERY KEY LINE
+//     below for why the case-sensitive `^[A-Z][A-Z-]*:` this used to be was a defect);
 //   - `PATHS: none` declares no paths; otherwise the value is comma-separated
 //     (cardheader.go:82-88);
 //   - `TEST: none` is a declaration; otherwise the value is exactly two fields, the
@@ -91,8 +93,36 @@ func CardHeaderChecks() []string {
 // `paused` (SPEC-TOOLWORK.md eligibility rule 1's TRUST listing).
 type TrustState map[string]string
 
+// headerKeyRE is what makes a line a `KEY: value` line: one word, starting with a
+// letter, then letters, digits and hyphens, then a colon, at column 0. ANY CASE (#2605).
+//
+// THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. This was
+// `^([A-Z][A-Z-]*):`, and the two lines every card the darwin launchers stage MUST carry
+// are lower case: `~/rowan-working/rowan-tools/bin/launchers/*-native-darwin.sh:30-31`
+// read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
+// case-sensitive `sed`, and refuse to launch without both. So on every one of the 59
+// cards of the 2026-09-22 sprint set those two lines ENDED the header block, and
+// `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`, `DONE-WHEN:`,
+// `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- were outside the header the
+// gate reads. `bin/sprint-stage:37` refuses the whole stage on one such card, so the set
+// either did not stage or staged with a header the gate could not read.
+//
+// WIDENED, NOT ALLOWLISTED. An allowlist of those two names would have fixed today's two
+// cards and broken on the next launcher key; the rule the card writer can hold in one
+// sentence is "the header is the leading run of `word:` lines". The cost is a prose line
+// that happens to be one word and a colon at column 0 (`Note: ...`) no longer ending the
+// block -- which the negative control in the table test pins, alongside the prose line
+// that does.
+//
+// THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
+// widening what a typed key IS: docs/SPEC-TOOLWORK.md:700-713 (§5 rule 1) and
+// docs/WORKER-CARDS.md:38-51 write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
+// upper case and say nothing anywhere about case, so `paths:` is not `PATHS:` here and
+// the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
+// names; the day a spec line rules case-insensitive keys, this is the one place to say
+// so.
 var (
-	headerKeyRE  = regexp.MustCompile(`^([A-Z][A-Z-]*):\s*(.*)$`)
+	headerKeyRE  = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
 	goTestNameRE = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
 )
 
