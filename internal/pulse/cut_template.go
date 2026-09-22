@@ -10,7 +10,6 @@ import (
 
 var cardHeaderKeyRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*:`)
 
-
 // CutTemplateInput is everything needed to render a card template with dependencies.
 type CutTemplateInput struct {
 	Template  string

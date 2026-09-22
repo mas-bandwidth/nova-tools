@@ -338,4 +338,3 @@ func TestCutTemplateInsertsDependsOnWhenNoPathsOrTest(t *testing.T) {
 		t.Fatalf("ApplyDependsOn did not insert DEPENDS-ON at end of header block:\ngot:\n%s\nwant:\n%s", got, want)
 	}
 }
-
