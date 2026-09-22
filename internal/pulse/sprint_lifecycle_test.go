@@ -540,3 +540,30 @@ func TestMutation_LifecycleTeeth(t *testing.T) {
 		}
 	}
 }
+
+func TestSprintStop_StrictDiscoversLaunchedCardsByDefault(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	launchedDir := filepath.Join(dir, "launched")
+	if err := os.MkdirAll(launchedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(launchedDir, "card-001.md"), []byte("active\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = WriteSprintState(dir, StateRunning)
+
+	var out, errb bytes.Buffer
+	code := SprintStop(SprintStopInput{
+		Dir:    dir,
+		Strict: true,
+		Stdout: &out,
+		Stderr: &errb,
+	})
+	if code != 1 {
+		t.Fatalf("expected exit 1 when active card exists in <dir>/launched with Leases nil, got %d", code)
+	}
+	if !strings.Contains(errb.String(), "SPRINT STOP WORKING: 1 active leases remain") {
+		t.Fatalf("unexpected stderr: %s", errb.String())
+	}
+}

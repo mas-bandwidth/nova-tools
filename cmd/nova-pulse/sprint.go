@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -70,10 +72,21 @@ func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 		}
 	}
+	if len(roots) == 0 {
+		candidateRoots := filepath.Join(dir, "roots")
+		if info, err := os.Stat(candidateRoots); err == nil && info.IsDir() {
+			roots = append(roots, candidateRoots)
+		}
+	}
+
+	launched := strings.TrimSpace(*launchedFlag)
+	if launched == "" {
+		launched = filepath.Join(dir, "launched")
+	}
 
 	leaseChecker := &pulse.DirLeaseChecker{
 		Roots:    roots,
-		Launched: strings.TrimSpace(*launchedFlag),
+		Launched: launched,
 		Now:      func() time.Time { return now },
 	}
 

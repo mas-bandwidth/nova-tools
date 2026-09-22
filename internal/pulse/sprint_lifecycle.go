@@ -350,7 +350,25 @@ func (sm *StateMachine) Drain(pollInterval, timeout time.Duration, sleep func(ti
 	sm.state = StateDraining
 	sm.mu.Unlock()
 
-	if sm.leases == nil {
+	leases := sm.leases
+	if leases == nil && sm.dir != "" {
+		candidate := filepath.Join(sm.dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			leases = &DirLeaseChecker{
+				Launched: candidate,
+				Now:      sm.now,
+			}
+		}
+	} else if dlc, ok := leases.(*DirLeaseChecker); ok && dlc.Launched == "" && sm.dir != "" {
+		candidate := filepath.Join(sm.dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			dlcCopy := *dlc
+			dlcCopy.Launched = candidate
+			leases = &dlcCopy
+		}
+	}
+
+	if leases == nil {
 		return sm.completeDrain()
 	}
 
@@ -366,7 +384,7 @@ func (sm *StateMachine) Drain(pollInterval, timeout time.Duration, sleep func(ti
 
 	start := sm.now()
 	for {
-		active, err := sm.leases.ActiveLeases()
+		active, err := leases.ActiveLeases()
 		if err != nil {
 			return err
 		}
@@ -431,8 +449,25 @@ func (sm *StateMachine) Stop(reason string) (*TerminalReceipt, error) {
 	}
 
 	active := 0
-	if sm.leases != nil {
-		if a, err := sm.leases.ActiveLeases(); err == nil {
+	leases := sm.leases
+	if leases == nil && sm.dir != "" {
+		candidate := filepath.Join(sm.dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			leases = &DirLeaseChecker{
+				Launched: candidate,
+				Now:      sm.now,
+			}
+		}
+	} else if dlc, ok := leases.(*DirLeaseChecker); ok && dlc.Launched == "" && sm.dir != "" {
+		candidate := filepath.Join(sm.dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			dlcCopy := *dlc
+			dlcCopy.Launched = candidate
+			leases = &dlcCopy
+		}
+	}
+	if leases != nil {
+		if a, err := leases.ActiveLeases(); err == nil {
 			active = a
 		}
 	}
@@ -710,7 +745,27 @@ func SprintDrain(in SprintDrainInput) int {
 		nowFn = func() time.Time { return time.Now().UTC() }
 	}
 
-	if in.Leases == nil {
+	leases := in.Leases
+	if leases == nil {
+		candidate := filepath.Join(in.Dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			leases = &DirLeaseChecker{
+				Launched: candidate,
+				Now:      nowFn,
+			}
+		}
+	} else if dlc, ok := leases.(*DirLeaseChecker); ok {
+		if dlc.Launched == "" {
+			candidate := filepath.Join(in.Dir, "launched")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				dlcCopy := *dlc
+				dlcCopy.Launched = candidate
+				leases = &dlcCopy
+			}
+		}
+	}
+
+	if leases == nil {
 		fmt.Fprintf(in.Stdout, "SPRINT DRAIN OK: 0 active leases\n")
 		return 0
 	}
@@ -730,7 +785,7 @@ func SprintDrain(in SprintDrainInput) int {
 
 	start := nowFn()
 	for {
-		active, err := in.Leases.ActiveLeases()
+		active, err := leases.ActiveLeases()
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "SPRINT DRAIN ERROR: %v\n", err)
 			return 2
@@ -779,8 +834,28 @@ func SprintStop(in SprintStopInput) int {
 	}
 
 	active := 0
-	if in.Leases != nil {
-		a, err := in.Leases.ActiveLeases()
+	leases := in.Leases
+	if leases == nil {
+		candidate := filepath.Join(in.Dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			leases = &DirLeaseChecker{
+				Launched: candidate,
+				Now:      in.Now,
+			}
+		}
+	} else if dlc, ok := leases.(*DirLeaseChecker); ok {
+		if dlc.Launched == "" {
+			candidate := filepath.Join(in.Dir, "launched")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				dlcCopy := *dlc
+				dlcCopy.Launched = candidate
+				leases = &dlcCopy
+			}
+		}
+	}
+
+	if leases != nil {
+		a, err := leases.ActiveLeases()
 		if err != nil {
 			fmt.Fprintf(in.Stderr, "SPRINT STOP ERROR: %v\n", err)
 			return 2
@@ -856,8 +931,27 @@ func SprintStatus(in SprintStatusInput) int {
 	}
 
 	active := 0
-	if in.Leases != nil {
-		a, err := in.Leases.ActiveLeases()
+	leases := in.Leases
+	if leases == nil {
+		candidate := filepath.Join(in.Dir, "launched")
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			leases = &DirLeaseChecker{
+				Launched: candidate,
+			}
+		}
+	} else if dlc, ok := leases.(*DirLeaseChecker); ok {
+		if dlc.Launched == "" {
+			candidate := filepath.Join(in.Dir, "launched")
+			if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+				dlcCopy := *dlc
+				dlcCopy.Launched = candidate
+				leases = &dlcCopy
+			}
+		}
+	}
+
+	if leases != nil {
+		a, err := leases.ActiveLeases()
 		if err == nil {
 			active = a
 		}

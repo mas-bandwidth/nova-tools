@@ -266,3 +266,75 @@ func TestSprintCLI_Refusals(t *testing.T) {
 		t.Fatalf("expected exit 2 on drain from idle, got %d", code)
 	}
 }
+
+func TestSprintCLI_StopStrict_RefusesWhenRootsOmittedWithActiveLeases(t *testing.T) {
+	dir := t.TempDir()
+	launchedDir := filepath.Join(dir, "launched")
+	if err := os.MkdirAll(launchedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 21, 15, 0, 0, 0, time.UTC)
+
+	// Prep and run the sprint with --dir dir
+	if code := run([]string{"sprint", "prep", "--dir", dir}, io.Discard, io.Discard, now); code != 0 {
+		t.Fatalf("prep failed: code %d", code)
+	}
+	if code := run([]string{"sprint", "run", "--dir", dir}, io.Discard, io.Discard, now); code != 0 {
+		t.Fatalf("run failed: code %d", code)
+	}
+
+	// Active card lease exists in <dir>/launched
+	cardFile := filepath.Join(launchedDir, "card-101.md")
+	if err := os.WriteFile(cardFile, []byte("active card lease\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Negative control test: sprint stop --strict without --roots (and without --launched)
+	// MUST refuse exit 1 because the active card lease in <dir>/launched is detected by default.
+	var out, errb bytes.Buffer
+	code := run([]string{"sprint", "stop", "--dir", dir, "--strict"}, &out, &errb, now.Add(time.Minute))
+	if code != 1 {
+		t.Fatalf("expected exit 1 on strict stop when --roots is omitted with active card in <dir>/launched, got %d (err: %s)", code, errb.String())
+	}
+	want := "SPRINT STOP WORKING: 1 active leases remain"
+	if !strings.Contains(errb.String(), want) {
+		t.Fatalf("want stderr %q, got %q", want, errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, pulse.SprintEndFile)); !os.IsNotExist(err) {
+		t.Fatalf("SPRINT-END must not exist when stop was refused")
+	}
+
+	// Also verify that even if an empty --roots is explicitly given, omitting --launched
+	// still defaults to <dir>/launched and refuses exit 1.
+	out.Reset()
+	errb.Reset()
+	emptyRootsDir := t.TempDir()
+	code = run([]string{"sprint", "stop", "--dir", dir, "--strict", "--roots", emptyRootsDir}, &out, &errb, now.Add(time.Minute))
+	if code != 1 {
+		t.Fatalf("expected exit 1 on strict stop when --roots is given without --launched, got %d (err: %s)", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), want) {
+		t.Fatalf("want stderr %q, got %q", want, errb.String())
+	}
+
+	// Clean up card, then sprint stop without flags must succeed
+	if err := os.Remove(cardFile); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	code = run([]string{"sprint", "stop", "--dir", dir, "--strict"}, &out, &errb, now.Add(2*time.Minute))
+	if code != 0 {
+		t.Fatalf("strict stop should succeed after card removed, got %d (err: %s)", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "SPRINT-END") {
+		t.Fatalf("unexpected stop output: %s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, pulse.SprintEndFile)); err != nil {
+		t.Fatalf("missing SPRINT-END file after successful stop: %v", err)
+	}
+	st, _ := pulse.ReadSprintState(dir)
+	if st != pulse.StateStop {
+		t.Fatalf("want state stop, got %s", st)
+	}
+}
