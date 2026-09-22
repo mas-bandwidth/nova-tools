@@ -1,13 +1,14 @@
 package merge
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -202,45 +203,244 @@ func runUncapped(ctx context.Context, runner Runner, dir, name string, args ...s
 // never on disk, and only the three call sites host.go names reach it -- a known, small
 // set of hosted answers, not every subprocess this tool starts.
 //
-// A command that FAILS still reports only the LAST execOutputCap bytes of what it wrote:
-// the cap is not gone, it is narrowed to the one job it always really had, which is
-// keeping a runaway command's error report short enough to read and to hold. That is the
-// tail and not the prefix Run keeps, because the line a person reading a failure wants is
-// the one git or gh wrote last, not the one they wrote first.
+// "Uncapped" is not "unbounded": that was Stella's HOLD on #2663. The first cut here kept
+// every byte of stdout AND stderr in one growing bytes.Buffer for the whole life of the
+// command, and only trimmed to execOutputCap's tail after failure -- so a runaway or
+// hostile gh could still grow this process's memory without limit for as long as it kept
+// writing, the exact failure mode Run's bounded.Capture exists to refuse. Two bounds
+// replace that single after-the-fact trim, both maintained WHILE the command runs:
+//
+//   - uncappedStdoutCeiling is the hard ceiling on stdout, the one thing the three named
+//     parser calls (host.go: PR, comments, reviews) need whole. It is a named constant,
+//     not "no ceiling": #2663's own gate measured the largest paginated comments capture
+//     across today's PRs at 3.4 MB, and 64 MiB is comfortable headroom over that, not an
+//     unbounded allowance. Crossing it cancels the command (the same cancel-on-hit shape
+//     bounded.Capture already uses for Run) and returns CeilingExceededError -- no partial
+//     parse: a cut prefix of JSON is a syntax error, not a truncated answer, so nothing
+//     past the ceiling is ever handed to a caller as if it were the whole capture.
+//   - the ring is a fixed uncappedRingSize-byte circular buffer that stderr, and a mirror
+//     of stdout, are written into as they arrive. It never grows: writing past its
+//     capacity overwrites the oldest bytes it holds, so at any moment during capture it
+//     already holds exactly the diagnostic tail a failure would need, rather than being
+//     trimmed down to one after the fact. On any failure -- ordinary exit, ceiling, or
+//     timeout -- that tail is what the caller gets back, and CeilingExceededError also
+//     carries it directly so a caller that only inspects the error still sees it.
+//
+// Peak memory for one call is therefore bounded by uncappedStdoutCeiling plus
+// uncappedRingSize, however much the command actually writes or how long it runs.
 func (Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error) {
+	return runUncappedCapture(ctx, dir, name, uncappedStdoutCeiling, uncappedRingSize, args...)
+}
+
+// runUncappedCapture is RunUncapped's body with the ceiling and ring size taken as
+// arguments rather than the package constants. RunUncapped always calls it with
+// uncappedStdoutCeiling and uncappedRingSize; the tests call it directly with small
+// synthetic limits so the ceiling-exceeded path can be exercised deterministically,
+// through the real Exec/exec.Cmd machinery, without a fixture anywhere near 64 MiB.
+func runUncappedCapture(ctx context.Context, dir, name string, stdoutCeiling, ringSize int, args ...string) (string, error) {
 	if filepath.Base(name) == "git" {
 		args = NoBackgroundGit(args...)
 	}
-	var out bytes.Buffer
-	cmd := exec.CommandContext(ctx, name, args...)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	ring := newRingBuffer(ringSize)
+	stdout := newCeilingWriter(stdoutCeiling, cancel)
+
+	cmd := exec.CommandContext(runCtx, name, args...)
 	cmd.Dir = dir
-	cmd.Stdout = &out
-	cmd.Stderr = &out
+	// stdout feeds both: the ceiling writer, which is what a successful parse reads
+	// whole, and the ring, so a stdout-side failure still has a tail. stderr feeds only
+	// the ring -- git and gh write their own diagnostics there, and this tool has never
+	// needed to parse stderr whole.
+	cmd.Stdout = io.MultiWriter(stdout, ring)
+	cmd.Stderr = ring
 	runErr := cmd.Run()
 
+	// The ceiling takes priority over any other outcome: a stdout that crossed it was
+	// cancelled mid-write, so runErr is this cancellation's own artifact (an exec error
+	// or "signal: killed"), not the command's real verdict, and must not be returned as
+	// if it were.
+	if stdout.Over() {
+		tail := ring.String()
+		return tail, &CeilingExceededError{Name: name, Ceiling: stdoutCeiling, Tail: tail}
+	}
+
 	if runErr == nil && ctx.Err() == nil {
-		return out.String(), nil
+		return string(stdout.Bytes()), nil
 	}
 
 	// The command failed, or the parent's deadline expired: either way this is an error
-	// report, not the parsed answer, so it is held to execOutputCap's TAIL rather than
-	// kept whole.
-	tail := tailOf(out.Bytes(), execOutputCap)
+	// report, not the parsed answer, so the caller gets the ring's bounded tail rather
+	// than whatever of stdout the ceiling writer happened to keep.
+	tail := ring.String()
 	if ctx.Err() != nil {
 		return tail, fmt.Errorf("%s took longer than this run's --timeout allows: %w", name, ctx.Err())
 	}
 	return tail, runErr
 }
 
-// tailOf returns the last n bytes of b, marked when that cut them, so a long failure's
-// error report stays exactly as bounded as Run's has always been -- only which end of the
-// capture survives changes, from the prefix Run keeps to the tail a diagnosis is read
-// from.
-func tailOf(b []byte, n int) string {
-	if len(b) <= n {
-		return string(b)
+// uncappedStdoutCeiling is the hard bound on how much of a successful command's stdout
+// RunUncapped will hold in memory at once, in bytes. It exists so "uncapped" still means
+// something under a hostile or malformed forge answer: nova-tools #2663's gate measured
+// the largest paginated PR comments capture across today's open PRs at 3.4 MB, and 64 MiB
+// is roughly 19x that -- comfortable headroom for tomorrow's larger PR, not an absence of
+// a limit.
+const uncappedStdoutCeiling = 64 * 1024 * 1024
+
+// uncappedRingSize is the ring's fixed capacity: the same execOutputCap this file already
+// held every capture to before #2663, now spent on a bounded diagnostic tail that is
+// maintained DURING capture rather than trimmed from an unbounded buffer after the fact.
+const uncappedRingSize = execOutputCap
+
+// CeilingExceededError is RunUncapped's refusal when a command's stdout crosses
+// uncappedStdoutCeiling before the command could be read whole. The command is cancelled
+// the moment the ceiling is crossed (see RunUncapped), so nothing beyond it is ever
+// accumulated, and nothing partial is handed to a parser as though it were complete.
+type CeilingExceededError struct {
+	Name    string // the command name, e.g. "gh"
+	Ceiling int    // uncappedStdoutCeiling, named so the message and a caller agree
+	Tail    string // the ring's diagnostic tail at the moment the ceiling was crossed
+}
+
+func (e *CeilingExceededError) Error() string {
+	return fmt.Sprintf("%s exceeded the %d-byte uncapped output ceiling", e.Name, e.Ceiling)
+}
+
+// AsCeilingExceededError reports whether err is RunUncapped's ceiling refusal.
+func AsCeilingExceededError(err error) (*CeilingExceededError, bool) {
+	var c *CeilingExceededError
+	ok := errors.As(err, &c)
+	return c, ok
+}
+
+// ceilingWriter retains at most limit bytes of what is written to it and calls cancel
+// (once) the first time cumulative writes cross that limit. Unlike bounded.Capture, bytes
+// past the limit are counted but never appended: the backing buffer's own allocation
+// never exceeds limit, whatever multiple of it the writer is handed, so an oversize
+// answer costs this process exactly limit bytes and not one write more.
+type ceilingWriter struct {
+	mu      sync.Mutex
+	limit   int
+	buf     []byte
+	written int64
+	cancel  context.CancelFunc
+	hit     bool
+}
+
+func newCeilingWriter(limit int, cancel context.CancelFunc) *ceilingWriter {
+	return &ceilingWriter{limit: limit, cancel: cancel}
+}
+
+func (w *ceilingWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.written += int64(len(p))
+	if room := w.limit - len(w.buf); room > 0 {
+		if room > len(p) {
+			room = len(p)
+		}
+		w.buf = append(w.buf, p[:room]...)
 	}
-	return fmt.Sprintf("[output truncated: showing the last %d bytes]\n", n) + string(b[len(b)-n:])
+	if w.written > int64(w.limit) && !w.hit {
+		w.hit = true
+		if w.cancel != nil {
+			w.cancel()
+		}
+	}
+	return len(p), nil
+}
+
+// Over reports whether cumulative writes have crossed limit -- not merely reached it, so
+// a command whose stdout is exactly limit bytes and then exits clean is not refused for
+// output it never actually exceeded.
+func (w *ceilingWriter) Over() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.written > int64(w.limit)
+}
+
+// Bytes returns what was retained: everything, when the command stayed under limit.
+func (w *ceilingWriter) Bytes() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.buf...)
+}
+
+// ringBuffer is a fixed-capacity circular byte buffer: it always holds at most its
+// capacity's worth of bytes, the MOST RECENTLY written ones, in one backing array that is
+// allocated once and never grows. It is what makes a bounded diagnostic tail possible
+// DURING capture rather than as a trim applied after unbounded buffering -- Stella's HOLD
+// on #2663's first cut, which kept everything and trimmed to a tail only once the command
+// had already finished writing.
+type ringBuffer struct {
+	mu      sync.Mutex
+	data    []byte // len(data) == cap always; the backing array, never resized
+	pos     int    // index the next byte will be written to
+	filled  bool   // whether data has ever been fully overwritten at least once
+	written int64  // total bytes ever written, for Truncated
+}
+
+func newRingBuffer(capacity int) *ringBuffer {
+	return &ringBuffer{data: make([]byte, capacity)}
+}
+
+func (r *ringBuffer) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := len(p)
+	r.written += int64(n)
+	capacity := len(r.data)
+	if capacity == 0 {
+		return n, nil
+	}
+	if n >= capacity {
+		// p alone is at least a full ring: only its own last `capacity` bytes can still
+		// be live once this write finishes, so copy those and reset the write position
+		// rather than writing byte by byte through a full wrap.
+		copy(r.data, p[n-capacity:])
+		r.pos = 0
+		r.filled = true
+		return n, nil
+	}
+	end := r.pos + n
+	if end <= capacity {
+		copy(r.data[r.pos:end], p)
+		r.pos = end % capacity
+		if end == capacity {
+			r.filled = true
+		}
+	} else {
+		first := capacity - r.pos
+		copy(r.data[r.pos:], p[:first])
+		copy(r.data[:end-capacity], p[first:])
+		r.pos = end - capacity
+		r.filled = true
+	}
+	return n, nil
+}
+
+// Bytes returns the last min(written, capacity) bytes, oldest first.
+func (r *ringBuffer) Bytes() []byte {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.filled {
+		return append([]byte(nil), r.data[:r.pos]...)
+	}
+	out := make([]byte, len(r.data))
+	copy(out, r.data[r.pos:])
+	copy(out[len(r.data)-r.pos:], r.data[:r.pos])
+	return out
+}
+
+func (r *ringBuffer) String() string { return string(r.Bytes()) }
+
+// Truncated reports whether more was written than the ring could hold, i.e. whether
+// Bytes is a tail of a longer stream rather than the whole of it.
+func (r *ringBuffer) Truncated() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.written > int64(len(r.data))
 }
 
 // Git runs git in one directory under one timeout, through the guard.
