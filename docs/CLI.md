@@ -1112,6 +1112,48 @@ FRIEND rowan awake age=500 source=bus-beat
 AWAKE OK friends=4 awake=2 asleep=1 unknown=1 window=300
 ```
 
+And two that cost nothing at all. `nova-wake beat --as <name> --store <host:port>`
+is the process a friend's window starts once at startup and forgets: every
+`--every` (default 30s) it writes `friend:<name> = <RFC3339 utc>` with a
+`--ttl` (default 90s) on the fleet store, and `friend:<name>:last` with no TTL
+beside it. It reads nothing, prints one line and then nothing, and **no model
+runs on either side** — the cost of presence has to be zero or the heartbeat is
+the first thing dropped under load. A window that exits, runs out of credit or
+is killed simply stops writing, and the key lapses within the TTL: there is no
+shutdown hook to forget to run, which is the whole point.
+
+`nova-wake presence --store <host:port> --bus <dir>` reads those keys back and
+prints one line for the swarm table:
+
+```
+$ nova-wake presence --store 100.115.99.19:6380 --bus ./bus
+friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
+```
+
+`up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
+with the age of the last beat and its clock time, both from the untimed key;
+`none` is a friend who has never beaten. `AWAY` is the only word in capitals
+because it is the only one that changes what the reader does next. The roster is the bus's —
+`--bus <dir>` reads its `participants.json`, `--participants <file>` names that
+file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
+Rowan, and there is no built-in list, because a copy of a roster is the thing
+that goes stale. A store that cannot be read is a refusal and exit 2, never an
+empty line: four friends reported away is a fact, and four friends not reported
+at all reads as good news.
+
+The password is never a flag, a file this tool opens or a word in its output.
+It reaches `beat` as `NOVA_REDIS_BENCH_PASSWORD` through
+`nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`, exactly the way
+`bench-row` hands it to `redis-cli`, and the ACL user it authenticates as
+(`--user`, default `bench`) holds `~friend:*` and nothing wider. The startup
+line each friend adds to their own window is in
+[docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
+
+This is the measured half of `awake`: `awake` reads presence out of the bus
+checkout, which is a git commit per beat and lags by a fetch, and `presence`
+reads it out of the store, which is a `SET` per beat and lags by nothing. Both
+report; neither decides. Issue #2610.
+
 ### First run
 
 Point it at a directory holding `RESULT.md` files and give it a state file of
