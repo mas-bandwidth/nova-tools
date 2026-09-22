@@ -43,12 +43,12 @@ const SourceSkipped = "skipped"
 
 // Entry is one row of the escalation log.
 type Entry struct {
-	Time          string  `json:"time"`
-	Unit          string  `json:"unit"`
-	Kind          string  `json:"kind"`
-	Evidence      Unit    `json:"evidence"`
-	RungTried     string  `json:"rung_tried"`
-	Height        int     `json:"height"`
+	Time      string `json:"time"`
+	Unit      string `json:"unit"`
+	Kind      string `json:"kind"`
+	Evidence  Unit   `json:"evidence"`
+	RungTried string `json:"rung_tried"`
+	Height    int    `json:"height"`
 	// Confidence and Floor are ABSENT rather than zero where the row did not
 	// carry them, by the same presence rule as the counters below: a row read
 	// back from a log line that omitted either keeps it nil, and the decide
@@ -56,14 +56,14 @@ type Entry struct {
 	// 0 nobody measured (Stella, HOLD 7 on #2628).
 	Confidence    *float64 `json:"confidence,omitempty"`
 	Floor         *float64 `json:"floor,omitempty"`
-	SteppedUp     bool    `json:"stepped_up"`
-	Escalated     bool    `json:"escalated"`
-	Designated    bool    `json:"designated,omitempty"`
-	Source        string  `json:"source"`
-	RowanPick     string  `json:"rowan_pick"`
-	Reason        string  `json:"reason,omitempty"`
-	Outcome       string  `json:"outcome,omitempty"`
-	RungSucceeded string  `json:"rung_succeeded,omitempty"`
+	SteppedUp     bool     `json:"stepped_up"`
+	Escalated     bool     `json:"escalated"`
+	Designated    bool     `json:"designated,omitempty"`
+	Source        string   `json:"source"`
+	RowanPick     string   `json:"rowan_pick"`
+	Reason        string   `json:"reason,omitempty"`
+	Outcome       string   `json:"outcome,omitempty"`
+	RungSucceeded string   `json:"rung_succeeded,omitempty"`
 
 	// Wait is the typed action beside the rung: "-" for a decision the caller
 	// may act on, awaiting_termination for one it may not.
