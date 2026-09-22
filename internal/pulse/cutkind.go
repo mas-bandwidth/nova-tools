@@ -9,7 +9,7 @@ package pulse
 // number comes only from the state file under the lock (number.go), and there is no
 // `--number` flag to pass one in.
 //
-// Six kinds, six line-1 shapes, and line 1 is the contract the harvest matches:
+// Seven kinds, seven line-1 shapes, and line 1 is the contract the harvest matches:
 //
 //	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
 //	fix     RESULT: CARD-<n> sha=<sha12> <repo> #<issue> fixed with its red test first: <title>
@@ -17,6 +17,7 @@ package pulse
 //	spec    RESULT: CARD-<n> <repo> spec: <title>
 //	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
 //	guard   RESULT: CARD-<n> guard of <repo> at <head>
+//	report  RESULT: CARD-<n> report of <repo>
 //
 // `cut` without `--kind` is the pool-driven cutter in cut.go and is untouched by any of this.
 
@@ -32,7 +33,7 @@ import (
 )
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard"}
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "report"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
@@ -112,7 +113,7 @@ func cutKindLane(kind string, n int, body string) lanes.Card {
 // cutKindSteps is the step budget each kind may spend, the number the lane
 // ordering compares.
 func cutKindSteps(kind string) int {
-	if kind == "read" {
+	if textKinds[kind] {
 		return 8
 	}
 	return 20
@@ -209,6 +210,9 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "guard":
 		fmt.Fprintf(&b, "RESULT: CARD-%d guard of %s at %s\n", n, repo, oneline.Field(in.Head))
 		fmt.Fprintf(&b, "SOURCE: %s@%s\n", in.Repo, oneline.Field(in.Head))
+	case "report":
+		fmt.Fprintf(&b, "RESULT: CARD-%d report of %s\n", n, repo)
+		fmt.Fprintf(&b, "SOURCE: %s\n", in.Repo)
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
@@ -248,6 +252,10 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 		return fmt.Sprintf(rebaseSteps,
 			rebasePreamble, in.Base, in.Branch, in.Branch, in.Branch, in.Base,
 			in.Base, in.Base, in.Base, in.Base, in.Branch, in.Base)
+	case "report":
+		return fmt.Sprintf(`Read and report on %s. Do not run go build, go test or any toolchain; read and write only.
+Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then the report.
+`, in.Repo)
 	case "guard":
 		return fmt.Sprintf(`The guard verdict is COMPUTED, never judged. Do not write GUARDED or UNGUARDED from reading the code.
 The model only picks which packages to run. Then:

@@ -168,6 +168,38 @@ func TestCutKindReplayAndSpec(t *testing.T) {
 	}
 }
 
+// cut --kind report writes a card. A nonsense kind is still not one of the kinds.
+func TestCutKindAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "report", Repo: "mas-bandwidth/nova-tools", Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("KIND report is a kind this cutter accepts: exit %d, stderr=%s", code, errs)
+	}
+	if !strings.Contains(line, "kind=report") {
+		t.Errorf("the one line = %q", line)
+	}
+	if got := strings.SplitN(card, "\n", 2)[0]; got != "RESULT: CARD-1 report of nova-tools" {
+		t.Errorf("line 1 = %q", got)
+	}
+	if !strings.Contains(card, "Do not run go build") {
+		t.Errorf("a report card is text-only and must say so:\n%s", card)
+	}
+
+	code, _, errs, card = cutKind(t, CutKindInput{
+		Kind: "not-a-real-kind", Repo: "mas-bandwidth/nova-tools",
+		Out: filepath.Join(dir, "nope"), Queue: queue,
+	})
+	if code != 2 || !strings.Contains(errs, "CUT REFUSED") || !strings.Contains(errs, "not-a-real-kind") {
+		t.Fatalf("a nonsense kind is refused: exit %d stderr=%q", code, errs)
+	}
+	if card != "" {
+		t.Fatalf("a refused kind wrote a card:\n%s", card)
+	}
+}
+
 // every refusal names its remedy, and an unknown kind is never guessed at.
 func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 	dir := t.TempDir()
