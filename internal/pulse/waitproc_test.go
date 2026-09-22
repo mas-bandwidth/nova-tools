@@ -97,6 +97,64 @@ func TestProcessGoneIgnoresTheCallerShellCarryingThePattern(t *testing.T) {
 	}
 }
 
+// oldWholeLineMatch is the pgrep -f shape this verb replaces: a substring match against the
+// WHOLE command line, not just argv[0] and argv[1]. It exists only as the control below, to
+// prove a row is being kept out by WaitLiveMatches and not merely absent from the fixture by
+// construction.
+func oldWholeLineMatch(p WaitProc, pat string) bool {
+	return strings.Contains(strings.Join(p.Args, " "), pat)
+}
+
+// TestProcessGoneOldWholeLineMatchWouldHaveCountedDescendantAndAncestor is Johnny's HOLD on
+// PR #2616 (comment 5780888670): the two tests above did not actually show either bug,
+// because the descendant's argv was a different binary rather than a COPY of the waiter's
+// own argv, and the ancestor's pattern sat in argv[1] as a script name rather than a later
+// argument, which WaitMatchesPattern never reads. Here the descendant carries the waiter's
+// own argv verbatim -- the shape bash gives a forked pipeline copy -- and the ancestor's
+// pattern is argv[3], past where WaitMatchesPattern reads. A whole-line match, the pgrep -f
+// shape bin/wait-for used, counts both rows live; WaitLiveMatches must count neither.
+func TestProcessGoneOldWholeLineMatchWouldHaveCountedDescendantAndAncestor(t *testing.T) {
+	t.Parallel()
+	const self = 700
+	const waiterArgv = "/usr/local/bin/nova-pulse wait --until process-gone harvest-priority"
+	procs := table(
+		"1 0 /sbin/launchd",
+		// the ancestor: one level up, a shell invoking the waiter via `-c`, so the
+		// pattern lands in argv[3] -- past argv[1] -- never in the script-name position.
+		"650 1 /bin/bash -c wait-for-helper harvest-priority",
+		fmt.Sprintf("%d 650 %s", self, waiterArgv),
+		// the descendant: NOT a different binary -- the waiter's own argv, copied whole,
+		// exactly as a forked pipeline stage carries it.
+		fmt.Sprintf("701 %d %s", self, waiterArgv),
+	)
+
+	var ancestor, descendant WaitProc
+	for _, p := range procs {
+		switch p.Pid {
+		case 650:
+			ancestor = p
+		case 701:
+			descendant = p
+		}
+	}
+	if !oldWholeLineMatch(ancestor, "harvest-priority") {
+		t.Fatalf("fixture bug: the ancestor's later argument must contain the pattern on the whole line: %v", ancestor)
+	}
+	if !oldWholeLineMatch(descendant, "harvest-priority") {
+		t.Fatalf("fixture bug: the descendant's copied argv must contain the pattern on the whole line: %v", descendant)
+	}
+
+	live := WaitLiveMatches(procs, "harvest-priority", self)
+	for _, p := range live {
+		if p.Pid == ancestor.Pid {
+			t.Fatalf("WaitLiveMatches counted the ancestor whose pattern sits past argv[1]; a whole-line match would have too: %v", live)
+		}
+		if p.Pid == descendant.Pid {
+			t.Fatalf("WaitLiveMatches counted the descendant carrying the waiter's own argv; a whole-line match would have too: %v", live)
+		}
+	}
+}
+
 // TestProcessGoneNeverMatchesAnArgumentPastArgv1 is the rule that makes both bugs
 // structurally impossible rather than only excluded: the pattern is read from argv[0] and
 // argv[1] and nowhere else, so a process that merely NAMES the pattern in a later argument
