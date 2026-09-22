@@ -102,11 +102,15 @@ it a directory of the batch's own.
 THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
 runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
 is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
-that goes green here is a batch that ran what CI runs. integration-4 went green under a
-plain "go test ./..." and three CI legs then failed. The one thing not mirrored is CI's
-fair share of the machine, which is the machine's own fact and not a number this tool may
-write down: pass --gomaxprocs <n> on a bench that is also running CI, and the gate takes
-that many cores instead of all of them.
+that goes green here is a batch that ran what CI runs. The test step writes that whole
+stream to <root>/test-<round>.jsonl before it is condensed. Round is 1 the first time
+that root keeps one and the next free integer after that, so a re-run does not erase the
+stream a red left behind; the directory rebuilt each run is <root>/<name>, and the stream
+is not inside it. A red test step's reason begins with stream=<that path>. integration-4
+went green under a plain "go test ./..." and three CI legs then failed. The one thing not
+mirrored is CI's fair share of the machine, which is the machine's own fact and not a
+number this tool may write down: pass --gomaxprocs <n> on a bench that is also running
+CI, and the gate takes that many cores instead of all of them.
 
 land IS THE ONE ENTRANCE TO THE MERGE QUEUE (Glenn, 2026-09-18: nothing reaches the dev
 merge queue but a batch). It reads the pull request back from the forge and enqueues it AT
