@@ -919,7 +919,9 @@ micro-dollar ticks — the unit `usd=` holds — folded into the model's `usd=`
 on the day's `TOKENS AVG` lines (rule 20's amendment: the cost is "from the
 usage `usd` column or a cost tick the source reported"); a lexeme that is
 not a non-negative integer is an absence, and `usd=` is `0` where no source
-reported one.
+reported one. The flag names that one file. A path that is not there is
+`TOKENS UNREADABLE` saying the file is not there and that a session store is
+not scanned; a directory is not walked for `usage.json` files.
 
 ### `--bus <dir>`: friends' self-reports
 

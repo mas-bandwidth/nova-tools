@@ -3,7 +3,9 @@ package tokens
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,7 +103,7 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 		return s
 	}
 
-	raw, err := readSource(path)
+	raw, err := readProviderSource(kind, path)
 	if err != nil {
 		s.unreadable(path, err.Error())
 		return s
@@ -253,6 +255,61 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 		s.Stream = append(s.Stream, m)
 	}
 	return s
+}
+
+// XaiUsageMissingError is the refusal when --provider xai names a path that is
+// not there. The path is the one the flag gave. No other path is opened.
+type XaiUsageMissingError struct {
+	Path string
+}
+
+func (e *XaiUsageMissingError) Error() string {
+	return "the file is not there; --provider xai wants one usage.json path and does not scan a session store"
+}
+
+func (e *XaiUsageMissingError) Unwrap() error { return os.ErrNotExist }
+
+// XaiUsageNotFileError is the refusal when --provider xai names something other
+// than one regular file. A directory is not walked for usage.json files.
+type XaiUsageNotFileError struct {
+	Path string
+}
+
+func (e *XaiUsageNotFileError) Error() string {
+	return "the path is not one file; --provider xai wants one usage.json path and does not scan a directory"
+}
+
+// ReadXaiUsageFile reads the one path --provider xai was given. A missing path
+// is *XaiUsageMissingError. A directory is *XaiUsageNotFileError.
+func ReadXaiUsageFile(path string) ([]byte, error) {
+	return readXaiUsageFile(path)
+}
+
+func readProviderSource(kind, path string) ([]byte, error) {
+	if kind == "xai" {
+		return readXaiUsageFile(path)
+	}
+	return readSource(path)
+}
+
+// readXaiUsageFile opens one path. It does not walk that path, and it does not
+// look under a session store for another usage.json.
+func readXaiUsageFile(path string) ([]byte, error) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, &XaiUsageMissingError{Path: path}
+		}
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, &XaiUsageNotFileError{Path: path}
+	}
+	raw, err := readSource(path)
+	if err != nil && errors.Is(err, os.ErrNotExist) {
+		return nil, &XaiUsageMissingError{Path: path}
+	}
+	return raw, err
 }
 
 // xaiJSONColumns maps the grok usage JSON's camelCase turn fields to the five token types
