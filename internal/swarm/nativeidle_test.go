@@ -14,9 +14,9 @@ import (
 // this since issue #593; `native` -- the verb every card on every bench runs through -- had
 // no watch at all.
 
-func TestDefaultNativeIdleEndsABodyStallUnderNinetySeconds(t *testing.T) {
-	if DefaultNativeIdle <= 0 || DefaultNativeIdle >= 90*time.Second {
-		t.Fatalf("native idle is %s, want a body stall ended under 90s", DefaultNativeIdle)
+func TestDefaultNativeIdleIsTheBatchWindowNotAProviderDeadline(t *testing.T) {
+	if DefaultNativeIdle != 300*time.Second {
+		t.Fatalf("native idle is %s, want the same 300s window as batch", DefaultNativeIdle)
 	}
 }
 
