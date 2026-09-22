@@ -1608,8 +1608,9 @@ CUT REFUSED: --repo <path> is not a directory (name the clone every git call run
 `cut --kind fix` pages every open PR on that `--repo`, then recently merged
 PRs as the seven-day search set (`merged:>=YYYY-MM-DD`) until a short page,
 before it writes a card. It does not stop from one row's `mergedAt`. A PR that already
-names the issue — `Fixes #N` / `Closes #N` / `Resolves #N`, the title, or the
-head branch — is refused, exit 2, no card:
+names the issue — a closing reference (`Fixes #N` / `Closes #N` / `Resolves #N`)
+in the title or body, `#N` in the title, or the head branch — is refused,
+exit 2, no card. A bare `#N` in the body is not that name:
 
 ```
 CUT REFUSED: <open|merged> PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)

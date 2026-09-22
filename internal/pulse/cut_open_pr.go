@@ -115,6 +115,11 @@ var closingIssueRef = regexp.MustCompile(`(?i)\b(close[sd]?|fix(?:e[sd])?|resolv
 // longer number.
 var branchIssueRef = regexp.MustCompile(`(^|[-/_])([0-9]+)([-/_]|$)`)
 
+// howPRNamesIssue reports how a PR carries issue, or "" when it does not.
+// A closing reference (Fixes/Closes/Resolves #N, any common tense) in the
+// title or the body carries it. So does a bare #N in the title, and the
+// issue number as its own token on the head branch. A bare #N in the body
+// is a mention ("see also #N"), not proof the PR carries the fix.
 func howPRNamesIssue(title, body, branch string, issue int) string {
 	if issue < 1 {
 		return ""
@@ -128,9 +133,6 @@ func howPRNamesIssue(title, body, branch string, issue int) string {
 	hash := "#" + strconv.Itoa(issue)
 	if hasHashIssue(title, issue) {
 		return "title " + hash
-	}
-	if hasHashIssue(body, issue) {
-		return "body " + hash
 	}
 	if branchHasIssue(branch, issue) {
 		return "branch=" + branch

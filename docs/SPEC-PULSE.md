@@ -1269,9 +1269,10 @@ said `Closes #1649` — then pages recently merged PRs as the seven-day
 search set (`merged:>=YYYY-MM-DD`) until a short page. It does not stop
 from one row's `mergedAt`: `gh pr list --state merged` is createdAt
 descending, so merge times are not monotonic. It matches the issue on
-`Fixes #N` / `Closes #N` / `Resolves #N` in
-title or body, `#N` in the title or body, or the issue number as a path token
-of the head branch. A match is exit 2, no card:
+a closing reference (`Fixes #N` / `Closes #N` / `Resolves #N`, any common
+tense) in the title or body, on `#N` in the title, or on the issue number
+as a path token of the head branch. A bare mention in the body (`see also #N`)
+is not a match. A match is exit 2, no card:
 
 ```
 CUT REFUSED: open PR <n> already carries #<issue> via <how> (do not cut a second card for work a PR already carries)
