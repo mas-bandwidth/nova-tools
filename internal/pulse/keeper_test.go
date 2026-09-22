@@ -453,3 +453,171 @@ func TestKeeperMutationTestWithTeeth(t *testing.T) {
 		t.Fatalf("mutation with diverged base must NOT exit 0 in strict mode (teeth failure)")
 	}
 }
+
+// TestDefaultResultFolderLeavesActiveCardWithoutResultInLaunched verifies that an active
+// card still running in launched/ (and mentioning clean, defect, skip in its prompt/body)
+// is NOT folded or moved to done/failed when RESULT.md / .result is absent.
+func TestDefaultResultFolderLeavesActiveCardWithoutResultInLaunched(t *testing.T) {
+	qDir := t.TempDir()
+	launchedDir := filepath.Join(qDir, "launched")
+	resultsDir := filepath.Join(qDir, "results")
+	if err := os.MkdirAll(launchedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(resultsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. An active card with text containing clean/defect/skip/pass, but NO result file.
+	activeCard := "active-card.md"
+	activeBody := "# Active Card\nEnsure code is clean, check defect rate, do not skip tests, expect pass.\n"
+	if err := os.WriteFile(filepath.Join(launchedDir, activeCard), []byte(activeBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. A finished card with an actual RESULT.md file.
+	finishedCard := "finished-card.md"
+	if err := os.WriteFile(filepath.Join(launchedDir, finishedCard), []byte("# Finished Card\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(resultsDir, finishedCard), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(resultsDir, finishedCard, "RESULT.md"), []byte("RESULT clean commit=abc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	summary, err := defaultResultFolder(qDir, "")
+	if err != nil {
+		t.Fatalf("defaultResultFolder failed: %v", err)
+	}
+
+	// Only finished-card should have been folded
+	if summary.Total != 1 {
+		t.Errorf("total folded = %d, want 1", summary.Total)
+	}
+	if summary.Clean != 1 {
+		t.Errorf("clean folded = %d, want 1", summary.Clean)
+	}
+
+	// Finished card must be moved to done/
+	if _, err := os.Stat(filepath.Join(qDir, "done", finishedCard)); err != nil {
+		t.Errorf("finished card not found in done/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(launchedDir, finishedCard)); !os.IsNotExist(err) {
+		t.Errorf("finished card still exists in launched/")
+	}
+
+	// Active card must REMAIN in launched/ and NOT be in done/ or failed/
+	if _, err := os.Stat(filepath.Join(launchedDir, activeCard)); err != nil {
+		t.Errorf("active card missing from launched/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(qDir, "done", activeCard)); !os.IsNotExist(err) {
+		t.Errorf("active card was improperly moved to done/")
+	}
+	if _, err := os.Stat(filepath.Join(qDir, "failed", activeCard)); !os.IsNotExist(err) {
+		t.Errorf("active card was improperly moved to failed/")
+	}
+}
+
+// TestFleetKeeperPropagatesFolderAndBaseErrors tests that Folder or BaseChecker errors
+// cause FleetKeeper to set verdict="ATTENTION_NEEDED", log the error in decisions, and exit 1.
+func TestFleetKeeperPropagatesFolderAndBaseErrors(t *testing.T) {
+	qDir := t.TempDir()
+	now := time.Date(2026, 9, 21, 16, 0, 0, 0, time.UTC)
+
+	// Case 1: Folder returns an error
+	{
+		var stdout, stderr bytes.Buffer
+		code := FleetKeeper(FleetKeeperInput{
+			Queue:  qDir,
+			Strict: false, // Must exit 1 even when strict=false
+			Stdout: &stdout,
+			Stderr: &stderr,
+			Now:    func() time.Time { return now },
+			LoopChecker: func(loops []string) []LoopStatus {
+				return []LoopStatus{{Name: "dealer", Alive: true, PID: 101}}
+			},
+			BaseChecker: func(repo, base string) (MergeBaseStatus, error) {
+				return MergeBaseStatus{Status: "aligned"}, nil
+			},
+			Folder: func(queue, roots string) (FoldSummary, error) {
+				return FoldSummary{}, os.ErrPermission
+			},
+		})
+		if code != 1 {
+			t.Fatalf("folder error exit = %d, want 1", code)
+		}
+
+		receiptPath := filepath.Join(qDir, "wake", "2026-09-21T16Z.receipt")
+		data, err := os.ReadFile(receiptPath)
+		if err != nil {
+			t.Fatalf("receipt not written on folder error: %v", err)
+		}
+		receipt, err := ParseKeeperReceipt(data)
+		if err != nil {
+			t.Fatalf("ParseKeeperReceipt failed: %v", err)
+		}
+		if receipt.Verdict != "ATTENTION_NEEDED" {
+			t.Errorf("receipt verdict = %q, want ATTENTION_NEEDED", receipt.Verdict)
+		}
+		foundFoldErr := false
+		for _, d := range receipt.Decisions {
+			if strings.Contains(d, "FOLD ERROR:") {
+				foundFoldErr = true
+				break
+			}
+		}
+		if !foundFoldErr {
+			t.Errorf("decisions do not contain FOLD ERROR: %v", receipt.Decisions)
+		}
+	}
+
+	// Case 2: BaseChecker returns an error
+	{
+		var stdout, stderr bytes.Buffer
+		now2 := time.Date(2026, 9, 21, 17, 0, 0, 0, time.UTC)
+		code := FleetKeeper(FleetKeeperInput{
+			Queue:  qDir,
+			Strict: false, // Must exit 1 even when strict=false
+			Stdout: &stdout,
+			Stderr: &stderr,
+			Now:    func() time.Time { return now2 },
+			LoopChecker: func(loops []string) []LoopStatus {
+				return []LoopStatus{{Name: "dealer", Alive: true, PID: 101}}
+			},
+			BaseChecker: func(repo, base string) (MergeBaseStatus, error) {
+				return MergeBaseStatus{Repo: repo, Base: base, Status: "error"}, os.ErrInvalid
+			},
+			Folder: func(queue, roots string) (FoldSummary, error) {
+				return FoldSummary{}, nil
+			},
+		})
+		if code != 1 {
+			t.Fatalf("base checker error exit = %d, want 1", code)
+		}
+
+		receiptPath := filepath.Join(qDir, "wake", "2026-09-21T17Z.receipt")
+		data, err := os.ReadFile(receiptPath)
+		if err != nil {
+			t.Fatalf("receipt not written on base checker error: %v", err)
+		}
+		receipt, err := ParseKeeperReceipt(data)
+		if err != nil {
+			t.Fatalf("ParseKeeperReceipt failed: %v", err)
+		}
+		if receipt.Verdict != "ATTENTION_NEEDED" {
+			t.Errorf("receipt verdict = %q, want ATTENTION_NEEDED", receipt.Verdict)
+		}
+		foundBaseErr := false
+		for _, d := range receipt.Decisions {
+			if strings.Contains(d, "BASE ERROR:") {
+				foundBaseErr = true
+				break
+			}
+		}
+		if !foundBaseErr {
+			t.Errorf("decisions do not contain BASE ERROR: %v", receipt.Decisions)
+		}
+	}
+}

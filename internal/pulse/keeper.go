@@ -125,14 +125,14 @@ func FleetKeeper(in FleetKeeperInput) int {
 	if folder == nil {
 		folder = defaultResultFolder
 	}
-	folds, _ := folder(in.Queue, in.Roots)
+	folds, foldErr := folder(in.Queue, in.Roots)
 
 	// 2. Check merge bases.
 	baseChecker := in.BaseChecker
 	if baseChecker == nil {
 		baseChecker = defaultBaseChecker
 	}
-	baseStatus, _ := baseChecker(in.Repo, in.Base)
+	baseStatus, baseErr := baseChecker(in.Repo, in.Base)
 
 	// 3. Check status of durable loops.
 	loopChecker := in.LoopChecker
@@ -143,11 +143,22 @@ func FleetKeeper(in FleetKeeperInput) int {
 
 	// 4. Formulate decisions.
 	var decisions []string
-	decisions = append(decisions, fmt.Sprintf("FOLD: %d results folded (%d clean, %d defect, %d failed, %d skipped)",
-		folds.Total, folds.Clean, folds.Defect, folds.Failed, folds.Skipped))
+	if foldErr != nil {
+		decisions = append(decisions, fmt.Sprintf("FOLD ERROR: %v", foldErr))
+	} else {
+		decisions = append(decisions, fmt.Sprintf("FOLD: %d results folded (%d clean, %d defect, %d failed, %d skipped)",
+			folds.Total, folds.Clean, folds.Defect, folds.Failed, folds.Skipped))
+	}
 
-	decisions = append(decisions, fmt.Sprintf("BASE: %s against %s (merge-base=%s head=%s base=%s)",
-		baseStatus.Status, baseStatus.Base, baseStatus.MergeBaseSHA, baseStatus.HeadSHA, baseStatus.BaseSHA))
+	if baseErr != nil {
+		decisions = append(decisions, fmt.Sprintf("BASE ERROR: %v", baseErr))
+		if baseStatus.Status == "" || baseStatus.Status == "unknown" {
+			baseStatus.Status = "error"
+		}
+	} else {
+		decisions = append(decisions, fmt.Sprintf("BASE: %s against %s (merge-base=%s head=%s base=%s)",
+			baseStatus.Status, baseStatus.Base, baseStatus.MergeBaseSHA, baseStatus.HeadSHA, baseStatus.BaseSHA))
+	}
 
 	var deadLoops []string
 	for _, l := range loopStatuses {
@@ -170,7 +181,8 @@ func FleetKeeper(in FleetKeeperInput) int {
 	verdict := "OK"
 	if len(deadLoops) > 0 {
 		verdict = "DEGRADED"
-	} else if baseStatus.Status == "diverged" {
+	}
+	if foldErr != nil || baseErr != nil || baseStatus.Status == "diverged" {
 		verdict = "ATTENTION_NEEDED"
 	}
 	decisions = append(decisions, fmt.Sprintf("VERDICT: %s", verdict))
@@ -232,6 +244,16 @@ func FleetKeeper(in FleetKeeperInput) int {
 	}
 	fmt.Fprintln(in.Stdout, outLine)
 
+	if foldErr != nil && in.Stderr != nil {
+		fmt.Fprintf(in.Stderr, "nova-pulse fleet keeper: folder error: %v\n", foldErr)
+	}
+	if baseErr != nil && in.Stderr != nil {
+		fmt.Fprintf(in.Stderr, "nova-pulse fleet keeper: base checker error: %v\n", baseErr)
+	}
+
+	if foldErr != nil || baseErr != nil {
+		return 1
+	}
 	if in.Strict && (len(deadLoops) > 0 || baseStatus.Status == "diverged") {
 		return 1
 	}
@@ -532,6 +554,7 @@ func defaultBaseChecker(repo, base string) (MergeBaseStatus, error) {
 
 	headOut, err := exec.CommandContext(ctx, "git", "-C", repo, "rev-parse", "HEAD").Output()
 	if err != nil {
+		st.Status = "error"
 		st.Decision = fmt.Sprintf("ERROR: git rev-parse HEAD failed: %v", err)
 		return st, err
 	}
@@ -546,6 +569,7 @@ func defaultBaseChecker(repo, base string) (MergeBaseStatus, error) {
 			base = trimmed
 			st.Base = trimmed
 		} else {
+			st.Status = "error"
 			st.Decision = fmt.Sprintf("ERROR: base ref %q not found: %v", base, err)
 			return st, err
 		}
@@ -555,6 +579,7 @@ func defaultBaseChecker(repo, base string) (MergeBaseStatus, error) {
 
 	mbOut, err := exec.CommandContext(ctx, "git", "-C", repo, "merge-base", base, "HEAD").Output()
 	if err != nil {
+		st.Status = "error"
 		st.Decision = fmt.Sprintf("ERROR: git merge-base failed: %v", err)
 		return st, err
 	}
@@ -587,24 +612,27 @@ func defaultResultFolder(queue, roots string) (FoldSummary, error) {
 
 	entries, err := os.ReadDir(launchedDir)
 	if err != nil {
-		// If launched directory doesn't exist, count any existing cards in done/failed.
-		if dEntries, errD := os.ReadDir(doneDir); errD == nil {
-			for _, de := range dEntries {
-				if !de.IsDir() && strings.HasSuffix(de.Name(), ".md") {
-					summary.Total++
-					summary.Clean++
+		if os.IsNotExist(err) {
+			// If launched directory doesn't exist, count any existing cards in done/failed.
+			if dEntries, errD := os.ReadDir(doneDir); errD == nil {
+				for _, de := range dEntries {
+					if !de.IsDir() && strings.HasSuffix(de.Name(), ".md") {
+						summary.Total++
+						summary.Clean++
+					}
 				}
 			}
-		}
-		if fEntries, errF := os.ReadDir(failedDir); errF == nil {
-			for _, fe := range fEntries {
-				if !fe.IsDir() && strings.HasSuffix(fe.Name(), ".md") {
-					summary.Total++
-					summary.Failed++
+			if fEntries, errF := os.ReadDir(failedDir); errF == nil {
+				for _, fe := range fEntries {
+					if !fe.IsDir() && strings.HasSuffix(fe.Name(), ".md") {
+						summary.Total++
+						summary.Failed++
+					}
 				}
 			}
+			return summary, nil
 		}
-		return summary, nil
+		return summary, err
 	}
 
 	for _, entry := range entries {
@@ -615,15 +643,20 @@ func defaultResultFolder(queue, roots string) (FoldSummary, error) {
 		cardPath := filepath.Join(launchedDir, cardName)
 
 		// Look for RESULT.md or result file.
+		cardBase := strings.TrimSuffix(cardName, ".md")
 		resultFile := filepath.Join(queue, "results", cardName, "RESULT.md")
 		if _, err := os.Stat(resultFile); err != nil {
-			resultFile = filepath.Join(launchedDir, strings.TrimSuffix(cardName, ".md")+".result")
+			resultFile = filepath.Join(queue, "results", cardBase, "RESULT.md")
+			if _, err := os.Stat(resultFile); err != nil {
+				resultFile = filepath.Join(launchedDir, cardBase+".result")
+			}
 		}
 
 		raw, err := os.ReadFile(resultFile)
 		if err != nil {
-			// Also check if the card itself carries a RESULT line.
-			raw, _ = os.ReadFile(cardPath)
+			// Card is still active in launched/ without a completed result.
+			// Do not infer verdict from card text or move the card.
+			continue
 		}
 
 		verdict := "failed"
@@ -657,7 +690,9 @@ func defaultResultFolder(queue, roots string) (FoldSummary, error) {
 		if verdict == "failed" {
 			targetDir = failedDir
 		}
-		_ = os.Rename(cardPath, filepath.Join(targetDir, cardName))
+		if err := os.Rename(cardPath, filepath.Join(targetDir, cardName)); err != nil {
+			return summary, fmt.Errorf("failed to move folded card %s: %w", cardName, err)
+		}
 	}
 
 	return summary, nil
