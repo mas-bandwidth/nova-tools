@@ -126,6 +126,9 @@ func TestHarvestBenchEmitsHarvestedAndPR(t *testing.T) {
 	if got[1].PR != "77" {
 		t.Errorf("the pr entry names PR %q, want the number the forge returned", got[1].PR)
 	}
+	if fake.StreamName() != "cards:done" || in.Events.StreamName() != "cards:done" {
+		t.Errorf("the harvest wrote to %q through a writer naming %q, want cards:done for both", fake.StreamName(), in.Events.StreamName())
+	}
 }
 
 // TestHarvestBenchDoesNotEmitPRForOneThatAlreadyExisted: this verb runs again and again over

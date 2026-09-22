@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
 )
 
 // env is a fake environment: exactly the variables a case says are set.
@@ -168,7 +170,7 @@ func TestSendSurvivesAStoreThatErrors(t *testing.T) {
 		t.Fatal("the writer did not open against the fake store")
 	}
 	for i := 0; i < 3; i++ {
-		w.Send(context.Background(), Event{Label: "card-1", Kind: OK, TokensIn: 10, TokensOut: 2, USD: 0.01})
+		w.Send(context.Background(), Event{Label: "card-1", Kind: OK, TokensIn: Int64(10), TokensOut: Int64(2), USD: Float64(0.01)})
 	}
 	if fake.Len() != 0 {
 		t.Fatalf("a store that errors kept %d entries", fake.Len())
@@ -224,8 +226,8 @@ func TestSendIsSafeOnANilWriter(t *testing.T) {
 	if w.Enabled() {
 		t.Fatal("a nil writer reports itself enabled")
 	}
-	if w.StreamName() != Stream {
-		t.Fatalf("a nil writer names stream %q, want %q", w.StreamName(), Stream)
+	if w.StreamName() != "cards:done" {
+		t.Fatalf("a nil writer names stream %q, want cards:done", w.StreamName())
 	}
 }
 
@@ -241,7 +243,7 @@ func TestSendWritesTheEntryWhenTheStoreIsUp(t *testing.T) {
 	defer w.Close()
 	w.Send(context.Background(), Event{
 		Label: "card-1", Bench: "hulk", Model: "opencode/deepseek-v4-flash", Route: "opencode",
-		Kind: OK, TokensIn: 1200, TokensOut: 340, USD: 0.07, Attempt: 2,
+		Kind: OK, TokensIn: Int64(1200), TokensOut: Int64(340), USD: Float64(0.07), Attempt: 2,
 	})
 	if fake.Len() != 1 {
 		t.Fatalf("the store holds %d entries, want 1", fake.Len())
@@ -254,7 +256,8 @@ func TestSendWritesTheEntryWhenTheStoreIsUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the entry does not read back: %v", err)
 	}
-	if e.Label != "card-1" || e.Kind != OK || e.TokensIn != 1200 || e.TokensOut != 340 || e.USD != 0.07 {
+	if e.Label != "card-1" || e.Kind != OK || e.TokensIn == nil || *e.TokensIn != 1200 ||
+		e.TokensOut == nil || *e.TokensOut != 340 || e.USD == nil || *e.USD != 0.07 {
 		t.Fatalf("the entry read back as %+v", e)
 	}
 	if e.Bench != "hulk" || e.Route != "opencode" || e.Attempt != 2 {
@@ -286,5 +289,46 @@ func TestTheSkipLineIsOneLineEvenWhenTheStoreIsNot(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, "EVENT SKIPPED label=card-1 event=ok") {
 		t.Fatalf("the escaped line lost its shape: %q", got)
+	}
+}
+
+// TestTheWritersWriteTheCardsDoneKey locks in the KEY the card path writes (Johnny's HOLD on
+// #2619). Neither cmdNative nor cmdHarvest sets WriterOptions.Stream, so the key is the
+// default Open resolves. This drives the real RedisStore -- Open, then XADD -- against
+// miniredis, and asserts the entry is on `cards:done` and `ev:cards` was never created.
+func TestTheWritersWriteTheCardsDoneKey(t *testing.T) {
+	mr := miniredis.RunT(t)
+	var log strings.Builder
+	w := OpenWriter(context.Background(), WriterOptions{
+		Addr:   mr.Addr(),
+		Log:    &log,
+		Lookup: env(map[string]string{DefaultPasswordEnv: "unused"}),
+		Dial: func(ctx context.Context, d Dial) (Store, error) {
+			d.Username, d.Password = "", "" // miniredis runs without an ACL
+			return Open(ctx, d)
+		},
+	})
+	defer w.Close()
+	if w.StreamName() != "cards:done" {
+		t.Fatalf("the writer names stream %q, want cards:done", w.StreamName())
+	}
+	w.Send(context.Background(), Event{Label: "card-1", Kind: OK})
+	if log.String() != "" {
+		t.Fatalf("the send said: %s", log.String())
+	}
+	if !mr.Exists("cards:done") {
+		t.Fatalf("no cards:done key after a send; keys are %v", mr.Keys())
+	}
+	if mr.Exists("ev:cards") {
+		t.Fatal("a send created ev:cards; there is one stream and it is cards:done")
+	}
+	entries, err := mr.Stream("cards:done")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("cards:done holds %d entries (%v), want 1", len(entries), err)
+	}
+	for i := 0; i+1 < len(entries[0].Values); i += 2 {
+		if name := entries[0].Values[i]; name == "usd" || name == "tokens_in" || name == "tokens_out" {
+			t.Errorf("an event with no cost wrote %s=%s; an absent cost is no field", name, entries[0].Values[i+1])
+		}
 	}
 }

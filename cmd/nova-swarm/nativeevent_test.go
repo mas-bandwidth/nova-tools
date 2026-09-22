@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -105,10 +106,10 @@ func TestCardEndEventCarriesTheUsageRow(t *testing.T) {
 	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
 	e, _ := cardEndEvent(nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
 		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
-	if e.TokensIn != 1200 || e.TokensOut != 340 {
-		t.Errorf("tokens are %d/%d, want 1200/340", e.TokensIn, e.TokensOut)
+	if e.TokensIn == nil || e.TokensOut == nil || *e.TokensIn != 1200 || *e.TokensOut != 340 {
+		t.Errorf("tokens are %v/%v, want 1200/340", e.TokensIn, e.TokensOut)
 	}
-	if e.USD != 0.0731 {
+	if e.USD == nil || *e.USD != 0.0731 {
 		t.Errorf("usd is %v, want 0.0731", e.USD)
 	}
 	if e.Model != "opencode/deepseek-v4-flash" {
@@ -126,16 +127,21 @@ func TestCardEndEventCarriesTheUsageRow(t *testing.T) {
 }
 
 // TestCardEndEventKeepsDashesOutOfTheStream: a fast failure whose provider reported nothing
-// keeps dashes in the row. The stream carries COUNTS, which have no third state, so a dash
-// is a zero here and the row stays the place "unmeasured" can still be read.
+// keeps dashes in the row, and the entry carries NO cost at all: an absent cost is not a
+// zero cost, so a dash is nil here and no tokens_in, tokens_out or usd field is written.
 func TestCardEndEventKeepsDashesOutOfTheStream(t *testing.T) {
 	row := swarm.UsageRow{"job": "card-1", "attempt": "2", "provider": swarm.Dash, "model": swarm.Dash,
 		"tokens_in": swarm.Dash, "tokens_out": swarm.Dash, "usd": swarm.Dash}
 	job := jobWithResult(t, "")
 	e, _ := cardEndEvent(nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
 		nativeRunResult{job: job, usage: row}, "INCOMPLETE", "hulk")
-	if e.TokensIn != 0 || e.TokensOut != 0 || e.USD != 0 {
-		t.Fatalf("a dashed row became %d/%d/%v", e.TokensIn, e.TokensOut, e.USD)
+	if e.TokensIn != nil || e.TokensOut != nil || e.USD != nil {
+		t.Fatalf("a dashed row became %v/%v/%v, want all absent (nil), never 0", e.TokensIn, e.TokensOut, e.USD)
+	}
+	for _, name := range []string{"tokens_in", "tokens_out", "usd"} {
+		if v, ok := e.Fields()[name]; ok {
+			t.Errorf("a dashed row writes %s=%q; an unmeasured cost is no field", name, v)
+		}
 	}
 	if e.Model != "opencode/deepseek-v4-flash" {
 		t.Fatalf("a dashed row lost the model the run was launched with: %q", e.Model)
@@ -219,6 +225,41 @@ func TestCardEndEmitWritesTheEntry(t *testing.T) {
 	}
 	if got[0].Fields["event"] != string(events.OK) || got[0].Fields["usd"] != "0.0731" {
 		t.Fatalf("the entry is %v", got[0].Fields)
+	}
+	if fake.StreamName() != "cards:done" {
+		t.Fatalf("the card end wrote to %q, want cards:done", fake.StreamName())
+	}
+}
+
+// TestCardEndEmitWritesTheCardsDoneKey locks in the KEY, not just the entry. cmdNative hands
+// emitCardEnd WriterOptions with no Stream, so the key is whatever events.Open defaults to;
+// this runs the real Redis store (Open, XADD) against miniredis and asserts the entry is on
+// `cards:done` and that `ev:cards` was never created (Johnny's HOLD on #2619).
+func TestCardEndEmitWritesTheCardsDoneKey(t *testing.T) {
+	mr := miniredis.RunT(t)
+	job := jobWithResult(t, "RESULT card-1 sha=abc — t\nGREEN it holds\n")
+	var stderr strings.Builder
+	emitCardEnd(context.Background(), events.WriterOptions{
+		Addr: mr.Addr(), Log: &stderr,
+		Lookup: func(n string) string { return map[string]string{events.DefaultPasswordEnv: "unused"}[n] },
+		Dial: func(ctx context.Context, d events.Dial) (events.Store, error) {
+			d.Username, d.Password = "", "" // miniredis runs without an ACL
+			return events.Open(ctx, d)
+		},
+	}, nativeRunConfig{label: "card-1", model: "opencode/deepseek-v4-flash"},
+		nativeRunResult{job: job, usage: okRow()}, "OK", "hulk")
+	if stderr.String() != "" {
+		t.Fatalf("the emit said: %s", stderr.String())
+	}
+	if !mr.Exists("cards:done") {
+		t.Fatalf("no cards:done key after the card end; keys are %v", mr.Keys())
+	}
+	if mr.Exists("ev:cards") {
+		t.Fatal("the card end created ev:cards; there is one stream and it is cards:done")
+	}
+	entries, err := mr.Stream("cards:done")
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("cards:done holds %d entries (%v), want 1", len(entries), err)
 	}
 }
 

@@ -135,7 +135,7 @@ var swarmAudit = audit.Config{
 		// card files it places; it never writes to a stream, and every id it
 		// returns is put through oneline.Field before this package prints it.
 		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
-		// events (nova-tools #2563) writes the card-end entry to the ev:cards stream, and
+		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
 		// it IS a writer of this package's stream: `native` hands events.Writer the run's
 		// own stderr so a card that could not be measured says so. It cannot write past
 		// the escape, and the reason is mechanical rather than a promise -- events.Writer

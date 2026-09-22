@@ -46,8 +46,8 @@ const (
 	PortEnv            = "NOVA_REDIS_PORT"
 )
 
-// DefaultUser is the fleet's ACL user for the card path: it holds XADD on `ev:*` and
-// nothing else. The fold reads under its own user.
+// DefaultUser is the fleet's ACL user for the card path: it needs XADD on `cards:done`, the
+// one stream (Stream), and nothing else. The fold reads under its own user.
 const DefaultUser = "bench"
 
 // WriterOptions is how a verb turns the stream on. Every seam a test needs is here, so no

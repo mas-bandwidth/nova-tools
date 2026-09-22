@@ -1,6 +1,6 @@
 package main
 
-// THE CARD-END WRITER of the ev:cards stream (nova-tools #2563 item 1, "no writer emits
+// THE CARD-END WRITER of the cards:done stream (nova-tools #2563 item 1, "no writer emits
 // yet"). `native` is the verb every card on every bench actually runs through, and the end
 // of a card is the one moment where the label, the bench, the model, the tokens, the dollars
 // and the verdict are all known at once. One entry is written here, from the usage row the
@@ -15,8 +15,8 @@ package main
 // THE NUMBERS COME FROM THE ROW, NOT FROM A SECOND READING. writeNativeUsage folds the
 // provider's store into one usage.tsv row and the event carries that row's own cells, so the
 // stream and the file can never disagree about one card's spend. A cell the provider never
-// reported is a dash in the row and a zero in the entry -- `Event.TokensIn` is a count and
-// has no third state -- and the row remains the place a dash can be read as "unmeasured".
+// reported is a dash in the row and ABSENT in the entry -- no tokens_in, tokens_out or usd
+// field at all -- because an absent cost is not a zero cost (Johnny, #2587).
 
 import (
 	"context"
@@ -157,24 +157,32 @@ func modelOf(cfg nativeRunConfig, row swarm.UsageRow) string {
 	return strings.TrimSpace(cfg.model)
 }
 
-// usageInt64 reads one count out of the row. A dash, an empty cell and an unreadable number
-// are all zero: the row is the place a dash keeps its meaning, and the stream carries counts.
-func usageInt64(row swarm.UsageRow, name string) int64 {
+// usageInt64 reads one count out of the row. A dash, an empty cell and an unreadable or
+// negative number are all ABSENT (nil): nobody measured it, and the entry then carries no
+// such field rather than a zero nobody reported.
+func usageInt64(row swarm.UsageRow, name string) *int64 {
 	n, err := strconv.ParseInt(strings.TrimSpace(row[name]), 10, 64)
 	if err != nil || n < 0 {
-		return 0
+		return nil
 	}
-	return n
+	return &n
 }
 
-func usageInt(row swarm.UsageRow, name string) int { return int(usageInt64(row, name)) }
+// usageInt reads attempt, whose absence is the card's first attempt, so it stays a plain int.
+func usageInt(row swarm.UsageRow, name string) int {
+	if n := usageInt64(row, name); n != nil {
+		return int(*n)
+	}
+	return 0
+}
 
-func usageFloat(row swarm.UsageRow, name string) float64 {
+// usageFloat reads the price the same way: a dash is absent, never $0.
+func usageFloat(row swarm.UsageRow, name string) *float64 {
 	f, err := strconv.ParseFloat(strings.TrimSpace(row[name]), 64)
 	if err != nil || f < 0 {
-		return 0
+		return nil
 	}
-	return f
+	return &f
 }
 
 // benchName is the `bench=` an entry carries from a card: the machine the card ran ON.
