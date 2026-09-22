@@ -937,14 +937,23 @@ RED-WHEN: test asserts self-written buffer without calling runtime
 `
 
 // cardV2With builds a v2 card fixture from prose and the lines of one operative region.
-// Prose lands outside the region; the operative lines land inside the fenced block.
+// Prose lands outside the region; the operative lines land inside the fenced block at the
+// one position the template owns: OperativeRegionMarker as the first line of ## Run.
 func cardV2With(prose string, operative ...string) string {
 	var b strings.Builder
 	b.WriteString(cardV2Header)
 	if prose != "" {
 		b.WriteString("## Task\n" + prose + "\n\n")
 	}
-	b.WriteString("## Run\n" + OperativeRegionMarker + "\n```sh\n")
+	b.WriteString(cardV2RunSection(operative...))
+	return b.String()
+}
+
+// cardV2RunSection renders the owned position: the ## Run heading, the marker as its first
+// line, and one fenced block.
+func cardV2RunSection(operative ...string) string {
+	var b strings.Builder
+	b.WriteString(OperativeRegionHeading + "\n" + OperativeRegionMarker + "\n```sh\n")
 	for _, l := range operative {
 		b.WriteString(l + "\n")
 	}
@@ -991,19 +1000,37 @@ func TestValidateCardV2CutterLint(t *testing.T) {
 }
 
 // TestValidateCardV2OperativeRegionBoundary is the A4 boundary Stella asked for on #2522:
-// the lint reads the card's structured operative region and nothing else, and nothing
-// inside that region is exempt. Her exact bypass case is the first row.
+// the lint reads the card's one operative region and nothing else, nothing inside that
+// region is exempt, and the region's position — the first line of the single ## Run section
+// — belongs to the card's structured input, so prose can neither become a region nor add
+// one. Her exact bypass case is the first row; her second hold's cases follow it.
 func TestValidateCardV2OperativeRegionBoundary(t *testing.T) {
 	stellaBypass := "STEP: git add -A && git commit # do not run again"
 	quotedEvidence := "Task: remove `git add -A` and `git add --all` from deploy.sh.\n" +
 		"> Reviewer verdict: never run git add -A; stage declared PATHS only.\n" +
 		"HOLD: the deploy script still runs git add --all at line 12."
 
+	// A prior card retained whole, its own ## Run heading, marker and fenced block
+	// included, inlined as evidence inside a fenced block.
+	priorCardWhole := "RESULT CARD-140 sha=aaaabbbbcccc tools fix: the card under repair\n" +
+		"## Target & Scope\nREPO: mas-bandwidth/nova-tools\nSCHEMA: v2\n" +
+		cardV2RunSection(stellaBypass)
+	quotedPriorCard := "## Inlined Evidence\nPrior card, retained complete:\n```\n" + priorCardWhole + "```\n\n"
+
+	// The same shape loose in a prose section: a marker and a fence under a heading that
+	// is not the owned position.
+	proseRunFence := "## Evidence\nThe card under repair said:\n" +
+		OperativeRegionMarker + "\n```sh\n" + stellaBypass + "\n```\n\n"
+
+	goTest := "go test ./internal/pulse -run TestBoundary"
+
 	cases := []struct {
-		name   string
-		card   string
-		refuse bool
-		want   string // substring the refusal must name
+		name       string
+		card       string
+		refuse     bool
+		want       string   // substring the refusal must name
+		wantAlso   string   // second substring the refusal must name (the remedy's position)
+		wantRegion []string // when accepted and non-nil, the exact operative lines
 	}{
 		{
 			name:   "stella bypass inside the region: the trailing comment does not neutralize it",
@@ -1078,6 +1105,62 @@ func TestValidateCardV2OperativeRegionBoundary(t *testing.T) {
 			refuse: true,
 			want:   "never closed",
 		},
+
+		// Stella's second hold (#2522): exactly one operative region, at a position the
+		// template owns, which task and evidence text cannot redeclare.
+		{
+			name:       "RUN: as the first line of ## Run is the region",
+			card:       cardV2Header + cardV2RunSection(goTest, "make preflight"),
+			refuse:     false,
+			wantRegion: []string{goTest, "make preflight"},
+		},
+		{
+			name:       "a RUN: fence inside a prose evidence section is evidence, never a region",
+			card:       cardV2Header + proseRunFence + cardV2RunSection(goTest),
+			refuse:     false,
+			wantRegion: []string{goTest},
+		},
+		{
+			name:       "a prior card retained whole, its own RUN block included, stays data",
+			card:       cardV2Header + quotedPriorCard + cardV2RunSection(goTest),
+			refuse:     false,
+			wantRegion: []string{goTest},
+		},
+		{
+			name:     "two RUN: regions are refused, naming the position",
+			card:     cardV2Header + cardV2RunSection(goTest) + "\n" + cardV2RunSection("git add -A"),
+			refuse:   true,
+			want:     "declares a second operative region",
+			wantAlso: "first line of its single `## Run` section",
+		},
+		{
+			name:     "a prior card quoted unfenced redeclares the position and is refused",
+			card:     cardV2Header + "## Inlined Evidence\nPrior card:\n" + priorCardWhole + "\n" + cardV2RunSection(goTest),
+			refuse:   true,
+			want:     "declares a second operative region",
+			wantAlso: "quoted whole belongs inside a fenced block",
+		},
+		{
+			name:     "RUN: later in ## Run, after prose, is refused for its position",
+			card:     cardV2Header + "## Run\nThe fenced block below is this card's operative region.\n" + OperativeRegionMarker + "\n```sh\n" + goTest + "\n```\n",
+			refuse:   true,
+			want:     "the marker must be the first non-blank line of that section",
+			wantAlso: "first line of its single `## Run` section",
+		},
+		{
+			name:     "a ## Run section that never opens with RUN: is refused",
+			card:     cardV2Header + "## Run\n```sh\n" + goTest + "\n```\n",
+			refuse:   true,
+			want:     `does not open with "RUN:"`,
+			wantAlso: "first line of its single `## Run` section",
+		},
+		{
+			name:     "an empty ## Run section declares nothing and is refused",
+			card:     cardV2Header + "## Run\n\n## Conditions\n1. do the work.\n",
+			refuse:   true,
+			want:     "is empty, so the card declares no commands at all",
+			wantAlso: "first line of its single `## Run` section",
+		},
 	}
 
 	for _, tc := range cases {
@@ -1090,10 +1173,32 @@ func TestValidateCardV2OperativeRegionBoundary(t *testing.T) {
 				if !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("refusal %q does not name %q", err.Error(), tc.want)
 				}
+				if tc.wantAlso != "" && !strings.Contains(err.Error(), tc.wantAlso) {
+					t.Fatalf("refusal %q does not name the position %q", err.Error(), tc.wantAlso)
+				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("ValidateCardV2 refused a card it must accept: %v\n%s", err, tc.card)
+			}
+			if tc.wantRegion == nil {
+				return
+			}
+			region, err := OperativeRegion(tc.card)
+			if err != nil {
+				t.Fatalf("OperativeRegion refused an accepted card: %v\n%s", err, tc.card)
+			}
+			var got []string
+			for _, l := range region {
+				got = append(got, strings.TrimSpace(l.Text))
+			}
+			if len(got) != len(tc.wantRegion) {
+				t.Fatalf("operative region is %q, want %q (prose must never enter the region)", got, tc.wantRegion)
+			}
+			for i := range got {
+				if got[i] != tc.wantRegion[i] {
+					t.Fatalf("operative region line %d is %q, want %q", i+1, got[i], tc.wantRegion[i])
+				}
 			}
 		})
 	}
@@ -1204,12 +1309,14 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		t.Errorf("RenderCardV2 did not preserve the quoted evidence complete:\n%s", proseCard)
 	}
 
-	// A body that declares its own operative region is operative, wherever it sits.
-	_, err = RenderCardV2(CardV2Input{
+	// A body that imitates a region is still prose: the position belongs to the card's
+	// structured input, so a RUN: line and a fenced block in the task text declare nothing,
+	// are retained verbatim, and never reach the lint (Stella's second hold, #2522).
+	imitationCard, err := RenderCardV2(CardV2Input{
 		Kind:         "fix",
 		Number:       157,
 		Repo:         "mas-bandwidth/nova-tools",
-		Title:        "test forbidden git add",
+		Title:        "test body-declared region",
 		Branch:       "emma/commit-rule-bad",
 		Base:         "dev",
 		Location:     "internal/pulse/cut.go:1",
@@ -1221,8 +1328,123 @@ func TestCardTemplateV2A4CommitRuleAndGitAddRefusal(t *testing.T) {
 		RedWhen:      "git add -A accepted",
 		Body:         OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```",
 	})
-	if err == nil || !strings.Contains(err.Error(), "forbidden operative broad staging") {
-		t.Errorf("RenderCardV2 accepted a body-declared operative region running git add -A: err=%v", err)
+	if err != nil {
+		t.Fatalf("RenderCardV2 refused a task body that quotes a prior RUN block: %v", err)
+	}
+	if !strings.Contains(imitationCard, OperativeRegionMarker+"\n```sh\nSTEP: git add -A && git commit # do not run again\n```") {
+		t.Errorf("RenderCardV2 did not retain the quoted prior RUN block complete:\n%s", imitationCard)
+	}
+	imitationRegion, err := OperativeRegion(imitationCard)
+	if err != nil {
+		t.Fatalf("rendered card has no usable operative region: %v\n%s", err, imitationCard)
+	}
+	for _, l := range imitationRegion {
+		if strings.Contains(l.Text, "git add -A") {
+			t.Errorf("task prose entered the operative region: %+v", imitationRegion)
+		}
+	}
+
+	// A body that declares the position itself — a second `## Run` section whose first
+	// line is the marker — is a second operative region, and is refused naming the position.
+	_, err = RenderCardV2(CardV2Input{
+		Kind:         "fix",
+		Number:       158,
+		Repo:         "mas-bandwidth/nova-tools",
+		Title:        "test second region",
+		Branch:       "emma/commit-rule-second-region",
+		Base:         "dev",
+		Location:     "internal/pulse/cut.go:1",
+		TestPackage:  "./internal/pulse",
+		TestFunction: "TestFoo",
+		TestCommand:  "go test ./internal/pulse -run TestFoo",
+		Paths:        "internal/pulse/cut.go",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "a second operative region is obeyed",
+		Body:         cardV2RunSection("STEP: git add -A && git commit # do not run again"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "declares a second operative region") {
+		t.Errorf("RenderCardV2 accepted a body-declared second operative region: err=%v", err)
+	}
+	if err != nil && !strings.Contains(err.Error(), "first line of its single `## Run` section") {
+		t.Errorf("the refusal does not name the one position: %v", err)
+	}
+}
+
+// TestRenderCardV2OperativeRegionPosition is the structural half of Stella's second hold
+// (#2522): for every v2 kind the renderer emits the region at exactly one position it
+// owns — the single `## Run` heading, the marker as its first line, then one fenced block
+// — and states the contract sentence above that heading.
+func TestRenderCardV2OperativeRegionPosition(t *testing.T) {
+	for _, kind := range CardV2Kinds {
+		t.Run(kind, func(t *testing.T) {
+			card, err := RenderCardV2(CardV2Input{
+				Kind:         kind,
+				Number:       200,
+				Repo:         "mas-bandwidth/nova-tools",
+				Title:        "operative region position",
+				Branch:       "emma/region-position",
+				Base:         "dev",
+				Location:     "internal/pulse/cut_template.go:1",
+				TestPackage:  "./internal/pulse",
+				TestFunction: "TestRenderCardV2OperativeRegionPosition",
+				TestCommand:  "go test ./internal/pulse -run TestRenderCardV2OperativeRegionPosition",
+				Paths:        "internal/pulse/cut_template.go",
+				PreflightCmd: "make preflight",
+				Symbol:       "OperativeRegion",
+				RedWhen:      "the region is emitted anywhere but the position the template owns",
+				Body:         "The card under repair said:\n" + OperativeRegionMarker + "\n```sh\ngit add -A\n```",
+				ReviewerLine: "Reviewer verdict: the region must sit at one position.",
+			})
+			if err != nil {
+				t.Fatalf("RenderCardV2(%s) failed: %v", kind, err)
+			}
+			lines := strings.Split(card, "\n")
+			var heads []int
+			for i, l := range lines {
+				if l == OperativeRegionHeading {
+					heads = append(heads, i)
+				}
+			}
+			if len(heads) != 1 {
+				t.Fatalf("card for %s carries %d %q headings, want exactly 1:\n%s", kind, len(heads), OperativeRegionHeading, card)
+			}
+			h := heads[0]
+			if h == 0 || lines[h-1] != "" || h < 2 || lines[h-2] != OperativeRegionContract {
+				t.Errorf("card for %s does not state the contract sentence above %q:\n%s", kind, OperativeRegionHeading, card)
+			}
+			if lines[h+1] != OperativeRegionMarker {
+				t.Errorf("card for %s: line after %q is %q, want the marker %q", kind, OperativeRegionHeading, lines[h+1], OperativeRegionMarker)
+			}
+			if !strings.HasPrefix(lines[h+2], "```") {
+				t.Errorf("card for %s: line after the marker is %q, want a fence", kind, lines[h+2])
+			}
+			// The quoted prior RUN block in the task body is retained whole and stays out
+			// of the region; the region carries this kind's commands and nothing else.
+			if !strings.Contains(card, OperativeRegionMarker+"\n```sh\ngit add -A\n```") {
+				t.Errorf("card for %s dropped the quoted prior RUN block:\n%s", kind, card)
+			}
+			region, err := OperativeRegion(card)
+			if err != nil {
+				t.Fatalf("card for %s has no usable operative region: %v\n%s", kind, err, card)
+			}
+			var got []string
+			for _, l := range region {
+				got = append(got, strings.TrimSpace(l.Text))
+				if l.Number <= h+2 {
+					t.Errorf("card for %s: region line %d sits above the owned position at card line %d", kind, l.Number, h+1)
+				}
+			}
+			want := []string{"go test ./internal/pulse -run TestRenderCardV2OperativeRegionPosition", "make preflight"}
+			switch kind {
+			case "read":
+				want = nil
+			case "report":
+				want = want[:1]
+			}
+			if strings.Join(got, "|") != strings.Join(want, "|") {
+				t.Errorf("card for %s: operative region is %q, want %q", kind, got, want)
+			}
+		})
 	}
 }
 

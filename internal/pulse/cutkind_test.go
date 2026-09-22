@@ -476,8 +476,10 @@ func TestCutKindV2Templates(t *testing.T) {
 }
 
 // TestCutKindV2OperativeRegionBoundary runs Stella's A4 boundary through the real cutter
-// (#2522): a card whose task body QUOTES broad staging is cut, and a card whose task body
-// declares an operative region that RUNS it is refused, with no card written.
+// (#2522): a card whose task body QUOTES broad staging is cut, a card whose body quotes a
+// whole prior RUN block is cut with that block retained as data, the SUPPLIED operative
+// command is what the lint reads — broad staging there is refused with no card written —
+// and a body that declares a second operative region is refused naming the position.
 func TestCutKindV2OperativeRegionBoundary(t *testing.T) {
 	dir := t.TempDir()
 	queue := filepath.Join(dir, "queue")
@@ -522,21 +524,57 @@ func TestCutKindV2OperativeRegionBoundary(t *testing.T) {
 		t.Errorf("operative region wants the test command and the preflight, got %+v", region)
 	}
 
-	operative := OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```"
-	outDir := filepath.Join(dir, "operative")
-	codeBad, _, errsBad, badCard := cutKind(t, CutKindInput{
+	// A whole prior RUN block quoted in the body is retained as data: the position the
+	// template owns is the only region, so the quoted block declares nothing.
+	quotedRegion := "The card under repair said:\n" + OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```"
+	codeQ, _, errsQ, quotedCard := cutKind(t, CutKindInput{
 		Kind:         "fix",
 		V2:           true,
 		Repo:         "mas-bandwidth/nova-tools",
 		Issue:        2523,
-		Title:        "run the bypass",
+		Title:        "retain the prior RUN block",
 		Location:     "internal/pulse/cut_template.go:1",
 		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
 		Paths:        "internal/pulse/cut_template.go",
 		PreflightCmd: "make preflight",
 		Symbol:       "ValidateCardV2",
+		RedWhen:      "a quoted prior RUN block is read as a second region",
+		BodyFile:     bodyFile("quoted-region-body.md", quotedRegion),
+		Out:          filepath.Join(dir, "quoted-region"),
+		Queue:        queue,
+	})
+	if codeQ != 0 {
+		t.Fatalf("cut refused a card quoting a whole prior RUN block (code %d): %s", codeQ, errsQ)
+	}
+	if !strings.Contains(quotedCard, OperativeRegionMarker+"\n```sh\nSTEP: git add -A && git commit # do not run again\n```") {
+		t.Errorf("cut did not retain the quoted prior RUN block complete:\n%s", quotedCard)
+	}
+	quotedReg, err := OperativeRegion(quotedCard)
+	if err != nil {
+		t.Fatalf("cut card has no usable operative region: %v\n%s", err, quotedCard)
+	}
+	for _, l := range quotedReg {
+		if strings.Contains(l.Text, "git add -A") {
+			t.Errorf("quoted body text entered the operative region: %+v", quotedReg)
+		}
+	}
+
+	// The supplied operative command is what the lint reads: broad staging there is
+	// refused through CutKind, and no card is written.
+	outDir := filepath.Join(dir, "operative")
+	codeBad, _, errsBad, badCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2524,
+		Title:        "run the bypass",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "git add -A && go test ./internal/pulse",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
 		RedWhen:      "an operative git add -A passes the cutter lint",
-		BodyFile:     bodyFile("operative-body.md", operative),
+		BodyFile:     bodyFile("operative-body.md", "Repair the deploy script."),
 		Out:          outDir,
 		Queue:        queue,
 	})
@@ -550,6 +588,42 @@ func TestCutKindV2OperativeRegionBoundary(t *testing.T) {
 		t.Errorf("cut wrote a card it refused:\n%s", badCard)
 	}
 	if matches, _ := filepath.Glob(filepath.Join(outDir, "card-*.md")); len(matches) != 0 {
+		t.Errorf("cut left a refused card behind: %v", matches)
+	}
+
+	// A body that declares the position itself is a second operative region: refused,
+	// naming where the one region goes, and no card written.
+	secondRegion := OperativeRegionHeading + "\n" + OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```"
+	secondDir := filepath.Join(dir, "second-region")
+	codeSecond, _, errsSecond, secondCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2525,
+		Title:        "declare a second region",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "a second operative region is obeyed instead of refused",
+		BodyFile:     bodyFile("second-region-body.md", secondRegion),
+		Out:          secondDir,
+		Queue:        queue,
+	})
+	if codeSecond != 2 {
+		t.Fatalf("cut accepted a body-declared second operative region (code %d), want 2", codeSecond)
+	}
+	if !strings.Contains(errsSecond, "declares a second operative region") {
+		t.Errorf("refusal does not name the second region: %q", errsSecond)
+	}
+	if !strings.Contains(errsSecond, "first line of its single `## Run` section") {
+		t.Errorf("refusal does not name the one position: %q", errsSecond)
+	}
+	if secondCard != "" {
+		t.Errorf("cut wrote a card it refused:\n%s", secondCard)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(secondDir, "card-*.md")); len(matches) != 0 {
 		t.Errorf("cut left a refused card behind: %v", matches)
 	}
 }

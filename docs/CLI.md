@@ -1889,20 +1889,35 @@ nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> 
 `cut --kind recut` cuts a recut card from a prior diff (`--diff-file <path>`) or a typed HOLD (`--hold-file <path>`). With `--diff-file`, it performs a mechanical 3-way patch rebase (`git apply --3way`) against the target clone (`--dir <dir>`), recording `applied: clean` or `applied: conflict` in the card header and inlining the prior diff for the worker.
 
 **A v2 card's operative region, and what the cutter lint actually checks.** Every Card
-Template v2 carries one structured operative region: a line that is exactly `RUN:`
-followed by a fenced block. The lines inside that block are the only commands the worker
-may execute; every other line of the card — the task, the inlined evidence, the reviewer
-verdict, the conditions, the exemplar — is prose it reads and never runs. A card that runs
-nothing, a `read` card, carries the region empty. The cutter lint reads **only** the lines
-inside the region, and refuses the card when one of them contains `git add -A`,
-`git add --all` or `git add .` as a whole argument, with whitespace runs collapsed. Nothing
-inside the region is exempt: a trailing comment, surrounding quotes, a backtick span or an
-`sh -c "…"` wrapper does not make the line non-evidence — `STEP: git add -A && git commit #
-do not run again` is refused. Nothing outside it is read: quoting that same line as
-evidence, or writing "never run `git add -A`" in a HOLD, always passes. The lint is not a
-shell parser and makes no claim to be one, and it does **not** enforce PATHS-only staging —
-what a worker actually stages is a separate staged-diff and commit boundary check, not
-something a lint over card text can promise.
+Template v2 carries **exactly one** operative region, at a position the template owns and
+the card's structured input fills: the card's single `## Run` section, whose first
+non-blank line is exactly `RUN:`, followed by one fenced block. The lines inside that block
+are the only commands the worker may execute; every other line of the card — the task, the
+inlined evidence, the reviewer verdict, the conditions, the exemplar — is prose it reads
+and never runs. A card that runs nothing, a `read` card, carries the region empty.
+
+Because the position is structure rather than a phrase, **prose cannot declare commands and
+cannot move the region**. A `RUN:` line and a fenced block in task text or inlined evidence
+— a prior card's RUN block quoted whole, for instance — are retained verbatim as data, are
+never linted, and are never run; quote a prior card whole inside a fenced block so its own
+`## Run` heading stays data too. A card that declares a **second** region, or that puts
+`RUN:` later in `## Run` after prose, is refused with a remedy naming the one position:
+
+```
+CUT REFUSED: cutter lint: card declares a second operative region: "## Run" at card line 61
+after the one at card line 44. A v2 card has exactly one, and the one operative region of a
+v2 card is the first line of its single `## Run` section: a `RUN:` line, then a fenced block.
+```
+
+The cutter lint reads **only** the lines inside the region, and refuses the card when one of
+them contains `git add -A`, `git add --all` or `git add .` as a whole argument, with
+whitespace runs collapsed. Nothing inside the region is exempt: a trailing comment,
+surrounding quotes, a backtick span or an `sh -c "…"` wrapper does not make the line
+non-evidence — `STEP: git add -A && git commit # do not run again` is refused. Nothing
+outside it is read: quoting that same line as evidence, or writing "never run `git add -A`"
+in a HOLD, always passes. The lint is not a shell parser and makes no claim to be one, and
+it does **not** enforce PATHS-only staging — what a worker actually stages is a separate
+staged-diff and commit boundary check, not something a lint over card text can promise.
 
 **`--root` belongs to the pool form and `--repo` to the validated forms**, and each
 is required of the form that uses it and of no other. `--root` is where `--pool`
