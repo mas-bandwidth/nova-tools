@@ -398,6 +398,17 @@ parallel amendment PRs that merge without conflict are its evidence.
 **Expires** when the layout changes. **Rollback:** the single-file specs.
 **Held by:** Rowan.
 
+## The depends-on token (#2636)
+
+`depends-on` is not one of the four §5 tokens above, and it is not one of the twelve
+shape rules. It fires only when `lint --card --typed` is asked, so a card written before
+the key existed is not refused for lacking it unless `--typed` is passed. It wants
+`DEPENDS-ON: <card-id>[, ...]` or `DEPENDS-ON: -` in the header block directly under the
+contract line. `-` passes: the card depends on nothing. The card's own id is the first
+word of its contract line, and a `DEPENDS-ON` that names that word is refused. An id is
+unknown only when `--lineup <file>` is handed over and the id is not in it; with no
+lineup the lint does not guess which ids exist.
+
 ## Open
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential

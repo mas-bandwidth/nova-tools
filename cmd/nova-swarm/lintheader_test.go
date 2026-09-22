@@ -149,7 +149,7 @@ func TestLintCardTypedRequiresTheHeader(t *testing.T) {
 	if exit != 2 {
 		t.Fatalf("--typed on a card with no header is a drift, exit %d:\n%s", exit, stdout)
 	}
-	for _, want := range []string{"kind-declared:", "paths-declared:", "test-named:"} {
+	for _, want := range []string{"kind-declared:", "paths-declared:", "test-named:", "depends-on:"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("no %s in:\n%s", want, stdout)
 		}
