@@ -2654,7 +2654,7 @@ somebody's work. That is why the rule is the narrowest one still worth having.
 ### status
 
 ```
-nova-pulse status --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status --queue <dir> --roots <dirs> [--results-root <dir>] [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 ```
 
 `status` prints, no model, counted from the queue, `usage.tsv`, the ADOPT
