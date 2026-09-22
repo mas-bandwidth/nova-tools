@@ -65,8 +65,8 @@ func TestKeeperUnitsContainDealerBackpressureHarvestSprint(t *testing.T) {
 		if u.Label != expectedLabel {
 			t.Errorf("unit %s label = %q, want %q", u.Name, u.Label, expectedLabel)
 		}
-		if len(u.ProgramArguments) < 2 {
-			t.Errorf("unit %s has empty or short ProgramArguments: %v", u.Name, u.ProgramArguments)
+		if len(u.ProgramArguments) != 3 {
+			t.Errorf("unit %s has ProgramArguments len = %d, want 3: %v", u.Name, len(u.ProgramArguments), u.ProgramArguments)
 		} else {
 			if u.ProgramArguments[0] != "/bin/bash" {
 				t.Errorf("unit %s ProgramArguments[0] = %q, want /bin/bash (never zsh)", u.Name, u.ProgramArguments[0])
@@ -78,6 +78,16 @@ func TestKeeperUnitsContainDealerBackpressureHarvestSprint(t *testing.T) {
 				if strings.Contains(arg, "zsh") {
 					t.Errorf("unit %s ProgramArguments contains forbidden zsh: %v", u.Name, u.ProgramArguments)
 				}
+			}
+			expectedBinProg := map[string]string{
+				KeeperUnitDealer:       "card-dealer",
+				KeeperUnitBackpressure: "backpressure",
+				KeeperUnitHarvest:      "harvest-priority",
+				KeeperUnitSprint:       "sprint-table",
+			}[u.Name]
+			expectedQuoted := shellToken(filepath.Join(cfg.BinDir, expectedBinProg))
+			if !strings.Contains(u.ProgramArguments[2], expectedQuoted) {
+				t.Errorf("unit %s ProgramArguments[2] = %q, want quoted path %s", u.Name, u.ProgramArguments[2], expectedQuoted)
 			}
 		}
 		if u.WorkingDirectory != cfg.WorkDir {
@@ -261,5 +271,82 @@ func TestKeeperRefusesUnknownUnit(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "unknown unit \"unknown-engine\"") {
 		t.Errorf("stderr does not name unknown unit:\n%s", errb.String())
+	}
+}
+
+func TestKeeperUnitsBinDirWithSpaces(t *testing.T) {
+	cfg := KeeperLaunchdConfig{
+		HomeDir:     "/Users/glenn with spaces",
+		WorkDir:     "/Users/glenn with spaces/rowan working",
+		BinDir:      "/Users/glenn with spaces/rowan working/bin with spaces",
+		LogDir:      "/Users/glenn with spaces/rowan working/tmp/keeper logs",
+		LabelPrefix: "com.mas-bandwidth.nova-",
+		PlistDir:    "/Users/glenn with spaces/Library/LaunchAgents",
+	}
+
+	units := DefaultKeeperUnits(cfg)
+	if len(units) != 4 {
+		t.Fatalf("expected 4 units, got %d", len(units))
+	}
+
+	expectedProgs := map[string]string{
+		KeeperUnitDealer:       "card-dealer",
+		KeeperUnitBackpressure: "backpressure",
+		KeeperUnitHarvest:      "harvest-priority",
+		KeeperUnitSprint:       "sprint-table",
+	}
+
+	hasPlutil := false
+	if runtime.GOOS == "darwin" {
+		if _, err := exec.LookPath("plutil"); err == nil {
+			hasPlutil = true
+		}
+	}
+
+	for _, u := range units {
+		if len(u.ProgramArguments) != 3 {
+			t.Fatalf("unit %s ProgramArguments len = %d, want 3: %v", u.Name, len(u.ProgramArguments), u.ProgramArguments)
+		}
+		if u.ProgramArguments[0] != "/bin/bash" {
+			t.Errorf("unit %s argv[0] = %q, want /bin/bash", u.Name, u.ProgramArguments[0])
+		}
+		if u.ProgramArguments[1] != "-c" {
+			t.Errorf("unit %s argv[1] = %q, want -c", u.Name, u.ProgramArguments[1])
+		}
+
+		progName, ok := expectedProgs[u.Name]
+		if !ok {
+			t.Fatalf("unexpected unit name %s", u.Name)
+		}
+		expectedBinPath := filepath.Join(cfg.BinDir, progName)
+		expectedQuoted := shellToken(expectedBinPath)
+		cmdStr := u.ProgramArguments[2]
+		if !strings.Contains(cmdStr, expectedQuoted) {
+			t.Errorf("unit %s command string %q does not contain quoted binary %q", u.Name, cmdStr, expectedQuoted)
+		}
+
+		// Verify bash evaluates the quoted executable path as a single argument without splitting on spaces.
+		checkCmd := strings.Replace(cmdStr, "exec ", `f() { printf "%s\n" "$1"; }; f `, 1)
+		out, err := exec.Command("/bin/bash", "-c", checkCmd).Output()
+		if err != nil {
+			t.Errorf("unit %s bash evaluation failed: %v", u.Name, err)
+		} else {
+			gotPath := strings.TrimSpace(string(out))
+			if gotPath != expectedBinPath {
+				t.Errorf("unit %s bash evaluated path = %q, want %q", u.Name, gotPath, expectedBinPath)
+			}
+		}
+
+		if hasPlutil {
+			tmpFile := filepath.Join(t.TempDir(), u.PlistFileName())
+			if err := os.WriteFile(tmpFile, []byte(u.PlistXML()), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("plutil", "-lint", tmpFile)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Errorf("plutil -lint failed for %s with spaces in binDir: %v, output:\n%s", u.Name, err, string(out))
+			}
+		}
 	}
 }

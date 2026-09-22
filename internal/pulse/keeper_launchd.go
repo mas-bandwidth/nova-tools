@@ -184,7 +184,7 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			ProgramArguments: []string{
 				"/bin/bash",
 				"-c",
-				fmt.Sprintf("exec %s/card-dealer", cfg.BinDir),
+				fmt.Sprintf("exec %s", shellToken(filepath.Join(cfg.BinDir, "card-dealer"))),
 			},
 			WorkingDirectory:     cfg.WorkDir,
 			StandardOutPath:      filepath.Join(cfg.LogDir, "dealer.log"),
@@ -200,7 +200,7 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			ProgramArguments: []string{
 				"/bin/bash",
 				"-c",
-				fmt.Sprintf("exec %s/backpressure --cap 40", cfg.BinDir),
+				fmt.Sprintf("exec %s --cap 40", shellToken(filepath.Join(cfg.BinDir, "backpressure"))),
 			},
 			WorkingDirectory:     cfg.WorkDir,
 			StandardOutPath:      filepath.Join(cfg.LogDir, "backpressure.log"),
@@ -216,7 +216,7 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			ProgramArguments: []string{
 				"/bin/bash",
 				"-c",
-				fmt.Sprintf("exec %s/harvest-priority --loop 240", cfg.BinDir),
+				fmt.Sprintf("exec %s --loop 240", shellToken(filepath.Join(cfg.BinDir, "harvest-priority"))),
 			},
 			WorkingDirectory:     cfg.WorkDir,
 			StandardOutPath:      filepath.Join(cfg.LogDir, "harvest.log"),
@@ -232,7 +232,7 @@ func DefaultKeeperUnits(cfg KeeperLaunchdConfig) []KeeperUnit {
 			ProgramArguments: []string{
 				"/bin/bash",
 				"-c",
-				fmt.Sprintf("exec %s/sprint-table 10", cfg.BinDir),
+				fmt.Sprintf("exec %s 10", shellToken(filepath.Join(cfg.BinDir, "sprint-table"))),
 			},
 			WorkingDirectory:     cfg.WorkDir,
 			StandardOutPath:      filepath.Join(cfg.LogDir, "sprint.log"),
