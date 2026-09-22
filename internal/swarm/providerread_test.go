@@ -16,6 +16,9 @@ func TestProviderReadDeadlinesStayUnderNinetySeconds(t *testing.T) {
 	if ProviderChunkTimeout <= 0 || ProviderChunkTimeout >= 90*time.Second {
 		t.Fatalf("chunk deadline is %s, want a stalled stream under 90s", ProviderChunkTimeout)
 	}
+	if ProviderBodySilence != 45*time.Second || ProviderBodySilence >= 90*time.Second {
+		t.Fatalf("body silence is %s, want 45s and under 90s", ProviderBodySilence)
+	}
 }
 
 func TestApplyProviderReadDeadlineWritesBothAndKeepsTheKey(t *testing.T) {

@@ -65,6 +65,16 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// bodySilence is the gap, after response headers, with no body bytes, that
+	// ends the attempt UNKNOWN. Zero means ProviderBodySilence (45s). Production
+	// leaves it zero. A test may set a shorter gap so the suite does not wait 45s.
+	bodySilence time.Duration
+	// bodyAfter arms that gap. Nil means the timer inside readWithinSilence.
+	// A test passes a clock it can fire so the 45s gap is an event.
+	bodyAfter func(time.Duration) <-chan time.Time
+	// onProxy receives the proxy once it is listening, before the child starts.
+	// Nil in production.
+	onProxy func(*swarm.ProviderProxy)
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -443,10 +453,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		reads = swarm.CardReadPaths(cfg.card)
 	}
 	reads = append(reads, nativeReadRoots(cfg)...)
-	configSHA, reason := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
+	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
+		if proxy != nil {
+			_ = proxy.Close()
+		}
 		refuseNative(errOut, reason)
 		return nativeRunResult{}, 2
+	}
+	if proxy != nil {
+		defer proxy.Close()
+		if cfg.onProxy != nil {
+			cfg.onProxy(proxy)
+		}
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -577,6 +596,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	termCh := nativeTermCh()
 	defer stopNativeTerm(termCh)
+	// A nil channel blocks forever in the select, which is no proxy: a card
+	// with no provider baseURL is not given a body deadline it cannot reach.
+	var bodyStall <-chan struct{}
+	if proxy != nil {
+		bodyStall = proxy.Stalled()
+	}
 	for attempt := 1; ; attempt++ {
 		before := fileSize(outLog)
 		cmd := exec.Command(runPath, runArgv...)
@@ -641,6 +666,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			<-done
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
+		case <-bodyStall:
+			// Headers arrived and then the body went silent. The measured
+			// harness kept running after its own timeouts, so the run reaps
+			// the card instead of waiting for it to notice, and does not
+			// launch it again.
+			deadline.Stop()
+			nativeReap(pgid, started, swarm.TerminateGrace)
+			<-done
+			res.rc = -1
+			res.lost = true
 		case <-termCh:
 			deadline.Stop()
 			nativeReap(pgid, started, swarm.TerminateGrace)
@@ -652,11 +687,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
 		tail := readSince(outLog, before)
-		// A socket that went quiet after the request may have been accepted is
-		// UNKNOWN. The usage row says so before anything else can call the
+		// A response that sent headers and then no body bytes is UNKNOWN, whether
+		// the harness printed its own timeout words or the proxy closed the
+		// body. The usage row says so before anything else can call the
 		// attempt done or failed, and the run does not launch again.
 		// (stella-6b51d37c8d7d, stella-9eb933ee0205)
-		lost := swarm.LostResponse(tail)
+		lost := swarm.LostResponse(tail) || res.lost
+		if proxy != nil && proxy.Lost() {
+			lost = true
+		}
 		res.end = swarm.EndDone
 		if lost {
 			res.end = swarm.EndUnknown
@@ -1466,7 +1505,7 @@ func copyAuth(src, provider, dataHome string) string {
 // best-effort and the copy is not -- and then the fence cannot be merged into it, which is
 // said once on stderr as a NATIVE NOTE rather than refused: a run with an unparseable config
 // is a run the caller has already chosen, and it is better fenced-by-default than not run.
-func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (sha8, reason string) {
+func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (string, string, *swarm.ProviderProxy) {
 	var raw []byte
 	configPath := cfg.configFile
 	switch {
@@ -1476,33 +1515,61 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	case configPath != "":
 		body, err := os.ReadFile(configPath)
 		if err != nil {
-			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
+			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error())), nil
 		}
 		if modelProviderMissingAuth(body, cfg.authFile, provider) {
 			return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile)))
+				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile))), nil
 		}
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	var proxy *swarm.ProviderProxy
 	if merged {
-		// The job copy, not the person's file. A black-holed socket then ends
-		// inside ProviderHeaderTimeout / ProviderChunkTimeout instead of at
-		// the 300s idle kill. A lost response is not retried (providerread.go).
+		// headerTimeout and chunkTimeout are written for a harness that honors
+		// them. They are not the deadline: the measured OpenCode did not end a
+		// stall on them. The deadline is the proxy below, and only when the
+		// provider has an http baseURL the proxy can stand in front of.
 		body = swarm.ApplyProviderReadDeadline(body, provider)
+		upstream := swarm.ProviderBaseURL(body, provider)
+		if swarm.ProviderProxyEligible(upstream) {
+			silence := cfg.bodySilence
+			if silence <= 0 {
+				silence = swarm.ProviderBodySilence
+			}
+			opened, err := swarm.ListenProviderProxy(swarm.ProviderProxyConfig{
+				Upstream: upstream, Silence: silence, After: cfg.bodyAfter,
+			})
+			if err != nil {
+				return "", fmt.Sprintf("the provider read proxy could not listen: %s", oneline.Escape(err.Error())), nil
+			}
+			pointed, ok := swarm.PointProviderAtProxy(body, provider, opened.HarnessURL())
+			if !ok {
+				_ = opened.Close()
+				return "", fmt.Sprintf("the provider %s could not be pointed at the read-deadline proxy", oneline.Field(provider)), nil
+			}
+			body = pointed
+			proxy = opened
+		}
 	}
 	if !merged && notes != nil {
-		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules and the provider read deadlines were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
+		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it and the provider request was not pointed at the read-deadline proxy; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
 	}
 	sum := sha256.Sum256(body)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error()))
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
 	}
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
-		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error())), nil
 	}
-	return hex.EncodeToString(sum[:])[:8], ""
+	return hex.EncodeToString(sum[:])[:8], "", proxy
 }
 
 // modelProviderMissingAuth reports whether the one provider this run will call -- the

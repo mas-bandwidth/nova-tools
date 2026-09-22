@@ -11,31 +11,35 @@ import (
 
 // THE PROVIDER SOCKET IS NOT THE CARD'S IDLE WINDOW.
 //
-// OpenCode's fetch sets timeout: false. headerTimeout bounds time-to-headers.
-// chunkTimeout bounds silence between SSE chunks, and it is armed only when the
-// job's config sets it. With it unset, a socket that has already accepted the
-// request and then sends nothing blocks until nova-swarm's --idle (300s) kills
-// the card. That is the 18-of-55 hang (#2535).
+// A response that has sent its headers and then no body bytes for
+// ProviderBodySilence is UNKNOWN. The timer is readWithinSilence, on the
+// localhost proxy this process owns (providerproxy.go). The card is not
+// launched again. A body that arrives inside the gap is success.
 //
-// These two deadlines sit on the job's own opencode.json, the copy native writes
-// for the child. The person's config is not edited. --idle stays 300s: a silent
-// go test whose CPU is moving, and a model turn that is only thinking, are not
-// this socket.
+// headerTimeout and chunkTimeout are still written into the job's own
+// opencode.json. They are not this deadline. OpenCode 1.18.20 was measured
+// at one POST /v1/responses with both set to 2000 and was still running at
+// 50.5s with no timeout line. --idle stays 300s: a silent go test whose CPU
+// is moving, and a model turn that is only thinking, are not this socket.
 //
-// A read that ends after the request may have been accepted is UNKNOWN. It is
-// not a launch failure and it does not earn another launch. A known failure
-// before the provider begins the work stays on the existing grace retry
-// (ProviderLaunchFailure). stella-6b51d37c8d7d.
+// A known failure before the provider begins the work stays on the existing
+// grace retry (ProviderLaunchFailure). stella-6b51d37c8d7d.
 
-// ProviderHeaderTimeout is how long the socket may sit before response headers.
-// It is a silence timer, not an overall attempt deadline: a stream that keeps
-// sending is not cut off by it. It is under the 90s a black-holed attempt may cost.
+// ProviderHeaderTimeout is written into the job config as headerTimeout, in
+// milliseconds. It is not the body-read deadline. It stays under 90s so a
+// harness that does honor it cannot outlive the body-read budget.
 const ProviderHeaderTimeout = 45 * time.Second
 
-// ProviderChunkTimeout is how long the socket may sit between SSE chunks.
-// Same shape as the header timer: silence, not the whole attempt. A second
-// launch is not started from this timeout.
+// ProviderChunkTimeout is written into the job config as chunkTimeout, in
+// milliseconds. Same limit as the header option, and the same non-claim:
+// setting it was measured not to end the stall.
 const ProviderChunkTimeout = 45 * time.Second
+
+// ProviderBodySilence is how long the response body may sit with no bytes
+// after headers have arrived. The proxy enforces it. A stream that keeps
+// sending is not cut off. Silence past this is UNKNOWN and the card is not
+// launched again. It is under the 90s a black-holed attempt may cost.
+const ProviderBodySilence = 45 * time.Second
 
 // providerReadBudget is the card's allowance for one black-holed attempt.
 const providerReadBudget = 90 * time.Second
@@ -85,10 +89,11 @@ func AcceptanceUnknown(job string) bool {
 }
 
 // ApplyProviderReadDeadline returns the job config with the model's provider
-// carrying headerTimeout and chunkTimeout, in milliseconds. A body that is
-// not a JSON object is returned unchanged. An absent provider entry is
-// created with only those two options, so a built-in provider still receives
-// the deadline. An apiKey already in the options is left as it was.
+// carrying headerTimeout and chunkTimeout, in milliseconds. Those options are
+// not the body-read deadline; see ProviderBodySilence. A body that is not a
+// JSON object is returned unchanged. An absent provider entry is created with
+// only those two options, so a built-in provider still receives them. An
+// apiKey already in the options is left as it was.
 func ApplyProviderReadDeadline(raw []byte, provider string) []byte {
 	if provider == "" || ProviderHeaderTimeout >= providerReadBudget || ProviderChunkTimeout >= providerReadBudget {
 		return raw
