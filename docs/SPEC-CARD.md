@@ -16,7 +16,7 @@ clause 9, and (f) the three former Open items: bare-directory PATHS (clause 4), 
 
 **Clause 10 added at #2636** (stacked on #2625 at `3ae8e1db`): every card declares `DEPENDS-ON:`,
 and the dealer's READY rule is normative. The edits it makes to clauses 2, 8 and 9 and to the
-summary are each marked *Amended at #2636*. It adds Open 6.
+summary are each marked *Amended at #2636*.
 
 **Roles.** Stella: contract review. Emma: cutter implementation coordination. Rowan: adoption.
 
@@ -354,9 +354,10 @@ The contract is accepted when, in one run at the pinned head:
    RED-WHEN, DONE-WHEN and the inlined findings. Measured today under the contract simulated:
    **57/59**; the two that do not pass are `01c` (clause 6: RUN is prose) and `tools-20`
    (clause 7: refused for a string it quotes), named fixes, not migration failures.
-   *Amended at #2636:* the 57/59 was measured before clause 10. Under it the 19 cards whose
-   dependency is not a card (clause 10, Open 6) are refused until Open 6 is decided; none of
-   them is `01c` or `tools-20`, so the expected count is 38/59 (arithmetic, not measured).
+   *Amended at #2636:* the 57/59 was measured before clause 10. Under it every one of the 35
+   named dependencies is written as a card id or a reference (clause 10), so the expected count
+   stays 57/59, provided the lineup carries the dogfood conform card; without it the ten cards
+   that name it are refused as unknown and the count is 47/59 (arithmetic, not measured).
 2. **The cutter re-emits `card-tools-03-stale-base-false-positive` byte-for-byte from structured
    input** — Stella's choice (5783178167). It is a positive roundtrip: the expected bytes are
    fixture P, `accept.md`, which is that card migrated under this contract, so the one file is
@@ -422,7 +423,7 @@ is removed (so D is byte-for-byte the P of #2625 at `3ae8e1db`). Both entry poin
 print the same line, differing only in the `card=`/file prefix:
 
 ```
-depends-on-declared: 1: no DEPENDS-ON: line under the contract line: a v2 card declares the cards it waits for, or that it waits for none remedy=DEPENDS-ON: <card-id>[, <card-id>...], or DEPENDS-ON: - when the card waits for no card
+depends-on-declared: 1: no DEPENDS-ON: line under the contract line: a v2 card declares what it waits for, or that it waits for nothing remedy=DEPENDS-ON: <card-id or owner/repo#n>[, ...], or DEPENDS-ON: - when the card waits for nothing
 ```
 
 Line 1 follows the lint's convention for an absent key (`kind-declared` names line 1 for a card
@@ -439,36 +440,46 @@ one lower. No line names `DEPENDS-ON`. Nothing in the output tells P from N, or 
 ## 10. DEPENDS-ON
 
 Every v2 card declares `DEPENDS-ON:` in its header block (clause 2). Its value is a
-comma-separated list of card ids — the id the lineup names the card by, which is the id on the
-card's own line 1 (`tools-01-harvest-commit-core`; never the file name `card-tools-01-…` and never
-a short form such as `tools-01`) — or the single token `-`, which declares that the card waits for
-no card. Entries are separated as clause 4 separates PATHS: by commas, never by whitespace. `-`
-stands alone: `-` beside an id, an empty entry between commas and an id listed twice are refused
+comma-separated list of entries, or the single token `-`, which declares that the card waits for
+nothing. An entry is one of two forms:
+
+- a **card id** — the id the lineup names the card by, which is the id on the card's own line 1
+  (`tools-01-harvest-commit-core`; never the file name `card-tools-01-…` and never a short form
+  such as `tools-01`);
+- a **reference** — `<owner>/<repo>#<n>`, an issue or a PR on GitHub
+  (`mas-bandwidth/nova-tools#2550`; never `nova-tools #2550`, never a bare `#2550`).
+
+Entries are separated as clause 4 separates PATHS: by commas, never by whitespace. `-` stands
+alone: `-` beside an entry, an empty entry between commas and an entry listed twice are refused
 by name.
 
-A card without the key is refused by name, with a remedy naming both forms; absence never means
-`-`. A card naming its own id is refused. An entry that is not the id of a card in the lineup the
-card was cut from is refused as unknown, with the entry quoted; how the lint's command line is
-handed the lineup is Emma's to name, as clause 4 leaves the tree. A prerequisite that is not a
-card — a PR or issue in any repository, a `dogfood CONFORMS` gate — is not a card id and is
-refused as unknown (Open 6); it is never dropped to make the card cut. A cycle cannot be seen
-from one card: the cutter, which holds the whole lineup, refuses a lineup whose DEPENDS-ON edges
-form one, naming the cycle.
+A card without the key is refused by name, with a remedy naming the forms; absence never means
+`-`. A card naming its own id is refused. A card id that is not the id of a card in the lineup
+the card was cut from is refused as unknown, with the entry quoted; how the lint's command line
+is handed the lineup is Emma's to name, as clause 4 leaves the tree. The lint checks a
+reference's shape; the cutter resolves it and refuses one that names neither an issue nor a PR.
+Anything else — a policy gate such as `dogfood CONFORMS <verb>`, prose, a URL — is not an entry
+and is refused by name. A gate that work must wait for is cut as a card, and the waiting cards
+name that card's id. A cycle cannot be seen from one card: the cutter, which holds the whole
+lineup, refuses a lineup whose DEPENDS-ON edges form one, naming the cycle.
 
 The cutter writes the key from the lineup's `depends-on` column, or, for a card cut from the
 nova-work graph, from its edges in `docs/roadmaps/nova-work.sexp`, expanding a short form to the
-one lineup id it names. A model never writes it, and the cutter never supplies `-` for a source
-row that names nothing: that is a cut error.
+one lineup id it names and a `<repo> #<n>` note to its reference. A model never writes it, and
+the cutter never supplies `-` for a source row that names nothing: that is a cut error.
 
-**The dealer's rule is normative here.** A card is **READY** when (a) every card its DEPENDS-ON
-names is **LANDED** — merged into the card's target base (`REPO`/`BASE`), clause 7's Landed; OK,
+**The dealer's rule is normative here.** A card is **READY** when (a) every DEPENDS-ON entry is
+**LANDED** — a card when it is merged into the card's target base (`REPO`/`BASE`), clause 7's
+Landed; a PR reference when the PR is merged; an issue reference when the issue is closed. OK,
 reviewed, verified or an open PR is not LANDED — and (b) its PATHS (clause 4) are disjoint from
 the PATHS of every card in flight, where in flight is handed out and neither LANDED nor closed.
 Disjointness is decided by the hygiene matching clause 4 reuses; `PATHS: none` is disjoint from
 every list. At every tick the dealer hands out the **highest-priority READY card**. Priority is
 the lineup's leverage tier, ties broken by the lineup's row order. A card that is not READY is
 passed over, not waited on: it keeps its place, is tested again at the next tick, and the dealer
-hands out the next READY card in priority order, so a serial head never blocks the queue. The
+hands out the next READY card in priority order, so a serial head never blocks the queue. An
+entry that can no longer land — a PR closed without merging, a card closed unlanded — is
+reported by name at every tick, never silently passed over forever. The
 dealer reads DEPENDS-ON and PATHS as the shared parser returns them from the card (clause 8,
 reader 7); a task record's `depends_on` and `paths` are written from that parse, never retyped.
 
@@ -488,12 +499,27 @@ flight. LANDED and not OK because an OK card's branch is not in the base a depen
 from: the dependent is cut against code that is not there, and its PR cannot merge. Disjoint
 PATHS because two cards editing one file in flight together make two PRs, and the second is a
 recut.
-*Effect on the 59:* all 59 gain the line, from `ORDER.tsv`: 24 `-` and 35 named. Of the 35, 16
-name only lineup cards, by short form (16 distinct, `tools-01` … `tools-53a`, each resolving to
-exactly one lineup id and written in full). 19 name a prerequisite that is not a card — 10
-`dogfood CONFORMS <verb>`, 7 `rowan-tools #132`, 1 `nova-tools #2550`, 1 `nova-tools #2522` — of
-which 4 (`tools-26`, `38`, `42`, `50`) also name cards. Those 19 are refused under this clause
-until Open 6 is decided; they are the cards whose dependency would otherwise be silently dropped.
+*Amended at #2636, the coordinator's ruling (20:28Z):* references are an entry form, and the
+`dogfood CONFORMS` gates become one card, so no named dependency of the 59 is left undecided.
+*Why a closed PR is reported:* `rowan-tools #132`, named by 7 of the 59, was closed as superseded
+by #134-#138; #137 and #138 were then closed unmerged and replaced by #139 (merged 20:22Z). A
+card naming #138 would wait forever.
+*Effect on the 59:* all 59 gain the line, from `ORDER.tsv`: 24 `-` and 35 named, every one
+expressible:
+
+| source in `ORDER.tsv` | cards | written as |
+|---|---|---|
+| lineup cards only, by short form (16 distinct, `tools-01` … `tools-53a`) | 16 | the full lineup id, each resolving to exactly one card |
+| `dogfood CONFORMS <verb>` (`tools-10`, `26`-`31`, `33`-`35`; `tools-26` also `tools-01`) | 10 | `tools-54-dogfood-conform-matrix`, a card the lineup gains (the 60th; it fills the CONFORMS lines of `reports/dogfood-matrix-2026-09-22.md`, and must not name `tools-35`, whose card depends on it, or the cutter refuses the cycle) |
+| `rowan-tools #132` (`tools-38`-`44`; `38` also `tools-37`, `42` also `tools-17`) | 7 | `mas-bandwidth/rowan-tools#139`, the PR that merged the tree #132 described |
+| `nova-tools #2550` (`tools-50`, also `tools-24`, `tools-25`) | 1 | `mas-bandwidth/nova-tools#2550` (an issue: LANDED when closed) |
+| `nova-tools #2522` (`tools-52`) | 1 | `mas-bandwidth/nova-tools#2522` (a PR: LANDED when merged) |
+
+Expected (arithmetic, not measured): 57/59 accepted at both entry points, as before clause 10,
+once the lineup carries `tools-54`. At the first tick, on dependencies alone (PATHS not yet
+applied), **29/59** can be READY: the 24 `-` cards and the 5 whose only entry is
+`mas-bandwidth/rowan-tools#139`, merged (`tools-39`, `40`, `41`, `43`, `44`); `nova-tools#2550`
+is open and `nova-tools#2522` is unmerged.
 
 ---
 
@@ -508,8 +534,9 @@ until Open 6 is decided; they are the cards whose dependency would otherwise be 
 | clause 6 | 59 | a `## Run` section each; `01c` rewritten by hand |
 | clause 7 | 1 | `tools-20` stops being refused for text it quotes |
 | **net, measured (simulated)** | **57/59** | `01c` and `tools-20` are the two named fixes |
-| clause 10 | 59 | each gains `DEPENDS-ON:` from `ORDER.tsv`: 24 `-`, 35 named; 16 name only cards (short forms written in full), 19 name a prerequisite that is not a card and wait on Open 6 |
-| **net with clause 10 (arithmetic)** | **38/59** | the 57 less the 19 of Open 6; not measured |
+| clause 10 | 59 | each gains `DEPENDS-ON:` from `ORDER.tsv`: 24 `-`, 35 named; 16 cards only, 10 the dogfood conform card `tools-54`, 7 `mas-bandwidth/rowan-tools#139`, 2 `mas-bandwidth/nova-tools#…` references |
+| **net with clause 10 (arithmetic)** | **57/59** | accepted, once the lineup carries `tools-54` (47/59 without it); not measured |
+| **READY at the first tick (arithmetic)** | **29/59** | the 24 `-` cards and the 5 waiting only on the merged `rowan-tools#139`; before PATHS disjointness |
 
 ## Open — not decided by this text
 
@@ -519,18 +546,12 @@ Each is a question the sources leave open or a place they conflict; none is sett
    form are decided; no source yet names the v2 kind or the removal date for `fix-red`,
    `transcript-test`, `sweep`, `mutation-kill`, `probe`, `text`, `tone`. The rows are written in
    the table and reviewed with it.
-6. **Prerequisites that are not cards** (clause 10, added at #2636). 19 of the 59 wait on
-   something the lineup has no card for. Two readings, not decided: (a) the prerequisite becomes
-   a lineup card — receipt-only, `KIND: report`, `PATHS: none`, as `01c` is (clause 3) — whose
-   product is the merged PR or the CONFORMS row, so LANDED applies unchanged; or (b) the grammar
-   admits a second id form, `<owner>/<repo>#<n>`, LANDED when that PR is merged into its own base,
-   and a policy gate such as `dogfood CONFORMS` stays off DEPENDS-ON and on the readiness receipt
-   (`LINEUP.md`: it "belongs on the readiness receipt, not in `depends-on`"). Until decided the 19
-   are refused, never cut with the prerequisite dropped.
 
 Decided at the HOLD 5783178167 revision, and no longer open: 2 bare-directory PATHS (clause 4),
 3 lowercase keys (clause 2), 4 sprint-stage as the sixth reader (clause 8), 5 the round-tripped
-card (clause 9 item 2), and the COMMIT RULE representation (clause 7).
+card (clause 9 item 2), and the COMMIT RULE representation (clause 7). Decided at #2636: a
+dependency that is not a lineup card is a `<owner>/<repo>#<n>` reference or is cut as a card
+(clause 10).
 
 ## Lineage
 
@@ -557,4 +578,5 @@ card (clause 9 item 2), and the COMMIT RULE representation (clause 7).
   rule, with fixture D; stacked on #2625 at `3ae8e1db`. Glenn, 2026-09-22 4:26 PM: "We will work
   on them in priority order *except* when we are going serial due to dependencies, then we will
   pick unrelated things that are next in priority order." Then: "Do all cards have dependency
-  information?" Measured: no (clause 10, *Why*).
+  information?" Measured: no (clause 10, *Why*). The coordinator's ruling at 20:28Z: references
+  are an entry form; the `dogfood CONFORMS` gates become one card.
