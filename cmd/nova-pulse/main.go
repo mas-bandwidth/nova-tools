@@ -33,6 +33,7 @@ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
+nova-pulse wait    --until <cond> [args...] [--every <d>] [--timeout <d>] [--bus <clone>] [--store <host:port>] [--store-user <name>] [--password-env <NAME>] [-- <cmd>...]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
@@ -129,6 +130,43 @@ so a restart carries on rather than starting again.
 
 example:
   nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6
+
+wait is the one waiter (#2546): poll until a condition holds, then act. It
+replaces bin/wait-for and the ad-hoc shell waiters that broke on zsh word
+splitting, globs and quoting -- four of a dozen typed on 2026-09-21, one of
+which silently never fired. Six conditions:
+
+  process-gone <pattern>        no process is running that the pattern names
+  file-has     <path> <regex>   the file has a line matching the regex
+  file-exists  <path>           the path is there (an EMPTY file counts; use
+                                file-has <path> . for wait-for's old mode)
+  pr-check     <repo> <n> <s>   the PR's checks are green|red|pending|none,
+                                or the PR itself is merged|closed (needs gh)
+  redis-key    <key> <value>    the store's key carries the value; * means
+                                only that the key exists (needs --store)
+  bus-note     <id>             somebody other than the sender replied to the
+                                note; a RECEIPT is heard, not answered, and
+                                the wait goes on (needs --bus)
+
+--every takes a bare number of seconds or a duration (20, 1s, 500ms) and
+defaults to 20s; --timeout the same, defaulting to 30m. Exit 0 when the
+condition held, 2 on timeout, 2 on a refusal, and ONE receipt line either way:
+WAIT HELD to stdout, WAIT TIMEOUT to stderr. Everything after a bare -- is a
+command run once the condition holds, argv passed through untouched, and ITS
+exit status becomes the verb's -- a harvest that failed must not read as a wait
+that succeeded.
+
+process-gone matches the pattern against argv[0] and argv[1] only, and never
+this process, its ancestors or its descendants. Both halves are load-bearing: a
+waiter carries the pattern it waits on as an argument, so pgrep -f found itself;
+bash forks an identical copy of a script per pipeline stage, so the waiter found
+its own child; and procps matches an ancestor where the BSD pgrep does not, so
+the same bug hung darwin and Linux on different days.
+
+example:
+  nova-pulse wait --until file-exists ./cards.tsv --timeout 5s
+  nova-pulse wait --until file-has ./cards.tsv 'gate\s' --every 1s --timeout 5s
+  nova-pulse wait --until process-gone no-such-process-on-this-machine --every 1s --timeout 5s
 
 triage cuts the decision packet for one undecided case to a card for the text
 route: the RESULT lines, the refusal line and the candidate rows of
@@ -331,6 +369,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdBeat(rest, stdout, stderr, now)
 	case "watch":
 		return cmdWatch(rest, stdout, stderr, now)
+	case "wait":
+		return cmdWait(rest, stdout, stderr)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
