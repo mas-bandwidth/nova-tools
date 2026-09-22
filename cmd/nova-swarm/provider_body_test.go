@@ -34,6 +34,13 @@ type bodyResult struct {
 
 func runBodyCard(t *testing.T, upstream string, silence time.Duration, after func(time.Duration) <-chan time.Time) bodyResult {
 	t.Helper()
+	return runProviderCard(t, upstream, silence, 0, after)
+}
+
+// runProviderCard is runBodyCard with the proxy's header wait as well. Zero
+// headerWait means ProviderHeaderTimeout.
+func runProviderCard(t *testing.T, upstream string, silence, headerWait time.Duration, after func(time.Duration) <-chan time.Time) bodyResult {
+	t.Helper()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -48,7 +55,7 @@ func runBodyCard(t *testing.T, upstream string, silence time.Duration, after fun
 		binary: bin, model: "fake/fake-model", label: "bodycard",
 		card: []byte(bodyCard), slotDir: slot, root: root,
 		configFile: cfgPath, deadline: 30 * time.Second, noWall: true,
-		bodySilence: silence, bodyAfter: after,
+		bodySilence: silence, bodyAfter: after, headerWait: headerWait,
 		onProxy: func(p *swarm.ProviderProxy) { proxy = p },
 	}, &errOut)
 	return bodyResult{res: res, code: code, err: errOut.String(), proxy: proxy}
@@ -265,6 +272,114 @@ func TestProviderBodyThatResumesInsideTheDeadlineIsNotUnknown(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err != nil {
 		t.Fatalf("the body inside the deadline did not publish: %v", err)
+	}
+	assertDialedProxy(t, got.res.job, got.proxy)
+}
+
+// TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown is Stella's HOLD
+// 5782441006: the upstream accepts the POST and never sends response headers.
+// The proxy's own header wait ends it, the card is UNKNOWN (not failed), one
+// upstream request, one launch, the persisted mark, no result. The body gap is
+// set far above the header wait so only the header wait can end this card.
+func TestProviderNoHeadersEndsAtTheHeaderWaitAsUnknown(t *testing.T) {
+	var upstream atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream.Add(1)
+		discardReq(r)
+		<-r.Context().Done()
+	}))
+	defer up.Close()
+
+	started := time.Now()
+	got := runProviderCard(t, up.URL, 25*time.Second, time.Second, nil)
+	runFor := time.Since(started)
+	if got.proxy == nil {
+		t.Fatalf("no proxy\n%s", got.err)
+	}
+	if got.proxy.HeaderWait() != time.Second {
+		t.Fatalf("header wait %s, want 1s", got.proxy.HeaderWait())
+	}
+	if got.code != 0 || !got.res.lost || got.res.end != swarm.EndUnknown {
+		t.Fatalf("code=%d lost=%v end=%s\n%s", got.code, got.res.lost, got.res.end, got.err)
+	}
+	verdict, why := nativeVerdictWhy(got.res)
+	if verdict != "INCOMPLETE" || why != "unknown-acceptance" {
+		t.Fatalf("verdict %s why %s", verdict, why)
+	}
+	if n := jobLaunches(t, got.res.job); n != 1 {
+		t.Fatalf("card launches=%d, want 1", n)
+	}
+	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
+		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	}
+	assertDialedProxy(t, got.res.job, got.proxy)
+	mark, err := os.ReadFile(filepath.Join(got.res.job, "provider-acceptance"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(mark) != oneline.Escape("unknown\n") {
+		t.Fatalf("provider-acceptance = %q", mark)
+	}
+	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err == nil {
+		t.Fatal("a response with no headers published a result")
+	}
+	if got.proxy.HeaderWall() < time.Second {
+		t.Fatalf("header wall %s, want at least the 1s wait", got.proxy.HeaderWall())
+	}
+	if got.proxy.SilenceWall() != 0 {
+		t.Fatalf("the body gap fired (%s) with no headers", got.proxy.SilenceWall())
+	}
+	t.Logf("CANARY requests=%d header_ms=%d run_ms=%d verdict=%s why=%s",
+		got.proxy.Requests(), got.proxy.HeaderWall().Milliseconds(), runFor.Milliseconds(), verdict, why)
+}
+
+// TestProviderDelayedHeadersInsideTheWaitAreNotUnknown is the pair's normal
+// case: headers come late but inside the wait, then the body streams. The
+// card completes. No acceptance file, nothing lost.
+func TestProviderDelayedHeadersInsideTheWaitAreNotUnknown(t *testing.T) {
+	var upstream atomic.Int32
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstream.Add(1)
+		discardReq(r)
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		f, _ := w.(http.Flusher)
+		for _, chunk := range []string{"o", "k", "\n"} {
+			_, _ = w.Write([]byte(chunk))
+			if f != nil {
+				f.Flush()
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}))
+	defer up.Close()
+
+	got := runProviderCard(t, up.URL, 2*time.Second, 2*time.Second, nil)
+	if got.proxy == nil {
+		t.Fatalf("no proxy\n%s", got.err)
+	}
+	if got.code != 0 || got.res.lost || got.res.rc != 0 {
+		t.Fatalf("code=%d lost=%v rc=%d\n%s", got.code, got.res.lost, got.res.rc, got.err)
+	}
+	verdict, why := nativeVerdictWhy(got.res)
+	if verdict != "OK" || why != "" {
+		t.Fatalf("verdict %s why %s, want OK", verdict, why)
+	}
+	if n := jobLaunches(t, got.res.job); n != 1 {
+		t.Fatalf("card launches=%d, want 1", n)
+	}
+	if got.proxy.Requests() != 1 || upstream.Load() != 1 {
+		t.Fatalf("requests=%d upstream=%d, want 1 and 1", got.proxy.Requests(), upstream.Load())
+	}
+	if got.proxy.Lost() || got.proxy.HeaderWall() != 0 {
+		t.Fatalf("delayed headers inside the wait were marked unknown (header wall %s)", got.proxy.HeaderWall())
+	}
+	if _, err := os.Stat(filepath.Join(got.res.job, "provider-acceptance")); !os.IsNotExist(err) {
+		t.Fatalf("provider-acceptance exists: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(got.res.job, "RESULT.md")); err != nil {
+		t.Fatalf("the delayed-header card did not publish: %v", err)
 	}
 	assertDialedProxy(t, got.res.job, got.proxy)
 }

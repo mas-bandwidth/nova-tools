@@ -8,9 +8,11 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -28,6 +30,16 @@ import (
 // proxy does not open a second upstream request. A body that arrives inside the
 // gap is success and is not unknown. Whole-card silence is not this signal;
 // that stays the 300s idle watch.
+//
+// THE HEADER WAIT IS OWNED TOO (stella 5782441006). The body timer starts only
+// when headers arrive, so an upstream that accepts the POST and never answers
+// with headers had no deadline of ours. The proxy's own transport waits
+// ProviderHeaderTimeout for response headers after the request is fully
+// written. That expiry is the same UNKNOWN as a silent body: the request was
+// sent and may have been accepted, so the run records unknown and the proxy
+// opens no second upstream request. A timeout before the request was written,
+// such as a dial that never connected, sent no work and stays a 502. Both
+// gaps are per request and are not the card's runtime.
 
 // errBodySilence is the gap readWithinSilence reports. It is not a launch
 // failure and it is not written into the harness log for the classifier to
@@ -36,11 +48,14 @@ var errBodySilence = errors.New("provider body silence")
 
 // ProviderProxyConfig is one proxy. Silence zero means ProviderBodySilence.
 // After nil means a time.Timer inside readWithinSilence. A test passes After
-// so the production gap is an event it can fire.
+// so the production gap is an event it can fire. HeaderWait zero means
+// ProviderHeaderTimeout; a test passes a shorter wait so the suite does not
+// wait 45s.
 type ProviderProxyConfig struct {
-	Upstream string
-	Silence  time.Duration
-	After    func(time.Duration) <-chan time.Time
+	Upstream   string
+	Silence    time.Duration
+	After      func(time.Duration) <-chan time.Time
+	HeaderWait time.Duration
 }
 
 // ProviderProxy is the localhost client the harness dials instead of the
@@ -50,6 +65,7 @@ type ProviderProxy struct {
 	upstream *url.URL
 	silence  time.Duration
 	after    func(time.Duration) <-chan time.Time
+	headerWt time.Duration
 	client   *http.Client
 	srv      *http.Server
 	stall    chan struct{}
@@ -61,6 +77,8 @@ type ProviderProxy struct {
 	requests  int64
 	headersAt time.Time
 	stalledAt time.Time
+	sentAt    time.Time
+	noHeaders bool
 
 	once      sync.Once
 	closeOnce sync.Once
@@ -85,16 +103,25 @@ func ListenProviderProxy(cfg ProviderProxyConfig) (*ProviderProxy, error) {
 	if silence <= 0 {
 		silence = ProviderBodySilence
 	}
+	headerWait := cfg.HeaderWait
+	if headerWait <= 0 {
+		headerWait = ProviderHeaderTimeout
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	p := &ProviderProxy{
 		upstream: u,
 		silence:  silence,
 		after:    cfg.After,
+		headerWt: headerWait,
 		stall:    make(chan struct{}),
 		ctx:      ctx,
 		cancel:   cancel,
 		client: &http.Client{
-			Transport: &http.Transport{Proxy: nil, DisableCompression: true},
+			Transport: &http.Transport{
+				Proxy:                 nil,
+				DisableCompression:    true,
+				ResponseHeaderTimeout: headerWait,
+			},
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
@@ -121,6 +148,10 @@ func (p *ProviderProxy) HarnessURL() string { return p.harness }
 // Silence is the gap the body timer is armed with.
 func (p *ProviderProxy) Silence() time.Duration { return p.silence }
 
+// HeaderWait is how long the proxy waits for response headers after the
+// request is written.
+func (p *ProviderProxy) HeaderWait() time.Duration { return p.headerWt }
+
 // Requests is how many upstream requests were started. A request refused
 // after a silent body is not counted.
 func (p *ProviderProxy) Requests() int64 {
@@ -129,10 +160,12 @@ func (p *ProviderProxy) Requests() int64 {
 	return p.requests
 }
 
-// Stalled is closed once, when a body gap ends the request.
+// Stalled is closed once, when a body gap or an expired header wait ends the
+// request.
 func (p *ProviderProxy) Stalled() <-chan struct{} { return p.stall }
 
-// Lost reports that the body gap already fired. A closed channel stays lost.
+// Lost reports that the body gap or the header wait already fired. A closed
+// channel stays lost.
 func (p *ProviderProxy) Lost() bool {
 	select {
 	case <-p.stall:
@@ -151,6 +184,17 @@ func (p *ProviderProxy) SilenceWall() time.Duration {
 		return 0
 	}
 	return p.stalledAt.Sub(p.headersAt)
+}
+
+// HeaderWall is the measured gap from the written request to the expired
+// header wait. Zero means the header wait did not end the request.
+func (p *ProviderProxy) HeaderWall() time.Duration {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if !p.noHeaders || p.sentAt.IsZero() || p.stalledAt.IsZero() {
+		return 0
+	}
+	return p.stalledAt.Sub(p.sentAt)
 }
 
 // Close stops the listener and unblocks a body read still in progress.
@@ -258,14 +302,37 @@ func (p *ProviderProxy) sawHeaders() {
 	p.mu.Unlock()
 }
 
-func (p *ProviderProxy) markLost() {
+func (p *ProviderProxy) sent() {
+	p.mu.Lock()
+	if p.sentAt.IsZero() {
+		p.sentAt = time.Now()
+	}
+	p.mu.Unlock()
+}
+
+func (p *ProviderProxy) markLost() { p.lose(false) }
+
+func (p *ProviderProxy) lose(noHeaders bool) {
 	p.once.Do(func() {
 		p.mu.Lock()
 		p.dead = true
+		p.noHeaders = noHeaders
 		p.stalledAt = time.Now()
 		p.mu.Unlock()
 		close(p.stall)
 	})
+}
+
+// headerWaitExpired reports that a written request got no response headers
+// within the transport's header wait. A cancelled run is not this, and
+// neither is a timeout before the request was written: a dial that never
+// connected sent no work.
+func headerWaitExpired(ctx context.Context, err error, sent bool) bool {
+	if err == nil || ctx.Err() != nil || !sent {
+		return false
+	}
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
 }
 
 func (p *ProviderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +351,16 @@ func (p *ProviderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if target.Path == "" {
 		target.Path = "/"
 	}
-	out, err := http.NewRequestWithContext(ctx, r.Method, target.String(), r.Body)
+	var wrote atomic.Bool
+	traced := httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			if info.Err == nil {
+				wrote.Store(true)
+				p.sent()
+			}
+		},
+	})
+	out, err := http.NewRequestWithContext(traced, r.Method, target.String(), r.Body)
 	if err != nil {
 		http.Error(w, "upstream", http.StatusBadGateway)
 		return
@@ -299,6 +375,14 @@ func (p *ProviderProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := p.client.Do(out)
 	if err != nil {
+		if headerWaitExpired(ctx, err, wrote.Load()) {
+			// The request was written and no headers came back inside the
+			// owned wait. It may have been accepted: the same UNKNOWN as a
+			// silent body, signalled before the abort, and no second
+			// upstream request after it.
+			p.lose(true)
+			panic(http.ErrAbortHandler)
+		}
 		http.Error(w, "upstream", http.StatusBadGateway)
 		return
 	}

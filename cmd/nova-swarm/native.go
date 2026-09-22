@@ -72,6 +72,10 @@ type nativeRunConfig struct {
 	// bodyAfter arms that gap. Nil means the timer inside readWithinSilence.
 	// A test passes a clock it can fire so the 45s gap is an event.
 	bodyAfter func(time.Duration) <-chan time.Time
+	// headerWait is how long the proxy waits for response headers after the
+	// request is written; expiry ends the attempt UNKNOWN. Zero means
+	// ProviderHeaderTimeout (45s). Production leaves it zero.
+	headerWait time.Duration
 	// onProxy receives the proxy once it is listening, before the child starts.
 	// Nil in production.
 	onProxy func(*swarm.ProviderProxy)
@@ -667,10 +671,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
 		case <-bodyStall:
-			// Headers arrived and then the body went silent. The measured
-			// harness kept running after its own timeouts, so the run reaps
-			// the card instead of waiting for it to notice, and does not
-			// launch it again.
+			// Headers arrived and then the body went silent, or the request
+			// was written and no headers came back inside the proxy's header
+			// wait. The measured harness kept running after its own
+			// timeouts, so the run reaps the card instead of waiting for it
+			// to notice, and does not launch it again.
 			deadline.Stop()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
@@ -1539,6 +1544,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			opened, err := swarm.ListenProviderProxy(swarm.ProviderProxyConfig{
 				Upstream: upstream, Silence: silence, After: cfg.bodyAfter,
+				HeaderWait: cfg.headerWait,
 			})
 			if err != nil {
 				return "", fmt.Sprintf("the provider read proxy could not listen: %s", oneline.Escape(err.Error())), nil
