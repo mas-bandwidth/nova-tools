@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -121,6 +122,17 @@ func NoBackgroundGit(args ...string) []string {
 // same 64 KiB this repo already holds a child to (internal/update.ChildCap), reused rather
 // than invented: a hostile or runaway gh/git must not be able to fill memory. A result
 // that reached the ceiling is marked truncated below.
+//
+// It is not the ceiling on every capture this tool takes. A handful of gh answers -- a
+// pull request's own JSON, its comments, its reviews -- are read by a parser, not a
+// person, and a parser handed a 64 KiB PREFIX of paginated JSON does not get a truncated
+// answer, it gets a syntax error: nova-tools #2522 measured a review-and-comment capture
+// at 63,499 bytes, over this cap, and it could not be parsed at all, so the pull request
+// it was read for never landed. Those captures go through RunUncapped below instead of
+// Run, and execOutputCap stays exactly what it was for everything else -- and for the
+// tail an uncapped command's own error message keeps when that command fails (see
+// RunUncapped): the ceiling on what a person or a parser is handed did not move, only
+// where it is enforced did.
 const execOutputCap = 64 * 1024
 
 // Run runs the command and returns its output, stdout and stderr together, because the
@@ -160,6 +172,75 @@ func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, 
 		return captured, fmt.Errorf("%s exceeded the %d-byte output capture cap", name, execOutputCap)
 	}
 	return captured, err
+}
+
+// UncappedRunner is the extra capability a Runner MAY offer beside Run: a capture that is
+// not held to execOutputCap because it feeds a parser rather than a terminal. Exec
+// implements it below; a test's fake Runner does not have to -- runUncapped falls back to
+// an ordinary Run, and a fake already hands back whatever whole string the test built for
+// it, because a fake was never bounded by the cap in the first place.
+type UncappedRunner interface {
+	RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error)
+}
+
+// runUncapped calls RunUncapped when the runner offers it, and Run otherwise.
+func runUncapped(ctx context.Context, runner Runner, dir, name string, args ...string) (string, error) {
+	if u, ok := runner.(UncappedRunner); ok {
+		return u.RunUncapped(ctx, dir, name, args...)
+	}
+	return runner.Run(ctx, dir, name, args...)
+}
+
+// RunUncapped is Run without the ceiling on a SUCCESSFUL command's captured output: some
+// hosted answers this tool must parse whole are legitimately over execOutputCap (#2522),
+// and a prefix of JSON is not a truncated file a reader can work around, it is JSON this
+// tool cannot parse at all.
+//
+// This is an in-memory capture, on purpose and not by oversight: rule 13 (see source_test
+// on this package) is that nothing this tool runs reaches /tmp or a path outside --lane,
+// so the unboundedness this trades for a whole parse lives in this process's own memory,
+// never on disk, and only the three call sites host.go names reach it -- a known, small
+// set of hosted answers, not every subprocess this tool starts.
+//
+// A command that FAILS still reports only the LAST execOutputCap bytes of what it wrote:
+// the cap is not gone, it is narrowed to the one job it always really had, which is
+// keeping a runaway command's error report short enough to read and to hold. That is the
+// tail and not the prefix Run keeps, because the line a person reading a failure wants is
+// the one git or gh wrote last, not the one they wrote first.
+func (Exec) RunUncapped(ctx context.Context, dir, name string, args ...string) (string, error) {
+	if filepath.Base(name) == "git" {
+		args = NoBackgroundGit(args...)
+	}
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir = dir
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	runErr := cmd.Run()
+
+	if runErr == nil && ctx.Err() == nil {
+		return out.String(), nil
+	}
+
+	// The command failed, or the parent's deadline expired: either way this is an error
+	// report, not the parsed answer, so it is held to execOutputCap's TAIL rather than
+	// kept whole.
+	tail := tailOf(out.Bytes(), execOutputCap)
+	if ctx.Err() != nil {
+		return tail, fmt.Errorf("%s took longer than this run's --timeout allows: %w", name, ctx.Err())
+	}
+	return tail, runErr
+}
+
+// tailOf returns the last n bytes of b, marked when that cut them, so a long failure's
+// error report stays exactly as bounded as Run's has always been -- only which end of the
+// capture survives changes, from the prefix Run keeps to the tail a diagnosis is read
+// from.
+func tailOf(b []byte, n int) string {
+	if len(b) <= n {
+		return string(b)
+	}
+	return fmt.Sprintf("[output truncated: showing the last %d bytes]\n", n) + string(b[len(b)-n:])
 }
 
 // Git runs git in one directory under one timeout, through the guard.
