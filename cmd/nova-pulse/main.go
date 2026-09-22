@@ -36,6 +36,8 @@ nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <
 nova-pulse wait    --until <cond> [args...] [--every <d>] [--timeout <d>] [--bus <clone>] [--store <host:port>] [--store-user <name>] [--password-env <NAME>] [-- <cmd>...]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--results-root <dir>] [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
+nova-pulse status  --store <host:port> [--friends <a,b>] [--interval <d>] [--out <path>] [--store-user <name>] [--password-env <NAME>]
+nova-pulse row     --store <host:port> [--interval <d>] [--host <name>] [--home <dir>] [--queue <dir>] [--slots <dir>] [--results <dir>] [--roots <dirs>] [--since <file>] [--textfile <path>] [--store-user <name>] [--password-env <NAME>] [--once] [--print]
 nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
@@ -189,6 +191,27 @@ the floor the suggestion is '?' with its confidence and the packet is unchanged.
 
 example:
   nova-pulse triage --case nosha --queue ./queue --out ./cards/triage-nosha.md --ref card-892
+
+row and status --store are the SWARM TABLE (#2561), the per-bench table Glenn
+reads, with zero ssh. Each bench runs nova-pulse row --store <redis>, which
+pushes bench:<host> {host,queue,working,done,ok,fail,load1,ncpu,at} once a
+second with a five-second TTL: a bench that stops pushing VANISHES from the
+table rather than showing a row of zeros, which is how a fleet nobody could see
+looked healthy on 2026-09-17. status --store renders the rows, the totals, the
+stuck-DONE count from bench:stuck_done, a friends: line from the friend:* keys
+(#2610) and, when there is a current sprint, its COWS line (#2593). Every path
+row reads is a flag with a default under --home: queue's ready and ready-pro,
+the slot store for working, and RESULT.md under the job roots and the results
+directory for done/ok/fail, counted from the mtime of --since (SPRINT-START).
+The count is a FLOOR and says so: a finished card's job directory is deleted at
+card end, and only what survives under --results is still countable. The
+password comes from $NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec, and
+never reaches a flag, a file or a receipt. row --print measures and prints the
+row without a store and without pushing: it is what to run when the table says
+0 done and you want to know which of the four readers answered nothing.
+
+example:
+  nova-pulse row --print --host bench-a --queue ./queue --slots ./slots --results ./results --roots . --since ./cards.tsv
 
 status --oneline is the whole day in one line under 400 bytes: width per bench,
 pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
@@ -387,6 +410,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdManager(rest, stdout, stderr)
 	case "status":
 		return cmdStatus(rest, stdout, stderr, now)
+	case "row":
+		return cmdRow(rest, stdout, stderr, now)
 	case "progress":
 		return cmdProgress(rest, stdout, stderr)
 	case "capacity":
@@ -672,6 +697,15 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	self := f.fs.String("self", "", "")
 	var loops repeatable
 	f.fs.Var(&loops, "loop", "")
+	// --store is the swarm table (#2561): the whole fleet's rows read from the Redis every
+	// bench pushes into, zero ssh. It is a mode of its own, like --html, and it shares
+	// none of the queue report's flags.
+	store := f.fs.String("store", "", "")
+	storeUser := f.fs.String("store-user", pulse.DefaultStoreUser, "")
+	storePassEnv := f.fs.String("password-env", pulse.DefaultStorePasswordEnv, "")
+	storeFriends := f.fs.String("friends", "", "")
+	storeInterval := f.fs.String("interval", "", "")
+	storeOut := f.fs.String("out", "", "")
 	// --timeout takes a bare number of seconds or a duration. It was seconds only while the
 	// verb's own progress line printed a duration, so a reader who copied what the tool said
 	// got a flag parse error: a flag that will not accept what the tool prints is a trap.
@@ -691,6 +725,34 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if *expandingHours < 1 {
 		f.add(fmt.Sprintf("--expanding-hours wants a whole number of hours, got %d", *expandingHours))
+	}
+	// --store: THE SWARM TABLE. It is read before --html and before the queue report, and
+	// it wants neither --queue nor --roots: the rows come from the benches themselves.
+	if strings.TrimSpace(*store) != "" {
+		var interval time.Duration
+		if strings.TrimSpace(*storeInterval) != "" {
+			d, err := pulse.ParsePollInterval(*storeInterval)
+			if err != nil {
+				f.add(fmt.Sprintf("--interval %s", err))
+			}
+			interval = d
+		}
+		if f.refused(stderr) {
+			return 2
+		}
+		var friends []string
+		if strings.TrimSpace(*storeFriends) != "" {
+			friends = strings.Split(*storeFriends, ",")
+		}
+		return pulse.SwarmStatus(pulse.SwarmStatusInput{
+			Store:    pulse.StoreOptions{Addr: *store, User: *storeUser, PasswordEnv: *storePassEnv},
+			Friends:  friends,
+			Interval: interval,
+			Out:      *storeOut,
+			Stdout:   stdout,
+			Stderr:   stderr,
+			Now:      func() time.Time { return time.Now().UTC() },
+		})
 	}
 	// --html is the fleet status page as a verb (status-page.sh folded in). It reads the
 	// machines registry and the queue, counts live cards from running card processes, and

@@ -2823,6 +2823,116 @@ expired wait on an acknowledged note does not read like a note nobody opened. A
 reply in the sender's own lane is not an answer either — the bus's answered rule
 is per reader, and asking the sender's lane would make every note self-answering.
 
+### row and status --store — the swarm table
+
+```
+nova-pulse row --store <host:port> [--interval <d>] [--host <name>] [--home <dir>] [--queue <dir>] [--slots <dir>] [--results <dir>] [--roots <dirs>] [--since <file>] [--textfile <path>] [--store-user <name>] [--password-env <NAME>] [--once] [--print]
+nova-pulse status --store <host:port> [--friends <a,b>] [--interval <d>] [--out <path>] [--store-user <name>] [--password-env <NAME>]
+```
+
+The **swarm table** is the per-bench table — host, queue, working, done, ok,
+fail, ok%, load — read from the fleet Redis with **zero ssh** (#2561). Glenn
+renamed it on 2026-09-22: the per-bench table is the *swarm* table, and a
+*sprint* is a bounded task set whose COWS line rides at the bottom (#2593).
+
+Each bench runs `nova-pulse row`, which measures itself and pushes
+`bench:<host>` = `{host, queue, working, done, ok, fail, load1, ncpu, at}` once
+a second with a **five-second TTL**. A bench that stops pushing **vanishes**
+from the table. That is the point: a row of zeros reads as a bench with nothing
+to do, which is how a fleet nobody could see looked healthy on 2026-09-17.
+
+```
+SWARM TABLE  2026-09-22T18:00:03Z  (each bench pushes its row every 1 s; absent = no row for 5 s)
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+hulk       |    12 |       8 |   140 |   119 |    21 |  85% |   4.20
+space      |     3 |       2 |    60 |    60 |     0 | 100% |   0.90
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |    15 |      10 |   200 |   179 |    21 |  89% |
+
+stuck-DONE: 7  (bench:stuck_done at 2026-09-22T17:55:00Z)
+friends: emma AWAY 1h12m (last 16:48Z) · freddy none · johnny up 15s · stella none
+S=cards-v2 C=18 O=9 W=3  18/30 60%
+```
+
+The columns, the widths, the separators and the totals line are byte for byte
+`bin/sprint-table-redis`'s, so the table Glenn already reads does not change
+shape on the day it changes implementation. Only the header word did.
+
+**What each column is read from**, all of them flags with a default under
+`--home`, because a verb carrying one session's queue directory in its source
+would freeze the scripts it exists to retire:
+
+| column | reader |
+| --- | --- |
+| `queue` | the `.md` cards in `<queue>/ready` and `<queue>/ready-pro` |
+| `working` | the leases in `<slots>` whose state is `live` (read through `internal/swarm`, not by shelling `nova-swarm slots list`) |
+| `done`, `ok`, `fail` | every `RESULT.md` newer than `<since>`: under the job roots (`<root>/<dir>/*/jobs/*/RESULT.md`) **and** under `<results>/<label>/` |
+| `load1`, `ncpu` | `/proc/loadavg` or `sysctl -n vm.loadavg`, and the core count |
+
+**The count is a floor and says so.** A finished card's job directory is deleted
+at card end, and only what survives under `--results` is still countable; a card
+swept from both places is counted by nothing. This is the bench's own floor,
+never the fleet's total of record.
+
+**One fail set for both sources.** `bin/bench-row` used a narrower set under the
+job roots than under `<results>`, so a `sprint-requeue`, a `bench-sweep` or a
+`RESULT: SILENT` card was a FAIL in one place and OK in the other — the same
+card changing column when its job directory was swept. The wider set is applied
+to both, and it is the one intentional difference from the numbers the shell
+printed.
+
+`--textfile <path>` additionally writes the same five counts as a node_exporter
+textfile-collector file (atomically: temp file, then rename), so the cards show
+up beside the load, memory and network collectors. The Redis push is unchanged
+by it.
+
+`--print` measures and prints the row **without a store and without pushing** —
+what to run when the table says `0 done` and you want to know which of the four
+readers answered nothing. It prints `pushed=-`, never `pushed=0`.
+
+`--interval` at or past the five-second TTL is **refused**, not clamped: a bench
+pushing every five seconds flickers on and off the table.
+
+**A push that fails is said.** `bin/bench-row` sent `redis-cli`'s output to
+`/dev/null`, so a bench whose ACL had lapsed looked exactly like a bench with
+nothing to do. Every failed push is one `ROW PUSH FAILED bench=<name>: <reason>`
+line, and `--once` exits 3 when any push failed.
+
+On the reading side, `status --store` adds three lines under the totals:
+
+* `stuck-DONE: <n>` from `bench:stuck_done` — the one key under `bench:*` that
+  is not a host row (the bench ACL user may only write that prefix, so the
+  fleet total shares it). A count nobody took prints `?`, never `0`.
+* `friends: …` from the `friend:*` keys (#2610): `friend:<name>` is set with a
+  90-second TTL by that friend's own harness and carries the time it was
+  written; `friend:<name>:last` outlives it so an AWAY line can say when the
+  friend was last here. Absent is **AWAY**; a name nobody has ever seen is
+  **none**, which is what `--friends <a,b>` is for — no friend's name is baked
+  into this tool. With no keys and no roster there is no line at all.
+* the current sprint's COWS line, `S=<name> C=<closed> O=<open> W=<working>
+  <closed>/<total> <pct>%`, from `sprint:current` and `sprint:<name>`. It is
+  **omitted** when there is no current sprint: a sprint of `0/0 0%` on the table
+  is a sprint somebody will act on.
+
+`--interval` loops instead of printing once; `--out <path>` writes each render
+to a file atomically, so everybody watching it with `watch cat` sees a whole
+table or the previous one, never half of one. Reads are `SCAN`, never `KEYS`:
+the instance is the fleet's coordination state with seven benches writing into
+it a second.
+
+The password comes from `$NOVA_REDIS_BENCH_PASSWORD` (`--password-env` names
+another variable), supplied by `nova-secrets exec --only
+NOVA_REDIS_BENCH_PASSWORD`, and reaches the client and nothing else — never a
+flag, never a file, never a receipt. A store that cannot be reached is refused
+naming the address, the ACL user and the *name* of the variable.
+
+```
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-pulse row --store 100.115.99.19:6380 --interval 1s
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-pulse status --store 100.115.99.19:6380 --friends johnny,stella,emma,freddy
+```
+
 ### status
 
 ```
