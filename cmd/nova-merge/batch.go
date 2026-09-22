@@ -462,10 +462,32 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		step := r.step
 		fmt.Fprintf(stderr, "BATCH STEP %s command=%q t=%.1fs\n", oneline.Field(step.name), step.command, since(start))
 		out, err := runCheck(clone, step.command, in.timeout, append(withBin(env, r.bin), step.env...))
-		if err == nil {
+		// The test step's stream is kept whether the step passed or not. A green
+		// run is the same capture a later red will be, and a failure that could
+		// not be written is a failure: the gate must not say OK about a stream
+		// it did not keep (#2626).
+		var streamPath string
+		var streamErr error
+		if step.name == "test" {
+			streamPath, streamErr = writeTestStream(rootAbs, out)
+		}
+		if err == nil && streamErr == nil {
 			continue
 		}
-		pkgs, tests, reason := stepFailure(step, out, err)
+		pkgs, tests, reason := []string(nil), []string(nil), ""
+		if err != nil {
+			pkgs, tests, reason = stepFailure(step, out, err)
+		}
+		switch {
+		case streamErr != nil && err != nil:
+			reason = "the test stream was not kept (" + streamErr.Error() + "); " + reason
+		case streamErr != nil:
+			reason = "the test stream was not kept: " + streamErr.Error()
+		case streamPath != "":
+			// The path is the front of the reason, ahead of anything Cap might
+			// cut: the one line a caller reads has to name the file.
+			reason = "stream=" + streamPath + "; " + reason
+		}
 		fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=%s tests=%s reason=%q\n",
 			line, oneline.Field(step.name), oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests)),
 			oneline.Cap(reason, oneline.TailBytes))
@@ -1038,6 +1060,74 @@ func ciTestEnv(tmp string, gomaxprocs int) []string {
 		env = append(env, "GOMAXPROCS="+strconv.Itoa(gomaxprocs))
 	}
 	return withSaneSHLVL(env)
+}
+
+// writeTestStream keeps the test step's whole captured output, the `go test -json`
+// stream with any notices that shared the pipe, at <root>/test-<round>.jsonl.
+//
+// Round is 1 the first time this root keeps a stream and the next free integer after
+// that. The working directory <root>/<name> is removed at the start of the next run;
+// this file is not inside it, so a re-run does not erase the stream the previous one
+// paid for.
+//
+// THE STREAM USED TO BE DISCARDED. The gate condensed it to one BATCH FAIL reason=
+// line and kept nothing, so a red whose assertion text was the only way to tell a
+// host fault from a tree fault left no --- FAIL block anywhere under the lane (#2626).
+func writeTestStream(root, out string) (string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", fmt.Errorf("the test stream could not be written under %s: %w", root, err)
+	}
+	highest := 0
+	for _, e := range entries {
+		if n, ok := testStreamRound(e.Name()); ok && n > highest {
+			highest = n
+		}
+	}
+	var last error
+	for n := highest + 1; n <= highest+testStreamTries; n++ {
+		path := filepath.Join(root, fmt.Sprintf("test-%d.jsonl", n))
+		// A name already there is an earlier round and is left alone. WriteFile
+		// would truncate it, so the stat is the exclusion.
+		if _, err := os.Lstat(path); err == nil {
+			last = fmt.Errorf("%s already exists", path)
+			continue
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, err)
+		}
+		if err := os.WriteFile(path, []byte(out), 0o644); err != nil {
+			_ = os.Remove(path)
+			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, err)
+		}
+		return path, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("no free test-<round>.jsonl")
+	}
+	return "", fmt.Errorf("the test stream could not be written under %s: %w", root, last)
+}
+
+// testStreamTries is how many names writeTestStream will try past the highest round
+// already in the root. One is enough when this process is the only writer; the rest
+// are for a name taken between the listing and the create.
+const testStreamTries = 32
+
+// testStreamRound reads a round out of test-<round>.jsonl. A leading zero is not a
+// round this writer produces, and it is not one it will skip past.
+func testStreamRound(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, "test-")
+	if !ok {
+		return 0, false
+	}
+	rest, ok = strings.CutSuffix(rest, ".jsonl")
+	if !ok || rest == "" || rest[0] == '0' {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
 }
 
 // stepFailure is what a red step says: the failing packages, the failing tests, and the

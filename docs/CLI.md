@@ -1580,7 +1580,7 @@ hold*; nova-tools #1748).
 
 ```
 BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]
-BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<the first line that is not a notice>"
+BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<condensed failure; a red test step starts stream=<root>/test-<round>.jsonl>"
 BATCH DROP #<n> reason="the merge conflicts with the members ahead"
 BATCH DROP #<n> reason="head <sha> has no green <check> (state=<pending|failure|none>)" check=<name>
 BATCH SKIP <step> reason="<why it could not run>"
@@ -1602,6 +1602,15 @@ skipped.
 surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a progress
 notice naming nothing to fix. It is now one `BATCH REFUSED` with the remedy, and a
 `go: downloading …` line is never what a `reason=` quotes.
+
+**A red test step keeps the stream it condensed.** The gate used to reduce
+`go test -json` to that one `reason=` and discard the rest, so a `--- FAIL` block and
+its assertion text were nowhere on disk (#2626). The test step now writes the complete
+stream to `<root>/test-<round>.jsonl`, whether the step passed or failed. Round is `1`
+the first time that root keeps a stream and the next free integer after that, so a later
+run in the same root does not replace the file. The working directory `<root>/<name>`
+is removed at the start of the next run; the stream is not inside it. On `step=test` the `reason=`
+begins with `stream=<path>`.
 
 **`checks=required` is the default (edge 25).** A member whose own head has no green
 required check is **dropped before the merge**, by name and with the state it was in.
