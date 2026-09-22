@@ -130,6 +130,30 @@ func landedForge(t *testing.T) map[string]string {
 	}
 }
 
+// HOLD 7 on #2688: a pinned subject asks about that head. #7's newer head merged;
+// the unit pinned to its older head is not done, the one pinned to the merged
+// head is.
+func TestSetCheckEvaluatePinnedHead(t *testing.T) {
+	useFakeGH(t, map[string]string{
+		"api repos/o/r/pulls/7": `{"state":"closed","merged_at":"2026-09-22T10:00:00Z","head":{"sha":"2222222222222222222222222222222222222222"}}`,
+	})
+	path := write(t, "pin.sexp", `(work-set "pin" :repo "o/r" :base "dev" :units (
+	  (unit "older-head" :status "open"
+	   :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#7@1111111111111111111111111111111111111111" :predicate :merged-or-closed-in-base)))
+	  (unit "merged-head" :status "open"
+	   :acceptance ((:id "c1" :kind :landed :subject "pr:o/r#7@2222222" :predicate :merged-or-closed-in-base)))))`)
+	code, stdout, _ := runCLI(t, "set", "check", "--file", path, "--evaluate", "--cache", t.TempDir())
+	for _, want := range []string{
+		"SET EVAL unit=older-head criterion=c1 kind=landed subject=pr:o/r#7@1111111111111111111111111111111111111111 holds=no why=pinned-head-superseded",
+		"SET EVAL unit=merged-head criterion=c1 kind=landed subject=pr:o/r#7@2222222 holds=yes why=merged",
+		"SET DONE done=1 percent=50",
+	} {
+		if code != 0 || !strings.Contains(stdout, want) {
+			t.Errorf("exit %d; stdout does not carry %q:\n%s", code, want, stdout)
+		}
+	}
+}
+
 const landedSet = `; the fixes-day shape: :pr, :status and one :acceptance criterion per unit
 (work-set "landed-fixture"
  :repo "o/r"

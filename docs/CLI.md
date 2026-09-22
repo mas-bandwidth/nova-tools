@@ -4332,7 +4332,9 @@ content in the base by the lander's rule -- git merge-tree --write-tree <base> <
 yields the base's own tree, so merging it changes nothing, which holds for a PR the lander
 combined with another -- and :subject "commit:<sha>" holds when the commit is reachable
 from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
-The merge runs in one blobless bare repository per repo under --cache. The base is
+A subject pinned as pr:<o/r>#<n>@<sha> asks about that head only: a pin the PR's last
+head does not match was superseded and is not landed. The merge runs in one blobless
+bare repository per repo under --cache. The base is
 --base, else the set's :base, and one is required. Each evaluable criterion prints one
 SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
 answer is unknown and counts as not done. A unit is decided by its criteria when every

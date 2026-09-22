@@ -17,6 +17,7 @@ commits inside the PR's landing window (see contentInBase).
 A third subject names the fact directly, a commit reachable from the base.
 
 	pr:<owner/repo>#<n>         merged, or closed and merging its head changes nothing
+	pr:<owner/repo>#<n>@<sha>   the same, only if <sha> is the PR's last head
 	commit:<sha>                reachable from the base (the repo is the set's :repo)
 	commit:<owner/repo>@<sha>   the same, naming its repo
 
@@ -154,13 +155,25 @@ func (e *Evaluator) Landed(ctx context.Context, subject string) Verdict {
 		}
 		return e.reachable(ctx, repo, sha)
 	}
-	repo, n, _, err := ParsePR(subject)
+	repo, n, pin, err := ParsePR(subject)
 	if err != nil {
 		return unknown("error:" + token(err.Error()))
+	}
+	if pin != "" && len(pin) < 7 {
+		return unknown("error:pin-" + token(pin) + "-is-shorter-than-7")
 	}
 	res := e.pull(ctx, repo, n)
 	if res.err != nil {
 		return unknown("error:" + token(res.err.Error()))
+	}
+	// A pinned subject (`pr:<o/r>#<n>@<sha>`) asks about THAT head. A PR's head
+	// is its last one, so a pin it does not match was superseded by a later push
+	// and is not what landed, merged or closed (Stella, HOLD 7 on #2688).
+	if pin != "" && !strings.HasPrefix(res.pr.Head.SHA, strings.ToLower(pin)) {
+		if res.pr.State == "closed" {
+			return no("pinned-head-superseded")
+		}
+		return no(token(res.pr.State))
 	}
 	switch {
 	case res.pr.MergedAt != "":

@@ -124,14 +124,15 @@ func closedPR(head string) string {
 func TestLandedIsTheLandersMergeRule(t *testing.T) {
 	url, heads := origin(t)
 	f := &forge{answers: map[string]string{
-		"api repos/o/r/pulls/1": closedPR(heads[1]),
-		"api repos/o/r/pulls/2": closedPR(heads[2]),
-		"api repos/o/r/pulls/3": closedPR(heads[3]),
-		"api repos/o/r/pulls/4": closedPR(heads[4]),
-		"api repos/o/r/pulls/5": closedAt(heads[5], time.Now().UTC().Add(time.Minute)),
-		"api repos/o/r/pulls/7": closedAt(heads[5], time.Now().UTC().Add(-48*time.Hour)),
-		"api repos/o/r/pulls/8": `{"state":"closed","merged_at":"2026-09-22T00:00:00Z","head":{"sha":"abc"}}`,
-		"api repos/o/r/pulls/9": `{"state":"open","merged_at":null,"head":{"sha":"abc"}}`,
+		"api repos/o/r/pulls/1":  closedPR(heads[1]),
+		"api repos/o/r/pulls/2":  closedPR(heads[2]),
+		"api repos/o/r/pulls/3":  closedPR(heads[3]),
+		"api repos/o/r/pulls/4":  closedPR(heads[4]),
+		"api repos/o/r/pulls/5":  closedAt(heads[5], time.Now().UTC().Add(time.Minute)),
+		"api repos/o/r/pulls/7":  closedAt(heads[5], time.Now().UTC().Add(-48*time.Hour)),
+		"api repos/o/r/pulls/8":  `{"state":"closed","merged_at":"2026-09-22T00:00:00Z","head":{"sha":"abc"}}`,
+		"api repos/o/r/pulls/10": `{"state":"closed","merged_at":"2026-09-22T00:00:00Z","head":{"sha":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}`,
+		"api repos/o/r/pulls/9":  `{"state":"open","merged_at":null,"head":{"sha":"abc"}}`,
 	}}
 	e := New(f.run, "o/r", "dev", t.TempDir())
 	e.GitURL = func(string) string { return url }
@@ -150,6 +151,15 @@ func TestLandedIsTheLandersMergeRule(t *testing.T) {
 		// the same head closed long before any base commit: no window, the tip's no
 		{"pr:o/r#7", "no", "merge-conflicts"},
 		{"pr:o/r#8", "yes", "merged"},
+		// HOLD 7: a pin asks about that head. #10's newer head merged: a pin to
+		// an older head is not landed, a pin to the merged head is.
+		{"pr:o/r#10@aaaaaaaaaaaa", "no", "pinned-head-superseded"},
+		{"pr:o/r#10@bbbbbbbbbbbb", "yes", "merged"},
+		{"pr:o/r#10@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "yes", "merged"},
+		{"pr:o/r#10@bbb", "unknown", "error:pin-bbb-is-shorter-than-7"},
+		// a closed PR pinned to its own head is the merge rule; pinned elsewhere, superseded
+		{"pr:o/r#1@" + heads[1], "yes", "merge-changes-nothing"},
+		{"pr:o/r#1@" + heads[2], "no", "pinned-head-superseded"},
 		{"pr:o/r#9", "no", "open"},
 		{"pr:o/r#6", "unknown", "error:gh:-Not-Found-(HTTP-404)"},
 		{"pr:o/r", "unknown", `error:subject-"pr:o/r"-is-not-pr:<owner/repo>#<n>`},
