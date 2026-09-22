@@ -330,15 +330,63 @@ func TestCommitJob1MBFileRefusal(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		// Add scratch file to assert it is NOT moved on refusal
+		scratchFile := filepath.Join(repoDir, "notes.txt")
+		if err := os.WriteFile(scratchFile, []byte("scratch notes\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		origHead := runCmd(t, repoDir, "git", "rev-parse", "HEAD")
+		origBranch := runCmd(t, repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		origStatus := runCmd(t, repoDir, "git", "status", "--porcelain")
+
 		var stdout bytes.Buffer
 		lines, err := CommitJob(CommitJobInput{JobDir: jobDir, Stdout: &stdout})
-		if err != nil {
-			t.Fatal(err)
+		if err == nil {
+			t.Fatal("expected refusal error from CommitJob, got nil")
+		}
+		var refErr *RefusalError
+		if !errors.As(err, &refErr) {
+			t.Fatalf("expected *RefusalError, got %T: %v", err, err)
 		}
 		joined := strings.Join(lines, "\n")
 		wantRefusal := "CLEAN-TREE REFUSED job-big: large_data.bin (a file over 1 MB; attribution 2026-09-21); left uncommitted"
 		if !strings.Contains(joined, wantRefusal) {
 			t.Fatalf("expected refusal line %q in:\n%s", wantRefusal, joined)
+		}
+		if strings.Contains(joined, "COMMITTED") {
+			t.Fatalf("unexpected COMMITTED line in:\n%s", joined)
+		}
+		if strings.Contains(joined, "SCRATCH-MOVED") {
+			t.Fatalf("unexpected SCRATCH-MOVED line in:\n%s", joined)
+		}
+
+		// Assert scratch file unchanged
+		if _, err := os.Stat(scratchFile); err != nil {
+			t.Errorf("scratch file was moved or removed: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(jobDir, "scratch-from-repo")); !os.IsNotExist(err) {
+			t.Errorf("scratch-from-repo was unexpectedly created")
+		}
+		// Assert branch unchanged
+		currBranch := runCmd(t, repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+		if currBranch != origBranch {
+			t.Errorf("branch changed: got %s, want %s", currBranch, origBranch)
+		}
+		// Assert HEAD commit unchanged
+		currHead := runCmd(t, repoDir, "git", "rev-parse", "HEAD")
+		if currHead != origHead {
+			t.Errorf("HEAD commit changed: got %s, want %s", currHead, origHead)
+		}
+		// Assert index unchanged
+		cachedDiff := runCmd(t, repoDir, "git", "diff", "--cached")
+		if len(strings.TrimSpace(cachedDiff)) > 0 {
+			t.Errorf("git index not empty:\n%s", cachedDiff)
+		}
+		// Assert working tree status unchanged
+		currStatus := runCmd(t, repoDir, "git", "status", "--porcelain")
+		if currStatus != origStatus {
+			t.Errorf("status changed:\ngot:\n%s\nwant:\n%s", currStatus, origStatus)
 		}
 
 		// Verify left uncommitted
@@ -1294,21 +1342,82 @@ func TestCommitJobPreconditionsTable(t *testing.T) {
 				}
 			}
 
+			// Put a scratch file in repoDir to verify whether scratch files are moved or untouched
+			scratchFile := filepath.Join(repoDir, "notes.txt")
+			if err := os.WriteFile(scratchFile, []byte("scratch notes\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			origHead := runCmd(t, repoDir, "git", "rev-parse", "HEAD")
+			origBranch := runCmd(t, repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+			origStatus := runCmd(t, repoDir, "git", "status", "--porcelain")
+
 			var stdout bytes.Buffer
 			lines, err := CommitJob(CommitJobInput{
 				JobDir: jobDir,
 				Clones: tc.clones,
 				Stdout: &stdout,
 			})
-			if err != nil {
-				t.Fatalf("unexpected error from CommitJob: %v", err)
-			}
 			joined := strings.Join(lines, "\n")
 			if !strings.Contains(joined, tc.wantVerdict) {
 				t.Fatalf("expected verdict %q in output:\n%s", tc.wantVerdict, joined)
 			}
-			if !tc.wantCommitted && strings.Contains(joined, "COMMITTED") {
-				t.Fatalf("COMMITTED emitted when precondition should have refused:\n%s", joined)
+
+			if tc.wantCommitted {
+				if err != nil {
+					t.Fatalf("unexpected error from CommitJob: %v", err)
+				}
+				if !strings.Contains(joined, "COMMITTED") {
+					t.Fatalf("expected COMMITTED in output:\n%s", joined)
+				}
+				// Verify scratch file moved
+				if _, err := os.Stat(scratchFile); !os.IsNotExist(err) {
+					t.Errorf("scratch file was not moved from repoDir in allowed commit")
+				}
+				if _, err := os.Stat(filepath.Join(jobDir, "scratch-from-repo", "notes.txt")); err != nil {
+					t.Errorf("scratch file not found in scratch-from-repo in allowed commit")
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("expected refusal error from CommitJob, got nil")
+				}
+				var refErr *RefusalError
+				if !errors.As(err, &refErr) {
+					t.Fatalf("expected *RefusalError, got %T: %v", err, err)
+				}
+				if strings.Contains(joined, "COMMITTED") {
+					t.Fatalf("COMMITTED emitted when precondition should have refused:\n%s", joined)
+				}
+				if strings.Contains(joined, "SCRATCH-MOVED") {
+					t.Fatalf("SCRATCH-MOVED emitted when precondition should have refused:\n%s", joined)
+				}
+				// Assert unchanged scratch state: scratch file must still be in repoDir and not in scratch-from-repo
+				if _, err := os.Stat(scratchFile); err != nil {
+					t.Errorf("scratch file was unexpectedly moved or removed from repoDir on refusal: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(jobDir, "scratch-from-repo")); !os.IsNotExist(err) {
+					t.Errorf("scratch-from-repo was unexpectedly created on refusal")
+				}
+				// Assert unchanged branch state
+				currBranch := runCmd(t, repoDir, "git", "rev-parse", "--abbrev-ref", "HEAD")
+				if currBranch != origBranch {
+					t.Errorf("branch changed on refusal: got %s, want %s", currBranch, origBranch)
+				}
+				// Assert unchanged repo/commit state
+				currHead := runCmd(t, repoDir, "git", "rev-parse", "HEAD")
+				if currHead != origHead {
+					t.Errorf("HEAD commit changed on refusal: got %s, want %s", currHead, origHead)
+				}
+				// Assert unchanged index state
+				cachedDiff := runCmd(t, repoDir, "git", "diff", "--cached")
+				if len(strings.TrimSpace(cachedDiff)) > 0 {
+					t.Errorf("git index (cached diff) not empty on refusal:\n%s", cachedDiff)
+				}
+				// Assert unchanged working tree state
+				currStatus := runCmd(t, repoDir, "git", "status", "--porcelain")
+				if currStatus != origStatus {
+					t.Errorf("git status changed on refusal:\ngot:\n%s\nwant:\n%s", currStatus, origStatus)
+				}
 			}
 		})
 	}
@@ -1341,6 +1450,16 @@ func TestCommitJobErrorPropagationTable(t *testing.T) {
 		readOnlyRes bool
 		wantErrSub  string
 	}{
+		{
+			name:       "initial rev-parse HEAD branch failure propagates error and fails closed",
+			failSubstr: "rev-parse --abbrev-ref HEAD",
+			wantErrSub: "git rev-parse --abbrev-ref HEAD",
+		},
+		{
+			name:       "initial status short failure propagates error and fails closed",
+			failSubstr: "status --short",
+			wantErrSub: "git status --short",
+		},
 		{
 			name:       "checkout failure propagates error and prevents COMMITTED",
 			failSubstr: "checkout",
@@ -1436,6 +1555,117 @@ func TestCommitJobErrorPropagationTable(t *testing.T) {
 	}
 }
 
+// Table-driven tests verifying scratch-drop error propagation (Finding 3).
+func TestCommitJobScratchDropErrorPropagationTable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		failSubstr string
+		wantErrSub string
+	}{
+		{
+			name:       "scratch-drop rm failure propagates error and prevents SCRATCH-DROPPED",
+			failSubstr: "rm -q -f",
+			wantErrSub: "git rm scratch file",
+		},
+		{
+			name:       "scratch-drop commit failure propagates error and prevents SCRATCH-DROPPED",
+			failSubstr: "commit -q -m harvest: drop card scratch outside PATHS",
+			wantErrSub: "git commit scratch-drop",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			jobDir := filepath.Join(root, "card-00-job-drop-err")
+			repoDir := filepath.Join(jobDir, "repo")
+			if err := os.MkdirAll(repoDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			initTestGitRepo(t, repoDir)
+			baseSHA := runCmd(t, repoDir, "git", "rev-parse", "HEAD")
+
+			// Add a scratch file that needs dropping
+			if err := os.WriteFile(filepath.Join(repoDir, "notes.txt"), []byte("scratch\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runCmd(t, repoDir, "git", "add", "notes.txt")
+			runCmd(t, repoDir, "git", "commit", "-m", "add scratch")
+
+			res := fmt.Sprintf("RESULT job-drop-err sha=%s\nDONE\nBRANCH rowan/drop-err\n", baseSHA)
+			if err := os.WriteFile(filepath.Join(jobDir, "RESULT.md"), []byte(res), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			runner := mockFailingRunner{
+				failOnSubstr: tc.failSubstr,
+				failErr:      errors.New("injected git failure"),
+			}
+
+			var stdout bytes.Buffer
+			lines, err := CommitJob(CommitJobInput{
+				JobDir: jobDir,
+				Runner: runner,
+				Stdout: &stdout,
+			})
+			if err == nil {
+				t.Fatalf("expected error from CommitJob on %s, got nil", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("expected error substring %q, got: %v", tc.wantErrSub, err)
+			}
+			joined := strings.Join(lines, "\n")
+			if strings.Contains(joined, "SCRATCH-DROPPED") {
+				t.Fatalf("SCRATCH-DROPPED unexpectedly emitted on failure:\n%s", joined)
+			}
+		})
+	}
+}
+
+// Verify clean tree branch rename error propagation.
+func TestCommitJobCleanTreeRenameErrorPropagation(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	jobDir := filepath.Join(root, "card-00-job-rename-err")
+	repoDir := filepath.Join(jobDir, "repo")
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGitRepo(t, repoDir)
+	runCmd(t, repoDir, "git", "checkout", "-b", "temp-branch")
+
+	res := "RESULT job-rename-err sha=012345678901\nDONE\nBRANCH rowan/job-rename-err\n"
+	if err := os.WriteFile(filepath.Join(jobDir, "RESULT.md"), []byte(res), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := mockFailingRunner{
+		failOnSubstr: "branch -q -m",
+		failErr:      errors.New("injected branch rename failure"),
+	}
+
+	var stdout bytes.Buffer
+	lines, err := CommitJob(CommitJobInput{
+		JobDir: jobDir,
+		Runner: runner,
+		Stdout: &stdout,
+	})
+	if err == nil {
+		t.Fatalf("expected error on branch rename failure, got nil")
+	}
+	if !strings.Contains(err.Error(), "git branch -m") {
+		t.Fatalf("expected error containing git branch -m, got: %v", err)
+	}
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "RENAMED") {
+		t.Fatalf("RENAMED unexpectedly emitted on failure:\n%s", joined)
+	}
+}
+
 // Test CommitStep error propagation when a job fails (Finding 3).
 func TestCommitStepErrorPropagation(t *testing.T) {
 	t.Parallel()
@@ -1499,6 +1729,10 @@ func TestHarvestWorkingReturnCodeAndErrorPropagation(t *testing.T) {
 		specs := fakePATH(t)
 		arglog := filepath.Join(working, "argv.log")
 		fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+			{Arg: 4, Equals: "--abbrev-ref", Stdout: "main"},
+			{Arg: 5, Equals: "refs/heads/rowan/g-ok", Exit: 1},
+			{Arg: 4, Equals: "--short", Stdout: "0123456789ab"},
+			{Arg: 3, Equals: "status", Stdout: "?? ok.go"},
 			{Arg: 1, Equals: "log", Stdout: "0123456789abcdef0123456789abcdef01234567 2026-09-17T10:00:00+00:00"},
 			{Arg: 1, Equals: "ls-remote", Stdout: "0123456789abcdef0123456789abcdef01234567\trefs/heads/rowan/g-ok"},
 			originRule("o/r"),

@@ -207,3 +207,147 @@ func TestHarvestCLIWorkingWithoutCommitLeavesUncommitted(t *testing.T) {
 		t.Errorf("stdout unexpectedly contains COMMITTED verdict:\n%s", out.String())
 	}
 }
+
+// Table-driven or paired test asserting that policy refusals act as a caller gate in the CLI:
+// stops that job, fails closed (non-zero exit), halts before dependent effects (zero push, zero PR, no .harvested marker),
+// and leaves scratch/repo/index/branch state unchanged, paired with allowed success (Finding 1 & 2).
+func TestHarvestCLIRefusedJobPolicyCallerGate(t *testing.T) {
+	t.Parallel()
+
+	working := t.TempDir()
+
+	// 1. Refused Job: card declares PATHS pkg/valid.go, but modifies unauthorized/bad.go
+	// Also has a scratch file notes.txt that must NOT be moved because of the refusal.
+	refusedJobDir := filepath.Join(working, "tmp", "guid-1", "jobs", "card-refused")
+	if err := os.MkdirAll(refusedJobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	refusedRes := "RESULT card-refused sha=012345678901\nDONE\nBRANCH rowan/card-refused\nREPO o/r\nPATHS pkg/valid.go\n"
+	if err := os.WriteFile(filepath.Join(refusedJobDir, "RESULT.md"), []byte(refusedRes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refusedRepo := filepath.Join(refusedJobDir, "repo")
+	if err := os.MkdirAll(refusedRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initCLITestGitRepo(t, refusedRepo)
+	// Place scratch file in refusedRepo
+	refusedScratch := filepath.Join(refusedRepo, "notes.txt")
+	if err := os.WriteFile(refusedScratch, []byte("scratch in refused repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Place unauthorized dirty file outside declared PATHS
+	badFileDir := filepath.Join(refusedRepo, "unauthorized")
+	if err := os.MkdirAll(badFileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	badFile := filepath.Join(badFileDir, "bad.go")
+	if err := os.WriteFile(badFile, []byte("package bad\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Allowed Job: card declares PATHS pkg/valid.go and modifies pkg/valid.go
+	// Also has scratch file notes.txt which SHOULD be set aside into scratch-from-repo/
+	allowedJobDir := filepath.Join(working, "tmp", "guid-1", "jobs", "card-allowed")
+	if err := os.MkdirAll(allowedJobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	allowedRes := "RESULT card-allowed sha=012345678901\nDONE\nBRANCH rowan/card-allowed\nREPO o/r\nPATHS pkg/valid.go\n"
+	if err := os.WriteFile(filepath.Join(allowedJobDir, "RESULT.md"), []byte(allowedRes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	allowedRepo := filepath.Join(allowedJobDir, "repo")
+	if err := os.MkdirAll(allowedRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initCLITestGitRepo(t, allowedRepo)
+	allowedScratch := filepath.Join(allowedRepo, "notes.txt")
+	if err := os.WriteFile(allowedScratch, []byte("scratch in allowed repo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	goodFileDir := filepath.Join(allowedRepo, "pkg")
+	if err := os.MkdirAll(goodFileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	goodFile := filepath.Join(goodFileDir, "valid.go")
+	if err := os.WriteFile(goodFile, []byte("package valid\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Coordinator clone setup
+	coordClone := t.TempDir()
+	initCLITestGitRepo(t, coordClone)
+
+	var out, errb bytes.Buffer
+	code := run([]string{
+		"harvest",
+		"--working", working,
+		"--commit",
+		"--clone", "o/r=" + coordClone,
+	}, &out, &errb, time.Unix(0, 0).UTC())
+
+	// Exit code must be non-zero (fails closed because card-refused failed)
+	if code == 0 {
+		t.Fatalf("expected non-zero exit code due to refused job, got 0\nstdout:\n%s\nstderr:\n%s", out.String(), errb.String())
+	}
+
+	// Stderr must log refusal error for card-refused
+	if !strings.Contains(errb.String(), "HARVEST COMMIT ERROR") || !strings.Contains(errb.String(), "PATHS REFUSED") {
+		t.Errorf("expected HARVEST COMMIT ERROR and PATHS REFUSED in stderr, got:\n%s", errb.String())
+	}
+
+	// card-refused MUST NOT have .harvested marker
+	if _, err := os.Stat(filepath.Join(refusedJobDir, ".harvested")); !os.IsNotExist(err) {
+		t.Fatalf(".harvested marker was unexpectedly created for refused job")
+	}
+
+	// card-refused MUST have unchanged scratch/repo/index/branch state
+	// Scratch file remains in repo, not moved to scratch-from-repo
+	if _, err := os.Stat(refusedScratch); err != nil {
+		t.Fatalf("scratch file was unexpectedly moved/deleted in refused repo")
+	}
+	if _, err := os.Stat(filepath.Join(refusedJobDir, "scratch-from-repo")); !os.IsNotExist(err) {
+		t.Fatalf("scratch-from-repo was created for refused job")
+	}
+	// Branch unchanged
+	refusedBranchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	refusedBranchCmd.Dir = refusedRepo
+	if bOut, err := refusedBranchCmd.CombinedOutput(); err != nil || strings.TrimSpace(string(bOut)) != "main" {
+		t.Fatalf("refused repo branch changed: %s, err: %v", string(bOut), err)
+	}
+	// Staging index unchanged
+	diffCachedCmd := exec.Command("git", "diff", "--cached")
+	diffCachedCmd.Dir = refusedRepo
+	if dOut, err := diffCachedCmd.CombinedOutput(); err != nil || len(strings.TrimSpace(string(dOut))) > 0 {
+		t.Fatalf("refused repo index changed: %s", string(dOut))
+	}
+	// Unauthorized file still uncommitted
+	logCmd := exec.Command("git", "log", "-1", "--format=%s")
+	logCmd.Dir = refusedRepo
+	if lOut, _ := logCmd.CombinedOutput(); strings.Contains(string(lOut), "card-refused") {
+		t.Fatalf("refused repo committed unexpected work: %s", string(lOut))
+	}
+
+	// card-allowed (paired success) MUST succeed:
+	// 1. .harvested marker created
+	if _, err := os.Stat(filepath.Join(allowedJobDir, ".harvested")); err != nil {
+		t.Fatalf(".harvested marker was not created for allowed job: %v", err)
+	}
+	// 2. COMMITTED verdict emitted
+	if !strings.Contains(out.String(), "COMMITTED card-allowed rowan/card-allowed") {
+		t.Errorf("stdout missing COMMITTED card-allowed:\n%s", out.String())
+	}
+	// 3. Scratch file moved to scratch-from-repo
+	if _, err := os.Stat(filepath.Join(allowedJobDir, "scratch-from-repo", "notes.txt")); err != nil {
+		t.Fatalf("scratch file was not moved to scratch-from-repo for allowed job")
+	}
+	if _, err := os.Stat(allowedScratch); !os.IsNotExist(err) {
+		t.Fatalf("scratch file remained in repo for allowed job")
+	}
+	// 4. Committed work in HEAD
+	allowedLogCmd := exec.Command("git", "log", "-1", "--format=%s")
+	allowedLogCmd.Dir = allowedRepo
+	if lOut, _ := allowedLogCmd.CombinedOutput(); !strings.Contains(string(lOut), "RESULT card-allowed") {
+		t.Fatalf("allowed job did not commit work: %s", string(lOut))
+	}
+}
