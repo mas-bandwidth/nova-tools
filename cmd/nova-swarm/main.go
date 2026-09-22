@@ -1852,7 +1852,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 	}()
 	res, code := nativeRun(cfg, stderr)
-	if code != 0 {
+	if code != 0 && !res.lost && !res.unrecorded {
 		return code
 	}
 	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
@@ -1913,6 +1913,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		if res.blockedPath != "" {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
+	}
+	if code != 0 {
+		return code
 	}
 	if res.rc != 0 {
 		if res.rc > 0 {

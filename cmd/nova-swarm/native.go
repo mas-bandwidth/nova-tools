@@ -677,7 +677,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// cannot be written, the capture must carry the word. If neither
 			// file can be written, the run refuses: a quiet exit would be
 			// scored as an ordinary missing result and retried.
-			if err := persistUnknown(jobDir); err != nil {
+			if err := persistUnknownFn(jobDir); err != nil {
 				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance could not be recorded: %s\n", oneline.Escape(err.Error()))
 				res.unrecorded = true
 			}
@@ -790,28 +790,47 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	return res, 0
 }
 
+// persistUnknownFn is the handoff writer. A test of a failed disk sets it
+// and puts it back. The production function is persistUnknown.
+var persistUnknownFn = persistUnknown
+
 // persistUnknown writes the handoff the next reader holds on. The marker is
-// first. The two logs are the fallback. If none of them can be written, the
-// caller refuses the run instead of leaving an ordinary missing result.
+// first. The two logs are the fallback. A short write or a failed close is
+// not a successful record. If none of them can be written, the caller still
+// prints the unknown verdict and then refuses the run.
 func persistUnknown(jobDir string) error {
 	acc := filepath.Join(jobDir, "provider-acceptance")
-	if err := os.WriteFile(acc, []byte("unknown\n"), 0o644); err == nil {
+	if err := writeUnknownFile(acc, "unknown\n"); err == nil {
 		return nil
 	} else {
 		var failed []string
 		failed = append(failed, err.Error())
+		line := "why=unknown-acceptance\n"
 		for _, name := range []string{"harness-output.log", "harness.log"} {
-			f, oerr := os.OpenFile(filepath.Join(jobDir, name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-			if oerr != nil {
-				failed = append(failed, oerr.Error())
+			if werr := writeUnknownFile(filepath.Join(jobDir, name), line); werr != nil {
+				failed = append(failed, werr.Error())
 				continue
 			}
-			fmt.Fprintln(f, "why=unknown-acceptance")
-			f.Close()
 			return nil
 		}
 		return fmt.Errorf("%s", strings.Join(failed, "; "))
 	}
+}
+
+func writeUnknownFile(path, body string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	n, werr := io.WriteString(f, body)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	if n != len(body) {
+		return fmt.Errorf("%s: short write", path)
+	}
+	return cerr
 }
 
 // fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads

@@ -3,12 +3,14 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -280,6 +282,63 @@ func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
 	}
 	if !swarm.AcceptanceUnknown(job) {
 		t.Fatal("the fallback log was not held")
+	}
+}
+
+func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
+	windowsIsNotABench(t)
+	prev := persistUnknownFn
+	persistUnknownFn = func(string) error { return errors.New("disk full") }
+	t.Cleanup(func() { persistUnknownFn = prev })
+
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	label := "unrecorded"
+	cardPath := filepath.Join(root, label+".md")
+	if err := os.WriteFile(cardPath, []byte("FAKE-LOST-RESPONSE\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
+		"--harness", bin, "--model", "fake/fake-model", "--label", label,
+		"--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "30s", "--no-wall"},
+		strings.NewReader(""), &stdout, &stderr, time.Now())
+	if code == 0 {
+		t.Fatalf("a failed record exited 0:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "why=unknown-acceptance") {
+		t.Fatalf("the refusal returned before the unknown verdict:\n%s\n%s", stdout.String(), stderr.String())
+	}
+
+	harvestRoot := t.TempDir()
+	job := filepath.Join(harvestRoot, "1", "jobs", label)
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "harness.log"), stdout.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	card := filepath.Join(harvestRoot, label+".md")
+	if err := os.WriteFile(card, []byte("RESULT "+label+" sha=u\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(harvestRoot, "cards.tsv"), []byte(label+"\t1\tflash\t"+card+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var hout, herr bytes.Buffer
+	hcode := pulse.Harvest(pulse.HarvestInput{
+		ID: "p1", Root: harvestRoot, Templates: harvestRoot, MaxBodyBytes: 4096, Max: 20,
+		Stdout: &hout, Stderr: &herr, Now: time.Now,
+	})
+	if hcode == 0 && !strings.Contains(herr.String(), "HARVEST HOLD") {
+		t.Fatalf("harvest did not hold the unrecorded run:\ncode=%d\n%s\n%s", hcode, hout.String(), herr.String())
+	}
+	if raw, err := os.ReadFile(filepath.Join(harvestRoot, "retry.tsv")); err == nil && strings.Contains(string(raw), label) {
+		t.Fatalf("harvest retried the unrecorded unknown:\n%s", raw)
+	}
+	if !strings.Contains(herr.String(), "unknown-acceptance") {
+		t.Fatalf("harvest did not name the unknown:\n%s\n%s", hout.String(), herr.String())
 	}
 }
 
