@@ -27,9 +27,13 @@ import (
 )
 
 // DefaultNativeIdle is the window a native run gives a card that is saying nothing and
-// spending no CPU. It is 300 seconds, which is `batch --idle`'s own default: one number for
-// the two verbs, so a card does not mean two different things on two paths.
-const DefaultNativeIdle = 300 * time.Second
+// spending no CPU. It is 75 seconds, under the 90 seconds a provider body stall may
+// cost the card. Measured 2026-09-22 on opencode 1.18.20: headerTimeout and
+// chunkTimeout of 2s did not end one accepted POST /v1/responses that then sent no
+// bytes; the process was still running at 50.5s. The harness does not end that
+// stall, so native does. batch --idle stays 300s. A card whose CPU is moving is
+// not this window.
+const DefaultNativeIdle = 75 * time.Second
 
 // NoIdleWindow is the window `--idle 0` reaches WatchIdle as: no watch at all, which is the
 // behaviour every native run had before this file existed. It is named because a bare zero
