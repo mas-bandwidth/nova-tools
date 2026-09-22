@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -179,7 +180,8 @@ func TestPoolCapacityAtomicMetricsTSV(t *testing.T) {
 }
 
 // TestPoolCapacityAtomicConcurrencyOExcl verifies that concurrent writers appending
-// to metrics.tsv via O_EXCL tempfile and rename do not corrupt the file.
+// to metrics.tsv via flock and atomic rename serialize safely without lost updates,
+// ensuring exactly N rows survive across N concurrent writers.
 func TestPoolCapacityAtomicConcurrencyOExcl(t *testing.T) {
 	dir := t.TempDir()
 	metricsPath := filepath.Join(dir, "metrics.tsv")
@@ -192,12 +194,8 @@ func TestPoolCapacityAtomicConcurrencyOExcl(t *testing.T) {
 		go func(idx int) {
 			defer wg.Done()
 			row := fmt.Sprintf("2026-09-20T12:%02d:00Z\t%d\t64\t1.00\t0\t50\n", idx, idx)
-			// Retrying with exponential backoff if rename collides
-			for attempt := 0; attempt < 10; attempt++ {
-				if err := WriteMetricsTSVAtomic(metricsPath, row, true); err == nil {
-					break
-				}
-				time.Sleep(10 * time.Millisecond)
+			if err := WriteMetricsTSVAtomic(metricsPath, row, true); err != nil {
+				t.Errorf("writer %d failed: %v", idx, err)
 			}
 		}(i)
 	}
@@ -210,14 +208,23 @@ func TestPoolCapacityAtomicConcurrencyOExcl(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(content)), "\n")
-	if len(lines) == 0 {
-		t.Fatal("expected non-empty metrics.tsv")
+	if len(lines) != numWriters {
+		t.Fatalf("expected exactly %d surviving rows, got %d:\n%s", numWriters, len(lines), string(content))
 	}
+	seen := make(map[int]bool)
 	for _, l := range lines {
 		fields := strings.Split(l, "\t")
 		if len(fields) != 6 {
 			t.Errorf("corrupt row with %d fields: %q", len(fields), l)
 		}
+		idx, err := strconv.Atoi(fields[1])
+		if err != nil {
+			t.Errorf("invalid writer index %q: %v", fields[1], err)
+		}
+		seen[idx] = true
+	}
+	if len(seen) != numWriters {
+		t.Errorf("expected %d unique writer rows, got %d", numWriters, len(seen))
 	}
 }
 

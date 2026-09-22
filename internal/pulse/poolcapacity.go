@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -130,7 +131,7 @@ func FormatMetricsRow(summary PoolCapacitySummary) string {
 }
 
 // WriteMetricsTSVAtomic atomically writes or appends the metrics row into metrics.tsv
-// using an O_EXCL tempfile and an atomic filesystem rename.
+// using an flock on <destPath>.lock, an O_EXCL tempfile, and an atomic filesystem rename.
 func WriteMetricsTSVAtomic(destPath string, row string, appendMode bool) error {
 	if strings.TrimSpace(destPath) == "" {
 		return fmt.Errorf("metrics path cannot be empty")
@@ -139,6 +140,13 @@ func WriteMetricsTSVAtomic(destPath string, row string, appendMode bool) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating directory %s: %w", dir, err)
 	}
+
+	lockPath := filepath.Clean(destPath) + ".lock"
+	unlock, err := bus.LockFile(lockPath, 10*time.Second)
+	if err != nil {
+		return fmt.Errorf("acquiring lock on %s: %w", lockPath, err)
+	}
+	defer unlock()
 
 	var existing []byte
 	if appendMode {
