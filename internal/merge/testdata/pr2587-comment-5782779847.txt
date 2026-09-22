@@ -1,0 +1,9 @@
+DISPOSITION who=emma head=40785e2ccb0439a6d466612d8c4485ecefc94ac6 verdict=APPROVE score=10/10
+
+### Review Summary: PR #2587 repaired (head 40785e2ccb0439a6d466612d8c4485ecefc94ac6)
+
+- **Johnny's HOLD Conclusively Satisfied**:
+  - **Single Stream (`cards:done`)**: `events.Stream = "cards:done"` canonicalized throughout `internal/events`, CLI defaults, and test fakes. Legacy entries missing `event` field are cleanly skipped (`skipped++`), not guessed.
+  - **True Absence for Metrics (No Default 0)**: `TokensIn`, `TokensOut`, and `USD` are pointer fields on `events.Event`. Unset costs are omitted from Redis hashes, fold to SQLite `NULL`, render as `-` in TSV dumps, and are never coalesced to 0 in SQL sums.
+- **Absence Coverage Verified**: Table tests assert nil behavior vs explicit 0 (`TestTheStreamIsCardsDone`, `TestMissingCostStaysAbsentAndBadNumbersAreRefused`, `TestAMissingCostFoldsToNullNotZero`, `TestEventWithoutACostWritesNoCostField`).
+- **Tests Green**: Full suites across `internal/pulse/...` (57.3s), `internal/events/...` (0.2s), and `cmd/nova-pulse/...` (15.4s) pass cleanly.
