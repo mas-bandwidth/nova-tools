@@ -4,8 +4,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"regexp"
 	"strings"
 )
+
+var cardHeaderKeyRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*:`)
+
 
 // CutTemplateInput is everything needed to render a card template with dependencies.
 type CutTemplateInput struct {
@@ -62,19 +66,20 @@ func FormatDependsOnValue(deps []string) string {
 }
 
 // ApplyDependsOn applies the DEPENDS-ON header declaration to card text:
-//   - If DEPENDS-ON: already exists, it is replaced in-place.
-//   - If <depends-on> placeholder exists, it is replaced.
-//   - Otherwise, DEPENDS-ON: is inserted immediately after PATHS: if present,
-//     or immediately after TEST: if present.
-//   - If neither PATHS: nor TEST: is present, the card is returned untouched.
+//   - If DEPENDS-ON: already exists in the owned header block, it is replaced in-place.
+//   - If <depends-on> placeholder exists in the owned header block, it is replaced.
+//   - Otherwise, DEPENDS-ON: is inserted immediately after PATHS: if present in the header block,
+//     or immediately after TEST: if present in the header block.
+//   - If neither PATHS: nor TEST: is present in the header block, DEPENDS-ON: is inserted at
+//     the end of the header block (or immediately after line 1 if the header block has no keys).
+//   - Anything outside the owned structural header block remains byte-for-byte untouched.
 func ApplyDependsOn(text string, deps []string) string {
+	if strings.TrimSpace(text) == "" {
+		return text
+	}
+
 	depLine := FormatDependsOn(deps)
 	depVal := FormatDependsOnValue(deps)
-
-	if strings.Contains(text, "<depends-on>") {
-		text = strings.ReplaceAll(text, "DEPENDS-ON: <depends-on>", depLine)
-		text = strings.ReplaceAll(text, "<depends-on>", depVal)
-	}
 
 	crlf := strings.Contains(text, "\r\n")
 	newline := "\n"
@@ -88,20 +93,39 @@ func ApplyDependsOn(text string, deps []string) string {
 		lines[i] = strings.TrimRight(l, "\r")
 	}
 
+	headerStart := 0
+	if len(lines) > 0 {
+		trimmed0 := strings.TrimSpace(lines[0])
+		if strings.HasPrefix(trimmed0, "RESULT ") || strings.HasPrefix(trimmed0, "RESULT:") {
+			headerStart = 1
+		}
+	}
+
+	headerEnd := headerStart
+	for headerEnd < len(lines) && cardHeaderKeyRE.MatchString(lines[headerEnd]) {
+		headerEnd++
+	}
+
+	for i := headerStart; i < headerEnd; i++ {
+		if strings.Contains(lines[i], "<depends-on>") {
+			lines[i] = strings.ReplaceAll(lines[i], "DEPENDS-ON: <depends-on>", depLine)
+			lines[i] = strings.ReplaceAll(lines[i], "<depends-on>", depVal)
+		}
+	}
+
 	dependsOnIdx := -1
 	pathsIdx := -1
 	testIdx := -1
 
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "DEPENDS-ON:") {
+	for i := headerStart; i < headerEnd; i++ {
+		line := lines[i]
+		if dependsOnIdx == -1 && strings.HasPrefix(line, "DEPENDS-ON:") {
 			dependsOnIdx = i
-			break
 		}
-		if pathsIdx == -1 && strings.HasPrefix(trimmed, "PATHS:") {
+		if pathsIdx == -1 && strings.HasPrefix(line, "PATHS:") {
 			pathsIdx = i
 		}
-		if testIdx == -1 && strings.HasPrefix(trimmed, "TEST:") {
+		if testIdx == -1 && strings.HasPrefix(line, "TEST:") {
 			testIdx = i
 		}
 	}
@@ -111,25 +135,18 @@ func ApplyDependsOn(text string, deps []string) string {
 		return strings.Join(lines, newline)
 	}
 
+	insertIdx := headerEnd
 	if pathsIdx != -1 {
-		insertIdx := pathsIdx + 1
-		newLines := make([]string, 0, len(lines)+1)
-		newLines = append(newLines, lines[:insertIdx]...)
-		newLines = append(newLines, depLine)
-		newLines = append(newLines, lines[insertIdx:]...)
-		return strings.Join(newLines, newline)
+		insertIdx = pathsIdx + 1
+	} else if testIdx != -1 {
+		insertIdx = testIdx + 1
 	}
 
-	if testIdx != -1 {
-		insertIdx := testIdx + 1
-		newLines := make([]string, 0, len(lines)+1)
-		newLines = append(newLines, lines[:insertIdx]...)
-		newLines = append(newLines, depLine)
-		newLines = append(newLines, lines[insertIdx:]...)
-		return strings.Join(newLines, newline)
-	}
-
-	return text
+	newLines := make([]string, 0, len(lines)+1)
+	newLines = append(newLines, lines[:insertIdx]...)
+	newLines = append(newLines, depLine)
+	newLines = append(newLines, lines[insertIdx:]...)
+	return strings.Join(newLines, newline)
 }
 
 // RenderTemplate renders one candidate's card from its template and returns the card text,

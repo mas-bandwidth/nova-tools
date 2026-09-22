@@ -162,10 +162,10 @@ func TestCutTemplateApplyDependsOn(t *testing.T) {
 			want: "KIND: fix\nPATHS: internal/pulse/cut.go\nDEPENDS-ON: tools-01, tools-04\nFILES: 1\nTEST: ./internal/pulse/ TestCut",
 		},
 		{
-			name: "legacy template with neither PATHS nor TEST is untouched",
+			name: "legacy template with neither PATHS nor TEST inserts after line 1",
 			tmpl: "RESULT label sha=123456789012\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://example.com/o/r.git . && git checkout -b b\n",
 			deps: []string{"tools-01"},
-			want: "RESULT label sha=123456789012\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://example.com/o/r.git . && git checkout -b b\n",
+			want: "RESULT label sha=123456789012\nDEPENDS-ON: tools-01\nYou are a worker.\nSTEP 1. mkdir -p scratch && git clone -q https://example.com/o/r.git . && git checkout -b b\n",
 		},
 	}
 
@@ -259,3 +259,83 @@ func TestCutTemplateRoundtripAndValidationControls(t *testing.T) {
 		}
 	})
 }
+
+func TestCutTemplatePreservesFencedPriorCardEvidence(t *testing.T) {
+	tmpl := strings.Join([]string{
+		"RESULT: tools-03 sha=000000000000",
+		"KIND: fix",
+		"PATHS: internal/pulse/harveststale.go",
+		"FILES: 1",
+		"TEST: ./internal/pulse/ TestStaleBaseAcceptsBranchWhoseParentIsTargetTip",
+		"",
+		"## Prior attempt",
+		"",
+		"```",
+		"RESULT: tools-02 sha=111111111111",
+		"KIND: fix",
+		"PATHS: internal/pulse/harveststale.go",
+		"DEPENDS-ON: old-card",
+		"FILES: 1",
+		"TEST: ./internal/pulse/ TestStaleBaseAcceptsBranchWhoseParentIsTargetTip",
+		"```",
+	}, "\n")
+
+	got := ApplyDependsOn(tmpl, []string{"tools-01", "tools-04"})
+
+	want := strings.Join([]string{
+		"RESULT: tools-03 sha=000000000000",
+		"KIND: fix",
+		"PATHS: internal/pulse/harveststale.go",
+		"DEPENDS-ON: tools-01, tools-04",
+		"FILES: 1",
+		"TEST: ./internal/pulse/ TestStaleBaseAcceptsBranchWhoseParentIsTargetTip",
+		"",
+		"## Prior attempt",
+		"",
+		"```",
+		"RESULT: tools-02 sha=111111111111",
+		"KIND: fix",
+		"PATHS: internal/pulse/harveststale.go",
+		"DEPENDS-ON: old-card",
+		"FILES: 1",
+		"TEST: ./internal/pulse/ TestStaleBaseAcceptsBranchWhoseParentIsTargetTip",
+		"```",
+	}, "\n")
+
+	if got != want {
+		t.Fatalf("ApplyDependsOn did not preserve fenced prior card evidence:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+
+	const fencedEvidence = "DEPENDS-ON: old-card"
+	if !strings.Contains(got, fencedEvidence) {
+		t.Fatalf("fenced evidence %q was not preserved in output:\n%s", fencedEvidence, got)
+	}
+}
+
+func TestCutTemplateInsertsDependsOnWhenNoPathsOrTest(t *testing.T) {
+	tmpl := strings.Join([]string{
+		"RESULT: tools-05 sha=000000000000",
+		"KIND: fix",
+		"FILES: 1",
+		"",
+		"## Details",
+		"Some details here.",
+	}, "\n")
+
+	got := ApplyDependsOn(tmpl, []string{"tools-01", "tools-04"})
+
+	want := strings.Join([]string{
+		"RESULT: tools-05 sha=000000000000",
+		"KIND: fix",
+		"FILES: 1",
+		"DEPENDS-ON: tools-01, tools-04",
+		"",
+		"## Details",
+		"Some details here.",
+	}, "\n")
+
+	if got != want {
+		t.Fatalf("ApplyDependsOn did not insert DEPENDS-ON at end of header block:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+}
+
