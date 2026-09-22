@@ -69,7 +69,10 @@ friends: stella up 4s · johnny up 12s · emma AWAY 1h12m (last 09:41Z) · fredd
 ```
 
 `up` is a beat inside the TTL and its age; `AWAY` is a window that stopped, with
-how long ago and when; `none` is a name that has never beaten. Your own line
+how long ago and when; `none` is a name that has never beaten. A friend is
+present only while `friend:<name>` itself is alive: a missing key is absence
+(`none`, or `AWAY` when only the untimed memory remains) and a live key is
+present (`up`). Nothing fills that in from a hand file. Your own line
 should read `up <n>s` within 30 seconds of starting the command above. If it
 reads `none`, the beat did not start: `~/<your>-working/.beat.log` holds its
 one startup line and any complaint it has about the store.

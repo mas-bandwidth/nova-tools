@@ -3240,6 +3240,13 @@ existence is the presence and its value only dates it**: a value this build
 cannot parse reads `up` with no age rather than away, because a friend running
 an older beat is still here.
 
+**A friend is present only while that beat key is alive** (#2675). `friend:<name>`
+with its TTL is the only evidence. A missing key is absent — `none` when the
+friend has never beaten, `AWAY` when only `friend:<name>:last` remains to date
+the silence — and a live key is present (`up`). The untimed key does not make
+them present, and nothing here reads a hand-written presence override. A friend
+who declines instrumentation is absent for exactly that reason: no beat key.
+
 **The roster is the bus's, never a copy.** `--bus <dir>` reads its
 `participants.json`, minus Glenn and Rowan; `--participants` names that file and
 `--friends` names them by hand. There is no built-in list, because the copy is
