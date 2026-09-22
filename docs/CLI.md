@@ -817,6 +817,47 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 
 `green` is `ok` and names the rung that succeeded, `red` is `failed`, `blocked` is `abandoned`, and `skipped` is `skipped` — a unit a precondition stopped before it ran, which is no rung's success and no rung's failure, so it moves no floor in either direction while still being a row `coverage` can see. The kind and the rung are read from that unit's last **decision** row rather than retyped, because a caller who has to retype them will eventually retype them wrong; an outcome for a unit no decision routed is a refusal, not a row. It appends a row of its own — the log is append-only and a row written is never rewritten — marked `source: outcome`, which the summary folds into the rung it names without counting a second decision.
 
+### review — the Jev first pass over a pull request
+
+```
+nova-decide review --repo <owner/name> --pr <n> [--card <file>]
+                   [--post|--dry-run] [--ledger file|redis] [--ledger-path <jsonl>]
+                   [--no-jev] [--table] [--record <dir>] [--replay <dir>]
+nova-decide review --repo <owner/name> --batch <file of pull request numbers>
+```
+
+Every harvested pull request, before any friend sees it (#2565). It fetches the diff and the card, runs **four mechanical checks in Go with no model**, asks Jev **one** typed question for a 1-10 score, prints one typed line and appends the verdict to a ledger.
+
+**It lands nothing, and that is not a policy — it is arithmetic.** The lander counts a typed line only when the GitHub *account* that posted the comment matches its FRIENDS regex (`bin/land-loop-schema` `facts()`: `select(.author.login|test("gafferongames|stella|johnny|rowan-claude"))`). The `who=` field on the line is never read by it. So `who=jev` is a label for the person reading the pull request, not the thing that keeps this line out of a batch — **the account is.** A pass posting from a friend's account would land cards whatever it called itself, which is why `--post` is a flag someone has to type and `--dry-run` is the default.
+
+The four checks, and what each is for:
+
+| check | yes when | the case it exists for |
+|---|---|---|
+| `symbol` | the added test exercises generated code **and** carries none of the self-check tells | schema#1507 landed on a 10/10 with `check(true, ...)` as its only assertion |
+| `paths` | every changed file is inside the card's `PATHS` globs | schema#1569 added a whole stub crate beside its one test file |
+| `done` | line 2 of the RESULT is the bare word `DONE` | a RESULT that has to qualify DONE has not finished |
+| `claims` | every file the RESULT's `files:` line names is in the diff | a RESULT written from intent rather than from the diff |
+
+A check with nothing to decide on answers **`missing`, never `no`** — an absent card is not a failed card. `missing` holds the pull request exactly as `no` does; it just says something different about why. The verdict is HOLD when any check is not `yes`, and otherwise the score decides at 8.
+
+```
+$ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
+DISPOSITION who=jev head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=HOLD score=6/10 checks=symbol:yes,paths:yes,done:yes,claims:no reason=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod
+```
+
+**The symbol check is two-sided, and one side alone gets it wrong.** "Does the file mention a generated symbol" says *yes* to schema#1459, which calls the real `tableFixedSelect` for half its assertions and writes `// Simulate exactly what FixedLoad does` for the other half. So the check asks for a generated symbol **and** the absence of a self-check tell, and every tell cites the pull request a friend read it out of. That is also its honest limit: it is calibrated on 122 cells of one repository's conformance legs, and a tell is a string a future card can avoid writing while doing the same thing. It bounces a card to a recut; it lands nothing.
+
+**With no card,** `PATHS` is inferred from the pull request's own `cell: <lang>/<row>` line and the line says so (`paths_from=pr-body-cell` in the ledger, and the posted comment says it in words). The inference comes from the cell's *identity*, never from the list of files the diff happens to touch — a bound read off the diff would pass by construction, and the row would then say a check ran that decided nothing.
+
+**One question, one call, one price.** `ScoreLevels` is ten levels in a fixed order: Jev is order-sensitive, so the same ten shuffled are a different question and a score from one ordering cannot be compared with one from another. A test pins the ordering by hash. The raw provider answer travels into the ledger beside the 1-10 that was printed, so that if the provider ever answers in level *indexes* rather than in the numbering the levels carry, both numbers are on the record and somebody can tell.
+
+`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). `--ledger redis` is the ev:cards `Kind=jev` event and **refuses today**, naming #2563, because that Emit is not on dev yet — a sink that silently does nothing is worse than one that says so.
+
+`--no-jev` runs the four checks alone: no key is read, nothing is dialled, and the line prints `score=-/10` rather than a zero nobody gave. `--record` writes each provider answer as a fixture and `--replay` reads them back, which is how the tests run: a Jev call costs money, so the 122-cell pass ran **once** (`internal/prereview/testdata/jev-2026-09-22/RUN.md` is that run's receipt) and everything since replays it.
+
+Exit **0** when every pull request cleared, **3** when any HOLD — a suggestion to recut, never an authorization — and **2** on refusal.
+
 ### classify — ask one typed question over one item
 
 ```
