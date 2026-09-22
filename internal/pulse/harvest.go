@@ -195,6 +195,7 @@ func Harvest(in HarvestInput) int {
 	_ = cardsPath
 
 	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread int
+	holdUnrecorded := false
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
@@ -203,7 +204,7 @@ func Harvest(in HarvestInput) int {
 		jobDir, n := resolveJobDir(in.Root, c.Slot, c.Label, contract)
 		if n > 1 {
 			refused++
-			writeSeen(in.Root, c, "refused")
+			_ = writeSeen(in.Root, c, "refused")
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: ambiguous RESULT.md under %s (same contract in more than one job directory; not folding)\n",
 				field(c.Label), field(in.Root))
 			continue
@@ -234,15 +235,18 @@ func Harvest(in HarvestInput) int {
 		switch state {
 		case "mismatch":
 			mismatch++
-			writeSeen(in.Root, c, "mismatch")
+			_ = writeSeen(in.Root, c, "mismatch")
 		case "unknown":
 			fmt.Fprintf(in.Stderr, "HARVEST HOLD label=%s reason=unknown-acceptance\n", field(c.Label))
-			writeSeen(in.Root, c, "hold")
+			if err := writeSeen(in.Root, c, "hold"); err != nil {
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: the hold could not be recorded: %s\n", field(c.Label), oneline.Err(err))
+				holdUnrecorded = true
+			}
 		case "abstain":
 			abstain++
 			retried++
 			refusal := lastRefusal(filepath.Join(jobDir, "harness.log"))
-			writeSeen(in.Root, c, "retry")
+			_ = writeSeen(in.Root, c, "retry")
 			lines = append(lines, fmt.Sprintf("HARVEST RETRY label=%s card=%s: %s",
 				field(c.Label), field(c.Card), oneline.Escape(refusal)))
 			appendRetry(in.Root, c, refusal)
@@ -252,7 +256,7 @@ func Harvest(in HarvestInput) int {
 				field(c.Label), field(in.Root))
 		case "refused":
 			refused++
-			writeSeen(in.Root, c, "refused")
+			_ = writeSeen(in.Root, c, "refused")
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
 		case "done":
 			// THE KEY-SHAPE SCAN COMES FIRST (#1814), before the typed decision and long
@@ -264,13 +268,13 @@ func Harvest(in HarvestInput) int {
 			findings, scanErr := secretScan(jobDir, resultLines)
 			if scanErr != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest", c.Label, scanErr))
 				continue
 			}
 			if len(findings) > 0 {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				secretRefusal{Site: "harvest", Label: c.Label, JobDir: jobDir,
 					QuarantineRoot: in.Root, HumanDir: in.Root, Out: in.Stderr}.refuse(findings)
 				continue
@@ -289,7 +293,7 @@ func Harvest(in HarvestInput) int {
 				}
 				switch class.kind {
 				case "no-change", "already-fixed":
-					writeSeen(in.Root, c, "done")
+					_ = writeSeen(in.Root, c, "done")
 					line := fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail)
 					if class.kind == "already-fixed" {
 						line += " test=" + field(class.test)
@@ -306,7 +310,7 @@ func Harvest(in HarvestInput) int {
 				// a defect is a candidate for a person or a stronger reader, one
 				// line, filed nowhere. Anything else harvests as today.
 				if res.result == "skip-precondition" {
-					writeSeen(in.Root, c, "done")
+					_ = writeSeen(in.Root, c, "done")
 					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail))
 					continue
 				}
@@ -322,7 +326,7 @@ func Harvest(in HarvestInput) int {
 			// pulse has ever heard of opened a draft PR on it (issue #1824).
 			if err := allowedPush(in, jobDir, c, repo, branch); err != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
@@ -338,14 +342,14 @@ func Harvest(in HarvestInput) int {
 			d, derr := managerDispatch(c.Card, in.Clones)
 			if derr != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED repo-unknown card=%s: %s\n", field(c.Label), oneline.Err(derr))
 				continue
 			}
 			dest, err := resolveDestination(c.Label, d, jobDir, repo)
 			if err != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
 				continue
 			}
@@ -354,19 +358,19 @@ func Harvest(in HarvestInput) int {
 			target, terr := harvestTargetBranch(in, resultLines)
 			if terr != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(terr))
 				continue
 			}
 			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, target, branch, globs, declared); err != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
 			if err := commitHarvestEffect(in, c.Label, harvest.ActionRESULT, nil); err != nil {
 				refused++
-				writeSeen(in.Root, c, "refused")
+				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				continue
 			}
@@ -375,7 +379,7 @@ func Harvest(in HarvestInput) int {
 			}); err != nil {
 				if in.Effect != nil {
 					refused++
-					writeSeen(in.Root, c, "refused")
+					_ = writeSeen(in.Root, c, "refused")
 					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				} else {
 					fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
@@ -391,7 +395,7 @@ func Harvest(in HarvestInput) int {
 			}); err != nil {
 				if in.Effect != nil {
 					refused++
-					writeSeen(in.Root, c, "refused")
+					_ = writeSeen(in.Root, c, "refused")
 					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
 				} else {
 					fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
@@ -460,6 +464,10 @@ func Harvest(in HarvestInput) int {
 
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.
+	if holdUnrecorded {
+		fmt.Fprintf(in.Stderr, "HARVEST REFUSED: a hold was not recorded, so nothing is admitted\n")
+		return 1
+	}
 	if rc := relaunch(in); rc != 0 && code == 0 {
 		code = rc
 	}
@@ -1010,18 +1018,25 @@ func readUSD(path string) string {
 }
 
 // writeSeen appends or updates a seen.tsv row: source<TAB>id<TAB>state.
-func writeSeen(root string, c CardRow, state string) {
+func writeSeen(root string, c CardRow, state string) error {
 	path := filepath.Join(root, "seen.tsv")
 	kind, id := "card", c.Label
-	if k, i, _, ok := lookupIdentity(root, c.Label); ok {
+	if a, ok := cardIdentity(c.Card); ok {
+		kind, id = a.Kind, a.ID
+	} else if k, i, _, ok, err := lookupIdentity(root, c.Label); err != nil {
+		return err
+	} else if ok {
 		kind, id = k, i
 	}
 	line := fmt.Sprintf("%s\t%s\t%s\n", kind, id, state)
-	existing, _ := os.ReadFile(path)
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	var b strings.Builder
 	b.Write(existing)
 	b.WriteString(line)
-	_ = os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 // appendRetry appends label<TAB>card<TAB>refusal to retry.tsv.

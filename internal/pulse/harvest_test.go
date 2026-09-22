@@ -327,6 +327,99 @@ func TestHarvestHoldIsNotAdmittedAgain(t *testing.T) {
 	if !strings.Contains(string(pooled), "\t2\t") {
 		t.Fatalf("the free issue was not pooled:\n%s", pooled)
 	}
+	ident, err := os.ReadFile(filepath.Join(root, "identity.tsv"))
+	if err != nil || !strings.Contains(string(ident), "issues\t1\t") {
+		t.Fatalf("the second pool forgot the held identity:\n%s", ident)
+	}
+
+	// The original queue, still naming the held card, after that second pool.
+	os.Remove(filepath.Join(root, "queue.tsv"))
+	queueCard(t, root, "1")
+	queueCard(t, root, "2")
+	var rout, rerr bytes.Buffer
+	if rc := relaunch(HarvestInput{ID: "p1", Root: root, Stdout: &rout, Stderr: &rerr}); rc != 0 {
+		t.Fatalf("relaunch exit %d\n%s\n%s", rc, rout.String(), rerr.String())
+	}
+	again, err := os.ReadFile(filepath.Join(root, "cards.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(again), "\n1\t") || strings.HasPrefix(string(again), "1\t") {
+		t.Fatalf("a stale queue admitted the held card after the second pool:\n%s", again)
+	}
+	if !strings.Contains(string(again), "2\t") {
+		t.Fatalf("the free card did not proceed from the stale queue:\n%s", again)
+	}
+}
+
+func TestSameIDFromTwoSourcesDoesNotCrossTheHold(t *testing.T) {
+	root := t.TempDir()
+	ident := "issues\t1\t1\t1\nprs\t1\t1\t1\n"
+	if err := os.WriteFile(filepath.Join(root, "identity.tsv"), []byte(ident), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "seen.tsv"), []byte("issues\t1\thold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	card := filepath.Join(root, "prs.md")
+	if err := os.WriteFile(card, []byte("RESULT prs sha=1\nIDENTITY kind=prs id=1 attempt=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seen, err := readSeen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := dropHeldCards(root, []CardRow{{Label: "1", Card: card}}, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) != 1 {
+		t.Fatalf("the prs card was treated as the held issue: %+v", kept)
+	}
+	bare, err := dropHeldCards(root, []CardRow{{Label: "1", Card: filepath.Join(root, "missing.md")}}, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bare) != 0 {
+		t.Fatalf("an ambiguous bare label was admitted: %+v", bare)
+	}
+
+	slash := "issues\ta/b\ta/b\t1\n"
+	if err := os.WriteFile(filepath.Join(root, "identity.tsv"), []byte(slash), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "seen.tsv"), []byte("issues\ta/b\thold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seen, err = readSeen(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sanitized, err := dropHeldCards(root, []CardRow{{Label: "a-b"}}, seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sanitized) != 0 {
+		t.Fatalf("a sanitized label was admitted under the raw id's hold: %+v", sanitized)
+	}
+}
+
+func TestRelaunchRefusesAnUnreadableHoldLedger(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "seen.tsv"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	queueCard(t, root, "2")
+	writePulseTable(t, root, "p1", 1, 1, "60s")
+	var out, errOut bytes.Buffer
+	rc := relaunch(HarvestInput{ID: "p1", Root: root, Stdout: &out, Stderr: &errOut})
+	if rc == 0 {
+		t.Fatalf("an unreadable seen.tsv admitted work:\n%s\n%s", out.String(), errOut.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "cards.tsv")); !os.IsNotExist(err) {
+		raw, _ := os.ReadFile(filepath.Join(root, "cards.tsv"))
+		t.Fatalf("cards were written despite the unreadable ledger:\n%s", raw)
+	}
 }
 
 func TestHarvestAbstainGoesToRetry(t *testing.T) {
