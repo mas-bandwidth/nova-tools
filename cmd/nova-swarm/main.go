@@ -1979,6 +1979,14 @@ func readTask(path string, useStdin bool, stdin io.Reader) ([]byte, error) {
 // nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
 // RESULT.md in its job directory, or in the clone the card worked in. A card that abstains
 // still writes one (it says ABSTAIN on line 2); a run that produced nothing writes none.
+//
+// A REPORT THE MACHINERY WROTE IS NOT THE CARD'S (issue #2548). A card that ended its last
+// turn with a question publishes nothing, and the run now writes `RESULT: ASKED <question>`
+// for it so the question is not lost. That file is evidence of an ABSENCE, and counting it
+// here would turn the verdict this run already prints -- `INCOMPLETE why=no-result` -- into
+// `NATIVE OK` for a card that did nothing but ask, which is the very fault #1844 made this
+// word earn itself. The verdict is therefore unchanged by the report, and the report is
+// where the question goes.
 func nativeLeftAResult(job string) bool {
 	if strings.TrimSpace(job) == "" {
 		return false
@@ -1987,7 +1995,7 @@ func nativeLeftAResult(job string) bool {
 		filepath.Join(job, "RESULT.md"),
 		filepath.Join(job, "repo", "RESULT.md"),
 	} {
-		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() && !swarm.AskedReport(p) {
 			return true
 		}
 	}
