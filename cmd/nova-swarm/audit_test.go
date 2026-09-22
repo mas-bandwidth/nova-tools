@@ -146,6 +146,10 @@ var swarmAudit = audit.Config{
 		// column it occupies: Itoa of an int cannot hold a control character, and it
 		// holds no writer of its own.
 		`"strconv"`,
+		// sync/atomic (native.go, issue #2632) only increments the counter that
+		// distinguishes two results publishes in one process. AddUint64 returns a
+		// number; the package holds no writer and prints nothing.
+		`"sync/atomic"`,
 		// runtime (authmode.go, issue #915) reads GOOS and nothing else. It holds no
 		// writer, and the one value selects which permission-bit rule the auth copy asks:
 		// NTFS reports 0666 for every readable file, so the unix looseness check refused

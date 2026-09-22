@@ -67,7 +67,7 @@ usage:
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm pull      --bench <dir> --worker <name> [--steal <dir>[,<dir>...] --capacity <n>] [--last-steal <stamp>]
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm reap      --root <dir> [--older <duration>] [--dry-run]
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
@@ -1683,6 +1683,13 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sandbox := f.fs.String("sandbox", "", "")
 	noWall := f.fs.Bool("no-wall", false, "")
 	noSharedCaches := f.fs.Bool("no-shared-caches", false, "")
+	// --results-root is where RESULT.md, usage.tsv and the report are published
+	// (issue #2632). Empty derives <root>/results from the root this run was
+	// already given. --sweep-now deletes the job directory after that publish,
+	// which is the control for a bench sweep that used to delete the results
+	// with the working directory.
+	resultsRootFlag := f.fs.String("results-root", "", "")
+	sweepNow := f.fs.Bool("sweep-now", false, "")
 	// THE BENCH SLOT LEASE (nova-tools#1546). --slots-store names the store and --owner
 	// whose share the one lease per run counts against. BOTH ARE REQUIRED: see
 	// swarm.NoSlotsStoreRefusal for why there is no optional mode and no default.
@@ -1814,6 +1821,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		sandbox:        *sandbox,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
+		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 	}
 	if workerGiven {
 		cfg.worker = &w
@@ -1900,6 +1908,17 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 		if res.blockedPath != "" {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
+		}
+	}
+	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
+	// is the control: it deletes the job directory the way the bench sweep does,
+	// and only when publishNativeResults named the directory it landed in. A
+	// publish that did not land leaves the job, which is then the only copy.
+	if *sweepNow {
+		if res.resultsDir == "" {
+			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
+		} else if err := sweepNativeJob(res.root, res.job); err != nil {
+			fmt.Fprintf(stderr, "NATIVE NOTE: the job directory %s could not be removed: %s\n", oneline.Field(res.job), oneline.Escape(err.Error()))
 		}
 	}
 	if code != 0 {
@@ -1990,6 +2009,19 @@ func nativeVerdictWhy(res nativeRunResult) (verdict, why string) {
 		return "INCOMPLETE", "rc"
 	}
 	return "OK", ""
+}
+
+// resultsRootOf is the directory native publishes into. A named --results-root
+// wins. Otherwise it is <root>/results, derived from the root the run was given,
+// not a path invented beside it.
+func resultsRootOf(flag, root string) string {
+	if strings.TrimSpace(flag) != "" {
+		return flag
+	}
+	if strings.TrimSpace(root) == "" {
+		return ""
+	}
+	return filepath.Join(root, "results")
 }
 
 // nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
