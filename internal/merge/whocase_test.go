@@ -146,43 +146,87 @@ func TestUntypedHoldDerivesTheFriendsNameFromALeadingPrefix(t *testing.T) {
 	}
 }
 
-// The real #2522 comment 5766104067, run through the whole ParseComment pipe: who is
-// "stella", not "unknown".
-func TestParseCommentDerivesWhoForTheRealStellaProseHold(t *testing.T) {
+// The real #2522 comments, run through the whole ParseComment/UnliftedHolds pipe.
+//
+// Coordinator decision, 2026-09-22 4:55 PM ("Glenn's one-read rule is about typed
+// lines; a friend's typed DISPOSITION is their lane record"), amending SPEC-DECIDE
+// reading 3: a HOLD by friend X at head H, however it was written, is released by X's
+// LATER typed `DISPOSITION who=x head=H verdict=APPROVE` comment at that same head H --
+// the last typed verdict per friend at head wins, whether H is superseded or current.
+// This lifts the older "a comment releases nothing at the current head; only the
+// holder's lane record does" restriction for exactly this case -- a friend superseding
+// their own word -- and nothing else: the needs_read approval gate (read.go's
+// EvaluateReads) still counts lane records only, and a DIFFERENT friend's comment still
+// releases nothing.
+//
+// The control is #2522's real shape: Stella's untyped prose hold (comment 5766104067,
+// "HOLD -- Stella, independent contract/source read...") binds to the current head
+// because an untyped comment always does (SPEC-DECIDE lines 1037-1040); Emma's typed
+// APPROVE score=10/10 at that head (a different friend, releases nothing); then
+// Stella's own typed APPROVE score=9 at that same head (comment 5783400393) -- which
+// now releases her hold. reads=[emma:10, stella:9], TAKE.
+func TestASameFriendsLaterTypedApproveReleasesTheirOwnHoldEvenAtTheCurrentHead(t *testing.T) {
 	t.Parallel()
 	rs, err := ParseReviewers(strings.NewReader("who\tlogins\tmay-hold\nstella\tgafferongames\tyes\nemma\tgafferongames\tyes\n"))
 	if err != nil {
 		t.Fatalf("reviewer fixture: %v", err)
 	}
-	body := "HOLD — Stella, independent contract/source read at **0526ea67fcf4ccad48f7fe573ccfbcf3a6f39745**. " +
-		"This is the actual forge head; the supplied full SHA ending `18ff` was not this revision."
 	head := "9ee8155657a4ff73d151003d18456a0075acfd41"
-	v, ok := ParseComment(5766104067, "gafferongames", body, "2026-09-21T19:16:48Z", rs, "gafferongames", head, false)
-	if !ok || v.Word != "hold" {
-		t.Fatalf("expected a hold verdict, got %+v ok=%v", v, ok)
-	}
-	if v.Who != "stella" {
-		t.Fatalf("expected the prose hold to derive who=stella, got who=%q", v.Who)
+	author := "gafferongames"
+
+	holdBody := "HOLD — Stella, independent contract/source read at **0526ea67fcf4ccad48f7fe573ccfbcf3a6f39745**. " +
+		"This is the actual forge head; the supplied full SHA ending `18ff` was not this revision."
+	v, ok := ParseComment(5766104067, "gafferongames", holdBody, "2026-09-21T19:16:48Z", rs, author, head, false)
+	if !ok || v.Word != "hold" || v.Who != "stella" {
+		t.Fatalf("expected the prose hold to derive who=stella, got %+v ok=%v", v, ok)
 	}
 
-	// Note on what this fix does NOT do: her hold binds to the current head (SPEC-DECIDE
-	// lines 1037-1040, untyped comments bind to current head), so it is an AT-HEAD hold,
-	// not a carried one. Releasing an AT-HEAD hold still requires the holder's own lane
-	// record (SPEC-DECIDE reading 3, nova-tools #2550/#2615,
-	// TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead's "both current" row): her
-	// own later typed APPROVE *comment* at that same head does not release it, same as
-	// before this fix. What this fix corrects is the attribution -- who=stella, not
-	// who=unknown -- which is what the reviewer-file permission checks (HasWho,
-	// IsExplicitlyDisallowed) and any future lane record from her need to match against.
-	approveBody := "DISPOSITION who=stella head=" + head + " verdict=APPROVE score=9"
-	av, aok := ParseComment(5783400393, "gafferongames", approveBody, "2026-09-22T20:12:58Z", rs, "gafferongames", head, false)
+	emmaApproveBody := "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10"
+	ev, eok := ParseComment(5780374275, "gafferongames", emmaApproveBody, "2026-09-22T16:44:51Z", rs, author, head, false)
+	if !eok || ev.Word != "approve" || ev.Who != "emma" {
+		t.Fatalf("expected emma's typed approve to parse as who=emma approve, got %+v ok=%v", ev, eok)
+	}
+
+	stellaApproveBody := "DISPOSITION who=stella head=" + head + " verdict=APPROVE score=9"
+	av, aok := ParseComment(5783400393, "gafferongames", stellaApproveBody, "2026-09-22T20:12:58Z", rs, author, head, false)
 	if !aok || av.Word != "approve" || av.Who != "stella" {
 		t.Fatalf("expected her typed approve to parse as who=stella approve, got %+v ok=%v", av, aok)
 	}
-	holds := UnliftedHolds([]Verdict{v, av}, head, "gafferongames", rs)
+
+	holds := UnliftedHolds([]Verdict{v, ev, av}, head, author, rs)
+	if len(holds) != 0 {
+		t.Fatalf("stella's own later typed APPROVE at the same head must release her own hold (TAKE), got: %+v", holds)
+	}
+}
+
+// The negative half of the same decision: a DIFFERENT friend's typed APPROVE, even at
+// the exact same head as the hold, releases nothing -- the rule is same-friend, never
+// "somebody approved".
+func TestADifferentFriendsTypedApproveAtHeadDoesNotReleaseTheHold(t *testing.T) {
+	t.Parallel()
+	rs, err := ParseReviewers(strings.NewReader("who\tlogins\tmay-hold\nstella\tgafferongames\tyes\nemma\tgafferongames\tyes\n"))
+	if err != nil {
+		t.Fatalf("reviewer fixture: %v", err)
+	}
+	head := "9ee8155657a4ff73d151003d18456a0075acfd41"
+	author := "gafferongames"
+
+	holdBody := "HOLD — Stella, independent contract/source read at **0526ea67fcf4ccad48f7fe573ccfbcf3a6f39745**. " +
+		"This is the actual forge head; the supplied full SHA ending `18ff` was not this revision."
+	v, ok := ParseComment(5766104067, "gafferongames", holdBody, "2026-09-21T19:16:48Z", rs, author, head, false)
+	if !ok || v.Word != "hold" || v.Who != "stella" {
+		t.Fatalf("expected the prose hold to derive who=stella, got %+v ok=%v", v, ok)
+	}
+
+	emmaApproveBody := "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10"
+	ev, eok := ParseComment(5780374275, "gafferongames", emmaApproveBody, "2026-09-22T16:44:51Z", rs, author, head, false)
+	if !eok || ev.Word != "approve" || ev.Who != "emma" {
+		t.Fatalf("expected emma's typed approve to parse as who=emma approve, got %+v ok=%v", ev, eok)
+	}
+
+	holds := UnliftedHolds([]Verdict{v, ev}, head, author, rs)
 	if len(holds) != 1 || holds[0].Who != "stella" {
-		t.Fatalf("an AT-HEAD hold is released only by a lane record (SPEC-DECIDE reading 3); "+
-			"a same-friend APPROVE comment at head must still leave it standing, got: %+v", holds)
+		t.Fatalf("a different friend's typed APPROVE at head must not release stella's hold, got: %+v", holds)
 	}
 }
 

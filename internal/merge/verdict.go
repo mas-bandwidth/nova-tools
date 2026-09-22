@@ -460,30 +460,48 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 			holds = append(holds, v)
 		}
 	}
-	return releaseCarriedHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs, currentHead)
+	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs, currentHead)
 }
 
-// releaseCarriedHolds is nova-tools #2550's rule, and it touches CARRIED holds only.
+// releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD at a SUPERSEDED
+// head is released by a later typed verdict from the same friend at the CURRENT head),
+// amended by the coordinator's 2026-09-22 4:55 PM decision to cover a HOLD still AT the
+// current head too:
 //
-// A hold whose held_at is not the current head is the last word its author left about a
-// commit the branch has moved past. It is released by a LATER TYPED verdict from the SAME
-// friend at the CURRENT head: an APPROVE releases it, and a new HOLD at the current head
-// REPLACES it -- the pull request is still dropped, but by the hold at head, so the DROP
-// line names a commit a reader can go and look at instead of held_at=<gone> carried=yes.
-// A hold stays carried exactly while its author has said nothing at the current head.
+//	A HOLD by friend X at head H, however it was written, is released by X's LATER typed
+//	`DISPOSITION who=x head=H verdict=APPROVE` comment at that same head H; the last
+//	typed verdict per friend at head wins, whether H is superseded or current.
+//
+// The reasoning given for lifting SPEC-DECIDE reading 3's older "a comment releases
+// nothing at the current head; only the holder's lane record does" restriction: Glenn's
+// one-read rule is about typed lines, and a friend's own typed DISPOSITION comment IS
+// their lane record for their own hold. It never was evidence good enough for a
+// DIFFERENT friend's hold or for the needs_read approval gate (read.go's EvaluateReads,
+// which remains lane-record-only and is untouched here) -- only for superseding one's
+// own earlier word with one's own later word, the same friend, the same head.
+//
+// Measured control: #2522 comment 5766104067, Stella's untyped prose hold ("HOLD --
+// Stella, independent contract/source read..."), binds to the current head because an
+// untyped comment always does (SPEC-DECIDE lines 1037-1040); her own later typed
+// `DISPOSITION who=stella head=<that same head> verdict=APPROVE score=9` comment
+// (5783400393) now releases it. Emma's typed APPROVE at that same head does not: the
+// rule is same-friend, never "somebody approved".
 //
 // What this does NOT do, and must not:
 //
-//   - A hold AT the current head is left alone. A comment still releases nothing there
-//     (SPEC-DECIDE reading 3); only the holder's lane record does.
-//   - An APPROVE at some OTHER superseded head releases nothing. Release keys on the
+//   - An APPROVE at some OTHER, non-matching head releases nothing. Release keys on the
 //     head, never on "somebody approved at some point".
-//   - A hold with who=unknown is left alone. An untyped hold-shaped line has no author
-//     to match, and it binds to the current head anyway, so it is never carried.
-func releaseCarriedHolds(unreleased []Verdict, vs []Verdict, currentHead string) []Verdict {
+//   - A hold with who=unknown is left alone. An untyped hold-shaped line with no
+//     attributable name has no author to match, so nothing can supersede it this way;
+//     SPEC-DECIDE reading 3's other release path (a different may-hold reader's lane
+//     record naming it) is unaffected.
+//   - The needs_read approval gate (read.go) still counts only lane records. This
+//     decision is about a hold's own author superseding themselves, not about who counts
+//     as a second friend's read.
+func releaseSameFriendSupersededHolds(unreleased []Verdict, vs []Verdict, currentHead string) []Verdict {
 	var kept []Verdict
 	for _, h := range unreleased {
-		if headMatch(h.Head, currentHead) || h.Who == "unknown" || h.Who == "" {
+		if h.Who == "unknown" || h.Who == "" {
 			kept = append(kept, h)
 			continue
 		}
@@ -502,6 +520,16 @@ func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool
 		if v.Word != "approve" && v.Word != "hold" {
 			continue
 		}
+		// Only a TYPED word counts as the friend's own lane record: Source "record" (a
+		// `nova-merge read`) or "comment-rule" (a typed DISPOSITION line, ParseComment's
+		// only way to produce Word "approve" or a named "hold"). A forge-native review
+		// click never reaches here as an approve at all -- ParseReview drops an APPROVED
+		// review outright (SPEC-DECIDE reading 3) -- but excluding every other Source
+		// here too means a verdict shaped like one, real or synthetic, still supersedes
+		// nothing (TestAForgeApprovedReviewReleasesNothing, TestACommentNeverReleasesAnything).
+		if v.Source != "record" && v.Source != "comment-rule" {
+			continue
+		}
 		if !sameLine(v.Who, h.Who) {
 			continue
 		}
@@ -513,9 +541,18 @@ func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool
 		if v.At == "" || v.At <= h.At {
 			continue
 		}
-		// A scoped APPROVE releases only what it names, the same way it does at head.
-		if v.Word == "approve" && v.Scope != "" && !releasesContains(v.Releases, h.ID) {
-			continue
+		if v.Word == "approve" {
+			// A scoped APPROVE releases only what it names, the same way it does at head.
+			if v.Scope != "" && !releasesContains(v.Releases, h.ID) {
+				continue
+			}
+		} else {
+			// A later HOLD replaces the held one only when it is the same topic: a
+			// friend's new hold on "docs" is not their last word on an unrelated,
+			// still-standing "parser" hold (TestAScopedApproveReleasesOnlyTheHoldsItNames).
+			if v.Scope != h.Scope {
+				continue
+			}
 		}
 		return true
 	}
