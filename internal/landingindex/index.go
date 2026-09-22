@@ -47,6 +47,18 @@ type SymbolDef struct {
 	GuardingTests []string // Tests guarding or referencing this symbol
 }
 
+// MaxInlinedParagraphLines is the maximum number of text lines copied from a single spec paragraph.
+const MaxInlinedParagraphLines = 16
+
+// MaxInlinedParagraphBytes is the maximum raw byte size copied from a single spec paragraph.
+const MaxInlinedParagraphBytes = 1200
+
+// MaxTotalInlinedBytes is the maximum total byte budget for the entire inlined context block in a card.
+const MaxTotalInlinedBytes = 3500
+
+// MaxTotalInlinedLines is the maximum total lines across all inlined spec paragraphs in a card.
+const MaxTotalInlinedLines = 40
+
 // Index holds the three landing indices:
 // 1. spec ID -> paragraph
 // 2. test -> covered files
@@ -68,16 +80,25 @@ type Index struct {
 
 	// Symbol name -> SymbolDef
 	SymbolsByName map[string]*SymbolDef
+
+	// bareAliasDocs maps a bare alias (e.g. "rule 5", "waits") to map[docPath]*SpecParagraph
+	bareAliasDocs map[string]map[string]*SpecParagraph
+
+	// ambiguousKeys tracks keys that appeared in multiple documents and are rejected as bare aliases
+	ambiguousKeys map[string]bool
 }
 
 var (
-	specLineRe   = regexp.MustCompile(`(?i)\b(?:docs/)?([A-Za-z0-9_.-]+\.md):(\d+)\b`)
-	specCodeRe   = regexp.MustCompile(`\b([A-Z][0-9A-Z]+(?:-[A-Z0-9]+)+)\b`)
-	specECodeRe  = regexp.MustCompile(`\b(E\d+(?:\.[0-9]+)*(?:-[A-Za-z0-9]+)*)\b`)
-	specRuleRe   = regexp.MustCompile(`(?i)\b(rule\s*\d+)\b`)
-	testNameRe   = regexp.MustCompile(`\b(Test[A-Za-z0-9_]+)\b`)
-	h3BacktickRe = regexp.MustCompile(`^###\s+` + "`" + `([^` + "`" + `]+)` + "`")
-	h3DashRe     = regexp.MustCompile(`^###\s+([^—–-]+)[—–-]`)
+	specLineRe      = regexp.MustCompile(`(?i)\b(?:docs/)?([A-Za-z0-9_.-]+\.md):(\d+)\b`)
+	specCodeRe      = regexp.MustCompile(`\b([A-Z][0-9A-Z]+(?:-[A-Z0-9]+)+)\b`)
+	specECodeRe     = regexp.MustCompile(`\b(E\d+(?:\.[0-9]+)*(?:-[A-Za-z0-9]+)*)\b`)
+	specRuleRe      = regexp.MustCompile(`(?i)\b(rule\s*\d+)\b`)
+	qualifiedRuleRe = regexp.MustCompile(`(?i)\b(?:docs/)?([A-Za-z0-9_.-]+(?:\.md)?)(?:[:#\s]+)(rule\s*\d+)\b`)
+	docMentionRe    = regexp.MustCompile(`(?i)\b([A-Za-z0-9_.-]+\.md|SPEC-[A-Za-z0-9_-]+)\b`)
+	testNameRe      = regexp.MustCompile(`\b(Test[A-Za-z0-9_]+)\b`)
+	h3BacktickRe    = regexp.MustCompile(`^###\s+` + "`" + `([^` + "`" + `]+)` + "`")
+	h3DashRe        = regexp.MustCompile(`^###\s+([^—–-]+)[—–-]`)
+	ruleDefRe       = regexp.MustCompile(`(?i)(?:^|\n)\s*(?:(\d+)\.\s+\*\*|(?:\*\*)?rule\s*(\d+)[:.]?)`)
 )
 
 // Build constructs all three landing indices from the given repository root directory.
@@ -96,6 +117,8 @@ func Build(repoRoot string) (*Index, error) {
 		SpecsByDocLine: make(map[string]*SpecParagraph),
 		TestsByName:    make(map[string]*TestCoverage),
 		SymbolsByName:  make(map[string]*SymbolDef),
+		bareAliasDocs:  make(map[string]map[string]*SpecParagraph),
+		ambiguousKeys:  make(map[string]bool),
 	}
 
 	if err := idx.indexSpecs(); err != nil {
@@ -147,17 +170,91 @@ func (idx *Index) indexSpecs() error {
 		idx.parseDocParagraphs(relPath, string(raw))
 	}
 
+	// Prune ambiguous bare aliases that appear across multiple documents
+	for alias, docs := range idx.bareAliasDocs {
+		if len(docs) > 1 {
+			delete(idx.SpecsByID, alias)
+			aliasHyphen := strings.ReplaceAll(alias, " ", "-")
+			delete(idx.SpecsByID, aliasHyphen)
+			idx.ambiguousKeys[alias] = true
+			idx.ambiguousKeys[aliasHyphen] = true
+		}
+	}
+
 	return nil
+}
+
+func docKeyPrefixes(docPath string) []string {
+	base := filepath.Base(docPath)
+	stem := strings.TrimSuffix(base, filepath.Ext(base))
+	prefixes := []string{
+		base,
+		strings.ToLower(base),
+		stem,
+		strings.ToLower(stem),
+		docPath,
+		strings.ToLower(docPath),
+	}
+	dir := filepath.Dir(docPath)
+	dirBase := filepath.Base(dir)
+	if dirBase != "" && dirBase != "." && dirBase != "docs" {
+		prefixes = append(prefixes, dirBase, strings.ToLower(dirBase))
+	}
+	return prefixes
+}
+
+func (idx *Index) recordAlias(alias, docPath string, prefixes []string, para *SpecParagraph) {
+	aliasLower := strings.ToLower(alias)
+
+	if idx.bareAliasDocs[aliasLower] == nil {
+		idx.bareAliasDocs[aliasLower] = make(map[string]*SpecParagraph)
+	}
+	idx.bareAliasDocs[aliasLower][docPath] = para
+
+	if idx.SpecsByID[alias] == nil {
+		idx.SpecsByID[alias] = para
+	}
+	if idx.SpecsByID[aliasLower] == nil {
+		idx.SpecsByID[aliasLower] = para
+	}
+
+	aliasHyphen := strings.ReplaceAll(aliasLower, " ", "-")
+	for _, p := range prefixes {
+		// Colon qualified
+		idx.SpecsByID[fmt.Sprintf("%s:%s", p, alias)] = para
+		idx.SpecsByID[fmt.Sprintf("%s:%s", p, aliasLower)] = para
+		idx.SpecsByID[fmt.Sprintf("%s:%s", p, aliasHyphen)] = para
+
+		// Space qualified
+		idx.SpecsByID[fmt.Sprintf("%s %s", p, alias)] = para
+		idx.SpecsByID[fmt.Sprintf("%s %s", p, aliasLower)] = para
+		idx.SpecsByID[fmt.Sprintf("%s %s", p, aliasHyphen)] = para
+
+		// Hash qualified
+		idx.SpecsByID[fmt.Sprintf("%s#%s", p, alias)] = para
+		idx.SpecsByID[fmt.Sprintf("%s#%s", p, aliasLower)] = para
+		idx.SpecsByID[fmt.Sprintf("%s#%s", p, aliasHyphen)] = para
+
+		// Slash qualified
+		idx.SpecsByID[fmt.Sprintf("%s/%s", p, alias)] = para
+		idx.SpecsByID[fmt.Sprintf("%s/%s", p, aliasLower)] = para
+	}
 }
 
 // parseDocParagraphs parses one markdown file into paragraphs, indexing each.
 func (idx *Index) parseDocParagraphs(docPath, content string) {
 	lines := strings.Split(content, "\n")
 	baseName := filepath.Base(docPath)
+	prefixes := docKeyPrefixes(docPath)
 
 	currentHeading := ""
+	headingIndexed := false
 	var pLines []string
 	pStart := 1
+
+	// Track rules defined or referenced in this document
+	docRules := make(map[string]*SpecParagraph)
+	docRuleIsDef := make(map[string]bool)
 
 	flushParagraph := func(endLine int) {
 		if len(pLines) == 0 {
@@ -202,16 +299,19 @@ func (idx *Index) parseDocParagraphs(docPath, content string) {
 			idx.SpecsByDocLine[fmt.Sprintf("%s:%d", docPath, l)] = para
 		}
 
-		// Index by heading tag if available
-		if currentHeading != "" {
+		// Index by heading tag if available (first non-heading content paragraph under heading only)
+		isHeadingOnly := strings.HasPrefix(text, "#")
+		if currentHeading != "" && !isHeadingOnly && !headingIndexed {
+			headingIndexed = true
+			var headingKey string
 			if m := h3BacktickRe.FindStringSubmatch(currentHeading); len(m) > 1 {
-				key := strings.ToLower(strings.TrimSpace(m[1]))
-				idx.SpecsByID[key] = para
-				para.ID = key
+				headingKey = strings.ToLower(strings.TrimSpace(m[1]))
 			} else if m := h3DashRe.FindStringSubmatch(currentHeading); len(m) > 1 {
-				key := strings.ToLower(strings.TrimSpace(m[1]))
-				idx.SpecsByID[key] = para
-				para.ID = key
+				headingKey = strings.ToLower(strings.TrimSpace(m[1]))
+			}
+			if headingKey != "" {
+				para.ID = headingKey
+				idx.recordAlias(headingKey, docPath, prefixes, para)
 			}
 		}
 
@@ -219,7 +319,7 @@ func (idx *Index) parseDocParagraphs(docPath, content string) {
 		for _, m := range specCodeRe.FindAllStringSubmatch(text, -1) {
 			key := m[1]
 			if !strings.HasPrefix(key, "SPEC-") && !strings.HasPrefix(key, "YYYY-") {
-				idx.SpecsByID[key] = para
+				idx.recordAlias(key, docPath, prefixes, para)
 				if para.ID == "" {
 					para.ID = key
 				}
@@ -229,18 +329,38 @@ func (idx *Index) parseDocParagraphs(docPath, content string) {
 		// Index by E-codes (E03, E05.1, etc.)
 		for _, m := range specECodeRe.FindAllStringSubmatch(text, -1) {
 			key := m[1]
-			idx.SpecsByID[key] = para
+			idx.recordAlias(key, docPath, prefixes, para)
 			if para.ID == "" {
 				para.ID = key
 			}
 		}
 
-		// Index by rule numbers (rule 5, rule 6, etc.)
-		for _, m := range specRuleRe.FindAllStringSubmatch(text, -1) {
-			ruleKey := strings.ToLower(strings.Join(strings.Fields(m[1]), " "))
-			idx.SpecsByID[ruleKey] = para
-			if para.ID == "" {
-				para.ID = ruleKey
+		// Check for rule definition or rule reference
+		if defMatches := ruleDefRe.FindAllStringSubmatch(text, -1); len(defMatches) > 0 {
+			for _, dm := range defMatches {
+				rNum := dm[1]
+				if rNum == "" {
+					rNum = dm[2]
+				}
+				if rNum != "" {
+					rKey := fmt.Sprintf("rule %s", rNum)
+					docRules[rKey] = para
+					docRuleIsDef[rKey] = true
+					if para.ID == "" {
+						para.ID = fmt.Sprintf("%s:%s", prefixes[2], rKey)
+					}
+				}
+			}
+		} else {
+			for _, m := range specRuleRe.FindAllStringSubmatch(text, -1) {
+				rKey := strings.ToLower(strings.Join(strings.Fields(m[1]), " "))
+				if _, exists := docRules[rKey]; !exists {
+					docRules[rKey] = para
+					docRuleIsDef[rKey] = false
+					if para.ID == "" {
+						para.ID = fmt.Sprintf("%s:%s", prefixes[2], rKey)
+					}
+				}
 			}
 		}
 
@@ -258,6 +378,7 @@ func (idx *Index) parseDocParagraphs(docPath, content string) {
 		if strings.HasPrefix(trimmed, "#") {
 			flushParagraph(lineNum - 1)
 			currentHeading = trimmed
+			headingIndexed = false
 			pStart = lineNum
 			pLines = append(pLines, line)
 			flushParagraph(lineNum)
@@ -278,6 +399,11 @@ func (idx *Index) parseDocParagraphs(docPath, content string) {
 	}
 
 	flushParagraph(len(lines))
+
+	// Register all resolved document rules
+	for rKey, p := range docRules {
+		idx.recordAlias(rKey, docPath, prefixes, p)
+	}
 }
 
 // indexGoCode parses all Go packages under repoRoot (focusing on cmd/ and internal/).
@@ -506,10 +632,17 @@ func (idx *Index) linkSpecGuards() {
 // LookupSpec looks up a spec paragraph by ID, rule name, or doc:line.
 func (idx *Index) LookupSpec(query string) *SpecParagraph {
 	q := strings.TrimSpace(query)
+	if q == "" {
+		return nil
+	}
+	qLower := strings.ToLower(q)
+	if idx.ambiguousKeys[qLower] {
+		return nil
+	}
 	if p, ok := idx.SpecsByID[q]; ok {
 		return p
 	}
-	if p, ok := idx.SpecsByID[strings.ToLower(q)]; ok {
+	if p, ok := idx.SpecsByID[qLower]; ok {
 		return p
 	}
 	if p, ok := idx.SpecsByDocLine[q]; ok {
@@ -518,11 +651,38 @@ func (idx *Index) LookupSpec(query string) *SpecParagraph {
 	// Try without "docs/" prefix if present
 	if strings.HasPrefix(q, "docs/") {
 		trimmed := strings.TrimPrefix(q, "docs/")
+		trimmedLower := strings.ToLower(trimmed)
+		if idx.ambiguousKeys[trimmedLower] {
+			return nil
+		}
 		if p, ok := idx.SpecsByDocLine[trimmed]; ok {
+			return p
+		}
+		if p, ok := idx.SpecsByID[trimmed]; ok {
+			return p
+		}
+		if p, ok := idx.SpecsByID[trimmedLower]; ok {
 			return p
 		}
 	} else {
 		if p, ok := idx.SpecsByDocLine["docs/"+q]; ok {
+			return p
+		}
+		if p, ok := idx.SpecsByID["docs/"+q]; ok {
+			return p
+		}
+		if p, ok := idx.SpecsByID[strings.ToLower("docs/"+q)]; ok {
+			return p
+		}
+	}
+	// Normalize space vs colon in qualified queries (e.g. "SPEC-CI rule 5" -> "SPEC-CI:rule 5")
+	if strings.Contains(q, " ") {
+		colonVariant := strings.ReplaceAll(q, " ", ":")
+		colonLower := strings.ToLower(colonVariant)
+		if p, ok := idx.SpecsByID[colonVariant]; ok {
+			return p
+		}
+		if p, ok := idx.SpecsByID[colonLower]; ok {
 			return p
 		}
 	}
@@ -578,32 +738,57 @@ func (idx *Index) FindMatches(text string) []InlinedContext {
 		}
 	}
 
-	// 2. Check rule codes (E03-F03-02, TC-MB-01, etc.)
+	// 2. Check qualified rule references (e.g. SPEC-CI.md:rule 5, SPEC-ALPHA rule 5, SPEC-PULSE:rule 5)
+	for _, m := range qualifiedRuleRe.FindAllStringSubmatch(text, -1) {
+		docPart := m[1]
+		rulePart := m[2]
+		if p := idx.LookupSpec(fmt.Sprintf("%s:%s", docPart, rulePart)); p != nil {
+			addSpec(p)
+		} else if p := idx.LookupSpec(fmt.Sprintf("%s %s", docPart, rulePart)); p != nil {
+			addSpec(p)
+		}
+	}
+
+	// 3. Check rule codes (E03-F03-02, TC-MB-01, etc.)
 	for _, m := range specCodeRe.FindAllStringSubmatch(text, -1) {
 		if p := idx.LookupSpec(m[1]); p != nil {
 			addSpec(p)
 		}
 	}
 
-	// 3. Check E-codes (E03, E05.1, etc.)
+	// 4. Check E-codes (E03, E05.1, etc.)
 	for _, m := range specECodeRe.FindAllStringSubmatch(text, -1) {
 		if p := idx.LookupSpec(m[1]); p != nil {
 			addSpec(p)
 		}
 	}
 
-	// 4. Check rule numbers (rule 5, rule 6, etc.)
+	// 5. Check bare rule numbers (rule 5, rule 6, etc.)
 	for _, m := range specRuleRe.FindAllStringSubmatch(text, -1) {
-		if p := idx.LookupSpec(m[1]); p != nil {
-			addSpec(p)
+		rulePart := m[1]
+		// If text mentions any specific document name, try to resolve the rule in that document's scope first
+		resolved := false
+		for _, dm := range docMentionRe.FindAllStringSubmatch(text, -1) {
+			docName := dm[1]
+			if p := idx.LookupSpec(fmt.Sprintf("%s:%s", docName, rulePart)); p != nil {
+				addSpec(p)
+				resolved = true
+				break
+			}
+		}
+		if !resolved {
+			// Bare rule only resolves if unambiguous across all specs
+			if p := idx.LookupSpec(rulePart); p != nil {
+				addSpec(p)
+			}
 		}
 	}
 
-	// 5. Check known spec IDs
+	// 6. Check known spec IDs
 	words := strings.Fields(text)
 	for _, w := range words {
 		clean := strings.Trim(w, "()`'\",;:.#")
-		if clean == "" {
+		if clean == "" || strings.HasPrefix(strings.ToLower(clean), "rule") {
 			continue
 		}
 		if p := idx.LookupSpec(clean); p != nil {
@@ -624,40 +809,102 @@ func (idx *Index) FormatInlinedContext(text string) string {
 	var b strings.Builder
 	b.WriteString("### INLINED SPEC CONTEXT (indices S2)\n")
 
+	totalBytes := len("### INLINED SPEC CONTEXT (indices S2)\n")
+	totalLines := 1
+
 	for i, m := range matches {
 		if i > 2 {
 			break // Cap at top 3 matches to stay strictly bounded
 		}
-		para := m.SpecParagraph
-		fmt.Fprintf(&b, "- Spec: %s (%s:%d-%d)\n", para.ID, para.DocPath, para.StartLine, para.EndLine)
-		if para.Heading != "" {
-			fmt.Fprintf(&b, "  Heading: %s\n", para.Heading)
+		if totalBytes >= MaxTotalInlinedBytes || totalLines >= MaxTotalInlinedLines {
+			b.WriteString("- ... [remaining matches omitted to stay within context budget]\n")
+			break
 		}
 
-		// Indent paragraph text as blockquote
-		for _, line := range strings.Split(para.Text, "\n") {
+		para := m.SpecParagraph
+		headerLine := fmt.Sprintf("- Spec: %s (%s:%d-%d)\n", para.ID, para.DocPath, para.StartLine, para.EndLine)
+		b.WriteString(headerLine)
+		totalBytes += len(headerLine)
+		totalLines++
+
+		if para.Heading != "" {
+			hLine := fmt.Sprintf("  Heading: %s\n", para.Heading)
+			b.WriteString(hLine)
+			totalBytes += len(hLine)
+			totalLines++
+		}
+
+		// Bound paragraph lines and bytes
+		paraLines := strings.Split(para.Text, "\n")
+		pBytes := 0
+		pLines := 0
+		truncated := false
+
+		for _, line := range paraLines {
+			if pLines >= MaxInlinedParagraphLines || pBytes+len(line) > MaxInlinedParagraphBytes ||
+				totalBytes+len(line)+10 > MaxTotalInlinedBytes || totalLines >= MaxTotalInlinedLines {
+				truncated = true
+				break
+			}
 			fmt.Fprintf(&b, "  > %s\n", line)
+			lineLen := len(line) + 5
+			totalBytes += lineLen
+			pBytes += len(line)
+			totalLines++
+			pLines++
+		}
+		if truncated {
+			truncLine := "  > ... [truncated to bounded line/byte budget]\n"
+			b.WriteString(truncLine)
+			totalBytes += len(truncLine)
+			totalLines++
 		}
 
 		if len(m.GuardingTests) > 0 {
 			b.WriteString("  Guarding Tests:\n")
+			totalBytes += 18
+			totalLines++
 			for _, tc := range m.GuardingTests {
-				fmt.Fprintf(&b, "  - `%s`: `%s`\n", tc.TestName, tc.TestCommand)
+				if totalBytes+len(tc.TestName)+len(tc.TestCommand)+15 > MaxTotalInlinedBytes {
+					break
+				}
+				gtLine := fmt.Sprintf("  - `%s`: `%s`\n", tc.TestName, tc.TestCommand)
+				b.WriteString(gtLine)
+				totalBytes += len(gtLine)
+				totalLines++
 			}
 		} else if len(para.GuardingTests) > 0 {
 			b.WriteString("  Guarding Tests:\n")
+			totalBytes += 18
+			totalLines++
 			for _, t := range para.GuardingTests {
-				fmt.Fprintf(&b, "  - `%s`\n", t)
+				if totalBytes+len(t)+10 > MaxTotalInlinedBytes {
+					break
+				}
+				gtLine := fmt.Sprintf("  - `%s`\n", t)
+				b.WriteString(gtLine)
+				totalBytes += len(gtLine)
+				totalLines++
 			}
 		}
 
 		if len(m.CoveredFiles) > 0 {
 			b.WriteString("  Covered Files:\n")
+			totalBytes += 17
+			totalLines++
 			for _, f := range m.CoveredFiles {
-				fmt.Fprintf(&b, "  - %s\n", f)
+				if totalBytes+len(f)+10 > MaxTotalInlinedBytes {
+					break
+				}
+				cfLine := fmt.Sprintf("  - %s\n", f)
+				b.WriteString(cfLine)
+				totalBytes += len(cfLine)
+				totalLines++
 			}
 		}
 		b.WriteString("\n")
+		totalBytes++
+		totalLines++
 	}
 
 	return strings.TrimRight(b.String(), "\n")
