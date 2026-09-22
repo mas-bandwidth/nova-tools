@@ -112,13 +112,22 @@ func HarvestWorking(in HarvestInput) int {
 			continue
 		}
 		if in.Commit {
-			CommitJob(CommitJobInput{
+			if _, err := CommitJob(CommitJobInput{
 				JobDir:       j.dir,
 				BranchPrefix: in.BranchPrefix,
 				DefaultBase:  in.Base,
 				MaxFileSize:  MaxChangedFileBytes,
+				Clones:       in.Clones,
 				Stdout:       in.Stdout,
-			})
+			}); err != nil {
+				if in.Stderr != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST COMMIT ERROR label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
+				}
+				counts[classFailed]++
+				line := r.jobLine(j, classFailed, "-", "-", "-")
+				list.Line(line)
+				continue
+			}
 		}
 		out := r.one(j)
 		counts[out.class]++

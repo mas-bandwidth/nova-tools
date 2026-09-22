@@ -1,6 +1,7 @@
 package pulse
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // CardScratchFiles are the scratch files set aside from the repo into scratch-from-repo/.
@@ -61,8 +64,19 @@ func (defaultGitRunner) Run(dir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	out := strings.TrimSpace(stdout.String())
+	if err != nil {
+		errStr := strings.TrimSpace(stderr.String())
+		if errStr != "" {
+			return out, fmt.Errorf("%w: %s", err, errStr)
+		}
+		return out, err
+	}
+	return out, nil
 }
 
 // CommitJobInput configures the commit step for a single job.
@@ -76,6 +90,7 @@ type CommitJobInput struct {
 	GitUser      string
 	GitEmail     string
 	MaxFileSize  int64
+	Clones       []string
 	Runner       GitRunner
 	Stdout       io.Writer
 }
@@ -92,6 +107,7 @@ type CommitStepInput struct {
 	GitUser      string
 	GitEmail     string
 	MaxFileSize  int64
+	Clones       []string
 	Runner       GitRunner
 	Stdout       io.Writer
 	Stderr       io.Writer
@@ -155,6 +171,7 @@ func CommitStep(in CommitStepInput) ([]string, error) {
 		jobDirs = DiscoverCommitJobs(in.Dir)
 	}
 	var allLines []string
+	var firstErr error
 	for _, jd := range jobDirs {
 		lines, err := CommitJob(CommitJobInput{
 			JobDir:       jd,
@@ -166,15 +183,21 @@ func CommitStep(in CommitStepInput) ([]string, error) {
 			GitUser:      in.GitUser,
 			GitEmail:     in.GitEmail,
 			MaxFileSize:  in.MaxFileSize,
+			Clones:       in.Clones,
 			Runner:       in.Runner,
 			Stdout:       in.Stdout,
 		})
-		if err != nil && in.Stderr != nil {
-			fmt.Fprintln(in.Stderr, err)
+		if err != nil {
+			if in.Stderr != nil {
+				fmt.Fprintln(in.Stderr, err)
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
 		}
 		allLines = append(allLines, lines...)
 	}
-	return allLines, nil
+	return allLines, firstErr
 }
 
 // CommitJob executes the harvest commit step for a single job directory.
@@ -211,6 +234,7 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 	}
 
 	var lines []string
+	var committedVerdict string
 	emit := func(l string) {
 		lines = append(lines, l)
 		if in.Stdout != nil {
@@ -261,9 +285,17 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 		return lines, nil
 	}
 
-	declaredBranch := resultToken(resLines, "BRANCH ")
+	declaredBranch := strings.TrimSpace(resultToken(resLines, "BRANCH "))
 	if declaredBranch == "" {
-		declaredBranch = resultToken(resLines, "BRANCH:")
+		declaredBranch = strings.TrimSpace(resultToken(resLines, "BRANCH:"))
+	}
+	if declaredBranch == "main" || declaredBranch == "master" {
+		emit(fmt.Sprintf("BRANCH REFUSED %s: branch %s is a trunk; commit never commits to trunk", label, oneline.Quote(declaredBranch)))
+		return lines, nil
+	}
+	if strings.Contains(declaredBranch, "/") && !strings.HasPrefix(declaredBranch, prefix) {
+		emit(fmt.Sprintf("BRANCH REFUSED %s: branch %s is not under %s -- every branch this line pushes is; refusing to branch", label, oneline.Quote(declaredBranch), field(prefix)))
+		return lines, nil
 	}
 	switch {
 	case strings.HasPrefix(declaredBranch, prefix):
@@ -274,6 +306,30 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 		declaredBranch = prefix + declaredBranch
 	}
 
+	if err := mustBranchPrefix(declaredBranch); err != nil {
+		emit(fmt.Sprintf("BRANCH REFUSED %s: %s", label, err.Error()))
+		return lines, nil
+	}
+
+	cardPath := findCardFile(in.CardDir, in.CardsDir, in.JobDir, label)
+	claimedRepo := resultToken(resLines, "REPO ")
+	if claimedRepo == "" {
+		claimedRepo = resultToken(resLines, "REPO:")
+	}
+	claimedRepo = strings.TrimPrefix(strings.TrimSpace(claimedRepo), "github.com/")
+	if cardPath != "" {
+		if cRepo := cardRepo(cardPath); cRepo != "" && claimedRepo != "" && claimedRepo != cRepo {
+			emit(fmt.Sprintf("REPO REFUSED %s: claim %s does not match card repo %s", label, claimedRepo, cRepo))
+			return lines, nil
+		}
+	}
+	if len(in.Clones) > 0 && claimedRepo != "" {
+		if cloneFor(in.Clones, claimedRepo) == "" {
+			emit(fmt.Sprintf("REPO REFUSED %s: claim %s is not in coordinator clone list", label, claimedRepo))
+			return lines, nil
+		}
+	}
+
 	curBranch, _ := runner.Run(repoDir, "rev-parse", "--abbrev-ref", "HEAD")
 	curBranch = strings.TrimSpace(curBranch)
 
@@ -281,28 +337,78 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 	statusShort = strings.TrimSpace(statusShort)
 
 	if statusShort != "" {
-		porcelain, _ := runner.Run(repoDir, "status", "--porcelain")
-		big := findBigFile(repoDir, porcelain, maxSize)
-		if big != "" {
-			emit(fmt.Sprintf("CLEAN-TREE REFUSED %s: %s (a file over 1 MB; attribution 2026-09-21); left uncommitted", label, big))
-			return lines, nil
-		}
-
 		junkMoved := moveScratchFiles(in.JobDir, repoDir)
 		if len(junkMoved) > 0 {
 			emit(fmt.Sprintf("SCRATCH-MOVED %s %s(card scratch set aside in the job dir, the rest is committed; 2026-09-21: a refusal here left 88 DONE cells unharvested)", label, strings.Join(junkMoved, " ")+" "))
 		}
 
-		runner.Run(repoDir, "checkout", "-q", "-B", declaredBranch)
-		runner.Run(repoDir, "add", "-A")
-		commitMsg := line1
-		if len(commitMsg) > 200 {
-			commitMsg = commitMsg[:200]
+		porcelain, err := runner.Run(repoDir, "status", "--porcelain", "-uall")
+		if err != nil {
+			return lines, fmt.Errorf("git status --porcelain for %s: %w", label, err)
 		}
-		runner.Run(repoDir, "-c", "user.name="+user, "-c", "user.email="+email, "commit", "-q", "-m", commitMsg)
-		shortHead, _ := runner.Run(repoDir, "rev-parse", "--short", "HEAD")
-		emit(fmt.Sprintf("COMMITTED %s %s %s", label, declaredBranch, strings.TrimSpace(shortHead)))
-	} else if curBranch != declaredBranch && curBranch != "HEAD" && curBranch != "" {
+		porcelain = strings.TrimSpace(porcelain)
+
+		if porcelain != "" {
+			big := findBigFile(repoDir, porcelain, maxSize)
+			if big != "" {
+				emit(fmt.Sprintf("CLEAN-TREE REFUSED %s: %s (a file over 1 MB; attribution 2026-09-21); left uncommitted", label, big))
+				return lines, nil
+			}
+
+			// Validate declared scope (PATHS)
+			globs, declared := harvestDeclaredPaths(cardPath, resLines)
+			if declared {
+				for _, l := range strings.Split(porcelain, "\n") {
+					f := parsePorcelainPath(l)
+					if f == "" || isScratchFile(f) {
+						continue
+					}
+					if !declaredCovers(globs, f) {
+						emit(fmt.Sprintf("PATHS REFUSED %s: %s (outside declared PATHS; refusing to stage outside declared scope)", label, f))
+						return lines, nil
+					}
+				}
+			}
+
+			// Validate branch reset precondition
+			if curBranch != declaredBranch {
+				// Refuse if declaredBranch already exists locally
+				if _, err := runner.Run(repoDir, "rev-parse", "--verify", "refs/heads/"+declaredBranch); err == nil {
+					emit(fmt.Sprintf("BRANCH-RESET REFUSED %s: branch %s already exists; refusing to reset unexpected branch", label, declaredBranch))
+					return lines, nil
+				}
+				// Refuse if curBranch is an unexpected worker branch
+				if strings.HasPrefix(curBranch, prefix) && curBranch != declaredBranch {
+					emit(fmt.Sprintf("BRANCH REFUSED %s: current branch %s is an unexpected branch; refusing to branch from it", label, curBranch))
+					return lines, nil
+				}
+				// Safely create and checkout new branch with -b
+				if _, err := runner.Run(repoDir, "checkout", "-q", "-b", declaredBranch); err != nil {
+					return lines, fmt.Errorf("checkout -b %s for %s: %w", declaredBranch, label, err)
+				}
+			}
+
+			if _, err := runner.Run(repoDir, "add", "-A"); err != nil {
+				return lines, fmt.Errorf("git add -A for %s: %w", label, err)
+			}
+			commitMsg := line1
+			if len(commitMsg) > 200 {
+				commitMsg = commitMsg[:200]
+			}
+			if _, err := runner.Run(repoDir, "-c", "user.name="+user, "-c", "user.email="+email, "commit", "-q", "-m", commitMsg); err != nil {
+				return lines, fmt.Errorf("git commit for %s: %w", label, err)
+			}
+			shortHead, err := runner.Run(repoDir, "rev-parse", "--short", "HEAD")
+			if err != nil {
+				return lines, fmt.Errorf("git rev-parse HEAD for %s: %w", label, err)
+			}
+			committedVerdict = fmt.Sprintf("COMMITTED %s %s %s", label, declaredBranch, strings.TrimSpace(shortHead))
+		}
+	} else if curBranch != declaredBranch && curBranch != "HEAD" && curBranch != "" && curBranch != "main" && curBranch != "master" {
+		if _, err := runner.Run(repoDir, "rev-parse", "--verify", "refs/heads/"+declaredBranch); err == nil {
+			emit(fmt.Sprintf("BRANCH-RESET REFUSED %s: branch %s already exists; refusing to rename to existing branch", label, declaredBranch))
+			return lines, nil
+		}
 		if _, err := runner.Run(repoDir, "branch", "-q", "-m", curBranch, declaredBranch); err == nil {
 			emit(fmt.Sprintf("RENAMED %s %s -> %s", label, curBranch, declaredBranch))
 		}
@@ -399,7 +505,9 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 					rptBytes = rptBytes[:MaxReportFoldBytes]
 				}
 				folded := strings.TrimRight(curStr, "\n") + "\n\n--- REPORT (the card, at most 1500 bytes) ---\n" + string(rptBytes) + "\n"
-				_ = os.WriteFile(rPath, []byte(folded), 0o644)
+				if err := os.WriteFile(rPath, []byte(folded), 0o644); err != nil {
+					return lines, fmt.Errorf("writing folded report to RESULT.md for %s: %w", label, err)
+				}
 				emit(fmt.Sprintf("REPORT-FOLDED %s", label))
 			}
 		}
@@ -415,7 +523,9 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 			if !containsPriorLine(curStr) {
 				ph := resolvePRHead(repoDir, in.MirrorDir, recutRepo, prNum, runner)
 				curStr = strings.TrimRight(curStr, "\n") + fmt.Sprintf("\nprior: #%s @ %s\n", prNum, ph)
-				_ = os.WriteFile(rPath, []byte(curStr), 0o644)
+				if err := os.WriteFile(rPath, []byte(curStr), 0o644); err != nil {
+					return lines, fmt.Errorf("writing prior line to RESULT.md for %s: %w", label, err)
+				}
 				emit(fmt.Sprintf("PRIOR-LINE %s #%s @ %s", label, prNum, ph))
 			}
 		}
@@ -427,7 +537,9 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 	if (rr2 == "card" || rr2 == "schema" || isSchema) && base != "" {
 		updated, changed, isNew := updateBaseLine(curStr, base)
 		if changed {
-			_ = os.WriteFile(rPath, []byte(updated), 0o644)
+			if err := os.WriteFile(rPath, []byte(updated), 0o644); err != nil {
+				return lines, fmt.Errorf("writing BASE line to RESULT.md for %s: %w", label, err)
+			}
 			curStr = updated
 			if isNew {
 				emit(fmt.Sprintf("BASE-LINE %s %s", label, base))
@@ -437,19 +549,27 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 		}
 	} else if isSchema && !hasBaseLine(curStr) {
 		curStr = strings.TrimRight(curStr, "\n") + "\nBASE main\n"
-		_ = os.WriteFile(rPath, []byte(curStr), 0o644)
+		if err := os.WriteFile(rPath, []byte(curStr), 0o644); err != nil {
+			return lines, fmt.Errorf("writing BASE main to RESULT.md for %s: %w", label, err)
+		}
 		emit(fmt.Sprintf("BASE-LINE %s main", label))
 	}
 
 	// Write BRANCH line into RESULT.md
 	updated, changed, isNew := updateBranchLine(curStr, declaredBranch)
 	if changed {
-		_ = os.WriteFile(rPath, []byte(updated), 0o644)
+		if err := os.WriteFile(rPath, []byte(updated), 0o644); err != nil {
+			return lines, fmt.Errorf("writing BRANCH line to RESULT.md for %s: %w", label, err)
+		}
 		if isNew {
 			emit(fmt.Sprintf("BRANCH-LINE %s %s", label, declaredBranch))
 		} else {
 			emit(fmt.Sprintf("BRANCH-LINE %s -> %s", label, declaredBranch))
 		}
+	}
+
+	if committedVerdict != "" {
+		emit(committedVerdict)
 	}
 
 	return lines, nil
@@ -575,6 +695,49 @@ func findCardBase(cardDir, cardsDir, label string) string {
 		}
 	}
 	return ""
+}
+
+func findCardFile(cardDir, cardsDir, jobDir, label string) string {
+	var candidates []string
+	if cardDir != "" {
+		candidates = append(candidates,
+			filepath.Join(cardDir, "card-00-"+label+".md"),
+			filepath.Join(cardDir, "card-"+label+".md"),
+			filepath.Join(cardDir, label+".md"),
+		)
+	}
+	if cardsDir != "" {
+		candidates = append(candidates,
+			filepath.Join(cardsDir, "card-00-"+label+".md"),
+			filepath.Join(cardsDir, "card-"+label+".md"),
+			filepath.Join(cardsDir, label+".md"),
+		)
+	}
+	if jobDir != "" {
+		candidates = append(candidates,
+			filepath.Join(jobDir, "card.md"),
+			filepath.Join(jobDir, "card-00-"+label+".md"),
+			filepath.Join(jobDir, "card-"+label+".md"),
+			filepath.Join(jobDir, label+".md"),
+			filepath.Join(jobDir, "..", "card.md"),
+		)
+	}
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			return p
+		}
+	}
+	return ""
+}
+
+func isScratchFile(p string) bool {
+	base := filepath.Base(p)
+	for _, sf := range CardScratchFiles {
+		if base == sf {
+			return true
+		}
+	}
+	return false
 }
 
 func resolveTargetRemote(repoDir, mirrorDir, repoName string) string {

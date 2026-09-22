@@ -2,10 +2,12 @@ package pulse
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1115,4 +1117,498 @@ func TestHarvestWorkingWithCommitStep(t *testing.T) {
 	if !strings.Contains(logOut, "RESULT g-commit") {
 		t.Fatalf("uncommitted work was not committed when Commit: true, last commit = %q", logOut)
 	}
+}
+
+// Table-driven tests exercising preconditions before checkout/stage/commit (Finding 2).
+func TestCommitJobPreconditionsTable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		label          string
+		cardRepo       string
+		resultLines    []string
+		dirtyFile      string
+		existingHead   string
+		existingBranch string
+		clones         []string
+		wantVerdict    string
+		wantCommitted  bool
+	}{
+		{
+			name:  "positive control: valid branch and PATHS passes and commits",
+			label: "job-valid",
+			resultLines: []string{
+				"RESULT job-valid sha=012345678901",
+				"DONE",
+				"BRANCH rowan/job-valid",
+				"PATHS pkg/valid.go",
+			},
+			dirtyFile:     "pkg/valid.go",
+			wantVerdict:   "COMMITTED job-valid rowan/job-valid",
+			wantCommitted: true,
+		},
+		{
+			name:  "negative control: branch is trunk main refused",
+			label: "job-trunk-main",
+			resultLines: []string{
+				"RESULT job-trunk-main sha=012345678901",
+				"DONE",
+				"BRANCH main",
+			},
+			dirtyFile:     "file.go",
+			wantVerdict:   "BRANCH REFUSED job-trunk-main: branch \"main\" is a trunk",
+			wantCommitted: false,
+		},
+		{
+			name:  "negative control: branch is trunk master refused",
+			label: "job-trunk-master",
+			resultLines: []string{
+				"RESULT job-trunk-master sha=012345678901",
+				"DONE",
+				"BRANCH master",
+			},
+			dirtyFile:     "file.go",
+			wantVerdict:   "BRANCH REFUSED job-trunk-master: branch \"master\" is a trunk",
+			wantCommitted: false,
+		},
+		{
+			name:  "negative control: off-prefix branch refused",
+			label: "job-badprefix",
+			resultLines: []string{
+				"RESULT job-badprefix sha=012345678901",
+				"DONE",
+				"BRANCH attacker/job-badprefix",
+			},
+			dirtyFile:     "file.go",
+			wantVerdict:   "BRANCH REFUSED job-badprefix: branch \"attacker/job-badprefix\" is not under rowan/",
+			wantCommitted: false,
+		},
+		{
+			name:  "negative control: branch already exists locally refused",
+			label: "job-exists",
+			resultLines: []string{
+				"RESULT job-exists sha=012345678901",
+				"DONE",
+				"BRANCH rowan/job-exists",
+			},
+			dirtyFile:      "file.go",
+			existingBranch: "rowan/job-exists",
+			wantVerdict:    "BRANCH-RESET REFUSED job-exists: branch rowan/job-exists already exists",
+			wantCommitted:  false,
+		},
+		{
+			name:  "negative control: current branch is unexpected worker branch refused",
+			label: "job-unexp",
+			resultLines: []string{
+				"RESULT job-unexp sha=012345678901",
+				"DONE",
+				"BRANCH rowan/job-unexp",
+			},
+			dirtyFile:     "file.go",
+			existingHead:  "rowan/other-worker",
+			wantVerdict:   "BRANCH REFUSED job-unexp: current branch rowan/other-worker is an unexpected branch",
+			wantCommitted: false,
+		},
+		{
+			name:  "negative control: modified file outside declared PATHS refused",
+			label: "job-badpaths",
+			resultLines: []string{
+				"RESULT job-badpaths sha=012345678901",
+				"DONE",
+				"BRANCH rowan/job-badpaths",
+				"PATHS pkg/allowed.go",
+			},
+			dirtyFile:     "unauthorized/intruder.go",
+			wantVerdict:   "PATHS REFUSED job-badpaths: unauthorized/intruder.go",
+			wantCommitted: false,
+		},
+		{
+			name:     "negative control: claimed repo does not match card repo",
+			label:    "job-repomismatch",
+			cardRepo: "mas-bandwidth/nova-tools",
+			resultLines: []string{
+				"RESULT job-repomismatch sha=012345678901",
+				"DONE",
+				"BRANCH rowan/job-repomismatch",
+				"REPO mas-bandwidth/other-repo",
+			},
+			dirtyFile:     "file.go",
+			wantVerdict:   "REPO REFUSED job-repomismatch: claim mas-bandwidth/other-repo does not match card repo mas-bandwidth/nova-tools",
+			wantCommitted: false,
+		},
+		{
+			name:   "negative control: claimed repo not in coordinator clone list",
+			label:  "job-notdecl",
+			clones: []string{"mas-bandwidth/nova-tools=/some/path"},
+			resultLines: []string{
+				"RESULT job-notdecl sha=012345678901",
+				"DONE",
+				"BRANCH rowan/job-notdecl",
+				"REPO mas-bandwidth/unlisted-repo",
+			},
+			dirtyFile:     "file.go",
+			wantVerdict:   "REPO REFUSED job-notdecl: claim mas-bandwidth/unlisted-repo is not in coordinator clone list",
+			wantCommitted: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			jobDir := filepath.Join(root, "card-00-"+tc.label)
+			repoDir := filepath.Join(jobDir, "repo")
+			if err := os.MkdirAll(repoDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			initTestGitRepo(t, repoDir)
+
+			if tc.existingBranch != "" {
+				runCmd(t, repoDir, "git", "branch", tc.existingBranch)
+			}
+			if tc.existingHead != "" {
+				runCmd(t, repoDir, "git", "checkout", "-b", tc.existingHead)
+			}
+
+			if tc.cardRepo != "" {
+				cardContent := fmt.Sprintf("# Card\nREPO %s\n", tc.cardRepo)
+				if err := os.WriteFile(filepath.Join(jobDir, "card.md"), []byte(cardContent), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			resContent := strings.Join(tc.resultLines, "\n") + "\n"
+			if err := os.WriteFile(filepath.Join(jobDir, "RESULT.md"), []byte(resContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			if tc.dirtyFile != "" {
+				fullPath := filepath.Join(repoDir, tc.dirtyFile)
+				if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(fullPath, []byte("package test\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			var stdout bytes.Buffer
+			lines, err := CommitJob(CommitJobInput{
+				JobDir: jobDir,
+				Clones: tc.clones,
+				Stdout: &stdout,
+			})
+			if err != nil {
+				t.Fatalf("unexpected error from CommitJob: %v", err)
+			}
+			joined := strings.Join(lines, "\n")
+			if !strings.Contains(joined, tc.wantVerdict) {
+				t.Fatalf("expected verdict %q in output:\n%s", tc.wantVerdict, joined)
+			}
+			if !tc.wantCommitted && strings.Contains(joined, "COMMITTED") {
+				t.Fatalf("COMMITTED emitted when precondition should have refused:\n%s", joined)
+			}
+		})
+	}
+}
+
+type mockFailingRunner struct {
+	failOnSubstr string
+	failErr      error
+	underlying   GitRunner
+}
+
+func (m mockFailingRunner) Run(dir string, args ...string) (string, error) {
+	cmdStr := strings.Join(args, " ")
+	if strings.Contains(cmdStr, m.failOnSubstr) {
+		return "", m.failErr
+	}
+	if m.underlying != nil {
+		return m.underlying.Run(dir, args...)
+	}
+	return defaultGitRunner{}.Run(dir, args...)
+}
+
+// Table-driven tests exercising error propagation in CommitJob (Finding 3).
+func TestCommitJobErrorPropagationTable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		failSubstr  string
+		readOnlyRes bool
+		wantErrSub  string
+	}{
+		{
+			name:       "checkout failure propagates error and prevents COMMITTED",
+			failSubstr: "checkout",
+			wantErrSub: "checkout -b",
+		},
+		{
+			name:       "git add failure propagates error and prevents COMMITTED",
+			failSubstr: "add",
+			wantErrSub: "git add -A",
+		},
+		{
+			name:       "git commit failure propagates error and prevents COMMITTED",
+			failSubstr: "commit",
+			wantErrSub: "git commit",
+		},
+		{
+			name:       "git rev-parse HEAD failure propagates error and prevents COMMITTED",
+			failSubstr: "rev-parse --short HEAD",
+			wantErrSub: "git rev-parse HEAD",
+		},
+		{
+			name:        "RESULT.md write failure propagates error and prevents false success",
+			readOnlyRes: true,
+			wantErrSub:  "RESULT.md",
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			jobDir := filepath.Join(root, "job-err")
+			repoDir := filepath.Join(jobDir, "repo")
+			if err := os.MkdirAll(repoDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			initTestGitRepo(t, repoDir)
+
+			resPath := filepath.Join(jobDir, "RESULT.md")
+			resContent := "RESULT job-err sha=012345678901\nDONE\nBRANCH rowan/job-err\n"
+			if err := os.WriteFile(resPath, []byte(resContent), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			// Add uncommitted work
+			if err := os.WriteFile(filepath.Join(repoDir, "change.txt"), []byte("change\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var runner GitRunner = defaultGitRunner{}
+			if tc.failSubstr != "" {
+				runner = mockFailingRunner{
+					failOnSubstr: tc.failSubstr,
+					failErr:      errors.New("injected git failure"),
+				}
+			}
+
+			if tc.readOnlyRes {
+				// Add REPORT.md so CommitJob is guaranteed to attempt writing folded report to RESULT.md
+				if err := os.WriteFile(filepath.Join(jobDir, "REPORT.md"), []byte("report contents\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(resPath, 0o400); err != nil {
+					t.Fatal(err)
+				}
+				if runtime.GOOS != "windows" {
+					if err := os.Chmod(jobDir, 0o555); err != nil {
+						t.Fatal(err)
+					}
+					defer os.Chmod(jobDir, 0o755)
+				}
+			}
+
+			var stdout bytes.Buffer
+			lines, err := CommitJob(CommitJobInput{
+				JobDir: jobDir,
+				Runner: runner,
+				Stdout: &stdout,
+			})
+
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", tc.wantErrSub)
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Errorf("expected error %q to contain %q", err.Error(), tc.wantErrSub)
+			}
+			joined := strings.Join(lines, "\n")
+			if strings.Contains(joined, "COMMITTED") {
+				t.Fatalf("COMMITTED was emitted despite error:\n%s", joined)
+			}
+		})
+	}
+}
+
+// Test CommitStep error propagation when a job fails (Finding 3).
+func TestCommitStepErrorPropagation(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	j1 := filepath.Join(root, "card-1", "jobs", "fix-1")
+	r1 := filepath.Join(j1, "repo")
+	if err := os.MkdirAll(r1, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	initTestGitRepo(t, r1)
+	if err := os.WriteFile(filepath.Join(r1, "work.txt"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(j1, "RESULT.md"), []byte("RESULT fix-1 sha=012345678901\nDONE\nBRANCH rowan/fix-1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := mockFailingRunner{
+		failOnSubstr: "commit",
+		failErr:      errors.New("injected commit crash"),
+	}
+
+	var stdout, stderr bytes.Buffer
+	lines, err := CommitStep(CommitStepInput{
+		Dir:    root,
+		Runner: runner,
+		Stdout: &stdout,
+		Stderr: &stderr,
+	})
+
+	if err == nil {
+		t.Fatalf("expected error from CommitStep, got nil")
+	}
+	if !strings.Contains(err.Error(), "git commit") {
+		t.Errorf("expected error to mention git commit, got %v", err)
+	}
+	joined := strings.Join(lines, "\n")
+	if strings.Contains(joined, "COMMITTED fix-1") {
+		t.Fatalf("COMMITTED emitted despite failure:\n%s", joined)
+	}
+	if !strings.Contains(stderr.String(), "git commit") {
+		t.Errorf("stderr does not contain error: %s", stderr.String())
+	}
+}
+
+// Integration tests verifying HarvestWorking return codes and error propagation (Finding 1 & 3).
+func TestHarvestWorkingReturnCodeAndErrorPropagation(t *testing.T) {
+	t.Run("positive control: green run returns exit code 0", func(t *testing.T) {
+		working := t.TempDir()
+		job := wkJob(t, working, "guid-1", "g-ok", "RESULT g-ok sha=012345678901\nDONE\nBRANCH rowan/g-ok\nREPO o/r\n")
+		repoDir := filepath.Join(job, "repo")
+		if err := os.MkdirAll(repoDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		initTestGitRepo(t, repoDir)
+		if err := os.WriteFile(filepath.Join(repoDir, "ok.go"), []byte("package ok\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		specs := fakePATH(t)
+		arglog := filepath.Join(working, "argv.log")
+		fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{
+			{Arg: 1, Equals: "log", Stdout: "0123456789abcdef0123456789abcdef01234567 2026-09-17T10:00:00+00:00"},
+			{Arg: 1, Equals: "ls-remote", Stdout: "0123456789abcdef0123456789abcdef01234567\trefs/heads/rowan/g-ok"},
+			originRule("o/r"),
+			pinRule(),
+		}})
+		fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
+			{Arg: 2, Equals: "list", Stdout: "[]"},
+			{Arg: 2, Equals: "create", Stdout: "https://example.invalid/o/r/pull/1"},
+		}})
+
+		var stdout, stderr bytes.Buffer
+		code := HarvestWorking(HarvestInput{
+			Working: working,
+			Commit:  true,
+			Base:    "0000000000000000000000000000000000000000",
+			Clones:  []string{"o/r=" + filepath.Join(t.TempDir(), "coordinator-clone")},
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			Now:     func() time.Time { return time.Unix(0, 0).UTC() },
+		})
+		if code != 0 {
+			t.Fatalf("expected exit code 0 for green run, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+		}
+	})
+
+	t.Run("negative control: failed commit causes exit code 1 and halts before push", func(t *testing.T) {
+		working := t.TempDir()
+		job := wkJob(t, working, "guid-2", "g-fail", "RESULT g-fail sha=012345678901\nDONE\nBRANCH rowan/g-fail\nREPO o/r\n")
+		repoDir := filepath.Join(job, "repo")
+		if err := os.MkdirAll(repoDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		initTestGitRepo(t, repoDir)
+
+		// Make RESULT.md read-only and add REPORT.md so writing folded report in CommitJob fails
+		if err := os.WriteFile(filepath.Join(repoDir, "change.go"), []byte("package change\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(job, "REPORT.md"), []byte("report\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		resPath := filepath.Join(job, "RESULT.md")
+		if err := os.Chmod(resPath, 0o400); err != nil {
+			t.Fatal(err)
+		}
+		if runtime.GOOS != "windows" {
+			if err := os.Chmod(job, 0o555); err != nil {
+				t.Fatal(err)
+			}
+			defer os.Chmod(job, 0o755)
+		}
+
+		var stdout, stderr bytes.Buffer
+		code := HarvestWorking(HarvestInput{
+			Working: working,
+			Commit:  true,
+			Clones:  []string{"o/r=" + filepath.Join(t.TempDir(), "coordinator-clone")},
+			Stdout:  &stdout,
+			Stderr:  &stderr,
+			Now:     func() time.Time { return time.Unix(0, 0).UTC() },
+		})
+		if code != 1 {
+			t.Fatalf("expected exit code 1 for failed CommitJob, got %d\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+		}
+
+		// Verify error was logged to stderr
+		if !strings.Contains(stderr.String(), "HARVEST COMMIT ERROR") {
+			t.Errorf("expected HARVEST COMMIT ERROR in stderr:\n%s", stderr.String())
+		}
+
+		// Verify no .harvested marker was created
+		if _, err := os.Stat(filepath.Join(job, ".harvested")); !os.IsNotExist(err) {
+			t.Fatalf(".harvested marker was unexpectedly created for failed job")
+		}
+	})
+}
+
+// Tests verifying defaultGitRunner separates stdout and stderr (Finding 4).
+func TestDefaultGitRunnerSeparateStdoutStderrTable(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	initTestGitRepo(t, root)
+
+	runner := defaultGitRunner{}
+
+	t.Run("warning on success returns clean stdout and nil error", func(t *testing.T) {
+		t.Parallel()
+		// 'git checkout -b new-branch' writes 'Switched to a new branch ...' to stderr,
+		// but stdout is empty and exit code is 0.
+		out, err := runner.Run(root, "checkout", "-b", "separate-branch")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// stdout must be clean without stderr contamination
+		if out != "" {
+			t.Fatalf("expected clean empty stdout, got %q (stderr contaminated stdout)", out)
+		}
+	})
+
+	t.Run("failure on non-zero exit preserves exit error and stderr text", func(t *testing.T) {
+		t.Parallel()
+		// Running checkout on nonexistent branch exits non-zero and prints to stderr
+		out, err := runner.Run(root, "checkout", "nonexistent-branch-xyz")
+		if err == nil {
+			t.Fatal("expected error for nonexistent branch checkout, got nil")
+		}
+		if !strings.Contains(err.Error(), "did not match any file") && !strings.Contains(err.Error(), "pathspec") {
+			t.Errorf("error %q does not contain stderr text", err.Error())
+		}
+		_ = out
+	})
 }

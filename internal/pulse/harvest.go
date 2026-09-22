@@ -212,6 +212,23 @@ func Harvest(in HarvestInput) int {
 				field(c.Label), field(in.Root))
 			continue
 		}
+		if in.Commit && jobDir != "" {
+			if _, err := CommitJob(CommitJobInput{
+				JobDir:       jobDir,
+				BranchPrefix: in.BranchPrefix,
+				DefaultBase:  in.Base,
+				MaxFileSize:  MaxChangedFileBytes,
+				Clones:       in.Clones,
+				Stdout:       in.Stdout,
+			}); err != nil {
+				if in.Stderr != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST COMMIT ERROR label=%s: %s\n", field(c.Label), oneline.Err(err))
+				}
+				refused++
+				writeSeen(in.Root, c, "refused")
+				continue
+			}
+		}
 		state, branch, repo, resultLines := classify(jobDir, c, contract)
 
 		// The pool layout beside the slot layout (SPEC-PULSE rule 12): launch
