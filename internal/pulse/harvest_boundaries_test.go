@@ -14,7 +14,7 @@ func TestHarvestVersionDowngradePrevention(t *testing.T) {
 	// Harvest must refuse the downgrade, classifying it as mismatch instead of done/push.
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/1")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/1")
 
 	contract := "RESULT CARD-1 sha=1234567890ab owner/repo fix: prevent downgrade"
 	cardContent := contract + "\nSCHEMA: v2\nATTEMPT: 1\nREPO owner/repo\n"
@@ -63,7 +63,7 @@ func TestHarvestUnknownSchemaRefused(t *testing.T) {
 	// A result declaring an unknown schema (e.g. SCHEMA: v3) must be refused before any dispatch.
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/1")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/1")
 
 	contract := "RESULT CARD-2 sha=1234567890ab owner/repo fix: test unknown schema"
 	cardContent := contract + "\nSCHEMA: v2\nATTEMPT: 1\nREPO owner/repo\n"
@@ -113,7 +113,7 @@ func TestHarvestReplayedAttemptRefused(t *testing.T) {
 	// Harvest must refuse the attempt mismatch.
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/1")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/1")
 
 	contract := "RESULT CARD-3 sha=1234567890ab owner/repo fix: test replayed attempt"
 	cardContent := contract + "\nSCHEMA: v2\nATTEMPT: 2\nREPO owner/repo\n"
@@ -166,7 +166,7 @@ func TestHarvestLegitimateLegacyCardAccepted(t *testing.T) {
 	// the explicit legacy adapter and score done when valid.
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/10")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/10")
 
 	contract := "RESULT CARD-10 legacy card test"
 	result := contract + `
@@ -195,7 +195,7 @@ func TestHarvestTruncatedLegacyResultNoSlicePanicAlongsideHealthyCard(t *testing
 	// Harvest must NOT panic on lines[2:], must refuse Card 1 as mismatch, and must successfully process Card 2.
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/20")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/20")
 
 	contract1 := "RESULT CARD-21 truncated one line"
 	// 1-line result: only contract line 1

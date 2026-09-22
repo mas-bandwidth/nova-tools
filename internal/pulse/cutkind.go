@@ -158,7 +158,12 @@ func CutKind(in CutKindInput) int {
 		diffArtifact = fmt.Sprintf("%s (%s)", diffPath, digest)
 	}
 
-	card := contractSHA12(renderKindCard(in, n, body, chosenDiff, diffArtifact))
+	rendered, err := renderKindCard(in, n, body, chosenDiff, diffArtifact)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	card := contractSHA12(rendered)
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -212,7 +217,7 @@ func cutKindProblem(in CutKindInput) string {
 	case strings.TrimSpace(in.DiffFile) != "" && strings.TrimSpace(in.PriorDiff) != "":
 		return "conflicting diff inputs: --diff-file and --prior-diff cannot both be specified"
 	}
-	if in.V2 {
+	if isV2Cut(in) {
 		if strings.TrimSpace(in.Symbol) == "" {
 			return "--symbol is required for a v2 card; every card must declare the runtime symbol or entrypoint (pass --symbol <name>)"
 		}
@@ -319,10 +324,17 @@ func cutKindKnown(kind string) bool {
 	return false
 }
 
+// isV2Cut returns true if the input demands a Card Template v2 format,
+// either via explicit --v2 or through auto-selection (port, docs-guard, report,
+// reviewer line, or test command).
+func isV2Cut(in CutKindInput) bool {
+	return in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard" || in.Kind == "report"
+}
+
 // renderKindCard writes line 1, the source line, the prior attempt if there is one, the
 // kind's own instruction and the body.
-func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diffArtifact ...string) string {
-	if in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard" || in.Kind == "report" {
+func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diffArtifact ...string) (string, error) {
+	if isV2Cut(in) {
 		failingOut := in.FailingOutput
 		if failingOut != "" {
 			if raw, err := os.ReadFile(failingOut); err == nil {
@@ -370,9 +382,10 @@ func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diff
 			Symbol:        in.Symbol,
 			RedWhen:       in.RedWhen,
 		})
-		if err == nil {
-			return card
+		if err != nil {
+			return "", fmt.Errorf("render card v2: %w", err)
 		}
+		return card, nil
 	}
 	repo := repoShort(in.Repo)
 	var b strings.Builder
@@ -449,7 +462,7 @@ func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diff
 	if body != "" {
 		b.WriteString(body + "\n")
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // kindInstruction is the one paragraph a kind always carries, whatever its body says. A fix

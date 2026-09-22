@@ -411,4 +411,66 @@ func TestCutKindV2Templates(t *testing.T) {
 	if !strings.Contains(errsNoRed, "--red-when is required for a v2 card") {
 		t.Errorf("expected error about --red-when, got %q", errsNoRed)
 	}
+
+	// 4. Auto-v2 selection: port without --v2 flag automatically requires Symbol and RedWhen
+	codeAutoNoSym, _, errsAutoNoSym, _ := cutKind(t, CutKindInput{
+		Kind:    "port",
+		V2:      false,
+		Repo:    "mas-bandwidth/nova-tools",
+		Title:   "port card auto-v2 missing symbol",
+		RedWhen: "port missing target symbol",
+		Out:     filepath.Join(dir, "port-auto-nosym"),
+		Queue:   queue,
+	})
+	if codeAutoNoSym != 2 {
+		t.Errorf("Auto-v2 cut without --symbol returned %d, want 2", codeAutoNoSym)
+	}
+	if !strings.Contains(errsAutoNoSym, "--symbol is required for a v2 card") {
+		t.Errorf("expected auto-v2 refusal for missing --symbol, got %q", errsAutoNoSym)
+	}
+
+	// Auto-v2 selection with Symbol and RedWhen succeeds and emits Card Template v2
+	codeAuto, _, errsAuto, autoCard := cutKind(t, CutKindInput{
+		Kind:    "port",
+		V2:      false,
+		Repo:    "mas-bandwidth/nova-tools",
+		Title:   "port card auto-v2 present symbol",
+		Symbol:  "PortTarget",
+		RedWhen: "port target missing",
+		Out:     filepath.Join(dir, "port-auto-ok"),
+		Queue:   queue,
+	})
+	if codeAuto != 0 {
+		t.Fatalf("Auto-v2 cut with declarations failed (code %d): %s", codeAuto, errsAuto)
+	}
+	if !strings.Contains(autoCard, "SCHEMA: v2") {
+		t.Errorf("Auto-v2 card missing SCHEMA: v2:\n%s", autoCard)
+	}
+	if !strings.Contains(autoCard, "SYMBOL: PortTarget") {
+		t.Errorf("Auto-v2 card missing SYMBOL:\n%s", autoCard)
+	}
+	if !strings.Contains(autoCard, "RED-WHEN: port target missing") {
+		t.Errorf("Auto-v2 card missing RED-WHEN:\n%s", autoCard)
+	}
+
+	// 5. Preserved legacy behavior: read card with V2=false and no auto-v2 triggers emits legacy card
+	codeLegacy, _, errsLegacy, legacyCard := cutKind(t, CutKindInput{
+		Kind:  "read",
+		V2:    false,
+		Repo:  "mas-bandwidth/nova-tools",
+		PR:    101,
+		Head:  "1234567890ab",
+		Title: "legacy read card",
+		Out:   filepath.Join(dir, "read-legacy"),
+		Queue: queue,
+	})
+	if codeLegacy != 0 {
+		t.Fatalf("Legacy read card failed (code %d): %s", codeLegacy, errsLegacy)
+	}
+	if strings.Contains(legacyCard, "SCHEMA: v2") {
+		t.Errorf("Legacy read card should not contain SCHEMA: v2:\n%s", legacyCard)
+	}
+	if !strings.Contains(legacyCard, "RESULT: CARD-") || !strings.Contains(legacyCard, "read of nova-tools PR101") {
+		t.Errorf("Legacy card missing legacy contract line:\n%s", legacyCard)
+	}
 }
