@@ -136,6 +136,12 @@ func TestDoneReadsLineTwoOfTheResult(t *testing.T) {
 // could find -- a check that never ran, reported as a check that failed.
 func TestMissingIsNotNo(t *testing.T) {
 	pr := loadCell(t, 1488)
+	// ci-ok missing is a fail, not a neutral missing (#2704). This test is about
+	// paths and claims, so the head's own ci-ok is green.
+	pr.Checks = []prereview.CheckRun{{
+		Name: "ci-ok", Status: "completed", Conclusion: "success",
+		HeadSHA: pr.Head, CompletedAt: "2026-09-22T00:00:01Z",
+	}}
 	pr.Body = "RESULT something\nDONE\n" // no cell, no branch, no files: line
 	c := prereview.Mechanical(pr, prereview.InferCard(pr))
 	if c.Paths.Result != prereview.Missing {
@@ -281,7 +287,7 @@ func TestJevLineIsNeverAFriendVerdict(t *testing.T) {
 // unscored is UNSURE; a disabled check decides nothing.
 func TestVerdictRule(t *testing.T) {
 	yes := prereview.Check{Result: prereview.Yes}
-	clear := prereview.Checks{Symbol: yes, Paths: yes, Done: yes, Claims: yes}
+	clear := prereview.Checks{Symbol: yes, Paths: yes, Done: yes, Claims: yes, CI: yes}
 	dirty := clear
 	dirty.Symbol = prereview.Check{Result: prereview.No, Reason: "self-check"}
 	tune := prereview.DefaultTuning()
@@ -308,7 +314,7 @@ func TestVerdictRule(t *testing.T) {
 			t.Errorf("%s: verdict=%s (%q), want %s", tc.name, got, why, tc.want)
 		}
 	}
-	if f := off.ChecksField(dirty, 10, true); f != "donewhen:ok,selfcheck:off-fail,paths:ok,claims:ok,score:10" {
+	if f := off.ChecksField(dirty, 10, true); f != "donewhen:ok,selfcheck:off-fail,paths:ok,claims:ok,ci:ok,score:10" {
 		t.Errorf("checks field = %q", f)
 	}
 }
