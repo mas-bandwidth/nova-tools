@@ -33,6 +33,19 @@ func fakeOpener(st presence.Store) storeOpener {
 	}
 }
 
+// countingOpener wraps an opener and counts how many times it dials. A
+// refused --store must never reach it: cmdBeat and cmdPresence both check
+// presence.Addr and print their refusal before they ever call open, so the
+// count is the test's proof that a bad address never causes a network
+// operation, not just that the CLI printed the right words.
+func countingOpener(st presence.Store, dials *int) storeOpener {
+	inner := fakeOpener(st)
+	return func(ctx context.Context, addr, user string) (presence.Store, func() error, error) {
+		*dials++
+		return inner(ctx, addr, user)
+	}
+}
+
 func TestBeatOnceWritesTheFriendsKey(t *testing.T) {
 	st := presence.NewFakeStore(beatAt)
 	var out, errb bytes.Buffer
@@ -100,8 +113,8 @@ func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *test
 		wantErr    string // substring the refusal must name; "" when it should succeed
 		hasNetwork bool
 	}{
-		{"tls is refused", "rediss://store.invalid:6380", 2, "rediss:// (TLS) is not supported", false},
-		{"userinfo is refused", "redis://johnny:" + secret + "@store.invalid:6380", 2, "userinfo (user:pass@) in the URL is not supported", false},
+		{"tls is refused", "rediss://store.invalid:6380", 2, "store address refused", false},
+		{"userinfo is refused", "redis://johnny:" + secret + "@store.invalid:6380", 2, "store address refused", false},
 		{"a plain URL still works", "redis://store.invalid:6380", 0, "", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -117,6 +130,48 @@ func TestBeatStoreURLParsingRejectsTLSAndUserinfoWithoutLeakingTheSecret(t *test
 			}
 			if strings.Contains(out.String(), secret) || strings.Contains(errb.String(), secret) {
 				t.Fatalf("stdout=%q stderr=%q; the password leaked", out.String(), errb.String())
+			}
+		})
+	}
+}
+
+// TestBeatStoreURLQueryParametersAreRefusedWithoutDialing is the CLI-level
+// control for comment 5783202393 on #2612: a plain redis://host:port?query
+// used to parse straight through Addr as a "clean" host:port carrying the
+// query -- secret included -- inside it. This drives the verb's own flag
+// parsing (cmdBeat, --once) for that exact shape and the same shape under
+// rediss://, through a counting opener that must stay at zero: the refusal
+// has to happen before cmdBeat ever calls open, or the "no network operation
+// occurs on a refused address" half of the control is not proven.
+func TestBeatStoreURLQueryParametersAreRefusedWithoutDialing(t *testing.T) {
+	const secret = "SECRET"
+	for _, c := range []struct {
+		name  string
+		store string
+	}{
+		{"redis with a query secret", "redis://h:6380?password=" + secret},
+		{"rediss with a query secret", "rediss://h:6380?password=" + secret},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			st := presence.NewFakeStore(beatAt)
+			var dials int
+			var out, errb bytes.Buffer
+			code := cmdBeat([]string{"--as", "johnny", "--store", c.store, "--once"},
+				&out, &errb, fakeStoreClock{st}, countingOpener(st, &dials))
+			if code != 2 {
+				t.Fatalf("exit %d; want 2 (stdout=%q stderr=%q)", code, out.String(), errb.String())
+			}
+			if !strings.Contains(errb.String(), "store address refused") {
+				t.Fatalf("refusal = %q; want the generic grammar refusal", errb.String())
+			}
+			if !strings.Contains(errb.String(), "query") {
+				t.Fatalf("refusal = %q; want it to name the query", errb.String())
+			}
+			if strings.Contains(out.String(), secret) || strings.Contains(errb.String(), secret) {
+				t.Fatalf("stdout=%q stderr=%q; the secret leaked", out.String(), errb.String())
+			}
+			if dials != 0 {
+				t.Fatalf("dials = %d; want 0 -- a refused --store must never reach the opener", dials)
 			}
 		})
 	}

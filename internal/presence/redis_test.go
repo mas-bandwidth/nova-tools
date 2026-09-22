@@ -69,71 +69,60 @@ func TestAddrTakesHostPortAndRefusesAGuess(t *testing.T) {
 	}
 }
 
-// TestAddrRefusesTLSAndUserinfoWithoutLeakingTheSecret is the synthetic
-// control for comment 5782441213 on #2612: a rediss:// address used to be
-// stripped of its extra "s" and dialled in plaintext with no word said, and a
-// user:pass@ address was never parsed at all -- it rode along inside the
-// "host:port" this function handed back, ready to be printed by the next
-// caller. Both are now refused, by name, and the refusal never carries the
-// password: no network is dialled here, Addr is pure string parsing.
-func TestAddrRefusesTLSAndUserinfoWithoutLeakingTheSecret(t *testing.T) {
-	const secret = "hunter2"
+// TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret is the
+// synthetic control for comment 5783202393 on #2612: maskAddr still echoed a
+// query secret in a rejected rediss:// URL (it only ever masked userinfo),
+// and a plain redis:// query string was never refused at all --
+// redis://host:port?password=SECRET parsed straight through as a "clean"
+// host:port carrying the secret inside it. The repair is a strict grammar --
+// exactly host:port or redis://host:port, nothing else -- so every one of
+// these shapes is refused by the same generic line, which never carries
+// anything of the input beyond the scheme name and the bare host. No network
+// is dialled here: Addr is pure string parsing.
+func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing.T) {
+	const secret = "SECRET"
 	for _, c := range []struct {
 		name    string
 		in      string
-		wantErr string // substring the refusal must name
+		want    string // "" means Addr must refuse it; else the host:port it must parse to
+		wantBad []string
 	}{
-		{"tls", "rediss://store.invalid:6380", "rediss:// (TLS) is not supported"},
-		{"userinfo", "redis://friend:" + secret + "@store.invalid:6380", "userinfo (user:pass@) in the URL is not supported"},
+		{name: "rediss with a query secret", in: "rediss://h:6380?password=" + secret, wantBad: []string{"scheme", "query"}},
+		{name: "plain redis with a query secret", in: "redis://h:6380?password=" + secret, wantBad: []string{"query"}},
+		{name: "userinfo carrying a secret", in: "redis://u:" + secret + "@h:6380", wantBad: []string{"userinfo"}},
+		{name: "a path", in: "redis://h:6380/0", wantBad: []string{"path"}},
+		{name: "a fragment carrying a secret", in: "redis://h:6380#" + secret, wantBad: []string{"fragment"}},
+		{name: "bare host:port", in: "h:6380", want: "h:6380"},
+		{name: "redis:// host:port", in: "redis://h:6380", want: "h:6380"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := Addr(c.in)
+			if c.want != "" {
+				if err != nil {
+					t.Fatalf("Addr(%q) = %v; want it to parse to %q", c.in, err, c.want)
+				}
+				if got != c.want {
+					t.Errorf("Addr(%q) = %q; want %q", c.in, got, c.want)
+				}
+				return
+			}
 			if err == nil {
 				t.Fatalf("Addr(%q) = %q, <nil>; want a refusal", c.in, got)
 			}
 			if got != "" {
 				t.Errorf("Addr(%q) returned a usable address %q alongside the error; want none", c.in, got)
 			}
-			if !strings.Contains(err.Error(), c.wantErr) {
-				t.Errorf("Addr(%q) error = %q; want it to name %q", c.in, err.Error(), c.wantErr)
+			if !strings.Contains(err.Error(), "store address refused: only host:port or redis://host:port is supported") {
+				t.Errorf("Addr(%q) error = %q; want the one generic refusal", c.in, err.Error())
+			}
+			for _, word := range c.wantBad {
+				if !strings.Contains(err.Error(), word) {
+					t.Errorf("Addr(%q) error = %q; want it to name %q", c.in, err.Error(), word)
+				}
 			}
 			if strings.Contains(err.Error(), secret) {
-				t.Errorf("Addr(%q) error = %q; the password leaked", c.in, err.Error())
+				t.Errorf("Addr(%q) error = %q; the secret leaked", c.in, err.Error())
 			}
 		})
-	}
-}
-
-// TestAddrStillAcceptsAPlainURL is the table's third leg: refusing rediss://
-// and userinfo must not have touched the ordinary redis://host:port a caller
-// pastes every day.
-func TestAddrStillAcceptsAPlainURL(t *testing.T) {
-	got, err := Addr("redis://store.invalid:6380")
-	if err != nil {
-		t.Fatalf("Addr(plain redis://) = %v; want it to still work", err)
-	}
-	if got != "store.invalid:6380" {
-		t.Errorf("Addr(plain redis://) = %q; want %q", got, "store.invalid:6380")
-	}
-}
-
-// TestMaskAddrNeverPrintsTheUserinfo is maskAddr's own control: whatever a
-// caller hands it, the substring up to and including the last "@" never
-// reaches the output, because that substring is where a pasted password
-// lives.
-func TestMaskAddrNeverPrintsTheUserinfo(t *testing.T) {
-	const secret = "hunter2"
-	for _, c := range []struct{ in, want string }{
-		{"friend:" + secret + "@store.invalid:6380", "***@store.invalid:6380"},
-		{"store.invalid:6380", "store.invalid:6380"},
-		{"redis://friend:" + secret + "@store.invalid:6380", "***@store.invalid:6380"},
-	} {
-		got := maskAddr(c.in)
-		if got != c.want {
-			t.Errorf("maskAddr(%q) = %q; want %q", c.in, got, c.want)
-		}
-		if strings.Contains(got, secret) {
-			t.Errorf("maskAddr(%q) = %q; still carries the password", c.in, got)
-		}
 	}
 }

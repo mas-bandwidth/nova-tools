@@ -59,53 +59,90 @@ func Open(ctx context.Context, addr, user string) (*Redis, error) {
 	return &Redis{rdb: rdb}, nil
 }
 
-// Addr normalizes what a caller spelled into host:port, or says why it cannot.
+// Addr normalizes what a caller spelled into host:port, or says why it
+// cannot, under a grammar strict enough that no shape of --store can carry a
+// secret past this function: the only two spellings accepted are host:port
+// and redis://host:port, with no userinfo, no query, no path (a single bare
+// trailing "/" is tolerated as the empty path a URL library would normalize
+// away) and no fragment. Anything else is refused.
 //
-// Two spellings are refused rather than half-honoured, because either one
-// silently dropped is a credential or a channel leaked, not a convenience
-// lost:
+// This replaced a looser Addr (comment 5782441213, #2612) that refused
+// rediss:// and user:pass@ by name but let everything else -- a query string
+// chief among them -- straight through: redis://host:port?password=SECRET
+// parsed as host:port="host:port?password=SECRET" and that whole string,
+// secret included, was the "clean" address handed back to be dialled,
+// printed on the beat's startup line and folded into the next error. Naming
+// each bad shape also meant echoing enough of it to prove the name, and
+// maskAddr -- built to make that echo safe -- only ever masked userinfo, so
+// the same query secret came back out through a rejected rediss:// URL too.
 //
-//   - rediss:// asks for TLS. Nothing in this package dials TLS -- there is
-//     no tls.Config anywhere near Open -- so stripping the extra "s" used to
-//     hand back a plaintext host:port and dial it unencrypted with no word
-//     said. That is a silent downgrade, not a parse. It is refused instead.
-//   - user:pass@host:port carries a password in the URL. This package takes
-//     its password from PasswordEnv and nowhere else (see Open), so a
-//     password pasted into --store was never going to be used -- and left
-//     unexamined, it would ride along inside the "host:port" this function
-//     hands back, to be printed verbatim in the next log line or error. It is
-//     refused before that can happen.
+// The repair drops per-shape messages for one grammar and one refusal: a
+// value is either exactly host:port (optionally redis://-prefixed) or it is
+// refused with a generic line naming only the scheme and the bare host --
+// never the port, the userinfo, the query or the fragment, so there is
+// nothing left in the message a secret could hide inside.
 func Addr(addr string) (string, error) {
 	a := strings.TrimSpace(addr)
-	if strings.HasPrefix(a, "rediss://") {
-		return "", fmt.Errorf("--store %s: rediss:// (TLS) is not supported -- use redis:// on the tailnet, or wait for TLS support", maskAddr(a))
-	}
-	a = strings.TrimPrefix(a, "redis://")
-	a = strings.TrimSuffix(a, "/")
-	if strings.Contains(a, "@") {
-		return "", fmt.Errorf("--store %s: userinfo (user:pass@) in the URL is not supported -- the password is never part of --store, set it via %s instead", maskAddr(a), PasswordEnv)
-	}
 	if a == "" {
 		return "", fmt.Errorf("--store is empty")
 	}
-	if !strings.Contains(a, ":") {
-		return "", fmt.Errorf("--store %s names no port; the fleet store is host:6380", a)
+
+	scheme, rest := "", a
+	if i := strings.Index(a, "://"); i >= 0 {
+		scheme, rest = a[:i], a[i+len("://"):]
 	}
-	return a, nil
+	rest = strings.TrimSuffix(rest, "/") // a bare trailing "/" is an empty path, not a path
+
+	host, bad := addrProblems(rest)
+	if scheme != "" && scheme != "redis" {
+		bad = append([]string{"scheme"}, bad...)
+	}
+	if len(bad) > 0 {
+		schemeDesc := scheme
+		if schemeDesc == "" {
+			schemeDesc = "none"
+		}
+		return "", fmt.Errorf("store address refused: only host:port or redis://host:port is supported (got scheme=%s host=%s with %s)",
+			schemeDesc, host, strings.Join(bad, "/"))
+	}
+	if !strings.Contains(rest, ":") {
+		return "", fmt.Errorf("--store %s names no port; the fleet store is host:6380", rest)
+	}
+	return rest, nil
 }
 
-// maskAddr is the one place a --store value is made safe to print. Any
-// userinfo up to the last "@" is replaced with "***", so a password pasted
-// into the URL never reaches an error, a log line or stdout -- including the
-// refusal that names the mistake. Addr calls it on the raw input before that
-// input appears in any message; because Addr refuses userinfo outright, the
-// host:port it returns can never carry one, so Open and every caller that
-// prints Addr's result inherit the masking for free without calling it again.
-func maskAddr(addr string) string {
-	if i := strings.LastIndex(addr, "@"); i >= 0 {
-		return "***@" + addr[i+1:]
+// addrProblems reports the bare host a value names -- never more than the
+// host, so a caller can name what is wrong without printing what is wrong --
+// and which of userinfo, path, query and fragment are present in it. It never
+// returns the port, the userinfo, the query or the fragment themselves: only
+// their names, for a message, and the host, which nova-tools treats as public
+// (it is the thing everyone already reads off the sprint table).
+func addrProblems(rest string) (host string, bad []string) {
+	s := rest
+	if i := strings.LastIndex(s, "@"); i >= 0 {
+		bad = append(bad, "userinfo")
+		s = s[i+1:]
 	}
-	return addr
+	if strings.ContainsRune(s, '/') {
+		bad = append(bad, "path")
+	}
+	if strings.ContainsRune(s, '?') {
+		bad = append(bad, "query")
+	}
+	if strings.ContainsRune(s, '#') {
+		bad = append(bad, "fragment")
+	}
+	cut := len(s)
+	for _, sep := range []byte{'/', '?', '#'} {
+		if i := strings.IndexByte(s, sep); i >= 0 && i < cut {
+			cut = i
+		}
+	}
+	host = s[:cut]
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		host = host[:i]
+	}
+	return host, bad
 }
 
 func isAuthError(err error) bool {
