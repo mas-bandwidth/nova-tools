@@ -33,6 +33,7 @@ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
+nova-pulse wait    --until <cond> [args...] [--every <d>] [--timeout <d>] [--bus <clone>] [--store <host:port>] [--store-user <name>] [--password-env <NAME>] [-- <cmd>...]
 nova-pulse manager --policy <file> --queue <dir> --roots <dirs> --bus <clone> --as <name> --hours <n> [--max <n>]
 nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [--oneline] [--timeout <s>] [--max <n>] [--expanding-hours <n>]
 nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
@@ -45,6 +46,8 @@ nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hour
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--dedupe --issues <file>] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>]
 nova-pulse reap    --roots <dirs> --queue <dir> --deadline <s> [--dry-run] [--timeout <s>]
+nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
+nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>] [--diag-days <n>] [--diag-max-bytes <n>]
@@ -127,6 +130,43 @@ so a restart carries on rather than starting again.
 
 example:
   nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6
+
+wait is the one waiter (#2546): poll until a condition holds, then act. It
+replaces bin/wait-for and the ad-hoc shell waiters that broke on zsh word
+splitting, globs and quoting -- four of a dozen typed on 2026-09-21, one of
+which silently never fired. Six conditions:
+
+  process-gone <pattern>        no process is running that the pattern names
+  file-has     <path> <regex>   the file has a line matching the regex
+  file-exists  <path>           the path is there (an EMPTY file counts; use
+                                file-has <path> . for wait-for's old mode)
+  pr-check     <repo> <n> <s>   the PR's checks are green|red|pending|none,
+                                or the PR itself is merged|closed (needs gh)
+  redis-key    <key> <value>    the store's key carries the value; * means
+                                only that the key exists (needs --store)
+  bus-note     <id>             somebody other than the sender replied to the
+                                note; a RECEIPT is heard, not answered, and
+                                the wait goes on (needs --bus)
+
+--every takes a bare number of seconds or a duration (20, 1s, 500ms) and
+defaults to 20s; --timeout the same, defaulting to 30m. Exit 0 when the
+condition held, 2 on timeout, 2 on a refusal, and ONE receipt line either way:
+WAIT HELD to stdout, WAIT TIMEOUT to stderr. Everything after a bare -- is a
+command run once the condition holds, argv passed through untouched, and ITS
+exit status becomes the verb's -- a harvest that failed must not read as a wait
+that succeeded.
+
+process-gone matches the pattern against argv[0] and argv[1] only, and never
+this process, its ancestors or its descendants. Both halves are load-bearing: a
+waiter carries the pattern it waits on as an argument, so pgrep -f found itself;
+bash forks an identical copy of a script per pipeline stage, so the waiter found
+its own child; and procps matches an ancestor where the BSD pgrep does not, so
+the same bug hung darwin and Linux on different days.
+
+example:
+  nova-pulse wait --until file-exists ./cards.tsv --timeout 5s
+  nova-pulse wait --until file-has ./cards.tsv 'gate\s' --every 1s --timeout 5s
+  nova-pulse wait --until process-gone no-such-process-on-this-machine --every 1s --timeout 5s
 
 triage cuts the decision packet for one undecided case to a card for the text
 route: the RESULT lines, the refusal line and the candidate rows of
@@ -212,6 +252,33 @@ deadline, slot locks whose pid is dead, launched cards whose job directory is go
 
 example:
   nova-pulse reap --roots ./swarm-root,./swarm-root-space --queue ./queue --deadline 1800 --dry-run
+
+event and fold are the card event stream and its record (nova-tools #2563). event
+XADDs one entry to cards:done -- label, attempt, bench, model, route, event,
+tokens_in, tokens_out, usd, pr, head, at, and nothing else, because Redis holds
+ids and counts while the diff, the test and the prompt stay in git. A cost not
+given (--tokens-in, --tokens-out, --usd) is absent from the entry, never 0. There
+is one stream: the fold is a view of cards:done, rebuildable from it, not a
+second record. fold reads it under its own --group (record and events keep
+theirs): XREADGROUP, a SQLite row keyed on the event
+id, XACK only after the row is committed, so a fold that is killed and restarted
+loses nothing and folds nothing twice. --once is one pass, --rebuild replays the
+whole stream into a file that does not exist yet, and --init, --report and --dump
+read the file with no store at all. The views are per model x route (rows, ok,
+usd, usd per ok, usd per landed), per bench, per day, per label, and totals.
+
+The store's password is never a flag: --password-env names the variable it is
+already in, which on the fleet is what nova-secrets exec leaves behind --
+
+  nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
+    nova-pulse event --store <host:port> --user bench --label card-42 --event ok
+  nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
+    nova-pulse fold --store <host:port> --user bench --db ~/nova-fold/ev.sqlite --interval 1s
+
+example:
+  nova-pulse event --label card-42 --event ok --bench studio --model fable --route studio --tokens-in 12000 --tokens-out 900 --usd 0.11 --print
+  nova-pulse fold --db ./ev-fold.sqlite --init
+  nova-pulse fold --db ./ev-fold.sqlite --report
 
 hygiene is the bench's clean-as-we-work pass, the Go half of bin/bench-hygiene.sh:
 run reaps dead slots, deletes read jobs and drops the build cache when the disk is
@@ -302,6 +369,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdBeat(rest, stdout, stderr, now)
 	case "watch":
 		return cmdWatch(rest, stdout, stderr, now)
+	case "wait":
+		return cmdWait(rest, stdout, stderr)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
@@ -320,6 +389,10 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdSweep(rest, stdout, stderr)
 	case "reap":
 		return cmdReap(rest, stdout, stderr)
+	case "event":
+		return cmdEvent(rest, stdout, stderr, now)
+	case "fold":
+		return cmdFold(rest, stdout, stderr)
 	case "hygiene":
 		return cmdHygiene(rest, stdout, stderr, now)
 	case "fleet":

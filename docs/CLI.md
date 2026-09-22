@@ -2651,6 +2651,82 @@ directory and a liveness rule, and a lane clone is neither. Nor can a lane clone
 scratch is swept, by age or by name — it holds a branch, and a branch may be the only copy of
 somebody's work. That is why the rule is the narrowest one still worth having.
 
+### wait
+
+```
+nova-pulse wait --until <cond> [args...] [--every <d>] [--timeout <d>] [--bus <clone>] [--store <host:port>] [--store-user <name>] [--password-env <NAME>] [-- <cmd>...]
+```
+
+`wait` is the one waiter: poll until a condition holds, then act. It replaces
+`bin/wait-for` and the ad-hoc waiters typed into a tool shell — a dozen on
+2026-09-21, four of which broke on zsh word splitting, globs or `$(...)`
+quoting, and one of which silently never fired (#2546).
+
+Six conditions:
+
+| `--until` | holds when |
+| --- | --- |
+| `process-gone <pattern>` | no process the pattern names is running |
+| `file-has <path> <regex>` | a line of the file matches the regex |
+| `file-exists <path>` | the path is there — **an empty file counts** |
+| `pr-check <repo> <n> <state>` | the PR's checks are `green`, `red`, `pending` or `none`, or the PR itself is `merged` or `closed` (one `gh pr view` per poll) |
+| `redis-key <key> <value>` | the store's key carries the value; `*` asks only that the key exist (needs `--store`) |
+| `bus-note <id>` | somebody other than the sender has **replied** to the note (needs `--bus`) |
+
+`--every` and `--timeout` take a bare whole number of seconds — the shape
+`bin/wait-for --every 20` took — or a duration (`1s`, `500ms`, `2m`). They
+default to `20s` and `30m`. Exit **0** when the condition held, **2** on
+timeout and **2** on a refusal, with ONE receipt line either way: `WAIT HELD`
+on stdout, `WAIT TIMEOUT` on stderr, each carrying the condition, the spend,
+the poll count and the evidence — the matched line, the live process, the
+answering note, the value read.
+
+```
+WAIT HELD until=file-has args="./harvest.log LANDED #[0-9]+" spent=40s polls=3 evidence="LANDED #1234 head=5f544272a1b0"
+WAIT TIMEOUT until=pr-check args="mas-bandwidth/nova-tools 2546 green" timeout=30m spent=30m polls=91 last="state=OPEN checks=pending"
+```
+
+Everything after a bare `--` is a command run once the condition holds. Its
+argv is passed through untouched — no shell — and **its exit status becomes the
+verb's**: a harvest that failed must not read as a wait that succeeded.
+
+The arguments are parsed by hand rather than by Go's `flag`, because `--until`
+takes a condition *and its arguments* and `flag` stops at the first non-flag
+word: `--until file-has ./log 'RE' --every 5s` would have left `--every` as a
+positional argument nobody read, and a verb that silently ignores the interval
+it was given is the same class of bug as the zsh one-liners. An unknown flag is
+refused by name.
+
+**`process-gone` matches argv[0] and argv[1] only**, whole and by basename, and
+excludes this process, its ancestors and its descendants. Both halves are
+load-bearing and both come from measured hangs: a waiter carries the pattern it
+waits on as an argument, so `pgrep -f` found *itself*; bash forks an identical
+copy of a script for each pipeline stage, so the waiter found its own child
+(darwin, 2026-09-22); and procps matches an ancestor of the `pgrep` process
+where the BSD `pgrep` does not, which is the self-match that killed the
+coordinator's shell four times on 2026-09-21. The `wait-for.bats` controls for
+both are ported to Go tests over a written process table, so each platform's
+shape is asserted on every platform.
+
+**`file-exists` holds on an empty file and `bin/wait-for file` did not.** The
+old mode wanted a *non-empty* path, because the thing it waited on was a
+`RESULT.md` a card creates and then writes. Porting a `wait-for file X` line
+wants `--until file-has X .` — any byte.
+
+**`redis-key` polls.** Redis has no blocking read for a string key: `BLPOP` and
+`XREAD BLOCK` are the list and stream forms, and blocking on a `GET` would need
+keyspace notifications this instance does not have. The blocking read belongs to
+the event stream (#2563), where the store really does allow one. The password
+comes from `$NOVA_REDIS_BENCH_PASSWORD` (`--password-env` names another
+variable), the way `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD` supplies
+it; it is never a flag, never a file and never on a receipt.
+
+**On the bus, heard is not answered.** A receipt in another lane says the note
+was read; the wait goes on, and the timeout receipt says `heard by <lane>` so an
+expired wait on an acknowledged note does not read like a note nobody opened. A
+reply in the sender's own lane is not an answer either — the bus's answered rule
+is per reader, and asking the sender's lane would make every note self-answering.
+
 ### status
 
 ```
@@ -2734,6 +2810,76 @@ and failing that the origin of the clone the queue sits in, named on a
 `STATUS NOTE` line. With neither there is nobody to ask and the page says so;
 with a repo that did not answer it says that instead — they are different
 facts, and the page used to print the first for both.
+
+### event and fold
+
+The card event stream and its record (nova-tools #2563). Every card transition
+XADDs one entry to `cards:done` on the fleet Redis; one consumer folds the stream
+into a SQLite file, and that file — not a `find` over job directories — is where
+`done`, `ok`, `fail` and the money come from.
+
+```
+nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
+nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
+```
+
+**What rides the stream.** `label`, `attempt`, `bench`, `model`, `route`,
+`event`, `tokens_in`, `tokens_out`, `usd`, `pr`, `head`, `at` — ids and counts,
+nothing else. **There is one stream.** These are fields added to `cards:done`,
+the stream `nova-work record` and `nova-work events` already read under their own
+groups; the fold reads it under `fold`, and its SQLite file is a view of that
+stream that `--rebuild` recomputes, never a second record. **An absent cost stays
+absent**: a `--tokens-in`, `--tokens-out` or `--usd` that is not given is not
+written, the fold stores NULL, and the report prints a dash, because a writer
+that did not know the cost has not reported a zero. An entry written before the
+fields were added carries no `event`; the fold counts it as skipped rather than
+guessing it into `ok` or `fail`. The diff, the test, the prompt, the transcript and the disposition
+stay in git, and a field over 200 bytes or carrying a control character is
+**refused at the door** rather than trusted to the writer. That is Johnny's rule
+in `reports/redis-for-nova-tools-2026-09-21.md` section 8, made mechanical: core
+Redis types only (XADD, XREADGROUP, XAUTOCLAIM, XACK, XRANGE), every query in the
+fold, so the hot store never becomes the database and Valkey stays a drop-in.
+
+**The password is never a flag.** `--password-env` names the variable it is
+already in, which on the fleet is what `nova-secrets exec --only` leaves behind.
+Nothing prints it, and it never reaches an argv a `ps` can read.
+
+```
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
+  nova-pulse event --store <host:port> --user bench --label card-42 --event ok \
+    --bench studio --model fable --route studio --tokens-in 12000 --tokens-out 900 --usd 0.11
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
+  nova-pulse fold --store <host:port> --user bench --db ~/nova-fold/ev.sqlite --interval 1s
+```
+
+`event` is the line today's bash writers each emit until they are Go: the
+launcher writes `queued`, `leased` and `started`; `nova-swarm` writes `ok`,
+`fail` and `asked` with `usage.tsv`'s row; harvest writes `harvested` and `pr`;
+the lander writes `landed`. `--print` renders the entry and writes nothing,
+which is how a writer is debugged with no store in the room.
+
+`fold` holds the loop: `--interval 1s` between passes, `--once` for a single
+one. Each pass reclaims what the group holds unacked (XAUTOCLAIM, so a fold that
+was killed and restarted under a new consumer name takes its predecessor's work
+back), then takes new entries, writes them in ONE transaction, and XACKs **only
+after the transaction commits**. The event id is the primary key of every table,
+so a redelivery is a no-op: kill the fold half way through a hundred DONEs,
+restart it, and the count is a hundred.
+
+`--rebuild` replays the whole stream from its first entry into a file that does
+not exist yet, reading the stream itself and never the group, so a rebuild never
+consumes what the running fold has not folded. No row carries a fold timestamp,
+which is why a rebuild's rows are the incremental fold's rows byte for byte.
+
+`--init`, `--report` and `--dump` read the file with no store at all: the schema,
+the views as TSV blocks, and every row deterministically ordered.
+
+The tables are `attempts` (the card's own life), `reads` (a friend's read of a
+PR) and `landings` (the lander's merge). The views are `by_model_route` (rows,
+ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
+`by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
+cost per USEFUL card, so a dearer model that lands beats a cheap one that does
+not.
 
 ## nova-review
 
