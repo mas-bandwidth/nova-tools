@@ -64,6 +64,7 @@ func (d *DirQueue) Add(stream, id string, fields map[string]string) (string, err
 		return "", err
 	}
 	var b strings.Builder
+	b.WriteString(CardFormatMarker + "\n")
 	for _, k := range sortedKeys(fields) {
 		fmt.Fprintf(&b, "%s=%s\n", k, escapeValue(fields[k]))
 	}
@@ -187,21 +188,49 @@ func (d *DirQueue) Reclaim(stream string, lease time.Duration, now time.Time) (b
 	return false, nil
 }
 
+// CardFormatMarker is the header written at the start of card files using escaped values.
+const CardFormatMarker = "# dirq:v1"
+
 func parseCardFile(path string) (map[string]string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	lines := strings.Split(string(raw), "\n")
+	isEscapedFormat := false
+	if len(lines) > 0 {
+		first := strings.TrimSpace(lines[0])
+		if first == CardFormatMarker || first == "# format=v1" || first == "# format=escaped" || first == "format=v1" {
+			isEscapedFormat = true
+		}
+	}
 	fields := map[string]string{}
-	for _, line := range strings.Split(string(raw), "\n") {
+	for i, line := range lines {
 		if line == "" {
+			continue
+		}
+		if i == 0 && (strings.HasPrefix(line, "# dirq:") || strings.HasPrefix(line, "# format=") || line == "format=v1") {
 			continue
 		}
 		k, v, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
 		}
-		fields[k] = unescapeValue(v)
+		if isEscapedFormat {
+			if strings.HasPrefix(v, "esc:") {
+				fields[k] = unescapeValue(strings.TrimPrefix(v, "esc:"))
+			} else if strings.HasPrefix(v, "v1:") {
+				fields[k] = unescapeValue(strings.TrimPrefix(v, "v1:"))
+			} else {
+				fields[k] = unescapeValue(v)
+			}
+		} else if strings.HasPrefix(v, "esc:") {
+			fields[k] = unescapeValue(strings.TrimPrefix(v, "esc:"))
+		} else if strings.HasPrefix(v, "v1:") {
+			fields[k] = unescapeValue(strings.TrimPrefix(v, "v1:"))
+		} else {
+			fields[k] = v
+		}
 	}
 	return fields, nil
 }
