@@ -85,6 +85,7 @@ type nativeRunResult struct {
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	end          string            // the end the usage row records: done, failed, wall, or unknown
 	lost         bool              // the provider read died after the request may have been accepted
+	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled        bool              // the idle watch ended the run, not the deadline and not the child
@@ -672,22 +673,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			break
 		}
 		if lost {
-			// The usage row has no end column. This file is the durable mark
-			// the later reader needs: the request may have been accepted.
-			acc := filepath.Join(jobDir, "provider-acceptance")
-			if err := os.WriteFile(acc, []byte("unknown\n"), 0o644); err != nil {
-				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance mark could not be written: %s\n", oneline.Escape(err.Error()))
-				// The marker is the handoff. If it cannot be written, the
-				// capture still has to carry the word, or a later reader
-				// scores the card as an ordinary missing result and retries it.
-				note := filepath.Join(jobDir, "harness-output.log")
-				f, oerr := os.OpenFile(note, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-				if oerr != nil {
-					fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance line could not be written either: %s\n", oneline.Escape(oerr.Error()))
-				} else {
-					fmt.Fprintln(f, "why=unknown-acceptance")
-					f.Close()
-				}
+			// The usage row has no end column. The marker is the handoff. If it
+			// cannot be written, the capture must carry the word. If neither
+			// file can be written, the run refuses: a quiet exit would be
+			// scored as an ordinary missing result and retried.
+			if err := persistUnknown(jobDir); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance could not be recorded: %s\n", oneline.Escape(err.Error()))
+				res.unrecorded = true
 			}
 			break
 		}
@@ -792,7 +784,34 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	if res.unrecorded {
+		return res, 2
+	}
 	return res, 0
+}
+
+// persistUnknown writes the handoff the next reader holds on. The marker is
+// first. The two logs are the fallback. If none of them can be written, the
+// caller refuses the run instead of leaving an ordinary missing result.
+func persistUnknown(jobDir string) error {
+	acc := filepath.Join(jobDir, "provider-acceptance")
+	if err := os.WriteFile(acc, []byte("unknown\n"), 0o644); err == nil {
+		return nil
+	} else {
+		var failed []string
+		failed = append(failed, err.Error())
+		for _, name := range []string{"harness-output.log", "harness.log"} {
+			f, oerr := os.OpenFile(filepath.Join(jobDir, name), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+			if oerr != nil {
+				failed = append(failed, oerr.Error())
+				continue
+			}
+			fmt.Fprintln(f, "why=unknown-acceptance")
+			f.Close()
+			return nil
+		}
+		return fmt.Errorf("%s", strings.Join(failed, "; "))
+	}
 }
 
 // fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads

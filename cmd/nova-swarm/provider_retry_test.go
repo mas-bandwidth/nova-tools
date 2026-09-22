@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A LAUNCH THAT DIES FAST ON A PROVIDER 5XX IS RETRIED (issue #900). These tests hold the
@@ -262,6 +264,33 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err == nil {
 		t.Fatal("a lost response must not publish a result")
+	}
+}
+
+func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
+	job := t.TempDir()
+	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(job, "harness-output.log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistUnknown(job); err != nil {
+		t.Fatal(err)
+	}
+	if !swarm.AcceptanceUnknown(job) {
+		t.Fatal("the fallback log was not held")
+	}
+}
+
+func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {
+	job := t.TempDir()
+	if err := os.Chmod(job, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(job, 0o755) })
+	if err := persistUnknown(job); err == nil {
+		t.Fatal("an unwritable job recorded the unknown")
 	}
 }
 
