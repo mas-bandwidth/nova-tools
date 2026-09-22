@@ -319,71 +319,98 @@ exclusively created directory in the snapshot and cache schemas, then answers
             (unless manifest-octets
               (return-from state-load
                 (values nil (format nil "LOAD FAIL: output overrun: ~A" m-line) (or m-code 2))))
-            (let* ((manifest-hash (sha256-hex manifest-octets))
-                   (manifest (handler-case (read-restricted (%state-load-octets-string manifest-octets))
-                               (restricted-data-violation ()
-                                 (refuse "corrupt S-expression")))))
-              (unless (equal (getf manifest :version) *state-export-manifest-version*)
-                (refuse "unsupported manifest version ~A" (getf manifest :version)))
-              (let ((schema (getf manifest :schema)))
-                (unless (and (equal (getf schema :id) *state-export-schema-id*)
-                             (equal (getf schema :sha256) (sha256-hex *state-export-schema-id*)))
-                  (refuse "schema mismatch: ~A" (getf schema :id))))
-              (let ((rev (getf (getf manifest :captured) :revision))
-                    (members (getf manifest :members))
-                    (seen '())
-                    (total (length manifest-octets))
-                    (root-bytes nil)
-                    (root-ok nil))
-                (unless (and (listp members) members)
-                  (refuse "missing mandatory member the member set"))
-                (when (and mn (> (length members) mn))
-                  (refuse "node bound ~D exceeds --max-nodes" (length members)))
-                (unless (integerp rev) (refuse "captured revision"))
-                (dolist (m members)
-                  (let ((path (getf m :path)))
-                    (unless (%state-load-clean-path-p path)
-                      (refuse "path escape ~A" path))
-                    (when (member path seen :test #'string=)
-                      (refuse "duplicate member ~A" path))
-                    (push path seen)
-                    (when (and md (> (1+ (count #\/ path)) md))
-                      (refuse "depth bound ~A exceeds --max-depth" path))
-                    (let ((full (%state-load-join from path)))
-                      (unless (probe-file full)
-                        (refuse "missing mandatory member ~A" path))
-                      #+sbcl
-                      (when (sb-posix:s-islnk
-                             (sb-posix:stat-mode (sb-posix:lstat (namestring full))))
-                        (refuse "symlink member ~A" path))
-                      (let ((member-max (and mb (- mb total))))
-                        (when (and member-max (minusp member-max))
-                          (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
-                        (multiple-value-bind (octets mem-line mem-code)
-                            (read-bounded-octets full :max-bytes member-max :signal-error nil)
-                          (unless octets
-                            (return-from state-load
-                              (values nil (format nil "LOAD FAIL: output overrun: ~A" mem-line) (or mem-code 2))))
-                          (unless (= (length octets) (getf m :bytes))
-                            (refuse "member ~A byte count ~D is not ~D"
-                                    path (length octets) (getf m :bytes)))
-                          (unless (equal (sha256-hex octets) (getf m :sha256))
-                            (refuse "changed digest for member ~A" path))
-                          (incf total (length octets))
-                          (when (and mb (> total mb))
+            (let ((manifest-text (%state-load-octets-string manifest-octets)))
+              (multiple-value-bind (m-bounds-ok m-bline m-bcode)
+                  (check-read-bounds manifest-text
+                                     :max-bytes mb
+                                     :max-depth md
+                                     :max-nodes mn
+                                     :file (namestring manifest-path)
+                                     :signal-error nil)
+                (unless m-bounds-ok
+                  (return-from state-load
+                    (values nil (format nil "LOAD FAIL: ~A" m-bline) (or m-bcode 2)))))
+              (let* ((manifest-hash (sha256-hex manifest-octets))
+                     (manifest (handler-case (read-restricted manifest-text)
+                                 (restricted-data-violation ()
+                                   (refuse "corrupt S-expression")))))
+                (unless (equal (getf manifest :version) *state-export-manifest-version*)
+                  (refuse "unsupported manifest version ~A" (getf manifest :version)))
+                (let ((schema (getf manifest :schema)))
+                  (unless (and (equal (getf schema :id) *state-export-schema-id*)
+                               (equal (getf schema :sha256) (sha256-hex *state-export-schema-id*)))
+                    (refuse "schema mismatch: ~A" (getf schema :id))))
+                (let ((rev (getf (getf manifest :captured) :revision))
+                      (members (getf manifest :members))
+                      (seen '())
+                      (total (length manifest-octets))
+                      (root-bytes nil)
+                      (root-ok nil))
+                  (unless (and (listp members) members)
+                    (refuse "missing mandatory member the member set"))
+                  (when (and mn (> (length members) mn))
+                    (refuse "node bound ~D exceeds --max-nodes" (length members)))
+                  (unless (integerp rev) (refuse "captured revision"))
+                  (dolist (m members)
+                    (let ((path (getf m :path)))
+                      (unless (%state-load-clean-path-p path)
+                        (refuse "path escape ~A" path))
+                      (when (member path seen :test #'string=)
+                        (refuse "duplicate member ~A" path))
+                      (push path seen)
+                      (when (and md (> (1+ (count #\/ path)) md))
+                        (refuse "depth bound ~A exceeds --max-depth" path))
+                      (let ((full (%state-load-join from path)))
+                        (unless (probe-file full)
+                          (refuse "missing mandatory member ~A" path))
+                        #+sbcl
+                        (when (sb-posix:s-islnk
+                               (sb-posix:stat-mode (sb-posix:lstat (namestring full))))
+                          (refuse "symlink member ~A" path))
+                        (let ((member-max (and mb (- mb total))))
+                          (when (and member-max (minusp member-max))
                             (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
-                          (when (equal (getf m :kind) :state-root)
-                            (setf root-bytes octets root-ok t)))))))
-                (when (and mb (> total mb))
-                  (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
-                (unless root-ok
-                  (refuse "missing mandatory member state-root"))
-                ;; Closure: rebuild the model from the stored bytes.
-                (let ((state (handler-case
-                                 (reconstruct-state (%state-load-octets-string root-bytes))
-                               (unsupported-input (c)
-                                 (refuse "dangling internal reference: ~A" (unsupported-input-what c)))
-                               (error () (refuse "corrupt S-expression")))))
+                          (multiple-value-bind (octets mem-line mem-code)
+                              (read-bounded-octets full :max-bytes member-max :signal-error nil)
+                            (unless octets
+                              (return-from state-load
+                                (values nil (format nil "LOAD FAIL: output overrun: ~A" mem-line) (or mem-code 2))))
+                            (unless (= (length octets) (getf m :bytes))
+                              (refuse "member ~A byte count ~D is not ~D"
+                                      path (length octets) (getf m :bytes)))
+                            (unless (equal (sha256-hex octets) (getf m :sha256))
+                              (refuse "changed digest for member ~A" path))
+                            (incf total (length octets))
+                            (when (and mb (> total mb))
+                              (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
+                            (when (equal (getf m :kind) :state-root)
+                              (setf root-bytes octets root-ok t)))))))
+                  (when (and mb (> total mb))
+                    (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total mb))
+                  (unless root-ok
+                    (refuse "missing mandatory member state-root"))
+                  ;; Closure: rebuild the model from the stored bytes.
+                  (let* ((root-text (%state-load-octets-string root-bytes)))
+                    (multiple-value-bind (root-bounds-ok r-bline r-bcode)
+                        (check-read-bounds root-text
+                                           :max-bytes mb
+                                           :max-depth md
+                                           :max-nodes mn
+                                           :file "state"
+                                           :signal-error nil)
+                      (unless root-bounds-ok
+                        (return-from state-load
+                          (values nil (format nil "LOAD FAIL: ~A" r-bline) (or r-bcode 2)))))
+                    (let ((state (handler-case
+                                     (reconstruct-state root-text
+                                                        :max-bytes mb
+                                                        :max-depth md
+                                                        :max-nodes mn)
+                                   (read-bounds-exceeded (c)
+                                     (refuse "read bounds: ~A" (unsupported-input-what c)))
+                                   (unsupported-input (c)
+                                     (refuse "dangling internal reference: ~A" (unsupported-input-what c)))
+                                   (error () (refuse "corrupt S-expression")))))
                   ;; Materialise: stage in a private sibling, then commit once.
                   (let* ((target (string-right-trim "/" (namestring into)))
                          (staging (format nil "~A.staging-~D" target (incf *state-load-staging-counter*)))

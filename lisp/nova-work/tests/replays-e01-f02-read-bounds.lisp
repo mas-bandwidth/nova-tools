@@ -373,7 +373,73 @@
       ;; Valid read of loaded snapshot within bounds succeeds:
       (let ((loaded (read-loaded-snapshot snap-dir :max-bytes 100000 :max-depth 10 :max-nodes 100)))
         (ok loaded "read-loaded-snapshot failed within bounds")
-        (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count")))
+        (check-equal 1 (snapshot-query loaded) "snapshot-query answered open count"))
+
+      ;; State-load depth and node boundary enforcement on MANIFEST.sexp:
+      (let ((dest (format nil "~A/fail-manifest-depth/" dir)))
+        (multiple-value-bind (snap line code)
+            (state-load :from export-dir :into dest :max-bytes 100000 :max-depth 1 :max-nodes 100)
+          (ok (null snap) "state-load succeeded when MANIFEST.sexp exceeded max-depth")
+          (check-equal 2 code "manifest depth overrun did not exit 2")
+          (ok (search "--max-depth" line) "refusal did not name --max-depth: ~A" line)
+          (ok (search "MANIFEST.sexp" line) "refusal did not name MANIFEST.sexp: ~A" line)
+          (ok (null (probe-file dest)) "failed load created destination")))
+
+      (let ((dest (format nil "~A/fail-manifest-nodes/" dir)))
+        (multiple-value-bind (snap line code)
+            (state-load :from export-dir :into dest :max-bytes 100000 :max-depth 10 :max-nodes 5)
+          (ok (null snap) "state-load succeeded when MANIFEST.sexp exceeded max-nodes")
+          (check-equal 2 code "manifest node overrun did not exit 2")
+          (ok (search "--max-nodes" line) "refusal did not name --max-nodes: ~A" line)
+          (ok (search "MANIFEST.sexp" line) "refusal did not name MANIFEST.sexp: ~A" line)
+          (ok (null (probe-file dest)) "failed load created destination")))
+
+      ;; State-load depth and node boundary enforcement on reconstructed root:
+      (let* ((deep-export-dir (format nil "~A/exp-deep-root/" dir))
+             (deep-dest (format nil "~A/dest-deep-root/" dir))
+             (deep-bytes "((((((((:id \"deep\" :type :task :parent nil))))))))")
+             (manifest-list (list :version "nova-work-state-export-v1"
+                                  :kind :captured-state
+                                  :id "exp-deep"
+                                  :captured (list :revision 0)
+                                  :schema (list :id "work-v1" :sha256 (sha256-hex "work-v1"))
+                                  :scope (list :open :all :closed-history :none)
+                                  :members (list (list :path "state/snapshot.sexp" :kind :state-root
+                                                       :bytes (length deep-bytes) :sha256 (sha256-hex deep-bytes)))
+                                  :omissions '()))
+             (m-bytes (canonical-string manifest-list)))
+        (ensure-directories-exist (%state-load-join deep-export-dir "state/"))
+        (%state-load-write-string (%state-load-join deep-export-dir "state/snapshot.sexp") deep-bytes)
+        (%state-load-write-string (%state-load-join deep-export-dir "MANIFEST.sexp") m-bytes)
+        (multiple-value-bind (snap line code)
+            (state-load :from deep-export-dir :into deep-dest :max-bytes 100000 :max-depth 5 :max-nodes 100)
+          (ok (null snap) "state-load succeeded when state root exceeded max-depth")
+          (check-equal 2 code "root depth overrun did not exit 2")
+          (ok (search "--max-depth" line) "refusal did not name --max-depth: ~A" line)
+          (ok (null (probe-file deep-dest)) "failed load created destination")))
+
+      (let* ((nodes-export-dir (format nil "~A/exp-nodes-root/" dir))
+             (nodes-dest (format nil "~A/dest-nodes-root/" dir))
+             (nodes-bytes "((:id \"n1\" :type :task :parent nil) (:id \"n2\" :type :task :parent nil) (:id \"n3\" :type :task :parent nil) (:id \"n4\" :type :task :parent nil))")
+             (nodes-manifest (list :version "nova-work-state-export-v1"
+                                   :kind :captured-state
+                                   :id "exp-nodes"
+                                   :captured (list :revision 0)
+                                   :schema (list :id "work-v1" :sha256 (sha256-hex "work-v1"))
+                                   :scope (list :open :all :closed-history :none)
+                                   :members (list (list :path "state/snapshot.sexp" :kind :state-root
+                                                        :bytes (length nodes-bytes) :sha256 (sha256-hex nodes-bytes)))
+                                   :omissions '()))
+             (m-bytes (canonical-string nodes-manifest)))
+        (ensure-directories-exist (%state-load-join nodes-export-dir "state/"))
+        (%state-load-write-string (%state-load-join nodes-export-dir "state/snapshot.sexp") nodes-bytes)
+        (%state-load-write-string (%state-load-join nodes-export-dir "MANIFEST.sexp") m-bytes)
+        (multiple-value-bind (snap line code)
+            (state-load :from nodes-export-dir :into nodes-dest :max-bytes 100000 :max-depth 10 :max-nodes 28)
+          (ok (null snap) "state-load succeeded when state root exceeded max-nodes")
+          (check-equal 2 code "root node overrun did not exit 2")
+          (ok (search "--max-nodes" line) "refusal did not name --max-nodes: ~A" line)
+          (ok (null (probe-file nodes-dest)) "failed load created destination"))))
 
     ;; 5. Direct verification of real production readers under session bounds
     ;; A. Journal readers (open-file-journal and replay-journal):
