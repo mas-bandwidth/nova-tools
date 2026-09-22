@@ -144,6 +144,11 @@ status --oneline is the whole day in one line under 400 bytes: width per bench,
 pool, STOP, the day's reds, merges, cards done and failed, spend, and the pit-stop
 note when <queue>/PITSTOP exists. A fresh window needs that line and the policy,
 never the transcript.
+status counts attempt results as card_fail and gateway on their own columns
+(STATUS FAILURES, and the same two fields on --oneline). A gateway death ended
+with no model turn -- a provider 5xx, or no tokens and no error on an attempt
+that still failed -- and does not increment card_fail. QUEUE failed= stays the
+count of cards in the failed directory.
 status --batches <dir> folds the swarm's own health from the newest batch-*.out
 outputs in that directory: STATUS SWARM first_attempt=<done/(done+abstain)> with
 the hedge the rate calls for below 0.90, one STATUS FAULT line per abstain reason

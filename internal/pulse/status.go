@@ -102,7 +102,8 @@ func Status(in StatusInput) int {
 	hourStart := now.Add(-time.Hour)
 
 	roots := splitList(in.Roots)
-	rows := collectUsage(roots)
+	files := loadUsageFiles(roots)
+	rows := usageRows(files)
 	queue := readQueue(in.Queue)
 	repo := firstLine(filepath.Join(in.Queue, "REPO"))
 	prs, issues := readGh(repo, in.Timeout) // cached per tick
@@ -118,6 +119,12 @@ func Status(in StatusInput) int {
 
 	fmt.Fprintf(out, "STATUS QUEUE pending=%d gated=%d launched=%d done=%d failed=%d\n",
 		queue.pending, queue.gated, queue.launched, queue.done, queue.failed)
+
+	// Gateway deaths are route failures, not card failures (#2634). QUEUE failed=
+	// stays the count of cards sitting in the failed directory; these two columns
+	// are attempt results.
+	cardFail, gateway := failureColumns(files)
+	fmt.Fprintf(out, "STATUS FAILURES card_fail=%d gateway=%d\n", cardFail, gateway)
 
 	rate := rateOf(rows, dayStart, now)
 	if rate.known {
@@ -327,8 +334,12 @@ func countUngated(dir, sub string) int { return countCards(dir, sub) - countGate
 // (statusindex.go): the first measured row of each file, which is what the rate arithmetic
 // folds. A root is refreshed only for the jobs whose directory mtime moved (#1088).
 func collectUsage(roots []string) []usageRow {
+	return usageRows(loadUsageFiles(roots))
+}
+
+func usageRows(files []usageFile) []usageRow {
 	var rows []usageRow
-	for _, f := range loadUsageFiles(roots) {
+	for _, f := range files {
 		if row, ok := f.first(); ok {
 			rows = append(rows, row)
 		}

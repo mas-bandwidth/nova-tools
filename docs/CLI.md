@@ -2614,6 +2614,7 @@ files and a cached `gh` step, at most `--max` lines per capped kind (default
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
@@ -2622,6 +2623,13 @@ STATUS ADOPTION <friend> version=<v> receipt=<n> edges=<n>
 STATUS OPEN dogfood=<n> holds=<n> escalations=<n>
 STATUS TOOLS merged_since_adoption=<n> <names>
 ```
+
+`FAILURES` splits attempt results. `gateway` is an attempt that ended with no
+model turn: a provider gateway 5xx, or no tokens and no recorded error on an
+attempt that still failed. That attempt does not increment `card_fail`.
+`card_fail` is the card's own verdict (abstain, blocked) and every other failed
+attempt. `QUEUE failed=` is still the count of cards in the failed directory,
+not this split. The same two fields are on `status --oneline`.
 
 `WIDTH` prints one line per bench in `--roots` (running jobs, slots, load and
 headroom from each bench's slot files); `--roots` is the scope — a bench or

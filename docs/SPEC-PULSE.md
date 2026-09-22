@@ -879,6 +879,7 @@ closed, remaining by depth, completion by epic) once the tree is the pool (#500)
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
@@ -932,7 +933,13 @@ files a job writes as it finishes — `usage.tsv`, its harness store
 indexed job and re-reads only the jobs one of them moved for, so a finished job whose
 harness log or store wal keeps moving is never re-opened for it, and a warm tick opens no
 job file and starts no `sqlite3` at all. The class is `RESULT.md`'s verdict (done, abstain,
-blocked), falling back to the usage row's return code when the job wrote none. `run` and
+blocked). An attempt with no model turn that died on a gateway 5xx, or that failed
+with no tokens and no recorded error, is `gateway` — a route death, not a card
+failure. Anything else with no verdict falls back to the usage row's return code
+(done or failed). `status` prints the split as `STATUS FAILURES card_fail=<n>
+gateway=<n>` (and the same two fields on `--oneline`): `card_fail` is abstain,
+blocked and every other failed attempt, and a gateway death increments only
+`gateway`. `QUEUE failed=` stays the count of cards in the failed directory. `run` and
 `harvest` append a finished job to its root's index as they
 fold it, so a job is indexed before the next tick needs it; a root with no index is walked
 once and the index written, and a root that sat still is answered from the index alone. The
