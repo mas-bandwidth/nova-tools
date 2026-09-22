@@ -625,8 +625,6 @@ Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
 two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
 with `benches.tsv`, `read.md` and `fix.md`.
 
-Run the cut/pool examples below from the checkout root ([#1503](https://github.com/mas-bandwidth/nova-tools/issues/1503)).
-
 `pool` runs against the same directory from the other end: a `sources.tsv`
 declaring one `roadmap` source, and that roadmap — two cells naming a card and
 one naming none. It reads the roadmap, skips the cell without a card, and writes
