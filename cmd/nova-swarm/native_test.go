@@ -407,38 +407,37 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 }
 
 // TestNativeRunAuthCopyIs0600: the named provider's entry is copied from the auth file into
-// the data home, mode 0600, and no other provider's entry travels with it.
+// the data home, mode 0600, and no other provider's entry travels with it. Asked of
+// copyAuth itself: the run that carries the copy removes it when the card ends, so after a
+// run there is nothing left to stat (TestNativeAuthCopyIsGoneAfterTheRun).
 func TestNativeRunAuthCopyIs0600(t *testing.T) {
 	windowsIsNotABench(t)
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600); err != nil {
+	src := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(src, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	var errOut bytes.Buffer
-	_, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth, deadline: 30 * time.Second, noWall: true,
-	}, &errOut)
-	if code != 0 {
-		t.Fatalf("an 0600 auth copy runs, got exit %d:\n%s", code, errOut.String())
+	dataHome := t.TempDir()
+	if reason := copyAuth(src, "fake", dataHome); reason != "" {
+		t.Fatalf("an 0600 auth source copies, got the refusal: %s", reason)
 	}
-	copied := filepath.Join(slot, "data", "auth.json")
-	st, err := os.Stat(copied)
-	if err != nil {
-		t.Fatalf("the auth copy was not written: %v", err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("the auth copy is mode %04o, want 0600", st.Mode().Perm())
-	}
-	body, err := os.ReadFile(copied)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(body) != `{"fake":"the-fake-secret"}` {
-		t.Errorf("the copy holds only the named provider entry, got %s", body)
+	for _, copied := range []string{
+		filepath.Join(dataHome, "auth.json"),
+		filepath.Join(dataHome, "opencode", "auth.json"),
+	} {
+		st, err := os.Stat(copied)
+		if err != nil {
+			t.Fatalf("the auth copy was not written: %v", err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("the auth copy is mode %04o, want 0600", st.Mode().Perm())
+		}
+		body, err := os.ReadFile(copied)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != `{"fake":"the-fake-secret"}` {
+			t.Errorf("the copy holds only the named provider entry, got %s", body)
+		}
 	}
 }
 
@@ -2013,7 +2012,8 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 // ISSUE #881 (b), the legacy half: `--auth` with a `--worker` description whose key is a
 // key_file still copies the provider secret to the data home -- and says so in ONE NOTE
 // line, because a description that named "secret": "<NAME>" would keep the key in the
-// environment instead.
+// environment instead. The copy is the child's for the length of the run and no longer:
+// when the card ends, no auth.json exists on the bench.
 func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -2035,8 +2035,57 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}
 	mustContain(t, "the legacy note", stderr.String(), "NATIVE NOTE: --auth")
-	if _, err := os.Stat(filepath.Join(slot, "data", "auth.json")); err != nil {
-		t.Errorf("the legacy shape still copies the auth file to the data home: %v", err)
+	for _, p := range []string{
+		filepath.Join(slot, "data", "auth.json"),
+		filepath.Join(slot, "data", "opencode", "auth.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("the legacy copy dies with the card, but %s exists after the run", p)
+		}
+	}
+}
+
+// The legacy --auth copy is the child's for the length of the run and no longer: the
+// harness reads it while the card runs -- the capture carries the child's own read of it,
+// by length and never by value -- and when the run ends no auth.json exists on the bench
+// (the bench standard's plaintext-key rule, docs/SPEC-SECRETS.md's dogfooding ten).
+func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	carried := filepath.Join(slot, "data", "auth.json")
+	cardPath := filepath.Join(root, "card.md")
+	card := "a card\nFAKE-CAT " + carried + "\nFAKE-FINDINGS 0\n"
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		"--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 0 {
+		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	// THE CHILD READ THE COPY WHILE IT RAN: its own cat of the carried file is in the
+	// capture.
+	capture, err := os.ReadFile(filepath.Join(slot, "jobs", "card", "harness-output.log"))
+	if err != nil {
+		t.Fatalf("the run captured no harness output under the job: %v", err)
+	}
+	mustContain(t, "the harness capture", string(capture), "cat "+carried+": ok len=")
+	// AND NO AUTH.JSON EXISTS AFTER THE CARD: neither the carried copy nor the spelling
+	// beside it.
+	for _, p := range []string{
+		carried,
+		filepath.Join(slot, "data", "opencode", "auth.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("no auth.json exists on the bench after a card, but %s exists", p)
+		}
 	}
 }
 

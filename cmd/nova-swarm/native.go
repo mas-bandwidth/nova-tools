@@ -403,13 +403,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
 	// this step is skipped entirely for one. When a description IS given and --auth is
 	// used, the copy is the legacy path and one NOTE line says so.
+	//
+	// AND THE COPY DIES WITH THE CARD. The child reads the copy for as long as it runs
+	// -- every launch of a retried card included -- and when the run returns by any path
+	// the copy is removed: a plaintext key file that outlives its card is the bench
+	// standard's plaintext-key drift (docs/SPEC-SECRETS.md, the dogfooding ten), left
+	// in a data home the hygiene reap may not visit for days. The secret shape still
+	// writes nothing at all.
 	if cfg.authFile != "" {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
 		}
+		defer removeAuthCopy(dataHome, errOut)
 		if cfg.worker != nil {
-			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
+			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600, and the copy is removed when the run ends; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
 				oneline.Field(cfg.authFile))
 		}
 	}
@@ -1507,6 +1515,24 @@ func copyAuth(src, provider, dataHome string) string {
 		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
 	}
 	return ""
+}
+
+// removeAuthCopy deletes the carried auth copy when the run ends. It is deferred the
+// moment copyAuth succeeds, so every return path after it -- done, failed, wall, idle,
+// terminated, or a refusal between the copy and the child's start -- leaves no auth.json
+// on the bench. The two paths are exactly the two copyAuth writes, named rather than
+// walked, and a file that is already gone is not an error. A removal that fails is a
+// NOTE, never a refusal: the run's own verdict is already decided, and the hygiene reap
+// takes what this misses.
+func removeAuthCopy(dataHome string, errOut io.Writer) {
+	for _, p := range []string{
+		filepath.Join(dataHome, "auth.json"),
+		filepath.Join(dataHome, "opencode", "auth.json"),
+	} {
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the auth copy %s could not be removed at the run's end: %s\n", oneline.Field(p), oneline.Escape(err.Error()))
+		}
+	}
 }
 
 // writeJobConfig writes the ONE opencode.json the job's harness reads, beside the carried
