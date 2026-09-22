@@ -102,3 +102,10 @@ record rule — is missing. Later slices add: the fallback round-trip per use
 (write through Redis, kill it, read the file); `spill`/`recall` with a TTL that
 expires; `presence` ageing out a heartbeat; and `check` refusing an instance
 bound beyond localhost and the tailnet or with persistence on.
+
+## Tests this spec demands
+
+- TestSpillRefusedWithoutOwner — spill with a name but no owner exits 2 with the remedy line.
+- TestSpillRefusedWithoutTTL — spill with no TTL exits 2; an unbounded key is refused, not stored.
+- TestRecallRefusesAnExpiredKey — spill with a short TTL against a faked clock, advance past it, recall exits 1.
+- TestEveryEphemeralKeyCarriesOwnerAndTTL — a repo/shape assertion that no spill path admits a key lacking owner or TTL.
