@@ -218,6 +218,19 @@ func (g *Graph) Accepted(id string) bool {
 
 func (n Node) accepted() bool { return n.Merged && n.Green }
 
+// Accept marks id as terminal accepted: merged and green. It is the join that
+// satisfies a dependent node's need.
+func (g *Graph) Accept(id string) error {
+	n, ok := g.node[id]
+	if !ok {
+		return fmt.Errorf("node %q not found in graph", id)
+	}
+	n.Merged = true
+	n.Green = true
+	g.node[id] = n
+	return nil
+}
+
 // State names a node's progress: open, merged, or accepted. A merged node that is not
 // yet green is the blocker nova-pulse harvest settles.
 func (n Node) State() string {
