@@ -123,6 +123,33 @@ should be against the JOHNNY class and against the landed/recut outcome, not aga
 score column — and the weekly false-pass number Stella owns wants pairs at the same head,
 which the ledger now writes.
 
+## The scale: the raw answers say the provider is probably counting from 0
+
+The printed score is `clamp(round(raw), 1, 10)` and the RAW travels into the ledger beside
+it, because the one thing nobody could settle before paying was whether Jev answers in the
+numbering the ten levels carry (1-10) or in their INDEXES (0-9). The 122 raws now say
+something about that:
+
+- range **0.38 to 8.00**; 119 of 122 are fractional.
+- **four answers fall below 1.0** (0.38, 0.79, 0.84, 0.92). A strict 1-10 reading cannot
+  produce those.
+- nothing reached 9 or 10, and only two rows hit 8.00 exactly; the next highest is 7.98.
+
+That is more consistent with a **0-based** scale over the ten levels than with the 1-10 the
+instructions ask for. If so, every printed score here is **one lower** than the level Jev
+picked, and the right reading of this run is "median 3 on the self-checks, median 8 on the
+runtime cells" rather than 2 and 7. It does not change the ORDER of anything, so the
+separation by class, the confusion table and the (absent) correlation all stand; it changes
+where the APPROVE bar sits.
+
+Nobody should guess which it is. The raws are in the ledger and beside this file, so the
+question can be settled by asking Jev one calibration question over a handful of PRs whose
+level a friend has already fixed -- not by re-running 122.
+
+Provider confidence on these answers is low: min 0.00, p25 0.21, median **0.43**, max 0.85.
+No floor is applied to the score today (the checks, not the confidence, are what HOLDs), but
+a floor tuned on this distribution is the obvious next measurement.
+
 ## The 122 rows
 
 | PR | cell | class(report) | read? | symbol | paths | done | claims | jev | verdict |

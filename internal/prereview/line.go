@@ -58,6 +58,13 @@ type Disposition struct {
 // 10 in their own text and the question says so, but a provider that answers in
 // level INDEXES would be one off, and the only way anyone can ever tell is if
 // both numbers are on the record.
+//
+// The 2026-09-22 pass says they probably are indexes: the 122 raws run 0.38 to
+// 8.00, and FOUR of them fall below 1.0, which a strict 1-10 answer cannot do
+// (testdata/jev-2026-09-22/RUN.md). The clamp below is therefore conservative --
+// it can only ever report a score LOWER than the level Jev picked, never higher
+// -- and the question is settled by one calibration ask against levels a friend
+// has fixed, not by re-running the corpus.
 func ScoreFromAnswer(raw float64) int {
 	if math.IsNaN(raw) {
 		return 1
