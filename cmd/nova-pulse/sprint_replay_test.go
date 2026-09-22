@@ -76,8 +76,10 @@ func newReplayHarness(t *testing.T) *replayHarness {
 			// No primary record is consulted in the replay: every close below carries the
 			// record it came from, exactly as the day did.
 			records: nil,
-			cards:   &sprint.FakeCards{},
-			getenv:  func(string) string { return "" },
+			cards: func(addr, user, password string) (sprint.Cards, error) {
+				return &sprint.FakeCards{}, nil
+			},
+			getenv: func(string) string { return "" },
 		},
 	}
 	return h

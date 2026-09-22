@@ -26,10 +26,13 @@ import (
 // rule) in two binaries that must agree forever.
 
 // sprintDeps are the seams a test replaces: the store, and the two primary-record readers.
+// cards is a factory rather than a value, like open, because the ev:cards half now dials
+// the fleet Redis too (#2587's stream) and does not know --store, --store-user or the
+// password until the flags are parsed.
 type sprintDeps struct {
 	open    func(addr, user, password string) (sprint.Store, error)
 	records func(friends []string) sprint.Records
-	cards   sprint.Cards
+	cards   func(addr, user, password string) (sprint.Cards, error)
 	getenv  func(string) string
 }
 
@@ -41,7 +44,9 @@ func defaultSprintDeps() sprintDeps {
 		records: func(friends []string) sprint.Records {
 			return sprint.NewGH("", os.Getenv("GH_CONFIG_DIR"), friends, 30*time.Second)
 		},
-		cards:  &sprint.FakeCards{},
+		cards: func(addr, user, password string) (sprint.Cards, error) {
+			return sprint.DialCards(context.Background(), addr, user, password)
+		},
 		getenv: os.Getenv,
 	}
 }
@@ -100,11 +105,27 @@ func (s storeFlags) open(f *flags, deps sprintDeps) (sprint.Store, error) {
 	if strings.TrimSpace(*s.addr) == "" {
 		return nil, fmt.Errorf("no store")
 	}
-	password := ""
-	if deps.getenv != nil {
-		password = deps.getenv(*s.passwordEnv)
+	return deps.open(*s.addr, *s.user, s.password(deps))
+}
+
+// password reads the store password from the NAMED ENVIRONMENT VARIABLE, never from a flag
+// (a flag is in the process table). Both the store and the ev:cards half read it the same
+// way, because they are the same fleet Redis.
+func (s storeFlags) password(deps sprintDeps) string {
+	if deps.getenv == nil {
+		return ""
 	}
-	return deps.open(*s.addr, *s.user, password)
+	return deps.getenv(*s.passwordEnv)
+}
+
+// openCards dials the ev:cards half over the same addr/user/password as the store. It
+// returns a nil Cards, no error when deps.cards is nil (a test that never flips), so
+// flipFromRecords can pass it straight to sprint.Flip.
+func (s storeFlags) openCards(deps sprintDeps) (sprint.Cards, error) {
+	if deps.cards == nil {
+		return nil, nil
+	}
+	return deps.cards(*s.addr, *s.user, s.password(deps))
 }
 
 func sprintOpen(args []string, stdout, stderr io.Writer, now time.Time, deps sprintDeps) int {
@@ -250,8 +271,15 @@ func sprintStatus(args []string, stdout, stderr io.Writer, now time.Time, deps s
 		return refuse(stderr, " sprint status", "no sprint is open; run: nova-pulse sprint open --name <id> --goal <one sentence>")
 	}
 	if *flip {
+		cards, err := sf.openCards(deps)
+		if err != nil {
+			return refuse(stderr, " sprint status", err.Error())
+		}
+		if closer, ok := cards.(interface{ Close() error }); ok {
+			defer closer.Close()
+		}
 		for _, s := range active {
-			if code := flipFromRecords(ctx, st, s.Name, splitList(*friends), now, deps, stdout); code != 0 {
+			if code := flipFromRecords(ctx, st, s.Name, splitList(*friends), now, deps, cards, stdout); code != 0 {
 				return code
 			}
 		}
@@ -291,7 +319,7 @@ func sprintStatus(args []string, stdout, stderr io.Writer, now time.Time, deps s
 	return 0
 }
 
-func flipFromRecords(ctx context.Context, st sprint.Store, name string, friends []string, now time.Time, deps sprintDeps, stdout io.Writer) int {
+func flipFromRecords(ctx context.Context, st sprint.Store, name string, friends []string, now time.Time, deps sprintDeps, cards sprint.Cards, stdout io.Writer) int {
 	tasks, err := st.Tasks(ctx, name)
 	if err != nil {
 		return 2
@@ -300,7 +328,7 @@ func flipFromRecords(ctx context.Context, st sprint.Store, name string, friends 
 	if deps.records != nil {
 		recs = deps.records(friends)
 	}
-	changed, problems := sprint.Flip(ctx, tasks, recs, deps.cards, now)
+	changed, problems := sprint.Flip(ctx, tasks, recs, cards, now)
 	for _, t := range changed {
 		if err := st.PutTask(ctx, t); err != nil {
 			return 2
@@ -353,6 +381,14 @@ func sprintRoute(args []string, stdout, stderr io.Writer, now time.Time, deps sp
 	bad := 0
 	for _, t := range tasks {
 		if !t.Open() {
+			continue
+		}
+		// READY (#2636): an open dependency, or a path a task already working holds, and
+		// this task waits -- it is not routed, and it is not an error, so it does not set
+		// the exit code. A serial head is never blocked by this: only what depends on it,
+		// or what shares its paths, waits behind it.
+		if reason := sprint.Blocked(t, all); reason != "" {
+			fmt.Fprintf(stdout, "NOT READY %s %s\n", t.ID, reason)
 			continue
 		}
 		if *handOver {
