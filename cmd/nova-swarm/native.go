@@ -664,7 +664,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if res.terminated {
 			break
 		}
-		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
+		tail := readSince(outLog, before)
+		// A socket that went quiet after the request may have been accepted is
+		// UNKNOWN. Ending it is the deadline in the job config. Launching the
+		// card again would send the request twice. (stella-6b51d37c8d7d)
+		if swarm.LostResponse(tail) {
+			break
+		}
+		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
@@ -1413,6 +1420,12 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	if merged {
+		// The job copy, not the person's file. A black-holed socket then ends
+		// inside ProviderHeaderTimeout / ProviderChunkTimeout instead of at
+		// the 300s idle kill. A lost response is not retried (providerread.go).
+		body = swarm.ApplyProviderReadDeadline(body, provider)
+	}
 	if !merged && notes != nil {
 		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
 	}
