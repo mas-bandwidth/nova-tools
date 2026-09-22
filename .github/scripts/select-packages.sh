@@ -21,7 +21,7 @@ list_all() {
   while read -r pkg; do
     [ -n "$pkg" ] || continue
     printf './%s\n' "${pkg#github.com/mas-bandwidth/nova-tools/}"
-  done < <(go list ./cmd/... ./internal/...)
+  done < <(go list ./cmd/... ./internal/... ./tools/...)
 }
 
 if [ "${1:-}" = "--all" ]; then
@@ -65,6 +65,12 @@ want="$want ./internal/ci"
 # the PR that broke it (#1364, #1409).
 want="$want ./internal/docs"
 
+# tools/testdur holds the two-minute rule's suite budget tests; when
+# docs/TEST-DURATIONS.md is updated, tools/testdur must be judged.
+if git diff --name-only "$base" HEAD 2>/dev/null | grep -q '^docs/TEST-DURATIONS\.md$'; then
+  want="$want ./tools/testdur"
+fi
+
 # dependents: every package in the tree that imports a changed one.
 while read -r pkg deps; do
   p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
@@ -73,7 +79,7 @@ while read -r pkg deps; do
     dp="./${dep#github.com/mas-bandwidth/nova-tools/}"
     case " $want " in *" $dp "*) want="$want $p"; break ;; esac
   done
-done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/...)
+done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/... ./tools/...)
 
 for pkg in "${all[@]}"; do
   case " $want " in *" $pkg "*) printf '%s\n' "$pkg" ;; esac
