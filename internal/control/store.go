@@ -148,6 +148,12 @@ func (h *Handle) WriteAck(now time.Time, ack Ack) error {
 	if err := ValidateAck(ack); err != nil {
 		return err
 	}
+	unlock, err := takeCoordinatorLock(context.Background(), h.lockPath(), h.lockTimeout)
+	if err != nil {
+		return fmt.Errorf("acquiring coordinator lock for ack: %w", err)
+	}
+	defer unlock()
+
 	if err := h.refuseOwnerRebind(ack); err != nil {
 		return err
 	}

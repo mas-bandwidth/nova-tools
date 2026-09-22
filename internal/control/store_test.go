@@ -663,6 +663,69 @@ func TestWriteAck_RefusesBenchRebind(t *testing.T) {
 	}
 }
 
+func TestWriteAck_ConcurrentCompetingBenchesRefused(t *testing.T) {
+	h, err := control.Open(t.TempDir(), 30*time.Second)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	const n = 10
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(n)
+
+	results := make([]error, n)
+	for i := 0; i < n; i++ {
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			results[idx] = h.WriteAck(time.Now().UTC(), control.Ack{
+				Generation: 1,
+				Owner:      "shared-owner",
+				Bench:      fmt.Sprintf("bench-%d", idx),
+				Desired:    control.DesiredRun,
+			})
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+
+	var successCount int
+	var failCount int
+	for _, resErr := range results {
+		if resErr == nil {
+			successCount++
+		} else if errors.Is(resErr, control.ErrInvalidAck) {
+			failCount++
+		} else {
+			t.Errorf("unexpected error: %v", resErr)
+		}
+	}
+
+	if successCount != 1 {
+		t.Fatalf("expected exactly 1 success, got %d", successCount)
+	}
+	if failCount != n-1 {
+		t.Fatalf("expected exactly %d rebind refusals, got %d", n-1, failCount)
+	}
+
+	loaded, err := h.LoadAck("shared-owner")
+	if err != nil {
+		t.Fatalf("LoadAck failed: %v", err)
+	}
+	var winningBench string
+	for i, resErr := range results {
+		if resErr == nil {
+			winningBench = fmt.Sprintf("bench-%d", i)
+			break
+		}
+	}
+	if loaded.Bench != winningBench {
+		t.Fatalf("loaded bench %q != winning bench %q", loaded.Bench, winningBench)
+	}
+}
+
 func TestLoad_UnknownFieldsRefused(t *testing.T) {
 	tmpDir := t.TempDir()
 	h, err := control.Open(tmpDir, 30*time.Second)
