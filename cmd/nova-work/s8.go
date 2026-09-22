@@ -4,9 +4,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
 // s8VerbFlags registers the query verb's flags. The query verb is the S8
@@ -185,14 +188,15 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 	// The client cannot know member exclusions, so it passes both to the session.
 
 	// --snapshot names a published snapshot FILE the offline reader opens under
-	// its own three bounds and its own --cache; it is not a session and there is
-	// no socket to dial. This client does not carry that reader yet, so it
-	// refuses here rather than handing the file to the socket dialler -- which
-	// sent a reader after a session that was never there, as
-	// `cannot reach <file>: ... connect: socket operation on non-socket`
+	// its own three bounds and its own --cache; it is not a session and there
+	// is no socket to dial (docs/SPEC-WORK.md:291). The reader answers the one
+	// ask it can answer honestly from the file alone -- done under --branch
+	// open, empty by construction -- and refuses every other ask towards the
+	// resident session, which is the fix for a path that was handed to the
+	// socket dialler and sent after a session that was never there
 	// (nova-tools#1787).
 	if snapshot != "" {
-		return refused(stderr, "query --snapshot reads a published snapshot file with the offline reader, which this client does not carry yet; use --session <path> for the resident session")
+		return querySnapshot(snapshot, strs, askKind, branch, stdout, stderr)
 	}
 
 	socket := session
@@ -205,4 +209,167 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return ask(socket, b.String(), frameFor("query", verbFlags["query"], strs, nil, nil), askTimeout, stdout, stderr)
+}
+
+// querySnapshot is the offline reader of docs/SPEC-WORK.md:291-293: a reader
+// who is not the coordinator reads a published snapshot with --snapshot in
+// place of --session, read-only, and the answer carries the snapshot's
+// revision. There is no socket and no dial here -- the file is the whole
+// session -- so the three bounds the caller named govern the snapshot and the
+// cache alike (:843-845): a file past one is refused whole, naming the bound
+// and the file, never truncated; and the cache's :state-sha256 must be the
+// sha of the snapshot's own bytes, the same identity check the engine's reader
+// makes (lisp/nova-work/src/state-export.lisp, read-loaded-snapshot).
+func querySnapshot(snapshot string, strs map[string]*string, askKind, branch string, stdout, stderr io.Writer) int {
+	// done --branch open is the one ask this reader answers, because the spec
+	// pins it as empty by construction (SPEC-WORK.md:1791-1793): every :to
+	// :done settles in the same envelope, so no done item is left in O, and
+	// the honest answer is shown=0 with no rows. Every other ask folds the
+	// closed index or the lease log, which only the engine holds, so it goes
+	// to the resident session rather than being guessed at from a file.
+	if askKind != "done" || branch != "open" {
+		return refused(stderr, "query --snapshot answers --ask done --branch open, the one ask that is empty by construction; --ask "+askKind+" --branch "+branch+" needs the resident session: use --session <path>")
+	}
+
+	maxBytes, err := snapshotBound(strs, "max-bytes")
+	if err != nil {
+		return refused(stderr, "query --snapshot: "+err.Error())
+	}
+	maxDepth, err := snapshotBound(strs, "max-depth")
+	if err != nil {
+		return refused(stderr, "query --snapshot: "+err.Error())
+	}
+	maxNodes, err := snapshotBound(strs, "max-nodes")
+	if err != nil {
+		return refused(stderr, "query --snapshot: "+err.Error())
+	}
+	limits := worklang.Limits{MaxBytes: maxBytes, MaxDepth: maxDepth, MaxNodes: maxNodes}
+
+	// BYTES first, on both files, before a byte of either is parsed: a file
+	// past the bound is refused whole, never truncated to fit.
+	data, err := os.ReadFile(snapshot)
+	if err != nil {
+		return refused(stderr, "query --snapshot: could not read the snapshot at "+snapshot+": "+err.Error())
+	}
+	if len(data) > limits.MaxBytes {
+		return refused(stderr, "query --snapshot: the snapshot at "+snapshot+fmt.Sprintf(" is past --max-bytes=%d (file is %d bytes); refused whole, never truncated", limits.MaxBytes, len(data)))
+	}
+	cachePath := *strs["cache"]
+	cacheData, err := os.ReadFile(cachePath)
+	if err != nil {
+		return refused(stderr, "query --snapshot: could not read the cache at "+cachePath+": "+err.Error())
+	}
+	if len(cacheData) > limits.MaxBytes {
+		return refused(stderr, "query --snapshot: the cache at "+cachePath+fmt.Sprintf(" is past --max-bytes=%d (file is %d bytes); refused whole, never truncated", limits.MaxBytes, len(cacheData)))
+	}
+
+	// The cache identifies the snapshot: its :state-sha256 names the bytes
+	// this run read, so a cache another snapshot wrote cannot vouch for this
+	// one, and the reader never answers for bytes it did not check.
+	cacheForm, err := worklang.Read(cachePath, cacheData, limits)
+	if err != nil {
+		return refused(stderr, "query --snapshot: "+err.Error())
+	}
+	sum := swarm.HashBytes(data)
+	if f, ok := formGetf(cacheForm, "state-sha256"); !ok || f.Kind != worklang.String || f.Value != sum {
+		return refused(stderr, "query --snapshot: the offline reader refused the snapshot at "+snapshot+": the cache at "+cachePath+" does not match it (its state-sha256 is not the snapshot's "+sum+")")
+	}
+
+	snapForm, err := worklang.Read(snapshot, data, limits)
+	if err != nil {
+		return refused(stderr, "query --snapshot: "+err.Error())
+	}
+	rev, err := snapshotRevision(snapshot, snapForm)
+	if err != nil {
+		return refused(stderr, "query --snapshot: "+err.Error())
+	}
+
+	// The counters the grammar's every QUERY OK carries, as this reader spent
+	// them: two restricted reads (the snapshot, the cache) and no replay -- the
+	// revision is read from the history the clip pinned, never recounted.
+	fmt.Fprintf(stdout, "QUERY OK ask=done scope=%d branch=open rows=0 shown=0 parses=2 replays=0\n", rev)
+	return 0
+}
+
+// snapshotBound reads one of --snapshot's three bounds. queryVerb required the
+// flag above; here it must also be a positive count, because this reader --
+// not a session -- is the one that enforces it, and a bound it cannot read is
+// a refusal rather than a guess.
+func snapshotBound(strs map[string]*string, name string) (int, error) {
+	v := *strs[name]
+	n := 0
+	for i := 0; i < len(v); i++ {
+		c := v[i]
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("--%s %q is not a positive count", name, v)
+		}
+		n = n*10 + int(c-'0')
+		if n > 1000000000 {
+			return 0, fmt.Errorf("--%s %q is not a positive count", name, v)
+		}
+	}
+	if n <= 0 {
+		return 0, fmt.Errorf("--%s %q is not a positive count", name, v)
+	}
+	return n, nil
+}
+
+// formGetf reads one property from a plist form the way the engine's own getf
+// does: the value immediately after the keyword, the first spelling winning.
+// A form that is not a list holds no properties at all.
+func formGetf(f worklang.Form, key string) (worklang.Form, bool) {
+	if f.Kind != worklang.List {
+		return worklang.Form{}, false
+	}
+	for i := 0; i+1 < len(f.List); i += 2 {
+		if f.List[i].IsKeyword(key) {
+			return f.List[i+1], true
+		}
+	}
+	return worklang.Form{}, false
+}
+
+// snapshotRevision reads the revision the snapshot pins, the way the engine's
+// replay computes it (lisp/nova-work/src/state.lisp, apply-event): the seed
+// starts at revision 0 and every event's :rev raises the revision to its own
+// maximum, so the newest :rev in the history IS the revision the answer
+// carries. The records are read, never replayed: this holds the engine's own
+// pinned value, not a recount of it.
+func snapshotRevision(snapshot string, form worklang.Form) (int64, error) {
+	if form.Kind != worklang.List {
+		return 0, fmt.Errorf("the snapshot at %s is not a (:seed ... :history ...) form: its one form is not a list", snapshot)
+	}
+	history, ok := formGetf(form, "history")
+	if !ok {
+		return 0, nil
+	}
+	if history.Kind != worklang.List {
+		return 0, fmt.Errorf("the snapshot at %s holds a :history that is not a list", snapshot)
+	}
+	var rev int64
+	for _, record := range history.List {
+		if record.Kind != worklang.List {
+			return 0, fmt.Errorf("the snapshot at %s holds a history record that is not a list", snapshot)
+		}
+		events, ok := formGetf(record, "events")
+		if !ok {
+			continue
+		}
+		if events.Kind != worklang.List {
+			return 0, fmt.Errorf("the snapshot at %s holds a history record whose :events is not a list", snapshot)
+		}
+		for _, event := range events.List {
+			if event.Kind != worklang.List {
+				return 0, fmt.Errorf("the snapshot at %s holds an event that is not a list", snapshot)
+			}
+			r, ok := formGetf(event, "rev")
+			if !ok || r.Kind != worklang.Integer {
+				return 0, fmt.Errorf("the snapshot at %s holds an event without an integer :rev", snapshot)
+			}
+			if r.Int > rev {
+				rev = r.Int
+			}
+		}
+	}
+	return rev, nil
 }
