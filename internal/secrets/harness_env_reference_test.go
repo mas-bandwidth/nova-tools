@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // TestHarnessConfigsReferenceEnvNames pins this sentence from
@@ -15,8 +17,9 @@ import (
 //
 // A harness config is the provider declaration a worker's description becomes:
 // its apiKey is the reference {env:NAME}, never the value (SPEC-SWARM "native
-// --worker"). This test holds that shape to the rule and then shows the rule has
-// teeth, by refusing a config that carries the key itself instead of the name.
+// --worker"). This test exercises the real production writer in
+// internal/swarm/worker.go (Worker.HarnessConfig), failing if the writer emits
+// a literal key or raw variable name rather than an {env:NAME} reference.
 func TestHarnessConfigsReferenceEnvNames(t *testing.T) {
 	t.Parallel()
 
@@ -25,7 +28,13 @@ func TestHarnessConfigsReferenceEnvNames(t *testing.T) {
 		t.Fatalf("fixture name %q is not a valid env var name", envName)
 	}
 
-	config := harnessConfig(t, "{env:"+envName+"}")
+	w := swarm.Worker{
+		Provider: "deepseek",
+		Model:    "deepseek-chat",
+		EnvVar:   envName,
+	}
+
+	config := w.HarnessConfig()
 	ref := harnessAPIKey(t, config)
 	if !envReferencePattern.MatchString(ref) {
 		t.Errorf("apiKey = %q, want a {env:NAME} reference and never a literal key", ref)
@@ -43,33 +52,15 @@ func TestHarnessConfigsReferenceEnvNames(t *testing.T) {
 
 	// The sentence is not vacuous: a config that carries the value instead of
 	// the name is DRIFT, and it is the shape above, not this one, that passes.
-	literal := harnessConfig(t, "sk-live-deepseek-key")
-	if envReferencePattern.MatchString(harnessAPIKey(t, literal)) {
-		t.Errorf("a literal key was accepted as an {env:NAME} reference:\n%s", literal)
+	for _, badKey := range []string{"sk-live-deepseek-key", "ghp_1234567890abcdef", envName} {
+		if envReferencePattern.MatchString(badKey) {
+			t.Errorf("a literal key %q was accepted as an {env:NAME} reference", badKey)
+		}
 	}
 }
 
 // envReferencePattern is the {env:NAME} reference a harness config must carry.
 var envReferencePattern = regexp.MustCompile(`^\{env:[A-Za-z_][A-Za-z0-9_]*\}$`)
-
-// harnessConfig marshals the provider declaration shape a harness config has,
-// with apiKey set to key.
-func harnessConfig(t *testing.T, key string) []byte {
-	t.Helper()
-	raw, err := json.Marshal(map[string]any{
-		"$schema": "https://example.invalid/config.json",
-		"provider": map[string]any{
-			"deepseek": map[string]any{
-				"options": map[string]any{"apiKey": key},
-				"models":  map[string]any{"deepseek-chat": map[string]any{}},
-			},
-		},
-	})
-	if err != nil {
-		t.Fatalf("marshal harness config: %v", err)
-	}
-	return raw
-}
 
 // harnessAPIKey reads the single provider's apiKey back out of a harness config.
 func harnessAPIKey(t *testing.T, raw []byte) string {
