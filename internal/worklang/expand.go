@@ -766,6 +766,23 @@ func (s issueSelector) match(i Issue) bool {
 	return true
 }
 
+// parseSelectorBool reads a selector boolean. The spec writes it as the bare
+// symbol true or false (`:has-pr false`, `:green true`); any other token -- a
+// typo such as tru, a keyword, a string -- is not a boolean, so the caller
+// refuses it instead of reading it as false and selecting the opposite set.
+func parseSelectorBool(val Form) (bool, bool) {
+	if val.Kind != Symbol {
+		return false, false
+	}
+	switch val.Value {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
+}
+
 func parseIssueSelector(file string, form Form) (issueSelector, error) {
 	var s issueSelector
 	body := form.List[1:]
@@ -784,14 +801,12 @@ func parseIssueSelector(file string, form Form) (issueSelector, error) {
 		case "state":
 			s.state = val.Value
 		case "has-pr":
-			switch val.Kind {
-			case Symbol, Keyword:
-				b := val.Value == "true"
-				s.hasPR = &b
-			default:
+			b, ok := parseSelectorBool(val)
+			if !ok {
 				return s, refuse(file, fmt.Sprintf(
-					":derive :from :has-pr %s is not a boolean; refusing to guess", renderVal(val)))
+					":derive :from :has-pr %s is not a boolean (want true or false); refusing to guess", renderVal(val)))
 			}
+			s.hasPR = &b
 		default:
 			return s, refuse(file, fmt.Sprintf(
 				":derive :from :%s is not a known selector key; refusing to guess", key.Value))
@@ -837,14 +852,12 @@ func parseBranchSelector(file string, form Form) (branchSelector, error) {
 		case "base":
 			s.base = val.Value
 		case "green":
-			switch val.Kind {
-			case Symbol, Keyword:
-				b := val.Value == "true"
-				s.green = &b
-			default:
+			b, ok := parseSelectorBool(val)
+			if !ok {
 				return s, refuse(file, fmt.Sprintf(
-					":fold :over :green %s is not a boolean; refusing to guess", renderVal(val)))
+					":fold :over :green %s is not a boolean (want true or false); refusing to guess", renderVal(val)))
 			}
+			s.green = &b
 		default:
 			return s, refuse(file, fmt.Sprintf(
 				":fold :over :%s is not a known selector key; refusing to guess", key.Value))

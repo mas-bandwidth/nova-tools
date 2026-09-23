@@ -225,4 +225,69 @@ func TestIssue2246(t *testing.T) {
 			}
 		}
 	})
+	// worklang-selector-booleans-refuse-anything-but-true-or-false: :has-pr
+	// and :green accept exactly the tokens true and false. Any other symbol
+	// or keyword (a typo such as tru, or :yes) is refused rather than read as
+	// false, which would silently select the opposite issue or branch set.
+	t.Run("worklang-selector-booleans-refuse-anything-but-true-or-false", func(t *testing.T) {
+		facts := &worklang.Facts{
+			Issues: []worklang.Issue{
+				{Number: 1, Slug: "s", URL: "https://github.example.invalid/x/issues/1",
+					Repo: "mas-bandwidth/schema", Label: "schema", State: "open"},
+				{Number: 2, Slug: "t", URL: "https://github.example.invalid/x/issues/2",
+					Repo: "mas-bandwidth/schema", Label: "schema", State: "open", HasPR: true, PRNumber: 9},
+			},
+			Branches: []worklang.Branch{
+				{Name: "rowan/a", Base: "dev", Green: true},
+				{Name: "rowan/b", Base: "dev", Green: false},
+			},
+		}
+		derive := func(v string) string {
+			return `(:plan :version 1
+ (:goal :id "g"
+  :acceptance ((:id "a1" :kind :test :subject "test:schema/versioning@HEAD" :predicate :passes)))
+ (:derive :as "schema/issue-{n}" :kind go-fix
+  :from (:issues :repo "mas-bandwidth/schema" :label "schema" :state :open :has-pr ` + v + `)
+  :repo "mas-bandwidth/schema" :base "dev" :inputs ((:issue "{url}"))
+  :output (:branch "rowan/{n}-{slug}" :green ("test:schema/versioning"))
+  :budget (:minutes 30 :tokens 120000 :model-floor sonnet)
+  :affinity (:bench local :route "deepseek-flash"))
+ (:clip :per-node))`
+		}
+		fold := func(v string) string {
+			return `(:plan :version 1
+ (:goal :id "g"
+  :acceptance ((:id "a1" :kind :merged :subject "pr:round-7" :predicate :merged-at)))
+ (:fold :as "round-7" :kind fold
+  :over (:branches :prefix "rowan/" :base "dev" :green ` + v + `)
+  :repo "mas-bandwidth/nova-tools" :base "dev" :inputs ((:artifact "{branch}"))
+  :output (:branch "rowan/round-7" :green ("gate:merge-clean"))
+  :budget (:minutes 45 :tokens 180000 :model-floor sonnet)
+  :affinity (:bench local :route "deepseek-flash"))
+ (:clip :per-node))`
+		}
+		expand := func(src string) ([]worklang.Card, error) {
+			parsed, err := worklang.ParsePlan("work.work", []byte(src), worklang.DefaultLimits())
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			return worklang.ExpandPlan(parsed, facts)
+		}
+		for _, v := range []string{"true", "false"} {
+			if _, err := expand(derive(v)); err != nil {
+				t.Errorf(":has-pr %s refused: %v", v, err)
+			}
+			if _, err := expand(fold(v)); err != nil {
+				t.Errorf(":green %s refused: %v", v, err)
+			}
+		}
+		for _, v := range []string{"tru", "yes", ":true", ":no", "nil"} {
+			if _, err := expand(derive(v)); err == nil || !strings.Contains(err.Error(), ":has-pr") || !strings.Contains(err.Error(), "not a boolean") {
+				t.Errorf(":has-pr %s was not refused as not a boolean: err=%v", v, err)
+			}
+			if _, err := expand(fold(v)); err == nil || !strings.Contains(err.Error(), ":green") || !strings.Contains(err.Error(), "not a boolean") {
+				t.Errorf(":green %s was not refused as not a boolean: err=%v", v, err)
+			}
+		}
+	})
 }
