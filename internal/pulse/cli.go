@@ -99,6 +99,7 @@ func statusVerb(args []string, out, errs io.Writer) int {
 		queue, roots, slotsStore, day string
 		timeout, max                  int
 		expandingHours                int
+		fleet                         bool
 	}{timeout: 120, max: 20, expandingHours: 2}
 	f := flag.NewFlagSet("status", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
@@ -109,6 +110,7 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	f.IntVar(&o.timeout, "timeout", 120, "bound on each gh child, seconds")
 	f.IntVar(&o.max, "max", 20, "per-kind output cap")
 	f.IntVar(&o.expandingHours, "expanding-hours", 2, "hours above the threshold before the verdict reads EXPANDING")
+	f.BoolVar(&o.fleet, "fleet", false, "read the queue's nodes/receipts projection instead of job files")
 	if err := f.Parse(args); err != nil {
 		return refusal(errs, "STATUS", fmt.Errorf("%s (run nova-pulse help)", err))
 	}
@@ -127,7 +129,7 @@ func statusVerb(args []string, out, errs io.Writer) int {
 	return Status(StatusInput{
 		Queue: o.queue, Roots: o.roots, SlotsStores: o.slotsStore, Day: o.day, Max: o.max,
 		Timeout: time.Duration(o.timeout) * time.Second, ExpandingHours: o.expandingHours,
-		Stdout: out, Stderr: errs,
+		Fleet: o.fleet, Stdout: out, Stderr: errs,
 	})
 }
 
