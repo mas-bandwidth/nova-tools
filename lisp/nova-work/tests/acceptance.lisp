@@ -308,7 +308,7 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
     (ok (search "\"operation\": \"op-9\"" frame) "the frame carries no operation id: ~A" frame))
   ;; (c) The operation diagnostic attaches the operation id, the op (verb), the
   ;; state (the stage) and a stable named reason, in the grammar's own FAIL line.
-  (multiple-value-bind (state line code)
+    (multiple-value-bind (state line code)
       (registry-operation-state (make-operation-registry) "op-missing")
     (ok (null state) "an unknown operation invented a state")
     (check-equal 2 code "the unknown operation's exit code")
@@ -316,4 +316,28 @@ rows, the worked acceptance's four ids (SPEC-WORK.md:5550)."
     (ok (search "op=" line) "the op (verb) is not attached: ~A" line)
     (ok (search "state=" line) "the stage/state is not attached: ~A" line)
     (ok (search "no such operation" line) "the stable reason is not attached: ~A" line)))
+
+;;; E07-F06-01 (ROADMAP.md:778): "Omit private nodes and descendants from
+;;; rendered output files." docs/SPEC-WORK.md:947-948 — "render never writes a
+;;; private node or its descendants into an output file".
+
+(deftest "TestE07F06OmitPrivateNodesAndDescendants" "docs/SPEC-WORK.md:947-948"
+    "expected=render-omits-a-private-node-and-every-containment-descendant-from-the-output-body"
+  ;; Marking a feature private must omit the feature and every task beneath it,
+  ;; while an unmarked sibling feature still renders.
+  (let* ((state (make-seed-state
+                 '((:id "root" :type :work-set :parent nil :state :unknown)
+                   (:id "root/f1" :type :feature :parent "root" :state :unknown :private t)
+                   (:id "root/f1/t1" :type :task :parent "root/f1" :state :doing)
+                   (:id "root/f1/t2" :type :task :parent "root/f1" :state :doing)
+                   (:id "root/f2" :type :feature :parent "root" :state :unknown))))
+         (view (list :axes '() :revision 1 :projections '()
+                     :members (list "root/f1" "root/f1/t1" "root/f1/t2" "root/f2")
+                     :private '())))
+    (multiple-value-bind (body line code) (render-view view :state state)
+      (ok (eql 0 code) "the render of a view carrying a private node was refused: ~A" line)
+      (ok (search "row=root/f2" body) "a public sibling was dropped from the rendered output: ~A" body)
+      (ok (null (search "root/f1" body)) "a private node leaked into the rendered output: ~A" body)
+      (ok (null (search "root/f1/t1" body)) "a private node's descendant leaked into the rendered output: ~A" body)
+      (ok (null (search "root/f1/t2" body)) "a private node's descendant leaked into the rendered output: ~A" body))))
 

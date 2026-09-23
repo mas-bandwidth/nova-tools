@@ -1648,28 +1648,34 @@ listing; an axis the view has not got answers NIL."
                        :column-members (copy-list (roadmap-view-axis-members view column-axis)))
                  nil 0))))))
 
-(defun render-view-body (view selection)
+(defun render-view-body (view selection &key (state nil))
   "The canonical bytes one stored selection renders. The `--chat` artifact's
-frame and byte bound are the render-target slice's (:3143)."
-  (let ((private (getf view :private)))
+frame and byte bound are the render-target slice's (:3143). A private node and
+its descendants leave the render: with STATE the row's effective privacy (its
+own marker or any containment ancestor's, docs/SPEC-WORK.md:947-948, :3051) is
+the test, and without STATE the view's own `:private` list is."
+  (labels ((hidden-p (id)
+             (if state
+                 (effective-private-p state id)
+                 (member id (getf view :private) :test #'string=))))
     (with-output-to-string (s)
       (format s "revision: ~A~%" (getf view :revision))
       (ecase (getf selection :kind)
         (:rows
          (dolist (row (getf selection :rows))
-           (unless (member row private :test #'string=)
+           (unless (hidden-p row)
              (format s "row=~A~%" row))))
         (:matrix
          (dolist (r (getf selection :row-members))
-           (unless (member r private :test #'string=)
+           (unless (hidden-p r)
              (dolist (c (getf selection :column-members))
-               (unless (member c private :test #'string=)
+               (unless (hidden-p c)
                  (format s "row=~A col=~A" r c)
                  (dolist (pin (getf selection :fixed))
                    (format s " ~A=~A" (car pin) (cdr pin)))
                  (terpri s))))))))))
 
-(defun render-view (view &key projection row-axis column-axis fixed)
+(defun render-view (view &key projection row-axis column-axis fixed state)
   "The `render --view <id> --chat` read of a stored selection
 (docs/SPEC-WORK.md:3131-3136). Answers (values BODY LINE CODE): BODY is the
 rendered selection on success, LINE the refusal otherwise, and CODE 0 or 2."
@@ -1680,4 +1686,4 @@ rendered selection on success, LINE the refusal otherwise, and CODE 0 or 2."
                                   :fixed fixed)
     (if line
         (values nil line code)
-        (values (render-view-body view selection) nil 0))))
+        (values (render-view-body view selection :state state) nil 0))))
