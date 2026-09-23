@@ -8,6 +8,7 @@ package report
 import (
 	"fmt"
 	"strings"
+	"sync"
 )
 
 // Forge is the interface a PR backend must implement for idempotent posting.
@@ -24,6 +25,23 @@ type Forge interface {
 	ListComments(repo string, pr int) ([]string, error)
 	// PostComment adds a comment to the given PR.
 	PostComment(repo string, pr int, body string) error
+}
+
+// HeadChecker is an optional extension of Forge. When the backend implements
+// it, PostVerdictOnce verifies that the head it was given is the PR's live
+// head before posting, and refuses a stale head.
+type HeadChecker interface {
+	// PRHead returns the current head commit SHA of the given PR.
+	PRHead(repo string, pr int) (string, error)
+}
+
+// verdictLocks serializes PostVerdictOnce per repo and PR, so two runs in
+// the same process cannot both observe "no verdict yet" and both post.
+var verdictLocks sync.Map // "repo#pr" -> *sync.Mutex
+
+func verdictLock(repo string, pr int) *sync.Mutex {
+	m, _ := verdictLocks.LoadOrStore(fmt.Sprintf("%s#%d", repo, pr), &sync.Mutex{})
+	return m.(*sync.Mutex)
 }
 
 // EnsurePRBody posts the report body to the PR exactly once. If the PR does
@@ -55,6 +73,16 @@ func EnsurePRBody(f Forge, repo, base, branch, title, body string) (int, bool, e
 // the PR. If a comment with the same content already exists on the PR, it is
 // not posted again.
 //
+// Atomicity: the list-then-post check is serialized per repo and PR inside
+// this process, so concurrent calls in one process post at most once. The
+// Forge offers no atomic compare-and-post, so callers in DIFFERENT processes
+// or hosts must serialize on the same PR themselves (for example a lease on
+// the PR held for the duration of the call); this package cannot.
+//
+// Head: the caller must pass the PR's verified current head. If the Forge
+// also implements HeadChecker, the live head is fetched and a mismatch is an
+// error; nothing is posted for a stale head.
+//
 // The comment format is "PR<pr>: <verdict> head=<sha>" (e.g.
 // "PR2509: APPROVE head=abc123").
 func PostVerdictOnce(f Forge, repo string, pr int, verdict, head string) (bool, error) {
@@ -68,6 +96,20 @@ func PostVerdictOnce(f Forge, repo string, pr int, verdict, head string) (bool, 
 		return false, fmt.Errorf("PostVerdictOnce: head must be non-empty")
 	}
 	comment := fmt.Sprintf("PR%d: %s head=%s", pr, verdict, head)
+
+	mu := verdictLock(repo, pr)
+	mu.Lock()
+	defer mu.Unlock()
+
+	if hc, ok := f.(HeadChecker); ok {
+		live, err := hc.PRHead(repo, pr)
+		if err != nil {
+			return false, err
+		}
+		if live != head {
+			return false, fmt.Errorf("PostVerdictOnce: head %s is not the live head %s of PR %d", head, live, pr)
+		}
+	}
 
 	comments, err := f.ListComments(repo, pr)
 	if err != nil {
