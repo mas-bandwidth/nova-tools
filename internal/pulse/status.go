@@ -34,6 +34,7 @@ import (
 type StatusInput struct {
 	Queue          string // the queue directory: pending, launched, done, failed and the state files
 	Roots          string // comma-separated bench roots, the benches in scope
+	ResultsRoot    string // when set, usage.tsv is read from here instead of from Roots (issue #2632)
 	SlotsStores    string // comma-separated bench slot-lease stores to report utilisation for
 	Batches        string // the directory holding the swarm's batch-*.out outputs; empty claims nothing
 	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
@@ -102,7 +103,7 @@ func Status(in StatusInput) int {
 	hourStart := now.Add(-time.Hour)
 
 	roots := splitList(in.Roots)
-	files := loadUsageFiles(roots)
+	files := loadUsageFiles(statusUsageRoots(in))
 	rows := usageRows(files)
 	queue := readQueue(in.Queue)
 	repo := firstLine(filepath.Join(in.Queue, "REPO"))
@@ -329,6 +330,16 @@ func countGated(dir, sub string) int {
 }
 
 func countUngated(dir, sub string) int { return countCards(dir, sub) - countGated(dir, sub) }
+
+// statusUsageRoots is where usage.tsv is read. --results-root, when set, is that
+// place: the job directory is disposable and the rows that survive a sweep live
+// under the results root (issue #2632). Otherwise the benches named by --roots.
+func statusUsageRoots(in StatusInput) []string {
+	if r := strings.TrimSpace(in.ResultsRoot); r != "" {
+		return splitList(r)
+	}
+	return splitList(in.Roots)
+}
 
 // collectUsage reads every bench's usage.tsv rows through the per-root status index
 // (statusindex.go): the first measured row of each file, which is what the rate arithmetic

@@ -49,7 +49,7 @@ flags:
   --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
   --from <seat>        a seat this machine can open, whose values are re-sealed (seat add only)
   --stdin              read the value from stdin instead of the terminal (seal only)
-  --no-pr              stop after the commit; make no gh call (seal only)
+  --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal only)
   --gh <path>          path to the gh executable (seal only, default: gh)
   --git <path>         path to the git executable (seal only, default: git)
 
@@ -508,7 +508,7 @@ func runSealCLI(args []string) {
 	ghFlag := fs.String("gh", "gh", "gh path")
 	gitFlag := fs.String("git", "git", "git path")
 	stdinFlag := fs.Bool("stdin", false, "read value from stdin")
-	noPRFlag := fs.Bool("no-pr", false, "stop after commit")
+	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
