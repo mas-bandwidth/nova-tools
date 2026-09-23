@@ -356,3 +356,44 @@ func TestSweepRecordsEveryOrderDecision(t *testing.T) {
 		t.Errorf("want three failed-call rows with unreported usage, got %d:\n%s", n, raw)
 	}
 }
+
+// Stella's second hold on #1150: the provider calls in a batch have already
+// happened by the time AppendLedger runs, so a ledger write failure must not
+// lose them. order.tsv is written before the ledger's early return, so the
+// attempt and its usage/outcome are on record even when the sweep then refuses
+// on a failed ledger append.
+func TestSweepRecordsOrderDecisionsEvenWhenTheLedgerAppendFails(t *testing.T) {
+	queue, src, enq := orderFixture(t)
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
+		7: {Type: "score", Score: 0.50, Confidence: 0.95},
+		8: {Type: "score", Score: 0.95, Confidence: 0.95},
+		9: {Type: "score", Score: 0.05, Confidence: 0.95},
+	}}
+	// ledger.tsv already exists (orderFixture seeded it); strip write permission
+	// so Sweep can still READ the open rows but its own AppendLedger call fails.
+	ledgerPath := filepath.Join(queue, ledgerFileName)
+	if err := os.Chmod(ledgerPath, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(ledgerPath, 0o644) })
+
+	code, _, errs := sweepWithScorer(t, queue, src, enq, fake, 0.9, time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC))
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (a failed ledger append refuses the sweep); stderr=%s", code, errs)
+	}
+	if !strings.Contains(errs, "SWEEP REFUSED") {
+		t.Errorf("stderr = %q, want a SWEEP REFUSED line", errs)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(queue, orderFileName))
+	if err != nil {
+		t.Fatalf("order record: %v (order.tsv should be written even though the ledger append then failed)", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 4 || lines[0]+"\n" != orderHeader {
+		t.Fatalf("order.tsv = %q, want a header and three rows despite the ledger failure", raw)
+	}
+	if n := strings.Count(string(raw), "enqueued"); n != 3 {
+		t.Errorf("want all three attempts recorded with their outcome, got %d in:\n%s", n, raw)
+	}
+}

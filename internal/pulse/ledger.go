@@ -223,18 +223,21 @@ func Sweep(in SweepInput) int {
 		enqueued++
 		marks = append(marks, mark(c.row, stamp, c.row.ClosedAt, c.row.Verdict))
 	}
-	if err := AppendLedger(in.Queue, marks...); err != nil {
-		fmt.Fprintf(in.Stderr, "SWEEP REFUSED: %s (fix the ledger under %s, then sweep again)\n", oneline.Err(err), oneline.Field(in.Queue))
-		return 2
-	}
-
 	// Every scored decision is kept with its outcome and the usage the provider
-	// reported: one durable row per attempted call, beside the ledger.
+	// reported: one durable row per attempted call, beside the ledger. Recorded
+	// BEFORE the ledger append, so a provider call already made is never lost if
+	// the ledger write then fails (Stella's second hold on #1150: AppendLedger
+	// used to gate this behind its own early return).
 	if in.Scorer != nil {
 		if err := AppendOrderRecords(in.Queue, stamp, batch); err != nil {
 			fmt.Fprintf(in.Stderr, "SWEEP REFUSED: %s (fix %s under %s, then sweep again)\n", oneline.Err(err), orderFileName, oneline.Field(in.Queue))
 			return 2
 		}
+	}
+
+	if err := AppendLedger(in.Queue, marks...); err != nil {
+		fmt.Fprintf(in.Stderr, "SWEEP REFUSED: %s (fix the ledger under %s, then sweep again)\n", oneline.Err(err), oneline.Field(in.Queue))
+		return 2
 	}
 
 	fmt.Fprintf(in.Stdout, "SWEEP repo=%s open=%d seeded=%d enqueued=%d stale=%d closed=%d held=%d pending=%d red=%d unread=%d\n",
