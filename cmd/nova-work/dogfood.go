@@ -158,8 +158,14 @@ func cmdDogfoodQuestion(args []string, stdout, stderr io.Writer) int {
 	if *tokens < 0 {
 		f.add("--tokens is required; it wants the measured token count of the answer, 0 or more; a negative count is a typo")
 	}
+	// The ledger stores whole milliseconds (wall_ms), so the floor is the
+	// stored resolution: a positive duration under 1ms would be written as 0
+	// and read back as a zero-cost measurement. Refuse it rather than record a
+	// measurement the ledger cannot hold (stella's hold on #2762).
 	if *wall <= 0 {
 		f.add("--wall is required; it wants the measured wall clock of the answer, a positive duration such as 312ms or 4m10s; a zero or negative duration is a measurement with no time in it")
+	} else if *wall < time.Millisecond {
+		f.add(fmt.Sprintf("--wall %s is under the ledger's 1ms resolution; the ledger stores whole milliseconds, so it would be recorded as 0; give 1ms or more", oneline.Field(wall.String())))
 	}
 	if *kind != "" && !dogfoodKnown(*kind, dogfoodQuestionKinds) {
 		f.add(fmt.Sprintf("--kind is one of %s, got %q", oneline.Escape(orList(dogfoodQuestionKinds)), *kind))
@@ -429,22 +435,30 @@ func dogfoodLedgerDir(dir string) error {
 	return os.MkdirAll(dir, 0o755)
 }
 
-// dogfoodAppend writes one row onto a ledger file. The dogfood cadence is one
-// row per question and one per drift, so a ledger is small and read-mostly, and
-// a write that reads what is already there refuses on a row it cannot parse
-// rather than appending to a ledger nobody can read back.
+// dogfoodAppend writes one row onto a ledger file. It never reads and rewrites
+// the file: the row is marshalled first and written as ONE write on a file
+// opened O_APPEND, so the kernel places each row at the end of whatever is
+// there at the moment of the write. Two coordinator or lane calls recording at
+// the same instant each land their row; neither can overwrite the other's, as
+// a read-then-rewrite would (stella's hold on #2762).
 func dogfoodAppend(path string, row any) error {
-	raw, err := os.ReadFile(path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
 	b, err := json.Marshal(row)
 	if err != nil {
 		return err
 	}
-	out := append(raw, b...)
-	out = append(out, '\n')
-	return os.WriteFile(path, out, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	// fmt.Fprintf formats into its own buffer and hands the file one Write.
+	// oneline.Escape leaves json.Marshal's output byte-identical except for a
+	// raw bidi override in a string, which it renders as the \uXXXX escape the
+	// JSON decoder reads back as the same rune.
+	if _, err := fmt.Fprintf(f, "%s\n", oneline.Escape(string(b))); err != nil {
+		f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // dogfoodLoadQuestions reads questions.jsonl whole: one JSON row per line, a
