@@ -169,6 +169,9 @@ the pod's last step is the clip — commit the card's branch, harvest its `RESUL
 kept worktree to base — exactly SPEC-JOBS §6, so the next Job sees warmth and never another
 card's uncommitted diff. `internal/fleetkube` runs a pod in that order — harness, usage row,
 clip (`PodSteps`) — and a card that exits non-zero is accounted and clipped the same way.
+The Job's container `command` is one executable's argv, `/bin/sh -c <script> nova-pod <harness
+argv...>` (`JobCommand`): the script runs the harness, appends the usage row, runs `nova-work
+clip` last, and exits with the harness's code.
 
 ## Part 3 — What nova-sandbox still adds, and what the Studio keeps
 

@@ -2,9 +2,12 @@ package fleetkube
 
 import (
 	"bytes"
+	"flag"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -250,20 +253,152 @@ func TestClipIsThePodLastStep(t *testing.T) {
 	}
 }
 
-// The Job's container command carries the same order: the harness under nova-secrets exec,
-// then nova-work clip as the final command.
-func TestJobCommandEndsWithTheClip(t *testing.T) {
-	cmd := JobCommand(Pod{Label: "card-9", Attempt: 1, Worktree: "/w", Branch: "b", Base: "dev", JobDir: "/j"}, "nova-secrets exec --only GH_TOKEN -- nova-swarm native --label card-9")
-	if len(cmd) == 0 {
-		t.Fatal("JobCommand is empty")
+// fakeNovaWorkEnv, when set in the environment, makes this test binary answer as
+// `nova-work` for the Job command under test: it takes the clip verb's flags, notes in the
+// order log (the variable's value) how many usage.tsv lines exist when the clip starts,
+// then runs swarm.Clip -- what cmd/nova-work clip runs. An unknown flag is refused, so a
+// Job command the real verb would reject fails here too.
+const fakeNovaWorkEnv = "FLEETKUBE_TEST_AS_NOVA_WORK"
+
+func TestMain(m *testing.M) {
+	if order := os.Getenv(fakeNovaWorkEnv); order != "" {
+		os.Exit(fakeNovaWork(order, os.Args[1:]))
 	}
-	last := cmd[len(cmd)-1]
-	if !strings.HasPrefix(last, "nova-work clip ") || !strings.Contains(last, "--harvest") {
-		t.Fatalf("last command = %q, want nova-work clip with --harvest", last)
+	os.Exit(m.Run())
+}
+
+func fakeNovaWork(order string, args []string) int {
+	if len(args) == 0 || args[0] != "clip" {
+		fmt.Fprintf(os.Stderr, "fake nova-work: want the clip verb, got %q\n", args)
+		return 2
 	}
-	for _, c := range cmd[:len(cmd)-1] {
-		if strings.Contains(c, "clip") {
-			t.Fatalf("a clip ran before the last step: %q", cmd)
+	fs := flag.NewFlagSet("clip", flag.ContinueOnError)
+	worktree := fs.String("worktree", "", "")
+	branch := fs.String("branch", "", "")
+	base := fs.String("base", "", "")
+	message := fs.String("message", "", "")
+	result := fs.String("result", "", "")
+	harvest := fs.String("harvest", "", "")
+	if err := fs.Parse(args[1:]); err != nil || fs.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "fake nova-work clip: %v %q\n", err, fs.Args())
+		return 2
+	}
+	raw, _ := os.ReadFile(filepath.Join(*harvest, "usage.tsv"))
+	f, err := os.OpenFile(order, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return 1
+	}
+	fmt.Fprintf(f, "clip usage-lines=%d\n", strings.Count(string(raw), "\n"))
+	f.Close()
+	if _, err := swarm.Clip(swarm.ClipRequest{Worktree: *worktree, Branch: *branch, Base: *base,
+		Message: *message, Result: *result, Harvest: *harvest}); err != nil {
+		fmt.Fprintf(os.Stderr, "fake nova-work clip: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// TestJobCommandRunsHarnessUsageThenClip (the hold on #3234 at 8e54dee3): the Job's
+// container command is an argv Kubernetes can exec -- one executable, then its arguments --
+// and executing it against the fixture card runs the harness (its argv untouched, its log on
+// stdout), appends the pod's usage row, and runs nova-work clip last, for a card that exits
+// 0 and one that exits 3; the container exits with the harness's code.
+func TestJobCommandRunsHarnessUsageThenClip(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rc := range []int{0, 3} {
+		root := t.TempDir()
+		wt, baseSHA := fixtureWorktree(t, root, "rowan/card-2227")
+		jobDir := filepath.Join(root, "shared", "jobs", "card-2227")
+		order := filepath.Join(root, "order.log")
+		bin := filepath.Join(root, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(self, filepath.Join(bin, "nova-work")); err != nil {
+			t.Fatal(err)
+		}
+		// The harness, as the caller builds it: one argv whose words carry spaces and quotes
+		// the shell must not re-split.
+		harness := []string{"/bin/sh", "-c",
+			`cd "$1" && echo "harness: the card's raw log line" && ` +
+				`printf 'RESULT: card-2227 sha=0123456789ab\nDONE\n' > RESULT.md && ` +
+				`echo "the card's work" > work.txt && echo harness >> "$2" && exit "$3"`,
+			"fixture-harness", wt, order, strconv.Itoa(rc)}
+		cmd := JobCommand(Pod{Label: "card-2227", Attempt: 1, Worktree: wt, Branch: "rowan/card-2227",
+			Base: "dev", JobDir: jobDir, Provider: "deepseek", Model: "deepseek-v4"}, harness)
+		if cmd[0] != JobShell || !filepath.IsAbs(cmd[0]) {
+			t.Fatalf("command[0] = %q, want the executable %s", cmd[0], JobShell)
+		}
+		if _, err := os.Stat(cmd[0]); err != nil {
+			t.Fatalf("command[0] %q is not an executable on this host: %v", cmd[0], err)
+		}
+
+		run := exec.Command(cmd[0], cmd[1:]...)
+		run.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), fakeNovaWorkEnv+"="+order)
+		var stdout, stderr bytes.Buffer
+		run.Stdout, run.Stderr = &stdout, &stderr
+		err := run.Run()
+		exit := 0
+		if ee, ok := err.(*exec.ExitError); ok {
+			exit = ee.ExitCode()
+		} else if err != nil {
+			t.Fatalf("rc=%d the Job command did not run: %v", rc, err)
+		}
+		if exit != rc {
+			t.Fatalf("rc=%d the container exited %d, want the harness's %d; stderr %q", rc, exit, rc, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "harness: the card's raw log line") {
+			t.Fatalf("rc=%d the harness log is not on the pod's stdout: %q", rc, stdout.String())
+		}
+
+		// In order: the harness, then the clip, and the usage row (header + one row) was
+		// already in usage.tsv when the clip started.
+		got, err := os.ReadFile(order)
+		if err != nil {
+			t.Fatalf("rc=%d order log: %v", rc, err)
+		}
+		if string(got) != "harness\nclip usage-lines=2\n" {
+			t.Fatalf("rc=%d order = %q, want harness, then the clip after the usage row", rc, got)
+		}
+
+		head, rows := readTSV(t, filepath.Join(jobDir, "usage.tsv"))
+		if strings.Join(head, "\t") != strings.Join(swarm.CardUsageColumns, "\t") {
+			t.Fatalf("rc=%d header = %q, want swarm.CardUsageColumns", rc, head)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("rc=%d usage rows = %v, want one", rc, rows)
+		}
+		row := rows[0]
+		if row["job"] != "card-2227" || row["attempt"] != "1" || row["rc"] != strconv.Itoa(rc) ||
+			row["provider"] != "deepseek" || row["model"] != "deepseek-v4" || row["usd"] != swarm.Dash {
+			t.Fatalf("rc=%d usage row = %v", rc, row)
+		}
+		started, err1 := time.Parse(time.RFC3339, row["started"])
+		ended, err2 := time.Parse(time.RFC3339, row["ended"])
+		if err1 != nil || err2 != nil || ended.Before(started) {
+			t.Fatalf("rc=%d started=%q ended=%q, want RFC3339 with ended >= started", rc, row["started"], row["ended"])
+		}
+		raw, _ := os.ReadFile(filepath.Join(jobDir, "usage.tsv"))
+		if strings.Contains(string(raw), "raw log") {
+			t.Fatalf("rc=%d the harness log leaked into usage.tsv: %q", rc, raw)
+		}
+
+		// The clip ran: branch committed, worktree back at base and clean, RESULT.md harvested.
+		if files := gitT(t, wt, "show", "--name-only", "--format=", "rowan/card-2227"); !strings.Contains(files, "work.txt") {
+			t.Fatalf("rc=%d the card's branch did not commit its work: %q", rc, files)
+		}
+		if h := gitT(t, wt, "rev-parse", "HEAD"); h != baseSHA {
+			t.Fatalf("rc=%d worktree HEAD = %s, want base %s", rc, h, baseSHA)
+		}
+		if st := gitT(t, wt, "status", "--porcelain"); st != "" {
+			t.Fatalf("rc=%d worktree is not clean after the clip: %q", rc, st)
+		}
+		result, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+		if err != nil || !strings.HasPrefix(string(result), "RESULT: card-2227 ") {
+			t.Fatalf("rc=%d RESULT.md was not harvested: %v %q", rc, err, result)
 		}
 	}
 }

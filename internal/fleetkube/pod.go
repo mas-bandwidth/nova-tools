@@ -149,15 +149,56 @@ func UsageRow(p Pod, start, end time.Time, rc int, cost swarm.ProviderUsage) swa
 	return row
 }
 
-// JobCommand is the Job container's command list, in PodSteps order: the card's harness
-// command as the caller built it (nova-secrets exec ... nova-swarm native ...), then the clip
-// as the final command. The usage row is written by the pod runner between the two.
-func JobCommand(p Pod, harness string) []string {
-	return []string{
-		harness,
-		"nova-work clip --worktree " + shq(p.Worktree) + " --branch " + shq(p.Branch) +
-			" --base " + shq(p.Base) + " --result " + ResultFile + " --harvest " + shq(p.JobDir),
+// JobShell is the interpreter the Job's container command runs under. A Kubernetes
+// container `command` is the argv of ONE executable, not a list of shell lines, so the
+// pod's three steps are one sh script and the harness is handed to it as argv, never
+// re-parsed by the shell.
+const JobShell = "/bin/sh"
+
+// JobCommand is the Job container's command: an argv that runs the pod's steps in PodSteps
+// order. It is `/bin/sh -c <script> nova-pod <harness argv...>`: the script runs the harness
+// ("$@", each word exactly as the caller built it, e.g. nova-secrets exec --only ... --
+// nova-swarm native ...) with its log on the pod's stdout, appends the pod's usage row
+// (started, ended, rc; provider and model from the Pod; the cost columns stay dashes, since
+// the shell is not told what the provider billed) to the job's usage.tsv in
+// swarm.CardUsageColumns, writing the header only when the file is new, then runs
+// `nova-work clip` last. The usage row and the clip run whatever the harness's exit code;
+// the container exits with the harness's code, or the clip's when the harness succeeded.
+func JobCommand(p Pod, harness []string) []string {
+	attempt := p.Attempt
+	if attempt <= 0 {
+		attempt = 1
 	}
+	usage := p.UsagePath()
+	fixed := []string{cell(p.Label), strconv.Itoa(attempt)}
+	var tail []string
+	tail = append(tail, cell(dash(p.Provider)), cell(dash(p.Model)))
+	for range swarm.TokenColumns {
+		tail = append(tail, swarm.Dash)
+	}
+	tail = append(tail, swarm.Dash) // usd
+	var b strings.Builder
+	b.WriteString("[ $# -gt 0 ] || { echo 'nova-pod: the Job has no harness to run' >&2; exit 2; }\n")
+	b.WriteString("started=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n")
+	b.WriteString("\"$@\"\n")
+	b.WriteString("rc=$?\n")
+	b.WriteString("ended=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n")
+	b.WriteString("mkdir -p " + shq(p.JobDir) + " || exit 1\n")
+	b.WriteString("[ -e " + shq(usage) + " ] || printf '%s\\n' " + shq(strings.Join(swarm.CardUsageColumns, "\t")) + " >> " + shq(usage) + " || exit 1\n")
+	b.WriteString("printf '%s\\t%s\\t%s\\t%s\\t%s\\n' " + shq(strings.Join(fixed, "\t")) + " \"$started\" \"$ended\" \"$rc\" " +
+		shq(strings.Join(tail, "\t")) + " >> " + shq(usage) + " || exit 1\n")
+	b.WriteString("nova-work clip --worktree " + shq(p.Worktree) + " --branch " + shq(p.Branch) +
+		" --base " + shq(p.Base) + " --message " + shq("card "+p.Label) + " --result " + ResultFile +
+		" --harvest " + shq(p.JobDir) + "\n")
+	b.WriteString("crc=$?\n")
+	b.WriteString("[ \"$rc\" -ne 0 ] && exit \"$rc\"\n")
+	b.WriteString("exit \"$crc\"\n")
+	return append([]string{JobShell, "-c", b.String(), "nova-pod"}, harness...)
+}
+
+// cell is one usage.tsv value: tabs and line breaks become spaces, as AppendCardUsage does.
+func cell(s string) string {
+	return strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(strings.TrimSpace(s))
 }
 
 func dash(s string) string {
