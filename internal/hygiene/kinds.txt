@@ -16,16 +16,16 @@
 #
 # There is no default kind. A kind that is not in this file is refused by name.
 #
-# Format: <kind><TAB><what the card does>
+# Format: <kind><TAB><what the card does><TAB><gated|ungated>
 
-fix-red	fixes one defect, red test first
-transcript-test	makes one docs/TESTS.md section executed line for line
-rebase	replays one of our own open PRs onto the base, changing nothing
-sweep	applies one mechanical class fix at every site the class test names
-mutation-kill	writes the test that kills one surviving mutant
-guard	reverts one commit's non-test files; the named tests must go red
-read	read and report
-probe	read and report
-text	read and report
-tone	read and report
-report	read and report
+fix-red	fixes one defect, red test first	gated
+transcript-test	makes one docs/TESTS.md section executed line for line	gated
+rebase	replays one of our own open PRs onto the base, changing nothing	gated
+sweep	applies one mechanical class fix at every site the class test names	gated
+mutation-kill	writes the test that kills one surviving mutant	gated
+guard	reverts one commit's non-test files; the named tests must go red	gated
+read	read and report	ungated
+probe	read and report	ungated
+text	read and report	ungated
+tone	read and report	ungated
+report	read and report	gated
