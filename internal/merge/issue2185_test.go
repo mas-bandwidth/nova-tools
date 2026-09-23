@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -202,5 +203,108 @@ func TestIssue2185ParkAgeFromStandingRecord(t *testing.T) {
 	}
 	if m["event"] != "park" || m["age"] != "2h0m0s" {
 		t.Fatalf("re-park line = %v, want event=park age=2h0m0s", m)
+	}
+}
+
+// swapDefaultEvents points the production sink at a buffer for one test.
+func swapDefaultEvents(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	saved := DefaultEvents
+	DefaultEvents = &Events{Sink: &buf}
+	t.Cleanup(func() { DefaultEvents = saved })
+	return &buf
+}
+
+// TestIssue2185ProductionSinkIsStderr: the production sink is stderr (docs/SPEC-LOGS.md),
+// and the one door's constructor carries it, so every production enqueue -- nova-merge
+// land, nova-pulse's ledger, GHSweep.Enqueue -- is built with a sink, not a nil.
+func TestIssue2185ProductionSinkIsStderr(t *testing.T) {
+	if DefaultEvents == nil || DefaultEvents.Sink != os.Stderr {
+		t.Fatalf("DefaultEvents = %+v, want a sink on stderr", DefaultEvents)
+	}
+	if door := NewEnqueuer(newFakeEnqueueHost()); door.Events != DefaultEvents {
+		t.Fatalf("NewEnqueuer built a door with Events=%v, want DefaultEvents", door.Events)
+	}
+}
+
+// TestIssue2185ProductionEnqueueEmits: a door built by NewEnqueuer, with no Events set by
+// the caller (land.go's and the ledger's shape), writes the enqueue line after the
+// mutation lands; a refused admission (the sweep's card branch) writes none.
+func TestIssue2185ProductionEnqueueEmits(t *testing.T) {
+	buf := swapDefaultEvents(t)
+	host := newFakeEnqueueHost()
+	host.ids[1341] = "PR_integration6"
+	head := strings.Repeat("b", 40)
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
+	if err := NewEnqueuer(host).Enqueue(context.Background(),
+		EnqueuePR{Number: 1341, HeadRef: "rowan/integration-6", HeadSHA: head, Receipt: receipt}, true); err != nil {
+		t.Fatalf("Enqueue: %v", err)
+	}
+	r := &recordRunner{out: "PR_kwDO\n"}
+	if err := NewGHSweep("mas-bandwidth/nova-tools", "dev", 0, r).Enqueue(
+		SweepPR{Number: 1207, HeadRef: "rowan/impl-something", MergeState: "CLEAN"}); err == nil {
+		t.Fatal("the sweep's host enqueued a card's branch; the queue takes batches only")
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want exactly the one admitted enqueue line, got %d:\n%s", len(lines), buf.String())
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &m); err != nil {
+		t.Fatalf("enqueue line is not one JSON object: %v\n%s", err, lines[0])
+	}
+	if m["event"] != "enqueue" || m["pr"] != float64(1341) || m["head"] != head {
+		t.Fatalf("enqueue line = %v, want event=enqueue pr=1341 head=%s", m, head)
+	}
+}
+
+// TestIssue2185SweepParkThroughUpdateQueueEmits: the queue sweep's poison detector
+// (cmd/nova-merge queue sweep) parks by writing q.Parked inside UpdateQueue, with no
+// instant on the record. That production write emits one park line with the reason and
+// age "-"; a later write that parks nothing new emits none.
+func TestIssue2185SweepParkThroughUpdateQueueEmits(t *testing.T) {
+	lane := t.TempDir()
+	if err := Init(lane, LaneConfig{
+		Repo:       "example.invalid/oak/repo",
+		Base:       "dev",
+		LaneBranch: "refs/heads/nova-merge/lane",
+	}); err != nil {
+		t.Fatalf("Init(lane): %v", err)
+	}
+	st, err := Load(lane)
+	if err != nil {
+		t.Fatalf("Load(lane): %v", err)
+	}
+	buf := swapDefaultEvents(t)
+	// The sweep's own shape, cmd/nova-merge/queue.go cmdQueueSweep.
+	p := Park{PR: 88, Test: "TestRefillCounts", Package: "internal/pulse", Runs: 2, Issue: "-"}
+	if _, err := UpdateQueue(lane, st, LockWait, func(q *Queue) error {
+		q.Queued = append(q.Queued, 88, 89)
+		q.DropPark(p.PR)
+		q.Parked = append(q.Parked, p)
+		q.Skipped = append(q.Skipped, p.PR)
+		q.Queued = QueueRemove(q.Queued, p.PR)
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateQueue (park): %v", err)
+	}
+	if _, err := UpdateQueue(lane, st, LockWait, func(q *Queue) error {
+		q.Queued = append(q.Queued, 90)
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateQueue (no park): %v", err)
+	}
+	lines := strings.Split(strings.TrimRight(buf.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("want exactly one park line, got %d:\n%s", len(lines), buf.String())
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(lines[0]), &m); err != nil {
+		t.Fatalf("park line is not one JSON object: %v\n%s", err, lines[0])
+	}
+	reason, _ := m["reason"].(string)
+	if m["event"] != "park" || !strings.Contains(reason, "TestRefillCounts") || m["age"] != "-" {
+		t.Fatalf("park line = %v, want event=park naming TestRefillCounts with age -", m)
 	}
 }

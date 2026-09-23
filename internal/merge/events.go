@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"time"
 )
@@ -34,6 +35,13 @@ const (
 type Events struct {
 	Sink io.Writer
 }
+
+// DefaultEvents is the production sink: stderr, where docs/SPEC-LOGS.md puts a
+// verb's JSON lines (on a bench a unit's stderr is the journal Alloy reads).
+// NewEnqueuer and UpdateQueue use it, so every production enqueue through the
+// one door and every park written to queue.json emits its line with no caller
+// wiring. A test swaps it for a buffer; nil silences it.
+var DefaultEvents = &Events{Sink: os.Stderr}
 
 // emit writes one event line. A nil Events or a nil Sink is silent: the
 // emitter is additive, never a replacement.
