@@ -484,3 +484,85 @@ func contains(list []string, s string) bool {
 	}
 	return false
 }
+
+// TestOkFriendReviewConflictStaysHarvested: a required read id already taken
+// by a different payload (create_task CONFLICT) must not leave the card
+// review-ready without that read. The call writes no task, the card stays
+// harvested, the event stays pending with a blocking unresolved item naming
+// the id, and once the id is cleared the next pass routes the read and moves
+// the card (stella's hold on #3052 at ba232061).
+func TestOkFriendReviewConflictStaysHarvested(t *testing.T) {
+	st, client := controlRedis(t)
+	ctx := context.Background()
+	sprint := "control-3052c0f1"
+	seedSprint(t, client, sprint)
+	ok := newConsumer(st, sprint, "okf-1")
+	must(t, ok.Start(ctx))
+
+	endCard(t, client, sprint, "card-5", "DONE", "done", "internal/x/c.go", "")
+	if _, err := ok.Pass(ctx); err != nil {
+		t.Fatalf("pass after ended: %v", err)
+	}
+	head := strings.Repeat("5", 40)
+	// Every possible reader's deterministic read id is held by another payload.
+	conflicts := map[string]string{}
+	for _, f := range []string{"ctl-a", "ctl-b", "ctl-c"} {
+		id := task.ReviewID(ctlRepo, 105, head, f)
+		conflicts[id] = f
+		must(t, client.HSet(ctx, "s:"+sprint+":task:"+id, "kind", "review", "state", "open",
+			"payload_sha", "not-this-payload").Err())
+	}
+	harvestCard(t, client, sprint, "card-5", 105, head)
+
+	_, err := ok.Pass(ctx)
+	if !errors.Is(err, ErrReviewBlocked) {
+		t.Fatalf("pass with a conflicting read id = %v; want ErrReviewBlocked", err)
+	}
+	if state, _ := client.HGet(ctx, "s:"+sprint+":card:card-5", "state").Result(); state != "harvested" {
+		t.Fatalf("card-5 state %q after a CONFLICT; want harvested (review-ready needs every read)", state)
+	}
+	pending, err := client.XPending(ctx, "s:"+sprint+":log", GroupOkFriend).Result()
+	must(t, err)
+	if pending.Count != 1 {
+		t.Fatalf("pending = %d after a CONFLICT; want the harvested event kept pending", pending.Count)
+	}
+	unresolved, err := client.HKeys(ctx, "s:"+sprint+":unresolved").Result()
+	must(t, err)
+	var blocked string
+	for _, k := range unresolved {
+		if strings.HasPrefix(k, "card-5:review-conflict:") {
+			blocked = strings.TrimPrefix(k, "card-5:review-conflict:")
+		}
+	}
+	if conflicts[blocked] == "" {
+		t.Fatalf("unresolved %v names no conflicting read id; want card-5:review-conflict:<id>", unresolved)
+	}
+	pushes, cards := logCounts(t, client, sprint)
+	for id := range conflicts {
+		if pushes[id] != 0 {
+			t.Fatalf("%s has a push receipt after a CONFLICT", id)
+		}
+	}
+	if cards["card-5 review-ready"] != 0 {
+		t.Fatal("card-5 has a review-ready receipt after a CONFLICT")
+	}
+
+	// A human clears the conflicting ids; the retried event routes the read.
+	for id := range conflicts {
+		must(t, client.Del(ctx, "s:"+sprint+":task:"+id).Err())
+	}
+	if _, err := ok.Pass(ctx); err != nil {
+		t.Fatalf("pass after the ids were cleared: %v", err)
+	}
+	if got := reviewTasks(t, client, sprint, "card-5"); len(got) != 1 {
+		t.Fatalf("card-5 has %d reads %v after the retry; want exactly 1", len(got), got)
+	}
+	if state, _ := client.HGet(ctx, "s:"+sprint+":card:card-5", "state").Result(); state != "review-ready" {
+		t.Fatalf("card-5 state %q after the retry; want review-ready", state)
+	}
+	pending, err = client.XPending(ctx, "s:"+sprint+":log", GroupOkFriend).Result()
+	must(t, err)
+	if pending.Count != 0 {
+		t.Fatalf("pending = %d after the retry; want 0", pending.Count)
+	}
+}

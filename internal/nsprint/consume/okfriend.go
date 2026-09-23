@@ -71,6 +71,18 @@ type OkFriend struct {
 // than the policy requires. The next pass retries it; nothing is written.
 var ErrNoReaders = errors.New("ok-to-friend: fewer eligible readers than required")
 
+// ErrReviewBlocked keeps a harvested event pending: a required read id is
+// taken by a different payload (CONFLICT) or was cancelled, so the read
+// cannot exist at the exact head. The function wrote only the blocking
+// unresolved item naming the id; the card stays harvested and the next pass
+// retries it once the id is cleared.
+var ErrReviewBlocked = errors.New("ok-to-friend: a required read cannot be created")
+
+// retryable: the event stays pending and is retried next pass.
+func retryable(err error) bool {
+	return errors.Is(err, ErrNoReaders) || errors.Is(err, ErrReviewBlocked)
+}
+
 func (o *OkFriend) logKey() string { return "s:" + o.Sprint + ":log" }
 
 func (o *OkFriend) check() error {
@@ -114,7 +126,7 @@ func (o *OkFriend) Run(ctx context.Context) error {
 		return err
 	}
 	for ctx.Err() == nil {
-		if _, err := o.Pass(ctx); err != nil && ctx.Err() == nil && !errors.Is(err, ErrNoReaders) {
+		if _, err := o.Pass(ctx); err != nil && ctx.Err() == nil && !retryable(err) {
 			return err
 		}
 	}
@@ -159,7 +171,7 @@ func (o *OkFriend) pass(ctx context.Context) (int, error) {
 	}
 	n, err := o.handleBatch(ctx, pending)
 	handled += n
-	if errors.Is(err, ErrNoReaders) {
+	if retryable(err) {
 		deferred = err
 	} else if err != nil {
 		return handled, err
@@ -178,7 +190,7 @@ func (o *OkFriend) pass(ctx context.Context) (int, error) {
 		}
 		n, err := o.handleBatch(ctx, msgs)
 		handled += n
-		if errors.Is(err, ErrNoReaders) {
+		if retryable(err) {
 			deferred = err
 		} else if err != nil {
 			return handled, err
@@ -274,7 +286,7 @@ func (o *OkFriend) handleBatch(ctx context.Context, msgs []redis.XMessage) (int,
 			}
 			err = o.onHarvested(ctx, e, census)
 		}
-		if errors.Is(err, ErrNoReaders) {
+		if retryable(err) {
 			deferred = err
 			continue
 		}
@@ -372,8 +384,13 @@ func (o *OkFriend) onHarvested(ctx context.Context, e *okEvent, census *readerCe
 	if err != nil {
 		return fmt.Errorf("ok-to-friend: review %s: %w", e.label, err)
 	}
-	if values, ok := reply.([]any); ok && len(values) > 0 && values[0] == "RETRY" {
-		return ErrNoReaders
+	if values, ok := reply.([]any); ok && len(values) > 0 {
+		switch values[0] {
+		case "RETRY":
+			return ErrNoReaders
+		case "BLOCKED":
+			return fmt.Errorf("%w: %s %v", ErrReviewBlocked, e.label, values[1:])
+		}
 	}
 	for _, friend := range readers {
 		census.load[friend]++

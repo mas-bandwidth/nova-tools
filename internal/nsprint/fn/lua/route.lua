@@ -114,6 +114,20 @@ do
   -- Guard: the card is harvested at the event's attempt, pr and head, and the
   -- head equals the pushed sha. A reader not registered refuses the whole
   -- call with RETRY and writes nothing, so the event stays pending.
+  -- review-ready means every required read exists at the exact head, so every
+  -- read id is checked before anything is written:
+  --   absent            -> created;
+  --   same payload, open or leased -> EXISTS (that read is already routed);
+  --   same payload, closed -> CLOSED: that reader already read this exact
+  --                        head (the payload pins repo, pr, head and reader),
+  --                        so the read exists and counts;
+  --   same payload, cancelled -> no usable read;
+  --   different payload -> CONFLICT: the id is taken by another payload and
+  --                        the required read cannot be created.
+  -- Any cancelled or CONFLICT id refuses the whole call with BLOCKED: no task
+  -- is created, the card stays harvested, the event is not acked (it stays
+  -- pending and is retried each pass), and one blocking unresolved item
+  -- `<label>:review-<conflict|cancelled>:<id>` names the id a human clears.
   local function okfriend_review(keys, args)
     local S, group, event_id, label, attempt = args[1], args[2], args[3], args[4], args[5]
     local repo, pr, head, actor = args[6], args[7], args[8], args[9]
@@ -140,6 +154,22 @@ do
         local friend = args[base + i * 5 + 1]
         if redis.call('SISMEMBER', 'friends', friend) == 0 then
           return { 'RETRY', 'unregistered ' .. friend }
+        end
+      end
+      for i = 0, n - 1 do
+        local id = args[base + i * 5]
+        local payload_sha = args[base + i * 5 + 4]
+        local key = 's:' .. S .. ':task:' .. id
+        local existing = redis.call('HGET', key, 'payload_sha')
+        local why = nil
+        if existing and existing ~= payload_sha then
+          why = 'conflict'
+        elseif existing and redis.call('HGET', key, 'state') == 'cancelled' then
+          why = 'cancelled'
+        end
+        if why then
+          redis.call('HSETNX', 's:' .. S .. ':unresolved', label .. ':review-' .. why .. ':' .. id, event_id)
+          return { 'BLOCKED', why .. ' ' .. id }
         end
       end
       local at = now_ms()
