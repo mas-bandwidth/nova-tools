@@ -16,8 +16,10 @@ import (
 // five lines docs/SPEC-UPDATE.md carries. Every path is a flag and no flag has a
 // default path: SPEC-UPDATE rule 1 (no search of the cwd, no $HOME) is why a
 // release cut from a laptop and a release cut from a bench are the same release.
-const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
+// The one exception is --receipts, and internal/release/dogfoodgate.go says at
+// length why the gate in front of the definition of done is worth it.
+const Verbs = `nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
 nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]`
@@ -54,7 +56,11 @@ type Deps struct {
 	// Git is the local checkout `cut --local-diff` reads the complete path
 	// list out of when the forge's compare is at its ceiling.
 	Git Git
-	Now func() time.Time
+	// Dogfood is the definition-of-done gate `cut` and `build` run first. A
+	// nil Dogfood is ReadDogfood, which reads the command reference and the
+	// receipts off disk and reaches nothing else.
+	Dogfood Dogfood
+	Now     func() time.Time
 	// Self answers what the nova-update RUNNING THIS is stamped with. It is a
 	// seam rather than a constant because this package is a library and the
 	// stamp lives in main; a nil Self means `adopt` cannot compare its own
@@ -72,9 +78,15 @@ type options struct {
 	repo, from, version, changelog, out, source, bin, machines, ssh, dest, platform string
 	stage, retire, expectSums, expectSumsFrom, sums, securityRead, reason           string
 	pathsFrom, localDiff                                                            string
-	platforms                                                                       platformList
-	dryRun                                                                          bool
-	timeout                                                                         time.Duration
+	// cli and receipts are the dogfood gate's two inputs, and noDogfood is
+	// the way past it. --reason is shared with `pull`, which already had one:
+	// both are somebody saying, in the record, why a release did something
+	// out of the ordinary.
+	cli, receipts string
+	noDogfood     bool
+	platforms     platformList
+	dryRun        bool
+	timeout       time.Duration
 }
 
 // platformList is a repeatable, comma-separated --platform. The fleet is three
@@ -143,6 +155,7 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 	case "help", "--help", "-h":
 		fmt.Fprintln(out, Verbs)
 		fmt.Fprintln(out, CutNote)
+		fmt.Fprintln(out, DogfoodNote)
 		fmt.Fprintln(out, AdoptNote)
 		fmt.Fprintln(out, PullNote)
 		return 0
@@ -168,11 +181,13 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 		f.StringVar(&o.securityRead, "security-read", "", "the note id or comment url of Johnny's read, required when the range touches a sensitive path")
 		f.StringVar(&o.localDiff, "local-diff", "", "a checkout to run `git diff --name-only <previous>...<head>` in, when the forge's compare is at its ceiling")
 		f.StringVar(&o.pathsFrom, "paths-from", "", "the path list to classify: written by --local-diff, read back without it")
+		addDogfoodFlags(f, &o, "docs/CLI.md beside --changelog")
 		required = []string{"repo", "from", "version", "changelog"}
 	case "build":
 		f.StringVar(&o.out, "out", "", "artifact root")
 		f.StringVar(&o.source, "source", "", "the checkout to build")
 		f.Var(&o.platforms, "platform", "goos-goarch, repeatable and comma-separated (default: this host)")
+		addDogfoodFlags(f, &o, "<--source>/docs/CLI.md")
 		required = []string{"version", "out", "source"}
 	case "install":
 		f.StringVar(&o.from, "from", "", "artifact root")
@@ -225,6 +240,9 @@ func Run(name string, args []string, out, errs io.Writer, deps Deps) int {
 			switch verb {
 			case "cut":
 				fmt.Fprintln(out, CutNote)
+				fmt.Fprintln(out, DogfoodNote)
+			case "build":
+				fmt.Fprintln(out, DogfoodNote)
 			case "adopt":
 				fmt.Fprintln(out, AdoptNote)
 			case "pull":

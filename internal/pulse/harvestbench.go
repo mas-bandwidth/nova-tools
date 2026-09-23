@@ -320,6 +320,7 @@ func harvestBench(in HarvestInput) int {
 		// Two-dot against the fetched authorized destination (issue #2032; HOLD on #2117).
 		globs, declared := harvestDeclaredPaths(launchedCardFor(in.Launched, label), j.Result)
 		if err := staleBaseRefusal(clone, dest.url, base, ref, globs, declared); err != nil {
+			remedyStaleBase(err, label, []string{clone})
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST REFUSED stale-base bench=%s label=%s: %s",
 				field(in.Bench), field(label), oneline.Err(err)))
@@ -716,6 +717,15 @@ func drainLaunched(in HarvestInput, facts drainFacts, lines *boundedList) (drain
 	leftBy := map[string]int{}
 	cards := readyCards(in.Launched)
 	sort.Strings(cards)
+	// No --session, no drain (rule (a) below): every card's verdict is `no-session`, so
+	// the answer is the count, and reading a marker per card (16,850 of them, 40 s on a
+	// loaded coordinator, 2026-09-22) would change nothing in it.
+	if strings.TrimSpace(in.Session) == "" && len(cards) > 0 {
+		leftBy["no-session"] = len(cards)
+		lines.Line(fmt.Sprintf("HARVEST LEFT reason=no-session cards=%d", len(cards)))
+		fmt.Fprintf(in.Stderr, "HARVEST NOTE drain: --launched without --session drains nothing (name the session whose cards these are: the one `fill --session` stamped into the launched markers)\n")
+		return 0, len(cards), 0
+	}
 
 	// Pass one decides everything that can be decided from what the fold already knows,
 	// and collects the labels that need the bench asked about them BY NAME.

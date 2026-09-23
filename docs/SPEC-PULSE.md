@@ -104,7 +104,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    directory, never `../scratch`. `cut` refuses a template whose rendered card violates any
    of these — `CUT REFUSED template=<name>: <which>` — because a card that drifts here is a
    card that stalls.
-6. **Text-only templates forbid the build.** `read`, `text` and `tone` carry the line `Do not
+6. **Text-only templates forbid the build.** `read`, `text`, `tone` and `report` carry the line `Do not
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
    line then green line, one row per item.
@@ -113,8 +113,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    beside it is read the same way): one column per model, three rows — a `model` row naming
    each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
    `capability`, `read|text|code|replay`. Per
-   card class a model is capable when its capability covers the kind's (`read`, `text` and
-   `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
+   card class a model is capable when its capability covers the kind's (`read`, `text`,
+   `tone` and `report` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
    and `cut` picks the capable model with the lowest average cost per token — `zero` beats
    `flat` beats `metered`, ties broken by `usd per Mtok` — so routing is mechanical: local is
    zero, Go is flat, Zen is metered. It prints `route=<model> reason=<class>` on its
@@ -328,6 +328,18 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     gate keeps today's behaviour as the fallback. Replays:
     `gate-reruns-a-flaky-job-once-per-head`, `gate-real-verdict-keeps-stop`,
     `gate-below-floor-changes-nothing`.
+21. **Triage links a same-class open issue by a typed decision behind a floor.** With
+    `--dedupe --issues <file> [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]` the
+    triage verb reads the open issues (one `number<TAB>title` per line) and sends
+    `internal/decide` one call: the state is the new case's title and evidence, escaped and
+    capped as the packet escapes evidence, and the one question is `same_class`, a choice
+    over the issue numbers plus `none`. A choice naming an open issue at or above the floor
+    puts `LINKS #<n> (same class, conf=<c>)` on the card and `dedupe=#<n>` on the `TRIAGE OK`
+    line; on `none`, on a provider error, or below the floor the card is cut unchanged and
+    the line reads `dedupe=?`. A decision below the floor is a suggestion, never an
+    authorization: the card that files work is cut exactly as it is today. Replays:
+    `triage-dedupe-links-a-same-class-open-issue`, `triage-dedupe-none-files-normally`,
+    `triage-dedupe-below-floor-changes-nothing`.
 
 ## Fleet
 
@@ -689,6 +701,44 @@ The general lesson, and the one to carry to the next cleaner written: *a window 
 that rotates itself is not a bound. Set the window from the rate the tree actually rotates at,
 and put a size ceiling behind it for the day the rate changes.*
 
+**The lane-clone sweep removes a clone only when the work in it is finished and elsewhere.**
+`nova-pulse hygiene --lane-dirs <root>` is the one flag-form mode — no subcommand, no `--home`
+— and it walks the **immediate children** of `<root>`, one level, never recursively. A child
+is a candidate when it holds a `.git` entry, or when exactly one directory inside it does
+(`<root>/lane-foo/repo`, the shape today's lane workers write); a `.git` file counts as much as
+a `.git` directory, so a worktree is a candidate too, and a child holding **more than one**
+checkout is kept, because two checkouts are two branches and it would have to remove both to
+remove either.
+
+Four questions, in this order, and the first one that answers no keeps the directory:
+
+1. **safepath** — the path resolves strictly below the resolved `<root>` and is not a symlink.
+2. **clean** — `git status --porcelain` says nothing.
+3. **pushed** — `git rev-list --branches --not --remotes` says nothing: no commit on a local branch that no remote has. It is stricter than asking about each branch's head, and the stricter answer is the one that keeps the directory.
+4. **settled** — the forge says the pull request whose head is the checked-out branch is `MERGED` or `CLOSED`.
+
+**A read that failed is a keep.** The git reads come before the forge read on purpose, so a
+merged pull request can never talk the verb past an uncommitted file. Every other outcome is one
+`HYGIENE KEEP dir=<d> reason=<token>` line, one token each: `unsafe`, `many-checkouts`, `fresh`,
+`dirty`, `unpushed`, `detached`, `git`, `forge`, `no-pr`, `open`, `unknown-state`. Each clone it
+acts on is `HYGIENE LANE dir=<d> pr=<n> state=<s> removed=<yes|no>`, the per-candidate lines are
+capped at 20 (`--max`, `0` for all) with one `HYGIENE MORE` line standing for the rest, and the
+run ends with `HYGIENE LANES root=<r> candidates=<n> remove=<n> removed=<n> kept=<n>
+dry-run=<yes|no>` — `remove` is what it decided, `removed` is what went. `--dry-run` prints the
+same lines with `removed=no` and touches nothing; it is **off** by default. `--older-than` has one
+spelling, a whole number of days with a `d` suffix, and refuses every other — exit 2, naming the
+flag. Both reads of the world are seams (`pulse.LaneGit`, `pulse.LanePRSource`), so no test of
+this verb runs git or reaches the network, and the one removal goes through `internal/safepath`
+below the root the caller named.
+
+The mistake it removes, measured on the Studio on 2026-09-18: **92 `lane-*` and `dogfood-*`
+clone directories** under `~/rowan-working/tmp`, one per lane worker of the day, and nothing that
+ever took one away. `hygiene run` does not: those are swarm slots, with a jobs directory and a
+liveness rule, and a lane clone is neither. Nor can a lane clone be swept the way scratch is
+swept, by age or by name — it holds a branch, and a branch may be the only copy of somebody's
+work. *The rule for deleting somebody else's working directory is not "is it old" but "is every
+byte of it somewhere else".*
+
 Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
 (run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
 bench=<name> no-systemd (install the timer by hand)`; `studio` from any hygiene act,
@@ -726,6 +776,16 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 17. `hygiene-diag-never-follows-a-symlink-out`: a symlink inside `_diag` pointing at a file outside the runner directory survives with its target, while a cap of one byte proves the prune did delete something.
 18. `hygiene-diag-flags-refuse-nonsense`: `--diag-days` and `--diag-max-bytes` each refuse a non-number and a negative, exit 2, naming the flag; a prune never runs on a guess.
 19. `hygiene-diag-default-cap-is-two-gibibytes`: the shipped defaults are pinned at two days and 2 GiB, so a change to either is a change to this test.
+20. `hygiene-lane-dirs-removes-a-merged-or-closed-clone`: a flat clone whose PR is `MERGED` and a nested `<root>/lane-foo/repo` clone whose PR is `CLOSED` both go, each named on its own `HYGIENE LANE` line, and the summary counts two.
+21. `hygiene-lane-dirs-keeps-open-and-unknown-branches`: an `OPEN` pull request and a branch the forge knows no pull request for are `reason=open` and `reason=no-pr`, and both directories survive.
+22. `hygiene-lane-dirs-keeps-dirty-and-unpushed`: a checkout `git status --porcelain` speaks for, and one holding a commit no remote has, are kept as `reason=dirty` and `reason=unpushed` even though both branches are `MERGED` — and the forge is never asked, because the git reads come first.
+23. `hygiene-lane-dirs-refuses-a-path-outside-the-root`: a symlink child pointing at a clone outside `<root>` is `reason=unsafe`, the target and the link both survive, and the forge is never asked.
+24. `hygiene-lane-dirs-dry-run-removes-nothing`: `--dry-run` prints the same `HYGIENE LANE` line with `removed=no`, keeps every directory, and its summary reads `remove=1 removed=0`.
+25. `hygiene-lane-dirs-older-than-skips-a-fresh-clone`: with a fake clock and `--older-than 2d`, a merged clone three days old goes and one touched an hour ago is `reason=fresh`, unasked about on the forge.
+26. `hygiene-lane-dirs-flags-refuse-nonsense`: `36h`, a bare `2`, `0d` and a missing value each refuse naming `--older-than`; a root that is relative or is not a directory refuses naming `--lane-dirs`; a subcommand alongside `--lane-dirs` refuses; `--older-than` without `--lane-dirs` refuses rather than being ignored; and a bare `nova-pulse hygiene` still prints the usage and exits 2.
+27. `hygiene-lane-dirs-output-is-bounded`: 30 candidates print 20 item lines and one `HYGIENE MORE kind=lane shown=20 total=30`, while the summary still counts 30 — and `--max 0` prints all 30 and no `MORE` line.
+28. `hygiene-lane-dirs-ignores-what-is-not-a-checkout`: a plain directory and a loose file under the root are not candidates, are not counted and are never removed.
+29. `os-lane-git-reads-a-real-checkout`: the one test that drives the real git seam, against a real `git init` in its own temporary directory — local only, no network — because a seam nobody has run against the real thing proves nothing.
 
 `fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
 2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
@@ -819,6 +879,7 @@ closed, remaining by depth, completion by epic) once the tree is the pool (#500)
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
@@ -872,7 +933,13 @@ files a job writes as it finishes — `usage.tsv`, its harness store
 indexed job and re-reads only the jobs one of them moved for, so a finished job whose
 harness log or store wal keeps moving is never re-opened for it, and a warm tick opens no
 job file and starts no `sqlite3` at all. The class is `RESULT.md`'s verdict (done, abstain,
-blocked), falling back to the usage row's return code when the job wrote none. `run` and
+blocked). An attempt with no model turn that died on a gateway 5xx, or that failed
+with no tokens and no recorded error, is `gateway` — a route death, not a card
+failure. Anything else with no verdict falls back to the usage row's return code
+(done or failed). `status` prints the split as `STATUS FAILURES card_fail=<n>
+gateway=<n>` (and the same two fields on `--oneline`): `card_fail` is abstain,
+blocked and every other failed attempt, and a gateway death increments only
+`gateway`. `QUEUE failed=` stays the count of cards in the failed directory. `run` and
 `harvest` append a finished job to its root's index as they
 fold it, so a job is indexed before the next tick needs it; a root with no index is walked
 once and the index written, and a root that sat still is answered from the index alone. The
@@ -1158,13 +1225,22 @@ one remedy in parentheses.
 ## The card, as `cut` writes it
 
 ```
-RESULT <label> sha=<sha12>
+RESULT: <label> sha=<sha12>
 You are a worker. Job directory only; the TMPDIR the runner already exported, never one of your own; never /tmp, ~ or ..; no stdlib or toolchain source; the deadline is the machinery's: <s> s.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<owner>/<name>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints <head>. Else write RESULT.md with line 2 BLOCKED head=<yours> and stop.
 STEP 2..n. <the template's numbered steps, one command per line, one check each>
 STEP last. Write RESULT.md: line 1 exactly the line 1 of this card; line 2 one of DONE, ABSTAIN <why>, BLOCKED <why>; then BRANCH <branch>; REPO <owner>/<name>; then the RESULT template's sections.
 ```
+
+Line 1 carries the colon: `RESULT: ` is SPEC-SWARM's form (SPEC-SWARM.md:969,976) and the one
+form every writer and reader converges on (SPEC-TOOLWORK §5 rule 7; the plain `cut` template
+path, `internal/pulse/cut.go:472`, is the renderer that still follows, by that rule's card).
+**A card of a kind in SPEC-TOOLWORK §5's table carries five typed header lines between the role
+line and `STEP 1`** — `KIND:`, `PATHS:`, `TEST:`, `LEGS:`, `SOURCE:`, and `MODE: explore` with
+`TURNS: <n>` when the card has more than three model steps — so for those kinds `STEP 1` is line
+8 (or 10), inside the fifteen the admission check reads (SPEC-TOOLWORK §5 rule 1). The templates
+of this document that are not kinds in that table keep the shape above: `STEP 1` on line 3.
 
 `<sha12>` is the first twelve hex of the SHA-256 of everything below line 1, so the contract
 line binds the card it heads; the swarm records the same hash at admission and refuses a
@@ -1288,7 +1364,7 @@ of thought no read needs.
 The rules:
 
 1. **`cut-steps-are-the-turn-budget`.** `cut` emits cards whose numbered step count is the
-   turn budget: a read-family card (`read`, `text`, `tone`) takes at most 8 turns, a
+   turn budget: a read-family card (`read`, `text`, `tone`, `report`) takes at most 8 turns, a
    writing-family card (`fix`, `replay`, `drift`) at most 20 turns. A template whose
    rendered card exceeds its budget is `CUT REFUSED template=<name>: <which>` naming the
    rule, and no card is written. The hurt that made it: the 1,434.6M cache-read tokens
@@ -2544,3 +2620,258 @@ git on PATH — no test opens a connection:
     `TestHarvestProvesJobDirGonePerLabelAndNeverFromASibling`,
     `TestHarvestLeavesACardTheProbeCouldNotAnswerFor` and
     `TestBenchProbeScriptAsksAboutEachLabelByName` — the per-label probe.
+
+## Sprint
+
+The 2026-09-20 sprint's observability was group G of the review: `sprint-table` (the ledger
+table, per host, ok/fail, ok/min), `sprint-models` (per-model ok from usage rows),
+`sprint-requeue` (harness-failed cards fed back once), `fleet-limit` (the 10-second sampler —
+Go, untracked, LIVE.md, SAMPLES.tsv) and `setshare.sh`. They were rebuilt five times in one
+day; every counter sshed seven hosts; the ledger began 118 minutes after the stamp, so the
+load test's first two hours are not in it (cairn 6ca67034: 1,801 cards launched, 1,293
+returned a result, ~437 ended with none, peak 501 live on seven machines); and the
+coordinator still answered "how many cards succeeded, failed, are in flight" with an ad-hoc
+scan of every bench while every manager kept a private TSV with different columns.
+`nova-pulse sprint` is the one verb that retires them: one plan starts the sprint, one epoch
+stamps it, one record holds its settings, one table watches it, one funnel grades it, one
+stop drains it. It makes no model call. The lines, as `nova-pulse help` prints them:
+
+```
+nova-pulse sprint start  --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>]
+nova-pulse sprint status --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse sprint set    --queue <dir> <bench> <key> <value>
+nova-pulse sprint table  --plan <file> --queue <dir> --bus <clone> [--bench <name>] [--once]
+nova-pulse sprint funnel --plan <file> --queue <dir> [--wave <id>] [--max <n>]
+nova-pulse sprint stop   --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>]
+```
+
+1. **The plan is one file, named by a flag, kept in git, validated whole before anything
+   moves.** `--plan <file>` is a tab-separated file, `#` comments and blank lines skipped,
+   three row kinds: `bench <name> <cap> <max_load_per_core> <gb_per_card>`, one per bench;
+   `route <flash|pro> <provider>[,<provider>...]`, the provider routes; and one `probe
+   <budget>` row. The file is read whole before any write: an unknown row kind, a wrong
+   field count, a cap below 1, a guard that is not a finite number, a duplicate bench, or a
+   bench the `--machines` registry does not carry is one `SPRINT REFUSED` naming the row,
+   exit 2, and nothing is applied — a plan the tool half-understands is a plan nobody
+   approved, the manager policy's law. This retires the plan's existence as five scripts'
+   five copies of the same numbers, edited under load. `TestSprintStartRefusesAPlanItCannotReadWhole`.
+2. **Start applies the plan in one order, or not at all.** Shares, then the record, then
+   the routes, then the mirrors, then the stamp, then the table and the feeder, then the
+   loop. A step that fails — a bench that will not take its share, a mirror that will not
+   refresh — refuses the whole start: no stamp is written anywhere, the shares already
+   written are named on the refusal line, and the exit is 2. A half-applied plan is benches
+   running different caps under one stamp, which is what five rebuilds in a day actually
+   were. `TestSprintStartAppliesThePlanInOrderOrNotAtAll`.
+3. **The cap is the slot-store share, written by start and by nothing else.** The plan's
+   `cap` becomes the owner row of each bench's `shares.tsv` — the store the capacity probe
+   already reads (#1914: the store leads, the load only brakes) — so the bench's answer to
+   "how many more cards may I take" is the plan's number from the first tick. This retires
+   `setshare.sh`, whose shares were written by hand, per bench, and drifted from every other
+   copy of the plan. `TestSprintStartWritesTheSharesFromThePlanCap`.
+4. **The guards are the plan's, read from the record every tick.** `max_load_per_core` is
+   the load brake the dealer already holds (`--max-load-per-core`; 0 is no brake);
+   `gb_per_card` is the disk term's per-card floor, the divisor the legacy formula
+   hardcoded as `(free_gb-25)/2`. Both are read from the record on every tick — never from
+   an environment variable, never from a flag the loop was started with — because tuning in
+   an env var is tuning nobody can change without killing the loop (#828, row 2: the
+   restart for a headroom change forgot `PULSE_STUDIO_SLOTS=8` and the Studio launched
+   eleven cards at load 26). `TestSprintGuardsAreReadFromTheRecordEveryTick`.
+5. **The per-bench capacity record is one file under the queue, and `sprint set` writes
+   it.** Start writes `<queue>/sprint.tsv` from the plan's bench rows — bench, cap,
+   max_load_per_core, gb_per_card, and the stamp — and every tick of the loop and of the
+   table agent re-reads it. `sprint set --queue <dir> <bench> <key> <value>` rewrites one
+   cell; the next tick takes it, one `SPRINT SET` line names the old and the new value, and
+   nothing restarts — the config file's law, with the counters untouched. A key the record
+   does not carry, or a bench the record does not name, is a refusal. This is #2164's
+   record: the setting exists exactly once, and the reader is the tick.
+   `TestSprintSetTakesEffectOnTheNextTickWithoutARestart`.
+6. **The stamp is one epoch, written to every host, rendered host-local.** Start takes one
+   epoch — its own, once — and writes it to `<queue>/SPRINT-START` and to every bench over
+   the shell seam, one file per host; every sprint line that prints a time prints it from
+   that epoch in the host's own local time. The sprint's ledger rows are keyed to the
+   stamp, so a viewer started late still reads from the stamp — the hurt was the ledger
+   beginning 118 minutes after it, because the script that kept the ledger was also its
+   starting gun. `TestSprintStartStampsOneEpochOnEveryHost`.
+7. **The mirrors are refreshed before the first card is dealt, by the verb that already
+   does it.** Start refreshes, for every bench the plan names, the mirrors `fleet mirror`
+   maintains there (#2383) — created or refreshed, the bare mirror a card clones from — and
+   a mirror that will not refresh refuses the start before the stamp, because a sprint that
+   begins with a stale mirror pays a stale clone for every card. This retires the hand
+   refresh that ran when somebody remembered. `TestSprintStartRefreshesTheMirrorsBeforeTheFirstDeal`.
+8. **The provider routes are the plan's route rows, written where the launcher reads
+   them.** The `flash` and `pro` rows write the routes file `launch --routes` reads, one
+   typed decision per card, and the probe budget bounds what the router may spend asking.
+   There is no per-card override and no hand on a route — the table is the whole policy, in
+   git, edited once (rule 7 of the pulse) — so two benches never route the same kind
+   differently because somebody edited one copy. `TestSprintStartWritesTheProviderRoutesTheLauncherReads`.
+9. **The feeder is a step of the loop, and a harness failure is fed back once.** Start
+   brings the requeue feeder up with the loop: a card whose harness failed — no RESULT, a
+   `harness-silent` — is requeued once under its stable card id, on another bench when
+   there is one, and the requeue is one appended row in the same ledger the manager's
+   triage writes, so the feeder and the triage never both spend the one remaining
+   executable attempt (rule 14). A card already on its second attempt is failed, never fed.
+   This retires `sprint-requeue`: a second process with a hand on the queue, feeding cards
+   back on its own count. `TestSprintRequeueFeedsAHarnessFailureBackOnce`.
+10. **The table is a per-bench agent: each bench computes its own row and pushes it.**
+    `sprint table --bench <name>` is the tiny agent (#2389) — part of the loop, or a
+    launchd/systemd unit — ticking every ten seconds, the manager tick's own cadence. Each
+    tick it reads its OWN bench's slot store (a local read; the agent is on the bench),
+    folds the dealt ledger (#2382) and the results store (#2379) as projected into the
+    fleet store by the verbs that write them, and pushes one row to the store the fleet
+    already has: the SPEC-REDIS instance when it answers, the bus's state dir (`.nova-bus`)
+    when it does not — SPEC-REDIS's file fallback, so an outage is a latency regression and
+    never a lost row. The agent's own probes are bounded by the plan's probe budget, and
+    the row it pushes says what the tick cost. This retires `fleet-limit`, the untracked
+    sampler, and its LIVE.md and SAMPLES.tsv. `TestSprintTableRowIsComputedOnTheBenchAndPushedToTheStore`.
+11. **`sprint status` prints the plan against the measured state, one line per bench.** For
+    each bench the plan names: the record's cap against the store's held and free, the
+    guard against the measured load per core, the route rows against the file the launcher
+    reads, the stamp's age. A bench whose measured state disagrees with the plan is
+    `drift=` named by the key that drifted, and the verb exits 1 — the tool saying NO —
+    because a sprint running on settings other than the plan's is the five-copies failure
+    running again. `TestSprintStatusNamesTheKeyThatDriftedFromThePlan`.
+12. **`sprint stop` drains before it stamps, and a sprint still working is not stopped.**
+    Stop writes the dealer's stop file first — no new deals from the next tick (the
+    `--stop` lever `fill` already holds) — then waits the drain: every bench's working
+    count to zero or the deadline. A drained sprint is stamped `SPRINT-END` beside the
+    start stamp, one epoch the same way, and exits 0. A sprint with leases still held
+    stamps nothing, prints one `SPRINT STOP WORKING` line per bench still working, and
+    exits 1 — a stop that stamped over live work would be the ledger lying about when the
+    sprint ended. `TestSprintStopDrainsBeforeItStamps` and
+    `TestSprintStopNamesEveryBenchStillWorking`.
+13. **The row is seven columns, and a count nobody took is a dash.** `host | queue |
+    working | done | ok | fail | ok%`: `queue` is the bench's pending cards, `working` its
+    live leases, `done` the dealt rows folded, `ok` the results rows with a result, `fail`
+    the results rows without one, `ok%` ok over ok+fail — a dash when the denominator is
+    zero, and any store that could not be read is a dash in its column, never a zero: a row
+    of zeros reads as a bench with nothing to do, the fleet page's one rule learned twice.
+    `TestSprintTableRowReadsADashForAStoreItCouldNotRead`.
+14. **The viewer renders the store and never sshes.** `sprint table` with no `--bench` is
+    the viewer: it reads the rows the agents pushed and prints them, one `SPRINT ROW` per
+    host, and starts no shell and no ssh — the review's receipt was every counter sshing
+    seven hosts, and a viewer that sshes is the script again. A host whose row is older
+    than two ticks is printed with its age, because a stale row is a claim about now that
+    nobody made. `TestSprintViewerRendersTheStoreAndNeverSshes`.
+15. **The ledger is the record, it begins at the stamp, and cleanup never touches it.** The
+    dealt ledger and the results store are append-only files under the queue —
+    coordinator-side, where hygiene's prune of bench job directories cannot reach —
+    written by the verbs that deal and fold, never by the viewer, and projected into the
+    fleet store in the same call, so no agent reads another bench's filesystem. Nothing in
+    the store is the only copy of anything (SPEC-REDIS's law); a store rebuilt from the
+    ledger is byte-identical. This retires the ledger that began 118 minutes after the
+    stamp because the script was its writer: here the writers are the verbs, from the
+    stamp. `TestSprintLedgerBeginsAtTheStampAndSurvivesAJobCleanup`.
+16. **The per-model rows come from the provider table, never from a usage-row scrape.** The
+    table's per-model columns are folded from the provider table (#2010, #2385) the routes
+    were written from — the same rows, read once — so a model's ok count is the route's
+    record and not a re-parse of every usage row on every tick. This retires
+    `sprint-models`. `TestSprintModelRowsComeFromTheProviderTable`.
+17. **The funnel is a standing report: ok, green, reviewed, useful, per wave and kind and
+    model and bench.** `sprint funnel` folds the launch records, the results, the gate
+    outcomes and the forge state into one table — `launched`, then `ok` (a RESULT
+    returned), `green` (the gate's verdict), `reviewed` (a read card's APPROVE), `useful`
+    (landed) — one row per wave per kind per model per bench, a wave being the pulse id the
+    launch records already carry. This retires the ad-hoc scan of every bench that could
+    not answer the all-day question (1,801 launched, 1,293 with a RESULT, 71 live, ~437
+    ended with none) and the managers' private TSVs with different columns: the columns are
+    these, and there is one writer. (#2034 names the report `nova-pulse funnel` or
+    nova-board; the fold is the same and the surface is the open question.)
+    `TestSprintFunnelFoldsTheRecordPerWaveKindModelAndBench`.
+18. **A funnel row is append-only; a mistake is voided by a void record, never edited.**
+    The outcome log's own law holds here: a row written is never rewritten, and a later
+    judgment appends a second row keyed to the same unit. A void record — `nova-decide
+    outcome`'s VOID, #2034's ask of that verb — excludes the row it keys from every stage's
+    count, and both rows stand, so the arithmetic that costs a route its floor is the one a
+    rewrite would erase. The receipt is the manager who recorded ten `outcome --result
+    green` lines that were not greens and could not take them back.
+    `TestSprintFunnelExcludesAVoidedRow`.
+19. **Cost per useful card is the wave's measured spend over its useful count, and
+    unmeasured spend is a dash.** The spend is the usage rows the record already folds; the
+    count is the useful stage's. A wave with no measured usage reads `usd_per_useful=-` — a
+    cost never measured is unknown, never zero, the RATE line's law — because a zero cost
+    per card is the one number this report may never invent.
+    `TestSprintFunnelReadsUnmeasuredSpendAsUnknown`.
+
+```
+SPRINT OK plan=<path> benches=<n> slots=<n> stamp=<epoch> mirrors=<n> table=<n> feeder=on took=<d>
+SPRINT REFUSED: <reason> (<remedy>)
+SPRINT SET bench=<name> <key>=<old>-><new> (the next tick takes it)
+SPRINT ROW host=<name> queue=<n> working=<n> done=<n> ok=<n> fail=<n> ok%=<n|-> age=<s>
+SPRINT TABLE OK bench=<name> store=<redis|dir> probes=<n> took=<d>
+SPRINT STATUS bench=<name> cap=<n> held=<n> free=<n> load_per_core=<f> drift=<none|cap|guard|route|stamp>
+SPRINT FUNNEL wave=<id> kind=<k> model=<m> bench=<name> launched=<n> ok=<n> green=<n> reviewed=<n> useful=<n> usd_per_useful=<x.xxxx|->
+SPRINT STOP OK stamp=<epoch> drained=<n> took=<d>
+SPRINT STOP WORKING bench=<name> working=<n> (drain not finished; nothing stamped)
+```
+
+Exit 0 when the verb ran and the state it reports is consistent — a plan applied whole, a
+row pushed, a status without drift, a sprint drained and stamped; 1 when the tool says NO —
+a status that found drift, a stop with work still running; 2 on every refusal — a plan that
+does not parse whole, a bench the record or the registry does not carry, a store that
+cannot be written — and nothing is applied.
+
+### Tests this spec demands
+
+`internal/pulse` for the verb and `cmd/nova-pulse` for the flag surface; every bench read
+and write through the `fakeShell` (the BenchShell seam), the mirror refresh through the
+fake git on PATH, the fleet store twice — miniredis for the instance and a temp dir for the
+`.nova-bus` fallback, asserting the same rows both ways — the cadence on a fake clock (no
+test asserts a wall-clock bound), the forge through `fakeForge`, and no test opens a
+connection. Each is seen red first against the mutation its rule names.
+
+1. `TestSprintStartRefusesAPlanItCannotReadWhole` — a plan with a bad row kind, a short
+   bench row, a NaN guard and a bench the registry does not carry is one refusal naming
+   the row, exit 2, and no share, record, route, mirror or stamp exists afterwards (rule 1).
+2. `TestSprintStartAppliesThePlanInOrderOrNotAtAll` — a mirror refresh failing on the third
+   of four benches leaves no stamp on any host and names the shares already written on the
+   refusal line (rule 2).
+3. `TestSprintStartWritesTheSharesFromThePlanCap` — the plan's cap lands as the owner row
+   of each bench's `shares.tsv`, and the capacity probe's next answer is the plan's number
+   (rule 3).
+4. `TestSprintGuardsAreReadFromTheRecordEveryTick` — a brake and a disk floor edited in the
+   record between two ticks are the values the next tick deals under, with no restart and
+   no flag (rule 4).
+5. `TestSprintSetTakesEffectOnTheNextTickWithoutARestart` — `sprint set space cap 64`
+   rewrites one cell, the next tick deals against 64, the `SPRINT SET` line names old and
+   new, and an unknown key or bench is a refusal (rule 5).
+6. `TestSprintStartStampsOneEpochOnEveryHost` — every host's stamp file carries the one
+   epoch start took, and two hosts' files differ by nothing (rule 6).
+7. `TestSprintStartRefreshesTheMirrorsBeforeTheFirstDeal` — the fake git's log shows the
+   fetch per bench before the stamp write, and a fetch that fails refuses the start
+   (rule 7).
+8. `TestSprintStartWritesTheProviderRoutesTheLauncherReads` — the routes file the launcher
+   reads carries the plan's flash and pro rows and nothing else (rule 8).
+9. `TestSprintRequeueFeedsAHarnessFailureBackOnce` — a harness-silent card is requeued once
+   under its stable id, a second failure is failed not fed, and the triage's ledger row for
+   the same card is never written twice (rule 9).
+10. `TestSprintTableRowIsComputedOnTheBenchAndPushedToTheStore` — the agent reads its own
+    slot store and the store's projection, pushes one row per tick of the fake clock, stays
+    inside the probe budget on the fake shell's argv count, and the same rows land in
+    miniredis and in the dir fallback (rule 10).
+11. `TestSprintStatusNamesTheKeyThatDriftedFromThePlan` — a cap lowered by hand in a
+    `shares.tsv` is `drift=cap` on that bench's line and exit 1; a fleet at the plan is
+    exit 0 (rule 11).
+12. `TestSprintStopDrainsBeforeItStamps` — the stop file exists before the first drain
+    read, a drained fleet gets `SPRINT-END`, and the stamp sits beside `SPRINT-START`
+    (rule 12).
+13. `TestSprintStopNamesEveryBenchStillWorking` — two benches holding leases at the
+    deadline are two `WORKING` lines, no stamp, exit 1 (rule 12).
+14. `TestSprintTableRowReadsADashForAStoreItCouldNotRead` — a results store that will not
+    parse is a dash in ok, fail and ok%, never a zero, and the row still pushes (rule 13).
+15. `TestSprintViewerRendersTheStoreAndNeverSshes` — the viewer prints one `SPRINT ROW` per
+    pushed row with the fake shell's script log empty, and a row older than two ticks
+    carries its age (rule 14).
+16. `TestSprintLedgerBeginsAtTheStampAndSurvivesAJobCleanup` — a viewer started after 100
+    dealt rows reads all 100 from the stamp, a hygiene prune of the bench's job dirs
+    removes no ledger row, and a store rebuilt from the ledger is byte-identical (rule 15).
+17. `TestSprintModelRowsComeFromTheProviderTable` — the per-model columns equal the
+    provider table's fold, and a usage row edited by hand moves nothing (rule 16).
+18. `TestSprintFunnelFoldsTheRecordPerWaveKindModelAndBench` — the load-test fixture (1,801
+    launched, 1,293 with a RESULT, ~437 with none) folds into launched, ok, green,
+    reviewed, useful per wave, kind, model and bench, and the sums across rows equal the
+    totals (rule 17).
+19. `TestSprintFunnelExcludesAVoidedRow` — ten green outcomes and a void record for each
+    leave the green stage at zero, the rows still in the log, and the funnel's counts
+    honest (rule 18).
+20. `TestSprintFunnelReadsUnmeasuredSpendAsUnknown` — a wave with no usage rows prints
+    `usd_per_useful=-`, never 0.0000 (rule 19).

@@ -24,6 +24,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 	file := f.fs.String("file", "", "the reply body, as a file (required)")
 	remote := f.fs.String("remote", "", "the git remote the note is resolved against and pushed to (required)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
+	host := f.fs.String("host", "", "the machine you are posting from; written as the Host line, shown as host= on an inbox line, and read from a `host=` line in <bus>/.nova-bus/defaults when the flag is absent")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD in the same commit as the reply")
 	dryRun := f.fs.Bool("dry-run", false, "shape and report the reply and write nothing")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
@@ -46,6 +47,10 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
+		return 2
+	}
+	hostName, hostOK := f.host(*host, f.set("host"), *busDir, stderr)
+	if !hostOK {
 		return 2
 	}
 	raw, err := os.ReadFile(*file)
@@ -109,7 +114,7 @@ func cmdReply(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-bus reply: --re %s names no note; run nova-bus inbox --open and name one\n", oneline.Field(*re))
 		return 2
 	}
-	prepared, err := bus.PrepareReply(t, me, original, body, now)
+	prepared, err := bus.PrepareReplyFrom(t, me, original, body, now, hostName)
 	if err != nil {
 		for _, reason := range bus.Reasons(err) {
 			fmt.Fprintf(stderr, "REPLY FAIL %s: %s\n", oneline.Escape(me.Name), oneline.Err(reason))

@@ -28,7 +28,11 @@ import (
 
 // DefaultNativeIdle is the window a native run gives a card that is saying nothing and
 // spending no CPU. It is 300 seconds, which is `batch --idle`'s own default: one number for
-// the two verbs, so a card does not mean two different things on two paths.
+// the two verbs, so a card does not mean two different things on two paths. It is not a
+// provider read deadline. A response whose headers arrived and then sent no body bytes
+// is UNKNOWN, and that deadline is the provider proxy's body timer, not this window.
+// Whole-card silence is not that evidence: a quiet think looks the same, and it stays
+// CARD IDLE.
 const DefaultNativeIdle = 300 * time.Second
 
 // NoIdleWindow is the window `--idle 0` reaches WatchIdle as: no watch at all, which is the

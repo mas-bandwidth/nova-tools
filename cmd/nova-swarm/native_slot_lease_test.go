@@ -17,6 +17,33 @@ import (
 // store that grants nothing is a refusal, not a run. These tests drive the command against
 // a temp store, the same store the `run` side of the contract is tested with.
 
+// TestNativeRefusesASchemaCardBeforeTheHarnessStarts is #2033: capacity is refused
+// at admission, before the harness starts. A schema card weighs 4; a share-3 store
+// grants a read and refuses the schema card, and no job directory is made.
+func TestNativeRefusesASchemaCardBeforeTheHarnessStarts(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	cardPath := filepath.Join(root, "card.md")
+	write(t, cardPath, "RESULT: schema-card sha=aaaaaaaaaaaa\nKIND: schema\na schema card\n")
+	store := slotShares(t, "capacity\t3\nreserve\t0\nfake-1\t3\n")
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+		"--label", "schema-card", "--card", cardPath, "--slot", slot, "--root", root,
+		"--deadline", "10s", "--no-wall",
+		"--slots-store", store, "--owner", "fake-1"},
+		strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 2 {
+		t.Fatalf("a schema card on share 3 is refused at admission, got exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "SLOTS REFUSED owner=fake-1 want=4 held=0 share=3") {
+		t.Fatalf("the refusal names want=4 (schema weight) against share 3:\n%s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(slot, "jobs", "schema-card")); !os.IsNotExist(err) {
+		t.Fatalf("no job directory is made when admission refuses: %v", err)
+	}
+}
+
 // TestNativeRefusesWhenSlotShareIsFullyHeld: a store whose only seat is already held by
 // another owner is a SLOTS REFUSED line, an exit 2, and no job directory, no harness.
 func TestNativeRefusesWhenSlotShareIsFullyHeld(t *testing.T) {

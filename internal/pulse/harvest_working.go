@@ -111,6 +111,24 @@ func HarvestWorking(in HarvestInput) int {
 		if _, err := os.Stat(filepath.Join(j.dir, ".harvested")); err == nil {
 			continue
 		}
+		if in.Commit {
+			if _, err := CommitJob(CommitJobInput{
+				JobDir:       j.dir,
+				BranchPrefix: in.BranchPrefix,
+				DefaultBase:  in.Base,
+				MaxFileSize:  MaxChangedFileBytes,
+				Clones:       in.Clones,
+				Stdout:       in.Stdout,
+			}); err != nil {
+				if in.Stderr != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST COMMIT ERROR label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
+				}
+				counts[classFailed]++
+				line := r.jobLine(j, classFailed, "-", "-", "-")
+				list.Line(line)
+				continue
+			}
+		}
 		out := r.one(j)
 		counts[out.class]++
 		pushed += out.pushed
@@ -288,6 +306,14 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
 	if err := staleBaseRefusal(clone, dest.url, target, "HEAD", globs, declared); err != nil {
+		// Same typed remedy as Harvest and harvest --bench (#2648). The diff
+		// head is the checkout, so the refusal records Branch as HEAD. The
+		// bookkeeping ref the other paths drop is refs/harvest/<branch>, and
+		// that name is the BRANCH field already in hand, not the sentence.
+		if sb, ok := err.(*StaleBaseRefusal); ok && strings.TrimSpace(branch) != "" {
+			sb.Branch = branch
+		}
+		remedyStaleBase(err, j.label, []string{clone})
 		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}

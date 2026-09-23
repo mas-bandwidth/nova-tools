@@ -27,6 +27,7 @@
                (:file "src/state-export")
                (:file "src/verifier")
                (:file "src/verification-cache-file")
+               (:file "src/verify-resolver")
                (:file "src/receipt-admission")
                (:file "src/needs")
                (:file "src/fleet")
@@ -37,6 +38,7 @@
                (:file "src/render-filesystem")
                (:file "src/edit-undo")
                (:file "src/take-verb")
+               (:file "src/dep-verb")
                (:file "src/undo")
                (:file "src/pricing")
                (:file "src/operations")
@@ -57,7 +59,8 @@
                (:file "src/request-line")
                (:file "src/replays-verdict-state")
                (:file "src/replays-notes")
-               (:file "src/dedup-root")))
+               (:file "src/dedup-root")
+               (:file "src/execution-reconcile")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -90,6 +93,7 @@
                 (:file "tests/replays-8682")
                 (:file "tests/replays-notes")
                 (:file "tests/replays-785-gate")
+                (:file "tests/replays-dep-verb")
                 (:file "tests/request-line")
                 (:file "tests/replays-concurrency-witness")
                 (:file "tests/replays-restart-and-recovery")
@@ -97,4 +101,7 @@
                 (:file "tests/replays-fleet-stale-tokens")
                 (:file "tests/replays-lease-durability")
                 (:file "tests/replays-e08-render-file")
-                (:file "tests/replays-new-verb-door")))
+                (:file "tests/replays-new-verb-door")
+                (:file "tests/replays-execution-reconcile")
+                 (:file "tests/issue-2338")
+                 (:file "tests/issue-1695")))
