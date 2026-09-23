@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
 // PR is everything `why` reads for one PR, loaded by LoadPR.
@@ -36,12 +38,12 @@ func Why(p *PR, now time.Time) []string {
 	pass := true
 
 	// ci
-	verdict := p.CI["verdict"]
+	verdict := civerdict.Of(p.CI)
 	if verdict == "" {
-		verdict = "MISSING"
+		verdict = civerdict.Missing
 	}
 	lines = append(lines, fmt.Sprintf("ci %s@%s", verdict, short(head)))
-	if verdict != "OK" || head == "" {
+	if !civerdict.Green(verdict) || head == "" {
 		pass = false
 	}
 
