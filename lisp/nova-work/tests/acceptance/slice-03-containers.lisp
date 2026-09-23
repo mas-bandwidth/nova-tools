@@ -74,13 +74,12 @@
 ;;;; Durable Filesystem Journal and Replay Acceptance
 ;;;; ------------------------------------------------------------------
 
-(defvar *journal-test-counter* 0)
-
 (defun test-journal-path (name)
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames "nova-work-test-journals/" base)))
-    (ensure-directories-exist dir)
-    (format nil "~A~A-~D-~D.journal" (namestring dir) name (get-universal-time) (incf *journal-test-counter*))))
+  "A journal path under this run's own root (nova-work.tests harness). The old
+name -- `<tmpdir>/nova-work-test-journals/<name>-<universal-time>-<counter>` --
+was the same in two suites that started inside one second, and the second
+process found the journal's lock held by the first (nova-tools#1699)."
+  (test-temp-file name "journal"))
 
 (defun file-byte-count (path)
   (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))

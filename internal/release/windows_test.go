@@ -90,8 +90,9 @@ func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 			t.Fatalf("a backslash reached the far side's shell, where it is an escape: %s", run)
 		}
 	}
-	// The stream lands beside the version directory, by the same slash path.
-	if len(s.sends) != 1 || !strings.HasSuffix(s.sends[0], "-> C:/Users/nova/nova-release/v0.16.0") {
+	// The stream lands in <version>.partial/ by the same slash path, and is
+	// renamed into the final directory only after the bench verifies it.
+	if len(s.sends) != 1 || !strings.HasSuffix(s.sends[0], "-> C:/Users/nova/nova-release/v0.16.0.partial") {
 		t.Fatalf("the release was not sent to the windows dest: %v", s.sends)
 	}
 }

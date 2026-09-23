@@ -81,7 +81,7 @@ usage:
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
-        [--quiet-beats]
+        [--quiet-beats] [--no-beat]
         [--max-commits <n>]
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
@@ -484,6 +484,52 @@ func receiptMaxWordsFromDefaults(busDir string) (int, bool) {
 	return 0, false
 }
 
+// host resolves the machine a note is posted from. The flag wins; when it is absent, a
+// `host=<name>` line in <bus>/.nova-bus/defaults is read. There is NO default beyond that
+// and no refusal when none is found: a bus whose lines each post from one machine has
+// nothing to disambiguate, and a note with no Host line is the note this tool has always
+// written. A value that is given and unusable IS a refusal, because a host silently
+// dropped is the `[bud air]` subject convention all over again.
+func (f *flags) host(flagValue string, flagWasSet bool, busDir string, stderr io.Writer) (string, bool) {
+	if !flagWasSet {
+		flagValue = hostFromDefaults(busDir)
+		if flagValue == "" {
+			return "", true
+		}
+	}
+	if err := bus.ValidHost(flagValue); err != nil {
+		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
+		return "", false
+	}
+	return flagValue, true
+}
+
+// hostFromDefaults reads the `host=<name>` line out of <bus>/.nova-bus/defaults, the same
+// key=value file receipt-max-words is read from. A missing file or a missing key is "no
+// host"; a key whose value is unusable is returned as it stands, so the caller refuses it
+// by name rather than posting as nobody.
+func hostFromDefaults(busDir string) string {
+	if busDir == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(busDir, ".nova-bus", "defaults"))
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, val, ok := strings.Cut(line, "=")
+		if !ok || strings.TrimSpace(key) != "host" {
+			continue
+		}
+		return strings.TrimSpace(val)
+	}
+	return ""
+}
+
 // receiptMaxWordsFromEnv reads NOVA_BUS_RECEIPT_MAX_WORDS, the environment default source.
 // An empty or unusable value is "absent".
 func receiptMaxWordsFromEnv() (int, bool) {
@@ -688,6 +734,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
 	as := f.fs.String("as", "", "which participant you are; supplies the From line when the draft has none, and is refused if the draft's From line names anybody else")
+	host := f.fs.String("host", "", "the machine you are posting from; written as the Host line, shown as host= on an inbox line, and read from a `host=` line in <bus>/.nova-bus/defaults when the flag is absent")
 	slug := f.fs.String("slug", "", "the human half of the filename (default: from the subject)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
@@ -703,6 +750,10 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		return 2
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
+		return 2
+	}
+	hostName, ok := f.host(*host, f.set("host"), *busDir, stderr)
+	if !ok {
 		return 2
 	}
 	hasDraft := *file != "" || *useStdin
@@ -827,7 +878,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		if !ok {
 			return 2
 		}
-		prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
+		prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
 		if err != nil {
 			for _, reason := range bus.Reasons(err) {
 				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
@@ -851,7 +902,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if !ok {
 		return 2
 	}
-	prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
+	prepared, err := bus.PrepareWith(t, text, now, bus.SendOptions{Slug: *slug, As: *as, Host: hostName})
 	if err != nil {
 		// EVERY reason, one line each. A refusal that named the first of three mistakes in
 		// a draft cost the writer three runs to find the other two, and the tool had read
@@ -1380,9 +1431,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	if o.bodies {
-		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
+		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, stdout, stderr)
 	}
-	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
+	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, stdout, stderr)
 }
 
 // inboxOpts is one listing's whole invocation, read from the flags and checked.
@@ -1444,6 +1495,11 @@ type inboxOpts struct {
 	me    bus.Participant
 	beat  time.Duration
 	lease time.Duration
+	// noBeat is `wait --no-beat`: no entry beat, no tick beat, no beat commit. It is a
+	// READ-ONLY poll for a process that runs BESIDE a line rather than AS the line, so
+	// the line's own harness keeps its BEAT to itself and the two writers never collide
+	// on from-<name>/BEAT (#1517). `inbox` leaves it false.
+	noBeat bool
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -2074,7 +2130,7 @@ func legacyToken(l bus.LegacyLine) string {
 // The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
-func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, noBeat bool, now time.Time, stdout, stderr io.Writer) int {
 	// NO LANE, NO WRITE, AND NOTHING TOUCHED. Every state path this function builds is
 	// lane + "/" + name, so a lane-less reader names "/CURSOR" and "/OPEN" -- absolute
 	// paths that land at the checkout ROOT and that git refuses to stage as outside the
@@ -2097,7 +2153,12 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s has no lane on this bus, so there is nowhere to write a cursor\n", oneline.Field(who))
 		return 1
 	}
-	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane), bus.BeatPath(me.Lane)}
+	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
+	// --no-beat (#1517): the cursor commit does not name the BEAT, so a read-only wait
+	// that advances its cursor still writes nothing of the line's presence onto the bus.
+	if !noBeat {
+		paths = append(paths, bus.BeatPath(me.Lane))
+	}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
@@ -2138,13 +2199,13 @@ func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, le
 
 // advanceCursor preserves the released full-head behaviour for listings without bodies.
 // Bodies mode calls advanceCursorTo with the paginator's whole-commit safe frontier.
-func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, noBeat bool, now time.Time, stdout, stderr io.Writer) int {
 	head, err := bus.HeadCommit(busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
-	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, now, stdout, stderr)
+	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, noBeat, now, stdout, stderr)
 }
 
 // defaultOpenMax is how many carried entries `--open` prints before it says how many it
@@ -2552,8 +2613,8 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int, d *not
 				shown++
 				continue
 			}
-			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
-				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
+			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s %saddr=%s at=%s path=%s: %s\n",
+				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)),
 				oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
 			shown++
 		}
@@ -2649,11 +2710,23 @@ func bodyDisplayGroup(item bus.BodyItem) string {
 	return "NOTE"
 }
 
+// hostField is the `host=<name> ` token an inbox line carries when the note named the
+// machine it was posted from, and the empty string when it did not. It is written this way
+// -- the whole token, space and all, or nothing -- so a note with no Host line prints the
+// line it has always printed, byte for byte, and every parser that reads field 4 of an
+// `INBOX NOTE` as `from=` keeps reading it there.
+func hostField(host string) string {
+	if host == "" {
+		return ""
+	}
+	return "host=" + oneline.Field(host) + " "
+}
+
 func printBodyItem(stdout io.Writer, item bus.BodyItem, d *noteDecider) error {
 	e := item.Entry
 	kind := bodyDisplayGroup(item)
 	if kind != "NOTE" {
-		if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+		if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s %saddr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 			return err
 		}
 		return nil
@@ -2667,7 +2740,7 @@ func printBodyItem(stdout io.Writer, item bus.BodyItem, d *noteDecider) error {
 		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject), decideSuffix(j)); err != nil {
 			return err
 		}
-	} else if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+	} else if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s %saddr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), hostField(e.Host), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
@@ -2776,6 +2849,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
 	beat := f.fs.Duration("beat", defaultBeatInterval, "how often to push your BEAT liveness file as its own commit")
 	beatLease := f.fs.Duration("beat-lease", defaultBeatLease, "how far into the future each BEAT's until= promises the line is alive, so a manager cycle between waits still reads awake")
+	noBeat := f.fs.Bool("no-beat", false, "write and push no BEAT at all: a read-only poll for a process that runs beside a line rather than as it, so it does not fight the line's own harness for from-<name>/BEAT; cannot be given with --beat or --beat-lease")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
 	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
 	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
@@ -2804,6 +2878,15 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// what its checkout already held would wait out its whole timeout beside a bus full of
 	// notes, and this tool does not guess a remote.
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
+		return 2
+	}
+	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE (#1517). --no-beat
+	// says this wait writes no BEAT and --beat/--beat-lease say when and how far to write
+	// one; a caller that gave both meant one of them, and guessing which would silently
+	// break either presence or the read-only promise. It is refused by name, and the door
+	// is the same one every invocation refusal names.
+	if *noBeat && (f.set("beat") || f.set("beat-lease")) {
+		fmt.Fprint(stderr, "nova-bus wait: --no-beat writes no BEAT and --beat/--beat-lease say when to write one; give one or the other; run: nova-bus help\n")
 		return 2
 	}
 	flagLegacy, ok := legacyLine("wait", *legacyBefore, stderr)
@@ -2939,7 +3022,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 		bodies: *bodies, maxNotes: *maxNotes, maxBytes: *maxBytes, after: *after,
-		me: me, beat: *beat, lease: *beatLease,
+		me: me, beat: *beat, lease: *beatLease, noBeat: *noBeat,
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
 		maxCommits:  *maxCommits,
@@ -2988,10 +3071,42 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)),
 			oneline.Field(dash(*until)), *idleExit)
 	}
+	// A KILLED TICK LEAVES THE NEXT ONE UNABLE TO START (#2627). An index.lock older than a
+	// minute, with no git still owning the checkout, is the killed git's leftover, and a
+	// dirty BEAT is the generated file that same kill left half-written. Both are this
+	// tool's. A CURSOR, a hand edit, anything else is not, and is not touched here. The
+	// clock on the lock is the machine's clock: `now` above is the note clock, which a
+	// test freezes, and a frozen clock would call a lock written today either ancient or
+	// not yet born. The repair is recorded only after it has happened, and printed once,
+	// from the poll, together with whatever the fast-forward itself had to discard.
+	repairs := &repairLog{}
+	if cleared, err := bus.ClearStaleIndexLock(*busDir, time.Now()); err != nil {
+		fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+		return 1
+	} else if cleared {
+		repairs.add("index.lock")
+	}
+	beatDiscarded := false
+	if !o.noBeat {
+		var err error
+		beatDiscarded, err = discardDirtyOwnedBeat(o)
+		if err != nil {
+			repairs.flush(stdout)
+			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+			return 1
+		}
+	}
 	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
-	// already reads awake the moment its call begins, lease and all.
-	if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
-		fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+	// already reads awake the moment its call begins, lease and all. --no-beat turns it
+	// off with the rest of the beat: a process running BESIDE a line does not beat for it.
+	// When the beat was dirty on the way in, this write is the regeneration, and the
+	// repair is claimed only if the write landed.
+	if !o.noBeat {
+		if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
+			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+		} else if beatDiscarded {
+			repairs.add(bus.BeatPath(me.Lane))
+		}
 	}
 	// The command the caller issues again to re-arm this wait: the next one, with the same
 	// flags, echoed back so a harness that does not wake on its own can paste it. A wait is
@@ -2999,7 +3114,65 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// is shell-quoted, not joined raw: a --bus path carrying a space must come back as the
 	// same one argument after a paste, not split in two.
 	next := rearmCommand(args)
-	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now)
+	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now, repairs)
+}
+
+// discardDirtyOwnedBeat throws away a BEAT this wait owns, when one was already dirty.
+// --no-beat does not own the line's BEAT — a process beside the line must not discard the
+// harness's — and returns false without looking. discarded is false when there was nothing
+// to throw away, so a clean beat is not a repair.
+func discardDirtyOwnedBeat(o inboxOpts) (bool, error) {
+	if o.noBeat {
+		return false, nil
+	}
+	beat := bus.BeatPath(o.me.Lane)
+	dirty, err := bus.PathDirty(o.busDir, beat)
+	if err != nil {
+		return false, err
+	}
+	if !dirty {
+		return false, nil
+	}
+	return bus.DiscardPath(o.busDir, beat)
+}
+
+// repairLog is the repairs this wait has done and not yet said. add is idempotent: a beat
+// discarded on the way in and discarded again so the fast-forward can move is one repair.
+// flush prints one WAIT REPAIR line naming exactly what was added, then forgets it, so a
+// later tick that repairs something new can say so and a tick that repairs nothing says
+// nothing.
+type repairLog struct {
+	pending []string
+}
+
+func (r *repairLog) add(item string) {
+	if r == nil || item == "" {
+		return
+	}
+	for _, e := range r.pending {
+		if e == item {
+			return
+		}
+	}
+	r.pending = append(r.pending, item)
+}
+
+func (r *repairLog) flush(w io.Writer) {
+	if r == nil || len(r.pending) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "WAIT REPAIR repaired=%s\n", oneline.Field(strings.Join(r.pending, ",")))
+	r.pending = nil
+}
+
+// waitOwnedPaths is the lane file wait may discard: its own BEAT, and only when this
+// call is the one writing it. CURSOR is the reader's place, not a generated beat, and is
+// never in this list. --no-beat owns nothing.
+func waitOwnedPaths(o inboxOpts) []string {
+	if o.noBeat {
+		return nil
+	}
+	return []string{bus.BeatPath(o.me.Lane)}
 }
 
 // waitWalkOverBound answers whether this lane's cursor is further behind HEAD than the
@@ -3085,7 +3258,7 @@ func writeBeatLease(o inboxOpts, cursor string) error {
 // note that is already there -- the caller answered the last one and came straight back --
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
-func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next string, stdout, stderr io.Writer, now time.Time) int {
+func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next string, stdout, stderr io.Writer, now time.Time, repairs *repairLog) int {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
@@ -3101,8 +3274,12 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	if held, err := bus.ReadCursor(o.busDir, o.me.Lane); err == nil {
 		cursor = held.Commit
 	}
-	// The beat write: one line into the working tree, cheap, every tick.
+	// The beat write: one line into the working tree, cheap, every tick. --no-beat makes
+	// it a no-op, so a read-only poll touches no file and no commit.
 	writeBeat := func() {
+		if o.noBeat {
+			return
+		}
 		if err := writeBeatLease(o, cursor); err != nil {
 			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
 		}
@@ -3136,6 +3313,16 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 	// unpushed commit of the caller's own beat, as their own machinery and carry it out
 	// with the note rather than refusing over it.
 	landBeat := func() {
+		if o.noBeat {
+			return
+		}
+		// A beat commit on a checkout that is still behind the bus is a divergence, not
+		// a landing. The poll that could not fast-forward — a dirty file this wait does
+		// not own, a lock it was not allowed to remove — has already said why. Committing
+		// here would move HEAD and the next tick would be worse than this one.
+		if behind, err := bus.BehindRemote(o.busDir, o.remote, o.branch); err == nil && behind {
+			return
+		}
 		dirty, err := bus.PathDirty(o.busDir, bus.BeatPath(o.me.Lane))
 		if err != nil {
 			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
@@ -3170,7 +3357,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 		// advances the cursor carry the beat out inside its own cursor commit; see
 		// landBeat.
 		writeBeat()
-		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stderr)
+		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stdout, stderr, repairs)
 		if r.Cursor != "" {
 			cursor = r.Cursor
 		}
@@ -3271,20 +3458,47 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 // twenty listings.
 //
 // The lock is taken and released here rather than around the loop; see lockCheckout.
-func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stderr io.Writer) (int, inboxReading, string, bool) {
+func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stdout, stderr io.Writer, repairs *repairLog) (int, inboxReading, string, bool) {
 	release, code := lockCheckout("WAIT", o.busDir, stderr)
 	if code != 0 {
+		repairs.flush(stdout)
 		return code, inboxReading{}, "", false
 	}
 	defer release()
 	// THE FETCH IS THE POLL. Every read in this tool reads the working tree, so a poll that
-	// fetched and left the checkout where it was would never see anything; see
-	// bus.FetchAndFastForward, which moves it only when moving it is a fast-forward.
-	if _, err := bus.FetchAndFastForward(o.busDir, o.remote, o.branch); err != nil {
+	// fetched and left the checkout where it was would never see anything. The recovery
+	// around that fetch removes a stale index.lock and, when the checkout is behind,
+	// discards only this wait's own BEAT if that file is what blocks the fast-forward. A
+	// dirty file it does not own refuses the poll and is not touched. See
+	// bus.RecoverWaitFastForward.
+	rec, err := bus.RecoverWaitFastForward(o.busDir, o.remote, o.branch, waitOwnedPaths(o), time.Now())
+	if rec.LockCleared {
+		repairs.add("index.lock")
+	}
+	beat := bus.BeatPath(o.me.Lane)
+	for _, p := range rec.Discarded {
+		if !o.noBeat && p == beat {
+			// The fast-forward needed a clean BEAT. Write it back, and claim the repair
+			// only when that write landed — a discard that did not regenerate is not the
+			// repair the line names.
+			cur := ""
+			if held, rerr := bus.ReadCursor(o.busDir, o.me.Lane); rerr == nil {
+				cur = held.Commit
+			}
+			if werr := writeBeatLease(o, cur); werr != nil {
+				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(werr))
+				continue
+			}
+		}
+		repairs.add(p)
+	}
+	repairs.flush(stdout)
+	if err != nil {
 		if first {
 			// The first poll's fetch failing is the invocation being wrong -- a remote that
-			// is not there, a branch nobody has, a checkout that has diverged -- and the
-			// caller should hear that now rather than in an hour.
+			// is not there, a branch nobody has, a checkout that has diverged, a dirty file
+			// this wait does not own -- and the caller should hear that now rather than in
+			// an hour.
 			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
 			return 1, inboxReading{}, "", false
 		}
@@ -3324,16 +3538,16 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 			return 1, r, "", false
 		}
 		var quiet bytes.Buffer
-		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &quiet, stderr); code != 0 {
+		if code := advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &quiet, stderr); code != 0 {
 			return code, r, "", false
 		}
 		skip := fmt.Sprintf("WAIT ADVANCED from=%s to=%s heard=%d\n", oneline.Field(sha8(r.Cursor)), oneline.Field(sha8(head)), r.HeardNew)
 		return 0, r, skip, true
 	}
 	if o.advance && o.bodies && r.AdvanceTo != "" {
-		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
 	} else if o.advance && !o.bodies {
-		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
 	}
 	return code, r, buf.String(), false
 }

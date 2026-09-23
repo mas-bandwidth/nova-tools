@@ -1,6 +1,7 @@
 package worklang_test
 
 import (
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"strings"
@@ -198,4 +199,57 @@ func TestWorklangExpand(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestExpandNamesEveryMissingField: a node lacking :output and :budget
+// is refused once, naming every missing field. The docs/CLI.md must also
+// document both :output and :budget fields.
+func TestExpandNamesEveryMissingField(t *testing.T) {
+	noFields := `(:plan :version 1
+  (:node :id "n1" :kind docs :repo "o/r" :base "dev"
+   :inputs ((:spec "docs/a.md"))
+   :affinity (:bench verify :route "deepseek-flash"))
+  (:clip :per-node))`
+	plan, err := worklang.ParsePlan("work.work", []byte(noFields), worklang.DefaultLimits())
+	if err != nil {
+		t.Fatalf("fixture plan was refused: %v", err)
+	}
+	_, err = worklang.ExpandPlan(plan)
+	if err == nil {
+		t.Fatal("a node lacking :output and :budget was accepted instead of refused")
+	}
+	ref := assertRefusal(t, err)
+	msg := ref.Error()
+	// The error must name both :output and :budget as missing, in the same run
+	outputFound := strings.Contains(msg, ":output")
+	budgetFound := strings.Contains(msg, ":budget")
+	if !outputFound || !budgetFound {
+		t.Errorf("refusal does not name both :output and :budget in one message: %s", msg)
+	}
+	// It should also reference node n1
+	if !strings.Contains(msg, "n1") {
+		t.Errorf("refusal does not name node n1: %s", msg)
+	}
+
+	// The docs/CLI.md must document both :output and :budget fields
+	// Try to find the docs file, starting from the current directory
+	cliPath := "docs/CLI.md"
+	if _, err := os.Stat(cliPath); err != nil {
+		// Try relative to the test's package directory
+		wd, _ := os.Getwd()
+		cliPath = filepath.Join(filepath.Dir(filepath.Dir(wd)), "docs", "CLI.md")
+	}
+
+	cliContent, err := ioutil.ReadFile(cliPath)
+	if err != nil {
+		t.Fatalf("could not read docs/CLI.md: %v", err)
+	}
+
+	cliText := string(cliContent)
+	// Both :output and :budget must be documented in the CLI docs
+	for _, want := range []string{":output", ":budget"} {
+		if !strings.Contains(cliText, want) {
+			t.Errorf("docs/CLI.md does not document %q", want)
+		}
+	}
 }

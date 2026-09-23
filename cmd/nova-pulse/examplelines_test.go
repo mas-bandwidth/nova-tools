@@ -109,6 +109,10 @@ var leftOwedExampleLines = map[string]string{
 	// why: the line acts on the real $HOME -- run reaps dead slots and drops the
 	// build cache -- so running it in a test would delete the caller's files.
 	"nova-pulse hygiene run --home \"$HOME\"": "the line acts on the real $HOME: run reaps dead slots and drops the build cache, so running it in a test would delete the caller's files",
+	// why: the lane sweep walks the caller's real $HOME/rowan-working/tmp; the
+	// test's HOME holds no lane clones, and a fixture cannot stand behind a
+	// stranger's working directory, so the line cannot exit 0 here.
+	"nova-pulse hygiene --lane-dirs \"$HOME/rowan-working/tmp\" --older-than 2d --dry-run": "the lane sweep walks the real $HOME/rowan-working/tmp, which the test's HOME does not hold; no fixture stands behind a stranger's working directory",
 	// why: survey runs tools/bench-standard.sh over ssh on every bench in
 	// ./fleet.tsv; the file does not exist and no test may reach a machine.
 	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
