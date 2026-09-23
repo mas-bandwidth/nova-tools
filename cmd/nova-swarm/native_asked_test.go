@@ -35,7 +35,7 @@ func nativeAsked(t *testing.T, label, card string) (job, stdout, stderr string) 
 		t.Fatal(err)
 	}
 	var out, errBuf strings.Builder
-	run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
+	run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"},
