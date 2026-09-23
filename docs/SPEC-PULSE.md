@@ -22,6 +22,10 @@ window reads one line per cycle.
   cuts a read card per PR, and pulses again — queue first.
 - `nova-pulse width` is the drift alarm: one line, and a non-zero exit when there is pool
   and there are free slots and nothing was launched.
+- `nova-pulse sprint` is the bounded set of work around all of it -- friends and swarm in one
+  `x/y z% -> ~Nh` -- with its own normative text in [SPEC-SPRINT.md](SPEC-SPRINT.md)
+  (nova-tools #2593). It adds no queue, no lease and no heartbeat of its own: a friend is a
+  consumer like a bench, and the refill is the dealer's rule that `fill` calls.
 
 SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
 `internal/oneline`, `internal/bounded`, no guessed paths — and this file says only what is
