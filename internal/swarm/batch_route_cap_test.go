@@ -65,8 +65,14 @@ func TestABatchNeverExceedsItsRouteCap(t *testing.T) {
 		release("c")
 		release("d")
 	}()
+	// THE BUDGET WORD IS REQUIRED (SPEC-SWARM rule 13d, issue #1545): a BatchInput without
+	// Tokens is refused before any card starts, so every literal in this file names one.
+	// `unmetered` is this file's behaviour byte for byte -- no cap is sampled and no card is
+	// stopped -- so the in-flight cap and the first-token window are measured exactly as
+	// #917 and #1784 wrote them here.
 	code, out, errs := runBatchInput(BatchInput{
-		ID: "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		MaxInflight: 2, Auth: "muse-contributor-free",
 	})
 	<-done
@@ -122,7 +128,8 @@ func TestWithNoCapEveryCardLaunchesAtOnce(t *testing.T) {
 		}
 	}()
 	code, out, errs := runBatchInput(BatchInput{
-		ID: "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	})
 	<-done
 	if code != 0 {
@@ -167,7 +174,8 @@ func TestTheCapIsPerRouteEndToEnd(t *testing.T) {
 		}
 	}()
 	code, out, errs := runBatchInput(BatchInput{
-		ID: "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		MaxInflight: 1, Auth: "k",
 	})
 	<-done
@@ -223,6 +231,7 @@ func TestACardWithNoFirstTokenIsStalled(t *testing.T) {
 	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) { return 50_000_000, true }
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
+		Tokens: "unmetered",
 		// Idle is left at its zero value: this test is the FIRST-TOKEN window and nothing else.
 		ID: "B1", Deadline: 60 * time.Second, StallAfter: testIdleBudget, // wall-ok: the injected clock advances this first-token window; it is never real time
 		Cards: tsv, Root: root, Runner: runner,
@@ -267,7 +276,8 @@ func TestWithNoStallAfterASilentCardIsNotStalled(t *testing.T) {
 		publishCard("{job}"),
 	)
 	code, out, _ := runBatch2(BatchInput{
-		ID: "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 60 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	})
 	if code != 0 {
 		t.Fatalf("a card that finished is done, got %d:\n%s", code, out)
