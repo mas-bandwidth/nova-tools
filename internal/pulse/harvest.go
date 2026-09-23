@@ -75,6 +75,11 @@ type HarvestInput struct {
 	SinceStamp string
 	Timer      string
 
+	// Commit, when set, runs the mechanical commit step on each job before folding:
+	// commits DONE cards whose work is uncommitted, drops card scratch, sets aside card artifacts,
+	// rebases onto moved target, and updates RESULT.md headers.
+	Commit bool
+
 	// Effect, when set, is the publication gate. RESULT, harvest push and
 	// accept each verify the card fence epoch and a separate RUN action token
 	// at the effect owner's linearization. Nil keeps today's harvest.
@@ -208,6 +213,23 @@ func Harvest(in HarvestInput) int {
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: ambiguous RESULT.md under %s (same contract in more than one job directory; not folding)\n",
 				field(c.Label), field(in.Root))
 			continue
+		}
+		if in.Commit && jobDir != "" {
+			if _, err := CommitJob(CommitJobInput{
+				JobDir:       jobDir,
+				BranchPrefix: in.BranchPrefix,
+				DefaultBase:  in.Base,
+				MaxFileSize:  MaxChangedFileBytes,
+				Clones:       in.Clones,
+				Stdout:       in.Stdout,
+			}); err != nil {
+				if in.Stderr != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST COMMIT ERROR label=%s: %s\n", field(c.Label), oneline.Err(err))
+				}
+				refused++
+				writeSeen(in.Root, c, "refused")
+				continue
+			}
 		}
 		state, branch, repo, resultLines := classify(jobDir, c, contract)
 
