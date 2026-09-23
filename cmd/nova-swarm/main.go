@@ -85,6 +85,9 @@ usage:
    nova-swarm pull     --stream <kind> --bench <name> (--redis <addr> | --dir <dir>) [--lane <lane>] [--wait <duration>]
    nova-swarm pull      --bench <name> --slots <n> --seat <seat> [--store <dir>] [--harvest <dir>] [--image <image>] [--runner <cmd>] [--once]
    nova-swarm pull      --store <dir> --owner <o> --for <duration>
+   nova-swarm stage     --url <url> --sha <sha> --mirror <bare mirror> --dest <dir> --job <dir> --bench <name> --label <text> --timeout <duration>
+                       (stages a card from the bench mirror, never a clone from GitHub; one fetch of --sha when the
+                        mirror lacks it; past --timeout: RESULT: BLOCKED stage-timeout <bench> <secs> in <job>/RESULT.md, exit 1)
 
 PULL TAKES ONE CARD BY RENAME. nova-swarm pull lists a bench's queue/ directory
 and takes one card by rename(<name>.card, taken/<worker>-<name>.card), atomic within
@@ -245,6 +248,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdPull(rest, stdout, stderr, now)
 	case "worker":
 		return cmdWorker(rest, stdout, stderr)
+	case "stage":
+		return cmdStage(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
