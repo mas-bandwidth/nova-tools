@@ -355,3 +355,115 @@ func TestLintDeadlineAtKindP95(t *testing.T) {
 		t.Fatal("a row after the first whose seconds are not a number is an error, not a skipped row")
 	}
 }
+
+// commitFileAt commits one file with the given body on top of HEAD and returns the
+// new sha: the base a card's DONE-WHEN is held against.
+func commitFileAt(t *testing.T, dir, rel, body string) string {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(rel)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, rel), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var sha string
+	for _, args := range [][]string{{"add", "."}, {"-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "tests"}, {"rev-parse", "HEAD"}} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		sha = strings.TrimSpace(string(out))
+	}
+	return sha
+}
+
+// #3083, INSERTION 2: THE CONTROL IS THE SENTENCE. A card's DONE-WHEN names a test
+// runner and a literal test that is absent at base-sha, so the test can be red there;
+// an English outcome ("applied cleanly", "make preflight") is not a control and the
+// card is refused before any model is spent on it.
+func TestLintDoneWhenTestNameAtBase(t *testing.T) {
+	repo, _ := baseRepo(t)
+	commitFileAt(t, repo, "internal/decide/decide_test.go",
+		"package decide\n\nimport \"testing\"\n\nfunc TestDecideExisting(t *testing.T) {}\n")
+	commitFileAt(t, repo, "tests/test_decide.py", "def test_decide_existing():\n    pass\n")
+	sha := commitFileAt(t, repo, "src/lib.rs", "#[test]\nfn decide_existing() {}\n")
+	bc := fullEvidence(repo)
+	lint := func(done string, bc BaseCheck) []CardHeaderFinding {
+		h := map[string]string{"base-sha": sha}
+		if done != "" {
+			h["DONE-WHEN"] = done
+		}
+		return findingsFor(LintCardBase(baseCard(h), bc), "donewhen-test-name")
+	}
+
+	// Clean: a real test runner naming a test absent at base-sha.
+	for _, done := range []string{
+		"`go test ./internal/decide -run TestDecideConfidenceMissing` passes",
+		"`go test ./internal/decide -run=TestDecideConfidenceMissing -count=1` passes",
+		"go test ./internal/decide -run '^TestDecideConfidenceMissing$' passes",
+		// One new test among existing ones is still a control that can be red.
+		`go test ./internal/decide -run "TestDecideExisting|TestDecideConfidenceMissing/zero" passes`,
+		"`pytest tests/test_decide.py::test_decide_confidence_missing` passes",
+		"`pytest tests -k test_decide_confidence_missing` passes",
+		"`cargo test decide::decide_confidence_missing` passes",
+	} {
+		if fs := lint(done, bc); len(fs) != 0 {
+			t.Fatalf("DONE-WHEN %q names a test absent at base and lints clean, got %v", done, fs)
+		}
+	}
+
+	// Refused: prose outcomes, a runner with no test named, a regex that is no name.
+	for _, done := range []string{
+		"applied cleanly",
+		"make preflight",
+		"`go test ./...` passes",
+		"`go test ./internal/decide -run 'TestDecide.*'` passes",
+		"the lander merges it",
+	} {
+		fs := lint(done, bc)
+		if len(fs) != 1 {
+			t.Fatalf("DONE-WHEN %q names no literal test and is refused, got %v", done, fs)
+		}
+		if fs[0].Line != 8 {
+			t.Fatalf("the finding sits on the DONE-WHEN: line (8), got %d for %q", fs[0].Line, done)
+		}
+	}
+
+	// Refused: every named test already exists at base-sha, so it cannot be red there.
+	for _, done := range []string{
+		"`go test ./internal/decide -run TestDecideExisting` passes",
+		"`pytest tests/test_decide.py::test_decide_existing` passes",
+		"`cargo test decide_existing` passes",
+	} {
+		fs := lint(done, bc)
+		if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "exists at base-sha "+sha[:12]) {
+			t.Fatalf("DONE-WHEN %q names a test present at base and is refused by sha, got %v", done, fs)
+		}
+	}
+
+	// No DONE-WHEN at all is refused.
+	if fs := lint("", bc); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "DONE-WHEN") {
+		t.Fatalf("a card with no DONE-WHEN is refused, got %v", fs)
+	}
+
+	// No evidence is not negative evidence: no repo, or a base the repo lacks, is MISSING.
+	none := bc
+	none.Repo = ""
+	if fs := lint("`go test ./internal/decide -run TestDecideConfidenceMissing` passes", none); len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "MISSING") {
+		t.Fatalf("no repository handed over is MISSING, never a pass, got %v", fs)
+	}
+	gone := findingsFor(LintCardBase(baseCard(map[string]string{
+		"base-sha":  "1111111111111111111111111111111111111111",
+		"DONE-WHEN": "`go test ./internal/decide -run TestDecideConfidenceMissing` passes",
+	}), bc), "donewhen-test-name")
+	if len(gone) != 1 || !strings.Contains(gone[0].Excerpt, "MISSING") {
+		t.Fatalf("a base-sha the repository does not hold is MISSING, got %v", gone)
+	}
+
+	// The token has its remedy, so `nova-swarm lint --rules` lists it.
+	if CardBaseRemedies["donewhen-test-name"] == "" {
+		t.Fatal("donewhen-test-name has no remedy in CardBaseRemedies")
+	}
+}

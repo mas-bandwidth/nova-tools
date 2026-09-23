@@ -48,8 +48,9 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
 // and `depends-on` (#2636), which fires only under `--typed`, and the four base checks of
 // internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
-// `deadline-p95` (#2636) -- which fire only under `--base-check`.
-const cardLintChecks = 21
+// `deadline-p95` (#2636) -- with `donewhen-test-name` (#3083), which fire only under
+// `--base-check`.
+const cardLintChecks = 22
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
