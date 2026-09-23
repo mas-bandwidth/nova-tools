@@ -381,6 +381,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdCapacity(rest, stdout, stderr)
 	case "gate":
 		return cmdGate(rest, stdout, stderr)
+	case "accept":
+		return cmdAccept(rest, stdout, stderr)
 	case "run":
 		return cmdRun(rest, stdout, stderr, now)
 	case "triage":

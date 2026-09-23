@@ -1,0 +1,12 @@
+fix-reverted	red-at-head
+vacuous	vacuous-test
+no-test	no-test
+wrong-author	identity
+stray	stray-file
+wide	out-of-path
+secret	secret
+broken	build
+vetted	vet
+renamed	named-test-missing
+wrong-name	named-test-not-red
+skipped	test-weakened
