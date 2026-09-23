@@ -129,7 +129,8 @@ the day the hurt behind it was learned.
      or whose guard cannot be measured, is `APPLY REFUSED`, exit 2, naming the
      condition that failed or was `unknown`, remedy *declare and put in force a
      rule that covers the default branch of the repository this file lives in,
-     requires review there, and that this seat cannot bypass*;
+     requires at least one approving review there, and that this seat cannot
+     bypass*;
    - `APPLY BEFORE` prints what the host says about the commit the blob came
      from — `commit=<sha> signed=<yes|no|unknown> reviewed=<yes|no|unknown>` —
      so the claim *a diff somebody read and a commit somebody signed* is a
@@ -149,8 +150,9 @@ the day the hurt behind it was learned.
    is one rule `R` on the declaring scope for which **all** of these are true,
    each measured, never inferred:
    - **declared:** the declaration carries, for the declaring scope, the rows
-     `R present`, `R/enforcement` at the host's in-force value, `R/refs`, and
-     `R/review` at a value other than `absent` — so every half of the guard is
+     `R present`, `R/enforcement` at the host's in-force value, `R/refs`,
+     `R/review` at a value other than `absent`, and `R/approvals` at a whole
+     number of at least 1 — so every half of the guard is
      also a row `plan` measures on a calm day, and its drift is a finding;
    - **in force:** the wire's `R/enforcement` is the host's in-force value. A
      rule the host reports as disabled, or only evaluated, fails the guard;
@@ -161,7 +163,15 @@ the day the hurt behind it was learned.
      would need a catalog of the host's pattern syntax, which rule 3 forbids. A
      host that offers no such read leaves coverage `unknown`;
    - **requires review:** the wire's `R/review` is not `absent`, so an edit to
-     that branch arrives as a change somebody reviewed rather than a push;
+     that branch arrives as a pull request rather than a push;
+   - **requires an approval:** the wire's `R/approvals` — the number of
+     approving reviews the host reports the rule requires before a pull
+     request may merge — is a whole number of at least 1, so the change is one
+     somebody other than its author approved. A pull-request requirement is
+     not an approval: the host lets a rule require a pull request while
+     requiring zero approvals, and such a rule passes the line above and
+     protects nothing. A count of 0, or a count the host does not state, fails
+     the guard (`unknown` is never a pass);
    - **the acting seat cannot bypass it:** no bypass actor the wire carries on
      `R` contains the acting identity's reach as rule 13 measures it. A reach
      the host will not report, against a rule carrying any bypass actor whose
@@ -173,7 +183,10 @@ the day the hurt behind it was learned.
    `APPLY BEFORE`. (2026-09-23 read of draft 3: the guard accepted *any*
    `ruleset` row for the declaring scope, so a present-but-disabled rule, or
    an active rule over unrelated refs, satisfied it while the default branch
-   and the declaration stayed open to one hand.)
+   and the declaration stayed open to one hand. 2026-09-23 read of the repair:
+   *"the review half of the self-protection guard can pass without any
+   approval"* — a rule may require a pull request with zero approvals, so the
+   guard now also measures `R/approvals` at 1 or more.)
 
 2. **One row per fact, six fields, and nothing implied.** One row is one
    tab-separated line: `kind`, `scope`, `key`, `want`, `owner`, `source`. The
@@ -691,7 +704,7 @@ rule 17 and never a pass.
 |---|---|---|---|
 | `repo` | a repository's own setting, `key` the setting's name as the host spells it | the host's repository read | the host's repository write |
 | `visibility` | whether a repository is public | the host's repository read | the host's repository write |
-| `ruleset` | a named rule's existence, and its enforcement, ref and review facets by key (below) | the host's rules read, at rule 8's origin | the host's rules write, at rule 8's address |
+| `ruleset` | a named rule's existence, and its enforcement, ref, review and approval facets by key (below) | the host's rules read, at rule 8's origin | the host's rules write, at rule 8's address |
 | `check` | a required context on a rule | the host's rules read **and** the check runs and commit statuses on the heads rule 9 names | the host's rules write |
 | `workflow` | the file that emits a context | the host's contents read, and the check run → check suite → workflow run path (below) | **nothing — there is no act** (below) |
 | `bypass` | one bypass actor and its mode on a rule | the host's rules read | the host's rules write |
@@ -773,7 +786,8 @@ one wire fact, which is rule 5's own hurt (2026-09-13 read):
 |---|---|---|---|
 | `<rule>/enforcement` | `ruleset` | `active`, `evaluate` or `disabled` as the host spells them | whether the rule is in force at all |
 | `<rule>/refs` | `ruleset` | the ref condition as the host spells it | what the rule covers |
-| `<rule>/review` | `ruleset` | the rule's pull-request requirement as the host spells it, or `absent` | whether an edit to a covered branch must arrive as a reviewed change rather than a push |
+| `<rule>/review` | `ruleset` | the rule's pull-request requirement as the host spells it, or `absent` | whether an edit to a covered branch must arrive as a pull request rather than a push |
+| `<rule>/approvals` | `ruleset` | a whole number: the approving reviews the host reports the rule requires, `0` where it requires a pull request and no approval | whether a pull request on a covered branch must be approved by somebody before it merges; a number, compared as a number, so no host spelling is catalogued (rule 3) |
 | `<rule>/<context>@<producer\|any>` | `check` | `present` or `absent` | a required check, and whether any producer satisfies it or one named one does |
 | `<rule>/actor:<type>:<id>` | `bypass` | a bypass mode as the host spells it, or `absent` | one bypass actor **and its mode**, which are two different grants |
 
@@ -819,6 +833,8 @@ a reader must be able to check a build against it.
 | `ruleset` facet `…/review` | any requirement the host spells, wire `absent` | require review where none was required | narrows |
 | `ruleset` facet `…/review` | any requirement the host spells, wire another requirement | change what review a rule requires | **unjudged** |
 | `ruleset` facet `…/review` | `absent` | stop requiring review | **widens** |
+| `ruleset` facet `…/approvals` | a number greater than the wire's | require more approving reviews | narrows |
+| `ruleset` facet `…/approvals` | a number less than the wire's | require fewer approving reviews | **widens** |
 | `bypass` | any mode the host spells | add a bypass actor, or change its mode | **widens** |
 | `bypass` | `absent` | remove a bypass actor | narrows |
 | `feature` | any value | turn a named feature on or off | **unjudged**, either way |
@@ -879,6 +895,7 @@ ruleset	acme/policy	protect-the-declaration	present	line-one	policy-0
 ruleset	acme/policy	protect-the-declaration/enforcement	enforcement-a	line-one	policy-0
 ruleset	acme/policy	protect-the-declaration/refs	ref-condition-default	line-one	policy-0
 ruleset	acme/policy	protect-the-declaration/review	review-a	line-one	policy-0
+ruleset	acme/policy	protect-the-declaration/approvals	1	line-one	policy-0
 ruleset	acme/widget	protect-trunk	present	line-one	policy-1
 ruleset	acme/widget	protect-trunk/enforcement	enforcement-a	line-one	policy-1
 ruleset	acme/widget	protect-trunk/refs	ref-condition-a	line-one	policy-1
@@ -894,11 +911,12 @@ ruling	bypass:acme/widget:protect-trunk/actor:actor-type-a:actor-id-a	2026-09-11
 
 - **`scope`** is the thing the row is about: a repository in the host's own
   `<owner>/<name>` spelling, or the organization.
-- The four `acme/policy` rows are the declaration's **own** repository and
+- The five `acme/policy` rows are the declaration's **own** repository and
   rule 1's self-protection guard, declared whole: the rule exists, is in force
   (`enforcement-a` stands for the host's in-force value), covers the default
   branch (`ref-condition-default` stands for a condition the host reports as
-  covering it), and requires review. No `bypass` row is declared on it, so a
+  covering it), requires review, and requires one approving review
+  (`review-a` alone, with `approvals` at `0`, would fail the guard). No `bypass` row is declared on it, so a
   bypass actor the wire carries there is `EXTRA`, and one that contains the
   acting seat's reach fails the guard. The `present` row alone would not pass:
   a declaration that does not protect the place it lives in is a declaration
@@ -1268,13 +1286,14 @@ nowhere is there an `os.Getwd`, a `$HOME` read or a path that is not from a flag
    **wire's** rows, and the local file is never opened; the blob sha the fixture
    served is on `APPLY BEFORE` and in the audit row, with the commit's `signed=`
    and `reviewed=` from the fixture beside it. The self-protection guard is
-   proved by one passing fixture and seven that each differ from it in one fact
+   proved by one passing fixture and eight that each differ from it in one fact
    and are each `APPLY REFUSED`, exit 2, naming that condition, before any
    write: the declaring scope carries only the `present` row; the rule is
    present but its wire enforcement is disabled; present but only evaluated;
    active but the host's rules-in-force read for the default branch does not
    name it (its refs cover another branch); active and covering but its wire
-   review is `absent`; a bypass actor on it contains the acting seat's reach;
+   review is `absent`; active, covering and requiring a pull request but its
+   wire approvals are `0`; a bypass actor on it contains the acting seat's reach;
    and the host answers the rules-in-force read with an error, so coverage is
    `unknown`. The passing fixture proceeds and prints `guard=` naming the rule.
 2. A header that differs by one byte is exit 2 naming line 1; a five-field and a
