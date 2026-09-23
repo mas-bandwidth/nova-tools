@@ -21,17 +21,25 @@ func DeclaredPrefixes() []string {
 
 // BytesPerPrefix scans keys matching prefix and returns the sum of their
 // memory usage in bytes. A key deleted between SCAN and MEMORY USAGE is
-// silently skipped.
+// silently skipped. Keys are deduplicated across SCAN pages, since Redis
+// SCAN may return the same key more than once during a single cursor walk.
 func BytesPerPrefix(ctx context.Context, s PrefixScanner, prefix string) (int64, error) {
 	var total int64
 	var cursor uint64
+	seen := make(map[string]struct{})
 	for {
 		keys, next, err := s.Scan(ctx, cursor, prefix+"*", 128).Result()
 		if err != nil {
 			return 0, err
 		}
 		for _, key := range keys {
-			usage, err := s.MemoryUsage(ctx, key, 0).Result()
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			// No explicit sample count: some MEMORY USAGE implementations
+			// (miniredis included) reject a SAMPLES argument of 0.
+			usage, err := s.MemoryUsage(ctx, key).Result()
 			if err != nil {
 				if isKeyGone(err) {
 					continue
@@ -72,6 +80,10 @@ func (q *Queue) QueueBytesPerDeclaredPrefix(ctx context.Context) (map[string]int
 	return BytesPerDeclaredPrefix(ctx, q.rdb)
 }
 
+// isKeyGone reports whether err represents a key that no longer exists.
+// Real Redis and miniredis return redis.Nil for MEMORY USAGE on a missing
+// key; the string form is kept for scanner implementations (including the
+// unit test's mock) that surface the raw protocol error text instead.
 func isKeyGone(err error) bool {
 	if errors.Is(err, redis.Nil) {
 		return true
