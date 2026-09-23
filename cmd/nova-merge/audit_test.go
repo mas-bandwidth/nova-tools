@@ -29,6 +29,7 @@ var mergeAudit = audit.Config{
 		"pass.go|cmdRun|*loop":                                          "a time.Duration this binary's own flag package parsed; its String() is digits and unit letters and holds no separator",
 		"verbs.go|cmdGate|s.name":                                       "a required flag's name, one of the three literals in the table declared above the site",
 		"verbs.go|cmdGate|s.wants":                                      "the sentence saying what that flag WANTS, one of the three literals in the same table",
+		"verbs.go|cmdGate|benchErr":                                     "an error already escaped through oneline.Field and oneline.Err inside gateBenchValidate in gatebench.go",
 		"main.go|done|f.verb":                                           "the verb's own name, a literal at every newFlags call site in this file",
 		"verbs.go|cmdInit|c.name":                                       "a flag's own name, one of the two literals \"base\" and \"lane-branch\" in the table above the site",
 		"pass.go|cmdRun|strconv.FormatFloat(*hours, 'g', -1, 64)":       "a float this binary's own flag package parsed, rendered as digits, a dot and an exponent letter",
@@ -86,6 +87,10 @@ var mergeAudit = audit.Config{
 		// SIMULATE POISON quotes.
 		`"github.com/mas-bandwidth/nova-tools/internal/goenv"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
+		// internal/merge/bench holds no writer of its own: Validate reads the machines
+		// registry and returns an error whose message is already escaped through
+		// oneline.Field and oneline.Err; it prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/merge/bench"`,
 		// safepath holds no writer of its own: RemoveUnder only decides whether a path
 		// may be removed and returns an os error, which every caller renders through
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
