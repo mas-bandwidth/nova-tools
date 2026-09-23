@@ -28,7 +28,7 @@ usage:
   nova-sprint version
   nova-sprint help
   nova-sprint table --once (--fixture <file> [--out <file>] | --refresh pending --out <file>)
-  nova-sprint table --redis <addr> [--once | --loop] [--out <file>]
+  nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop] [--out <file>]
   nova-sprint table --check --redis <addr>
   nova-sprint refresh -- <command> [arg...]
 
@@ -37,6 +37,7 @@ table --refresh pending does not open --out: the previous table stays, and
 the command prints it again. An empty render is not published.
 The Redis form reads one consistent FCALL_RO snapshot per render; --loop
 renders once per second. The function library must already be loaded.
+Control sprints are hidden unless named with --sprint.
 --check reads an existing throwaway fixture store and compares exact output.
 
 refresh runs the command after -- in its own session (POSIX setsid) and

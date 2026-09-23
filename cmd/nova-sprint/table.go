@@ -29,6 +29,7 @@ type tableOpts struct {
 	out     string
 	refresh string
 	redis   string
+	sprint  string
 	check   bool
 	loop    bool
 }
@@ -43,6 +44,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&opts.out, "out", "", "")
 	fs.StringVar(&opts.refresh, "refresh", "", "")
 	fs.StringVar(&opts.redis, "redis", "", "")
+	fs.StringVar(&opts.sprint, "sprint", "", "")
 	fs.BoolVar(&opts.check, "check", false, "")
 	fs.BoolVar(&opts.loop, "loop", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -52,7 +54,7 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		return tableRefuse(stderr, "takes flags, not positional arguments")
 	}
 	if opts.check {
-		if opts.fixture != "" || opts.out != "" || opts.refresh != "" || opts.loop || opts.once {
+		if opts.fixture != "" || opts.out != "" || opts.refresh != "" || opts.loop || opts.once || opts.sprint != "" {
 			return tableRefuse(stderr, "--check takes only --redis <addr>")
 		}
 		return cmdTableCheck(opts.redis, stdout, stderr)
@@ -61,15 +63,18 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 		if opts.fixture != "" || opts.refresh != "" || (opts.loop && opts.once) {
 			return tableRefuse(stderr, "--redis takes either --once or --loop, with optional --out; no --fixture or --refresh")
 		}
-		return cmdTableRedis(opts.redis, opts.out, opts.loop, stdout, stderr)
+		return cmdTableRedis(opts.redis, opts.sprint, opts.out, opts.loop, stdout, stderr)
 	}
 	if opts.loop {
 		return tableRefuse(stderr, "--loop requires --redis <addr>")
 	}
+	if opts.sprint != "" {
+		return tableRefuse(stderr, "--sprint requires --redis <addr>")
+	}
 	return cmdTableRestart(opts, fs.NArg(), stdout, stderr)
 }
 
-func cmdTableRedis(addr, out string, loop bool, stdout, stderr io.Writer) int {
+func cmdTableRedis(addr, sprint, out string, loop bool, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -77,7 +82,7 @@ func cmdTableRedis(addr, out string, loop bool, stdout, stderr io.Writer) int {
 	}
 	defer st.Close()
 	render := func() (int, error) {
-		snap, err := table.Read(ctx, st.Client())
+		snap, err := table.ReadNamed(ctx, st.Client(), sprint)
 		if err != nil {
 			return 0, err
 		}

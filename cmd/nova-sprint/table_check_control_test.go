@@ -136,7 +136,7 @@ func TestTableCLIBenchCellsFromCardIndexes(t *testing.T) {
 		{"SADD", "s:s1:done:ghost", "y1", "y2", "y3", "y4", "y5", "y6", "y7"},
 	})
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"table", "--redis", addr}, &stdout, &stderr)
+	code := run([]string{"table", "--redis", addr, "--sprint", "control-a"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("table exit %d; stderr %s", code, stderr.String())
 	}

@@ -95,24 +95,30 @@ local function append_pipeline(out, sprint)
   for _, v in ipairs(rec) do out[#out + 1] = v end
 end
 
-local function append_procs(out, now)
-  if scard('procs') > 128 then
-    return false
+local function append_procs(out, now, benches)
+  local procs = { 'reconciler', 'ok-to-friend', 'pr-to-read',
+    'hold-to-fix', 'backpressure' }
+  for _, bench in ipairs(benches) do
+    procs[#procs + 1] = 'harvest:' .. bench
   end
-  local procs = redis.call('SMEMBERS', 'procs')
   table.sort(procs)
   for _, p in ipairs(procs) do
     local at = tonumber(redis.call('HGET', 'proc:' .. p, 'pass_at'))
-    local up = at and 1 or 0
     local age = -1
     if at then age = math.max(0, now - math.floor(at / 1000)) end
+    local up = at and age <= 20 and 1 or 0
+    local why = ''
+    if not at then
+      why = 'missing: pass'
+    elseif age > 20 then
+      why = 'stale: pass ' .. tostring(age) .. 's'
+    end
     out[#out + 1] = 'proc'
     out[#out + 1] = p
     out[#out + 1] = tostring(up)
     out[#out + 1] = tostring(age)
-    out[#out + 1] = ''
+    out[#out + 1] = why
   end
-  return true
 end
 
 redis.register_function{
@@ -127,11 +133,20 @@ redis.register_function{
     -- Bounds first: a registry larger than its bound is an error, and the
     -- bound is checked before any member is read (6.3).
     if scard('sprints') > MAX_SPRINTS or scard('benches') > MAX_BENCHES
-      or scard('friends') > MAX_FRIENDS or scard('procs') > 128 then
+      or scard('friends') > MAX_FRIENDS then
       return { 'time', tostring(now), 'error', 'snapshot: bound exceeded' }
     end
 
-    local sprints = redis.call('SMEMBERS', 'sprints')
+    local requested = args[1] or ''
+    local all_sprints = redis.call('SMEMBERS', 'sprints')
+    local sprints = {}
+    for _, sp in ipairs(all_sprints) do
+      local status = redis.call('HGET', 's:' .. sp, 'status')
+      local control = string.sub(sp, 1, 8) == 'control-'
+      if (status == 'open' or status == 'paused') and (not control or requested == sp) then
+        sprints[#sprints + 1] = sp
+      end
+    end
     local benches = redis.call('SMEMBERS', 'benches')
     local friends = redis.call('SMEMBERS', 'friends')
     table.sort(sprints)
@@ -168,7 +183,7 @@ redis.register_function{
     for _, sp in ipairs(sprints) do
       append_pipeline(out, sp)
     end
-    append_procs(out, now)
+    append_procs(out, now, benches)
     for _, k in ipairs(writers) do
       out[#out + 1] = 'error'
       out[#out + 1] = 'two writers: ' .. k

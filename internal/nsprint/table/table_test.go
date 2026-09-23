@@ -88,6 +88,19 @@ func TestControl21TableCheckFixture(t *testing.T) {
 	if len(snap.Errors) != 0 {
 		t.Fatalf("clean fixture errors: %v", snap.Errors)
 	}
+	if err := client.HSet(ctx, "proc:reconciler", "pass_at", "1").Err(); err != nil {
+		t.Fatal(err)
+	}
+	snap, err = table.Read(ctx, client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snap.Render(), "proc reconciler down age=") || !strings.Contains(snap.Render(), "why=stale: pass") {
+		t.Fatalf("old reconciler pass looked current:\n%s", snap.Render())
+	}
+	if err := client.Del(ctx, "proc:reconciler").Err(); err != nil {
+		t.Fatal(err)
+	}
 	for _, key := range []string{
 		"bench:b1:width", "bench:b1:queue", "bench:b1:done",
 		"friend:fran:width", "friend:fran:queue", "friend:fran:done", "friend:fran:slots",
@@ -122,7 +135,7 @@ func TestControl24BenchCellsFromCardIndexes(t *testing.T) {
 		{"ZADD", "s:control-a:open:ghost", "0", "x1", "0", "x2", "0", "x3", "0", "x4", "0", "x5"},
 		{"SADD", "s:control-a:done:ghost", "y1", "y2", "y3", "y4", "y5", "y6", "y7"},
 	})
-	snap, err := table.Read(ctx, client)
+	snap, err := table.ReadNamed(ctx, client, "control-a")
 	if err != nil {
 		t.Fatal(err)
 	}

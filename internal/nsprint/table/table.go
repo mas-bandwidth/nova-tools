@@ -308,5 +308,9 @@ func procLine(p Proc) string {
 	if p.Up {
 		state = "up"
 	}
-	return fmt.Sprintf("proc %s %s age=%ds", p.Name, state, p.Age)
+	line := fmt.Sprintf("proc %s %s age=%ds", p.Name, state, p.Age)
+	if p.Why != "" {
+		line += " why=" + p.Why
+	}
+	return line
 }
