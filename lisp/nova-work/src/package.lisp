@@ -2043,6 +2043,15 @@
     #:command-resolver-timeout
     #:parse-resolver-output
     #:run-resolver-command
+    ;; the CI lanes (SPEC-WORK.md:7089-7100,7235, src/verifier.lisp)
+    #:*per-change-suites*
+    #:*exhaustive-suites*
+    #:*per-change-target-seconds*
+    #:*per-change-ceiling-seconds*
+    #:acceptance-suite-lane
+    #:lane-blocks-gate
+    #:lane-suites
+    #:run-ci-lane
     ;; the needs-met predicate and its five reason tokens (nova-tools #785,
     ;; SPEC-WORK.md:4740-4866)
     #:needs-view
