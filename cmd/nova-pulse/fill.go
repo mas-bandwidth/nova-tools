@@ -305,9 +305,17 @@ func parseGrace(s string) (time.Duration, error) {
 // flashLauncher hands one moved card to flash-native-bench.sh, fill-loop.sh's per-card
 // launcher, or to the program --launcher names.
 //
-// It starts the child and waits only the grace: a launcher that is still running when the
-// grace is up has launched the card, and the bench owns it from there. The child is waited
-// on in a goroutine, so it is reaped rather than left a zombie, and it is never killed.
+// It starts the child and waits the grace, then one refusal window of the same length: a
+// launcher that is still running when the grace is up has USUALLY launched the card, but
+// a launcher refusing the bench is still running for the refusal's own reason -- the ssh
+// it must make to say "over capacity", "disk full" or "unreachable" is answered late by
+// exactly the bench that is too loaded to take the card, and its rc 2 (the contract's
+// refused-before-launch) lands after the grace. Taken as launched there, the card sat in
+// launched/ with no job behind it and was raised UNKNOWN rather than handed back
+// (#2381: 191 cards requeued by hand on the 2026-09-20 load test). So a child that exits
+// inside the refusal window reports its code exactly as an in-grace exit, and only a
+// child still running when the window closes has launched. The child is waited on in a
+// goroutine, so it is reaped rather than left a zombie, and it is never killed.
 type flashLauncher struct {
 	bin      string
 	deadline int
@@ -347,6 +355,20 @@ func (l flashLauncher) Launch(bench, card string) error {
 		}
 		return nil
 	case <-timer.C:
+	}
+	// The grace is up and the child still runs. A refusal is slow on exactly the bench
+	// that causes it, so one refusal window of the grace's own length: a child that
+	// exits inside it reports its code exactly as an in-grace exit, and only a child
+	// still running when the window closes has launched (#2381).
+	window := time.NewTimer(l.grace)
+	defer window.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			return said.wrap(err)
+		}
+		return nil
+	case <-window.C:
 		return nil
 	}
 }
