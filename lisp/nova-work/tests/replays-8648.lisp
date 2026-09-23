@@ -428,3 +428,267 @@ every implementation provides -- no shell-out, no Go execution."
                  "the mapped external issue survives the child's refusal open")
     (check-equal '("acme/repo#42") (node-links (kernel-state k) "p")
                  "the issue mapping itself survives the child's refusal unchanged")))
+
+
+;;; ------------------------------------------------------------------
+;;; TestE10F04OrchestrateProcessLevelRunsAgainst  E10-F04-01
+;;; docs/SPEC-WORK.md:7223-7227
+;;; ------------------------------------------------------------------
+;;;
+;;; E10-F04-01 (ROADMAP.md:1014). docs/SPEC-WORK.md:7223-7227 -- "process-level
+;;; fault injection and restart-and-replay against temporary Git remotes and
+;;; fake providers, two-process fencing and interrupted I/O included."
+;;;
+;;; The orchestrator lives here, beside its one test, not in src/. It creates
+;;; a temporary bare Git remote on disk and two clones, one per owner, and
+;;; drives real OS processes against it:
+;;;
+;;;   two-process fencing  two `git push --force-with-lease` processes race
+;;;                        from the same observed tip; exactly one lands.
+;;;   stale owner          the loser, still believing the old tip, pushes
+;;;                        again and the remote's compare-and-swap refuses it.
+;;;   handoff              the ownership claim names a successor, who takes
+;;;                        the next generation at once and pushes on the tip
+;;;                        it fetched.
+;;;   crash / interrupted  a process is killed (SIGKILL) in the middle of the
+;;;   I/O                  ref write, leaving a torn ref lock; the next push is
+;;;                        refused and the tip is unchanged.
+;;;   restart and replay   recovery clears the dead writer's lock and replays
+;;;                        the push once; a second replay applies nothing, and
+;;;                        a restarted kernel over the same journal answers the
+;;;                        recorded receipt without applying the command twice.
+;;;
+;;; The fake provider answers the bounded question once. Every outcome is read
+;;; back from the remote, the provider and the ownership claims.
+
+(defun e10f04-run (dir program &rest args)
+  "Run PROGRAM with ARGS in DIR as a child process; answer exit code and
+trimmed standard output."
+  (multiple-value-bind (out err code)
+      (uiop:run-program (cons program args) :directory dir
+                        :output :string :error-output :string
+                        :ignore-error-status t)
+    (declare (ignore err))
+    (values code (string-trim '(#\Space #\Newline #\Return #\Tab) out))))
+
+(defun e10f04-git (dir &rest args)
+  (apply #'e10f04-run dir "git"
+         "-c" "user.name=nova-work-test" "-c" "user.email=test@nova.invalid"
+         "-c" "commit.gpgsign=false" "-c" "init.defaultBranch=work"
+         args))
+
+(defun e10f04-tip (remote)
+  (nth-value 1 (e10f04-git remote "rev-parse" "refs/heads/work")))
+
+(defun e10f04-commit (clone message)
+  "Commit an empty change in CLONE on top of what it last fetched; answer the sha."
+  (e10f04-git clone "commit" "-q" "--allow-empty" "-m" message)
+  (nth-value 1 (e10f04-git clone "rev-parse" "HEAD")))
+
+(defun e10f04-push-process (clone expected)
+  "Launch (without waiting) a push from CLONE that lands only if the remote
+tip is still EXPECTED: the compare-and-swap an owner uses."
+  (uiop:launch-program
+   (list "git" "push" "-q" (format nil "--force-with-lease=work:~A" expected)
+         "origin" "HEAD:refs/heads/work")
+   :directory clone :output nil :error-output nil))
+
+(defun e10f04-push (clone expected)
+  (zerop (uiop:wait-process (e10f04-push-process clone expected))))
+
+(defun orchestrate-process-level-run
+    (&key (t0 "2026-09-20T12:00:00Z") (t1 "2026-09-20T12:00:30Z"))
+  "Orchestrate one process-level lifecycle against a temporary Git remote on
+disk and real child processes. Answers a report plist of outcomes read back
+from the remote, the fake provider and the ownership claims."
+  (let* ((root (uiop:ensure-directory-pathname
+                (merge-pathnames (format nil "nova-work-e10f04-~D-~D/"
+                                         (get-universal-time) (random 1000000))
+                                 (uiop:temporary-directory))))
+         (remote (merge-pathnames "remote.git/" root))
+         (seed-clone (merge-pathnames "seed/" root))
+         (emma (merge-pathnames "emma/" root))
+         (stella (merge-pathnames "stella/" root))
+         (provider (make-fake-decider :answer :run))
+         (seed '((:id "w" :type :work-set :parent nil :state :unknown)
+                 (:id "w/t1" :type :task :parent "w" :state :todo))))
+    (ensure-directories-exist remote)
+    (unwind-protect
+         (progn
+           (e10f04-git remote "init" "-q" "--bare")
+           (e10f04-git root "clone" "-q" (namestring remote) (namestring seed-clone))
+           (e10f04-commit seed-clone "genesis")
+           (e10f04-git seed-clone "push" "-q" "origin" "HEAD:refs/heads/work")
+           (e10f04-git root "clone" "-q" "-b" "work" (namestring remote) (namestring emma))
+           (e10f04-git root "clone" "-q" "-b" "work" (namestring remote) (namestring stella))
+           (let ((genesis (e10f04-tip remote)))
+             ;; 1. Vacant take: emma takes generation 1.
+             (multiple-value-bind (vacant-action vacant-record)
+                 (evaluate-ownership-claim nil "emma" :now t0 :token "tok-emma"
+                                           :every "30s" :skew "5s" :my-bench "bench-emma")
+               ;; 2. Two-process fencing: both owners observed GENESIS and race
+               ;;    two push processes; the remote admits exactly one.
+               (let* ((emma-race (e10f04-commit emma "emma gen-1 race"))
+                      (stella-race (e10f04-commit stella "stella race"))
+                      (pe (e10f04-push-process emma genesis))
+                      (ps (e10f04-push-process stella genesis))
+                      (emma-landed (zerop (uiop:wait-process pe)))
+                      (stella-landed (zerop (uiop:wait-process ps)))
+                      (race-tip (e10f04-tip remote))
+                      (winner (if emma-landed emma stella))
+                      (loser (if emma-landed stella emma)))
+                 (declare (ignore winner))
+                 ;; 3. Stale owner: the loser still believes GENESIS; its claim
+                 ;;    against the live hold is fenced and its push refused.
+                 (multiple-value-bind (stale-action)
+                     (evaluate-ownership-claim
+                      (make-ownership-record :owner "emma" :generation 1 :token "tok-emma"
+                                             :stamp t0 :until t1 :bench "bench-emma")
+                      "zoe" :now t0 :token "tok-zoe" :every "30s" :skew "5s"
+                      :my-bench "bench-zoe")
+                   (let* ((stale-pushed (e10f04-push loser genesis))
+                          (tip-after-stale (e10f04-tip remote)))
+                     ;; 4. Handoff: the record names stella successor; stella
+                     ;;    takes gen 2 at once, fetches the tip and pushes on it.
+                     (multiple-value-bind (handoff-action handoff-record)
+                         (evaluate-ownership-claim
+                          (make-ownership-record :owner "emma" :generation 1 :token "tok-emma"
+                                                 :stamp t0 :until t1 :bench "bench-emma"
+                                                 :successor "stella")
+                          "stella" :now t1 :token "tok-stella" :every "30s" :skew "5s"
+                          :my-bench "bench-stella")
+                       (e10f04-git stella "fetch" "-q" "origin")
+                       (e10f04-git stella "reset" "-q" "--hard" "origin/work")
+                       (let* ((handoff-base (e10f04-tip remote))
+                              (handoff-commit (e10f04-commit stella "stella gen-2 handoff"))
+                              (handoff-pushed (e10f04-push stella handoff-base))
+                              (handoff-tip (e10f04-tip remote))
+                              ;; 5. Crash mid-I/O: a writer process takes the ref
+                              ;;    lock, writes half a sha and is SIGKILLed.
+                              (lock (merge-pathnames "refs/heads/work.lock" remote))
+                              (crash-code
+                                (e10f04-run remote "/bin/sh" "-c"
+                                            (format nil "printf '~A' > refs/heads/work.lock; kill -KILL $$"
+                                                    (subseq handoff-tip 0 20))))
+                              (torn-lock (probe-file lock))
+                              (crash-commit (e10f04-commit stella "stella gen-2 after crash"))
+                              (pushed-during-crash (e10f04-push stella handoff-tip))
+                              (tip-after-crash (e10f04-tip remote)))
+                         ;; 6. Restart and replay: recovery clears the dead
+                         ;;    writer's lock, the push replays once and lands,
+                         ;;    a second replay applies nothing.
+                         (delete-file lock)
+                         (let* ((replay-pushed (e10f04-push stella handoff-tip))
+                                (replay-tip (e10f04-tip remote))
+                                (second-replay-exit (e10f04-push stella handoff-tip))
+                                (second-replay-tip (e10f04-tip remote))
+                                (commits (parse-integer
+                                          (nth-value 1 (e10f04-git remote "rev-list" "--count"
+                                                                   "refs/heads/work")))))
+                           (declare (ignore second-replay-exit))
+                           ;; 7. The fake provider answers the bounded question once.
+                           (multiple-value-bind (answer)
+                               (decide-consult provider '(:kind :choice :options (:run :stop)))
+                             ;; 8. Kernel restart over the same journal answers
+                             ;;    the recorded receipt and applies nothing twice.
+                             (let* ((journal (make-ordering-journal))
+                                    (live (make-kernel :state (make-seed-state seed)
+                                                       :journal journal))
+                                    (request (list :verb :state-to-doing :node "w/t1" :by "stella"
+                                                   :reason "start" :request "restart-1"
+                                                   :stamp t1 :clock :tool
+                                                   :generation-owner "gen-2"))
+                                    (okp (submit live request))
+                                    (restarted (make-kernel :state (make-seed-state seed)
+                                                            :journal journal))
+                                    (retry (nth-value 3 (submit restarted request))))
+                               (list :vacant-action vacant-action
+                                     :vacant-generation (owner-generation vacant-record)
+                                     :race-landed (count t (list emma-landed stella-landed))
+                                     :race-tip-is-winner
+                                     (string= race-tip (if emma-landed emma-race stella-race))
+                                     :stale-owner-action stale-action
+                                     :stale-pushed stale-pushed
+                                     :tip-unchanged-by-stale (string= race-tip tip-after-stale)
+                                     :handoff-action handoff-action
+                                     :handoff-generation (owner-generation handoff-record)
+                                     :handoff-pushed handoff-pushed
+                                     :handoff-tip-is-commit (string= handoff-tip handoff-commit)
+                                     :crash-killed (/= 0 crash-code)
+                                     :torn-lock (and torn-lock t)
+                                     :pushed-during-crash pushed-during-crash
+                                     :tip-unchanged-by-crash (string= handoff-tip tip-after-crash)
+                                     :replay-pushed replay-pushed
+                                     :replay-tip-is-commit (string= replay-tip crash-commit)
+                                     :second-replay-changed (not (string= replay-tip second-replay-tip))
+                                     :remote-commits commits
+                                     :provider-answer answer
+                                     :provider-calls (fake-decider-calls provider)
+                                     :restart-live-ok okp
+                                     :restart-live-state (node-state (kernel-state live) "w/t1")
+                                     :restart-replayed (getf retry :replayed)
+                                     :restart-state (node-state (kernel-state restarted) "w/t1")))))))))))))
+      (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
+
+(deftest "TestE10F04OrchestrateProcessLevelRunsAgainst"
+    "E10-F04-01 (docs/SPEC-WORK.md:7223-7227)"
+    "expected=vacant-take-gen1;two-process-race-lands-once;stale-owner-fenced;stale-push-refused;handoff-successor-takes-gen2;crash-mid-write-refuses;restart-replays-once;provider-consulted-once;kernel-restart-answers-once-only"
+  (let ((r (orchestrate-process-level-run)))
+    ;; ownership claims.
+    (check-equal :take (getf r :vacant-action)
+                 "a vacant claim is a take")
+    (check-equal 1 (getf r :vacant-generation)
+                 "the first owner takes generation 1")
+    ;; two-process fencing against the temporary remote.
+    (check-equal 1 (getf r :race-landed)
+                 "exactly one of two racing push processes lands")
+    (ok (getf r :race-tip-is-winner)
+        "the remote tip is the winning process's commit")
+    ;; stale owner.
+    (check-equal :fenced (getf r :stale-owner-action)
+                 "a stale owner contesting a live hold is fenced")
+    (check-equal nil (getf r :stale-pushed)
+                 "the stale owner's compare-and-swap push is refused")
+    (ok (getf r :tip-unchanged-by-stale)
+        "the remote tip is unchanged by the stale owner")
+    ;; handoff.
+    (check-equal :take (getf r :handoff-action)
+                 "the successor's handoff claim is a take")
+    (check-equal 2 (getf r :handoff-generation)
+                 "the successor takes the next generation at once")
+    (ok (getf r :handoff-pushed)
+        "the successor's push on the fetched tip lands")
+    (ok (getf r :handoff-tip-is-commit)
+        "the remote tip is the successor's commit")
+    ;; crash with interrupted I/O.
+    (ok (getf r :crash-killed)
+        "the writer process died by SIGKILL mid-write")
+    (ok (getf r :torn-lock)
+        "the killed writer left its torn ref lock behind")
+    (check-equal nil (getf r :pushed-during-crash)
+                 "a push against the torn ref lock is refused")
+    (ok (getf r :tip-unchanged-by-crash)
+        "the torn write never becomes the remote tip")
+    ;; restart and replay.
+    (ok (getf r :replay-pushed)
+        "after recovery the replayed push lands")
+    (ok (getf r :replay-tip-is-commit)
+        "the remote tip is the replayed commit")
+    (check-equal nil (getf r :second-replay-changed)
+                 "a second replay applies nothing")
+    (check-equal 4 (getf r :remote-commits)
+                 "the remote holds genesis, the race winner, the handoff and the replay, nothing more")
+    ;; the fake provider participates exactly once.
+    (check-equal :run (getf r :provider-answer)
+                 "the fake provider answers the bounded question with :run")
+    (check-equal 1 (getf r :provider-calls)
+                 "the fake provider is consulted exactly once")
+    ;; kernel restart over the same journal.
+    (ok (getf r :restart-live-ok)
+        "the live kernel accepts the command")
+    (check-equal :doing (getf r :restart-live-state)
+                 "the live kernel applies the accepted command")
+    (ok (getf r :restart-replayed)
+        "the restarted kernel answers the recorded receipt")
+    (check-equal :todo (getf r :restart-state)
+                 "the restarted kernel does not apply the command a second time")))
