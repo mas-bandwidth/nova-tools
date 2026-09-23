@@ -44,8 +44,8 @@ func TestSetCheckFindingsExitOneAndPrintEveryOne(t *testing.T) {
 		t.Errorf("findings are the verb's answer, not a refusal, yet stderr = %q", stderr)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("printed %d lines, want 2 findings and the summary:\n%s", len(lines), stdout)
+	if len(lines) != 4 {
+		t.Fatalf("printed %d lines, want 2 findings, the summary and SET DONE:\n%s", len(lines), stdout)
 	}
 	for _, want := range []string{
 		"SET NEEDS unit=stack:redis-live need=repair:spec-1208-1209",
@@ -55,19 +55,22 @@ func TestSetCheckFindingsExitOneAndPrintEveryOne(t *testing.T) {
 			t.Errorf("stdout does not carry %q:\n%s", want, stdout)
 		}
 	}
-	if !strings.Contains(lines[len(lines)-1], "SET OK units=14") {
-		t.Errorf("the summary line is %q, want it last and naming the units", lines[len(lines)-1])
+	if !strings.Contains(lines[len(lines)-2], "SET OK units=14") {
+		t.Errorf("the summary line is %q, want it before SET DONE and naming the units", lines[len(lines)-2])
+	}
+	if !strings.HasPrefix(lines[len(lines)-1], "SET DONE done=") {
+		t.Errorf("the last line is %q, want SET DONE", lines[len(lines)-1])
 	}
 	// Every finding carries the byte it lives at and a remedy: a checker that only
 	// said something was wrong would leave the reader to find it.
-	for _, line := range lines[:len(lines)-1] {
+	for _, line := range lines[:len(lines)-2] {
 		if !strings.Contains(line, " at=") || !strings.Contains(line, " remedy=") {
 			t.Errorf("finding %q carries no byte or no remedy", line)
 		}
 	}
 }
 
-// A clean set is exit 0 and one line.
+// A clean set is exit 0 and two lines: the summary and x/y z%.
 func TestSetCheckCleanSetIsOneLine(t *testing.T) {
 	path := write(t, "clean.lisp", `(work-set "clean" :units (
 	  (unit "a" :status "closed" :title "landed")
@@ -77,7 +80,7 @@ func TestSetCheckCleanSetIsOneLine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
-	if got := strings.TrimSpace(stdout); got != "SET OK units=3 ready=1 blocked=1 owned=1" {
+	if got := strings.TrimSpace(stdout); got != "SET OK units=3 ready=1 blocked=1 owned=1\nSET DONE done=1 percent=33" {
 		t.Errorf("summary = %q", got)
 	}
 }
@@ -242,6 +245,7 @@ func TestSetCheckReadyAdmitsTheRealSetOf20260918(t *testing.T) {
 		"SET READY unit=lisp:collision owner=Stella lane=work deadline=- admit=go on=- by=-",
 		"SET READY unit=air:bud-setup owner=rowan-child lane=docs deadline=- admit=go on=- by=-",
 		"SET OK units=20 ready=11 blocked=9 owned=20",
+		"SET DONE done=0 percent=0",
 	}
 	if got := strings.Split(strings.TrimSpace(stdout), "\n"); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the real set's ready line moved.\ngot:\n%s\nwant:\n%s", stdout, strings.Join(want, "\n"))

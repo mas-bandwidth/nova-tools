@@ -41,7 +41,7 @@ const theResolver = "resolveDestination"
 // resolved nothing cannot appear beside it.
 const (
 	theForgeLeaf       = "CreatePR"
-	theForgeLeafCaller = "harvestBench"
+	theForgeLeafCaller = "harvestBench harvestBenchBatch" // the bench fold and its batched pass (#2756); each must resolve
 )
 
 func TestEveryPushPathChecksTheBranchPrefixAndResolvesItsDestination(t *testing.T) {
@@ -168,9 +168,14 @@ func TestEveryPushPathChecksTheBranchPrefixAndResolvesItsDestination(t *testing.
 		}
 	}
 	sort.Strings(forgeLeafCallers)
-	if len(forgeLeafCallers) != 1 || forgeLeafCallers[0] != theForgeLeafCaller {
+	if strings.Join(forgeLeafCallers, " ") != theForgeLeafCaller {
 		t.Errorf("%s is called by %v; the destination is resolved in %s alone, so a new caller must resolve it too",
 			theForgeLeaf, forgeLeafCallers, theForgeLeafCaller)
+	}
+	for _, c := range forgeLeafCallers {
+		if !resolves[c] {
+			t.Errorf("%s calls %s and this walk did not see it call %s", c, theForgeLeaf, theResolver)
+		}
 	}
 
 	t.Logf("PUSH-PATH OK sites=%d guarded=%d unguarded=%d", guarded+len(unguarded), guarded, len(unguarded))
