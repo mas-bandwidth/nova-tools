@@ -484,3 +484,68 @@ on. Registration goes through the real `machine` verb, never a back door."
                "a per-change failure blocks the per-change gate")
   (check-equal :nightly-release-gate (lane-blocks-gate :nightly-pre-release)
                "an exhaustive failure blocks the nightly/release gate, not per-change"))
+
+;;; The dispatch and gate path (`run-ci-lane`, src/verifier.lisp): the lane
+;;; mapping above is not only declared but drives which suites run, the
+;;; two-minute bound, and which gate a failure blocks.
+
+(defun %lane-runner (&key fail (seconds 5))
+  "A runner that records every suite it is asked to run, fails the names in
+FAIL, and reports SECONDS per suite. Returns (values RUNNER CALLED-THUNK)."
+  (let ((called '()))
+    (values (lambda (suite)
+              (push suite called)
+              (values (not (member suite fail :test #'string=)) seconds))
+            (lambda () (reverse called)))))
+
+(deftest "TestE10F03CILaneDispatchAndGate" "docs/SPEC-WORK.md:7235"
+    "expected=per-change-lane-runs-only-its-six-suites;over-two-minutes-blocks-per-change-gate;exhaustive-failure-blocks-only-nightly-release-gate"
+  ;; the per-change lane dispatches exactly its six suites, never an exhaustive one
+  (multiple-value-bind (runner called) (%lane-runner :seconds 5)
+    (multiple-value-bind (line blocked code) (run-ci-lane :per-change runner)
+      (check-equal *per-change-suites* (funcall called)
+                   "per-change dispatches exactly the per-change suites, in order")
+      (ok (notany (lambda (s) (member s *exhaustive-suites* :test #'string=))
+                  (funcall called))
+          "no exhaustive suite runs on a change")
+      (check-equal nil blocked "30 s of passing per-change suites blocks no gate")
+      (check-equal 0 code "a passing per-change lane exits 0")
+      (ok (search "CI LANE per-change OK suites=6 failed=0 seconds=30" line)
+          "the lane line reports the clean run: ~A" line)))
+  ;; past the one-minute target but inside two: over target, gate still open
+  (multiple-value-bind (runner called) (%lane-runner :seconds 15)
+    (declare (ignore called))
+    (multiple-value-bind (line blocked) (run-ci-lane :per-change runner)
+      (check-equal nil blocked "90 s is over target but inside the ceiling")
+      (ok (search "over-target=yes over-ceiling=no" line)
+          "90 s is reported over the one-minute target: ~A" line)))
+  ;; past the two-minute ceiling: the per-change gate is blocked even with no failure
+  (multiple-value-bind (runner called) (%lane-runner :seconds 21)
+    (declare (ignore called))
+    (multiple-value-bind (line blocked code) (run-ci-lane :per-change runner)
+      (check-equal :per-change-gate blocked "126 s blocks the per-change gate")
+      (check-equal 1 code "an over-ceiling per-change lane exits 1")
+      (ok (search "over-ceiling=yes" line) "the ceiling breach is named: ~A" line)))
+  ;; a failing per-change suite blocks the per-change gate
+  (multiple-value-bind (runner called) (%lane-runner :fail '("undo-redo"))
+    (declare (ignore called))
+    (multiple-value-bind (line blocked) (run-ci-lane :per-change runner)
+      (check-equal :per-change-gate blocked "a per-change failure blocks the per-change gate")
+      (ok (search "failing=undo-redo" line) "the failing suite is named: ~A" line)))
+  ;; the nightly/pre-release lane runs the exhaustive suites with no two-minute
+  ;; bound, and a failure there blocks only the nightly/release gate
+  (multiple-value-bind (runner called) (%lane-runner :fail '("hostile-data") :seconds 600)
+    (multiple-value-bind (line blocked code) (run-ci-lane :nightly-pre-release runner)
+      (check-equal *exhaustive-suites* (funcall called)
+                   "nightly/pre-release dispatches exactly the exhaustive suites")
+      (check-equal :nightly-release-gate blocked
+                   "an exhaustive failure blocks the nightly/release gate, never per-change")
+      (check-equal 1 code "a blocked nightly lane exits 1")
+      (ok (search "over-ceiling=no" line)
+          "the two-minute bound does not apply to the nightly lane: ~A" line)))
+  ;; an unnamed lane is refused, never run
+  (check-equal :refused
+               (handler-case (progn (run-ci-lane :every-change (lambda (s) (declare (ignore s)) t))
+                                    :ran)
+                 (error () :refused))
+               "an unnamed lane is refused"))

@@ -2043,6 +2043,8 @@
     #:*per-change-ceiling-seconds*
     #:acceptance-suite-lane
     #:lane-blocks-gate
+    #:lane-suites
+    #:run-ci-lane
     ;; the needs-met predicate and its five reason tokens (nova-tools #785,
     ;; SPEC-WORK.md:4740-4866)
     #:needs-view

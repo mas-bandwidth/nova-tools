@@ -413,3 +413,50 @@ per-change gate (SPEC-WORK.md:7235-7240)."
     (:per-change :per-change-gate)
     (:nightly-pre-release :nightly-release-gate)
     (t nil)))
+
+(defun lane-suites (lane)
+  "The suites LANE dispatches, and only those: the per-change lane never
+schedules an exhaustive suite, the nightly/pre-release lane runs the whole
+matrices (SPEC-WORK.md:7089-7100). Any other lane is refused."
+  (case lane
+    (:per-change *per-change-suites*)
+    (:nightly-pre-release *exhaustive-suites*)
+    (t (error 'unsupported-input
+              :what (format nil "ci lane: ~S names no CI lane" lane)))))
+
+(defun run-ci-lane (lane runner)
+  "Dispatch LANE's suites through RUNNER and decide LANE's gate.
+RUNNER is called once per suite name the lane selects (via `lane-suites`, each
+name's lane checked by `acceptance-suite-lane`) and returns (values PASSED-P
+SECONDS). A failing suite blocks the gate `lane-blocks-gate` names for LANE,
+and only that gate; a per-change run whose total exceeds
+`*per-change-ceiling-seconds*` blocks the per-change gate too, and one past
+`*per-change-target-seconds*` is reported over target (SPEC-WORK.md:7235-7240).
+Returns (values LINE BLOCKED-GATE EXIT-CODE): BLOCKED-GATE is nil when the gate
+passes, EXIT-CODE 0 on pass and 1 on a blocked gate."
+  (let ((suites (lane-suites lane))
+        (gate (lane-blocks-gate lane))
+        (failed '())
+        (seconds 0))
+    (dolist (suite suites)
+      (unless (eq (acceptance-suite-lane suite) lane)
+        (error 'unsupported-input
+               :what (format nil "ci lane: ~A is not a ~(~A~) suite" suite lane)))
+      (multiple-value-bind (passed-p took) (funcall runner suite)
+        (incf seconds (or took 0))
+        (unless passed-p (push suite failed))))
+    (setf failed (nreverse failed))
+    (let* ((per-change-p (eq lane :per-change))
+           (over-ceiling (and per-change-p (> seconds *per-change-ceiling-seconds*)))
+           (over-target (and per-change-p (> seconds *per-change-target-seconds*)))
+           (blocked (and (or failed over-ceiling) gate))
+           (line (format nil "CI LANE ~(~A~) ~A suites=~D failed=~D seconds=~A target=~A ceiling=~A over-target=~A over-ceiling=~A gate=~(~A~) failing=~A"
+                         lane (if blocked "BLOCKED" "OK") (length suites) (length failed)
+                         seconds
+                         (if per-change-p *per-change-target-seconds* "-")
+                         (if per-change-p *per-change-ceiling-seconds* "-")
+                         (if over-target "yes" "no")
+                         (if over-ceiling "yes" "no")
+                         gate
+                         (if failed (format nil "~{~A~^,~}" failed) "-"))))
+      (values line blocked (if blocked 1 0)))))
