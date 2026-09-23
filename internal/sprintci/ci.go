@@ -1,13 +1,18 @@
-// Package sprintci is the dealer's slot accounting for a CI pass
-// (nova-tools#2842).
+// Package sprintci is a CI pass as a card (nova-tools#2842).
 //
 // A CI pass is one card per PR head, id ci-<pr>-<sha8>. It takes one slot
 // inside the machine width. Half the slots stay for model cards: the CI share
 // is width/2 (the odd slot, if there is one, stays with the model cards), and
-// a pass that would hold more does not run. That is the whole of "a CI pass
-// runs inside the dealer's shares". A pass that is not a card does not run
-// either. A second sha is a second head, never this one. A rerun of the same
-// head is the same card and does not take a second slot.
+// a pass that would hold more does not run. A pass that is not a card does not
+// run either. A second sha is a second head, never this one. A rerun of the
+// same head is the same card and does not take a second slot.
+//
+// The dealer deals that one slot to one bench. A bench that has no dealt slot
+// for the card does not start the run. Cut writes ci-<pr>-<sha8>.md into the
+// front tier: KIND script, zero model calls. The bench runs that script from
+// its mirror at the sha, never a clone from GitHub. The script runs gofmt,
+// go vet, and go test on the PATHS packages. The card's end writes Redis
+// ci:<repo>:<sha> as OK, or FAIL plus the package and the test.
 package sprintci
 
 import (
@@ -20,12 +25,18 @@ import (
 // and the slots that remain stay for model cards.
 const OutsideShares = "outside the dealer's shares"
 
+// NoDealtSlot is why a bench did not start a CI run: the dealer has not dealt
+// this card's slot to that bench. A free share is not a dealt slot.
+const NoDealtSlot = "no dealt slot"
+
 // Dealer is one machine's slot accounting. Width is the machine's slot count.
 // CI cards and model cards draw from that one width; CI may not draw past its share.
+// dealt is the bench that holds each head's one slot.
 type Dealer struct {
 	width int
 	ci    map[string]string // head key -> card id
 	model map[string]struct{}
+	dealt map[string]string // head key -> bench
 }
 
 // Card is one CI pass: one repository, one pull request, one full head.
@@ -45,6 +56,7 @@ func New(machineWidth int) (*Dealer, error) {
 		width: machineWidth,
 		ci:    map[string]string{},
 		model: map[string]struct{}{},
+		dealt: map[string]string{},
 	}, nil
 }
 
@@ -95,27 +107,77 @@ func (c Card) ID() (string, error) {
 // slot for it inside the CI share and inside the machine width. Otherwise the
 // pass does not run. The same head a second time is the same card: it is
 // already running, and it does not take another slot.
+//
+// RunCI admits the card to the share. It does not deal a bench, and it does
+// not start a bench: Start is what a bench may do, and only after Deal.
 func (d *Dealer) RunCI(c Card) (ran bool, reason string) {
+	_, _, reason = d.hold(c)
+	if reason != "" {
+		return false, reason
+	}
+	return true, ""
+}
+
+// Deal gives this card's one slot to one bench. The share rules are the same
+// as RunCI. The same head dealt to the same bench again does not take a second
+// slot. A second bench does not get the slot: one head, one bench.
+func (d *Dealer) Deal(bench string, c Card) (bool, string) {
+	if strings.TrimSpace(bench) == "" || strings.ContainsAny(bench, " \t\r\n") {
+		return false, "a bench needs a name of one word"
+	}
+	_, key, reason := d.hold(c)
+	if reason != "" {
+		return false, reason
+	}
+	if prev, ok := d.dealt[key]; ok && prev != bench {
+		return false, "the slot is dealt to " + prev
+	}
+	d.dealt[key] = bench
+	return true, ""
+}
+
+// Start reports whether bench may start this card's run. The only yes is a
+// dealt slot for this head on this bench. A share with room, a slot dealt to
+// another bench, and a pass that is not a card are all nos, and none of them
+// starts a run.
+func (d *Dealer) Start(bench string, c Card) (bool, string) {
 	if d == nil {
 		return false, "no dealer"
 	}
-	id, err := c.ID()
-	if err != nil {
+	if _, err := c.ID(); err != nil {
 		return false, "not a ci card: " + err.Error()
 	}
 	d.init()
-	key := c.key()
+	got, ok := d.dealt[c.key()]
+	if !ok || got != bench {
+		return false, NoDealtSlot
+	}
+	return true, ""
+}
+
+// hold admits c to the CI share. An empty reason means the head holds a slot
+// (it already did, or it does now). The caller deals a bench separately.
+func (d *Dealer) hold(c Card) (id, key, reason string) {
+	if d == nil {
+		return "", "", "no dealer"
+	}
+	id, err := c.ID()
+	if err != nil {
+		return "", "", "not a ci card: " + err.Error()
+	}
+	d.init()
+	key = c.key()
 	if _, held := d.ci[key]; held {
-		return true, ""
+		return id, key, ""
 	}
 	if len(d.ci)+1 > d.CIShare() {
-		return false, OutsideShares
+		return "", "", OutsideShares
 	}
 	if len(d.ci)+len(d.model)+1 > d.width {
-		return false, "the machine has no free slot"
+		return "", "", "the machine has no free slot"
 	}
 	d.ci[key] = id
-	return true, ""
+	return id, key, ""
 }
 
 // TakeModel takes one slot for a model card. Model cards may use a CI slot
@@ -145,6 +207,9 @@ func (d *Dealer) init() {
 	}
 	if d.model == nil {
 		d.model = map[string]struct{}{}
+	}
+	if d.dealt == nil {
+		d.dealt = map[string]string{}
 	}
 }
 

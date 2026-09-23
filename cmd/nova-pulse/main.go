@@ -363,6 +363,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return cmdCutKind(rest, stdout, stderr)
 		}
 		return cmdCut(rest, stdout, stderr)
+	case "ci":
+		return cmdCI(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":

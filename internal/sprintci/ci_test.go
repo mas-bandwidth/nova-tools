@@ -146,6 +146,36 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 	if _, err := New(-1); err == nil {
 		t.Fatal("a negative machine width must be refused, not guessed")
 	}
+
+	// A share with room is not a dealt slot. The run does not start until the
+	// dealer has dealt this head to this bench, and another bench's slot is
+	// not this one.
+	benches, err := New(4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dealt := Card{Repo: "example/nova", PR: 2842, SHA: shaN(7)}
+	if ran, _ := benches.Start("vision", dealt); ran {
+		t.Fatal("a CI run started on a bench that has no dealt slot")
+	}
+	if ok, reason := benches.Deal("hulk", dealt); !ok {
+		t.Fatalf("deal: %s", reason)
+	}
+	if ran, _ := benches.Start("vision", dealt); ran {
+		t.Fatal("a CI run started on a bench that has no dealt slot")
+	}
+	if ran, reason := benches.Start("hulk", dealt); !ran {
+		t.Fatalf("the dealt bench did not start: %s", reason)
+	}
+	if ok, reason := benches.Deal("hulk", dealt); !ok {
+		t.Fatalf("the same head dealt again: %s", reason)
+	}
+	if benches.CIHeld() != 1 {
+		t.Fatalf("a dealt rerun took a second slot: CI held %d", benches.CIHeld())
+	}
+	if ok, _ := benches.Deal("vision", dealt); ok {
+		t.Fatal("a second bench took the head's one slot")
+	}
 }
 
 func shaN(n int) string {
