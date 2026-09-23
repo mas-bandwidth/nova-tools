@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // GitHub is the Forge over GitHub REST through `gh api` (GH_CONFIG_DIR picks
@@ -131,6 +133,14 @@ echo "PUSH OK $branch"
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func (p SSHPusher) repoDir(c Card) (string, error) {
+	// repoDir starts nothing itself, but its receiver names the seam Push
+	// reaches through it: guard here too, before Push ever builds the ssh
+	// command line, so the seam is refused at every frame that names it.
+	bin := p.SSH
+	if bin == "" {
+		bin = "ssh"
+	}
+	testguard.RefuseHosts(bin)
 	sub := p.RepoSubdir
 	if sub == "" {
 		sub = "repo"
@@ -169,8 +179,10 @@ func (p SSHPusher) Push(ctx context.Context, b BenchInfo, c Card) error {
 		bin = "ssh"
 	}
 	remote := "bash -s -- " + shellQuote(dir) + " " + shellQuote(c.PushedSHA) + " " + shellQuote(c.Branch)
-	cmd := exec.CommandContext(ctx, bin, "-o", "BatchMode=yes",
-		"-o", "ConnectTimeout="+strconv.Itoa(int(timeout.Seconds())), target, remote)
+	args := []string{"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=" + strconv.Itoa(int(timeout.Seconds())), target, remote}
+	testguard.RefuseHosts(bin, args...)
+	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdin = strings.NewReader(pushScript)
 	var out bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &out

@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // The REST calls name the exact endpoints, and the push script is idempotent
@@ -15,7 +18,7 @@ func TestGitHubCallsAndIdempotentPush(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	gh := filepath.Join(dir, "gh")
-	script := "#!/bin/bash\necho \"$*\" >> " + log + "\n" +
+	script := "#!/bin/bash\necho \"$*\" >> " + strconv.Quote(log) + "\n" +
 		`case "$*" in
 *"-X GET"*) echo '[{"number":7,"html_url":"u","head":{"sha":"abc","ref":"nova/s/l-a1"}}]';;
 *"-X POST"*) echo '{"number":8,"html_url":"u","head":{"sha":"abc","ref":"nova/s/m-a1"}}';;
@@ -95,7 +98,13 @@ esac
 	if out, err := push(one, "rowan/x"); err == nil || !strings.Contains(out, "not under nova/") {
 		t.Fatalf("push outside nova/ must be refused: %q %v", out, err)
 	}
-	if d, err := (SSHPusher{}).repoDir(Card{Label: "l", Results: "s/l/09fbedc9/b/1"}); err == nil {
-		t.Fatalf("relative results with no root = %q, want refused", d)
-	}
+	// repoDir is a guarded seam by receiver name alone -- it starts nothing
+	// itself, but names the same seam Push reaches through it -- so a test
+	// calling it directly, with no fake ssh on PATH, declares that out loud.
+	func() {
+		defer testguard.AllowHosts()()
+		if d, err := (SSHPusher{}).repoDir(Card{Label: "l", Results: "s/l/09fbedc9/b/1"}); err == nil {
+			t.Fatalf("relative results with no root = %q, want refused", d)
+		}
+	}()
 }

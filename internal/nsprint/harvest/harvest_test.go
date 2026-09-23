@@ -98,8 +98,10 @@ func seedEnded(t *testing.T, c *redis.Client, bench, label, kind, outcome, pushe
 	c.SAdd(ctx, "s:"+sprint+":bench:"+bench+":ended", label)
 }
 
-// fixturePusher: an UP bench pushes in 100 ms; a DOWN bench's ssh never
-// answers, so the push blocks until that bench's own clock ends.
+// fixturePusher: an UP bench's push returns as soon as it is scheduled (no
+// wall-clock wait to fake -- the event under test is completion, not a
+// duration); a DOWN bench's ssh never answers, so the push blocks until that
+// bench's own clock ends.
 type fixturePusher struct {
 	down   map[string]bool
 	mu     sync.Mutex
@@ -112,9 +114,9 @@ func (p *fixturePusher) Push(ctx context.Context, b harvest.BenchInfo, c harvest
 		return fmt.Errorf("ssh %s: %w", b.Name, ctx.Err())
 	}
 	select {
-	case <-time.After(100 * time.Millisecond):
 	case <-ctx.Done():
 		return ctx.Err()
+	default:
 	}
 	p.mu.Lock()
 	p.pushes[c.Branch]++
@@ -230,15 +232,16 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 
 	start := time.Now()
 	res := byBench(harvest.Run(ctx, st, opt))
-	wall := time.Since(start)
 
-	// The down bench spends its whole clock and harvests nothing.
+	// The down bench spends its whole clock and harvests nothing: assert the
+	// event (its own context deadline fired), not how long the run took by
+	// the wall clock.
 	down := res["ctl-down"]
 	if down.Err == nil || len(down.Cards) != 0 {
 		t.Fatalf("down bench: err=%v cards=%v; want its clock to end it with nothing harvested", down.Err, down.Cards)
 	}
-	if wall < clock {
-		t.Fatalf("run returned in %v, before the down bench's clock %v", wall, clock)
+	if !errors.Is(down.Err, context.DeadlineExceeded) {
+		t.Fatalf("down bench err=%v; want its own clock's deadline to have fired", down.Err)
 	}
 	// Every UP bench finishes inside its own clock, in parallel: each is done
 	// long before the down bench's clock ends (serial would be 3 x ~0.5 s,
