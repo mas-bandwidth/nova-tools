@@ -300,3 +300,133 @@ func TestRecordLeavesTheRestOfTheDocumentByteIdentical(t *testing.T) {
 		t.Error("the temporary file was left behind")
 	}
 }
+
+// liveSet is the real set with the named units marked :live, as a take would
+// have left them, written into the test's own directory.
+func liveSet(t *testing.T, ids ...string) string {
+	t.Helper()
+	path := workSet(t)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		head := []byte(`(unit "` + id + `"`)
+		if !bytes.Contains(data, head) {
+			t.Fatalf("the fixture no longer holds %s", id)
+		}
+		data = bytes.Replace(data, head, append(append([]byte(nil), head...), []byte(" :state :live")...), 1)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// Stella's hold on #1421 (next.go:265-273): a live unit whose reservation cannot
+// be rebuilt used to be skipped, so Admit treated what it holds as free. Two
+// live units in the one pulse lane cannot both be granted, and the verb now
+// refuses naming the unit rather than admitting anything against them.
+func TestNextRefusesWhenAHeldReservationCannotBeRebuilt(t *testing.T) {
+	fakeRouter(t, func(u decide.Unit) (decide.RouteResult, error) { return rung("opus", 0.90), nil })
+	path := liveSet(t, "certify:verb", "harvest:bench")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"next", "--file", path, "--for", "rowan-child", "--lanes", lanesFixture, "--no-jev"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2 (fail closed); stdout = %s", code, stdout.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("a unit was offered against an unreconstructed reservation: %s", stdout.String())
+	}
+	for _, want := range []string{"harvest:bench", "cannot be reconstructed"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("the refusal does not name %q: %s", want, stderr.String())
+		}
+	}
+}
+
+// Stella's hold on #1421 (next.go --usage/--log): the flags were required
+// before a jev call and then never written. Every decision now lands in the
+// log and every provider call in the usage TSV, the same rows nova-decide
+// route writes.
+func TestNextRecordsEveryJevDecisionAndItsSpend(t *testing.T) {
+	calls := 0
+	fakeRouter(t, func(u decide.Unit) (decide.RouteResult, error) {
+		calls++
+		res := rung("opus", 0.90)
+		res.Usage = decide.RouteUsage{Calls: 1, InputTokens: 120, OutputTokens: 30, HasInput: true, HasOutput: true}
+		return res, nil
+	})
+	dir := t.TempDir()
+	usage, logPath := filepath.Join(dir, "usage.tsv"), filepath.Join(dir, "decide.jsonl")
+	line := nextLine(t, "--file", workSet(t), "--for", "rowan-child", "--lanes", lanesFixture,
+		"--usage", usage, "--log", logPath)
+	if !strings.HasPrefix(line, "NEXT unit=") {
+		t.Fatalf("no answer: %s", line)
+	}
+	if calls == 0 {
+		t.Fatal("the fake ladder was never asked")
+	}
+	rows, err := decide.ReadEntries(logPath)
+	if err != nil {
+		t.Fatalf("read the decision log: %v", err)
+	}
+	if len(rows) != calls {
+		t.Errorf("the log holds %d rows for %d decisions", len(rows), calls)
+	}
+	raw, err := os.ReadFile(usage)
+	if err != nil {
+		t.Fatalf("read the usage TSV: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != calls+1 {
+		t.Fatalf("the usage TSV holds %d lines for %d calls plus the header:\n%s", len(lines), calls, raw)
+	}
+	if !strings.Contains(lines[0], "tokens_in") || !strings.Contains(lines[1], "120") || !strings.Contains(lines[1], "30") {
+		t.Errorf("the usage rows do not carry the call's tokens:\n%s", raw)
+	}
+}
+
+// And a call whose spend cannot be written is refused BEFORE it is made.
+func TestNextRefusesBeforeACallItCannotRecord(t *testing.T) {
+	calls := 0
+	fakeRouter(t, func(u decide.Unit) (decide.RouteResult, error) { calls++; return rung("opus", 0.90), nil })
+	dir := t.TempDir()
+	for name, args := range map[string][]string{
+		"usage": {"--usage", filepath.Join(dir, "absent", "usage.tsv"), "--log", filepath.Join(dir, "decide.jsonl")},
+		"log":   {"--usage", filepath.Join(dir, "usage.tsv"), "--log", filepath.Join(dir, "absent", "decide.jsonl")},
+	} {
+		var stdout, stderr bytes.Buffer
+		base := []string{"next", "--file", workSet(t), "--for", "rowan-child", "--lanes", lanesFixture}
+		if code := run(append(base, args...), &stdout, &stderr); code != 2 {
+			t.Errorf("%s unwritable: exit = %d, want 2; stdout = %s", name, code, stdout.String())
+		}
+		if !strings.Contains(stderr.String(), "--"+name) || !strings.Contains(stderr.String(), "before the call") {
+			t.Errorf("%s unwritable: the refusal does not name the flag and the rule: %s", name, stderr.String())
+		}
+	}
+	if calls != 0 {
+		t.Errorf("the ladder was asked %d times with nowhere to record the call", calls)
+	}
+}
+
+// Stella's hold on #1421 (next.go:163-170 and the attempt readers): the file was
+// read whole before --max-bytes was checked. Every verb now reads through a
+// reader capped at the bound plus one byte and refuses there.
+func TestEveryAttemptVerbStopsReadingAtMaxBytes(t *testing.T) {
+	fakeRouter(t, func(u decide.Unit) (decide.RouteResult, error) { return rung("opus", 0.90), nil })
+	for _, args := range [][]string{
+		{"next", "--for", "rowan-child", "--lanes", lanesFixture, "--no-jev"},
+		{"attempt", "list", "--unit", "certify:verb"},
+		{"attempt", "record", "--unit", "certify:verb", "--by", "rowan-child", "--outcome", "uncertain"},
+	} {
+		path := workSet(t)
+		var stdout, stderr bytes.Buffer
+		if code := run(append(args, "--file", path, "--max-bytes", "100"), &stdout, &stderr); code != 2 {
+			t.Errorf("%v: exit = %d, want 2", args[:2], code)
+		}
+		if !strings.Contains(stderr.String(), "--max-bytes=100") || !strings.Contains(stderr.String(), "after reading 101 bytes") {
+			t.Errorf("%v: the refusal does not say it stopped at the bound: %s", args[:2], stderr.String())
+		}
+	}
+}

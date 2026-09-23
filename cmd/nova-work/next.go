@@ -49,6 +49,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -56,6 +57,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
 
@@ -72,6 +74,13 @@ var router = func(ctx context.Context, reg *decide.Registry, u decide.Unit, floo
 		return decide.RouteResult{}, err
 	}
 	return decide.RouteJev(ctx, client, reg, u, floor)
+}
+
+// openDecisionLog opens the decision log --log names: a path (JSON lines) or
+// the table, exactly as nova-decide route opens it. It is a seam so a test can
+// hand in an in-memory sink.
+var openDecisionLog = func(name string) (decide.LogSink, error) {
+	return decide.OpenLogSink(name, "")
 }
 
 // defaultKind is the decide kind a unit of a work set is routed as when it
@@ -148,6 +157,34 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " next", oneline.Err(err))
 	}
+	// The accounting is OPENED before any call, not after it (Stella's hold on
+	// #1421, and nova-decide route's own rule since #1327): a paid call with
+	// nowhere its spend or its decision can be written is refused before it is
+	// made. The log is opened -- a table that will not open is nowhere -- and a
+	// file on either path is probed for an append without writing a byte, so a
+	// usage file that is not there yet still gets its header on the first row.
+	var sink decide.LogSink
+	if strings.TrimSpace(*logPath) != "" {
+		opened, err := openDecisionLog(*logPath)
+		if err != nil {
+			return refuse(stderr, " next", "a jev call must be accounted for: --log will not open: "+oneline.Err(err))
+		}
+		sink = opened
+		defer sink.Close()
+	}
+	if ask {
+		for _, probe := range [][2]string{{"--usage", *usagePath}, {"--log", *logPath}} {
+			flagName, path := probe[0], probe[1]
+			if flagName == "--log" && strings.TrimSpace(path) == decide.PostgresLog {
+				continue // opened above: the table is its own probe
+			}
+			if err := appendable(path); err != nil {
+				return refuse(stderr, " next", fmt.Sprintf(
+					"a jev call must be accounted for: %s %s cannot be appended to (%s); refusing before the call is made",
+					oneline.Escape(flagName), oneline.Escape(path), oneline.Err(err)))
+			}
+		}
+	}
 
 	// --take holds the set's lock across the read, the decision and the write:
 	// the unit a mind is told to do and the unit it is recorded as doing are
@@ -160,7 +197,7 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 		defer release()
 	}
 
-	data, err := os.ReadFile(*file)
+	data, err := readSetBounded(*file, bounds(limits))
 	if err != nil {
 		return refuse(stderr, " next", oneline.Err(err))
 	}
@@ -169,11 +206,14 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " next", oneline.Err(err))
 	}
 
-	picked, none := pickNext(ws, nextOpts{
+	picked, none, err := pickNext(ws, nextOpts{
 		Mind: *forMind, Lanes: lanes, LanesFile: *lanesFile, Done: splitIDs(*doneList),
 		Registry: reg, Kind: *kind, Floor: *floor, Ask: ask,
-		BaseURL: *baseURL, KeyEnv: *keyEnv, Log: *logPath, Usage: *usagePath,
+		BaseURL: *baseURL, KeyEnv: *keyEnv, Log: sink, Usage: *usagePath,
 	})
+	if err != nil {
+		return refuse(stderr, " next", oneline.Err(err))
+	}
 	if none != "" {
 		// Every value inside the sentence was escaped where it was interpolated,
 		// so the quote here makes it one pasteable token and nothing more.
@@ -224,8 +264,13 @@ type nextOpts struct {
 	Ask       bool
 	BaseURL   string
 	KeyEnv    string
-	Log       string
-	Usage     string
+	// Log is where every routing decision is appended (nil: --log not given,
+	// which only --no-jev allows), and Usage the TSV every provider call's spend
+	// is appended to. Both are WRITTEN by pickNext, one row per decision, on the
+	// way out of the router whether it answered or refused: a call already made
+	// has already been paid for.
+	Log   decide.LogSink
+	Usage string
 }
 
 // candidate is one unit that survived the gates, with the ladder's answer.
@@ -238,11 +283,12 @@ type candidate struct {
 // pickNext runs the four gates and returns the one answer, or the reason there
 // is none. The reason is never "nothing to do": it names WHICH gate emptied the
 // set, so a mind reading it knows whether to wait, to ask, or to look at a lane
-// somebody else is holding.
-func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
+// somebody else is holding. The error is a refusal rather than an answer: a
+// reservation that cannot be rebuilt, or a decision that could not be recorded.
+func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string, error) {
 	ready := ws.Ready(opts.Done)
 	if len(ready) == 0 {
-		return candidate{}, "no unit of the set is ready: every open unit is waiting on a need"
+		return candidate{}, "no unit of the set is ready: every open unit is waiting on a need", nil
 	}
 
 	var owned []worklang.Unit
@@ -254,7 +300,7 @@ func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
 	if len(owned) == 0 {
 		return candidate{}, fmt.Sprintf(
 			"%d units are ready and none of them is %s's: a unit goes to its :owner, and an unowned one only to a child of the coordinating window",
-			len(ready), oneline.Escape(opts.Mind))
+			len(ready), oneline.Escape(opts.Mind)), nil
 	}
 
 	// A4 first: what is already running holds its reservation, and the clock
@@ -267,9 +313,18 @@ func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
 			continue
 		}
 		if state := u.State(); state == worklang.StateLive || state == "uncertain" {
-			if _, err := a.Grant(u.Request()); err == nil {
-				held = append(held, u.ID)
+			// FAIL CLOSED (Stella's hold on #1421). A live or uncertain unit whose
+			// reservation cannot be rebuilt -- two live units in one lane, two
+			// whose :writes intersect, a request the kernel refuses -- still
+			// holds whatever it holds on the bench. Skipping it would let Admit
+			// treat its lane and its writes as free and hand them out again, so
+			// the set is refused naming the unit, and nothing is admitted.
+			if _, err := a.Grant(u.Request()); err != nil {
+				return candidate{}, "", fmt.Errorf(
+					"unit %s is :%s and its reservation cannot be reconstructed (%s); refusing to admit anything against capacity it may still hold. Record its attempt's outcome, or repair the set so the units already holding capacity do not collide",
+					oneline.Escape(u.ID), state, oneline.Err(err))
 			}
+			held = append(held, u.ID)
 		}
 	}
 
@@ -297,7 +352,7 @@ func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
 		return candidate{}, fmt.Sprintf(
 			"%d units are %s's and ready, and every one of them is held: %s (%d unit(s) already hold a reservation: %s)",
 			len(owned), oneline.Escape(opts.Mind), oneline.Escape(firstHeld),
-			len(held), oneline.Escape(strings.Join(held, ", ")))
+			len(held), oneline.Escape(strings.Join(held, ", "))), nil
 	}
 
 	var picks []candidate
@@ -311,6 +366,14 @@ func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
 			continue
 		}
 		res, err := router(context.Background(), opts.Registry, ev, opts.Floor, opts.Ask, opts.BaseURL, opts.KeyEnv)
+		// The record is written BEFORE the router's error is looked at: a call
+		// that was made was paid for, whatever came back. A record that cannot
+		// be written stops the verb -- the next unit would be another call
+		// nobody can account for.
+		if perr := persistDecision(res, ev, opts); perr != nil {
+			return candidate{}, "", fmt.Errorf("the decision on %s could not be recorded: %s",
+				oneline.Escape(u.ID), oneline.Err(perr))
+		}
 		if err != nil {
 			if waiting == "" {
 				waiting = fmt.Sprintf("the ladder could not route %s: %s", oneline.Escape(u.ID), oneline.Err(err))
@@ -332,7 +395,7 @@ func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
 	}
 	if len(picks) == 0 {
 		return candidate{}, fmt.Sprintf(
-			"%d units are ready, owned and free, and the ladder dispatches none of them: %s", len(free), oneline.Escape(waiting))
+			"%d units are ready, owned and free, and the ladder dispatches none of them: %s", len(free), oneline.Escape(waiting)), nil
 	}
 	// Highest confidence first -- the ladder's own number for "the first
 	// attempt is right" -- and ties in the order the author wrote them, so one
@@ -343,7 +406,97 @@ func pickNext(ws *worklang.WorkSet, opts nextOpts) (candidate, string) {
 		}
 		return picks[i].Order < picks[j].Order
 	})
-	return picks[0], ""
+	return picks[0], "", nil
+}
+
+// persistDecision writes one routing decision's record, the way nova-decide
+// route writes its own: the log row for anything that got far enough to be a
+// decision, and a usage row for every provider call actually made. A decision
+// that made no call writes no usage row -- an empty row would claim a call.
+func persistDecision(res decide.RouteResult, u decide.Unit, opts nextOpts) error {
+	if res.Unit == "" {
+		return nil // nothing got as far as being a decision
+	}
+	var failures []string
+	if opts.Log != nil {
+		if err := opts.Log.Append(decide.EntryFor(res, u, time.Now())); err != nil {
+			failures = append(failures, "log: "+err.Error())
+		}
+	}
+	if res.Usage.Calls > 0 {
+		if strings.TrimSpace(opts.Usage) == "" {
+			failures = append(failures, "usage: a provider call was made and no --usage was given to record it")
+		} else if err := swarm.AppendCardUsage(opts.Usage, decisionUsageRow(res, u, opts.Registry)); err != nil {
+			failures = append(failures, "usage: "+err.Error())
+		}
+	}
+	if len(failures) == 0 {
+		return nil
+	}
+	return fmt.Errorf("%s", strings.Join(failures, "; "))
+}
+
+// decisionUsageRow is one row of the fleet's usage TSV for the provider call a
+// decision made, in the columns nova-decide route writes, so nova-tokens reads
+// the spend of `next` the way it reads everything else. A counter the provider
+// did not report is left empty (written as a dash), never a zero, and usd is
+// priced from the registry's rate table only when both counters were reported.
+func decisionUsageRow(res decide.RouteResult, u decide.Unit, reg *decide.Registry) swarm.UsageRow {
+	stamp := time.Now().UTC().Format(time.RFC3339)
+	row := swarm.UsageRow{
+		"job":      u.ID,
+		"attempt":  fmt.Sprintf("%d", len(u.Attempts)+1),
+		"started":  stamp,
+		"ended":    stamp,
+		"rc":       "0",
+		"provider": "typesafe",
+		"model":    decide.DefaultModel,
+	}
+	if res.Usage.HasInput {
+		row["tokens_in"] = fmt.Sprintf("%d", res.Usage.InputTokens)
+	}
+	if res.Usage.HasOutput {
+		row["tokens_out"] = fmt.Sprintf("%d", res.Usage.OutputTokens)
+	}
+	if res.Usage.Failed {
+		row["rc"] = "2"
+	}
+	if reg != nil && res.Usage.HasInput && res.Usage.HasOutput {
+		if rate, ok := reg.RateFor(decide.DefaultModel); ok {
+			row["usd"] = fmt.Sprintf("%.6f", rate.USD(res.Usage.InputTokens, res.Usage.OutputTokens))
+		}
+	}
+	return row
+}
+
+// appendable reports whether a record can be appended at path WITHOUT writing
+// a byte: an existing file must open for append, and a file not there yet
+// needs a directory that takes a new file (probed with a temporary file that
+// is removed at once), so the first real row still writes the header.
+func appendable(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return fmt.Errorf("no path given")
+	}
+	if info, err := os.Stat(path); err == nil {
+		if info.IsDir() {
+			return fmt.Errorf("%s is a directory", path)
+		}
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0)
+		if err != nil {
+			return err
+		}
+		return f.Close()
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	probe, err := os.CreateTemp(filepath.Dir(path), ".nova-work-probe-*")
+	if err != nil {
+		return err
+	}
+	name := probe.Name()
+	probe.Close()
+	return os.Remove(name)
 }
 
 // ownerMatches is A13's rule as a reading. A unit goes to the mind its :owner

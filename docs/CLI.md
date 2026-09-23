@@ -4685,7 +4685,8 @@ policy, refused and abandoned are themselves, and uncertain keeps the reservatio
 A try that started and then ended is ONE try. Where the unit's last attempt is still open
 -- an :outcome :uncertain with no :proof, taken by this same mind -- record CLOSES that
 record rather than appending beside it, keeping its :n, its :rung and the instant it
-actually began.
+actually began. An open attempt under ANOTHER mind is refused, never appended beside:
+its state and its reservation stand until its own owner records the outcome.
 
 next is the what-do-I-do-next verb, and the first place all three halves of the work
 language answer one question together: the graph says whose needs are closed, the kernel
@@ -4696,7 +4697,9 @@ gate that emptied the set. Everything already :live or :uncertain holds its rese
 BEFORE anything is admitted against what is left, which is what A4 means: the clock never
 frees capacity, only an outcome does. And a unit the ladder is waiting on is never
 dispatched (Stella's lease rule: a rung that may still be running is not a rung to step
-off).--evaluate derives done from each unit's :acceptance instead of its :status, through gh
+off).
+
+--evaluate derives done from each unit's :acceptance instead of its :status, through gh
 (nova-tools #2664). Two criteria are evaluable: (:kind :landed :subject "pr:<o/r>#<n>"
 :predicate :merged-or-closed-in-base) holds when the PR is merged, OR closed with its
 content in the base by the lander's rule -- git merge-tree --write-tree <base> <head>
@@ -4713,6 +4716,7 @@ one is evaluable or one fails; a unit naming only :test, :job or :attested crite
 its :status. Each question is asked once per run.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
+
 events publishes the family's three event channels from two sources: the cards:done
 stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
 becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a changed
@@ -4772,16 +4776,20 @@ flags:
                   build unless its author says otherwise.
   --jev/--no-jev  next: ask Jev among the eligible rungs, or answer by the rules alone
                   with no key and no network. Asking requires --usage and --log, because
-                  a call nobody can account for is refused rather than made.
+                  a call nobody can account for is refused rather than made: both are
+                  probed before the first call, every decision is appended to --log
+                  and every provider call's spend to --usage.
   --take          next: open the attempt on the unit chosen -- :state :live, the lane
                   and the writes charged to it from that instant -- under the set's own
                   lock, so the unit a mind is told to do and the unit it is recorded as
-                  doing are one decision.  --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
+                  doing are one decision.
+  --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
   --base <branch> set check: the branch :landed means; default the set's :base.
   --cache <dir>   set check: where --evaluate keeps one blobless bare repository per
                   repo for the merge; default <user cache dir>/nova-work/landed.
   --write-status  set check: rewrite :status "open" to "landed" where every criterion
-                  holds, in place, one line per unit; implies --evaluate.  --out <dir>     plan expand: the directory to write one card per node into. Required;
+                  holds, in place, one line per unit; implies --evaluate.
+  --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
   --max-bytes <n> plan check: the byte ceiling (default 65536). A file past it is

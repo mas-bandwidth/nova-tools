@@ -102,7 +102,7 @@ func cmdAttemptRecord(args []string, stdout, stderr io.Writer) int {
 	}
 	defer release()
 
-	data, err := os.ReadFile(*file)
+	data, err := readSetBounded(*file, bounds(limits))
 	if err != nil {
 		return refuse(stderr, " attempt record", oneline.Err(err))
 	}
@@ -139,7 +139,7 @@ func cmdAttemptList(args []string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(*file) == "" || strings.TrimSpace(*unit) == "" {
 		return refuse(stderr, " attempt list", "--file and --unit are both required; refusing to guess")
 	}
-	data, err := os.ReadFile(*file)
+	data, err := readSetBounded(*file, bounds(limits))
 	if err != nil {
 		return refuse(stderr, " attempt list", oneline.Err(err))
 	}
@@ -204,6 +204,34 @@ func boundFlags(fs *flag.FlagSet) (*[3]int, func(*[3]int) worklang.Limits) {
 	return &v, func(p *[3]int) worklang.Limits {
 		return worklang.Limits{MaxBytes: p[0], MaxDepth: p[1], MaxNodes: p[2]}
 	}
+}
+
+// readSetBounded reads a work set through a reader capped at --max-bytes plus
+// one, so the byte bound protects MEMORY and not just the parser: a file past
+// it is refused after at most max+1 bytes are read, never allocated whole and
+// then measured (Stella's hold on #1421). Within the bound the bytes are the
+// file's, untruncated, and the parser holds them to the other two bounds. A
+// non-positive bound reads nothing and is left to the parser, which refuses it
+// by name.
+func readSetBounded(path string, limits worklang.Limits) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if limits.MaxBytes <= 0 {
+		return nil, nil
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(limits.MaxBytes)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > limits.MaxBytes {
+		return nil, fmt.Errorf(
+			"plan file=%s: past --max-bytes=%d; refused whole after reading %d bytes, never truncated and never read further",
+			path, limits.MaxBytes, len(data))
+	}
+	return data, nil
 }
 
 // writeInPlace replaces the document through a temporary file beside it and one

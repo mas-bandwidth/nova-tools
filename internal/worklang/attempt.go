@@ -156,7 +156,9 @@ type Recorded struct {
 // the file's bytes in place.
 //
 // It CLOSES rather than appends when the unit's last attempt is still open: an
-// `:outcome :uncertain` with no `:proof`, taken by this same owner. A try that
+// `:outcome :uncertain` with no `:proof`, taken by this same owner. An open
+// attempt taken by a DIFFERENT owner is refused, never appended beside: its
+// state and reservation stand until its own owner closes it. A try that
 // started and then ended is ONE try (A3: "an attempt is a record, not a
 // counter"), so the record that was opened by `next --take` is the record that
 // is finished here, keeping its `:n`, its `:rung` and its `:started`. Any other
@@ -164,8 +166,9 @@ type Recorded struct {
 //
 // Every refusal is made BEFORE a byte is written, so a file is never left half
 // edited: an outcome that is not one of A3's, an outcome other than `uncertain`
-// with no proof, a unit the set does not hold, and a unit already in a terminal
-// state are all refused with the document untouched.
+// with no proof, a unit the set does not hold, a unit already in a terminal
+// state and an open attempt owned by another mind are all refused with the
+// document untouched.
 func Record(file string, data []byte, unitID string, a NewAttempt, limits Limits) ([]byte, Recorded, error) {
 	return record(file, data, unitID, a, limits, "")
 }
@@ -211,8 +214,21 @@ func record(file string, data []byte, unitID string, a NewAttempt, limits Limits
 	if state != "" {
 		rec.State = state
 	}
+	// An OPEN attempt belongs to the mind that opened it. Another mind filing
+	// an outcome here would move the unit's :state -- to open, or closed, or
+	// anything -- while that attempt still has no termination proof, and the
+	// reservation A4 says it keeps would be gone with nobody having proved the
+	// first try stopped. So a different owner is refused, with the document
+	// untouched: the owner closes its own attempt, or a person proves the
+	// handoff by editing the record, and only then does anyone else file here.
+	open, isOpen := openAttempt(attempts)
+	if isOpen && !sameOwner(open.Owner, a.Owner) {
+		return nil, Recorded{}, refuse(file, fmt.Sprintf(
+			"unit %q has attempt %d open under %q with no :proof of termination; %q cannot file an outcome over it, because that would move the unit's :state while the first try may still be running. Record it --by %s, or prove the handoff in the record first",
+			unitID, open.N, open.Owner, a.Owner, open.Owner))
+	}
 	var edits []edit
-	if open, isOpen := openAttempt(attempts); isOpen && sameOwner(open.Owner, a.Owner) {
+	if isOpen {
 		rec.N, rec.Closed = open.N, true
 		filled := a
 		filled.Rung, filled.Owner, filled.Started = open.Rung, open.Owner, open.Started

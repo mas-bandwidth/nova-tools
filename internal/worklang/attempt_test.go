@@ -308,3 +308,49 @@ func TestTheFixtureIsTheRealSetsShape(t *testing.T) {
 		t.Error("the fixture is not named after the file it copies")
 	}
 }
+
+// Stella's hold on #1421 (attempt.go:215-233): a second owner filing over an
+// OPEN attempt used to take the append branch and write its own outcome's
+// state, so a :live unit could read open or closed while the first try still
+// had no termination proof. It is refused now, for every outcome, and the
+// document -- state, reservation and record -- is left exactly as it was.
+func TestAnotherOwnerCannotFileOverAnOpenAttempt(t *testing.T) {
+	taken, _, err := worklang.Take(realSet, readReal(t), "certify:verb", worklang.NewAttempt{
+		Rung: "opus", Owner: "rowan-child", Started: "2026-09-18T12:00:00Z",
+	}, worklang.DefaultLimits())
+	if err != nil {
+		t.Fatalf("take: %v", err)
+	}
+	for _, outcome := range []string{"ok", "failed", "refused", "abandoned", "uncertain"} {
+		other := green()
+		other.Owner, other.Rung, other.Outcome = "stella-child", "sonnet", outcome
+		if outcome == "uncertain" {
+			other.Proof = worklang.Proof{}
+		}
+		out, _, err := worklang.Record(realSet, taken, "certify:verb", other, worklang.DefaultLimits())
+		if err == nil {
+			t.Errorf("outcome %s by another owner was filed over rowan-child's open attempt", outcome)
+			if got := stateOf(t, out, "certify:verb"); got != "live" {
+				t.Errorf("and it moved :state to :%s while the first try is unproved", got)
+			}
+			continue
+		}
+		for _, want := range []string{"open", "rowan-child", "stella-child", "--by rowan-child"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("outcome %s: the refusal does not name %q: %v", outcome, want, err)
+			}
+		}
+	}
+	if got := stateOf(t, taken, "certify:verb"); got != "live" {
+		t.Errorf("the unit reads :%s, want live: the reservation stands", got)
+	}
+	// The owner itself still closes its own try, as ONE record.
+	closed, rec, err := worklang.Record(realSet, taken, "certify:verb", green(), worklang.DefaultLimits())
+	if err != nil {
+		t.Fatalf("the owner could not close its own attempt: %v", err)
+	}
+	if !rec.Closed || rec.N != 1 || stateOf(t, closed, "certify:verb") != "closed" {
+		t.Errorf("owner's close wrote n=%d closed=%v state=%s, want n=1 closed=true state=closed",
+			rec.N, rec.Closed, stateOf(t, closed, "certify:verb"))
+	}
+}
