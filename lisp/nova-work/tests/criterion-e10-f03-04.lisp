@@ -58,15 +58,99 @@ assignment of it is present. Only the assignment is read: the first
             (setf start (1+ newline))
             (return (nreverse lines)))))))
 
-(defun e10-f03-04-need-names-p (workflow name)
-  "True when some `needs:` line of WORKFLOW names the job NAME -- the leg's red
-being read at the gate the report job is, rather than vanishing."
-  (some (lambda (line)
-          (let ((trimmed (string-trim '(#\Space #\Tab) line)))
-            (and (<= 6 (length trimmed))
-                 (string= "needs:" trimmed :end2 6)
-                 (and (search name trimmed) t))))
-        (e10-f03-04-lines workflow)))
+(defun e10-f03-04-indent (line)
+  "LINE's count of leading spaces."
+  (or (position #\Space line :test-not #'char=) (length line)))
+
+(defun e10-f03-04-blank-or-comment-p (line)
+  "True when LINE carries no YAML content: blank, or only a comment."
+  (let ((trimmed (string-trim '(#\Space #\Tab) line)))
+    (or (zerop (length trimmed)) (char= #\# (char trimmed 0)))))
+
+(defun e10-f03-04-uncomment (text)
+  "TEXT with a trailing ` #` YAML comment removed, trimmed."
+  (let ((hash (search " #" text)))
+    (string-trim '(#\Space #\Tab) (if hash (subseq text 0 hash) text))))
+
+(defun e10-f03-04-job-token (text)
+  "One job name out of a needs entry: brackets, quotes and spaces trimmed."
+  (string-trim '(#\Space #\Tab #\[ #\] #\" #\') text))
+
+(defun e10-f03-04-split-commas (text)
+  "TEXT split on its commas."
+  (let ((parts '()) (start 0))
+    (loop
+      (let ((comma (position #\, text :start start)))
+        (push (subseq text start comma) parts)
+        (if comma
+            (setf start (1+ comma))
+            (return (nreverse parts)))))))
+
+(defun e10-f03-04-job-needs (workflow job)
+  "The exact job names in JOB's own `needs:` under WORKFLOW's `jobs:`, as a
+list of strings (NIL when JOB is absent or needs nothing). Only JOB's block
+is read -- from its `  JOB:` header to the next line at the jobs' indent --
+and only the `needs:` key at that block's own key indent, so another job's
+needs, a comment, or a step's text never answer for JOB. The flow form
+`needs: [a, b]`, the scalar `needs: a`, and the block list `needs:` then
+`- a` lines are all read."
+  (let* ((lines (e10-f03-04-lines workflow))
+         (jobs-at (position-if (lambda (l)
+                                 (string= "jobs:" (e10-f03-04-uncomment l)))
+                               lines))
+         (header (concatenate 'string job ":")))
+    (when jobs-at
+      (let* ((body (nthcdr (1+ jobs-at) lines))
+             (job-indent (let ((first (find-if-not #'e10-f03-04-blank-or-comment-p body)))
+                           (and first (e10-f03-04-indent first))))
+             (start (and job-indent
+                         (position-if (lambda (l)
+                                        (and (not (e10-f03-04-blank-or-comment-p l))
+                                             (= job-indent (e10-f03-04-indent l))
+                                             (string= header (e10-f03-04-uncomment l))))
+                                      body))))
+        (when start
+          (let* ((after (nthcdr (1+ start) body))
+                 (end (or (position-if (lambda (l)
+                                         (and (not (e10-f03-04-blank-or-comment-p l))
+                                              (<= (e10-f03-04-indent l) job-indent)))
+                                       after)
+                          (length after)))
+                 (block (subseq after 0 end))
+                 (key-indent (let ((first (find-if-not #'e10-f03-04-blank-or-comment-p block)))
+                               (and first (e10-f03-04-indent first))))
+                 (at (and key-indent
+                          (position-if (lambda (l)
+                                         (let ((text (e10-f03-04-uncomment l)))
+                                           (and (not (e10-f03-04-blank-or-comment-p l))
+                                                (= key-indent (e10-f03-04-indent l))
+                                                (<= 6 (length text))
+                                                (string= "needs:" text :end2 6))))
+                                       block))))
+            (when at
+              (let ((value (e10-f03-04-uncomment
+                            (subseq (e10-f03-04-uncomment (nth at block)) 6))))
+                (remove ""
+                        (if (plusp (length value))
+                            (mapcar #'e10-f03-04-job-token
+                                    (e10-f03-04-split-commas value))
+                            (loop for l in (nthcdr (1+ at) block)
+                                  for text = (e10-f03-04-uncomment l)
+                                  until (and (not (e10-f03-04-blank-or-comment-p l))
+                                             (<= (e10-f03-04-indent l) key-indent)
+                                             (not (and (plusp (length text))
+                                                       (char= #\- (char text 0)))))
+                                  when (and (plusp (length text))
+                                            (char= #\- (char text 0)))
+                                    collect (e10-f03-04-job-token (subseq text 1))))
+                        :test #'string=)))))))))
+
+(defun e10-f03-04-need-names-p (workflow job name)
+  "True when WORKFLOW's job JOB lists the job NAME, exactly, in its own
+`needs:` -- the leg's red being read at the gate JOB is, rather than
+vanishing. Another job's needs, or a longer name that only contains NAME,
+does not count."
+  (and (member name (e10-f03-04-job-needs workflow job) :test #'string=) t))
 
 (defun e10-f03-04-registered-p (name)
   (and (find name *tests* :key #'first :test #'string=) t))
@@ -143,5 +227,81 @@ being read at the gate the report job is, rather than vanishing."
         "no failure is swallowed")
     (ok (e10-f03-04-has runner "gate is blocked")
         "a red names the gate it blocks")
-    (ok (e10-f03-04-need-names-p nightly "nova-work-exhaustive")
+    (ok (e10-f03-04-need-names-p nightly "report" "nova-work-exhaustive")
         "the exhaustive leg is a needs of the nightly report gate")))
+
+;;; The report-gate reading above is only as good as its parser: a needs line
+;;; of some other job, or a longer job name that merely contains the leg's,
+;;; must not stand in for the report job's own needs (Stella's hold on #2884
+;;; at d14fd56c: the old reading matched any `needs:` line anywhere).
+(defparameter *e10-f03-04-fixture-report-needs-leg*
+  "on:
+  schedule:
+    - cron: '0 6 * * *'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+  nova-work-exhaustive:
+    runs-on: ubuntu-latest
+  report:
+    # every leg is a `needs:` here
+    needs: [test, nova-work-exhaustive]
+    if: failure()
+")
+
+(defparameter *e10-f03-04-fixture-only-other-job-needs-leg*
+  "jobs:
+  test:
+    runs-on: ubuntu-latest
+  nova-work-exhaustive:
+    runs-on: ubuntu-latest
+  summary:
+    needs: [nova-work-exhaustive]
+    runs-on: ubuntu-latest
+  report:
+    needs: [test]
+    if: failure()
+    steps:
+      - run: echo needs: nova-work-exhaustive
+")
+
+(defparameter *e10-f03-04-fixture-report-needs-longer-name*
+  "jobs:
+  report:
+    needs: [test, nova-work-exhaustive-lite]
+")
+
+(defparameter *e10-f03-04-fixture-report-needs-block-list*
+  "jobs:
+  report:
+    needs:
+      - test
+      - \"nova-work-exhaustive\"  # the leg
+    if: failure()
+  other:
+    needs: [unrelated]
+")
+
+(deftest "e10-f03-04-report-needs-is-exact"
+    "docs/SPEC-WORK.md:7089-7100,7235-7240"
+    "expected=failures-block-affected-gates-read-from-the-report-jobs-own-needs-by-exact-name"
+  (check-equal '("test" "nova-work-exhaustive")
+               (e10-f03-04-job-needs *e10-f03-04-fixture-report-needs-leg* "report")
+               "the report job's flow-form needs, by exact name")
+  (ok (e10-f03-04-need-names-p *e10-f03-04-fixture-report-needs-leg*
+                               "report" "nova-work-exhaustive")
+      "a report job that needs the leg is read as gating it")
+  (ok (not (e10-f03-04-need-names-p *e10-f03-04-fixture-only-other-job-needs-leg*
+                                    "report" "nova-work-exhaustive"))
+      "an unrelated job's needs of the leg does not stand in for report's")
+  (check-equal '("test")
+               (e10-f03-04-job-needs *e10-f03-04-fixture-only-other-job-needs-leg* "report")
+               "report's own needs are read, not a step's text nor another job's")
+  (ok (not (e10-f03-04-need-names-p *e10-f03-04-fixture-report-needs-longer-name*
+                                    "report" "nova-work-exhaustive"))
+      "a longer job name containing the leg's is not the leg")
+  (check-equal '("test" "nova-work-exhaustive")
+               (e10-f03-04-job-needs *e10-f03-04-fixture-report-needs-block-list* "report")
+               "the block-list form of needs is read, quotes and comment trimmed")
+  (check-equal '() (e10-f03-04-job-needs *e10-f03-04-fixture-report-needs-leg* "absent")
+               "an absent job needs nothing"))
