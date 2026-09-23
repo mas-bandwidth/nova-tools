@@ -799,7 +799,22 @@ func (idx *Index) FindMatches(text string) []InlinedContext {
 	return results
 }
 
+// remainingMatchesMarker is appended when content had to be dropped to stay inside the
+// total inlined-context budget. It goes through the same tryAppend gate as everything
+// else, so on a razor-thin remaining budget it is simply omitted rather than pushing the
+// rendered block over the cap.
+const remainingMatchesMarker = "- ... [remaining matches omitted to stay within context budget]\n"
+
 // FormatInlinedContext formats the matched index context into markdown suitable for inlining.
+//
+// Every emitted chunk -- the header, each match's spec/heading lines, paragraph body
+// lines, the per-paragraph truncation marker, the guarding-test/covered-file section
+// labels and their entries, and the remaining-matches marker -- is written through
+// tryAppend, which is the single gate that checks the running byte/line totals before
+// committing anything to the buffer. That is what keeps the *whole* rendered block
+// (not just paragraph text) inside MaxTotalInlinedBytes/MaxTotalInlinedLines: a chunk
+// that would cross the budget is never written, so the budget can never be exceeded,
+// only met or under-filled.
 func (idx *Index) FormatInlinedContext(text string) string {
 	matches := idx.FindMatches(text)
 	if len(matches) == 0 {
@@ -807,104 +822,114 @@ func (idx *Index) FormatInlinedContext(text string) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("### INLINED SPEC CONTEXT (indices S2)\n")
+	header := "### INLINED SPEC CONTEXT (indices S2)\n"
+	b.WriteString(header)
 
-	totalBytes := len("### INLINED SPEC CONTEXT (indices S2)\n")
+	totalBytes := len(header)
 	totalLines := 1
+
+	// tryAppend commits s to b and advances the running totals only if doing so keeps
+	// both totals within the strict budget; otherwise it leaves b and the totals
+	// untouched and reports the miss so the caller can react (truncate, mark omitted,
+	// or simply skip a best-effort chunk like the trailing blank line).
+	tryAppend := func(s string) bool {
+		lines := strings.Count(s, "\n")
+		if totalBytes+len(s) > MaxTotalInlinedBytes || totalLines+lines > MaxTotalInlinedLines {
+			return false
+		}
+		b.WriteString(s)
+		totalBytes += len(s)
+		totalLines += lines
+		return true
+	}
 
 	for i, m := range matches {
 		if i > 2 {
 			break // Cap at top 3 matches to stay strictly bounded
 		}
 		if totalBytes >= MaxTotalInlinedBytes || totalLines >= MaxTotalInlinedLines {
-			b.WriteString("- ... [remaining matches omitted to stay within context budget]\n")
+			tryAppend(remainingMatchesMarker)
 			break
 		}
 
 		para := m.SpecParagraph
 		headerLine := fmt.Sprintf("- Spec: %s (%s:%d-%d)\n", para.ID, para.DocPath, para.StartLine, para.EndLine)
-		b.WriteString(headerLine)
-		totalBytes += len(headerLine)
-		totalLines++
+		if !tryAppend(headerLine) {
+			// The spec header line alone doesn't fit in what's left of the budget.
+			tryAppend(remainingMatchesMarker)
+			break
+		}
 
 		if para.Heading != "" {
 			hLine := fmt.Sprintf("  Heading: %s\n", para.Heading)
-			b.WriteString(hLine)
-			totalBytes += len(hLine)
-			totalLines++
+			if !tryAppend(hLine) {
+				// An oversized heading alone can exceed the remaining budget; stop
+				// here rather than let it (or anything after it) cross the cap.
+				tryAppend(remainingMatchesMarker)
+				break
+			}
 		}
 
-		// Bound paragraph lines and bytes
+		// Bound paragraph lines and bytes: per-paragraph caps are checked here,
+		// the total-budget cap is enforced by tryAppend on every candidate line.
 		paraLines := strings.Split(para.Text, "\n")
 		pBytes := 0
 		pLines := 0
 		truncated := false
 
 		for _, line := range paraLines {
-			if pLines >= MaxInlinedParagraphLines || pBytes+len(line) > MaxInlinedParagraphBytes ||
-				totalBytes+len(line)+10 > MaxTotalInlinedBytes || totalLines >= MaxTotalInlinedLines {
+			if pLines >= MaxInlinedParagraphLines || pBytes+len(line) > MaxInlinedParagraphBytes {
 				truncated = true
 				break
 			}
-			fmt.Fprintf(&b, "  > %s\n", line)
-			lineLen := len(line) + 5
-			totalBytes += lineLen
+			candidate := fmt.Sprintf("  > %s\n", line)
+			if !tryAppend(candidate) {
+				truncated = true
+				break
+			}
 			pBytes += len(line)
-			totalLines++
 			pLines++
 		}
 		if truncated {
-			truncLine := "  > ... [truncated to bounded line/byte budget]\n"
-			b.WriteString(truncLine)
-			totalBytes += len(truncLine)
-			totalLines++
+			// Best effort: if even the truncation marker doesn't fit, drop it silently
+			// rather than cross the budget just to announce the truncation.
+			tryAppend("  > ... [truncated to bounded line/byte budget]\n")
 		}
 
 		if len(m.GuardingTests) > 0 {
-			b.WriteString("  Guarding Tests:\n")
-			totalBytes += 18
-			totalLines++
-			for _, tc := range m.GuardingTests {
-				if totalBytes+len(tc.TestName)+len(tc.TestCommand)+15 > MaxTotalInlinedBytes {
-					break
+			if tryAppend("  Guarding Tests:\n") {
+				for _, tc := range m.GuardingTests {
+					gtLine := fmt.Sprintf("  - `%s`: `%s`\n", tc.TestName, tc.TestCommand)
+					if !tryAppend(gtLine) {
+						break
+					}
 				}
-				gtLine := fmt.Sprintf("  - `%s`: `%s`\n", tc.TestName, tc.TestCommand)
-				b.WriteString(gtLine)
-				totalBytes += len(gtLine)
-				totalLines++
 			}
 		} else if len(para.GuardingTests) > 0 {
-			b.WriteString("  Guarding Tests:\n")
-			totalBytes += 18
-			totalLines++
-			for _, t := range para.GuardingTests {
-				if totalBytes+len(t)+10 > MaxTotalInlinedBytes {
-					break
+			if tryAppend("  Guarding Tests:\n") {
+				for _, t := range para.GuardingTests {
+					gtLine := fmt.Sprintf("  - `%s`\n", t)
+					if !tryAppend(gtLine) {
+						break
+					}
 				}
-				gtLine := fmt.Sprintf("  - `%s`\n", t)
-				b.WriteString(gtLine)
-				totalBytes += len(gtLine)
-				totalLines++
 			}
 		}
 
 		if len(m.CoveredFiles) > 0 {
-			b.WriteString("  Covered Files:\n")
-			totalBytes += 17
-			totalLines++
-			for _, f := range m.CoveredFiles {
-				if totalBytes+len(f)+10 > MaxTotalInlinedBytes {
-					break
+			if tryAppend("  Covered Files:\n") {
+				for _, f := range m.CoveredFiles {
+					cfLine := fmt.Sprintf("  - %s\n", f)
+					if !tryAppend(cfLine) {
+						break
+					}
 				}
-				cfLine := fmt.Sprintf("  - %s\n", f)
-				b.WriteString(cfLine)
-				totalBytes += len(cfLine)
-				totalLines++
 			}
 		}
-		b.WriteString("\n")
-		totalBytes++
-		totalLines++
+
+		// Trailing blank line between matches is cosmetic; skip it silently if the
+		// budget is already exhausted instead of crossing the cap for it.
+		tryAppend("\n")
 	}
 
 	return strings.TrimRight(b.String(), "\n")

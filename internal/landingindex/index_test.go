@@ -1,12 +1,29 @@
 package landingindex
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 )
+
+// assertWithinBudget fails the test if inlined -- the real return value of
+// FormatInlinedContext, not a hand-built stand-in -- crosses the strict total
+// byte/line budget. It mirrors exactly how FormatInlinedContext itself tracks the
+// budget (totalBytes accumulates len of every committed chunk; totalLines counts
+// newline characters), so it is a faithful check of the same invariant the
+// production code enforces, not an approximation of it.
+func assertWithinBudget(t *testing.T, inlined string) {
+	t.Helper()
+	if len(inlined) > MaxTotalInlinedBytes {
+		t.Fatalf("rendered context exceeds MaxTotalInlinedBytes: %d > %d bytes:\n%s", len(inlined), MaxTotalInlinedBytes, inlined)
+	}
+	if n := strings.Count(inlined, "\n"); n > MaxTotalInlinedLines {
+		t.Fatalf("rendered context exceeds MaxTotalInlinedLines: %d > %d lines:\n%s", n, MaxTotalInlinedLines, inlined)
+	}
+}
 
 var (
 	sharedIndex *Index
@@ -255,5 +272,96 @@ func TestFormatInlinedContext(t *testing.T) {
 	}
 	if !strings.Contains(inlined, "go test ./internal/ci") {
 		t.Errorf("expected inlined test command, got %q", inlined)
+	}
+}
+
+// TestFormatInlinedContextOversizedHeadingStaysWithinBudget is a control against the
+// finding that a single oversized Markdown heading could alone exceed the entire total
+// inlined-context budget, because the heading line was appended unconditionally instead
+// of being checked against the running byte/line totals like everything else.
+func TestFormatInlinedContextOversizedHeadingStaysWithinBudget(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// A single heading line, by itself, longer than the entire total budget --
+	// immediately followed by the rule paragraph it covers.
+	hugeHeading := "## " + strings.Repeat("gigantic heading word ", 400)
+	specHuge := "# SPEC-HUGE\n\n" + hugeHeading + "\n\nRule 1: keep the bench lean and dogfood every verb.\n"
+	if err := os.WriteFile(filepath.Join(docsDir, "SPEC-HUGE.md"), []byte(specHuge), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	para := idx.LookupSpec("SPEC-HUGE.md:rule 1")
+	if para == nil {
+		t.Fatalf("expected SPEC-HUGE.md:rule 1 to be indexed")
+	}
+	if len(para.Heading) <= MaxTotalInlinedBytes {
+		t.Fatalf("test setup: heading is %d bytes, must exceed MaxTotalInlinedBytes (%d) to exercise the oversized-heading path", len(para.Heading), MaxTotalInlinedBytes)
+	}
+
+	inlined := idx.FormatInlinedContext("Implement feature under SPEC-HUGE rule 1")
+
+	assertWithinBudget(t, inlined)
+
+	// Reproducing the oversized heading verbatim would alone breach the budget, so it
+	// must never appear in the rendered block.
+	if strings.Contains(inlined, "gigantic heading word") {
+		t.Errorf("oversized heading leaked into rendered context despite exceeding the total budget on its own:\n%s", inlined)
+	}
+}
+
+// TestFormatInlinedContextNearLimitMultiMatchStaysWithinBudget is a control against the
+// finding that per-match content (spec/heading lines, the per-paragraph truncation
+// marker, section labels, the remaining-matches marker) was appended without checking
+// the running total, so several matches that each individually respect the
+// per-paragraph caps could together still cross the total budget. It exercises the real
+// FormatInlinedContext with three near-cap paragraphs -- not a hand-built substitute --
+// so the whole rendered block, including every match's headers/heading/markers, is
+// checked against the strict total.
+func TestFormatInlinedContextNearLimitMultiMatchStaysWithinBudget(t *testing.T) {
+	dir := t.TempDir()
+	docsDir := filepath.Join(dir, "docs")
+	if err := os.MkdirAll(docsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each paragraph sits at the per-paragraph line cap (MaxInlinedParagraphLines)
+	// and close to the per-paragraph byte cap (MaxInlinedParagraphBytes), so each
+	// individually is within bounds -- but three of them together (line overhead for
+	// spec/heading/guarding lines included) exceed MaxTotalInlinedBytes and
+	// MaxTotalInlinedLines, which is exactly the boundary the total budget exists to
+	// guard against a single check on paragraph size cannot catch.
+	paraLines := make([]string, MaxInlinedParagraphLines)
+	for i := range paraLines {
+		paraLines[i] = fmt.Sprintf("padding line %02d filling the paragraph toward its per-paragraph cap xx", i)
+	}
+	longParagraph := strings.Join(paraLines, "\n")
+
+	for i, name := range []string{"ONE", "TWO", "THREE"} {
+		body := fmt.Sprintf("# SPEC-%s\n\nRule %d: %s\n", name, i+1, longParagraph)
+		if err := os.WriteFile(filepath.Join(docsDir, "SPEC-"+name+".md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	idx, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build failed: %v", err)
+	}
+
+	inlined := idx.FormatInlinedContext("Implement feature under SPEC-ONE rule 1, SPEC-TWO rule 2 and SPEC-THREE rule 3")
+
+	assertWithinBudget(t, inlined)
+
+	if !strings.Contains(inlined, "SPEC-ONE.md") {
+		t.Errorf("expected the first (highest-priority) near-cap match to still be present:\n%s", inlined)
 	}
 }
