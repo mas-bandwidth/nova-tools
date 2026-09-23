@@ -16,7 +16,9 @@
 -- #3128 rebuilt here per ci card): a task parked on ci:<repo>:<sha> is state
 -- waiting-ci in its sprint's idx:task:waiting-ci, on no open queue, with its
 -- queue in `to` ('' is the ready pool), and <sprint>/<id> is a member of the
--- head's set ci:<repo>:<sha>:waiting. ns_ci_end settles that set in the call
+-- head's set ci:<repo>:<sha>:waiting. Its queue score is kept: `wait_score`
+-- is the ZSCORE it had when it left its queue (a front push is -priority);
+-- absent, the score is its stored `priority`, as for a plain push. ns_ci_end settles that set in the call
 -- that writes the verdict: OK opens every member to its queue (enqueued_at is
 -- this TIME, so the read clock starts at the OK); FAIL parks them (state
 -- parked, reason ci-fail); FLAKY and MISSING leave them waiting.
@@ -82,7 +84,7 @@ local function ci_settle_waiting(repo, head, final, pkg, actor, at)
   for _, member in ipairs(redis.call('SMEMBERS', wkey)) do
     local T, id = string.match(member, '^([^/]+)/(.+)$')
     local key = T and ('s:' .. T .. ':task:' .. id) or ''
-    local row = T and redis.call('HMGET', key, 'state', 'repo', 'head', 'to', 'priority', 'reason') or {}
+    local row = T and redis.call('HMGET', key, 'state', 'repo', 'head', 'to', 'priority', 'reason', 'wait_score') or {}
     local state = row[1]
     local live = row[2] == repo and row[3] == head and
       (state == 'waiting-ci' or (state == 'parked' and row[6] == 'ci-fail'))
@@ -90,8 +92,12 @@ local function ci_settle_waiting(repo, head, final, pkg, actor, at)
       redis.call('SREM', wkey, member)
     elseif final == 'OK' then
       local to = row[4] or ''
-      local score = -(tonumber(row[5]) or 0)
+      -- The score it had: wait_score when the parker kept one (a front push
+      -- is -priority), else its stored priority unchanged, as ns_task_push
+      -- scores a plain push and task_beat requeues. Never negated here.
+      local score = tonumber(row[7]) or tonumber(row[5]) or 0
       redis.call('HSET', key, 'state', 'open', 'reason', '', 'enqueued_at', at)
+      redis.call('HDEL', key, 'wait_score')
       redis.call('SREM', 's:' .. T .. ':idx:task:' .. state, id)
       redis.call('SADD', 's:' .. T .. ':idx:task:open', id)
       if to ~= '' then

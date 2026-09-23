@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 )
 
@@ -24,6 +26,34 @@ func (f *fixture) waitOn(sprint, id, to, h string) {
 	}
 	f.client.SAdd(f.ctx, "s:"+sprint+":idx:task:waiting-ci", id)
 	f.client.SAdd(f.ctx, ci.RecordKey(repo, h)+":waiting", sprint+"/"+id)
+}
+
+// waitOnScored is waitOn for a task whose queue score is the point: the
+// stored priority tier, and wait_score, the ZSCORE the task had on its queue
+// when it began waiting (” leaves the field unset, as for a plain push whose
+// score is its priority).
+func (f *fixture) waitOnScored(sprint, id, to, h, priority, waitScore string) {
+	f.t.Helper()
+	f.waitOn(sprint, id, to, h)
+	key := "s:" + sprint + ":task:" + id
+	if err := f.client.HSet(f.ctx, key, "priority", priority).Err(); err != nil {
+		f.t.Fatal(err)
+	}
+	if waitScore != "" {
+		if err := f.client.HSet(f.ctx, key, "wait_score", waitScore).Err(); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+}
+
+// order is the queue's members, lowest score (claimed first) to highest.
+func (f *fixture) order(key string) []string {
+	f.t.Helper()
+	ids, err := f.client.ZRange(f.ctx, key, 0, -1).Result()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return ids
 }
 
 func (f *fixture) task(sprint, id string) map[string]string {
@@ -125,6 +155,50 @@ func TestCiEndReleasesWaitingTasksAndOwnsTheFailItem(t *testing.T) {
 		}
 		if items := f.ciFailItems(); len(items) != 0 {
 			t.Errorf("an OK head wrote ci-fail items %v", items)
+		}
+	})
+
+	// The released task keeps the score it had (stella hold on c46df9d7): a
+	// plain priority-5 task re-enters at 5, never -5, and a task that was
+	// front-scored keeps its front score from wait_score, in a named queue
+	// and in the ready pool, ordered against a task already open there.
+	t.Run("OK re-enters each task at the queue score it had", func(t *testing.T) {
+		f := newFixture(t, "ctl-a", "ctl-b")
+		f.client.SAdd(f.ctx, "friends", "stella")
+		named, ready := "s:"+f.sprint+":open:stella", "s:"+f.sprint+":ready"
+		f.client.ZAdd(f.ctx, named, redis.Z{Score: 3, Member: "open-3"})
+		f.client.ZAdd(f.ctx, ready, redis.Z{Score: 3, Member: "ready-3"})
+		f.waitOnScored(f.sprint, "read-p5", "stella", head, "5", "")
+		f.waitOnScored(f.sprint, "read-front", "stella", head, "5", "-5")
+		f.waitOnScored(f.sprint, "ready-p5", "", head, "5", "")
+		f.waitOnScored(f.sprint, "ready-front", "", head, "5", "-5")
+		label := f.cut()
+		token, identity := f.deal(label, "ctl-a")
+		if r := f.end(label, token, identity, "DONE", "done", ci.OK, "", ""); r.Detail != ci.OK {
+			t.Fatalf("end = %v; want OK", r)
+		}
+		for _, c := range []struct {
+			queue, id string
+			score     float64
+		}{
+			{named, "read-p5", 5}, {named, "read-front", -5},
+			{ready, "ready-p5", 5}, {ready, "ready-front", -5},
+		} {
+			got, err := f.client.ZScore(f.ctx, c.queue, c.id).Result()
+			if err != nil || got != c.score {
+				t.Errorf("ZSCORE %s %s = %v, %v; want %v", c.queue, c.id, got, err, c.score)
+			}
+		}
+		for _, c := range []struct {
+			queue string
+			want  []string
+		}{
+			{named, []string{"read-front", "open-3", "read-p5"}},
+			{ready, []string{"ready-front", "ready-3", "ready-p5"}},
+		} {
+			if got := f.order(c.queue); strings.Join(got, ",") != strings.Join(c.want, ",") {
+				t.Errorf("%s order = %v; want %v", c.queue, got, c.want)
+			}
 		}
 	})
 
