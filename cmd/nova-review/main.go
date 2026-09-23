@@ -36,6 +36,8 @@ usage:
                          apply ONE seeded defect in a throwaway worktree at the head and run the named suites: they must fail. The edit count is asserted, not reported: exactly one, else MUTATE REFUSED.
   nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
                          revert the commit's non-test files, keep the tests, run the named packages: the verdict is computed from exit codes and test names, never judged
+  nova-review dedupe --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
+                         print the open findings ledger for the entry: who saw each, who duped it, and what still stands
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -82,6 +84,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return mutate(args[1:], out, errOut)
 	case "guard":
 		return guard(args[1:], out, errOut)
+	case "dedupe":
+		return dedupe(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
@@ -1505,19 +1509,69 @@ type rawAnswerRecord struct {
 	Note    string `json:"note"`
 }
 
-func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (string, int, error) {
-	var sb strings.Builder
-	sb.WriteString("## Open findings (answer with `dup <id>` if you see the same thing)\n")
+// loadReviewDir reads the review records and answer records for one entry from
+// <lane>/reviews/<entryDir>. It returns verdicts sorted oldest-first and a map
+// from finding id to answer. A missing directory is not an error: it returns
+// empty slices so callers can print "none recorded".
+func loadReviewDir(lane, entryID string) ([]rawReviewRecord, map[string]rawAnswerRecord, error) {
 	entryDir := merge.EntryDirName(entryID)
 	reviewsDir := filepath.Join(lane, "reviews", entryDir)
 	entries, err := os.ReadDir(reviewsDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			sb.WriteString("none recorded\n")
-			return sb.String(), 0, nil
+			return nil, nil, nil
 		}
-		return "", 0, fmt.Errorf("could not read reviews directory: %w", err)
+		return nil, nil, fmt.Errorf("could not read reviews directory: %w", err)
 	}
+
+	answers := make(map[string]rawAnswerRecord)
+	var verdictFiles []string
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), "policy-") {
+			continue
+		}
+		p := filepath.Join(reviewsDir, e.Name())
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read review file %s: %w", e.Name(), err)
+		}
+		if strings.HasPrefix(e.Name(), "answer-") {
+			var ans rawAnswerRecord
+			if err := json.Unmarshal(b, &ans); err != nil {
+				return nil, nil, &foldErr{file: p, err: fmt.Errorf("could not decode answer record: %w", err)}
+			}
+			answers[ans.Finding] = ans
+		} else {
+			verdictFiles = append(verdictFiles, p)
+		}
+	}
+
+	var verdicts []rawReviewRecord
+	for _, p := range verdictFiles {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("could not read review file %s: %w", p, err)
+		}
+		var rec rawReviewRecord
+		if err := json.Unmarshal(b, &rec); err != nil {
+			return nil, nil, &foldErr{file: p, err: fmt.Errorf("could not decode review record: %w", err)}
+		}
+		verdicts = append(verdicts, rec)
+	}
+
+	sort.Slice(verdicts, func(i, j int) bool {
+		return verdicts[i].At < verdicts[j].At
+	})
+	return verdicts, answers, nil
+}
+
+func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (string, int, error) {
+	var sb strings.Builder
+	sb.WriteString("## Open findings (answer with `dup <id>` if you see the same thing)\n")
 
 	type findingItem struct {
 		ID         string
@@ -1532,48 +1586,14 @@ func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (s
 	}
 
 	findingsMap := make(map[string]*findingItem)
-	answers := make(map[string]rawAnswerRecord)
-	var verdictFiles []string
-
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		if strings.HasPrefix(e.Name(), "policy-") {
-			continue
-		}
-		p := filepath.Join(reviewsDir, e.Name())
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", 0, fmt.Errorf("could not read review file %s: %w", e.Name(), err)
-		}
-		if strings.HasPrefix(e.Name(), "answer-") {
-			var ans rawAnswerRecord
-			if err := json.Unmarshal(b, &ans); err != nil {
-				return "", 0, &foldErr{file: p, err: fmt.Errorf("could not decode answer record: %w", err)}
-			}
-			answers[ans.Finding] = ans
-		} else {
-			verdictFiles = append(verdictFiles, p)
-		}
+	verdicts, answers, err := loadReviewDir(lane, entryID)
+	if err != nil {
+		return "", 0, err
 	}
-
-	var verdicts []rawReviewRecord
-	for _, p := range verdictFiles {
-		b, err := os.ReadFile(p)
-		if err != nil {
-			return "", 0, fmt.Errorf("could not read review file %s: %w", p, err)
-		}
-		var rec rawReviewRecord
-		if err := json.Unmarshal(b, &rec); err != nil {
-			return "", 0, &foldErr{file: p, err: fmt.Errorf("could not decode review record: %w", err)}
-		}
-		verdicts = append(verdicts, rec)
+	if len(verdicts) == 0 && len(answers) == 0 {
+		sb.WriteString("none recorded\n")
+		return sb.String(), 0, nil
 	}
-
-	sort.Slice(verdicts, func(i, j int) bool {
-		return verdicts[i].At < verdicts[j].At
-	})
 
 	for _, rec := range verdicts {
 		for _, f := range rec.Findings {
@@ -1710,6 +1730,250 @@ func containsString(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// dedupe prints the open findings ledger for one entry. It groups findings by
+// (path, line, rule) and reports who saw each finding, who folded a duplicate
+// onto it, and what is still open. This is the verb SPEC-REVIEW.md names at
+// line 627 and the demanded-tests section at line 1827.
+func dedupe(args []string, out, errOut io.Writer) int {
+	fs := flag.NewFlagSet("dedupe", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	lane := fs.String("lane", "", "")
+	pr := fs.Int("pr", 0, "")
+	branch := fs.String("branch", "", "")
+	asked := fs.String("head", "", "")
+	maxFlag := fs.Int("max", 20, "")
+	if fs.Parse(args) != nil || fs.NArg() != 0 {
+		return refuse(errOut, "bad dedupe flags")
+	}
+	if *lane == "" {
+		return refuse(errOut, "--lane is required")
+	}
+	if (*pr > 0) == (*branch != "") {
+		return refuse(errOut, "give exactly one of --pr or --branch")
+	}
+	if *maxFlag < 0 {
+		return refuse(errOut, "--max must be non-negative")
+	}
+
+	st, err := merge.Load(*lane)
+	if err != nil {
+		if errors.Is(err, merge.ErrNotALane) {
+			return refuse(errOut, fmt.Sprintf("--lane %s is not a lane; a lane is a directory made by nova-merge init --lane <dir> --repo <owner/name> --base <branch> --lane-branch <name>", *lane))
+		}
+		return refuse(errOut, fmt.Sprintf("could not read lane: %v", err))
+	}
+	id := ""
+	if *pr > 0 {
+		id = fmt.Sprint(*pr)
+	} else {
+		id = *branch
+	}
+	entry := st.Find(id)
+	if entry == nil {
+		return refuse(errOut, "the lane does not hold this entry; add it with nova-merge add --lane <dir> --pr <n> --needs-read (or add-branch --branch <name>)")
+	}
+	current := entry.OID
+	if *asked != "" {
+		if !merge.IsSHA(*asked) {
+			return refuse(errOut, "--head wants a full 40-character sha")
+		}
+		current = *asked
+	}
+
+	verdicts, answers, err := loadReviewDir(*lane, id)
+	if err != nil {
+		var fe *foldErr
+		if errors.As(err, &fe) {
+			fmt.Fprintf(errOut, "DEDUPE FOLD file=%s: %s\n", oneline.Field(fe.file), oneline.Escape(fe.err.Error()))
+			return 2
+		}
+		return refuse(errOut, err.Error())
+	}
+
+	type dedupeFinding struct {
+		ID       string
+		Key      string
+		Severity string
+		Head     string
+		RuleKind string
+		Rule     string
+		SeenBy   []string
+		Members  []string
+		Dups     int
+		Closed   bool
+		Answer   string
+	}
+
+	findingsMap := make(map[string]*dedupeFinding)
+
+	recordSeen := func(item *dedupeFinding, who, model string) {
+		view := who
+		if model != "" && model != "-" {
+			view = who + ":" + model
+		}
+		for _, s := range item.SeenBy {
+			if s == view {
+				return
+			}
+		}
+		item.SeenBy = append(item.SeenBy, view)
+	}
+
+	for _, rec := range verdicts {
+		for _, f := range rec.Findings {
+			if strings.EqualFold(f.State, "ok") {
+				continue
+			}
+			if strings.EqualFold(f.State, "close") || strings.EqualFold(f.State, "closed") {
+				if item, ok := findingsMap[f.ID]; ok {
+					item.Closed = true
+				}
+				continue
+			}
+			if strings.EqualFold(f.State, "dup") {
+				targetID := f.ID
+				if f.Claim != "" && findingsMap[f.Claim] != nil {
+					targetID = f.Claim
+				}
+				if item, ok := findingsMap[targetID]; ok {
+					recordSeen(item, rec.Who, rec.Model)
+					item.Dups++
+				}
+				continue
+			}
+			fl := f.Path
+			if f.Side == "base" {
+				fl = "base:" + fl
+			}
+			key := fmt.Sprintf("%s:%d@%s:%s", fl, f.Line, f.RuleKind, f.Rule)
+			if existing, ok := findingsMap[f.ID]; ok {
+				recordSeen(existing, rec.Who, rec.Model)
+			} else {
+				findingsMap[f.ID] = &dedupeFinding{
+					ID:       f.ID,
+					Key:      key,
+					Severity: strings.ToLower(f.State),
+					Head:     rec.Head,
+					RuleKind: f.RuleKind,
+					Rule:     f.Rule,
+					SeenBy:   []string{},
+				}
+				recordSeen(findingsMap[f.ID], rec.Who, rec.Model)
+			}
+		}
+	}
+
+	for findingID, ans := range answers {
+		if item, ok := findingsMap[findingID]; ok {
+			item.Answer = ans.As
+			if ans.As == "dup" && ans.Of != "" {
+				if target, tok := findingsMap[ans.Of]; tok {
+					recordSeen(target, ans.Who, "-")
+					target.Dups++
+				}
+			}
+		}
+	}
+
+	groups := make(map[string]*dedupeFinding)
+	for _, item := range findingsMap {
+		if item.Closed {
+			continue
+		}
+		if g, ok := groups[item.Key]; ok {
+			g.Members = append(g.Members, item.ID)
+			for _, s := range item.SeenBy {
+				found := false
+				for _, existing := range g.SeenBy {
+					if existing == s {
+						found = true
+						break
+					}
+				}
+				if !found {
+					g.SeenBy = append(g.SeenBy, s)
+				}
+			}
+			g.Dups += item.Dups
+			if item.Answer != "" {
+				g.Answer = item.Answer
+			}
+		} else {
+			groups[item.Key] = &dedupeFinding{
+				ID:       item.ID,
+				Key:      item.Key,
+				Severity: item.Severity,
+				Head:     item.Head,
+				RuleKind: item.RuleKind,
+				Rule:     item.Rule,
+				SeenBy:   append([]string{}, item.SeenBy...),
+				Members:  []string{item.ID},
+				Dups:     item.Dups,
+				Answer:   item.Answer,
+			}
+		}
+	}
+
+	var list []*dedupeFinding
+	for _, g := range groups {
+		list = append(list, g)
+	}
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Key < list[j].Key
+	})
+
+	limit := len(list)
+	if *maxFlag > 0 && limit > *maxFlag {
+		limit = *maxFlag
+	}
+	for i := 0; i < limit; i++ {
+		g := list[i]
+		answer := g.Answer
+		if answer == "" {
+			answer = "-"
+		}
+		members := strings.Join(g.Members, ",")
+		if members == "" {
+			members = "-"
+		}
+		seen := strings.Join(g.SeenBy, ",")
+		if seen == "" {
+			seen = "-"
+		}
+		fmt.Fprintf(out, "DEDUPE FINDING id=%s key=%s sev=%s head=%s members=%s seen=%s unreported=- blind=0 dups=%d open=true answer=%s\n",
+			g.ID, g.Key, g.Severity, merge.Short(g.Head), members, seen, g.Dups, answer)
+	}
+	if *maxFlag > 0 && len(list) > *maxFlag {
+		entryFlag := ""
+		if *pr > 0 {
+			entryFlag = fmt.Sprintf("--pr %d", *pr)
+		} else {
+			entryFlag = fmt.Sprintf("--branch %s", shellQuote(*branch))
+		}
+		fmt.Fprintf(out, "DEDUPE MORE kind=finding shown=%d total=%d nova-review dedupe --lane %s %s --max 0\n",
+			*maxFlag, len(list), shellQuote(*lane), entryFlag)
+	}
+
+	readers := make(map[string]struct{})
+	for _, rec := range verdicts {
+		readers[rec.Who] = struct{}{}
+	}
+	baseCount, externalCount, proposedCount := 0, 0, 0
+	for _, item := range findingsMap {
+		switch item.RuleKind {
+		case "base":
+			baseCount++
+		case "external":
+			externalCount++
+		case "proposed":
+			proposedCount++
+		}
+	}
+	fmt.Fprintf(out, "DEDUPE OK entry=%s head=%s findings=%d groups=%d folded=%d open=%d base=%d external=%d proposed=%d readers=%d\n",
+		oneline.Field(id), merge.Short(current), len(findingsMap), len(list), 0, len(list), baseCount, externalCount, proposedCount, len(readers))
+	return 0
 }
 
 type fileDiff struct {
