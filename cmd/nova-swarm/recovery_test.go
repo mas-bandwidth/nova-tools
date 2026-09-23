@@ -988,10 +988,13 @@ func noteSupervisor(t *testing.T, pid int) {
 	spawnedSups[pid] = true
 	spawnedSupsMu.Unlock()
 	t.Cleanup(func() {
-		// A SIGSTOP'd process cannot die, only be resumed; SIGCONT first, then kill the
-		// group the supervisor leads (ownGroup made it its own process-group leader).
+		// A SIGSTOP'd process cannot die, only be resumed; SIGCONT first, then terminate,
+		// wait, kill, and wait until the pid is gone so a leftover cannot outlive the test.
 		_ = syscall.Kill(pid, syscall.SIGCONT)
-		swarm.KillGroup(pid, "")
+		swarm.Reap(pid, "", swarm.TerminateGrace)
+		for waited := time.Duration(0); waited < testWaitBound() && processIsAlive(pid); waited += 5 * time.Millisecond {
+			time.Sleep(5 * time.Millisecond)
+		}
 	})
 }
 
