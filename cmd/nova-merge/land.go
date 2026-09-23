@@ -155,6 +155,11 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	if head.Total() == 0 {
 		head = checks
 	}
+	if head.Source == merge.CIFromGitHub {
+		// A missing verdict record is not a verdict: the forge's check-runs answered.
+		fmt.Fprintf(stderr, "LAND NOTE pr=%d head=%s ci: from-github (%s)\n", in.pr, oneline.Field(data.HeadOID),
+			oneline.Escape(head.SourceWhy))
+	}
 	if head.Red > 0 || head.Pending > 0 || head.Total() == 0 {
 		return landRefused(stderr, fmt.Sprintf("pull request %d is not green (%s); the queue takes a batch CI has judged, and this one it has not",
 			in.pr, oneline.Field(head.Field())))
