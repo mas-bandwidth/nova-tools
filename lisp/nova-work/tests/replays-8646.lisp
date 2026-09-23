@@ -241,6 +241,31 @@
     (ok (member "rowan" (fleet-friends fleet) :test #'string=)
         "the coordinator's identity is not among the friends")
     (check-equal 3 (length (fleet-friends fleet)) "a friend identity was dropped"))
+  ;; "Through the same queries" (:3380): the coordinator's own tasks are read
+  ;; through the one holder (friend) index every friend is read through, not a
+  ;; coordinator-only path. The coordinator and another friend each take a task
+  ;; on a real kernel; the same indexed query answers both, and the maintained
+  ;; index agrees with a full independent reconstruction.
+  (let* ((seed '((:id "r" :type :work-set :parent nil :state :unknown)
+                 (:id "r/f" :type :feature :parent "r" :state :unknown)
+                 (:id "r/f/coord" :type :task :parent "r/f" :state :doing)
+                 (:id "r/f/friend" :type :task :parent "r/f" :state :doing)
+                 (:id "r/f/free" :type :task :parent "r/f" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)
+                         :friends '("rowan" "emma" "priya"))))
+    (ok (member "rowan" (fleet-friends (kernel-fleet k)) :test #'string=)
+        "the kernel's session fleet does not carry the coordinator as a friend")
+    (take-lease k "r/f/coord" "rowan")
+    (take-lease k "r/f/friend" "emma")
+    (let ((index (state-holder-index (kernel-state k))))
+      (check-equal '("r/f/coord") (cdr (assoc "rowan" index :test #'equal))
+                   "the coordinator's task is not answered by the holder index query")
+      (check-equal '("r/f/friend") (cdr (assoc "emma" index :test #'equal))
+                   "another friend's task is not answered by the same query")
+      (check-equal 2 (length index)
+                   "the holder index carries a holder other than the two who took"))
+    (check-equal '() (state-index-mismatches (kernel-state k))
+                 "the coordinator's entry in the holder index disagrees with reconstruction"))
   ;; An execution attributes model, bench, attempt and usage as distinct
   ;; fields: the requested model is never the observed model, the bench and the
   ;; attempt stay separate, and the usage receipt is retained, never guessed.
