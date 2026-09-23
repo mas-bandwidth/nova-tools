@@ -100,6 +100,29 @@ func TestReapVerbRefusesWithoutADeadline(t *testing.T) {
 	}
 }
 
+// cut --kind report is a kind. A nonsense kind is still refused by name.
+func TestCutKindVerbAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
+	dir := t.TempDir()
+	queue, out := filepath.Join(dir, "queue"), filepath.Join(dir, "pending")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	args := []string{"cut", "--kind", "report", "--repo", "mas-bandwidth/nova-tools", "--out", out, "--queue", queue}
+	if code := run(args, &stdout, &stderr, time.Now().UTC()); code != 0 {
+		t.Fatalf("cut --kind report exit = %d, stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "kind=report") {
+		t.Errorf("CUT line = %q", stdout.String())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	args[2] = "not-a-real-kind"
+	if code := run(args, &stdout, &stderr, time.Now().UTC()); code != 2 || !strings.Contains(stderr.String(), "CUT REFUSED") || !strings.Contains(stderr.String(), "not-a-real-kind") {
+		t.Fatalf("a nonsense kind: exit %d stderr=%s", code, stderr.String())
+	}
+}
+
 // cut --kind writes the card under the queue's own number, and --number is not a flag.
 func TestCutKindVerbNumbersFromTheStateFile(t *testing.T) {
 	dir := t.TempDir()

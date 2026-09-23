@@ -3071,12 +3071,41 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)),
 			oneline.Field(dash(*until)), *idleExit)
 	}
+	// A KILLED TICK LEAVES THE NEXT ONE UNABLE TO START (#2627). An index.lock older than a
+	// minute, with no git still owning the checkout, is the killed git's leftover, and a
+	// dirty BEAT is the generated file that same kill left half-written. Both are this
+	// tool's. A CURSOR, a hand edit, anything else is not, and is not touched here. The
+	// clock on the lock is the machine's clock: `now` above is the note clock, which a
+	// test freezes, and a frozen clock would call a lock written today either ancient or
+	// not yet born. The repair is recorded only after it has happened, and printed once,
+	// from the poll, together with whatever the fast-forward itself had to discard.
+	repairs := &repairLog{}
+	if cleared, err := bus.ClearStaleIndexLock(*busDir, time.Now()); err != nil {
+		fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+		return 1
+	} else if cleared {
+		repairs.add("index.lock")
+	}
+	beatDiscarded := false
+	if !o.noBeat {
+		var err error
+		beatDiscarded, err = discardDirtyOwnedBeat(o)
+		if err != nil {
+			repairs.flush(stdout)
+			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+			return 1
+		}
+	}
 	// THE ENTRY BEAT, written before the first poll, so a line that is about to wait
 	// already reads awake the moment its call begins, lease and all. --no-beat turns it
 	// off with the rest of the beat: a process running BESIDE a line does not beat for it.
+	// When the beat was dirty on the way in, this write is the regeneration, and the
+	// repair is claimed only if the write landed.
 	if !o.noBeat {
 		if err := bus.WriteBeat(*busDir, me.Lane, held.Commit, now, now.Add(*beatLease)); err != nil {
 			fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(err))
+		} else if beatDiscarded {
+			repairs.add(bus.BeatPath(me.Lane))
 		}
 	}
 	// The command the caller issues again to re-arm this wait: the next one, with the same
@@ -3085,7 +3114,65 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// is shell-quoted, not joined raw: a --bus path carrying a space must come back as the
 	// same one argument after a paste, not split in two.
 	next := rearmCommand(args)
-	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now)
+	return waitLoop(o, waitFor, *interval, *idleExit, next, stdout, stderr, now, repairs)
+}
+
+// discardDirtyOwnedBeat throws away a BEAT this wait owns, when one was already dirty.
+// --no-beat does not own the line's BEAT — a process beside the line must not discard the
+// harness's — and returns false without looking. discarded is false when there was nothing
+// to throw away, so a clean beat is not a repair.
+func discardDirtyOwnedBeat(o inboxOpts) (bool, error) {
+	if o.noBeat {
+		return false, nil
+	}
+	beat := bus.BeatPath(o.me.Lane)
+	dirty, err := bus.PathDirty(o.busDir, beat)
+	if err != nil {
+		return false, err
+	}
+	if !dirty {
+		return false, nil
+	}
+	return bus.DiscardPath(o.busDir, beat)
+}
+
+// repairLog is the repairs this wait has done and not yet said. add is idempotent: a beat
+// discarded on the way in and discarded again so the fast-forward can move is one repair.
+// flush prints one WAIT REPAIR line naming exactly what was added, then forgets it, so a
+// later tick that repairs something new can say so and a tick that repairs nothing says
+// nothing.
+type repairLog struct {
+	pending []string
+}
+
+func (r *repairLog) add(item string) {
+	if r == nil || item == "" {
+		return
+	}
+	for _, e := range r.pending {
+		if e == item {
+			return
+		}
+	}
+	r.pending = append(r.pending, item)
+}
+
+func (r *repairLog) flush(w io.Writer) {
+	if r == nil || len(r.pending) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "WAIT REPAIR repaired=%s\n", oneline.Field(strings.Join(r.pending, ",")))
+	r.pending = nil
+}
+
+// waitOwnedPaths is the lane file wait may discard: its own BEAT, and only when this
+// call is the one writing it. CURSOR is the reader's place, not a generated beat, and is
+// never in this list. --no-beat owns nothing.
+func waitOwnedPaths(o inboxOpts) []string {
+	if o.noBeat {
+		return nil
+	}
+	return []string{bus.BeatPath(o.me.Lane)}
 }
 
 // waitWalkOverBound answers whether this lane's cursor is further behind HEAD than the
@@ -3171,7 +3258,7 @@ func writeBeatLease(o inboxOpts, cursor string) error {
 // note that is already there -- the caller answered the last one and came straight back --
 // and making them wait an interval for news the bus already had would be a tool inventing
 // latency.
-func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next string, stdout, stderr io.Writer, now time.Time) int {
+func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next string, stdout, stderr io.Writer, now time.Time, repairs *repairLog) int {
 	start := time.Now()
 	deadline := start.Add(timeout)
 	// The moment this call cannot see past: a switch-day line drawn after it hides
@@ -3229,6 +3316,13 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 		if o.noBeat {
 			return
 		}
+		// A beat commit on a checkout that is still behind the bus is a divergence, not
+		// a landing. The poll that could not fast-forward — a dirty file this wait does
+		// not own, a lock it was not allowed to remove — has already said why. Committing
+		// here would move HEAD and the next tick would be worse than this one.
+		if behind, err := bus.BehindRemote(o.busDir, o.remote, o.branch); err == nil && behind {
+			return
+		}
 		dirty, err := bus.PathDirty(o.busDir, bus.BeatPath(o.me.Lane))
 		if err != nil {
 			fmt.Fprintf(stderr, "WAIT NOTE beat push failed: %s\n", oneline.Err(err))
@@ -3263,7 +3357,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 		// advances the cursor carry the beat out inside its own cursor commit; see
 		// landBeat.
 		writeBeat()
-		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stderr)
+		code, r, lines, skipped := waitPoll(o, polls == 1, pollNow, keep, stdout, stderr, repairs)
 		if r.Cursor != "" {
 			cursor = r.Cursor
 		}
@@ -3364,20 +3458,47 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 // twenty listings.
 //
 // The lock is taken and released here rather than around the loop; see lockCheckout.
-func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stderr io.Writer) (int, inboxReading, string, bool) {
+func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stdout, stderr io.Writer, repairs *repairLog) (int, inboxReading, string, bool) {
 	release, code := lockCheckout("WAIT", o.busDir, stderr)
 	if code != 0 {
+		repairs.flush(stdout)
 		return code, inboxReading{}, "", false
 	}
 	defer release()
 	// THE FETCH IS THE POLL. Every read in this tool reads the working tree, so a poll that
-	// fetched and left the checkout where it was would never see anything; see
-	// bus.FetchAndFastForward, which moves it only when moving it is a fast-forward.
-	if _, err := bus.FetchAndFastForward(o.busDir, o.remote, o.branch); err != nil {
+	// fetched and left the checkout where it was would never see anything. The recovery
+	// around that fetch removes a stale index.lock and, when the checkout is behind,
+	// discards only this wait's own BEAT if that file is what blocks the fast-forward. A
+	// dirty file it does not own refuses the poll and is not touched. See
+	// bus.RecoverWaitFastForward.
+	rec, err := bus.RecoverWaitFastForward(o.busDir, o.remote, o.branch, waitOwnedPaths(o), time.Now())
+	if rec.LockCleared {
+		repairs.add("index.lock")
+	}
+	beat := bus.BeatPath(o.me.Lane)
+	for _, p := range rec.Discarded {
+		if !o.noBeat && p == beat {
+			// The fast-forward needed a clean BEAT. Write it back, and claim the repair
+			// only when that write landed — a discard that did not regenerate is not the
+			// repair the line names.
+			cur := ""
+			if held, rerr := bus.ReadCursor(o.busDir, o.me.Lane); rerr == nil {
+				cur = held.Commit
+			}
+			if werr := writeBeatLease(o, cur); werr != nil {
+				fmt.Fprintf(stderr, "WAIT NOTE beat write failed: %s\n", oneline.Err(werr))
+				continue
+			}
+		}
+		repairs.add(p)
+	}
+	repairs.flush(stdout)
+	if err != nil {
 		if first {
 			// The first poll's fetch failing is the invocation being wrong -- a remote that
-			// is not there, a branch nobody has, a checkout that has diverged -- and the
-			// caller should hear that now rather than in an hour.
+			// is not there, a branch nobody has, a checkout that has diverged, a dirty file
+			// this wait does not own -- and the caller should hear that now rather than in
+			// an hour.
 			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
 			return 1, inboxReading{}, "", false
 		}
