@@ -95,13 +95,38 @@ func ProposeFloors(reg *Registry, entries []Entry) (FloorProposals, error) {
 	if reg == nil || len(reg.Minds) == 0 {
 		return FloorProposals{}, fmt.Errorf("decide: no registry; a floor with no ladder under it gates nothing")
 	}
+	// The log is append-only: an outcome for a routed unit is appended as a
+	// separate row, or recorded later against the unit. Collect the settled
+	// status per unit across the entire log before evaluating decisions.
+	// A later HOLD appends a second outcome row (failed/red) and both stand,
+	// because any failure costs a route its floor.
+	unitFailed := map[string]bool{}
+	unitOK := map[string]bool{}
+	for _, e := range entries {
+		unit := strings.TrimSpace(e.Unit)
+		if unit == "" {
+			continue
+		}
+		if entryFailed(e) {
+			unitFailed[unit] = true
+		} else if entrySettledSuccess(e) {
+			unitOK[unit] = true
+		}
+	}
+
 	stood := map[string][]float64{}
 	failed := map[string]int{}
 	kinds := map[string]bool{}
 	for i, e := range entries {
+		if e.Source == SourceSkipped {
+			continue
+		}
 		kind := strings.TrimSpace(e.Kind)
 		if kind == "" {
 			kind = strings.TrimSpace(e.Evidence.Kind)
+		}
+		if kind == "" && e.Source == SourceOutcome {
+			continue
 		}
 		if !KnownKind(kind) {
 			return FloorProposals{}, fmt.Errorf("decide: log row %d names kind %q, which is not one of %s", i+1, e.Kind, strings.Join(Kinds, ", "))
@@ -113,11 +138,32 @@ func ProposeFloors(reg *Registry, entries []Entry) (FloorProposals, error) {
 		if e.Source != SourceJev {
 			continue
 		}
+
+		unit := strings.TrimSpace(e.Unit)
+		if unit != "" {
+			if unitFailed[unit] {
+				failed[kind]++
+				continue
+			}
+			if unitOK[unit] {
+				stood[kind] = append(stood[kind], e.Confidence)
+				continue
+			}
+			// Blank or pending outcome: the work has not settled.
+			// Skip it: do not count as stood-up, and do not count as failed.
+			continue
+		}
+
+		// When no unit ID is present, classify the entry itself.
 		if entryFailed(e) {
 			failed[kind]++
 			continue
 		}
-		stood[kind] = append(stood[kind], e.Confidence)
+		if entrySettledSuccess(e) {
+			stood[kind] = append(stood[kind], e.Confidence)
+			continue
+		}
+		// Blank or pending: skip.
 	}
 	names := make([]string, 0, len(kinds))
 	for kind := range kinds {
@@ -157,18 +203,21 @@ func ProposeFloors(reg *Registry, entries []Entry) (FloorProposals, error) {
 }
 
 // entryFailed reports whether the log recorded a failure against this decision.
-// A row with no outcome yet has not failed -- the loop fills the outcome in
-// later -- and the render prints stood beside rows so a reader can see how much
-// of the measurement is still unlabeled.
+// Refusals, failed attempts, timeouts, and abandonments count as failed.
 func entryFailed(e Entry) bool {
 	if strings.TrimSpace(e.Refusal) != "" {
 		return true
 	}
-	switch e.Outcome {
+	switch strings.TrimSpace(e.Outcome) {
 	case OutcomeFailed, OutcomeTimeout, OutcomeAbandoned:
 		return true
 	}
 	return false
+}
+
+// entrySettledSuccess reports whether the entry records a settled success (ok).
+func entrySettledSuccess(e Entry) bool {
+	return strings.TrimSpace(e.Outcome) == OutcomeOK
 }
 
 // round2 keeps a proposed floor at the two places every line prints it to, so

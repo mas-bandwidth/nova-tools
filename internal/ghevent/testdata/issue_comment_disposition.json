@@ -1,0 +1,21 @@
+{
+  "action": "created",
+  "issue": {
+    "number": 42
+  },
+  "comment": {
+    "id": 9001,
+    "created_at": "2026-09-22T16:47:03Z",
+    "updated_at": "2026-09-22T16:47:03Z",
+    "body": "DISPOSITION who=stella head=3333333333333333333333333333333333333333 verdict=HOLD scope=\"parser\"",
+    "user": {
+      "login": "stella"
+    }
+  },
+  "repository": {
+    "full_name": "mas-bandwidth/nova-tools"
+  },
+  "sender": {
+    "login": "astra"
+  }
+}

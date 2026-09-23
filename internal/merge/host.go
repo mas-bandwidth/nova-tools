@@ -230,14 +230,35 @@ type GH struct {
 	Repo    string
 	Timeout time.Duration
 	Runner  Runner
+	// CI is the injectable CI verdict source GH.Checks reads. NewGH sets it to
+	// RedisFromEnv (ci:<owner/repo>:<sha>); WithCISource overrides it. It is
+	// never GitHub's check-runs.
+	CI CISource
 }
 
-// NewGH returns a host that shells to gh against one repository.
-func NewGH(repo string, timeout time.Duration, runner Runner) *GH {
+// NewGH returns a host that shells to gh against one repository. The trailing
+// GHOption values are optional, so every existing NewGH(repo, timeout, runner)
+// call keeps compiling.
+func NewGH(repo string, timeout time.Duration, runner Runner, opts ...GHOption) *GH {
 	if runner == nil {
 		runner = Exec{}
 	}
-	return &GH{Repo: repo, Timeout: timeout, Runner: runner}
+	h := &GH{Repo: repo, Timeout: timeout, Runner: runner, CI: RedisFromEnv()}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
+}
+
+// GHOption configures a GH after NewGH has built it.
+type GHOption func(*GH)
+
+// WithCISource injects the CI verdict source GH.Checks reads, in place of the
+// Redis source RedisFromEnv builds. It is how a test proves no check-run is read.
+func WithCISource(src CISource) GHOption {
+	return func(h *GH) { h.CI = src }
 }
 
 func (h *GH) gh(args ...string) (string, error) {
@@ -402,22 +423,25 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's check runs and buckets them.
+// Checks reads a commit's CI verdict from the injectable source, at
+// ci:<owner/repo>:<sha>, and NEVER from GitHub's check-runs. A check-run the
+// forge reports -- green or not -- is not evidence this tool may merge on
+// (nova-tools #2924), so this method does not invoke gh at all. A missing,
+// empty or non-OK key answers ErrCIMissing, which a caller reports as
+// "ci: MISSING"; only an OK value answers green.
 func (h *GH) Checks(oid string) (Checks, error) {
-	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
-		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
+	if h.CI == nil {
+		return Checks{}, ErrCIMissing
+	}
+	value, ok, err := h.CI.Read(h.Repo, oid)
 	if err != nil {
-		return Checks{}, err
+		return Checks{}, fmt.Errorf("%w: %v", ErrCIMissing, err)
+	}
+	if !ok || !ciGreen(value) {
+		return Checks{}, ErrCIMissing
 	}
 	var c Checks
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		name, rest, _ := strings.Cut(line, "\t")
-		state, sha, _ := strings.Cut(rest, "\t")
-		c.AddRun(name, state, sha)
-	}
+	c.AddRun("ci", "success", strings.TrimSpace(oid))
 	return c, nil
 }
 

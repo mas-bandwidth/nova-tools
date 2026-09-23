@@ -291,7 +291,7 @@ it does not hold is refused by name rather than left to unlock nothing (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone; run: nova-check help
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -709,6 +709,27 @@ fake harness: cat /…/key: open /…/key: operation not permitted
 ```
 
 
+### The budget word on the native route
+
+Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
+(SPEC-SWARM rule 13d, issue #1545). Recorded against the same fake harness, with the paths
+abridged:
+
+```
+$ nova-swarm native --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess
+
+$ nova-swarm native --tokens 0 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is a budget and is at least 1, got 0; `unmetered` is how a caller says there is no accounting
+
+$ nova-swarm native --tokens unmetered --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE NOTE: no harness store: looked at ./root/slot-1/data/opencode/opencode.db and ./root/slot-1/data/.local/share/opencode/opencode.db
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0 wall=0.18s sandbox=none-by-flag card_sha256=ab6468b200da0b3d5a0175e863d1b1cf772f010abdf4fe70b3ea39926f3fc826 binary_sha256=13c788f4813d7d81152460f6a16d45123314342ce0269f3fb43e6c8438192852 config=68719609 harness=ok budget=unmetered usage=none reason=no-store path=./root/slot-1/data/opencode/opencode.db
+```
+
+Both refusals exit 2 and make no directory: `<slot>/jobs`, `<slot>/data` and `<slot>/tmp`
+do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
+
 ### First run
 
 ```
@@ -749,8 +770,8 @@ SUM PAIR model=gemini-2.5-pro repo=schema input=123456 output=7890 cache_write=-
 SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=- cache_read=4000 reasoning=- rough=0 dashes=0,0,1,0,1 nonutc=0 days=1
 SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,1,0,2 nonutc=0 repos=2
 SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
-SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
-SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
+SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2 units=1
+SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 units=1 nonutc=0
 ```
 
 
@@ -1029,3 +1050,59 @@ is whole seconds and defaults to 60. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
+
+
+## nova-sprint
+
+Fixture: `cmd/nova-sprint/testdata/table.txt`, copied to `table.txt` in an empty
+directory by `cmd/nova-sprint/firstrun_test.go` before the lines below run. The
+published table is `sprint-table.txt` in that same directory. Nothing here is a
+Redis read and nothing loops: a second start with the refresh still pending
+prints the previous table and leaves the file byte-for-byte.
+
+### First run
+
+```text
+$ nova-sprint table --once --fixture table.txt
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+
+$ nova-sprint table --once --fixture table.txt --out sprint-table.txt
+TABLE PUBLISHED out=sprint-table.txt bytes=675
+
+$ nova-sprint table --once --refresh pending --out sprint-table.txt
+TABLE KEPT out=sprint-table.txt bytes=675 reason=refresh-not-ready
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+```
+
+The first command is the fixture control: standard output is the fixture file,
+byte for byte. The second publishes that render. The third is a restart whose
+refresh is not ready: `TABLE KEPT` and the same table again, and `sprint-table.txt`
+is not opened for write. An empty render is refused rather than published.
