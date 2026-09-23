@@ -105,6 +105,7 @@ type Summary struct {
 	Routes      []Route
 	CICards     int
 	CIDone      int
+	CI          CICost // the ci cost line (ci.go, #3046)
 	Tasks       int
 	TasksDone   int
 	Receipts    int64
@@ -420,7 +421,9 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 		sum.Routes = append(sum.Routes, *r)
 	}
 	sort.Slice(sum.Routes, func(i, j int) bool { return sum.Routes[i].Name < sum.Routes[j].Name })
-	return sum, nil
+	ci, err := readCI(ctx, client, sprint, labels, cards)
+	sum.CI = ci
+	return sum, err
 }
 
 func scanKeys(ctx context.Context, client *redis.Client, match string) ([]string, error) {
@@ -496,6 +499,7 @@ func PrintLines(out io.Writer, s Summary) {
 			per(r, r.Useful), per(r, r.Landed), r.Unpriced())
 	}
 	fmt.Fprintf(out, "FOLD CI sprint=%s cards=%d done=%d\n", s.Sprint, s.CICards, s.CIDone)
+	printCI(out, s.Sprint, s.CI)
 	t := s.Total
 	fmt.Fprintf(out, "FOLD SPRINT sprint=%s cards=%d done=%d useful=%d landed=%d usd=%s usd_per_useful=%s usd_per_landed=%s unpriced=%d tasks=%d tasks_done=%d receipts=%d useful_min=%d\n",
 		s.Sprint, t.Cards, t.Done, t.Useful, t.Landed, usd(t),
@@ -522,6 +526,7 @@ func Sexp(s Summary) []byte {
 	fmt.Fprintf(&b, "  :goal %s\n  :nova-work-sha %s\n  :useful-min %d\n", q(s.Goal), q(s.NovaWorkSHA), s.UsefulMin)
 	fmt.Fprintf(&b, "  :tasks %d :tasks-done %d :receipts %d\n", s.Tasks, s.TasksDone, s.Receipts)
 	fmt.Fprintf(&b, "  :ci (:cards %d :done %d)\n", s.CICards, s.CIDone)
+	fmt.Fprintf(&b, "  :ci-cost %s\n", ciSexp(s.CI))
 	fmt.Fprintf(&b, "  :total %s\n", routeSexp("all", s.Total))
 	b.WriteString("  :routes (")
 	for i, r := range s.Routes {
