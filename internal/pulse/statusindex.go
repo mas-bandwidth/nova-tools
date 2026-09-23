@@ -2,6 +2,7 @@ package pulse
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -113,6 +114,9 @@ func refreshStatusIndex(root string) []usageFile {
 			return nil
 		})
 	} else {
+		if discoverStatusIndex(root, entries) {
+			changed = true
+		}
 		for rel := range entries {
 			abs := filepath.Join(root, rel)
 			if _, err := os.Stat(abs); err != nil {
@@ -136,6 +140,41 @@ func refreshStatusIndex(root string) []usageFile {
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	return files
+}
+
+// statusDiscoverPattern is the one fixed depth a finished card's usage.tsv sits at under
+// either kind of root status reads: <root>/<slot>/jobs/<job>/usage.tsv on a bench, and
+// <results-root>/<label>/<runID>/<attempt>/usage.tsv where nova-swarm native publishes
+// (#2632). Three wildcard levels, then the file, in io/fs's slash form.
+const statusDiscoverPattern = "*/*/*/usage.tsv"
+
+// discoverStatusIndex adds to a warm index every usage.tsv at the fixed depth that it does
+// not yet hold, and reports whether it added one. The warm refresh used to re-stat only the
+// jobs it already knew, so a card whose writer appends to no index -- every nova-swarm
+// native publish into a results root, and every job a bash launcher ran -- was invisible
+// from the tick after the index was first written (the follow-up to #2658). The glob reads
+// directories and stats candidates; it opens only the files that are new, so a tick with
+// nothing new still opens no job file. The root is never part of the pattern, so a root
+// whose name holds a glob metacharacter is matched as itself.
+func discoverStatusIndex(root string, entries map[string]indexEntry) bool {
+	matches, err := fs.Glob(os.DirFS(root), statusDiscoverPattern)
+	if err != nil {
+		return false
+	}
+	added := false
+	for _, m := range matches {
+		rel := filepath.FromSlash(m)
+		if _, known := entries[rel]; known {
+			continue
+		}
+		path := filepath.Join(root, rel)
+		if fi, err := os.Lstat(path); err != nil || !fi.Mode().IsRegular() {
+			continue
+		}
+		entries[rel] = readIndexEntry(path)
+		added = true
+	}
+	return added
 }
 
 // appendStatusIndex refreshes a set of finished jobs in one root's index in a single pass,
