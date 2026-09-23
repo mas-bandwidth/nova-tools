@@ -154,13 +154,23 @@ func readCI(ctx context.Context, client *redis.Client, sprint string, labels []s
 		}
 	}
 
-	// Wall per landed PR: the landed head's record, cut -> final verdict.
+	// Wall per landed PR: the landed head's record, cut -> final verdict,
+	// only when the shared ci:<repo>:<head> record's own base matches the
+	// ci card cut for this landed PR (Stella's HOLD 7 on nova-tools #3060).
+	// The record is keyed by head alone, so a later cut of the same head
+	// against another base overwrites it; a card whose base the record no
+	// longer reflects leaves its wall unmeasured rather than borrowing the
+	// other base's cut/end interval. Keep checking candidate cards (a head
+	// can have more than one base) instead of stopping at the first one.
 	for _, p := range landedPRs {
 		for _, k := range ci {
 			if k.repo != p.repo || k.pr != p.pr || !sameSHA(k.head, p.head) {
 				continue
 			}
 			rec := records["ci:"+k.repo+":"+k.head]
+			if rec["base"] != k.base {
+				continue
+			}
 			cut, err1 := strconv.ParseInt(rec["cut_at"], 10, 64)
 			end, err2 := strconv.ParseInt(rec["end_at"], 10, 64)
 			if err1 == nil && err2 == nil && end >= cut && cut > 0 {

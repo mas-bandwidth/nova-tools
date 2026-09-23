@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -95,6 +96,43 @@ func removeCICards(t *testing.T, c *redis.Client, sprint string) {
 			}
 		}
 	}
+}
+
+// addCIHeadBase writes one ci card and a one-attempt record under its own
+// label, pr and base, distinct from addCIHead's ciBase-only shape: it lets
+// a test put two cards on the same head under two different bases so the
+// shared ci:<repo>:<head> record (keyed by head alone) ends up reflecting
+// whichever was written last. Used to test that the landed-PR wall loop
+// only counts wall from a record whose base matches the card's own base
+// (Stella's HOLD 7 on nova-tools #3060).
+func addCIHeadBase(t *testing.T, c *redis.Client, sprint, pr, head, label, base, verdict string, cutMs, endMs int64, wallS int) {
+	t.Helper()
+	ctx := context.Background()
+	s := "s:" + sprint
+	recKey := "ci:nova-tools:" + head
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(c.HSet(ctx, s+":card:"+label, map[string]any{
+		"kind": "script", "state": "ended", "outcome": "DONE", "reason": "done",
+		"ci_for": "nova-tools " + pr + " " + head + " " + base, "ci_repo": "nova-tools", "ci_pr": pr,
+		"ci_head": head, "base": base, "attempt": 1, "reruns": 0, "cut_at": cutMs,
+	}).Err())
+	must(c.SAdd(ctx, s+":idx:card:ended", label).Err())
+	rec := map[string]any{"attempt": 1, "card": s + "/" + label, "head": head,
+		"base": base, "pr": pr, "repo": "nova-tools", "wall_s": wallS,
+		"cut_at": cutMs, "end_at": endMs, "source": "card"}
+	if verdict != "" {
+		rec["verdict"] = verdict
+	}
+	must(c.HSet(ctx, recKey, rec).Err())
+	evidence := recKey + " " + verdict + " bench=b1 pkg= test= log=results/x wall_s=" + strconv.Itoa(wallS)
+	must(c.XAdd(ctx, &redis.XAddArgs{Stream: s + ":log", Values: []string{
+		"kind", "ci end", "id", label, "from", "running", "to", "ended", "attempt", "1",
+		"token_sha", "", "actor", "ctl", "reason", "done", "evidence", evidence, "idem", "", "at", "1"}}).Err())
 }
 
 // seedCI is the fold fixture (three landed PRs: 101, 102, 105) with its
@@ -194,6 +232,55 @@ func TestFoldCICostOnItsOwnLine(t *testing.T) {
 		}
 		if sum.CI.Attempts != 4 || sum.CI.Unmeasured != 1 || sum.CI.BenchS != 360 {
 			t.Fatalf("ci cost %+v, want 4 attempts, 1 unmeasured, 360 s measured", sum.CI)
+		}
+	})
+
+	// Stella's HOLD 7 on nova-tools #3060: the same head cut against two
+	// bases shares one ci:<repo>:<head> record (keyed by head alone), so
+	// the record ends up reflecting whichever cut was written last. A
+	// landed PR's own ci card here is the earlier, ciBase cut; a second,
+	// unrelated PR (999, not landed) recut the same head against another
+	// base afterward, so the shared record now belongs to that other base.
+	// The landed PR's wall must be left unmeasured, never borrowed from
+	// the other base's cut/end interval.
+	t.Run("wall-only-counts-the-matching-base-record", func(t *testing.T) {
+		client, s := seedCI(t, false)
+		const otherBase = "3333333333333333333333333333333333333333"
+		head := fullSHA("aaaa6666")
+		ctx := context.Background()
+		if err := client.HSet(ctx, "s:"+s+":card:c6", map[string]any{
+			"kind": "model", "route": "sonnet", "state": "landed", "outcome": "DONE",
+			"repo": "nova-tools", "pr": "106", "head": "aaaa6666", "usd": "0.30",
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.SAdd(ctx, "s:"+s+":idx:card:landed", "c6").Err(); err != nil {
+			t.Fatal(err)
+		}
+		const t0 = int64(1_790_000_000_000)
+		// 106's own cut, base ciBase: cut->end would be 300 s if counted.
+		addCIHeadBase(t, client, s, "106", head, "ci-106-aaaa6666", ciBase, "OK", t0, t0+300_000, 100)
+		// An unrelated PR 999 recuts the same head against another base
+		// afterward: the shared record now points at this cut instead.
+		addCIHeadBase(t, client, s, "999", head, "ci-999-aaaa6666", otherBase, "OK", t0+50_000, t0+450_000, 200)
+
+		sum, err := fold.Read(ctx, client, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Heads/OK/Attempts/BenchS pick up both new cards; the wall stays
+		// exactly the 101+102 baseline (800 s, 2 PRs): 106 is unmeasured,
+		// not the 400 s a base-blind match would borrow from PR 999's cut.
+		want := fold.CICost{Heads: 5, OK: 3, Attempts: 6, Unmeasured: 0, BenchS: 690,
+			LandedPRs: 4, WallS: 800, WallPRs: 2}
+		if sum.CI != want {
+			t.Fatalf("ci cost %+v\nwant     %+v (106's wall must stay unmeasured, base ciBase != record base otherBase)", sum.CI, want)
+		}
+		var out bytes.Buffer
+		fold.PrintLines(&out, sum)
+		line := "FOLD CI COST sprint=" + s + " heads=5 ok=3 attempts=6 unmeasured=0 bench_min=11.5 landed_prs=4 bench_min_per_landed=2.88 wall_min_per_landed=6.67 wall_unmeasured=2\n"
+		if !strings.Contains(out.String(), line) {
+			t.Fatalf("missing %q in\n%s", line, out.String())
 		}
 	})
 
