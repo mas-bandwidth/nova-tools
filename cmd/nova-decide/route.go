@@ -618,6 +618,10 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	// A voided outcome row is in the log but is no outcome of a decision:
+	// drop it before folding so the funnel never counts a row the manager
+	// retracted (SPEC-PULSE rule 18, nova-tools #2034).
+	entries = excludeVoidedOutcomes(entries)
 	sum, err := decide.Summarize(reg, entries)
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -674,4 +678,51 @@ func dsnEnvName(dsnEnv string) string {
 		return s
 	}
 	return decide.LogDSNEnv
+}
+
+// excludeVoidedOutcomes drops from a list of entries every OUTCOME row whose
+// Time stamp a later void record retracts, and drops the void records
+// themselves. The summary then never sees a mistake: every stage's count
+// reflects only the rows still standing (SPEC-PULSE rule 18, #2034).
+//
+// Void records are gathered in a pre-pass because their position in the log
+// is below the row they void: a manager appends the correction after the
+// wrong row was written, and an outcome that comes earlier in the file
+// would be processed before its retraction was seen.
+func excludeVoidedOutcomes(entries []decide.Entry) []decide.Entry {
+	voidedTimes := map[string]bool{}
+	for _, e := range entries {
+		if strings.TrimSpace(e.Source) != sourceVoid {
+			continue
+		}
+		if key := voidTargetFromReason(e.Reason); key != "" {
+			voidedTimes[key] = true
+		}
+	}
+	kept := make([]decide.Entry, 0, len(entries))
+	for _, e := range entries {
+		if strings.TrimSpace(e.Source) == sourceVoid {
+			continue
+		}
+		if strings.TrimSpace(e.Source) == decide.SourceOutcome && voidedTimes[strings.TrimSpace(e.Time)] {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
+}
+
+// voidTargetFromReason reads the Time stamp a void record's Reason fields,
+// returning it for the exclude step. A Reason that does not start with the
+// void prefix is not a void we recognise; return empty so the row stands.
+func voidTargetFromReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, voidPrefix) {
+		return ""
+	}
+	key := strings.TrimSpace(strings.TrimPrefix(reason, voidPrefix))
+	if key == "" {
+		return ""
+	}
+	return key
 }
