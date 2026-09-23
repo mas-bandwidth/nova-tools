@@ -99,6 +99,7 @@ func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{
 		"native",
+		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
 		"--owner", "fake-1",
 		"--harness", bin,
@@ -281,6 +282,7 @@ func TestNativeRefusesMissingPoolIdentityBeforeHarness(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{
 		"native",
+		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
 		"--owner", "fake-1",
 		"--harness", bin,
@@ -365,6 +367,7 @@ func TestNativeRefusesMalformedPoolIdentityBeforeHarness(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{
 		"native",
+		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
 		"--owner", "fake-1",
 		"--harness", bin,
