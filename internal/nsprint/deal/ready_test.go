@@ -164,6 +164,9 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 	prs.set("o/r#4", Ref{State: "closed"})
 	prs.set("o/r#5", Ref{State: "open"})
 	prs.set("o/r#6", Ref{IsPR: true, State: "open", Base: "dev"})
+	// A merged PR whose forge answer names no base: unknown, not landed
+	// (Stella's HOLD2 on #3080: a missing base must not release the card).
+	prs.set("o/r#7", Ref{IsPR: true, Merged: true, State: "closed", Base: ""})
 	card := func(label string, deps ...string) Card {
 		return Card{Sprint: "s", Label: label, Repo: "o/r", Base: "dev", DependsOn: deps}
 	}
@@ -175,6 +178,8 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 			card("pr-merged", "o/r#1"),
 			card("pr-other-base", "o/r#2"),
 			card("pr-closed", "o/r#3"),
+			card("pr-base-unknown", "o/r#7"),
+			{Sprint: "s", Label: "dep-base-unknown", Repo: "o/r", Base: "", DependsOn: []string{"o/r#1"}},
 			card("issue-closed", "o/r#4"),
 			card("issue-open", "o/r#5"),
 			card("unanswered", "o/r#99"),
@@ -207,21 +212,23 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 		why[b.Label] = b.Why
 	}
 	for label, want := range map[string]string{
-		"pr-other-base": "o/r#2 merged into main, not dev",
-		"pr-closed":     "o/r#3 can no longer land: closed without merge",
-		"issue-open":    "o/r#5 open",
-		"unanswered":    "o/r#99 unknown: forge did not answer",
-		"cancelled":     "dep-cancelled can no longer land: card cancelled without a PR",
-		"missing":       "dep-gone can no longer land: no such card in sprint s",
-		"dep-pr-open":   "dep-open (o/r#6) open",
-		"two":           "o/r#6 open",
+		"pr-other-base":    "o/r#2 merged into main, not dev",
+		"pr-closed":        "o/r#3 can no longer land: closed without merge",
+		"issue-open":       "o/r#5 open",
+		"unanswered":       "o/r#99 unknown: forge did not answer",
+		"cancelled":        "dep-cancelled can no longer land: card cancelled without a PR",
+		"missing":          "dep-gone can no longer land: no such card in sprint s",
+		"dep-pr-open":      "dep-open (o/r#6) open",
+		"two":              "o/r#6 open",
+		"pr-base-unknown":  "o/r#7 unknown: base-unresolved",
+		"dep-base-unknown": "o/r#1 unknown: base-unresolved",
 	} {
 		if why[label] != want {
 			t.Errorf("%s: why %q, want %q", label, why[label], want)
 		}
 	}
-	if len(blocked) != 8 {
-		t.Errorf("%d blocked, want 8: %+v", len(blocked), blocked)
+	if len(blocked) != 10 {
+		t.Errorf("%d blocked, want 10: %+v", len(blocked), blocked)
 	}
 	var released int
 	for _, m := range moves["s"] {

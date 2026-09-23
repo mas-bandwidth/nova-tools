@@ -26,7 +26,10 @@ package deal
 // does not have can no longer land: they are reported by name on every pass,
 // never silently passed over. A question the forge could not answer is
 // unknown and the card waits: no evidence is not negative evidence, and it is
-// not positive evidence either.
+// not positive evidence either. A merged PR whose REST base is empty, or
+// whose dependent card names no BASE, is unknown for the same reason: fail
+// closed on an unresolved base rather than release the card on a match that
+// was never checked (Stella's HOLD2 on #3080).
 //
 // THE MOVE. The pass reads the pool and the waiting set; a pooled card that is
 // not ready moves to `s:<S>:waiting`, a waiting card that became ready moves
@@ -169,10 +172,12 @@ func landedPR(ref Ref, err error, name, base string) string {
 			return ""
 		}
 		return name + " open"
-	case ref.Merged && (base == "" || ref.Base == "" || ref.Base == base):
-		return ""
-	case ref.Merged:
+	case ref.Merged && (base == "" || ref.Base == ""):
+		return name + " unknown: base-unresolved"
+	case ref.Merged && ref.Base != base:
 		return name + " merged into " + ref.Base + ", not " + base
+	case ref.Merged:
+		return ""
 	case ref.State == "closed":
 		return name + " can no longer land: closed without merge"
 	}
