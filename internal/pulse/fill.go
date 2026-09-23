@@ -65,6 +65,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -243,6 +244,9 @@ type FillInput struct {
 	Sleep      func(time.Duration)
 	Launcher   CardLauncher
 	Capacity   Capacity
+	// Metrics receives the fill's queue depth, launched cards and launcher latency each
+	// tick (nx-g61); nil exports nothing.
+	Metrics *metrics.Set
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
 	// `loop` verb), so it takes none of its own.
 	Locked bool
@@ -488,7 +492,11 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 				live[lane] = base
 			}
 			want[i]--
-			if err := in.Launcher.Launch(bench, seats[bench], moved); err != nil {
+			// Wall time, not in.Now: the command line pins Now to the moment it started.
+			start := time.Now()
+			err := in.Launcher.Launch(bench, seats[bench], moved)
+			in.Metrics.ProviderLatency(metrics.Fill, bench, time.Since(start))
+			if err != nil {
 				failed[i]++
 				failLaunch(in, moved, base, lane, live, err)
 				if res.err == nil {
@@ -523,8 +531,11 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 	}
 	// ready= is CARDS, never files: the directory holds card-<n>.md and the markers live
 	// somewhere else, so the depth a reader acts on is the depth of the queue (#2013).
+	depth := len(readyCards(in.Ready))
+	in.Metrics.QueueDepth(metrics.Fill, depth)
+	in.Metrics.LeasesHeld(metrics.Fill, len(readyCards(in.Launched)))
 	b.WriteString(" ready=")
-	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
+	b.WriteString(strconv.Itoa(depth))
 	lines := append([]string{b.String()}, held...)
 	if reaped > 0 {
 		lines = append(lines, fmt.Sprintf("FILL REAPED tick=%d markers=%d dir=%s note=%q",

@@ -11,6 +11,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
@@ -188,7 +189,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	}
 
 	// The production reconciler runs both built consumers as duties.
-	_, names, err := productionDuties(store.New(c))
+	_, names, err := productionDuties(store.New(c), metrics.Default)
 	if err != nil {
 		t.Fatal(err)
 	}

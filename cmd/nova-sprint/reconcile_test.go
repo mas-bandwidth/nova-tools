@@ -13,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/metrics/metricstest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
@@ -273,4 +274,67 @@ func TestReconcileOnceSurfacesDutyErrors(t *testing.T) {
 	if n, err := c.Exists(ctx, "lease:reconciler").Result(); err != nil || n != 0 {
 		t.Fatalf("lease:reconciler exists=%d err=%v after --once, want released", n, err)
 	}
+}
+
+// TestReconcileVerbServesDealerMetrics (nx-g61, #2720; Stella's hold on #3259
+// at 64dbe017: the dealer was built only here and served no /metrics). The
+// production `nova-sprint reconcile --metrics-addr` hands metrics.Default to
+// the deal pass it builds and serves /metrics itself. One --once pass over a
+// fixture bench of 4 slots and a pool of 6 deals 4, and a GET on the verb's
+// own listener, as it finishes, reads the pool left (2), the slots leased (4)
+// and one ssh session latency for the bench.
+func TestReconcileVerbServesDealerMetrics(t *testing.T) {
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load nova_sprint library: %v", err)
+	}
+	const bench, S, slots, cards = "ctl-metrics", "control-2720metr", 4, 6
+	pipe := c.TxPipeline()
+	pipe.SAdd(ctx, "benches", bench)
+	pipe.HSet(ctx, "bench:"+bench+":desired", "slots", strconv.Itoa(slots))
+	pipe.HSet(ctx, "bench:"+bench+":beat", "host", bench, "at", "1")
+	pipe.SAdd(ctx, "sprints", S)
+	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
+	pipe.HSet(ctx, "s:"+S, "status", "open")
+	pipe.HSet(ctx, "s:"+S+":policy", "share", "1", "backpressure_missing", "open")
+	for i := 0; i < cards; i++ {
+		label := fmt.Sprintf("card-%02d", i)
+		pipe.HSet(ctx, "s:"+S+":card:"+label, "state", "queued", "priority", strconv.Itoa(i),
+			"attempt", "0", "retries", "0", "base_sha", "0123456789abcdef", "bench", "", "leg", "", "tier", "")
+		pipe.ZAdd(ctx, "s:"+S+":pool", redis.Z{Score: float64(i), Member: label})
+		pipe.SAdd(ctx, "s:"+S+":idx:card:queued", label)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	ssh := &verbSSH{}
+	seams := reconcileSeams
+	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
+	registered := reconcileDuties
+	t.Cleanup(func() { reconcileSeams, reconcileDuties = seams, registered })
+	scraped := metricstest.AtClose(t)
+
+	var out, errOut bytes.Buffer
+	if got := runReconcile(ctx, []string{"--redis", addr, "--host", "ctl-host", "--once",
+		"--metrics-addr", "127.0.0.1:0"}, &out, &errOut); got != 0 {
+		t.Fatalf("reconcile --once exit %d, want 0; stdout %q stderr %q", got, out.String(), errOut.String())
+	}
+	if ssh.launched() != slots {
+		t.Fatalf("launched %d, want %d", ssh.launched(), slots)
+	}
+	if !strings.Contains(out.String(), "METRICS reconcile url=http://127.0.0.1:") {
+		t.Fatalf("stdout %q, want the METRICS reconcile url line", out.String())
+	}
+	body := scraped()
+	if body == "" {
+		t.Fatalf("reconcile never served /metrics; stdout %q", out.String())
+	}
+	metricstest.Want(t, body,
+		`nova_queue_depth{component="dealer"} 2`,
+		`nova_leases_held{component="dealer"} 4`,
+		`nova_provider_latency_seconds_count{component="dealer",provider="ctl-metrics"} 1`,
+	)
 }
