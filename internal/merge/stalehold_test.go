@@ -89,6 +89,14 @@ func TestAHoldPinnedToANonHeadShaIsNotAHoldAtHead(t *testing.T) {
 		}
 	})
 
+	t.Run("who= on the next line still attributes", func(t *testing.T) {
+		body := "HOLD sha=" + head2612 + "\n\nWho=Stella one more defect."
+		v, ok := ParseComment(6041, "gafferongames", body, "2026-09-22T21:10:00Z", rs, "rowan-claude", head2612, false)
+		if !ok || v.Word != "hold" || v.Who != "stella" {
+			t.Fatalf("who=<name> must still attribute, got %+v ok=%v", v, ok)
+		}
+	})
+
 	t.Run("7-hex prefix of the PR head still counts", func(t *testing.T) {
 		body := "HOLD head=" + head2612[:7] + " Stella: one more defect."
 		v, ok := ParseComment(605, "gafferongames", body, "2026-09-22T21:10:00Z", rs, "rowan-claude", head2612, false)
@@ -151,6 +159,23 @@ func TestAHoldPinnedToANonHeadShaIsNotAHoldAtHead(t *testing.T) {
 		holds := UnliftedHolds([]Verdict{hv, av}, head2612, "rowan-claude", rs)
 		if len(holds) != 1 || holds[0].Who != "unknown" {
 			t.Fatalf("an unattributed hold must stay held, got %+v", holds)
+		}
+	})
+
+	// A shared login can mention a friend without being that friend. "Stella
+	// delta read..." is a mention, not who=stella and not "Stella:", so her
+	// later approve must not release it.
+	t.Run("a single friend-name mention is not attribution", func(t *testing.T) {
+		body := "HOLD sha=" + head2612 + "\n\nStella delta read clears the original defect."
+		approve := "DISPOSITION who=stella head=" + head2612 + " verdict=APPROVE score=9"
+		hv, ok := ParseComment(613, "gafferongames", body, "2026-09-22T20:01:08Z", rs, "rowan-claude", head2612, false)
+		av, aok := ParseComment(614, "gafferongames", approve, "2026-09-22T21:03:55Z", rs, "rowan-claude", head2612, false)
+		if !ok || !aok || hv.Word != "hold" || hv.Who != "unknown" || av.Word != "approve" {
+			t.Fatalf("a bare name must stay an unattributed hold, got hold %+v/%v approve %+v/%v", hv, ok, av, aok)
+		}
+		holds := UnliftedHolds([]Verdict{hv, av}, head2612, "rowan-claude", rs)
+		if len(holds) != 1 || holds[0].Who != "unknown" || holds[0].ID != "comment:613" {
+			t.Fatalf("stella's later approve must not release a hold that only mentions her, got %+v", holds)
 		}
 	})
 

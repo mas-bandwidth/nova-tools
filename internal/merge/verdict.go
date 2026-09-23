@@ -875,6 +875,10 @@ func deriveHoldWho(line string) string {
 // friendNameRE is the fixed set hold_attrib scans, case-insensitively, as whole words.
 var friendNameRE = regexp.MustCompile(`(?i)\b(emma|stella|johnny|glenn)\b`)
 
+// whoAnchorBefore is an identity slot immediately before a friend name:
+// who=<name>, optional space around =, optional quote. A bare mention is not one.
+var whoAnchorBefore = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])who\s*=\s*["']?$`)
+
 // holdPinTokenRE removes sha=/head= pins so the header can be asked whether
 // anything but a pin remains. A leading boundary is required, matching hold_pin.
 var holdPinTokenRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?[0-9a-fA-F]{7,40}"?`)
@@ -882,9 +886,13 @@ var holdPinTokenRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?[
 // attributeUntypedHold is deriveHoldWho, plus the #2710 header rule for
 // "HOLD sha=<hex>" where the friend's name is not adjacent to HOLD. The header
 // is the rest of the first line after HOLD; if that rest is only pins and
-// punctuation, it extends to the next non-blank line. Exactly one friend name
-// attributes. Two names, or none, stay unknown: an unattributed HOLD stays held.
-// A name deriveHoldWho already reads ("HOLD — Stella", "Stella: HOLD") is kept.
+// punctuation, it extends to the next non-blank line. A single anchored
+// identity attributes: who=<name>, or <Name>: (either spelling). A free-form
+// mention does not — "Stella delta read clears the original defect" stays
+// unknown, so that friend's later approve cannot release somebody else's HOLD
+// on a shared login. Two names, or none, stay unknown. An unattributed HOLD
+// stays held. A name deriveHoldWho already reads ("HOLD — Stella", "Stella: HOLD")
+// is kept.
 func attributeUntypedHold(clean, holdLine string) string {
 	if who := deriveHoldWho(holdLine); who != "unknown" {
 		return who
@@ -898,11 +906,7 @@ func attributeUntypedHold(clean, holdLine string) string {
 	if holdHeaderIsPinOnly(rest) && len(lines) > 1 {
 		header = rest + " " + lines[1]
 	}
-	names := friendNamesIn(header)
-	if len(names) == 1 {
-		return names[0]
-	}
-	return "unknown"
+	return anchoredFriendWho(header)
 }
 
 func stripLeadingHoldWord(line string) string {
@@ -930,18 +934,45 @@ func holdHeaderIsPinOnly(rest string) bool {
 	return true
 }
 
-func friendNamesIn(s string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, m := range friendNameRE.FindAllStringSubmatch(s, -1) {
-		n := normWho(m[1])
-		if n == "" || seen[n] {
+// anchoredFriendWho is the one friend the header names as an identity.
+// who=<name> and <Name>: count. A name with neither, or a second friend's
+// name beside the first, does not: a mention is not a signature.
+func anchoredFriendWho(header string) string {
+	idxs := friendNameRE.FindAllStringSubmatchIndex(header, -1)
+	if len(idxs) == 0 {
+		return "unknown"
+	}
+	who := ""
+	anchored := false
+	for _, m := range idxs {
+		n := normWho(header[m[2]:m[3]])
+		if n == "" {
 			continue
 		}
-		seen[n] = true
-		out = append(out, n)
+		if who == "" {
+			who = n
+		} else if who != n {
+			return "unknown"
+		}
+		if friendNameIsAnchored(header, m[2], m[3]) {
+			anchored = true
+		}
 	}
-	return out
+	if who == "" || !anchored {
+		return "unknown"
+	}
+	return who
+}
+
+func friendNameIsAnchored(s string, start, end int) bool {
+	if start < 0 || end > len(s) || start > end {
+		return false
+	}
+	if whoAnchorBefore.MatchString(s[:start]) {
+		return true
+	}
+	rest := strings.TrimLeft(s[end:], " \t")
+	return strings.HasPrefix(rest, ":")
 }
 
 // ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.
