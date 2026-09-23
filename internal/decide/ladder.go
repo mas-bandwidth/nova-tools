@@ -1092,7 +1092,9 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	// decision boundary is HERE: a fact about the unit and its attempts, never
 	// a proxy on len(offered).
 	if Mechanical(u.Kind) && len(failedAt) == 0 {
-		rules.Reason += "; one eligible rung, so no decision to ask"
+		// Its own reason: the height may hold several minds, so "one
+		// eligible rung" would be false here.
+		rules.Reason += "; a mechanical kind with no confirmed failure, so no decision to ask"
 		return rules, nil
 	}
 	if len(offered) < 2 {

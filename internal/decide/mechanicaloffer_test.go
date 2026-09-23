@@ -6,6 +6,10 @@ import (
 	"testing"
 )
 
+// mechanicalNoAskReason is the reason routeJev gives when it declines to ask
+// because the kind is mechanical and nothing has confirmed-failed.
+const mechanicalNoAskReason = "a mechanical kind with no confirmed failure, so no decision to ask"
+
 // #1513: a mechanical kind with no CONFIRMED failure is offered its supported
 // rung ALONE, so the rules answer without a decision being asked at all.
 func TestAMechanicalKindIsOfferedOneRungUntilSomethingFails(t *testing.T) {
@@ -23,8 +27,8 @@ func TestAMechanicalKindIsOfferedOneRungUntilSomethingFails(t *testing.T) {
 	if res.Rung.Name != rules.Rung.Name {
 		t.Errorf("with nothing confirmed-failed the rules' own rung stands: got %s, want %s", res.Rung.Name, rules.Rung.Name)
 	}
-	if !strings.Contains(res.Reason, "one eligible rung, so no decision to ask") {
-		t.Errorf("the reason must say no decision was asked: %s", res.Reason)
+	if !strings.Contains(res.Reason, mechanicalNoAskReason) {
+		t.Errorf("the reason must say no decision was asked because the kind is mechanical with nothing confirmed-failed: %s", res.Reason)
 	}
 }
 
@@ -84,7 +88,12 @@ func TestASameHeightMechanicalOfferWithTwoMindsMakesNoCall(t *testing.T) {
 	if res.Rung.Name != rules.Rung.Name {
 		t.Errorf("with nothing confirmed-failed the rules' own rung stands: got %s, want %s", res.Rung.Name, rules.Rung.Name)
 	}
-	if !strings.Contains(res.Reason, "one eligible rung, so no decision to ask") {
-		t.Errorf("the reason must say no decision was asked: %s", res.Reason)
+	if !strings.Contains(res.Reason, mechanicalNoAskReason) {
+		t.Errorf("the reason must say no decision was asked because the kind is mechanical with nothing confirmed-failed: %s", res.Reason)
+	}
+	// Two minds sit at this height: the reason must not claim there was one
+	// eligible rung, which is false for this offer (Rowan's read of #2126).
+	if strings.Contains(res.Reason, "one eligible rung") {
+		t.Errorf("two minds were offered at one height, so the reason must not say one eligible rung: %s", res.Reason)
 	}
 }
