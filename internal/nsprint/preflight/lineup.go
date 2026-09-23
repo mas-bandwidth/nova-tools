@@ -20,6 +20,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -123,6 +125,26 @@ type Conform struct {
 	Answers  map[string]string // key -> the bench's answer
 	Findings map[string]string // failing key -> its DRIFT or MISSING line
 	Want     Declared
+	// Run is the lineup run marker this record was published under (the
+	// RunMarkerEnv of the `nova-sprint lineup` that ran bench-conform); empty
+	// for a publish outside a lineup run.
+	Run string
+}
+
+// RunMarkerEnv carries a lineup run's marker from `nova-sprint lineup` through
+// bench-conform --publish into each `nova-sprint lineup publish`, which stamps
+// it on the record as the run field.
+const RunMarkerEnv = "NOVA_LINEUP_RUN"
+
+// NewRunMarker is a lineup run's unique marker: Redis server time to the
+// microsecond and 64 random bits, so two runs never share one, even inside
+// the same second.
+func NewRunMarker(now time.Time) (string, error) {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%d-%s", now.UnixMicro(), hex.EncodeToString(b[:])), nil
 }
 
 // Evaluate holds a bench's answers against the declared standard, each key an
@@ -249,11 +271,14 @@ func pairs(v string) map[string]string {
 func conformKey(bench string) string { return "bench:" + bench + ":conform" }
 
 // PublishConform is the one writer of bench:<b>:conform: the record replaces
-// the last one in one transaction, stamped with Redis server time, with the
-// 15 min TTL.
+// the last one in one transaction, stamped with Redis server time and the
+// lineup run marker, with the 15 min TTL.
 func PublishConform(ctx context.Context, c *redis.Client, cf Conform) error {
 	if cf.Bench == "" || strings.ContainsAny(cf.Bench, " :\t\n") {
 		return fmt.Errorf("bench name %q", cf.Bench)
+	}
+	if strings.ContainsAny(cf.Run, " \t\n") {
+		return fmt.Errorf("run marker %q", cf.Run)
 	}
 	now, err := c.Time(ctx).Result()
 	if err != nil {
@@ -272,6 +297,7 @@ func PublishConform(ctx context.Context, c *redis.Client, cf Conform) error {
 		"mirror_age_s":     cf.Answers[KeyMirrorAge],
 		"results_root":     cf.Answers[KeyResultsRoot],
 		"jobdirs_finished": cf.Answers[KeyFinishedJobdirs],
+		"run":              cf.Run,
 	}
 	for k, f := range cf.Findings {
 		fields["finding:"+k] = f
@@ -351,10 +377,12 @@ type LineupInput struct {
 	BenchesLoaded bool      // the registry and beats were read
 	Up            []string  // registered benches with a beat, sorted
 	Conform       map[string]ConformRecord
-	// ConformSince is this run's start (Redis server time) when the run
-	// published conform; a record stamped before it was not republished by
-	// this run and is RED, however fresh. Zero when the run did not publish.
-	ConformSince time.Time
+	// ConformRun is this run's marker when the run published conform; a
+	// record whose run field is not this marker was not republished by this
+	// run and is RED, however fresh (a timestamp cannot tell an older record
+	// written in the same second from this run's). Empty when the run did
+	// not publish (--no-conform): the records are then only TTL-fresh.
+	ConformRun string
 	// ConformFail is why this run's conform publish failed (error or
 	// nonzero exit); non-empty is RED on 7.18.
 	ConformFail string
@@ -451,9 +479,10 @@ func PrerequisiteChecks(in LineupInput) []Line {
 type LineupRun struct {
 	Sprint string
 	Probes []string // the five probe cards to cut; nil cuts none
-	// Conform runs bench-conform --publish; an error or nonzero exit is its
-	// failure. nil is --no-conform: the records are then only TTL-fresh.
-	Conform func(context.Context) error
+	// Conform runs bench-conform --publish under the run marker it is given
+	// (every record it publishes must carry it); an error or nonzero exit is
+	// its failure. nil is --no-conform: the records are then only TTL-fresh.
+	Conform func(ctx context.Context, run string) error
 	// Enrich fills what Redis does not hold: the GraphQL budget and the
 	// binary scan. It runs once.
 	Enrich func(*LineupInput)
@@ -469,8 +498,8 @@ type LineupResult struct {
 
 // RunLineup runs the lineup in the order #2756 v6 section 7 names: conform
 // publish, then the preflight checks, then the probe cut. A failed publish is
-// RED on 7.18, and a record this run did not republish is RED whatever its
-// age, so an earlier PASS cannot stand in for the current probe. The probe
+// RED on 7.18, and a record that does not carry this run's marker is RED
+// whatever its age, so an earlier PASS cannot stand in for the current probe. The probe
 // set is cut only when every prerequisite check is GREEN; on any RED it is
 // left untouched and ProbesHeld names the red checks.
 func RunLineup(ctx context.Context, c *redis.Client, run LineupRun) (LineupResult, error) {
@@ -478,15 +507,16 @@ func RunLineup(ctx context.Context, c *redis.Client, run LineupRun) (LineupResul
 	if len(run.Probes) > 0 && run.Sprint == "" {
 		return res, fmt.Errorf("--probes needs --sprint <S>")
 	}
-	var since time.Time
-	var fail string
+	var marker, fail string
 	if run.Conform != nil {
 		t, err := c.Time(ctx).Result()
 		if err != nil {
 			return res, err
 		}
-		since = t
-		if err := run.Conform(ctx); err != nil {
+		if marker, err = NewRunMarker(t); err != nil {
+			return res, err
+		}
+		if err := run.Conform(ctx, marker); err != nil {
 			fail = oneline.Err(err)
 		}
 	}
@@ -494,7 +524,7 @@ func RunLineup(ctx context.Context, c *redis.Client, run LineupRun) (LineupResul
 	if err != nil {
 		return res, err
 	}
-	in.ConformSince, in.ConformFail = since, fail
+	in.ConformRun, in.ConformFail = marker, fail
 	if run.Enrich != nil {
 		run.Enrich(&in)
 	}
@@ -516,7 +546,7 @@ func RunLineup(ctx context.Context, c *redis.Client, run LineupRun) (LineupResul
 			if err != nil {
 				return res, err
 			}
-			again.ConformSince, again.ConformFail = since, fail
+			again.ConformRun, again.ConformFail = marker, fail
 			again.GraphQL, again.BinaryScanned, again.BinaryHits = in.GraphQL, in.BinaryScanned, in.BinaryHits
 			in = again
 		}
@@ -538,8 +568,8 @@ func (in LineupInput) record(b string) (ConformRecord, string) {
 	if age := in.Now.Sub(at); age > ConformTTL {
 		return r, fmt.Sprintf("%s conform %ds old", oneline.Escape(b), int64(age/time.Second))
 	}
-	if since := in.ConformSince.Truncate(time.Second); !since.IsZero() && at.Before(since) {
-		return r, fmt.Sprintf("%s conform not republished this run (at %ds before it)", oneline.Escape(b), int64(since.Sub(at)/time.Second))
+	if in.ConformRun != "" && r.Fields["run"] != in.ConformRun {
+		return r, fmt.Sprintf("%s conform not republished this run (run=%s want=%s)", oneline.Escape(b), oneline.Escape(orNone(r.Fields["run"], "MISSING")), oneline.Escape(in.ConformRun))
 	}
 	return r, ""
 }

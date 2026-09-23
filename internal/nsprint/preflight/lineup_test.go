@@ -377,14 +377,14 @@ func TestLineupConformFailureRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	mr.SetTime(t0.Add(2 * time.Minute))
-	run.Conform = func(context.Context) error { return errors.New("bench-conform exit=1") }
+	run.Conform = func(context.Context, string) error { return errors.New("bench-conform exit=1") }
 	res, err := RunLineup(ctx, c, run)
 	if err != nil {
 		t.Fatal(err)
 	}
 	mustRefuse(t, res.Lines, "7.18")
 	l := lineFor(t, res.Lines, "7.18")
-	if !strings.Contains(l.Why, "conform publish failed: bench-conform exit=1") || !strings.Contains(l.Why, "hulk conform not republished this run (at 120s before it)") {
+	if !strings.Contains(l.Why, "conform publish failed: bench-conform exit=1") || !strings.Contains(l.Why, "hulk conform not republished this run (run=MISSING want=") {
 		t.Fatalf("7.18 %v", l)
 	}
 	if res.ProbesCut || len(probeSet(t, c)) != 0 || !strings.Contains(res.ProbesHeld, "7.18") {
@@ -392,7 +392,7 @@ func TestLineupConformFailureRefuses(t *testing.T) {
 	}
 
 	// A clean exit that published nothing: the earlier PASS is still not this run's.
-	run.Conform = func(context.Context) error { return nil }
+	run.Conform = func(context.Context, string) error { return nil }
 	res, err = RunLineup(ctx, c, run)
 	if err != nil {
 		t.Fatal(err)
@@ -415,7 +415,11 @@ func TestLineupOrderProbeCutAfterPreflight(t *testing.T) {
 	sealed := goodAnswers()
 	sealed[KeySecretsStore] = "branch=seal/x,upstream=no,rev=0fa4aa554bef,clean=yes"
 	answers := sealed
-	run.Conform = func(ctx context.Context) error { return PublishConform(ctx, c, Evaluate("hulk", answers, declared)) }
+	run.Conform = func(ctx context.Context, marker string) error {
+		cf := Evaluate("hulk", answers, declared)
+		cf.Run = marker
+		return PublishConform(ctx, c, cf)
+	}
 
 	res, err := RunLineup(ctx, c, run)
 	if err != nil {
@@ -452,5 +456,67 @@ func TestLineupOrderProbeCutAfterPreflight(t *testing.T) {
 	}
 	if err := OpenGate(res.Lines); err != nil {
 		t.Fatalf("lined up with five landed probes refused: %v\n%s", err, RenderLineup(res.In, res.Lines))
+	}
+}
+
+// Stella's hold at 62b09a24: a run-start timestamp truncated to the second
+// cannot tell an older PASS written earlier in that second from this run's.
+// The old record and the run start share a second (Redis time never moves),
+// and a clean conform command publishes nothing: 7.18 stays RED and the
+// probes stay uncut. The same record republished under an earlier run's
+// marker is no better; only this run's marker counts.
+func TestLineupSameSecondOldRecordRefuses(t *testing.T) {
+	mr, c, run := runFixture(t, "hulk")
+	ctx := context.Background()
+	mr.SetTime(t0.Add(500 * time.Millisecond))
+	old := Evaluate("hulk", goodAnswers(), declared)
+	old.Run = "earlier-run"
+	if err := PublishConform(ctx, c, old); err != nil {
+		t.Fatal(err)
+	}
+	var got string
+	run.Conform = func(_ context.Context, marker string) error { got = marker; return nil }
+	res, err := RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == "" || got == old.Run {
+		t.Fatalf("run marker %q", got)
+	}
+	mustRefuse(t, res.Lines, "7.18", "7.19", "7.24", "7.25")
+	if l := lineFor(t, res.Lines, "7.18"); !strings.Contains(l.Why, "hulk conform not republished this run (run=earlier-run want="+got+")") {
+		t.Fatalf("7.18 %v", l)
+	}
+	if res.ProbesCut || len(probeSet(t, c)) != 0 || !strings.Contains(res.ProbesHeld, "7.18") {
+		t.Fatalf("probes cut on a same-second old record: %+v %v", res, probeSet(t, c))
+	}
+
+	// Positive control, same second: the record this run publishes under its
+	// own marker is GREEN and the probes are cut.
+	run.Conform = func(ctx context.Context, marker string) error {
+		cf := Evaluate("hulk", goodAnswers(), declared)
+		cf.Run = marker
+		return PublishConform(ctx, c, cf)
+	}
+	res, err = RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.ProbesCut || len(probeSet(t, c)) != ProbeCount {
+		t.Fatalf("this run's record did not cut the probes: %+v %v", res, probeSet(t, c))
+	}
+}
+
+func TestRunMarkerUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		m, err := NewRunMarker(t0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if seen[m] || strings.ContainsAny(m, " \t\n") {
+			t.Fatalf("marker %q repeated or not one word", m)
+		}
+		seen[m] = true
 	}
 }

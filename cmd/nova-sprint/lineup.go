@@ -28,10 +28,13 @@ import (
 //	nova-sprint lineup --redis <addr> --sprint <S> [--probes a,b,c,d,e]
 //	    [--conform-cmd "bench-conform --publish" | --no-conform]
 //	    [--gql-remaining n] --lane-gql-per-pass n --lane-cadence 10s
-//	nova-sprint lineup publish --redis <addr> --bench <b> --all-yml <file> < probe-output
+//	nova-sprint lineup publish --redis <addr> --bench <b> --all-yml <file> [--run <marker>] < probe-output
 //
 // `lineup publish` is the one writer of bench:<b>:conform; bin/bench-conform
-// --publish pipes each bench's probe answers into it.
+// --publish pipes each bench's probe answers into it. Each lineup run mints a
+// unique marker and passes it to bench-conform as NOVA_LINEUP_RUN; publish
+// stamps it (--run, default $NOVA_LINEUP_RUN) as the record's run field, and
+// only records carrying this run's marker count.
 //
 // Exit 0 lined up, 1 any RED (or a DRIFT record for publish), 2 could not run.
 func init() {
@@ -89,8 +92,8 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	if !*noConform {
 		argv := strings.Fields(*conformCmd)
-		run.Conform = func(ctx context.Context) error {
-			err := runConformPublish(ctx, argv, stderr)
+		run.Conform = func(ctx context.Context, marker string) error {
+			err := runConformPublish(ctx, argv, marker, stderr)
 			if err != nil {
 				fmt.Fprintf(stdout, "CONFORM ERROR %s\n", oneline.Err(err))
 			} else {
@@ -129,15 +132,17 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 }
 
 // runConformPublish runs bench-conform --publish, which probes every UP bench
-// in one ssh batch and pipes each answer into `lineup publish`. An error or a
+// in one ssh batch and pipes each answer into `lineup publish`. The run marker
+// reaches those publishes as NOVA_LINEUP_RUN in the environment. An error or a
 // nonzero exit is a failed publish (RED on 7.18); a clean exit is still not
-// trusted alone: every UP bench's record must be stamped in this run.
-func runConformPublish(ctx context.Context, argv []string, stderr io.Writer) error {
+// trusted alone: every UP bench's record must carry this run's marker.
+func runConformPublish(ctx context.Context, argv []string, marker string, stderr io.Writer) error {
 	if len(argv) == 0 {
 		return fmt.Errorf("--conform-cmd is empty")
 	}
 	testguard.RefuseHosts(argv[0], argv[1:]...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	cmd.Env = append(os.Environ(), preflight.RunMarkerEnv+"="+marker)
 	cmd.Stdout = stderr
 	cmd.Stderr = stderr
 	err := cmd.Run()
@@ -166,8 +171,9 @@ func cmdLineupPublish(ctx context.Context, args []string, stdin io.Reader, stdou
 	addr := fs.String("redis", "", "")
 	bench := fs.String("bench", "", "")
 	allYML := fs.String("all-yml", "", "")
+	runMarker := fs.String("run", os.Getenv(preflight.RunMarkerEnv), "")
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "lineup publish", err.Error()+"; it wants --redis <addr> --bench <b> --all-yml <file>")
+		return refuse(stderr, "lineup publish", err.Error()+"; it wants --redis <addr> --bench <b> --all-yml <file> [--run <marker>]")
 	}
 	var problems []string
 	if *addr == "" {
@@ -198,6 +204,7 @@ func cmdLineupPublish(ctx context.Context, args []string, stdin io.Reader, stdou
 		return refuse(stderr, "lineup publish", "no probe answers on stdin; an empty probe is not a record")
 	}
 	cf := preflight.Evaluate(*bench, answers, d)
+	cf.Run = *runMarker
 	client := lineupClient(*addr)
 	defer client.Close()
 	if err := preflight.PublishConform(ctx, client, cf); err != nil {
