@@ -1,0 +1,6 @@
+# The index and slice expressions on a strings.Fields / strings.Split /
+# bytes.Fields result that this repository still permits without a len() check in
+# the same function, one `file:function # reason` per row. Every row carries the
+# reason the data cannot be short. This list only shrinks: the class test
+# (fieldsindex_class_test.go) fails on a row whose unchecked index has left as
+# well as on an unchecked index that is not listed.
