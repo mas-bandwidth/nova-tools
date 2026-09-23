@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
@@ -48,6 +49,12 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if !cardFlagAllowed(sub, name) {
 			return cardUsage(stderr, "unknown flag --"+name, want)
 		}
+	}
+	if sub == "end" && !filepath.IsAbs(flags["results"]) {
+		// #3329: results is the card hash field harvest pushes from; it is
+		// absolute so no reader needs a root typed on its argv.
+		return cardUsage(stderr, "--results "+flags["results"]+" is relative",
+			"results must be absolute (the card hash field s:<S>:card:<label> results); "+want)
 	}
 	st, err := store.Open(ctx, flags["redis"])
 	if err != nil {

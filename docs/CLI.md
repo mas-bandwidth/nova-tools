@@ -5010,3 +5010,14 @@ What a first run gets wrong, and what each one wants:
 - **`--refresh ready`, or a one-second loop.** This cut does not read the store. `--refresh` wants `pending`.
 
 There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
+
+### Where a card's results live
+
+`nova-sprint card end --results <dir>` writes `<dir>` once into the card hash
+`s:<S>:card:<label>` field `results` (single writer `ns_card_end`, stamped
+`ended_at` from Redis TIME). The dir is always absolute: `card end` exits 1
+(USAGE) on a relative one before it opens Redis, and `ns_card_end` refuses it
+too, so nothing is written. `nova-sprint card harvest` pushes from
+`<results>/repo` on the bench as read from that field; there is no
+`--results-root` (it is refused as an unknown flag that names the field),
+because no worker needs to know a bench's layout (#3329).

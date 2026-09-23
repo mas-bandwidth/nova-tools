@@ -107,11 +107,10 @@ func (g GitHub) ReadPR(ctx context.Context, repo string, number int) (PR, error)
 
 // SSHPusher pushes from the bench over one `ssh <user@host> bash -s` call
 // per card (never zsh: the remote runs bash with the script on stdin). The
-// card's git checkout is <results>/<RepoSubdir>, with a relative results dir
-// under ResultsRoot on the bench.
+// card's git checkout is <results>/<RepoSubdir>, where results is the
+// absolute card hash field written by card end (#3329): there is no root.
 type SSHPusher struct {
 	SSH            string        // default "ssh"
-	ResultsRoot    string        // bench-side root for relative results dirs
 	RepoSubdir     string        // default "repo"
 	ConnectTimeout time.Duration // default 5 s
 }
@@ -148,13 +147,10 @@ func (p SSHPusher) repoDir(c Card) (string, error) {
 	if c.Results == "" {
 		return "", fmt.Errorf("%s: no results dir", c.Label)
 	}
-	if path.IsAbs(c.Results) {
-		return path.Join(c.Results, sub), nil
+	if !path.IsAbs(c.Results) {
+		return "", fmt.Errorf("%s: results %s is relative; the card hash field results must be absolute (card end refuses a relative dir)", c.Label, c.Results)
 	}
-	if p.ResultsRoot == "" {
-		return "", fmt.Errorf("%s: results %s is relative and no --results-root was given", c.Label, c.Results)
-	}
-	return path.Join(p.ResultsRoot, c.Results, sub), nil
+	return path.Join(c.Results, sub), nil
 }
 
 func (p SSHPusher) Push(ctx context.Context, b BenchInfo, c Card) error {

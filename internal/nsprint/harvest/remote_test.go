@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -107,4 +108,42 @@ esac
 			t.Fatalf("relative results with no root = %q, want refused", d)
 		}
 	}()
+}
+
+// TestHarvestHasNoResultsRoot is the #3329 DONE-WHEN (pusher half): the
+// pusher has no results root of its own. It pushes from the absolute
+// `results` the card hash carries, and refuses a relative one, naming the
+// field, before it starts ssh.
+func TestHarvestHasNoResultsRoot(t *testing.T) {
+	if _, ok := reflect.TypeOf(SSHPusher{}).FieldByName("ResultsRoot"); ok {
+		t.Fatal("SSHPusher still has a ResultsRoot; the results dir comes from the card hash only")
+	}
+	dir := t.TempDir()
+	log := filepath.Join(dir, "ssh.log")
+	ssh := filepath.Join(dir, "ssh")
+	script := "#!/bin/bash\nprintf '%s\\n' \"$@\" >> " + strconv.Quote(log) + "\ncat >/dev/null\n"
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := SSHPusher{SSH: ssh}
+	ctx := context.Background()
+	bench := BenchInfo{Name: "b", Host: "h", User: "u"}
+	abs := "/srv/results/s/l/09fbedc9/b/1"
+	if err := p.Push(ctx, bench, Card{Label: "l", Results: abs, PushedSHA: "abc", Branch: "nova/s/l-a1"}); err != nil {
+		t.Fatalf("push from absolute results: %v", err)
+	}
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "bash -s -- '" + abs + "/repo' 'abc' 'nova/s/l-a1'"; !strings.Contains(string(calls), want) {
+		t.Fatalf("ssh args %q lack %q", calls, want)
+	}
+	err = p.Push(ctx, bench, Card{Label: "m", Results: "s/m/09fbedc9/b/1", PushedSHA: "abc", Branch: "nova/s/m-a1"})
+	if err == nil || !strings.Contains(err.Error(), "results") || !strings.Contains(err.Error(), "absolute") {
+		t.Fatalf("relative results = %v, want a refusal naming the absolute results field", err)
+	}
+	if again, _ := os.ReadFile(log); string(again) != string(calls) {
+		t.Fatalf("a relative results dir started ssh: %q", again)
+	}
 }

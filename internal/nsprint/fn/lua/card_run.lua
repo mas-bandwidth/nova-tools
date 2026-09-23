@@ -55,12 +55,17 @@ local function card_keys_ok(keys, sprint, label)
     and keys[3] == 's:' .. sprint .. ':idem'
 end
 
--- results is the canonical attempt directory, or that relative path under a root.
+-- results is absolute (#3329): '/...' or a drive root 'C:/...' / 'C:\...'.
+-- The card hash field is read by harvest with no root to join it to.
+local function results_absolute(results)
+  return string.sub(results, 1, 1) == '/' or string.match(results, '^%a:[/\\]') ~= nil
+end
+
+-- results is the canonical attempt directory under an absolute root.
 local function results_bound(results, identity)
   local sprint, label, base, bench, attempt = identity_parts(identity)
   if not sprint or results == '' then return false end
   local want = sprint .. '/' .. label .. '/' .. base .. '/' .. bench .. '/' .. attempt
-  if results == want then return true end
   local suffix = '/' .. want
   if #results < #suffix then return false end
   return string.sub(results, -#suffix) == suffix
@@ -153,6 +158,7 @@ redis.register_function('ns_card_end', function(keys, args)
   local claim_outcome = args[12] or ''
   local claim_reason = args[13] or ''
   if mode ~= 'token' and mode ~= 'record' then return reply(2, 'STATE', '', '') end
+  if not results_absolute(results) then return reply(1, 'USAGE', '', '') end
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
   local card_key, log_key, idem_key = keys[1], keys[2], keys[3]
   local state = hget(card_key, 'state')

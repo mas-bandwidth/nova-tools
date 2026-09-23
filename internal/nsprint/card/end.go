@@ -181,7 +181,7 @@ type ResolveRequest struct {
 // attempt's token exits 3.
 func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 	const verb = "card end"
-	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || req.Outcome == "" || req.Reason == "" || strings.TrimSpace(req.ResultsDir) == "" {
+	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || req.Outcome == "" || req.Reason == "" || !absResults(req.ResultsDir) {
 		return usage(verb, req.Label), nil
 	}
 	return callEnd(ctx, st, verb, "token", req.Sprint, req.Label, req.Token, req.ResultsDir, req.Outcome, req.Reason)
@@ -193,7 +193,7 @@ func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 // the indexes, and the log stay as they were.
 func Resolve(ctx context.Context, st *store.Store, req ResolveRequest) (Result, error) {
 	const verb = "card resolve"
-	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || strings.TrimSpace(req.ResultsDir) == "" {
+	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || !absResults(req.ResultsDir) {
 		return usage(verb, req.Label), nil
 	}
 	return callEnd(ctx, st, verb, "record", req.Sprint, req.Label, "", req.ResultsDir, "", "")
@@ -247,6 +247,13 @@ func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, to
 	return resultFrom(verb, label, reply), nil
 }
 
+// absResults reports whether dir can be the card hash field results: it is
+// written once by ns_card_end and read by harvest with no root to join it to
+// (#3329), so a relative dir is a usage error before anything is written.
+func absResults(dir string) bool {
+	return strings.TrimSpace(dir) != "" && filepath.IsAbs(dir)
+}
+
 func cleanResultsDir(dir string) (string, error) {
 	if strings.TrimSpace(dir) == "" || strings.ContainsAny(dir, "\r\n") {
 		return "", fmt.Errorf("results dir is required")
@@ -271,16 +278,13 @@ func storedIdentity(ctx context.Context, st *store.Store, sprint, label string) 
 }
 
 // resultsBound reports whether dir is the canonical attempt directory
-// <sprint>/<label>/<base sha8>/<bench>/<attempt>, or that path under a root.
+// <sprint>/<label>/<base sha8>/<bench>/<attempt> under an absolute root.
 func resultsBound(dir string, id Identity) bool {
 	want := id.String()
 	if want == "" || id.Attempt < 1 {
 		return false
 	}
 	clean := filepath.ToSlash(filepath.Clean(dir))
-	if clean == want {
-		return true
-	}
 	return strings.HasSuffix(clean, "/"+want)
 }
 
