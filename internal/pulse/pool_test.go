@@ -195,3 +195,55 @@ func TestPoolRoadmapKindIsCardKind(t *testing.T) {
 		}
 	}
 }
+
+// 687b02e4: a roadmap locator that is not absolute is joined to the sources
+// file's directory, so a relative path in sources.tsv is the file beside it.
+func TestPoolRoadmapRelativeLocatorJoinsTheSourcesDir(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, dir, "roadmap.sexp",
+		"((:id \"pulse-read\" :title \"read a pool\" :card \"read\"))\n")
+	sources := writeTestFile(t, dir, "sources.tsv", "roadmap\troadmap.sexp\tfix\n")
+
+	var out, errb bytes.Buffer
+	code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb})
+	if code != 0 {
+		t.Fatalf("pool exit = %d, want 0; stdout=%q stderr=%q", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "candidates=1") || !strings.Contains(out.String(), "roadmap=1") {
+		t.Fatalf("POOL OK line wrong: %q", out.String())
+	}
+}
+
+// f293cf63: an issues row names the repo locator in the source column, not the
+// kind word "issues", so cut can tell two issue sources apart.
+func TestPoolIssueRowsNameTheRepoLocator(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeTestFile(t, dir, "issues.json", `[
+  {"number": 7, "title": "one", "labels": [{"name": "card"}], "body": ""}
+]`)
+	ghFixture(t, dir, jsonBody)
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeTestFile(t, dir, "sources.tsv", "issues\towner/repo\tfix\n")
+
+	var out, errb bytes.Buffer
+	code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb})
+	if code != 0 {
+		t.Fatalf("Pool exit = %d, stderr=%s", code, errb.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := strings.TrimRight(string(raw), "\n")
+	parts := strings.Split(line, "\t")
+	if len(parts) < 1 || parts[0] != "owner/repo" {
+		t.Fatalf("issue source column = %q, want the locator owner/repo\n%s", line, line)
+	}
+}
