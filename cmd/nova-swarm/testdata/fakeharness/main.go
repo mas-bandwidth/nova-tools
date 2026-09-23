@@ -87,6 +87,13 @@ func main() {
 	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
+	// FAKE-DROP-CAPTURE unlinks the harness log the parent already opened. The
+	// parent still holds the descriptor, so the child can run, but the path is
+	// gone when the run tries to publish the report. That is a required capture
+	// that cannot be copied.
+	if _, ok := directive(prompt, "FAKE-DROP-CAPTURE"); ok && job != "" {
+		_ = os.Remove(filepath.Join(job, "harness-output.log"))
+	}
 	if _, ok := directive(prompt, "FAKE-LAUNCHES"); ok && job != "" {
 		record(filepath.Join(job, "launches"))
 		if f, err := os.OpenFile(filepath.Join(job, "launches"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
