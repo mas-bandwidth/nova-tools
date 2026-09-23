@@ -260,9 +260,11 @@ func Harvest(in HarvestInput) int {
 				state = "elsewhere"
 			}
 		}
-		// THE PLAN STEP (#2590, #2861). A pro card in plan mode is not pushed until its
-		// PLAN.md carries the PLAN-OK line; it holds, and the harvest after the approve
-		// line folds the same job and pushes it.
+		// THE PLAN STEP's publication safeguard (#2590, #2861). Launch is the gate
+		// (planAdmitCards: a plan-mode pro card's first launch is a plan-only turn, and it
+		// executes only once PLAN.md passes). Harvest still refuses to push a plan-mode
+		// card whose PLAN.md is not approved, so the plan-only turn's own result, or a
+		// card launched some other way, holds instead of publishing.
 		planWhy := ""
 		if state == "done" {
 			if why, held := planHold(jobDir, c); held {
