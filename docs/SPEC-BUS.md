@@ -9,7 +9,7 @@ bounded, and tests use fakes.
 **The verb lines, as help prints them.**
 
 ```
-nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--cc] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
+nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
 nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id-or-path> [--text <text>] --remote <name> --branch <name> [--attempts <n>] [--no-push] [--git-timeout <seconds>]
 ```
 
@@ -181,7 +181,7 @@ test is proven able to fail before it is trusted. The verb groups are
 `reply` (already implemented).
 
 1. `TestWaitOnNotePrintsOnlyTheNote` — a To: note wakes exactly one `WAIT OK` status line and its `INBOX NOTE`/body, and no `INBOX OPEN` frame or carrying count ever prints.
-2. `TestWaitOnNoteReadsToByDefaultCcByOptIn` — the wake is To: only (addr=to the default); `--cc` opts into Cc: notes, which are data, not a wake.
+2. `TestWaitOnNoteWakesOnToOnly` — the wake is To: only (addr=to the default); a Cc: note is data, not a wake.
 3. `TestWaitOnNoteWritesNothingWithoutAdvance` — `wait --on-note` writes nothing unless `--advance` is given.
 4. `TestWaitOnNoteAdvanceMovesTheCursorLikeInbox` — with `--advance` it moves and pushes the caller's cursor as `inbox --advance` does.
 5. `TestWaitOnNoteNamesEveryField` — the wake output names the id, sender, repository-relative path, byte count and the existing frame fields.
@@ -212,5 +212,5 @@ test is proven able to fail before it is trusted. The verb groups are
 30. `TestReplyFillsFromToReSubjectFromTheOriginal` — the reply's four headers come from the original note, never hand-shaped.
 31. `TestReplyRefusesAnUnknownRe` — `reply --re` naming no note is exit 2 and names `inbox --open`.
 32. `TestReplyRefusesAHandShapedHeader` — a draft carrying a header `reply` fills is exit 2 with one remedy line.
-33. `TestReplyRefusesWithoutRe` — `reply` without `--re` is exit 2 with the one remedy line `nova-bus reply: --re is required; name the note being answered`, and no note or cursor moves.
+33. `TestReplyAdvanceMovesTheCursorInTheReplyCommit` — `--advance` moves and pushes the cursor in the same commit as the reply.
 34. `TestReplyAdvanceWithDryRunIsRefused` — `reply --advance` with `--dry-run` is exit 2 and neither cursor nor note moves.
