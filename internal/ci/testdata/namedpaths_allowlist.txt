@@ -19,6 +19,18 @@ cmd/nova-local SPEC-LOCAL's plan; nova-local is specified and unbuilt
 cmd/nova-local/main.go SPEC-LOCAL's plan: the command's entry point
 cmd/nova-wake/quickstart SPEC-WAKE's plan, item 7: the quickstart verb's own file
 docs/roadmap.sexp SPEC-WORK's plan: the state input the roadmap projection will read
+cmd/nova-pulse/testdata/accept/ SPEC-TOOLWORK.md's selftest plan: the gate's own fixture repository, unwritten
+cmd/nova-test SPEC-TEST.md's plan: a proposed binary, git ls-files shows no cmd/nova-test yet
+internal/ci/testdata/unexecuted_examples.txt SPEC-TOOLWORK.md's plan: the shrink-only unexecuted-example list, unwritten
+internal/control SPEC-TOOLWORK.md's plan; internal/harvest/fake.go stands in for it until it lands
+internal/decide/questions/security.txt SPEC-DECIDE.md's plan: the shipped-default phrase table, not yet split into its own data file
+internal/decide/questions/tamper.txt SPEC-DECIDE.md's plan: the shipped-default pattern table, not yet split into its own data file
+internal/pulse/cardheader.go SPEC-TOOLWORK.md's plan, #1721: the gate parser cmd/nova-swarm/lint.go and internal/swarm/lintheader.go cite ahead of landing
+internal/pulse/kinds.go SPEC-TOOLWORK.md's plan: the kind-gate table as data, unwritten
+testdata/accept/ SPEC-TOOLWORK.md's plan: the transcript-test card kind's own fixture directory, unwritten
+testdata/ci/package-sizes-windows.tsv SPEC-CI.md's plan: the measured Windows package sizes, parked (deleted on dev) while the doc still names it
+tools/deploy/ SPEC-SPRINT.md's plan: a listed live/security path, unwritten
+tools/legs.tsv SPEC-TOOLWORK.md's plan: the repository's leg table as data, unwritten
 internal/chat/allow.go SPEC-CHAT's plan, item 1: the allow-file parser
 internal/chat/discord.go SPEC-CHAT's plan, item 5: the Discord adapter
 internal/chat/fuse.go SPEC-CHAT's plan, item 7: the nova-fuse calls before each cycle
@@ -55,6 +67,10 @@ docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside
 docs/bus/from-bo/x.md the path that same narrative says git reports from the repository root
 docs/history SPEC.md's `--allow docs/history` example for subdirectory enumeration
 internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `internal/secrets` would also catch
+docs/spec-pulse/10 SPEC-TOOLWORK.md's shorthand cite for docs/spec-pulse/10-the-card-as-cut-writes-it.md, before that draft's files carried full names
+internal/decide/entry.go internal/swarm/lintbase.go's worked example: card-nx-f19 named it and it did not exist at that card's base
+internal/secrets/recovery_key_test.go internal/pulse/harveststale.go's worked example: the file a 2026-09-22 card refused as undeclared
+internal/swarm/pull SPEC-WORKLANG.md's worklang subject spelling `test:internal/swarm/pull@HEAD`, not a directory; internal/swarm/pull.go is the real file
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
@@ -66,5 +82,8 @@ docs/SPEC-WORK-CLOSED.md SPEC-WORK cites it at a named commit on another branch,
 docs/SPEC-WORK-PILOT.md the same: a named commit on codex/, not in this tree
 docs/SPEC-WORK-VALIDATION.md the same: a named commit on codex/, not in this tree
 fleet/macos/provision-mac-bench.sh the Mac provisioning script lives in the self repository; there is no fleet/ here
+docs/coordination/card-contract-2608-proposal.md SPEC-CARD.md cites it at mas-bandwidth/stella-tools@2fb4393, not in this tree
+fleet/authorized_keys the fleet's public keys live in the self repository; there is no fleet/ here
+fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 scripts/coordination/fleet-wake.sh SPEC-PULSE.md names the retired script the Go power verbs replaced
