@@ -153,25 +153,29 @@ writer and its counters rather than on one node's transition table.")
        (ignore-errors (delete-file path)))))
 
 ;;; ------------------------------------------------------------------
-;;; TestE10F05PinScenariosOwnersAndCommands
+;;; TestE10F05ExactRevisionPinRequiresRecheck
 ;;;   criterion E10-F05-03 (docs/roadmaps/nova-work.sexp): "Pin scenarios,
 ;;;   owners and commands before implementation; require exact-revision
 ;;;   correctness and measured operational results before adoption".
-;;;   docs/SPEC-WORK.md:7239-7240 states it: "Before the lock gate each suite is
-;;;   mapped to its named scenarios, assertions, owner, command and CI lane;
-;;;   before a release the exact-revision results are attached." (The
-;;;   scenarios/owners/commands half is also named at docs/SPEC-WORK.md:7381.)
 ;;;
-;;;   A scenario is pinned before implementation as a tick that records the
-;;;   exact revision it was measured at; exact-revision correctness is the rule
-;;;   that a changed source or criterion re-opens verification and can never
-;;;   silently carry a green across a different revision. This asserts behaviour,
-;;;   not the struct: it holds for whichever record the kernel keeps, so long as
-;;;   the pin survives and the changed revision forces re-verification.
+;;;   This pins ONE half of that criterion: exact-revision correctness.
+;;;   docs/SPEC-WORK.md:7238-7239 states it: "changing the code a receipt
+;;;   covers invalidates that receipt". A scenario is pinned as a tick that
+;;;   records the exact revision it was measured at; a changed source or
+;;;   criterion re-opens verification and can never silently carry a green
+;;;   across a different revision, while the historic pin survives.
+;;;
+;;;   NOT pinned here, and not claimed: the other half, "each suite is mapped
+;;;   to its named scenarios, assertions, owner, command and CI lane"
+;;;   (docs/SPEC-WORK.md:7239-7240, again at :7381). The kernel has no
+;;;   suite-to-owner/command/CI-lane record to assert against; that mapping is
+;;;   the E10-F03 subfeature "Map each suite to an owner, command and CI lane"
+;;;   (state "missing" in the sexp). E10-F05-03 therefore stays partly unmet
+;;;   until E10-F03 lands a suite map and a test drives it.
 ;;; ------------------------------------------------------------------
 
-(deftest "TestE10F05PinScenariosOwnersAndCommands" "docs/SPEC-WORK.md:7239-7240"
-    "expected=scenario-pinned-at-exact-revision;source-or-criterion-change=recheck-needed;pin-survives"
+(deftest "TestE10F05ExactRevisionPinRequiresRecheck" "docs/SPEC-WORK.md:7238-7239"
+    "expected=scenario-pinned-at-exact-revision;source-or-criterion-change=recheck-needed;pin-survives;suite-owner-command-lane-map=not-pinned-here(E10-F03)"
   (let ((tick (make-tick-record :id "fixed-tables/update-one-fact"
                                 :pinned-rev "f01a0c42d7de"
                                 :source-sha "f01a0c42d7de"
