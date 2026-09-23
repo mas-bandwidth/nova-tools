@@ -281,14 +281,21 @@ func foldRun(a foldRunArgs) int {
 		return 2
 	}
 	if _, err := g.Publish("origin", a.out, expected, squash); err != nil {
-		switch foldPublishedAfterError(g, a.out, squash, err) {
+		state, remote := foldPublishedAfterError(g, a.out, expected, squash, err)
+		switch state {
 		case foldPublishNo:
 			fmt.Fprintf(a.stderr, "FOLD FAIL: %s; nothing was published\n",
 				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 			return 1
 		case foldPublishUnknown:
-			fmt.Fprintf(a.stderr, "FOLD FAIL: %s; whether %s was published is unknown (the remote ref could not be read back); remedy: git ls-remote origin refs/heads/%s\n",
-				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(merge.Short(squash)), oneline.Field(a.out))
+			why := "the remote ref could not be read back"
+			if remote != "" {
+				why = "origin " + oneline.Field(a.out) + " is at " + oneline.Field(merge.Short(remote)) +
+					", neither the squash nor the pre-push " + oneline.Field(merge.Short(expected)) +
+					", so the squash may have landed and been superseded"
+			}
+			fmt.Fprintf(a.stderr, "FOLD FAIL: %s; whether %s was published is unknown (%s); remedy: git ls-remote origin refs/heads/%s\n",
+				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(merge.Short(squash)), why, oneline.Field(a.out))
 			return 1
 		}
 		// The push landed and only its reply was lost: the remote holds the squash, so
@@ -318,21 +325,30 @@ const (
 // foldPublishedAfterError reads the remote ref back after a failed lease push, so that a
 // push whose reply was lost (a timeout, a dropped connection) is never reported as
 // "nothing was published" when the remote in fact holds the squash. A rejected lease is
-// the remote's own definitive answer and needs no read-back.
-func foldPublishedAfterError(g *merge.Git, out, squash string, err error) foldPublishState {
+// the remote's own definitive answer and needs no read-back. Only a ref still at the
+// pre-push expected sha (absent when expected is the zero sha) proves the push did not
+// land; a ref at any other sha may be the squash landed and then superseded by another
+// writer, so it is unknown, and that sha is returned for the message.
+func foldPublishedAfterError(g *merge.Git, out, expected, squash string, err error) (foldPublishState, string) {
 	var raced *merge.RacedError
 	if errors.As(err, &raced) {
-		return foldPublishNo
+		return foldPublishNo, ""
 	}
 	got, lerr := g.Out("ls-remote", "origin", "refs/heads/"+out)
 	if lerr != nil {
-		return foldPublishUnknown
+		return foldPublishUnknown, ""
 	}
-	fields := strings.Fields(got)
-	if len(fields) > 0 && fields[0] == squash {
-		return foldPublishYes
+	remote := zeroSHA
+	if fields := strings.Fields(got); len(fields) > 0 {
+		remote = fields[0]
 	}
-	return foldPublishNo
+	switch remote {
+	case squash:
+		return foldPublishYes, remote
+	case expected:
+		return foldPublishNo, remote
+	}
+	return foldPublishUnknown, remote
 }
 
 // foldUnresolvable returns the first file whose conflict is neither in a test file nor in

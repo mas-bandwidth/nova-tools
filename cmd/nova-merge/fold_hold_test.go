@@ -234,12 +234,31 @@ func TestRunFoldCmdIsBoundedByItsTimeout(t *testing.T) {
 type lostReplyRunner struct {
 	inner merge.Runner
 	land  bool
+	// advance, when set, names a bare repository whose ref is moved on by another
+	// writer right after the push lands and before the fold reads it back.
+	advance string
+	ref     string
 }
 
 func (r *lostReplyRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	if isLeasePush(args) {
 		if r.land {
 			_, _ = r.inner.Run(ctx, dir, name, args...)
+			if r.advance != "" {
+				landed, err := r.inner.Run(ctx, r.advance, "git", "rev-parse", r.ref)
+				if err != nil {
+					return "", err
+				}
+				landed = strings.TrimSpace(landed)
+				other, err := r.inner.Run(ctx, r.advance, "git", "-c", "user.name=other", "-c", "user.email=other@example.invalid",
+					"commit-tree", landed+"^{tree}", "-p", landed, "-m", "another writer")
+				if err != nil {
+					return "", err
+				}
+				if _, err := r.inner.Run(ctx, r.advance, "git", "update-ref", r.ref, strings.TrimSpace(other), landed); err != nil {
+					return "", err
+				}
+			}
 		}
 		return "fatal: the remote end hung up unexpectedly", errors.New("exit status 128")
 	}
@@ -282,6 +301,35 @@ func TestFoldReadsTheRemoteBackWhenThePushReplyIsLost(t *testing.T) {
 			t.Fatal("the fixture landed a push it was told to drop")
 		}
 	}
+}
+
+// A push whose reply is lost and whose ref another writer then moves on proves nothing
+// either way: the squash may have landed and been superseded. Only a ref still at the
+// pre-push expected sha proves the lease push did not land, so a ref at any other sha is
+// reported unknown, never "nothing was published", and no pull request is opened on it.
+func TestFoldALostReplyOnARefThatMovedOnIsUnknown(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("main")
+	l.branch("feature-a", "a.txt", "a\n", "a")
+	l.git(l.work, "push", "-q", "origin", "main:refs/heads/fold-out")
+	before := l.git(l.remote, "rev-parse", "refs/heads/fold-out")
+	greenTests(l)
+	l.runner = &lostReplyRunner{inner: merge.Exec{}, land: true, advance: l.remote, ref: "refs/heads/fold-out"}
+	file := l.foldBranches("branches.txt", "feature-a 101\n")
+
+	exit, stdout, stderr := l.run("fold", "--lane", l.lane, "--branches", file, "--onto", "main", "--out", "fold-out")
+	after := l.git(l.remote, "rev-parse", "refs/heads/fold-out")
+	if after == before {
+		t.Fatal("the fixture did not land and advance the push")
+	}
+	if exit != 1 {
+		t.Fatalf("a lost reply on a ref that moved on: exit %d, want 1\n%s\n%s", exit, stdout, stderr)
+	}
+	absent(t, stderr, "nothing was published")
+	absent(t, stdout, "FOLD OK")
+	contains(t, stderr, "unknown")
+	contains(t, stderr, merge.Short(after))
 }
 
 func mustWriteFile(t *testing.T, path, body string) {
