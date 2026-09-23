@@ -11,7 +11,9 @@
 // files at the dev tip and the configured launcher, so the checks never ssh,
 // read GitHub or read a state file themselves; the tests hand them fakes.
 // No evidence is not negative evidence: an input the check needs and does not
-// have prints MISSING and is RED, never GREEN.
+// have prints MISSING and is RED, never GREEN. An empty slice cannot tell a
+// snapshot read and empty from one never read, so every collection carries a
+// Loaded flag and a check whose collection is unread refuses.
 package preflight
 
 import (
@@ -160,8 +162,41 @@ type EndedCard struct {
 	Reason string
 }
 
+// Loaded says which collection snapshots the verb actually read. The verb sets
+// a flag only after the read succeeded, so a zero FleetInput is an unread fleet
+// and every check that needs a collection is RED, never GREEN on nothing.
+type Loaded struct {
+	Benches     bool // the bench registry and every bench's beat
+	Consumers   bool // XPENDING for every consumer group
+	Profiles    bool // the registered bench profiles
+	Workflows   bool // the sprint repos' workflow files at the dev tip
+	ReviewReady bool // the review-ready heads
+	LandReady   bool // the land-ready receipts
+	Orphans     bool // the cards in orphan-effect
+	EndedDone   bool // the cards in ended(DONE)
+}
+
+// need is one collection a check reads and whether it was loaded.
+type need struct {
+	name   string
+	loaded bool
+}
+
+// unread returns one red reason per collection a check needs and was not read.
+func unread(needs ...need) []string {
+	var reds []string
+	for _, n := range needs {
+		if !n.loaded {
+			reds = append(reds, n.name+" unread (MISSING)")
+		}
+	}
+	return reds
+}
+
 // FleetInput is everything the fleet checks read.
 type FleetInput struct {
+	Loaded Loaded
+
 	Benches []BenchState
 
 	Dialer    Dialer
@@ -218,7 +253,7 @@ func sortedBenches(in []BenchState) []BenchState {
 
 // CheckBatchLauncher is 7.4: every beat names the batch launcher.
 func CheckBatchLauncher(in FleetInput) FleetLine {
-	var reds []string
+	reds := unread(need{"benches", in.Loaded.Benches})
 	n := 0
 	for _, b := range sortedBenches(in.Benches) {
 		if !b.BeatPresent {
@@ -238,7 +273,7 @@ func CheckBatchLauncher(in FleetInput) FleetLine {
 
 // CheckBeats is 7.5: a registered bench's beat is fresh, or it is paused.
 func CheckBeats(in FleetInput) FleetLine {
-	var reds []string
+	reds := unread(need{"benches", in.Loaded.Benches})
 	up := 0
 	for _, b := range sortedBenches(in.Benches) {
 		switch {
@@ -263,6 +298,9 @@ func CheckOneSessionPerBatch(ctx context.Context, in FleetInput) FleetLine {
 	const check, name = "7.6", "one session per batch"
 	if in.Launcher == nil || in.Dialer == nil {
 		return line(check, name, []string{"launcher or dialer MISSING; no dry batch ran"}, "")
+	}
+	if reds := unread(need{"benches", in.Loaded.Benches}); len(reds) > 0 {
+		return line(check, name, append(reds, "no dry batch ran"), "")
 	}
 	window := in.AckWindow
 	if window <= 0 {
@@ -396,7 +434,7 @@ func (s *countingSession) Close() error { return s.s.Close() }
 // CheckHarvestAndConsumers is 7.8: every UP bench holds a harvest worker
 // lease and no consumer group has an entry pending past 60 s.
 func CheckHarvestAndConsumers(in FleetInput) FleetLine {
-	var reds []string
+	reds := unread(need{"benches", in.Loaded.Benches}, need{"consumer groups", in.Loaded.Consumers})
 	for _, b := range sortedBenches(in.Benches) {
 		if b.Up() && !b.HarvestLease {
 			reds = append(reds, oneline.Escape(b.Name)+" has no harvest worker lease")
@@ -451,7 +489,8 @@ func CheckRESTBudget(in FleetInput) FleetLine {
 // registered bench profile can run, every review-ready head has a ci card or
 // a runner-only record, and no land-ready came from a check-run.
 func CheckTwoSchedulers(in FleetInput) FleetLine {
-	var reds []string
+	reds := unread(need{"bench profiles", in.Loaded.Profiles}, need{"workflows", in.Loaded.Workflows},
+		need{"review-ready heads", in.Loaded.ReviewReady}, need{"land-ready receipts", in.Loaded.LandReady})
 	carriers := map[string][]string{} // os -> benches carrying the go leg
 	for _, p := range in.Profiles {
 		for _, leg := range p.Legs {
@@ -509,8 +548,8 @@ func CheckTwoSchedulers(in FleetInput) FleetLine {
 // CheckOrphanEffects is 7.17: no card sits in orphan-effect past the grace
 // with nothing unresolved, and no ended(DONE) came from `reconciled`.
 func CheckOrphanEffects(in FleetInput) FleetLine {
-	var reds []string
-	if len(in.Orphans) > 0 && in.OrphanGrace <= 0 {
+	reds := unread(need{"orphan-effect cards", in.Loaded.Orphans}, need{"ended(DONE) cards", in.Loaded.EndedDone})
+	if in.OrphanGrace <= 0 {
 		reds = append(reds, "orphan_grace MISSING")
 	}
 	for _, o := range in.Orphans {

@@ -96,6 +96,12 @@ func (perCardLauncher) LaunchBatch(ctx context.Context, bench string, cards []st
 	return nil
 }
 
+// allLoaded is a fleet whose every collection snapshot was read.
+func allLoaded() Loaded {
+	return Loaded{Benches: true, Consumers: true, Profiles: true, Workflows: true,
+		ReviewReady: true, LandReady: true, Orphans: true, EndedDone: true}
+}
+
 func upBench(name string, desired int) BenchState {
 	return BenchState{Name: name, Desired: desired, BeatPresent: true, BeatAge: 500 * time.Millisecond,
 		Launcher: BatchLauncherName, HarvestLease: true}
@@ -106,7 +112,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 	benches := []BenchState{upBench("ctl-a", 50), upBench("ctl-b", 8)}
 
 	t.Run("one session carries the batch: GREEN", func(t *testing.T) {
-		in := FleetInput{Benches: benches, Dialer: &fakeSSHD{maxSessions: 2}, Launcher: batchLauncher{}}
+		in := FleetInput{Loaded: allLoaded(), Benches: benches, Dialer: &fakeSSHD{maxSessions: 2}, Launcher: batchLauncher{}}
 		line := CheckOneSessionPerBatch(ctx, in)
 		if line.Red {
 			t.Fatalf("one session per batch must be green, got %s", line)
@@ -120,7 +126,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 	})
 
 	t.Run("a launcher opening a session per card: RED", func(t *testing.T) {
-		in := FleetInput{Benches: benches, Dialer: &fakeSSHD{maxSessions: 2}, Launcher: perCardLauncher{}}
+		in := FleetInput{Loaded: allLoaded(), Benches: benches, Dialer: &fakeSSHD{maxSessions: 2}, Launcher: perCardLauncher{}}
 		line := CheckOneSessionPerBatch(ctx, in)
 		if !line.Red {
 			t.Fatalf("a session per card must be red, got %s", line)
@@ -133,7 +139,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 	})
 
 	t.Run("sshd refuses the batch session: RED names the bench", func(t *testing.T) {
-		in := FleetInput{Benches: []BenchState{upBench("ctl-wedged", 4)}, Dialer: &fakeSSHD{refuse: true}, Launcher: batchLauncher{}}
+		in := FleetInput{Loaded: allLoaded(), Benches: []BenchState{upBench("ctl-wedged", 4)}, Dialer: &fakeSSHD{refuse: true}, Launcher: batchLauncher{}}
 		line := CheckOneSessionPerBatch(ctx, in)
 		if !line.Red || !strings.Contains(line.String(), "ctl-wedged: ssh: refused") {
 			t.Fatalf("a refused session must be red and named: %s", line)
@@ -141,7 +147,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 	})
 
 	t.Run("a dry child slower than the ack window: RED", func(t *testing.T) {
-		in := FleetInput{Benches: []BenchState{upBench("ctl-slow", 2)}, Dialer: &fakeSSHD{ackDelay: 200 * time.Millisecond},
+		in := FleetInput{Loaded: allLoaded(), Benches: []BenchState{upBench("ctl-slow", 2)}, Dialer: &fakeSSHD{ackDelay: 200 * time.Millisecond},
 			Launcher: batchLauncher{}, AckWindow: 50 * time.Millisecond}
 		line := CheckOneSessionPerBatch(ctx, in)
 		if !line.Red || !strings.Contains(line.String(), "ctl-slow:") || !strings.Contains(line.String(), "timed out") {
@@ -158,7 +164,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 			defer s.Close()
 			return s.LaunchDry(ctx, cards[0])
 		})
-		in := FleetInput{Benches: []BenchState{upBench("ctl-lazy", 3)}, Dialer: &fakeSSHD{}, Launcher: lazy}
+		in := FleetInput{Loaded: allLoaded(), Benches: []BenchState{upBench("ctl-lazy", 3)}, Dialer: &fakeSSHD{}, Launcher: lazy}
 		line := CheckOneSessionPerBatch(ctx, in)
 		if !line.Red || !strings.Contains(line.String(), "ctl-lazy: 1 of 3 dry children acked") {
 			t.Fatalf("missing acks must be red: %s", line)
@@ -166,7 +172,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 	})
 
 	t.Run("no launcher configured is MISSING, never green", func(t *testing.T) {
-		line := CheckOneSessionPerBatch(ctx, FleetInput{Benches: benches})
+		line := CheckOneSessionPerBatch(ctx, FleetInput{Loaded: allLoaded(), Benches: benches})
 		if !line.Red || !strings.Contains(line.String(), "MISSING") {
 			t.Fatalf("no launcher must be red MISSING: %s", line)
 		}
@@ -175,7 +181,7 @@ func TestPreflightOneSessionPerBatch(t *testing.T) {
 	t.Run("paused and zero-desired benches are not dealt a dry batch", func(t *testing.T) {
 		paused := upBench("ctl-paused", 4)
 		paused.Paused = true
-		in := FleetInput{Benches: []BenchState{paused, upBench("ctl-zero", 0)}, Dialer: &fakeSSHD{refuse: true}, Launcher: batchLauncher{}}
+		in := FleetInput{Loaded: allLoaded(), Benches: []BenchState{paused, upBench("ctl-zero", 0)}, Dialer: &fakeSSHD{refuse: true}, Launcher: batchLauncher{}}
 		line := CheckOneSessionPerBatch(ctx, in)
 		if line.Red {
 			t.Fatalf("no UP bench wants a batch; must be green: %s", line)
@@ -295,7 +301,9 @@ func TestPreflightTwoSchedulersRed(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			line := CheckTwoSchedulers(tc.in)
+			in := tc.in
+			in.Loaded = allLoaded()
+			line := CheckTwoSchedulers(in)
 			if line.Red != tc.red {
 				t.Fatalf("red=%v want %v: %s", line.Red, tc.red, line)
 			}
@@ -314,6 +322,7 @@ func TestPreflightTwoSchedulersRed(t *testing.T) {
 func TestPreflightFleetChecksInOrder(t *testing.T) {
 	ctx := context.Background()
 	green := FleetInput{
+		Loaded:       allLoaded(),
 		Benches:      []BenchState{upBench("ctl-a", 2)},
 		Dialer:       &fakeSSHD{},
 		Launcher:     batchLauncher{},
@@ -400,6 +409,84 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 			if l.Check == "7.17" && l.Red {
 				t.Fatalf("7.17 red: %s", l)
 			}
+		}
+	})
+}
+
+// TestPreflightUnreadInputRefuses is Stella's hold on 1b798eae: an empty
+// collection cannot say whether it was read, so a check whose snapshot is
+// unread is RED naming it, never GREEN on nothing.
+func TestPreflightUnreadInputRefuses(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("an unread fleet passes no collection check", func(t *testing.T) {
+		for _, l := range []FleetLine{
+			CheckBatchLauncher(FleetInput{}),
+			CheckBeats(FleetInput{}),
+			CheckOneSessionPerBatch(ctx, FleetInput{Dialer: &fakeSSHD{}, Launcher: batchLauncher{}}),
+			CheckHarvestAndConsumers(FleetInput{}),
+			CheckTwoSchedulers(FleetInput{}),
+			CheckOrphanEffects(FleetInput{}),
+		} {
+			if !l.Red || !strings.Contains(l.String(), "unread (MISSING)") {
+				t.Errorf("an unread input must be red and say unread: %s", l)
+			}
+		}
+		if !FleetRed(FleetChecks(ctx, FleetInput{})) {
+			t.Error("an unread fleet passed preflight")
+		}
+	})
+
+	// Each collection alone unread, everything else read and clean: the one
+	// check that needs it goes red and names it.
+	green := FleetInput{
+		Loaded:           allLoaded(),
+		Benches:          []BenchState{upBench("ctl-a", 2)},
+		Dialer:           &fakeSSHD{},
+		Launcher:         batchLauncher{},
+		TableCheck:       func(context.Context) error { return nil },
+		TableFilePresent: true,
+		REST:             RESTBudget{Known: true, Remaining: 4000, CallsPerPass: 1, Cadence: 10 * time.Second},
+		OrphanGrace:      5 * time.Minute,
+	}
+	cases := []struct {
+		unset  func(*Loaded)
+		checks []string
+		name   string
+	}{
+		{func(l *Loaded) { l.Benches = false }, []string{"7.4", "7.5", "7.6", "7.8"}, "benches"},
+		{func(l *Loaded) { l.Consumers = false }, []string{"7.8"}, "consumer groups"},
+		{func(l *Loaded) { l.Profiles = false }, []string{"7.16"}, "bench profiles"},
+		{func(l *Loaded) { l.Workflows = false }, []string{"7.16"}, "workflows"},
+		{func(l *Loaded) { l.ReviewReady = false }, []string{"7.16"}, "review-ready heads"},
+		{func(l *Loaded) { l.LandReady = false }, []string{"7.16"}, "land-ready receipts"},
+		{func(l *Loaded) { l.Orphans = false }, []string{"7.17"}, "orphan-effect cards"},
+		{func(l *Loaded) { l.EndedDone = false }, []string{"7.17"}, "ended(DONE) cards"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" unread", func(t *testing.T) {
+			in := green
+			tc.unset(&in.Loaded)
+			want := map[string]bool{}
+			for _, c := range tc.checks {
+				want[c] = true
+			}
+			for _, l := range FleetChecks(ctx, in) {
+				switch {
+				case want[l.Check] && (!l.Red || !strings.Contains(l.String(), tc.name+" unread (MISSING)")):
+					t.Errorf("%s must be red naming %q unread: %s", l.Check, tc.name, l)
+				case !want[l.Check] && l.Red:
+					t.Errorf("%s does not read %s and went red: %s", l.Check, tc.name, l)
+				}
+			}
+		})
+	}
+
+	t.Run("orphan_grace unset is MISSING even with no orphans", func(t *testing.T) {
+		in := green
+		in.OrphanGrace = 0
+		if l := CheckOrphanEffects(in); !l.Red || !strings.Contains(l.String(), "orphan_grace MISSING") {
+			t.Fatalf("unset grace must be red: %s", l)
 		}
 	})
 }
