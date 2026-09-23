@@ -320,6 +320,7 @@ func harvestBench(in HarvestInput) int {
 		// Two-dot against the fetched authorized destination (issue #2032; HOLD on #2117).
 		globs, declared := harvestDeclaredPaths(launchedCardFor(in.Launched, label), j.Result)
 		if err := staleBaseRefusal(clone, dest.url, base, ref, globs, declared); err != nil {
+			remedyStaleBase(err, label, []string{clone})
 			failed++
 			lines.Line(fmt.Sprintf("HARVEST REFUSED stale-base bench=%s label=%s: %s",
 				field(in.Bench), field(label), oneline.Err(err)))

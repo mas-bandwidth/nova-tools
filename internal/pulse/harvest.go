@@ -389,6 +389,7 @@ func Harvest(in HarvestInput) int {
 				continue
 			}
 			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, target, branch, globs, declared); err != nil {
+				remedyStaleBase(err, c.Label, []string{cloneDir(jobDir)})
 				refused++
 				_ = writeSeen(in.Root, c, "refused")
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
