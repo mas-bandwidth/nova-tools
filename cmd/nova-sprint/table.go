@@ -1,38 +1,34 @@
-// table.go: the nova-sprint table verb. Two cuts share one dispatch:
-//
-//   - the old restart cut (--fixture/--refresh) keeps its exact behavior;
-//   - the one-second cut (--redis <addr>) makes exactly one FCALL_RO
-//     ns_snapshot per rendered tick, and --check renders a fixture keyspace.
+// table.go: the nova-sprint table verb. The table is read from Redis and
+// written nowhere (#3326): --redis <addr> makes exactly one FCALL_RO
+// ns_snapshot per rendered tick and prints it to stdout, and --check renders
+// a fixture keyspace. There is no published file and no "last table" kept on
+// disk; a restarted unit re-renders from Redis on its next tick.
 //
 // Section 6 of #2756.
 package main
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/sprinttable"
 )
 
+// tableWants is the whole table verb, named in every refusal.
+const tableWants = "the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>"
+
 type tableOpts struct {
-	once    bool
-	fixture string
-	out     string
-	refresh string
-	redis   string
-	sprint  string
-	check   bool
-	loop    bool
+	once   bool
+	redis  string
+	sprint string
+	check  bool
+	loop   bool
 }
 
 func cmdTable(args []string, stdout, stderr io.Writer) int {
@@ -41,41 +37,32 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs.Usage = func() {}
 	var opts tableOpts
 	fs.BoolVar(&opts.once, "once", false, "")
-	fs.StringVar(&opts.fixture, "fixture", "", "")
-	fs.StringVar(&opts.out, "out", "", "")
-	fs.StringVar(&opts.refresh, "refresh", "", "")
 	fs.StringVar(&opts.redis, "redis", "", "")
 	fs.StringVar(&opts.sprint, "sprint", "", "")
 	fs.BoolVar(&opts.check, "check", false, "")
 	fs.BoolVar(&opts.loop, "loop", false, "")
 	if err := fs.Parse(args); err != nil {
-		return tableRefuse(stderr, err.Error()+"; it wants --once and either --fixture <file> or --refresh pending --out <file>")
+		return tableRefuse(stderr, err.Error()+"; "+tableWants)
 	}
 	if fs.NArg() > 0 {
 		return tableRefuse(stderr, "takes flags, not positional arguments")
 	}
 	if opts.check {
-		if opts.fixture != "" || opts.out != "" || opts.refresh != "" || opts.loop || opts.once || opts.sprint != "" {
+		if opts.loop || opts.once || opts.sprint != "" {
 			return tableRefuse(stderr, "--check takes only --redis <addr>")
 		}
 		return cmdTableCheck(opts.redis, stdout, stderr)
 	}
-	if opts.redis != "" {
-		if opts.fixture != "" || opts.refresh != "" || (opts.loop && opts.once) {
-			return tableRefuse(stderr, "--redis takes either --once or --loop, with optional --out; no --fixture or --refresh")
-		}
-		return cmdTableRedis(opts.redis, opts.sprint, opts.out, opts.loop, stdout, stderr)
+	if opts.redis == "" {
+		return tableRefuse(stderr, "--redis <addr> is required; "+tableWants)
 	}
-	if opts.loop {
-		return tableRefuse(stderr, "--loop requires --redis <addr>")
+	if opts.loop && opts.once {
+		return tableRefuse(stderr, "--redis takes either --once or --loop, not both")
 	}
-	if opts.sprint != "" {
-		return tableRefuse(stderr, "--sprint requires --redis <addr>")
-	}
-	return cmdTableRestart(opts, fs.NArg(), stdout, stderr)
+	return cmdTableRedis(opts.redis, opts.sprint, opts.loop, stdout, stderr)
 }
 
-func cmdTableRedis(addr, sprint, out string, loop bool, stdout, stderr io.Writer) int {
+func cmdTableRedis(addr, sprint string, loop bool, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -88,11 +75,6 @@ func cmdTableRedis(addr, sprint, out string, loop bool, stdout, stderr io.Writer
 			return 0, err
 		}
 		body := snap.Render()
-		if out != "" {
-			if err := publishAtomic(out, body); err != nil {
-				return 0, err
-			}
-		}
 		if _, err := io.WriteString(stdout, body); err != nil {
 			return 0, err
 		}
@@ -144,98 +126,6 @@ func cmdTableCheck(addr string, stdout, stderr io.Writer) int {
 	}
 	if body != table.DefectGolden() {
 		return tableRefuse(stderr, "--check: rendered output is not the fixture output")
-	}
-	return 0
-}
-
-// publishAtomic is the atomic file write of 6.7: temp file then rename.
-func publishAtomic(path, body string) error {
-	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(file.Name())
-	if _, err := io.WriteString(file, body); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Chmod(0o644); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		return err
-	}
-	if err := file.Close(); err != nil {
-		return err
-	}
-	return os.Rename(file.Name(), path)
-}
-
-// cmdTableRestart is the original restart cut, unchanged.
-func cmdTableRestart(opts tableOpts, narg int, stdout, stderr io.Writer) int {
-	var problems []string
-	if !opts.once {
-		problems = append(problems, "--once is required; the one-second loop is not this cut")
-	}
-	if narg > 0 {
-		problems = append(problems, "takes flags, not positional arguments")
-	}
-	switch opts.refresh {
-	case "", "pending":
-	default:
-		problems = append(problems, "--refresh wants pending, which keeps the last table until the next render is ready")
-	}
-	if opts.fixture != "" && opts.refresh == "pending" {
-		problems = append(problems, "--fixture and --refresh pending disagree; one is a ready render and the other is not")
-	}
-	if opts.fixture == "" && opts.refresh != "pending" {
-		problems = append(problems, "pass --fixture <file> to render a ready table, or --refresh pending with --out to keep the last one")
-	}
-	if opts.refresh == "pending" && opts.out == "" {
-		problems = append(problems, "--refresh pending needs --out, the published table to keep")
-	}
-	if len(problems) > 0 {
-		return tableRefuse(stderr, strings.Join(problems, "; "))
-	}
-
-	var next []byte
-	ready := false
-	if opts.fixture != "" {
-		body, err := os.ReadFile(opts.fixture)
-		if err != nil {
-			return tableRefuse(stderr, "cannot read --fixture "+opts.fixture+": "+err.Error())
-		}
-		if len(bytes.TrimSpace(body)) == 0 {
-			return tableRefuse(stderr, "--fixture is empty; refusing to blank the table")
-		}
-		next = body
-		ready = true
-	}
-	res, err := sprinttable.Publish(opts.out, next, ready)
-	if err != nil {
-		return tableRefuse(stderr, err.Error())
-	}
-	if opts.out == "" {
-		if _, err := stdout.Write(res.Body); err != nil {
-			return tableRefuse(stderr, err.Error())
-		}
-		return 0
-	}
-	if res.Wrote {
-		fmt.Fprintf(stdout, "TABLE PUBLISHED out=%s bytes=%d\n", oneline.Field(opts.out), len(res.Body))
-		return 0
-	}
-	fmt.Fprintf(stdout, "TABLE KEPT out=%s bytes=%d reason=%s\n", oneline.Field(opts.out), len(res.Body), oneline.Field(res.Reason))
-	if len(res.Body) == 0 {
-		return 0
-	}
-	if _, err := stdout.Write(res.Body); err != nil {
-		return tableRefuse(stderr, err.Error())
-	}
-	if !bytes.HasSuffix(res.Body, []byte("\n")) {
-		fmt.Fprintln(stdout)
 	}
 	return 0
 }
