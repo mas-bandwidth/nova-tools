@@ -28,7 +28,7 @@ func TestNativeRefusesASchemaCardBeforeTheHarnessStarts(t *testing.T) {
 	store := slotShares(t, "capacity\t3\nreserve\t0\nfake-1\t3\n")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--tokens", "unmetered", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "schema-card", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall",
 		"--slots-store", store, "--owner", "fake-1"},

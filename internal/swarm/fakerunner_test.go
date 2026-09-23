@@ -223,7 +223,7 @@ func TestFakeRunnerPublishesAWholeFileWriteAtomically(t *testing.T) {
 	runner := runnerDoing(t, dir, "writer", runnerStep{Op: "write", Path: dest, Body: "the published body"})
 	card := filepath.Join(dir, "card.md")
 	root := filepath.Join(dir, "root")
-	cmd := exec.Command(runner, "card-f", "1", "m", card, root)
+	cmd := exec.Command(runner, "card-f", "1", "m", card, root, "unmetered")
 	if got, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the writing runner: %v\n%s", err, got)
 	}

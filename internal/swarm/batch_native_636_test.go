@@ -91,7 +91,7 @@ func TestBatchUnknownAcceptanceDoesNotExitZero(t *testing.T) {
 	)
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		ID: "TP1", Deadline: 10 * time.Second, Cards: tsv, Root: root, Runner: runner, Tokens: "unmetered",
 		Stdout: &out, Stderr: &errb,
 	})
 	if code == 0 {
