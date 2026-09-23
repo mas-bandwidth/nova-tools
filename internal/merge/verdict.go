@@ -297,7 +297,7 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	if holdLine != "" {
 		// SPEC-DECIDE lines 1037-1040: untyped comment binds to current head
 		head := currentHead
-		who := deriveHoldWho(holdLine)
+		who := attributeUntypedHold(clean, holdLine)
 		v := Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
 			Who:    who,
@@ -820,6 +820,122 @@ func deriveHoldWho(line string) string {
 		return "unknown"
 	}
 	return normWho(m[1])
+}
+
+// friendNameRE is the fixed set of friend names, case-insensitive, whole words.
+var friendNameRE = regexp.MustCompile(`(?i)\b(emma|stella|johnny|glenn)\b`)
+
+// whoAnchorBefore is an identity slot immediately before a friend name:
+// who=<name>, optional space around =, optional quote. A bare mention is not one.
+var whoAnchorBefore = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])who\s*=\s*["']?$`)
+
+// holdPinTokenRE removes sha=/head= pins so the header can be asked whether
+// anything but a pin remains.
+var holdPinTokenRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?[0-9a-fA-F]{7,40}"?`)
+
+// attributeUntypedHold is deriveHoldWho, plus the nova-tools #2710 header rule
+// for "HOLD sha=<hex>" where the friend's name is not adjacent to HOLD (#2713's
+// 43f1df17, recut). The header is the rest of the first line after HOLD; if
+// that rest is only pins and punctuation, it extends to the next non-blank
+// line. A single anchored identity attributes: who=<name>, or <Name>: (either
+// spelling). A free-form mention does not -- "Stella delta read clears the
+// original defect" stays unknown -- because under the #3278 ruling the
+// holder's own later typed APPROVE releases the hold at any head, so a mention
+// read as the writer would let the mentioned friend release somebody else's
+// HOLD on a shared login. Two names, or none, stay unknown, and an
+// unattributed HOLD stays held. A name deriveHoldWho already reads
+// ("HOLD -- Stella", "Stella: HOLD") is kept. A sha= pin only shapes the
+// header here; it does not move the head the hold binds to.
+func attributeUntypedHold(clean, holdLine string) string {
+	if who := deriveHoldWho(holdLine); who != "unknown" {
+		return who
+	}
+	lines := nonEmptyLines(clean)
+	if len(lines) == 0 || !strings.EqualFold(firstToken(lines[0]), "HOLD") {
+		return "unknown"
+	}
+	rest := stripLeadingHoldWord(lines[0])
+	header := rest
+	if holdHeaderIsPinOnly(rest) && len(lines) > 1 {
+		header = rest + " " + lines[1]
+	}
+	return anchoredFriendWho(header)
+}
+
+func nonEmptyLines(body string) []string {
+	var out []string
+	for _, l := range strings.Split(body, "\n") {
+		if s := strings.TrimSpace(l); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func stripLeadingHoldWord(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) >= 4 && strings.EqualFold(line[:4], "HOLD") {
+		rest := line[4:]
+		if rest == "" {
+			return rest
+		}
+		r := rest[0]
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return rest
+		}
+	}
+	return line
+}
+
+func holdHeaderIsPinOnly(rest string) bool {
+	stripped := holdPinTokenRE.ReplaceAllString(" "+rest, "")
+	for _, r := range stripped {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+// anchoredFriendWho is the one friend the header names as an identity.
+// who=<name> and <Name>: count. A name with neither, or a second friend's
+// name beside the first, does not: a mention is not a signature.
+func anchoredFriendWho(header string) string {
+	idxs := friendNameRE.FindAllStringSubmatchIndex(header, -1)
+	if len(idxs) == 0 {
+		return "unknown"
+	}
+	who := ""
+	anchored := false
+	for _, m := range idxs {
+		n := normWho(header[m[2]:m[3]])
+		if n == "" {
+			continue
+		}
+		if who == "" {
+			who = n
+		} else if who != n {
+			return "unknown"
+		}
+		if friendNameIsAnchored(header, m[2], m[3]) {
+			anchored = true
+		}
+	}
+	if who == "" || !anchored {
+		return "unknown"
+	}
+	return who
+}
+
+func friendNameIsAnchored(s string, start, end int) bool {
+	if start < 0 || end > len(s) || start > end {
+		return false
+	}
+	if whoAnchorBefore.MatchString(s[:start]) {
+		return true
+	}
+	rest := strings.TrimLeft(s[end:], " \t")
+	return strings.HasPrefix(rest, ":")
 }
 
 // ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.
