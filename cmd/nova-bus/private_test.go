@@ -321,3 +321,63 @@ func TestThePrivateRouteCannotReachAProviderByConstruction(t *testing.T) {
 		}
 	}
 }
+
+// Stella's hold at 0c3c10a1 (SPEC-DECIDE S7): every <NAME>_KEY=, <NAME>_TOKEN= and
+// <NAME>_SECRET= assignment is redacted before framing -- in the SUBJECT as well as the
+// body -- by the shared questions.Redact, so the fake provider must never see the value.
+func TestInboxDecideRedactsAssignmentShapedSecretsInTheSubject(t *testing.T) {
+	checkout, _ := busDir(t)
+	publicBus(t, checkout)
+	addDecideNote(t, checkout, "from-bo/subject-secret.md", "bo-777777777777",
+		"Please start the batch with DEPLOY_TOKEN=subjtokenvalue1 and API_KEY=subjkeyvalue2",
+		"Nothing secret down here, just the ordinary body of a note.")
+	f, url := startFakeJev(t)
+	t.Setenv(decideTestKeyEnv, "sk-test-key")
+	t.Setenv("TYPESAFE_API_KEY", "")
+
+	invoke(t, "", decideArgs(checkout, url)...).mustCode(t, 0)
+
+	if f.calls.Load() == 0 {
+		t.Fatal("provider was never called, so the regression proves nothing")
+	}
+	for _, leak := range []string{"subjtokenvalue1", "subjkeyvalue2"} {
+		if f.sawState(leak) {
+			t.Fatalf("provider saw the subject's secret %q", leak)
+		}
+	}
+	if !f.sawState("[redacted]") {
+		t.Fatal("provider state carries no redaction placeholder")
+	}
+	if !f.sawState("Please start the batch") {
+		t.Fatal("redaction ate the subject's ordinary words")
+	}
+}
+
+// The same S7 rule over the body: an assignment inside the sent prefix is redacted, and
+// the whole body is redacted before the 600-character cut, so an assignment straddling
+// the cut cannot leave a prefix of its value behind.
+func TestInboxDecideRedactsAssignmentShapedSecretsInTheBody(t *testing.T) {
+	checkout, _ := busDir(t)
+	publicBus(t, checkout)
+	body := "Please start the batch. DB_SECRET=bodysecretvalue3 and GH_TOKEN = bodytokenvalue4. " +
+		strings.Repeat("y", 600-len("Please start the batch. DB_SECRET=bodysecretvalue3 and GH_TOKEN = bodytokenvalue4. ")-8) +
+		" CLOUD_KEY=straddlevalue5"
+	addDecideNote(t, checkout, "from-bo/body-secret.md", "bo-888888888888", "An ordinary subject", body)
+	f, url := startFakeJev(t)
+	t.Setenv(decideTestKeyEnv, "sk-test-key")
+	t.Setenv("TYPESAFE_API_KEY", "")
+
+	invoke(t, "", decideArgs(checkout, url)...).mustCode(t, 0)
+
+	if f.calls.Load() == 0 {
+		t.Fatal("provider was never called, so the regression proves nothing")
+	}
+	for _, leak := range []string{"bodysecretvalue3", "bodytokenvalue4", "straddle", "CLOUD_K"} {
+		if f.sawState(leak) {
+			t.Fatalf("provider saw the body's secret fragment %q", leak)
+		}
+	}
+	if !f.sawState("[redacted]") {
+		t.Fatal("provider state carries no redaction placeholder")
+	}
+}

@@ -57,6 +57,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/decide/questions"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -2502,7 +2503,11 @@ func (d *noteDecider) judge(e bus.OpenEntry) (noteJudgment, error) {
 			}
 			d.client = c
 		}
-		answers, _, err := d.client.Decide(context.Background(), decideState(subject, body), d.qs)
+		state, err := decideState(e, subject, body)
+		if err != nil {
+			return noteJudgment{}, err
+		}
+		answers, _, err := d.client.Decide(context.Background(), state, d.qs)
 		if err != nil {
 			return noteJudgment{}, err
 		}
@@ -2587,9 +2592,32 @@ func (d *noteDecider) decided() decideCounts { return d.counts }
 func (d *noteDecider) privateRoute() bool { return false }
 
 // decideState is what a note sends to the provider: its subject and the first 600
-// characters of its body, with any sk- key redacted.
-func decideState(subject, body string) string {
-	return subject + "\n\n" + redactSK(firstChars(body, decideStateChars))
+// characters of its body, redacted by SPEC-DECIDE S7's shared rule before either is cut
+// or framed. Every sk- token and every <NAME>_KEY=, <NAME>_TOKEN= and <NAME>_SECRET=
+// assignment -- in the subject as well as the body -- is replaced with a placeholder by
+// questions.Redact, the one redaction every decider path uses, and the WHOLE body is
+// redacted before the 600-character cut, so a secret straddling the cut cannot leave half
+// of itself behind. Evidence that still reads secret-shaped after redaction is refused
+// with why=secret-shaped (secretShapedError) and never sent.
+func decideState(e bus.OpenEntry, subject, body string) (string, error) {
+	subject = questions.Redact(redactSK(subject))
+	body = questions.Redact(redactSK(body))
+	if questions.SecretShaped(subject) || questions.SecretShaped(body) {
+		return "", &secretShapedError{ID: e.ID, Path: e.Path}
+	}
+	return subject + "\n\n" + firstChars(body, decideStateChars), nil
+}
+
+// secretShapedError is S7's refusal for evidence redaction could not clean: it is raised
+// before the state is framed, so the provider is never called with it.
+type secretShapedError struct {
+	ID   string
+	Path string
+}
+
+func (e *secretShapedError) Error() string {
+	return fmt.Sprintf("why=secret-shaped id=%s path=%s: this note still reads secret-shaped after redaction, so --decide will not send it to a provider",
+		oneline.Field(dash(e.ID)), oneline.Field(e.Path))
 }
 
 // decideStateChars is how much of a note's body --decide sends.
