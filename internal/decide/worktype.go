@@ -292,6 +292,59 @@ func LoadWorkTypeRoutes(path string) (WorkTypeRoutes, error) {
 	return w, nil
 }
 
+// WorkTypeProducesBranch reports whether a card of type t writes code: the
+// three types that end in a branch. Their route is gated by allowed_routes, so
+// a card of one of them is not routed without the table.
+func WorkTypeProducesBranch(t string) bool {
+	return t == WorkTypeIssueFixRedFirst || t == WorkTypeRecutAtTip || t == WorkTypeConformanceCell
+}
+
+// RequireTable refuses a card whose type produces a branch when no
+// allowed_routes table was given: for a coding card the table IS the route
+// gate, and a gate that is absent is not a pass. It runs after the card is
+// classified and before any route is chosen.
+func (w WorkTypeRoutes) RequireTable(t string) error {
+	if w == nil && WorkTypeProducesBranch(t) {
+		return fmt.Errorf("a card of type %s produces a branch and its route is gated by allowed_routes[%s]; pass --allowed-routes", t, t)
+	}
+	return nil
+}
+
+// Admit is the gate on the SELECTED route: the rung the router chose, by its
+// name or the model id the registry gives it, must be one of allowed_routes[t].
+// With a table given, a type with no row admits nothing (an unclassified card
+// has no row: the table refuses a key outside the eight). With no table, only
+// a type that produces no branch passes (RequireTable). A route that is a wait
+// dispatches nothing and is not gated.
+func (w WorkTypeRoutes) Admit(t string, res RouteResult, reg *Registry) error {
+	if err := w.RequireTable(t); err != nil {
+		return err
+	}
+	if w == nil || !res.Dispatchable() {
+		return nil
+	}
+	rs := w.For(t)
+	if len(rs) == 0 {
+		return fmt.Errorf("allowed_routes has no row for %s: no route is allowed for this card", t)
+	}
+	names := []string{res.Rung.Name}
+	model := "-"
+	if reg != nil {
+		if m, ok := reg.ModelFor(res.Rung.Name); ok {
+			names, model = append(names, m), m
+		}
+	}
+	for _, r := range rs {
+		for _, n := range names {
+			if strings.TrimSpace(n) != "" && r == n {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("the selected rung %s (model %s) is not in allowed_routes[%s] = %s",
+		oneline.Field(res.Rung.Name), oneline.Field(model), t, strings.Join(rs, ","))
+}
+
 // WorkTypeCardLines is the two lines the route writes on the card: the work
 // type with allowed_routes[type], and the route receipt in the dispatch path's
 // own grammar (jev=<rung> where Jev chose it, jev=fallback where the rules'

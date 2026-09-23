@@ -207,3 +207,62 @@ func TestWorkTypeRoutesRefusesAnUnknownType(t *testing.T) {
 		t.Errorf("an unknown work type was accepted: %v", err)
 	}
 }
+
+// allowed_routes gates the SELECTED route (Stella's read at afd3efb0): the rung
+// the router chose must be in allowed_routes[type], by name or by the model id
+// the registry gives it. The negative control is a disallowed rung, refused; a
+// type with no row admits nothing; and a card whose type produces a branch is
+// refused with no table at all, because for it the table is the gate.
+func TestWorkTypeAllowedRoutesGateTheSelectedRung(t *testing.T) {
+	reg := testRegistry(t)
+	res := mustRoute(t, reg, Unit{ID: "card-gate", Kind: KindRebase, Files: 1, Packages: 1, Lanes: 1}, DefaultFloor)
+	if res.Rung.Name == "" || !res.Dispatchable() {
+		t.Fatalf("the fixture route chose no dispatchable rung: %+v", res)
+	}
+	model, hasModel := reg.ModelFor(res.Rung.Name)
+	fix := WorkTypeIssueFixRedFirst
+
+	// Positive controls: the rung by name, and by its model id.
+	if err := (WorkTypeRoutes{fix: {"ocminimax", res.Rung.Name}}).Admit(fix, res, reg); err != nil {
+		t.Errorf("rung %s is in allowed_routes[%s] by name and was refused: %v", res.Rung.Name, fix, err)
+	}
+	if hasModel {
+		if err := (WorkTypeRoutes{fix: {model}}).Admit(fix, res, reg); err != nil {
+			t.Errorf("rung %s is in allowed_routes[%s] by model %s and was refused: %v", res.Rung.Name, fix, model, err)
+		}
+	}
+
+	// Negative control: a rung the table does not list is refused.
+	err := (WorkTypeRoutes{fix: {"ocminimax", "ormimopro"}}).Admit(fix, res, reg)
+	if err == nil || !strings.Contains(err.Error(), "not in allowed_routes["+fix+"]") {
+		t.Errorf("rung %s is not in allowed_routes[%s] = ocminimax,ormimopro and was admitted: %v", res.Rung.Name, fix, err)
+	}
+	// A table with no row for the type admits nothing.
+	if err := (WorkTypeRoutes{WorkTypeIssueColdRead: {res.Rung.Name}}).Admit(fix, res, reg); err == nil {
+		t.Errorf("allowed_routes has no row for %s and the route was admitted", fix)
+	}
+	if err := (WorkTypeRoutes{WorkTypeIssueColdRead: {res.Rung.Name}}).Admit(WorkTypeUnclassified, res, reg); err == nil {
+		t.Errorf("an unclassified card was admitted under a table that has no row for it")
+	}
+
+	// No table: a coding card is refused before any route is chosen; a read passes.
+	var none WorkTypeRoutes
+	for _, coding := range []string{WorkTypeIssueFixRedFirst, WorkTypeRecutAtTip, WorkTypeConformanceCell} {
+		if err := none.RequireTable(coding); err == nil {
+			t.Errorf("a %s card was routed with no allowed_routes table", coding)
+		}
+		if err := none.Admit(coding, res, reg); err == nil {
+			t.Errorf("a %s card was admitted with no allowed_routes table", coding)
+		}
+	}
+	if err := none.Admit(WorkTypeIssueColdRead, res, reg); err != nil {
+		t.Errorf("a read card with no table was refused: %v", err)
+	}
+
+	// A wait dispatches nothing and is not gated.
+	wait := res
+	wait.Wait = "owner"
+	if err := (WorkTypeRoutes{fix: {"ocminimax"}}).Admit(fix, wait, reg); err != nil {
+		t.Errorf("a wait was gated as if it dispatched: %v", err)
+	}
+}
