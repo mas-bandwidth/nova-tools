@@ -144,7 +144,51 @@ jobs:
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -201,6 +245,14 @@ jobs:
       - name: vet
         run: make vet
 
+      - name: vet-laws
+        # tools/analyzers/cmd/vetlaw as a go vet -vettool= analyzer over
+        # ./cmd/..., enforcing verb laws #2573 (exit-zero-with-zero-bytes),
+        # #2575 (help-answers-refused) and #2583 (task-text-in-argv). Its own
+        # step, not folded into `vet`, because this job is the only one that
+        # runs `make vet` unsharded and un-PKGS-scoped (nova-tools #2724).
+        run: make vet-laws
+
       - name: vet-windows
         # `GOOS=windows go vet ./...`, the one Windows guard on the CL path.
         # It is last in this job on purpose: it is the only step that has to
@@ -219,7 +271,7 @@ jobs:
     # packages run on the studio only. On pull_request and merge_group it
     # selects only the packages the change touches and their in-module
     # importers; the push to dev and the nightly run keep the whole tree.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     outputs:
@@ -240,7 +292,51 @@ jobs:
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -341,11 +437,56 @@ jobs:
             exit 0
           fi
 
+          # A PULL REQUEST'S macOS LEGS ARE FOR THE CODE THAT IS DIFFERENT ON macOS.
+          # Measured 2026-09-23 02:40Z (#2795): 52 PR runs queued, and every one of
+          # their 141 waiting jobs needed `self-hosted,macOS` while 46 Linux runners
+          # sat idle; the macOS legs of the last 25 PR runs waited a median 39 min
+          # (max 51) for one of the 36-40 Mac runners the swarm also loads, the
+          # Linux legs 2 s. Yet 73 of the 78 packages compile the SAME files on
+          # darwin as on linux, and 58 of them import nothing that does not: their
+          # macOS leg ran the Go source their Linux leg had already run. So on a
+          # pull_request a touched package gets a macOS leg only when it, or a
+          # package it (or its tests) imports from this module, compiles a
+          # different file set under GOOS=darwin (today cmd/nova-sandbox,
+          # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
+          # 15 packages that import them); every other package runs on Linux
+          # only, the shape the merge_group run below has used since 2026-09-16.
+          # The whole tree still runs on macOS on every push to dev (16 studio
+          # shards) and in certification's `test` job, so nothing leaves the
+          # macOS evidence; it leaves the PR feedback path. If `go list` fails,
+          # every touched package keeps its macOS leg (the old shape).
+          darwin_sensitive=" "
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${#all[@]}" -gt 0 ]; then
+            mod=$(go list -m)
+            files='{{.ImportPath}} {{.GoFiles}} {{.CgoFiles}} {{.TestGoFiles}} {{.XTestGoFiles}}'
+            if GOOS=linux go list -f "$files" ./cmd/... ./internal/... > "$RUNNER_TEMP/files-linux" &&
+              GOOS=darwin go list -f "$files" ./cmd/... ./internal/... > "$RUNNER_TEMP/files-darwin" &&
+              GOOS=darwin go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./cmd/... ./internal/... > "$RUNNER_TEMP/deps-darwin"; then
+              differ=$(diff "$RUNNER_TEMP/files-linux" "$RUNNER_TEMP/files-darwin" | awk '/^[<>]/ {print $2}' | sort -u || true)
+              while read -r p deps; do
+                p="${p%.test}"
+                p="${p%_test}"
+                for d in $differ; do
+                  case " $p $deps " in *" $d "*) darwin_sensitive+="./${p#"$mod"/} "; break ;; esac
+                done
+              done < "$RUNNER_TEMP/deps-darwin"
+              echo "darwin-specific (own files or an import differ under GOOS=darwin): $(echo $darwin_sensitive | tr ' ' '\n' | sort -u | tr '\n' ' ')"
+            else
+              darwin_sensitive="ALL"
+              echo "go list failed: every touched package keeps its macOS leg"
+            fi
+          fi
+          needs_darwin() {
+            [ "$darwin_sensitive" = "ALL" ] && return 0
+            case "$darwin_sensitive" in *" $1 "*) return 0 ;; esac
+            return 1
+          }
+
           declare -a space_grp studio_grp
           s=0
           st=0
           for pkg in "${all[@]}"; do
-            if [ "${{ github.event_name }}" = "merge_group" ] && ! is_darwin_only "$pkg"; then
+            if { [ "${{ github.event_name }}" = "merge_group" ] || { [ "${{ github.event_name }}" = "pull_request" ] && ! needs_darwin "$pkg"; }; } && ! is_darwin_only "$pkg"; then
               space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
             fi
             studio_grp[$((st % STUDIO_SHARDS))]+=" $pkg"
@@ -390,7 +531,7 @@ jobs:
     # and exits 0.
     name: test (${{ matrix.entry.name }})
     needs: test-packages
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     strategy:
       fail-fast: false
       matrix:
@@ -456,8 +597,53 @@ jobs:
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: borrow objects from the bench mirror
         if: matrix.entry.packages != ''
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        if: matrix.entry.packages != ''
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: matrix.entry.packages != '' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         if: matrix.entry.packages != ''
@@ -567,7 +753,7 @@ jobs:
     # default feedback path is still the self-hosted matrix and costs nothing
     # here. ci-ok does not gate on it for a dispatch: the run is evidence to
     # read, not an automatic merge gate.
-    if: github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -576,7 +762,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -642,14 +838,24 @@ jobs:
     # the changed packages sum under 20 s (or no Go changed), else 3. No Go
     # toolchain needed: the table is keyed by import path, module path + dir.
     name: plan-merge
-    if: github.event_name == 'merge_group'
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'merge_group')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     outputs:
       shards: ${{ steps.plan.outputs.shards }}
       slots: ${{ steps.plan.outputs.slots }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: plan the shard slots
         id: plan
         shell: bash
@@ -685,7 +891,7 @@ jobs:
     # 51 s idle and over three times that on a loaded Studio, where three
     # shards each crossed the two-minute cap.
     name: test-hosted-merge (${{ matrix.leg.name }}, ${{ matrix.shard }})
-    if: github.event_name == 'merge_group'
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name == 'merge_group')
     needs: plan-merge
     strategy:
       fail-fast: false
@@ -752,7 +958,17 @@ jobs:
     # 2026-09-18: twelve minutes for the windows leg, which is gone with the leg.
     timeout-minutes: ${{ matrix.leg.timeout }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -1002,7 +1218,17 @@ jobs:
     # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: filter the PR diff for this platform's paths
         # No path filter exists elsewhere in this file to reuse, so
@@ -1054,7 +1280,7 @@ jobs:
     # is what keeps it populated: a card that changes a verb names the sequence a friend
     # runs through it and adds the test. On a pull_request this is a self-hosted Linux job
     # using the machine's own Go, guarded as every self-hosted job is.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
@@ -1073,7 +1299,51 @@ jobs:
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -1124,7 +1394,51 @@ jobs:
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
@@ -1176,7 +1490,51 @@ jobs:
           [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
           find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: borrow objects from the bench mirror
+        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
+        # workspace above, so actions/checkout fetched the whole commit from
+        # GitHub (11 MB at --depth=1) on every job, and on the house benches
+        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
+        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
+        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
+        # the same stall that failed 566 staged cards (#2882). Every bench
+        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
+        # workspace borrows its objects (objects/info/alternates) and starts
+        # detached at the mirror's HEAD: the fetch then carries only what the
+        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
+        # actions/checkout keeps a workspace whose origin URL matches and whose
+        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
+        # checkout step itself is unchanged.
+        # A bench with no mirror, or a workspace that is not empty, is left to
+        # actions/checkout exactly as before, and this step never fails a job.
+        shell: bash
+        run: |
+          m="$HOME/nova-bench/mirror/nova-tools.git"
+          w="${GITHUB_WORKSPACE:?}"
+          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
+          mkdir -p "$w"
+          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
+          seed() {
+            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
+            git init -q "$w" &&
+              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
+              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
+              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
+              echo "workspace borrows $m, detached at its HEAD $tip"
+          }
+          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
+
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: install sbcl if missing
         # The self-hosted runners need no sudo; install directly when sbcl is absent.
@@ -1223,8 +1581,18 @@ jobs:
         id: want
         run: |
           [ "${{ matrix.slot }}" -le "${{ inputs.slots }}" ] && echo "run=yes" >> "$GITHUB_OUTPUT" || echo "run=no" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
         if: steps.want.outputs.run == 'yes'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.want.outputs.run == 'yes' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: toolchains the way ci.yml finds them
         if: steps.want.outputs.run == 'yes'
         run: |
@@ -1301,6 +1669,7 @@ jobs:
         run: |
           set -uo pipefail
           bad=0
+          cards="${{ vars.NOVA_CI_CARDS }}"
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
@@ -1322,6 +1691,8 @@ jobs:
             # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
+            # NOVA_CI_CARDS=on (#2925): these rows run as ci cards and the lander reads ci:<repo>:<sha> (#2842, #2924), so Actions skipping them is the design.
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|e2e|test-hosted-merge) continue ;; esac; fi
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
             # test-windows-pr was aggregated here until 2026-09-18, when the
@@ -1338,6 +1709,7 @@ jobs:
         run: |
           set -uo pipefail
           bad=0
+          cards="${{ vars.NOVA_CI_CARDS }}"
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
@@ -1351,6 +1723,7 @@ jobs:
             # docs/SPEC-WORK.md did not move; a skipped lisp is a pass. A red
             # lisp still blocks the merge.
             if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|e2e|test-hosted) continue ;; esac; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

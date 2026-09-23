@@ -1,15 +1,25 @@
 // Package ghevent turns one GitHub webhook delivery into one entry on the
 // Redis stream ev:github (nova-tools #2657, #2685).
 //
-// The carried events are pull_request, issue_comment, pull_request_review,
-// check_suite, check_run and merge_group. Anything else, including ping, is
-// ErrNotCarried and is not written. One delivery is one entry: a check that
-// names several pull requests does not fan out. The number kept is the first
-// pull request the payload lists.
+// The carried events are ping, pull_request, issue_comment,
+// pull_request_review, check_suite, check_run, merge_group, issues (actions
+// opened, labeled, unlabeled, edited, closed, reopened) and workflow_run.
+// Anything else, and an issues action outside that set, is ErrNotCarried and
+// is not written. One delivery is one entry: a check that names several pull
+// requests does not fan out. The number kept is the first pull request the
+// payload lists.
 //
-// The fields are the ones the issue names: repo, kind, number, head, action,
-// at, sender, comment_id. kind is the X-GitHub-Event header, which is not in
-// the JSON body. An issue_comment payload has no pull-request head; when the
+// A ping is carried (#3177): creating a hook, or POST .../hooks/<id>/pings, is
+// how the hook proves it reaches the stream, so a ping is one entry with
+// kind=ping, action=ping, repo the repository's full name or, on an org hook,
+// the organization's login, and at the hook's updated_at.
+//
+// Every entry has the fields repo, kind, number, head, action, at, sender,
+// comment_id. kind is the X-GitHub-Event header, which is not in the JSON
+// body. Two kinds add their own fields, always all of them, empty included:
+// issues adds labels (a JSON array of the issue's label names after the
+// change), body, state and state_reason; workflow_run adds run_id, workflow,
+// status and conclusion. An issue_comment payload has no pull-request head; when the
 // body carries a typed DISPOSITION line, head is the sha that line names,
 // read with the lander's parser after quotes and fences are stripped. A
 // comment that is not a typed line is still one entry, with an empty head.
@@ -48,6 +58,18 @@ type Entry struct {
 	At        string
 	Sender    string
 	CommentID string
+
+	// issues only.
+	Labels      []string
+	Body        string
+	State       string
+	StateReason string
+
+	// workflow_run only.
+	RunID      string
+	Workflow   string
+	Status     string
+	Conclusion string
 }
 
 // Decode reads one delivery. event is the X-GitHub-Event header.
@@ -65,6 +87,9 @@ func Decode(event string, payload []byte) (Entry, error) {
 		Kind:   event,
 		Action: strings.TrimSpace(p.Action),
 		Sender: strings.TrimSpace(p.Sender.Login),
+	}
+	if event == "ping" {
+		return decodePing(e, &p), nil
 	}
 	if e.Repo == "" {
 		return Entry{}, errMissing("repository.full_name")
@@ -129,34 +154,98 @@ func Decode(event string, payload []byte) (Entry, error) {
 		if p.MergeGroup.HeadCommit != nil {
 			e.At = strings.TrimSpace(p.MergeGroup.HeadCommit.Timestamp)
 		}
+	case "issues":
+		if !issueActionCarried(e.Action) {
+			return Entry{}, ErrNotCarried
+		}
+		if p.Issue == nil {
+			return Entry{}, errMissing("issue")
+		}
+		e.Number = formatID(p.Issue.Number)
+		e.At = first(strp(p.Issue.UpdatedAt), strp(p.Issue.CreatedAt))
+		e.Labels = make([]string, 0, len(p.Issue.Labels))
+		for _, l := range p.Issue.Labels {
+			if n := strings.TrimSpace(l.Name); n != "" {
+				e.Labels = append(e.Labels, n)
+			}
+		}
+		e.Body = strp(p.Issue.Body)
+		e.State = strings.TrimSpace(p.Issue.State)
+		e.StateReason = strp(p.Issue.StateReason)
+	case "workflow_run":
+		w := p.WorkflowRun
+		if w == nil {
+			return Entry{}, errMissing("workflow_run")
+		}
+		e.Head = strings.TrimSpace(w.HeadSHA)
+		e.At = first(strp(w.UpdatedAt), strp(w.RunStartedAt), strp(w.CreatedAt))
+		for _, pr := range w.PullRequests {
+			if e.Number = formatID(pr.Number); e.Number != "" {
+				break
+			}
+		}
+		e.RunID = formatID(w.ID)
+		e.Workflow = strings.TrimSpace(w.Name)
+		e.Status = strings.TrimSpace(w.Status)
+		e.Conclusion = strp(w.Conclusion)
 	default:
 		return Entry{}, fmt.Errorf("ev:github: kind %q is carried but not decoded", event)
 	}
 	return e, nil
 }
 
-// Publish appends one entry. Every named field is written, empty string included,
-// so a reader can rely on the key set.
+// Publish appends one entry. Every named field of the entry's kind is written,
+// empty string included, so a reader can rely on the key set. A ping may have
+// no repo (a hook with neither repository nor organization); every other kind
+// needs one.
 func Publish(ctx context.Context, rdb *redis.Client, e Entry) (string, error) {
 	if rdb == nil {
 		return "", fmt.Errorf("ev:github: nil redis client")
 	}
-	if e.Repo == "" || e.Kind == "" || e.Action == "" {
+	if e.Kind == "" || e.Action == "" || (e.Repo == "" && e.Kind != "ping") {
 		return "", fmt.Errorf("ev:github: entry needs repo, kind and action")
 	}
-	return rdb.XAdd(ctx, &redis.XAddArgs{
-		Stream: Stream,
-		Values: map[string]interface{}{
-			"repo":       e.Repo,
-			"kind":       e.Kind,
-			"number":     e.Number,
-			"head":       e.Head,
-			"action":     e.Action,
-			"at":         e.At,
-			"sender":     e.Sender,
-			"comment_id": e.CommentID,
-		},
-	}).Result()
+	values, err := Fields(e)
+	if err != nil {
+		return "", err
+	}
+	return rdb.XAdd(ctx, &redis.XAddArgs{Stream: Stream, Values: values}).Result()
+}
+
+// Fields is the stream entry's key set for e: the eight common fields, plus
+// the issues or workflow_run fields for those kinds.
+func Fields(e Entry) (map[string]interface{}, error) {
+	v := map[string]interface{}{
+		"repo":       e.Repo,
+		"kind":       e.Kind,
+		"number":     e.Number,
+		"head":       e.Head,
+		"action":     e.Action,
+		"at":         e.At,
+		"sender":     e.Sender,
+		"comment_id": e.CommentID,
+	}
+	switch e.Kind {
+	case "issues":
+		labels := e.Labels
+		if labels == nil {
+			labels = []string{}
+		}
+		b, err := json.Marshal(labels)
+		if err != nil {
+			return nil, fmt.Errorf("ev:github: labels: %w", err)
+		}
+		v["labels"] = string(b)
+		v["body"] = e.Body
+		v["state"] = e.State
+		v["state_reason"] = e.StateReason
+	case "workflow_run":
+		v["run_id"] = e.RunID
+		v["workflow"] = e.Workflow
+		v["status"] = e.Status
+		v["conclusion"] = e.Conclusion
+	}
+	return v, nil
 }
 
 // Accept decodes one delivery and appends it. A delivery the stream does not
@@ -171,11 +260,35 @@ func Accept(ctx context.Context, rdb *redis.Client, event string, payload []byte
 
 func carried(event string) bool {
 	switch event {
-	case "pull_request", "issue_comment", "pull_request_review", "check_suite", "check_run", "merge_group":
+	case "ping", "pull_request", "issue_comment", "pull_request_review", "check_suite", "check_run",
+		"merge_group", "issues", "workflow_run":
 		return true
 	default:
 		return false
 	}
+}
+
+// issueActionCarried is the issues actions the stream records (#3177).
+func issueActionCarried(action string) bool {
+	switch action {
+	case "opened", "labeled", "unlabeled", "edited", "closed", "reopened":
+		return true
+	default:
+		return false
+	}
+}
+
+// decodePing fills a ping entry. A ping is never refused for a missing field:
+// it is the hook's proof of reach, so it is written with whatever it names.
+func decodePing(e Entry, p *delivery) Entry {
+	if e.Repo == "" && p.Organization != nil {
+		e.Repo = strings.TrimSpace(p.Organization.Login)
+	}
+	e.Action = "ping"
+	if p.Hook != nil {
+		e.At = first(strp(p.Hook.UpdatedAt), strp(p.Hook.CreatedAt))
+	}
+	return e
 }
 
 func errMissing(what string) error {
@@ -286,8 +399,34 @@ type delivery struct {
 	Sender      userLogin    `json:"sender"`
 	PullRequest *pullRequest `json:"pull_request"`
 	Issue       *struct {
-		Number int64 `json:"number"`
+		Number      int64   `json:"number"`
+		Body        *string `json:"body"`
+		State       string  `json:"state"`
+		StateReason *string `json:"state_reason"`
+		CreatedAt   *string `json:"created_at"`
+		UpdatedAt   *string `json:"updated_at"`
+		Labels      []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
 	} `json:"issue"`
+	Organization *userLogin `json:"organization"`
+	Hook         *struct {
+		CreatedAt *string `json:"created_at"`
+		UpdatedAt *string `json:"updated_at"`
+	} `json:"hook"`
+	WorkflowRun *struct {
+		ID           int64   `json:"id"`
+		Name         string  `json:"name"`
+		HeadSHA      string  `json:"head_sha"`
+		Status       string  `json:"status"`
+		Conclusion   *string `json:"conclusion"`
+		CreatedAt    *string `json:"created_at"`
+		UpdatedAt    *string `json:"updated_at"`
+		RunStartedAt *string `json:"run_started_at"`
+		PullRequests []struct {
+			Number int64 `json:"number"`
+		} `json:"pull_requests"`
+	} `json:"workflow_run"`
 	Comment *struct {
 		ID        int64   `json:"id"`
 		Body      string  `json:"body"`
