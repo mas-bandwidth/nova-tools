@@ -1,0 +1,2 @@
+The accept gate's fixture repository (nova-tools#2222). Not a Go package of nova-tools:
+every file here is written out with its .in suffix dropped and committed by the test.

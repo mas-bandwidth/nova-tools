@@ -1,0 +1,14 @@
+package sign
+
+import "testing"
+
+func expect(t *testing.T, got, want int) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("got %d, want %d", got, want)
+	}
+}
+
+func TestSignPositive(t *testing.T) {
+	expect(t, Sign(5), 1)
+}

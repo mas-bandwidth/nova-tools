@@ -1,0 +1,22 @@
+diff --git a/sign.go b/sign.go
+index 9ca6c62..e051e4a 100644
+--- a/sign.go
++++ b/sign.go
+@@ -10,7 +10,7 @@ func Sign(n int) int {
+ 	case n > 0:
+ 		return 1
+ 	}
+-	return -1
++	return 0
+ }
+ 
+ // Label names the sign of n for a person.
+diff --git a/sign_test.go b/sign_test.go
+index d440706..6d970e5 100644
+--- a/sign_test.go
++++ b/sign_test.go
+@@ -12,3 +12,4 @@ func expect(t *testing.T, got, want int) {
+ func TestSignPositive(t *testing.T) {
+ 	expect(t, Sign(5), 1)
+ }
++func TestSignZero(t *testing.T) { expect(t, Sign(0), 0) }

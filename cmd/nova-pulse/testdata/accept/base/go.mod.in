@@ -1,0 +1,3 @@
+module example.invalid/sign
+
+go 1.21
