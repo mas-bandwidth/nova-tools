@@ -1626,7 +1626,6 @@
     #:review-ledger-covers-friends-p
     #:review-ledger-cycle-count
     #:review-ledger-total-cost
-    #:orchestrate-process-level-run
     ;; replays of card 8649: roadmap proof, journal rotation, rule 2's
     ;; unavailable partition, savepoint cut and write failure
     #:make-roadmap-row
