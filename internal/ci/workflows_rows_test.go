@@ -45,6 +45,13 @@ const ciCardsGate = "vars.NOVA_CI_CARDS != 'on'"
 var runnerOnlyRows = map[string]string{
 	"ci.yml/test-hosted-pr": "the hosted platform selftest: internal/sandbox on the hosted Linux kernel, the one platform the self-hosted matrix cannot see",
 	"ci.yml/fleet-probe":    "proves a self-hosted runner itself; workflow_dispatch only, with a bench named",
+	// Stella's review at 99a88149: the #2886 ci card runs `go test -p 4` with no
+	// -race and no build tags, so these suites stay on Actions until a scheduled
+	// ci card variant carries race and the tags; retiring them is its own ruling.
+	"certification.yml/test":    "go test -race; the ci card carries no race detector",
+	"certification.yml/perf":    "the tagged perf suite (wall clock); the ci card carries no build tags",
+	"nightly-slow.yml/test":     "the tagged slow/soak/nightly/novadisk legs; the ci card carries no build tags",
+	"nightly-slow.yml/postgres": "the postgres-tagged contract with its service container; the ci card carries no build tags or services",
 }
 
 func TestWorkflowsKeepOnlyRunnerOnlyRows(t *testing.T) {
