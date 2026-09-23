@@ -38,6 +38,14 @@ The name is yours as the bus roster spells it, in any case — the key is
 `friend:<name>` in lower case either way. Two windows of your own beating the
 same name is harmless: they write the same key.
 
+A window that knows two more facts may pass them, and a window that does not
+leaves them off. `--window <time>` is the cap's reset time, stored as given
+(`friend:<name>:window`); the beat does not invent that clock. `--width <n>`
+is how many children are in use now (`friend:<name>:width`), and zero is a
+real answer. Omitting either flag does not write that key and does not fail
+the beat. `presence` prints `window=` and `width=` on your phrase when the
+keys are there.
+
 ## The seat, and why it is the same one for everybody
 
 The password is never a flag, a file you open, or a word you paste. It reaches
