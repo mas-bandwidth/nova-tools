@@ -54,10 +54,15 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	fs := capacityFlags("capacity " + kind)
 	redisAddr := fs.String("redis", "", "")
 	machine := fs.String("machine", "", "")
-	actor := fs.String("actor", "", "")
+	actor := new(string)
+	fs.StringVar(actor, "as", "", "")
+	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity "+kind, err.Error())
+	}
+	if *actor == "" {
+		return refuse(errOut, "capacity "+kind, "--as actor is required")
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
@@ -101,10 +106,15 @@ func runCapacityMachine(ctx context.Context, args []string, out, errOut io.Write
 	redisAddr := fs.String("redis", "", "")
 	cores := fs.Int("cores", 0, "")
 	memGB := fs.Int("mem-gb", 0, "")
-	actor := fs.String("actor", "", "")
+	actor := new(string)
+	fs.StringVar(actor, "as", "", "")
+	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity machine", err.Error())
+	}
+	if *actor == "" {
+		return refuse(errOut, "capacity machine", "--as actor is required")
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
