@@ -12,6 +12,9 @@
 --                       ready_open, blocked, desired, deficit, fillable,
 --                       idle (typed per-slot reasons), stuck, under,
 --                       working_ms, desired_ms, gen, woke, at.
+--   friend:<f>:waiting  (#3090, task.lua) tasks the friend owns that wait on
+--                       CI, a read, a dependency or a person with no child;
+--                       printed beside working, never counted in desired.
 --   friend:<f>:peaks    hour -> the largest working count held in that hour;
 --                       cap is the max over the last 24 hours.
 --   friend:<f>:wake     stream; UNDERFULL wakes for a harness with no loop.
@@ -279,7 +282,7 @@ end
 -- args = rebalance_ticks, readers csv, builders csv, coordinator, actor, idem,
 -- fence (the lease:reconciler token; any other refuses FENCED, nothing written).
 -- Returns { rows, events }: a row per friend
---   { f, slots, cap, working, starting, ready_open, desired, deficit, fillable, idle }
+--   { f, slots, cap, working, starting, ready_open, desired, deficit, fillable, idle, waiting }
 -- and event lines CAP, MOVE, READ-BOUND, UNDERFULL.
 local function width_tick(keys, args)
   if not WD.holds(args[7]) then
@@ -303,6 +306,8 @@ local function width_tick(keys, args)
     local declared = WD.declared(f)
     local working = redis.call('ZCARD', 'friend:' .. f .. ':living')
     local starting = redis.call('ZCARD', 'friend:' .. f .. ':starting')
+    -- waiting (#3090) holds no slot: it is in neither living nor open:<f>.
+    local waiting = redis.call('ZCARD', 'friend:' .. f .. ':waiting')
     local ready, blocked, why = WD.queue(f, sprints)
     local slots = WD.effective(f, declared, working)
     local cap_before, cap = WD.peak(f, working, at)
@@ -333,7 +338,7 @@ local function width_tick(keys, args)
 
     st[#st + 1] = {
       f = f, declared = declared, slots = slots, cap = cap, working = working,
-      starting = starting, ready = ready, blocked = blocked, why = WD.why(why), desired = desired,
+      starting = starting, waiting = waiting, ready = ready, blocked = blocked, why = WD.why(why), desired = desired,
       deficit = deficit, fillable = fillable, under = under, stuck = stuck,
       present = WD.present(f),
     }
@@ -417,7 +422,7 @@ local function width_tick(keys, args)
     redis.call('HSET', wkey,
       'slots', tostring(s.slots), 'declared', tostring(s.declared), 'cap', tostring(s.cap),
       'working', tostring(s.working), 'starting', tostring(s.starting),
-      'ready_open', tostring(#s.ready), 'blocked', tostring(s.blocked), 'blocked_why', s.why,
+      'waiting', tostring(s.waiting), 'ready_open', tostring(#s.ready), 'blocked', tostring(s.blocked), 'blocked_why', s.why,
       'desired', tostring(s.desired), 'deficit', tostring(s.deficit),
       'fillable', tostring(s.fillable), 'idle', idle,
       'stuck', tostring(s.stuck), 'under', tostring(s.under),
@@ -453,6 +458,7 @@ local function width_tick(keys, args)
     rows[#rows + 1] = {
       s.f, tostring(s.slots), tostring(s.cap), tostring(s.working), tostring(s.starting),
       tostring(#s.ready), tostring(s.desired), tostring(s.deficit), tostring(s.fillable), idle,
+      tostring(s.waiting),
     }
   end
   redis.call('HSET', 'sprint:width', 'working', tostring(fleet_working),

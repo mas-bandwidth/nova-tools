@@ -40,13 +40,21 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 )
 
 // DutyActor is the actor the width duty writes on receipts.
 const DutyActor = "reconciler-width"
 
-// completionKinds are the s:<S>:log receipts that free a friend's slot.
-var completionKinds = map[string]bool{"task done": true, "task cancel": true, "task expire": true}
+// completionKinds are the s:<S>:log receipts that free a friend's slot or
+// give it ready work back: done, cancel and expire; task wait (#3090: a
+// waiting build releases its child, so the refill starts a replacement in the
+// next pass); task resume (the waited-on event put the task back at the front
+// of its owner's queue).
+var completionKinds = map[string]bool{
+	"task done": true, "task cancel": true, "task expire": true,
+	"task wait": true, "task resume": true,
+}
 
 // Duty is the reconciler's width duty. Its Run is a reconcile.Duty.
 type Duty struct {
@@ -81,6 +89,9 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 	actor := d.Actor
 	if actor == "" {
 		actor = DutyActor
+	}
+	if err := d.sweepWaiting(ctx, l.Token(), actor); err != nil {
+		return reconcile.Counts{}, fmt.Errorf("width duty: %w", err)
 	}
 	freed, cursors, err := d.completions(ctx)
 	if err != nil {
@@ -140,6 +151,40 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		return c, fmt.Errorf("width duty: %w", errors.Join(errs...))
 	}
 	return c, nil
+}
+
+// sweepWaiting resolves every open sprint's waiting dep: and read: keys under
+// the lease (#3090) before the completions are read, so a resumed task is
+// dealt in the same pass. ci: and human: keys wait for their event
+// (task.Wake).
+func (d *Duty) sweepWaiting(ctx context.Context, fence, actor string) error {
+	order, err := d.Store.Client().ZRange(ctx, "sprint:order", 0, -1).Result()
+	if err != nil {
+		return fmt.Errorf("sprint order: %w", err)
+	}
+	if len(order) == 0 {
+		return nil
+	}
+	pipe := d.Store.Client().Pipeline()
+	counts := make([]*redis.IntCmd, len(order))
+	for i, S := range order {
+		counts[i] = pipe.SCard(ctx, "s:"+S+":idx:task:"+task.StateWaiting)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("waiting counts: %w", err)
+	}
+	for i, S := range order {
+		if counts[i].Val() == 0 {
+			continue
+		}
+		if _, err := task.WaitSweep(ctx, d.Store, S, fence, actor, ""); err != nil {
+			if errors.Is(err, task.ErrWaitFenced) {
+				return fmt.Errorf("%v: %w", err, reconcile.ErrFenced)
+			}
+			return err
+		}
+	}
+	return nil
 }
 
 // advance writes the cursors read this pass, fenced; ids only move forward.
