@@ -440,6 +440,11 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	if verb == "results" {
 		return cmdResults(rest, stdout, stderr, deps)
 	}
+	// visualize reads one record the caller names and reaches nothing outside the
+	// process, so it dispatches the same way, outside the socket-verb switch.
+	if verb == "visualize" {
+		return cmdVisualize(rest, stdout, stderr)
+	}
 	switch verb {
 	case "help", "--help", "-h":
 		if len(rest) != 0 {
