@@ -404,6 +404,28 @@ func production() Deps {
 	}
 }
 
+// absorbDecision is the decision record of nova-tools#2090, in the issue's own
+// terms, carried as the one line this binary answers `absorb` with. It is a
+// record for later, not a promise: nothing in it is work to start, and the
+// three E09-F04 criteria it names stay unverified on purpose until one of the
+// named triggers reopens the issue. Before it lived here the caller who asked
+// was told `unknown verb`, a sentence that says nobody decided -- which is
+// false: the decision is made, it is just NO, and Glenn's rulings of 2026-09-20
+// (link mode today; absorb only if radically cheaper or a second tracker
+// arrives, never to answer sync pain with a cleverer sync; and if one side
+// must be primary, "the internal lisp data structure representation would
+// win") are the reasoning this line keeps from having to be reconstructed.
+const absorbDecision = "absorb is not scheduled (the decision record of nova-tools#2090, E09-F04): " +
+	"link is the intake mode today and GitHub stays the source of truth for issues; " +
+	"it reopens only on one of three triggers -- a radical saving in tokens and wall clock shown by the dogfood tables (#2089), " +
+	"a second issue tracker beside GitHub, or sync pain, drift that needs a person or a decision made on a stale copy; " +
+	"which side wins is already decided: if one side must be primary it is nova-work's Lisp data structure, " +
+	"and the GitHub copy is what stops being maintained; " +
+	"and before it is built all three E09-F04 criteria must be verified: " +
+	"absorb separate from the default link with selected scope and authority, " +
+	"source identity, provenance and content archived before removal with the deletion outcome receipt appended, " +
+	"and deletion left pending on missing content, a source change or an uncertain network result"
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
 // run takes the version stamp (a string, for the version verb's tests) and the injected
@@ -455,6 +477,13 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return 0
 	case "query":
 		return queryVerb(rest, stdout, stderr)
+	}
+	// absorb is the one name answered with a decision record rather than a
+	// verb or an "unknown verb": the roadmap holds it as E09-F04 and the
+	// 2026-09-20 ruling left it not scheduled (nova-tools#2090), so the caller
+	// who asks is owed the record, said in one line.
+	if verb == "absorb" {
+		return refused(stderr, absorbDecision)
 	}
 	// Every other verb the spec addresses to a session is a row of verbFlags
 	// and no case of its own: see socketverbs.go. The block's lines this
