@@ -69,6 +69,9 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	slotsOwner := f.fs.String("slots-owner", "", "")
 	slotsBin := f.fs.String("slots-bin", defaultSlotsBin, "")
 	maxLoad := f.fs.Float64("max-load-per-core", defaultMaxLoadPerCore, "")
+	resultsDir := f.fs.String("results", "", "")
+	repo := f.fs.String("repo", ".", "")
+	base := f.fs.String("base", "dev", "")
 	var benches benchFlag
 	var only benchFlag
 	var localBenches benchFlag
@@ -133,21 +136,24 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		})
 	}
 	return pulse.Fill(pulse.FillInput{
-		Ready:    *ready,
-		Launched: *launched,
-		Lanes:    *lanes,
-		Machines: *machines,
-		Session:  *session,
-		Benches:  []string(benches),
-		Only:     []string(only),
-		Once:     *once,
-		Interval: tick,
-		Stop:     *stop,
-		Stdout:   stdout,
-		Stderr:   stderr,
-		Now:      func() time.Time { return now },
-		Capacity: reader,
-		Launcher: flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Ready:      *ready,
+		Launched:   *launched,
+		Lanes:      *lanes,
+		Machines:   *machines,
+		Session:    *session,
+		Benches:    []string(benches),
+		Only:       []string(only),
+		Once:       *once,
+		Interval:   tick,
+		Stop:       *stop,
+		ResultsDir: *resultsDir,
+		Repo:       *repo,
+		Base:       *base,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		Now:        func() time.Time { return now },
+		Capacity:   reader,
+		Launcher:   flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
 	})
 }
 
