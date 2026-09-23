@@ -5033,3 +5033,16 @@ nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibratio
 **Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
 
 **What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
+
+### Where a card's results live
+
+`nova-sprint card end --results <dir>` writes `<dir>` once into the card hash
+`s:<S>:card:<label>` field `results` (single writer `ns_card_end`, stamped
+`ended_at` from Redis TIME). The dir is always a Unix absolute path on the
+bench: a leading `/`, not `//` (a network share), no backslash, no `..`
+segment; a drive root (`C:\x`, `C:/x`) or a scheme is refused. `card end`
+exits 1 (USAGE) on anything else before it opens Redis, `ns_card_end` applies
+the same rule (so nothing is written), and harvest refuses it before ssh. `nova-sprint card harvest` pushes from
+`<results>/repo` on the bench as read from that field; there is no
+`--results-root` (it is refused as an unknown flag that names the field),
+because no worker needs to know a bench's layout (#3329).
