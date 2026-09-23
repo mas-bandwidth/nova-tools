@@ -194,7 +194,8 @@ local function ci_end(keys, args)
       'at', at)
   end
   local evidence = rec_key .. ' ' .. (verdict ~= '' and verdict or 'MISSING') ..
-    ' bench=' .. bench .. ' pkg=' .. pkg .. ' test=' .. test .. ' log=' .. log
+    ' bench=' .. bench .. ' pkg=' .. pkg .. ' test=' .. test .. ' wall_s=' .. wall_s ..
+    ' log=' .. log
   ci_receipt(S, 'ci end', label, state, 'ended', attempt, ci_hget(card_key, 'token_sha'), actor,
     outcome .. ' ' .. reason, evidence, 'ci-end:' .. identity, at)
   return { 'ENDED', attempt, final }

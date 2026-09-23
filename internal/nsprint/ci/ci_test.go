@@ -470,6 +470,21 @@ func TestControl34ExecutionStateAndVerdict(t *testing.T) {
 		if n := f.logCount("ci end", ""); n != 2 {
 			t.Fatalf("ci end receipts = %d; want both attempts charged", n)
 		}
+		// Every attempt's duration is on its own end receipt: the record keeps
+		// only the latest attempt's wall_s, the stream keeps each one.
+		msgs, err := f.client.XRange(f.ctx, "s:"+f.sprint+":log", "-", "+").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		timed := 0
+		for _, m := range msgs {
+			if m.Values["kind"] == "ci end" && strings.Contains(fmt.Sprint(m.Values["evidence"]), " wall_s=42 ") {
+				timed++
+			}
+		}
+		if timed != 2 {
+			t.Fatalf("ci end receipts carrying wall_s = %d; want 2 (one per attempt)", timed)
+		}
 		s, err := ci.ReadStatus(f.ctx, f.st, f.sprint)
 		if err != nil {
 			t.Fatal(err)
