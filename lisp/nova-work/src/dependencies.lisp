@@ -105,6 +105,9 @@ counted once however often it references."
   (unless (getf prereq :owner)
     (error 'unsupported-input
            :what (format nil "~A has no owner" (getf prereq :id))))
+  (unless (stringp cell)
+    (error 'unsupported-input
+           :what (format nil "cell ~A is not a string" cell)))
   (let ((cells (getf prereq :cells)))
     (unless (member cell cells :test #'string=)
       (setf (getf prereq :cells) (append cells (list cell)))))
