@@ -292,11 +292,20 @@ func ParseDenyList(spec string) ([]string, error) {
 // exempt lists elsewhere in this repo obey. The deny-list runs the other way:
 // it is a floor that ships with the tool, because a narrowing that goes
 // missing fails open and a floor that ships cannot.
+//
+// Stage selects the read substrate: false (the default) walks the tree
+// under Dir; true reads the staged content of Dir as the index carries
+// it. The two paths share the same floor lists, the same --allow
+// prefixing, and the same NAME/LOCATION/EXTENSION rules — the substrate
+// is only what feeds the executable-bit check (the walk's perm, the
+// index's DstMode) and the shebang check (the walk's Peek(2) on the
+// file, the index's first two bytes through ONE cat-file --batch pipe).
 type NoCodeOptions struct {
 	Dir        string   // root of the tree being guarded (required)
 	Allow      []string // path prefixes where machinery may live; empty by default
 	DenyExt    []string // effective deny-list; empty means the floor list
 	DenySource string   // provenance; required when DenyExt is set
+	Stage      bool     // read the index, not the working tree
 }
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
@@ -315,6 +324,14 @@ type NoCodeOptions struct {
 // A file that cannot be read produces a finding rather than a pass. Making a
 // file less readable must not make this gate greener.
 func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
+	if opts.Stage {
+		// The index path keeps the same call surface and the same
+		// flag set; only the substrate changes. The cmd/nova-check
+		// nocode command reaches for this entry today for the walk;
+		// a future `--staged` flag would set opts.Stage and reach
+		// the audit's index counterpart from the same line.
+		return noCodeStaged(opts)
+	}
 	deny := opts.DenyExt
 	source := opts.DenySource
 	if len(deny) == 0 {
@@ -441,33 +458,14 @@ func isAllowed(rel string, allow []string) bool {
 // classify returns every reason the file is machinery, or nil if it is prose.
 // All reasons are reported when more than one holds: a gate that says only
 // "no" teaches nothing, and each reason is separately actionable.
+//
+// The PATH-SIDE rules (name, location, extension) are shared with the
+// index-side classifier in nocode_staged.go through `pathOnlyReasons`,
+// which is the single statement of those rules the spec demanded
+// (SPEC.md 858). The SUBSTRATE-BOUND inputs (perm bit and shebang reader)
+// stay here — the audit reads them from the filesystem.
 func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
-	var reasons []string
-	// Name and location are checked FIRST, and before the symlink return
-	// below, because both read only the path. A symlink called Makefile is
-	// machinery by the same argument that catches a file called Makefile, and
-	// deciding that requires no dereference.
-	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
-		reasons = append(reasons, fmt.Sprintf("build machinery by name %s (floor name list)", base))
-	}
-	// Lowercased on both sides so location matching agrees with name matching.
-	// They disagreed: on a case-insensitive filesystem a tree checked out as
-	// .GitHub/workflows/ is the same directory on disk and the floor did not
-	// fire, while a file named MAKEFILE did. An asymmetry a reader cannot tell
-	// was decided is worse than either choice.
-	lowerRel := strings.ToLower(rel)
-	for _, pre := range denyPrefixes {
-		if lowerRel == pre || strings.HasPrefix(lowerRel, pre+"/") {
-			reasons = append(reasons, fmt.Sprintf("machinery by location %s/ (floor name list)", pre))
-			break
-		}
-	}
-	// Trailing whitespace is trimmed for MATCHING only: a file named "x.py "
-	// has extension ".py " by Go's reckoning and would otherwise miss the list
-	// while being every bit as much a script.
-	if ext := strings.TrimSpace(strings.ToLower(filepath.Ext(rel))); denySet[ext] {
-		reasons = append(reasons, fmt.Sprintf("code extension %s (%s)", ext, source))
-	}
+	reasons := pathOnlyReasons(rel, denySet, source, denyNames, denyPrefixes)
 	if isLink {
 		// Never dereferenced: the name is classified, the target is not read
 		// and its mode is not consulted.
