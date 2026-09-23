@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -67,10 +68,12 @@ func WriteResults(ctx context.Context, resultsDir, outDir string, rdb *redis.Cli
 }
 
 // ScanLabels returns every label whose card:<label> hash exists in Redis,
-// sorted. The set is what an HSCAN over card:* keys finds: every key is one
+// sorted and without duplicates (SCAN may return a key more than once across
+// cursor pages). The set is what an HSCAN over card:* keys finds: every key is one
 // card's hash, and reading all of them answers what the set of cards is.
 func ScanLabels(ctx context.Context, rdb *redis.Client) ([]string, error) {
-	var labels []string
+	seen := map[string]bool{}
+	labels := []string{}
 	var cursor uint64
 	for {
 		keys, next, err := rdb.Scan(ctx, cursor, CardPrefix+"*", 128).Result()
@@ -78,13 +81,19 @@ func ScanLabels(ctx context.Context, rdb *redis.Client) ([]string, error) {
 			return nil, err
 		}
 		for _, k := range keys {
-			labels = append(labels, strings.TrimPrefix(k, CardPrefix))
+			label := strings.TrimPrefix(k, CardPrefix)
+			if seen[label] {
+				continue
+			}
+			seen[label] = true
+			labels = append(labels, label)
 		}
 		cursor = next
 		if cursor == 0 {
 			break
 		}
 	}
+	sort.Strings(labels)
 	return labels, nil
 }
 

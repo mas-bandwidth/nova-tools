@@ -65,7 +65,7 @@ func TestCardStatusHashMatchesBashFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sort.Strings(got)
+	// No sort here: ScanLabels owns the sorted contract.
 
 	// Compare. The HSCAN on each card:* key returns fields; the set of keys
 	// must match the bash listing.
