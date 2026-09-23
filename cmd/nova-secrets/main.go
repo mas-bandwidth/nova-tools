@@ -89,6 +89,16 @@ var disallowedVerbs = map[string]string{
 	"session":    "not supported. Every call opens the file again; a cached plaintext is a plaintext with a lifetime nobody is watching.",
 }
 
+// sopsIdentityEnv is every variable in sops' documented age identity lookup. None of
+// them reaches the command exec starts.
+var sopsIdentityEnv = []string{
+	"SOPS_AGE_KEY_FILE",
+	"SOPS_AGE_KEY",
+	"SOPS_AGE_KEY_CMD",
+	"SOPS_AGE_SSH_PRIVATE_KEY_FILE",
+	"SOPS_KEYSERVICE",
+}
+
 type stringSlice []string
 
 func (s *stringSlice) String() string {
@@ -208,6 +218,26 @@ func runExecCLI(args []string) {
 	if len(fs.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: unexpected argument %q before '--'\n", oneline.Field(fs.Args()[0]))
 		os.Exit(125)
+	}
+
+	// A .git that is a FILE is a worktree or a submodule: its real repository lives
+	// elsewhere, so HEAD and the tracking ref read here would not be the store's. Refuse
+	// naming that fact, the sentence check prints, not "no .git directory" (SPEC-SECRETS
+	// test 20).
+	if *storeFlag != "" {
+		if fi, err := os.Lstat(*storeFlag + string(os.PathSeparator) + ".git"); err == nil && !fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL store %s: .git is a file (a worktree or submodule); expected a directory working copy\n", oneline.Escape(*storeFlag))
+			os.Exit(125)
+		}
+	}
+
+	// sops' identity lookup is defeated for the command as well as for the sops child:
+	// every variable in it is dropped from this process before anything runs, so the
+	// command, which this process becomes, never inherits a route to another key
+	// (SPEC-SECRETS test 2). The sops child's environment is built, not edited, inside
+	// the package.
+	for _, name := range sopsIdentityEnv {
+		_ = os.Unsetenv(name)
 	}
 
 	code, err := secrets.RunExec(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *onlyFlag, requireFlags, cmdArgs)
