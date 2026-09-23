@@ -113,6 +113,47 @@ func TestReleaseJobDirRemovesTheCloneAfterTheBundleListsHEAD(t *testing.T) {
 	}
 }
 
+// RESULT.md with no BRANCH line still names a commit the base does not have.
+// git bundle create refuses a range of raw SHAs that names no ref, and that
+// refusal used to keep the only copy in the job directory.
+func TestReleaseJobDirBundlesACommitWhenResultNamesNoBranch(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not on PATH")
+	}
+	root, slot, job, tmp, results := releaseLayout(t)
+	repo := filepath.Join(job, "repo")
+	sha := gitCommitOnBranch(t, repo, "rowan/card", "base", "work")
+	body := "RESULT card sha=" + sha + "\nDONE\n"
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := ReleaseJobDir(releaseInput(root, slot, job, tmp, results, t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Removed || out.Head != sha {
+		t.Fatalf("removed=%v head=%s, want the commit removed", out.Removed, out.Head)
+	}
+	if _, err := os.Stat(job); !os.IsNotExist(err) {
+		t.Fatalf("job directory still present: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(results, "RESULT.md"))
+	if err != nil || string(got) != body {
+		t.Fatalf("RESULT.md in the results store = %q, %v", got, err)
+	}
+	heads, err := exec.Command("git", "bundle", "list-heads", out.Bundle).CombinedOutput()
+	if err != nil {
+		t.Fatalf("list-heads: %v\n%s", err, heads)
+	}
+	if !headsContain(string(heads), sha) {
+		t.Fatalf("bundle does not list HEAD %s:\n%s", sha, heads)
+	}
+	if !strings.Contains(string(heads), " HEAD") {
+		t.Fatalf("bundle does not name HEAD:\n%s", heads)
+	}
+}
+
 // The loss that opened the hole: RESULT.md names a branch, and that ref is not in
 // the clone and not in a bundle. The directory stays, clone and all.
 func TestReleaseJobDirKeepsABranchThatResolvesNowhere(t *testing.T) {
@@ -333,6 +374,72 @@ func TestReleaseJobDirKeepsJobEvidenceWhenResultsDirIsAnAlias(t *testing.T) {
 			t.Fatalf("release copied the job through the alias: %v", statErr)
 		}
 	})
+}
+
+// results/<label> aliases another directory already under results/. The target
+// is inside the results root and outside the job, which is the check that used
+// to accept it. The copy then replaces that directory's files, including the
+// manifest. The other card's results have to stay byte for byte, and the job
+// has to stay too.
+func TestReleaseJobDirKeepsPeerResultsWhenResultsDirAliasesAnother(t *testing.T) {
+	root, slot, job, tmp, results := releaseLayout(t)
+	prior := filepath.Join(root, "results", "prior")
+	if err := os.MkdirAll(prior, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const (
+		priorResult   = "prior-result\n"
+		priorManifest = "prior-manifest\n"
+		priorOnly     = "prior-only\n"
+		jobResult     = "RESULT: BLOCKED card\nwritten-by: nova-swarm native\n"
+		jobOnly       = "job-only\n"
+	)
+	if err := os.WriteFile(filepath.Join(prior, "RESULT.md"), []byte(priorResult), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prior, "release-manifest.txt"), []byte(priorManifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prior, "untouched"), []byte(priorOnly), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(jobResult), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "keep"), []byte(jobOnly), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("prior", results); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+
+	_, err := ReleaseJobDir(releaseInput(root, slot, job, tmp, results, t.TempDir()))
+	if err == nil || !strings.Contains(err.Error(), "resolves to") {
+		t.Fatalf("a results directory that aliases another results directory: %v", err)
+	}
+	got, readErr := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	if readErr != nil || string(got) != jobResult {
+		t.Fatalf("job RESULT.md = %q, %v (release: %v)", got, readErr, err)
+	}
+	got, readErr = os.ReadFile(filepath.Join(job, "keep"))
+	if readErr != nil || string(got) != jobOnly {
+		t.Fatalf("job evidence = %q, %v (release: %v)", got, readErr, err)
+	}
+	got, readErr = os.ReadFile(filepath.Join(prior, "RESULT.md"))
+	if readErr != nil || string(got) != priorResult {
+		t.Fatalf("peer RESULT.md = %q, %v (release: %v)", got, readErr, err)
+	}
+	got, readErr = os.ReadFile(filepath.Join(prior, "release-manifest.txt"))
+	if readErr != nil || string(got) != priorManifest {
+		t.Fatalf("peer manifest = %q, %v (release: %v)", got, readErr, err)
+	}
+	got, readErr = os.ReadFile(filepath.Join(prior, "untouched"))
+	if readErr != nil || string(got) != priorOnly {
+		t.Fatalf("peer sentinel = %q, %v (release: %v)", got, readErr, err)
+	}
+	if _, statErr := os.Stat(filepath.Join(prior, "keep")); !os.IsNotExist(statErr) {
+		t.Fatalf("release copied the job onto the peer results: %v", statErr)
+	}
 }
 
 func TestReleaseJobDirDoesNotFollowASymlink(t *testing.T) {

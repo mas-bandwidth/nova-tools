@@ -28,9 +28,11 @@ import (
 //  1. RESULT.md, the job's other regular files (usage.tsv, the harness log, notes),
 //     and the slot's native.log are copied into ResultsDir. A copy whose bytes do not
 //     hash back to the source is not a copy. The results path is resolved before that
-//     copy: a component that is a symlink into the job or the temp directory, or that
-//     resolves outside <root>/results, is not a destination. The lexical path can look
-//     contained while the copy sits in the directory that is about to be removed.
+//     copy: a component that is a symlink into the job or the temp directory, that
+//     resolves outside <root>/results, or that resolves anywhere other than the
+//     requested results path, is not a destination. The lexical path can look
+//     contained while the copy sits in the directory that is about to be removed,
+//     or while it replaces another card's stored results.
 //  2. A commit the clone holds that is not already in its remote-tracking base, and a
 //     BRANCH line in RESULT.md whose ref is not already in that base, are written to
 //     branch.bundle. The bundle is verified, and its listed tips have to be those
@@ -270,11 +272,14 @@ func releaseStrictlyWithin(root, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// refuseResultsAlias refuses a results directory that is not really inside the
-// results root and outside the job. Containment of the cleaned path is not
-// enough: results/<label> can be a symlink into <job>/saved, the copy and the
-// manifest land there, and removeReleased then deletes the only durable copy.
-// Every component at and below the results root is resolved before writing.
+// refuseResultsAlias refuses a results directory that is not the requested
+// path, inside the results root and outside the job. Containment of the
+// cleaned path is not enough: results/<label> can be a symlink into
+// <job>/saved, or onto another directory already under results. The copy and
+// the manifest then land in that target, and either removing the job or the
+// copy itself destroys a durable record. Every component at and below the
+// results root is resolved before writing, and the resolved path has to be
+// the one that was asked for.
 func refuseResultsAlias(results, root, job, tmp string) error {
 	resolvedJob, err := AbsResolved(job)
 	if err != nil {
@@ -294,6 +299,10 @@ func refuseResultsAlias(results, root, job, tmp string) error {
 	dest, err := resolveResultsDestination(start, rel, resultsRoot, resolvedJob, resolvedTmp)
 	if err != nil {
 		return err
+	}
+	want := filepath.Clean(filepath.Join(start, rel))
+	if filepath.Clean(dest) != want {
+		return fmt.Errorf("the results directory %s resolves to %s, not %s", results, dest, want)
 	}
 	return requireResultsContainment(results, dest, resultsRoot, resolvedJob, resolvedTmp)
 }
@@ -800,6 +809,12 @@ func (localGit) bundle(repo, dest, base, sha, branch string) (string, error) {
 	default:
 		return "", errors.New("nothing to bundle")
 	}
+	// A raw SHA is not a ref. `git bundle create` with only base..sha exits
+	// "Refusing to create empty bundle" when RESULT.md names no BRANCH, and
+	// the clone stays in the job directory. HEAD is the ref state() read,
+	// including a detached HEAD. The named branch, when it is another tip,
+	// stays a second ref so its commit is listed too.
+	args = append(args, "HEAD")
 	if branch != "" {
 		args = append(args, "refs/heads/"+branch)
 	}
