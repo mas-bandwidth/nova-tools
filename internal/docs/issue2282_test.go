@@ -16,16 +16,18 @@ import (
 // and ages out expired heartbeats with no tombstone written.
 //
 // The spec (docs/SPEC-REDIS.md:68-69):
-//   "presence lists the live lines seen by heartbeat keys that expire on their
-//    own, so a crashed line ages out without anyone writing a tombstone."
+//
+//	"presence lists the live lines seen by heartbeat keys that expire on their
+//	 own, so a crashed line ages out without anyone writing a tombstone."
 //
 // And (docs/SPEC-REDIS.md:103-104):
-//   "presence ageing out a heartbeat"
+//
+//	"presence ageing out a heartbeat"
 //
 // This test verifies:
-// 1. The spec file contains the required text about presence and heartbeats.
-// 2. The behaviour is implemented: heartbeat keys with TTL are listed via SCAN,
-//    and expiry removes them silently with no tombstone.
+//  1. The spec file contains the required text about presence and heartbeats.
+//  2. The behaviour is implemented: heartbeat keys with TTL are listed via SCAN,
+//     and expiry removes them silently with no tombstone.
 func TestIssue2282(t *testing.T) {
 	t.Parallel()
 
