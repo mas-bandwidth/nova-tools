@@ -1,0 +1,26 @@
+roles: bench,runner
+expect: ^GO PATH OK
+
+# NON-INTERACTIVE, deliberately: vision, space and mini had no go at all over plain ssh
+# (GOTOOLCHAIN=NOGO) while a login shell on each of them had one. The version must be at
+# least go.mod's `go` line, because a toolchain below it does not fail loudly -- it refuses
+# the module by name, and only if something is watching.
+set -eu
+GO=$(command -v go 2>/dev/null || true)
+if [ -z "$GO" ]; then
+  echo "GO PATH FAIL no go on the non-interactive PATH: $PATH"
+  exit 1
+fi
+GOT=$("$GO" version 2>&1)
+HAVE=$(echo "$GOT" | sed -n 's/.*go\([0-9][0-9.]*\).*/\1/p' | head -n 1)
+WANT=$(echo "$NOVA_GO" | sed -n 's/go\([0-9][0-9.]*\)/\1/p')
+if [ -z "$HAVE" ]; then
+  echo "GO PATH FAIL $GO printed no version: $GOT"
+  exit 1
+fi
+LOWEST=$(printf '%s\n%s\n' "$WANT" "$HAVE" | sort -V 2>/dev/null | head -n 1)
+if [ "$LOWEST" != "$WANT" ] && [ "$HAVE" != "$WANT" ]; then
+  echo "GO PATH FAIL want >= $NOVA_GO got $GOT at $GO"
+  exit 1
+fi
+echo "GO PATH OK $GO $GOT"

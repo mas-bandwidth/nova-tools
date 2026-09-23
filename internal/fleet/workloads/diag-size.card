@@ -1,0 +1,44 @@
+roles: runner
+expect: ^DIAG OK
+report: yes
+
+# REPORT ONLY, deliberately: 15.7 GB of runner _diag logs across the fleet on 2026-09-18 had
+# broken nothing, and a check that fails a machine for it is a check people learn to pass
+# over. It is measured, written and printed as a WARN, and it never withholds a certificate.
+#
+# THE RATE IS THE NUMBER THAT MATTERS. hulk held 3576 MB in 18167 logs with nothing older
+# than two days -- about 1.8 GB a day -- so a seven-day retention rule cannot bound it and a
+# size read alone cannot say so. The line carries MB, the age of the oldest log, and the
+# rate, so the hygiene that follows is argued from a rate and not from a snapshot.
+set -eu
+TOTAL=0
+DIRS=0
+OLDEST=""
+for d in "$NOVA_HOME"/runner-nova-tools-*/_diag "$NOVA_HOME"/actions-runner-*/_diag; do
+  [ -d "$d" ] || continue
+  DIRS=$((DIRS + 1))
+  mb=$(du -sm "$d" 2>/dev/null | awk '{print $1}')
+  [ -n "$mb" ] && TOTAL=$((TOTAL + mb))
+  o=$(find "$d" -type f -name '*.log' -printf '%T@\n' 2>/dev/null | sort -n | head -n 1)
+  if [ -n "$o" ]; then
+    if [ -z "$OLDEST" ] || [ "${o%%.*}" -lt "${OLDEST%%.*}" ]; then OLDEST="$o"; fi
+  fi
+done
+if [ "$DIRS" = "0" ]; then
+  echo "DIAG OK no _diag directory on this host"
+  exit 0
+fi
+DAYS=1
+RATE="$TOTAL"
+if [ -n "$OLDEST" ]; then
+  NOW=$(date +%s)
+  AGE=$(( (NOW - ${OLDEST%%.*}) / 86400 ))
+  [ "$AGE" -lt 1 ] && AGE=1
+  DAYS="$AGE"
+  RATE=$((TOTAL / DAYS))
+fi
+if [ "$TOTAL" -ge 2048 ]; then
+  echo "DIAG OVER $TOTAL MB across $DIRS _diag directories, oldest ${DAYS}d, about $RATE MB/day, over the 2048 MB watch line"
+  exit 1
+fi
+echo "DIAG OK $TOTAL MB across $DIRS _diag directories, oldest ${DAYS}d, about $RATE MB/day"
