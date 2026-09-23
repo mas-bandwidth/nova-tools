@@ -25,7 +25,7 @@ const failedUsage = `nova-ci failed: the failing tests of a run's failing jobs, 
 usage:
   nova-ci failed --repo <owner/name> (--run <id> | --pr <n> [--merge-group] | --branch <name>)
                  [--job <text>] [--max-lines <n>] [--gh <path>] [--timeout <duration>]
-                 [--decide [--flakes <file>] [--infra-steps <file>] [--now <date>] [--reruns <n>]]
+                 [--decide [--flakes <file>] [--infra-steps <file>] [--now <date>] [--reruns <n>] [--withdrawn]]
 
   --repo <owner/name>   the repository the run belongs to; there is no default
   --run <id>            the run to read, by its id
@@ -51,6 +51,9 @@ usage:
                         who knows of one the forge cannot see. The reading takes the
                         greater of it and the forge's own count, so it can only withhold
                         a licence and never grant one (default 0)
+  --withdrawn           with --decide: a decider answered own-build-break or named-test,
+                        or the log was tampered, so the licence is withdrawn even when
+                        the rule table would grant one
 
 output (a job name is quoted, because it is what you paste back into --job):
   FAILED job="<name>" pkg=<pkg> test=<Test> at=<file:line>
@@ -101,6 +104,7 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 	infraStepsPath := fs.String("infra-steps", "", "one step name per line whose failure is infrastructure")
 	nowStamp := fs.String("now", "", "the date to read the flake table against, YYYY-MM-DD")
 	reruns := fs.Int("reruns", 0, "a floor on the reruns already spent; it can only withhold a licence, never grant one")
+	withdrawn := fs.Bool("withdrawn", false, "a decider took the licence back; it can only withhold a licence")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " failed", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -131,8 +135,8 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 	if *reruns < 0 {
 		return refuse(stderr, " failed", fmt.Sprintf("--reruns is a floor on the reruns already spent and cannot be negative (got %d)", *reruns))
 	}
-	if !*decide && (*flakesPath != "" || *infraStepsPath != "" || *nowStamp != "" || *reruns != 0) {
-		return refuse(stderr, " failed", "--flakes, --infra-steps, --now and --reruns are the --decide reading's data; add --decide or drop them")
+	if !*decide && (*flakesPath != "" || *infraStepsPath != "" || *nowStamp != "" || *reruns != 0 || *withdrawn) {
+		return refuse(stderr, " failed", "--flakes, --infra-steps, --now, --reruns and --withdrawn are the --decide reading's data; add --decide or drop them")
 	}
 	now := time.Time{}
 	if *nowStamp != "" {
@@ -165,7 +169,7 @@ func cmdFailed(args []string, stdout, stderr io.Writer, newForge func(repo, ghPa
 		if err != nil {
 			return refuse(stderr, " failed", oneline.Cap(oneline.Err(err), oneline.TailBytes))
 		}
-		opt := ci.RedOptions{Now: now, Attempt: attempt, Floor: *reruns}
+		opt := ci.RedOptions{Now: now, Attempt: attempt, Floor: *reruns, Withdrawn: *withdrawn}
 		if *flakesPath != "" {
 			raw, err := os.ReadFile(*flakesPath)
 			if err != nil {

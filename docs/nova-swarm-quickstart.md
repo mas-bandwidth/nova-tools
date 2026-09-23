@@ -31,6 +31,7 @@ nova-swarm native \
   --deadline 120s \
   --slots-store /path/to/root/slots-store \
   --owner stella \
+  --tokens 200000 \
   --auth ~/.local/share/opencode/auth.json \
   --label card-smoke-ds
 ```
@@ -89,6 +90,10 @@ SLOT="$2"
 MODEL="$3"
 CARD="$4"
 ROOT="$5"
+# The budget word, handed to a --runner as its SIXTH argument since SPEC-SWARM rule 13d
+# (nova-tools#1545). The runner does not invent it and does not default it: a runner that
+# reaches `native` without passing it on meets `native`'s own refusal.
+TOKENS="${6:?the batch hands the token budget as the sixth argument: a number, or the word unmetered}"
 JOB_DIR="$ROOT/$SLOT/jobs/$LABEL"
 # The bench slot lease (nova-tools#1546): native refuses to launch without a store and an
 # owner. The store is made ONCE per bench, by hand, and is NOT created here -- a runner that
@@ -119,6 +124,7 @@ exec nova-swarm native \
   --deadline 120s \
   --slots-store "$ROOT/slots-store" \
   --owner "$OWNER" \
+  --tokens "$TOKENS" \
   --auth ~/.local/share/opencode/auth.json
 ```
 
