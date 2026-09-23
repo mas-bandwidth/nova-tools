@@ -440,3 +440,57 @@ a closed node D, under the coordinator scope \"coord\"."
                  "the earlier confirmed close is not erased by the reopen")
     (check-equal "close-receipt-7" (outbound-receipt l "req-1")
                  "the earlier completion receipt survives the reopen")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02RefuseConflictingRequestReuse  docs/SPEC-WORK.md:7576-7581
+;;;
+;;; A retry under a request id is idempotent only when it is the SAME action:
+;;; reusing the id for a different issue, kind or payload is refused with
+;;; OUTBOUND-REQUEST-CONFLICT and records nothing. A terminal outcome is
+;;; immutable: fail after confirm (or a second, different receipt) is refused,
+;;; so the earlier completion evidence survives.
+;;; ------------------------------------------------------------------
+
+(defun %refuses-conflict-p (thunk)
+  (handler-case (progn (funcall thunk) nil)
+    (outbound-request-conflict () t)))
+
+(deftest "TestE09F02RefuseConflictingRequestReuse" "docs/SPEC-WORK.md:7576-7581"
+    "expected=conflicting-request-reuse-refused;terminal-outcome-immutable"
+  (let ((l (make-correspondence-ledger)))
+    (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close
+                      :payload "closing: fixed in abc123")
+    ;; The same action retried is idempotent.
+    (ok (not (%refuses-conflict-p
+              (lambda () (start-outbound l :request "req-1" :issue "acme/work#7"
+                                           :kind :close :payload "closing: fixed in abc123"))))
+        "an identical retry is idempotent, not refused")
+    ;; The same id reused for a different action is refused.
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#9" :kind :close
+                                      :payload "closing: fixed in abc123")))
+        "reusing a request id for a different issue is refused")
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#7" :kind :report-fix
+                                      :payload "closing: fixed in abc123")))
+        "reusing a request id for a different kind is refused")
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close
+                                      :payload "closing: wontfix")))
+        "reusing a request id for a different payload is refused")
+    (check-equal 1 (length (correspondence-ledger-actions l))
+                 "a refused reuse records nothing")
+    (check-equal "acme/work#7" (outbound-action-issue (first (correspondence-ledger-actions l)))
+                 "the first action is unchanged by a refused reuse")
+    ;; Confirm, then a fail on the same request is refused: the receipt stays.
+    (confirm-outbound l "req-1" "close-receipt-7")
+    (ok (not (%refuses-conflict-p (lambda () (confirm-outbound l "req-1" "close-receipt-7"))))
+        "repeating the same confirmation is idempotent")
+    (ok (%refuses-conflict-p (lambda () (fail-outbound l "req-1" "http-500")))
+        "fail after confirm is refused")
+    (ok (%refuses-conflict-p (lambda () (confirm-outbound l "req-1" "other-receipt")))
+        "a second confirmation with a different receipt is refused")
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the confirmed outcome survives a refused fail")
+    (check-equal "close-receipt-7" (outbound-receipt l "req-1")
+                 "the completion receipt survives a refused fail")))

@@ -2161,6 +2161,10 @@
      #:outbound-action-kind
      #:outbound-action-state
      #:outbound-action-receipt
+     #:outbound-action-payload
+     #:outbound-request-conflict
+     #:outbound-request-conflict-request
+     #:outbound-request-conflict-reason
      #:make-correspondence-ledger
      #:correspondence-ledger-actions
      #:start-outbound
