@@ -66,6 +66,9 @@ func ghPRReviews(ctx context.Context, pr int, hostRepo string) (string, []prRevi
 	c := exec.CommandContext(ctx, "gh", "pr", "view", strconv.Itoa(pr), "--repo", hostRepo, "--json", "author,reviews")
 	var stderr strings.Builder
 	c.Stderr = &limitedWriter{w: &stderr, n: 512}
+	// Backstop: once gh has exited, a descendant still holding stderr must
+	// not hold Wait open.
+	c.WaitDelay = 5 * time.Second
 	stdout, err := c.StdoutPipe()
 	if err != nil {
 		return "", nil, err
@@ -75,6 +78,15 @@ func ghPRReviews(ctx context.Context, pr int, hostRepo string) (string, []prRevi
 	}
 	const maxRead = 4 << 20
 	b, rerr := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+	if rerr != nil || len(b) > maxRead {
+		// We stopped reading: a gh with more to say would block on the full
+		// pipe while Wait blocks on it, until the caller's timeout (Stella's
+		// hold, #2863). Close our end so any writer (gh, or a child it left
+		// holding the pipe and stderr) gets EPIPE, and kill gh itself, so the
+		// refusal is prompt.
+		_ = stdout.Close()
+		_ = c.Process.Kill()
+	}
 	werr := c.Wait()
 	switch {
 	case rerr != nil:
@@ -376,7 +388,13 @@ func ingestPRReviews(pr int, revs []prReview) ([]ledgerRead, error) {
 		typed := false
 		for _, ln := range strings.Split(strings.ReplaceAll(r.Body, "\r\n", "\n"), "\n") {
 			f := strings.Fields(strings.TrimSpace(ln))
-			if len(f) == 0 || !strings.EqualFold(f[0], "READ") {
+			if len(f) < 2 || !strings.EqualFold(f[0], "READ") {
+				continue
+			}
+			// Only READ #<n> ... is a typed line; prose whose first word is
+			// "Read" is stepped over, as scanBusTypedLines does (Johnny's nit
+			// on #2863).
+			if _, perr := typedPR(f[1]); perr != nil {
 				continue
 			}
 			if strings.TrimSpace(r.SubmittedAt) == "" {

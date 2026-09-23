@@ -278,6 +278,20 @@ func TestIssue2063(t *testing.T) {
 		}
 	}
 
+	// A gh that prints more than the 4 MiB bound is refused promptly (Stella's
+	// hold, #2863): the reader stops at the bound, and a child still writing
+	// must not block Wait until the caller's timeout. --timeout is a day, so
+	// a reader that waits on the blocked child hangs past the test binary's
+	// deadline instead of returning: the event asserted is that run returns.
+	must(os.WriteFile(filepath.Join(fakeBin, "gh"), []byte("#!/bin/sh\nhead -c 6000000 /dev/zero\nexit 0\n"), 0o755))
+	out.Reset()
+	errb.Reset()
+	code := run([]string{"reads", "--lane", lane, "--bus", bus, "--reviews", "1901:" + reviews1901, "--ready", "--timeout", "86400"}, &out, &errb)
+	if code != 2 || !strings.Contains(errb.String(), "READS REFUSED") || !strings.Contains(errb.String(), "gh output over 4194304 bytes") ||
+		strings.Contains(out.String(), "READS READY") {
+		t.Errorf("reads with an oversized gh reply must refuse naming the bound: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+
 	// A snapshot that names no author is refused the same way: the author's
 	// own reads could not be told from a friend's.
 	noAuthor := snapshot("reviews-1945-noauthor.json", map[string]any{"reviews": []any{}})
@@ -286,5 +300,22 @@ func TestIssue2063(t *testing.T) {
 	if code := run([]string{"reads", "--lane", lane, "--bus", bus, "--reviews", "1945:" + noAuthor, "--reviews", "1901:" + reviews1901, "--ready"}, &out, &errb); code != 2 ||
 		!strings.Contains(errb.String(), "pr 1945 name no author") || strings.Contains(out.String(), "READS READY") {
 		t.Errorf("a reviews snapshot with no author must refuse: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
+}
+
+// TestIssue2063ReviewProseIsNotTyped: a GitHub review whose line merely starts
+// with the word "Read" is prose, not a typed READ line, and must not refuse the
+// ledger (Johnny's nit on #2863); a mistyped READ #<n> line still refuses.
+func TestIssue2063ReviewProseIsNotTyped(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	revs := []prReview{{Author: "johnny", State: "APPROVED", CommitID: head, SubmittedAt: "2026-09-23T14:21:21Z",
+		Body: "Read the spec first; the seam is fine.\nread carefully"}}
+	got, err := ingestPRReviews(2863, revs)
+	if err != nil || len(got) != 1 || got[0].Verdict != "approve" || got[0].Head != head {
+		t.Fatalf("prose review must fold as a plain APPROVED at commit_id: got %+v err %v", got, err)
+	}
+	revs[0].Body = "READ #2863 abc APPROVE"
+	if _, err := ingestPRReviews(2863, revs); err == nil {
+		t.Fatalf("a mistyped READ #<n> line must still refuse")
 	}
 }
