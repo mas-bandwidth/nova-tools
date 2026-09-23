@@ -1069,55 +1069,24 @@ the stream first (`.github/workflows/ci.yml`).
 
 ## nova-sprint
 
-Fixture: `cmd/nova-sprint/testdata/table.txt`, copied to `table.txt` in an empty
-directory by `cmd/nova-sprint/firstrun_test.go` before the lines below run. The
-published table is `sprint-table.txt` in that same directory. Nothing here is a
-Redis read and nothing loops: a second start with the refresh still pending
-prints the previous table and leaves the file byte-for-byte.
+Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
+still be empty afterwards: the table is read from Redis and written nowhere
+(#3326), so none of these lines needs a server and none writes a file.
 
 ### First run
 
 ```text
-$ nova-sprint table --once --fixture table.txt
-SPRINT TABLE
+$ nova-sprint table --once --out sprint-table.txt
+! nova-sprint table: flag provided but not defined: -out; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
 
-host       | queue | working |  done |    ok |  fail |  ok% |   load
------------+-------+---------+-------+-------+-------+------+-------
-alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
------------+-------+---------+-------+-------+-------+------+-------
-total      |     1 |       2 |     3 |     2 |     1 |  66% |
+$ nova-sprint table --once
+! nova-sprint table: --redis <addr> is required; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
 
-friend     | queue | working |  done |    ok |  fail | status
------------+-------+---------+-------+-------+-------+--------
-ada        |     4 |       1 |     2 |     2 |     0 |     up
------------+-------+---------+-------+-------+-------+--------
-total      |     4 |       1 |     2 |     2 |     0 |
-
-1/2 50% -> ~10m
-
-$ nova-sprint table --once --fixture table.txt --out sprint-table.txt
-TABLE PUBLISHED out=sprint-table.txt bytes=675
-
-$ nova-sprint table --once --refresh pending --out sprint-table.txt
-TABLE KEPT out=sprint-table.txt bytes=675 reason=refresh-not-ready
-SPRINT TABLE
-
-host       | queue | working |  done |    ok |  fail |  ok% |   load
------------+-------+---------+-------+-------+-------+------+-------
-alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
------------+-------+---------+-------+-------+-------+------+-------
-total      |     1 |       2 |     3 |     2 |     1 |  66% |
-
-friend     | queue | working |  done |    ok |  fail | status
------------+-------+---------+-------+-------+-------+--------
-ada        |     4 |       1 |     2 |     2 |     0 |     up
------------+-------+---------+-------+-------+-------+--------
-total      |     4 |       1 |     2 |     2 |     0 |
-
-1/2 50% -> ~10m
+$ nova-sprint table --check
+! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
 ```
 
-The first command is the fixture control: standard output is the fixture file,
-byte for byte. The second publishes that render. The third is a restart whose
-refresh is not ready: `TABLE KEPT` and the same table again, and `sprint-table.txt`
-is not opened for write. An empty render is refused rather than published.
+The first is the deleted file cut: `--out` (like `--fixture` and `--refresh`)
+is an unknown flag. The second and third name the server the table is read
+from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
+start) and checks the directory stays empty.
