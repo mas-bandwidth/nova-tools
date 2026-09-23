@@ -113,7 +113,7 @@ func FoldRun(in FoldInput) int {
 
 	switch {
 	case in.Init:
-		fmt.Fprintf(in.Stdout, "FOLD %s schema=%d tables=attempts,reads,landings\n", db.Path(), SchemaVersion)
+		fmt.Fprintf(in.Stdout, "FOLD %s schema=%d tables=%s\n", db.Path(), SchemaVersion, Tables)
 		return 0
 	case in.Dump:
 		if err := db.Dump(ctx, in.Stdout); err != nil {

@@ -21,10 +21,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// SchemaVersion is the migration version schema.sql installs.
-const SchemaVersion = 1
+// SchemaVersion is the migration version schema.sql installs. Version 2 added the decisions
+// table (#2623), the record the decide_log table held.
+const SchemaVersion = 2
 
-// DB is the fold's SQLite file: three tables keyed on the event id and the views over them.
+// Tables is the fold's tables, as the --init receipt names them.
+const Tables = "attempts,reads,landings,decisions"
+
+// DB is the fold's SQLite file: four tables keyed on the event id and the views over them.
 type DB struct {
 	db   *sql.DB
 	path string
@@ -72,13 +76,16 @@ func (d *DB) Close() error {
 }
 
 // table is where one kind lands. Keeping the three tables of #2563 apart makes the read
-// queue's numbers and the landed count separable from the card's own life.
+// queue's numbers and the landed count separable from the card's own life, and a decision
+// (#2623) has columns of its own, so it has a table of its own.
 func table(k Kind) string {
 	switch k {
 	case Read:
 		return "reads"
 	case Landed:
 		return "landings"
+	case Decide:
+		return "decisions"
 	default:
 		return "attempts"
 	}
@@ -115,6 +122,11 @@ func (d *DB) Apply(ctx context.Context, entries []Entry) (inserted, skipped int,
 		}
 		stmts[name] = s
 	}
+	decided, err := tx.PrepareContext(ctx, insertDecision)
+	if err != nil {
+		return 0, 0, err
+	}
+	stmts["decisions"] = decided
 
 	for _, entry := range entries {
 		e, err := FromFields(entry.Fields)
@@ -127,9 +139,14 @@ func (d *DB) Apply(ctx context.Context, entries []Entry) (inserted, skipped int,
 			at = e.At.UTC().Format(time.RFC3339)
 		}
 		// A nil pointer is a nil argument, which is SQL NULL: an absent cost stays absent.
-		res, err := stmts[table(e.Kind)].ExecContext(ctx,
-			entry.ID, e.Label, e.Attempt, e.Bench, e.Model, e.Route, string(e.Kind),
-			nullable(e.TokensIn), nullable(e.TokensOut), nullable(e.USD), e.PR, e.Head, at, e.Day())
+		var res sql.Result
+		if e.Kind == Decide {
+			res, err = stmts["decisions"].ExecContext(ctx, decisionArgs(entry.ID, e, at)...)
+		} else {
+			res, err = stmts[table(e.Kind)].ExecContext(ctx,
+				entry.ID, e.Label, e.Attempt, e.Bench, e.Model, e.Route, string(e.Kind),
+				nullable(e.TokensIn), nullable(e.TokensOut), nullable(e.USD), e.PR, e.Head, at, e.Day())
+		}
 		if err != nil {
 			return 0, 0, fmt.Errorf("fold %s: %w", entry.ID, err)
 		}
@@ -152,17 +169,22 @@ func nullable[T int64 | float64](p *T) any {
 	return *p
 }
 
-// Count is how many rows the three tables hold together: the number Johnny's bar 3 asks for.
+// Count is how many rows the four tables hold together: the number Johnny's bar 3 asks for.
 func (d *DB) Count(ctx context.Context) (int, error) {
 	var n int
 	err := d.db.QueryRowContext(ctx,
-		`SELECT (SELECT count(*) FROM attempts) + (SELECT count(*) FROM reads) + (SELECT count(*) FROM landings)`).Scan(&n)
+		`SELECT (SELECT count(*) FROM attempts) + (SELECT count(*) FROM reads) + (SELECT count(*) FROM landings) + (SELECT count(*) FROM decisions)`).Scan(&n)
 	return n, err
 }
 
 // CountKind is how many rows of one kind the fold holds.
 func (d *DB) CountKind(ctx context.Context, k Kind) (int, error) {
 	var n int
+	if k == Decide {
+		// decisions holds one kind only, and its `kind` column is the UNIT's kind.
+		err := d.db.QueryRowContext(ctx, `SELECT count(*) FROM decisions`).Scan(&n)
+		return n, err
+	}
 	err := d.db.QueryRowContext(ctx, fmt.Sprintf(`SELECT count(*) FROM %s WHERE kind = ?`, table(k)), string(k)).Scan(&n)
 	return n, err
 }
@@ -170,8 +192,8 @@ func (d *DB) CountKind(ctx context.Context, k Kind) (int, error) {
 // dumpColumns is the row shape Dump writes, the same for all three tables.
 const dumpColumns = "event_id, label, attempt, bench, model, route, kind, tokens_in, tokens_out, usd, pr, head, at, day"
 
-// Dump writes every row of the three tables as TSV, table by table and ordered inside each
-// table by event id. It is deterministic by construction -- no fold timestamp, no insertion
+// Dump writes every row of the three card tables as TSV, table by table and ordered inside
+// each table by event id, then the decisions under a header of their own columns. It is deterministic by construction -- no fold timestamp, no insertion
 // order -- which is what lets a rebuild be compared with an incremental fold byte for byte.
 func (d *DB) Dump(ctx context.Context, w io.Writer) error {
 	if _, err := fmt.Fprintf(w, "table\t%s\n", strings.ReplaceAll(dumpColumns, ", ", "\t")); err != nil {
@@ -186,7 +208,7 @@ func (d *DB) Dump(ctx context.Context, w io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	return dumpDecisions(ctx, d.db, w)
 }
 
 func dumpRows(w io.Writer, name string, rows *sql.Rows) error {
@@ -235,6 +257,7 @@ func (d *DB) Report(ctx context.Context, w io.Writer, max int) error {
 		{"by_model_route", `SELECT model, route, "rows", ok, fail, done, usd, usd_per_ok, landed, usd_per_landed FROM by_model_route ORDER BY model, route`},
 		{"by_bench", `SELECT bench, "rows", cards, ok, fail, done, usd FROM by_bench ORDER BY bench`},
 		{"by_day", `SELECT day, "rows", cards, ok, fail, done, usd FROM by_day ORDER BY day`},
+		{"decisions_by_kind", `SELECT kind, decisions, units, stepped_up, escalated, refused, calls, tokens_in, tokens_out FROM decisions_by_kind ORDER BY kind`},
 	} {
 		if err := reportBlock(ctx, d.db, w, v.name, v.query, max); err != nil {
 			return err

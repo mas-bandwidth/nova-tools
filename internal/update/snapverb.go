@@ -61,8 +61,25 @@ const snapshotHeader = "name\tstamp\trevision\tplatform"
 
 // row is one binary as its OWN `version` reported it. Name is the executable's
 // file name; stamp, revision and platform are read off the four-token line, so
-// a renamed stub cannot forge a row.
-type snapRow struct{ name, stamp, revision, platform string }
+// a renamed stub cannot forge a row. Source is the structured source metadata
+// the line carries (repository, revision, dirty flag, build host), and has
+// tells the mixed-source gate whether the line named source at all: a binary
+// that did not name source contributes no opinion to that gate, and a binary
+// that did is checked against every other binary that did (#2291,
+// SPEC-VERSION item 6).
+type snapRow struct {
+	name, stamp, revision, platform string
+	src                             buildinfo.Source
+	has                             bool
+}
+
+// sourceString is the one line a Source reads as on a refusal: every field
+// named, in the order internal/buildinfo writes them, so the reader of the
+// refusal can match it against a build's manifest without holding the
+// goroutine open.
+func sourceString(s buildinfo.Source) string {
+	return fmt.Sprintf("repo=%s revision=%s dirty=%t build_host=%s", s.Repository, s.Revision, s.Dirty, s.BuildHost)
+}
 
 // revisionOf is the twelve-hex commit the identity carries, or "-". The
 // toolchain's vcs stamp is <utc time>-<12 hex>[-dirty]; a release tag carries
@@ -90,12 +107,21 @@ func revisionOf(stamp string) string {
 // is a tool saying one more true thing about itself; every column this verb
 // writes is read out of the four tokens the whole set shares, so an extra
 // changes nothing here except that it is no longer a refusal.
-func parseVersionLine(s string) (stamp, revision, platform string, ok bool) {
+//
+// The structured source view -- repository, revision, dirty flag, build host
+// -- is read from the same line and returned separately. A line that does not
+// carry the four source keys (an old binary, a foreign tool, a `go install`
+// from a tag) returns src with has=false: the row is still recorded, and
+// "no source" is the honest answer rather than a refusal at this verb's
+// normal case. The mixed-source gate downstream compares only what the rows
+// carry (#2291, SPEC-VERSION item 6).
+func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo.Source, has bool, ok bool) {
 	f, ok := buildinfo.Parse(s)
 	if !ok {
-		return "", "", "", false
+		return "", "", "", buildinfo.Source{}, false, false
 	}
-	return f.Version, revisionOf(f.Version), f.Platform, true
+	src, has = f.FindSource()
+	return f.Version, revisionOf(f.Version), f.Platform, src, has, true
 }
 
 // snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
@@ -193,11 +219,11 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 			}
 			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (%s) (%s)", e.Name(), reason, remedy))
 		}
-		stamp, revision, platform, ok := parseVersionLine(p.Stdout)
+		stamp, revision, platform, src, has, ok := parseVersionLine(p.Stdout)
 		if !ok {
 			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (it printed no version line: want `<tool> <stamp> <goos>/<goarch> <go version>` and then any key=value extras) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
 		}
-		rows = append(rows, snapRow{e.Name(), stamp, revision, platform})
+		rows = append(rows, snapRow{e.Name(), stamp, revision, platform, src, has})
 	}
 	if len(rows) == 0 {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("--bin %s holds no nova-* regular file (supply a readable --bin: a directory of nova-* executables)", bin))
@@ -206,6 +232,34 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	for i := 1; i < len(rows); i++ {
 		if rows[i].stamp != rows[0].stamp {
 			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update apply --sha, or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
+		}
+	}
+	// SOURCE METADATA GATE (#2291, SPEC-VERSION item 6). The version stamp
+	// is one field a build can carry from a different checkout; the four
+	// source keys -- repository, revision, dirty flag, build host -- are
+	// the structured view of WHERE the build actually came from, and
+	// every stamp read at the gate checks it. A row that does not name
+	// source (an old binary, a foreign tool, a `go install` from a tag)
+	// contributes no opinion, so the existing tests' four-token stubs
+	// remain readable; a row that names source is checked against every
+	// other row that named source, and disagreement is refused. Missing
+	// in the strict sense ("a binary whose source metadata is missing")
+	// is the next issue's slice, once every stamp read across the tree
+	// can demand source without breaking the older binaries in the
+	// wild.
+	var firstSrc buildinfo.Source
+	var firstSrcName string
+	var firstSrcSet bool
+	for _, r := range rows {
+		if !r.has {
+			continue
+		}
+		if !firstSrcSet {
+			firstSrc, firstSrcName, firstSrcSet = r.src, r.name, true
+			continue
+		}
+		if r.src != firstSrc {
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update apply --sha, or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
 	var b strings.Builder

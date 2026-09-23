@@ -59,6 +59,14 @@ HOME_DIR="${HOME:-}"
 DRIFTS=0
 STRAY_PIDS=""
 
+# Build the card environment before any tool resolution so the verdict
+# does not depend on the caller's PATH (nova-tools#2052).
+if [ -f "$HOME_DIR/sdk/env.sh" ]; then
+  set +u
+  . "$HOME_DIR/sdk/env.sh"
+  set -u
+fi
+
 drift() {
   echo "DRIFT $*"
   DRIFTS=$((DRIFTS + 1))
@@ -232,6 +240,35 @@ else
   fi
 fi
 
+# (3c) harness canary: try to start the harness inside the sandbox wall.
+# A harness that cannot start inside the wall means the bench is unfit for
+# cards -- every card would fail at startup (#2388).
+if [ "$harness_ok" = "1" ] && [ "$OS" = "Linux" ]; then
+  _hbin=""
+  if [ -n "$NOVA_HARNESS" ]; then
+    _hbin="$NOVA_HARNESS"
+  else
+    for _h in "$HOME_DIR"/nova-bench/harness-*/opencode; do
+      [ -x "$_h" ] || continue
+      _hbin="$_h"
+      break
+    done
+  fi
+  if [ -n "$_hbin" ]; then
+    _sbin="$HOME_DIR/.local/bin/nova-sandbox"
+    if [ -x "$_sbin" ]; then
+      _cdir="$(mktemp -d "$HOME_DIR/nova-bench/nova-canary.XXXXXX" 2>/dev/null || true)"
+      if [ -n "$_cdir" ]; then
+        mkdir -p "$_cdir/home"
+        if ! HOME="$_cdir/home" "$_sbin" --read "$HOME_DIR/nova-bench" --write "$_cdir" --cwd "$_cdir" -- "$_hbin" --help >/dev/null 2>&1; then
+          drift "harness cannot start inside the sandbox wall; $_hbin --help failed under nova-sandbox"
+        fi
+        rm -rf "$_cdir"
+      fi
+    fi
+  fi
+fi
+
 # (3b) the network probe runs inside the real sandbox, never on the host, so
 # what it reports is what a card would see (#893).
 if [ "$OS" = "Linux" ]; then
@@ -322,6 +359,9 @@ else
   else
     seat="$(basename "$seatkey" .key)"
     store="${NOVA_SECRETS_STORE:-}"
+    if [ -z "$store" ] && [ -d "$HOME_DIR/nova-bench/secrets" ]; then
+      store="$HOME_DIR/nova-bench/secrets"
+    fi
     if [ -z "$store" ] && [ -d "$HOME_DIR/secrets" ]; then
       store="$HOME_DIR/secrets"
     fi

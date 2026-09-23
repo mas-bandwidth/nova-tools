@@ -1,16 +1,22 @@
 package decide
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 )
 
-// The log has two sinks and one contract. The JSONL file is what it has always
-// been; Postgres is the same rows beside the card results (Glenn 2026-09-18).
-// Everything below runs on the fake or on a file: a unit test never opens a
-// socket.
+// The log has two sinks. The JSONL file is what it has always been; the fleet's
+// record is one decide event on cards:done, folded into the decisions table
+// (#2623). Everything below runs on a file, the fake sink or the in-memory
+// stream: a unit test never opens a socket.
 
 func sampleEntry() Entry {
 	in := 937
@@ -21,8 +27,8 @@ func sampleEntry() Entry {
 		Evidence:   Unit{ID: "u1", Kind: KindRebase, Files: 2, Packages: 1, Lanes: 1, LaneOwner: "decide"},
 		RungTried:  "flash",
 		Height:     0,
-		Confidence: 0.94,
-		Floor:      DefaultFloor,
+		Confidence: measured(0.94),
+		Floor:      measured(DefaultFloor),
 		Source:     SourceRules,
 		RowanPick:  "flash",
 		Wait:       WaitNone,
@@ -32,14 +38,12 @@ func sampleEntry() Entry {
 	}
 }
 
-// OpenLogSink picks the sink by name: "postgres" is the table, anything else is
-// a path. An empty name is a refusal, never a guess at one.
-func TestOpenLogSinkChoosesByName(t *testing.T) {
-	if _, err := OpenLogSink("", ""); err == nil {
+// --log is a path. An empty one is a refusal, never a guess at one.
+func TestOpenLogSinkIsAPath(t *testing.T) {
+	if _, err := OpenLogSink(""); err == nil {
 		t.Fatal("an empty --log must refuse rather than guess a path")
 	}
-	path := filepath.Join(t.TempDir(), "decide.jsonl")
-	sink, err := OpenLogSink(path, "")
+	sink, err := OpenLogSink(filepath.Join(t.TempDir(), "decide.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,28 +53,11 @@ func TestOpenLogSinkChoosesByName(t *testing.T) {
 	}
 }
 
-// "postgres" with no DSN in the environment is a refusal that names the
-// variable to set, because the DSN never comes in on argv.
-func TestPostgresLogRefusesWithoutADSNInTheEnvironment(t *testing.T) {
-	name := "NOVA_DECIDE_LOG_DSN_TEST_ABSENT"
-	os.Unsetenv(name)
-	_, err := OpenLogSink(PostgresLog, name)
-	if err == nil {
-		t.Fatal("postgres with no DSN must refuse")
-	}
-	if !strings.Contains(err.Error(), name) {
-		t.Errorf("the refusal must name the variable to set: %q", err)
-	}
-	if strings.Contains(err.Error(), "--dsn ") {
-		t.Errorf("the DSN is never asked for on argv: %q", err)
-	}
-}
-
 // The file sink is the log as it has always been: the same rows AppendEntry
 // wrote and ReadEntries read.
 func TestFileSinkIsTheJSONLLogItAlwaysWas(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "decide.jsonl")
-	sink, err := OpenLogSink(path, "")
+	sink, err := OpenLogSink(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,124 +86,158 @@ func TestFileSinkIsTheJSONLLogItAlwaysWas(t *testing.T) {
 	}
 }
 
-// Stella's presence rule: a counter the provider did not report is ABSENT, not
-// zero. It survives the row shape the table is written in.
-func TestLogRowKeepsAnUnreportedCounterAbsent(t *testing.T) {
+// The decide event is the whole decide_log row under decide_log's names: every
+// column the calibration set reads survives the mapping.
+func TestDecisionEventCarriesTheWholeRow(t *testing.T) {
 	e := sampleEntry()
-	if e.TokensOut != nil {
-		t.Fatal("the fixture reports no output tokens")
-	}
-	row, err := logRowFor(e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !row.TokensIn.Valid || row.TokensIn.Int64 != 937 {
-		t.Errorf("a reported counter is a measurement: %+v", row.TokensIn)
-	}
-	if row.TokensOut.Valid {
-		t.Errorf("an unreported counter is SQL NULL, never a zero: %+v", row.TokensOut)
-	}
-	back, err := row.entry()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if back.TokensOut != nil {
-		t.Errorf("NULL came back as a number: %v", *back.TokensOut)
-	}
-	if back.TokensIn == nil || *back.TokensIn != 937 {
-		t.Errorf("the measurement did not survive: %v", back.TokensIn)
-	}
-}
-
-// A reported zero is a measurement and is written as one, so it comes back as a
-// zero rather than an absence.
-func TestLogRowKeepsAReportedZero(t *testing.T) {
-	e := sampleEntry()
-	zero := 0
-	e.TokensOut = &zero
-	row, err := logRowFor(e)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !row.TokensOut.Valid || row.TokensOut.Int64 != 0 {
-		t.Fatalf("a reported zero must be written as a zero: %+v", row.TokensOut)
-	}
-	back, err := row.entry()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if back.TokensOut == nil || *back.TokensOut != 0 {
-		t.Errorf("a reported zero came back as an absence: %v", back.TokensOut)
-	}
-}
-
-// The row is the whole decision: the table carries every column the summary
-// reads, so a row written to Postgres and read back is the row that was
-// written.
-func TestLogRowRoundTripsTheWholeDecision(t *testing.T) {
-	e := sampleEntry()
-	e.SteppedUp = true
-	e.Escalated = true
-	e.Designated = true
+	e.SteppedUp, e.Escalated, e.Designated = true, true, true
 	e.Reason = "the lane's owner is up"
 	e.Refusal = "no-rung"
 	e.RungSucceeded = "pro"
 	e.Wait = WaitAwaitingTermination
 	e.AwaitingTermination = true
 	e.UsageFailed = true
-	e.Evidence.Attempts = []Attempt{{Rung: "flash", Outcome: OutcomeFailed, Reason: "red"}}
-	row, err := logRowFor(e)
+	ev, err := DecisionEvent(e)
 	if err != nil {
 		t.Fatal(err)
 	}
-	back, err := row.entry()
-	if err != nil {
-		t.Fatal(err)
+	if err := ev.Validate(); err != nil {
+		t.Fatalf("the stream refuses the decision: %v", err)
 	}
-	if back.Time != e.Time {
-		t.Errorf("time: %q != %q", back.Time, e.Time)
+	if ev.Kind != events.Decide || ev.Label != "u1" || !ev.At.Equal(time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)) {
+		t.Fatalf("event=%s label=%s at=%s; want decide, the unit, the row's stamp", ev.Kind, ev.Label, ev.At)
 	}
-	if back.Unit != e.Unit || back.Kind != e.Kind || back.RungTried != e.RungTried {
-		t.Errorf("identity: %+v", back)
-	}
-	if back.Confidence != e.Confidence || back.Floor != e.Floor || back.Height != e.Height {
-		t.Errorf("numbers: %+v", back)
-	}
-	if back.Wait != e.Wait || !back.AwaitingTermination || back.Refusal != e.Refusal {
-		t.Errorf("the wait and the refusal: %+v", back)
-	}
-	if back.Outcome != e.Outcome || back.RungSucceeded != e.RungSucceeded {
-		t.Errorf("the outcome: %+v", back)
-	}
-	if !back.SteppedUp || !back.Escalated || !back.Designated || !back.UsageFailed {
-		t.Errorf("the flags: %+v", back)
-	}
-	if back.Reason != e.Reason || back.Source != e.Source || back.RowanPick != e.RowanPick {
-		t.Errorf("the prose: %+v", back)
-	}
-	if len(back.Evidence.Attempts) != 1 || back.Evidence.Attempts[0].Rung != "flash" {
-		t.Errorf("the evidence's attempts are the escalation count: %+v", back.Evidence)
-	}
-	if back.Evidence.Files != 2 || back.Evidence.Packages != 1 || back.Evidence.Lanes != 1 {
-		t.Errorf("the size buckets: %+v", back.Evidence)
-	}
-	if back.Evidence.LaneOwner != "decide" {
-		t.Errorf("the lane: %+v", back.Evidence)
+	f := ev.Fields()
+	for name, want := range map[string]string{
+		"unit_id": "u1", "kind": KindRebase, "files": "2", "packages": "1", "lanes": "1", "lane": "decide",
+		"rung_tried": "flash", "height": "0", "confidence": "0.94", "floor": "0.65",
+		"stepped_up": "true", "escalated": "true", "designated": "true", "source": SourceRules,
+		"rowan_pick": "flash", "reason": "the lane's owner is up", "wait": WaitAwaitingTermination,
+		"awaiting_termination": "true", "refusal": "no-rung", "outcome": OutcomeOK, "rung_succeeded": "pro",
+		"calls": "1", "tokens_in": "937", "usage_failed": "true",
+	} {
+		if f[name] != want {
+			t.Errorf("%s = %q, want %q", name, f[name], want)
+		}
 	}
 }
 
-// A row with a time that is not a time is a refusal naming the row, never a
-// silent zero stamp in the durable record.
-func TestLogRowRefusesATimeThatIsNotOne(t *testing.T) {
+// Stella's presence rule: a counter the provider did not report is ABSENT,
+// not zero, and a reported zero is a zero.
+func TestDecisionEventKeepsAnUnreportedCounterAbsent(t *testing.T) {
+	e := sampleEntry()
+	ev, err := DecisionEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ev.Fields()["tokens_out"]; ok {
+		t.Fatal("an unreported counter is absent from the entry, never a zero")
+	}
+	zero := 0
+	e.TokensOut = &zero
+	if ev, err = DecisionEvent(e); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := ev.Fields()["tokens_out"]; !ok || got != "0" {
+		t.Fatalf("a reported zero is a measurement: tokens_out=%q present=%v", got, ok)
+	}
+}
+
+// A stamp that is not a time is a refusal naming the unit, never a silent zero
+// stamp in the record.
+func TestDecisionEventRefusesATimeThatIsNotOne(t *testing.T) {
 	e := sampleEntry()
 	e.Time = "yesterday"
-	if _, err := logRowFor(e); err == nil {
-		t.Fatal("a stamp that is not a time must refuse")
+	if _, err := DecisionEvent(e); err == nil || !strings.Contains(err.Error(), "u1") {
+		t.Fatalf("a stamp that is not a time must refuse naming the unit: %v", err)
 	}
 }
 
-// The summary is a projection of the rows, so it reads the same off either
-// sink. The fake is the table's stand-in in the unit suite.
+// A reason longer than the stream's field ceiling is cut with the byte mark,
+// not refused: a long reason must not cost the whole decision.
+func TestDecisionEventCapsALongReason(t *testing.T) {
+	e := sampleEntry()
+	e.Reason = strings.Repeat("step 1: flash answered below the floor; ", 12)
+	ev, err := DecisionEvent(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ev.Validate(); err != nil {
+		t.Fatalf("a long reason cost the decision: %v", err)
+	}
+	if !strings.Contains(ev.Decision.Reason, "...+") {
+		t.Fatalf("the reason was cut without the mark: %q", ev.Decision.Reason)
+	}
+}
+
+// The round trip at the decide end: the sink writes through the Emitter every
+// card transition uses, onto cards:done, and the fold reads it into decisions
+// with the unreported counter NULL (a dash in the dump), never 0.
+func TestEventSinkWritesADecisionTheFoldReads(t *testing.T) {
+	ctx := context.Background()
+	stream := events.NewFakeStream()
+	sink := &EventSink{Emitter: stream, Bench: "hulk"}
+	if err := sink.Append(sampleEntry()); err != nil {
+		t.Fatalf("writing the decision: %v", err)
+	}
+	if _, err := sink.Entries(); err == nil || !strings.Contains(err.Error(), "fold") {
+		t.Fatalf("the writer must send a reader to the fold: %v", err)
+	}
+	db, err := events.OpenDB(ctx, filepath.Join(t.TempDir(), "ev.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	folder := &events.Folder{Reader: stream, DB: db}
+	if err := folder.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := folder.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.CountKind(ctx, events.Decide); err != nil || n != 1 {
+		t.Fatalf("the fold holds %d decisions (err %v), want 1", n, err)
+	}
+	var dump bytes.Buffer
+	if err := db.Dump(ctx, &dump); err != nil {
+		t.Fatal(err)
+	}
+	// ... unit_id kind files packages lanes lane rung_tried height confidence floor ...
+	// calls tokens_in tokens_out usd usage_failed
+	if !strings.Contains(dump.String(), "\tu1\trebase\t2\t1\t1\tdecide\tflash\t0\t0.94\t0.65\t") ||
+		!strings.Contains(dump.String(), "\t1\t937\t-\t-\t0\n") {
+		t.Fatalf("the fold's decision row is not the row that was written:\n%s", dump.String())
+	}
+	if !strings.Contains(dump.String(), "decisions\t1-0\tu1\thulk\t") {
+		t.Fatalf("the decision lost its bench:\n%s", dump.String())
+	}
+}
+
+// Tee writes every sink and reports every failure, so the file and the stream
+// are written together and neither failure hides the other.
+func TestTeeWritesEverySinkAndReportsEveryFailure(t *testing.T) {
+	a, b := NewFakeLogSink(), NewFakeLogSink()
+	both := Tee(a, nil, b)
+	if err := both.Append(sampleEntry()); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []*FakeLogSink{a, b} {
+		if rows, _ := s.Entries(); len(rows) != 1 {
+			t.Fatalf("a sink behind the tee holds %d rows, want 1", len(rows))
+		}
+	}
+	b.AppendErr = errors.New("the stream is down")
+	err := both.Append(sampleEntry())
+	if err == nil || !strings.Contains(err.Error(), "the stream is down") {
+		t.Fatalf("the tee hid a failed sink: %v", err)
+	}
+	if rows, _ := a.Entries(); len(rows) != 2 {
+		t.Fatalf("one failed sink stopped the others: the file holds %d rows, want 2", len(rows))
+	}
+}
+
+// The summary is a projection of the rows, so it reads the same off the file
+// and off the fake.
 func TestSummaryIsTheSameOffEitherSink(t *testing.T) {
 	reg, err := LoadRegistry("")
 	if err != nil {
@@ -227,18 +248,17 @@ func TestSummaryIsTheSameOffEitherSink(t *testing.T) {
 	entries[1].Outcome = OutcomeFailed
 	entries[1].RungSucceeded = ""
 
-	path := filepath.Join(t.TempDir(), "decide.jsonl")
-	file, err := OpenLogSink(path, "")
+	file, err := OpenLogSink(filepath.Join(t.TempDir(), "decide.jsonl"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer file.Close()
-	table := NewFakeLogSink()
+	fake := NewFakeLogSink()
 	for _, e := range entries {
 		if err := file.Append(e); err != nil {
 			t.Fatal(err)
 		}
-		if err := table.Append(e); err != nil {
+		if err := fake.Append(e); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -246,7 +266,7 @@ func TestSummaryIsTheSameOffEitherSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tableRows, err := table.Entries()
+	fakeRows, err := fake.Entries()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,20 +274,19 @@ func TestSummaryIsTheSameOffEitherSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tableSum, err := Summarize(reg, tableRows)
+	fakeSum, err := Summarize(reg, fakeRows)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fileSum.Render() != tableSum.Render() {
-		t.Errorf("the same rows are the same summary:\nfile:  %s\ntable: %s", fileSum.Render(), tableSum.Render())
+	if fileSum.Render() != fakeSum.Render() {
+		t.Errorf("the same rows are the same summary:\nfile: %s\nfake: %s", fileSum.Render(), fakeSum.Render())
 	}
 	if !strings.Contains(fileSum.Render(), "LOG OK rows=2") {
 		t.Errorf("two rows are two rows: %s", fileSum.Render())
 	}
 }
 
-// The fake is the seam the unit tests run on, and it keeps the same promise the
-// table does: the rows come back in the order they were appended.
+// The fake keeps the order the rows were appended in.
 func TestFakeLogSinkKeepsTheOrder(t *testing.T) {
 	sink := NewFakeLogSink()
 	for _, id := range []string{"a", "b", "c"} {
@@ -286,32 +305,72 @@ func TestFakeLogSinkKeepsTheOrder(t *testing.T) {
 	}
 }
 
-// The migration is a file in the repository, applied by a verb: it creates the
-// table if it is not there and may be run twice.
-func TestMigrationsAreIdempotentSQLInTheRepository(t *testing.T) {
-	stmts, err := logMigrations()
+// Stella HOLD 7 at d4482049: the absent->NULL invariant on the LIVE writer
+// path. A JSON lines row that omitted confidence and floor goes through
+// ReadEntries, EventSink.Append and so DecisionEvent, onto cards:done, and the
+// fold stores NULL for both (a dash in the dump) -- never a present 0. The
+// control beside it: a row that CARRIED a zero confidence folds a 0.
+func TestAnOmittedConfidenceAndFloorFoldAsNullThroughDecisionEvent(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "decide.jsonl")
+	lines := `{"time":"2026-09-18T10:00:00Z","unit":"absent","kind":"rebase","evidence":{"id":"absent","kind":"rebase"},"rung_tried":"flash","height":0,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash"}
+{"time":"2026-09-18T10:00:01Z","unit":"zero","kind":"rebase","evidence":{"id":"zero","kind":"rebase"},"rung_tried":"flash","height":0,"confidence":0,"floor":0,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash"}
+`
+	if err := os.WriteFile(path, []byte(lines), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := ReadEntries(path)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("read %d rows (err %v), want 2", len(rows), err)
+	}
+
+	ev, err := DecisionEvent(rows[0])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(stmts) == 0 {
-		t.Fatal("there is no migration to apply")
-	}
-	joined := strings.Join(stmts, "\n")
-	if !strings.Contains(joined, "CREATE TABLE IF NOT EXISTS decide_log") {
-		t.Errorf("the migration does not create decide_log: %s", joined)
-	}
-	for _, want := range []string{"tokens_in", "tokens_out", "rung_succeeded", "refusal", "confidence", "floor"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("the table has no %s column: %s", want, joined)
+	for _, name := range []string{"confidence", "floor"} {
+		if v, ok := ev.Fields()[name]; ok {
+			t.Errorf("the source row omitted %s but the event carries %s=%q; absent is not zero", name, name, v)
 		}
 	}
-	for _, stmt := range stmts {
-		up := strings.ToUpper(stmt)
-		switch {
-		case strings.HasPrefix(up, "CREATE TABLE"), strings.HasPrefix(up, "CREATE INDEX"):
-			if !strings.Contains(up, "IF NOT EXISTS") {
-				t.Errorf("a migration that is not idempotent cannot be run twice: %s", stmt)
-			}
+	ev, err = DecisionEvent(rows[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"confidence", "floor"} {
+		if v, ok := ev.Fields()[name]; !ok || v != "0" {
+			t.Errorf("the source row carried %s=0 but the event has %s=%q present=%v; a written zero is a zero", name, name, v, ok)
 		}
+	}
+
+	stream := events.NewFakeStream()
+	sink := &EventSink{Emitter: stream, Bench: "hulk"}
+	for _, e := range rows {
+		if err := sink.Append(e); err != nil {
+			t.Fatalf("writing the decision: %v", err)
+		}
+	}
+	db, err := events.OpenDB(ctx, filepath.Join(t.TempDir(), "ev.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	folder := &events.Folder{Reader: stream, DB: db}
+	if err := folder.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := folder.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var dump bytes.Buffer
+	if err := db.Dump(ctx, &dump); err != nil {
+		t.Fatal(err)
+	}
+	// ... unit_id kind files packages lanes lane rung_tried height confidence floor ...
+	if !strings.Contains(dump.String(), "\tabsent\trebase\t0\t0\t0\t-\tflash\t0\t-\t-\t") {
+		t.Errorf("the omitted confidence and floor did not fold as NULL:\n%s", dump.String())
+	}
+	if !strings.Contains(dump.String(), "\tzero\trebase\t0\t0\t0\t-\tflash\t0\t0\t0\t") {
+		t.Errorf("the written zero confidence and floor did not fold as 0:\n%s", dump.String())
 	}
 }
