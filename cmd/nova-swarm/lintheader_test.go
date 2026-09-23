@@ -74,6 +74,48 @@ func TestLintCardDrawsTestNamedAndPathsDeclared(t *testing.T) {
 	}
 }
 
+// KIND: report is a card kind. The wake-chain card carries it, and lint accepts
+// that fixture. A nonsense kind is still a drift. `text` stays declared.
+func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
+	report := writeLintCard(t, "report.card", typedCardText(t,
+		"KIND: report",
+		"PATHS: internal/swarm/lintheader.go",
+		"TEST: internal/swarm TestLintCardAcceptsKindReportAndRefusesANonsenseKind",
+		"LEGS: go",
+		"SOURCE: mas-bandwidth/nova-tools#1651",
+	))
+	exit, stdout, stderr := runSwarm(t, "lint", "--card", report)
+	if exit != 0 || !strings.Contains(stdout, "LINT OK card=report.card checks=") {
+		t.Fatalf("KIND: report is a kind lint accepts: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if strings.Contains(stdout, "kind-declared") {
+		t.Fatalf("KIND: report drew kind-declared:\n%s", stdout)
+	}
+
+	text := writeLintCard(t, "text.card", typedCardText(t,
+		"KIND: text",
+		"PATHS: none",
+		"TEST: none",
+		"LEGS: go",
+		"SOURCE: mas-bandwidth/nova-tools#1651",
+	))
+	if exit, stdout, stderr = runSwarm(t, "lint", "--card", text); exit != 0 {
+		t.Fatalf("KIND: text stays accepted: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+
+	bad := writeLintCard(t, "nonsense.card", typedCardText(t,
+		"KIND: not-a-real-kind",
+		"PATHS: internal/swarm/lintheader.go",
+		"TEST: internal/swarm TestLintCardAcceptsKindReportAndRefusesANonsenseKind",
+		"LEGS: go",
+		"SOURCE: mas-bandwidth/nova-tools#1651",
+	))
+	exit, stdout, stderr = runSwarm(t, "lint", "--card", bad)
+	if exit != 2 || !strings.Contains(stdout, "kind-declared") || !strings.Contains(stdout, "not-a-real-kind") {
+		t.Fatalf("a nonsense KIND is refused: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+}
+
 // NEGATIVE CONTROL: the same card, header complete and every value one the gate reads,
 // is clean at exit 0.
 func TestLintCardCompleteHeaderPasses(t *testing.T) {
@@ -149,7 +191,7 @@ func TestLintCardTypedRequiresTheHeader(t *testing.T) {
 	if exit != 2 {
 		t.Fatalf("--typed on a card with no header is a drift, exit %d:\n%s", exit, stdout)
 	}
-	for _, want := range []string{"kind-declared:", "paths-declared:", "test-named:"} {
+	for _, want := range []string{"kind-declared:", "paths-declared:", "test-named:", "depends-on:"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("no %s in:\n%s", want, stdout)
 		}

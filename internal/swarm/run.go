@@ -108,6 +108,7 @@ type running struct {
 	adopted    bool
 	notes      int
 	leased     bool
+	leaseIDs   []string
 }
 
 // Run is the dispatcher. It returns the exit code.
@@ -368,9 +369,11 @@ func Run(in RunInput) int {
 
 	// THE BENCH SLOT LEASE, FROM THE DISPATCHER'S SIDE. A store wider than this pool
 	// answers to a share: one lease per task, labelled with the task id and held for the
-	// task's deadline plus two minutes, released the moment the task ends. A refused take
-	// is a WAIT -- one `RUN WAIT slots owner= holders=` line, a poll every slotPoll, and
-	// no launch past the share -- until the task's own deadline says it can no longer run.
+	// task's deadline plus two minutes, released the moment the task ends. The lease is
+	// charged at the card kind's admission weight (#2033), so a schema card that would
+	// overflow the remaining share waits rather than launching. A refused take is a WAIT
+	// -- one `RUN WAIT slots owner= holders=` line, a poll every slotPoll, and no launch
+	// past the share -- until the task's own deadline says it can no longer run.
 	slotPoll := in.SlotPoll
 	if slotPoll <= 0 {
 		slotPoll = 10 * time.Second
@@ -443,9 +446,11 @@ func Run(in RunInput) int {
 				}
 			}
 			leased := false
+			var leaseIDs []string
 			if in.SlotsStore != "" {
 				dur := taskDeadline(sc, in.Worker) + 2*time.Minute
-				_, _, _, _, holders, granted, lerr := TakeSlotLeases(in.SlotsStore, in.SlotOwner, 1, dur, sc.ID, now(), slotPID)
+				kind := CardKindFromText(string(text))
+				ids, _, _, _, holders, granted, lerr := TakeSlotLeasesKind(in.SlotsStore, in.SlotOwner, 1, kind, dur, sc.ID, now(), slotPID)
 				if lerr != nil {
 					said = true
 					haltAdmissions = true
@@ -471,6 +476,7 @@ func Run(in RunInput) int {
 					break
 				}
 				leased = true
+				leaseIDs = ids
 				slotWaitTask = ""
 				slotNextPoll = time.Time{}
 			}
@@ -478,6 +484,7 @@ func Run(in RunInput) int {
 			switch code {
 			case launchStarted:
 				r.leased = leased
+				r.leaseIDs = leaseIDs
 				started++
 				watching[slot] = r
 				tasks.Line(line)
@@ -496,7 +503,7 @@ func Run(in RunInput) int {
 				failed++
 				tasks.Line(line)
 				if leased {
-					in.releaseSlotLease(sc.ID)
+					in.releaseSlotLease(leaseIDs)
 				}
 			default:
 				said = true
@@ -504,7 +511,7 @@ func Run(in RunInput) int {
 				haltAdmissions = true
 				tasks.Line(line)
 				if leased {
-					in.releaseSlotLease(sc.ID)
+					in.releaseSlotLease(leaseIDs)
 				}
 			}
 		}
@@ -541,7 +548,7 @@ func Run(in RunInput) int {
 				// THE LEASE ENDS WITH THE TASK, whatever end it found. Clearing the poll
 				// hold lets the next waiting task ask at once rather than wait out a
 				// poll interval for a capacity that is already free.
-				in.releaseSlotLease(r.sc.ID)
+				in.releaseSlotLease(r.leaseIDs)
 				slotNextPoll = time.Time{}
 			}
 			// D2 (the real run, 2026-09-11): two jobs printed `RUN DONE … dest=failed`
@@ -603,16 +610,26 @@ func Run(in RunInput) int {
 	return 0
 }
 
-// releaseSlotLease gives back the lease this dispatcher holds for one task. A failure is
+// releaseSlotLease gives back EXACTLY the leases this dispatcher took. A failure is
 // reported and is not fatal: the lease names this process's pid, so a dispatcher that dies
 // leaves a lease the next take reaps anyway.
-func (in RunInput) releaseSlotLease(id string) {
-	if in.SlotsStore == "" || id == "" {
+//
+// IT RELEASES BY IDENTITY, not by owner and label (nova-tools#1582, Stella's hold on
+// PR #1562). The first cut handed `ReleaseSlotLeases(store, owner, taskID, false)` here,
+// and that removes EVERY lease matching the owner and the task id — so two dispatchers
+// sharing both each gave away the other's live seat. ids is exactly what TakeSlotLeases
+// granted this task and exactly what is handed back.
+func (in RunInput) releaseSlotLease(ids []string) {
+	if in.SlotsStore == "" || len(ids) == 0 {
 		return
 	}
-	if _, _, err := ReleaseSlotLeases(in.SlotsStore, in.SlotOwner, id, false); err != nil {
-		fmt.Fprintf(in.Stderr, "nova-swarm run: releasing the slot lease for %s: %s\n",
-			oneline.Field(id), oneline.Escape(redactedReason(err)))
+	pid := in.SlotPID
+	if pid <= 0 {
+		pid = os.Getpid()
+	}
+	if _, err := ReleaseSlotLeasesByID(in.SlotsStore, ids, pid); err != nil {
+		fmt.Fprintf(in.Stderr, "nova-swarm run: releasing the slot lease: %s\n",
+			oneline.Escape(redactedReason(err)))
 	}
 }
 
@@ -772,6 +789,37 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
 	_ = p.WriteSidecar(Running, sc)
 
+	usageEveryNS := in.UsageInterval
+	if usageEveryNS <= 0 {
+		usageEveryNS = 5 * time.Second
+	}
+	evidenceRoot := filepath.Join(p.Dir, "evidence")
+	r := LaunchRecord{
+		Schema:           LaunchSchema,
+		Context:          LaunchRecordContext{Kind: "pool", Root: p.Dir},
+		EvidenceRoot:     evidenceRoot,
+		JobID:            sc.ID,
+		Slot:             strconv.Itoa(slot),
+		ReservationNonce: nonce,
+		ManifestHash:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		Control: LaunchRecordControl{
+			ManifestHash:  "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Root:          evidenceRoot,
+			SandboxSource: in.Sandbox,
+			Launcher: LaunchRecordLauncher{
+				Path:   in.Supervisor,
+				SHA256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+				Source: in.Supervisor,
+			},
+		},
+		Realization: LaunchRecordRealization{
+			EnvHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Sandbox:      in.Sandbox,
+		UsageEveryNS: strconv.FormatInt(usageEveryNS.Nanoseconds(), 10),
+	}
+	_ = PublishLaunchRecord(evidenceRoot, sc.ID, nonce, r)
+
 	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:
 	// before this, `--usage-interval` was decoded, carried into RunInput and dropped at the
 	// fork, and every job sampled at the supervisor's own default.
@@ -791,8 +839,18 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	if in.UsageInterval > 0 {
 		supervisorArgs = append(supervisorArgs, "--usage-interval", in.UsageInterval.String())
 	}
+	id, err := LoadPoolIdentity(p.Dir)
+	if err != nil {
+		_ = p.Free(slot)
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), launchBroken
+	}
 	cmd := exec.Command(in.Supervisor, supervisorArgs...)
 	cmd.Stdout, cmd.Stderr = nil, nil
+	// The bench's own git config stops at the job boundary: the supervisor and
+	// everything it spawns read the staged clone's local config, never the
+	// bench's (SPEC-TOOLWORK §3 rule 1, #1665), and export the pool's identity
+	// so a worker cloning after launch commits under the pool's name.
+	cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
 	if log, err := os.OpenFile(filepath.Join(jobDir, "supervisor.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
 		cmd.Stdout, cmd.Stderr = log, log
 		defer log.Close()
@@ -901,6 +959,13 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 	// move, and a directory that exists only because something else needed a path under
 	// it is a directory that disappears when that something changes.
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		return err
+	}
+	// STAGING (SPEC-TOOLWORK §3 rules 1-2, #1665): the pool's identity, the
+	// clone's local git config, and no way out of the job root -- before the
+	// worker starts, so a pool with no identity row and a tree with a way out
+	// are both refused at launch rather than run under nobody's name.
+	if err := StageJob(in.Pool.Dir, jobDir, filepath.Join(jobDir, "repo")); err != nil {
 		return err
 	}
 	if _, err := in.Worker.WriteHarnessConfig(slot); err != nil {
