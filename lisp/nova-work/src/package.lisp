@@ -89,6 +89,9 @@
    #:state-lease-log
    #:take-lease
    #:release-lease
+   ;; rule 6: the reference edge as a verb (SPEC-WORK.md:4993-5031)
+   ;; rule 6, #785: the read-time needs view `DEP OK` reads (SPEC-WORK.md:5004)
+   #:kernel-needs-view
    #:working-count
    #:node-disposition
    #:roadmap-members
@@ -2052,6 +2055,7 @@
     #:needs-view-evidence
     #:needs-view-generations
     #:needs-view-responsible
+    #:needs-view-engaged
     #:needs-view-node-evidence
     #:needs-view-node-generation
     #:needs-view-node-responsible
@@ -2059,6 +2063,7 @@
     #:need-met-p
     #:node-needs-status
     #:node-needs-met-p
+    #:node-engaged-p
     #:standing-done-evidence
     #:*need-default-generation*
     #:state-node-ids

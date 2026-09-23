@@ -396,12 +396,10 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (copy-list (wnode-deps n))))
 
-(defun node-needs-broken (state id)
-  "True when a need of this node was reverted after this node landed
-(SPEC-WORK.md:2110, the `needs-broken` flag)."
-  (let ((n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (wnode-needs-broken n)))
+;;; `node-needs-broken` is DERIVED (SPEC-WORK.md:4972), so it no longer lives
+;;; here as a slot reader: it moved to src/needs.lisp beside the other readings
+;;; of rule 5. The slot stays -- `ready-p` and `%recheck-needs-broken` still
+;;; maintain it on the write path, and the derived reading honours it.
 
 ;;; ------------------------------------------------------------------
 ;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
