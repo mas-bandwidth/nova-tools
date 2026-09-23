@@ -52,6 +52,7 @@ func newBench(t *testing.T) *bench {
 	t.Helper()
 	dir := t.TempDir()
 	b := &bench{t: t, dir: dir, pool: filepath.Join(dir, "pool")}
+	t.Cleanup(func() { reapLeftoverSupervise(b) })
 	if err := os.MkdirAll(b.pool, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -188,6 +189,15 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	code := m.Run()
+	if leftover := leftoverChildPIDs(); len(leftover) > 0 {
+		for _, pid := range leftover {
+			fmt.Fprintf(os.Stderr, "a child of the test binary (pid %d) was still alive at exit\n", pid)
+			reapLeftoverPID(pid)
+		}
+		if code == 0 {
+			code = 1
+		}
+	}
 	if builtDir != "" {
 		_ = os.RemoveAll(builtDir)
 	}
