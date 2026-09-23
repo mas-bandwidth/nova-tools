@@ -131,6 +131,43 @@ func TestWakeHealthLoadedUnitIsOK(t *testing.T) {
 	}
 }
 
+// TestWakeHealthStaleBeatIsDown (#3134 hold, Stella): a loaded unit and a
+// current clone with a beat older than its TTL is not a live wake path. The
+// state is down and the row is red; before the fix it was `wake: ok`.
+func TestWakeHealthStaleBeatIsDown(t *testing.T) {
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+	host.loaded[walterUnit] = true
+
+	h := life.CheckWake(context.Background(), host, beatsLive(false), d)
+	if h.State != life.WakeDown {
+		t.Fatalf("loaded unit, behind=0, stale beat: state %q, want %q", h.State, life.WakeDown)
+	}
+	row := h.Row()
+	if !strings.HasPrefix(row, "\x1b[31mwake: down\x1b[0m "+walterUnit) || !strings.Contains(row, "beat=stale") {
+		t.Errorf("stale-beat row %q, want a red wake: down with beat=stale", row)
+	}
+	if len(host.calls) != 0 {
+		t.Errorf("stale beat on a loaded unit made repair calls %v", host.calls)
+	}
+}
+
+// TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat: the unit this tick
+// bootstrapped cannot have beaten yet, so its stale beat leaves it repaired.
+func TestWakeHealthJustBootstrappedUnitIsNotDownOnBeat(t *testing.T) {
+	host := newFakeWakeHost()
+	d := walterDecl()
+	host.files[d.UnitFile] = true
+
+	if h := life.CheckWake(context.Background(), host, beatsLive(false), d); h.State != life.WakeRepaired {
+		t.Fatalf("freshly bootstrapped unit with no beat yet: state %q, want %q", h.State, life.WakeRepaired)
+	}
+	if h := life.CheckWake(context.Background(), host, beatsLive(false), d); h.State != life.WakeDown {
+		t.Fatalf("next tick, unit loaded and still no beat: state %q, want %q", h.State, life.WakeDown)
+	}
+}
+
 // TestWakeHealthPullsBehindBus: the wake server's bus clone is 3 commits
 // behind; one tick pulls it and the row prints behind=0 with the finding.
 func TestWakeHealthPullsBehindBus(t *testing.T) {

@@ -172,7 +172,24 @@ func CheckWake(ctx context.Context, host WakeHost, beats BeatReader, d WakeDecl)
 			h.ensureCurrent(ctx, host, dir)
 		}
 	}
+	// A beat older than its TTL is a dead wake path even with the unit loaded
+	// and every clone current (#3134 hold, Stella): the server is not beating.
+	// The one exception is a wake unit this tick just bootstrapped, whose
+	// server cannot have beaten yet; the next tick holds it to the TTL.
+	if !h.BeatLive && !h.bootstrapped(d.Unit) {
+		h.down("", "beat older than its TTL")
+	}
 	return h
+}
+
+// bootstrapped reports whether this tick loaded unit cleanly.
+func (h *WakeHealth) bootstrapped(unit string) bool {
+	for _, r := range h.Repairs {
+		if r.Action == "bootstrap" && r.Target == unit && r.Err == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // ensureUnit bootstraps a unit the supervisor does not have, at most
