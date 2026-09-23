@@ -275,9 +275,9 @@ func (h *GH) gh(args ...string) (string, error) {
 	return out, nil
 }
 
-// ghWhole is gh without execOutputCap on a successful call: for the three captures a
-// parser reads whole rather than a person -- a pull request's own JSON, its comments,
-// its reviews -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
+// ghWhole is gh without execOutputCap on a successful call: for the captures on the
+// landing path a parser reads whole rather than a person -- a pull request's own JSON,
+// its comments, its reviews (#2455) -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
 // JSON it cannot parse at all (nova-tools #2522). See RunUncapped for the mechanism and
 // for what still happens to a FAILING call's captured output.
 func (h *GH) ghWhole(args ...string) (string, error) {
