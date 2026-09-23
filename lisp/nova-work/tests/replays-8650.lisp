@@ -229,3 +229,40 @@
         (check-equal 1 rcode "the refused increase is not exit 1")
         (ok (search "no repair" rline)
             "the refusal is not the `no repair` line: ~A" rline)))))
+
+(deftest "TestE10F07RepairSessionSubmitIsGated" "docs/SPEC-WORK.md:2430"
+    "expected=non-decrease-refused-through-submit;nothing-applied;decrease-admitted-through-submit;findings-updated"
+  ;; The gate is the session's mutation path, not a free function: a mutation
+  ;; submitted to a --repair session reaches O only when the candidate's
+  ;; finding count strictly drops (SPEC-WORK.md:2430-2440).
+  (let ((red (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7)))
+    (multiple-value-bind (sess line code)
+        (session-start :repair t :state-seed red :owner "rowan" :base "tip")
+      (declare (ignore code))
+      (ok sess "session start --repair did not start a session: ~A" line)
+      (let* ((k (session-kernel sess))
+             (history (length (state-history (kernel-state k)))))
+        ;; t2 moving to doing leaves t1's finding standing: no repair.
+        (multiple-value-bind (okp rline rcode)
+            (session-submit sess (list :verb :state-to-doing :node "acme/work/f1/t2"
+                                       :by "rowan" :reason "picked up" :evidence '("ev-1")
+                                       :request "repair-no-1" :stamp "2026-09-14T12:00:00Z"
+                                       :clock :tool :generation-owner "gen-4"))
+          (ok (not okp) "a mutation that keeps the finding count was admitted: ~A" rline)
+          (check-equal 1 rcode "the refused non-decrease is not exit 1")
+          (ok (and rline (search "no repair" rline))
+              "the refusal is not the `no repair` line: ~A" rline))
+        (check-equal history (length (state-history (kernel-state k)))
+                     "the refused mutation was applied to O")
+        (check-equal 1 (session-findings sess)
+                     "the refused mutation moved the finding count")
+        ;; Settling t1 takes it out of O: the one finding goes, so it is admitted.
+        (multiple-value-bind (okp rline rcode)
+            (session-submit sess (close-request :node "acme/work/f1/t1"
+                                                :request "repair-yes-1"))
+          (ok okp "a mutation that drops the finding count was refused: ~A" rline)
+          (check-equal 0 rcode "the admitted repair is not exit 0"))
+        (check-equal 0 (session-findings sess)
+                     "the admitted repair did not update the finding count")
+        (check-equal 0 (length (cow-load-findings (kernel-state k)))
+                     "the admitted repair did not reach O")))))
