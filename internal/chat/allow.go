@@ -140,8 +140,8 @@ func parseAllow(r io.Reader, source string) (*Allow, error) {
 	for scanner.Scan() {
 		lineNo++
 		raw := strings.TrimRight(scanner.Text(), "\r")
-		trimmed := strings.TrimSpace(raw)
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+		trimmed := strings.TrimSpace(stripComment(raw))
+		if trimmed == "" {
 			continue
 		}
 		if err := parseAllowLine(allow, trimmed, lineNo); err != nil {
@@ -173,6 +173,23 @@ func parseAllow(r io.Reader, source string) (*Allow, error) {
 		return nil, fmt.Errorf("%s: %w", source, errMissing("flood-multiple"))
 	}
 	return allow, nil
+}
+
+// stripComment drops a `#` comment from a line: a `#` at the start of the
+// line or preceded by whitespace begins a comment running to the end of the
+// line. The spec's own example carries trailing comments (`member <id> # glenn`),
+// so a comment is not only a whole line. A `#` inside a token (no whitespace
+// before it) is kept as part of the token.
+func stripComment(line string) string {
+	for i := 0; i < len(line); i++ {
+		if line[i] != '#' {
+			continue
+		}
+		if i == 0 || line[i-1] == ' ' || line[i-1] == '\t' {
+			return line[:i]
+		}
+	}
+	return line
 }
 
 // parseAllowLine is the per-line dispatch. Each top-level token is a verb the
@@ -338,11 +355,6 @@ func parseConversation(allow *Allow, tokens []string, isDM bool) error {
 		}
 	}
 	c := Conversation{ID: id}
-	if isDM {
-		c.Class = ClassDM
-	} else {
-		c.Class = ClassPublic
-	}
 	seen := map[string]bool{}
 	for _, tok := range tokens[2:] {
 		key, val, ok := strings.Cut(tok, "=")
@@ -377,10 +389,20 @@ func applyConversationKey(c *Conversation, isDM bool, key, val string) error {
 	case "class":
 		switch Class(val) {
 		case ClassOwn, ClassPublic, ClassDM:
-			c.Class = Class(val)
 		default:
 			return fmt.Errorf("class=%q is unknown; the values are own, public, dm", val)
 		}
+		// The class must agree with the entry kind: a `dm` line is class=dm
+		// and nothing else, a `conversation` line is class=own or
+		// class=public and never dm. A class that contradicts the slice the
+		// entry lands in would let later callers apply the wrong surface rules.
+		if isDM && Class(val) != ClassDM {
+			return fmt.Errorf("dm entry has class=%s; a dm entry is class=dm", val)
+		}
+		if !isDM && Class(val) == ClassDM {
+			return fmt.Errorf("conversation entry has class=dm; a conversation is class=own or class=public (a DM is a dm line)")
+		}
+		c.Class = Class(val)
 		return nil
 	case "name":
 		c.Name = val
@@ -457,9 +479,10 @@ func applyConversationKey(c *Conversation, isDM bool, key, val string) error {
 		c.ContextSet = true
 		return nil
 	case "history-budget":
-		if !isDM {
-			return fmt.Errorf("history-budget is only for dm entries")
-		}
+		// A dm entry requires it (checked in finishConversation); a
+		// conversation may carry it, because mode=fresh trims the window it
+		// re-sends at history-budget (SPEC-CHAT.md, the allow-list example's
+		// `general` line and test 2).
 		n, err := strconv.Atoi(val)
 		if err != nil || n <= 0 {
 			return fmt.Errorf("history-budget=%q is not a positive integer", val)
@@ -483,6 +506,12 @@ func applyConversationKey(c *Conversation, isDM bool, key, val string) error {
 // the pinned own-server, and the conversation id (or *) must not be a duplicate
 // of one already in the file.
 func finishConversation(allow *Allow, c *Conversation, isDM bool) error {
+	if c.Class == "" {
+		if isDM {
+			return fmt.Errorf("dm entry has no class= (a dm entry is class=dm)")
+		}
+		return fmt.Errorf("conversation entry has no class= (own or public; every field is named and none is a default)")
+	}
 	if c.Mode == "" {
 		return fmt.Errorf("%s entry has no mode= (resume or fresh)", entryKind(isDM))
 	}
@@ -510,21 +539,10 @@ func finishConversation(allow *Allow, c *Conversation, isDM bool) error {
 			return fmt.Errorf("%s entry has mode=fresh and wrap-file=%s; wrap-file is forbidden on fresh", entryKind(isDM), c.WrapFile)
 		}
 	}
-	if c.Mode == ModeResume {
-		if c.SessionIdle == "" || c.SessionMax == "" || c.WrapFile == "" {
-			return fmt.Errorf("%s entry has mode=resume and is missing one of session-idle, session-max, wrap-file", entryKind(isDM))
-		}
-	}
 	if isDM && c.HistoryBudget == 0 {
 		return fmt.Errorf("dm entry has no history-budget= (dm takes history-budget, not context)")
 	}
-	if !isDM && c.ContextSet && c.Context == 0 {
-		return fmt.Errorf("conversation entry has context=0")
-	}
 	if c.Class == ClassOwn {
-		if isDM {
-			return fmt.Errorf("dm entry cannot be class=own")
-		}
 		if allow.OwnServer == "" {
 			return fmt.Errorf("class=own entry before own-server is set")
 		}

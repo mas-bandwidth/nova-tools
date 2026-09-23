@@ -137,18 +137,96 @@ func TestIssue2315(t *testing.T) {
 		t.Error("ParseAllow on a line carrying an unknown key accepted it; an unknown key is a refusal (SPEC-CHAT.md, The allow-list)")
 	}
 
-	wrongClass := strings.Join([]string{
+	// Class must agree with the entry kind. Each fixture is a full, otherwise
+	// valid file (person, own-server, the whole ladder), so the only reason
+	// it can be refused is the class, and the error must name class.
+	ladder := []string{
+		"backoff 5m 10m 20m 40m 80m 160m",
+		"cooldown 30m",
+		"burst-window 90s",
+		"gap-messages 200",
+		"flood-multiple 6",
+		"",
+	}
+	fullFile := func(entry string) string {
+		return strings.Join(append([]string{
+			"person      214800000000000000",
+			"own-server  1600000000000000000",
+			entry,
+		}, ladder...), "\n")
+	}
+	validConversation := "conversation 1524795311036563549 class=public name=general mode=fresh reply-max=600 min-gap=20m replies-per-hour=2 context=25"
+	validDM := "dm * class=dm mode=fresh reply-max=1200 min-gap=1m replies-per-hour=20 history-budget=8000"
+	for _, tc := range []struct {
+		name, entry string
+		wantClass   Class
+		wantErr     bool
+	}{
+		{"conversation-class-public", validConversation, ClassPublic, false},
+		{"dm-class-dm", validDM, ClassDM, false},
+		{"conversation-class-dm", strings.Replace(validConversation, "class=public", "class=dm", 1), "", true},
+		{"conversation-no-class", strings.Replace(validConversation, "class=public ", "", 1), "", true},
+		{"dm-class-public", strings.Replace(validDM, "class=dm", "class=public", 1), "", true},
+		{"dm-class-own", strings.Replace(validDM, "class=dm", "class=own", 1), "", true},
+		{"dm-no-class", strings.Replace(validDM, "class=dm ", "", 1), "", true},
+	} {
+		path := filepath.Join(dir, "class-"+tc.name)
+		if err := os.WriteFile(path, []byte(fullFile(tc.entry)), 0o644); err != nil {
+			t.Fatalf("seed %s: %v", tc.name, err)
+		}
+		got, err := ParseAllow(path)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: ParseAllow accepted a class that contradicts the entry kind", tc.name)
+			} else if !strings.Contains(err.Error(), "class") {
+				t.Errorf("%s: refused for a reason other than class: %v", tc.name, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: ParseAllow refused a valid full file: %v", tc.name, err)
+			continue
+		}
+		var entries []Conversation
+		entries = append(entries, got.Conversations...)
+		entries = append(entries, got.DMs...)
+		if len(entries) != 1 || entries[0].Class != tc.wantClass {
+			t.Errorf("%s: entries = %+v, want one entry with class=%s", tc.name, entries, tc.wantClass)
+		}
+	}
+
+	// The spec's own example, verbatim from SPEC-CHAT.md (the allow-list
+	// section): trailing `#` comments on member lines, and history-budget on
+	// the mode=fresh `general` conversation. Both must parse.
+	specExample := strings.Join([]string{
+		"# ---- the person, and their own server. Set by hand, out of band, never from a message.",
 		"person      214800000000000000",
 		"own-server  1600000000000000000",
-		"conversation 9999 class=own name=stray mode=fresh reply-max=600",
+		"member      214800000000000000     # glenn",
+		"member      1601000000000000001 kind=line   # rowan",
+		"member      1601000000000000002 kind=line   # stella",
+		"member      1601000000000000003 kind=line   # freddy",
 		"",
-	}, "\n")
-	wrongPath := filepath.Join(dir, "wrong-class")
-	if err := os.WriteFile(wrongPath, []byte(wrongClass), 0o644); err != nil {
-		t.Fatalf("seed wrong-class allow-list: %v", err)
+		"conversation 1600000000000000010 class=own    name=table   mode=resume session-idle=7d  session-max=30d wrap-file=./wrap-table.md   reply-max=1600 min-gap=0s  replies-per-hour=60 context=40",
+		"conversation 1600000000000000011 class=own    name=work    mode=resume session-idle=7d  session-max=30d wrap-file=./wrap-work.md    reply-max=1900 min-gap=0s  replies-per-hour=60 context=40",
+		"conversation 1524795311036563549 class=public name=general mode=fresh  history-budget=8000                                          reply-max=600  reply-ratio=2 reply-floor=240 min-gap=20m replies-per-hour=2  context=25",
+		"conversation 1529471102441492681 class=public name=allies  mode=resume session-idle=2h  session-max=24h wrap-file=./wrap-allies.md  reply-max=1200 reply-ratio=3 reply-floor=240 min-gap=2m  replies-per-hour=12 context=40",
+		"dm           *                   class=dm     mode=resume session-idle=4h  session-max=48h wrap-file=./wrap-dm.md  history-budget=8000 reply-max=1200 reply-ratio=2 reply-floor=240 min-gap=1m  replies-per-hour=20",
+		"",
+	}, "\n") + "\n" + strings.Join(ladder, "\n")
+	specPath := filepath.Join(dir, "spec-example")
+	if err := os.WriteFile(specPath, []byte(specExample), 0o644); err != nil {
+		t.Fatalf("seed spec example: %v", err)
 	}
-	if _, err := ParseAllow(wrongPath); err == nil {
-		t.Error("ParseAllow on class=own whose id is not own-server accepted it; the class must be checked (SPEC-CHAT.md, allow-list)")
+	spec, err := ParseAllow(specPath)
+	if err != nil {
+		t.Fatalf("ParseAllow on SPEC-CHAT.md's example verbatim refused: %v", err)
+	}
+	if len(spec.Members) != 4 || len(spec.Conversations) != 4 || len(spec.DMs) != 1 {
+		t.Errorf("spec example: %d members, %d conversations, %d dms; want 4, 4, 1", len(spec.Members), len(spec.Conversations), len(spec.DMs))
+	}
+	if g := spec.ConversationByID("1524795311036563549"); g == nil || g.HistoryBudget != 8000 || g.Mode != ModeFresh {
+		t.Errorf("spec example general = %+v, want mode=fresh history-budget=8000", g)
 	}
 
 	missingRequired := strings.Join([]string{
