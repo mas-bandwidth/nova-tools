@@ -14,8 +14,9 @@ make map            # regenerate AGENTS.md and per-directory maps
 | --- | --- | --- | --- |
 | `.github/` | CI workflows and automation | `go test ./internal/ci` | `make test` |
 | `assets/` | static assets and schemas | none | none |
-| [cmd/](cmd/AGENTS.md) | 22 nova command-line tools | `go test ./cmd/...` | `make build` |
+| [cmd/](cmd/AGENTS.md) | 23 nova command-line tools | `go test ./cmd/...` | `make build` |
 | [docs/](docs/AGENTS.md) | specs, guides, and proposals | `go test ./internal/docs` | `go test ./internal/docs` |
+| `fleet/` | fleet loop units and bench templates | none | none |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `go test ./internal/...` | `make test` |
 | `lisp/` | nova-work lisp kernel | `go test ./internal/ci` | `make test-lisp` |
