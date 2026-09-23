@@ -945,6 +945,9 @@ func cmdCut(args []string, stdout, stderr io.Writer) int {
 	validated := *issue != "" || *rows != "" || *branchFrom != ""
 	if !validated {
 		f.want(*root, "root", "the state root; --pool writes skipped.tsv here")
+		if *probe && strings.TrimSpace(*history) == "" {
+			f.problems = append(f.problems, "--probe requires --history; the checklist is cut from the abstain history (one class per line)")
+		}
 	}
 	if validated {
 		f.want(*repo, "repo", "the clone every git call runs in (git -C); cut never reads the working directory")
