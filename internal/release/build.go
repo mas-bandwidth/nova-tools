@@ -29,7 +29,8 @@ const SumsFile = "SHA256SUMS"
 // which is that machine vouching for its own bytes and is not evidence at all.
 // This file is written where the build ran, on the coordinator, out of the
 // SHA256SUMS the build had just verified; `adopt --expect-sums-from` reads it
-// from there and never asks any machine to hash anything.
+// from there. A digest computed on the machine being adopted from is not
+// evidence about a fetch.
 const DigestFile = "SUMS.digest"
 
 // Platform is the goos-goarch an artifact directory is named for. A release

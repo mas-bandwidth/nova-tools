@@ -53,8 +53,13 @@ func TestBatchDeadlineEndsTheCardsWholeTree(t *testing.T) {
 		runnerStep{Op: "linger", Path: pidPath, N: 20000, Ms: 30000},
 	)
 	clk := newManualClock()
+	// THE BUDGET WORD IS REQUIRED (SPEC-SWARM rule 13d, issue #1545): a BatchInput without
+	// Tokens is refused before any card starts, so every literal in this file names one.
+	// `unmetered` is this file's behaviour byte for byte -- no cap is sampled and no card is
+	// stopped -- so the whole-tree kill of #640 is the one this file already asserted.
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		// The child exists before the deadline is fired, so the assertion below is about
 		// the kill and never about a process that had not started yet.
@@ -93,7 +98,8 @@ func TestBatchAbstainRowSaysHowManyItKilled(t *testing.T) {
 	)
 	clk := newManualClock()
 	_, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		waitForFile(t, pidPath)
 		clk.waitDeadline()
