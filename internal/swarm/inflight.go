@@ -39,13 +39,14 @@ type inflight struct {
 	held   map[string]int // route key -> how many are in flight now
 	peak   map[string]int // route key -> the most ever in flight at once
 	waited map[string]int // route key -> how many acquires had to wait
+	parked map[string]int // route key -> how many acquires are waiting on the cap right now
 	closed bool
 }
 
 // newInflight is a cap of n per route. n <= 0 is no cap at all, which is what every caller
 // that has not asked for one gets: today's behaviour, byte for byte.
 func newInflight(n int) *inflight {
-	f := &inflight{cap: n, held: map[string]int{}, peak: map[string]int{}, waited: map[string]int{}}
+	f := &inflight{cap: n, held: map[string]int{}, peak: map[string]int{}, waited: map[string]int{}, parked: map[string]int{}}
 	f.wake = sync.NewCond(&f.mu)
 	return f
 }
@@ -81,8 +82,14 @@ func (f *inflight) acquire(route string) bool {
 	}
 	waited := false
 	for f.held[route] >= f.cap && !f.closed {
+		if !waited {
+			f.parked[route]++
+		}
 		waited = true
 		f.wake.Wait()
+	}
+	if waited {
+		f.parked[route]--
 	}
 	if f.closed {
 		return false
@@ -93,6 +100,16 @@ func (f *inflight) acquire(route string) bool {
 	f.held[route]++
 	f.note(route)
 	return true
+}
+
+// waiting is how many acquires on the route are parked on its cap at this moment. It is the
+// state "the route is at its cap and the rest are held back" made observable, so a caller
+// (and a test, #2994) can synchronise on the hold-back having happened instead of guessing
+// at goroutine scheduling.
+func (f *inflight) waiting(route string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.parked[route]
 }
 
 // note records the high-water mark, under the lock the caller already holds.

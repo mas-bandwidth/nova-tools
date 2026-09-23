@@ -159,6 +159,34 @@ func AddedLines(diff string) string {
 	return b.String()
 }
 
+// AddedLinesOutside is AddedLines over only the files whose path does not
+// contain skip. The tells are read out of what a card's test DOES, and a
+// testdata fixture that quotes a self-check (this package's own cells, for
+// one) is evidence about somebody else's test, not this one's (#2621: the pass
+// self-convicted on its own testdata).
+func AddedLinesOutside(diff, skip string) string {
+	if skip == "" {
+		return AddedLines(diff)
+	}
+	var b strings.Builder
+	keep := true
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			keep = !strings.Contains(line, skip)
+			continue
+		}
+		if strings.HasPrefix(line, "+++ ") {
+			keep = keep && !strings.Contains(line, skip)
+			continue
+		}
+		if keep && strings.HasPrefix(line, "+") {
+			b.WriteString(strings.TrimPrefix(line, "+"))
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
+
 // DiffFiles is the changed paths a unified diff names, for a caller that has a
 // diff and no file list.
 var diffFileRE = regexp.MustCompile(`(?m)^\+\+\+ b/(.+)$`)
@@ -178,9 +206,17 @@ func DiffFiles(diff string) []string {
 // symbol must appear in the added lines -- the card's word beats the family --
 // and the tells still apply on top of it.
 func symbolCheck(pr PR, card Card) Check {
-	added := AddedLines(pr.Diff)
+	// The check is calibrated on conformance cells and nothing else. A pull
+	// request that is not a cell -- no SYMBOL on a card, no cell leg in its
+	// body, no file under test/conformance/ -- has nothing for it to decide,
+	// and it answers missing rather than no (#2621: on tool pull requests it
+	// said no to every one).
+	if card.Symbol == "" && !isCell(pr, card) {
+		return Check{Missing, "not a conformance cell: no SYMBOL on a card, no cell leg in the body, no file under test/conformance/"}
+	}
+	added := AddedLinesOutside(pr.Diff, "/testdata/")
 	if strings.TrimSpace(added) == "" {
-		return Check{Missing, "the diff adds no lines"}
+		return Check{Missing, "the diff adds no lines outside testdata"}
 	}
 	if t, ok := firstTell(added); ok {
 		return Check{No, fmt.Sprintf("the added test %s (%s)", t.says, t.from)}

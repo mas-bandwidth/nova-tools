@@ -140,7 +140,7 @@ func writeBatchLock(t *testing.T, root string, slot int, id string, pid int) str
 func deadPID(t *testing.T) int {
 	t.Helper()
 	bin := runnerDoing(t, t.TempDir(), "throwaway", runnerStep{Op: "exit", N: 0})
-	cmd := exec.Command(bin, "throwaway", "1", "model", filepath.Join(t.TempDir(), "no.card"), t.TempDir())
+	cmd := exec.Command(bin, "throwaway", "1", "model", filepath.Join(t.TempDir(), "no.card"), t.TempDir(), "unmetered")
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("starting a throwaway child: %v", err)
 	}
@@ -370,7 +370,7 @@ func TestBatchAbstainNamesReason(t *testing.T) {
 			// runner is given all the time it needs to sleep or to publish, and then
 			// the test alone says the time is up. No case here races the machine.
 			clk := newManualClock()
-			in := BatchInput{ID: "B1", Deadline: tc.deadline, Idle: tc.idle, Cards: tsv, Root: root, Runner: runner}
+			in := BatchInput{ID: "B1", Deadline: tc.deadline, Idle: tc.idle, Cards: tsv, Root: root, Runner: runner, Tokens: "unmetered"}
 			drive := func() {}
 			switch tc.kill {
 			case "deadline":
