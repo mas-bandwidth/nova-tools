@@ -398,8 +398,12 @@ func TestOnlyTheHolderReleases(t *testing.T) {
 	}
 }
 
-// 10. TestAReleaseAtAStaleHeadReleasesNothing
-func TestAReleaseAtAStaleHeadReleasesNothing(t *testing.T) {
+// 10. TestAReleaseAtAStaleHeadReleasesTheHoldersOwnHold: flipped by Glenn's
+// lander-keys-reads-by-who ruling (2026-09-23). A hold by X is released when X's last
+// typed verdict written after the hold is APPROVE, at ANY head (#2879: rowan HOLD 6 and
+// rowan APPROVE 8 both at fc15f98d, head moved to 8984b941, the hold pinned). Another
+// friend's APPROVE at the stale head still releases nothing.
+func TestAReleaseAtAStaleHeadReleasesTheHoldersOwnHold(t *testing.T) {
 	t.Parallel()
 	rev := parseRev(defaultReviewersTSV)
 	h1 := strings.Repeat("1", 40)
@@ -408,9 +412,16 @@ func TestAReleaseAtAStaleHeadReleasesNothing(t *testing.T) {
 		{ID: "record:at1", Who: "alice", Word: "hold", Head: h1, At: "2026-09-19T01:00:00Z", Source: "record"},
 		{ID: "record:at2", Who: "alice", Word: "approve", Head: h1, At: "2026-09-19T02:00:00Z", Source: "record"},
 	}
-	holds := merge.UnliftedHolds(vs, h2, "author", rev)
-	if len(holds) != 1 || !holds[0].Carried {
-		t.Fatalf("release at stale head releases nothing, got %v", holds)
+	if holds := merge.UnliftedHolds(vs, h2, "author", rev); len(holds) != 0 {
+		t.Fatalf("the holder's own later APPROVE at a stale head releases her hold, got %v", holds)
+	}
+	other := []merge.Verdict{
+		vs[0],
+		{ID: "record:at3", Who: "bob", Word: "approve", Head: h1, At: "2026-09-19T02:00:00Z", Source: "record"},
+	}
+	two := parseRev("alice\talice\tyes\nbob\tbob\tyes\n")
+	if holds := merge.UnliftedHolds(other, h2, "author", two); len(holds) != 1 || !holds[0].Carried {
+		t.Fatalf("another friend's APPROVE at a stale head releases nothing; want alice's hold carried, got %v", holds)
 	}
 }
 
