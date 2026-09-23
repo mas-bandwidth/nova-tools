@@ -72,7 +72,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	resultsDir := f.fs.String("results", "", "")
 	repo := f.fs.String("repo", ".", "")
 	base := f.fs.String("base", "dev", "")
-	fillCap := f.fs.Int("fill-cap", 60, "")
+	fillCap := f.fs.Int("fill-cap", pulse.FillCap, "")
 	var benches benchFlag
 	var only benchFlag
 	var localBenches benchFlag

@@ -61,8 +61,10 @@ import (
 )
 
 // FillCap is the most cards one bench may take in a tick: fill-loop.sh holds this reserve
-// back so a filling bench never eats the machine its own CI needs.
-const FillCap = 30
+// back so a filling bench never eats the machine its own CI needs. It is the one number:
+// the live loop uses it (#1483), the verb's --fill-cap flag defaults to it, and an unset
+// FillInput.FillCap takes it (#2908).
+const FillCap = 60
 
 // FillInterval is how often the loop ticks when --once is absent (fill-loop.sh's sleep 300).
 const FillInterval = 300 * time.Second
@@ -183,8 +185,8 @@ type FillInput struct {
 	Launcher   CardLauncher
 	Capacity   Capacity
 	// FillCap is the most cards one bench may take in a tick; 0 takes the FillCap constant.
-	// The live loop uses 60 (#1483); the verb's --fill-cap flag defaults to 60 so the verb
-	// and the loop agree on the number.
+	// The --fill-cap flag defaults to the FillCap constant, so the verb, the loop and an
+	// unset field agree on one number (#1483, #2908).
 	FillCap int
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
 	// `loop` verb, so it takes none of its own.
