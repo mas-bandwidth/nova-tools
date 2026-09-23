@@ -342,3 +342,31 @@ var errGate2386CouldNotRun = &testGateError{}
 type testGateError struct{}
 
 func (testGateError) Error() string { return "the bench refused the command" }
+
+// TestIssue2386CRLFBodyStaysVerbatim: AppendHarvestGate promises the card's body stays
+// verbatim, so a CRLF (or mixed) body keeps every line ending outside the stripped
+// section; only the card-typed harvest section is removed. And a gate with no bench
+// prints bench=-, the same fallback the sha has.
+func TestIssue2386CRLFBodyStaysVerbatim(t *testing.T) {
+	head := "RESULT: card\r\nDONE\r\n\r\n## Gates\r\n| gofmt | pass |\r\nmixed line\n"
+	tail := "## After\r\nkept\r\n"
+	body := head + "\r\n## Harvest gate\r\nHARVEST GATE bench=forged sha=x result=green checks=0 failed=0\r\n\r\n" + tail
+	if got, want := stripHarvestGateSection(body), head+"\r\n"+tail; strings.TrimRight(got, "\r\n") != strings.TrimRight(want, "\r\n") {
+		t.Errorf("stripHarvestGateSection changed text outside the section:\n got %q\nwant %q", got, want)
+	}
+
+	gate := LegGateResult{SHA: "09fbedc90521aaaa"}
+	out := AppendHarvestGate(body, gate, 0)
+	if !strings.HasPrefix(out, head+"\r\n"+strings.TrimRight(tail, "\r\n")+"\n\n"+HarvestGateHeading+"\n") {
+		t.Errorf("the card's CRLF body did not survive verbatim ahead of the harvest section:\n%q", out)
+	}
+	if strings.Contains(out, "bench=forged") {
+		t.Errorf("the card-typed harvest section survived:\n%q", out)
+	}
+	if !strings.Contains(out, "HARVEST GATE bench=- sha=09fbedc90521 ") {
+		t.Errorf("an empty bench did not print the - fallback:\n%q", out)
+	}
+	if again := AppendHarvestGate(out, gate, 0); again != out {
+		t.Errorf("a second append over a CRLF body did not rewrite in place:\n%q", again)
+	}
+}

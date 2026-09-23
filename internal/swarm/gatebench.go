@@ -343,8 +343,12 @@ func LegGateLine(r LegGateResult) string {
 	if sha == "" {
 		sha = "-"
 	}
+	bench := strings.TrimSpace(r.Bench)
+	if bench == "" {
+		bench = "-"
+	}
 	return fmt.Sprintf("HARVEST GATE bench=%s sha=%s result=%s checks=%d failed=%d",
-		oneline.Field(r.Bench), oneline.Field(sha), verdict, len(r.Commands), failed)
+		oneline.Field(bench), oneline.Field(sha), verdict, len(r.Commands), failed)
 }
 
 // AppendHarvestGate composes the PR body the harvest publishes: the card's own body
@@ -361,7 +365,7 @@ func AppendHarvestGate(body string, r LegGateResult, max int) string {
 	if max <= 0 {
 		max = GateSectionBytes
 	}
-	kept := strings.TrimRight(stripHarvestGateSection(body), "\n \t")
+	kept := strings.TrimRight(stripHarvestGateSection(body), "\r\n \t")
 	var b strings.Builder
 	b.WriteString(HarvestGateHeading)
 	b.WriteString("\n")
@@ -401,10 +405,11 @@ func AppendHarvestGate(body string, r LegGateResult, max int) string {
 // stripHarvestGateSection removes the harvest's own section from a body: the heading
 // line and every line after it up to the next `## ` heading, or the end. The section is
 // heading-delimited, so a card that typed the heading mid-body loses exactly its typed
-// section and no more.
+// section and no more. Every retained line keeps its own terminator -- a CRLF body
+// stays CRLF, a mixed body stays mixed -- so the text outside the stripped section is
+// byte-for-byte what the card wrote.
 func stripHarvestGateSection(body string) string {
-	norm := strings.ReplaceAll(body, "\r\n", "\n")
-	lines := strings.Split(norm, "\n")
+	lines := strings.SplitAfter(body, "\n")
 	var out []string
 	skipping := false
 	for _, l := range lines {
@@ -425,5 +430,5 @@ func stripHarvestGateSection(body string) string {
 	for len(out) > 0 && strings.TrimSpace(out[len(out)-1]) == "" {
 		out = out[:len(out)-1]
 	}
-	return strings.Join(out, "\n")
+	return strings.Join(out, "")
 }
