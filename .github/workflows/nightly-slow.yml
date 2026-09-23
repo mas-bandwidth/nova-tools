@@ -37,6 +37,16 @@
 #                             job would be inherited by its macos legs and fail them.
 #                             The leg is still `tag: postgres` in a matrix, so the
 #                             class test reads it the same way it reads the others.
+#   nova-work-exhaustive      lisp/nova-work's exhaustive fault/scale suites, the
+#                             explicit nightly lane of E10-F03-04
+#                             (SPEC-WORK.md:7089-7100, :7235-7240): `run-tests.sh`
+#                             leaves those named suites to `run-tests.sh
+#                             --exhaustive` so per-change CI stays inside two
+#                             minutes, and this job is where they run instead —
+#                             nightly and on demand, never on every change. No
+#                             `tag:` entry: these are SBCL acceptance cases, not
+#                             a Go build tag, so nightlytags_class_test.go has
+#                             nothing to read here.
 #
 # A RED run here does not block anything: it opens (or updates) a single issue
 # titled "nightly tagged suite red <date>" for the morning. No aggregate gate, no
@@ -133,13 +143,36 @@ jobs:
           DECIDE_TEST_PG: postgres://nova:nova@127.0.0.1:5432/nova_decide_test?sslmode=disable
         run: go test -tags ${{ matrix.tag }} -count=1 ./...
 
+  nova-work-exhaustive:
+    # THE EXHAUSTIVE FAULT/SCALE SUITES of lisp/nova-work, in their explicit
+    # nightly lane (E10-F03-04; SPEC-WORK.md:7089-7100, :7235-7240).
+    # `lisp/nova-work/run-tests.sh` keeps its per-change lane inside the
+    # two-minute bound by leaving these named suites to `--exhaustive`; they
+    # run here — nightly, and on demand as the pre-release pull — and never on
+    # every change. The suite's exit code is this job's fate: a red fails this
+    # leg, and with the leg named in `report`'s needs below it is read at the
+    # morning gate rather than vanishing as an unrun suite.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: install sbcl
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends sbcl
+          sbcl --version
+
+      - name: nova-work exhaustive fault/scale suites
+        run: ./lisp/nova-work/run-tests.sh --exhaustive
+
   report:
     # ONE ISSUE PER DAY, not one per leg. The matrix jobs above are `failure()`
     # if ANY leg failed, and this job then makes sure there is exactly one open
     # issue whose title names today: create it if absent, add a comment pointing
     # at this run if it is already there. EVERY leg job is a `needs:` here — a
     # leg missing from this list is a leg whose red night nobody reads.
-    needs: [test, postgres]
+    needs: [test, postgres, nova-work-exhaustive]
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 5
