@@ -618,6 +618,10 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	// A voided outcome row is in the log but is no outcome of a decision:
+	// drop it before folding so the funnel never counts a row the manager
+	// retracted (SPEC-PULSE rule 18, nova-tools #2034).
+	entries = excludeVoidedOutcomes(entries)
 	sum, err := decide.Summarize(reg, entries)
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -674,4 +678,59 @@ func dsnEnvName(dsnEnv string) string {
 		return s
 	}
 	return decide.LogDSNEnv
+}
+
+// excludeVoidedOutcomes drops from a list of entries the one OUTCOME row each
+// void record retracts, and drops the void records themselves. The summary
+// then never sees a mistake: every stage's count reflects only the rows still
+// standing (SPEC-PULSE rule 18, #2034).
+//
+// A void is keyed by unit AND Time stamp, and each distinct key removes at
+// most one outcome row (the earliest match): the stamp has second precision,
+// so another unit's outcome in the same second, or a later row of the same
+// unit, is never swept up with the one the manager retracted (Stella's hold
+// on #2850). Void records are gathered in a pre-pass so a void's position in
+// the log relative to its target does not matter.
+func excludeVoidedOutcomes(entries []decide.Entry) []decide.Entry {
+	type voidKey struct{ unit, time string }
+	pending := map[voidKey]bool{}
+	for _, e := range entries {
+		if strings.TrimSpace(e.Source) != sourceVoid {
+			continue
+		}
+		key := voidKey{unit: outcomeUnit(e), time: voidTargetFromReason(e.Reason)}
+		if key.unit != "" && key.time != "" {
+			pending[key] = true
+		}
+	}
+	kept := make([]decide.Entry, 0, len(entries))
+	for _, e := range entries {
+		if strings.TrimSpace(e.Source) == sourceVoid {
+			continue
+		}
+		if strings.TrimSpace(e.Source) == decide.SourceOutcome {
+			key := voidKey{unit: outcomeUnit(e), time: strings.TrimSpace(e.Time)}
+			if pending[key] {
+				delete(pending, key) // one void key retracts one row
+				continue
+			}
+		}
+		kept = append(kept, e)
+	}
+	return kept
+}
+
+// voidTargetFromReason reads the Time stamp a void record's Reason fields,
+// returning it for the exclude step. A Reason that does not start with the
+// void prefix is not a void we recognise; return empty so the row stands.
+func voidTargetFromReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, voidPrefix) {
+		return ""
+	}
+	key := strings.TrimSpace(strings.TrimPrefix(reason, voidPrefix))
+	if key == "" {
+		return ""
+	}
+	return key
 }
