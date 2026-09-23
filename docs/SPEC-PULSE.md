@@ -1215,7 +1215,9 @@ landing base, and card PATHS versus `git diff --name-only base...head`. One line
 to stdout and optionally `--receipt-file`. A conflicting merge-tree prints
 `merge-tree=conflict` and exits 2; a clean tree prints `merge-tree=clean` and
 exits 0 when `ci-ok` is success and the diff stays inside PATHS. `--rollup` is
-the check rollup as a file; unit tests never call GitHub.
+the check rollup as a file and must name this head (`head` or `headRefOid`);
+a live `--pr` accepts the rollup only when `headRefOid` is that commit. Unit
+tests never call GitHub.
 
 `POOL`, `CUT`, `ADMIT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens;
 `OK`, `REFUSED`, `WIDTH`, `UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of

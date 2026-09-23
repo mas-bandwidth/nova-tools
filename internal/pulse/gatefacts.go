@@ -4,7 +4,9 @@ package pulse
 // merge-tree against the landing base, and the card PATHS versus
 // `git diff --name-only base...head`. One line. A conflicting merge-tree is
 // merge-tree=conflict and exit 2; a clean tree is merge-tree=clean and exit 0
-// when ci-ok is success and the diff stays inside PATHS.
+// when ci-ok is success and the diff stays inside PATHS. A --rollup file and a
+// live gh rollup are evidence for one commit: head or headRefOid must be the
+// resolved --head, or the stamp is refused.
 
 import (
 	"context"
@@ -25,6 +27,8 @@ import (
 
 // CISource is G1. The shipped sources are a --rollup file, a gh pr view, or
 // pending when neither is named. Tests inject a fake; they never call GitHub.
+// head is the resolved commit the stamp names. A source that cannot show the
+// checks are for that commit returns an error instead of another revision's status.
 type CISource interface {
 	CI(repo string, pr int, head string) (status, job, test string, err error)
 }
@@ -112,7 +116,12 @@ func GateFacts(in GateFactsInput) int {
 	}
 	ciOK, job, test, err := src.CI(in.Repo, in.PR, headSHA)
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "GATEFACTS REFUSED ci-ok: %s (pass --rollup <file>, or --pr with --repo)\n", oneline.Err(err))
+		var bind *ciHeadError
+		if errors.As(err, &bind) {
+			fmt.Fprintf(in.Stderr, "GATEFACTS REFUSED ci-ok: %s\n", oneline.Err(err))
+		} else {
+			fmt.Fprintf(in.Stderr, "GATEFACTS REFUSED ci-ok: %s (pass --rollup <file>, or --pr with --repo)\n", oneline.Err(err))
+		}
 		return 2
 	}
 	ciOK, job, test, err = normalizeCIOK(ciOK, job, test)
@@ -233,14 +242,18 @@ func (pendingCISource) CI(string, int, string) (string, string, string, error) {
 }
 
 // fileCISource is --rollup: the check rollup as JSON, so a test never reaches gh.
-// Compact form: {"ci-ok":"failure","job":"...","test":"..."}.
-// gh form: {"statusCheckRollup":[{"name":"ci-ok","status":"COMPLETED","conclusion":"SUCCESS"}]}.
+// The file is evidence for one commit. Compact form names it in "head"; the gh
+// form names it in "headRefOid". A missing or different id is not this revision.
+// Compact form: {"ci-ok":"failure","job":"...","test":"...","head":"<sha>"}.
+// gh form: {"headRefOid":"<sha>","statusCheckRollup":[{"name":"ci-ok","status":"COMPLETED","conclusion":"SUCCESS"}]}.
 type fileCISource struct{ path string }
 
 type rollupFile struct {
 	CIOK              string       `json:"ci-ok"`
 	Job               string       `json:"job"`
 	Test              string       `json:"test"`
+	Head              string       `json:"head"`
+	HeadRefOid        string       `json:"headRefOid"`
 	StatusCheckRollup []rollupItem `json:"statusCheckRollup"`
 }
 
@@ -252,7 +265,7 @@ type rollupItem struct {
 	State      string `json:"state"`
 }
 
-func (f fileCISource) CI(string, int, string) (string, string, string, error) {
+func (f fileCISource) CI(_ string, _ int, head string) (string, string, string, error) {
 	raw, err := os.ReadFile(f.path)
 	if err != nil {
 		return "", "", "", fmt.Errorf("cannot read --rollup %s: %s", f.path, oneline.Err(err))
@@ -260,6 +273,20 @@ func (f fileCISource) CI(string, int, string) (string, string, string, error) {
 	var src rollupFile
 	if err := json.Unmarshal(raw, &src); err != nil {
 		return "", "", "", fmt.Errorf("--rollup %s is not the rollup json: %s", f.path, oneline.Err(err))
+	}
+	return acceptRollup(head, src)
+}
+
+// ciHeadError is a rollup that is not this revision's checks. It is a refusal,
+// not a ci-ok value: another commit's success must not be printed beside this head.
+type ciHeadError struct{ reason string }
+
+func (e *ciHeadError) Error() string { return e.reason }
+
+// acceptRollup folds a rollup only after its head id matches the resolved commit.
+func acceptRollup(head string, src rollupFile) (string, string, string, error) {
+	if err := requireSameHead(head, src); err != nil {
+		return "", "", "", err
 	}
 	if src.CIOK != "" {
 		return src.CIOK, src.Job, src.Test, nil
@@ -270,6 +297,52 @@ func (f fileCISource) CI(string, int, string) (string, string, string, error) {
 		job = src.Job
 	}
 	return status, job, test, nil
+}
+
+// requireSameHead refuses a rollup that does not name the resolved head.
+// head and headRefOid are the same claim; when both are set they must agree.
+func requireSameHead(want string, src rollupFile) error {
+	got, err := rollupOID(src)
+	if err != nil {
+		return err
+	}
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return &ciHeadError{reason: "ci-ok has no resolved head (pass --head that resolves to a commit)"}
+	}
+	if got == "" {
+		return &ciHeadError{reason: fmt.Sprintf(
+			"rollup names no head (put head or headRefOid of %s in the file; an unbound rollup is not this revision)",
+			showOID(want))}
+	}
+	if !strings.EqualFold(want, got) {
+		return &ciHeadError{reason: fmt.Sprintf(
+			"rollup head %s is not requested head %s (refusing another revision's checks)",
+			showOID(got), showOID(want))}
+	}
+	return nil
+}
+
+func rollupOID(src rollupFile) (string, error) {
+	h := strings.TrimSpace(src.Head)
+	o := strings.TrimSpace(src.HeadRefOid)
+	if h != "" && o != "" && !strings.EqualFold(h, o) {
+		return "", &ciHeadError{reason: fmt.Sprintf(
+			"rollup head %s and headRefOid %s disagree (name one commit)",
+			showOID(h), showOID(o))}
+	}
+	if o != "" {
+		return o, nil
+	}
+	return h, nil
+}
+
+func showOID(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) > 64 {
+		return s[:64]
+	}
+	return s
 }
 
 func foldCIOK(items []rollupItem) (status, job string) {
@@ -352,8 +425,10 @@ func first(v []string) string {
 	return v[0]
 }
 
-// ghCISource is the live G1 path: one `gh pr view --json statusCheckRollup`.
-// Unit tests pass --rollup and never construct this.
+// ghCISource is the live G1 path: one `gh pr view --json statusCheckRollup,headRefOid`.
+// The rollup is the pull request's current head. It is accepted only when
+// headRefOid is the resolved --head; a green current head is not a stamp for
+// a different requested commit.
 type ghCISource struct{ timeout time.Duration }
 
 func (g ghCISource) CI(repo string, pr int, head string) (string, string, string, error) {
@@ -370,7 +445,7 @@ func (g ghCISource) CI(repo string, pr int, head string) (string, string, string
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprintf("%d", pr),
-		"--repo", repo, "--json", "statusCheckRollup")
+		"--repo", repo, "--json", "statusCheckRollup,headRefOid")
 	out, err := cmd.Output()
 	if err != nil {
 		return "", "", "", fmt.Errorf("gh pr view %d: %s", pr, oneline.Err(err))
@@ -379,8 +454,7 @@ func (g ghCISource) CI(repo string, pr int, head string) (string, string, string
 	if err := json.Unmarshal(out, &src); err != nil {
 		return "", "", "", fmt.Errorf("gh pr view did not answer json: %s", oneline.Err(err))
 	}
-	status, job := foldCIOK(src.StatusCheckRollup)
-	return status, job, src.Test, nil
+	return acceptRollup(head, src)
 }
 
 func mergeTree(ctx context.Context, dir, base, head string) (state string, files []string, err error) {

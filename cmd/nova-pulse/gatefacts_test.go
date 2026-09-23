@@ -46,7 +46,7 @@ func TestGateFactsVerbConflictExits2(t *testing.T) {
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-q", "-m", "main")
 	runGit(t, dir, "checkout", "-q", "card")
-	rollup := writeMainFile(t, dir, "rollup.json", `{"ci-ok":"success"}`)
+	rollup := writeMainFile(t, dir, "rollup.json", `{"ci-ok":"success","head":"`+gitHead(t, dir)+`"}`)
 
 	var out, errb bytes.Buffer
 	code := run([]string{"gate-facts", "--dir", dir, "--base", "main", "--head", "HEAD", "--rollup", rollup, "--paths", "sign/**"}, &out, &errb, time.Now().UTC())
@@ -64,7 +64,7 @@ func TestGateFactsVerbCleanExits0(t *testing.T) {
 	writeMainFile(t, dir, "sign/sign.go", "package sign\nfunc Sign() {}\n")
 	runGit(t, dir, "add", "-A")
 	runGit(t, dir, "commit", "-q", "-m", "head")
-	rollup := writeMainFile(t, dir, "rollup.json", `{"ci-ok":"success"}`)
+	rollup := writeMainFile(t, dir, "rollup.json", `{"ci-ok":"success","head":"`+gitHead(t, dir)+`"}`)
 	receipt := filepath.Join(dir, "receipt.txt")
 
 	var out, errb bytes.Buffer
@@ -136,7 +136,7 @@ func TestGateFactsVerbDoesNotCallGhWithRollup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	rollup := writeMainFile(t, dir, "rollup.json", `{"ci-ok":"success"}`)
+	rollup := writeMainFile(t, dir, "rollup.json", `{"ci-ok":"success","head":"`+gitHead(t, dir)+`"}`)
 	var out, errb bytes.Buffer
 	code := run([]string{
 		"gate-facts", "--dir", dir, "--base", "main", "--head", "HEAD",
@@ -148,4 +148,16 @@ func TestGateFactsVerbDoesNotCallGhWithRollup(t *testing.T) {
 	if _, err := os.Stat(called); err == nil {
 		t.Fatal("gh was invoked; --rollup must be the whole G1 source")
 	}
+}
+
+func gitHead(t *testing.T, dir string) string {
+	t.Helper()
+	cmd := exec.Command("git", "rev-parse", "HEAD")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("git rev-parse HEAD: %v", err)
+	}
+	return strings.TrimSpace(string(out))
 }

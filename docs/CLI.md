@@ -2396,9 +2396,13 @@ flag is given. No path is guessed: `--dir`, `--base` and `--head` are required.
 
 - **G1** `ci-ok=success|failure|pending`. When it is not success, `job=` and
   `test=` come from the rollup. `--rollup <file>` is the check rollup as JSON
-  (`{"ci-ok":"failure","job":"…","test":"…"}` or gh's `statusCheckRollup` shape)
-  so a unit test never calls GitHub. `--pr` with `--repo` reads the live rollup
-  via `gh pr view`. With neither, `ci-ok=pending`.
+  (`{"ci-ok":"failure","job":"…","test":"…","head":"<sha>"}` or gh's
+  `statusCheckRollup` with `headRefOid`) and that id must be the resolved
+  `--head`. A file with no head, or a different one, is refused: an unbound
+  rollup is not this revision. Unit tests never call GitHub. `--pr` with
+  `--repo` reads `gh pr view --json statusCheckRollup,headRefOid` and accepts
+  the checks only when `headRefOid` is that same commit. With neither source,
+  `ci-ok=pending`.
 - **G2** `merge-tree=clean` or `merge-tree=conflict` from
   `git merge-tree --write-tree --name-only` of `--head` onto `--base` (the
   landing base, `origin/dev` in nova-tools). Conflict names the files and

@@ -149,7 +149,8 @@ func TestGateFactsCIFailureNamesJobAndTest(t *testing.T) {
 	writeFacts(t, dir, "sign/sign.go", "package sign\nfunc Sign() {}\n")
 	factsGitCmd(t, dir, "add", "-A")
 	factsGitCmd(t, dir, "commit", "-q", "-m", "head")
-	rollup := writeRollup(t, dir, `{"ci-ok":"failure","job":"studio-fast","test":"TestGateHoldsTheBench"}`)
+	head := factsGitCmd(t, dir, "rev-parse", "HEAD")
+	rollup := writeRollup(t, dir, `{"ci-ok":"failure","job":"studio-fast","test":"TestGateHoldsTheBench","head":"`+head+`"}`)
 
 	out, errb, code := runFacts(t, GateFactsInput{
 		Dir: dir, Base: "main", Head: "HEAD", Rollup: rollup, Paths: "sign/**",
@@ -247,7 +248,8 @@ func TestGateFactsRollupFileNeverCallsGh(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	rollup := writeRollup(t, dir, `{"ci-ok":"success"}`)
+	head := factsGitCmd(t, dir, "rev-parse", "HEAD")
+	rollup := writeRollup(t, dir, `{"ci-ok":"success","head":"`+head+`"}`)
 	_, errb, code := runFacts(t, GateFactsInput{
 		Dir: dir, Base: "main", Head: "HEAD", Rollup: rollup, Paths: "none", PR: 99, Repo: "owner/name",
 	})
@@ -283,7 +285,8 @@ func TestGateFactsReadsCardPATHS(t *testing.T) {
 
 func TestGateFactsGhRollupShape(t *testing.T) {
 	dir := factsLab(t)
-	rollup := writeRollup(t, dir, `{"statusCheckRollup":[{"name":"ci-ok","status":"COMPLETED","conclusion":"FAILURE"},{"name":"test (1/4 studio)","status":"COMPLETED","conclusion":"FAILURE"}],"test":"TestFoo"}`)
+	head := factsGitCmd(t, dir, "rev-parse", "HEAD")
+	rollup := writeRollup(t, dir, `{"headRefOid":"`+head+`","statusCheckRollup":[{"name":"ci-ok","status":"COMPLETED","conclusion":"FAILURE"},{"name":"test (1/4 studio)","status":"COMPLETED","conclusion":"FAILURE"}],"test":"TestFoo"}`)
 	out, errb, code := runFacts(t, GateFactsInput{
 		Dir: dir, Base: "main", Head: "HEAD", Rollup: rollup, Paths: "none",
 	})
@@ -299,4 +302,117 @@ func TestGateFactsGhRollupShape(t *testing.T) {
 	if !strings.Contains(out, "test=TestFoo") {
 		t.Fatalf("want test=TestFoo from the rollup, got %q", out)
 	}
+}
+
+// gate-facts-mismatched-head: a rollup for another commit must not be stamped
+// as this head's ci-ok. The file says success; the receipt must not.
+func TestGateFactsMismatchedHeadRefuses(t *testing.T) {
+	dir := factsLab(t)
+	other := strings.Repeat("ab", 20)
+	if factsGitCmd(t, dir, "rev-parse", "HEAD") == other {
+		t.Fatal("fixture sha collided with the lab head")
+	}
+	rollup := writeRollup(t, dir, `{"ci-ok":"success","headRefOid":"`+other+`"}`)
+	out, errb, code := runFacts(t, GateFactsInput{
+		Dir: dir, Base: "main", Head: "HEAD", Rollup: rollup, Paths: "none",
+	})
+	if code != 2 {
+		t.Fatalf("mismatch exit = %d, want 2; out=%q err=%q", code, out, errb)
+	}
+	if out != "" {
+		t.Fatalf("mismatch must not stamp a receipt, got %q", out)
+	}
+	if !strings.Contains(errb, other) || !strings.Contains(errb, "not requested head") {
+		t.Fatalf("refusal should name both heads, got %q", errb)
+	}
+}
+
+// An offline rollup with no head is the same hole: success with nothing to bind.
+func TestGateFactsRollupWithoutHeadRefuses(t *testing.T) {
+	dir := factsLab(t)
+	rollup := writeRollup(t, dir, `{"ci-ok":"success"}`)
+	out, errb, code := runFacts(t, GateFactsInput{
+		Dir: dir, Base: "main", Head: "HEAD", Rollup: rollup, Paths: "none",
+	})
+	if code != 2 {
+		t.Fatalf("unbound exit = %d, want 2; out=%q err=%q", code, out, errb)
+	}
+	if out != "" || !strings.Contains(errb, "names no head") {
+		t.Fatalf("want a no-head refusal and no receipt, out=%q err=%q", out, errb)
+	}
+}
+
+func TestGateFactsLiveHeadMismatchRefuses(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the PATH gh fake is a shell script")
+	}
+	dir := factsLab(t)
+	other := strings.Repeat("cd", 20)
+	body := `{"headRefOid":"` + other + `","statusCheckRollup":[{"name":"ci-ok","status":"COMPLETED","conclusion":"SUCCESS"}]}`
+	args := installFactsGH(t, dir, body)
+	out, errb, code := runFacts(t, GateFactsInput{
+		Dir: dir, Base: "main", Head: "HEAD", PR: 2503, Repo: "owner/name", Paths: "none",
+	})
+	if code != 2 {
+		t.Fatalf("live mismatch exit = %d, want 2; out=%q err=%q", code, out, errb)
+	}
+	if out != "" || strings.Contains(out, "ci-ok=success") {
+		t.Fatalf("live mismatch stamped a receipt: %q", out)
+	}
+	if !strings.Contains(errb, other) || !strings.Contains(errb, "not requested head") {
+		t.Fatalf("refusal should name the pr head, got %q", errb)
+	}
+	raw, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatalf("gh was not invoked: %v; err=%q", err, errb)
+	}
+	if !strings.Contains(string(raw), "headRefOid") || !strings.Contains(string(raw), "statusCheckRollup") {
+		t.Fatalf("gh was not asked for headRefOid, args %q", raw)
+	}
+}
+
+func TestGateFactsLiveHeadMatchStamps(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the PATH gh fake is a shell script")
+	}
+	dir := factsLab(t)
+	head := factsGitCmd(t, dir, "rev-parse", "HEAD")
+	body := `{"headRefOid":"` + head + `","statusCheckRollup":[{"name":"ci-ok","status":"COMPLETED","conclusion":"SUCCESS"}]}`
+	args := installFactsGH(t, dir, body)
+	out, errb, code := runFacts(t, GateFactsInput{
+		Dir: dir, Base: "main", Head: "HEAD", PR: 2503, Repo: "owner/name", Paths: "none",
+	})
+	if code != 0 {
+		t.Fatalf("live match exit = %d, want 0; out=%q err=%q", code, out, errb)
+	}
+	if !strings.Contains(out, "ci-ok=success") || !strings.Contains(out, "head="+head[:12]) {
+		t.Fatalf("want this head's success, got %q", out)
+	}
+	raw, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "headRefOid") {
+		t.Fatalf("gh was not asked for headRefOid, args %q", raw)
+	}
+}
+
+func installFactsGH(t *testing.T, dir, body string) string {
+	t.Helper()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(dir, "gh-args")
+	bodyFile := filepath.Join(dir, "gh-body.json")
+	if err := os.WriteFile(bodyFile, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" > '" + argsFile + "'\ncat '" + bodyFile + "'\n"
+	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("NOVA_TEST_NO_HOST", "")
+	return argsFile
 }

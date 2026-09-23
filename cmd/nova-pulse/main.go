@@ -198,7 +198,9 @@ merge-tree against --base, and the card PATHS versus git diff --name-only base..
 One line to stdout, the same line to --receipt-file when given. A conflicting
 merge-tree prints merge-tree=conflict and exits 2; a clean tree prints
 merge-tree=clean and exits 0 when ci-ok is success and the diff stays inside PATHS.
---rollup is the check rollup as a file, so a unit test never calls GitHub.
+--rollup is the check rollup as a file and must name this head (head or
+headRefOid); a live --pr accepts gh's rollup only when headRefOid is that
+commit. A unit test never calls GitHub.
 
 sweep walks the approvals ledger: every read verdict is a row in <queue>/ledger.tsv,
 and each sweep enqueues the approved, green, undrafted, unheld ones exactly once,
