@@ -98,3 +98,32 @@ func hasPath(list []string, want string) bool {
 	}
 	return false
 }
+
+// #1557: when xcode-select points at a developer dir that is not already a
+// fixed root (Xcode.app/Contents, not CommandLineTools under /Library), that
+// directory is an optional root so /usr/bin/c++ can dispatch to it. The grant
+// is Contents, not Contents/Developer: the shims read Info.plist and
+// SharedFrameworks next to Developer. A target already under /Library is
+// skipped, the same as any other optional root under a fixed prefix.
+func TestOptionalRootsIncludeTheXcodeSelectDeveloperDir(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skipf("skipped on %s: xcode_select_link is the darwin profile's", runtime.GOOS)
+	}
+	dirs := xcodeSelectDeveloperDirs()
+	if len(dirs) == 0 {
+		t.Skip("skipped: no xcode_select_link on this machine")
+	}
+	roots := OptionalRoots("/bin/echo")
+	for _, dir := range dirs {
+		found := hasPath(roots, dir)
+		if underAny(dir, fixedDarwinPrefixes) {
+			if found {
+				t.Errorf("xcode-select points at %s, which is already under a fixed root, and it is still an optional root: %v", dir, roots)
+			}
+			continue
+		}
+		if !found {
+			t.Errorf("xcode-select points at %s, which is under no fixed root and is not an optional root: %v", dir, roots)
+		}
+	}
+}

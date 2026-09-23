@@ -23,10 +23,24 @@ func relaunch(in HarvestInput) int {
 	// `PULSE POOL EMPTY` printed over the top of it. They are already cut cards: they do
 	// not want rendering from a template, they want admitting.
 	queuePath := filepath.Join(in.Root, "queue.tsv")
-	queued := readQueuedCards(queuePath)
+	seen, err := readSeen(in.Root)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: seen.tsv cannot be read, so nothing is admitted: %s\n", oneline.Err(err))
+		return 2
+	}
+	queued, err := dropHeldCards(in.Root, readQueuedCards(queuePath), seen)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
 
 	ordered := readCandidates(filepath.Join(in.Root, "next.tsv"))
 	ordered = append(ordered, readCandidates(filepath.Join(in.Root, "pool.tsv"))...)
+	ordered, err = dropHeldCandidates(in.Root, ordered, seen)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
 
 	if len(queued) == 0 && len(ordered) == 0 {
 		fmt.Fprintf(in.Stdout, "PULSE POOL EMPTY in-flight=0\n")
@@ -56,7 +70,11 @@ func relaunch(in HarvestInput) int {
 	for i, c := range ordered {
 		label := sanitizeID(c.ID)
 		cardPath := filepath.Join(cardsDir, fmt.Sprintf("%03d-%s.md", i, label))
-		if err := os.WriteFile(cardPath, []byte(render(c, in.Templates)), 0o644); err != nil {
+		body := render(c, in.Templates)
+		if matches, merr := identitiesFor(in.Root, c.ID); merr == nil && len(matches) == 1 {
+			body += fmt.Sprintf("IDENTITY kind=%s id=%s attempt=%d\n", matches[0].Kind, matches[0].ID, matches[0].Attempt)
+		}
+		if err := os.WriteFile(cardPath, []byte(body), 0o644); err != nil {
 			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot cut %s: %s", label, oneline.Err(err)))
 		}
 		rows = append(rows, CardRow{Label: label, Slot: "-", Model: routeFor(c.Kind, false, table).Name, Card: cardPath})
@@ -73,6 +91,53 @@ func relaunch(in HarvestInput) int {
 	}
 
 	return runLaunchSubprocess(in, filepath.Join(in.Root, "cards.tsv"), slots, deadline)
+}
+
+func dropHeldCards(root string, cards []CardRow, seen map[string]bool) ([]CardRow, error) {
+	var out []CardRow
+	for _, c := range cards {
+		kind, id, ambiguous, err := heldIdentity(root, c.Label, c.Card)
+		if err != nil {
+			return nil, err
+		}
+		if ambiguous || (kind != "" && seen[kind+"\x00"+id]) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+func dropHeldCandidates(root string, cands []PoolRow, seen map[string]bool) ([]PoolRow, error) {
+	var out []PoolRow
+	for _, c := range cands {
+		kind, id, ambiguous, err := heldIdentity(root, c.ID, "")
+		if err != nil {
+			return nil, err
+		}
+		if ambiguous || (kind != "" && seen[kind+"\x00"+id]) {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// heldIdentity is the source kind and id a card or candidate was admitted
+// under. The card's own IDENTITY line wins. A bare label that matches two
+// sources is not guessed: the card is not admitted.
+func heldIdentity(root, label, cardPath string) (kind, id string, ambiguous bool, err error) {
+	if a, ok := cardIdentity(cardPath); ok {
+		return a.Kind, a.ID, false, nil
+	}
+	k, i, _, _, err := lookupIdentity(root, label)
+	if err != nil {
+		if strings.Contains(err.Error(), "ambiguous") {
+			return "", "", true, nil
+		}
+		return "", "", false, err
+	}
+	return k, i, false, nil
 }
 
 // readQueuedCards reads the table `launch --queue` writes: label<TAB>model<TAB>card, the

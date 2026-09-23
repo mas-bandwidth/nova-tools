@@ -20,6 +20,7 @@ import (
 // thread.
 const (
 	KeyFrom    = "From"
+	KeyHost    = "Host"
 	KeyTo      = "To"
 	KeyCc      = "Cc"
 	KeyDate    = "Date"
@@ -31,8 +32,8 @@ const (
 
 // KnownKeys is the header's whole vocabulary, in the order send writes it. It is a list
 // rather than a set because a refusal names it: a writer told only that their key is
-// unknown has to go and find the eight that are not, and the eight fit on the line.
-var KnownKeys = []string{KeyFrom, KeyTo, KeyCc, KeyDate, KeyID, KeyRe, KeySubject, KeyKind}
+// unknown has to go and find the nine that are not, and the nine fit on the line.
+var KnownKeys = []string{KeyFrom, KeyHost, KeyTo, KeyCc, KeyDate, KeyID, KeyRe, KeySubject, KeyKind}
 
 // KindReceipt and KindNote are the two values of the optional Kind line, which overrides
 // the receipt heuristic in either direction.
@@ -72,7 +73,18 @@ const idHexLen = 12
 // round-tripped verbatim, because "Ada (day shift, the west host, the shared account)" carries
 // information the roster does not hold.
 type Header struct {
-	From    string
+	From string
+	// Host is the machine that posted the note, and it is OPTIONAL: an absent Host line is
+	// the shape every note on every bus had before this line existed, and it stays that
+	// shape byte for byte. It exists because one name can post from two places -- the
+	// keeper on the Studio and the bud on the Air both post as Rowan -- and the subject
+	// convention that told them apart, `[bud air]`, spent the subject line on routing.
+	//
+	// It is NOT in the id's preimage (see canonical): the id says a note is the same note
+	// -- same sender, same second, same recipients, same subject, same body -- and which
+	// machine typed it is a fact about the posting and not about the note. Keeping it out
+	// means every id already on every bus is still the id it was.
+	Host    string
 	To      string
 	Cc      string
 	Date    string
@@ -235,7 +247,7 @@ func parseLines(path string, lines []string, at []int, first int) (Note, []error
 				h.lines[key] = i + 1
 			}
 			continue
-		case KeyFrom, KeyTo, KeyCc, KeyDate, KeyID, KeySubject, KeyKind:
+		case KeyFrom, KeyHost, KeyTo, KeyCc, KeyDate, KeyID, KeySubject, KeyKind:
 			if _, dup := h.lines[key]; dup {
 				// The FIRST of the two is kept, so that what this header says is what a
 				// reader of the file's top would say it says.
@@ -258,6 +270,8 @@ func parseLines(path string, lines []string, at []int, first int) (Note, []error
 		switch key {
 		case KeyFrom:
 			h.From = value
+		case KeyHost:
+			h.Host = value
 		case KeyTo:
 			h.To = value
 		case KeyCc:
@@ -510,6 +524,11 @@ func (h Header) Problems(c *Config) []error {
 	if strings.TrimSpace(h.Subject) == "" {
 		problems = append(problems, fmt.Errorf("no %s line, or an empty one", KeySubject))
 	}
+	if h.Host != "" {
+		if err := ValidHost(h.Host); err != nil {
+			problems = append(problems, fmt.Errorf("%s: %w", KeyHost, err))
+		}
+	}
 	if h.Kind != "" && h.Kind != KindReceipt && h.Kind != KindNote {
 		problems = append(problems, fmt.Errorf("%s: %q is neither %q nor %q", KeyKind, h.Kind, KindReceipt, KindNote))
 	}
@@ -629,13 +648,19 @@ func NormalizeBody(body string) string {
 	return strings.Join(lines, "\n")
 }
 
-// Render writes a note back out in the canonical header order: From, To, Cc, Date, Id,
-// Re..., Subject, a blank line, the body. The author's own text is preserved in every
+// Render writes a note back out in the canonical header order: From, Host, To, Cc, Date,
+// Id, Re..., Subject, a blank line, the body. The author's own text is preserved in every
 // line but Date and Id.
+//
+// Host is written only when there is one, so a note sent without --host renders the bytes
+// it has always rendered.
 func (n Note) Render() string {
 	var b strings.Builder
 	h := n.Header
 	b.WriteString(KeyFrom + ": " + h.From + "\n")
+	if h.Host != "" {
+		b.WriteString(KeyHost + ": " + h.Host + "\n")
+	}
 	b.WriteString(KeyTo + ": " + h.To + "\n")
 	if h.Cc != "" {
 		b.WriteString(KeyCc + ": " + h.Cc + "\n")

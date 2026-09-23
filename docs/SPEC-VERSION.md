@@ -175,3 +175,42 @@ reaches a network.
 11. `TestSnapshotIsBoundedByTheClock`: an injected clock and a fake binary sleeping past its deadline is exit 2 with the deadline named and no partial `--out`.
 12. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary`: a fake binary that is slow on its FIRST invocation and immediate on every one after — the platform's assessment made deterministic — is read, not refused, under the default bound, so the verb's own normal case (a `--bin` one `go install` old) is not a refusal.
 13. `TestSnapshotTakesItsBoundsFromFlags`: a fake binary sleeping past a given `--timeout` is exit 2 naming that tool and that duration with no partial `--out`; four such binaries under a `--budget` shorter than one of them is exit 2 naming the budget rather than a tool's slowness; a non-positive `--timeout` is exit 2 naming the flags.
+
+## Tests this spec demands
+
+SPEC-VERSION.md already names its tests in two `### Red tests this section demands`
+blocks (a `## Tests this spec demands` heading it lacks); this list is those 24 plus
+four prose-only behaviours the spec demands but never names a test for. The moved /
+apply --sha half runs against fakes on `PATH` — `git`, `go`, and every built binary —
+with an injected clock and temp dirs; the snapshot / diff half (already present) runs
+against shell-script stubs in `t.TempDir()`, unix-only, no network, every fixture proven
+able to fail before it is trusted.
+
+1. `TestMovedReadsTheBuildNeverAList` — `moved` invents each `<tool> help` at `--from` and `--to` and reports added/deleted from the parsed help, so a flag no binary's help prints is never announced.
+2. `TestMovedRefusesAMissingFlag` — no `--repo` and separately no `--out` is exit 2 printing `refusing to guess`, naming the flag, and starts no build.
+3. `TestMovedRefusesAnUnresolvedRevision` — a revision that is not a commit in `--repo` names the revision and the `git fetch` remedy, exit 2, writes no note.
+4. `TestMovedRefusesABinaryWithNoHelp` — a `cmd/*` that builds but answers no help (non-zero exit, or no output) is exit 2 naming the tool and the revision.
+5. `TestMovedNeverInfersARename` — help text alone never makes a rename: a vanished plus a differently-named appeared tool is `deleted=1 added=1 renamed=0`; `renamed=1` only when the commit message or a `MOVED` file states it.
+6. `TestMovedEmptyDiffIsNotARefusal` — an empty diff is `added=0 deleted=0 renamed=0`, exit 0, never a refusal (spec §16–17 item 3, prose-only).
+7. `TestMovedIsBoundedByTheClock` — `moved` caps every child through `internal/bounded`, takes its clock from the injected seam, and touches the network only for the `git fetch` a named missing revision asks for (item 12, prose-only).
+8. `TestApplyShaBuildsOneStampOnAFakeBench` — a fake `go` records exactly one `-X main.version=` and every fake binary echoes it, so one `APPLY SHA` line carries `stamp=` of the revision and `built=` of the `cmd/*` count.
+9. `TestApplyShaRefusesAMixedSetNamingThePair` — a `--bin` holding two binaries at two stamps is exit 2 naming both names and both stamps, and starts no build.
+10. `TestApplyShaRefusesALostStamp` — a build whose one binary answers `devel` while the rest answer the revision is refused naming that binary and both stamps, and installs nothing.
+11. `TestApplyShaPublishesTheWholeSetAtomically` — a successful run swaps the `--bin` link once and writes repository, revision, build host, go version and time into the manifest; a failing last binary leaves the prior set linked and untouched.
+12. `TestStampCheckAlsoVerifiesSourceMetadata` — a binary whose version stamp matches but whose source metadata is missing or disagrees with the manifest is exit 2 naming that binary and the field, and installs nothing; a wrong checkout carrying the linker stamp cannot pass.
+13. `TestApplyShaIsBoundedByTheClock` — an injected clock and a fake build sleeping past `--timeout` is exit 2 with the timeout named and no partial `--bin` directory.
+14. `TestApplyShaWithFileIsARefusal` — `--sha` given with `--file` is a refusal naming both flags (item 5, prose-only).
+15. `TestApplyShaRefusesMissingFlagsAndUnresolvedRevision` — a missing `--sha`, `--repo` or `--bin` is `refusing to guess` naming it; an unresolved revision names it and the fetch; a `cmd/*` that does not build names the package and the revision (item 9, prose-only).
+16. `TestSnapshotWritesOneRowPerBinary` — one header and one row per `nova-*` file, name/stamp/revision/platform all named, a non-`nova-` file absent.
+17. `TestSnapshotReadsVersionNotTheFileName` — a binary whose `version` prints a stamp unlike its name records the printed stamp, so a renamed stub cannot forge a row.
+18. `TestSnapshotRefusesAMixedSetNamingThePair` — two binaries at two stamps is exit 2 naming both names and both stamps, and writes no `--out`.
+19. `TestSnapshotRefusesAMissingFlag` — no `--bin` and separately no `--out` is exit 2 printing `refusing to guess`, naming the flag.
+20. `TestSnapshotRefusesABinaryWithNoVersion` — a `version` that exits non-zero, and one that prints nothing parseable, are each exit 2 naming the tool.
+21. `TestSnapshotRefusesAnUnreadableBin` — a `--bin` that is a file, and one holding no `nova-*` file, are each exit 2 naming the directory and the readable `--bin` remedy.
+22. `TestDiffNamesOneLinePerChangedBinary` — one `DIFF CHANGED` line for the one differing binary, the unchanged binary prints none.
+23. `TestDiffNamesAddedAndRemoved` — a binary only in `--from` and one only in `--to` are each one line with `-` on the absent side, `changed=` counts both.
+24. `TestDiffRefusesANonSnapshotFile` — a wrong header and a wrong-arity row are each exit 2 naming the file and the `snapshot` remedy.
+25. `TestVersionAndDoubleDashVersionAgree` — `version` and `--version` print the identical `<tool> <stamp> <goos>/<goarch> <go version>` line, `nova-wake` among them, and a second argument is a refusal at exit 2.
+26. `TestSnapshotIsBoundedByTheClock` — an injected clock and a fake binary sleeping past its deadline is exit 2 with the deadline named and no partial `--out`.
+27. `TestSnapshotToleratesTheFirstExecOfANeverSeenBinary` — a fake binary slow on its FIRST invocation and immediate after is read, not refused, under the default bound.
+28. `TestSnapshotTakesItsBoundsFromFlags` — a `--timeout` past is exit 2 naming the tool and duration; four sleepers under a shorter `--budget` is exit 2 naming the budget; a non-positive `--timeout` is exit 2 naming the flags.

@@ -44,14 +44,24 @@ type Row struct {
 	OK        string // "yes", "no", or "-" when nobody has run it
 	Issue     string // the edge filed, or "-"
 	NonAuthor bool   // the receipt shown is somebody other than the author's
+
+	// Open is how many findings on this verb nobody has answered.
+	//
+	// It is on the row because the row is the line that HID one (round 5, edge
+	// 2): the row shows the receipt that speaks best for the verb, so a second
+	// dogfooder's ok=yes was printed over a first dogfooder's open finding, and
+	// the one line a reader parses claimed a clean verb. It is printed whether
+	// it is zero or not — a field that appears only when it is interesting is a
+	// field nobody can parse.
+	Open int
 }
 
 // Line is the row as the ledger prints it. A tool with no verbs prints
 // `verb=-`: its bare invocation is a unit like any other, and a unit with no
 // row can never be dogfooded.
 func (r Row) Line() string {
-	return fmt.Sprintf("DOGFOOD tool=%s verb=%s by=%s at=%s ok=%s issue=%s",
-		r.Tool, r.Verb, r.By, r.At, r.OK, r.Issue)
+	return fmt.Sprintf("DOGFOOD tool=%s verb=%s by=%s at=%s ok=%s issue=%s open=%d",
+		r.Tool, r.Verb, r.By, r.At, r.OK, r.Issue, r.Open)
 }
 
 // Summary is the count line under the rows.
@@ -135,13 +145,14 @@ func Ledger(verbs []Verb, receipts []Receipt, authors Authors) ([]Row, Summary) 
 				}
 			}
 		}
-		rows = append(rows, row)
 		for _, edge := range openEdges(got) {
+			row.Open++
 			summary.OpenEdges++
 			if !edge.Filed() {
 				summary.Unfiled++
 			}
 		}
+		rows = append(rows, row)
 	}
 	return rows, summary
 }
@@ -170,18 +181,44 @@ func yesNo(ok bool) string {
 	return "no"
 }
 
-// openEdges returns the receipts for one verb that found something and that no
-// later receipt has cleared. A receipt finds something when the verb did not do
-// what the run needed, or when its notes name an edge; it is cleared when
-// somebody runs the verb again, later, and records neither. That is what
-// "feedback applied" means from outside the fix — and an edge with no issue
+// openEdges returns the receipts for one verb that found something and that
+// nothing has since answered. A receipt finds something when the verb did not do
+// what the run needed, or when its notes name an edge. An edge with no issue
 // number is one nobody else can act on at all, which the summary counts
 // separately.
+//
+// DOGFOOD ROUND 5, EDGE 2: AN EDGE IS ANSWERED, NOT OUTLIVED. It used to be
+// cleared by "somebody runs the verb again, later, and records neither" —
+// ANYBODY. So a second dogfooder who ran the same verb an hour after the first
+// one found something, and for whom it worked, silently closed a finding nobody
+// had read: the gate said open-edges=0 and the ledger row showed that second
+// person's ok=yes over it. A pass is evidence about the passer's run, not an
+// answer to somebody else's.
+//
+// Two things answer a finding, and each is somebody taking responsibility for
+// it:
+//
+//   - a receipt that NAMES it — `--closes <id>` — which anybody may write, and
+//     which is how a fixer says this run is the answer to that finding;
+//   - the person who found it running the verb again, later, and finding
+//     nothing. They are the one who knows what they were looking at.
+//
+// An id that matches no finding closes nothing: a typo in a --closes must not
+// read as a close.
 func openEdges(got []Receipt) []Receipt {
-	var latestClean time.Time
+	// The ids anything here claims to answer, and the latest clean run each
+	// dogfooder has on this verb.
+	closed := map[string]bool{}
+	latestCleanBy := map[string]time.Time{}
 	for _, r := range got {
-		if !r.RecordsAnEdge() && r.Time().After(latestClean) {
-			latestClean = r.Time()
+		if id := strings.TrimSpace(r.Closes); id != "" {
+			closed[id] = true
+		}
+		if r.RecordsAnEdge() {
+			continue
+		}
+		if at := r.Time(); at.After(latestCleanBy[r.By]) {
+			latestCleanBy[r.By] = at
 		}
 	}
 	var open []Receipt
@@ -189,7 +226,10 @@ func openEdges(got []Receipt) []Receipt {
 		if !r.RecordsAnEdge() {
 			continue
 		}
-		if !latestClean.IsZero() && !r.Time().After(latestClean) {
+		if closed[r.ID()] {
+			continue
+		}
+		if clean, ok := latestCleanBy[r.By]; ok && clean.After(r.Time()) {
 			continue
 		}
 		open = append(open, r)
@@ -402,13 +442,17 @@ func Gate(verbs []Verb, receipts []Receipt, authors Authors, requireAll bool) ([
 		key := normalizeKey(v.Key())
 		got := byVerb[key]
 		for _, edge := range openEdges(got) {
-			reason := fmt.Sprintf("open edge from %s at %s", edge.By, edge.At)
+			// WHOSE FINDING IT IS, AND HOW TO ANSWER IT. The author was
+			// already named; the id is what a fixer passes to
+			// `dogfood record --closes`, and it is the same eight characters
+			// that end the receipt's filename, so a reader can find the file.
+			reason := fmt.Sprintf("open edge receipt=%s from %s at %s", edge.ID(), edge.By, edge.At)
 			if edge.Filed() {
 				reason += fmt.Sprintf(" (issue #%d)", edge.Issue)
 			} else {
 				reason += " (no issue filed)"
 			}
-			reason += ": " + edge.Notes
+			reason += fmt.Sprintf("; closed by --closes %s or by %s running it again: %s", edge.ID(), edge.By, edge.Notes)
 			findings = append(findings, GateFinding{Kind: "open-edge", Tool: v.Tool, Verb: v.Verb, Reason: reason})
 		}
 		if !requireAll {

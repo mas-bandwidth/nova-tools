@@ -98,13 +98,23 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	repo := f.fs.String("repo", "", "")
 	runner := f.fs.String("runner", "", "")
 	base := f.fs.String("base", "", "")
+	// Section 3 (lease take) and the pull worker daemon.
+	store := f.fs.String("store", "", "")
+	owner := f.fs.String("owner", "", "")
+	forDur := f.fs.String("for", "", "")
+	slots := f.fs.Int("slots", 0, "")
+	seat := f.fs.String("seat", "", "")
+	image := f.fs.String("image", "", "")
+	model := f.fs.String("model", "", "")
+	container := f.fs.String("container", "", "")
+	once := f.fs.Bool("once", false, "")
 
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	// Batching (section 6) is the shape whenever any of its own flags is present; it is
 	// asked first because it shares --queue with the affinity pull of section 4.
-	if *batch > 0 || strings.TrimSpace(*runner) != "" || strings.TrimSpace(*clone) != "" {
+	if *batch > 0 || strings.TrimSpace(*clone) != "" || (strings.TrimSpace(*runner) != "" && strings.TrimSpace(*bench) == "") {
 		f.want(*queue, "queue", "the directory cards wait in")
 		f.want(*clone, "clone", "the one kept clone every card in the batch runs on")
 		f.want(*harvest, "harvest", "where every card's RESULT.md lands, one directory per label")
@@ -162,6 +172,15 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return pullRedis(*redisAddr, *stream, *bench, lanes, *wait, stdout, stderr)
 		}
 		return pullDirectory(*dir, *stream, *bench, lanes, stdout, stderr)
+	}
+	// Pull worker daemon (section 3): --seat or --slots given, or --bench given without
+	// --worker, runs cards in a container or runner under a slot lease.
+	if strings.TrimSpace(*seat) != "" || *slots > 0 || (strings.TrimSpace(*bench) != "" && strings.TrimSpace(*worker) == "") {
+		return pullWorker(f, *bench, *slots, *seat, *store, *harvest, *image, *model, *runner, *container, *forDur, *once, stdout, stderr)
+	}
+	// Lease take (section 3): --store and --owner given without --bench.
+	if strings.TrimSpace(*store) != "" && strings.TrimSpace(*owner) != "" {
+		return pullLease(f, *store, *owner, *forDur, stdout, stderr, now)
 	}
 	// Backpressure (section 7) is the shape whenever any probe number is present; without
 	// one, --bench and --worker are section 2's per-bench queue pull.
@@ -451,6 +470,75 @@ func harvestPullResult(clone, result string) error {
 		return nil
 	}
 	return nil
+}
+
+// pullWorker runs the pull worker process in container/runner (section 3).
+func pullWorker(f *flags, bench string, slots int, seat, store, harvest, image, model, runner, container, forDur string, once bool, stdout, stderr io.Writer) int {
+	f.want(bench, "bench", "the bench name or directory")
+	if slots <= 0 {
+		slots = 1
+	}
+	dur := swarm.DefaultWorkerLeaseDur
+	if strings.TrimSpace(forDur) != "" {
+		d, err := time.ParseDuration(forDur)
+		if err != nil || d <= 0 {
+			f.add(fmt.Sprintf("--for wants a positive duration, got %q", forDur))
+		} else {
+			dur = d
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	ctx := context.Background()
+
+	opts := swarm.PullWorkerOptions{
+		Bench:     bench,
+		Slots:     slots,
+		Seat:      seat,
+		Store:     store,
+		Harvest:   harvest,
+		Image:     image,
+		Model:     model,
+		Runner:    runner,
+		Container: container,
+		For:       dur,
+		Once:      once,
+		Stdout:    stdout,
+		Stderr:    stderr,
+	}
+	return swarm.RunPullWorker(ctx, opts)
+}
+
+// pullLease takes a card from store/ under a slot lease (section 3).
+func pullLease(f *flags, store, owner, forDur string, stdout, stderr io.Writer, now time.Time) int {
+	f.want(store, "store", "the bench store holding shares.tsv, queue/ and slots/")
+	f.want(owner, "owner", "whose share the lease counts against")
+	dur, err := time.ParseDuration(forDur)
+	if err != nil || dur <= 0 {
+		f.add(fmt.Sprintf("--for wants a positive duration such as 30m, got %q", forDur))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	res, err := swarm.PullLease(store, owner, dur, now, os.Getpid())
+	if swarm.IsNoCard(err) {
+		fmt.Fprintf(stdout, "PULL IDLE owner=%s cards=0\n", oneline.Field(owner))
+		return 0
+	}
+	if ref, ok := swarm.AsLeaseRefusal(err); ok {
+		return refuse(stderr, " pull", fmt.Sprintf(
+			"no lease for owner=%s card=%s held=%d share=%d free=%d holders=%s; a launch without a lease is refused",
+			oneline.Field(owner), oneline.Field(ref.Card), ref.Held, ref.Share, ref.Free, oneline.Escape(ref.Holders)))
+	}
+	if err != nil {
+		return refuse(stderr, " pull", oneline.Err(err))
+	}
+	fmt.Fprintf(stdout, "PULL OK owner=%s card=%s lease=%s until=%s\n",
+		oneline.Field(res.Owner), oneline.Field(res.Card), oneline.Field(res.Lease),
+		oneline.Field(res.Until.UTC().Format(time.RFC3339)))
+	return 0
 }
 
 // pullBackpressure is section 7's take: `nova-swarm pull --bench <dir> --worker <name>
