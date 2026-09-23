@@ -117,17 +117,17 @@ func TestControl03PushIsCreateOnly(t *testing.T) {
 	}
 
 	if got, err := task.Done(ctx, st, task.DoneRequest{
-		Sprint: sprint, ID: "t1", Token: claim.Token, Evidence: "http://evidence/t1",
+		Sprint: sprint, ID: "t1", Token: claim.Token, Evidence: "https://example.test/evidence/t1",
 	}); err != nil || got != task.DoneClosed {
 		t.Fatalf("done = %s, %v; want DONE", got, err)
 	}
 	if got, err := task.Done(ctx, st, task.DoneRequest{
-		Sprint: sprint, ID: "t1", Token: "1.wrong", Evidence: "http://evidence/t1",
+		Sprint: sprint, ID: "t1", Token: "1.wrong", Evidence: "https://example.test/evidence/t1",
 	}); err != nil || got != task.DoneFenced || got.ExitCode() != 3 {
 		t.Fatalf("wrong token after done = %s, %v; want FENCED exit 3", got, err)
 	}
 	if got, err := task.Done(ctx, st, task.DoneRequest{
-		Sprint: sprint, ID: "t1", Token: claim.Token, Evidence: "http://evidence/t1",
+		Sprint: sprint, ID: "t1", Token: claim.Token, Evidence: "https://example.test/evidence/t1",
 	}); err != nil || got != task.DoneRepeat {
 		t.Fatalf("repeated done = %s, %v; want CLOSED", got, err)
 	}
