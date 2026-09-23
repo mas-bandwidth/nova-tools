@@ -43,6 +43,17 @@ func staleBaseRefusal(dir, destURL, target, head string, globs []string, declare
 		return fmt.Errorf("stale-base MISSING target=%s: the authorized destination's target could not be fetched or pinned, so no diff was walked: %s",
 			field(target), oneline.Err(err))
 	}
+	return staleBaseVerdict(dir, oid, head, globs, declared)
+}
+
+// staleBaseVerdict is the walk and the verdict against an ALREADY pinned target oid: the
+// second half of staleBaseRefusal, split out so a batch harvest pins each target once per
+// pass and judges every job against that one pin (harvest --batch, #2756) instead of
+// fetching the same target from GitHub once per job.
+func staleBaseVerdict(dir, oid, head string, globs []string, declared bool) error {
+	if strings.TrimSpace(head) == "" {
+		head = "HEAD"
+	}
 	bad, rng, err := staleBaseOffenders(dir, oid, head, globs, declared)
 	if err != nil {
 		return fmt.Errorf("stale-base MISSING range=%s: the diff could not be read, so no verdict was reached: %s",
