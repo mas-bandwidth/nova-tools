@@ -398,3 +398,79 @@ view the same way a session would: from the tree, after the settle."
                         "with no audit record left behind"))
       (ignore-errors (close-file-journal (kernel-journal k))))))
 
+
+;;; ------------------------------------------------------------------
+;;; a-removed-reverted-need-leaves-no-stale-needs-broken
+;;;                                              SPEC-WORK.md:4765, :4972
+;;; ------------------------------------------------------------------
+;;;
+;;; Stella's hold at 3a71ee48: D needs A and B, A settles and is reverted, so
+;;; rule 5 reads D needs-broken through A's `need-reverted`. Removing the A edge
+;;; leaves B open, and B's `need-open` alone never breaks an unengaged node in
+;;; O: the reading is derived (:4972), so no bit the write path raised for A may
+;;; outlive the edge it was raised for. The same holds when A settles again
+;;; instead of leaving: the reason it was raised for is gone.
+
+(defparameter *dep-two-need-seed*
+  '((:id "acme/work"   :type :work-set :parent nil         :state :unknown)
+    (:id "acme/work/d" :type :task     :parent "acme/work" :state :todo
+     :deps ("acme/work/a" "acme/work/b"))
+    (:id "acme/work/a" :type :task     :parent "acme/work" :state :doing)
+    (:id "acme/work/b" :type :task     :parent "acme/work" :state :doing))
+  "An unengaged D in O with two unmet needs, A and B.")
+
+(defun %dep-revert-a (k)
+  "Settle A, then reopen it: D now holds a reverted need and an open one."
+  (multiple-value-bind (okp line)
+      (submit k (need-done-request "acme/work/a" "done-a" "2026-09-16T12:00:00Z"))
+    (ok okp "A settles: ~A" line))
+  (multiple-value-bind (okp line)
+      (submit k (need-reopen-request "acme/work/a" "reopen-a" "2026-09-16T13:00:00Z"))
+    (ok okp "A is reverted: ~A" line))
+  (ok (node-needs-broken (kernel-state k) "acme/work/d")
+      "while the reverted edge stands, D reads needs-broken (need-reverted)"))
+
+(deftest "a-removed-reverted-need-leaves-no-stale-needs-broken"
+    "docs/SPEC-WORK.md:4765"
+    "expected=needs-broken-false-once-only-need-open-remains"
+  ;; remove the reverted edge, the second need still open
+  (let ((k (dep-kernel *dep-two-need-seed*)))
+    (%dep-revert-a k)
+    (multiple-value-bind (okp line) (dep-remove k "acme/work/d" "acme/work/a")
+      (ok okp "the reverted edge is removed: ~A" line)
+      (ok (search "unmet=1" line) "B is still unmet: ~A" line)
+      (ok (search "needs-broken=false" line)
+          "and need-open alone does not break an unengaged node in O: ~A" line))
+    (check-equal '("acme/work/b") (node-deps (kernel-state k) "acme/work/d")
+                 "only B is left")
+    (ok (not (node-needs-broken (kernel-state k) "acme/work/d"))
+        "the derived reading is false after the remove, not the stale bit")
+    (multiple-value-bind (unmet need reason) (node-needs-status (kernel-state k) "acme/work/d")
+      (check-equal 1 unmet "one unmet need")
+      (check-string= "acme/work/b" need "and it is B")
+      (check-equal :need-open reason "whose reason is need-open")))
+  ;; the same edge settled again instead of removed: the reason is gone too
+  (let ((k (dep-kernel *dep-two-need-seed*)))
+    (%dep-revert-a k)
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :state-to-doing :node "acme/work/a" :by "rowan"
+                        :reason "picked up again" :request "doing-a-2"
+                        :stamp "2026-09-16T13:30:00Z" :clock :tool
+                        :generation-owner "gen-1"))
+      (ok okp "A is worked again: ~A" line))
+    (multiple-value-bind (okp line)
+        (submit k (list :verb :state-to-done :node "acme/work/a" :by "rowan"
+                        :reason "merged again" :evidence '("ev-2") :request "done-a-2"
+                        :stamp "2026-09-16T14:00:00Z" :clock :tool
+                        :generation-owner "gen-1"))
+      (ok okp "A settles again: ~A" line))
+    (ok (not (node-needs-broken (kernel-state k) "acme/work/d"))
+        "no reverted need is left, B is only open, so D is not needs-broken"))
+  ;; and an engaged D with only B open still reads true (rule 5, engaged)
+  (let ((k (dep-kernel *dep-two-need-seed*)))
+    (%dep-revert-a k)
+    (dep-remove k "acme/work/d" "acme/work/a")
+    (setf (kernel-needs-view k) (make-needs-view :engaged '("acme/work/d")))
+    (ok (node-needs-broken (kernel-state k) "acme/work/d"
+                           :view (kernel-needs-view k))
+        "engaged with an unmet need is needs-broken whatever the edge history")))

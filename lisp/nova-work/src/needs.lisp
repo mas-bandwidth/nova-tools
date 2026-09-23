@@ -304,19 +304,22 @@ the ids a session holds busy by something the tree does not hold."
          t)))
 
 (defun node-needs-broken (state id &key view)
-  "Rule 5's reading, derived at read time and stored nowhere."
+  "Rule 5's reading, derived at read time from the node's CURRENT needs. The
+write path's cached `wnode-needs-broken` bit is not read here: a bit raised for
+a reverted need that has since been removed or settled again must not keep an
+unengaged node in O whose only remaining reason is `need-open` flagged
+(SPEC-WORK.md:4765, :4972)."
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (multiple-value-bind (unmet need reason) (node-needs-status state id :view view)
       (declare (ignore need))
-      (and (or (wnode-needs-broken n)
-               (and (plusp unmet)
-                    (or (node-engaged-p state id :view view)
-                        (eq :c (wnode-branch n))
-                        (eq :need-reverted reason)
-                        (some (lambda (dep)
-                                (multiple-value-bind (met r)
-                                    (need-met-p state dep :view view :dependent id)
-                                  (and (not met) (eq :need-reverted r))))
-                              (wnode-deps n)))))
+      (and (plusp unmet)
+           (or (node-engaged-p state id :view view)
+               (eq :c (wnode-branch n))
+               (eq :need-reverted reason)
+               (some (lambda (dep)
+                       (multiple-value-bind (met r)
+                           (need-met-p state dep :view view :dependent id)
+                         (and (not met) (eq :need-reverted r))))
+                     (wnode-deps n)))
            t))))
