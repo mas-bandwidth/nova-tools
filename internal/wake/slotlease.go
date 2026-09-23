@@ -288,13 +288,13 @@ type SlotLeaseManager struct {
 // AcquireSlotLease attempts to acquire a slot lease under cfg.
 //
 // Rules enforced:
-// 1. If an existing lease is "live" (held by another alive process): refused.
-// 2. If an existing lease is in "DRIFT" (expired Until, but PID is STILL ALIVE):
-//    DRIFT IS PRESERVED: refused, never stolen or reclaimed!
-// 3. If an existing lease is "expired" (PID is dead):
-//    DEAD PID IS RECLAIMED: the dead holder's lease is overwritten atomically.
-// 4. Default TTL is 15s; default heartbeat is 5s.
-// 5. Writes are atomic via temp file + rename.
+//  1. If an existing lease is "live" (held by another alive process): refused.
+//  2. If an existing lease is in "DRIFT" (expired Until, but PID is STILL ALIVE):
+//     DRIFT IS PRESERVED: refused, never stolen or reclaimed!
+//  3. If an existing lease is "expired" (PID is dead):
+//     DEAD PID IS RECLAIMED: the dead holder's lease is overwritten atomically.
+//  4. Default TTL is 15s; default heartbeat is 5s.
+//  5. Writes are atomic via temp file + rename.
 func AcquireSlotLease(cfg SlotLeaseConfig) (*SlotLeaseManager, error) {
 	if cfg.TTL <= 0 {
 		cfg.TTL = DefaultSlotLeaseTTL

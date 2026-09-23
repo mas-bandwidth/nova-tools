@@ -7983,8 +7983,9 @@ Red tests, one per rule, each with a fake where the real thing is the network, a
 **Revisions of this section** (PR #3162): rev 1 `af157e46`; rev 2 `de351e5e` (the index folded in);
 rev 3 `f360ec8a` (repository digest over O and C, Stella's hold); rev 4 `12d1e535` (the measured
 index numbers; Stella 10, Rowan 7 with ten defects, comment 5798962823); **rev 5 folds those ten**:
-(1) a separate private record repository, on a misremembered ruling of 2026-09-23 ~3:10 PM
-(**withdrawn**: see the repair below); (2) `:poll` is in the map shape (3, 6); (3) the cold-start replay keys `parses=0` on
+(1) the whole record lives in one private repository, by Glenn's ruling of 2026-09-23 ~3:10 PM
+(rev 5 named it after the tool; the repair below names it `mas-bandwidth/work`), and open question 1
+and every private-scope hold are gone (sections 2, 3, 4, 5, 9, 11, 12, 13); (2) `:poll` is in the map shape (3, 6); (3) the cold-start replay keys `parses=0` on
 the snapshot digest (11); (4) the benchmark replay names its rows (11); (5) the mirror marker is
 admitted only against a recorded mirror request (2b, 8, 11); (6) an edited mirror is re-pushed and
 `INGEST DRIFT` is in the output block, so verify does not drift forever (3, 4, 8); (7) `--order` has
@@ -7995,13 +7996,18 @@ and PATHS per piece. **Rev 6** (Stella's hold at `131c68dd`): a pending mirror r
 only by its create receipt or, for an uncertain create, by a capture matching the request's
 unguessable token, recorded actor, payload hash and time; a forged marker filed during the pending
 window is minted as its own unit and leaves the unit and request untouched (2b, 8, 11: fixtures
-(5)–(7) of `mirror-marker-not-forgeable`). **Repair on the stream** (Glenn, 2026-09-23 3:58 PM ET,
-the second time): *"nova-work is JUST A TOOL."* There is no separate record repository; nova-work is
-`cmd/nova-work` and `lisp/nova-work` in nova-tools, and the record is nova-tools
-`docs/roadmaps/*.sexp`. Rev 5's fold (1) is withdrawn: the record lives in nova-tools
-`docs/roadmaps/` and lands on `dev` (sections 2, 5, 7, 9), the lander accepts record writes (5, 11),
-the replay is `record-lives-in-nova-tools-roadmaps` (11), and because nova-tools is public the private
-repositories go back to open question 1 (2, 3, 4, 12, 13).
+(5)–(7) of `mirror-marker-not-forgeable`). **Repair on the stream** (Glenn, 2026-09-23 6:35-6:45 PM
+ET, superseding the data half of his 3:58 PM ruling and the stream repair at `95287935`, which had
+put the record in public nova-tools `docs/roadmaps/` and left the private repositories counted and not
+ingested): the work RECORD — the cross-repo sexp, the ingest map, fold receipts — lives in the
+private repository `mas-bandwidth/work`, created that day, whose README says data only, no code; the
+TOOL stays `cmd/nova-work` and `lisp/nova-work` in nova-tools; nova-tools' own `docs/roadmaps/*.sexp`
+stays nova-tools' public roadmap, a different thing from the record. *"I don't want any confusion
+between nova-work the tool, and work the repo."* So this text calls `mas-bandwidth/work` **the work
+repo** and never names the data after the tool (sections 2, 5, 7, 9, 11, 12, 13 and the build table);
+nova-tools' lander is unaffected by record writes, because the record is not in nova-tools (5); the
+replay is `record-lives-in-the-work-repo` (11); and open question 1 stays closed: private
+repositories' issues ingest into the private record (2, 3, 12, 13).
 
 **Glenn's words are the requirement, and they are all from one hour of 2026-09-23 (Eastern).** At
 12:25 PM, when one login's REST quota stalled thirty-two children: *"OK we need to switch away from
@@ -8030,7 +8036,7 @@ absorption* and *Durable primary state and GitHub intake* — whose sentences go
 section says less. **O is already the primary form** (stella-fe600103fa2e, *"the work set is the
 PRIMARY FORM"*, at the head of this file); what this section adds is the operational completion of
 that sentence for the team's GitHub issues: the verb that ingests, the verb that proves the capture
-complete, the path by which the record reaches its home, nova-tools `docs/roadmaps/` on `dev`, the path by which it stays current, what
+complete, the path by which the record reaches its home, the work repo's `main` (`mas-bandwidth/work`), the path by which it stays current, what
 downstream reads, how new work is created, the one outbound write, the verbs that replace every
 GitHub issue query we run today, the controls, the migration and the questions only Glenn can
 answer. The recorded rulings it rests on are named where they bite: *ideas live as issues* (ideas
@@ -8059,8 +8065,8 @@ which is the last GitHub-held record the work reads.
 
 **The cutover is a rule, not a date.** **The sexp is the primary source from the first sprint opened
 after `nova-work ingest verify --org mas-bandwidth` prints `VERIFY PASS` for every repository the map
-declares `:work` or `:pool` — a private repository's `VERIFY SKIP` (section 2) is not a pass, so the
-cutover waits on open question 1 — and a non-owner friend's `SAMPLE ... ok=30/30` line of section 4 is recorded at the verified
+declares `:work` or `:pool` — public and private alike, since the whole record has one home (section
+2) — and a non-owner friend's `SAMPLE ... ok=30/30` line of section 4 is recorded at the verified
 commit.** Before that
 sprint, the scripts that read GitHub keep running and nothing refuses a GitHub ref; from that sprint,
 `sprint open`'s preflight refuses any task or card whose ref is a GitHub issue with no unit (section
@@ -8101,7 +8107,7 @@ read:
                    :labels ("fixed-tables" "spec") :milestone (:absent) :assignees ("gafferongames")
                    :state :open :state-reason (:absent) :closed-at (:absent)
                    :updated-at "2026-09-21T09:40:00Z"
-                   :body-sha256 "<64 hex>"       ; blobs/<aa>/<64 hex> under nova-tools docs/roadmaps/
+                   :body-sha256 "<64 hex>"       ; blobs/<aa>/<64 hex> in the work repo
                    :content-sha256 "<64 hex>"))  ; the verify hash of section 3
  :priority (:self (:absent) :subtree (:absent)))
 ```
@@ -8179,36 +8185,46 @@ landing receipts (#3139) that name the unit; either is recorded in the report's 
 GitHub's order. **An assignee is not `:responsible`**, because *The data* makes `:responsible` *"durable
 accountability, set by a person's word (an event records who set it)"* and a remote assignment is
 observed data, not that word; the issue verbs filter on `:assignees` and `who` never reads it
-(open question 4). A map row may route a milestone the way it routes a label (`:milestone
+(open question 3). A map row may route a milestone the way it routes a label (`:milestone
 "<title>" :under "<container>"`), which is the only way a milestone moves structure.
 
 **Links: the issue, and what closed it.** `:links` carries the issue URL first and, when known, the
 closing PR's URL and the closing commit's URL; a unit that later gains a fix PR by `issue link` gains
 that link. A PR is never a node (*The data*); its record is nova-sprint's PR record (#3091).
 
-**The record lives in nova-tools, under `docs/roadmaps/`.** Glenn, 2026-09-23 3:58 PM ET: *"nova-work
-is JUST A TOOL"*; nova-work is `cmd/nova-work` and `lisp/nova-work` in nova-tools, and the forest is
-nova-tools `docs/roadmaps/*.sexp`. There is no separate record repository: **one logical forest, one
-manifest, one digest chain, one writer and one check-in path**, all in nova-tools beside the engine
-that reads them (`lisp/nova-work`, the Go verbs, this specification and the invented fixtures of
-section 10), checked in by section 5 (replay `record-lives-in-nova-tools-roadmaps`, section 11).
+**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`.**
+Glenn, 2026-09-23 6:35-6:45 PM ET, answering this section's former first open question for good: the
+work RECORD — the cross-repo sexp, the ingest map, fold receipts — lives in the private repo
+`mas-bandwidth/work` (created 2026-09-23; its README says data only, no code), and the TOOL stays
+`cmd/nova-work` and `lisp/nova-work` in nova-tools: *"I don't want any confusion between nova-work
+the tool, and work the repo."* *Link versus absorb* requires
+that *"a private issue is not published by becoming part of S"*; one private home for every
+repository, public and private, keeps that with no split: **one logical forest, one manifest, one
+digest chain, one writer and one check-in path.** Units of a private repository are still minted
+`:private true` (*The data*: `render` never writes a private node into an output file), so any
+rendered view that is published elsewhere carries none of them. **nova-tools holds the tool and
+never the record**: `lisp/nova-work`, the Go verbs, this specification and the invented fixtures of
+section 10 stay in nova-tools; no unit, capture, blob, map row or fold receipt is ever written to a
+nova-tools path, and no private repository's bytes appear in nova-tools (replay
+`record-lives-in-the-work-repo`, section 11). **nova-tools' `docs/roadmaps/` is nova-tools' own
+roadmap only**: its `*.sexp` files and the rendered `ROADMAP.md` stay public in nova-tools, land
+through nova-tools' lander like any other change, and are never a record path.
 
-**Access scope is preserved, so private repositories wait for a private home.** *Link versus absorb*
-requires that *"a private issue is not published by becoming part of S"*, and `mas-bandwidth/nova-tools`
-is public (`visibility=public`, read 2026-09-23). So **no unit, capture, body or map row of a private
-repository is ever written under a nova-tools path**: the public map counts them in one line,
-`:private-repos (:count 37 :home (:absent))`, and names none. Where their units live is Glenn's to
-rule (open question 1); **until he does, private repositories are counted and not ingested**, and
-verify reports each `VERIFY SKIP repo=<private>: no private home`, which is not a PASS and holds the
-cutover. A unit minted `:private true` (*The data*: `render` never writes a private node into an
-output file) stays out of every published view as before.
-
-**Where it lives.** In the storage split of section 9, under nova-tools `docs/roadmaps/`, landed on
-`dev` by section 5: the manifest `nova-work.sexp` (today's `docs/roadmaps/nova-work.sexp`, in place,
-not moved), one O file and one C file per repository under `work/`, bodies as content-addressed blobs
-under `blobs/`, and the map `ingest-map.sexp`. **In this section a record path is relative to
-nova-tools `docs/roadmaps/`**. **All of it is the record, and all of it is checked in** by section 5;
-`ROADMAP.md` stays rendered from the manifest as it is today. The node carries the report in
+**Where it lives.** In the storage split of section 9, at the root of the work repo
+(`mas-bandwidth/work`), branch `main`: the manifest `nova-work.sexp`, one O file and one C file per repository under
+`work/`, bodies as content-addressed blobs under `blobs/`, and the map `ingest-map.sexp`. **In this
+section a record path is always relative to the root of the work repo**, and a path in
+nova-tools is written with `nova-tools:` in front. **All of it is the record, and all of it is
+checked in** by section 5. The record's manifest keeps the name `nova-work.sexp` because the tool
+reads it; it is a file of the work repo, and `nova-tools:docs/roadmaps/nova-work.sexp` is nova-tools'
+roadmap for the tool, a different file that no record write touches. **The sexp moves there in the
+cutover** (section 12, step 0): from (b)'s first write the record is written only in the work repo,
+and any record data the cutover carries over from nova-tools is committed there byte-identical, the
+commit message naming the nova-tools commit it was taken from; nova-tools' roadmap files stay where
+they are. **The work repo exists (created 2026-09-23); it must be reachable before anything is
+written**: rowan-claude and the writer's bench able to push to it, a `work.git` mirror in the bench
+mirror set and its read credential sealed on every bench is the first line of (b) — an org act that
+is Rowan's as org admin (Glenn, 2026-09-23 3:15 PM) — and (a)'s real run waits on it. The node carries the report in
 `:correspondence` and the plan in its own keys, so the verify of section 4 compares the report and
 never the plan, and a person who retitles or re-places a unit never makes it drift.
 
@@ -8232,9 +8248,7 @@ nothing else: (i) **the create receipt** — the adapter's own `POST` response f
 whose number the writer records directly (an ingest capture is then admitted by the recorded-number
 rule above); or (ii) for an uncertain create with no receipt, a capture that matches the request on
 **all four** of: its marker carries the request's **token** (`nova-work: <U> req=<token>`, a
-128-bit value from a CSPRNG minted per request and stored in the record, which is public in
-nova-tools, so the token is not a secret once the request lands and the **author** match below is
-what a forger cannot meet); its
+128-bit value from a CSPRNG minted per request and stored only in the private record); its
 **author** is the request's `:actor` (the login the adapter authenticated as when it sent the
 create, recorded on the request, so a forger would need that account's credential); the SHA-256
 of its title and body bytes equals the request's `:payload-sha256` (the exact bytes the writer
@@ -8343,10 +8357,10 @@ captures:**
  :org "mas-bandwidth"
  :team ("gafferongames" "rowan-claude" "<each friend's GitHub login>")
  :poll (:every-seconds 600)                        ; the fallback poll of section 6, every declared repository
- :private-repos (:count 37 :home (:absent))       ; private repositories by count only (section 2); never named here
  :repos ((:repo "nova-tools" :disposition :work :work-set "mas-bandwidth/nova-tools")
          (:repo "schema"     :disposition :work :work-set "mas-bandwidth/schema")
          (:repo "yojimbo"    :disposition :work :work-set "mas-bandwidth/yojimbo" :poll (:every-seconds 3600))
+         (:repo "ideas"      :disposition :pool :work-set "mas-bandwidth/ideas" :private t)
          (:repo "hydrogen"   :disposition :skip :reason "<why, and whose word>")
          (:repo "netcode.go" :disposition :work :work-set "mas-bandwidth/netcode.go" :was ()))
  :containers ((:id "mas-bandwidth/nova-tools/nova-work" :type :work-set :category "stream" :title "nova-work")
@@ -8360,18 +8374,16 @@ captures:**
 
 **A repository is one line** (section 12, step 1): `:work` ingests and counts, `:pool` ingests and never
 counts (section 2), `:skip` ingests nothing and carries its `:reason`. `:private t` marks a private
-repository, whose units are minted `:private true`; such a row belongs only in a private home's map
-(open question 1), and nova-tools' public map refuses it at exit 2 and counts private repositories in
-`:private-repos` instead, because the map lives in public nova-tools. **`:poll` is a declared key**: the top-level `(:poll (:every-seconds
+repository, whose units are minted `:private true`; its row names it like any other, because the map
+lives in the private record. **`:poll` is a declared key**: the top-level `(:poll (:every-seconds
 <n>))` is required and sets the fallback poll interval of section 6 for every declared repository;
 a repository row may carry its own `:poll` of the same shape, which overrides it for that repository;
 `<n>` is a positive integer of seconds, and a missing top-level `:poll`, a zero, a negative or any
 other unit is refused by step (1) like any invalid map. The complete set of admitted keys is the
-top-level `:schema :providers :org :team :poll :private-repos :repos :containers :labels :milestones`, the repository
+top-level `:schema :providers :org :team :poll :repos :containers :labels :milestones`, the repository
 row's `:repo :disposition :work-set :reason :was :private :poll`, and the `:labels` row's `:repo
 :label :under :category`; any other key is refused at exit 2. **Every repository the org
-holds is declared — a public one by name, the private ones by a `:private-repos` count that must equal
-the org's private repositories the adapter lists — and an undeclared one refuses the run** (`INGEST REFUSED repo=<o>/<r>: undeclared
+holds is declared, and an undeclared one refuses the run** (`INGEST REFUSED repo=<o>/<r>: undeclared
 (add one line to ingest-map.sexp)`), because *O is the team's authorized known work,
 never a scan of every reachable repository* (*The root is COW*) — the map is that authorization, and a
 new repository arriving unannounced is a decision to make, not a scan to extend. The org's repository
@@ -8426,7 +8438,7 @@ repository it names and leaves every other repository's envelope to stand or fal
 | a capture whose `:gh-id` matches another unit's (a transfer) | `INGEST SUPERSEDE unit=<old> by=<new>` | 0 | the supersede of section 2 |
 | the writer lease held by another | `INGEST REFUSED: writer held by <name> until <stamp>` | 1 | nothing read |
 | the rate budget reached (`--max-calls`) | `INGEST FAIL repo=<o>/<r> calls=<n>: budget reached at page <p>` | 1 | as capture incomplete |
-| a private repository with no private home | `INGEST SKIP repo=<private>: no private home` | 0 | nothing; verify holds the cutover |
+| the work repo unreachable (clone, fetch or push of `mas-bandwidth/work` fails) | `INGEST REFUSED record=mas-bandwidth/work: <reason>` | 1 | nothing read from GitHub, nothing written |
 | a mirror marker the record does not expect (section 2b) | `INGEST MARKER-REFUSED repo=<o>/<r> number=<n> unit=<id>: marker not admitted (<reason>)` | 0 | the issue minted as its own unit; the named unit untouched |
 
 **Remote text is data, all of it.** Titles, bodies, labels and logins are strings read by the bounded
@@ -8451,11 +8463,9 @@ VERIFY DRIFT <o>/<r>#<n> field=<title|body|labels|state|state-reason|milestone|a
 VERIFY <o>/<r> issues=<a> units=<b> missing=<m> extra=<e> drift=<d> calls=<n> not-captured=comments,reactions,timeline
 VERIFY REPUSH <o>/<r>#<n> unit=<id> request=<id> age=<duration>   ; a mirror edit whose re-push is pending
 VERIFY PASS repos=<n> issues=<n> units=<n>         ; or VERIFY FAIL repos=<n> failing=<n>
-VERIFY SKIP repo=<private>: no private home
 ```
 
 `DRIFT` names each differing field once, from the report's stored fields against the live ones.
-A `SKIP` is not a pass, and exits 1 when `--repo` names that repository.
 **What verify compares for a `:mirror` unit.** A mirror's report is not what GitHub last said but
 what the writer last pushed: its `:content-sha256` is recomputed only on a *confirmed* mirror push
 (section 8), so it is the hash GitHub should show. Verify compares only the fields the writer pushes
@@ -8475,7 +8485,7 @@ by eye and records one typed line of its own kind — **never a `SPEC` line**, w
 1–10 spec gate the lander and the table parse:
 
 ```
-SAMPLE who=<friend> seed=<n> commit=<nova-tools sha> ok=<k>/30 [bad=<unit>:<field>,...]
+SAMPLE who=<friend> seed=<n> commit=<nova-work sha> ok=<k>/30 [bad=<unit>:<field>,...]
 ```
 
 **Its home is the record, written through the writer**, never a PR comment or an issue comment
@@ -8495,30 +8505,32 @@ git) and to `w:verify`, so `issue mirror status` of section 10 answers from the 
 after the cutover** (a scripted card of the sprint machinery, never a model), and a failing weekly
 verify files one fix per `MISSING`/`EXTRA`/`DRIFT` class.
 
-### 5. Check-in: the sexp in nova-tools `docs/roadmaps/` on `dev` through the lander, one land cycle behind at most
+### 5. Check-in: the sexp on `mas-bandwidth/work` `main` through the lander, one land cycle behind at most
 
-Glenn: *"have this file checked in to github"*, and at 3:58 PM, *"the forest is nova-tools
-docs/roadmaps/*.sexp"*. **The record under `docs/roadmaps/` on nova-tools `dev` is the record, and it
-gets there the way every change does: the lander.** Each ingest (and each write of sections 6, 7 and
-8) commits its files on a branch `nova-work/ingest-<stamp>` — `<stamp>` the run's UTC
-`YYYYMMDDTHHMMSSZ` — from the tip of `dev` it read, and hands the branch to the lander (#3139) as a
-**`roadmap` batch**: a batch kind whose gate is **`nova-work check --snapshot` over the manifest and
-every file of section 9's storage split (the validator whole, rule by rule) under the reader's three
-bounds, and nothing else — no build and no test**, because a data-only change under `docs/roadmaps/`
-is proved by its own lint and a Go build proves nothing about it; the lint binary is the `nova-work`
-at the lander's pinned engine commit, printed on the landing receipt.
-
-**The lander accepts record writes.** A `roadmap` batch that writes the manifest, `work/`, `blobs/`
-or the map lands on its lint alone; an ordinary nova-tools batch that also touches `docs/roadmaps/`
-(a hand edit of today's sexp, a PR that updates a unit beside its code) is gated as usual plus the
-same lint. **No batch is refused for writing a record path; only a `WORK FAIL` refuses a record
-write.** The one path refusal is the other way round: a `roadmap` batch touching a path outside the
-storage split (`LAND REFUSED batch=roadmap path=<p>: not a record path`), because a lint-only gate
-must never carry code. **One writer of the sexp** is *One coordinator, one live reader/writer*
-applied to the files on disk, and it is held by a lease, not by the lander: the writer holds
-`lease:nova-work-writer` in nova-sprint's Redis (the resident session holds it for its life once E01
-exists; the interim `--file` verbs take it per run), every other hand is a requester of that writer,
-and a hand edit that lands is read by the writer when it next branches from `dev`.
+Glenn: *"have this file checked in to github"*, and at 6:35-6:45 PM, the record lives in the private
+repo `mas-bandwidth/work`, data only. **The record on the work repo's `main` is the record, and it
+gets there the way every change does: the lander**, which is multi-repository by #3139's own
+requirement. The work repo has one branch, `main`; there is
+no `dev`/`main` promotion for data (the close on `main` of section 2b is about the *fixed* repository's
+`main`, not this one). Each ingest (and each write of sections 6, 7 and 8) commits its files on a
+branch `nova-work/ingest-<stamp>` — `<stamp>` the run's UTC `YYYYMMDDTHHMMSSZ` — from the tip of
+the work repo's `main` it read, and hands the branch to the lander (#3139) as a **`roadmap`
+batch on that repository**: a batch kind whose gate is **`nova-work check --snapshot` over the
+manifest and every file of section 9's storage split (the validator whole, rule by rule) under the
+reader's three bounds, and nothing else — no build and no test**, because a data-only change is
+proved by its own lint; the lint binary is the nova-tools `nova-work` at the lander's pinned engine
+commit, printed on the landing receipt. The lander refuses, on `mas-bandwidth/work`, any batch
+that is not a `roadmap` batch from the writer (`LAND REFUSED repo=mas-bandwidth/work: only the
+record writer lands here`) and a `roadmap` batch touching a path outside the storage split
+(`LAND REFUSED batch=roadmap path=<p>: not a record path`). **nova-tools' lander is unaffected by
+record writes**, because the record is not in nova-tools: no record write is ever a nova-tools batch,
+so nova-tools gains no record rule and no path refusal, and its `docs/roadmaps/` — nova-tools' own
+roadmap — lands like any other change. That the writer never targets a nova-tools path is the
+writer's own check (replay `record-lives-in-the-work-repo`, section 11). That is *One
+coordinator, one live reader/writer* applied to the files on disk: **one writer of the sexp**, landing
+in the work repo with its lease `lease:nova-work-writer` in nova-sprint's Redis
+(the resident session holds it for its life once E01 exists; the interim `--file` verbs take it per
+run), and every other hand a requester of that writer.
 
 **Batched, not one commit per event.** Writes accumulate in the writer's working copy and are
 committed once per land cycle, so a burst of webhook deliveries is one commit and one land. **A land
@@ -8526,7 +8538,8 @@ cycle, `L`, is the lander's own measured cadence**, which the lander prints on e
 (`cycle=<duration>`); nothing here fixes a number for it.
 
 **The lag bound is the control.** `nova-work lag` compares, for the newest landing receipt and the
-newest ingest, what the record on `dev` carries against what the writer wrote:
+newest ingest, what the record on the work repo's `main` carries against what the writer
+wrote (`dev-rev` below names that branch's revision, kept as the field name the table already reads):
 
 ```
 nova-work lag --redis <addr> --repo-dir <path> [--at <stamp>]
@@ -8535,8 +8548,8 @@ LAG FAIL writer-rev=<n> dev-rev=<n> behind=<duration> cycle=<duration> receipts-
 ```
 
 **Exit 1 when `behind` exceeds one `cycle`, or when a landing receipt older than one cycle names a unit
-whose evidence the record on `dev` does not carry**; exit 2 when the lander prints no cycle
-(`lander=absent`), which is not a pass. Today, before any of this: `docs/roadmaps/nova-work.sexp` was
+whose evidence the record on `main` does not carry**; exit 2 when the lander prints no cycle
+(`lander=absent`), which is not a pass. Today, before any of this: `nova-tools:docs/roadmaps/nova-work.sexp` was
 last changed at `0878987f` (2026-09-19 18:23:38Z) and `dev` is `7187ceef` (2026-09-23 14:04:06Z) — a
 lag of 3 d 19 h 40 m across 96 commits, 27 of them touching nova-work paths; the bound makes that a
 red line within one cycle instead of a finding a person makes days later.
@@ -8598,7 +8611,7 @@ walk at every level (*sprint is any bounded goal*). `--open` is the one new flag
 the landed branch served (the card's `TASK:` line); the writer, in the next roadmap batch, appends to
 each unit the `:evidence` event of its `:merged` criterion (`pr:<o>/<r>#<pr>@<merge sha>`) and, where
 the unit's criteria are then covered, the `:to :done` of *States and transitions, derived* — whose
-envelope carries the `:settle` — so **a landed fix is a settled unit in the record on nova-tools `dev` within one land
+envelope carries the `:settle` — so **a landed fix is a settled unit in the record on `mas-bandwidth/work` `main` within one land
 cycle**, section 5's bound. A verified criterion of the E01–E11 inventory writes the same way into its
 `:verification :by-feature` row. The fold never writes from a message, a PR comment or a hand line:
 the landing receipt is the only input, which is *GitHub is a git remote only* again.
@@ -8654,7 +8667,7 @@ assignees are not pushed and not compared.
 ancestor of `main` (section 2b), the lander's close step posts **one** comment and closes the issue
 (`state_reason: completed`). The comment is a fixed template of facts and no prose — `Fixed in <sha>
 on main (<repo>@<sha12>), tracked as nova-work <unit-id>.` — so it is an operational record and not a
-publication under SPEC-OUTBOUND (open question 6 asks whether Glenn wants it behind that gate
+publication under SPEC-OUTBOUND (open question 5 asks whether Glenn wants it behind that gate
 anyway).
 
 **Exactly once, and provably.** The close is an outbound action keyed by `(unit, issue, commit)`
@@ -8663,7 +8676,7 @@ close stamp, `failed` with the error. **A retry after an uncertain result reads 
 comments first (one conditional call) and does not post when the template line for that commit is
 already there**; a close whose issue is already closed records `confirmed` with `already-closed=yes`
 and posts nothing. **Team-origin ingested issues close by the same rule**, because after the cutover
-an open GitHub copy of a settled unit is a mirror that lies (open question 5 asks Glenn to confirm).
+an open GitHub copy of a settled unit is a mirror that lies (open question 4 asks Glenn to confirm).
 Nothing here closes an issue for any other reason: a deferral, a cancellation, a supersede or a local
 done that has not reached `main` leaves the GitHub issue exactly as it is (*"a locally completed
 attempt, a deferred work node, or a scope reduction does not by itself close the public issue"*).
@@ -8682,8 +8695,7 @@ already require (the `|O|` counter, the per-container open counts, W materialise
 index) and adds the ones issue parity needs.
 
 **The storage split.** One logical forest, one engine, several files, all checked in by section 5
-(all of it under nova-tools `docs/roadmaps/` on `dev`, section 2, and the paths below relative to it;
-nothing of a private repository):
+(all of it at the root of the work repo, `mas-bandwidth/work`, on `main`, section 2; nothing in nova-tools):
 
 | path | what | why this shape |
 |---|---|---|
@@ -8953,14 +8965,14 @@ written red first:
 | `bug-label-is-a-category` | a closed `bug`-labelled issue with no test imports and settles | the import refuses by rule 19, or `bugs=` counts it |
 | `verify-sets-and-hashes` | a fixture with one missing, one extra and one drifted issue | fewer than three lines, a wrong field named, or exit 0 |
 | `verify-names-what-it-does-not-capture` | every `VERIFY <repo>` line carries `not-captured=comments,reactions,timeline` | the field is absent on any line |
-| `roadmap-batch-gates-on-lint-only` | on nova-tools: a `roadmap` batch with a `WORK FAIL` finding is refused, a clean one lands without build or test, and a `roadmap` batch with a path outside the storage split is refused; an ordinary batch that also edits a record path lands when its usual gate and the lint pass, and one with a `WORK FAIL` is refused | any of the four lands the wrong way, or a record write is refused for its path |
+| `roadmap-batch-gates-on-lint-only` | on `mas-bandwidth/work`: a `roadmap` batch with a `WORK FAIL` finding is refused, a clean one lands without build or test, a `roadmap` batch with a path outside the storage split is refused, and a batch not from the writer is refused; nova-tools' lander carries no record rule, because no record write reaches it | any of the four lands the wrong way, or nova-tools' lander refuses a batch for a record path |
 | `one-writer-of-the-sexp` | a second writer run while `lease:nova-work-writer` is held refuses | two writers each write a commit |
-| `dev-equals-the-writer-within-a-cycle` | after an ingest at T, the record paths under `docs/roadmaps/` on `dev` equal the writer's bytes by T + one cycle, and `nova-work lag` says so | `lag` exits 0 while they differ, or the bytes differ past the bound |
+| `main-equals-the-writer-within-a-cycle` | after an ingest at T, the record paths on `mas-bandwidth/work` `main` equal the writer's bytes by T + one cycle, and `nova-work lag` says so | `lag` exits 0 while they differ, or the bytes differ past the bound |
 | `webhook-edit-within-sixty-seconds` | an `issues.edited` delivery changes the unit within 60 s with zero REST calls | a REST call is made, or 60 s pass |
 | `poll-not-modified-is-free` | a conditional poll of an unchanged repository writes nothing and reports `not-modified=` equal to its pages | a write, or a non-conditional request |
 | `push-refuses-a-bare-github-ref` | `task push` and the cutter refuse every GitHub ref shape and accept the unit id | any GitHub shape is admitted |
 | `sexp-is-primary-source` | a fixture sprint with one GitHub-only ref is refused at `sprint open`; task push, card cut, `set check` x/y, the fold and the table's hash run with the adapter a failing fake and print the same numbers as with it working | a refusal is missing, a number differs, or the adapter is invoked |
-| `fold-settles-a-landed-unit` | a landing receipt naming a unit yields its `:merged` evidence and its settle in the record on `dev` within one cycle | the unit stays open, or evidence is written from anything but the receipt |
+| `fold-settles-a-landed-unit` | a landing receipt naming a unit yields its `:merged` evidence and its settle on the record's `main` within one cycle | the unit stays open, or evidence is written from anything but the receipt |
 | `external-close-exactly-once` | fixture external issue → unit → landing on `main` → one comment and a close; a retry after a timed-out response posts nothing; an external reopen revives the unit on the next ingest | two comments, a close from `dev`, a close before `main`, or no revive |
 | `mirror-never-duplicates` | `issue create --mirror-github` opens one issue and the create receipt confirms the request; an uncertain create retried finds its own issue by token, actor and payload hash; the next ingest mints nothing | two issues, or two units |
 | `issue-verbs-golden-offline` | every verb of section 10 byte-equals its golden with the adapter a failing fake, within its access path's visit count | a byte differs, the fake is invoked, or a verb visits more nodes than its path allows |
@@ -8969,7 +8981,7 @@ written red first:
 | `cold-start-without-parse` | two separate conditions, each tested alone: (1) **the snapshot decides the parse** — with the engine snapshot's digest equal to the manifest's root `:digest`, a start prints `parses=0`; with it different, a start prints one parse per repository O and C file and writes the new snapshot digest; (2) **`w:digest` decides only the projection** — with the snapshot current and `w:digest` stale, a start prints `parses=0` and `projection=rebuilt`, and every `w:*` key equals a full rebuild; with both current, `parses=0 projection=current` | a parse on a current snapshot, `parses=0` on a stale snapshot, a projection rebuild with `w:digest` current, or a stale projection served with `w:digest` stale |
 | `c-only-change-invalidates-projection` | from a current projection, three fixtures each change only a repository's C file with its O file byte-identical: a `:settle` row appended, a `:revive` row appended, and a check-in that lands a C row alone; after each, the manifest's `:closed-digest`, repository `:digest` and root `:digest` all change, the next start prints `parses=` non-zero, and every `w:*` key of that repository (the closed range, the state sets, `w:ready:<repo>`, the `w:n:*` state fields) equals a full rebuild; a manifest whose `:closed-digest` does not match the C file's bytes is refused by lint | a start prints `parses=0` after a C-only change, any closed-side key differs from the rebuild, the root digest is unchanged, or the mismatched manifest passes lint |
 | `index-benchmark-table` | part (ix): these **nine** rows of section 9's complexity table, by their `operation` text, at 10k, 100k and 1M generated units — *unit by id; repository by name; unit by external ref*; *a page of 50 by state and one label, assignee or kind*; *the same with a further filter (post-filter, cap 1,000 examined)* (unmeasured at rev 5: this replay is its first measurement, and it fails like any other row); *title search within a repository, two words*; *the ready set of a repository*; *a state change*; *changed-since for the table, k = 10*; *cold start of the projection*; *full rebuild from the sexp*. Not in it: *engine restart from a current snapshot*, which is part (x)'s own replay `engine-restart-from-snapshot`, and *CONTROL*, which is checked the other way round | any of the nine over its target at 100k, or growing faster than its bound across the three sizes; or the CONTROL row not slower than every one of the nine at 100k and 1M (a control that does not lose means the harness is not measuring the index) |
-| `record-lives-in-nova-tools-roadmaps` | every ingest, verify, sample-record, fold and mirror write lands under nova-tools `docs/roadmaps/` on `dev` through the lander, and a clean batch writing the record paths lands (never `LAND REFUSED` for its path); no private repository's name, unit, capture or body appears under any nova-tools path (the map carries `:private-repos` as a count only); a `render` of a `:private` unit into any public output refuses | a record write lands anywhere but `docs/roadmaps/`, the lander refuses a clean record write, a private repository name or capture appears under a nova-tools path, or a private unit is rendered into a public output |
+| `record-lives-in-the-work-repo` | every ingest, verify, sample-record, fold and mirror write, and every fold receipt, goes to `mas-bandwidth/work`; no record file (manifest, O or C file, blob, map, receipt) is written under any nova-tools path; no private repository's name, unit, capture or body appears in nova-tools; a `render` of a `:private` unit into any output published outside the record refuses | a record write goes anywhere but `mas-bandwidth/work`, a record file appears under a nova-tools path, any private repository's bytes appear in nova-tools, or a private unit is rendered into a public output |
 | `engine-restart-from-snapshot` | part (x): restart from a current snapshot at 100k units | over 300 ms at 100k, or not faster than the measured 413 ms parse |
 | `mirror-marker-not-forgeable` | fixtures: (1) an external issue whose body ends `nova-work: <U>` for an existing unit U with no mirror request; (2) the same for a U whose confirmed mirror is a different number; (3) a marker naming a nonexistent unit; (4) the genuine mirror of a pending request (right token, actor and payload hash); **the pending-request race**, with U's request pending and no receipt yet: (5) a forged issue by another login ending `nova-work: <U>` with no token or a wrong token, arriving before the genuine create; (6) a forged copy of the genuine body, correct token included, filed by another login after the genuine issue is visible; (7) an uncertain-create retry whose search sees the forged issues of (5) and (6) beside the genuine one | (1)–(3), (5), (6): U's correspondence or its request (state, number, token, attempts, receipt) changes, or the issue is not minted as its own unit, or no `INGEST MARKER-REFUSED` line; (4): a second unit minted, or the request not confirmed; (7): the retry records a forged number, opens a second issue, or leaves the request unconfirmed when exactly the genuine issue passes |
 | `mirror-edit-is-repushed` | a title edit made on GitHub to a mirrored issue: the next ingest prints `INGEST DRIFT` and queues one re-push; verify before the push prints `VERIFY REPUSH` and passes; after the confirmed push verify passes with no line for it; a failed push makes verify print `DRIFT` and exit 1 | the unit adopts the GitHub text, two re-pushes are posted, verify fails on a young pending re-push, or passes on a failed one |
@@ -8994,16 +9006,22 @@ any file is written.
 
 **The order, each step gated on the one before:**
 
-1. **The map** ((b), from the first cut's (f)): every one of the 80 repositories declared — the 43
-   public by name, `:work`, `:pool` or `:skip` with a reason, and the 37 private by count in
-   `:private-repos` (section 2) — and the top-level `:poll`; one file, `docs/roadmaps/ingest-map.sexp`,
-   in nova-tools.
+0. **The work repo** ((b)'s first line):
+   the work repo exists (created 2026-09-23); the sexp moves there in the cutover.
+   `mas-bandwidth/work` is private, with `main`, and its README says data only, no code;
+   rowan-claude and the writer's bench can push to it; it is in the bench mirror set; its read
+   credential is sealed on every bench. Each of these is measured, not assumed, and is Rowan's as
+   org admin (Glenn, 2026-09-23 3:15 PM). The sexp's move (section 2) is this step's one commit of
+   content; nova-tools' `docs/roadmaps/` is not touched by it and stays nova-tools' own roadmap.
+1. **The map** ((b), from the first cut's (f)): every one of the 80 repositories declared by name,
+   public and private alike, `:work`, `:pool` or `:skip` with a reason, `:private t` on the 37 private
+   ones, and the top-level `:poll`; one file, `ingest-map.sexp`, in the record.
 2. **A dry run per repository** (`--dry-run`): prints `INGEST REPO` with `issues=`, the calls it
-   would make and each repository file's and blob set's bytes; nothing written. Open question 2 (one
+   would make and each repository file's and blob set's bytes; nothing written. Open question 1 (one
    file or a forest) is decided from these numbers.
 3. **Ingest, work repositories first, largest backlog first** — nova-tools, then schema, then the
-   rest of the public repositories — **and any pool last**, because a pool counts for nothing; the
-   private repositories, the ideas pool among them, wait on open question 1; one `roadmap` batch per repository, so a failure holds one repository and
+   rest, public and private in one order — **and the pool last**, because the pool is the largest
+   and counts for nothing; one `roadmap` batch per repository, so a failure holds one repository and
    not the org.
 4. **Verify every repository to `VERIFY PASS`**, then a non-owner friend's `SAMPLE ... ok=30/30`
    recorded at the verified commit (section 4).
@@ -9020,30 +9038,27 @@ backlog stays open on GitHub until each unit's fix reaches `main` and section 8b
 
 ### 13. Open questions for Glenn
 
-The former seventh question, *who adds the org webhook*, is answered by *"You are org admin rowan"*
-(Glenn, 2026-09-23 3:15 PM): it is a precondition of (c), Rowan's to do. The first is open again,
-because the 3:58 PM ruling puts the record in public nova-tools. Seven remain:
+The former first question, *where do private repositories' units live*, is closed (Glenn,
+2026-09-23 6:35-6:45 PM: the whole record in the private work repo `mas-bandwidth/work`, section 2;
+private repositories' issues ingest into the private record), and the
+former seventh, *who adds the org webhook*, is answered by *"You are org admin rowan"* (Glenn,
+2026-09-23 3:15 PM): it is a precondition of (c), Rowan's to do. Six remain, renumbered:
 
-1. **The private home.** Private repositories' units and captures cannot live in public nova-tools
-   (*Link versus absorb*), and the 3:58 PM ruling names nova-tools `docs/roadmaps/` as the record's
-   one home. Until you rule where they live (or that they are not ingested), 37 private repositories
-   — 1,007 open issues, 797 of them ideas — are counted and not ingested, and the cutover waits on
-   them.
-2. **One file or a forest.** Glenn said *"this file"*; section 9 writes one logical forest as a small
-   manifest (`docs/roadmaps/nova-work.sexp`, the file you named, in place), one O and one C
+1. **One file or a forest.** Glenn said *"this file"*; section 9 writes one logical forest as a small
+   manifest (`nova-work.sexp`, the record's manifest in the work repo), one O and one C
    file per repository and content-addressed bodies, because one file for 80 repositories and
    thousands of units is one hot file for every writer and every diff. Confirm the forest, or hold to
    one file?
-3. **The pool.** Ideas ingested as `:required false` units that never count (section 2), or not
+2. **The pool.** Ideas ingested as `:required false` units that never count (section 2), or not
    ingested at all?
-4. **Assignees.** Kept as data only (never `:responsible`), or should an assignee on a `:work`
+3. **Assignees.** Kept as data only (never `:responsible`), or should an assignee on a `:work`
    repository set `:responsible` by a recorded `responsible` event naming you as the word's source?
-5. **Closing team issues.** Section 8b closes team-origin ingested issues on `main` by the same rule as
+4. **Closing team issues.** Section 8b closes team-origin ingested issues on `main` by the same rule as
    external ones, so no open GitHub copy outlives its settled unit. Confirm, or keep team issues open
    on GitHub as history?
-6. **The closing comment.** A fixed factual template, outside SPEC-OUTBOUND's approve gate; or behind
+5. **The closing comment.** A fixed factual template, outside SPEC-OUTBOUND's approve gate; or behind
    it?
-7. **The mirror re-push.** Section 8 re-pushes a mirror edited on GitHub back to the unit's text
+6. **The mirror re-push.** Section 8 re-pushes a mirror edited on GitHub back to the unit's text
    (title, body, labels, state), so a teammate's edit on GitHub is undone within one ingest. Confirm,
    or should a team-origin edit on a mirror be adopted as a proposed edit for a friend to accept?
 
@@ -9057,14 +9072,14 @@ verbs are part (vi) of the index issue, so there is one issue per owner-sized pi
 **DEPENDS-ON is a closed task or a merged PR, never an open one** (*Order and dependencies between
 cards*); PATHS are the repository paths the piece may touch, each checked at the build's base by
 `git ls-tree` before the task is cut (a path marked *new* must not yet exist). Code paths are in
-nova-tools; record paths are under nova-tools `docs/roadmaps/`, written by the writer at run time
-through `roadmap` batches (section 5), and a build PR touches only the ones its PATHS name.
+nova-tools; record paths are in the work repo, `mas-bandwidth/work`, and written only by the writer
+at run time, never by a build PR; no build PR writes a record path in nova-tools.
 
 | | issue | sections | owner | readers | DEPENDS-ON | PATHS |
 |---|---|---|---|---|---|---|
 | (index) | #3174: the index and the parity verbs, in ten parts: (i) the storage split; (ii) the node fields parity needs; (iii) resident R, X, READY and REV with reconstruction proofs; (iv) the Redis projection and its rebuild; (v) title search, and the body-search measurement; (vi) the parity verbs as fixed named queries; (vii) `nova-work serve` and the Go client; (viii) Redis publication per event; (ix) the 10k/100k/1M benchmark with section 9's table as pass/fail, including the post-filter row; (x) the engine snapshot, whose DONE-WHEN is restart < 300 ms at 100k units against the 413 ms parse | 9, 10 | rowan (tracking; parts proposed: stella (i)-(iii) and (vi), johnny (iv), (v), (vii), (viii), rowan (ix), (x)) | stella, johnny | within the issue: (i) first; (ii) on (i); (iii) on (ii); (iv) on (iii); (v) on (iv); (vi) on (iii) and (iv); (vii) on (iii); (viii) on (iv); (ix) on (iv) and (vi); (x) on (iii). Outside it: none | `lisp/nova-work/src/indexes.lisp`, `lisp/nova-work/src/state.lisp` (READY replaces `ready-nodes`), `lisp/nova-work/src/render-filesystem.lisp` (the split), new `lisp/nova-work/src/issue-verbs.lisp`, new `lisp/nova-work/src/snapshot.lisp`, `lisp/nova-work/tests/`, `internal/workclient/`, `cmd/nova-work/`, new `internal/workindex/` (the projection and the benchmark) |
 | (a) | #3167: `nova-work ingest github`: the adapter, identity, placement, the map (with `:poll`), the marker admission, idempotence | 2, 2b, 3 | stella | johnny, rowan | (index) (i) and (ii) merged | `lisp/nova-work/src/capture.lisp`, new `lisp/nova-work/src/ingest.lisp`, new `lisp/nova-work/tests/fixtures/ingest-30/`, new `cmd/nova-intake/`, new `internal/intake/github/` |
-| (b) | #3168: the writer and its lease, the `roadmap` batch on nova-tools (record writes accepted, section 5), `nova-work lag`, the declared map of all 80 repositories (the first cut's (f); private ones by count) | 2, 3, 5, 12 | rowan | stella, johnny | #3139 (the multi-repository lander) merged; (index) (i) merged | the lander's package as #3139 lands it (`internal/nsprint/` or its successor, the `roadmap` batch kind only), new `lisp/nova-work/src/writer.lisp`, `cmd/nova-work/` (`lag`), new `docs/roadmaps/ingest-map.sexp` |
+| (b) | #3168: the work repo's readiness (section 12 step 0: push access, mirror, sealed read credential) and the sexp's move into it, the writer and its lease, the `roadmap` batch on `mas-bandwidth/work`, `nova-work lag`, the declared map of all 80 repositories (the first cut's (f)) | 2, 3, 5, 12 | rowan | stella, johnny | #3139 (the multi-repository lander) merged; (index) (i) merged; step 0 done before the map is written | the lander's package as #3139 lands it (`internal/nsprint/` or its successor, the `roadmap` batch kind only), new `lisp/nova-work/src/writer.lisp`, `cmd/nova-work/` (`lag`); record, in the work repo: `nova-work.sexp`, `ingest-map.sexp` |
 | (c) | #3169: continuous: `issues` on `ev:github`, the conditional poll at the map's `:poll` | 6 | johnny | stella, rowan | (a) merged; the org webhook for `issues` added (Rowan, as org admin) | `internal/ghevent/`, `lisp/nova-work/src/ingest.lisp` (`--from-events` only) |
 | (d) | #3170: cut from the sexp: `task push` and the cutter take units, `--order priority`, `set check --open` | 7 | johnny | stella, rowan | (a) merged; (index) (iii) merged | `internal/friendqueue/`, `internal/nsprint/` (task push only), `cmd/nova-work/`, `lisp/nova-work/src/new-verbs.lisp` (`--order`, `--open`) |
 | (e) | #3171: fold write-back: landed PRs and verified criteria settle units | 7 | stella | johnny, rowan | #3139 merged; (b) merged | `lisp/nova-work/src/receipts.lisp`, `lisp/nova-work/src/receipt-admission.lisp`, `lisp/nova-work/src/writer.lisp` (fold hook only) |

@@ -16,14 +16,15 @@
 // the disk commit SHA (RUNNING_SHA == DISK_SHA).
 //
 // STAGES COMPUTED FROM EVIDENCE, NEVER TYPED:
-//   0%  StageNone:      No PR open yet. Next act: open PR.
-//  25%  StagePROpen:    PR open. Next act: green CI and clean hygiene.
-//  50%  StageGreen:     CI green and clean. Next act: required readers approve live head.
-//  75%  StageApproved:  Every required read approves live head. Next act: land on dev.
-//  90%  StageInstalled: Merged to dev AND installed on disk (DISK_SHA) on every UP bench.
-// 100%  StageInUse:     IN USE: running daemon reports live SHA via probe/heartbeat
-//                       matching DISK_SHA (RUNNING_SHA == DISK_SHA), a named receipt
-//                       from a real run on the fleet, and no operational HOLD.
+//
+//	 0%  StageNone:      No PR open yet. Next act: open PR.
+//	25%  StagePROpen:    PR open. Next act: green CI and clean hygiene.
+//	50%  StageGreen:     CI green and clean. Next act: required readers approve live head.
+//	75%  StageApproved:  Every required read approves live head. Next act: land on dev.
+//	90%  StageInstalled: Merged to dev AND installed on disk (DISK_SHA) on every UP bench.
+//	100% StageInUse:     IN USE: running daemon reports live SHA via probe/heartbeat
+//	                     matching DISK_SHA (RUNNING_SHA == DISK_SHA), a named receipt
+//	                     from a real run on the fleet, and no operational HOLD.
 package adoption
 
 import (
@@ -46,12 +47,12 @@ const InvariantInstalledNotAdopted = "installed is not adopted"
 type Stage int
 
 const (
-	StageNone       Stage = 0   // Not started / no PR
-	StagePROpen     Stage = 25  // PR open
-	StageGreen      Stage = 50  // Green and clean
-	StageApproved   Stage = 75  // Every required read approves the live head
-	StageInstalled  Stage = 90  // On dev and installed on disk (DISK_SHA)
-	StageInUse      Stage = 100 // Adopted and in use (RUNNING_SHA == DISK_SHA, receipt, no holds)
+	StageNone      Stage = 0   // Not started / no PR
+	StagePROpen    Stage = 25  // PR open
+	StageGreen     Stage = 50  // Green and clean
+	StageApproved  Stage = 75  // Every required read approves the live head
+	StageInstalled Stage = 90  // On dev and installed on disk (DISK_SHA)
+	StageInUse     Stage = 100 // Adopted and in use (RUNNING_SHA == DISK_SHA, receipt, no holds)
 )
 
 // Percent returns the stage percentage as an integer.
@@ -77,15 +78,15 @@ const DefaultHeartbeatStaleBound = 5 * time.Minute
 
 // Typed sentinel errors for adoption verification.
 var (
-	ErrInstalledNotAdopted   = errors.New("installed is not adopted: running daemon SHA does not match disk SHA")
-	ErrDaemonNotRunning      = errors.New("running daemon not reporting live SHA: probe/heartbeat missing")
-	ErrMissingDiskSHA        = errors.New("missing DISK_SHA on bench")
-	ErrTargetMismatch        = errors.New("disk SHA does not match target SHA")
-	ErrHeartbeatStale        = errors.New("heartbeat is stale")
-	ErrOperationalHold       = errors.New("adoption held: operational hold active")
-	ErrMissingReceipt        = errors.New("adoption unproven: missing execution receipt")
-	ErrUnrecognizedEvidence  = errors.New("unrecognized evidence kind (must be probe or heartbeat)")
-	ErrMissingBench          = errors.New("missing bench name in daemon evidence")
+	ErrInstalledNotAdopted  = errors.New("installed is not adopted: running daemon SHA does not match disk SHA")
+	ErrDaemonNotRunning     = errors.New("running daemon not reporting live SHA: probe/heartbeat missing")
+	ErrMissingDiskSHA       = errors.New("missing DISK_SHA on bench")
+	ErrTargetMismatch       = errors.New("disk SHA does not match target SHA")
+	ErrHeartbeatStale       = errors.New("heartbeat is stale")
+	ErrOperationalHold      = errors.New("adoption held: operational hold active")
+	ErrMissingReceipt       = errors.New("adoption unproven: missing execution receipt")
+	ErrUnrecognizedEvidence = errors.New("unrecognized evidence kind (must be probe or heartbeat)")
+	ErrMissingBench         = errors.New("missing bench name in daemon evidence")
 )
 
 // DaemonEvidence is the live evidence reported by or collected from a bench daemon.
