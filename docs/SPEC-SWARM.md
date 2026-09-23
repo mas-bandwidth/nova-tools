@@ -1666,9 +1666,12 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   `harness.log` under its job directory, the runner's stdout pinned to a
   regular file — and the batch also reads the **CPU time of the card's whole
   process tree**, the runner's children and their children with it. **Idle
-  means no child activity**: a card is alive while any of its log grows, its
-  harness store moves or its tree's CPU time advances, and it is killed only
-  when *none* of them moved for `idle` seconds. On **2026-09-15** cards
+  means no child activity**: a card is alive while its log grows by a page
+  (4 KiB) within the window, its harness store moves or its tree's CPU time
+  advances, and it is killed only when *none* of them moved for `idle` seconds.
+  Any size change is not enough: the card can write those files, and a dribble
+  or a rewrite would otherwise occupy the slot until the deadline (issue
+  #1893). A truncation is a new floor, not work. On **2026-09-15** cards
   664-670 were killed `idle 300s` inside a `go test` that prints nothing for
   minutes, and the loop raised `--idle` to 900 s, which only delays the same
   kill (issue #593): a busy silent harness is working, and a sleeping one is
@@ -1809,7 +1812,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
-| `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
+| `idle=<s>` | was killed because neither its log (a page of growth in the window) nor its process tree moved for `<s>` seconds |
 | `stalled` | was killed because it produced NOTHING AT ALL -- no first token -- within `--stall-after` of launching; not the idle window, which needs a first sample to compare against (#917) |
 | `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
@@ -1901,7 +1904,9 @@ The copied-up result above is the same rule the bench pull holds under
 **Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
 line. Replays this section demands, beside the tests #577 named:
 `idle-watch-counts-child-activity` (`TestIdleWatchCountsChildActivity`, landed
-in #603), `gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo`,
+in #603), `idle-watch-ends-a-dribble`
+(`TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog`, #1893),
+`gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo`,
 #603), `native-silent-harness-is-not-ok` (`TestNativeSilentHarnessIsNotOK`, PR
 #604), `native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
 #558), `local-route-is-one-slot` (two local-model cards in one batch: one runs,
