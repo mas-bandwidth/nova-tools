@@ -103,23 +103,42 @@ func writeSparseFixture(t *testing.T, src string) {
 	gitT(t, src, "commit", "-q", "-m", "fixture")
 }
 
-// prepare is the staging path: given a reference checkout, it stages <job>/repo
-// as the sparse clone before the worker starts.
+// prepare is the staging path. A production run does not set CloneFrom by hand:
+// a PATHS card takes the pool's reference checkout ref/<owner>/<name>@<rev>.
+// Leaving CloneFrom empty with that checkout present must still stage the
+// sparse job clone. A run that is handed CloneFrom stages from that checkout.
 func TestPrepareStagesASparseJobClone(t *testing.T) {
 	root := t.TempDir()
-	src := filepath.Join(root, "src")
-	writeSparseFixture(t, src)
 	workerDir := filepath.Join(root, "home")
 	if err := os.MkdirAll(workerDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	w := Worker{WorkerDir: workerDir, Provider: "opencode", Model: "x", EnvVar: "X_API_KEY"}
+
+	pool := filepath.Join(root, "pool")
+	ref := filepath.Join(pool, "ref", "example", "s10@fixture")
+	writeSparseFixture(t, ref)
 	jobDir := w.JobDir(1, "s10")
-	run := RunInput{Worker: w, CloneFrom: src}
-	card := []byte("PATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
+	run := RunInput{Worker: w, Pool: &Pool{Dir: pool}}
+	card := []byte("SOURCE: example/s10@fixture\nPATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
 	if err := run.prepare(Sidecar{ID: "s10"}, card, 1, jobDir); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
+	assertSparseJob(t, jobDir)
+
+	src := filepath.Join(root, "src")
+	writeSparseFixture(t, src)
+	jobDir2 := w.JobDir(1, "s10b")
+	handed := RunInput{Worker: w, CloneFrom: src}
+	card2 := []byte("PATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
+	if err := handed.prepare(Sidecar{ID: "s10b"}, card2, 1, jobDir2); err != nil {
+		t.Fatalf("prepare with CloneFrom: %v", err)
+	}
+	assertSparseJob(t, jobDir2)
+}
+
+func assertSparseJob(t *testing.T, jobDir string) {
+	t.Helper()
 	repo := filepath.Join(jobDir, JobRepo)
 	if _, err := os.Stat(filepath.Join(repo, "pkg", "named", "named.go")); err != nil {
 		t.Fatalf("prepare did not stage the named package: %v", err)
@@ -127,8 +146,9 @@ func TestPrepareStagesASparseJobClone(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(repo, "pkg", "dep", "dep.go")); err != nil {
 		t.Fatalf("prepare did not stage the named package's dependency: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, "pkg", "unrelated", "unrelated.go")); !os.IsNotExist(err) {
-		t.Fatalf("prepare materialized an unrelated package at %s (err=%v)", filepath.Join(repo, "pkg", "unrelated", "unrelated.go"), err)
+	unrelated := filepath.Join(repo, "pkg", "unrelated", "unrelated.go")
+	if _, err := os.Stat(unrelated); !os.IsNotExist(err) {
+		t.Fatalf("prepare materialized an unrelated package at %s (err=%v)", unrelated, err)
 	}
 }
 

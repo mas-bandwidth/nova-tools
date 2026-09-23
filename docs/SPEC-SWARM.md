@@ -4170,7 +4170,12 @@ Staging for a card that declares `PATHS:` checks out the **minimal tree**:
 those packages and their in-module dependencies only. A package the card did
 not name is not materialized. The named package's tests still run. `PATHS:
 none`, or no `PATHS:` line, stays a full checkout. `prepare` does this into
-`<job>/repo` when it is given the reference checkout.
+`<job>/repo` when it is given the reference checkout. When `CloneFrom` is
+empty and the card declares `PATHS:`, `prepare` sets it from the pool's
+reference checkout `ref/<owner>/<name>@<rev>` when that checkout is present.
+`SOURCE:` names the repo; `@<rev>` on that token names the rev, and a card
+that names no rev uses the one checkout present for that repo. No checkout
+there leaves the card to clone itself.
 
 A lookup that finds no in-module directories is a valid empty set: the PATHS
 and TEST cones are still checked out. An import that cannot be resolved is

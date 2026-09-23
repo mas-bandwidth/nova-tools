@@ -114,6 +114,99 @@ func cardPATHS(text string) (globs []string, declared bool) {
 	return nil, false
 }
 
+// referenceCheckout is the dispatcher's reference checkout for a PATHS card:
+// <pool>/ref/<owner>/<name>@<rev> (SPEC-SANDBOX, one checkout per distinct ref).
+// SOURCE: names the repo; @<rev> on that token names the rev. A card that names
+// the repo and not the rev uses the one checkout present for that repo. None,
+// or more than one, is not a checkout this call will invent: the card still
+// clones itself. PATHS: none, or no PATHS: line, is not a sparse stage.
+func referenceCheckout(poolDir, card string) string {
+	poolDir = strings.TrimSpace(poolDir)
+	if poolDir == "" {
+		return ""
+	}
+	globs, declared := cardPATHS(card)
+	if !declared || len(globs) == 0 {
+		return ""
+	}
+	repo, rev := cardSourceRepo(card)
+	if repo == "" {
+		if repos := cardRepos(card); len(repos) == 1 {
+			repo = repos[0]
+		}
+	}
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	if rev != "" {
+		p := filepath.Join(poolDir, "ref", owner, name+"@"+rev)
+		if isGitCheckout(p) {
+			return p
+		}
+		return ""
+	}
+	dir := filepath.Join(poolDir, "ref", owner)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	prefix := name + "@"
+	var match string
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), prefix) || len(e.Name()) == len(prefix) {
+			continue
+		}
+		p := filepath.Join(dir, e.Name())
+		if !isGitCheckout(p) {
+			continue
+		}
+		if match != "" {
+			return ""
+		}
+		match = p
+	}
+	return match
+}
+
+// cardSourceRepo reads SOURCE: as owner/name, with an optional @rev and an
+// optional #n issue suffix. A token that is not owner/name names no repo.
+func cardSourceRepo(text string) (repo, rev string) {
+	for _, line := range strings.Split(text, "\n") {
+		t := strings.TrimSpace(line)
+		if !strings.HasPrefix(t, "SOURCE:") {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSpace(strings.TrimPrefix(t, "SOURCE:")))
+		if len(fields) == 0 {
+			return "", ""
+		}
+		tok := fields[0]
+		if i := strings.Index(tok, "#"); i >= 0 {
+			tok = tok[:i]
+		}
+		owner, nameRev, ok := strings.Cut(tok, "/")
+		if !ok || owner == "" || nameRev == "" {
+			return "", ""
+		}
+		name, rev, _ := strings.Cut(nameRev, "@")
+		if name == "" || strings.Contains(name, "/") {
+			return "", ""
+		}
+		return owner + "/" + name, rev
+	}
+	return "", ""
+}
+
+func isGitCheckout(dir string) bool {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	g, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil && (g.IsDir() || g.Mode().IsRegular())
+}
+
 // cardTestPackage reads the TEST: package, so a card whose tests live beside
 // (or in) the named package still has that tree to run.
 func cardTestPackage(text string) string {
