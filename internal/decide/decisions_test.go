@@ -114,13 +114,37 @@ func TestDecisionsTSVRoundTrip(t *testing.T) {
 	}
 }
 
-// An empty DSN is a refusal, never a guess; a repo with no Postgres driver
-// linked refuses rather than opening nothing.
-func TestOpenDecisionsRefusesNoTable(t *testing.T) {
+// An empty DSN is a refusal, never a guess.
+//
+// The second half of this test used to assert that a postgres:// DSN refuses
+// "with no linked driver linked". That was true and it was a DEFECT, not a
+// guarantee: PGDriverName said "postgres", pgx's shim registers "pgx", and
+// nothing in a nova-decide process imported it, so every postgres:// DSN died
+// at sql.Open before reaching a query. Stella named it on #1925 -- the
+// Postgres adoption "depends on an owned migration and driver registration,
+// neither of which is in this repository" -- and both halves are here now.
+//
+// So a postgres:// DSN OPENS. sql.Open is lazy and contacts nothing, and what
+// stands between a real database and a degraded row is the schema gate, which
+// schema_test.go controls: below the required version the write is a typed
+// refusal naming the migration, and no receipt is claimed.
+func TestOpenDecisionsRefusesNoTableAndOpensAPostgresDSN(t *testing.T) {
 	if _, err := OpenDecisions(""); err == nil {
 		t.Fatal("empty DSN must refuse")
 	}
-	if _, err := OpenDecisions("postgres://bench/decisions"); err == nil {
-		t.Fatal("a postgres DSN with no linked driver must refuse")
+	store, err := OpenDecisions("postgres://bench/decisions")
+	if err != nil {
+		t.Fatalf("a postgres DSN must open now that the driver is registered: %v", err)
+	}
+	defer store.Close()
+	pg, ok := store.(*postgresDriver)
+	if !ok {
+		t.Fatalf("a postgres DSN opened a %T", store)
+	}
+	if pg.schema == nil || pg.rows == nil {
+		t.Error("the postgres store was built without its schema or row half")
+	}
+	if _, ok := store.(Migrator); !ok {
+		t.Error("a postgres store must be migratable; it is what `nova-decide migrate` calls")
 	}
 }
