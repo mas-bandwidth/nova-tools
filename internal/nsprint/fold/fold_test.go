@@ -24,6 +24,7 @@ type fixture struct {
 	Policy map[string]string            `json:"policy"`
 	Cards  map[string]map[string]string `json:"cards"`
 	Disp   map[string]map[string]string `json:"disp"`
+	PRs    map[string]map[string]string `json:"prs"`
 	Tasks  map[string][]string          `json:"tasks"`
 	Log    int                          `json:"log"`
 }
@@ -60,6 +61,9 @@ func seed(t *testing.T) (*miniredis.Miniredis, *redis.Client, fixture) {
 	}
 	for key, fields := range fx.Disp {
 		must(client.HSet(ctx, s+":disp:"+key, fields).Err())
+	}
+	for key, fields := range fx.PRs {
+		must(client.HSet(ctx, s+":pr:"+key, fields).Err())
 	}
 	for state, ids := range fx.Tasks {
 		for _, id := range ids {

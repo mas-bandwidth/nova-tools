@@ -93,12 +93,15 @@ type Summary struct {
 	Tasks       int
 	TasksDone   int
 	Receipts    int64
+	Apart       Apart // code and read cards apart, the unknown gate, approved-not-landed (#3107, split.go)
 }
 
 var sprintName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 
 // Run folds opt.Sprint. It prints one line per route, the ci line, the sprint
-// line, the commit and the record, and returns an error for any refusal.
+// line, the split (split.go), the commit and the record, and returns an error
+// for any refusal; an *UnknownError, before any commit, while any card has no
+// end record or any PR no state.
 func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) (Result, error) {
 	if !sprintName.MatchString(opt.Sprint) {
 		return Result{}, fmt.Errorf("sprint name %q is not a sprint name ([A-Za-z0-9._-], starting with a letter or digit)", opt.Sprint)
@@ -146,6 +149,10 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 		return Result{}, err
 	}
 	PrintLines(out, sum)
+	PrintApart(out, opt.Sprint, sum.Apart)
+	if err := unknownGate(opt.Sprint, sum.Apart); err != nil {
+		return Result{}, err
+	}
 
 	sha, err := findCommit(ctx, opt.Work, opt.Sprint)
 	if err != nil {
@@ -360,6 +367,11 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 		sum.Routes = append(sum.Routes, *r)
 	}
 	sort.Slice(sum.Routes, func(i, j int) bool { return sum.Routes[i].Name < sum.Routes[j].Name })
+	apart, err := readApart(ctx, client, key, sum.UsefulMin)
+	if err != nil {
+		return sum, err
+	}
+	sum.Apart = apart
 	return sum, nil
 }
 
@@ -466,7 +478,9 @@ func Sexp(s Summary) []byte {
 		}
 		b.WriteString(routeSexp("route "+q(r.Name), r))
 	}
-	b.WriteString("))\n")
+	b.WriteString(")")
+	b.WriteString(apartSexp(s.Apart))
+	b.WriteString(")\n")
 	return []byte(b.String())
 }
 
