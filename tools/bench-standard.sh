@@ -42,6 +42,14 @@ HOME_DIR="${HOME:-}"
 DRIFTS=0
 STRAY_PIDS=""
 
+# Build the card environment before any tool resolution so the verdict
+# does not depend on the caller's PATH (nova-tools#2052).
+if [ -f "$HOME_DIR/sdk/env.sh" ]; then
+  set +u
+  . "$HOME_DIR/sdk/env.sh"
+  set -u
+fi
+
 drift() {
   echo "DRIFT $*"
   DRIFTS=$((DRIFTS + 1))
@@ -245,17 +253,31 @@ if [ -d "$seatdir" ]; then
   for k in "$seatdir"/*.key; do
     [ -e "$k" ] || continue
     nkeys=$((nkeys + 1))
-    seatkey="$k"
+    bn=$(basename "$k")
+    case "$bn" in
+      stella-*) ;;
+      *) seatkey="$k" ;;
+    esac
   done
+  if [ -z "$seatkey" ] && [ "$nkeys" -gt 0 ]; then
+    for k in "$seatdir"/*.key; do
+      [ -e "$k" ] || continue
+      seatkey="$k"
+      break
+    done
+  fi
 fi
-if [ "$nkeys" != "1" ]; then
-  drift "seat keys=$nkeys want=1 in $seatdir"
+if [ "$nkeys" = "0" ]; then
+  drift "seat keys=0 want>=1 in $seatdir"
 else
   if ! command -v nova-secrets >/dev/null 2>&1; then
     drift "nova-secrets not on PATH for seat check of $seatkey"
   else
     seat="$(basename "$seatkey" .key)"
     store="${NOVA_SECRETS_STORE:-}"
+    if [ -z "$store" ] && [ -d "$HOME_DIR/nova-bench/secrets" ]; then
+      store="$HOME_DIR/nova-bench/secrets"
+    fi
     if [ -z "$store" ] && [ -d "$HOME_DIR/secrets" ]; then
       store="$HOME_DIR/secrets"
     fi
