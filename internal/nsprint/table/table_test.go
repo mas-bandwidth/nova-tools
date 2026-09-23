@@ -2,60 +2,20 @@ package table_test
 
 import (
 	"context"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
 func controlStore(t *testing.T) *redis.Client {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	_ = listener.Close()
-	_, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	log, err := os.Create(filepath.Join(dir, "redis.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = log.Close() })
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--dir", dir)
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
-	client := redis.NewClient(&redis.Options{Addr: addr})
+	client := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = client.Close() })
-	ctx := context.Background()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if err := client.Ping(ctx).Err(); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("throwaway redis did not start")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err := fn.Load(ctx, client); err != nil {
+	if err := fn.Load(context.Background(), client); err != nil {
 		t.Fatal(err)
 	}
 	return client
