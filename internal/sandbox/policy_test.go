@@ -515,6 +515,36 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 	}
 }
 
+// #1557: /usr/bin/c++ is an Xcode shim that reads /var/db/xcode_select_link.
+// /var is a literal on the symlink, not a subpath, so without a literal on the
+// link itself every C and C++ compile inside the wall dies with xcode-select's
+// "unable to read data link". The grant is the link, not a subpath on
+// /private/var/db, which holds host state the wall is not for.
+func TestDarwinProfileGrantsTheXcodeSelectLink(t *testing.T) {
+	needUnixPaths(t)
+	write, read, home, _ := scratch(t)
+	p, bad := Build(in(t, write, read, home, anExecutable(t)))
+	if len(bad) > 0 {
+		t.Fatalf("refused: %v", bad)
+	}
+	text, _, err := DarwinProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grants := grantLines(text)
+	for _, want := range []string{
+		`(literal "/var/db/xcode_select_link")`,
+		`(literal "/private/var/db/xcode_select_link")`,
+	} {
+		if !strings.Contains(grants, want) {
+			t.Errorf("the generated profile does not grant %s; /usr/bin/c++ reads that link and every C/C++ compile inside the wall dies", want)
+		}
+	}
+	if strings.Contains(grants, `(subpath "/private/var/db")`) || strings.Contains(grants, `(subpath "/var/db")`) {
+		t.Error("the profile grants a subpath on /var/db; the grant is the xcode_select_link literal, not the directory")
+	}
+}
+
 // TestAncestorsGetMetadataOnly: the ancestor literals grant stat, never data. Every proper
 // ancestor of every --read, --write, --cwd and --tmp path gets one
 // (allow file-read-metadata (literal "<dir>")), so the harness's walk up from its cwd (lstat

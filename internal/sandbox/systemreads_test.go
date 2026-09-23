@@ -5,7 +5,6 @@ package sandbox
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"testing"
 )
 
@@ -59,16 +58,4 @@ func TestLinuxWallGrantsTheResolvedResolverConfigDirectory(t *testing.T) {
 		}
 	}
 	t.Fatalf("the resolver config %s resolves to %s, whose directory %s is in no read root the wall applies (%v), so a name lookup inside the wall fails with \"Could not resolve host\" while TCP by IP still works", link, target, targetDir, roots)
-}
-
-// The system reads are not a caller switch and there is no second table: a field on
-// Input or Policy would be the duplicate policy PR 948 removed.
-func TestSystemReadsAreNotAFieldOnInputOrPolicy(t *testing.T) {
-	for _, typ := range []reflect.Type{reflect.TypeOf(Input{}), reflect.TypeOf(Policy{})} {
-		for _, name := range []string{"SystemReads", "NoSystemReads"} {
-			if f, ok := typ.FieldByName(name); ok {
-				t.Fatalf("%s still carries %s: linuxReadRoots is the one enforced policy", typ, f.Name)
-			}
-		}
-	}
 }

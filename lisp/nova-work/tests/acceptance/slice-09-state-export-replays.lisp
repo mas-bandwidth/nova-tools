@@ -143,18 +143,14 @@
 ;;; state-load-is-isolated (docs/SPEC-WORK.md:5896)
 ;;; ------------------------------------------------------------------
 
-(defvar *state-load-test-counter* 0)
-
 (defun test-state-load-dir (name)
   "A fresh scratch parent for one state-load replay, so the three copies of this
-slice file (the loader list names it once per fold) never collide."
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames
-               (format nil "nova-work-state-load-~A-~D-~D/" name
-                       (get-universal-time) (incf *state-load-test-counter*))
-               base)))
-    (ensure-directories-exist dir)
-    (namestring dir)))
+slice file (the loader list names it once per fold) never collide -- and, since
+it is taken under this run's own root, so that two suites sharing a host never
+collide either. The old name keyed on `(get-universal-time)` and a counter that
+starts at zero in every image, which is nova-tools#1699's `state-load-is-isolated`
+red: the second process found the destination already there."
+  (namestring (test-temp-dir (format nil "state-load-~A" name))))
 
 (deftest "state-load-is-isolated" "docs/SPEC-WORK.md:5896"
     "expected=no-ownership-dispatch-replay-merge-resolver-network-or-repo-write;re-export-equal"

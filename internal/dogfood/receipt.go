@@ -28,6 +28,18 @@ type Receipt struct {
 	Notes string `json:"notes"`
 	Issue int    `json:"issue,omitempty"` // the edge filed, when there is one
 
+	// Closes is the ID of the finding this run answers, when it answers one.
+	//
+	// Dogfood round 5, edge 2: an edge used to be closed by "somebody runs the
+	// verb again, later, and records neither" — ANYBODY, on any run. So on a
+	// bench where two people dogfood the same verb, one of them finding
+	// something and the other happening to run it afterwards and finding
+	// nothing put the first one's finding out of the gate's sight: nobody read
+	// the note, nobody filed the issue, and the ledger row showed ok=yes over
+	// it. A finding is a PERSON'S, and it is answered by a receipt that names
+	// it or by the person who found it running the verb again.
+	Closes string `json:"closes,omitempty"`
+
 	// File is where this receipt was read from. It is not part of the record —
 	// a receipt does not know its own path — and it is here so a strand can be
 	// NAMED: the dogfood pass of 2026-09-18 was told nine receipts matched
@@ -47,6 +59,14 @@ func (r Receipt) Key() string { return NormalizeKey(r.Tool, r.Verb) }
 // that had found six things.
 var edgeMarker = regexp.MustCompile(`(?i)(^|[^a-z])edges?:`)
 
+// receiptIDShape is what an ID looks like: the eight hex characters a content
+// hash gives, which is also what ends a receipt's filename.
+var receiptIDShape = regexp.MustCompile(`^[0-9a-f]{8}$`)
+
+// IsReceiptID reports whether a string is a receipt id, so that the verb which
+// takes one from a caller and the record which stores it ask the same question.
+func IsReceiptID(s string) bool { return receiptIDShape.MatchString(strings.TrimSpace(s)) }
+
 // RecordsAnEdge reports whether this receipt found something: the verb did not
 // do what the run needed, or the notes name an edge in the shape the family
 // writes them. The prose is not read any further than that marker — what the
@@ -58,6 +78,34 @@ func (r Receipt) RecordsAnEdge() bool {
 // Filed reports whether the edge this receipt records has an issue somebody
 // can act on.
 func (r Receipt) Filed() bool { return r.Issue > 0 }
+
+// ID is this receipt's name, short enough for a person to type into a --closes.
+//
+// It is a fact of the CONTENT, not of the file: the same receipt read from two
+// places is one receipt with one id, and a receipts directory holds no
+// counter anybody has to keep. It is the same eight characters Record puts at
+// the end of the filename, so a reader with an id off the gate's line can find
+// the file it came from.
+func (r Receipt) ID() string {
+	sum, err := receiptSum(r)
+	if err != nil {
+		return "x"
+	}
+	return sum
+}
+
+// receiptSum is the content hash both ID and Record's filename use. File is
+// json:"-" and never reaches it, which is what makes an id independent of where
+// the receipt was read from.
+func receiptSum(r Receipt) (string, error) {
+	line, err := json.Marshal(r)
+	if err != nil {
+		return "", err
+	}
+	line = append(line, '\n')
+	sum := sha256.Sum256(line)
+	return hex.EncodeToString(sum[:])[:8], nil
+}
 
 // Spelling is the verb as a line prints it, with the bare marker for a tool
 // that has no verbs.
@@ -127,6 +175,11 @@ func (r Receipt) Validate() []error {
 	if r.Issue < 0 {
 		errs = append(errs, fmt.Errorf("issue %d is not an issue number; leave it out when no edge was filed", r.Issue))
 	}
+	// A closes= that is not an id could never match a finding, so it would read
+	// as a close that quietly did nothing. It is refused where it is written.
+	if c := strings.TrimSpace(r.Closes); c != "" && !receiptIDShape.MatchString(c) {
+		errs = append(errs, fmt.Errorf("closes %q is not a receipt id; it is the eight hex characters the gate prints as receipt=<id>", c))
+	}
 	for _, f := range []struct{ name, value string }{
 		{"tool", r.Tool}, {"verb", r.Verb}, {"by", r.By}, {"notes", r.Notes},
 	} {
@@ -167,10 +220,15 @@ func Record(dir string, r Receipt) (string, error) {
 	}
 	line = append(line, '\n')
 
-	sum := sha256.Sum256(line)
+	// The filename ends in the receipt's own ID, so the id the gate prints and
+	// the file on disk are the same eight characters.
+	sum, err := receiptSum(r)
+	if err != nil {
+		return "", fmt.Errorf("receipts: %w", err)
+	}
 	name := fmt.Sprintf("%s-%s-%s-%s-%s.json",
 		strings.ReplaceAll(r.Time().Format("20060102T150405Z"), ":", ""),
-		slug(r.Tool), slug(r.Verb), slug(r.By), hex.EncodeToString(sum[:])[:8])
+		slug(r.Tool), slug(r.Verb), slug(r.By), sum)
 	final := filepath.Join(dir, name)
 
 	tmp, err := os.CreateTemp(dir, ".receipt-*.tmp")
