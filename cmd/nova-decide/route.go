@@ -83,12 +83,23 @@ var deciderOpener = func(baseURL, keyEnv string) (decide.Decider, error) {
 	return client, nil
 }
 
-// logSinkOpener opens the decision log --log names: a path (JSON lines) or the
-// table beside the card results. It is the seam a test replaces with an
-// in-memory sink, so no unit test opens a socket to Postgres.
-var logSinkOpener = func(name, dsnEnv string) (decide.LogSink, error) {
-	return decide.OpenLogSink(name, dsnEnv)
+// logSinkOpener opens the JSON lines log --log names. It is the seam a test
+// replaces with an in-memory sink.
+var logSinkOpener = func(path string) (decide.LogSink, error) {
+	return decide.OpenLogSink(path)
 }
+
+// eventSinkOpener dials the fleet store --store names and returns the sink that
+// writes each decision as one decide event on cards:done (#2623). The password
+// is read from the environment variable --password-env names, never from argv.
+var eventSinkOpener = func(addr, user, password string) (decide.LogSink, error) {
+	return decide.OpenEventSink(addr, user, password, "")
+}
+
+// defaultPasswordEnv is the variable `nova-secrets exec --only
+// NOVA_REDIS_BENCH_PASSWORD` leaves the fleet store's password in, the same one
+// nova-pulse event reads.
+const defaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
 
 // now is a var so a test can pin the log's timestamp.
 var now = time.Now
@@ -113,8 +124,10 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nova-decide route", flag.ContinueOnError)
 	unitPath := fs.String("unit", "", "a JSON file (or inline JSON) holding the unit of work's evidence")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
-	logPath := fs.String("log", "", "append the decision to this log: a path (JSON lines) or "+decide.PostgresLog+" (the table beside the card results)")
-	dsnEnv := fs.String("dsn-env", "", "with --log "+decide.PostgresLog+": the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
+	logPath := fs.String("log", "", "append the decision to this JSON lines log")
+	store := fs.String("store", "", "the fleet Redis as host:port: write the decision as one decide event on cards:done, which the fold keeps in its decisions table")
+	storeUser := fs.String("user", "", "with --store: the ACL user")
+	passwordEnv := fs.String("password-env", defaultPasswordEnv, "with --store: the environment variable the password arrives in; never the password itself")
 	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung. Absent, the registry's floor for this unit's KIND answers, and the built-in default only where the kind has none")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
@@ -233,21 +246,38 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	// the table does not know -- and every line says which it was.
 	effectiveFloor, floorFrom := decide.ResolveFloor(reg, unit.Kind, *floor, set["floor"])
 	ask := *useJev && !*noJev
-	// The log is OPENED before the call, not after it. --log names a path or the
-	// table, and a table that will not open is nowhere to record the decision:
-	// the rule of #1327 is that a jev call with nowhere to record it is refused
-	// BEFORE it is made, and a DSN that is not there is exactly that case.
-	var sink decide.LogSink
-	if strings.TrimSpace(*logPath) != "" {
-		opened, err := logSinkOpener(*logPath, *dsnEnv)
-		if err != nil {
-			reason := "bad-log"
-			if ask {
-				reason = "no-accounting"
-			}
-			return refuse(stderr, "ROUTE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
+	// The log and the stream are OPENED before the call, not after it. A sink
+	// that will not open is nowhere to record the decision: the rule of #1327 is
+	// that a jev call with nowhere to record it is refused BEFORE it is made,
+	// and a store that does not answer is exactly that case.
+	var fileSink, eventSink decide.LogSink
+	openFailed := func(err error) int {
+		reason := "bad-log"
+		if ask {
+			reason = "no-accounting"
 		}
-		sink = opened
+		return refuse(stderr, "ROUTE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if strings.TrimSpace(*logPath) != "" {
+		opened, err := logSinkOpener(*logPath)
+		if err != nil {
+			return openFailed(err)
+		}
+		fileSink = opened
+	}
+	if strings.TrimSpace(*store) != "" {
+		opened, err := eventSinkOpener(*store, *storeUser, os.Getenv(*passwordEnv))
+		if err != nil {
+			if fileSink != nil {
+				fileSink.Close()
+			}
+			return openFailed(err)
+		}
+		eventSink = opened
+	}
+	var sink decide.LogSink
+	if fileSink != nil || eventSink != nil {
+		sink = decide.Tee(fileSink, eventSink)
 		defer sink.Close()
 	}
 	var res decide.RouteResult
@@ -643,12 +673,8 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 // runLog is the log verb: the escalation counts per kind and the starting rung
 // regenerated from the rows.
 func runLog(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "migrate" {
-		return runLogMigrate(args[1:], stdout, stderr)
-	}
 	fs := flag.NewFlagSet("nova-decide log", flag.ContinueOnError)
-	logPath := fs.String("log", "", "the escalation log to read: a path (JSON lines) or "+decide.PostgresLog+" (the table)")
-	dsnEnv := fs.String("dsn-env", "", "with --log "+decide.PostgresLog+": the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
+	logPath := fs.String("log", "", "the escalation log to read: a JSON lines path")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	summary := fs.Bool("summary", false, "print the per-kind escalation counts and the regenerated starting rung")
 	fs.SetOutput(io.Discard)
@@ -663,7 +689,7 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "LOG", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if strings.TrimSpace(*logPath) == "" {
-		return refuse(stderr, "LOG", "bad-arguments", "--log is required; refusing to guess the log's path. Pass a path, or "+decide.PostgresLog+" for the table")
+		return refuse(stderr, "LOG", "bad-arguments", "--log is required; refusing to guess the log's path. Pass the JSON lines log's path; the fleet's decisions are in the fold: nova-pulse fold --db <file> --report")
 	}
 	if !*summary {
 		return refuse(stderr, "LOG", "bad-arguments", "--summary is the read this verb offers; pass it")
@@ -672,9 +698,8 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	// One read for both sinks: the rows are the record and the summary is a
-	// projection of them, so the file and the table print the same lines.
-	sink, err := logSinkOpener(*logPath, *dsnEnv)
+	// The rows are the record and the summary is a projection of them.
+	sink, err := logSinkOpener(*logPath)
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -693,56 +718,6 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, sum.Render())
 	return 0
-}
-
-// migrator is what a sink that has a schema offers: the table's migration,
-// applied from the files in internal/decide/migrations. A file sink has no
-// schema and does not satisfy it, which is how `log migrate` knows it was
-// pointed at a file.
-type migrator interface {
-	Migrate(ctx context.Context) error
-}
-
-// runLogMigrate installs the decision log's table. It is always the table's
-// verb: there is no path to migrate, and the DSN arrives in the environment
-// under the name --dsn-env gives, put there by nova-secrets exec.
-func runLogMigrate(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("nova-decide log migrate", flag.ContinueOnError)
-	dsnEnv := fs.String("dsn-env", "", "the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "MIGRATE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, "MIGRATE", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-	}
-	sink, err := logSinkOpener(decide.PostgresLog, *dsnEnv)
-	if err != nil {
-		return refuse(stderr, "MIGRATE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	defer sink.Close()
-	m, ok := sink.(migrator)
-	if !ok {
-		return refuse(stderr, "MIGRATE", "bad-migration",
-			fmt.Sprintf("%T has no schema to install; migrate is the table's verb and the JSON lines log has none", sink))
-	}
-	fmt.Fprintln(stderr, "nova-decide log migrate: applying the decision log's migrations")
-	if err := m.Migrate(context.Background()); err != nil {
-		return refuse(stderr, "MIGRATE", "bad-migration", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	fmt.Fprintf(stdout, "MIGRATE OK table=decide_log version=%d dsn_env=%s\n",
-		decide.LogSchemaVersion, oneline.Field(dsnEnvName(*dsnEnv)))
-	return 0
-}
-
-// dsnEnvName is the variable the DSN came from, for the line that says what was
-// done. The name is not a secret; the value never appears.
-func dsnEnvName(dsnEnv string) string {
-	if s := strings.TrimSpace(dsnEnv); s != "" {
-		return s
-	}
-	return decide.LogDSNEnv
 }
 
 // excludeVoidedOutcomes drops from a list of entries the one OUTCOME row each

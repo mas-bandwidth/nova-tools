@@ -141,7 +141,7 @@ func TestAnOutcomeRowFeedsTheSummaryAndIsNotADecision(t *testing.T) {
 	decision := Entry{
 		Time: at.Format(time.RFC3339), Unit: "row-card", Kind: KindRowTest,
 		Evidence:  Unit{ID: "row-card", Kind: KindRowTest, Files: 1, Packages: 1},
-		RungTried: "pro", Height: 1, Confidence: 0.89, Floor: DefaultFloor, Source: SourceJev,
+		RungTried: "pro", Height: 1, Confidence: measured(0.89), Floor: measured(DefaultFloor), Source: SourceJev,
 		RowanPick: "pro", Wait: WaitNone,
 	}
 	before, err := Summarize(reg, []Entry{decision})

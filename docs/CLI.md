@@ -656,12 +656,12 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 ### route — the ladder of minds
 
 ```
-nova-decide route --unit <json file|inline json> --usage <path> --log <path|postgres>
-                  [--dsn-env NOVA_DECIDE_LOG_DSN]
+nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                  [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                   [--registry <path>] [--floor 0.65] [--base-url <url>] [--key-env JEV_API_KEY]
                   (--usage and --log are REQUIRED whenever jev is asked)
 nova-decide route --unit <json file|inline json> --no-jev [--registry <path>]
-                  [--usage <path>] [--log <path|postgres>] [--floor 0.65]
+                  [--usage <path>] [--log <path>] [--store <host:port>] [--floor 0.65]
 nova-decide route --unit-id <id> --kind <kind> [--files n] [--packages n] [--lanes n]
                   [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                   [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
@@ -891,8 +891,7 @@ CLASSIFY question=harvest/v1 answer=unknown conf=- floor=0.65 decider=none stop=
 ### log — the escalation log
 
 ```
-nova-decide log --log <path|postgres> --summary [--dsn-env NOVA_DECIDE_LOG_DSN] [--registry <path>]
-nova-decide log migrate [--dsn-env NOVA_DECIDE_LOG_DSN]
+nova-decide log --log <path> --summary [--registry <path>]
 ```
 
 `route --log <path>` appends one JSON object per decision: the evidence, the rung tried, its confidence and floor, **where that floor came from**, **who reads the work**, whether it stepped up, the source, the outcome and the rung that succeeded when they are known — and, beside all of it, `rowan_pick`, what the rules alone would have chosen. `log --summary` reads the rows back: the escalations per kind, the starting rung **regenerated** from the rows — the lowest rung carrying its own weight, with at least as many successes as failures — and, per kind, the **shape of the provider's answers** against the floor they were gated on. A kind with no success keeps the rung the table started from. The closing line carries `coverage=<outcomes>/<decisions>`, rows against rows: the two halves of rule 8's row, so the share of decisions with an outcome beside them is visible rather than guessed — it was 141 of 412 on 2026-09-19, and a floor tuned on a third of the rows is tuned on the rows somebody remembered.
@@ -927,21 +926,31 @@ TUNE FLOORS OK rows=20 kinds=6 proposed=5 defeated=0
 TUNE FLOORS WRITTEN floors=5 path=./registry.json
 ```
 
-`--log postgres` is the same log as the table `decide_log`, in the same database as `card_results` (`nova-work record`), so a decision and the card result it produced are one join apart. The summary is a projection of the rows, so it prints the same lines off either sink. The DSN is **never** a flag: it arrives in the environment under the name `--dsn-env` gives (default `NOVA_DECIDE_LOG_DSN`), and `log migrate` installs the table from `internal/decide/migrations/`, idempotently, so it is safe on every start.
+`route --store <host:port>` also writes each decision as one `decide` event on the
+`cards:done` stream of the fleet Redis, through the same writer every card transition uses
+(`internal/events`), and `nova-pulse fold` keeps it in its `decisions` table. The event carries
+`decide_log`'s fields under `decide_log`'s names — `unit_id`, `kind`, `files`, `packages`, `lanes`,
+`lane`, `rung_tried`, `height`, `confidence`, `floor`, `stepped_up`, `escalated`, `designated`,
+`source`, `rowan_pick`, `reason`, `wait`, `awaiting_termination`, `refusal`, `outcome`,
+`rung_succeeded`, `calls`, `tokens_in`, `tokens_out`, `usage_failed` — with the row's stamp as the
+entry's `at`. The evidence document stays in the JSON lines log: the stream carries ids and
+counts, so a reason over 200 bytes is cut with a `...+<n>B` mark and the uncut text is in `--log`.
+A counter the provider did not report is absent from the entry and NULL in the fold, never a
+zero. The password is never a flag: it arrives in the variable `--password-env` names. The
+`decide_log` table this replaces is retired (nova-tools #2623), and with it the table form of
+`--log`, `--dsn-env` and `log migrate`.
 
 ```
-$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_DECIDE_LOG_DSN -- \
-    nova-decide log migrate
-MIGRATE OK table=decide_log version=1 dsn_env=NOVA_DECIDE_LOG_DSN
-
-$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_DECIDE_LOG_DSN -- \
+$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_REDIS_BENCH_PASSWORD -- \
     nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 \
-    --usage ./usage.tsv --log postgres
+    --usage ./usage.tsv --log ./decide.jsonl --store space:6379 --user swarm-hulk
 ROUTE unit=card-41 kind=rebase rung=flash ...
 
-$ nova-decide log --log postgres --summary   # with the DSN in the environment
-LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false
-LOG OK rows=1 kinds=1 escalations=0
+$ nova-pulse fold --db ./ev.sqlite --report
+...
+# decisions_by_kind
+kind	decisions	units	stepped_up	escalated	refused	calls	tokens_in	tokens_out
+rebase	1	1	0	0	0	1	937	12
 ```
 
 `nova-decide tune` is the other half of rule 8: it reads a decisions log back and reports, per
@@ -1060,41 +1069,8 @@ alike: a caller told the decision succeeded while nothing was written has no rec
 
 The decisions table carries both facts. Its TSV fallback gained a seventh column, `source`, after
 the other six; a file written before it exists is six columns wide and is still read, with its
-source unknown rather than guessed. `provider_confidence` is a dash — NULL in Postgres — for a row
-no provider answered.
-
-### the decisions table's schema is owned and versioned
-
-The Postgres decisions table has a migration of its own: `internal/decide/schema.sql`, embedded and
-versioned in `decisions_schema_version` (a **separate** counter from `internal/record`'s
-`schema_version` — the two stores are reached by different DSNs and must not share a number).
-Install it with
-
-```
-nova-decide migrate --dsn <dsn>          # or $NOVA_DSN
-MIGRATE OK store=postgres version=1
-```
-
-It is idempotent in both directions: a fresh database gets the whole table, with `source` present
-and `provider_confidence` nullable; a database carrying the hand-made six-column shape SPEC-DECIDE
-describes in prose is upgraded in place by `ADD COLUMN IF NOT EXISTS source` and
-`ALTER COLUMN provider_confidence DROP NOT NULL`. Running it twice is a no-op, so it is safe on
-every start. A TSV `--dsn` needs no migration and says so.
-
-**Below the required version the writer refuses rather than degrading the row.** It does not drop
-the source, it does not invent a confidence, and it does not print a decision line with a warning
-attached:
-
-```
-DECIDE REFUSED reason=decisions-schema-unmigrated the decision was settled and its configured
-decisions table cannot hold the row's source or its absent provider confidence, so there is no
-receipt and nothing was written: … ; run: nova-decide migrate --dsn <dsn>
-```
-
-Exit 2, nothing on stdout, and **no `receipt=recorded`**: a row that was refused is not a receipt.
-Ownership of this DDL was searched before it was written — no `decisions` table was declared
-anywhere in the organisation, and this repository holds the only writer, the only reader, the
-declaring spec and the org's one versioned migration pattern.
+source unknown rather than guessed. `provider_confidence` is a dash for a row no provider
+answered.
 
 `tune --kind <kind>` reads the decisions TABLE rather than a JSONL log and prints the rows behind
 one kind; a kind with no rows is a refusal, because a floor with no rows behind it is untuned. It
@@ -1102,8 +1078,9 @@ lists rows and reports no floor — the floors come from `--decisions`.
 
 ## Build
 
-Go 1.26 or newer. The standard library, plus the one Postgres driver the durable records share
-(`github.com/jackc/pgx/v5`, linked by `nova-work record` and by `nova-decide`'s decision log).
+Go 1.26 or newer. The standard library, plus the Redis client (`github.com/redis/go-redis/v9`),
+the pure-Go SQLite driver the event fold writes with (`modernc.org/sqlite`, no cgo), and
+`github.com/alicebob/miniredis/v2`, which only the tests link.
 
 ```
 go build ./...
@@ -2966,8 +2943,8 @@ nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password
 **What rides the stream.** `label`, `attempt`, `bench`, `model`, `route`,
 `event`, `tokens_in`, `tokens_out`, `usd`, `pr`, `head`, `at` — ids and counts,
 nothing else. **There is one stream.** These are fields added to `cards:done`,
-the stream `nova-work record` and `nova-work events` already read under their own
-groups; the fold reads it under `fold`, and its SQLite file is a view of that
+the stream `nova-work events` already reads under its own group (and re-announces
+only a card's end, an `ok` or a `fail`); the fold reads it under `fold`, and its SQLite file is a view of that
 stream that `--rebuild` recomputes, never a second record. **An absent cost stays
 absent**: a `--tokens-in`, `--tokens-out` or `--usd` that is not given is not
 written, the fold stores NULL, and the report prints a dash, because a writer
@@ -4811,11 +4788,14 @@ its :status. Each question is asked once per run.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
-events publishes the family's three event channels from two sources: the cards:done
-stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
-becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a changed
-base head. The poll is the fallback heartbeat until the forge pushes a webhook; a quiet
-poll publishes nothing. Without --repo only the stream is bridged.
+events publishes the family's three event channels from two sources: a card's end on
+the cards:done stream (consumer group events) becomes card-done, and a poll of gh every
+--gh-poll becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a
+changed base head. Only an ok or a fail entry is a card's end (or an entry with no event
+field, written before the field existed); every other transition on the stream -- queued,
+a turn, a decide event -- is acked and not re-announced. The poll is the fallback
+heartbeat until the forge pushes a webhook; a quiet poll publishes nothing. Without
+--repo only the stream is bridged.
 
 --once reads the stream and polls the forge once, then exits. The loop form requires
 --deadline and returns when it is reached.
@@ -4904,24 +4884,6 @@ example:
   nova-work plan check --file ./work.work --max-bytes 65536
   nova-work set check --file ./work-set.lisp --ready
   nova-work events --redis 127.0.0.1:6379 --once
-
-nova-work is also the durable card-result record: Redis carries the result, Postgres keeps it.
-
-usage:
-  nova-work record  --postgres <dsn> --redis <addr> [--once] [--deadline 1h] [--migrate]
-  nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed] [--max 20]
-
-verbs:
-  record  consume cards:done and write one row per result into card_results, idempotent on
-          the stream id; --migrate applies the schema and exits; --once reads one pass
-  results one line per recorded result, newest first
-  help
-  version
-
-example:
-  nova-work record --migrate --postgres postgres://space/nova
-  nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
-  nova-work results --postgres postgres://space/nova --bench space --failed --max 5
 ```
 
 The session verbs `session start`, `session status` and `session stop` speak the socket protocol; `SESSION OK` is one shape printed by all three alike. A missing `--session` (the socket has no default path) or a socket nothing answers is one `WORK REFUSED` line on stderr, exit 2, ending `run: nova-work help`. The session's own refusals — `FAIL`, `RACED`, `REFUSED` — reach stderr and exit 1. The graph and plan verbs read the JSON dependency graph and the bounded `.work` plan as data: `plan check` and `plan expand` require a plan path and default to 65,536 bytes, 64 levels of nesting and 4,096 atoms (`--max-bytes`, `--max-depth`, `--max-nodes`); unknown kinds, absent dependencies and dependency cycles refuse. `plan expand` writes card directories for explicit `:node` entries and does not launch them; existing cards are left unchanged when expanding again. `dependencies --graph <file>` reads the graph and `--node <id> --needs <id,id>` writes dependency edges; `ready` prints whether each requested node's dependencies are terminal and accepted without acquiring a lease or reserving a slot. `set check` reads the other top form of the same language — `(work-set "id" … :units ((unit …)))`, the one a coordinator writes by hand — through that same bounded reader, and validates its content: a duplicate id, a `:needs` naming a unit nobody defined, a cycle, an `:owner` no `--minds` registry names, a `:lane` no `--lanes` file names, a `:deadline` that is not an instant. Every rule runs over every unit in one pass and each finding is one `SET` line, so a defective set costs one run rather than one run per defect. The two exit codes stay apart: exit 2 is a file that could not be read at all, exit 1 is a file read whole whose content is wrong, and the `SET OK units=… ready=… blocked=… owned=…` summary prints either way. `--ready` adds the mechanical ready set — a unit is done when it says so (`:done`, or a `:status` of closed, done, landed or merged) or when `--done` names it, and ready when it is not done and every need is done — so what can be pulled is derived from the language rather than maintained by hand. `nova-work help` also describes `clip`, which commits and harvests a worker's result before resetting its worktree; use that mutating workflow only with the intended worktree, branch, base and harvest destination.
