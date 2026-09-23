@@ -154,6 +154,31 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			want: want{held: false},
 		},
 		{
+			// nova-tools #2615 follow-up: the same-friend match is case-insensitive.
+			// Measured 2026-09-22 20:14Z, lane land-1615: BATCH DROP #2587 held
+			// who=johnny though the pull request carried a typed `who=johnny` APPROVE
+			// at head, because the HOLD comment had been typed `who=Johnny`.
+			name: "hold typed who=Johnny at A, APPROVE typed who=johnny at B: taken",
+			comments: []fixtureComment{
+				{ID: 1101, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headA2550 + " verdict=HOLD score=4/10",
+					At: "2026-09-21T21:35:02Z"},
+				{ID: 1102, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 + " verdict=APPROVE score=9/10",
+					At: "2026-09-22T01:48:00Z"},
+			},
+			want: want{held: false},
+		},
+		{
+			// The mirror: HOLD typed lowercase, APPROVE typed capitalised.
+			name: "hold typed who=johnny at A, APPROVE typed who=Johnny at B: taken",
+			comments: []fixtureComment{
+				{ID: 1201, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headA2550 + " verdict=HOLD score=4/10",
+					At: "2026-09-21T21:35:02Z"},
+				{ID: 1202, Login: "johnny-grok", Body: "DISPOSITION who=Johnny head=" + headB2550 + " verdict=APPROVE score=9/10",
+					At: "2026-09-22T01:48:00Z"},
+			},
+			want: want{held: false},
+		},
+		{
 			// The second ask on the issue: an APPROVE's head= is matched against the
 			// whole 40-character head by the same prefix rule HOLD's head= gets, so the
 			// abbreviation a friend actually types releases.
@@ -188,14 +213,30 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			want: want{held: true, holdID: "comment:801", heldAt: headA2550, carried: true},
 		},
 		{
-			// The line this fix must NOT cross (SPEC-DECIDE reading 3): a hold AT the
-			// current head is not carried, and a comment never releases it.
-			name: "hold at B and APPROVE at B, both current: dropped, a comment releases nothing at head",
+			// Amended by the coordinator's 2026-09-22 4:55 PM decision: a hold AT the
+			// current head IS released by the same friend's later typed APPROVE at that
+			// same head -- SPEC-DECIDE reading 3's older "a comment releases nothing at
+			// head" no longer governs a friend superseding their own word (it still
+			// governs the needs_read approval gate, read.go, and a DIFFERENT friend's
+			// comment; see the row below and whocase_test.go).
+			name: "hold at B and APPROVE at B, both current, same friend: taken",
 			comments: []fixtureComment{
 				{ID: 901, Login: "emma-claude", Body: hold2550(headB2550), At: "2026-09-22T01:00:00Z"},
 				{ID: 902, Login: "emma-claude", Body: approve2550(headB2550), At: "2026-09-22T01:48:00Z"},
 			},
-			want: want{held: true, holdID: "comment:901", heldAt: headB2550, carried: false},
+			want: want{held: false},
+		},
+		{
+			// The negative control on the same decision: at head, same as carried, the
+			// rule is same-friend, never "somebody approved". A different friend's
+			// typed APPROVE at the SAME head as the hold releases nothing.
+			name: "hold at B by emma, APPROVE at B by johnny, both current: dropped",
+			comments: []fixtureComment{
+				{ID: 951, Login: "emma-claude", Body: hold2550(headB2550), At: "2026-09-22T01:00:00Z"},
+				{ID: 952, Login: "johnny-grok", Body: "DISPOSITION who=johnny head=" + headB2550 +
+					" verdict=APPROVE score=9/10", At: "2026-09-22T01:48:00Z"},
+			},
+			want: want{held: true, holdID: "comment:951", heldAt: headB2550, carried: false},
 		},
 		{
 			// An untyped hold-shaped line binds to the current head, is who=unknown,

@@ -9,6 +9,7 @@ BASE: dev
 base-repo: https://github.com/mas-bandwidth/nova-tools.git
 base-sha: af6a9fccf33199b4edfc586ab3c7f0c5e1a2d71d
 PATHS: internal/pulse/harveststale.go, internal/pulse/harveststale_test.go
+DEPENDS-ON: -
 FILES: 2
 TEST: ./internal/pulse/ TestStaleBaseAcceptsBranchWhoseParentIsTargetTip
 RUN: go test ./internal/pulse/ -run TestStaleBase -count=1

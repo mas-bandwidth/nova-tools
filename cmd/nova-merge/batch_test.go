@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
@@ -166,6 +167,180 @@ func TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember(t *testing.T) {
 		t.Errorf("the remote received %d new pushes; the batch pushes nothing", got-before)
 	}
 	absent(t, remoteRefs(l), "rowan/integration-2")
+	// The passing test step keeps its stream too. The red control below is what
+	// shows the FAIL block; this only says a green run did not discard the file.
+	kept := filepath.Join(root, "test-1.jsonl")
+	raw, err := os.ReadFile(kept)
+	if err != nil {
+		t.Fatalf("a green test step wrote no %s: %v", kept, err)
+	}
+	if !strings.Contains(string(raw), `"Action":`) {
+		t.Fatalf("a green test step's stream is not go test -json:\n%s", raw)
+	}
+}
+
+// THE RED CONTROL FOR THE KEPT STREAM (#2626). #3's test fails on purpose
+// (t.Fatal("the poison")). The gate still condenses to one BATCH FAIL line, and
+// that line names <root>/test-<round>.jsonl. The file is the complete go test
+// -json stream, which is where the --- FAIL block and the assertion text are.
+func TestBatchKeepsTheFailingTestStream(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-stream", "--pr", "3",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m")
+	if exit != 1 {
+		t.Fatalf("a red test step is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "step=test")
+	contains(t, stdout, "packages=example.com/batch/pkg/c")
+	contains(t, stdout, "tests=TestBroken")
+
+	path := filepath.Join(root, "test-1.jsonl")
+	reason := batchFailReason(t, stdout)
+	if !strings.HasPrefix(reason, "stream="+path+";") {
+		t.Errorf("the condensed reason does not name %s\nreason: %s\nstdout: %s", path, reason, stdout)
+	}
+	// <root>/<name> is removed at the start of the next run. The stream is not inside it.
+	insideWork := filepath.Join(root, "integration-stream", "test-1.jsonl")
+	if _, err := os.Stat(insideWork); err == nil {
+		t.Errorf("the stream was written at %s, inside the directory the next run removes", insideWork)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the test stream was not written to %s: %v\nstdout: %s", path, err, stdout)
+	}
+	text := testStreamOutput(t, string(raw))
+	if !strings.Contains(text, "--- FAIL: TestBroken") {
+		t.Fatalf("the kept stream has no --- FAIL block:\n%s", text)
+	}
+	if !strings.Contains(text, "the poison") {
+		t.Fatalf("the kept stream has no assertion text:\n%s", text)
+	}
+}
+
+// A second test step in the same root takes the next round and leaves the first
+// file byte for byte. <root>/<name> is what the next run removes; these files are not in it.
+func TestTestStreamRoundsDoNotReplaceEachOther(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	first, err := writeTestStream(dir, "round-one\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := writeTestStream(dir, "round-two\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Base(first) != "test-1.jsonl" || filepath.Base(second) != "test-2.jsonl" {
+		t.Fatalf("rounds = %s then %s, want test-1.jsonl then test-2.jsonl", first, second)
+	}
+	got, err := os.ReadFile(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "round-one\n" {
+		t.Fatalf("the first round was replaced: %q", got)
+	}
+}
+
+// Two differently named batches may share one --root. The writers reserve
+// test-<round>.jsonl with O_EXCL, so each keeps its own path and its own
+// bytes. A stat-then-truncate would hand both the same file.
+func TestConcurrentWritersSharingARootKeepDistinctStreams(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	const n = 16
+	paths := make([]string, n)
+	payloads := make([]string, n)
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		payloads[i] = fmt.Sprintf("stream-%02d\n%s\n", i, strings.Repeat("abcdefghij", 20+i))
+		go func(i int) {
+			defer wg.Done()
+			paths[i], errs[i] = writeTestStream(dir, payloads[i])
+		}(i)
+	}
+	wg.Wait()
+	seen := map[string]bool{}
+	for i := 0; i < n; i++ {
+		if errs[i] != nil {
+			t.Fatalf("writer %d: %v", i, errs[i])
+		}
+		if !strings.HasPrefix(paths[i], dir+string(os.PathSeparator)) {
+			t.Fatalf("writer %d wrote outside the root: %s", i, paths[i])
+		}
+		if _, ok := testStreamRound(filepath.Base(paths[i])); !ok {
+			t.Fatalf("writer %d path %s is not test-<round>.jsonl", i, paths[i])
+		}
+		if seen[paths[i]] {
+			t.Fatalf("two writers got %s", paths[i])
+		}
+		seen[paths[i]] = true
+		got, err := os.ReadFile(paths[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != payloads[i] {
+			t.Fatalf("writer %d payload at %s is not intact (%d bytes, want %d)", i, paths[i], len(got), len(payloads[i]))
+		}
+	}
+}
+
+// batchFailReason is the reason= value of the verdict line, unquoted.
+func batchFailReason(t *testing.T, stdout string) string {
+	t.Helper()
+	const key = "reason="
+	i := strings.LastIndex(stdout, key)
+	if i < 0 {
+		t.Fatalf("no reason= on the verdict:\n%s", stdout)
+	}
+	rest := stdout[i+len(key):]
+	if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+		rest = rest[:nl]
+	}
+	q, err := strconv.QuotedPrefix(rest)
+	if err != nil {
+		t.Fatalf("reason= is not a quoted string (%v): %s", err, rest)
+	}
+	s, err := strconv.Unquote(q)
+	if err != nil {
+		t.Fatalf("reason= did not unquote: %v", err)
+	}
+	return s
+}
+
+// testStreamOutput is the text the kept `go test -json` stream printed, joined
+// from its output events. A notice that shared the pipe is not an event.
+func testStreamOutput(t *testing.T, raw string) string {
+	t.Helper()
+	var b strings.Builder
+	events := 0
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.Contains(line, `"Action"`) {
+			continue
+		}
+		var ev struct {
+			Action string `json:"Action"`
+			Output string `json:"Output"`
+		}
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatalf("kept stream line is not go test -json: %v\n%s", err, line)
+		}
+		events++
+		if ev.Action == "output" {
+			b.WriteString(ev.Output)
+		}
+	}
+	if events == 0 {
+		t.Fatalf("kept stream has no go test -json events:\n%s", raw)
+	}
+	return b.String()
 }
 
 // THE STEP THE TESTS DO NOT RUN IS STILL THE STEP THE GATE RUNS, and this is what says so.

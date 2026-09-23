@@ -1567,6 +1567,12 @@ nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
 
 **The class rule.** `TestNoGhPrMergeSpellingInTheToolsGo` and `TestNoGhPrMergeSpellingUnderDotGithub` (internal/ci) refuse a `pr merge` argument list or an `--auto` flag in every non-test Go file under `cmd/` and `internal/` and in every file under `.github/`. The exceptions are a shrink-only list in `internal/ci/testdata/prmerge_allowlist.txt`, checked in both directions: the guard that names `--auto` in order to refuse it, the audit's `--disable-auto` (the one spelling that unmerges), and the secrets store's own squash merge in a repository that has no merge queue.
 
+## Sibling staging on a rebuilt root (2026-09-21)
+
+**The mistake it removes.** Schema's go tests resolve serialize runtimes as siblings of the checkout (`../serialize.go` from the job clone; nested packages walk further). `nova-merge batch` rebuilds `--root/<name>` every run, so those clones — and any watcher symlink the lane pinned beside `repo/` — vanish with the tree.
+
+**The flag.** `--sibling <name>=<url>@<ref>` (repeatable) clones that repository beside `repo/` at the named branch or tag, after the job clone and before the merges. `name` is one `safepath.NameOK` path element (`serialize.go` is legal); `repo` and `tmp` are reserved for the batch's own checkout and temp dir. The last `@` splits url from ref, so an ssh URL is `git@host:path.git@v1.16.2`. A clone that cannot be made is `BATCH REFUSED`. Tests stage a `file://` fixture; they do not clone the real serialize repositories (nova-tools #2499 item 2 / #2508).
+
 ## Lessons — the dogfood pass of 2026-09-18
 
 A non-author drove `nova-merge batch`, `nova-merge queue` and `nova-merge react` against this repository at `dev` 65e23fb0 and wrote down every edge they fell off. **A friend's first-run stumble is a gift, and the repair is the tool.** Sixteen of them are in this section by their own numbers, with the thing each one cost; every one has a test that was seen red before it was trusted.
