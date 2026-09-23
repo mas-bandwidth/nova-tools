@@ -220,8 +220,14 @@ func swapDefaultEvents(t *testing.T) *bytes.Buffer {
 // and the one door's constructor carries it, so every production enqueue -- nova-merge
 // land, nova-pulse's ledger, GHSweep.Enqueue -- is built with a sink, not a nil.
 func TestIssue2185ProductionSinkIsStderr(t *testing.T) {
-	if DefaultEvents == nil || DefaultEvents.Sink != os.Stderr {
-		t.Fatalf("DefaultEvents = %+v, want a sink on stderr", DefaultEvents)
+	// Compare the descriptor, not the *os.File: under `go test -json` (make test's
+	// GOFLAGS) the testing package swaps os.Stderr after package init, so the sink
+	// holds the process's fd 2 while os.Stderr is the harness's pipe.
+	if DefaultEvents == nil {
+		t.Fatal("DefaultEvents is nil, want a sink on stderr")
+	}
+	if f, ok := DefaultEvents.Sink.(*os.File); !ok || f.Fd() != 2 {
+		t.Fatalf("DefaultEvents.Sink = %#v, want the process's stderr (fd 2)", DefaultEvents.Sink)
 	}
 	if door := NewEnqueuer(newFakeEnqueueHost()); door.Events != DefaultEvents {
 		t.Fatalf("NewEnqueuer built a door with Events=%v, want DefaultEvents", door.Events)
