@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -88,11 +89,15 @@ func TestCommentPromotionRefusedAndNoMissingHeadDefault(t *testing.T) {
 	rs := sampleReviewers()
 	head := strings.Repeat("a", 40)
 
-	// Case A: Typed APPROVE in comment must NOT produce an approval verdict
+	// Case A: Typed APPROVE in comment must NOT produce approval standing in EvaluateVerdicts
 	bodyApprove := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM"
 	vApprove, okApprove := ParseComment(101, "stella-astra", bodyApprove, "2026-09-19T10:00:00Z", rs, "author", head, false)
-	if okApprove && vApprove.Word == "approve" {
-		t.Fatalf("comment must NOT be promoted to APPROVE, got %+v", vApprove)
+	if !okApprove || vApprove.Source == "record" {
+		t.Fatalf("typed comment must not have record provenance, got: %+v", vApprove)
+	}
+	st := EvaluateVerdicts([]Verdict{vApprove}, head, "author", rs)
+	if st.Approves != 0 || st.Satisfied {
+		t.Fatalf("comment must NOT be promoted to APPROVE standing, got %+v", st)
 	}
 
 	// Case B: Typed HOLD without explicit head must NOT supply currentHead
@@ -255,11 +260,15 @@ func TestPureApproveCommentsAreInert(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	author := "rowan"
 
-	// Case A: Pure typed DISPOSITION verdict=APPROVE
+	// Case A: Pure typed DISPOSITION verdict=APPROVE must not produce hold or pending, and cannot grant approval standing
 	bodyTypedApprove := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM\nEverything looks great."
 	vTyped, okTyped := ParseComment(201, "stella-astra", bodyTypedApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
-	if okTyped {
-		t.Fatalf("typed APPROVE must be inert and not produce a hold or pending verdict, got: %+v", vTyped)
+	if okTyped && (vTyped.Word == "hold" || vTyped.Word == "pending") {
+		t.Fatalf("typed APPROVE must not produce a hold or pending verdict, got: %+v", vTyped)
+	}
+	st := EvaluateVerdicts([]Verdict{vTyped}, head, author, rs)
+	if st.Approves != 0 || st.Satisfied {
+		t.Fatalf("typed APPROVE comment must not grant approval standing, got: %+v", st)
 	}
 
 	// Case B: Pure explicit first-line APPROVE with ignoreUntyped=true
@@ -339,18 +348,73 @@ func TestACommentNeverReleasesAnything_DrivenFromParseComment(t *testing.T) {
 		Source: "record",
 	}
 
-	// stella posts a comment claiming APPROVE
-	commentBody := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM"
-	vComment, okComment := ParseComment(301, "stella-astra", commentBody, "2026-09-19T02:00:00Z", rs, author, head, false)
+	// A different friend (johnny) posts a comment claiming APPROVE
+	commentBody := "DISPOSITION who=johnny head=" + head + " verdict=APPROVE\nLGTM"
+	vComment, okComment := ParseComment(301, "johnny-login", commentBody, "2026-09-19T02:00:00Z", rs, author, head, false)
 
 	vs := []Verdict{hold}
 	if okComment {
 		vs = append(vs, vComment)
 	}
 
-	// The hold must still be unlifted
+	// The hold must still be unlifted (different friend's comment cannot release stella's hold)
 	unlifted := UnliftedHolds(vs, head, author, rs)
 	if len(unlifted) != 1 || unlifted[0].ID != "record:at1" {
-		t.Fatalf("a comment claiming approve must never release a hold, got: %v", unlifted)
+		t.Fatalf("a different friend's comment claiming approve must never release a hold, got: %v", unlifted)
+	}
+}
+
+// 10. Comment and review bodies are bounded to MaxCommentBodyBytes (64 KiB) during
+// projection and decoding (#2512): an oversized remote payload is safely clamped,
+// preventing unbounded heap allocation, while valid short comments pass without truncation.
+func TestCommentBodyProjectionAndDecodingIsBounded(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	// A: Valid short comment passes untouched
+	shortBody := "DISPOSITION who=stella head=" + head + " verdict=HOLD\nmissing unit test for bounds"
+	vShort, okShort := ParseComment(501, "stella-astra", shortBody, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okShort || vShort.Word != "hold" || vShort.Who != "stella" {
+		t.Fatalf("valid short comment must parse cleanly, got: ok=%v verdict=%+v", okShort, vShort)
+	}
+
+	// B: Oversized comment body (128 KiB) passed to ParseComment is clamped to MaxCommentBodyBytes
+	// If a hold is at the beginning, it is recognized even though the body is huge.
+	oversizedBodyWithHold := "DISPOSITION who=stella head=" + head + " verdict=HOLD\nmemory cap issue\n" + strings.Repeat("x", 128*1024)
+	vOver, okOver := ParseComment(502, "stella-astra", oversizedBodyWithHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okOver || vOver.Word != "hold" || vOver.Who != "stella" {
+		t.Fatalf("oversized comment with leading hold must be parsed, got: ok=%v verdict=%+v", okOver, vOver)
+	}
+
+	// C: Hold marker placed beyond MaxCommentBodyBytes is truncated and NOT recognized
+	fillerBeforeHold := strings.Repeat("z\n", (MaxCommentBodyBytes/2)+10) // exceeds 64 KiB
+	bodyHoldBeyondCap := fillerBeforeHold + "DISPOSITION who=stella head=" + head + " verdict=HOLD\nhidden beyond cap"
+	vBeyond, okBeyond := ParseComment(503, "stella-astra", bodyHoldBeyondCap, "2026-09-19T10:00:00Z", rs, author, head, true)
+	if okBeyond && vBeyond.Word == "hold" {
+		t.Fatalf("hold token beyond MaxCommentBodyBytes must be truncated and not recognized as hold, got: %+v", vBeyond)
+	}
+
+	// D: ParseForgeVerdicts decodes oversized comments JSON safely via boundedBody
+	oversizedJSONComment := fmt.Sprintf(`[{"id":504,"user":{"login":"stella-astra"},"body":%q,"created_at":"2026-09-19T10:00:00Z"}]`,
+		"DISPOSITION who=stella head="+head+" verdict=HOLD\nin oversized json\n"+strings.Repeat("a", 100*1024))
+	vsComments, err := ParseForgeVerdicts(oversizedJSONComment, "[]", 123, rs, author, head, false)
+	if err != nil {
+		t.Fatalf("ParseForgeVerdicts must decode oversized comment JSON without error, got: %v", err)
+	}
+	if len(vsComments) != 1 || vsComments[0].Word != "hold" || vsComments[0].Who != "stella" {
+		t.Fatalf("expected 1 hold verdict from oversized comment JSON, got: %+v", vsComments)
+	}
+
+	// E: ParseForgeVerdicts decodes oversized reviews JSON safely via boundedBody
+	oversizedJSONReview := fmt.Sprintf(`[{"id":505,"user":{"login":"stella-astra"},"body":%q,"state":"CHANGES_REQUESTED","submitted_at":"2026-09-19T10:00:00Z","commit_id":%q}]`,
+		"DISPOSITION who=stella head="+head+" verdict=HOLD\nReview comments...\n"+strings.Repeat("b", 100*1024), head)
+	vsReviews, err := ParseForgeVerdicts("[]", oversizedJSONReview, 123, rs, author, head, false)
+	if err != nil {
+		t.Fatalf("ParseForgeVerdicts must decode oversized review JSON without error, got: %v", err)
+	}
+	if len(vsReviews) != 1 || vsReviews[0].Word != "hold" || vsReviews[0].Who != "stella" {
+		t.Fatalf("expected 1 hold verdict from oversized review JSON, got: %+v", vsReviews)
 	}
 }

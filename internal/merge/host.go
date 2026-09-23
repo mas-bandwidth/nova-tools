@@ -417,14 +417,16 @@ func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 // comment or review capture that carries a typed disposition near the end of a long
 // thread is not evidence this tool may read a 64 KiB prefix of and call complete
 // (nova-tools #2522 measured one such capture at 63,499 bytes).
+// The body is projected and bounded via --jq (.body[:65536]) so that individual comment
+// payloads cannot cause unbounded memory consumption during capture and decoding.
 func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
 	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n),
-		"--jq", "[.[] | {id, body, created_at, user: {login: .user.login}}]")
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), created_at, user: {login: .user.login}}]", MaxCommentBodyBytes))
 	if err != nil {
 		return nil, err
 	}
 	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n),
-		"--jq", "[.[] | {id, body, state, submitted_at, commit_id, user: {login: .user.login}}]")
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), state, submitted_at, commit_id, user: {login: .user.login}}]", MaxCommentBodyBytes))
 	if err != nil {
 		return nil, err
 	}

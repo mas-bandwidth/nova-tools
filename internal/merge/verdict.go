@@ -229,6 +229,9 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
 	}
+	if len(rawBody) > MaxCommentBodyBytes {
+		rawBody = strings.Clone(rawBody[:MaxCommentBodyBytes])
+	}
 	clean := StripQuotedAndCode(rawBody)
 	if IsAuthorNote(clean, author, rs) {
 		return Verdict{}, false
@@ -261,34 +264,14 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			}
 		}
 	}
-	// A typed APPROVE (nova-tools #2550), read BEFORE the untyped hold-shape check below
-	// (nova-tools #2631): the typed line wins when a comment carries both a typed verdict
-	// and prose that happens to be hold-shaped. Before this reordering, an APPROVE comment
-	// whose body praised a HOLD by name in passing -- "**Johnny's HOLD Conclusively
-	// Satisfied**" inside a `DISPOSITION who=emma ... verdict=APPROVE` comment -- was read
-	// as an untyped HOLD by whoever's word HOLD appeared in bold, before its own typed
-	// APPROVE line was ever consulted (#2587 comment 5782779847, #2616 comment 5782724650).
-	//
-	// Before this, a comment carrying `DISPOSITION who=<name> head=<sha> verdict=APPROVE`
-	// fell through to the untyped branch below and came back as a PENDING comment -- a
-	// typed verdict read as evidence of nothing, and then as a second reason to drop the
-	// pull request. It is read here so that UnreleasedHolds can see it.
-	//
-	// It is still true that a comment releases nothing at the current head: an approve
-	// with Source "comment-rule" is not a lane record, so UnreleasedHolds never folds it
-	// against a hold that binds to the head. Its one job is the carried case.
-	if v, ok := approveVerdict(id, login, lines, at, rs, currentHead); ok {
-		return v, true
-	}
 
-	// Untyped check: a comment yields HOLD only from a verdict-SHAPED line (nova-tools
-	// #2631). The word HOLD inside a body -- a bold aside inside a bullet about somebody
+	// Untyped check: a comment yields HOLD from a verdict-SHAPED line (nova-tools
+	// #2631, #2454). The word HOLD inside a body -- a bold aside inside a bullet about somebody
 	// else's hold, a heading recapping one, a quoted line -- is never a verdict; a LINE
-	// that is, on its own, one of the recognised shapes is. Every line is checked, not
-	// only the first, because a genuine standalone `**HOLD: ...**` line can follow a
-	// leading DISPOSITION/NOTE line (TestAuthorLoginExcusesNothingOnSharedLoginNote) --
-	// but "Johnny's HOLD Conclusively Satisfied" is a bullet ABOUT a hold, not a line
-	// whose own shape is HOLD, so it never matches isHoldShapedLine on any line by itself.
+	// that is, on its own, one of the recognised shapes is.
+	//
+	// Independent HOLD evidence takes precedence over a typed or explicit APPROVE in the same
+	// comment, preserving unresolved HOLD evidence even in mixed-message comments (#2454).
 	holdLine := ""
 	for _, l := range lines {
 		if isHoldShapedLine(l) {
@@ -311,6 +294,11 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 			Conf:   "-",
 			Kind:   "line",
 		}
+		return v, true
+	}
+
+	// A typed APPROVE (nova-tools #2550), read when no hold-shaped line is present:
+	if v, ok := approveVerdict(id, login, lines, at, rs, currentHead); ok {
 		return v, true
 	}
 
@@ -401,6 +389,9 @@ func approveVerdict(id int64, login string, lines []string, at string, rs *Revie
 func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string, ignoreUntyped bool) (Verdict, bool) {
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
+	}
+	if len(rawBody) > MaxCommentBodyBytes {
+		rawBody = strings.Clone(rawBody[:MaxCommentBodyBytes])
 	}
 	clean := StripQuotedAndCode(rawBody)
 
@@ -801,7 +792,7 @@ func isHoldShapedLine(line string) bool {
 	if line == "" {
 		return false
 	}
-	if strings.EqualFold(firstToken(line), "HOLD") {
+	if strings.EqualFold(firstToken(strings.TrimLeft(line, "# ")), "HOLD") {
 		return true
 	}
 	if holdVerdictLine.MatchString(line) || holdParenLine.MatchString(line) || holdReviewLine.MatchString(line) {
@@ -851,20 +842,41 @@ func deriveHoldWho(line string) string {
 	return normWho(m[1])
 }
 
+// MaxCommentBodyBytes is the upper bound on a single comment or review body, in bytes.
+// Matches execOutputCap and ChildCap (64 KiB): remote comment bodies are clamped to this
+// ceiling during projection and decoding so that oversized payloads cannot cause
+// unbounded heap allocation.
+const MaxCommentBodyBytes = 64 * 1024
+
+// boundedBody clamps remote payload strings to MaxCommentBodyBytes upon unmarshaling.
+type boundedBody string
+
+func (b *boundedBody) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	if len(s) > MaxCommentBodyBytes {
+		s = strings.Clone(s[:MaxCommentBodyBytes])
+	}
+	*b = boundedBody(s)
+	return nil
+}
+
 // ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.
 func ParseForgeVerdicts(comments, reviews string, n int, rs *ReviewerSet, author, currentHead string, ignoreUntyped bool) ([]Verdict, error) {
 	var out []Verdict
 	var rawComments []struct {
 		ID        int64                  `json:"id"`
 		User      struct{ Login string } `json:"user"`
-		Body      string                 `json:"body"`
+		Body      boundedBody            `json:"body"`
 		CreatedAt string                 `json:"created_at"`
 	}
 	if err := decodeArrays(comments, &rawComments); err != nil {
 		return nil, fmt.Errorf("pull request %d's comments did not answer JSON this tool can read: %w", n, err)
 	}
 	for _, c := range rawComments {
-		if v, ok := ParseComment(c.ID, c.User.Login, c.Body, c.CreatedAt, rs, author, currentHead, ignoreUntyped); ok {
+		if v, ok := ParseComment(c.ID, c.User.Login, string(c.Body), c.CreatedAt, rs, author, currentHead, ignoreUntyped); ok {
 			out = append(out, v)
 		}
 	}
@@ -872,7 +884,7 @@ func ParseForgeVerdicts(comments, reviews string, n int, rs *ReviewerSet, author
 	var rawReviews []struct {
 		ID          int64                  `json:"id"`
 		User        struct{ Login string } `json:"user"`
-		Body        string                 `json:"body"`
+		Body        boundedBody            `json:"body"`
 		State       string                 `json:"state"`
 		SubmittedAt string                 `json:"submitted_at"`
 		CommitID    string                 `json:"commit_id"`
@@ -881,7 +893,7 @@ func ParseForgeVerdicts(comments, reviews string, n int, rs *ReviewerSet, author
 		return nil, fmt.Errorf("pull request %d's reviews did not answer JSON this tool can read: %w", n, err)
 	}
 	for _, r := range rawReviews {
-		if v, ok := ParseReview(r.ID, r.User.Login, r.Body, r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead, ignoreUntyped); ok {
+		if v, ok := ParseReview(r.ID, r.User.Login, string(r.Body), r.State, r.CommitID, r.SubmittedAt, rs, author, currentHead, ignoreUntyped); ok {
 			out = append(out, v)
 		}
 	}
