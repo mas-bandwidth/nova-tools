@@ -23,7 +23,10 @@ import (
 // reads the whole batch off stdin (the remote launch already has it) and
 // only then drops the connection the way a mid-command network blip would:
 // no kex_exchange_identification prefix, so the pre-exec phase is not named
-// (#3061 hold 7). Every other accepted session appends one line to
+// (#3061 hold 7). A bench whose dir holds `dropafter-reset` does the same but
+// with the "Connection reset by" wording instead of "Connection closed by"
+// (#3061 hold 7, stella's second pass: the reset wording was still
+// unconditional in preExecRefused). Every other accepted session appends one line to
 // sessions.log and its stdin to launched, then holds the session for a
 // second, as a slow remote verb would. It lives in t.TempDir(), so testguard
 // sees a fake.
@@ -56,6 +59,10 @@ echo "open $*" >> "$dir/sessions.log"
 cat >> "$dir/launched"
 if [ -e "$dir/dropafter" ]; then
   echo "Connection closed by 127.0.0.1 port 22" >&2
+  exit 255
+fi
+if [ -e "$dir/dropafter-reset" ]; then
+  echo "Connection reset by 127.0.0.1 port 22" >&2
   exit 255
 fi
 sleep 1
@@ -93,6 +100,18 @@ func (f *fixture) dropAfter(t *testing.T, bench string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.dir, bench, "dropafter"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dropAfterReset is dropAfter's twin for the "Connection reset by" wording
+// (#3061 hold 7, stella's second pass).
+func (f *fixture) dropAfterReset(t *testing.T, bench string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.dir, bench), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.dir, bench, "dropafter-reset"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -448,6 +467,42 @@ func TestPostCommandDisconnectKeepsReservationsDealt(t *testing.T) {
 	}
 }
 
+// TestPostCommandResetKeepsReservationsDealt is #3061 hold 7's second pass
+// (stella): the same ambiguity as TestPostCommandDisconnectKeepsReservationsDealt,
+// but for "Connection reset by" instead of "Connection closed by". Both
+// bare messages used to be accepted unconditionally by preExecRefused before
+// any connect-phase-context check ran, so a mid-command reset would return
+// the reservations to the pool and deal the same 50 cards again.
+func TestPostCommandResetKeepsReservationsDealt(t *testing.T) {
+	const sprint = "control-3061-hold7-reset"
+	ctx := context.Background()
+	f := newFixture(t)
+	f.dropAfterReset(t, "ctl-a")
+	in := Input{Now: time.Now(), Benches: []Bench{upBench("ctl-a", 64)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
+	st := newFakeStore("lease-1", in)
+	p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: f.remote()}
+	res, err := p.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(f.lines("ctl-a", "launched")); got != 50 {
+		t.Fatalf("card launch --stdin got %d lines, want 50 (the batch must reach the remote command before the drop)", got)
+	}
+	br := res.Benches[0]
+	if br.SSH != SSHError {
+		t.Fatalf("post-command reset classified %s, want %s: it is ambiguous, not pre-exec", br.SSH, SSHError)
+	}
+	if br.Returned != 0 {
+		t.Fatalf("post-command reset returned %d reservations to the pool, want 0", br.Returned)
+	}
+	if n := st.dealtOn("ctl-a"); n != 50 {
+		t.Fatalf("%d of 50 cards stayed dealt on ctl-a after a post-command reset, want all 50 retained", n)
+	}
+	if res.Launched() != 0 {
+		t.Fatalf("res.Launched() = %d, want 0: the pass does not know the batch succeeded", res.Launched())
+	}
+}
+
 func TestPlanSharesAndFilters(t *testing.T) {
 	now := time.Now()
 	a := []Card{{Sprint: "a", Label: "a1", Priority: 1}, {Sprint: "a", Label: "a2", Priority: 2}, {Sprint: "a", Label: "a3", Priority: 3}, {Sprint: "a", Label: "a4", Priority: 4}}
@@ -486,6 +541,7 @@ func TestClassifyOpenSSHMessages(t *testing.T) {
 		{0, "", SSHOK},
 		{255, "kex_exchange_identification: Connection closed by remote host\r\nConnection closed by 100.64.0.7 port 22", SSHRefused},
 		{255, "ssh: connect to host studio port 22: Connection refused", SSHRefused},
+		{255, "ssh: connect to host studio port 22: Connection reset by peer", SSHRefused},
 		{255, "Connection timed out during banner exchange", SSHTimeout},
 		{255, "ssh: connect to host studio port 22: Operation timed out", SSHTimeout},
 		{255, "Host key verification failed.", SSHError},
@@ -496,6 +552,10 @@ func TestClassifyOpenSSHMessages(t *testing.T) {
 		// stays SSHError rather than returning reservations to the pool.
 		{255, "Connection closed by 100.64.0.7 port 22", SSHError},
 		{255, "Operation timed out", SSHError},
+		// #3061 hold 7, stella's second pass: "connection reset by" is the
+		// same ambiguity as "connection closed by" and must require the
+		// same connect-phase context.
+		{255, "Connection reset by 100.64.0.7 port 22", SSHError},
 	} {
 		if got := Classify(tc.exit, tc.stderr); got != tc.want {
 			t.Errorf("Classify(%d, %q) = %s, want %s", tc.exit, tc.stderr, got, tc.want)
