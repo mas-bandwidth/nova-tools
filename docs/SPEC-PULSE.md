@@ -2875,3 +2875,60 @@ connection. Each is seen red first against the mutation its rule names.
     honest (rule 18).
 20. `TestSprintFunnelReadsUnmeasuredSpendAsUnknown` — a wave with no usage rows prints
     `usd_per_useful=-`, never 0.0000 (rule 19).
+
+## Launch: one card, one bench
+
+This verb retires the thirty-three shell scripts of the `rr-*.sh`, `nova-*-runner.sh` and `studiolaunch-*.sh` families, which launch one card on one bench. On 2026-09-20, these scripts comprised three parallel, diverging code paths for Linux, darwin and the studio, where every fix was applied three times and at least one wrongly, causing an outage. `nova-pulse launch` replaces them with one Go code path, one contract, and one test suite.
+
+The verb has two operational forms, discriminated by the singular/plural flag:
+- **Single-card launcher:** `nova-pulse launch --bench <name> --card <file> [--provider <route>]` executes one card on one bench. It is the atomic launch primitive called by the fill loop and by hand (rule 64, `hand-launch-is-launch-card-n`).
+- **Batch admission runner:** `nova-pulse launch --cards <cards.tsv> --root <dir> ...` (the gather mode described under "The verbs", above) enqueues cards across the pool.
+
+Passing both `--card` and `--cards`, or omitting both, is refused: `PULSE REFUSED: specify either --card <file> or --cards <tsv>` (exit 2).
+
+The 9 rules of the single-card launch contract, and the 11 tests it demands:
+
+```
+nova-pulse launch --bench <name> --card <file> [--provider <route>]
+```
+
+1.  **The verb requires a bench, a card, and an optional provider route.** `launch` reads the card file and the bench record named by `--bench`; a missing `--card` or `--bench` is a refusal. A `--provider` route on the command line overrides any route discovered from the bench record. If `--provider` is omitted, `launch` reads the provider route from the bench's own record. This retires the twelve provider-specific launcher scripts (`flash-native-bench.sh`, `dspro-native-bench.sh` and so on), each of which hardcoded one provider route. `TestLaunchRequiresBenchAndCard`, `TestLaunchReadsProviderOverride`.
+
+2.  **The repository is staged from the bench's mirror.** The card's `base-repo` and `base-sha` headers are required. The verb stages the repository from the mirror path declared in the bench's own record, and includes the fixed-path self-heal behaviour of the scripts it replaces. A card that tries to clone a repository from a URL is a lint error and is never launched. This retires the defect from #2383 where cards cloned from GitHub inside the firewall. `TestLaunchStagesRepoFromBenchMirror`, `TestLaunchRefusesCardWithNoBaseRepo`.
+
+3.  **A ten-second preflight runs before the slot lease is taken.** Before starting the native process, `launch` verifies that the harness binary starts and answers a no-op, the staged repo is at `base-sha`, the card's `LEG` toolchain resolves, and the chosen provider answers a one-token ping. Any failure is a refusal, printed with a named cause (`why=preflight` or `why=unreachable`). This retires the failure from #2384 where a broken environment was discovered only after the native process began, wasting a slot. `TestLaunchPreflightRefusesOnFailure`.
+
+4.  **A slot is taken by atomic lease.** `launch` takes one lease from the bench's slot store. If the bench reports no capacity, the launch is refused (`why=capacity`). The lease is held until the native process exits. This retires the hand-rolled capacity probes of `rr-native-bench.sh` and its copies. `TestLaunchTakesAtomicSlotLease`.
+
+5.  **The harness environment is sanitized and bounded.** `OPENCODE_*` variables are forwarded from the environment. `GOMAXPROCS` is set to `2` and the `go test` arguments on the card are amended with `-p 2` to bound parallelism. This retires the defects from #2328 and #2401 where a card's environment was either too sparse (requiring manual grants on darwin) or too wide (consuming a whole bench). `TestLaunchSetsHarnessEnvironment`.
+
+6.  **Per-OS differences are behind a launcher interface.** The concrete launcher implementation is chosen based on the bench record's `OS` field. The interface abstracts the differences between Linux (`/proc`), darwin (`sysctl`) and the studio's local path layout, so the core launch logic is shared. This retires the three parallel, diverging code paths that made fixes so costly. `TestLaunchAbidesPerOSDifferences`.
+
+7.  **A successful start exits 0 with the job id.** On a successful launch, where the native process has started and the harness has acknowledged it, `launch` prints one `LAUNCH STARTED` line with the job id and exits 0. `TestLaunchSuccessPrintsStarted`.
+
+8.  **A pre-launch refusal exits 2 or 3 and hands the card back.** If the launch is refused for any reason before the native process starts — capacity, disk space, a bad name, an unreachable provider, or a failed preflight check — the verb prints one `LAUNCH REFUSED` line with the cause and exits 2 (or 3 for `unreachable`, per #2381). The card is considered "handed back" to the caller, untouched. This retires the ambiguous exit codes of `rr-run.sh` that led to failed jobs being retried as `UNKNOWN`. `TestLaunchRefusesWithTypedExitCode`.
+
+9.  **An ambiguous exit after the start is UNKNOWN.** If the native process starts but fails in a way that the launcher cannot definitively diagnose (e.g., the harness becomes unresponsive after acknowledging the start), the state is considered `UNKNOWN`. The launcher does not raise this; it is the responsibility of the calling machinery to observe this state and act. This clarifies the boundary from #2381. `TestLaunchAmbiguousExitIsHandledByCaller`.
+
+```
+LAUNCH STARTED job=<id> bench=<name> slot=<n> pid=<pid>
+LAUNCH REFUSED why=<capacity|disk|name|unreachable|preflight> reason=<text>
+```
+
+A successful launch exits 0. A pre-launch refusal exits 2 (or 3 for `unreachable`).
+
+### Tests this spec demands
+
+The tests for this verb live in the `internal/pulse` package. They use a fake bench record store, a fake slot lease store, a fake harness and a fake git on PATH. No test opens a real network connection or touches a real forge. Each test is seen red first.
+
+1.  `TestLaunchRequiresBenchAndCard` — refuses to run if `--bench` or `--card` is missing (rule 1).
+2.  `TestLaunchReadsProviderOverride` — a `--provider` flag overrides the bench record's default (rule 1).
+3.  `TestLaunchStagesRepoFromBenchMirror` — stages the repository from the path in the fake bench record, using the card's `base-repo` and `base-sha` (rule 2).
+4.  `TestLaunchRefusesCardWithNoBaseRepo` — refuses a card that is missing the `base-repo` or `base-sha` header (rule 2).
+5.  `TestLaunchPreflightRefusesOnFailure` — injects failures for each preflight step (harness, repo, toolchain, provider) and asserts a refusal with the correct cause (rule 3).
+6.  `TestLaunchTakesAtomicSlotLease` — proves a lease is taken from the fake slot store; asserts refusal when the store reports no capacity (rule 4).
+7.  `TestLaunchSetsHarnessEnvironment` — inspects the environment passed to the fake harness, asserting `OPENCODE_*` variables are forwarded and `GOMAXPROCS` is set (rule 5).
+8.  `TestLaunchAbidesPerOSDifferences` — runs the same launch against three fake benches (Linux, darwin, studio) and confirms the correct OS-specific fakes are called (rule 6).
+9.  `TestLaunchSuccessPrintsStarted` — on a clean run with all fakes succeeding, asserts the `LAUNCH STARTED` line and exit code 0 (rule 7).
+10. `TestLaunchRefusesWithTypedExitCode` — asserts that pre-launch refusals for capacity, disk, etc., produce a `LAUNCH REFUSED` line and the correct exit code (2 or 3) (rule 8).
+11. `TestLaunchAmbiguousExitIsHandledByCaller` — asserts that a process that dies ambiguously after start acknowledges is classified as UNKNOWN without the launcher raising a false refusal (rule 9).
