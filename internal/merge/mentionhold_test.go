@@ -80,6 +80,39 @@ func TestAMentionedFriendIsNotTheWriterOfAHold(t *testing.T) {
 		}
 	})
 
+	// Stella's HOLD 6 on #3388 (comment 5804827993), case 1: a prose mention
+	// followed by a colon is not a signature. <Name>: attributes only at the start
+	// of the post-pin header.
+	t.Run("a prose <Name>: after the pin is not a signature", func(t *testing.T) {
+		body := "HOLD sha=" + headMention + "\n\nI asked Stella: please verify this"
+		approve := "DISPOSITION who=stella head=" + olderMention + " verdict=APPROVE score=9"
+		hv, ok := ParseComment(618, "gafferongames", body, "2026-09-22T20:01:08Z", rs, "rowan-claude", headMention, false)
+		av, aok := ParseComment(619, "gafferongames", approve, "2026-09-22T21:03:55Z", rs, "rowan-claude", headMention, false)
+		if !ok || !aok || hv.Word != "hold" || hv.Who != "unknown" {
+			t.Fatalf("a mid-sentence Name: must stay an unattributed hold, got %+v ok=%v", hv, ok)
+		}
+		holds := UnliftedHolds([]Verdict{hv, av}, headMention, "rowan-claude", rs)
+		if len(holds) != 1 || holds[0].ID != "comment:618" {
+			t.Fatalf("stella's later approve must not release a hold that only mentions her, got %+v", holds)
+		}
+	})
+
+	// Stella's HOLD 6 on #3388, case 2: ParseComment finds a standalone HOLD line
+	// after a leading line, so the header is read from THAT line and its next
+	// non-blank line, not from the body's first line.
+	t.Run("a later standalone HOLD line reads its own header", func(t *testing.T) {
+		body := "NOTE shared login, second pass.\nHOLD sha=" + headMention + "\nwho=stella one more defect."
+		approve := "DISPOSITION who=stella head=" + olderMention + " verdict=APPROVE score=9"
+		hv, ok := ParseComment(620, "gafferongames", body, "2026-09-22T20:01:08Z", rs, "rowan-claude", headMention, false)
+		if !ok || hv.Word != "hold" || hv.Who != "stella" {
+			t.Fatalf("the later HOLD line's who= must attribute, got %+v ok=%v", hv, ok)
+		}
+		av, _ := ParseComment(621, "gafferongames", approve, "2026-09-22T21:03:55Z", rs, "rowan-claude", headMention, false)
+		if holds := UnliftedHolds([]Verdict{hv, av}, headMention, "rowan-claude", rs); len(holds) != 0 {
+			t.Fatalf("stella's own later approve must release her hold (#3278), got %+v", holds)
+		}
+	})
+
 	t.Run("the attributed holder's own later approve releases at any head (#3278)", func(t *testing.T) {
 		body := "HOLD sha=" + headMention + "\n\nwho=stella one more defect."
 		approve := "DISPOSITION who=stella head=" + olderMention + " verdict=APPROVE score=9"

@@ -287,17 +287,17 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	// leading DISPOSITION/NOTE line (TestAuthorLoginExcusesNothingOnSharedLoginNote) --
 	// but "Johnny's HOLD Conclusively Satisfied" is a bullet ABOUT a hold, not a line
 	// whose own shape is HOLD, so it never matches isHoldShapedLine on any line by itself.
-	holdLine := ""
-	for _, l := range lines {
+	holdLine, holdIdx := "", -1
+	for i, l := range lines {
 		if isHoldShapedLine(l) {
-			holdLine = strings.TrimSpace(l)
+			holdLine, holdIdx = strings.TrimSpace(l), i
 			break
 		}
 	}
 	if holdLine != "" {
 		// SPEC-DECIDE lines 1037-1040: untyped comment binds to current head
 		head := currentHead
-		who := attributeUntypedHold(clean, holdLine)
+		who := attributeUntypedHold(lines, holdIdx)
 		v := Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
 			Who:    who,
@@ -835,41 +835,49 @@ var holdPinTokenRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?[
 
 // attributeUntypedHold is deriveHoldWho, plus the nova-tools #2710 header rule
 // for "HOLD sha=<hex>" where the friend's name is not adjacent to HOLD (#2713's
-// 43f1df17, recut). The header is the rest of the first line after HOLD; if
-// that rest is only pins and punctuation, it extends to the next non-blank
-// line. A single anchored identity attributes: who=<name>, or <Name>: (either
-// spelling). A free-form mention does not -- "Stella delta read clears the
-// original defect" stays unknown -- because under the #3278 ruling the
-// holder's own later typed APPROVE releases the hold at any head, so a mention
-// read as the writer would let the mentioned friend release somebody else's
-// HOLD on a shared login. Two names, or none, stay unknown, and an
-// unattributed HOLD stays held. A name deriveHoldWho already reads
+// 43f1df17, recut). The header belongs to the HOLD line ParseComment located
+// (lines[holdIdx]), not to the body's first line: a standalone HOLD line may
+// follow a leading NOTE/prose line, and it is read on its own (Stella, #3388
+// comment 5804827993). The header is the rest of that line after HOLD; if the
+// rest is only pins and punctuation, it extends to the next non-blank line.
+// A single anchored identity attributes: who=<name> as a bounded key=value
+// field, or <Name>: at the very start of the post-pin header. A free-form
+// mention does not -- "Stella delta read clears the original defect" and "I
+// asked Stella: please verify this" both stay unknown -- because under the
+// #3278 ruling the holder's own later typed APPROVE releases the hold at any
+// head, so a mention read as the writer would let the mentioned friend release
+// somebody else's HOLD on a shared login. Two names, or none, stay unknown, and
+// an unattributed HOLD stays held. A name deriveHoldWho already reads
 // ("HOLD -- Stella", "Stella: HOLD") is kept. A sha= pin only shapes the
 // header here; it does not move the head the hold binds to.
-func attributeUntypedHold(clean, holdLine string) string {
+func attributeUntypedHold(lines []string, holdIdx int) string {
+	if holdIdx < 0 || holdIdx >= len(lines) {
+		return "unknown"
+	}
+	holdLine := strings.TrimSpace(lines[holdIdx])
 	if who := deriveHoldWho(holdLine); who != "unknown" {
 		return who
 	}
-	lines := nonEmptyLines(clean)
-	if len(lines) == 0 || !strings.EqualFold(firstToken(lines[0]), "HOLD") {
+	if !strings.EqualFold(firstToken(holdLine), "HOLD") {
 		return "unknown"
 	}
-	rest := stripLeadingHoldWord(lines[0])
-	header := rest
-	if holdHeaderIsPinOnly(rest) && len(lines) > 1 {
-		header = rest + " " + lines[1]
+	header := stripHoldPins(stripLeadingHoldWord(holdLine))
+	if headerIsPunctuationOnly(header) {
+		if next := nextNonBlankLine(lines, holdIdx+1); next != "" {
+			header = header + " " + stripHoldPins(next)
+		}
 	}
 	return anchoredFriendWho(header)
 }
 
-func nonEmptyLines(body string) []string {
-	var out []string
-	for _, l := range strings.Split(body, "\n") {
-		if s := strings.TrimSpace(l); s != "" {
-			out = append(out, s)
+// nextNonBlankLine is the first non-blank line at or after lines[from], trimmed.
+func nextNonBlankLine(lines []string, from int) string {
+	for i := from; i < len(lines); i++ {
+		if s := strings.TrimSpace(lines[i]); s != "" {
+			return s
 		}
 	}
-	return out
+	return ""
 }
 
 func stripLeadingHoldWord(line string) string {
@@ -887,9 +895,13 @@ func stripLeadingHoldWord(line string) string {
 	return line
 }
 
-func holdHeaderIsPinOnly(rest string) bool {
-	stripped := holdPinTokenRE.ReplaceAllString(" "+rest, "")
-	for _, r := range stripped {
+// stripHoldPins removes sha=/head= pins, keeping a space where each stood.
+func stripHoldPins(s string) string {
+	return holdPinTokenRE.ReplaceAllString(" "+s, " ")
+}
+
+func headerIsPunctuationOnly(s string) bool {
+	for _, r := range s {
 		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
 			return false
 		}
@@ -897,10 +909,16 @@ func holdHeaderIsPinOnly(rest string) bool {
 	return true
 }
 
-// anchoredFriendWho is the one friend the header names as an identity.
-// who=<name> and <Name>: count. A name with neither, or a second friend's
-// name beside the first, does not: a mention is not a signature.
+func isASCIILetter(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+}
+
+// anchoredFriendWho is the one friend the post-pin header names as an
+// identity. who=<name> anywhere as a bounded field counts; <Name>: counts only
+// as the header's first word. A name with neither, or a second friend's name
+// beside the first, does not: a mention is not a signature.
 func anchoredFriendWho(header string) string {
+	header = strings.TrimLeftFunc(header, func(r rune) bool { return !isASCIILetter(r) })
 	idxs := friendNameRE.FindAllStringSubmatchIndex(header, -1)
 	if len(idxs) == 0 {
 		return "unknown"
@@ -927,14 +945,20 @@ func anchoredFriendWho(header string) string {
 	return who
 }
 
-func friendNameIsAnchored(s string, start, end int) bool {
-	if start < 0 || end > len(s) || start > end {
+// friendNameIsAnchored: header[start:end] is a friend name. It is an identity
+// when it is the value of a who= field, or when it is the header's first word
+// and a colon follows it (bold/underscore markers between are allowed).
+func friendNameIsAnchored(header string, start, end int) bool {
+	if start < 0 || end > len(header) || start > end {
 		return false
 	}
-	if whoAnchorBefore.MatchString(s[:start]) {
+	if whoAnchorBefore.MatchString(header[:start]) {
 		return true
 	}
-	rest := strings.TrimLeft(s[end:], " \t")
+	if start != 0 {
+		return false
+	}
+	rest := strings.TrimLeft(header[end:], " \t*_`")
 	return strings.HasPrefix(rest, ":")
 }
 
