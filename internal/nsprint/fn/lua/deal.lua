@@ -43,9 +43,13 @@ local function deal_receipt(S, kind, id, from_state, to_state, attempt, token_sh
     'idem', idem or '', 'at', tostring(at))
 end
 
--- The bench profile: an empty legs field runs every leg.
+-- The bench profile: an empty legs field runs every leg, and a card with no
+-- leg deals to any bench. A missing field is the empty set: HMGET answers it
+-- with Lua false, never nil (nova-tools #3321: the fleet's benches carry no
+-- legs field and `card push` stores no leg, so gmatch on false failed every
+-- deal).
 local function deal_runs(legs, leg)
-  if leg == nil or leg == '' or legs == nil or legs == '' then
+  if not leg or leg == '' or not legs or legs == '' then
     return true
   end
   for l in string.gmatch(legs, '[^, ]+') do
