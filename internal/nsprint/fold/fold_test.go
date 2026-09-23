@@ -366,3 +366,286 @@ func TestFoldSuppressesPerCardWhenUnpricedCardIsOutsideTheDenominator(t *testing
 		t.Errorf("commit subject %q does not suppress usd per landed", msg)
 	}
 }
+
+// calibSet is the Jev calibration set the fold fixture runs (nova-tools #3081).
+// Rows 1-5 are the five resolved disagreements of the 2026-09-22 scorecard
+// (reports/jev-scorecard-2026-09-22.md; the rowan-tools #176 few-shots) with
+// the ruled friend line at the head Jev read. #2781 at 0a897035 is Stella's
+// false-confidence case: Jev said UNSURE, her HOLD 4 at the same head found a
+// Redis Spend partial-write defect. #2961 at afd3efb0 is her coverage case:
+// the work-type step stamped allowed=- without enforcing allowed_routes[type];
+// Emma's APPROVE 10 there is superseded by Stella's HOLD 6. The schema 90xx
+// rows are synthetic conformance cells, so the set has a second work type.
+// Resolved times order the date split: the newest third is the held-out set.
+const calibSet = `{"repo":"nova-tools","pr":2519,"head":"907546af","work_type":"issue-fix-red-first","who":"emma","verdict":"HOLD","score":6,"resolved_at":"2026-09-22T16:53:00Z","tag":"few-shot","note":"CI red at head (G1); Jev PASS 8"}
+{"repo":"nova-tools","pr":2522,"head":"9ee81556","work_type":"issue-fix-red-first","who":"stella","verdict":"APPROVE","score":9,"resolved_at":"2026-09-22T16:54:00Z","tag":"few-shot"}
+{"repo":"nova-tools","pr":2543,"head":"86889917","work_type":"issue-fix-red-first","who":"rowan-ruling","verdict":"HOLD","score":0,"resolved_at":"2026-09-22T16:55:00Z","tag":"few-shot","note":"the test checks its own fixture; ruled not an 8+, no score"}
+{"repo":"nova-tools","pr":2622,"head":"312a4b38","work_type":"issue-fix-red-first","who":"emma","verdict":"APPROVE","score":10,"resolved_at":"2026-09-22T16:56:00Z","tag":"few-shot"}
+{"repo":"nova-tools","pr":2651,"head":"468acdbc","work_type":"issue-fix-red-first","who":"stella","verdict":"HOLD","score":7,"resolved_at":"2026-09-22T20:00:00Z","tag":"few-shot","note":"fail-open on lsof failure"}
+{"repo":"schema","pr":9001,"head":"c0de9001","work_type":"conformance-cell","who":"johnny","verdict":"APPROVE","score":9,"resolved_at":"2026-09-22T21:00:00Z","note":"synthetic"}
+{"repo":"schema","pr":9002,"head":"c0de9002","work_type":"conformance-cell","who":"johnny","verdict":"HOLD","score":3,"resolved_at":"2026-09-22T21:01:00Z","note":"synthetic self-check tautology"}
+{"repo":"schema","pr":9003,"head":"c0de9003","work_type":"conformance-cell","who":"johnny","verdict":"APPROVE","score":8,"resolved_at":"2026-09-22T21:02:00Z","note":"synthetic"}
+{"repo":"nova-tools","pr":2781,"head":"0a897035","work_type":"issue-fix-red-first","who":"stella","verdict":"HOLD","score":4,"resolved_at":"2026-09-23T01:06:16Z","tag":"false-confidence","note":"Jev UNSURE; Stella HOLD 4 found a Redis Spend partial write"}
+{"repo":"schema","pr":9004,"head":"c0de9004","work_type":"conformance-cell","who":"johnny","verdict":"HOLD","score":2,"resolved_at":"2026-09-23T02:00:00Z","note":"synthetic"}
+{"repo":"nova-tools","pr":2961,"head":"afd3efb0","work_type":"issue-fix-red-first","who":"stella","verdict":"HOLD","score":6,"resolved_at":"2026-09-23T04:30:00Z","tag":"coverage","note":"allowed=- stamped, allowed_routes[type] never enforced"}
+{"repo":"schema","pr":9005,"head":"c0de9005","work_type":"conformance-cell","who":"johnny","verdict":"APPROVE","score":9,"resolved_at":"2026-09-23T05:00:00Z","note":"synthetic"}
+`
+
+// jevAnswers is what each prompt says per PR: verdict and score (0 = no
+// score). p-current is the live lines at those heads (the scorecard and the
+// PR comments); the candidates answer only on the held-out rows.
+var jevAnswers = map[string]map[int]struct {
+	verdict string
+	score   int
+}{
+	"p-current": {
+		2519: {"PASS", 8}, 2522: {"BOUNCE", 3}, 2543: {"BOUNCE", 3}, 2622: {"BOUNCE", 3}, 2651: {"UNSURE", 7},
+		2781: {"UNSURE", 0}, 2961: {"UNSURE", 0},
+		9001: {"PASS", 9}, 9002: {"BOUNCE", 2}, 9003: {"UNSURE", 6}, 9004: {"BOUNCE", 3}, 9005: {"PASS", 8},
+	},
+	// p-regress turns the two false-confidence/coverage silences into passes.
+	"p-regress": {2781: {"PASS", 7}, 9004: {"BOUNCE", 2}, 2961: {"PASS", 8}, 9005: {"PASS", 9}},
+	// p-bouncy bounces a conformance cell the friend approved.
+	"p-bouncy": {2781: {"BOUNCE", 4}, 9004: {"BOUNCE", 2}, 2961: {"BOUNCE", 5}, 9005: {"BOUNCE", 4}},
+	// p-gates holds both of Stella's cases and keeps the cells right.
+	"p-gates": {2781: {"BOUNCE", 4}, 9004: {"BOUNCE", 2}, 2961: {"BOUNCE", 5}, 9005: {"PASS", 9}},
+}
+
+// fakeJev answers from jevAnswers and records which rows each prompt saw.
+type fakeJev struct{ calls map[string][]int }
+
+func (f *fakeJev) Score(_ context.Context, prompt string, rows []fold.CalibRow) ([]fold.JevLine, error) {
+	if f.calls == nil {
+		f.calls = map[string][]int{}
+	}
+	var out []fold.JevLine
+	for _, r := range rows {
+		f.calls[prompt] = append(f.calls[prompt], r.PR)
+		a, ok := jevAnswers[prompt][r.PR]
+		if !ok {
+			continue
+		}
+		out = append(out, fold.JevLine{Repo: "mas-bandwidth/" + r.Repo, PR: r.PR, Head: r.Head + "0000", Verdict: a.verdict, Score: a.score})
+	}
+	return out, nil
+}
+
+func calib(t *testing.T, candidate string, scorer fold.Scorer) *fold.JevCalib {
+	t.Helper()
+	set, err := fold.ReadCalibSet(strings.NewReader(calibSet))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fold.JevCalib{Set: set, PromptSHA: "p-current", Candidate: candidate, Scorer: scorer}
+}
+
+// TestFoldRunsJevEvalPerType is the DONE-WHEN of nova-tools #3081: the fold
+// re-scores the resolved PRs with the current prompt and writes agreement,
+// MAE, false-pass and false-bounce per work type into the fold record; a
+// candidate prompt worse on the held-out third in false passes or false
+// bounces is refused and the current prompt stays; one that holds is adopted.
+func TestFoldRunsJevEvalPerType(t *testing.T) {
+	ctx := context.Background()
+	t.Run("current", func(t *testing.T) {
+		_, client, fx := seed(t)
+		client.HSet(ctx, "jev:prompt", "sha", "p-current")
+		work := workRepo(t)
+		o := opts(fx, work)
+		jev := &fakeJev{}
+		o.Jev = calib(t, "", jev)
+		var out bytes.Buffer
+		res, err := fold.Run(ctx, client, o, &out)
+		if err != nil {
+			t.Fatalf("fold: %v\n%s", err, out.String())
+		}
+		if res.PromptRefused != "" {
+			t.Fatalf("no candidate, yet refused: %s", res.PromptRefused)
+		}
+		s := fx.Sprint
+		for _, want := range []string{
+			"FOLD JEV SET sprint=" + s + " prompt_sha=p-current heads=12 holdout=4 set_sha=",
+			// The inverse finding of 2026-09-22, reproduced: Jev scores the held
+			// tool PRs above the approved ones (sep < 0), so the score gate fails.
+			"FOLD JEV TYPE sprint=" + s + " prompt_sha=p-current type=conformance-cell heads=5 decided=4 agree=4/4 false_pass=0 false_bounce=0 unsure=1 mae=1.00 sep=+5.17 pass_prec_lb=0.342 bounce_prec_lb=0.342 promote=none\n",
+			"FOLD JEV TYPE sprint=" + s + " prompt_sha=p-current type=issue-fix-red-first heads=7 decided=4 agree=1/4 false_pass=1 false_bounce=2 unsure=3 mae=3.75 sep=-3.00 pass_prec_lb=0.000 bounce_prec_lb=0.061 promote=none\n",
+			"FOLD JEV TAG sprint=" + s + " prompt_sha=p-current tag=coverage heads=1 missed=1 prs=nova-tools#2961\n",
+			"FOLD JEV TAG sprint=" + s + " prompt_sha=p-current tag=false-confidence heads=1 missed=1 prs=nova-tools#2781\n",
+			"FOLD JEV TAG sprint=" + s + " prompt_sha=p-current tag=few-shot heads=5 missed=4 prs=nova-tools#2519,nova-tools#2522,nova-tools#2622,nova-tools#2651\n",
+		} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("missing %q in\n%s", want, out.String())
+			}
+		}
+		if strings.Contains(out.String(), "FOLD JEV CANDIDATE") {
+			t.Errorf("a candidate line with no candidate:\n%s", out.String())
+		}
+		body, err := os.ReadFile(filepath.Join(work, "docs", "roadmaps", "folds", s+".sexp"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range []string{
+			`:jev (:prompt-sha "p-current" :set-sha "`,
+			`(type "issue-fix-red-first" :heads 7 :decided 4 :agree 1 :false-pass 1 :false-bounce 2 :unsure 3 :mae "3.75" :sep "-3.00" :pass-prec-lb "0.000" :bounce-prec-lb "0.061" :promote "none")`,
+			`(type "conformance-cell" :heads 5 :decided 4 :agree 4 :false-pass 0 :false-bounce 0 :unsure 1 :mae "1.00" :sep "+5.17"`,
+			`(tag "false-confidence" :heads 1 :missed 1 :prs ("nova-tools#2781"))`,
+			`(tag "coverage" :heads 1 :missed 1 :prs ("nova-tools#2961"))`,
+		} {
+			if !bytes.Contains(body, []byte(want)) {
+				t.Errorf("fold record lacks %q:\n%s", want, body)
+			}
+		}
+		if n := len(jev.calls["p-current"]); n != 12 {
+			t.Errorf("current prompt scored %d rows, want all 12", n)
+		}
+		if got := client.HGet(ctx, "jev:prompt", "sha").Val(); got != "p-current" {
+			t.Errorf("jev:prompt sha %q after a fold with no candidate", got)
+		}
+	})
+
+	for _, tc := range []struct {
+		candidate, reason string
+	}{
+		{"p-regress", "false_pass 0>2 on issue-fix-red-first"},
+		{"p-bouncy", "false_bounce 0>1 on conformance-cell"},
+	} {
+		t.Run("refuses-"+tc.candidate, func(t *testing.T) {
+			_, client, fx := seed(t)
+			client.HSet(ctx, "jev:prompt", "sha", "p-current")
+			work := workRepo(t)
+			o := opts(fx, work)
+			jev := &fakeJev{}
+			o.Jev = calib(t, tc.candidate, jev)
+			var out bytes.Buffer
+			res, err := fold.Run(ctx, client, o, &out)
+			if err != nil {
+				t.Fatalf("fold: %v\n%s", err, out.String())
+			}
+			if !strings.Contains(res.PromptRefused, tc.reason) {
+				t.Fatalf("refusal %q, want it to name %q\n%s", res.PromptRefused, tc.reason, out.String())
+			}
+			if got := client.HGet(ctx, "jev:prompt", "sha").Val(); got != "p-current" {
+				t.Fatalf("a refused candidate moved jev:prompt to %q", got)
+			}
+			if !strings.Contains(out.String(), "FOLD JEV CANDIDATE sprint="+fx.Sprint+" candidate="+tc.candidate+" current=p-current holdout=4 ") ||
+				!strings.Contains(out.String(), " adopted=no reason=") {
+				t.Errorf("no refusing candidate line:\n%s", out.String())
+			}
+			// The candidate saw only the held-out third, never the rows it could be tuned on.
+			if got := jev.calls[tc.candidate]; len(got) != 4 || got[0] != 2781 || got[3] != 9005 {
+				t.Errorf("candidate scored rows %v, want the held-out 2781 9004 2961 9005", got)
+			}
+			// The fold itself is recorded: the loser's numbers stay in the fold.
+			if st := client.HGet(ctx, "s:"+fx.Sprint, "status").Val(); st != "folded" {
+				t.Errorf("status %q: a refused prompt must not stop the fold", st)
+			}
+			body, _ := os.ReadFile(filepath.Join(work, "docs", "roadmaps", "folds", fx.Sprint+".sexp"))
+			if !bytes.Contains(body, []byte(`:candidate (:sha "`+tc.candidate+`"`)) || !bytes.Contains(body, []byte(`:adopted "no"`)) {
+				t.Errorf("fold record lacks the refused candidate:\n%s", body)
+			}
+		})
+	}
+
+	t.Run("adopts-p-gates", func(t *testing.T) {
+		_, client, fx := seed(t)
+		client.HSet(ctx, "jev:prompt", "sha", "p-current")
+		work := workRepo(t)
+		o := opts(fx, work)
+		o.Jev = calib(t, "p-gates", &fakeJev{})
+		var out bytes.Buffer
+		res, err := fold.Run(ctx, client, o, &out)
+		if err != nil || res.PromptRefused != "" {
+			t.Fatalf("fold: %v refused %q\n%s", err, res.PromptRefused, out.String())
+		}
+		h := client.HGetAll(ctx, "jev:prompt").Val()
+		if h["sha"] != "p-gates" || h["prev"] != "p-current" || h["fold"] != fx.Sprint {
+			t.Fatalf("jev:prompt after adoption: %v", h)
+		}
+		if !strings.Contains(out.String(), " adopted=yes") {
+			t.Errorf("no adopting line:\n%s", out.String())
+		}
+	})
+
+	t.Run("refuses-a-stale-current", func(t *testing.T) {
+		_, client, fx := seed(t)
+		client.HSet(ctx, "jev:prompt", "sha", "p-other")
+		work := workRepo(t)
+		o := opts(fx, work)
+		o.Jev = calib(t, "p-gates", &fakeJev{})
+		var out bytes.Buffer
+		_, err := fold.Run(ctx, client, o, &out)
+		if err == nil || !strings.Contains(err.Error(), "p-other") {
+			t.Fatalf("calibrating against a prompt the store does not run: %v", err)
+		}
+		if n := len(strings.Fields(git(t, work, "log", "--format=%H"))); n != 1 {
+			t.Fatalf("a refused calibration made a fold commit")
+		}
+	})
+
+	t.Run("refuses-a-missing-answer", func(t *testing.T) {
+		_, client, fx := seed(t)
+		work := workRepo(t)
+		o := opts(fx, work)
+		o.Jev = calib(t, "", &fakeJev{})
+		o.Jev.PromptSHA = "p-gates" // answers only 4 of 12: no evidence is not a verdict
+		var out bytes.Buffer
+		_, err := fold.Run(ctx, client, o, &out)
+		if err == nil || !strings.Contains(err.Error(), "no line for nova-tools#2519") {
+			t.Fatalf("a scorer that skipped rows: %v", err)
+		}
+	})
+}
+
+// TestJevEvalHelper is the jev-eval stand-in Main runs through --jev-eval: it
+// reads calibration rows on stdin and writes ledger-shaped lines on stdout.
+func TestJevEvalHelper(t *testing.T) {
+	if os.Getenv("FOLD_JEV_HELPER") != "1" {
+		t.Skip("helper process for TestMainJevEvalExitCodes")
+	}
+	prompt := ""
+	for i, a := range os.Args {
+		if a == "--prompt-sha" && i+1 < len(os.Args) {
+			prompt = os.Args[i+1]
+		}
+	}
+	set, err := fold.ReadCalibSet(os.Stdin)
+	if err != nil {
+		os.Exit(9)
+	}
+	lines, _ := (&fakeJev{}).Score(context.Background(), prompt, set.Rows)
+	enc := json.NewEncoder(os.Stdout)
+	for _, l := range lines {
+		_ = enc.Encode(map[string]any{"repo": l.Repo, "pr": l.PR, "head": l.Head, "verdict": l.Verdict, "score": l.Score})
+	}
+	os.Exit(0)
+}
+
+// Main wires --calib, --prompt-sha, --candidate and --jev-eval: a regressing
+// candidate folds the sprint and exits 3 with the current prompt unchanged.
+func TestMainJevEvalExitCodes(t *testing.T) {
+	t.Setenv("FOLD_JEV_HELPER", "1")
+	set := filepath.Join(t.TempDir(), "calib.jsonl")
+	if err := os.WriteFile(set, []byte(calibSet), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	helper := os.Args[0] + " -test.run=^TestJevEvalHelper$ --"
+	for _, tc := range []struct {
+		candidate string
+		code      int
+		sha       string
+	}{{"p-regress", 3, "p-current"}, {"p-gates", 0, "p-gates"}} {
+		mr, client, fx := seed(t)
+		client.HSet(context.Background(), "jev:prompt", "sha", "p-current")
+		var stdout, stderr bytes.Buffer
+		code := fold.Main(context.Background(), []string{fx.Sprint, "--store", mr.Addr(), "--work", workRepo(t),
+			"--calib", set, "--prompt-sha", "p-current", "--candidate", tc.candidate, "--jev-eval", helper}, &stdout, &stderr)
+		if code != tc.code {
+			t.Fatalf("candidate %s: exit %d, want %d\nstdout %s\nstderr %s", tc.candidate, code, tc.code, stdout.String(), stderr.String())
+		}
+		if got := client.HGet(context.Background(), "jev:prompt", "sha").Val(); got != tc.sha {
+			t.Fatalf("candidate %s: jev:prompt sha %q, want %q", tc.candidate, got, tc.sha)
+		}
+		if !strings.Contains(stdout.String(), "FOLD RECORDED sprint="+fx.Sprint) {
+			t.Fatalf("candidate %s: the fold was not recorded\n%s", tc.candidate, stdout.String())
+		}
+	}
+}
