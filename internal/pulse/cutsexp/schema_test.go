@@ -40,4 +40,14 @@ func TestSchemaCellsOnePerOpenLeaf(t *testing.T) {
 	if len(cells) != expected {
 		t.Errorf("got %d cells, want %d", len(cells), expected)
 	}
+
+	// Verify that the cells are the actual leaf tasks, not the parent container.
+	wantCells := []string{"task 1", "subtask 1"}
+	if len(cells) == len(wantCells) {
+		for i, want := range wantCells {
+			if cells[i].Title != want {
+				t.Errorf("cell[%d] title = %q, want %q", i, cells[i].Title, want)
+			}
+		}
+	}
 }

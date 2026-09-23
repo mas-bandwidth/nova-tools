@@ -24,6 +24,23 @@ func (n *Node) IsAtom() bool {
 	return len(n.Children) == 0
 }
 
+// containsTask recursively checks if n or any of its descendants (through
+// empty-value wrapper lists) is a task node.
+func containsTask(n *Node) bool {
+	if n == nil || !n.IsList() {
+		return false
+	}
+	if len(n.Children) > 0 && n.Children[0].Value == "task" {
+		return true
+	}
+	for _, child := range n.Children {
+		if containsTask(child) {
+			return true
+		}
+	}
+	return false
+}
+
 // Parse parses an S-expression from a reader.
 func Parse(r io.Reader) (*Node, error) {
 	scanner := bufio.NewScanner(r)
@@ -33,21 +50,36 @@ func Parse(r io.Reader) (*Node, error) {
 	var stack []*Node
 	var currentAtom string
 	inString := false
+	inComment := false
 
 	flushAtom := func() {
-		if currentAtom != "" {
+		if currentAtom != "" || inString {
 			if len(stack) > 0 {
 				last := stack[len(stack)-1]
 				last.Children = append(last.Children, &Node{Value: currentAtom})
 			}
 			currentAtom = ""
+			inString = false
 		}
 	}
 
 	for scanner.Scan() {
 		tok := scanner.Text()
 
+		if inComment {
+			if tok == "\n" {
+				inComment = false
+			}
+			continue
+		}
+
 		if inString {
+			if tok == "\\" {
+				if scanner.Scan() {
+					currentAtom += scanner.Text()
+				}
+				continue
+			}
 			if tok == "\"" {
 				inString = false
 				flushAtom()
@@ -60,6 +92,9 @@ func Parse(r io.Reader) (*Node, error) {
 		switch tok {
 		case "\"":
 			inString = true
+		case ";":
+			inComment = true
+			flushAtom()
 		case "(":
 			flushAtom()
 			newNode := &Node{}
@@ -104,7 +139,7 @@ func CutFromSchema(r io.Reader, leg string) ([]Cell, error) {
 		if len(n.Children) > 0 && n.Children[0].Value == "task" {
 			isLeaf := true
 			for _, child := range n.Children {
-				if child.IsList() && len(child.Children) > 0 && child.Children[0].Value == "task" {
+				if child.IsList() && containsTask(child) {
 					isLeaf = false
 					find(child)
 				}
