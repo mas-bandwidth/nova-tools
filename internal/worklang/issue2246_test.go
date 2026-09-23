@@ -29,7 +29,7 @@ func TestIssue2246(t *testing.T) {
 			issues = append(issues, worklang.Issue{
 				Number: i,
 				Slug:   fmt.Sprintf("schema-versioning-%d", i),
-				URL:    fmt.Sprintf("https://github.com/mas-bandwidth/schema/issues/%d", i),
+				URL:    fmt.Sprintf("https://github.example.invalid/mas-bandwidth/schema/issues/%d", i),
 				Repo:   "mas-bandwidth/schema",
 				Label:  "schema",
 				State:  "open",
@@ -39,7 +39,7 @@ func TestIssue2246(t *testing.T) {
 		issues = append(issues, worklang.Issue{
 			Number:   26,
 			Slug:     "schema-versioning-26-with-pr",
-			URL:      "https://github.com/mas-bandwidth/schema/issues/26",
+			URL:      "https://github.example.invalid/mas-bandwidth/schema/issues/26",
 			Repo:     "mas-bandwidth/schema",
 			Label:    "schema",
 			State:    "open",
@@ -83,7 +83,7 @@ func TestIssue2246(t *testing.T) {
 		}
 		wantURLs := make(map[string]bool, 25)
 		for i := int64(1); i <= 25; i++ {
-			wantURLs[fmt.Sprintf("https://github.com/mas-bandwidth/schema/issues/%d", i)] = true
+			wantURLs[fmt.Sprintf("https://github.example.invalid/mas-bandwidth/schema/issues/%d", i)] = true
 		}
 		wantBranches := make(map[string]bool, 25)
 		for i := int64(1); i <= 25; i++ {
