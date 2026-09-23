@@ -6,35 +6,54 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
-// ciFakeRunner answers a GREEN check-run to anything asked of it. If GH.Checks
-// ever reached GitHub, it would read this green run and call the commit green;
-// the test asserts this runner is never invoked. Exec is embedded so the fake
-// satisfies Runner whatever else that interface grows, while Run is overridden.
+// ciFakeRunner answers GitHub's check-runs for any commit with out. Exec is
+// embedded so the fake satisfies Runner whatever else that interface grows,
+// while Run is overridden.
 type ciFakeRunner struct {
 	Exec
+	out   string
+	err   error
 	calls int
 }
 
 func (r *ciFakeRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	r.calls++
-	return "ci-ok\tsuccess\tdeadbeef\n", nil
+	return r.out, r.err
 }
 
-// ciFakeSource is an injectable CISource over a map, for the test.
+const (
+	ghGreen = "lint\tsuccess\tdeadbeef\ntest\tsuccess\tdeadbeef\nci-ok\tsuccess\tdeadbeef\n"
+	ghRed   = "lint\tsuccess\tdeadbeef\ntest\tfailure\tdeadbeef\n"
+)
+
+// ciFakeSource is an injectable CISource over a map of verdict words, for the
+// test; err, when set, is every read's answer (an unreadable store).
 type ciFakeSource struct {
 	values map[string]string
+	err    error
 	calls  int
 }
 
 func (s *ciFakeSource) Read(repo, sha string) (string, bool, error) {
 	s.calls++
+	if s.err != nil {
+		return "", false, s.err
+	}
 	v, ok := s.values[CIKey(repo, sha)]
-	return v, ok, nil
+	return v, ok && strings.TrimSpace(v) != "", nil
 }
 
-func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
+// A missing record is not a verdict (no-evidence-is-not-negative-evidence):
+// the record answers when it carries a verdict, the forge answers when it does
+// not, and ci: MISSING is only the answer when both say nothing.
+func TestChecksReadsTheRecordThenFallsBackToGitHub(t *testing.T) {
 	const repo, sha = "owner/repo", "deadbeef"
 
 	t.Run("production address has safe local default", func(t *testing.T) {
@@ -55,67 +74,164 @@ func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
 		}
 	})
 
-	// A green check-run sits behind the runner, and NOTHING in the injectable
-	// source. The forge would say green; the source says missing. The lander
-	// must report ci: MISSING and never read the check-run.
-	t.Run("green check-run without redis key stays MISSING", func(t *testing.T) {
-		runner := &ciFakeRunner{}
-		src := &ciFakeSource{values: map[string]string{}}
-		h := NewGH(repo, time.Second, runner, WithCISource(src))
-
-		_, err := h.Checks(sha)
-		if !errors.Is(err, ErrCIMissing) {
-			t.Fatalf("Checks with no redis key = %v, want ErrCIMissing", err)
-		}
-		if runner.calls != 0 {
-			t.Fatalf("Checks read GitHub check-runs %d time(s); it must never read them", runner.calls)
-		}
-		if src.calls != 1 {
-			t.Fatalf("Checks read the CI source %d time(s), want 1", src.calls)
-		}
-	})
-
-	// The same commit, with an OK key, is green -- buckets and all -- still
-	// without touching a check-run.
-	t.Run("injected OK becomes green", func(t *testing.T) {
-		runner := &ciFakeRunner{}
+	t.Run("record OK is green from redis without a check-run read", func(t *testing.T) {
+		runner := &ciFakeRunner{out: ghRed}
 		src := &ciFakeSource{values: map[string]string{CIKey(repo, sha): "OK"}}
-		h := NewGH(repo, time.Second, runner, WithCISource(src))
-
-		c, err := h.Checks(sha)
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
 		if err != nil {
-			t.Fatalf("Checks with injected OK = %v, want nil", err)
+			t.Fatalf("Checks = %v, want nil", err)
 		}
-		if c.Verdict() != "GREEN" {
-			t.Fatalf("Verdict() = %q, want GREEN", c.Verdict())
-		}
-		if c.Green != 1 || c.Pending != 0 || c.Red != 0 {
-			t.Fatalf("buckets = g%d/p%d/r%d, want g1/p0/r0", c.Green, c.Pending, c.Red)
+		if c.Verdict() != "GREEN" || c.Source != CIFromRedis {
+			t.Fatalf("Verdict %s source %q, want GREEN from redis", c.Verdict(), c.Source)
 		}
 		if runner.calls != 0 {
-			t.Fatalf("Checks read GitHub check-runs %d time(s); it must never read them", runner.calls)
+			t.Fatalf("a record with a verdict read GitHub %d time(s)", runner.calls)
 		}
 	})
 
-	// Empty and every value other than the protocol's exact OK token are
-	// neither green nor a check-run read.
-	for _, value := range []string{"", "ok", "success", "green", "fail", "pending", "NOTOK"} {
+	t.Run("record FAIL is red from redis without a check-run read", func(t *testing.T) {
+		runner := &ciFakeRunner{out: ghGreen}
+		src := &ciFakeSource{values: map[string]string{CIKey(repo, sha): "FAIL internal/merge TestX"}}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil {
+			t.Fatalf("Checks = %v, want nil", err)
+		}
+		if c.Verdict() != "RED" || runner.calls != 0 {
+			t.Fatalf("Verdict %s after %d GitHub reads, want RED and none", c.Verdict(), runner.calls)
+		}
+	})
+
+	for _, value := range []string{"ok", "success", "green", "pending", "NOTOK"} {
 		value := value
-		t.Run("non-OK "+strings.TrimSpace(value)+" is MISSING", func(t *testing.T) {
-			runner := &ciFakeRunner{}
+		t.Run("record "+value+" is not green", func(t *testing.T) {
+			runner := &ciFakeRunner{out: ghGreen}
 			src := &ciFakeSource{values: map[string]string{CIKey(repo, sha): value}}
-			h := NewGH(repo, time.Second, runner, WithCISource(src))
-			if _, err := h.Checks(sha); !errors.Is(err, ErrCIMissing) {
-				t.Fatalf("Checks(%q) = %v, want ErrCIMissing", value, err)
+			c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+			if err != nil {
+				t.Fatalf("Checks(%q) = %v", value, err)
 			}
-			if runner.calls != 0 {
-				t.Fatalf("Checks read GitHub check-runs %d time(s)", runner.calls)
+			if c.Verdict() == "GREEN" || runner.calls != 0 {
+				t.Fatalf("Checks(%q) = %s after %d GitHub reads, want not GREEN and none", value, c.Verdict(), runner.calls)
 			}
 		})
 	}
 
-	// The key is exactly ci:<owner/repo>:<sha>.
-	if got := CIKey("o/r", "abc123"); got != "ci:o/r:abc123" {
+	t.Run("record absent and GitHub green is green from-github", func(t *testing.T) {
+		runner := &ciFakeRunner{out: ghGreen}
+		src := &ciFakeSource{values: map[string]string{}}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil {
+			t.Fatalf("Checks = %v, want nil", err)
+		}
+		if c.Verdict() != "GREEN" || c.Source != CIFromGitHub {
+			t.Fatalf("Verdict %s source %q, want GREEN from-github", c.Verdict(), c.Source)
+		}
+		if !strings.Contains(c.SourceWhy, "absent") {
+			t.Fatalf("SourceWhy = %q, want it to say the record was absent", c.SourceWhy)
+		}
+		if runner.calls != 1 || src.calls != 1 {
+			t.Fatalf("reads: GitHub %d, record %d; want 1 and 1", runner.calls, src.calls)
+		}
+	})
+
+	t.Run("record absent and GitHub red is red", func(t *testing.T) {
+		runner := &ciFakeRunner{out: ghRed}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(&ciFakeSource{})).Checks(sha)
+		if err != nil {
+			t.Fatalf("Checks = %v, want nil", err)
+		}
+		if c.Verdict() != "RED" || c.Source != CIFromGitHub {
+			t.Fatalf("Verdict %s source %q, want RED from-github", c.Verdict(), c.Source)
+		}
+	})
+
+	t.Run("record unreadable falls back to GitHub", func(t *testing.T) {
+		runner := &ciFakeRunner{out: ghGreen}
+		src := &ciFakeSource{err: errors.New("NOPERM User bench has no permissions to access the 'ci:owner/repo:deadbeef' key")}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil {
+			t.Fatalf("Checks = %v, want nil", err)
+		}
+		if c.Verdict() != "GREEN" || c.Source != CIFromGitHub || !strings.Contains(c.SourceWhy, "NOPERM") {
+			t.Fatalf("Verdict %s source %q why %q, want GREEN from-github naming NOPERM", c.Verdict(), c.Source, c.SourceWhy)
+		}
+	})
+
+	t.Run("record absent and no check-runs is MISSING", func(t *testing.T) {
+		runner := &ciFakeRunner{out: ""}
+		_, err := NewGH(repo, time.Second, runner, WithCISource(&ciFakeSource{})).Checks(sha)
+		if !errors.Is(err, ErrCIMissing) {
+			t.Fatalf("Checks = %v, want ErrCIMissing", err)
+		}
+	})
+
+	t.Run("record absent and GitHub unreadable is an error, not MISSING", func(t *testing.T) {
+		runner := &ciFakeRunner{err: errors.New("HTTP 502")}
+		_, err := NewGH(repo, time.Second, runner, WithCISource(&ciFakeSource{})).Checks(sha)
+		if err == nil || errors.Is(err, ErrCIMissing) {
+			t.Fatalf("Checks = %v, want an unreadable-forge error that is not ErrCIMissing", err)
+		}
+	})
+
+	// The key is exactly ci:<owner/repo>:<sha>, the one land reads.
+	if got := CIKey("o/r", "abc123"); got != "ci:o/r:abc123" || got != civerdict.Key("o/r", "abc123") {
 		t.Fatalf("CIKey = %q, want ci:o/r:abc123", got)
 	}
+}
+
+// The production source reads the record as the HASH land reads. A string at
+// the key (the pre-fix GET shape) is WRONGTYPE: an unreadable record, so the
+// forge answers -- never ci: MISSING.
+func TestRedisCISourceReadsTheHashLandReads(t *testing.T) {
+	const repo, sha = "owner/repo", "deadbeef"
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	src := &RedisCISource{Client: client}
+	key := CIKey(repo, sha)
+
+	t.Run("hash verdict OK lands from redis", func(t *testing.T) {
+		mr.FlushAll()
+		mr.HSet(key, civerdict.Field, "OK")
+		runner := &ciFakeRunner{out: ghRed}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil || c.Verdict() != "GREEN" || c.Source != CIFromRedis || runner.calls != 0 {
+			t.Fatalf("Checks = %s/%q, %v after %d GitHub reads; want GREEN from redis, none", c.Verdict(), c.Source, err, runner.calls)
+		}
+	})
+
+	t.Run("hash without a verdict falls back", func(t *testing.T) {
+		mr.FlushAll()
+		mr.HSet(key, "bench", "studio")
+		runner := &ciFakeRunner{out: ghGreen}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil || c.Source != CIFromGitHub || c.Verdict() != "GREEN" {
+			t.Fatalf("Checks = %s/%q, %v; want GREEN from-github", c.Verdict(), c.Source, err)
+		}
+	})
+
+	t.Run("WRONGTYPE falls back to from-github", func(t *testing.T) {
+		mr.FlushAll()
+		if err := mr.Set(key, "OK"); err != nil {
+			t.Fatal(err)
+		}
+		runner := &ciFakeRunner{out: ghGreen}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil {
+			t.Fatalf("Checks = %v, want the forge's answer", err)
+		}
+		if c.Source != CIFromGitHub || c.Verdict() != "GREEN" || !strings.Contains(c.SourceWhy, "WRONGTYPE") {
+			t.Fatalf("Checks = %s/%q why %q; want GREEN from-github naming WRONGTYPE", c.Verdict(), c.Source, c.SourceWhy)
+		}
+	})
+
+	t.Run("store down falls back to from-github", func(t *testing.T) {
+		dead := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 200 * time.Millisecond, MaxRetries: -1})
+		t.Cleanup(func() { _ = dead.Close() })
+		runner := &ciFakeRunner{out: ghGreen}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(&RedisCISource{Client: dead})).Checks(sha)
+		if err != nil || c.Source != CIFromGitHub || c.Verdict() != "GREEN" {
+			t.Fatalf("Checks = %s/%q, %v; want GREEN from-github", c.Verdict(), c.Source, err)
+		}
+	})
 }
