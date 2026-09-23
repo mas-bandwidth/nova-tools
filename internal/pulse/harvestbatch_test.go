@@ -161,6 +161,44 @@ func TestHarvestBatchNeverRefetchesARefusedHead(t *testing.T) {
 	}
 }
 
+// Stella's HOLD of #2926 at 2b48d622: an unedited card still carries its template state
+// line, which starts with DONE. With BRANCH and REPO claims beside it, it is not a
+// candidate: never staged, fetched, pushed or opened, and skipped by state.
+func TestHarvestBatchNeverStagesAnUneditedTemplate(t *testing.T) {
+	root, specs, arglog := setupPulse(t)
+	batchGit(t, specs, arglog)
+	shell := batchShell(benchJobListing("/home/gaffer/rowan-swarm-root/0/jobs/card-9601", []string{
+		"RESULT card-9601 sha=abc", "DONE            <- or: ABSTAIN <why> | BLOCKED <why>",
+		"BRANCH rowan/card-9601", "REPO mas-bandwidth/nova-tools",
+	}))
+	forge := &fakeForge{}
+	mem := &fakeMemory{}
+	in := benchHarvestInput(t, root, shell, forge)
+	in.Batch, in.Memory = true, mem
+	code, out, errb := runBenchHarvest(t, in)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout=%s\nstderr=%s", code, out, errb)
+	}
+	if !strings.Contains(out, "HARVEST SKIPPED bench=hulk reason=state count=1") {
+		t.Errorf("the template was not skipped by state:\n%s", out)
+	}
+	if !strings.Contains(out, "fetched=0 pushed=0 prs=0 skipped=1") {
+		t.Errorf("the template was fetched, pushed or opened:\n%s", out)
+	}
+	for _, sc := range shell.scripts {
+		if strings.Contains(sc, "take ") {
+			t.Errorf("the template was staged:\n%s", sc)
+		}
+	}
+	log, _ := os.ReadFile(arglog)
+	if strings.Contains(string(log), "push --porcelain") {
+		t.Errorf("the template's branch was pushed:\n%s", log)
+	}
+	if len(forge.opened) != 0 {
+		t.Errorf("PRs opened = %d, want 0", len(forge.opened))
+	}
+}
+
 // A job harvested before (un-marked, or marked on a bench that lost the marker) already
 // has its pull request: the forge says so on create, and the pass finds it instead of
 // failing or opening a second one. Any other refusal stands, and a lookup that answers
@@ -189,9 +227,12 @@ func TestResultStateReadsTheStateLine(t *testing.T) {
 		"ABSTAIN": {"RESULT x sha=abc", "ABSTAIN not-per-leg"},
 		"RED":     {"RESULT x sha=abc", "RED 2 tests"},
 		"tmpl":    {"RESULT x sha=abc", "DONE <- or: ABSTAIN <why> | BLOCKED <why>"},
+		"tmpl-sp": {"RESULT x sha=abc", "DONE            <- or: ABSTAIN <why> | BLOCKED <why>"},
+		"tmpl-rw": {"RESULT x sha=abc", "DONE <why>"},
 		"empty":   {"RESULT x sha=abc"},
 	}
-	want := map[string]string{"DONE": "DONE", "DONE ": "DONE", "DONE:": "DONE", "ABSTAIN": "ABSTAIN", "RED": "RED", "tmpl": "DONE", "empty": ""}
+	want := map[string]string{"DONE": "DONE", "DONE ": "DONE", "DONE:": "DONE", "ABSTAIN": "ABSTAIN", "RED": "RED",
+		"tmpl": "TEMPLATE", "tmpl-sp": "TEMPLATE", "tmpl-rw": "TEMPLATE", "empty": ""}
 	for name, lines := range cases {
 		if got := resultState(lines); got != want[name] {
 			t.Errorf("%s: resultState = %q, want %q", name, got, want[name])

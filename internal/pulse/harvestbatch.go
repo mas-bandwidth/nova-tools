@@ -706,7 +706,11 @@ func (idx launchedIndex) lookup(dirs []string, label string) string {
 // resultState is the RESULT.md's state: the first word of the first non-empty line after
 // the RESULT line, trailing punctuation dropped. `DONE`, `DONE (green tests)` and `DONE:`
 // are all DONE; `ABSTAIN not-per-leg ...`, `RED`, `BLOCKED <why>` and a template's
-// `DONE <- or: ABSTAIN <why>` are not.
+// `DONE <- or: ABSTAIN <why>` are not. The whole state line is read, not only its first
+// word: the card's own template line (docs/SPEC-PULSE.md, the RESULT grammar: line 2 is
+// one of `DONE`, `ABSTAIN <why>`, `BLOCKED <why>`) also starts with DONE, so a line that
+// still carries the template's `<-` arrow or its `<why>` placeholder is TEMPLATE, the
+// unedited card, and is never harvested (Stella's HOLD of #2926 at 2b48d622).
 func resultState(lines []string) string {
 	seen := false
 	for _, l := range lines {
@@ -719,6 +723,11 @@ func resultState(lines []string) string {
 			continue
 		}
 		f := strings.Fields(t)
+		for _, w := range f {
+			if w == "<-" || strings.Contains(w, "<why>") {
+				return "TEMPLATE"
+			}
+		}
 		return strings.TrimRight(f[0], ":,;.")
 	}
 	return ""
