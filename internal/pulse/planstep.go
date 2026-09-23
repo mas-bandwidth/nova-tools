@@ -83,3 +83,49 @@ func boundedAsk(a string) bool {
 	}
 	return true
 }
+
+// PlanModeLine is the card line that puts a pro card in plan mode: `PLAN: PLAN.md`.
+// Plan mode is the card's own declaration, so pro cards cut before it fold as they did.
+const PlanModeLine = "PLAN:"
+
+// planHold is PlanStepReady's production caller (Stella's HOLD on #3165): harvest asks
+// it before a finished card is pushed. A pro card that declares plan mode may not proceed
+// until its job directory's PLAN.md ends with PLAN-OK and every Q: line in it is bounded
+// multiple choice; held is true with PlanStepReady's reason while it may not. Flash cards
+// skip plan mode (#2590), and so does a card with no PLAN: line.
+func planHold(jobDir string, c CardRow) (why string, held bool) {
+	if c.Model != "pro" || !cardPlansFirst(readCard(c.Card)) {
+		return "", false
+	}
+	ready, why := PlanStepReady(jobDir, planAsks(jobDir))
+	return why, !ready
+}
+
+// cardPlansFirst is true when the card carries `PLAN: PLAN.md` before its first section.
+func cardPlansFirst(card string) bool {
+	for _, l := range strings.Split(card, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "## ") {
+			return false
+		}
+		if v, ok := strings.CutPrefix(t, PlanModeLine); ok && strings.TrimSpace(v) == PlanFile {
+			return true
+		}
+	}
+	return false
+}
+
+// planAsks is the plan's questions: every PLAN.md line that starts with `Q:`.
+func planAsks(jobDir string) []string {
+	raw, err := os.ReadFile(filepath.Join(jobDir, PlanFile))
+	if err != nil {
+		return nil
+	}
+	var asks []string
+	for _, l := range strings.Split(string(raw), "\n") {
+		if t := strings.TrimSpace(l); strings.HasPrefix(t, "Q:") {
+			asks = append(asks, t)
+		}
+	}
+	return asks
+}
