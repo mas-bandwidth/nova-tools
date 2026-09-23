@@ -56,8 +56,11 @@ type OkFriend struct {
 	Sprint   string
 	Consumer string // this process instance's consumer name
 	Actor    string
-	Count    int64         // events per read; 0 means 100
-	Block    time.Duration // block of the first new-event read; 0 means 1 s
+	Count    int64 // events per read; 0 means 100
+	// Block is the block of the first new-event read; 0 means 1 s and a
+	// negative Block never blocks (a reconcile duty passes inside its 1 s
+	// tick, #3323).
+	Block time.Duration
 	// RetryWait is Run's pause after a pass that left an event pending on a
 	// retryable error (ErrNoReaders, ErrReviewBlocked); it doubles on each
 	// consecutive retryable pass up to RetryMax and resets on a clean pass.
@@ -214,7 +217,7 @@ func (o *OkFriend) pass(ctx context.Context) (int, error) {
 		count = 100
 	}
 	block := o.Block
-	if block <= 0 {
+	if block == 0 {
 		block = time.Second
 	}
 	handled := 0
