@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -39,6 +40,7 @@ nova-pulse status  --queue <dir> --roots <dirs> [--batches <dir>] [--day <d>] [-
 nova-pulse status  --html <out> --machines <registry> [--benches <file>, retired] [--queue <dir>] [--ssh <path>] [--timeout <s|duration>]
         [--publish <host:dir>] [--self <name>] [--loop <label>=<pattern>]... [--branch <name>]
         [--day-start <HH:MMZ>] [--gh-config <dir>]
+nova-pulse log     --queue <dir> [--since <d>]
 nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [--memfree-gb <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
@@ -371,6 +373,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdWatch(rest, stdout, stderr, now)
 	case "wait":
 		return cmdWait(rest, stdout, stderr)
+	case "log":
+		return cmdLog(rest, stdout, stderr, now)
 	case "manager":
 		return cmdManager(rest, stdout, stderr)
 	case "status":
@@ -716,6 +720,61 @@ func cmdWatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Queue: *queue, Bus: *busDir, Jobs: *jobs, Until: *until, Cap: capDur,
 		Now: func() time.Time { return now }, Stdout: stdout, Stderr: stderr,
 	})
+}
+
+func cmdLog(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("log")
+	queue := f.fs.String("queue", "", "")
+	sinceRaw := f.fs.String("since", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*queue, "queue", "the queue directory holding pulse.log")
+	var since time.Duration
+	if s := strings.TrimSpace(*sinceRaw); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			f.add(fmt.Sprintf("--since wants a duration such as 6h, got %q", s))
+		} else if d < 0 {
+			f.add("--since is 0 or more")
+		} else {
+			since = d
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	raw, err := os.ReadFile(filepath.Join(*queue, "pulse.log"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0
+		}
+		fmt.Fprintf(stderr, "nova-pulse log: %s\n", oneline.Err(err))
+		return 2
+	}
+	nowUTC := now.UTC()
+	cutoff := nowUTC.Add(-since)
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if since > 0 {
+			if t, ok := parseLogTime(line, nowUTC); ok && t.Before(cutoff) {
+				continue
+			}
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	return 0
+}
+
+func parseLogTime(line string, now time.Time) (time.Time, bool) {
+	if len(line) < 10 {
+		return time.Time{}, false
+	}
+	ts := line[:9]
+	t, err := time.Parse("15:04:05Z", ts)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC), true
 }
 
 func cmdManager(args []string, stdout, stderr io.Writer) int {
