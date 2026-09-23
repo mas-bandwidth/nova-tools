@@ -179,6 +179,9 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 		}
 	}
 	PrintLines(out, sum)
+	if err := foldRote(ctx, client, opt.Sprint, head, out); err != nil {
+		return Result{}, err
+	}
 	refused := ""
 	if sum.Jev != nil {
 		PrintJev(out, opt.Sprint, sum.Jev)
