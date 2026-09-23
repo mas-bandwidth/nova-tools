@@ -8551,9 +8551,9 @@ index) and adds the ones issue parity needs.
 
 | path | what | why this shape |
 |---|---|---|
-| `docs/roadmaps/nova-work.sexp` | **the manifest**: gains `:repositories`, one `(:repo "<o>/<r>" :file "<path>" :digest "<sha256>")` per declared public repository, and `:digest`, the root digest over the repository digests; its existing keys (`:epics`, `:verification`, `:events`, ...) unchanged | one small file every reader opens first; a digest check tells a cold start whether anything moved |
+| `docs/roadmaps/nova-work.sexp` | **the manifest**: gains `:repositories`, one `(:repo "<o>/<r>" :file "<O path>" :file-digest "<sha256>" :closed "<C path>" :closed-digest "<sha256>" :digest "<sha256>")` per declared public repository, and `:digest`, the root digest over the repository digests; its existing keys (`:epics`, `:verification`, `:events`, ...) unchanged. **Digest rule:** `:file-digest` and `:closed-digest` are the SHA-256 of the canonical bytes of that repository's O and C files (a repository with no closed rows yet has an empty C file and the empty file's hash); the repository `:digest` is SHA-256 over `:file-digest` then `:closed-digest`, in that order; the root `:digest` is SHA-256 over the repository digests in manifest order. **Every write to either file rewrites both of its file digests, the repository digest and the root digest in the same commit**, so a C-only change (a `:settle` or `:revive` row, or a check-in that touches only the C file) moves the root digest exactly as an O change does; lint refuses (`WORK FAIL digest`) a manifest whose digests do not match the bytes on disk | one small file every reader opens first; a digest check over every O and every C file tells a cold start whether anything moved |
 | `docs/roadmaps/work/<repo>.sexp` | that repository's **O** subtree: its repository work set, its containers and its open units | *The root is COW*: every top-level child of O is a repository work set; git conflicts are scoped to one repository |
-| `docs/roadmaps/work/<repo>.closed.sexp` | that repository's **C** rows: one per `:settle` and per `:revive`, keyed `<event-rev>:<id>`, the closed-index row shape of *The root is COW*, append-only | C beside the snapshot, never inside it; the per-repository file is the partition until E07's day partitions exist; a session loads none of it at start |
+| `docs/roadmaps/work/<repo>.closed.sexp` | that repository's **C** rows: one per `:settle` and per `:revive`, keyed `<event-rev>:<id>`, the closed-index row shape of *The root is COW*, append-only; its hash is the manifest row's `:closed-digest`, folded into the repository and root digests | C beside the snapshot, never inside it; the per-repository file is the partition until E07's day partitions exist; a session loads none of it at start, and the digest still covers it |
 | `docs/roadmaps/blobs/<aa>/<sha256>` | **bodies**, content-addressed (`<aa>` the first two hex digits), write-once, referenced from `:correspondence` by `:body-sha256` | *"retain external reports separately from the coordinator's accepted plan"* (Stella); bodies never bloat a parse or a diff, and identical bodies are stored once |
 | `docs/roadmaps/ingest-map.sexp` | the declared table of section 3 | *capacity is config, not argv* |
 
@@ -8613,8 +8613,14 @@ measurement and not a rewrite.
 
 **Cold start without a parse.** On load the engine reads the manifest's `:digest`; when it equals
 `w:digest`, it rebuilds its resident hashes from the `w:n:*` hashes in pipelined batches and parses no
-repository file; otherwise it parses each repository file once (the only O(n) pass there is), rebuilds
-both, and writes `w:digest`. A crash between the journal append and the pipeline is repaired by the
+repository file; otherwise it parses each repository's O and C files once (the only O(n) pass there
+is), rebuilds both, including every closed-side key (`...:closed`, `...:state:<state>`, `w:ready:<repo>`,
+the `w:n:*` state and closed-at fields), and writes `w:digest`. **The skip is sound only because the
+root digest covers both files of every repository** (the digest rule of the manifest row above): a
+C-only settle or revive changes `:closed-digest`, hence the repository and root digests, hence
+`w:digest` no longer matches and the projection is rebuilt; a digest over O alone would leave a stale
+closed index looking current, and `c-only-change-invalidates-projection` in section 11 is the replay
+that fails if it does. A crash between the journal append and the pipeline is repaired by the
 same check on the next load: the journal commits first, so the projection can be behind and never
 ahead.
 
@@ -8760,6 +8766,7 @@ written red first:
 | `index-reconstruction-agrees` | after every legal verb, R, X, READY, REV and every `w:*` key equal a full rebuild from the canonical state | any maintained value differs from the rebuild |
 | `no-verb-scans-o` | with an instrumented node-visit counter, a repository listing visits O(log n + k) nodes and `query --ask ready` visits none | a verb's visits grow with the org's size rather than its answer's |
 | `cold-start-without-parse` | with `w:digest` equal to the manifest's, a start prints `parses=0`; with it different, one parse per repository file and a rewritten digest | a parse on a current projection, or a stale projection served |
+| `c-only-change-invalidates-projection` | from a current projection, three fixtures each change only a repository's C file with its O file byte-identical: a `:settle` row appended, a `:revive` row appended, and a check-in that lands a C row alone; after each, the manifest's `:closed-digest`, repository `:digest` and root `:digest` all change, the next start prints `parses=` non-zero, and every `w:*` key of that repository (the closed range, the state sets, `w:ready:<repo>`, the `w:n:*` state fields) equals a full rebuild; a manifest whose `:closed-digest` does not match the C file's bytes is refused by lint | a start prints `parses=0` after a C-only change, any closed-side key differs from the rebuild, the root digest is unchanged, or the mismatched manifest passes lint |
 | `index-benchmark-table` | the eight rows of section 9's complexity table at 10k, 100k and 1M generated units | any row over its target at 100k, or growing faster than its bound across the three sizes |
 | `private-scope-never-published` | a `:private` repository's units, captures and name are written only under the private home; nova-tools' files carry only the count | any private name or capture appears in a nova-tools path |
 
