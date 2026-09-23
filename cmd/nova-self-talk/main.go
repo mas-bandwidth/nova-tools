@@ -250,7 +250,26 @@ func run(args []string, stdout, stderr io.Writer) int {
 			// everything went from 78K tokens to one line.
 			dated++
 		}
+		// THE THIRD DETECTOR (nova-tools #1468, third fix attempt) runs alongside
+		// selftalk.Scan for the same reason the second detector does: the three
+		// plainest first-person absolutes ("I cannot ever get this right." and
+		// its two siblings) are missed by both of the existing detectors by
+		// design. plainest.go carries the narrow addition; here we merge its
+		// STANDING claims into the count and the FAIL stream, so the run loop's
+		// one-line grammar is unchanged.
+		plainestClaims, plainestFound := plainestScan(text)
+		for _, c := range plainestClaims {
+			claims++
+			if c.Verdict == selftalk.Standing {
+				standing++
+				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s: %s: %s",
+					oneline.Escape(f), c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
+				continue
+			}
+			dated++
+		}
 		found := selftalk.ScanInstallation(text)
+		found = append(found, plainestFound...)
 		// The banner prints ONCE per file that has findings, before them, so a
 		// reader cannot meet a finding in a rule document without meeting the
 		// sentence that says what it is for.
