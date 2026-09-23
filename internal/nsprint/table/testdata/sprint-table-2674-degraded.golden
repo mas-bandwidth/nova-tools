@@ -1,7 +1,7 @@
 SPRINT TABLE
-blocked: 176
-landed: 209/682 30% -> ~31h
-sprint: 4967/5299 93% -> ~44m
+blocked: 0
+landed: ?
+sprint: SPRINT ? (sprint-xy has not written yet)
 
 host       | ready | working |  done |    ok |  fail |  ok% |   load
 -----------+-------+---------+-------+-------+-------+------+-------
@@ -11,16 +11,18 @@ hulk       |     1 |       0 |    12 |     5 |     7 |  41% |  40.95
 spacegame  |     0 |       0 |    14 |     2 |    12 |  14% |  15.51
 superman   |     0 |       0 |   103 |    97 |     6 |  94% |  11.20
 vision     |     1 |       0 |    14 |     5 |     9 |  35% |  33.99
+zz-dealer  |    11 |       1 |    10 |     7 |     3 |  70% |   0.50
+zz-olddealer |     6 |       0 |     0 |     0 |     0 |   0% |      -
 -----------+-------+---------+-------+-------+-------+------+-------
-total      |     3 |       0 |   537 |   495 |    42 |  92% |
-pool: 0 undealt
+total      |    20 |       1 |   547 |   502 |    45 |  91% |
 
 
 friend     | ready | working |  done | status    
 -----------+-------+---------+-------+------------
-rowan      |    14 |      30 |  2532 | up        
+rowan      |    14 |      30 |  2532 | stale     
 johnny     |     1 |       0 |   446 | down      
-emma       |     1 |       0 |   283 | down      
-stella     |    59 |      26 |  1674 | up        
+emma       |     - |       - |     - | ?         
+stella     |    59 |      26 |  1674 | down      
 -----------+-------+---------+-------+------------
-total      |    75 |      56 |  4935 |
+total      |    74 |      56 |  4652 |
+stale: xy key missing and no SPRINT-XY.txt (sprint-xy is not running)

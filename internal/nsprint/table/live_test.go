@@ -2,8 +2,10 @@ package table_test
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
@@ -19,16 +21,105 @@ func liveStore(t *testing.T, cmds [][]string) *redis.Client {
 	return client
 }
 
-// TestControl2674SprintLayout: the fixture keyspace renders the real
-// SPRINT-TABLE.txt of 2026-09-23T19:26:17Z byte for byte.
-func TestControl2674SprintLayout(t *testing.T) {
-	client := liveStore(t, table.Fixture2674())
-	snap, err := table.ReadLive(context.Background(), client, table.Fixture2674Config())
-	if err != nil {
-		t.Fatal(err)
+// case2674 is one keyspace of the #2674 control. Every golden is the bash of
+// record's own output on that keyspace (live_bash_test.go runs it and, with
+// -update-golden-2674, wrote the file); Go must print the same bytes.
+type case2674 struct {
+	name    string
+	extra   [][]string // applied after Fixture2674()
+	noRedis bool       // Redis does not answer at all
+	golden  func() string
+	file    string
+	// diverge names a bench row the bash prints and Go must not (the bash's
+	// IFS-collapse defect); such a case has no golden.
+	diverge string
+}
+
+func cases2674() []case2674 {
+	return []case2674{
+		{name: "live", golden: table.Golden2674, file: "sprint-table-2674.golden"},
+		{name: "degraded", extra: table.Fixture2674Degraded(), golden: table.Golden2674Degraded, file: "sprint-table-2674-degraded.golden"},
+		{name: "noredis", noRedis: true, golden: table.Golden2674NoRedis, file: "sprint-table-2674-noredis.golden"},
+		{name: "dead-bench-no-dealer-fields", diverge: "zz-dead", extra: [][]string{
+			{"HSET", "bench:zz-dead", "host", "zz-dead", "queue", "2", "working", "1", "done", "5", "ok", "5", "fail", "0", "load1", "0.20", "at", table.Fixture2674Now().Add(-300 * time.Second).Format("2006-01-02T15:04:05Z")},
+		}},
 	}
-	if got, want := snap.RenderLive(table.Fixture2674Now()), table.Golden2674(); got != want {
-		t.Fatalf("live layout differs from the bash golden\ngot:\n%s\nwant:\n%s", got, want)
+}
+
+// TestControl2674SprintLayout (DONE-WHEN of #2674): on the keyspace captured
+// from the live fleet Redis, and on the degraded and no-Redis variants, Go's
+// RenderLive prints the bytes the bash of record printed on the same keyspace.
+// The "bash" subtest re-runs the pinned bash itself against a real
+// redis-server loaded with the same keys and requires bash == golden == Go.
+func TestControl2674SprintLayout(t *testing.T) {
+	cfg, now := table.Fixture2674Config(), table.Fixture2674Now()
+	for _, c := range cases2674() {
+		if c.golden == nil {
+			continue
+		}
+		t.Run(c.name, func(t *testing.T) {
+			snap := table.FailedLive(cfg, nil)
+			if !c.noRedis {
+				var err error
+				client := liveStore(t, append(table.Fixture2674(), c.extra...))
+				if snap, err = table.ReadLive(context.Background(), client, cfg); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got, want := snap.RenderLive(now), c.golden(); got != want {
+				t.Fatalf("Go differs from the bash's %s\ngot:\n%s\nwant:\n%s", c.file, got, want)
+			}
+		})
+	}
+	t.Run("bash", bashParity2674)
+}
+
+var stamp2674 = regexp.MustCompile(`[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z`)
+
+// TestControl2674FixtureMargins: the bash reads its own clock (date) a few
+// seconds after the test shifts the snapshot to "now", so every age in the
+// fixture must sit at least 5 s from the threshold it is tested against, or
+// a slow bash tick would flip a cell and the control would measure load.
+func TestControl2674FixtureMargins(t *testing.T) {
+	now := table.Fixture2674Now()
+	cmds := append(table.Fixture2674(), table.Fixture2674Degraded()...)
+	checked := 0
+	check := func(what, stamp string, threshold int64) {
+		at, err := time.Parse("2006-01-02T15:04:05Z", stamp)
+		if err != nil {
+			return
+		}
+		age := now.Unix() - at.Unix()
+		if d := age - threshold; d > -5 && d < 5 {
+			t.Errorf("%s: age %ds is within 5 s of the %ds threshold; recapture the snapshot", what, age, threshold)
+		}
+		checked++
+	}
+	for _, cmd := range cmds {
+		if cmd[0] == "SET" && strings.HasSuffix(cmd[1], ":landed") {
+			for _, m := range stamp2674.FindAllString(cmd[2], -1) {
+				check(cmd[1], m, 180)
+			}
+		}
+		if cmd[0] != "HSET" {
+			continue
+		}
+		f := map[string]string{}
+		for i := 2; i+1 < len(cmd); i += 2 {
+			f[cmd[i]] = cmd[i+1]
+		}
+		switch {
+		case strings.HasPrefix(cmd[1], "friend:") && !strings.Contains(cmd[1][len("friend:"):], ":"):
+			check(cmd[1]+" at", f["at"], 10)
+		case strings.HasPrefix(cmd[1], "bench:") && f["host"] == strings.TrimPrefix(cmd[1], "bench:"):
+			check(cmd[1]+" at", f["at"], 60)
+			if f["dealer_queue"] != "" {
+				check(cmd[1]+" dealer_at", f["dealer_at"], 30)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no stamps checked: the snapshot has no friend or bench rows")
 	}
 }
 
@@ -51,15 +142,27 @@ func TestControl2674FailedTickNeverBlank(t *testing.T) {
 	}
 	good.LastGood = now.Add(-7e9)
 	got = table.FailedLive(cfg, good).RenderLive(now)
-	for _, want := range []string{"blocked: ?\n", "stella     |    87 |      21 |  1553 | up        \n", "stale: 7s (Redis did not answer; rows are the last good read)\n"} {
+	stella := good.Friends[len(good.Friends)-1]
+	row := "stella     | " + pad(stella.Ready, 5) + " | " + pad(stella.Working, 7) + " | " + pad(stella.Done, 5) + " | "
+	for _, want := range []string{"blocked: ?\n", row, "stale: 7s (Redis did not answer; rows are the last good read)\n"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("failed tick lacks %q:\n%s", want, got)
 		}
 	}
 }
 
+func pad(v string, n int) string {
+	if v == "" {
+		v = "-"
+	}
+	for len(v) < n {
+		v = " " + v
+	}
+	return v
+}
+
 func TestFormatLandedAgesOut(t *testing.T) {
-	now := table.Fixture2674Now()
+	now := time.Date(2026, 9, 23, 19, 26, 17, 0, time.UTC)
 	for raw, want := range map[string]string{
 		"": "landed: ?",
 		"193/666 landed 28% (a 1/2) eta=~21h at=2026-09-23T19:25:17Z": "landed: 193/666 28% -> ~21h",
