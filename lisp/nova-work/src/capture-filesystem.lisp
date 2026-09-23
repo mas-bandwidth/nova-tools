@@ -25,11 +25,13 @@
 ;;;; HANDOFF for Stella; if she chooses a resident provider, it is a producer in
 ;;;; front of this function and none of what is below changes.
 ;;;;
-;;;; A staged file is NOT written by rename. A stage is trusted only when its
-;;;; recorded length and digest match the bytes on disk, which catches a torn
-;;;; write at the moment it matters -- the admission -- and is a stronger
-;;;; statement than an atomic publish would be, because it also catches a stage
-;;;; that something else truncated afterwards.
+;;;; A stage is trusted only when its recorded length and digest match the
+;;;; bytes on disk, which catches a torn write at the moment it matters -- the
+;;;; admission -- and also a stage that something else truncated afterwards.
+;;;; The bytes are written to a fresh temporary file and renamed over the stage
+;;;; path, and a stage is only ever read from a regular file at that path: a
+;;;; symlink planted there is replaced on write and refused on read, never
+;;;; followed out of the staging root.
 
 (in-package #:nova-work)
 
@@ -129,26 +131,63 @@ reconciled against every stage record that journal already holds
 ;;; Staging one input outside the mutation loop
 ;;; ------------------------------------------------------------------
 
+(defvar *staged-temp-counter* 0)
+
+(defun staged-lstat (path)
+  "The lstat of PATH -- the final component itself, never what a symlink there
+points at -- or NIL when nothing is there."
+  (ignore-errors (sb-posix:lstat path)))
+
 (defun write-staged-file (path content)
   "Write CONTENT to PATH and make it durable: the file is fsynced and so is its
-directory, because a staged input nobody can find after a crash is not staged."
-  (let ((directory (subseq path 0 (position #\/ path :from-end t))))
+directory, because a staged input nobody can find after a crash is not staged.
+
+The bytes go to a FRESH temporary file in the already-verified operation
+directory (created exclusively, so nothing that is already there is opened) and
+that file is then renamed over PATH. rename(2) replaces whatever sits at PATH --
+a symlink included -- and never follows it, so a planted
+<root>/<operation>/<id>.stage symlink cannot redirect the write to a file
+outside the staging root."
+  (let* ((directory (subseq path 0 (position #\/ path :from-end t)))
+         (temp (format nil "~A.tmp-~D-~D" path
+                       (sb-posix:getpid) (incf *staged-temp-counter*)))
+         (renamed nil))
     (ensure-directories-exist (concatenate 'string directory "/"))
-    (with-open-file (out path :direction :output :if-exists :supersede
-                              :if-does-not-exist :create
-                              :element-type 'character :external-format :utf-8)
-      (write-string content out)
-      (sync-stream out :path path))
-    (sync-directory directory)
+    (unwind-protect
+         (progn
+           (with-open-file (out temp :direction :output :if-exists :error
+                                     :if-does-not-exist :create
+                                     :element-type 'character :external-format :utf-8)
+             (write-string content out)
+             (sync-stream out :path temp))
+           (sb-posix:rename temp path)
+           (setf renamed t)
+           (sync-directory directory))
+      (unless renamed (ignore-errors (sb-posix:unlink temp))))
     path))
 
 (defun read-staged-file (path)
-  "The staged bytes, or NIL when the file is gone."
-  (when (probe-file path)
-    (with-open-file (in path :direction :input :element-type 'character
-                             :external-format :utf-8)
-      (let ((text (make-string (file-length in))))
-        (subseq text 0 (read-sequence text in))))))
+  "The staged bytes, or NIL and a reason. Only a REGULAR file at PATH itself is
+read: a symlink there (to anything, inside the root or out) is refused without
+being followed, and the file opened must be the very inode the lstat saw, so a
+swap between the check and the open is refused too."
+  (let ((st (staged-lstat path)))
+    (cond
+      ((null st) (values nil "the staged file is missing"))
+      ((not (sb-posix:s-isreg (sb-posix:stat-mode st)))
+       (values nil "the staged path is not a regular file (a symlink is never followed)"))
+      (t
+       (with-open-file (in path :direction :input :element-type 'character
+                                :external-format :utf-8 :if-does-not-exist nil)
+         (if (null in)
+             (values nil "the staged file is missing")
+             (let ((opened (ignore-errors (sb-posix:fstat (sb-sys:fd-stream-fd in)))))
+               (if (not (and opened
+                             (eql (sb-posix:stat-dev opened) (sb-posix:stat-dev st))
+                             (eql (sb-posix:stat-ino opened) (sb-posix:stat-ino st))))
+                   (values nil "the staged file moved between the check and the open")
+                   (let ((text (make-string (file-length in))))
+                     (subseq text 0 (read-sequence text in)))))))))))
 
 (defun stage-source-bytes (stage &key operation id kind (expected-revision 0)
                                       content source-pin request author stamp)
@@ -195,7 +234,8 @@ Answers (values T LINE 0) or (values NIL LINE 2)."
               (setf (capture-stage-inputs stage)
                     (remove id (capture-stage-inputs stage)
                             :key #'capture-input-id :test #'equal))
-              (ignore-errors (delete-file (staged-input-path stage operation id)))
+              ;; unlink(2) removes the name itself and never follows a symlink.
+              (ignore-errors (sb-posix:unlink (staged-input-path stage operation id)))
               (values nil (format nil "STAGE FAIL id=~A: ~A" id c) 2)))))))
 
 ;;; ------------------------------------------------------------------
@@ -209,11 +249,11 @@ recorded. A stage whose file is gone, short or altered answers
   (let ((entry (cdr (assoc id (filesystem-capture-stage-staged stage) :test #'equal))))
     (if (null entry)
         (values nil (format nil "STAGE FAIL id=~A: no staged input" id) 2)
-        (let* ((path (staged-input-path stage (getf entry :operation) id))
-               (text (read-staged-file path)))
+        (multiple-value-bind (text why)
+            (read-staged-file (staged-input-path stage (getf entry :operation) id))
           (cond
             ((null text)
-             (values nil (format nil "STAGE FAIL id=~A: the staged file is missing" id) 2))
+             (values nil (format nil "STAGE FAIL id=~A: ~A" id why) 2))
             ((/= (length (utf8-octets text)) (getf entry :bytes))
              (values nil
                      (format nil "STAGE FAIL id=~A: staged ~D bytes, recorded ~D"
@@ -255,14 +295,15 @@ not a licence to admit what is not. Answers (values VERIFIED UNVERIFIED)."
                  (unsafe (unsafe-staging-component operation input))
                  (path (and (not unsafe)
                             (ignore-errors (staged-input-path stage operation input))))
-                 (text (and path (read-staged-file path))))
+                 (got (and path (multiple-value-list (read-staged-file path))))
+                 (text (first got)))
             (cond
               (unsafe
                (push (cons input unsafe) unverified))
               ((null path)
                (push (cons input "the staged path escapes the staging root") unverified))
               ((null text)
-               (push (cons input "the staged file is missing") unverified))
+               (push (cons input (second got)) unverified))
               ((/= (length (utf8-octets text)) (getf record :bytes))
                (push (cons input "the staged file is short or long") unverified))
               ((not (equal (sha256-hex text) (getf record :sha)))

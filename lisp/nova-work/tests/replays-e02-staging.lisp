@@ -7,6 +7,7 @@
 ;;;;   the-restart-reconciles-staged-inputs-and-reports-a-missing-one  :2759-2760
 ;;;;   only-the-owning-engine-admits-at-the-expected-revision     :2752-2754
 ;;;;   a-traversal-id-stages-nothing-outside-the-staging-root     :2752-2754
+;;;;   a-symlinked-stage-is-never-followed-out-of-the-root        :2752-2754
 ;;;;
 ;;;; The pure model of src/capture.lisp stages a byte COUNT and no bytes. Every
 ;;;; case here reads the staging root off the disk with its own WITH-OPEN-FILE,
@@ -241,3 +242,65 @@ operation. Answers (values STAGE JOURNAL-PATH ROOT)."
       (ok (stage-source-bytes stage :operation "op-cap" :id "in.1_ok-2" :kind :capture
                                     :content "fine" :request "req-ok")
           "a safe id still stages"))))
+
+;;; ------------------------------------------------------------------
+;;; a-symlinked-stage-is-never-followed-out-of-the-root       :2752-2754
+;;; ------------------------------------------------------------------
+
+(deftest "a-symlinked-stage-is-never-followed-out-of-the-root" "docs/SPEC-WORK.md:2752-2754"
+    "expected=a-planted-symlink-is-replaced-not-written-through;a-symlinked-stage-is-not-admitted;the-outside-file-is-unchanged"
+  (multiple-value-bind (stage journal-path root) (staging-fixture "symlink")
+    (let* ((victim (format nil "~A/victim.stage" root))
+           (op-dir (format nil "~A/stage/op-cap/" root)))
+      (with-open-file (out victim :direction :output :if-exists :supersede
+                                  :element-type 'character :external-format :utf-8)
+        (write-string "original" out))
+      (ensure-directories-exist op-dir)
+      ;; WRITE: safe ids, but <root>/op-cap/in-w.stage is a pre-planted symlink
+      ;; to the outside victim.
+      (let ((planted (staged-input-path stage "op-cap" "in-w")))
+        (sb-posix:symlink victim planted)
+        (multiple-value-bind (staged line code)
+            (stage-source-bytes stage :operation "op-cap" :id "in-w" :kind :capture
+                                      :content "overwritten" :request "req-w")
+          (declare (ignore line))
+          (check-equal t staged "a safe id stages")
+          (check-equal 0 code "and exits 0"))
+        (check-string= "original" (read-file-text victim)
+                       "the write did not go through the symlink to the outside file")
+        (ok (sb-posix:s-isreg (sb-posix:stat-mode (sb-posix:lstat planted)))
+            "the stage path is now a regular file, the symlink replaced not followed")
+        (check-string= "overwritten" (read-file-text planted) "holding the staged bytes"))
+      ;; READ: a verified stage is swapped behind the engine's back for a
+      ;; symlink to an outside file with the SAME bytes, so length and digest
+      ;; would both match if the link were followed.
+      (stage-source-bytes stage :operation "op-cap" :id "in-r" :kind :capture
+                                :expected-revision 7 :content "original" :request "req-r")
+      (let ((path (staged-input-path stage "op-cap" "in-r")))
+        (sb-posix:unlink path)
+        (sb-posix:symlink victim path))
+      (multiple-value-bind (text line code) (staged-content stage "in-r")
+        (check-equal nil text "a symlinked stage is not read")
+        (check-equal 2 code "and exits 2")
+        (ok (and line (search "not a regular file" line)) "naming why: ~A" line))
+      (multiple-value-bind (admitted line code) (admit-staged-result stage 7 :id "in-r")
+        (declare (ignore line))
+        (check-equal nil admitted "a symlinked stage is never admitted")
+        (check-equal 2 code "and its admission exits 2"))
+      (check-string= "original" (read-file-text victim) "the outside file is unchanged")
+      ;; RESTART: the symlinked stage is reported, not re-registered.
+      (close-durable-operation-registry (capture-stage-registry stage))
+      (let* ((registry (open-durable-operation-registry journal-path))
+             (restarted (open-filesystem-capture-stage (format nil "~A/stage" root)
+                                                       :registry registry)))
+        (unwind-protect
+             (progn
+               (ok (assoc "in-r" (filesystem-capture-stage-unverified restarted) :test #'equal)
+                   "the restart reports the symlinked stage")
+               (ok (not (find "in-r" (capture-stage-inputs restarted)
+                              :key #'capture-input-id :test #'equal))
+                   "and does not re-register it")
+               (ok (find "in-w" (capture-stage-inputs restarted)
+                         :key #'capture-input-id :test #'equal)
+                   "while the regular stage is re-registered"))
+          (close-durable-operation-registry registry))))))
