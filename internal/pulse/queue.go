@@ -78,7 +78,7 @@ func NewGitAndResultsChecker(repo, baseBranch, resultsDir string) *GitAndResults
 // IsDependencyMerged checks results store and git to see if dep has landed on BaseBranch.
 func (g *GitAndResultsChecker) IsDependencyMerged(dep string) (bool, string) {
 	dep = strings.TrimSpace(dep)
-	if dep == "" {
+	if dep == "" || dep == "-" { // "-" is DEPENDS-ON's "none" (FormatDependsOn)
 		return true, ""
 	}
 
