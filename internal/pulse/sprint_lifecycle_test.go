@@ -520,23 +520,76 @@ func TestMutation_LifecycleTeeth(t *testing.T) {
 		}
 	}
 
-	// Tooth 8: SprintStop refuses if already stopped or idle
+	// Tooth 8: SprintStop refuses if idle (never started, nothing to stop)
 	{
-		for _, invalid := range []SprintState{StateIdle, StateStopped} {
-			dir := t.TempDir()
-			_ = WriteSprintState(dir, invalid)
-			var out, errb bytes.Buffer
-			code := SprintStop(SprintStopInput{
-				Dir:    dir,
-				Stdout: &out,
-				Stderr: &errb,
-			})
-			if code != 2 {
-				t.Fatalf("tooth 8 failed: stop did not refuse from state %s (got %d)", invalid, code)
-			}
-			if !strings.Contains(errb.String(), "SPRINT REFUSED") {
-				t.Fatalf("tooth 8 failed: expected SPRINT REFUSED, got %s", errb.String())
-			}
+		dir := t.TempDir()
+		_ = WriteSprintState(dir, StateIdle)
+		var out, errb bytes.Buffer
+		code := SprintStop(SprintStopInput{
+			Dir:    dir,
+			Stdout: &out,
+			Stderr: &errb,
+		})
+		if code != 2 {
+			t.Fatalf("tooth 8 failed: stop did not refuse from state %s (got %d)", StateIdle, code)
+		}
+		if !strings.Contains(errb.String(), "SPRINT REFUSED") {
+			t.Fatalf("tooth 8 failed: expected SPRINT REFUSED, got %s", errb.String())
+		}
+	}
+
+	// Tooth 9: SprintStop is idempotent when already stopped (safe retry
+	// after a lost successful response), and MUST NOT refuse.
+	{
+		dir := t.TempDir()
+		_ = WriteSprintState(dir, StateStopped)
+		stamp := "2026-09-23T00:00:00Z"
+		if err := os.WriteFile(filepath.Join(dir, SprintEndFile), []byte(stamp+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var out, errb bytes.Buffer
+		code := SprintStop(SprintStopInput{
+			Dir:    dir,
+			Stdout: &out,
+			Stderr: &errb,
+		})
+		if code != 0 {
+			t.Fatalf("tooth 9 failed: idempotent re-stop refused (got %d): %s", code, errb.String())
+		}
+		if !strings.Contains(out.String(), "SPRINT-END "+stamp) {
+			t.Fatalf("tooth 9 failed: expected prior SPRINT-END stamp echoed, got %s", out.String())
+		}
+		st, _ := ReadSprintState(dir)
+		if st != StateStopped {
+			t.Fatalf("tooth 9 failed: state changed on idempotent retry, got %s", st)
+		}
+	}
+
+	// Tooth 10: forced (non-strict) SprintStop with lingering leases invokes
+	// CancelTasks and reports the override on stderr instead of silently
+	// stamping stopped.
+	{
+		dir := t.TempDir()
+		_ = WriteSprintState(dir, StateRunning)
+		var out, errb bytes.Buffer
+		var cancelled bool
+		leases := LeaseFunc(func() (int, error) { return 3, nil })
+		code := SprintStop(SprintStopInput{
+			Dir:         dir,
+			Leases:      leases,
+			Strict:      false,
+			CancelTasks: func() { cancelled = true },
+			Stdout:      &out,
+			Stderr:      &errb,
+		})
+		if code != 0 {
+			t.Fatalf("tooth 10 failed: forced stop refused (got %d): %s", code, errb.String())
+		}
+		if !cancelled {
+			t.Fatalf("tooth 10 failed: CancelTasks was not invoked on forced stop with lingering leases")
+		}
+		if !strings.Contains(errb.String(), "SPRINT STOP FORCED: 3 active leases") {
+			t.Fatalf("tooth 10 failed: expected forced-override audit line, got %s", errb.String())
 		}
 	}
 }

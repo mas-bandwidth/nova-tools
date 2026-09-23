@@ -828,6 +828,25 @@ func SprintStop(in SprintStopInput) int {
 		fmt.Fprintf(in.Stderr, "SPRINT REFUSED: reading state: %v\n", err)
 		return 2
 	}
+	if curr == StateStopped {
+		// Idempotent retry: the sprint is already stopped, most likely because
+		// a prior SprintStop call succeeded but its response was lost (network
+		// blip, killed client, etc). Re-report the same success instead of
+		// refusing, so a client retry after a lost response is safe.
+		stamp := ""
+		if data, rerr := os.ReadFile(filepath.Join(in.Dir, SprintEndFile)); rerr == nil {
+			stamp = strings.TrimSpace(string(data))
+		}
+		if stamp == "" {
+			now := time.Now().UTC()
+			if in.Now != nil {
+				now = in.Now().UTC()
+			}
+			stamp = now.Format(time.RFC3339)
+		}
+		fmt.Fprintf(in.Stdout, "SPRINT-END %s (already stopped, idempotent retry)\n", stamp)
+		return 0
+	}
 	if curr != StateRunning && curr != StatePaused && curr != StateDraining {
 		fmt.Fprintf(in.Stderr, "SPRINT REFUSED: cannot stop sprint in state %q (must be running, paused, or draining)\n", curr)
 		return 2
@@ -865,10 +884,18 @@ func SprintStop(in SprintStopInput) int {
 			fmt.Fprintf(in.Stderr, "SPRINT STOP WORKING: %d active leases remain\n", active)
 			return 1
 		}
+		if !in.Strict && active > 0 {
+			// A non-strict (forced) stop is proceeding past lingering leases.
+			// Make that override auditable in the terminal receipt (ActiveCards
+			// below) and on stderr, instead of silently stamping stopped.
+			fmt.Fprintf(in.Stderr, "SPRINT STOP FORCED: %d active leases not confirmed stopped; requesting cancellation\n", active)
+		}
 	}
 
 	if in.CancelTasks != nil {
 		in.CancelTasks()
+	} else if active > 0 {
+		fmt.Fprintf(in.Stderr, "SPRINT STOP WARNING: %d active leases left running: no cancellation callback supplied\n", active)
 	}
 
 	stopPath := in.StopFile

@@ -135,15 +135,26 @@ func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
 		})
 	case "stop":
 		strict := *strictFlag && !*forceFlag
+		stopFilePath := stopPath
+		if stopFilePath == "" {
+			stopFilePath = filepath.Join(dir, pulse.SprintStopFile)
+		}
 		return pulse.SprintStop(pulse.SprintStopInput{
 			Dir:      dir,
 			StopFile: stopPath,
 			Leases:   leaseChecker,
 			Strict:   strict,
-			Reason:   strings.TrimSpace(*reasonFlag),
-			Now:      func() time.Time { return now },
-			Stdout:   stdout,
-			Stderr:   stderr,
+			// CancelTasks is the CLI's cancellation signal: halt new dispatch
+			// immediately (before the terminal receipt is written) by writing
+			// the STOP file, rather than leaving lingering leases uncancelled
+			// with no signal at all when --force overrides the strict check.
+			CancelTasks: func() {
+				_ = os.WriteFile(stopFilePath, nil, 0o644)
+			},
+			Reason: strings.TrimSpace(*reasonFlag),
+			Now:    func() time.Time { return now },
+			Stdout: stdout,
+			Stderr: stderr,
 		})
 	case "status":
 		return pulse.SprintStatus(pulse.SprintStatusInput{
