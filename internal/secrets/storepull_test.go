@@ -48,6 +48,16 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 	// A seat whose home is itself inside the card wall: the key is the seat's own and still refused.
 	wallSeatHome := filepath.Join(wall, "home")
 	wallSeatKey := writeThrowawayKey(t, filepath.Join(wallSeatHome, ".ssh", "id_ed25519"), seat+"@testbench")
+	// Stella's hold on #3240: a person's private key beside a seat-labeled public half. The comment
+	// in the .pub is the seat's, but the key ssh would offer is the person's; the pull must see
+	// that the two halves are not one key. Both the PEM form and the OpenSSH form ssh-keygen
+	// writes are held.
+	swappedKey := writeThrowawayKey(t, filepath.Join(seatHome, ".ssh", "id_swapped"), seat+"@testbench")
+	copyFile(t, personKey, swappedKey)
+	personOpenSSH := writeThrowawayOpenSSHKey(t, filepath.Join(personHome, ".ssh", "id_openssh"), "glenn@laptop")
+	swappedOpenSSH := writeThrowawayOpenSSHKey(t, filepath.Join(seatHome, ".ssh", "id_swapped_openssh"), seat+"@testbench")
+	copyFile(t, personOpenSSH, swappedOpenSSH)
+	benchOpenSSH := writeThrowawayOpenSSHKey(t, filepath.Join(seatHome, ".ssh", "id_openssh"), seat+"@testbench")
 	linkedKey := filepath.Join(seatHome, ".ssh", "id_link")
 	if err := os.Symlink(personKey, linkedKey); err != nil {
 		t.Fatal(err)
@@ -70,6 +80,8 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 		{"a symlink to a person's key", linkedKey, seatHome, "symlink"},
 		{"the seat's key inside the card wall", wallKey, seatHome, "inside the card wall"},
 		{"a seat whose home is inside the card wall", wallSeatKey, wallSeatHome, "inside the card wall"},
+		{"a person's private key under the seat's public half", swappedKey, seatHome, "does not match its public half"},
+		{"a person's OpenSSH key under the seat's public half", swappedOpenSSH, seatHome, "does not match its public half"},
 	}
 	for _, c := range refused {
 		t.Run("refuses "+c.name, func(t *testing.T) {
@@ -89,30 +101,35 @@ func TestStorePullUsesBenchOwnedKey(t *testing.T) {
 		})
 	}
 
-	t.Run("pulls over the bench's own key", func(t *testing.T) {
-		_ = os.Remove(sshLog)
-		t.Setenv("SSH_AUTH_SOCK", filepath.Join(root, "agent.sock"))
-		o := base
-		o.Key = benchKey
-		head, err := PullStore(o)
-		if err != nil {
-			t.Fatalf("PullStore refused the bench's own key: %v", err)
-		}
-		want := strings.TrimSpace(gitOut(t, gitBin, origin, "rev-parse", "HEAD"))
-		if head != want {
-			t.Fatalf("store head after the pull is %s, want the origin head %s", head, want)
-		}
-		logged, err := os.ReadFile(sshLog)
-		if err != nil {
-			t.Fatalf("the pull never ran the seat's ssh: %v", err)
-		}
-		argv := strings.Split(strings.TrimSpace(string(logged)), "\n")
-		for _, w := range []string{"-i", benchKey, "IdentitiesOnly=yes", "IdentityAgent=none", "agent=unset"} {
-			if !containsLine(argv, w) {
-				t.Fatalf("ssh argv/env %q does not carry %q; the pull must offer exactly the bench's key and nothing an agent holds", argv, w)
+	for _, c := range []struct{ name, key string }{
+		{"the bench's own key", benchKey},
+		{"the bench's own OpenSSH-format key", benchOpenSSH},
+	} {
+		t.Run("pulls over "+c.name, func(t *testing.T) {
+			_ = os.Remove(sshLog)
+			t.Setenv("SSH_AUTH_SOCK", filepath.Join(root, "agent.sock"))
+			o := base
+			o.Key = c.key
+			head, err := PullStore(o)
+			if err != nil {
+				t.Fatalf("PullStore refused %s: %v", c.name, err)
 			}
-		}
-	})
+			want := strings.TrimSpace(gitOut(t, gitBin, origin, "rev-parse", "HEAD"))
+			if head != want {
+				t.Fatalf("store head after the pull is %s, want the origin head %s", head, want)
+			}
+			logged, err := os.ReadFile(sshLog)
+			if err != nil {
+				t.Fatalf("the pull never ran the seat's ssh: %v", err)
+			}
+			argv := strings.Split(strings.TrimSpace(string(logged)), "\n")
+			for _, w := range []string{"-i", c.key, "IdentitiesOnly=yes", "IdentityAgent=none", "agent=unset"} {
+				if !containsLine(argv, w) {
+					t.Fatalf("ssh argv/env %q does not carry %q; the pull must offer exactly the bench's key and nothing an agent holds", argv, w)
+				}
+			}
+		})
+	}
 }
 
 // storePullFixture builds a bare origin with two commits and a store clone one commit behind,
@@ -188,6 +205,65 @@ func writeThrowawayKey(t *testing.T, path, comment string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// writeThrowawayOpenSSHKey generates an ed25519 key in the test's temp directory in the
+// unencrypted openssh-key-v1 form ssh-keygen writes (PROTOCOL.key), mode 0600, with its public
+// half beside it in authorized_keys form.
+func writeThrowawayOpenSSHKey(t *testing.T, path, comment string) string {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubBlob := testWire([]byte("ssh-ed25519"), pub)
+	var check [4]byte
+	if _, err := rand.Read(check[:]); err != nil {
+		t.Fatal(err)
+	}
+	section := append(append([]byte{}, check[:]...), check[:]...)
+	section = append(section, testWire([]byte("ssh-ed25519"), pub, priv, []byte(comment))...)
+	for i := byte(1); len(section)%8 != 0; i++ {
+		section = append(section, i)
+	}
+	body := []byte("openssh-key-v1\x00")
+	body = append(body, testWire([]byte("none"), []byte("none"), nil)...)
+	body = binary.BigEndian.AppendUint32(body, 1)
+	body = append(body, testWire(pubBlob, section)...)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	line := "ssh-ed25519 " + base64.StdEncoding.EncodeToString(pubBlob) + " " + comment + "\n"
+	if err := os.WriteFile(path+".pub", []byte(line), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// testWire concatenates SSH length-prefixed strings; the test's own copy, so the fixture does not
+// lean on the code under test.
+func testWire(parts ...[]byte) []byte {
+	var out []byte
+	for _, p := range parts {
+		out = binary.BigEndian.AppendUint32(out, uint32(len(p)))
+		out = append(out, p...)
+	}
+	return out
+}
+
+// copyFile overwrites dst's contents with src's, keeping dst's mode.
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, b, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func gitOut(t *testing.T, gitBin, dir string, args ...string) string {
