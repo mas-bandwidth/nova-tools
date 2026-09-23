@@ -49,7 +49,9 @@ func TestRouteLogsToTheTable(t *testing.T) {
 	usage := filepath.Join(t.TempDir(), "usage.tsv")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"route", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--packages", "1",
+	// new-verb, not a mechanical kind: a first mechanical attempt makes no
+	// provider call at all (#1513), and this test is about the spend on the row.
+	code := run([]string{"route", "--unit-id", "u", "--kind", "new-verb", "--files", "2", "--packages", "1",
 		"--usage", usage, "--log", "postgres"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
@@ -64,7 +66,7 @@ func TestRouteLogsToTheTable(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("one decision is one row, got %d", len(rows))
 	}
-	if rows[0].Unit != "u" || rows[0].Kind != "rebase" {
+	if rows[0].Unit != "u" || rows[0].Kind != "new-verb" {
 		t.Errorf("the row is not the decision: %+v", rows[0])
 	}
 	if rows[0].TokensIn == nil || *rows[0].TokensIn != 937 {

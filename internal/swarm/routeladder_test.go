@@ -38,6 +38,7 @@ import (
 const routeTestRegistry = `{
   "minds": [
     {"name": "low", "lineage": "vendor", "height": 0, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "vendor/low-1"},
+    {"name": "side", "lineage": "other", "height": 0, "kinds": [], "lanes": [], "availability": "asleep", "ask": "card", "model": "other/side-1"},
     {"name": "high", "lineage": "vendor", "height": 1, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "vendor/high-1"},
     {"name": "child", "lineage": "house", "height": 2, "kinds": [], "lanes": [], "availability": "available", "ask": "child"},
     {"name": "guardian", "lineage": "house", "height": 3, "kinds": ["guard", "fresh-take"], "lanes": ["security"], "availability": "reserved", "ask": "bus"}
@@ -55,11 +56,28 @@ func routeTestReg(t *testing.T) *decide.Registry {
 
 func routeTestNow() time.Time { return time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC) }
 
-// routeTestUnit is one mechanical unit of work: the kind starts at the bottom
-// rung, so the offered set is the two card rungs and there is a decision to
-// make.
+// routeTestUnit is one mechanical unit of work on its first attempt: the kind
+// starts at the bottom rung and nothing has failed, so (#1513) the step above
+// is not offered and no provider is asked -- the rules' bottom rung stands.
 func routeTestUnit(id string) decide.Unit {
 	return decide.Unit{ID: id, Kind: decide.KindRebase, Files: 4, Packages: 1, Lanes: 1}
+}
+
+// routeTestFailure is the CONFIRMED failure that earns a mechanical unit its
+// step-up offer (#1513): the other bottom-rung lineage (side, asleep since, so
+// never a sideways answer of its own) already failed it, so the rules answer
+// the bottom rung and the provider is offered that rung and the one above --
+// a decision to make.
+func routeTestFailure() []decide.Attempt {
+	return []decide.Attempt{{Rung: "side", Outcome: decide.OutcomeFailed, Reason: "the gate went red"}}
+}
+
+// routeTestDecisionUnit is routeTestUnit carrying that confirmed failure: the
+// unit these tests route through the provider.
+func routeTestDecisionUnit(id string) decide.Unit {
+	u := routeTestUnit(id)
+	u.Attempts = routeTestFailure()
+	return u
 }
 
 // jevFake is the provider, strict the way the real endpoint is: a POST with a
@@ -156,7 +174,7 @@ func TestRouteCardFollowsTheAnswer(t *testing.T) {
 		Usage:    filepath.Join(dir, "usage.tsv"),
 		Now:      routeTestNow,
 	}
-	got := RouteCard(context.Background(), in, routeTestUnit("card-1"), "vendor/low-1")
+	got := RouteCard(context.Background(), in, routeTestDecisionUnit("card-1"), "vendor/low-1")
 	if got.Model != "vendor/high-1" {
 		t.Fatalf("the card was dispatched with %q; the answer named the high rung, so the model must follow it", got.Model)
 	}
@@ -209,7 +227,7 @@ func TestRouteCardBelowTheFloorKeepsTodaysModel(t *testing.T) {
 		Log:      filepath.Join(dir, "decide.jsonl"),
 		Usage:    filepath.Join(dir, "usage.tsv"),
 		Now:      routeTestNow,
-	}, routeTestUnit("card-2"), "vendor/low-1")
+	}, routeTestDecisionUnit("card-2"), "vendor/low-1")
 	if got.Model != "vendor/low-1" {
 		t.Fatalf("model %q; below the floor the card keeps today's model", got.Model)
 	}
@@ -240,6 +258,41 @@ func TestRouteCardWithNoKeyKeepsTodaysModel(t *testing.T) {
 	}
 }
 
+// TestRouteCardNeverAsksOnAFirstMechanicalAttempt (#1513): a mechanical unit
+// with no confirmed failure is offered its supported rung alone, so the card
+// runs on the bottom rung and the provider is never called -- the step up is
+// earned by a failure, and the same unit carrying one IS asked.
+func TestRouteCardNeverAsksOnAFirstMechanicalAttempt(t *testing.T) {
+	calls := 0
+	seam := func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		calls++
+		q := qs[decide.RungQuestion]
+		options := make([]string, 0, len(q.Choice))
+		for name := range q.Choice {
+			options = append(options, name)
+		}
+		return map[string]decide.Answer{decide.RungQuestion: {Type: "choice", Choice: highestOption(options), Confidence: 0.97}},
+			decide.Usage{InputTokens: 900, HasInput: true}, nil
+	}
+	dir := t.TempDir()
+	in := RouteInput{Registry: routeTestReg(t), Decide: seam, Floor: 0.9, Now: routeTestNow,
+		Log: filepath.Join(dir, "decide.jsonl"), Usage: filepath.Join(dir, "usage.tsv")}
+	first := RouteCard(context.Background(), in, routeTestUnit("card-7"), "vendor/low-1")
+	if calls != 0 {
+		t.Fatalf("the provider was called %d time(s) for a first mechanical attempt; the step up is earned by a confirmed failure", calls)
+	}
+	if first.Rung != "low" || first.Model != "vendor/low-1" {
+		t.Fatalf("rung=%q model=%q; a first mechanical attempt runs on the bottom rung", first.Rung, first.Model)
+	}
+	earned := RouteCard(context.Background(), in, routeTestDecisionUnit("card-8"), "vendor/low-1")
+	if calls != 1 {
+		t.Fatalf("the provider was called %d time(s) for a unit carrying a confirmed failure, want 1", calls)
+	}
+	if earned.Rung != "high" || earned.Model != "vendor/high-1" {
+		t.Fatalf("rung=%q model=%q; a confirmed failure restores the offer, and the answer took the rung above", earned.Rung, earned.Model)
+	}
+}
+
 // TestRouteCardKeepsTodaysModelWhenTheProviderRefuses: a 400 from the endpoint
 // leaves the rules' answer standing, the card keeps today's model, and the
 // call is STILL accounted for -- a refusal cannot unspend it.
@@ -265,7 +318,7 @@ func TestRouteCardKeepsTodaysModelWhenTheProviderRefuses(t *testing.T) {
 		Log:      filepath.Join(dir, "decide.jsonl"),
 		Usage:    usagePath,
 		Now:      routeTestNow,
-	}, routeTestUnit("card-4"), "vendor/low-1")
+	}, routeTestDecisionUnit("card-4"), "vendor/low-1")
 	if got.Model != "vendor/low-1" {
 		t.Fatalf("model %q; a provider refusal leaves today's model standing", got.Model)
 	}
@@ -434,6 +487,11 @@ func TestRouteCardsOnTheFillPathOverridesTheTSVModel(t *testing.T) {
 	if cards[1].routable {
 		t.Fatalf("a card naming no kind was typed anyway: %+v", cards[1].unit)
 	}
+	// The card re-enters carrying a confirmed failure on the other bottom
+	// lineage: a first mechanical attempt is never offered a step up (#1513),
+	// so without it there is no decision for the provider to override the TSV
+	// with.
+	cards[0].unit.Attempts = routeTestFailure()
 	var stderr strings.Builder
 	in := BatchInput{
 		Stderr: &stderr,
