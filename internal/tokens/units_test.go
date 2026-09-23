@@ -143,3 +143,31 @@ func TestAPRValueIsReadWhicheverWayItIsWritten(t *testing.T) {
 		}
 	}
 }
+
+// Two units on one (model, repo) are two rows, and they come out in (model, repo, unit)
+// order EVERY time. The rows leave a map, so a sort on (model, repo) alone put them in map
+// order, and the day file's reader dropped the second as "out of order": a unit's spend
+// vanished from `sum --by unit` on about one fold in five. Many folds, one order.
+func TestTwoUnitsOnOnePairAreWrittenInUnitOrder(t *testing.T) {
+	for i := 0; i < 64; i++ {
+		f := NewFolder()
+		for _, unit := range []string{"lisp:collision", "certify:verb", "", "zeta"} {
+			f.Add("claude:glenn", Message{Day: "2026-09-18", Basis: UTC, Model: "claude-opus-5",
+				Repo: "schema", Unit: unit, Turn: true})
+		}
+		rows, _ := f.DayRows("2026-09-18")
+		var got []string
+		for _, r := range rows {
+			got = append(got, r.Unit)
+		}
+		want := []string{"-", "certify:verb", "lisp:collision", "zeta"}
+		if len(got) != len(want) {
+			t.Fatalf("fold %d: units %q, want %q", i, got, want)
+		}
+		for j := range want {
+			if got[j] != want[j] {
+				t.Fatalf("fold %d: units %q, want %q", i, got, want)
+			}
+		}
+	}
+}

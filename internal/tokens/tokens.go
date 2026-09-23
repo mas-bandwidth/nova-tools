@@ -285,18 +285,12 @@ func (f *Folder) DayRows(day string) (rows []*Row, mixed []Mixed) {
 		}
 		rows = append(rows, r)
 	}
-	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].Model != rows[j].Model {
-			return rows[i].Model < rows[j].Model
-		}
-		return rows[i].Repo < rows[j].Repo
-	})
-	sort.Slice(mixed, func(i, j int) bool {
-		if mixed[i].Model != mixed[j].Model {
-			return mixed[i].Model < mixed[j].Model
-		}
-		return mixed[i].Repo < mixed[j].Repo
-	})
+	// Sorted by the WHOLE key, (model, repo, unit). The rows come out of a map, and two
+	// units on one (model, repo) sorted by (model, repo) alone land in map order: the day
+	// file's reader then finds the second one "out of order" and drops its row, so a
+	// unit's spend vanished from `sum --by unit` on roughly one fold in five.
+	sort.Slice(rows, func(i, j int) bool { return keyLess(rows[i].Key, rows[j].Key) })
+	sort.Slice(mixed, func(i, j int) bool { return keyLess(mixed[i].Key, mixed[j].Key) })
 	return rows, mixed
 }
 
@@ -680,4 +674,16 @@ func orNoUnit(u string) string {
 		return NoUnit
 	}
 	return u
+}
+
+// keyLess orders two keys of one day by (model, repo, unit), the order a day file's rows
+// are written in and the order its reader checks.
+func keyLess(a, b Key) bool {
+	if a.Model != b.Model {
+		return a.Model < b.Model
+	}
+	if a.Repo != b.Repo {
+		return a.Repo < b.Repo
+	}
+	return orNoUnit(a.Unit) < orNoUnit(b.Unit)
 }

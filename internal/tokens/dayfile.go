@@ -211,11 +211,11 @@ type Partial struct {
 //   - some inside and some outside: a Partial, PartialBlended. Its cells are already a sum
 //     over both and nothing on disk takes them apart.
 //
-// A retained row and a recomputed row with the same (model, repo) is a Partial too,
-// PartialCollision: the day file's rows are unique by (model, repo), and summing the two
+// A retained row and a recomputed row with the same (model, repo, unit) is a Partial too,
+// PartialCollision: the day file's rows are unique by (model, repo, unit), and summing the two
 // would blend two runs' arithmetic into one cell no later fold could undo.
 //
-// The returned rows are sorted by (model, repo), which is what ParseDayFile demands. When
+// The returned rows are sorted by (model, repo, unit), which is what ParseDayFile demands. When
 // any Partial is returned the caller writes NOTHING: the rows are what the merge would have
 // been, and are not a file.
 func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained int, partials []Partial) {
@@ -229,7 +229,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 	rows = append(rows, fresh...)
 	computed := map[string]bool{}
 	for _, r := range fresh {
-		computed[r.Model+"\t"+r.Repo] = true
+		computed[r.Model+"\t"+r.Repo+"\t"+orDashStr(r.Unit)] = true
 	}
 	for _, r := range old {
 		in, out := 0, 0
@@ -251,7 +251,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 			// totals, day-total comparison cannot see the per-source quiet shrink
 			// (preserved as follow-up).
 		default:
-			if computed[r.Model+"\t"+r.Repo] {
+			if computed[r.Model+"\t"+r.Repo+"\t"+orDashStr(r.Unit)] {
 				partials = append(partials, partialOf(r, folded, PartialCollision))
 				continue
 			}
@@ -260,10 +260,8 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].Model != rows[j].Model {
-			return rows[i].Model < rows[j].Model
-		}
-		return rows[i].Repo < rows[j].Repo
+		return keyLess(Key{Model: rows[i].Model, Repo: rows[i].Repo, Unit: rows[i].Unit},
+			Key{Model: rows[j].Model, Repo: rows[j].Repo, Unit: rows[j].Unit})
 	})
 	return rows, retained, partials
 }
