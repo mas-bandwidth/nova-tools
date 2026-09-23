@@ -1,7 +1,7 @@
-;;;; replays-8648.lisp --- seven acceptance replays named by docs/SPEC-WORK.md.
+;;;; replays-8648.lisp --- six acceptance replays named by docs/SPEC-WORK.md.
 ;;;;
 ;;;; Each deftest names the paragraph(s) it comes from and drives the pure
-;;;; model the kernel exposes for it. The seven:
+;;;; model the kernel exposes for it. The six:
 ;;;;
 ;;;;   regression-opens-repair-work                     :4943-4951,5782-5785
 ;;;;   reply-retired-only-under-verified-coverage       :6020-6024,6316-6325
@@ -9,7 +9,6 @@
 ;;;;   reuse-only-valid-review                          :4851
 ;;;;   review-cycles-stay-visible                       :6368-6370
 ;;;;   TestE11F04PartialChildNeverClosesParent          :4655,4312
-;;;;   TestE07F04IncludeOrdinaryDeliveredCapabilitiesBesideReplay :7782
 
 (in-package #:nova-work/tests)
 
@@ -354,61 +353,3 @@
                  "the mapped external issue survives the child's refusal open")
     (check-equal '("acme/repo#42") (node-links (kernel-state k) "p")
                  "the issue mapping itself survives the child's refusal unchanged")))
-
-;;; ------------------------------------------------------------------
-;;; ordinary-delivered-capabilities-beside-versioning-replay  SPEC-WORK.md:7782
-;;; ------------------------------------------------------------------
-;;;
-;;; E07-F04-02 (ROADMAP.md:757). docs/SPEC-WORK.md:7782 -- "For Schema,
-;;; ordinary scalar and container support must be visible beside version
-;;; evolution, refusal behavior and interoperability." The imported baseline
-;;; once held only the versioning (audit-family) rows and dropped the ordinary
-;;; delivered capability rows; the renderer must keep an ordinary delivered
-;;; capability row beside a versioning row in the one table, in its declared
-;;; order, dropping or segregating neither class.
-;;;
-;;; This is a replay witness distinct from the pre-existing acceptance test of
-;;; the same criterion in tests/acceptance/slice-03-containers.lisp:685
-;;; (landed on dev via #2060); the name here carries a Replay suffix so the
-;;; two register and count separately instead of colliding under one name.
-
-(deftest "TestE07F04IncludeOrdinaryDeliveredCapabilitiesBesideReplay" "docs/SPEC-WORK.md:7782"
-    "expected=ordinary-capability-rows-rendered-beside-versioning-rows;none-dropped;order-preserved"
-  (let* ((rows (list (make-roadmap-row :id "schema/fixed-tables/versioning/cpp"
-                                       :axis :versioning :kind :required
-                                       :state :open :evidence :full :status :current)
-                     (make-roadmap-row :id "schema/scalar/int-key"
-                                       :axis :scalar :kind :required
-                                       :state :open :evidence :full :status :current)
-                     (make-roadmap-row :id "schema/fixed-tables/versioning/struct"
-                                       :axis :versioning :kind :required
-                                       :state :open :evidence :full :status :current)
-                     (make-roadmap-row :id "schema/container/vector"
-                                       :axis :container :kind :required
-                                       :state :open :evidence :full :status :current)))
-         (rm (make-roadmap :id "schema" :axes '(:versioning :scalar :container)
-                           :rows rows :shared-prerequisites '()
-                           :discovered '() :closed '()))
-         (text (roadmap-render rm :chat)))
-    ;; every row -- versioning and ordinary delivered capability alike -- is
-    ;; present in the one rendered table.
-    (ok (search "schema/fixed-tables/versioning/cpp" text)
-        "the cpp versioning row is missing from the render")
-    (ok (search "schema/fixed-tables/versioning/struct" text)
-        "the struct versioning row is missing from the render")
-    (ok (search "schema/scalar/int-key" text)
-        "the ordinary scalar capability row is missing from the render")
-    (ok (search "schema/container/vector" text)
-        "the ordinary container capability row is missing from the render")
-    ;; Rendered beside one another in their declared interleaved order: a
-    ;; versioning row, an ordinary row, a versioning row, an ordinary row.
-    (flet ((pos (id) (search id text)))
-      (ok (< (pos "schema/fixed-tables/versioning/cpp")
-             (pos "schema/scalar/int-key"))
-          "an ordinary capability row is not rendered beside the first versioning row")
-      (ok (< (pos "schema/scalar/int-key")
-             (pos "schema/fixed-tables/versioning/struct"))
-          "the ordinary capability row is not rendered between the versioning rows")
-      (ok (< (pos "schema/fixed-tables/versioning/struct")
-             (pos "schema/container/vector"))
-          "the second ordinary capability row is not rendered beside the second versioning row"))))
