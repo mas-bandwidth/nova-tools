@@ -29,6 +29,8 @@ usage:
   nova-sprint help
   nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop]
   nova-sprint table --check --redis <addr>
+  nova-sprint table --layout live --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>] [--once | --loop]
+  nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
   nova-sprint refresh -- <command> [arg...]
 
 table reads one consistent FCALL_RO snapshot per render and prints it to
@@ -36,6 +38,11 @@ stdout; --loop renders once per second. It writes no file: there is no
 --out, --fixture or --refresh pending, and a restart re-renders from Redis.
 The function library must already be loaded.
 Control sprints are hidden unless named with --sprint.
+--layout live is Glenn's sprint table, the Go port of rowan-tools
+bin/sprint-table-redis (#2674): the same keys (friend:<f>, friend:<f>:down,
+sprint:<name>:xy and :landed, q:blocked, bench:*) and the same bytes.
+--compare waits for the file's next publish, renders from Redis, and prints
+MATCH (exit 0) or a unified diff (exit 1).
 --check reads an existing throwaway fixture store and compares exact output.
 
 refresh runs the command after -- in its own session (POSIX setsid) and

@@ -4970,6 +4970,17 @@ kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
 `fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
 itself signals only the unit's pid.
 
+`table --layout live --redis <addr> --sprint <name> --friends <a,b,...>` is
+Glenn's live sprint table, ported from rowan-tools `bin/sprint-table-redis`
+(#2674). It reads only the keys that script reads (`friend:<f>` and
+`friend:<f>:down`, `sprint:<name>:xy` and `:landed`, `ZCARD q:blocked`, and
+every `bench:*` hash found by SCAN) in one pipeline after the SCAN, and prints
+the same bytes. Like every table mode it is written nowhere (#3326): `--loop`
+prints a table once a second; a failed read keeps the last good friend rows
+and adds a `stale:` line.
+`table --compare <file>` (same flags) waits for the file's next publish,
+renders from Redis, and prints `MATCH` or a unified diff and exits 1.
+
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
