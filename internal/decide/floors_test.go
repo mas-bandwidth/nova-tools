@@ -195,7 +195,7 @@ func TestTheShippedFloorsAreWhatTuneProposesFromTheDaysLog(t *testing.T) {
 // and the note says how many rows there were.
 func TestOneAnswerIsNotAQuartile(t *testing.T) {
 	reg := testRegistry(t)
-	entries := []Entry{{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.61, RungTried: "emma"}}
+	entries := []Entry{{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.61, RungTried: "emma", Outcome: OutcomeOK}}
 	proposals, err := ProposeFloors(reg, entries)
 	if err != nil {
 		t.Fatal(err)
@@ -221,8 +221,8 @@ func TestAFailedDecisionDoesNotSetTheFloor(t *testing.T) {
 	reg := testRegistry(t)
 	entries := []Entry{
 		{Unit: "a", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.40, Outcome: OutcomeFailed},
-		{Unit: "b", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80},
-		{Unit: "c", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90},
+		{Unit: "b", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80, Outcome: OutcomeOK},
+		{Unit: "c", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90, Outcome: OutcomeOK},
 		// Not a provider answer at all: the machinery's own number.
 		{Unit: "d", Kind: KindNewVerb, Source: SourceRules, Confidence: 1.00},
 	}
@@ -236,6 +236,97 @@ func TestAFailedDecisionDoesNotSetTheFloor(t *testing.T) {
 	}
 	if row.Floor != 0.80 {
 		t.Errorf("floor = %.2f, want 0.80: the p25 of what stood, not of what failed", row.Floor)
+	}
+}
+
+// Blank or pending outcomes are not counted as stood-up or failed, and cannot
+// propose a floor.
+func TestBlankOrPendingOutcomesDoNotCountAsStood(t *testing.T) {
+	reg := testRegistry(t)
+	entries := []Entry{
+		{Unit: "pending-1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.85},
+		{Unit: "pending-2", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.88, Outcome: ""},
+		{Unit: "pending-3", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90, Outcome: "   "},
+	}
+	proposals, err := ProposeFloors(reg, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proposals.Proposals) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(proposals.Proposals))
+	}
+	row := proposals.Proposals[0]
+	if row.Stood != 0 || row.Failed != 0 || row.Rows != 0 {
+		t.Errorf("blank outcomes must not count as stood or failed: stood=%d failed=%d rows=%d", row.Stood, row.Failed, row.Rows)
+	}
+	if row.Proposed {
+		t.Errorf("no floor should be proposed from pending answers: proposed=%v floor=%.2f", row.Proposed, row.Floor)
+	}
+}
+
+// In append-only logs, outcomes are written as separate rows (SourceOutcome)
+// keyed by unit. ProposeFloors must correlate them by unit to determine which
+// decisions stood, which failed, and skip pending or precondition-skipped units.
+func TestSeparateOutcomeRowsDriveStoodAndFailed(t *testing.T) {
+	reg := testRegistry(t)
+	entries := []Entry{
+		// u1: stood via outcome row
+		{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.75},
+		{Unit: "u1", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
+		// u2: failed via outcome row
+		{Unit: "u2", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.70},
+		{Unit: "u2", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeFailed},
+		// u3: stood via outcome row
+		{Unit: "u3", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80},
+		{Unit: "u3", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
+		// u4: stood via outcome row
+		{Unit: "u4", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.85},
+		{Unit: "u4", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
+		// u5: pending (no outcome row)
+		{Unit: "u5", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90},
+		// u6: skipped via precondition skip
+		{Unit: "u6", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.60},
+		{Unit: "u6", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeSkipped},
+	}
+	proposals, err := ProposeFloors(reg, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(proposals.Proposals) != 1 {
+		t.Fatalf("proposals = %d, want 1", len(proposals.Proposals))
+	}
+	row := proposals.Proposals[0]
+	if row.Stood != 3 {
+		t.Errorf("stood = %d, want 3 (u1, u3, u4)", row.Stood)
+	}
+	if row.Failed != 1 {
+		t.Errorf("failed = %d, want 1 (u2)", row.Failed)
+	}
+	if row.Rows != 4 {
+		t.Errorf("rows = %d, want 4 (3 stood + 1 failed)", row.Rows)
+	}
+	// u1(0.75), u3(0.80), u4(0.85): p25 is 0.75
+	if !row.Proposed || row.Floor != 0.75 {
+		t.Errorf("floor = %.2f (proposed=%v), want 0.75", row.Floor, row.Proposed)
+	}
+}
+
+// A later HOLD appends a second outcome row (red/failed) and costs the bad route
+// its floor even if an earlier outcome was green/ok.
+func TestLaterHoldCostsRouteItsFloorEvenIfEarlierGreen(t *testing.T) {
+	reg := testRegistry(t)
+	entries := []Entry{
+		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80},
+		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
+		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeFailed},
+	}
+	proposals, err := ProposeFloors(reg, entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := proposals.Proposals[0]
+	if row.Stood != 0 || row.Failed != 1 {
+		t.Errorf("later HOLD must make unit failed: stood=%d failed=%d, want 0/1", row.Stood, row.Failed)
 	}
 }
 
