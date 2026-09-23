@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 	"github.com/mas-bandwidth/nova-tools/internal/presence"
 )
 
@@ -335,6 +336,100 @@ func TestTheUsageNamesBothVerbs(t *testing.T) {
 			t.Fatalf("the usage banner does not name %q", want)
 		}
 	}
+}
+
+// TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints is the
+// comparator test SPEC-TOOLWORK §7 rule 7 asks for: `docs/CLI.md` pastes one
+// `nova-wake presence` example ahead of the `### First run` heading -- the
+// prose that introduces the verb, not a first-run transcript -- so it is read
+// straight out of the document here rather than through onboarding.FirstRun,
+// and its command and output block are compared with the one comparator every
+// firstrun_test.go in this repo uses (onboarding.Compare, #2218): same number
+// of lines, same lines, same order. The doc's `--store 100.115.99.19:6380` and
+// `--bus ./bus` are illustrative -- CI-NET means nothing here dials it -- so
+// the store is a fake built to the documented scenario (johnny up 12s, stella
+// up 4s, emma AWAY 1h12m last 09:41Z, freddy never beaten) and `./bus` is
+// localized to a roster this test owns, the same substitution firstrun_test.go
+// makes for `./reports` and `./wake.state`.
+func TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmdLine, want := presenceExampleFromCLI(t, string(raw))
+
+	fields := strings.Fields(cmdLine)
+	if len(fields) < 3 || fields[0] != "$" || fields[1] != "nova-wake" || fields[2] != "presence" {
+		t.Fatalf("docs/CLI.md's presence example is %q; want it to start `$ nova-wake presence`", cmdLine)
+	}
+	args := append([]string(nil), fields[3:]...)
+	dir := t.TempDir()
+	found := false
+	for i, a := range args {
+		if a == "./bus" {
+			args[i] = dir
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("docs/CLI.md's presence example %q carries no `./bus` to localize", cmdLine)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "participants.json"), []byte(
+		`{"participants":[{"name":"johnny"},{"name":"stella"},{"name":"emma"},{"name":"freddy"}]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	st := presence.NewFakeStore(beatAt)
+	ctx := context.Background()
+	if err := presence.Beat(ctx, st, "emma", st.Now(), presence.DefaultTTL); err != nil {
+		t.Fatalf("beat emma: %v", err)
+	}
+	st.Advance(72 * time.Minute) // emma's window is long gone
+	if err := presence.Beat(ctx, st, "stella", st.Now().Add(-4*time.Second), presence.DefaultTTL); err != nil {
+		t.Fatalf("beat stella: %v", err)
+	}
+	if err := presence.Beat(ctx, st, "johnny", st.Now().Add(-12*time.Second), presence.DefaultTTL); err != nil {
+		t.Fatalf("beat johnny: %v", err)
+	}
+
+	var out, errb bytes.Buffer
+	code := cmdPresence(args, &out, &errb, fakeStoreClock{st}, fakeOpener(st))
+
+	step := onboarding.Step{Line: cmdLine, Want: want}
+	res := onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}
+	for _, p := range onboarding.Compare(step, res, nil) {
+		t.Errorf("docs/CLI.md drift: %s", p)
+	}
+}
+
+// presenceExampleFromCLI reads the `$ nova-wake presence ...` example out of
+// docs/CLI.md's `## nova-wake` section and returns its command line and the
+// block written under it. It is not under `### First run` -- onboarding.FirstRun
+// and onboarding.Transcript both require a `### ` heading immediately before
+// the fence, and this example sits in the prose that introduces the verb
+// instead -- so this reads the section the same way fencedLines does, anchored
+// on the command's own marker rather than a heading.
+func presenceExampleFromCLI(t *testing.T, cli string) (cmdLine string, want []string) {
+	t.Helper()
+	section, ok := onboarding.Section(cli, "nova-wake")
+	if !ok {
+		t.Fatal("docs/CLI.md has no `## nova-wake` section")
+	}
+	const marker = "$ nova-wake presence "
+	i := strings.Index(section, marker)
+	if i < 0 {
+		t.Fatalf("docs/CLI.md's `## nova-wake` section carries no %q example", marker)
+	}
+	block := section[i:]
+	end := strings.Index(block, "\n```")
+	if end < 0 {
+		t.Fatal("the presence example's fenced block never closes")
+	}
+	lines := strings.Split(block[:end], "\n")
+	if len(lines) < 2 {
+		t.Fatalf("the presence example has no output block under it:\n%s", block[:end])
+	}
+	return lines[0], lines[1:]
 }
 
 // errStoreDown is what a store that is not answering looks like to the verb.
