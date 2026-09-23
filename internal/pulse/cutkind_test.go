@@ -172,6 +172,38 @@ func TestCutKindReplayAndSpec(t *testing.T) {
 	}
 }
 
+// cut --kind report writes a card. A nonsense kind is still not one of the kinds.
+func TestCutKindAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "report", Repo: "mas-bandwidth/nova-tools", Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("KIND report is a kind this cutter accepts: exit %d, stderr=%s", code, errs)
+	}
+	if !strings.Contains(line, "kind=report") {
+		t.Errorf("the one line = %q", line)
+	}
+	if got := strings.SplitN(card, "\n", 2)[0]; got != "RESULT: CARD-1 report of nova-tools" {
+		t.Errorf("line 1 = %q", got)
+	}
+	if !strings.Contains(card, "Do not run go build") {
+		t.Errorf("a report card is text-only and must say so:\n%s", card)
+	}
+
+	code, _, errs, card = cutKind(t, CutKindInput{
+		Kind: "not-a-real-kind", Repo: "mas-bandwidth/nova-tools",
+		Out: filepath.Join(dir, "nope"), Queue: queue,
+	})
+	if code != 2 || !strings.Contains(errs, "CUT REFUSED") || !strings.Contains(errs, "not-a-real-kind") {
+		t.Fatalf("a nonsense kind is refused: exit %d stderr=%q", code, errs)
+	}
+	if card != "" {
+		t.Fatalf("a refused kind wrote a card:\n%s", card)
+	}
+}
+
 // every refusal names its remedy, and an unknown kind is never guessed at.
 func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 	dir := t.TempDir()
@@ -189,6 +221,7 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		{"no queue", CutKindInput{Kind: "read", Repo: "o/n", PR: 1, Head: "h", Out: dir}, "--queue"},
 		{"rebase without a branch", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Base: "dev", Title: "t", Out: dir, Queue: dir}, "--branch"},
 		{"rebase without a base", CutKindInput{Kind: "rebase", Repo: "o/n", PR: 1, Branch: "rowan/x", Title: "t", Out: dir, Queue: dir}, "--base"},
+		{"guard without a head", CutKindInput{Kind: "guard", Repo: "o/n", Out: dir, Queue: dir}, "--head"},
 	} {
 		var out, errs bytes.Buffer
 		in := c.in
@@ -199,6 +232,39 @@ func TestCutKindRefusalsNameTheirRemedy(t *testing.T) {
 		if !strings.Contains(errs.String(), "CUT REFUSED") || !strings.Contains(errs.String(), c.want) || !strings.Contains(errs.String(), "(") {
 			t.Errorf("%s: refusal = %q, want CUT REFUSED naming %s and a remedy", c.name, errs.String(), c.want)
 		}
+	}
+}
+
+func TestCutKindGuardCardForbidsJudgingTheVerdict(t *testing.T) {
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "guard", Repo: "mas-bandwidth/nova-tools", Head: "ddce356eabcd",
+		Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if got := strings.SplitN(card, "\n", 2)[0]; got != "RESULT: CARD-1 guard of nova-tools at ddce356eabcd" {
+		t.Errorf("line 1 = %q", got)
+	}
+	if !strings.Contains(card, "nova-review guard --repo ./repo --head ddce356eabcd") {
+		t.Errorf("the card does not name the mechanical verb:\n%s", card)
+	}
+	if !strings.Contains(card, "COMPUTED, never judged") {
+		t.Errorf("the card does not forbid judging:\n%s", card)
+	}
+	if strings.Contains(card, "last token") {
+		t.Errorf("N/A and ABSTAIN end in reason/prose; the card must not copy the last token:\n%s", card)
+	}
+	if !strings.Contains(card, "status=") {
+		t.Errorf("the card must name the status= field to copy, not a last token:\n%s", card)
+	}
+	if !strings.Contains(line, "kind=guard") {
+		t.Errorf("the one line = %q", line)
 	}
 }
 
@@ -232,5 +298,336 @@ func TestCutKindWritesPriorityLanes(t *testing.T) {
 	}
 	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "green", "*.card")); len(matches) != 1 {
 		t.Fatalf("a read card is not in the green lane: %v", matches)
+	}
+}
+
+func TestCutKindV2Templates(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+
+	// 1. Recut kind generates Card Template v2
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind:          "recut",
+		Repo:          "mas-bandwidth/nova-tools",
+		Title:         "re-cut boundary failure",
+		Location:      "internal/pulse/cut.go:42",
+		TestPackage:   "./internal/pulse",
+		TestFunction:  "TestBoundary",
+		TestCommand:   "go test ./internal/pulse -run TestBoundary",
+		Paths:         "internal/pulse/cut.go",
+		ReviewerLine:  "DISPOSITION who=Rowan verdict=HOLD reason=test",
+		PriorDiff:     "--- a/old\n+++ b/new\n",
+		FailingOutput: "panic: nil pointer",
+		PreflightCmd:  "make preflight",
+		Symbol:        "TestBoundary",
+		RedWhen:       "panic: nil pointer",
+		Out:           filepath.Join(dir, "recut"),
+		Queue:         queue,
+	})
+	if code != 0 {
+		t.Fatalf("recut failed (code %d): %s", code, errs)
+	}
+	if !strings.Contains(line, "kind=recut") {
+		t.Errorf("line = %q, want kind=recut", line)
+	}
+	if !strings.Contains(card, "COMMAND: go test ./internal/pulse -run TestBoundary") {
+		t.Errorf("card missing COMMAND:\n%s", card)
+	}
+	if !strings.Contains(card, "make preflight") {
+		t.Errorf("card missing preflight:\n%s", card)
+	}
+	if !strings.Contains(card, "## Inlined Evidence") {
+		t.Errorf("card missing inlined evidence:\n%s", card)
+	}
+	if !strings.Contains(card, "## Exemplar (recut)") {
+		t.Errorf("card missing exemplar:\n%s", card)
+	}
+
+	// 2. Fix with V2=true generates Card Template v2
+	code, _, errs, fixCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        123,
+		Title:        "v2 fix card",
+		Location:     "internal/pulse/queue.go:10",
+		TestCommand:  "go test ./internal/pulse -run TestQueue",
+		Paths:        "internal/pulse/queue.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "QueuePop",
+		RedWhen:      "empty queue panics",
+		Out:          filepath.Join(dir, "fix-v2"),
+		Queue:        queue,
+	})
+	if code != 0 {
+		t.Fatalf("fix v2 failed (code %d): %s", code, errs)
+	}
+	if !strings.Contains(fixCard, "COMMAND: go test ./internal/pulse -run TestQueue") {
+		t.Errorf("fix v2 missing COMMAND:\n%s", fixCard)
+	}
+	if !strings.Contains(fixCard, "SYMBOL: QueuePop") {
+		t.Errorf("fix v2 missing SYMBOL:\n%s", fixCard)
+	}
+	if !strings.Contains(fixCard, "RED-WHEN: empty queue panics") {
+		t.Errorf("fix v2 missing RED-WHEN:\n%s", fixCard)
+	}
+	if !strings.Contains(fixCard, "## Exemplar (fix)") {
+		t.Errorf("fix v2 missing exemplar:\n%s", fixCard)
+	}
+
+	// 3. V2=true without Symbol or RedWhen is refused by cutter lint
+	codeNoSym, _, errsNoSym, _ := cutKind(t, CutKindInput{
+		Kind:        "fix",
+		V2:          true,
+		Repo:        "mas-bandwidth/nova-tools",
+		Issue:       124,
+		Title:       "missing symbol v2",
+		Location:    "internal/pulse/queue.go:10",
+		TestCommand: "go test ./internal/pulse -run TestQueue",
+		Paths:       "internal/pulse/queue.go",
+		RedWhen:     "some red condition",
+		Out:         filepath.Join(dir, "fix-v2-nosym"),
+		Queue:       queue,
+	})
+	if codeNoSym != 2 {
+		t.Errorf("CutKind without --symbol returned %d, want 2", codeNoSym)
+	}
+	if !strings.Contains(errsNoSym, "--symbol is required for a v2 card") {
+		t.Errorf("expected error about --symbol, got %q", errsNoSym)
+	}
+
+	codeNoRed, _, errsNoRed, _ := cutKind(t, CutKindInput{
+		Kind:        "fix",
+		V2:          true,
+		Repo:        "mas-bandwidth/nova-tools",
+		Issue:       125,
+		Title:       "missing red-when v2",
+		Location:    "internal/pulse/queue.go:10",
+		TestCommand: "go test ./internal/pulse -run TestQueue",
+		Paths:       "internal/pulse/queue.go",
+		Symbol:      "QueuePop",
+		Out:         filepath.Join(dir, "fix-v2-nored"),
+		Queue:       queue,
+	})
+	if codeNoRed != 2 {
+		t.Errorf("CutKind without --red-when returned %d, want 2", codeNoRed)
+	}
+	if !strings.Contains(errsNoRed, "--red-when is required for a v2 card") {
+		t.Errorf("expected error about --red-when, got %q", errsNoRed)
+	}
+
+	// 4. Auto-v2 selection: port without --v2 flag automatically requires Symbol and RedWhen
+	codeAutoNoSym, _, errsAutoNoSym, _ := cutKind(t, CutKindInput{
+		Kind:    "port",
+		V2:      false,
+		Repo:    "mas-bandwidth/nova-tools",
+		Title:   "port card auto-v2 missing symbol",
+		RedWhen: "port missing target symbol",
+		Out:     filepath.Join(dir, "port-auto-nosym"),
+		Queue:   queue,
+	})
+	if codeAutoNoSym != 2 {
+		t.Errorf("Auto-v2 cut without --symbol returned %d, want 2", codeAutoNoSym)
+	}
+	if !strings.Contains(errsAutoNoSym, "--symbol is required for a v2 card") {
+		t.Errorf("expected auto-v2 refusal for missing --symbol, got %q", errsAutoNoSym)
+	}
+
+	// Auto-v2 selection with Symbol and RedWhen succeeds and emits Card Template v2
+	codeAuto, _, errsAuto, autoCard := cutKind(t, CutKindInput{
+		Kind:    "port",
+		V2:      false,
+		Repo:    "mas-bandwidth/nova-tools",
+		Title:   "port card auto-v2 present symbol",
+		Symbol:  "PortTarget",
+		RedWhen: "port target missing",
+		Out:     filepath.Join(dir, "port-auto-ok"),
+		Queue:   queue,
+	})
+	if codeAuto != 0 {
+		t.Fatalf("Auto-v2 cut with declarations failed (code %d): %s", codeAuto, errsAuto)
+	}
+	if !strings.Contains(autoCard, "SCHEMA: v2") {
+		t.Errorf("Auto-v2 card missing SCHEMA: v2:\n%s", autoCard)
+	}
+	if !strings.Contains(autoCard, "SYMBOL: PortTarget") {
+		t.Errorf("Auto-v2 card missing SYMBOL:\n%s", autoCard)
+	}
+	if !strings.Contains(autoCard, "RED-WHEN: port target missing") {
+		t.Errorf("Auto-v2 card missing RED-WHEN:\n%s", autoCard)
+	}
+
+	// 5. Preserved legacy behavior: read card with V2=false and no auto-v2 triggers emits legacy card
+	codeLegacy, _, errsLegacy, legacyCard := cutKind(t, CutKindInput{
+		Kind:  "read",
+		V2:    false,
+		Repo:  "mas-bandwidth/nova-tools",
+		PR:    101,
+		Head:  "1234567890ab",
+		Title: "legacy read card",
+		Out:   filepath.Join(dir, "read-legacy"),
+		Queue: queue,
+	})
+	if codeLegacy != 0 {
+		t.Fatalf("Legacy read card failed (code %d): %s", codeLegacy, errsLegacy)
+	}
+	if strings.Contains(legacyCard, "SCHEMA: v2") {
+		t.Errorf("Legacy read card should not contain SCHEMA: v2:\n%s", legacyCard)
+	}
+	if !strings.Contains(legacyCard, "RESULT: CARD-") || !strings.Contains(legacyCard, "read of nova-tools PR101") {
+		t.Errorf("Legacy card missing legacy contract line:\n%s", legacyCard)
+	}
+}
+
+// TestCutKindV2OperativeRegionBoundary runs Stella's A4 boundary through the real cutter
+// (#2522): a card whose task body QUOTES broad staging is cut, a card whose body quotes a
+// whole prior RUN block is cut with that block retained as data, the SUPPLIED operative
+// command is what the lint reads — broad staging there is refused with no card written —
+// and a body that declares a second operative region is refused naming the position.
+func TestCutKindV2OperativeRegionBoundary(t *testing.T) {
+	dir := t.TempDir()
+	queue := filepath.Join(dir, "queue")
+	bodyFile := func(name, text string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	quoted := "Repair the deploy script.\n" +
+		"The card under repair said: STEP: git add -A && git commit # do not run again\n" +
+		"> Reviewer verdict: never run `git add --all`; stage declared PATHS only."
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2522,
+		Title:        "quote the bypass as evidence",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "an operative git add -A passes the cutter lint",
+		BodyFile:     bodyFile("quoted-body.md", quoted),
+		Out:          filepath.Join(dir, "quoted"),
+		Queue:        queue,
+	})
+	if code != 0 {
+		t.Fatalf("cut refused a card that only quotes broad staging (code %d): %s", code, errs)
+	}
+	if !strings.Contains(card, "STEP: git add -A && git commit # do not run again") {
+		t.Errorf("cut did not preserve the quoted evidence complete:\n%s", card)
+	}
+	region, err := OperativeRegion(card)
+	if err != nil {
+		t.Fatalf("cut card has no usable operative region: %v\n%s", err, card)
+	}
+	if len(region) != 2 {
+		t.Errorf("operative region wants the test command and the preflight, got %+v", region)
+	}
+
+	// A whole prior RUN block quoted in the body is retained as data: the position the
+	// template owns is the only region, so the quoted block declares nothing.
+	quotedRegion := "The card under repair said:\n" + OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```"
+	codeQ, _, errsQ, quotedCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2523,
+		Title:        "retain the prior RUN block",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "a quoted prior RUN block is read as a second region",
+		BodyFile:     bodyFile("quoted-region-body.md", quotedRegion),
+		Out:          filepath.Join(dir, "quoted-region"),
+		Queue:        queue,
+	})
+	if codeQ != 0 {
+		t.Fatalf("cut refused a card quoting a whole prior RUN block (code %d): %s", codeQ, errsQ)
+	}
+	if !strings.Contains(quotedCard, OperativeRegionMarker+"\n```sh\nSTEP: git add -A && git commit # do not run again\n```") {
+		t.Errorf("cut did not retain the quoted prior RUN block complete:\n%s", quotedCard)
+	}
+	quotedReg, err := OperativeRegion(quotedCard)
+	if err != nil {
+		t.Fatalf("cut card has no usable operative region: %v\n%s", err, quotedCard)
+	}
+	for _, l := range quotedReg {
+		if strings.Contains(l.Text, "git add -A") {
+			t.Errorf("quoted body text entered the operative region: %+v", quotedReg)
+		}
+	}
+
+	// The supplied operative command is what the lint reads: broad staging there is
+	// refused through CutKind, and no card is written.
+	outDir := filepath.Join(dir, "operative")
+	codeBad, _, errsBad, badCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2524,
+		Title:        "run the bypass",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "git add -A && go test ./internal/pulse",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "an operative git add -A passes the cutter lint",
+		BodyFile:     bodyFile("operative-body.md", "Repair the deploy script."),
+		Out:          outDir,
+		Queue:        queue,
+	})
+	if codeBad != 2 {
+		t.Fatalf("cut accepted an operative git add -A (code %d), want 2", codeBad)
+	}
+	if !strings.Contains(errsBad, "forbidden operative broad staging") {
+		t.Errorf("refusal does not name the broad staging: %q", errsBad)
+	}
+	if badCard != "" {
+		t.Errorf("cut wrote a card it refused:\n%s", badCard)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(outDir, "card-*.md")); len(matches) != 0 {
+		t.Errorf("cut left a refused card behind: %v", matches)
+	}
+
+	// A body that declares the position itself is a second operative region: refused,
+	// naming where the one region goes, and no card written.
+	secondRegion := OperativeRegionHeading + "\n" + OperativeRegionMarker + "\n```sh\nSTEP: git add -A && git commit # do not run again\n```"
+	secondDir := filepath.Join(dir, "second-region")
+	codeSecond, _, errsSecond, secondCard := cutKind(t, CutKindInput{
+		Kind:         "fix",
+		V2:           true,
+		Repo:         "mas-bandwidth/nova-tools",
+		Issue:        2525,
+		Title:        "declare a second region",
+		Location:     "internal/pulse/cut_template.go:1",
+		TestCommand:  "go test ./internal/pulse -run TestValidateCardV2OperativeRegionBoundary",
+		Paths:        "internal/pulse/cut_template.go",
+		PreflightCmd: "make preflight",
+		Symbol:       "ValidateCardV2",
+		RedWhen:      "a second operative region is obeyed instead of refused",
+		BodyFile:     bodyFile("second-region-body.md", secondRegion),
+		Out:          secondDir,
+		Queue:        queue,
+	})
+	if codeSecond != 2 {
+		t.Fatalf("cut accepted a body-declared second operative region (code %d), want 2", codeSecond)
+	}
+	if !strings.Contains(errsSecond, "declares a second operative region") {
+		t.Errorf("refusal does not name the second region: %q", errsSecond)
+	}
+	if !strings.Contains(errsSecond, "first line of its single `## Run` section") {
+		t.Errorf("refusal does not name the one position: %q", errsSecond)
+	}
+	if secondCard != "" {
+		t.Errorf("cut wrote a card it refused:\n%s", secondCard)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(secondDir, "card-*.md")); len(matches) != 0 {
+		t.Errorf("cut left a refused card behind: %v", matches)
 	}
 }

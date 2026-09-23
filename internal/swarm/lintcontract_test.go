@@ -22,7 +22,8 @@ import (
 // source as text, which is the same thing a class test over a document does.
 
 const (
-	cutSourcePath     = "../pulse/cut.go"
+	cutSourcePath     = "../pulse/cut_template.go"
+	cutLegacyPath     = "../pulse/cut.go"
 	harvestSourcePath = "../pulse/harvest.go"
 	cardCutDocPath    = "../../docs/spec-pulse/10-the-card-as-cut-writes-it.md"
 )
@@ -55,20 +56,24 @@ func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 }
 
 // `cut`'s own renderer is on dev, so the test reads it rather than the document alone:
-// internal/pulse/cut.go refuses a card whose line 1 is not the form it names.
+// internal/pulse/cut_template.go refuses a card whose line 1 is not the form it names.
 func TestCutsContractLineIsOneTheLintAccepts(t *testing.T) {
-	src := readOr(t, cutSourcePath)
+	path := cutSourcePath
+	if _, err := os.Stat(path); err != nil {
+		path = cutLegacyPath
+	}
+	src := readOr(t, path)
 	found := false
 	for _, prefix := range CardContractPrefixes {
 		if strings.Contains(src, `HasPrefix(line1, "`+prefix+`")`) {
 			found = true
 			if !IsCardContractLine(prefix + "label sha=0123456789ab") {
-				t.Errorf("%s accepts %q and the lint does not", cutSourcePath, prefix)
+				t.Errorf("%s accepts %q and the lint does not", path, prefix)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("%s no longer tests line 1 with a prefix the lint knows; the lint accepts %v and the two have drifted apart", cutSourcePath, CardContractPrefixes)
+		t.Fatalf("%s no longer tests line 1 with a prefix the lint knows; the lint accepts %v and the two have drifted apart", path, CardContractPrefixes)
 	}
 }
 

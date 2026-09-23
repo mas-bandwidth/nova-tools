@@ -22,6 +22,10 @@ window reads one line per cycle.
   cuts a read card per PR, and pulses again — queue first.
 - `nova-pulse width` is the drift alarm: one line, and a non-zero exit when there is pool
   and there are free slots and nothing was launched.
+- `nova-pulse sprint` is the bounded set of work around all of it -- friends and swarm in one
+  `x/y z% -> ~Nh` -- with its own normative text in [SPEC-SPRINT.md](SPEC-SPRINT.md)
+  (nova-tools #2593). It adds no queue, no lease and no heartbeat of its own: a friend is a
+  consumer like a bench, and the refill is the dealer's rule that `fill` calls.
 
 SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
 `internal/oneline`, `internal/bounded`, no guessed paths — and this file says only what is
@@ -104,7 +108,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    directory, never `../scratch`. `cut` refuses a template whose rendered card violates any
    of these — `CUT REFUSED template=<name>: <which>` — because a card that drifts here is a
    card that stalls.
-6. **Text-only templates forbid the build.** `read`, `text` and `tone` carry the line `Do not
+6. **Text-only templates forbid the build.** `read`, `text`, `tone` and `report` carry the line `Do not
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
    line then green line, one row per item.
@@ -113,8 +117,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    beside it is read the same way): one column per model, three rows — a `model` row naming
    each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
    `capability`, `read|text|code|replay`. Per
-   card class a model is capable when its capability covers the kind's (`read`, `text` and
-   `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
+   card class a model is capable when its capability covers the kind's (`read`, `text`,
+   `tone` and `report` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
    and `cut` picks the capable model with the lowest average cost per token — `zero` beats
    `flat` beats `metered`, ties broken by `usd per Mtok` — so routing is mechanical: local is
    zero, Go is flat, Zen is metered. It prints `route=<model> reason=<class>` on its
@@ -210,7 +214,14 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's
     label, `done/` before `failed/`, latest task first — and a task in `failed/` whose
     `RESULT.md` exists with a first line equal to the card's `RESULT` line is harvested as a
-    result, not a failure, because the contract decides, never the directory it sits in. When
+    result, not a failure, because the contract decides, never the directory it sits in. The
+    `--then` harvest launch chains is `harvest --id <id> --root <root>` with no `--bench`.
+    Launch writes the pulse table's slot column as `-` before swarm allocates; a remote card's
+    files come back at `<root>/<bench>-<n>/jobs/<label>/` (SPEC-SWARM, Three files come back).
+    Harvest opens a same-label job under the root whose `RESULT.md` line 1 matches the
+    current card contract, and only when that match is unique. Two matches are
+    `HARVEST REFUSED` ambiguous (a leftover and the current pull of the same card); mtime
+    is not identity. A unique match is not counted `elsewhere` (issue #1907). When
     `--root` names a bare swarm root with no `cards.tsv` — the caller handed cards straight to
     `nova-swarm batch` — `harvest` folds every `<root>/<slot>/jobs/<label>/RESULT.md` under it,
     whoever put it there, with no push or PR withheld for want of a cards.tsv: with none to
@@ -234,11 +245,16 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     by `usd per Mtok` — so the zero-cost local model wins; with neither file present the
     relaunch keeps the kind-only route it has always written. Replay
     `harvest-cuts-read-card-per-pr` holds one card after #416.
-14. **An abstain is requeued at most once, under a new card number, then escalated.** For
-    every `ABSTAIN` row and every card with no `RESULT.md`, `harvest` counts it in
-    `abstain=<n>` and triages it by its reason token as the manager does (#587): a first
-    abstain is requeued once under a new number on the other bench, the attempt riding on
-    the card; a second abstain of the same item is one escalation and a row in
+14. **An abstain may use the one remaining executable attempt, then escalates.** The lifecycle
+    section below is a bounded override of this older path for cards launched through the new
+    ledger: the stable card id does not change, while a display number may; attempts live in the
+    authoritative ledger and never reset when work crosses pulse, pool, swarm or reap. A card
+    with no `RESULT.md` is UNKNOWN, not an abstain and not automatically retried. For a completed
+    attempt carrying a typed `ABSTAIN` row, `harvest` counts it in `abstain=<n>` and triages it by
+    its reason token as the manager does (#587). A retry is allowed only after conservative
+    execution reconciliation plus publication-fence revocation, and only when the shared total
+    of two leaves one attempt. A provider fallback consumes that same remaining attempt; it does
+    not earn another pulse retry. A failed or blocked second executable attempt yields one escalation and a row in
     `<root>/retry.tsv` — `label`, `card path`, and the last line of `<job>/harness.log` that
     carries `permission`, `denied`, `refused` or `REFUSED` (else the log's last line),
     bounded to one line — never a third send. `retry.tsv` is a person's inbox: the card is
@@ -250,8 +266,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     `--floor` is appended to `<queue>/HUMAN` as one line
     `HUMAN task=<id> reason=<r> conf=<c> card=<label>` and is not auto-retried, so a person
     reads the inbox instead of the loop retrying a task that needs them; a
-    `provider_error` above the floor is requeued once by rule 14's own path; below the
-    floor nothing changes and the pool's own class stands. The decision is the core of
+    `provider_error` above the floor may request rule 14's remaining attempt under these same
+    gates; below the floor nothing changes and the pool's own class stands. The decision is the core of
     `nova-swarm triage --decide` (`internal/swarm.DecideFinished`), and the loop makes no
     model call of its own.
 15. **Harvest pulses again, queue first.** After the counts, `harvest` runs `pool`, `cut`
@@ -316,6 +332,18 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     gate keeps today's behaviour as the fallback. Replays:
     `gate-reruns-a-flaky-job-once-per-head`, `gate-real-verdict-keeps-stop`,
     `gate-below-floor-changes-nothing`.
+21. **Triage links a same-class open issue by a typed decision behind a floor.** With
+    `--dedupe --issues <file> [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]` the
+    triage verb reads the open issues (one `number<TAB>title` per line) and sends
+    `internal/decide` one call: the state is the new case's title and evidence, escaped and
+    capped as the packet escapes evidence, and the one question is `same_class`, a choice
+    over the issue numbers plus `none`. A choice naming an open issue at or above the floor
+    puts `LINKS #<n> (same class, conf=<c>)` on the card and `dedupe=#<n>` on the `TRIAGE OK`
+    line; on `none`, on a provider error, or below the floor the card is cut unchanged and
+    the line reads `dedupe=?`. A decision below the floor is a suggestion, never an
+    authorization: the card that files work is cut exactly as it is today. Replays:
+    `triage-dedupe-links-a-same-class-open-issue`, `triage-dedupe-none-files-normally`,
+    `triage-dedupe-below-floor-changes-nothing`.
 
 ## Fleet
 
@@ -338,13 +366,16 @@ FILL REFUSED bench=batman reason=runner-host remedy="..."
 ```
 
 The reason is one of `runner-host`, `coordination-host`, `services-host`,
-`not-a-bench`, `unknown-machine`. `nova-pulse fill`, the path a CARD takes,
-**requires** `--machines`: without it the verb cannot tell a bench from a CI
-runner host, and that is the one thing it may not guess. The fleet admin verbs
-take it optionally and keep their older guard without it. A machine that is
-both `runner` and `bench` must carry a dated exception in its notes,
-`allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the pull
-worker runs cards in containers. `nova-pulse fleet registry` lists the file.
+`not-a-bench`, `unknown-machine`, `shared-without-note`. `nova-pulse fill`, the
+path a CARD takes, **requires** `--machines`: without it the verb cannot tell a
+bench from a CI runner host, and that is the one thing it may not guess. The
+fleet admin verbs take it optionally and keep their older guard without it. A
+machine that is both `runner` and `bench` must carry a dated exception in its
+notes, `allow-shared=<YYYY-MM-DD> <why>`; hulk and vision carry one until the
+pull worker runs cards in containers. A shared row without that note disables
+**that** bench (`FILL DISABLED bench=<name> reason=shared-without-note`) and
+does not stop the rest of the fleet's tick (#2031). `nova-pulse fleet registry`
+lists the file.
 
 The fleet rule: every fleet verb prints one `FLEET <name>` line per bench,
 runs the benches in parallel under `--timeout <s>` (default 120), exits
@@ -392,7 +423,7 @@ listener process descending from `nova-runner-<i>.service` (runner checks run
 only when `uname` is Linux), that each unit file carries `Environment=PATH`
 with `go/bin` and `.local/bin`, `KillMode=control-group` and
 `TimeoutStopSec=30s`, that `go version` equals `$NOVA_GO` (default
-`go1.26.5`) with `sbcl` on `PATH` and the harness at
+the tree's `go.mod` `go` line; `$NOVA_GO` is an explicit override) with `sbcl` on `PATH` and the harness at
 `$HOME/nova-bench/harness-<ver>/opencode`, that the 16 nova bins in
 `$HOME/.local/bin` each report `$NOVA_WANT`, that exactly one `*.key` sits
 under `$HOME/.config/nova-secrets` with `nova-secrets check` passing for it,
@@ -479,12 +510,12 @@ It prints one `STANDARD <bench> <check> OK got=<v>` or
 then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
 `FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
 operating system, so the standard is read rather than traced through a shell
-script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+script: the Linux list is the Go toolchain at `--go` (default the tree's `go.mod` `go` line),
 `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
 opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
 the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
-the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
-`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+the Xcode shim (`/usr/bin/git` is the shim; the wall grants `xcode_select_link`,
+and Homebrew's git remains the usual PATH), and every runner's `.path` carrying the real git
 first — with the stamp, seat and space checks shared. `--os` names the list;
 left out, the bench is asked with `uname -s`. The remote side prints
 `CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This
@@ -674,6 +705,44 @@ The general lesson, and the one to carry to the next cleaner written: *a window 
 that rotates itself is not a bound. Set the window from the rate the tree actually rotates at,
 and put a size ceiling behind it for the day the rate changes.*
 
+**The lane-clone sweep removes a clone only when the work in it is finished and elsewhere.**
+`nova-pulse hygiene --lane-dirs <root>` is the one flag-form mode — no subcommand, no `--home`
+— and it walks the **immediate children** of `<root>`, one level, never recursively. A child
+is a candidate when it holds a `.git` entry, or when exactly one directory inside it does
+(`<root>/lane-foo/repo`, the shape today's lane workers write); a `.git` file counts as much as
+a `.git` directory, so a worktree is a candidate too, and a child holding **more than one**
+checkout is kept, because two checkouts are two branches and it would have to remove both to
+remove either.
+
+Four questions, in this order, and the first one that answers no keeps the directory:
+
+1. **safepath** — the path resolves strictly below the resolved `<root>` and is not a symlink.
+2. **clean** — `git status --porcelain` says nothing.
+3. **pushed** — `git rev-list --branches --not --remotes` says nothing: no commit on a local branch that no remote has. It is stricter than asking about each branch's head, and the stricter answer is the one that keeps the directory.
+4. **settled** — the forge says the pull request whose head is the checked-out branch is `MERGED` or `CLOSED`.
+
+**A read that failed is a keep.** The git reads come before the forge read on purpose, so a
+merged pull request can never talk the verb past an uncommitted file. Every other outcome is one
+`HYGIENE KEEP dir=<d> reason=<token>` line, one token each: `unsafe`, `many-checkouts`, `fresh`,
+`dirty`, `unpushed`, `detached`, `git`, `forge`, `no-pr`, `open`, `unknown-state`. Each clone it
+acts on is `HYGIENE LANE dir=<d> pr=<n> state=<s> removed=<yes|no>`, the per-candidate lines are
+capped at 20 (`--max`, `0` for all) with one `HYGIENE MORE` line standing for the rest, and the
+run ends with `HYGIENE LANES root=<r> candidates=<n> remove=<n> removed=<n> kept=<n>
+dry-run=<yes|no>` — `remove` is what it decided, `removed` is what went. `--dry-run` prints the
+same lines with `removed=no` and touches nothing; it is **off** by default. `--older-than` has one
+spelling, a whole number of days with a `d` suffix, and refuses every other — exit 2, naming the
+flag. Both reads of the world are seams (`pulse.LaneGit`, `pulse.LanePRSource`), so no test of
+this verb runs git or reaches the network, and the one removal goes through `internal/safepath`
+below the root the caller named.
+
+The mistake it removes, measured on the Studio on 2026-09-18: **92 `lane-*` and `dogfood-*`
+clone directories** under `~/rowan-working/tmp`, one per lane worker of the day, and nothing that
+ever took one away. `hygiene run` does not: those are swarm slots, with a jobs directory and a
+liveness rule, and a lane clone is neither. Nor can a lane clone be swept the way scratch is
+swept, by age or by name — it holds a branch, and a branch may be the only copy of somebody's
+work. *The rule for deleting somebody else's working directory is not "is it old" but "is every
+byte of it somewhere else".*
+
 Refusals are exit 2, one remedy line each: without root, `FLEET REFUSED bench=<name> no-sudo
 (run it under sudo, or install the script by hand)`; without systemd, `FLEET REFUSED
 bench=<name> no-systemd (install the timer by hand)`; `studio` from any hygiene act,
@@ -711,6 +780,16 @@ Red tests, one card writes them first; each fakes what the test cannot have:
 17. `hygiene-diag-never-follows-a-symlink-out`: a symlink inside `_diag` pointing at a file outside the runner directory survives with its target, while a cap of one byte proves the prune did delete something.
 18. `hygiene-diag-flags-refuse-nonsense`: `--diag-days` and `--diag-max-bytes` each refuse a non-number and a negative, exit 2, naming the flag; a prune never runs on a guess.
 19. `hygiene-diag-default-cap-is-two-gibibytes`: the shipped defaults are pinned at two days and 2 GiB, so a change to either is a change to this test.
+20. `hygiene-lane-dirs-removes-a-merged-or-closed-clone`: a flat clone whose PR is `MERGED` and a nested `<root>/lane-foo/repo` clone whose PR is `CLOSED` both go, each named on its own `HYGIENE LANE` line, and the summary counts two.
+21. `hygiene-lane-dirs-keeps-open-and-unknown-branches`: an `OPEN` pull request and a branch the forge knows no pull request for are `reason=open` and `reason=no-pr`, and both directories survive.
+22. `hygiene-lane-dirs-keeps-dirty-and-unpushed`: a checkout `git status --porcelain` speaks for, and one holding a commit no remote has, are kept as `reason=dirty` and `reason=unpushed` even though both branches are `MERGED` — and the forge is never asked, because the git reads come first.
+23. `hygiene-lane-dirs-refuses-a-path-outside-the-root`: a symlink child pointing at a clone outside `<root>` is `reason=unsafe`, the target and the link both survive, and the forge is never asked.
+24. `hygiene-lane-dirs-dry-run-removes-nothing`: `--dry-run` prints the same `HYGIENE LANE` line with `removed=no`, keeps every directory, and its summary reads `remove=1 removed=0`.
+25. `hygiene-lane-dirs-older-than-skips-a-fresh-clone`: with a fake clock and `--older-than 2d`, a merged clone three days old goes and one touched an hour ago is `reason=fresh`, unasked about on the forge.
+26. `hygiene-lane-dirs-flags-refuse-nonsense`: `36h`, a bare `2`, `0d` and a missing value each refuse naming `--older-than`; a root that is relative or is not a directory refuses naming `--lane-dirs`; a subcommand alongside `--lane-dirs` refuses; `--older-than` without `--lane-dirs` refuses rather than being ignored; and a bare `nova-pulse hygiene` still prints the usage and exits 2.
+27. `hygiene-lane-dirs-output-is-bounded`: 30 candidates print 20 item lines and one `HYGIENE MORE kind=lane shown=20 total=30`, while the summary still counts 30 — and `--max 0` prints all 30 and no `MORE` line.
+28. `hygiene-lane-dirs-ignores-what-is-not-a-checkout`: a plain directory and a loose file under the root are not candidates, are not counted and are never removed.
+29. `os-lane-git-reads-a-real-checkout`: the one test that drives the real git seam, against a real `git init` in its own temporary directory — local only, no network — because a seam nobody has run against the real thing proves nothing.
 
 `fleet add <bench>` is the only door into the loop, and rule R (pit stop 4,
 2026-09-16: nothing enters the loop untested) is why. It reads the fleet-probe
@@ -804,6 +883,7 @@ closed, remaining by depth, completion by epic) once the tree is the pool (#500)
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
@@ -857,7 +937,13 @@ files a job writes as it finishes — `usage.tsv`, its harness store
 indexed job and re-reads only the jobs one of them moved for, so a finished job whose
 harness log or store wal keeps moving is never re-opened for it, and a warm tick opens no
 job file and starts no `sqlite3` at all. The class is `RESULT.md`'s verdict (done, abstain,
-blocked), falling back to the usage row's return code when the job wrote none. `run` and
+blocked). An attempt with no model turn that died on a gateway 5xx, or that failed
+with no tokens and no recorded error, is `gateway` — a route death, not a card
+failure. Anything else with no verdict falls back to the usage row's return code
+(done or failed). `status` prints the split as `STATUS FAILURES card_fail=<n>
+gateway=<n>` (and the same two fields on `--oneline`): `card_fail` is abstain,
+blocked and every other failed attempt, and a gateway death increments only
+`gateway`. `QUEUE failed=` stays the count of cards in the failed directory. `run` and
 `harvest` append a finished job to its root's index as they
 fold it, so a job is indexed before the next tick needs it; a root with no index is walked
 once and the index written, and a root that sat still is answered from the index alone. The
@@ -1143,13 +1229,22 @@ one remedy in parentheses.
 ## The card, as `cut` writes it
 
 ```
-RESULT <label> sha=<sha12>
+RESULT: <label> sha=<sha12>
 You are a worker. Job directory only; the TMPDIR the runner already exported, never one of your own; never /tmp, ~ or ..; no stdlib or toolchain source; the deadline is the machinery's: <s> s.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<owner>/<name>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints <head>. Else write RESULT.md with line 2 BLOCKED head=<yours> and stop.
 STEP 2..n. <the template's numbered steps, one command per line, one check each>
 STEP last. Write RESULT.md: line 1 exactly the line 1 of this card; line 2 one of DONE, ABSTAIN <why>, BLOCKED <why>; then BRANCH <branch>; REPO <owner>/<name>; then the RESULT template's sections.
 ```
+
+Line 1 carries the colon: `RESULT: ` is SPEC-SWARM's form (SPEC-SWARM.md:969,976) and the one
+form every writer and reader converges on (SPEC-TOOLWORK §5 rule 7; the plain `cut` template
+path, `internal/pulse/cut.go:472`, is the renderer that still follows, by that rule's card).
+**A card of a kind in SPEC-TOOLWORK §5's table carries five typed header lines between the role
+line and `STEP 1`** — `KIND:`, `PATHS:`, `TEST:`, `LEGS:`, `SOURCE:`, and `MODE: explore` with
+`TURNS: <n>` when the card has more than three model steps — so for those kinds `STEP 1` is line
+8 (or 10), inside the fifteen the admission check reads (SPEC-TOOLWORK §5 rule 1). The templates
+of this document that are not kinds in that table keep the shape above: `STEP 1` on line 3.
 
 `<sha12>` is the first twelve hex of the SHA-256 of everything below line 1, so the contract
 line binds the card it heads; the swarm records the same hash at admission and refuses a
@@ -1310,7 +1405,7 @@ of thought no read needs.
 The rules:
 
 1. **`cut-steps-are-the-turn-budget`.** `cut` emits cards whose numbered step count is the
-   turn budget: a read-family card (`read`, `text`, `tone`) takes at most 8 turns, a
+   turn budget: a read-family card (`read`, `text`, `tone`, `report`) takes at most 8 turns, a
    writing-family card (`fix`, `replay`, `drift`) at most 20 turns. A template whose
    rendered card exceeds its budget is `CUT REFUSED template=<name>: <which>` naming the
    rule, and no card is written. The hurt that made it: the 1,434.6M cache-read tokens
@@ -1353,9 +1448,12 @@ clone and copy pay about 44 s and the model loop pays the tail — the same leve
 - **No cross-repo dependency graph.** Every card is one bounded item on one repo at one head;
   a card that needs another card's PR merged first is a card that is not bounded yet, and it
   waits in an issue until it is.
-- **No third try.** A card abstains, is requeued once under a new number (rule 14, #587),
-  and a second abstain is a person's: `retry.tsv` names it and the harness's last refusal, a
-  person rewrites it, and the rewritten card is a new candidate.
+- **No third try.** Under the durable lifecycle, a completed first attempt may use the one
+  remaining executable attempt after conservative reconciliation; a provider fallback may have
+  consumed it already. The stable card id remains the same even when a display number changes.
+  Missing result is UNKNOWN rather than abstain. At the shared total of two, `retry.tsv` names the
+  card, both attempts and bounded evidence for a person's diagnosis; no pool-layer rewrite resets
+  the total.
 - **No model call, no summary, no judgement.** It never reads a report body, never opens a
   transcript, never scores a finding. The swarm's packet is the whole read.
 - **No clock of its own.** No daemon, no `--loop`, no `--watch`. The chain is `harvest` and
@@ -1406,8 +1504,10 @@ quiet cycle makes); receipt every `START` and `DONE` note and append every other
 `<queue>/ESCALATE` as one line, composing no reply; harvest every card whose job holds a
 `RESULT.md` — push its branch by explicit refspec, open or update its PR, cut its read card
 from `<queue>/templates`, and refuse a fix PR carrying neither a `red:` line nor a test file
-in its diff; triage each abstain by its reason token, requeueing it once under a new number
-on the other bench and escalating the second; hand a non-draft PR whose read said `APPROVE`
+in its diff; triage each completed abstain by its reason token, using the one remaining shared
+attempt on another eligible bench or route as its failure class requires, only after conservative
+reconciliation, and escalating at the total of
+two; keep a missing result UNKNOWN and reserved; hand a non-draft PR whose read said `APPROVE`
 to the lane once the head revalidates and every check is `SUCCESS` — `nova-merge add
 --lane <dir> --pr <n>`, never `gh pr merge`, never on `HOLD`; refill the queue
 from the policy's sources to its floor, deduplicated on PR number, issue number and the
@@ -1423,8 +1523,275 @@ not landed (#553).
 Replays: `manager-never-expands-policy`, `manager-quiet-time-makes-no-call`,
 `manager-dedups-on-contract-line`, `manager-revalidates-head-before-merge`,
 `manager-never-merges-draft`, `manager-shift-ends-with-handoff`,
-`manager-requeues-once-then-escalates`, `manager-refuses-fix-pr-without-test`,
+`manager-abstain-uses-only-the-shared-remaining-attempt`, `manager-refuses-fix-pr-without-test`,
 `manager-hands-merge-to-lane`.
+
+## Durable launch, attempts and fleet control (SPEC-AHEAD: #2045, #2040, #2022)
+
+This section specifies the lifecycle before its verbs ship. It does not describe the current
+`fill` launcher as already safe: today that launcher can outlive its grace without returning a
+start receipt, and the old reap rule below treats a missing job directory as proof that work is
+gone. Neither fact is a durable execution protocol.
+
+**One owner and two identities.** `nova-swarm launch` owns execution and the durable attempt
+ledger. `nova-pulse` remains the dealer: it selects a ready card and asks `nova-swarm launch` to
+claim and execute it, but it keeps no second launch state. The existing `nova-pulse launch`
+surface remains a compatibility delegate to that same ledger and does not implement another
+dispatcher. This boundary follows the existing
+tools: pulse owns queues and policy; swarm owns jobs, leases and worker execution. Every card has
+one stable `card=<id>` from cut through harvest. Every executable try has a new immutable,
+unguessable `attempt=<id>`; changing bench or route is a new attempt, while a late reply or a
+restarted reconciliation of the same try retains its attempt id. Labels and paths are display
+fields, never identity. [SPEC-SWARM.md](SPEC-SWARM.md) must cross-reference this section as the
+one authoritative attempt lifecycle; it must not copy the state machine into a second contract.
+
+**Version-one layout.** Under the explicitly named swarm root,
+`lifecycle/events.jsonl` is the authoritative append-only event log,
+`lifecycle/cards/<card>.json` is the rebuildable current projection, and
+`lifecycle/attempts/<attempt>/` holds bounded `stdout`, `stderr`, `exit` and receipts. Fleet
+control lives at the explicitly named control root as `control/state.json` and
+`control/acks/<owner>.json`. No command guesses either root. These paths and names are the pinned
+version-one storage contract and the crash, recovery and ownership tests use them exactly.
+
+Every version-one event requires `card`, `attempt`, prior and new state, monotonically
+increasing `rev`, control `generation`, bench, route, pinned source, job and lease identities,
+limits, UTC time and one idempotency key; readers ignore additional fields so a later writer can
+extend the record without making an older reader reject otherwise valid history. A required field
+may be explicitly null until its identity exists: READY has no attempt, and CLAIM may not yet have
+a job or lease. State validation requires the attempt by CLAIMED, every invocation identity by
+STARTING, and the fully bound receipt identities by STARTED. CLAIM compares
+and swaps the card's current `rev` and, in that same linearized event, mints and records the new
+unguessable `attempt`; `READY` has no attempt to compare. Exactly one claimant can therefore
+linearize `READY -> CLAIMED`, even when racing dealer requests arrive. Later
+transitions compare `card`, its current `attempt`, and `rev`. A duplicate event
+with the same idempotency key and byte-identical payload is the same act; the same key with a
+different payload is a refusal. A different event against an old revision is a conflict and
+changes nothing. The authoritative event is appended and fsynced before the launcher is invoked;
+an append or fsync error prevents a success receipt and launcher invocation. The write may have
+reached storage, so recovery reconciles the log before any retry; it never assumes rollback. The projection is then
+atomically replaced. A projection-write failure reports degraded state and refuses further
+admission; it cannot undo the committed event. A crash may therefore leave the projection behind
+the event log. Restart validates and replays the log's complete valid prefix to rebuild the
+projection, including its list of raised work. A malformed event, revision gap, conflicting
+duplicate or projection that is not a prefix-derived state refuses new admission at exit 2. It never starts over from queue paths,
+leases or job directories, and it does not claim an impossible atomic commit across two files.
+
+The states are:
+
+```
+READY -> CLAIMED -> STARTING -> STARTED -> RETURNED -> HARVESTED
+                         |          |           |
+                         +------ UNKNOWN -------+
+```
+
+`PARKED` is a scheduling disposition on the card, not an execution state. Its authoritative event
+carries `raised=true` and the required `class`; an UNKNOWN transition likewise carries
+`raised=true` and its required `reason`. The projection reconstructs the coordinator's list of
+raised work from those events. Parking prevents new attempts. It does not change an
+attempt's state, release its seat or budget, prove termination, or satisfy DRAIN/STOP. A parked
+UNKNOWN attempt remains UNKNOWN, owned and reserved until the conservative reconciliation below
+completes.
+
+`CLAIMED` is the durable prelaunch ownership record. `STARTING` durably authorizes the
+launcher invocation before it occurs; a crash around that invocation requires reconciliation. Only this typed acknowledgement, parsed from the bounded launcher channel and bound
+to all named identities, establishes `STARTED`:
+
+```
+LAUNCH STARTED card=<id> attempt=<id> job=<id> lease=<id> bench=<name> route=<name> generation=<n> worker=<opaque> at=<RFC3339>
+```
+
+An SSH connection, a surviving timer, any pid, pgid or process start stamp, a lease file,
+a job directory, provider output, or an untyped worker line is not that acknowledgement. The
+pid/pgid/start-stamp tuple may contribute to `never-admitted` or `terminated` reconciliation; it
+never establishes `STARTED`. The launcher retains bounded stdout, stderr and exit separately under the attempt and prints their
+paths; it never discards a stream. Missing, malformed or late acknowledgement at the launch
+deadline yields `UNKNOWN`, not failed or ready. A valid late `STARTED` reconciles that same
+attempt from `UNKNOWN`; it does not consume another attempt.
+
+**Execution proof and publication fencing both precede retry.** `UNKNOWN` retains the card claim
+and its seat reservation. The sole ledger and admission writer is coordinator-side
+`nova-swarm launch`; a worker-written receipt or file is evidence that this owner validates, not
+self-authenticating authority. `never-admitted` is a legal reconciliation only while the last
+durable event is `CLAIMED`, before `STARTING` authorized invocation. Once `STARTING` is durable,
+only an executor `terminated` or `completed` receipt authenticated by that launch's existing
+`exit_attest` and `nonce` pair proves execution ended. A retry is legal only when the owner
+records the applicable proof **and** durably advances the card's publication-fence epoch. Every
+attempt records that card-level epoch. A private attempt-local result or log capture presents the
+attempt ownership credential and records evidence only; it remains permitted during PAUSE and is
+not an accepted RESULT or publication. `RESULT` below means the authoritative
+accepted/publication record. Creating it, harvest-pushing it or accepting it additionally requires
+a separate bounded RUN action token. The effect owner atomically verifies the ownership
+credential, action token and the **card's current fence epoch** at its own
+linearization point. A monotonically increasing counter scoped only to an attempt is not a fence
+between two live workers for one card. Fence advancement alone is
+insufficient: it does not prove resource use, billing or remote execution stopped, so the attempt
+stays UNKNOWN and no retry begins. The contract does not claim exactly-once execution. It
+guarantees at most one current attempt can have its effects accepted. An unreachable bench, a
+missing lease, process or job directory, timeout or stale status is not proof. The reap rule below
+is superseded where it requeues from a missing job directory alone.
+
+An attempt is reserved durably before its first dispatch. One executable try consists of its
+launcher and the one provider route that launcher selected; their internal handoff does not count
+twice. A fallback route or a new bench is a new attempt, as is another dispatch after a launch
+failure. The hard default and maximum automatic budget is **two total attempts per card**, initial
+attempt included. A
+`LAUNCH` retry must use a different eligible bench; a `PROVIDER` retry must use a different
+eligible route; `CARD` has no automatic retry. Before any retry the old attempt must be fenced,
+the current control generation rechecked and the budget atomically reserved. At two attempts,
+or when reconciliation cannot be proved, the card is marked PARKED without changing the current
+attempt's execution state or reservation; it is never silently returned to ready.
+An explicit diagnosed requeue is a new authorized event over the same stable card history, not
+an erasure or an automatic third try.
+
+The machine receipts are:
+
+```
+LAUNCH CLAIMED card=<id> attempt=<id> rev=<n> bench=<name> route=<name> generation=<n> attempts=<n>/2
+LAUNCH UNKNOWN card=<id> attempt=<id> bench=<name> route=<name> why=<no-start|lost-reply|timeout|malformed-start> stdout=<path|-> stderr=<path|-> exit=<n|->
+LAUNCH RECONCILED card=<id> attempt=<id> owner=<id> execution=<never-admitted|terminated|completed> fence_epoch=<n> publication=revoked
+LAUNCH PARKED card=<id> attempt=<id> state=<CLAIMED|STARTING|STARTED|RETURNED|UNKNOWN> class=<LAUNCH|PROVIDER|CARD|SILENT|UNKNOWN> attempts=<n>/2 record=<path>
+LAUNCH OK card=<id> attempt=<id> state=<STARTED|RETURNED> bench=<name> route=<name> generation=<n> record=<path>
+```
+
+Exit 0 means a requested positive transition to CLAIMED, STARTING, STARTED, RETURNED, HARVESTED
+or RECONCILED was durably recorded. UNKNOWN and PARKED explicitly exit 1, as do exhausted budget
+and an unreconciled prior attempt. Exit 2 means the invocation or authoritative ledger could not
+be read safely. Every UNKNOWN transition and PARKED disposition commits `raised=true` plus its
+reason or class in the authoritative event. `nova-pulse failed` lists the replayed projection. A
+projection-write failure reports degradation and refuses new admission without rolling back that
+committed event. A bus notification is best-effort only: its failure cannot alter or retry the
+lifecycle.
+
+**Fleet control is desired state plus acknowledgements, not one magic file.** Rowan's
+2026-09-20 decision `rowan-a76827b29f93` formally amends row 6 to make version-one `CONTROL`
+fleet-wide with no exceptions. Paid-card hold remains dealer policy under RUN; adoption,
+version reporting and read-only status are not card admission. Version one has
+one supported scope: the entire fleet named by the control root. A per-lane, per-bench or
+exception scope is refused before mutation, and version one has no `--except` surface. Before
+every launch, accept, publish, merge and land
+path is wired to the generation check, that path denies new admission; unsupported paths do not
+silently proceed.
+
+The control
+record is an atomically replaced, durable tuple
+`generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet by=<identity>
+at=<RFC3339> reason=<token>`. Its generation increases on every accepted change. `expires=` is
+required and a positive, bounded future time on every `CONTROL SET` to RUN. Renewal creates RUN
+generation `n+1`; it never extends an outstanding token in place. RUN grants
+a bounded admission authority carrying `generation`, `scope=fleet` and `expires=<RFC3339>`;
+there is no timeless cached RUN permission. A dealer checks it before claiming. The swarm
+admission owner checks it with the coordinator while atomically consuming a bounded start token
+and changing `CLAIMED -> STARTING`; that transaction records the generation as its admission
+linearization point. The bench then persists its uniquely bound local acknowledgement before
+invocation. A crash after global consumption but before that acknowledgement leaves the attempt
+STARTING and outstanding; recovery reconciles that attempt rather than consuming another token.
+Route fallback and every new attempt repeat
+both checks. An unreadable, absent when configured, stale, expired or malformed control record
+fails closed for new admission. It has no exception lane or borrowed attempt budget. The bounded
+RUN duration is a required explicit configuration value reviewed for the deployment; this spec
+chooses no magical default.
+
+`PAUSE` stops issuing RUN authority and forbids new launch, accept, harvest push/PR, publish,
+merge and land admissions. It permits `adopt`, `nova-version`, read-only status, bounded capture
+of already-returned logs and results, harvest reconciliation that makes no publication, and
+cleanup of attempts the caller demonstrably owns. `DRAIN` has PAUSE's
+admission rule and waits for owned attempts to become returned, harvested or conservatively
+reconciled; scheduling disposition is irrelevant and any `UNKNOWN` keeps the drain pending.
+`STOP` additionally requests termination only for the
+attempt and lease identities owned in the ledger; it grants no host-wide process authority.
+`RUN` reopens admission only at its new generation and bounded expiry.
+
+An attempt whose bounded start token was globally consumed in the `CLAIMED -> STARTING`
+transaction may execute within that original authority after a partition or later PAUSE, whether
+or not its process is running yet; PAUSE reports it as outstanding rather than claiming instant
+revocation or rollback. A token merely issued but not globally consumed is not admission. A bench
+that is offline before admission, or whose current local acknowledgement is missing, stale or
+PAUSE, cannot complete the transaction and refuses resident or native start. Publication,
+merge and land need their own durable, bounded action
+token acquired after checking the current generation. The side-effect owner checks that token and
+generation where it commits the effect; a shell precheck is insufficient. Retrying such an action
+reconciles the same token rather than acquiring a new one. The result names whether the effect
+completed, failed or is unknown. Harvest may capture a result during PAUSE, but cannot turn that
+capture into a push, acceptance, publication or land without a current RUN action token.
+
+Every admission and effect owner persists its observed generation. Each acknowledgement owner
+identity is unique and binds exactly one bench, so two benches never write the same
+`control/acks/<owner>.json`; the file records that owner and bench pair before resident or native
+invocation. The coordinator aggregates every required owner-plus-bench identity rather than
+treating one coordinator acknowledgement as fleet observation. A control request receipt names
+the desired generation separately from those acknowledgements:
+
+```
+CONTROL SET generation=<n> desired=<RUN|PAUSE|DRAIN|STOP> scope=fleet expires=<RFC3339|-> owners=<n>
+CONTROL ACK generation=<n> owner=<name> bench=<name|coordinator> desired=<state> observed=<RFC3339>
+CONTROL STATUS generation=<n> desired=<state> acked=<n> pending=<n> unknown=<n> owned=<n> complete=<yes|no>
+```
+
+Offline or late benches and owners remain `pending`; a bench with a missing or stale local
+acknowledgement refuses new resident and native admission. The request never claims an
+instantaneous fleet-wide pause. Removing a pause creates RUN generation `n+1`; an old
+acknowledgement cannot satisfy it.
+STOP completion requires conservative RECONCILED execution and publication receipts for every
+owned attempt. PARKED is irrelevant to completion, and UNKNOWN prevents it. Absence of a lease,
+job directory or reply cannot reduce `owned` or make `complete=yes`.
+
+**Required tests, all with local fakes and event coordination:**
+
+1. Two dealers race one READY card; the winning CLAIM mints its attempt in the card-revision CAS,
+   exactly one durable claim exists, and the loser
+   receives a conflict without changing the ledger.
+2. A launcher writes no acknowledgement and exits late: stdout, stderr and exit are retained,
+   the attempt becomes UNKNOWN, its reservation remains, and no second invocation occurs.
+3. A correctly bound acknowledgement makes STARTED; wrong card, attempt, job, lease or
+   generation is malformed and cannot start. A late correct acknowledgement reconciles the
+   same attempt.
+4. Missing lease and job-directory controls leave UNKNOWN reserved. Before STARTING,
+   coordinator `nova-swarm launch` may validate `never-admitted`; after STARTING, only a
+   terminated/completed executor receipt with matching `exit_attest` and `nonce` suffices. Fence
+   advancement alone still forbids retry.
+5. Two live workers for one card present different attempt ownership credentials. An
+   authoritative RESULT, harvest push and accept each require a separate RUN action token and
+   verify the card's current fence epoch; only the current worker
+   publishes, the stale worker is refused, and the refusal consumes no third attempt.
+6. One launcher plus its selected provider consumes one attempt, not two. Its provider fallback
+   consumes the second; a third executable try is refused and parked without making UNKNOWN
+   terminal or releasing its reservation. CARD is parked after its first failure. Permitted
+   LAUNCH and PROVIDER retries change bench or route respectively.
+7. Crash after CLAIM but before STARTING reconstructs CLAIMED and reconciles it. After durable
+   STARTING, a crash before or after invocation requires reconciliation and may become UNKNOWN;
+   neither path returns READY from absence alone.
+8. PAUSE racing launch has two legal histories: coordinator validation and global start-token
+   consumption linearize `STARTING` at the current RUN generation first, after which the admitted
+   start may execute within its bounded authority through a partition or later PAUSE while it is
+   reported outstanding; or PAUSE linearizes first and admission is refused. A merely issued but
+   unconsumed token, or an offline, stale, missing-ack or paused bench before admission, cannot
+   start. No history claims instantaneous revocation.
+9. During PAUSE, adopt, version, status/result capture and owned cleanup run, while new launch,
+   accept, push/PR, publish, merge and land admissions refuse. Previously issued tokens follow
+   test 8. A private attempt-local capture cannot become an authoritative RESULT without a
+   separate current RUN action token and card-epoch check.
+10. Each uniquely identified owner binds one bench and persists its own acknowledgement without
+    colliding with another bench's file; the coordinator aggregates every required owner/bench
+    pair. An offline bench remains pending and refuses resident/native admission. A crash after
+    global start-token consumption but before local acknowledgement leaves one STARTING attempt
+    to reconcile, not a second admission. DRAIN with UNKNOWN is incomplete; STOP targets only
+    ledger-owned attempt/lease pairs. RUN renewal creates generation n+1 and rejects stale
+    acknowledgements.
+11. UNKNOWN and PARKED events each carry `raised=true` plus reason/class and reconstruct a
+    listable projection after restart. Append/fsync failure yields no success or invocation and requires log reconciliation before
+    retry; projection failure after commit degrades and refuses admission without rollback. Bus failure causes no
+    retry or lifecycle transition.
+12. A restart with a fsynced valid event ahead of the projection replays that valid prefix. A
+    malformed/non-prefix history refuses admission without invoking a launcher. A duplicate
+    idempotency key and identical payload adds no event; the same key with different payload
+    refuses. Version-one paths and required fields are exact; state validation accepts null only
+    before an identity is allocated and additional event fields are ignored.
+13. `live-process-identity-is-not-started`: a live pid/pgid/start-stamp tuple and a
+    `RUN START` line carrying all three matching values (pid, pgid and process start stamp)
+    form the negative control: without the typed, fully bound `LAUNCH STARTED` acknowledgement,
+    neither establishes STARTED. The durable state stays CLAIMED or STARTING as applicable,
+    becoming UNKNOWN at the acknowledgement deadline; ownership and reservations remain.
+    Supplying the valid typed acknowledgement then follows test 3 for that same attempt.
 
 ## The loop as a tool (pit stop 3)
 
@@ -1492,6 +1859,9 @@ already did and no further: the law that does not move is rule 17, no verb calls
    **Held by:** `nova-pulse gate` (writes the STOP naming the red, and writes RESUME),
    `nova-pulse run` and `launch` (admit against it), the STOP file under the root.
    **Proved by:** `stop-admits-only-the-reds-own-fix-card`, `resume-is-the-gates-alone`.
+   This is the CI gate's queue-local `STOP` and its explicit red-fix admission list. It is not
+   fleet `CONTROL STOP` above. The fleet control has no implicit repair exception: a repair runs
+   only after an explicit fleet RUN generation grants it bounded admission authority.
 
 4. **D. Point-in-time verdicts.** Row 4: *"Enqueue only on APPROVE **and** green at that
    instant; 51 approved PRs with checks still queued were logged `(not merged)` and never
@@ -1511,13 +1881,19 @@ already did and no further: the law that does not move is rule 17, no verb calls
    done/failed cards as a block; 22 admitted issues sat uncut"* — a finished card that nothing
    sweeps is a card that still counts.
    **The rule:** a `reap` step every tick. Processes under a swarm root older than the batch
-   deadline are killed and logged; a launched card whose job directory is gone is requeued once
-   and then failed; a batch lock whose pid is dead is removed; test binaries under
-   `/tmp/*swarmtest*` older than 30 minutes die. The counts ride on the `PULSE WIDTH` line, so a
-   leak is visible in the one line the coordinator already reads.
+   deadline are reconciled by their owning attempt and logged; a launched card whose job
+   directory is gone becomes UNKNOWN and retains its reservation until the durable admission
+   coordinator-side `nova-swarm launch` validates never-admitted before STARTING or an
+   `exit_attest`/`nonce`-bound terminated/completed executor receipt after STARTING, and advances
+   the old card fence epoch. Only then may the remaining attempt budget admit a retry; at the
+   two-total-attempt bound it is marked parked without becoming terminal. A batch lock whose
+   pid is dead is removed only when it is not an attempt's ownership record. Cleanup is confined
+   to processes and files carrying the current attempt's durable ownership inside the explicitly
+   named swarm or test-fixture root. The counts ride on the `PULSE WIDTH` line, so a leak is
+   visible in the one line the coordinator already reads.
    **Held by:** `nova-pulse reap`, called by `run` each tick; `PULSE WIDTH`.
-   **Proved by:** `reap-kills-past-the-batch-deadline`,
-   `reap-requeues-a-launched-card-whose-job-dir-is-gone`.
+   **Proved by:** `reap-reconciles-past-the-batch-deadline-by-owned-attempt`,
+   `missing-job-dir-is-unknown-until-conservative-reconciliation`.
 
 6. **F. The coordinator's hands.** Row 12: *"The coordinator's own shell: zsh globs aborting
    probes (`no matches found`), a wrong runner path, a held slot, `pkill` killing its own ssh"*.
@@ -1633,11 +2009,13 @@ handoff (rule **The manager tier**).
     <branch>:<branch>`, open exactly one draft PR whose body is the `RESULT.md` lines, and
     print `pushed=1 prs=1 mismatch=2`, exit 1; a bare `git push` in the fixture's argv log is
     the mutation that matters.
-14. `harvest-abstain-goes-to-retry`: one `ABSTAIN reason=idle=300` row and one card with no
-    `RESULT.md`, each on its first attempt, yield `abstain=2` and two requeues under new
-    numbers on the other bench; the same two abstaining again yield `retry=2`, two
-    `retry.tsv` rows each carrying the card path and the harness log's last
-    `permission`/`refused` line, no push, no PR, no third batch argv, `seen.tsv` rows `retry`.
+14. `harvest-abstain-uses-only-the-shared-remaining-attempt`: a completed first attempt with
+    `ABSTAIN reason=idle=300`, conservative reconciliation and no earlier provider fallback may
+    reserve attempt two on another bench under the same stable card id. A first attempt with no
+    `RESULT.md` stays UNKNOWN and reserved; an ABSTAIN whose provider fallback already consumed
+    attempt two parks. Neither produces a third batch argv. Each parked row retains the card path,
+    attempt ids and bounded harness evidence; changing a display card number does not reset the
+    ledger total.
 15. `harvest-cuts-read-card-per-pr`: every PR opened yields one row in `next.tsv` with
     template `read` (or `tone` for a seed page), carrying the bench cost table's cheapest
     model that can hold it, and the next `pool` counts it in `next=<n>` after `queue.tsv`.
@@ -1804,14 +2182,20 @@ handoff (rule **The manager tier**).
 61. `sweep-cuts-a-read-card-when-the-head-moves`: an open row whose PR head changed yields one
     new read card in `next.tsv` and no enqueue, and the row carries the new head; the old card is
     not re-sent and the row is not closed.
-62. `reap-kills-past-the-batch-deadline`: on a day-sized fixture, a supervise process under a
-    swarm root older than its batch deadline, a batch lock whose pid is dead and a
-    `/tmp/*swarmtest*` binary older than 30 minutes are killed, removed and deleted, each logged
-    one line, with the counts on the `PULSE WIDTH` line — the mutation that matters: a loop with
-    no reaper, which is fourteen hours of leaked supervisors and a 23-hour-old card (row 10).
-63. `reap-requeues-a-launched-card-whose-job-dir-is-gone`: a card in `launched/` whose job
-    directory has vanished is requeued exactly once and failed on the second reap, its state row
-    written both times, and a done or failed card never blocks the next `refill` from cutting its
+62. `reap-reconciles-past-the-batch-deadline-by-owned-attempt`: on a day-sized fixture, an old
+    supervise process carrying this attempt's current holder and fence is terminated and fenced,
+    while an unowned or mismatched process is left alone and raises UNKNOWN. A dead batch lock is
+    removed only when it is not an attempt ownership record. Test binaries created by the fixture
+    may be deleted under its own temporary root. Each outcome is logged and counted on `PULSE
+    WIDTH` — the mutation that matters is a loop with no owner-aware reaper, which left fourteen
+    hours of leaked supervisors and a 23-hour-old card (row 10).
+63. `missing-job-dir-is-unknown-until-conservative-reconciliation`: a card in `launched/` whose job directory
+    has vanished stays claimed and reserved as UNKNOWN through repeated reaps. A holder-specific
+    card fence advance alone changes nothing; coordinator-validated never-admitted evidence
+    before STARTING or `exit_attest`/`nonce`-bound terminated/completed executor evidence after
+    STARTING, plus the fence advance, permits at most the second total attempt. Without
+    both, no retry occurs; parking at the cap does not release the UNKNOWN attempt or let
+    DRAIN/STOP complete. A returned or harvested card does not block `refill` from cutting another
     item (row 7: 22 admitted issues sat uncut).
 64. `hand-launch-is-launch-card-n`: `nova-pulse launch --card <n>` launches that one card and
     prints one bounded line; the same card launched twice is refused by its state row naming the
@@ -2182,16 +2566,68 @@ nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<
    `<card>.launched` marker `fill` writes beside the card — `lane`, `bench`, `label`,
    `session`, `at` — so the release is by lane name and never by parsing the card again.
 
+9. **The launched directory is SHARED, and the drain touches only what is the caller's,
+   finished, and within `--max`.** #1950: one `harvest --bench vision --max 1` emptied a
+   live 151-card queue in 733 ms — `jobs=0 ... drained=151` on one line — marked every card
+   `failed`, deleted every `.launched` marker and took five cards of other lanes whose jobs
+   were running on other benches; 149 markers had to be rebuilt by hand. Seven manager
+   lanes drop cards into one `ready/` and the resident fill loops move them into one
+   `launched/`, so a verb that empties that directory for everybody is a fleet-wide
+   foot-gun. Four clauses, each read from the card's own launch record:
+   - **(a) the record must be the caller's, and the caller must SAY who that is.**
+     `--session <id>` is **required for any drain**: with no `--session` nothing is
+     drained at all — every card is left, counted `no-session`, with the remedy on stderr
+     (Johnny, #1984: *"`--launched` without `--session` must not drain"*). The session is
+     never inferred — not from the job's `RESULT.md`, not from the lane, not from the
+     bench. With one, only a card whose marker names exactly that session; a marker naming
+     none is not provably the caller's either.
+   - **(b) it must match `--bench`.** A card whose marker names another bench is left where
+     it is — the drain printed `bench=captainamerica` under `--bench vision` and moved the
+     card anyway. Without `--bench` (the local form) only a marker naming no bench qualifies.
+   - **(c) it must be finished, or PROVEN dead.** `done` is a job THIS run folded to a
+     durable end — a PR, a `NO-COMMIT`, or an earlier `.harvested`. A job whose fetch, push
+     or forge call failed, or which a filter passed over, keeps its card: **a launch record
+     is removed only after its result has been harvested.** `job-dir-gone` is a verdict on
+     EVIDENCE, and a sibling job being listed is not evidence about this card:
+     - the traversal must be **complete per root**. The listing answers
+       `ROOT <path> ok|missing|incomplete`, holding every root, every slot and every `jobs`
+       directory against `-r` and `-x`, because a glob is silent about the difference
+       between *nothing is here* and *I was not allowed to look*: a live job under a `jobs`
+       directory at mode 000 makes the script print nothing and exit 0. One `incomplete`
+       root costs the whole run its absence claims (never its harvest), and the cards it
+       cannot judge are left and counted `incomplete-listing`.
+     - the card's OWN job directory must be **probed by name**: one bounded
+       `PROBE <label> present|absent|unknown` call for every candidate, where `present`
+       beats `unknown` beats `absent`, so no permission failure is ever read as a dead job.
+       Only `absent` is absence. An empty listing proves nothing either.
+   - **(d) `--max` bounds what is CONSUMED, not just what is printed.** `--max 1` printed
+     one line and drained 151.
+   A drained card's `.launched` marker **moves with it** into `--done` or `--failed` and is
+   never deleted: it is the only record of which bench the job is on, and a card without it
+   cannot be harvested by anyone. The two move as a **PAIR or not at all**: the destination
+   is checked for a collision first (this verb overwrites no evidence it did not write), the
+   MARKER moves first, and a card move that fails rolls the marker back. A drain that cannot
+   complete is **never counted in `drained`**, prints `HARVEST DRAIN-FAIL` with its reason —
+   `destination-exists`, `marker-move`, `card-move`, `rollback` — and makes the verb exit 1.
+   `drained=<n> left=<m>` on the summary is the whole receipt, with one bounded
+   `HARVEST LEFT reason=<r> cards=<n>` line per reason and never one per card. And a
+   `--root` that does not resolve on the bench is `HARVEST REFUSED` before any state
+   changes, never a silent `jobs=0`; a quoted `'~/...'` is not expanded by this verb.
+
 ```
 HARVEST JOB bench=<name> label=<label> branch=<name> sha=<sha> base=<branch> pr=<repo>#<n>
 HARVEST NO-COMMIT bench=<name> label=<label> branch=<name> base=<branch> (nothing was committed; not pushed)
 HARVEST SKIP bench=<name> label=<label> reason=<session|branch-prefix|age|no-repo|no-clone|no-count> <detail>
+HARVEST ROOT-INCOMPLETE bench=<name> root=<path> (<why>)
 HARVEST DRAIN card=<card-<n>.md> lane=<name> state=<done|failed> bench=<name> why=<result|job-dir-gone>
-HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> took=<d>
+HARVEST DRAIN-FAIL card=<card-<n>.md> lane=<name> bench=<name> reason=<destination-exists|marker-move|card-move|rollback> <detail>
+HARVEST LEFT reason=<running|unharvested|no-session|other-session|other-bench|probe-present|probe-unknown|unprobed|unproven|incomplete-listing|max> cards=<n>
+HARVEST BENCH <OK|RED> bench=<name> jobs=<n> done=<n> pushed=<n> prs=<n> no-commit=<n> skipped=<n> drained=<n> left=<n> took=<d>
+HARVEST REFUSED: --root <path> does not exist on <bench> (<remedy>)
 ```
 
-Exit 0, 1 when a fetch, a push or the forge failed for any job, 2 on a refusal that never
-started. Red tests, one per edge, each against the fake shell, the fake forge and the fake
+Exit 0, 1 when a fetch, a push or the forge failed for any job or a drain could not
+complete, 2 on a refusal that never started. Red tests, one per edge, each against the fake shell, the fake forge and the fake
 git on PATH — no test opens a connection:
 
 1. `TestHarvestBenchReadsResultsOverTheShellSeamAndOpensThePR` — rules 1, 3 and 4.
@@ -2205,3 +2641,335 @@ git on PATH — no test opens a connection:
 8. `TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession`,
    `TestFillReadsTheLiveLaneFromTheMarkerNotTheCard` and
    `TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails` — rule 8's marker.
+9. `TestHarvestConsumesOnlyItsOwnFinishedCardOnASharedQueue` — rule 9, all four clauses in
+   one run, asserted on a before/after listing of the shared directory with a sha256 per
+   file; `TestHarvestDrainsNothingWhenTheBenchListedNoJobs` — rule 9(c), the 733 ms
+   receipt; `TestHarvestLeavesACardWhoseJobFailedToFetch` — rule 9(c), durability;
+   `TestHarvestRefusesARootThatDoesNotResolveOnTheBench` and
+   `TestBenchListScriptAsksWhetherEachRootIsThere` — the root refusal.
+10. The pair, the session and the proof, one witness each (#1984):
+    `TestHarvestNeverSplitsACardFromItsMarkerWhenTheMarkerCannotMove`,
+    `TestHarvestRollsTheMarkerBackWhenTheCardCannotMove` and
+    `TestHarvestRefusesToDrainOntoExistingEvidence` — the paired move, each with an
+    injected failing rename and a sha256 listing showing no split pair anywhere;
+    `TestHarvestWithNoSessionDrainsNothing` and
+    `TestHarvestWithASessionStillRefusesAMismatchedOrUnstampedMarker` — clause (a);
+    `TestHarvestInfersNoAbsenceFromARootItCouldNotReadWhole` and
+    `TestBenchListScriptReportsAnUnreadableRootAsIncomplete` — per-root completeness, the
+    generated script run under `/bin/sh` against a two-root fixture whose second `jobs`
+    directory is mode 000 (skipped as root, which mode 000 does not refuse);
+    `TestHarvestProvesJobDirGonePerLabelAndNeverFromASibling`,
+    `TestHarvestLeavesACardTheProbeCouldNotAnswerFor` and
+    `TestBenchProbeScriptAsksAboutEachLabelByName` — the per-label probe.
+
+## Sprint
+
+The 2026-09-20 sprint's observability was group G of the review: `sprint-table` (the ledger
+table, per host, ok/fail, ok/min), `sprint-models` (per-model ok from usage rows),
+`sprint-requeue` (harness-failed cards fed back once), `fleet-limit` (the 10-second sampler —
+Go, untracked, LIVE.md, SAMPLES.tsv) and `setshare.sh`. They were rebuilt five times in one
+day; every counter sshed seven hosts; the ledger began 118 minutes after the stamp, so the
+load test's first two hours are not in it (cairn 6ca67034: 1,801 cards launched, 1,293
+returned a result, ~437 ended with none, peak 501 live on seven machines); and the
+coordinator still answered "how many cards succeeded, failed, are in flight" with an ad-hoc
+scan of every bench while every manager kept a private TSV with different columns.
+`nova-pulse sprint` is the one verb that retires them: one plan starts the sprint, one epoch
+stamps it, one record holds its settings, one table watches it, one funnel grades it, one
+stop drains it. It makes no model call. The lines, as `nova-pulse help` prints them:
+
+```
+nova-pulse sprint start  --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>]
+nova-pulse sprint status --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>] [--max <n>]
+nova-pulse sprint set    --queue <dir> <bench> <key> <value>
+nova-pulse sprint table  --plan <file> --queue <dir> --bus <clone> [--bench <name>] [--once]
+nova-pulse sprint funnel --plan <file> --queue <dir> [--wave <id>] [--max <n>]
+nova-pulse sprint stop   --plan <file> --queue <dir> --machines <file> [--ssh <path>] [--timeout <s>]
+```
+
+1. **The plan is one file, named by a flag, kept in git, validated whole before anything
+   moves.** `--plan <file>` is a tab-separated file, `#` comments and blank lines skipped,
+   three row kinds: `bench <name> <cap> <max_load_per_core> <gb_per_card>`, one per bench;
+   `route <flash|pro> <provider>[,<provider>...]`, the provider routes; and one `probe
+   <budget>` row. The file is read whole before any write: an unknown row kind, a wrong
+   field count, a cap below 1, a guard that is not a finite number, a duplicate bench, or a
+   bench the `--machines` registry does not carry is one `SPRINT REFUSED` naming the row,
+   exit 2, and nothing is applied — a plan the tool half-understands is a plan nobody
+   approved, the manager policy's law. This retires the plan's existence as five scripts'
+   five copies of the same numbers, edited under load. `TestSprintStartRefusesAPlanItCannotReadWhole`.
+2. **Start applies the plan in one order, or not at all.** Shares, then the record, then
+   the routes, then the mirrors, then the stamp, then the table and the feeder, then the
+   loop. A step that fails — a bench that will not take its share, a mirror that will not
+   refresh — refuses the whole start: no stamp is written anywhere, the shares already
+   written are named on the refusal line, and the exit is 2. A half-applied plan is benches
+   running different caps under one stamp, which is what five rebuilds in a day actually
+   were. `TestSprintStartAppliesThePlanInOrderOrNotAtAll`.
+3. **The cap is the slot-store share, written by start and by nothing else.** The plan's
+   `cap` becomes the owner row of each bench's `shares.tsv` — the store the capacity probe
+   already reads (#1914: the store leads, the load only brakes) — so the bench's answer to
+   "how many more cards may I take" is the plan's number from the first tick. This retires
+   `setshare.sh`, whose shares were written by hand, per bench, and drifted from every other
+   copy of the plan. `TestSprintStartWritesTheSharesFromThePlanCap`.
+4. **The guards are the plan's, read from the record every tick.** `max_load_per_core` is
+   the load brake the dealer already holds (`--max-load-per-core`; 0 is no brake);
+   `gb_per_card` is the disk term's per-card floor, the divisor the legacy formula
+   hardcoded as `(free_gb-25)/2`. Both are read from the record on every tick — never from
+   an environment variable, never from a flag the loop was started with — because tuning in
+   an env var is tuning nobody can change without killing the loop (#828, row 2: the
+   restart for a headroom change forgot `PULSE_STUDIO_SLOTS=8` and the Studio launched
+   eleven cards at load 26). `TestSprintGuardsAreReadFromTheRecordEveryTick`.
+5. **The per-bench capacity record is one file under the queue, and `sprint set` writes
+   it.** Start writes `<queue>/sprint.tsv` from the plan's bench rows — bench, cap,
+   max_load_per_core, gb_per_card, and the stamp — and every tick of the loop and of the
+   table agent re-reads it. `sprint set --queue <dir> <bench> <key> <value>` rewrites one
+   cell; the next tick takes it, one `SPRINT SET` line names the old and the new value, and
+   nothing restarts — the config file's law, with the counters untouched. A key the record
+   does not carry, or a bench the record does not name, is a refusal. This is #2164's
+   record: the setting exists exactly once, and the reader is the tick.
+   `TestSprintSetTakesEffectOnTheNextTickWithoutARestart`.
+6. **The stamp is one epoch, written to every host, rendered host-local.** Start takes one
+   epoch — its own, once — and writes it to `<queue>/SPRINT-START` and to every bench over
+   the shell seam, one file per host; every sprint line that prints a time prints it from
+   that epoch in the host's own local time. The sprint's ledger rows are keyed to the
+   stamp, so a viewer started late still reads from the stamp — the hurt was the ledger
+   beginning 118 minutes after it, because the script that kept the ledger was also its
+   starting gun. `TestSprintStartStampsOneEpochOnEveryHost`.
+7. **The mirrors are refreshed before the first card is dealt, by the verb that already
+   does it.** Start refreshes, for every bench the plan names, the mirrors `fleet mirror`
+   maintains there (#2383) — created or refreshed, the bare mirror a card clones from — and
+   a mirror that will not refresh refuses the start before the stamp, because a sprint that
+   begins with a stale mirror pays a stale clone for every card. This retires the hand
+   refresh that ran when somebody remembered. `TestSprintStartRefreshesTheMirrorsBeforeTheFirstDeal`.
+8. **The provider routes are the plan's route rows, written where the launcher reads
+   them.** The `flash` and `pro` rows write the routes file `launch --routes` reads, one
+   typed decision per card, and the probe budget bounds what the router may spend asking.
+   There is no per-card override and no hand on a route — the table is the whole policy, in
+   git, edited once (rule 7 of the pulse) — so two benches never route the same kind
+   differently because somebody edited one copy. `TestSprintStartWritesTheProviderRoutesTheLauncherReads`.
+9. **The feeder is a step of the loop, and a harness failure is fed back once.** Start
+   brings the requeue feeder up with the loop: a card whose harness failed — no RESULT, a
+   `harness-silent` — is requeued once under its stable card id, on another bench when
+   there is one, and the requeue is one appended row in the same ledger the manager's
+   triage writes, so the feeder and the triage never both spend the one remaining
+   executable attempt (rule 14). A card already on its second attempt is failed, never fed.
+   This retires `sprint-requeue`: a second process with a hand on the queue, feeding cards
+   back on its own count. `TestSprintRequeueFeedsAHarnessFailureBackOnce`.
+10. **The table is a per-bench agent: each bench computes its own row and pushes it.**
+    `sprint table --bench <name>` is the tiny agent (#2389) — part of the loop, or a
+    launchd/systemd unit — ticking every ten seconds, the manager tick's own cadence. Each
+    tick it reads its OWN bench's slot store (a local read; the agent is on the bench),
+    folds the dealt ledger (#2382) and the results store (#2379) as projected into the
+    fleet store by the verbs that write them, and pushes one row to the store the fleet
+    already has: the SPEC-REDIS instance when it answers, the bus's state dir (`.nova-bus`)
+    when it does not — SPEC-REDIS's file fallback, so an outage is a latency regression and
+    never a lost row. The agent's own probes are bounded by the plan's probe budget, and
+    the row it pushes says what the tick cost. This retires `fleet-limit`, the untracked
+    sampler, and its LIVE.md and SAMPLES.tsv. `TestSprintTableRowIsComputedOnTheBenchAndPushedToTheStore`.
+11. **`sprint status` prints the plan against the measured state, one line per bench.** For
+    each bench the plan names: the record's cap against the store's held and free, the
+    guard against the measured load per core, the route rows against the file the launcher
+    reads, the stamp's age. A bench whose measured state disagrees with the plan is
+    `drift=` named by the key that drifted, and the verb exits 1 — the tool saying NO —
+    because a sprint running on settings other than the plan's is the five-copies failure
+    running again. `TestSprintStatusNamesTheKeyThatDriftedFromThePlan`.
+12. **`sprint stop` drains before it stamps, and a sprint still working is not stopped.**
+    Stop writes the dealer's stop file first — no new deals from the next tick (the
+    `--stop` lever `fill` already holds) — then waits the drain: every bench's working
+    count to zero or the deadline. A drained sprint is stamped `SPRINT-END` beside the
+    start stamp, one epoch the same way, and exits 0. A sprint with leases still held
+    stamps nothing, prints one `SPRINT STOP WORKING` line per bench still working, and
+    exits 1 — a stop that stamped over live work would be the ledger lying about when the
+    sprint ended. `TestSprintStopDrainsBeforeItStamps` and
+    `TestSprintStopNamesEveryBenchStillWorking`.
+13. **The row is seven columns, and a count nobody took is a dash.** `host | queue |
+    working | done | ok | fail | ok%`: `queue` is the bench's pending cards, `working` its
+    live leases, `done` the dealt rows folded, `ok` the results rows with a result, `fail`
+    the results rows without one, `ok%` ok over ok+fail — a dash when the denominator is
+    zero, and any store that could not be read is a dash in its column, never a zero: a row
+    of zeros reads as a bench with nothing to do, the fleet page's one rule learned twice.
+    `TestSprintTableRowReadsADashForAStoreItCouldNotRead`.
+14. **The viewer renders the store and never sshes.** `sprint table` with no `--bench` is
+    the viewer: it reads the rows the agents pushed and prints them, one `SPRINT ROW` per
+    host, and starts no shell and no ssh — the review's receipt was every counter sshing
+    seven hosts, and a viewer that sshes is the script again. A host whose row is older
+    than two ticks is printed with its age, because a stale row is a claim about now that
+    nobody made. `TestSprintViewerRendersTheStoreAndNeverSshes`.
+15. **The ledger is the record, it begins at the stamp, and cleanup never touches it.** The
+    dealt ledger and the results store are append-only files under the queue —
+    coordinator-side, where hygiene's prune of bench job directories cannot reach —
+    written by the verbs that deal and fold, never by the viewer, and projected into the
+    fleet store in the same call, so no agent reads another bench's filesystem. Nothing in
+    the store is the only copy of anything (SPEC-REDIS's law); a store rebuilt from the
+    ledger is byte-identical. This retires the ledger that began 118 minutes after the
+    stamp because the script was its writer: here the writers are the verbs, from the
+    stamp. `TestSprintLedgerBeginsAtTheStampAndSurvivesAJobCleanup`.
+16. **The per-model rows come from the provider table, never from a usage-row scrape.** The
+    table's per-model columns are folded from the provider table (#2010, #2385) the routes
+    were written from — the same rows, read once — so a model's ok count is the route's
+    record and not a re-parse of every usage row on every tick. This retires
+    `sprint-models`. `TestSprintModelRowsComeFromTheProviderTable`.
+17. **The funnel is a standing report: ok, green, reviewed, useful, per wave and kind and
+    model and bench.** `sprint funnel` folds the launch records, the results, the gate
+    outcomes and the forge state into one table — `launched`, then `ok` (a RESULT
+    returned), `green` (the gate's verdict), `reviewed` (a read card's APPROVE), `useful`
+    (landed) — one row per wave per kind per model per bench, a wave being the pulse id the
+    launch records already carry. This retires the ad-hoc scan of every bench that could
+    not answer the all-day question (1,801 launched, 1,293 with a RESULT, 71 live, ~437
+    ended with none) and the managers' private TSVs with different columns: the columns are
+    these, and there is one writer. (#2034 names the report `nova-pulse funnel` or
+    nova-board; the fold is the same and the surface is the open question.)
+    `TestSprintFunnelFoldsTheRecordPerWaveKindModelAndBench`.
+18. **A funnel row is append-only; a mistake is voided by a void record, never edited.**
+    The outcome log's own law holds here: a row written is never rewritten, and a later
+    judgment appends a second row keyed to the same unit. A void record — `nova-decide
+    outcome`'s VOID, #2034's ask of that verb — excludes the row it keys from every stage's
+    count, and both rows stand, so the arithmetic that costs a route its floor is the one a
+    rewrite would erase. The receipt is the manager who recorded ten `outcome --result
+    green` lines that were not greens and could not take them back.
+    `TestSprintFunnelExcludesAVoidedRow`.
+19. **Cost per useful card is the wave's measured spend over its useful count, and
+    unmeasured spend is a dash.** The spend is the usage rows the record already folds; the
+    count is the useful stage's. A wave with no measured usage reads `usd_per_useful=-` — a
+    cost never measured is unknown, never zero, the RATE line's law — because a zero cost
+    per card is the one number this report may never invent.
+    `TestSprintFunnelReadsUnmeasuredSpendAsUnknown`.
+
+```
+SPRINT OK plan=<path> benches=<n> slots=<n> stamp=<epoch> mirrors=<n> table=<n> feeder=on took=<d>
+SPRINT REFUSED: <reason> (<remedy>)
+SPRINT SET bench=<name> <key>=<old>-><new> (the next tick takes it)
+SPRINT ROW host=<name> queue=<n> working=<n> done=<n> ok=<n> fail=<n> ok%=<n|-> age=<s>
+SPRINT TABLE OK bench=<name> store=<redis|dir> probes=<n> took=<d>
+SPRINT STATUS bench=<name> cap=<n> held=<n> free=<n> load_per_core=<f> drift=<none|cap|guard|route|stamp>
+SPRINT FUNNEL wave=<id> kind=<k> model=<m> bench=<name> launched=<n> ok=<n> green=<n> reviewed=<n> useful=<n> usd_per_useful=<x.xxxx|->
+SPRINT STOP OK stamp=<epoch> drained=<n> took=<d>
+SPRINT STOP WORKING bench=<name> working=<n> (drain not finished; nothing stamped)
+```
+
+Exit 0 when the verb ran and the state it reports is consistent — a plan applied whole, a
+row pushed, a status without drift, a sprint drained and stamped; 1 when the tool says NO —
+a status that found drift, a stop with work still running; 2 on every refusal — a plan that
+does not parse whole, a bench the record or the registry does not carry, a store that
+cannot be written — and nothing is applied.
+
+### Tests this spec demands
+
+`internal/pulse` for the verb and `cmd/nova-pulse` for the flag surface; every bench read
+and write through the `fakeShell` (the BenchShell seam), the mirror refresh through the
+fake git on PATH, the fleet store twice — miniredis for the instance and a temp dir for the
+`.nova-bus` fallback, asserting the same rows both ways — the cadence on a fake clock (no
+test asserts a wall-clock bound), the forge through `fakeForge`, and no test opens a
+connection. Each is seen red first against the mutation its rule names.
+
+1. `TestSprintStartRefusesAPlanItCannotReadWhole` — a plan with a bad row kind, a short
+   bench row, a NaN guard and a bench the registry does not carry is one refusal naming
+   the row, exit 2, and no share, record, route, mirror or stamp exists afterwards (rule 1).
+2. `TestSprintStartAppliesThePlanInOrderOrNotAtAll` — a mirror refresh failing on the third
+   of four benches leaves no stamp on any host and names the shares already written on the
+   refusal line (rule 2).
+3. `TestSprintStartWritesTheSharesFromThePlanCap` — the plan's cap lands as the owner row
+   of each bench's `shares.tsv`, and the capacity probe's next answer is the plan's number
+   (rule 3).
+4. `TestSprintGuardsAreReadFromTheRecordEveryTick` — a brake and a disk floor edited in the
+   record between two ticks are the values the next tick deals under, with no restart and
+   no flag (rule 4).
+5. `TestSprintSetTakesEffectOnTheNextTickWithoutARestart` — `sprint set space cap 64`
+   rewrites one cell, the next tick deals against 64, the `SPRINT SET` line names old and
+   new, and an unknown key or bench is a refusal (rule 5).
+6. `TestSprintStartStampsOneEpochOnEveryHost` — every host's stamp file carries the one
+   epoch start took, and two hosts' files differ by nothing (rule 6).
+7. `TestSprintStartRefreshesTheMirrorsBeforeTheFirstDeal` — the fake git's log shows the
+   fetch per bench before the stamp write, and a fetch that fails refuses the start
+   (rule 7).
+8. `TestSprintStartWritesTheProviderRoutesTheLauncherReads` — the routes file the launcher
+   reads carries the plan's flash and pro rows and nothing else (rule 8).
+9. `TestSprintRequeueFeedsAHarnessFailureBackOnce` — a harness-silent card is requeued once
+   under its stable id, a second failure is failed not fed, and the triage's ledger row for
+   the same card is never written twice (rule 9).
+10. `TestSprintTableRowIsComputedOnTheBenchAndPushedToTheStore` — the agent reads its own
+    slot store and the store's projection, pushes one row per tick of the fake clock, stays
+    inside the probe budget on the fake shell's argv count, and the same rows land in
+    miniredis and in the dir fallback (rule 10).
+11. `TestSprintStatusNamesTheKeyThatDriftedFromThePlan` — a cap lowered by hand in a
+    `shares.tsv` is `drift=cap` on that bench's line and exit 1; a fleet at the plan is
+    exit 0 (rule 11).
+12. `TestSprintStopDrainsBeforeItStamps` — the stop file exists before the first drain
+    read, a drained fleet gets `SPRINT-END`, and the stamp sits beside `SPRINT-START`
+    (rule 12).
+13. `TestSprintStopNamesEveryBenchStillWorking` — two benches holding leases at the
+    deadline are two `WORKING` lines, no stamp, exit 1 (rule 12).
+14. `TestSprintTableRowReadsADashForAStoreItCouldNotRead` — a results store that will not
+    parse is a dash in ok, fail and ok%, never a zero, and the row still pushes (rule 13).
+15. `TestSprintViewerRendersTheStoreAndNeverSshes` — the viewer prints one `SPRINT ROW` per
+    pushed row with the fake shell's script log empty, and a row older than two ticks
+    carries its age (rule 14).
+16. `TestSprintLedgerBeginsAtTheStampAndSurvivesAJobCleanup` — a viewer started after 100
+    dealt rows reads all 100 from the stamp, a hygiene prune of the bench's job dirs
+    removes no ledger row, and a store rebuilt from the ledger is byte-identical (rule 15).
+17. `TestSprintModelRowsComeFromTheProviderTable` — the per-model columns equal the
+    provider table's fold, and a usage row edited by hand moves nothing (rule 16).
+18. `TestSprintFunnelFoldsTheRecordPerWaveKindModelAndBench` — the load-test fixture (1,801
+    launched, 1,293 with a RESULT, ~437 with none) folds into launched, ok, green,
+    reviewed, useful per wave, kind, model and bench, and the sums across rows equal the
+    totals (rule 17).
+19. `TestSprintFunnelExcludesAVoidedRow` — ten green outcomes and a void record for each
+    leave the green stage at zero, the rows still in the log, and the funnel's counts
+    honest (rule 18).
+20. `TestSprintFunnelReadsUnmeasuredSpendAsUnknown` — a wave with no usage rows prints
+    `usd_per_useful=-`, never 0.0000 (rule 19).
+
+## Launch: one card, one bench
+
+This verb retires the thirty-three shell scripts of the `rr-*.sh`, `nova-*-runner.sh` and `studiolaunch-*.sh` families, which launch one card on one bench. On 2026-09-20, these scripts comprised three parallel, diverging code paths for Linux, darwin and the studio, where every fix was applied three times and at least one wrongly, causing an outage. `nova-pulse launch` replaces them with one Go code path, one contract, and one test suite.
+
+The verb has two operational forms, discriminated by the singular/plural flag:
+- **Single-card launcher:** `nova-pulse launch --bench <name> --card <file> [--provider <route>]` executes one card on one bench. It is the atomic launch primitive called by the fill loop and by hand (rule 64, `hand-launch-is-launch-card-n`).
+- **Batch admission runner:** `nova-pulse launch --cards <cards.tsv> --root <dir> ...` (the gather mode described under "The verbs", above) enqueues cards across the pool.
+
+Passing both `--card` and `--cards`, or omitting both, is refused: `PULSE REFUSED: specify either --card <file> or --cards <tsv>` (exit 2).
+
+The 9 rules of the single-card launch contract, and the 11 tests it demands:
+
+```
+nova-pulse launch --bench <name> --card <file> [--provider <route>]
+```
+
+1.  **The verb requires a bench, a card, and an optional provider route.** `launch` reads the card file and the bench record named by `--bench`; a missing `--card` or `--bench` is a refusal. A `--provider` route on the command line overrides any route discovered from the bench record. If `--provider` is omitted, `launch` reads the provider route from the bench's own record. This retires the twelve provider-specific launcher scripts (`flash-native-bench.sh`, `dspro-native-bench.sh` and so on), each of which hardcoded one provider route. `TestLaunchRequiresBenchAndCard`, `TestLaunchReadsProviderOverride`.
+
+2.  **The repository is staged from the bench's mirror.** The card's `base-repo` and `base-sha` headers are required. The verb stages the repository from the mirror path declared in the bench's own record, and includes the fixed-path self-heal behaviour of the scripts it replaces. A card that tries to clone a repository from a URL is a lint error and is never launched. This retires the defect from #2383 where cards cloned from GitHub inside the firewall. `TestLaunchStagesRepoFromBenchMirror`, `TestLaunchRefusesCardWithNoBaseRepo`.
+
+3.  **A ten-second preflight runs before the slot lease is taken.** Before starting the native process, `launch` verifies that the harness binary starts and answers a no-op, the staged repo is at `base-sha`, the card's `LEG` toolchain resolves, and the chosen provider answers a one-token ping. Any failure is a refusal, printed with a named cause (`why=preflight` or `why=unreachable`). This retires the failure from #2384 where a broken environment was discovered only after the native process began, wasting a slot. `TestLaunchPreflightRefusesOnFailure`.
+
+4.  **A slot is taken by atomic lease.** `launch` takes one lease from the bench's slot store. If the bench reports no capacity, the launch is refused (`why=capacity`). The lease is held until the native process exits. This retires the hand-rolled capacity probes of `rr-native-bench.sh` and its copies. `TestLaunchTakesAtomicSlotLease`.
+
+5.  **The harness environment is sanitized and bounded.** `OPENCODE_*` variables are forwarded from the environment. `GOMAXPROCS` is set to `2` and the `go test` arguments on the card are amended with `-p 2` to bound parallelism. This retires the defects from #2328 and #2401 where a card's environment was either too sparse (requiring manual grants on darwin) or too wide (consuming a whole bench). `TestLaunchSetsHarnessEnvironment`.
+
+6.  **Per-OS differences are behind a launcher interface.** The concrete launcher implementation is chosen based on the bench record's `OS` field. The interface abstracts the differences between Linux (`/proc`), darwin (`sysctl`) and the studio's local path layout, so the core launch logic is shared. This retires the three parallel, diverging code paths that made fixes so costly. `TestLaunchAbidesPerOSDifferences`.
+
+7.  **A successful start exits 0 with the job id.** On a successful launch, where the native process has started and the harness has acknowledged it, `launch` prints one `LAUNCH STARTED` line with the job id and exits 0. `TestLaunchSuccessPrintsStarted`.
+
+8.  **A pre-launch refusal exits 2 or 3 and hands the card back.** If the launch is refused for any reason before the native process starts — capacity, disk space, a bad name, an unreachable provider, or a failed preflight check — the verb prints one `LAUNCH REFUSED` line with the cause and exits 2 (or 3 for `unreachable`, per #2381). The card is considered "handed back" to the caller, untouched. This retires the ambiguous exit codes of `rr-run.sh` that led to failed jobs being retried as `UNKNOWN`. `TestLaunchRefusesWithTypedExitCode`.
+
+9.  **An ambiguous exit after the start is UNKNOWN.** If the native process starts but fails in a way that the launcher cannot definitively diagnose (e.g., the harness becomes unresponsive after acknowledging the start), the state is considered `UNKNOWN`. The launcher does not raise this; it is the responsibility of the calling machinery to observe this state and act. This clarifies the boundary from #2381. `TestLaunchAmbiguousExitIsHandledByCaller`.
+
+```
+LAUNCH STARTED job=<id> bench=<name> slot=<n> pid=<pid>
+LAUNCH REFUSED why=<capacity|disk|name|unreachable|preflight> reason=<text>
+```
+
+A successful launch exits 0. A pre-launch refusal exits 2 (or 3 for `unreachable`).
+
+### Tests this spec demands
+
+The tests for this verb live in the `internal/pulse` package. They use a fake bench record store, a fake slot lease store, a fake harness and a fake git on PATH. No test opens a real network connection or touches a real forge. Each test is seen red first.
+
+1.  `TestLaunchRequiresBenchAndCard` — refuses to run if `--bench` or `--card` is missing (rule 1).
+2.  `TestLaunchReadsProviderOverride` — a `--provider` flag overrides the bench record's default (rule 1).
+3.  `TestLaunchStagesRepoFromBenchMirror` — stages the repository from the path in the fake bench record, using the card's `base-repo` and `base-sha` (rule 2).
+4.  `TestLaunchRefusesCardWithNoBaseRepo` — refuses a card that is missing the `base-repo` or `base-sha` header (rule 2).
+5.  `TestLaunchPreflightRefusesOnFailure` — injects failures for each preflight step (harness, repo, toolchain, provider) and asserts a refusal with the correct cause (rule 3).
+6.  `TestLaunchTakesAtomicSlotLease` — proves a lease is taken from the fake slot store; asserts refusal when the store reports no capacity (rule 4).
+7.  `TestLaunchSetsHarnessEnvironment` — inspects the environment passed to the fake harness, asserting `OPENCODE_*` variables are forwarded and `GOMAXPROCS` is set (rule 5).
+8.  `TestLaunchAbidesPerOSDifferences` — runs the same launch against three fake benches (Linux, darwin, studio) and confirms the correct OS-specific fakes are called (rule 6).
+9.  `TestLaunchSuccessPrintsStarted` — on a clean run with all fakes succeeding, asserts the `LAUNCH STARTED` line and exit code 0 (rule 7).
+10. `TestLaunchRefusesWithTypedExitCode` — asserts that pre-launch refusals for capacity, disk, etc., produce a `LAUNCH REFUSED` line and the correct exit code (2 or 3) (rule 8).
+11. `TestLaunchAmbiguousExitIsHandledByCaller` — asserts that a process that dies ambiguously after start acknowledges is classified as UNKNOWN without the launcher raising a false refusal (rule 9).
