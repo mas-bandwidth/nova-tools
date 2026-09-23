@@ -199,7 +199,7 @@ func Harvest(in HarvestInput) int {
 	}
 	_ = cardsPath
 
-	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread int
+	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread, returned int
 	holdUnrecorded := false
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
@@ -264,6 +264,10 @@ func Harvest(in HarvestInput) int {
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: the hold could not be recorded: %s\n", field(c.Label), oneline.Err(err))
 				holdUnrecorded = true
 			}
+		case "returned":
+			returned++
+			_ = writeSeen(in.Root, c, "returned")
+			lines = append(lines, fmt.Sprintf("HARVEST RETURNED label=%s: check failed or not-run; result retained unverified", field(c.Label)))
 		case "abstain":
 			abstain++
 			retried++
@@ -467,7 +471,7 @@ func Harvest(in HarvestInput) int {
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 || drainFailed > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || drainFailed > 0 || returned > 0 {
 		code = 1
 	}
 	tail := ""
@@ -536,10 +540,17 @@ func readCards(path string) ([]CardRow, error) {
 			continue
 		}
 		p := strings.Split(line, "\t")
-		if len(p) != 4 {
+		if len(p) < 4 {
 			return nil, fmt.Errorf("%s wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", path, len(p))
 		}
-		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]})
+		row := CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]}
+		if len(p) > 4 {
+			row.Schema = p[4]
+		}
+		if len(p) > 5 {
+			row.Attempt = p[5]
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -658,6 +669,62 @@ func cardContract(cardPath string) string {
 	return strings.TrimSpace(firstNonEmpty(strings.Split(string(raw), "\n")))
 }
 
+// kindFromContract extracts the card kind from line 1 of the card contract if recognizable.
+func kindFromContract(contract string) string {
+	parts := strings.Fields(contract)
+	for i, p := range parts {
+		clean := strings.TrimSuffix(p, ":")
+		if IsV2Kind(clean) {
+			return clean
+		}
+		if i > 5 {
+			break
+		}
+	}
+	return ""
+}
+
+// cardExpected binds expected schema version and attempt identity from the trusted card record.
+func cardExpected(c CardRow) (schema, attempt string) {
+	schema = c.Schema
+	attempt = c.Attempt
+	if c.Card != "" {
+		if raw, err := os.ReadFile(c.Card); err == nil {
+			content := string(raw)
+			if schema == "" {
+				if isV2CardContent(content) {
+					schema = "v2"
+				} else {
+					schema = "legacy"
+				}
+			}
+			if attempt == "" {
+				if att := attemptOf(content); att > 0 {
+					attempt = strconv.Itoa(att)
+				} else if schema == "v2" {
+					attempt = "1"
+				}
+			}
+			return schema, attempt
+		}
+	}
+	return schema, attempt
+}
+
+// isV2CardContent reports whether a card declares schema v2 in its headers or template.
+func isV2CardContent(content string) bool {
+	for _, l := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
+			v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
+			if v == "v2" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // classify reads a card's RESULT.md and returns its disposition and the push details.
 // done -> pushed unless the branch is main or a pro card lacks a red: line (refused).
 func classify(jobDir string, c CardRow, contract string) (state, branch, repo string, resultLines []string) {
@@ -671,8 +738,10 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 	return classifyResult(c, contract, string(raw))
 }
 
-// classifyResult folds one RESULT.md body by the card's own two lines -- line 1
-// the contract, line 2 the verdict -- and by the BRANCH line.
+// classifyResult folds one RESULT.md body by the card's own contract and verdict lines,
+// dispatching via an explicit versioned adapter to either schema v2 or legacy handling.
+// It binds expected schema version and attempt identity from the trusted card/job record
+// and refuses version downgrade attempts.
 func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
 	norm := strings.ReplaceAll(body, "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
@@ -687,9 +756,66 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 	if want == "" || !strings.HasPrefix(strings.TrimRight(line1, " \t"), want) {
 		return "mismatch", "", "", lines
 	}
-	line2 := ""
-	if len(lines) > 1 {
-		line2 = strings.TrimSpace(lines[1])
+
+	var rawSchema, rawCheck, rawAttempt string
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "## ") {
+			break
+		}
+		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
+			rawSchema = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
+		}
+		if strings.HasPrefix(t, "CHECK:") || strings.HasPrefix(t, "CHECK ") {
+			rawCheck = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "CHECK:"), "CHECK "))
+		}
+		if strings.HasPrefix(t, "ATTEMPT:") || strings.HasPrefix(t, "ATTEMPT ") {
+			rawAttempt = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "ATTEMPT:"), "ATTEMPT "))
+		}
+	}
+
+	// Unknown schema is refused before any dispatch
+	if rawSchema != "" && rawSchema != "v2" {
+		return "mismatch", "", "", lines
+	}
+
+	expectedSchema, expectedAttempt := cardExpected(c)
+	if expectedSchema == "" {
+		if rawSchema == "v2" {
+			expectedSchema = "v2"
+		} else {
+			expectedSchema = "legacy"
+		}
+	}
+
+	if expectedSchema == "v2" {
+		// Version downgrade prevention: a v2 card cannot omit SCHEMA: v2 or CHECK
+		if rawSchema != "v2" || rawCheck == "" {
+			return "mismatch", "", "", lines
+		}
+		if rawAttempt != "" && expectedAttempt != "" && rawAttempt != expectedAttempt {
+			return "mismatch", "", "", lines
+		}
+		return classifyV2Result(c, contract, body, lines, expectedAttempt)
+	}
+
+	// Explicit legacy adapter
+	if rawSchema != "" && rawSchema != "legacy" {
+		return "mismatch", "", "", lines
+	}
+	return classifyLegacyResult(c, contract, body, lines)
+}
+
+// classifyLegacyResult handles cards without v2 schema markers.
+// It extracts BRANCH and REPO strictly from header lines before markdown sections,
+// ensuring evidence body text cannot override envelope fields.
+func classifyLegacyResult(c CardRow, contract, body string, lines []string) (state, branch, repo string, resultLines []string) {
+	if len(lines) < 2 {
+		return "mismatch", "", "", lines
+	}
+	line2 := strings.TrimSpace(lines[1])
+	if line2 == "" {
+		return "mismatch", "", "", lines
 	}
 	if strings.HasPrefix(line2, "ABSTAIN") {
 		return "abstain", "", "", lines
@@ -697,13 +823,29 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 	if strings.HasPrefix(line2, "BLOCKED") {
 		return "mismatch", "", "", lines
 	}
-	for _, l := range lines {
+	if !strings.HasPrefix(line2, "DONE") {
+		return "mismatch", "", "", lines
+	}
+	if len(lines) <= 2 {
+		return "mismatch", "", "", lines
+	}
+
+	// Envelope-only field extraction: scan lines after line 2 and before the first "## " section
+	for _, l := range lines[2:] {
 		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "## ") {
+			break
+		}
 		if strings.HasPrefix(t, "BRANCH ") {
 			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH "))
+		} else if strings.HasPrefix(t, "BRANCH: ") {
+			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH: "))
 		}
 		if strings.HasPrefix(t, "REPO ") {
 			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO "))
+			repo = strings.TrimPrefix(repo, "github.com/")
+		} else if strings.HasPrefix(t, "REPO: ") {
+			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO: "))
 			repo = strings.TrimPrefix(repo, "github.com/")
 		}
 	}
@@ -714,6 +856,64 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 		return "refused", branch, repo, lines
 	}
 	return "done", branch, repo, lines
+}
+
+// classifyV2Result handles schema v2 result envelopes.
+// All versioned envelopes (including ABSTAIN and BLOCKED) are strictly validated before state branching.
+// Effective fields are extracted strictly from the parsed envelope, never raw document lines.
+// DONE with a failed check is retained as "returned" (withholding push/landing eligibility).
+func classifyV2Result(c CardRow, contract, body string, lines []string, expectedAttempt string) (state, branch, repo string, resultLines []string) {
+	kind := kindFromContract(contract)
+	if kind == "" {
+		for _, l := range lines {
+			t := strings.TrimSpace(l)
+			if strings.HasPrefix(t, "## ") {
+				break
+			}
+			if strings.HasPrefix(t, "KIND:") || strings.HasPrefix(t, "KIND ") {
+				k := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "KIND:"), "KIND "))
+				if IsV2Kind(k) {
+					kind = k
+					break
+				}
+			}
+		}
+	}
+
+	// Validate envelope first before state branching
+	env, err := ValidateResultV2(body, kind)
+	if err != nil {
+		return "mismatch", "", "", lines
+	}
+
+	repo = strings.TrimPrefix(env.Repo, "github.com/")
+
+	if expectedAttempt != "" && env.Attempt != expectedAttempt {
+		return "mismatch", "", repo, lines
+	}
+
+	switch env.Status {
+	case "ABSTAIN":
+		return "abstain", "", repo, lines
+	case "BLOCKED":
+		return "mismatch", "", repo, lines
+	case "DONE":
+		if env.Check != "pass" {
+			// Returned: attempt finished with failed/not-run check.
+			// Retained unverified with check conclusion; withhold push/landing eligibility and friend authority.
+			return "returned", "", repo, lines
+		}
+		branch = env.Branch
+		if branch == "" || branch == "main" || branch == "master" {
+			return "mismatch", branch, repo, lines
+		}
+		if c.Model == "pro" && !hasRedLine(lines) {
+			return "refused", branch, repo, lines
+		}
+		return "done", branch, repo, lines
+	default:
+		return "mismatch", "", repo, lines
+	}
 }
 
 // classifyPool folds the pool layout beside the slot layout: launch admits cards
