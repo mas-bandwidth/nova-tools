@@ -39,8 +39,9 @@ type Tuning struct {
 	// BounceBelow: a score strictly below it BOUNCEs.
 	BounceBelow int
 	// Enabled names the checks that may decide: donewhen, selfcheck, paths,
-	// claims, score. A check that is not enabled still runs and still prints
-	// (as off:<answer>) so the scorecard can say what it WOULD have done.
+	// claims, ci, score. The loop calls this list checks_enabled. A check that
+	// is not enabled still runs and still prints (as off:<answer>) so the
+	// scorecard can say what it WOULD have done.
 	Enabled map[string]bool
 	// Model is the provider model the score question is asked of, or "none".
 	Model string
@@ -49,13 +50,21 @@ type Tuning struct {
 	USDPerMTokIn, USDPerMTokOut float64
 }
 
-// CheckNames are the five, in print order.
-var CheckNames = []string{"donewhen", "selfcheck", "paths", "claims", "score"}
+// CheckNames are the checks in print order. ci reads the rollup at the exact
+// head (nova-tools #2704). It is a known name, so checks_enabled can turn it
+// on; a default run does not.
+var CheckNames = []string{"donewhen", "selfcheck", "paths", "claims", "ci", "score"}
+
+// DefaultChecks are the checks a default run enables. ci is left out: schema
+// has no ci-ok job, and enabling ci by default bounced every schema pull
+// request (nova-tools #2712). The loop turns ci on by naming it in
+// checks_enabled.
+var DefaultChecks = []string{"donewhen", "selfcheck", "paths", "claims", "score"}
 
 // DefaultTuning is the setting the first posted run used.
 func DefaultTuning() Tuning {
 	en := map[string]bool{}
-	for _, n := range CheckNames {
+	for _, n := range DefaultChecks {
 		en[n] = true
 	}
 	return Tuning{PassAbove: 7, BounceBelow: 4, Enabled: en, Model: "jev-latest"}
@@ -199,10 +208,10 @@ func word(r Result) string {
 	}
 }
 
-// ChecksField renders checks=donewhen:ok,selfcheck:fail,paths:missing,claims:ok,score:N.
+// ChecksField renders checks=donewhen:ok,selfcheck:fail,paths:missing,claims:ok,ci:fail,score:N.
 // A disabled check prints off:<what it answered>, so the record still carries it.
 func (t Tuning) ChecksField(c Checks, score int, scored bool) string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, len(CheckNames))
 	for _, e := range c.named() {
 		w := word(e.c.Result)
 		if !t.Enabled[e.name] {
@@ -243,7 +252,7 @@ func (d Disposition) costField() string {
 
 // Line renders the one typed line:
 //
-//	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,score:N model=<model> cost=$x explain=<one line>
+//	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
 //
 // It starts JEV and never DISPOSITION, and it carries neither APPROVE nor HOLD,
 // so neither lander can read it as a friend's verdict: the bash lander's

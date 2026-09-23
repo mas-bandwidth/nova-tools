@@ -150,3 +150,19 @@ func TestControl24BenchCellsFromCardIndexes(t *testing.T) {
 		t.Fatalf("friend task cells leaked into bench:\n%s", snap.Render())
 	}
 }
+
+// TestPipelineCountsOnlyReadyCards is #3066's table half: the pipeline's ready
+// cell is the pool, which holds only queued cards whose every DEPENDS-ON is
+// merged on their base; a card still waiting on a dependency is counted in
+// waiting and never in ready.
+func TestPipelineCountsOnlyReadyCards(t *testing.T) {
+	raw := []any{"time", "1", "pipeline", "s1", "3", "0", "0", "0", "0", "0", "0", "0", "2", "1", "0", "0", "0"}
+	snap, err := table.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := snap.Render()
+	if !strings.Contains(got, " ready=2 waiting=1 ") || strings.Contains(got, "pool=") {
+		t.Fatalf("pipeline line %q: want ready=2 waiting=1 and no pool= cell", got)
+	}
+}

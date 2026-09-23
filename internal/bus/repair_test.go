@@ -2,10 +2,12 @@ package bus
 
 import (
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -457,4 +459,51 @@ func TestRecoverWaitFastForwardLeavesADirtyCursor(t *testing.T) {
 	if after != before {
 		t.Fatalf("HEAD moved over a dirty CURSOR: %s -> %s", before, after)
 	}
+}
+
+// #3029: a gate batch went red on TestWaitRepairStaleLockAndDirtyBeat with
+//
+//	WAIT REFUSED: cannot tell whether a git process owns this checkout: read /proc/637768/comm: no such process
+//
+// while every member passed alone. Linux answers a read of /proc/<pid>/comm, cmdline,
+// stat or cwd with ESRCH, not ENOENT, while a process that has just exited is being torn
+// down. On a gate host running a whole package in parallel some process is always in that
+// window, and it need not even be a git. A pid that is gone is gone, whichever errno says
+// so: it is not an owner, and it is not an unreadable live process. The scan is supplied
+// here, so the answer does not depend on which process happens to be exiting when it runs.
+func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	esrch := func(file string) error {
+		return &fs.PathError{Op: "read", Path: "/proc/637768/" + file, Err: syscall.ESRCH}
+	}
+	for _, v := range []procView{
+		{commErr: esrch("comm")},
+		{comm: "git\n", cmdErr: esrch("cmdline")},
+		{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: esrch("cwd")},
+	} {
+		if _, skip, err := gitProcFromView(v); err != nil || !skip {
+			t.Fatalf("a process gone mid-read (%+v): skip=%v err=%v, want skipped and no error", v, skip, err)
+		}
+	}
+
+	dir, lock := oldIndexLock(t)
+	scan := func() ([]gitProc, error) {
+		return classifyViews([]procView{{commErr: esrch("comm")}, {comm: "bash\n"}})
+	}
+	cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
+	if err != nil || !cleared {
+		t.Fatalf("a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
+	}
+	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
+		t.Fatalf("stale index.lock still present: %v", statErr)
+	}
+
+	// ESRCH is not a licence for every errno: a live process that denies the read
+	// still keeps the lock.
+	kept, keptLock := oldIndexLock(t)
+	cleared, err = clearStaleIndexLock(kept, time.Now(), func() ([]gitProc, error) {
+		return classifyViews([]procView{{comm: "git\n", cmdErr: &fs.PathError{Op: "read", Path: "/proc/1/cmdline", Err: syscall.EACCES}}})
+	})
+	assertLockKept(t, keptLock, cleared, err)
 }
