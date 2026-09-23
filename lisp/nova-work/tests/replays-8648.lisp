@@ -1,13 +1,14 @@
-;;;; replays-8648.lisp --- six acceptance replays named by docs/SPEC-WORK.md.
+;;;; replays-8648.lisp --- seven acceptance replays named by docs/SPEC-WORK.md.
 ;;;;
 ;;;; Each deftest names the paragraph(s) it comes from and drives the pure
-;;;; model the kernel exposes for it. The six:
+;;;; model the kernel exposes for it. The seven:
 ;;;;
 ;;;;   regression-opens-repair-work                     :4943-4951,5782-5785
 ;;;;   reply-retired-only-under-verified-coverage       :6020-6024,6316-6325
 ;;;;   restore-is-isolated-and-dispatches-nothing       :6285-6290,5790-5793
 ;;;;   reuse-only-valid-review                          :4851
 ;;;;   review-cycles-stay-visible                       :6368-6370
+;;;;   TestE02F06PinCommonLispImplementationGo          :292-301,312-321
 ;;;;   TestE11F04PartialChildNeverClosesParent          :4655,4312
 
 (in-package #:nova-work/tests)
@@ -288,6 +289,80 @@
                  "the repeated cycles are visible as work")
     (check-equal 8 (review-ledger-total-cost ledger)
                  "the repeated cycles are visible as operational cost")))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F06PinCommonLispImplementationGo  SPEC-WORK.md:292-301,312-321
+;;; ------------------------------------------------------------------
+;;;
+;;; E02-F06-01 "Pin Common Lisp implementation, Go client and supported
+;;; OS/runtime combinations." The client is Go under this repository's
+;;; conventions (SPEC-WORK.md:292); the session's own language is Common Lisp
+;;; (293); the runtime is pinned to SBCL and the two supported cells are
+;;; darwin-arm64 and linux-x64 (300, 312-321). This slice pins what it can
+;;; observe about the engine's own runtime: the running binary's build identity
+;;; must name SBCL, and the Common Lisp implementation it reports must be SBCL.
+;;;
+;;; Stella's HOLD on #2056 (review 5291971003): a prior cut of this test only
+;;; pinned the Common Lisp runtime, leaving the Go client and the darwin-arm64
+;;; / linux-x64 matrix (SPEC-WORK.md:300, 312-321) unpinned even though the
+;;; criterion names all three. This process is Lisp, so it cannot execute the
+;;; Go client; it pins what it CAN observe from here without running Go code:
+;;; that `cmd/nova-work` exists on disk as a real Go source file under this
+;;; repository's conventions (SPEC-WORK.md:292's "the client is Go"), and that
+;;; the platform this suite is running on is one of the two pinned, supported
+;;; matrix cells (SPEC-WORK.md's table at :312-321) -- never windows, which is
+;;; out of scope by its own recorded scope event.
+
+(defun %e02f06-go-client-path ()
+  "cmd/nova-work/main.go, found via the ASDF system's own source directory so
+this resolves the same regardless of the caller's working directory (run-tests.sh
+never `cd`s to the repository root)."
+  (merge-pathnames "../../cmd/nova-work/main.go"
+                   (asdf:system-source-directory :nova-work)))
+
+(defun %e02f06-platform-cell ()
+  "The running platform as one of the E02-F06 matrix's cell spellings
+(SPEC-WORK.md:312-321), from the two CL-standard introspection functions
+every implementation provides -- no shell-out, no Go execution."
+  (let ((os (software-type))
+        (arch (machine-type)))
+    (format nil "~A-~A"
+            (cond ((search "Darwin" os) "darwin")
+                  ((search "Linux" os) "linux")
+                  (t (string-downcase os)))
+            (cond ((or (search "ARM64" arch) (search "aarch64" arch :test #'char-equal))
+                   "arm64")
+                  ((or (search "X86-64" arch) (search "X86_64" arch)
+                       (search "AMD64" arch))
+                   "x64")
+                  (t (string-downcase arch))))))
+
+(deftest "TestE02F06PinCommonLispImplementationGo"
+    "docs/SPEC-WORK.md:292-301,312-321"
+    "expected=implementation-is-SBCL;build-identity-names-SBCL;go-client-file-present;platform-in-supported-matrix"
+  (let ((impl (lisp-implementation-type))
+        (build (session-build-identity))
+        (go-client (%e02f06-go-client-path))
+        (cell (%e02f06-platform-cell)))
+    (check-equal "SBCL" (string-upcase impl)
+                 "the pinned Common Lisp implementation is SBCL")
+    (ok (and (stringp build) (search "SBCL" build))
+        "the build identity names the pinned SBCL runtime: ~A" build)
+    ;; The Go client (SPEC-WORK.md:292): cmd/nova-work/main.go exists and is
+    ;; real Go source, not a stub or a same-named non-Go file.
+    (ok (probe-file go-client)
+        "cmd/nova-work/main.go was not found at ~A: the Go client is not pinned"
+        go-client)
+    (ok (let ((text (with-open-file (in go-client :if-does-not-exist nil)
+                      (and in (let ((s (make-string (file-length in))))
+                                (read-sequence s in) s)))))
+          (and text (search "package main" text)))
+        "cmd/nova-work/main.go does not read as Go source (no 'package main')")
+    ;; The supported OS/runtime matrix (SPEC-WORK.md:312-321): darwin-arm64
+    ;; and linux-x64 are supported, windows is out of scope.
+    (ok (member cell '("darwin-arm64" "linux-x64") :test #'string=)
+        "this bench's platform cell ~A is not in the pinned supported matrix (darwin-arm64, linux-x64)"
+        cell)))
 
 ;;; ------------------------------------------------------------------
 ;;; partial-child-never-closes-parent       SPEC-WORK.md:4655,4312

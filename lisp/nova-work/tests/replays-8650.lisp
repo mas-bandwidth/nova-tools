@@ -174,3 +174,62 @@
                                    :priced-p nil)))
       (ok (absentp (getf unknown :measured-cash))
           "an unsupported cash dimension was reported as zero"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE03F02SupportAddMetadataEditMove          SPEC-WORK.md:2928
+;;;
+;;; nova-work acceptance criterion E03-F02-01: "Support add, metadata
+;;; edit, move/reparent, decompose, link/unlink and retire". This test
+;;; pins the operations the slice-1 kernel already provides — add
+;;; (`node-add`), permitted-metadata edit and link/unlink (`node-edit`),
+;;; move/reparent (`node-move`) and retire (`node-remove`). It names the
+;;; SPEC-WORK "work structure" row (docs/SPEC-WORK.md:2928). `decompose`
+;;; (the `--into` split verb) is not yet present in this slice and is
+;;; pinned separately by replays-8651's reversibility registry, so it is
+;;; outside this test's scope.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE03F02SupportAddMetadataEditMove" "docs/SPEC-WORK.md:2928"
+    "expected=add=ok,edit=ok,link=ok,unlink=ok,move=ok,retire=ok"
+  (let ((k (fresh)))
+    ;; add: a new feature is admitted under the work set.
+    (multiple-value-bind (okp line)
+        (node-add k :id "acme/work/f3" :type :feature :parent "acme/work")
+      (ok okp "add refused: ~A" line))
+    (check-equal :feature (node-type (kernel-state k) "acme/work/f3")
+                 "the added feature's type")
+    ;; metadata edit: title and a link are permitted fields.
+    (multiple-value-bind (okp line)
+        (node-edit k "acme/work/f3"
+                   :changes (list :title "F3"
+                                  :links (list "https://example.com/i1"))
+                   :request "edit-1")
+      (ok okp "metadata edit refused: ~A" line))
+    (check-string= "F3"
+                   (getf (node-metadata (kernel-state k) "acme/work/f3") :title)
+                   "the edited title")
+    (check-equal '("https://example.com/i1")
+                 (getf (node-metadata (kernel-state k) "acme/work/f3") :links)
+                 "the added link")
+    ;; unlink: links are a permitted metadata patch, cleared in place.
+    (multiple-value-bind (okp line)
+        (node-edit k "acme/work/f3" :changes (list :links :clear) :request "edit-2")
+      (ok okp "unlink refused: ~A" line))
+    (check-equal '() (getf (node-metadata (kernel-state k) "acme/work/f3") :links)
+                 "the cleared links")
+    ;; move/reparent: the task's containment edge moves from f1 to f2.
+    (multiple-value-bind (okp line)
+        (node-move k :id "acme/work/f1/t1" :from "acme/work/f1" :under "acme/work/f2"
+                   :request "move-1")
+      (ok okp "move refused: ~A" line))
+    (check-string= "acme/work/f2"
+                   (node-parent (kernel-state k) "acme/work/f1/t1")
+                   "the moved node's new parent")
+    (ok (member "acme/work/f1/t1"
+                (node-children (kernel-state k) "acme/work/f2") :test #'equal)
+        "the moved node is not listed under its new parent")
+    ;; retire: node removal settles the added feature out of O.
+    (multiple-value-bind (okp line) (node-remove k "acme/work/f3")
+      (ok okp "retire refused: ~A" line))
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f3")
+                 "the retired node's branch")))

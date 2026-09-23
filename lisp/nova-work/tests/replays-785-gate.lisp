@@ -577,6 +577,42 @@ supplied by hand is the very thing that hid the defect."
     ;; 8. a node with NO standing done cannot be proved by this route
     (let* ((k (gate-kernel))
            (view (session-needs-view k)))
-      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
-        (ok (not met) "an open node is not met")
-        (check-equal :need-open reason "by rule 2 row 1, before evidence is read at all")))))
+       (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+         (ok (not met) "an open node is not met")
+         (check-equal :need-open reason "by rule 2 row 1, before evidence is read at all")))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F04RepresentWorkSetFeatureRoadmap     SPEC-WORK.md:888
+;;; ------------------------------------------------------------------
+
+(defparameter *kinds-seed*
+  '((:id "ws"     :type :work-set :parent nil    :state :unknown)
+    (:id "ws/f"   :type :feature  :parent "ws"   :state :unknown)
+    (:id "ws/f/t" :type :task     :parent "ws/f" :state :todo))
+  "One work-set with a feature and a leaf task beneath it, to exercise the
+three node kinds the criterion names beside the roadmap, the lease and the
+event.")
+
+(deftest "TestE01F04RepresentWorkSetFeatureRoadmap" "docs/SPEC-WORK.md:888"
+    "expected=work-set-feature-and-task-are-node-types;roadmap-is-a-node-type-made-by-its-one-creator;a-lease-names-a-holder-and-is-a-lease-event-kind;an-event-carries-a-kind"
+  (let ((k (gate-kernel *kinds-seed*)))
+    ;; work-set, feature and task are node types (SPEC-WORK.md:891, :894, :930).
+    (check-equal :work-set (node-type (kernel-state k) "ws") "a work-set is a node type")
+    (check-equal :feature (node-type (kernel-state k) "ws/f") "a feature is a node type")
+    (check-equal :task (node-type (kernel-state k) "ws/f/t") "a task is a node type")
+    ;; roadmap is a node type, and only its one creator makes one (:891-903).
+    (multiple-value-bind (okp line)
+        (roadmap-create k :id "ws/r" :parent "ws" :title "plan")
+      (ok okp "roadmap create refused: ~A" line)
+      (check-equal :roadmap (node-type (kernel-state k) "ws/r") "a roadmap is a node type"))
+    ;; lease: one live holder named by the take, and a :lease event kind (:955).
+    (check-equal "emma" (take-lease k "ws/f/t" "emma") "a lease names its holder")
+    (check-equal "emma" (node-holder (kernel-state k) "ws/f/t") "the node is held")
+    (check-equal '(:change :holder) (kind-fields :lease)
+                 "lease is an event kind with its own field list")
+    ;; event: the log, and every event carries a :kind (:956). The take above
+    ;; is one :lease event in the history; read the newest record's events.
+    (let ((record (first (state-history (kernel-state k)))))
+      (ok (getf record :events) "the take wrote no event record")
+      (check-equal :lease (getf (first (getf record :events)) :kind)
+                   "an event carries its kind"))))
