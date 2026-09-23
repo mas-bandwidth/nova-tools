@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // DefaultDiffCap is the 6 KB cap on inlined prior diffs in v2 cards (A1).
@@ -1193,7 +1194,16 @@ func RenderTemplate(in CutTemplateInput) (string, string) {
 	} else {
 		lines[0] = fmt.Sprintf("RESULT %s sha=%s", in.Row.ID, hex.EncodeToString(sum[:])[:12])
 	}
-	return strings.Join(lines, "\n"), ""
+	card := strings.Join(lines, "\n")
+	// Render-to-admit (nova-tools#1728, Stella's ruling): the card must pass the same
+	// production shape check admission runs -- STEP 1 in the first fifteen lines, a fourth
+	// model step only under MODE: explore -- before it is written, whichever model the
+	// route picks. The cutter's own looser windows (twenty lines, the turn budget) let
+	// through cards the swarm then abstained at in=0.
+	if why := swarm.CardShapeRefusal(card); why != "" {
+		return "", "admission would refuse the rendered card: " + why + " (SPEC-TOOLWORK section 5 rule 1: STEP 1 right after the hashed header)"
+	}
+	return card, ""
 }
 
 // RenderCardTemplate is an alias for RenderTemplate.

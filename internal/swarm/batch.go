@@ -1446,6 +1446,30 @@ func readCards(path string) ([]batchCard, error) {
 	return cards, nil
 }
 
+// CardAdmission is one card's admission verdict as batch reads it: its label, the model
+// its row names, and the refusal ("" when the card is admitted).
+type CardAdmission struct {
+	Label string
+	Model string
+	Why   string
+}
+
+// AdmitCards reads a cards table exactly as Batch does -- the same readCards, not a second
+// reading of the rules -- and returns each card's admission verdict in table order. It
+// launches nothing. It is the preflight a cutter's output is held to (nova-tools#1728: a
+// card cut renders must be admitted), and a TSV that batch itself would refuse is the error.
+func AdmitCards(path string) ([]CardAdmission, error) {
+	cards, err := readCards(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]CardAdmission, 0, len(cards))
+	for _, c := range cards {
+		out = append(out, CardAdmission{Label: c.label, Model: c.model, Why: c.admitWhy})
+	}
+	return out, nil
+}
+
 // logSize is the byte length of a card's log file, or zero when the file is not there yet.
 // Growth is the only signal the idle monitor trusts: a card that has written nothing, or has
 // stopped writing, reads the same size twice and is on the clock.
@@ -2175,6 +2199,17 @@ func cardShapeFailure(model, raw string) string {
 	if !isDeepSeekModel(model) {
 		return ""
 	}
+	return CardShapeRefusal(raw)
+}
+
+// CardShapeRefusal is admission's shape check with the model gate lifted: the reason a
+// DeepSeek-family model's admission would refuse this card, or "" when it would admit it.
+// It is the ONE production check, exported so the cutter runs it on every card it renders
+// before the card is written (nova-tools#1728, Stella's ruling: "Cutter output must pass
+// the same production shape check before any card is written") -- a card cut is a card
+// admitted, whichever model the route later picks. The fifteen-line STEP 1 bound is not
+// widened for SPEC-TOOLWORK section 5's header: the header is ordered so STEP 1 fits it.
+func CardShapeRefusal(raw string) string {
 	lines := strings.Split(raw, "\n")
 	step := "docs/WORKER-CARDS.md practice 17"
 	if firstNonEmpty := firstNonEmptyLine(lines); lineIsCapitalsOnly(firstNonEmpty) {
@@ -2227,7 +2262,10 @@ func lineIsCapitalsOnly(s string) bool {
 	return hasLetter
 }
 
-// hasStep1 reports whether any of the first 15 lines begins "STEP 1".
+// hasStep1 reports whether any of the first 15 lines begins "STEP 1". The bound is
+// practice 17's and stays at fifteen (Stella's #1728 ruling: do not weaken the admission
+// bound); SPEC-TOOLWORK section 5's header -- contract, optional role, the hashed typed
+// lines -- is at most eleven lines, so STEP 1 lands inside it.
 func hasStep1(lines []string) bool {
 	n := len(lines)
 	if n > 15 {

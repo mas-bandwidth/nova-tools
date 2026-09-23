@@ -740,50 +740,72 @@ its line 1. A kind is a template **plus** the gate that judges it and the contro
 proves the gate: the first half is text for the worker, the second is code in the tool
 the worker never sees and cannot edit.
 
-1. **A seven-line header block, then `STEP 1`; everything below line 1 inside the hash.**
-   The header is the contract line, the role line, and five typed lines, in this order,
-   and `STEP 1` is the line after it:
+1. **The contract line, an optional role line, the hashed typed header, then `STEP 1`
+   inside the first fifteen lines; everything below line 1 inside the hash; prose after.**
+   Ruled by Stella on nova-tools#1728 (2026-09-19): reconcile the header with practice 17
+   and **do not weaken the admission bound**. The order, top to bottom:
 
    ```
-   RESULT: <label> sha=<sha12>
-   You are a worker. <the role line of docs/spec-pulse/10-the-card-as-cut-writes-it.md>
+   RESULT: <label> sha=<sha12>                                  line 1, the contract
+   You are a worker. <the role line of docs/spec-pulse/10-the-card-as-cut-writes-it.md>   optional, one line
    KIND: <kind>
    PATHS: <glob>[, <glob>...]
    TEST: <package> <TestName>          (or `TEST: none` where the kind allows it)
    LEGS: <leg>[,<leg>...]
    SOURCE: <owner>/<repo>#<n> | <file:line at the pinned head>
+   FILES: <n>                          (sweep only)
+   SEED: <name of the seed block>      (mutation-kill only; the one-edit patch sits below the steps)
+   MODE: explore                       (a card with more than three model steps)
+   TURNS: <n>                          (with MODE: explore, a positive integer)
    STEP 1. <clone or cd, as the spec-pulse document writes it>
+   ...the remaining STEP lines...
+   LANE, ACCEPT, CERT, rules prose, the RESULT template: below STEP 1, still inside the hash
    ```
 
-   **Why seven and why `STEP 1` next**: the shipped admission check reads the first
-   fifteen lines for a line beginning `STEP 1` (`internal/swarm/batch.go:1833-1844`,
-   `hasStep1`, for every DeepSeek-family model; `docs/WORKER-CARDS.md` practice 17), and
-   the first card cut in draft 5's shape, with a coordinator's `BASE`, `SPEC`, `ROUTE`,
-   `ACCEPT`, `CERT`, `LANE` and RULES prose above the steps, was refused before any model,
-   bench or provider was reached (`ADMIT REFUSED tools10-c1 card-shape: no 'STEP 1' line
-   in the first 15 lines`, `in=0 out=0 usd=0.0000`; measured 2026-09-19 by the tools10
-   shift, nova-tools#1728). Everything else a card carries — `LANE`, `ACCEPT`, `CERT`,
-   rules prose, the `RESULT` template — sits **below `STEP 1`**, still inside the hash,
-   because the hash is of everything below line 1 and the header lines' order is free.
-   **A card with more than three model steps carries `MODE: explore` and `TURNS: <n>`**,
-   as header lines directly under `SOURCE:` and inside the hash, so the block is nine
-   lines and `STEP 1` is line 10, still inside the fifteen: the shipped pipeline rule
-   admits three model calls with no mode word (`internal/swarm/cardpipeline.go:15`,
-   `pipelineModelSteps = 3`) and refuses a fourth without it, and every gated kind's
-   shape in rule 2 names more than three (a `fix-red` card is eight `STEP` lines). Two
-   kinds carry one more typed line under `SOURCE:` — `sweep` a `FILES: <n>` line — or a
-   block below `STEP 1` — `mutation-kill` a `SEED:` block holding its one-edit patch.
+   **Why this order**: the shipped admission check reads the first fifteen lines for a
+   line beginning `STEP 1` (`internal/swarm/batch.go:2269`, `hasStep1`, reached from
+   `cardShapeFailure` at `:2198` for every DeepSeek-family model; `docs/WORKER-CARDS.md`
+   practice 17), and the first card cut in draft 5's shape, with a coordinator's `BASE`,
+   `SPEC`, `ROUTE`, `ACCEPT`, `CERT`, `LANE` and RULES prose above the steps, was refused
+   before any model, bench or provider was reached (`ADMIT REFUSED tools10-c1 card-shape:
+   no 'STEP 1' line in the first 15 lines`, `in=0 out=0 usd=0.0000`; measured 2026-09-19
+   by the tools10 shift, nova-tools#1728). The bound stays at fifteen; the header is what
+   moves. The contract line, the role line, the five typed lines, the one kind-specific
+   line (`FILES:` or `SEED:`), `MODE:`/`TURNS:` and the cutter's own `DEPENDS-ON:` line
+   (inserted under `PATHS:`, `internal/pulse/cut_template.go` `ApplyDependsOn`) are at
+   most **eleven lines**, so `STEP 1` is at most line 12. Everything a reader or the
+   coordinator wants to say — `LANE`, `ACCEPT`, `CERT`, rules prose — sits **below
+   `STEP 1`** (after the last step is the plain place), still inside the hash, because the
+   hash is of everything below line 1 and the order of the lines below it is free.
+   **A card with more than three model steps carries `MODE: explore` and a positive
+   `TURNS: <n>`** in that header: the shipped pipeline rule admits three model calls with
+   no mode word (`internal/swarm/cardpipeline.go:15`, `pipelineModelSteps = 3`) and
+   refuses a fourth without it, and every gated kind's shape in rule 2 names more than
+   three (a `fix-red` card is eight `STEP` lines).
    The header lines are written by `cut` from the pool row, never by a model, and because
    they sit below line 1 the contract hash covers them: a card whose header was altered
    after admission is `line1-mismatch` at `gather`. `cut` refuses a gated kind missing
-   any of them (`CUT REFUSED kind=<kind>: no <LINE>`) and refuses a rendered card that
-   the shipped admission and pipeline checks would refuse, and a class test,
-   `a-card-cut-renders-is-admitted`, runs `cut`'s output through the admission shape
-   check and the pipeline rule — the test that would have caught #1728 before a card was
-   launched. `lint --card` gains the tokens `kind-declared`, `paths-declared`, `paused`
-   (the coordinator paused this kind; the remedy is the `trust --set trial` command),
-   `mode-declared` (more than three model steps and no `MODE: explore` / `TURNS:`) and
-   `test-named`.
+   any of them (`CUT REFUSED kind=<kind>: no <LINE>`).
+   **Render-to-admit (shipped, #1728):** `cut` runs the **same production shape check**
+   admission runs — `swarm.CardShapeRefusal` (`internal/swarm/batch.go:2212`, the body
+   of `cardShapeFailure` with the model gate lifted: the capitalised-contract, `STEP 1`
+   within fifteen, launcher and pipeline rules) — on every card it renders, **before the
+   card is written** (`internal/pulse/cut_template.go:1203`, `RenderTemplate`), whichever
+   model the route later picks, and refuses with admission's own reason
+   (`CUT REFUSED template=<name>: admission would refuse the rendered card: <why>`). The
+   cutter's looser windows (`STEP 1` within twenty lines, a twenty-turn budget) no longer
+   let a card through that the swarm abstains at `in=0`. The class test
+   `a-card-cut-renders-is-admitted` is `TestIssue1728ACardCutRendersIsAdmitted`
+   (`internal/swarm/issue1728_test.go`): the real cutter renders the shipped
+   `cmd/nova-pulse/testdata/templates/fix-red.md` — this rule's shape, eight steps,
+   `MODE: explore`, `TURNS: 12` — and `readCards` (through `swarm.AdmitCards`) admits it
+   on a DeepSeek-family route; the same card with `STEP 1` pushed to line 16 is still
+   refused. `TestIssue1728CutRefusesACardAdmissionWouldRefuse` is its negative half:
+   draft 5's header and an eight-step card with no `MODE:` are refused by `cut` and no
+   card file is written. `lint --card` gains the tokens `kind-declared`,
+   `paths-declared`, `paused` (the coordinator paused this kind; the remedy is the
+   `trust --set trial` command), `mode-declared` (more than three model steps and no
+   `MODE: explore` / `TURNS:`) and `test-named`.
 2. **The kinds.** `gate` is the step list of §1 rule 4; `control` is what must be seen
    red before the gate's green counts for this card.
 
