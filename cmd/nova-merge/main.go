@@ -186,9 +186,10 @@ read rather than a failure. The two transcripts are in docs/TESTS.md, and both a
 by this binary's tests.
 
 The repository, the base and the lane branch are properties of the LANE, written
-once by init. No other verb takes --repo, --base or --lane-branch, and the flag
-on gate that names the base SHA is spelled --base-sha so the two are never one
-word.
+once by init. Lane verbs read them from there; simulate, batch and land name
+--repo, and simulate and batch also --base, because they reach the forge without
+a lane. The flag on gate that names the base SHA is spelled --base-sha so the
+two are never one word.
 
 ONE PREDICATE. An entry merges on the NEWEST gate record for (its head, the base
 sha read this pass) being green, that gate's merge being an object in the lane's

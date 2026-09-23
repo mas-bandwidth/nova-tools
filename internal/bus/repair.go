@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -437,16 +438,26 @@ func boundDiag(s string) string {
 }
 
 // procReadFailed separates a process that is gone from one that is still there
-// and cannot be inspected. ENOENT is gone: it is not an owner. Any other error
-// is an inspection denial, and the lock stays.
+// and cannot be inspected. A gone process (procGone) is not an owner. Any other
+// error is an inspection denial, and the lock stays.
 func procReadFailed(err error) (vanished bool, unknown error) {
 	if err == nil {
 		return false, nil
 	}
-	if os.IsNotExist(err) {
+	if procGone(err) {
 		return true, nil
 	}
 	return false, ownershipUnknownErr(err.Error())
+}
+
+// procGone reports whether a read of a process's metadata failed because the process
+// no longer exists. ENOENT is a pid whose /proc entry is already gone. ESRCH is the
+// same process one step earlier: Linux answers a read of /proc/<pid>/comm, cmdline,
+// stat or cwd with "no such process" while an exited task is being torn down (#3029).
+// On a host running a test package in parallel some process is always in that window,
+// and treating it as an unreadable live process refused every wait that met it.
+func procGone(err error) bool {
+	return os.IsNotExist(err) || errors.Is(err, syscall.ESRCH)
 }
 
 // procView is one process's metadata as a scanner managed to read it, errors included.

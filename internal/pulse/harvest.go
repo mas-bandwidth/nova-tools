@@ -58,6 +58,13 @@ type HarvestInput struct {
 	Since        time.Duration
 	Shell        BenchShell
 	Forge        Forge
+	// Batch turns a --bench harvest into the batched pass (harvestbatch.go, #2756): one
+	// ssh to stage every candidate branch, one fetch and one push per repository, PRs
+	// through REST, one ssh to mark. Store is the fleet Redis the pass remembers stale-base
+	// refusals in and writes its row to; Memory is the seam a test fills instead.
+	Batch  bool
+	Store  StoreOptions
+	Memory HarvestMemory
 
 	// Launched is the queue directory `fill` moves live cards into. When it is
 	// named, harvest drains it: a card whose job has finished leaves it for Done
@@ -158,6 +165,9 @@ func Harvest(in HarvestInput) int {
 	// A bench harvest is the whole verb: the jobs are on the bench, the cards.tsv
 	// this fold reads is not, and there is nothing here to relaunch.
 	if strings.TrimSpace(in.Bench) != "" {
+		if in.Batch {
+			return harvestBenchBatch(in)
+		}
 		return harvestBench(in)
 	}
 
@@ -291,7 +301,12 @@ func Harvest(in HarvestInput) int {
 			// until both have been read for the shape of a key. A hit refuses, quarantines
 			// the job and writes the HUMAN line, and prints nothing it matched
 			// (harvest_secret.go).
-			findings, scanErr := secretScan(jobDir, resultLines)
+			report := readJobReport(jobDir)
+			prov := extractHarvestProvenance(jobDir, c, in.Bench, resultLines)
+			fullBody := constructPRBody(resultLines, report, prov)
+			bodyLines := strings.Split(fullBody, "\n")
+
+			findings, scanErr := secretScan(jobDir, bodyLines)
 			if scanErr != nil {
 				refused++
 				_ = writeSeen(in.Root, c, "refused")
@@ -417,7 +432,7 @@ func Harvest(in HarvestInput) int {
 			var pr int
 			if err := commitHarvestEffect(in, c.Label, harvest.ActionAccept, func() error {
 				var prErr error
-				pr, prErr = openPR(in, jobDir, c.Card, repo, c.Label, branch, resultLines)
+				pr, prErr = openPR(in, jobDir, c.Card, repo, c.Label, branch, bodyLines)
 				return prErr
 			}); err != nil {
 				if in.Effect != nil {
@@ -1109,9 +1124,12 @@ func openPR(in HarvestInput, dir, record, claimed, label, branch string, resultL
 		return 0, err
 	}
 	body := strings.Join(resultLines, "\n")
-	if len(body) > in.MaxBodyBytes {
-		body = body[:in.MaxBodyBytes]
+	if !hasProvenanceTable(body) {
+		report := readJobReport(dir)
+		prov := extractProvenanceFromDir(dir, record, in.Bench, resultLines)
+		body = constructPRBody(resultLines, report, prov)
 	}
+	body = boundPRBody(body, in.MaxBodyBytes)
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 
