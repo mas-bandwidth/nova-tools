@@ -560,6 +560,43 @@ func childEnv(w Worker, slot int, id, key, root string) []string {
 	if w.EnvVar != "" && key != "" {
 		env = append(env, w.EnvVar+"="+key)
 	}
+	// The pool's identity row is exported as author and committer, and git config
+	// isolation variables are set so the bench's own config cannot leak into what
+	// the worker commits (SPEC-TOOLWORK §3 rule 1, #1665).
+	if poolID, err := LoadPoolIdentity(root); err == nil {
+		env = append(env, StagingGitEnv(poolID)...)
+	} else {
+		hasGitID := false
+		for _, k := range []string{
+			"GIT_AUTHOR_NAME",
+			"GIT_AUTHOR_EMAIL",
+			"GIT_COMMITTER_NAME",
+			"GIT_COMMITTER_EMAIL",
+		} {
+			if v, ok := os.LookupEnv(k); ok {
+				env = append(env, k+"="+v)
+				hasGitID = true
+			}
+		}
+		if hasGitID {
+			if v, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
+				env = append(env, "GIT_CONFIG_GLOBAL="+v)
+			} else {
+				env = append(env, "GIT_CONFIG_GLOBAL=/dev/null")
+			}
+			if v, ok := os.LookupEnv("GIT_CONFIG_NOSYSTEM"); ok {
+				env = append(env, "GIT_CONFIG_NOSYSTEM="+v)
+			} else {
+				env = append(env, "GIT_CONFIG_NOSYSTEM=1")
+			}
+		} else {
+			for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"} {
+				if v, ok := os.LookupEnv(k); ok {
+					env = append(env, k+"="+v)
+				}
+			}
+		}
+	}
 	return env
 }
 

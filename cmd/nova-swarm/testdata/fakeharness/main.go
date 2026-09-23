@@ -172,6 +172,35 @@ func main() {
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
 	}
+	// FAKE-GIT-COMMIT creates a git repository inside the job directory and commits a file,
+	// recording the resulting commit's author and committer into <job>/commit-identity.
+	// This proves that the pool identity reached the harness child and was not displaced
+	// by misleading bench gitconfig or dropped at the supervisor/native boundary.
+	if _, ok := directive(prompt, "FAKE-GIT-COMMIT"); ok && job != "" {
+		repo := filepath.Join(job, "worker-repo")
+		_ = os.MkdirAll(repo, 0o755)
+		runGit := func(args ...string) ([]byte, error) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = repo
+			return cmd.CombinedOutput()
+		}
+		if _, err := runGit("init", "-q"); err != nil {
+			writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git init failed: "+err.Error()+"\n"), 0o644)
+		} else {
+			_ = os.WriteFile(filepath.Join(repo, "work.txt"), []byte("work\n"), 0o644)
+			if out, err := runGit("add", "work.txt"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git add failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else if out, err := runGit("commit", "-q", "-m", "worker commit"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git commit failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else {
+				if out, err := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>"); err == nil {
+					writeRecorded(filepath.Join(job, "commit-identity"), out, 0o644)
+				} else {
+					writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git log failed: "+err.Error()+"\n"+string(out)), 0o644)
+				}
+			}
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
