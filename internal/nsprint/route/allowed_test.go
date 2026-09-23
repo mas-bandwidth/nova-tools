@@ -13,7 +13,7 @@ func TestAllowedRoutesRefusesADroppedRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	flashDropped := []string{"orgptnano", "ornemotron", "orgeminilite"}
-	proDropped := []string{"ocpro", "ordspro", "ocglm53", "orglm53", "orkimicode", "orminimax", "orqwenplus", "orgemini25pro", "orhaiku", "ordevstral", "ocmuse", "ormuse"}
+	proDropped := []string{"ocpro", "ordspro", "ocglm53", "orkimicode", "orminimax", "orqwenplus", "orgemini25pro", "orhaiku", "ordevstral", "ocmuse", "ormuse"}
 	types := append([]string{""}, tab.Types()...)
 	for _, typ := range types {
 		for _, r := range flashDropped {
@@ -84,6 +84,7 @@ func TestAllowedRoutesRefusesWrongRungHeldAndUnknown(t *testing.T) {
 		{Card{Rung: "pro", Route: "orqwen38"}, "rung flash"},
 		{Card{Rung: "flash", Route: "ocglmflash"}, "held"},
 		{Card{Rung: "pro", Route: "orkimi3"}, "held"},
+		{Card{Rung: "pro", Route: "orglm53"}, "held"},
 		{Card{Rung: "flash", Route: "nosuchroute"}, "not in the table"},
 		{Card{Rung: "turbo", Route: "orqwen38"}, "rung"},
 	} {
@@ -157,5 +158,61 @@ func TestRenderPrintsTheTableWithTheNumbers(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("render missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// The rule line and the table cannot disagree (stella's hold on #3003): every
+// row's state is recomputed from its numbers and flags by the rule written at
+// the top of routes.yaml, and a held or dropped row's why names the step of
+// the rule that put it there.
+func TestTheTableFollowsItsRule(t *testing.T) {
+	tab, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Q <= 0 with n >= 8 and useful < 3/4 of the rung median", "Pareto-dominated with Q <= 0", "best third"} {
+		if !strings.Contains(tab.Rule, want) {
+			t.Errorf("rule line %q does not say %q", tab.Rule, want)
+		}
+	}
+	derived := tab.Derive()
+	for _, row := range tab.Rows() {
+		d, ok := derived[row.Route]
+		if !ok {
+			t.Errorf("%s: rule gave no state", row.Route)
+			continue
+		}
+		if d.State != row.State {
+			t.Errorf("%s is %s in routes.yaml but the rule gives %s (%s)", row.Route, row.State, d.State, d.Reason)
+			continue
+		}
+		if row.State != Allowed && !strings.Contains(strings.ToLower(row.Why), strings.ToLower(d.Reason)) {
+			t.Errorf("%s is %s by %q but its why does not say so: %q", row.Route, row.State, d.Reason, row.Why)
+		}
+	}
+}
+
+// The rule is not vacuous: the rows stella named move when their numbers do.
+func TestDeriveMovesARowWhenItsNumbersMove(t *testing.T) {
+	tab, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := tab.Derive()["ocminimax"]; d.State != Allowed || d.Reason != "best third" {
+		t.Fatalf("ocminimax derived %+v, want allowed by best third", d)
+	}
+	i := tab.byRoute["ocminimax"]
+	n := *tab.rows[i].Numbers
+	n.U8, n.U9 = 4, 3 // 4 of 13 at 8+: Q <= 0 and useful far below the pro rung
+	tab.rows[i].Numbers = &n
+	if d := tab.Derive()["ocminimax"]; d.State != Dropped || d.Reason != "quality rule" {
+		t.Fatalf("ocminimax at 4 of 13 derived %+v, want dropped by the quality rule", d)
+	}
+	j := tab.byRoute["orglm53"]
+	m := *tab.rows[j].Numbers
+	m.Q = -0.01
+	tab.rows[j].Numbers = &m
+	if d := tab.Derive()["orglm53"]; d.State != Dropped || d.Reason != "Pareto-dominated" {
+		t.Fatalf("orglm53 at Q -0.01 derived %+v, want dropped as Pareto-dominated", d)
 	}
 }

@@ -13,6 +13,8 @@ package route
 import (
 	_ "embed"
 	"fmt"
+	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -35,12 +37,24 @@ type Numbers struct {
 	Run, Scored, U8, U9 int
 	USDPer8, Efficiency float64
 	Q                   float64
+	TokPer8             float64 // millions of tokens of all run cards per 8+ card
+	WallS               int     // median wall seconds of run cards
 }
+
+// numberKeys is how many ranking numbers a row carries when it carries any.
+const numberKeys = 9
+
+// Flags a row may carry: a fact about the route that the numbers cannot show.
+const (
+	FlagBenched = "benched" // the route carries a ROUTE-BENCHED flag
+	FlagDead    = "dead"    // the route's launches return nothing
+)
 
 // Row is one route.
 type Row struct {
 	Route, Rung, Model, Via string
 	State                   State
+	Flag                    string   // "", benched or dead
 	Numbers                 *Numbers // nil when the route is not in the ranking
 	Why                     string
 }
@@ -300,7 +314,7 @@ func (t *Table) addRow(it map[string]string) error {
 		}
 		var err error
 		switch key {
-		case "route", "rung", "model", "via", "state", "why":
+		case "route", "rung", "model", "via", "state", "flag", "why":
 			var s string
 			if s, err = scalar(raw); err != nil {
 				break
@@ -316,10 +330,12 @@ func (t *Table) addRow(it map[string]string) error {
 				r.Via = s
 			case "state":
 				r.State = State(s)
+			case "flag":
+				r.Flag = s
 			case "why":
 				r.Why = s
 			}
-		case "run", "scored", "u8", "u9":
+		case "run", "scored", "u8", "u9", "wall_s":
 			var v int
 			if v, err = strconv.Atoi(raw); err != nil || v < 0 {
 				return fmt.Errorf("%s %q is not a count", key, raw)
@@ -334,8 +350,10 @@ func (t *Table) addRow(it map[string]string) error {
 				nums.U8 = v
 			case "u9":
 				nums.U9 = v
+			case "wall_s":
+				nums.WallS = v
 			}
-		case "usd_per_8", "efficiency", "q":
+		case "usd_per_8", "efficiency", "q", "tok_per_8":
 			var v float64
 			if v, err = strconv.ParseFloat(raw, 64); err != nil {
 				return fmt.Errorf("%s %q is not a number", key, raw)
@@ -348,6 +366,8 @@ func (t *Table) addRow(it map[string]string) error {
 				nums.Efficiency = v
 			case "q":
 				nums.Q = v
+			case "tok_per_8":
+				nums.TokPer8 = v
 			}
 		default:
 			return fmt.Errorf("unknown route key %q", key)
@@ -367,15 +387,20 @@ func (t *Table) addRow(it map[string]string) error {
 	default:
 		return fmt.Errorf("route %s: state %q, want allowed, held or dropped", r.Route, r.State)
 	}
+	switch r.Flag {
+	case "", FlagBenched, FlagDead:
+	default:
+		return fmt.Errorf("route %s: flag %q, want benched or dead", r.Route, r.Flag)
+	}
 	if r.State != Allowed && r.Why == "" {
 		return fmt.Errorf("route %s is %s without a why", r.Route, r.State)
 	}
 	switch have {
 	case 0:
-	case 7:
+	case numberKeys:
 		r.Numbers = &nums
 	default:
-		return fmt.Errorf("route %s carries %d of the 7 ranking numbers; give all or none", r.Route, have)
+		return fmt.Errorf("route %s carries %d of the %d ranking numbers; give all or none", r.Route, have, numberKeys)
 	}
 	if _, dup := t.byRoute[r.Route]; dup {
 		return fmt.Errorf("route %s appears twice", r.Route)
@@ -460,4 +485,121 @@ func scalar(v string) (string, error) {
 		return "", fmt.Errorf("value %q is outside the subset; quote it", v)
 	}
 	return v, nil
+}
+
+// Derived is what the table's rule gives one row: the state and the step of
+// the rule that decided it.
+type Derived struct {
+	State  State
+	Reason string // dead route, not in the ranking, quality rule, best third, benched, Pareto-dominated, too few, second tier
+}
+
+// Derive applies the rule written at the top of routes.yaml (and in its rule
+// line) to the rows' numbers and flags, first match wins, and returns the
+// state per route. The persisted states must equal it (TestTheTableFollowsItsRule).
+func (t *Table) Derive() map[string]Derived {
+	out := map[string]Derived{}
+	for _, rung := range t.rungs {
+		var rows []Row
+		for _, r := range t.rows {
+			if r.Rung == rung {
+				rows = append(rows, r)
+			}
+		}
+		for k, v := range deriveRung(rows) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func deriveRung(rows []Row) map[string]Derived {
+	useful := func(n *Numbers) float64 { return float64(n.U8) / float64(n.Scored) }
+	measured := func(r Row) bool {
+		return r.Flag != FlagDead && r.Numbers != nil && r.Numbers.U8 >= 5 && r.Numbers.Scored > 0
+	}
+	// Rows sharing a model carry the model's numbers; count each model once.
+	onePerModel := func(keep func(Row) bool) []Row {
+		var out []Row
+		seen := map[string]bool{}
+		for _, r := range rows {
+			if keep(r) && !seen[r.Model] {
+				seen[r.Model] = true
+				out = append(out, r)
+			}
+		}
+		return out
+	}
+	var us []float64
+	for _, r := range onePerModel(measured) {
+		us = append(us, useful(r.Numbers))
+	}
+	farBelow := 0.75 * median(us)
+	quality := func(r Row) bool {
+		n := r.Numbers
+		return n != nil && n.Scored >= 8 && n.Q <= 0 && useful(n) < farBelow
+	}
+	var effs []float64
+	for _, r := range onePerModel(func(r Row) bool { return measured(r) && !quality(r) }) {
+		effs = append(effs, r.Numbers.Efficiency)
+	}
+	sort.Float64s(effs)
+	cut := math.Inf(-1)
+	if len(effs) > 0 {
+		cut = effs[(len(effs)+2)/3-1] + 0.01 + 1e-9
+	}
+	dominated := func(r Row) bool {
+		a := r.Numbers
+		for _, o := range rows {
+			b := o.Numbers
+			if o.Route == r.Route || b == nil || b.U8 < 1 || a.U8 < 1 {
+				continue
+			}
+			ra, rb := float64(a.U8)/float64(a.Run), float64(b.U8)/float64(b.Run)
+			noWorse := b.USDPer8 <= a.USDPer8 && b.TokPer8 <= a.TokPer8 && b.WallS <= a.WallS && rb >= ra
+			better := b.USDPer8 < a.USDPer8 || b.TokPer8 < a.TokPer8 || b.WallS < a.WallS || rb > ra
+			if noWorse && better {
+				return true
+			}
+		}
+		return false
+	}
+	out := map[string]Derived{}
+	for _, r := range rows {
+		n := r.Numbers
+		var d Derived
+		switch {
+		case r.Flag == FlagDead:
+			d = Derived{Dropped, "dead route"}
+		case n == nil:
+			d = Derived{Held, "not in the ranking"}
+		case quality(r):
+			d = Derived{Dropped, "quality rule"}
+		case measured(r) && n.Efficiency <= cut && r.Flag == FlagBenched:
+			d = Derived{Held, "benched"}
+		case measured(r) && n.Efficiency <= cut:
+			d = Derived{Allowed, "best third"}
+		case n.Q <= 0 && dominated(r):
+			d = Derived{Dropped, "Pareto-dominated"}
+		case n.U8 < 5:
+			d = Derived{Held, "too few"}
+		default:
+			d = Derived{Held, "second tier"}
+		}
+		out[r.Route] = d
+	}
+	return out
+}
+
+func median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	m := len(s) / 2
+	if len(s)%2 == 1 {
+		return s[m]
+	}
+	return (s[m-1] + s[m]) / 2
 }
