@@ -76,7 +76,7 @@ func TestNativeWallReadsTheWorkerReadRoots(t *testing.T) {
 	_, slot := aSlot(t)
 	stage := t.TempDir()
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "linux", worker: aReadRootWorker(stage)}
-	argv := nativeSandboxArgv(bin, cfg, slot+"/data", slot+"/jobs/lbl", slot+"/tmp/lbl")
+	argv := nativeSandboxArgv([]string{bin}, cfg, slot+"/data", slot+"/jobs/lbl", slot+"/tmp/lbl")
 
 	found := false
 	for i := 0; i+1 < len(argv); i++ {
