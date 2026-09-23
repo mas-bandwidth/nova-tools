@@ -145,8 +145,8 @@ reclaimed; a needed member that is not pinned is a named recovery gap. Returns
 (defun load-state (manifest &key max-bytes max-depth max-nodes into)
   "Verify and materialise one isolated snapshot. Returns (values snapshot line)
 or (values nil refusal); no path text is read, no resolver runs and nothing is
-written outside INTO."
-  (declare (ignore max-depth max-nodes))
+written outside INTO.
+MAX-BYTES, MAX-DEPTH and MAX-NODES are enforced on the reconstructed state."
   (unless (eql 1 (getf manifest :version))
     (return-from load-state (values nil "LOAD FAIL: unsupported manifest version")))
   (when (getf manifest :observations-gone)
