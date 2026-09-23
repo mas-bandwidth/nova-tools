@@ -127,3 +127,52 @@ Use real disposable local bare Git remotes, not only fake SEND text:
 Public fixtures are synthetic. Friends choose recipients; version statuses do not
 wake Johnny through To. New versions remain a choice, and working alternatives
 remain welcome.
+
+## Tests this spec demands
+
+The tree already carries a full implementation of `prepare`/`send --prepared` in
+`cmd/nova-bus` + `internal/bus` and the "version reporter join" in `internal/update`
+(the fake-bus and slow build-tag suites). Tests use real disposable local bare Git remotes
+(hermetic, no network), injected clocks and temp dirs, and process-death helpers that
+SIGKILL a child at each write boundary before a fresh child recovers; every
+already-published/refusal result is proven able to fail by a mutation. Five behaviours
+remain unproven by any test.
+
+1. `TestPrepareDecidingTests` — `prepare` reads the explicit bus and draft, reusing participant/recipient/draft validation, and computes the existing deterministic note ID.
+2. `TestMakeAndValidatePreparedArtifact` — `prepare` assigns Date once (injected clock) before any mutation.
+3. `TestPrepareWritesNoBusState` — `prepare` performs no network, Git write, checkout write, index update or delivery.
+4. `TestPrepareDecidingTests` — stdout is exactly one JSON object carrying `schema`/`id`/`path`/`note`/`sha256`.
+5. `TestMakeAndValidatePreparedArtifact` — the rendered `note` ends with LF; prepare and prepared-send refuse one without it.
+6. `TestMakeAndValidatePreparedArtifact` — `sha256` is the full-content digest of the note's UTF-8 bytes including the final LF.
+7. `TestPreparedRefusesLaneTraversalThatKeepsThePrefix` — the path is the ordinary own-lane note path, not an arbitrary destination.
+8. `TestPrepareDecidingTests` — tolerance notices go to stderr as bounded single lines; stdout stays machine-readable.
+9. `TestPrepareWritesNoBusState` — no automatic output file exists.
+10. `TestPrepareFailureWritesNoBusState` — preparation failure writes no bus state.
+11. `TestPrepareDecidingTests` — exit 0 produces a valid artifact; exit 1 is a draft/roster refusal; exit 2 is an invalid invocation or unreadable input.
+12. `TestPrepareHelpSaysDoNotPrepareAgain` — help and the first-run block say "Do not prepare again while pending; retry the saved artifact."
+13. `TestPrepareDraftIDsDifferAcrossInstants` — two preparations at different instants can assign different Date values and IDs even for an identical draft.
+14. `TestSendPreparedDecidingTests` — the prepared send modes are mutually exclusive with ordinary `--file`/`--stdin`.
+15. `TestMakeAndValidatePreparedArtifact` — send validates schema, full digest, rendered note, roster, speaker, deterministic ID and safe own-lane path before writing anything.
+16. `TestMakeAndValidatePreparedArtifact` — a changed roster/speaker that no longer resolves the prepared identity is a named refusal.
+17. `TestSendPreparedDecidingTests` — artifact content is data, not permission; bus/remote/branch/speaker are still named and there is no `--id` override.
+18. `TestSendPreparedArtifactAlreadyPublished` — locate the exact note by ID; if note bytes and its INDEX agree, return `SEND OK … attempts=0 state=already-published` with no new note, commit or push.
+19. `TestStellaPreparedRequiresCompleteRemoteIndex` — remote INDEX alone is insufficient proof of already-published.
+20. `TestSendPreparedArtifactRefusals` — same-ID different-content, unsafe path, inconsistent INDEX, or different note at the prepared path are refused; evidence is preserved, never overwritten.
+21. `TestSendPreparedArtifactInterruptedRecoveries` — absent remotely, reconcile the exact note + INDEX from an interrupted attempt; complete exact-matching partial writes, refuse conflicting bytes.
+22. `TestSendPreparedArtifactInterruptedRecoveries` — reuse an existing pending commit when possible.
+23. `TestStellaPreparedPreservesUnrelatedAttributeEdit` — the final contribution holds one note, one INDEX entry, only the standard merge-attributes change, and the normal send trailer.
+24. `TestSendPreparedArtifactRefusals` — refuse unrelated dirty/staged work or unrelated local commits ahead of the named remote.
+25. `TestStellaPreparedPreservesUnrelatedAheadAttributeEdit` — another tool's valid trailer does not authorize publishing its pending contribution during this retry.
+26. `TestSendPreparedArtifactRefusals` — refusal preserves the caller's index, files and commits; no stash, reset, clean, delete, remote-config change or credential use.
+27. `TestSendPreparedArtifactConcurrentRemoteLanding` — push without force through bounded race handling; reconcile the exact identity after an ambiguous push; a racing unrelated remote note is preserved.
+28. `TestSendPreparedArtifactConcurrentRemoteLanding` — success returns `SEND OK … pushed=true` plus `state=published`; only remote confirmation establishes success.
+29. `TestRowanProbeStaleIndexLock` — known failure or uncertainty returns 1 with the prepared ID and a bounded diagnostic; no raw source blob enters a diagnostic.
+30. `TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget` — retries use finite `--attempts`/`--git-timeout` inside the reporter's budget; exhaustion leaves the artifact; same-ID never stands in for full note equality.
+31. `TestNewObservationCannotReplaceUnresolvedPending` — with `--snapshot`, store `pending` (scope + artifact + observed map) before sending.
+32. `TestPendingBeforeDispatchAndQuietRetry` — each later `--send` resolves the pending artifact first, even when no installed version changed.
+33. `TestNewObservationCannotReplaceUnresolvedPending` — remote-confirmed success updates `delivered` and clears pending atomically.
+34. `TestNewObservationCannotReplaceUnresolvedPending` — if today's observation differs while an older report is pending, finish the old report first.
+35. `TestNewObservationCannotReplaceUnresolvedPending` — if the old report cannot be confirmed within budget, retain it, report the pending gate, and do not send a newer report.
+36. `TestNewObservationCannotReplaceUnresolvedPending` — if confirmed, a newer observation is prepared, atomically saved and sent with the remaining budget; never discard an old report merely because a newer observation exists.
+37. `TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked` — without `--snapshot` a plain report/draft writes nothing and each send is a new intention; the artifact is held in memory for bounded in-process retry only.
+38. `TestDeliveryScopeAndPreparedArtifactChecks` — recipient suppression compares confirmed delivery by scope; local observations and timestamps never suppress a first delivery.

@@ -69,13 +69,14 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-windows lint test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
+.PHONY: help build fmt vet vet-laws vet-windows lint test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
 
 help:
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
+	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
@@ -102,6 +103,20 @@ fmt:
 vet:
 	$(GO) vet $(PKGS)
 
+# THE VERB-LAW GUARD, its own target rather than folded into `vet` because
+# `vet` is also the SHARDED per-package leg (ci.yml's test-packages job calls
+# `make vet PKGS=<shard>` once per shard): vetlaw's checks are a whole-tree
+# analysis over the verbs, and folding it into `vet` would rebuild and
+# re-run it once per shard for no extra coverage. This runs once.
+#
+# ./cmd/..., not ./..., because tools/analyzers/fixtures deliberately trips
+# all three checks on purpose (read directly by tools/analyzers' own tests)
+# and is never meant to pass this gate.
+vet-laws:
+	@mkdir -p bin
+	$(GO) build -o bin/vetlaw ./tools/analyzers/cmd/vetlaw
+	$(GO) vet -vettool=$(CURDIR)/bin/vetlaw ./cmd/...
+
 # THE ONE WINDOWS GUARD ON THE CL PATH, since the native windows runners were
 # dropped (Glenn 2026-09-18: "drop the native windows CI runners. WSL only from
 # now on."). `GOOS=windows go vet ./...` builds the Windows standard library
@@ -122,7 +137,7 @@ vet:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
-lint: fmt vet
+lint: fmt vet vet-laws
 
 # The fast tier. The package set is the one ci.yml's test-packages job reads out
 # of the source with `go list ./cmd/... ./internal/...`, minus the darwin-only
