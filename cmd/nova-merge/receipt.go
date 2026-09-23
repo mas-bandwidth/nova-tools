@@ -56,6 +56,14 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, deps Deps) int {
 			*pr, oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
+	// The answer is the receipt naming the PR's current head. With no head there
+	// is nothing to match against, so no receipt can be chosen: refuse rather than
+	// hand back whichever line parsed (#2843, fail-open on an empty HeadOID).
+	if strings.TrimSpace(data.HeadOID) == "" {
+		fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's head sha is missing from the forge's answer; a receipt is chosen by the head it names, so none can be matched\n",
+			*pr)
+		return 1
+	}
 	lines := receiptLinesInBody(data.Body)
 	if len(lines) == 0 {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's body quotes no BATCH OK line; a receipt is the gate's own green line, not a hand-written summary\n",
@@ -78,7 +86,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, deps Deps) int {
 			continue
 		}
 		heads = append(heads, rec.Head)
-		if data.HeadOID == "" || strings.EqualFold(rec.Head, data.HeadOID) {
+		if strings.EqualFold(rec.Head, data.HeadOID) {
 			answer = line
 		}
 	}

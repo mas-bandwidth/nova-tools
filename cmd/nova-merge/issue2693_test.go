@@ -131,3 +131,17 @@ func TestIssue2693ReceiptPicksTheOneNamingTheHead(t *testing.T) {
 		t.Fatalf("a body with only a stale receipt is refused naming its head; exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 }
+
+// A pull request whose head sha is missing cannot be matched against any
+// receipt: the verb refuses, naming the missing head, and prints nothing on
+// stdout even when the body quotes a valid receipt (#2843, the empty-HeadOID
+// fail-open).
+func TestIssue2693ReceiptRefusesAMissingHead(t *testing.T) {
+	line := "BATCH OK name=integration-2693 base=" + strings.Repeat("0", 40) + " head=" + strings.Repeat("9", 40) + " members=2693 dropped=none"
+	h := merge.NewFakeHost()
+	h.PRs[2693] = merge.PR{Number: 2693, HeadRef: "b", HeadOID: "", Body: "prose\n" + line + "\n"}
+	exit, stdout, stderr := runReceipt(t, h, "receipt", "--repo", "o/n", "--pr", "2693")
+	if exit != 1 || stdout != "" || !strings.Contains(stderr, "RECEIPT REFUSED") || !strings.Contains(stderr, "head sha is missing") {
+		t.Fatalf("a PR with no head sha is refused naming the missing head; exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+}
