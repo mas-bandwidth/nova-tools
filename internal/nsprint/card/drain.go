@@ -117,7 +117,7 @@ func (d *drainTally) refused(sprint, item, rest, reason string) {
 }
 
 // Drain runs resume, import, and release for one sprint. See DrainOptions.
-func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainOptions) Result {
+func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainOptions) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
 	}
@@ -170,7 +170,7 @@ func Drain(ctx context.Context, client *redis.Client, sprint string, opts DrainO
 	if d.refuse > 0 {
 		code = exitRefused
 	}
-	return Result{Code: code, Stdout: d.out.String()}
+	return VerbResult{Code: code, Stdout: d.out.String()}
 }
 
 // importDir imports each card file in one retired queue dir, in name order.
