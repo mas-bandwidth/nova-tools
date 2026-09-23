@@ -190,13 +190,59 @@ each of its UTF-8 characters is counted exactly once."
           form)
     (t (error 'restricted-data-violation :value form))))
 
+(defun refuse-over-bounds (text &key max-bytes max-depth max-nodes)
+  "Refuse TEXT before the reader sees it when it exceeds MAX-BYTES UTF-8 octets,
+nests lists deeper than MAX-DEPTH, or holds more than MAX-NODES nodes. The scan
+is lexical: every open paren is one list node, every atom and string one node,
+comment text is opaque; so a hostile input is refused without being read and
+the reader never recurses past MAX-DEPTH. A NIL bound is not checked."
+  (when (and max-bytes (> (utf8-bytes-up-to text (length text)) max-bytes))
+    (error 'restricted-data-violation
+           :value (format nil "input ~D bytes exceeds max-bytes ~D"
+                          (utf8-bytes-up-to text (length text)) max-bytes)))
+  (when (or max-depth max-nodes)
+    (let ((depth 0) (nodes 0) (in-string nil) (escaped nil)
+          (len (length text)) (i 0))
+      (flet ((node ()
+               (incf nodes)
+               (when (and max-nodes (> nodes max-nodes))
+                 (error 'restricted-data-violation
+                        :value (format nil "nodes ~D exceeds max-nodes ~D" nodes max-nodes)))))
+        (loop while (< i len)
+              do (let ((ch (char text i)))
+                   (cond
+                     ((and in-string escaped) (setf escaped nil))
+                     ((and in-string (char= ch #\\)) (setf escaped t))
+                     ((char= ch #\") (if in-string
+                                          (setf in-string nil)
+                                          (progn (setf in-string t) (node))))
+                     (in-string nil)
+                     ((char= ch #\;)
+                      (loop while (and (< (1+ i) len)
+                                       (not (char= (char text (1+ i)) #\Newline)))
+                            do (incf i)))
+                     ((char= ch #\()
+                      (incf depth)
+                      (when (and max-depth (> depth max-depth))
+                        (error 'restricted-data-violation
+                               :value (format nil "depth ~D exceeds max-depth ~D" depth max-depth)))
+                      (node))
+                     ((char= ch #\)) (decf depth))
+                     ((reader-whitespace-p ch) nil)
+                     (t
+                      (node)
+                      (loop while (and (< (1+ i) len)
+                                       (not (reader-token-boundary-p (char text (1+ i)))))
+                            do (incf i)))))
+                 (incf i)))))
+  text)
+
 (defun read-restricted (text &key max-bytes max-depth max-nodes)
   "Read one restricted s-expression from TEXT. Counted in *PARSES*.
-When MAX-BYTES, MAX-DEPTH or MAX-NODES are given, refuse inputs that exceed them."
+When MAX-BYTES, MAX-DEPTH or MAX-NODES are given, TEXT is refused before it is
+read if it exceeds them (see REFUSE-OVER-BOUNDS)."
   (refuse-evaluation-syntax text)
-  (when (and max-bytes (> (length text) max-bytes))
-    (error 'restricted-data-violation
-           :value (format nil "input ~D bytes exceeds max-bytes ~D" (length text) max-bytes)))
+  (refuse-over-bounds text :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes)
   (let ((*read-eval* nil)
         (*package* (find-package '#:nova-work.read))
         (*read-base* 10)
@@ -222,32 +268,4 @@ When MAX-BYTES, MAX-DEPTH or MAX-NODES are given, refuse inputs that exceed them
               (error 'restricted-data-violation
                      :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
           (incf *parses*)
-          (let ((form (check-restricted form)))
-            (when (and max-depth (plusp max-depth))
-              (let ((peak (scan-depth form 0)))
-                (when (> peak max-depth)
-                  (error 'restricted-data-violation
-                         :value (format nil "depth ~D exceeds max-depth ~D" peak max-depth)))))
-            (when (and max-nodes (plusp max-nodes))
-              (let ((nodes (count-nodes form)))
-                (when (> nodes max-nodes)
-                  (error 'restricted-data-violation
-                         :value (format nil "nodes ~D exceeds max-nodes ~D" nodes max-nodes)))))
-            form))))))
-
-(defun scan-depth (form current)
-  "Return the peak nesting depth of FORM, where CURRENT is the depth already reached."
-  (typecase form
-    (cons (let ((child-depth (1+ current)))
-            (loop for sub in form
-                  maximize (scan-depth sub child-depth))))
-    (t current)))
-
-(defun count-nodes (form)
-  "Count the total number of cons cells in FORM."
-  (typecase form
-    (cons (loop for sub in form
-                summing (count-nodes sub)
-                into total
-                finally (return (1+ total))))
-    (t 1)))
+          (check-restricted form))))))
