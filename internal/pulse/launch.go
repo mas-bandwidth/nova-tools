@@ -123,6 +123,17 @@ func Launch(in LaunchInput) int {
 			in.Max, oneline.Field(in.Cards), len(cards), in.Max)
 		cards = cards[:in.Max]
 	}
+	// THE FIRST CARD OF A NEW TEMPLATE RUNS ALONE (SPEC-TOOLWORK.md §5 rule 5, #2215): a
+	// batch wider than one is refused while any (kind, template) pair in it has no
+	// ACCEPT OK on file in <root>/accept/first.tsv, and a typed card whose kind the
+	// table does not hold is refused outright (rule 3: there is no default kind). The
+	// check sits before ROUTE for the same reason --max does: a refused batch costs no
+	// model call, and the batch shape is the caller's input, not the bench state's
+	// overlay. A launch of cards with no typed header, which is every card cut before
+	// §5, prints exactly what it printed before this rule.
+	if code := refuseWideUnprovenFirstBatch(in.Stderr, in.Root, cards); code != 0 {
+		return code
+	}
 	// ROUTE (SPEC-DECIDE rule 8): with --routes, each card's worker is a typed decision, and
 	// the ROUTE line is logged beside the card and the time. Below the floor the card keeps
 	// its own model as the default worker and the line says so. Every card is routed, queued
