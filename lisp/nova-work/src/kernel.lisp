@@ -624,28 +624,88 @@ the verb's contract with its callers is unchanged."
           (values nil (format nil "~A FAIL request=~A: journal refused acceptance: ~A"
                               word rid refusal)
                   1 nil))))
-    ;; The verb itself. It validates whole before its first write, so a
-    ;; refusal mutates nothing.
-    (multiple-value-bind (ok line code verb-event)
-        (ecase verb
-          (:machine (machine-submit kernel request))
-          (:route (route-submit kernel request))
-          (:take (fleet-take-submit kernel request))
-          (:heartbeat (fleet-heartbeat-submit kernel request))
-          (:release (fleet-release-submit kernel request))
-          (:probe (fleet-probe-submit kernel request)))
-      (cond
-        (ok
-         ;; The record is durable before the OK line leaves the writer, which
-         ;; is the half of the :307 order a retry rests on.
-         (journal-record journal rid digest line (work-event-rev event))
-         (values t line 0 verb-event))
-        (t
-         ;; Refused: nothing mutated, so the acceptance the journal holds is
-         ;; dropped rather than recorded, and the journal stays as it was.
-         (when (typep journal 'file-journal)
-           (setf (journal-pending-envelope journal) nil))
-         (values nil line code nil))))))
+    ;; The verb runs on a STAGED copy of the three CONFIG/ACTIVE registries
+    ;; and the staged state is installed only once the record is durable
+    ;; (SPEC-WORK.md:307, the record-then-apply order the work path keeps
+    ;; above). The OK line the journal records is the verb's own answer, so
+    ;; the record cannot precede the verb; staging keeps the live state
+    ;; untouched until it has. A record that fails -- an append or a sync
+    ;; error -- or a verb that refuses or signals unwinds to the live state
+    ;; exactly as it was: no CONFIG member or ACTIVE allocation is ever live
+    ;; without its journaled event (#2880 HOLD).
+    (let ((live (kernel-state kernel))
+          (committed nil))
+      (unwind-protect
+           (progn
+             (setf (kernel-state kernel) (%stage-config-state live))
+             (multiple-value-bind (ok line code verb-event)
+                 (ecase verb
+                   (:machine (machine-submit kernel request))
+                   (:route (route-submit kernel request))
+                   (:take (fleet-take-submit kernel request))
+                   (:heartbeat (fleet-heartbeat-submit kernel request))
+                   (:release (fleet-release-submit kernel request))
+                   (:probe (fleet-probe-submit kernel request)))
+               (cond
+                 (ok
+                  ;; Durable first; only then does the staged state become
+                  ;; the live one and the OK line leave the writer.
+                  (journal-record journal rid digest line (work-event-rev event))
+                  (setf committed t)
+                  (values t line 0 verb-event))
+                 (t
+                  ;; Refused: the staged copy is dropped, the acceptance the
+                  ;; journal holds is dropped rather than recorded, and the
+                  ;; journal stays as it was.
+                  (when (typep journal 'file-journal)
+                    (setf (journal-pending-envelope journal) nil))
+                  (values nil line code nil)))))
+        (unless committed
+          (setf (kernel-state kernel) live))))))
+
+(defun %stage-copy (object seen)
+  "A deep copy of OBJECT for staging a CONFIG/ACTIVE verb: conses, hash tables
+and structure instances are copied, and everything else -- strings, numbers,
+symbols -- is shared, since no verb mutates one in place. SEEN maps each
+already-copied hash table and structure to its copy, so an object reached by
+two paths (an allocation record named from two places) stays one object in
+the copy."
+  (typecase object
+    (cons
+     (cons (%stage-copy (car object) seen)
+           (%stage-copy (cdr object) seen)))
+    (hash-table
+     (or (gethash object seen)
+         (let ((copy (make-hash-table :test (hash-table-test object)
+                                      :size (max 1 (hash-table-count object)))))
+           (setf (gethash object seen) copy)
+           (maphash (lambda (key value)
+                      (setf (gethash key copy) (%stage-copy value seen)))
+                    object)
+           copy)))
+    (structure-object
+     (or (gethash object seen)
+         (let ((copy (copy-structure object)))
+           (setf (gethash object seen) copy)
+           (dolist (slot (sb-mop:class-slots (class-of object)))
+             (let ((name (sb-mop:slot-definition-name slot)))
+               (setf (slot-value copy name)
+                     (%stage-copy (slot-value object name) seen))))
+           copy)))
+    (t object)))
+
+(defun %stage-config-state (state)
+  "A candidate state for one CONFIG/ACTIVE verb (#2880 HOLD): STATE's own
+work tree, carried as it is (no such verb touches it), beside deep copies of
+the fleet, the routes and the allocations, which are all the six verbs write.
+The verb mutates the copies; %submit-config installs the candidate only after
+the verb's record is durable, and otherwise keeps STATE, untouched."
+  (let ((staged (copy-wstate state))
+        (seen (make-hash-table :test #'eq)))
+    (setf (wstate-fleet staged) (%stage-copy (wstate-fleet state) seen)
+          (wstate-routes staged) (%stage-copy (wstate-routes state) seen)
+          (wstate-allocations staged) (%stage-copy (wstate-allocations state) seen))
+    staged))
 
 ;;; The counters, read.
 

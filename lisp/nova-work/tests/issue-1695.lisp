@@ -219,3 +219,56 @@
                             "the post-restart take retry applied a second allocation")))
         (ignore-errors (close-file-journal j2))))
     (ignore-errors (delete-file path))))
+
+;;; The record-failure boundary (Stella's HOLD on #2880, kernel.lisp
+;;; %submit-config): the verb used to mutate the live CONFIG/ACTIVE registries
+;;; and only then call `journal-record`, so a record that failed left a live
+;;; member or allocation the journal never heard of. The verb now runs on a
+;;; staged copy of the three registries, installed only after the record is
+;;; durable: a record failure must leave the live state exactly as it was --
+;;; the same guarantee the work path's record-then-apply order gives
+;;; (SPEC-WORK.md:307).
+(deftest "issue-1695-record-failure" "nova-tools#1695 (#2880 HOLD)"
+    "nova-work E09: a CONFIG/ACTIVE verb whose journal record fails leaves no unjournaled live mutation"
+  ;; CONFIG: `machine --register` whose record fails before the write.
+  (let* ((path (test-journal-path "issue-1695-record-fail-machine"))
+         (digest (root-digest (make-seed-state *seed*)))
+         (j (open-file-journal path :initial-state-hash digest
+                                    :fail-pre-write-on "req-m-fail")))
+    (unwind-protect
+         (let ((k (make-kernel :state (make-seed-state *seed*) :journal j
+                               :friends '("rowan")))
+               (signaled nil))
+           (handler-case (submit k (%issue-1695-machine-register "req-m-fail"))
+             (journal-uncertain-write () (setf signaled t)))
+           (ok signaled "the failed record did not signal journal-uncertain-write")
+           (check-equal '() (journal-order j) "the failed record reached the journal's order")
+           (check-equal 0 (fleet-member-count (kernel-fleet k))
+                        "a member was left live although its record failed")
+           (ok (null (fleet-allocator-of (kernel-allocations k) "m1"))
+               "an allocator was left live although its record failed"))
+      (ignore-errors (close-file-journal j))
+      (ignore-errors (delete-file path))))
+  ;; ACTIVE: a `take` on a registered machine whose record fails.
+  (let* ((path (test-journal-path "issue-1695-record-fail-take"))
+         (digest (root-digest (make-seed-state *seed*)))
+         (j (open-file-journal path :initial-state-hash digest
+                                    :fail-pre-write-on "req-take-fail")))
+    (unwind-protect
+         (let ((k (make-kernel :state (make-seed-state *seed*) :journal j
+                               :friends '("rowan")))
+               (signaled nil))
+           (multiple-value-bind (ok line) (submit k (%issue-1695-machine-register "req-m1"))
+             (ok ok "the register was refused: ~A" line))
+           (handler-case (submit k (%issue-1695-take "req-take-fail"))
+             (journal-uncertain-write () (setf signaled t)))
+           (ok signaled "the failed take record did not signal journal-uncertain-write")
+           (check-equal '("req-m1") (journal-order j)
+                        "the failed take reached the journal's order")
+           (check-equal 1 (fleet-member-count (kernel-fleet k))
+                        "the journaled member did not stay live")
+           (check-equal 0 (length (fleet-live-allocations (kernel-allocations k)
+                                                         :machine "m1"))
+                        "an allocation was left live although its record failed"))
+      (ignore-errors (close-file-journal j))
+      (ignore-errors (delete-file path)))))
