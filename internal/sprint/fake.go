@@ -14,22 +14,42 @@ import (
 // that was never opened, and it returns tasks in the same order. A lenient fake here would
 // ship the verb broken on the one store that matters.
 type FakeStore struct {
-	mu      sync.Mutex
-	sprints map[string]Sprint
-	tasks   map[string]Task
-	sets    map[string][]string
-	queues  map[string][]Task
-	present map[string]bool
+	mu        sync.Mutex
+	sprints   map[string]Sprint
+	tasks     map[string]Task
+	sets      map[string][]string
+	queues    map[string][]Task
+	present   map[string]bool
+	gen       map[string]uint64
+	evaluated map[string]bool
 }
 
 // NewFakeStore returns an empty store.
 func NewFakeStore() *FakeStore {
 	return &FakeStore{
-		sprints: map[string]Sprint{},
-		tasks:   map[string]Task{},
-		sets:    map[string][]string{},
-		queues:  map[string][]Task{},
-		present: map[string]bool{},
+		sprints:   map[string]Sprint{},
+		tasks:     map[string]Task{},
+		sets:      map[string][]string{},
+		queues:    map[string][]Task{},
+		present:   map[string]bool{},
+		gen:       map[string]uint64{},
+		evaluated: map[string]bool{},
+	}
+}
+
+// bump invalidates an in-flight PublishProgress. Redis does the same with
+// WATCH: a write to the sprint hash, its task set, or a member task fails the
+// other writer's EXEC.
+func (f *FakeStore) bump(name string) { f.gen[name]++ }
+
+func (f *FakeStore) bumpTask(id string) {
+	for name, ids := range f.sets {
+		for _, have := range ids {
+			if have == id {
+				f.bump(name)
+				break
+			}
+		}
 	}
 }
 
@@ -57,8 +77,100 @@ func (f *FakeStore) PutSprint(ctx context.Context, s Sprint) error {
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Same as Redis HSET of the identity fields: a later PutSprint does not wipe
+	// done/units/percent/eta_minutes that PutProgress already wrote. A first
+	// open has none yet, so the zeros on s are the starting value.
+	if prev, ok := f.sprints[s.Name]; ok {
+		s.Done = prev.Done
+		s.Units = prev.Units
+		s.Percent = prev.Percent
+		s.ETAMinutes = prev.ETAMinutes
+	}
 	f.sprints[s.Name] = s
+	f.bump(s.Name)
 	return nil
+}
+
+// PutProgress writes the four table fields and leaves the goal and the times.
+func (f *FakeStore) PutProgress(ctx context.Context, name string, p Progress) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := ValidateName("sprint", name); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.sprints[name]
+	if !ok {
+		return fmt.Errorf("no sprint named %q is open; run: nova-pulse sprint open %s --goal <one sentence>", name, name)
+	}
+	s.Done = p.Done
+	s.Units = p.Units
+	s.Percent = p.Percent
+	s.ETAMinutes = p.ETAMinutes
+	f.sprints[name] = s
+	f.evaluated[name] = p.Evaluated
+	f.bump(name)
+	return nil
+}
+
+// PublishProgress measures outside the lock, then writes only if no sprint,
+// task, or acceptance write has landed since the read.
+func (f *FakeStore) PublishProgress(ctx context.Context, name string, measure func(ProgressView) (Progress, error)) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := ValidateName("sprint", name); err != nil {
+		return false, err
+	}
+	f.mu.Lock()
+	if _, ok := f.sprints[name]; !ok {
+		f.mu.Unlock()
+		return false, fmt.Errorf("no sprint named %q is open; run: nova-pulse sprint open %s --goal <one sentence>", name, name)
+	}
+	view, gen := f.progressView(name)
+	f.mu.Unlock()
+
+	p, err := measure(view)
+	if err != nil {
+		return false, err
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.sprints[name]; !ok {
+		return false, fmt.Errorf("no sprint named %q is open; run: nova-pulse sprint open %s --goal <one sentence>", name, name)
+	}
+	if f.gen[name] != gen {
+		return false, nil
+	}
+	s := f.sprints[name]
+	s.Done = p.Done
+	s.Units = p.Units
+	s.Percent = p.Percent
+	s.ETAMinutes = p.ETAMinutes
+	f.sprints[name] = s
+	f.evaluated[name] = p.Evaluated
+	f.bump(name)
+	return true, nil
+}
+
+func (f *FakeStore) progressView(name string) (ProgressView, uint64) {
+	s := f.sprints[name]
+	ids := append([]string(nil), f.sets[name]...)
+	sort.Strings(ids)
+	var tasks []Task
+	for _, id := range ids {
+		if t, ok := f.tasks[id]; ok {
+			tasks = append(tasks, t)
+		}
+	}
+	var acc Acceptance
+	if f.evaluated[name] {
+		acc = Acceptance{Set: true, Done: s.Done, Units: s.Units, Percent: s.Percent}
+	}
+	return ProgressView{Tasks: tasks, Acceptance: acc}, f.gen[name]
 }
 
 // GetSprint reads one back.
@@ -115,6 +227,7 @@ func (f *FakeStore) PutTask(ctx context.Context, t Task) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tasks[t.ID] = t
+	f.bumpTask(t.ID)
 	return nil
 }
 
@@ -148,6 +261,7 @@ func (f *FakeStore) AddTask(ctx context.Context, sprintName, taskID string) erro
 		}
 	}
 	f.sets[sprintName] = append(f.sets[sprintName], taskID)
+	f.bump(sprintName)
 	return nil
 }
 
