@@ -6,13 +6,13 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
-	"github.com/mas-bandwidth/nova-tools/internal/post"
 )
 
 func cli(args ...string) (int, string, string) {
@@ -61,43 +61,51 @@ func TestBareCommandRefusesInOneLine(t *testing.T) {
 	}
 }
 
-// docs/TESTS.md's `## nova-post` is the one transcript of the eight this lane
-// took that is NOT made to pass. It says something false about the tool, and
-// the rule is that a false document is filed rather than bent: issue #1631.
+// TestTESTSFirstRunIsWhatTheToolPrints runs docs/TESTS.md's `## nova-post`
+// `### First run` block as written, in a fresh directory holding exactly the
+// fixture the section names, and compares every line. Issue #1631 was this block
+// running `--channel fake` (not one of the spec's four channels, refused at exit
+// 2) and writing `<sha256>` where a hash goes; the block was re-cut on `ghost`
+// with the real hash pasted, and this test is what keeps it runnable.
 //
-// Two things are wrong with the section:
+// Every documented command must exit 0 as well as print what the page shows:
+// the block is the quickstart, and a quickstart step that fails is not one.
 //
-//  1. The section runs `--channel fake` six times. internal/post's
-//     ParseChannel (post.go:111-118) used to refuse anything outside ghost,
-//     bsky, email and discord at exit 2. The card fix3-nova-tools-1631 made
-//     ParseChannel accept `fake` as a fifth channel, so the documented
-//     command is no longer refused at the flag-parse layer. The tripwire
-//     that pinned that defect (TestTESTSFirstRunSaysFakeIsAChannelUntil1631)
-//     has been deleted: its specific assertion could no longer hold once
-//     ParseChannel stopped refusing `fake`.
-//  2. The block's first three commands write `<sha256>` where a hash goes.
-//     docs/TESTS.md has no placeholder convention -- every other block in it is
-//     real output pasted whole -- so those lines cannot be run by anything.
-//     The tripwire below pins this with the parsing layer.
-//
-// When #1631 is fully settled -- the section re-cut to use ghost or to drop
-// `<sha256>` -- delete TestTESTSFirstRunIsNotRunnableUntil1631 and add the
-// executing TestTESTSFirstRunIsWhatTheToolPrints this tool's siblings carry.
+// TWO normalisations are declared, as the siblings declare them: the
+// `<goos>/<goarch> go<version>` tail of `version` is the machine the line was
+// recorded on, and the version word is what the build stamped itself with.
+// Nothing else is normalised, so the hash is compared byte for byte.
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	steps, err := onboarding.Steps("nova-post", firstRunLines(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-post command; this test would pass by running nothing")
+	}
+	t.Chdir(t.TempDir())
+	write(t, "body.md", "A first post for the ghost channel.\n")
+	write(t, "allowlist", "ghost\texample.com\n")
+	if err := os.Mkdir("drafts", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Version(), onboarding.GoBuild()) {
+		t.Error(p)
+	}
+}
 
-// TestTESTSFirstRunIsNotRunnableUntil1631 pins the surviving defect (2): the
-// transcript does not even parse into commands, because `--draft <sha256>` is
-// a placeholder and not something a reader can type.
-func TestTESTSFirstRunIsNotRunnableUntil1631(t *testing.T) {
-	_, err := onboarding.Steps("nova-post", firstRunLines(t))
-	if err == nil {
-		t.Fatal("the `### First run` block now parses into runnable commands.\n" +
-			"That is defect (2) of issue #1631 being fixed: delete this test and\n" +
-			"add the executing TestTESTSFirstRunIsWhatTheToolPrints this tool's\n" +
-			"siblings carry.")
+// runDocumented calls this binary's entry point with the documented arguments
+// and refuses a non-zero exit: Compare carries no exit code, and the quickstart
+// promises every step runs.
+func runDocumented(s onboarding.Step) (onboarding.Result, error) {
+	if s.Stdin != "" {
+		return onboarding.Result{}, fmt.Errorf("nova-post reads no stdin; a `< %s` in its transcript is the document's bug", s.Stdin)
 	}
-	if !strings.Contains(err.Error(), "sha256") {
-		t.Errorf("the block is unrunnable for a reason other than the `<sha256>` placeholder #1631 names: %v", err)
+	code, stdout, stderr := cli(s.Args...)
+	if code != 0 {
+		return onboarding.Result{}, fmt.Errorf("the documented command\n  %s\nexits %d, and every quickstart step must exit 0:\n%s%s", s.Line, code, stdout, stderr)
 	}
+	return onboarding.Result{Code: code, Stdout: stdout, Stderr: stderr}, nil
 }
 
 // firstRunLines is the `### First run` transcript of this tool, as written.
@@ -121,20 +129,5 @@ func write(t *testing.T, name, body string) {
 	t.Helper()
 	if err := os.WriteFile(name, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// TestIssue1631 pins the defect filed in nova-tools #1631: docs/TESTS.md's
-// `## nova-post` quickstart runs `--channel fake` six times, but
-// internal/post's ParseChannel used to return a `bad-channel` Refusal at
-// exit 2 for any value outside ghost, bsky, email and discord. The fix is to
-// accept `fake` as a fifth channel so the documented command runs.
-//
-// red on base (ParseChannel refuses), green after the production change,
-// red again when the production change is reverted.
-func TestIssue1631(t *testing.T) {
-	t.Helper()
-	if _, err := post.ParseChannel("fake"); err != nil {
-		t.Fatalf("post.ParseChannel(\"fake\") = %v\n#1631, open: docs/TESTS.md's `## nova-post` quickstart runs `--channel fake` and the binary must accept it, instead of refusing at exit 2.", err)
 	}
 }
