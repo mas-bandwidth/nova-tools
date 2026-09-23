@@ -128,26 +128,29 @@ and the staged-byte sum are bounded by the declared limits; a breach refuses
 and stages nothing (SPEC-WORK.md:2748-2753). A staged issue keeps its stable
 provider/repository/issue identity with its current URL and last observed
 remote revision; repeated intake of the same identity updates the existing
-staged input instead of duplicating it (SPEC-WORK.md:7569)."
-  (let ((limits (capture-stage-limits stage))
-        (key (when (and provider repository issue)
-               (capture-issue-key provider repository issue))))
+staged input instead of duplicating it (SPEC-WORK.md:7569). Identity is
+checked before the capacity and byte limits: re-intake of an identity already
+staged adds no new input and no new bytes, so it must never be refused by a
+stage that is merely full (SPEC-WORK.md:7569)."
+  (let* ((limits (capture-stage-limits stage))
+         (key (when (and provider repository issue)
+                (capture-issue-key provider repository issue)))
+         (prior (when key
+                  (find key (capture-stage-inputs stage)
+                        :key #'capture-input-identity :test #'equal))))
     (cond
+      (prior
+       (setf (capture-input-expected-revision prior) expected-revision
+             (capture-input-url prior) url
+             (capture-input-remote-revision prior) remote-revision)
+       (values t (format nil "STAGE OK id=~A revision=~D identity=~A"
+                         id expected-revision key)))
       ((>= (capture-input-count stage) (getf limits :staged-inputs))
        (values nil (format nil "STAGE FAIL: staged inputs at the bound ~D"
                            (getf limits :staged-inputs))))
       ((> (+ (capture-stage-bytes stage) bytes) (getf limits :staged-bytes))
        (values nil (format nil "STAGE FAIL: staged bytes over the bound ~D"
                            (getf limits :staged-bytes))))
-      ((and key (find key (capture-stage-inputs stage)
-                      :key #'capture-input-identity :test #'equal))
-       (let ((prior (find key (capture-stage-inputs stage)
-                          :key #'capture-input-identity :test #'equal)))
-         (setf (capture-input-expected-revision prior) expected-revision
-               (capture-input-url prior) url
-               (capture-input-remote-revision prior) remote-revision)
-         (values t (format nil "STAGE OK id=~A revision=~D identity=~A"
-                           id expected-revision key))))
       (t
        (push (make-capture-input :id id :kind kind
                                  :expected-revision expected-revision
