@@ -43,8 +43,8 @@ func (r Row) Width() int64 { return r.Starting + r.Living + r.Stale }
 type Pipeline struct {
 	Sprint       string
 	Cards        map[string]int64
-	Pool         int64
-	Waiting      int64
+	Pool         int64 // s:<S>:pool: queued cards whose every DEPENDS-ON is landed; printed ready= (#3066)
+	Waiting      int64 // s:<S>:waiting: queued cards with a DEPENDS-ON not yet merged on their base
 	Backpressure int64
 	Orphan       int64
 	Reconcile    int64
@@ -294,7 +294,9 @@ func pipelineLine(p Pipeline) string {
 		parts = append(parts, state+"="+strconv.FormatInt(p.Cards[state], 10))
 	}
 	parts = append(parts,
-		"pool="+strconv.FormatInt(p.Pool, 10),
+		// The pool is the ready antichain: the deal pass moves every queued
+		// card whose DEPENDS-ON is not merged on its base to waiting (#3066).
+		"ready="+strconv.FormatInt(p.Pool, 10),
 		"waiting="+strconv.FormatInt(p.Waiting, 10),
 		"backpressure="+strconv.FormatInt(p.Backpressure, 10),
 		"orphan-effect="+strconv.FormatInt(p.Orphan, 10),
