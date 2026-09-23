@@ -76,10 +76,16 @@ func parseHoldFile(raw string) (holdCard, string) {
 	return h, ""
 }
 
-func applyHold(in CutKindInput, h holdCard) CutKindInput {
-	if strings.TrimSpace(in.Head) == "" {
-		in.Head = h.Head
+// applyHold fills the cut from the HOLD. The card head is the typed HOLD head.
+// A caller --head that names another revision is refused, so RESULT and SOURCE
+// cannot bind to a sha the carried HOLD line does not.
+func applyHold(in CutKindInput, h holdCard) (CutKindInput, string) {
+	caller := strings.TrimSpace(in.Head)
+	holdHead := strings.TrimSpace(h.Head)
+	if caller != "" && !strings.EqualFold(caller, holdHead) {
+		return in, fmt.Sprintf("--head %s differs from the HOLD head %s (omit --head, or pass that head; a recut binds RESULT and SOURCE to the HOLD revision only)", oneline.Field(caller), oneline.Field(holdHead))
 	}
+	in.Head = holdHead
 	if strings.TrimSpace(in.Base) == "" {
 		in.Base = h.Base
 	}
@@ -90,7 +96,7 @@ func applyHold(in CutKindInput, h holdCard) CutKindInput {
 	in.TestName = h.Test
 	in.HoldLine = h.Line
 	in.Remains = h.Remains
-	return in
+	return in, ""
 }
 
 func headerValue(line, key string) (string, bool) {

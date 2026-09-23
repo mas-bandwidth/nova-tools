@@ -54,6 +54,39 @@ func TestCutKindRecutHoldFileWritesOneCard(t *testing.T) {
 	}
 }
 
+func TestCutKindRecutHoldFileHeadMismatchIsARefusal(t *testing.T) {
+	dir := t.TempDir()
+	queue, out := filepath.Join(dir, "queue"), filepath.Join(dir, "queue", "pending")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hold := filepath.Join(dir, "hold.md")
+	const holdHead = "d080cec1d2a5afcaef2b696840389e91e769a1d1"
+	const other = "0123456789abcdef0123456789abcdef01234567"
+	body := "DISPOSITION who=Johnny head=" + holdHead + " verdict=HOLD score=4/10\n" +
+		"PATHS: internal/swarm/pullworker.go\n" +
+		"TEST: ./internal/swarm TestHarvestDoesNotFollowAResultSymlink\n"
+	if err := os.WriteFile(hold, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	args := []string{"cut", "--kind", "recut", "--repo", "mas-bandwidth/nova-tools",
+		"--head", other, "--hold-file", hold, "--out", out, "--queue", queue}
+	var stdout, stderr bytes.Buffer
+	if code := run(args, &stdout, &stderr, time.Now().UTC()); code != 2 {
+		t.Fatalf("exit = %d, want 2, stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "CUT REFUSED") || !strings.Contains(stderr.String(), other) || !strings.Contains(stderr.String(), holdHead) {
+		t.Errorf("refusal = %q, want CUT REFUSED naming both heads", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "CUT CARD") {
+		t.Errorf("a mismatched --head still cut: %q", stdout.String())
+	}
+	if matches, _ := filepath.Glob(filepath.Join(out, "card-*.md")); len(matches) != 0 {
+		t.Errorf("a refusal wrote a card: %v", matches)
+	}
+}
+
 func TestCutKindRecutHoldFileWithoutRemainsIsARefusal(t *testing.T) {
 	dir := t.TempDir()
 	queue, out := filepath.Join(dir, "queue"), filepath.Join(dir, "queue", "pending")

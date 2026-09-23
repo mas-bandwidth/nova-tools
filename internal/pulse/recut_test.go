@@ -188,6 +188,66 @@ func TestCutKindRecutRefusesAQuotedHoldAsEvidence(t *testing.T) {
 	}
 }
 
+// A caller --head that is not the HOLD revision must not win RESULT/SOURCE
+// while HOLD: still names the typed head (#2500).
+func TestCutKindRecutRefusesAHeadThatDiffersFromTheHold(t *testing.T) {
+	out, queue := recutDirs(t)
+	hold := writeHold(t, t.TempDir(), recutHoldLine+"\n"+
+		"PATHS: internal/swarm/pullworker.go\n"+
+		"TEST: ./internal/swarm TestHarvestDoesNotFollowAResultSymlink\n")
+	const other = "0123456789abcdef0123456789abcdef01234567"
+
+	code, line, errs, card := cutKind(t, CutKindInput{
+		Kind: "recut", Repo: "mas-bandwidth/nova-tools", Head: other,
+		HoldFile: hold, Out: out, Queue: queue,
+	})
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2, stdout=%s stderr=%s", code, line, errs)
+	}
+	if !strings.Contains(errs, "CUT REFUSED") || !strings.Contains(errs, other) || !strings.Contains(errs, "d080cec1d2a5afcaef2b696840389e91e769a1d1") || !strings.Contains(errs, "(") {
+		t.Errorf("refusal = %q, want CUT REFUSED naming both heads and a remedy", errs)
+	}
+	if strings.Contains(line, "CUT CARD") || card != "" {
+		t.Errorf("a mismatched --head still cut a card:\nstdout=%s\n%s", line, card)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(out, "card-*.md")); len(matches) != 0 {
+		t.Errorf("a refused recut left files in --out: %v", matches)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(queue, "lanes", "red", "*.card")); len(matches) != 0 {
+		t.Errorf("a refused recut left a red-lane card: %v", matches)
+	}
+}
+
+// The same revision, however the caller spells it, still cuts, and RESULT and
+// SOURCE use the HOLD head rather than the caller's spelling.
+func TestCutKindRecutBindsToTheHoldHeadWhenTheCallerPassesIt(t *testing.T) {
+	out, queue := recutDirs(t)
+	hold := writeHold(t, t.TempDir(), recutHoldLine+"\n"+
+		"PATHS: internal/swarm/pullworker.go\n"+
+		"TEST: ./internal/swarm TestHarvestDoesNotFollowAResultSymlink\n")
+	const holdHead = "d080cec1d2a5afcaef2b696840389e91e769a1d1"
+
+	code, _, errs, card := cutKind(t, CutKindInput{
+		Kind: "recut", Repo: "mas-bandwidth/nova-tools", Head: strings.ToUpper(holdHead),
+		HoldFile: hold, Out: out, Queue: queue,
+	})
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	for _, want := range []string{
+		"recut of nova-tools at " + holdHead + " from HOLD",
+		"SOURCE: mas-bandwidth/nova-tools HOLD " + holdHead,
+		"HOLD: " + recutHoldLine,
+	} {
+		if !strings.Contains(card, want) {
+			t.Errorf("the recut card does not carry %q:\n%s", want, card)
+		}
+	}
+	if strings.Contains(card, strings.ToUpper(holdHead)) {
+		t.Errorf("the caller's spelling of the head leaked onto the card:\n%s", card)
+	}
+}
+
 func TestCutKindRecutRefusesWithoutHoldFile(t *testing.T) {
 	dir := t.TempDir()
 	var out, errs bytes.Buffer

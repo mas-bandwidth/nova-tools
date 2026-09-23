@@ -1751,7 +1751,9 @@ CUT REFUSED: --repo <path> is not a directory (name the clone every git call run
 
 `cut --kind recut --hold-file <path>` writes one recut card from a typed
 `DISPOSITION who=… head=<sha> verdict=HOLD` plus named remains (`PATHS:` and
-`TEST:` on that HOLD). A HOLD without named remains is refused. The card header
+`TEST:` on that HOLD). A HOLD without named remains is refused. A `--head`
+that differs from that HOLD's `head=` is refused, so the card's RESULT and
+SOURCE cannot name a revision the carried HOLD line does not. The card header
 carries `BASE`, `base-sha`, `PATHS` if present, and the HOLD line as evidence.
 
 `cut` reads **one** source and refuses none and refuses two: naming no source is

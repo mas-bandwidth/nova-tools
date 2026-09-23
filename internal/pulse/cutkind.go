@@ -43,7 +43,7 @@ type CutKindInput struct {
 	Kind      string
 	Repo      string // owner/name; line 1 names the repo for every kind
 	PR        int    // read, rebase
-	Head      string // read, recut (from the HOLD when --hold-file is set)
+	Head      string // read, recut (the HOLD head; a different --head is refused)
 	Issue     int    // fix
 	Title     string // fix, spec, rebase, and the parenthesised title of a read
 	Branch    string // rebase: the branch rebased onto the base
@@ -91,7 +91,11 @@ func CutKind(in CutKindInput) int {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
 			return 2
 		}
-		in = applyHold(in, hold)
+		in, problem = applyHold(in, hold)
+		if problem != "" {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
+			return 2
+		}
 	}
 	n, err := NextCardNumber(in.Queue)
 	if err != nil {
