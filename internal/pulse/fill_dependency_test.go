@@ -197,7 +197,7 @@ type recordLauncherWithSeq struct {
 	onLaunch func(bench, card string)
 }
 
-func (r recordLauncherWithSeq) Launch(bench, card string) error {
+func (r recordLauncherWithSeq) Launch(bench, seat, card string) error {
 	if r.onLaunch != nil {
 		r.onLaunch(bench, card)
 	}
