@@ -129,6 +129,82 @@ func TestDependencyCheckerResultsStore(t *testing.T) {
 	}
 }
 
+func TestDependencyCheckerResultsStoreAuthoritativeDone(t *testing.T) {
+	resultsDir := t.TempDir()
+	checker := NewGitAndResultsChecker("", "dev", resultsDir)
+
+	// 1. Non-existent RESULT.md is rejected
+	merged, reason := checker.IsDependencyMerged("card-prereq")
+	if merged {
+		t.Fatalf("expected non-existent RESULT.md to be rejected, got merged=true: %s", reason)
+	}
+
+	storeDir := filepath.Join(resultsDir, "card-prereq")
+	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resPath := filepath.Join(storeDir, "RESULT.md")
+
+	// 2. Empty RESULT.md is rejected
+	if err := os.WriteFile(resPath, []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merged, reason = checker.IsDependencyMerged("card-prereq")
+	if merged {
+		t.Fatalf("expected empty RESULT.md to be rejected, got merged=true: %s", reason)
+	}
+
+	// 3. Arbitrary in-progress text is rejected
+	inProgressTexts := []string{
+		"running build steps...",
+		"IN_PROGRESS: shard 2 executing",
+		"we are working on this card",
+		"almost done with the task",
+	}
+	for _, text := range inProgressTexts {
+		if err := os.WriteFile(resPath, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		merged, reason = checker.IsDependencyMerged("card-prereq")
+		if merged {
+			t.Fatalf("expected arbitrary in-progress text %q to be rejected, got merged=true: %s", text, reason)
+		}
+	}
+
+	// 4. RESULT.md with FAILED is rejected (even if DONE is mentioned)
+	failedTexts := []string{
+		"RESULT card-prereq\nFAILED\n",
+		"RESULT card-prereq\nFAILED: build timeout\n",
+		"RESULT card-prereq\nFAILED: did not reach DONE step\n",
+	}
+	for _, text := range failedTexts {
+		if err := os.WriteFile(resPath, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		merged, reason = checker.IsDependencyMerged("card-prereq")
+		if merged {
+			t.Fatalf("expected FAILED text %q to be rejected, got merged=true: %s", text, reason)
+		}
+	}
+
+	// 5. RESULT.md with DONE is accepted
+	doneTexts := []string{
+		"RESULT card-prereq\nDONE\n",
+		"RESULT card-prereq DONE\n",
+		"DONE\n",
+		"DONE sha=1234567\n",
+	}
+	for _, text := range doneTexts {
+		if err := os.WriteFile(resPath, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		merged, reason = checker.IsDependencyMerged("card-prereq")
+		if !merged {
+			t.Fatalf("expected DONE text %q to be accepted, got merged=false: %s", text, reason)
+		}
+	}
+}
+
 func TestDependencyCheckerGitMock(t *testing.T) {
 	checker := &GitAndResultsChecker{
 		Repo:       ".",

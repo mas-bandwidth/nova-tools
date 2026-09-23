@@ -94,8 +94,8 @@ func (g *GitAndResultsChecker) IsDependencyMerged(dep string) (bool, string) {
 			resFile := filepath.Join(storeDir, "RESULT.md")
 			if fi, err := os.Stat(resFile); err == nil && fi.Size() > 0 {
 				data, err := os.ReadFile(resFile)
-				if err == nil && (bytes.Contains(data, []byte("DONE")) || len(data) > 0) {
-					return true, fmt.Sprintf("results store %s/RESULT.md present", cand)
+				if err == nil && isResultDone(data) {
+					return true, fmt.Sprintf("results store %s/RESULT.md DONE", cand)
 				}
 			}
 			harvestedFile := filepath.Join(storeDir, ".harvested")
@@ -195,6 +195,35 @@ func extractPRNumber(dep string) string {
 		return dep
 	}
 	return ""
+}
+
+// isResultDone checks whether RESULT.md content authoritatively indicates DONE.
+// It requires DONE to be present and rejects files that contain FAILED, lack DONE,
+// or contain arbitrary text without DONE.
+func isResultDone(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+	if bytes.Contains(data, []byte("FAILED")) {
+		return false
+	}
+	if !bytes.Contains(data, []byte("DONE")) {
+		return false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "DONE" || strings.HasPrefix(trimmed, "DONE ") || strings.HasPrefix(trimmed, "DONE:") || strings.HasPrefix(trimmed, "DONE\t") {
+			return true
+		}
+		if strings.HasPrefix(trimmed, "RESULT ") && strings.Contains(trimmed, "DONE") {
+			return true
+		}
+		upper := strings.ToUpper(trimmed)
+		if upper == "STATUS: DONE" || upper == "VERDICT: DONE" || upper == "**DONE**" {
+			return true
+		}
+	}
+	return false
 }
 
 func isAllDigits(s string) bool {
