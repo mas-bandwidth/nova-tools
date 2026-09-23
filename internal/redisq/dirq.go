@@ -8,6 +8,7 @@ package redisq
 // see across.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -149,6 +150,38 @@ func (d *DirQueue) Reclaim(stream string, lease time.Duration, now time.Time) (b
 		return true, nil
 	}
 	return false, nil
+}
+
+// PullLanes reads the oldest card across the ordered priority lanes:
+// red first, then green, then small, then next. The kind is the
+// middle segment of nova:queue:<kind>:<lane>.
+func (d *DirQueue) PullLanes(kind string) (*Card, error) {
+	for _, lane := range []string{"red", "green", "small", "next"} {
+		card, err := d.Pull("nova:queue:" + kind + ":" + lane)
+		if err != nil {
+			return nil, err
+		}
+		if card != nil {
+			return card, nil
+		}
+	}
+	return nil, nil
+}
+
+// PullLanes reads the oldest card from Redis across the ordered priority
+// lanes: red, green, small, next. The kind is the middle segment of
+// nova:queue:<kind>:<lane>.
+func (q *Queue) PullLanes(ctx context.Context, kind, bench string, block time.Duration) (*Card, error) {
+	for _, lane := range []string{"red", "green", "small", "next"} {
+		card, err := q.Pull(ctx, "nova:queue:"+kind+":"+lane, bench, block)
+		if err != nil {
+			return nil, err
+		}
+		if card != nil {
+			return card, nil
+		}
+	}
+	return nil, nil
 }
 
 func parseCardFile(path string) (map[string]string, error) {
