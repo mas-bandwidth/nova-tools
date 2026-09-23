@@ -264,7 +264,7 @@ one event pending, whichever comes first; a clip with nothing pending is not run
                                            when (< (getf event :rev) boundary)
                                              collect event))
                (snapshot-path (or path "snapshot.lisp"))
-               (archive-path (format nil "~A-archive.lisp" (pathname-name snapshot-path))))
+               (archive-path (retention-archive-path snapshot-path)))
           (write-clip-snapshot structure boundary retained-events snapshot-path)
           (write-retention-archive pre-boundary-events archive-path :revision-range (list 0 boundary))
           (incf (ctl-clip-revision (kernel-controls kernel)))
@@ -284,10 +284,22 @@ one event pending, whichever comes first; a clip with nothing pending is not run
 According to SPEC-WORK.md:498: the session clips when its pending accepted events
 reach --clip-after, or when --clip-every has elapsed since the last clip with at
 least one event pending, whichever comes first; a clip with nothing pending is not run."
-  (and (> pending-count 0)
-       (or (>= pending-count clip-after)
+  (declare (ignore kernel))
+  (and pending-count (> pending-count 0)
+       (or (and clip-after (>= pending-count clip-after))
            (and clip-every last-clip-time
                 (> (get-universal-time) (+ last-clip-time clip-every))))))
+
+(defun retention-archive-path (snapshot-path)
+  "The sibling retention archive for SNAPSHOT-PATH: same directory, name
+<snapshot>-archive, same type (SPEC-WORK.md:530: a sibling file the same clip
+commits). Keeping the directory is the point: an absolute snapshot path must not
+send its archive to the process working directory."
+  (let ((snap (pathname snapshot-path)))
+    (namestring
+     (make-pathname :name (format nil "~A-archive" (pathname-name snap))
+                    :type (or (pathname-type snap) "lisp")
+                    :defaults snap))))
 
 (defun calculate-retention-boundary (events retain-duration clip-stamp)
   "Calculate the retention boundary revision.
