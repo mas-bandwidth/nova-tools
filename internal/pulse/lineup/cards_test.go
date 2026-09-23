@@ -60,6 +60,20 @@ func TestPlanCIPackagesFromPaths(t *testing.T) {
 	}
 }
 
+// TestPlanCICommaSeparatedPaths: cards write PATHS comma separated too ("a.go, b.go").
+// A trailing comma must not hide the .go file and turn a go card into a false ci-dry-run RED.
+func TestPlanCICommaSeparatedPaths(t *testing.T) {
+	commas := append(without(goodHeader, "PATHS:"), "PATHS: internal/pulse/wire.go, cmd/nova-pulse/lineup_cards.go,internal/pulse/lineup/*")
+	p, err := PlanCI(testCard("c.md", commas...))
+	if err != nil {
+		t.Fatalf("comma separated PATHS refused: %v", err)
+	}
+	want := []string{"./cmd/nova-pulse", "./internal/pulse", "./internal/pulse/lineup"}
+	if !reflect.DeepEqual(p.Packages, want) {
+		t.Fatalf("packages %v, want %v", p.Packages, want)
+	}
+}
+
 func TestCardChecksNameEachFailingCard(t *testing.T) {
 	cc := CardChecks{
 		Lint: func(c Card) (string, error) {

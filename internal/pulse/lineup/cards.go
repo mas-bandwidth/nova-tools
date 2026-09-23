@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // The four card checks, in the order they are run and printed.
@@ -141,7 +142,9 @@ func PlanCI(c Card) (CIPlan, error) {
 		return p, errors.New("no base-sha: line, so no sha for the ci card to start from")
 	}
 	paths, _ := HeaderValue(c.Raw, "PATHS")
-	fields := strings.Fields(paths)
+	// PATHS is written both ways on cards: space separated and comma separated
+	// ("PATHS: a.go, b.go"). Split on both so a trailing comma never hides a .go file.
+	fields := strings.FieldsFunc(paths, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
 	if len(fields) == 0 {
 		return p, errors.New("no PATHS: line, so the ci card has nothing to cover")
 	}

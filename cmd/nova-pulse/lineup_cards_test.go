@@ -22,7 +22,6 @@ func lineupCardText(name, model, noSubagents, paths string) string {
 		"LEG: go",
 		"REPO: mas-bandwidth/nova-tools",
 		"BASE: dev",
-		"base-repo: https://github.com/mas-bandwidth/nova-tools.git",
 		"base-sha: 09fbedc905218d5d4bdf5d039d0baff366ef2545",
 		"PATHS: " + paths,
 		"DONE-WHEN: `go test ./internal/pulse/ -run TestX` passes",
