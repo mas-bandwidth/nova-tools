@@ -112,6 +112,41 @@ func TestCardPushRefusesPrivateRepo(t *testing.T) {
 	assertPlace(t, ctx, client, f.label, true, false)
 }
 
+// TestPrivateRepoRedirectIsRefused is the negative control for a forge that
+// answers a private repository with 302 and a login page that returns 200.
+// Following that redirect would accept the page's 200 as a public repository.
+func TestPrivateRepoRedirectIsRefused(t *testing.T) {
+	ctx := context.Background()
+	client := newRedis(t)
+	var loginHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/acme/redirected":
+			http.Redirect(w, r, "/login", http.StatusFound)
+		case "/login":
+			loginHits++
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	f := validCard(srv.URL + "/acme/redirected.git")
+	f.label = "repo-redirect"
+	res := card.Push(ctx, client, sprint, f.render())
+	if res.Code != 2 || res.Stdout != "" || !strings.Contains(res.Stderr, "private repo acme/redirected") {
+		t.Fatalf("exit %d stdout %q stderr %q, want exit 2 and private repo acme/redirected", res.Code, res.Stdout, res.Stderr)
+	}
+	if strings.Contains(res.Stderr, "probe:") {
+		t.Fatalf("redirect classified as a probe failure, not private: %q", res.Stderr)
+	}
+	if loginHits != 0 {
+		t.Fatalf("privacy probe followed the redirect and read the login page (%d hits)", loginHits)
+	}
+	assertAbsent(t, ctx, client, f.label)
+}
+
 func TestDependentWaitsUntilParentMerged(t *testing.T) {
 	ctx := context.Background()
 	client := newRedis(t)

@@ -2,10 +2,12 @@
 // parent has landed.
 //
 // Push refuses, before any write, a card missing BASE, base-sha, PATHS,
-// DEPENDS-ON, or DONE-WHEN, and a card whose repository is private. A card
-// whose dependency is not landed is stored in the waiting set. Release moves
-// that card into the pool only after the dependency is landed, and leaves
-// every other waiting card where it is.
+// DEPENDS-ON, or DONE-WHEN, and a card whose repository is private. A
+// redirect is private: the page it names can be a login form that returns
+// 200, and that page is not the repository. A card whose dependency is not
+// landed is stored in the waiting set. Release moves that card into the pool
+// only after the dependency is landed, and leaves every other waiting card
+// where it is.
 package card
 
 import (
@@ -49,9 +51,16 @@ var (
 	shaRE    = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
-// probeClient is the unauthenticated repository check. A 404, 401, or 403 is
-// how a forge answers a private repository, and that is a refusal, not a pass.
-var probeClient = &http.Client{Timeout: 30 * time.Second}
+// probeClient is the unauthenticated repository check. It does not follow
+// redirects. A 404, 401, or 403 is how a forge answers a private repository.
+// A redirect to a login page is the same answer: that page returns 200, and
+// the default client would report the page instead of the repository.
+var probeClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 type cardDoc struct {
 	Label     string
@@ -222,8 +231,10 @@ type privateRepoError struct{ Name string }
 func (e *privateRepoError) Error() string { return "private repo " + e.Name }
 
 // probeRepo refuses a repository an unauthenticated request cannot read.
-// 404, 401, and 403 are private. Anything else that is not 200 is a probe
-// failure, which is also a refusal: an unread repository is not a public one.
+// 404, 401, and 403 are private. A redirect is private too: it is not the
+// repository, and following it can land on a login page that returns 200.
+// Anything else that is not 200 is a probe failure, which is also a refusal:
+// an unread repository is not a public one.
 func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 	if strings.TrimSpace(cloneURL) == "" {
 		return "", errors.New("missing base-repo")
@@ -242,14 +253,21 @@ func probeRepo(ctx context.Context, cloneURL string) (string, error) {
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	switch resp.StatusCode {
-	case http.StatusOK:
+	switch {
+	case resp.StatusCode == http.StatusOK:
 		return name, nil
-	case http.StatusNotFound, http.StatusUnauthorized, http.StatusForbidden:
+	case resp.StatusCode == http.StatusNotFound ||
+		resp.StatusCode == http.StatusUnauthorized ||
+		resp.StatusCode == http.StatusForbidden ||
+		isRedirect(resp.StatusCode):
 		return "", &privateRepoError{Name: name}
 	default:
 		return "", fmt.Errorf("probe: HTTP %d", resp.StatusCode)
 	}
+}
+
+func isRedirect(code int) bool {
+	return code >= 300 && code < 400
 }
 
 func repoProbeURL(cloneURL string) (string, string, error) {
