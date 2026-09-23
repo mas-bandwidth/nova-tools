@@ -58,6 +58,12 @@ type OkFriend struct {
 	Actor    string
 	Count    int64         // events per read; 0 means 100
 	Block    time.Duration // block of the first new-event read; 0 means 1 s
+	// RetryWait is Run's pause after a pass that left an event pending on a
+	// retryable error (ErrNoReaders, ErrReviewBlocked); it doubles on each
+	// consecutive retryable pass up to RetryMax and resets on a clean pass.
+	// 0 means 1 s; RetryMax 0 means 10 s.
+	RetryWait time.Duration
+	RetryMax  time.Duration
 	// CICut is called for every harvested card before its review transition.
 	// nil skips the cut (the ci verb, #2842, is not wired in yet).
 	CICut func(context.Context, CICut) error
@@ -65,6 +71,10 @@ type OkFriend struct {
 	// deliverHook runs on every delivered event before it is handled; a test
 	// returns an error to kill the instance between delivery and ack.
 	deliverHook func(redis.XMessage) error
+	// passHook runs after every pass Run makes; a test counts passes.
+	passHook func(error)
+	// pause waits d or until ctx ends; nil is a timer. A test injects it.
+	pause func(ctx context.Context, d time.Duration)
 }
 
 // ErrNoReaders keeps a harvested event pending: fewer UP eligible friends
@@ -120,17 +130,63 @@ func (o *OkFriend) Start(ctx context.Context) error {
 	}
 }
 
-// Run starts the consumer and passes until ctx ends.
+// Run starts the consumer and passes until ctx ends. A pass that leaves an
+// event pending on a retryable error is followed by a bounded backoff, so a
+// persistent BLOCKED or no-readers event is retried without a hot loop (a
+// pending event makes the next pass read without blocking).
 func (o *OkFriend) Run(ctx context.Context) error {
 	if err := o.Start(ctx); err != nil {
 		return err
 	}
+	var backoff time.Duration
 	for ctx.Err() == nil {
-		if _, err := o.Pass(ctx); err != nil && ctx.Err() == nil && !retryable(err) {
+		_, err := o.Pass(ctx)
+		if o.passHook != nil {
+			o.passHook(err)
+		}
+		if err == nil || ctx.Err() != nil {
+			backoff = 0
+			continue
+		}
+		if !retryable(err) {
 			return err
+		}
+		backoff = o.nextBackoff(backoff)
+		if o.pause != nil {
+			o.pause(ctx, backoff)
+			continue
+		}
+		timer := time.NewTimer(backoff)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
 	return nil
+}
+
+// nextBackoff doubles the previous retry pause, starting at RetryWait and
+// bounded by RetryMax.
+func (o *OkFriend) nextBackoff(prev time.Duration) time.Duration {
+	first, max := o.RetryWait, o.RetryMax
+	if first <= 0 {
+		first = time.Second
+	}
+	if max <= 0 {
+		max = 10 * time.Second
+	}
+	if max < first {
+		max = first
+	}
+	next := first
+	if prev > 0 {
+		next = 2 * prev
+	}
+	if next > max {
+		next = max
+	}
+	return next
 }
 
 // Pass handles this instance's pending entries from id 0, then drains new

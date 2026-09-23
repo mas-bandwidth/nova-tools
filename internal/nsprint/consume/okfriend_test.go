@@ -566,3 +566,86 @@ func TestOkFriendReviewConflictStaysHarvested(t *testing.T) {
 		t.Fatalf("pending = %d after the retry; want 0", pending.Count)
 	}
 }
+
+// TestOkFriendRunBacksOffOnBlocked: a persistent BLOCKED event keeps Run
+// retrying with a bounded backoff, not a hot loop. The event stays pending
+// and the card stays harvested for the whole run.
+func TestOkFriendRunBacksOffOnBlocked(t *testing.T) {
+	st, client := controlRedis(t)
+	ctx := context.Background()
+	sprint := "control-3052b0ff"
+	seedSprint(t, client, sprint)
+	ok := newConsumer(st, sprint, "okf-1")
+	must(t, ok.Start(ctx))
+
+	endCard(t, client, sprint, "card-6", "DONE", "done", "internal/x/d.go", "")
+	if _, err := ok.Pass(ctx); err != nil {
+		t.Fatalf("pass after ended: %v", err)
+	}
+	head := strings.Repeat("6", 40)
+	for _, f := range []string{"ctl-a", "ctl-b", "ctl-c"} {
+		id := task.ReviewID(ctlRepo, 106, head, f)
+		must(t, client.HSet(ctx, "s:"+sprint+":task:"+id, "kind", "review", "state", "open",
+			"payload_sha", "not-this-payload").Err())
+	}
+	harvestCard(t, client, sprint, "card-6", 106, head)
+
+	ok.RetryWait = time.Second
+	ok.RetryMax = 4 * time.Second
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Every pass is recorded with the pause that follows it (0 = none). The
+	// pause is injected, so the test has no wall-clock bound: the eighth pass
+	// cancels the run.
+	var passes []error
+	var pauses []time.Duration
+	ok.passHook = func(err error) {
+		passes = append(passes, err)
+		pauses = append(pauses, 0)
+		if len(passes) == 8 {
+			cancel()
+		}
+	}
+	ok.pause = func(_ context.Context, d time.Duration) { pauses[len(pauses)-1] = d }
+	if err := ok.Run(runCtx); err != nil {
+		t.Fatalf("Run with a persistent BLOCKED event = %v; want nil at ctx end", err)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 4 * time.Second,
+		4 * time.Second, 4 * time.Second, 4 * time.Second}
+	for i, err := range passes[:len(passes)-1] {
+		if !errors.Is(err, ErrReviewBlocked) {
+			t.Fatalf("pass %d = %v; want ErrReviewBlocked (the event retried)", i, err)
+		}
+		if pauses[i] != want[i] {
+			t.Fatalf("pauses after blocked passes %v; want %v (bounded backoff, never a hot loop)", pauses, want)
+		}
+	}
+	pending, err := client.XPending(ctx, "s:"+sprint+":log", GroupOkFriend).Result()
+	must(t, err)
+	if pending.Count != 1 {
+		t.Fatalf("pending = %d after Run; want the BLOCKED event retained", pending.Count)
+	}
+	if state, _ := client.HGet(ctx, "s:"+sprint+":card:card-6", "state").Result(); state != "harvested" {
+		t.Fatalf("card-6 state %q after Run; want harvested", state)
+	}
+	t.Logf("passes=%d pauses=%v", len(passes), pauses)
+}
+
+func TestOkFriendNextBackoffBounded(t *testing.T) {
+	o := &OkFriend{RetryWait: time.Second, RetryMax: 4 * time.Second}
+	var got []time.Duration
+	var d time.Duration
+	for i := 0; i < 5; i++ {
+		d = o.nextBackoff(d)
+		got = append(got, d)
+	}
+	want := []time.Duration{time.Second, 2 * time.Second, 4 * time.Second, 4 * time.Second, 4 * time.Second}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("backoff sequence %v; want %v", got, want)
+		}
+	}
+	if d := (&OkFriend{}).nextBackoff(0); d != time.Second {
+		t.Fatalf("default first backoff %v; want 1s", d)
+	}
+}
