@@ -891,6 +891,21 @@ func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "three field platform with an extra slash rejected",
+			out:  "nova-merge deadbeef1234 linux/amd64/extra\n",
+			want: "",
+		},
+		{
+			name: "three field platform with a repeated slash rejected",
+			out:  "nova-merge deadbeef1234 linux//amd64\n",
+			want: "",
+		},
+		{
+			name: "four token buildinfo line with an extra platform slash rejected",
+			out:  "nova-merge deadbeef1234 linux/amd64/extra go1.26.5\n",
+			want: "",
+		},
+		{
 			name: "four token buildinfo line from a different tool rejected",
 			out:  "nova-sandbox v0.17.0 linux/amd64 go1.26.5\n",
 			want: "",

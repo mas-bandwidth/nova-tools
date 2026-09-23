@@ -883,10 +883,13 @@ func isHex(s string) bool {
 // validPlatform reports whether s is a <goos>/<goarch> pair: two non-empty tokens either
 // side of exactly one slash, the same shape buildinfo.Parse requires of a version line's
 // third field. "Contains a slash" alone accepted diagnostics like a path fragment; this
-// requires both sides to actually be present the way a real platform token always is.
+// requires both sides to actually be present the way a real platform token always is,
+// and exactly one slash: `linux/amd64/extra` and `linux//amd64` are not a goos/goarch
+// pair (Stella's hold 7 on #2478 at f5fb27dc), so a goarch that itself contains a slash
+// is rejected.
 func validPlatform(s string) bool {
 	goos, goarch, found := strings.Cut(s, "/")
-	return found && goos != "" && goarch != ""
+	return found && goos != "" && goarch != "" && !strings.Contains(goarch, "/")
 }
 
 // BuildVersion reads the version token out of a `nova-merge version` output. It
@@ -915,7 +918,7 @@ func BuildVersion(out string) string {
 			continue
 		}
 		// The full buildinfo shape: <tool> <version> <goos>/<goarch> <go version> [k=v...]
-		if f, ok := buildinfo.Parse(line); ok && f.Tool == buildTool && IsValidBuildVersion(f.Version) {
+		if f, ok := buildinfo.Parse(line); ok && f.Tool == buildTool && validPlatform(f.Platform) && IsValidBuildVersion(f.Version) {
 			return f.Version
 		}
 		// The shorter standalone forms nova-merge falls back to when it has no
