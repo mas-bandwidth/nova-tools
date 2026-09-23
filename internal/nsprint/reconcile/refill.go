@@ -37,7 +37,11 @@ package reconcile
 //
 // Task and friend events (a friend slot freed, a friend's hello, a task
 // push) are route wakes, handed to Route; routing ready tasks to friends is
-// the route duty's, not this file's.
+// the route duty's, not this file's. Route wakes are acknowledged only after
+// Route succeeds, apart from the deal's: a failed Route leaves them pending
+// and the next pass hands them to Route again (RouteReplay) without waking
+// the deal, so a failed route is replayed and never lost, and the deal it
+// rode in with runs once.
 
 import (
 	"context"
@@ -77,6 +81,9 @@ type Wake struct {
 	Retry   bool // the previous deal pass failed
 	Deal    int  // events that free a bench slot or change eligibility
 	Route   int  // events for the route duty (friend and task)
+	// RouteReplay counts route events a failed Route left pending (or a dead
+	// instance left pending, claimed at restart), handed to Route again.
+	RouteReplay int
 	// Benches names each bench whose beat is present after it was absent.
 	Benches []string
 	Claimed int // entries a dead instance left pending, claimed at restart
@@ -108,6 +115,9 @@ func (w Wake) Why() string {
 	if w.Route > 0 {
 		p = append(p, fmt.Sprintf("route=%d", w.Route))
 	}
+	if w.RouteReplay > 0 {
+		p = append(p, fmt.Sprintf("route-replay=%d", w.RouteReplay))
+	}
 	return strings.Join(p, " ")
 }
 
@@ -117,8 +127,10 @@ type Refill struct {
 	// Deal is the deal pass. Fence is set from the lease each pass; a nil
 	// Source, Reserver, Row or Gate is filled with the Redis ones.
 	Deal *deal.Pass
-	// Route, when set, runs on a pass that saw route events; it returns the
-	// tasks it routed. Nil: route events are acknowledged and counted only.
+	// Route, when set, runs on a pass that saw route events or has route
+	// events a failed Route left pending; it returns the tasks it routed.
+	// Its events are acknowledged only when it returns nil. Nil: route
+	// events are acknowledged and counted only.
 	Route func(ctx context.Context, l *Lease, w Wake) (int, error)
 	// Sweep is the deal floor; DefaultSweep when zero.
 	Sweep time.Duration
@@ -142,7 +154,8 @@ type Refill struct {
 	up        map[string]bool     // bench -> beat present at the last pass
 	lastDeal  time.Time           // the last deal pass that succeeded
 	retry     bool                // the last deal pass failed
-	unacked   map[string][]string // stream -> wake ids read, not yet acked
+	unacked   map[string][]string // stream -> deal (and no-wake) ids read, not yet acked
+	routeIDs  map[string][]string // stream -> route ids read, not yet routed and acked
 	firstPass bool
 }
 
@@ -158,7 +171,7 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if r.instance != l.Instance() {
 		// A new instance: the state of the old one is not evidence.
 		r.instance = l.Instance()
-		r.groups, r.up, r.unacked = map[string]bool{}, nil, map[string][]string{}
+		r.groups, r.up, r.unacked, r.routeIDs = map[string]bool{}, nil, map[string][]string{}, map[string][]string{}
 		r.lastDeal, r.retry, r.firstPass = time.Time{}, false, true
 	}
 	consumer := r.consumer(l)
@@ -179,6 +192,9 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 		}
 		w.Claimed = n
 	}
+	// Route events still pending from a failed Route (or claimed at restart)
+	// are replayed to Route this pass; they do not wake the deal.
+	w.RouteReplay = pending(r.routeIDs)
 	w.Retry = r.retry
 	if !r.lastDeal.IsZero() && r.now().Sub(r.lastDeal) >= r.sweep() {
 		w.Sweep = true
@@ -189,7 +205,7 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	}
 	w.Benches = returned
 	block := time.Duration(-1)
-	if r.Block > 0 && !w.Dealing() {
+	if r.Block > 0 && !w.Dealing() && w.RouteReplay == 0 {
 		block = r.Block
 	}
 	if err := r.read(ctx, streams, consumer, block, &w); err != nil {
@@ -198,19 +214,25 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 
 	var c Counts
 	var errs []string
-	if w.Route > 0 && r.Route != nil {
+	// routed is true when the route events read so far may be acknowledged:
+	// Route ran and succeeded, or there is no Route to hand them to.
+	routed := true
+	if w.Route+w.RouteReplay > 0 && r.Route != nil {
 		n, err := r.Route(ctx, l, w)
 		if errors.Is(err, ErrFenced) {
 			return c, err
 		}
 		if err != nil {
+			// Keep the route events pending: the next pass replays them.
+			routed = false
 			errs = append(errs, "route: "+err.Error())
 		}
 		c.Routed += n
 	}
 	if !w.Dealing() {
-		// Only route events, or none: acknowledge them; nothing to deal.
-		if err := r.ack(ctx); err != nil {
+		// Only route events, or none: nothing to deal. Acknowledge the
+		// no-wake events, and the route events only if they were routed.
+		if err := r.ack(ctx, true, routed); err != nil {
 			errs = append(errs, "ack: "+err.Error())
 		}
 		return c, joinErrs(errs)
@@ -220,9 +242,15 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 		if errors.Is(err, deal.ErrFenced) || errors.Is(err, ErrFenced) {
 			return c, fmt.Errorf("refill: %w: %v", ErrFenced, err)
 		}
-		// Keep the wakes; the next pass deals again whatever it reads.
+		// Keep the deal wakes; the next pass deals again whatever it reads.
+		// Routed events are done with and acknowledged.
 		r.retry = true
 		errs = append(errs, "deal: "+err.Error())
+		if routed {
+			if err := r.ack(ctx, false, true); err != nil {
+				errs = append(errs, "ack: "+err.Error())
+			}
+		}
 		return c, joinErrs(errs)
 	}
 	r.retry, r.firstPass = false, false
@@ -231,7 +259,7 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if r.AfterDeal != nil {
 		r.AfterDeal(w, res)
 	}
-	if err := r.ack(ctx); err != nil {
+	if err := r.ack(ctx, true, routed); err != nil {
 		errs = append(errs, "ack: "+err.Error())
 	}
 	return c, joinErrs(errs)
@@ -343,7 +371,7 @@ func (r *Refill) claim(ctx context.Context, streams []string, consumer string) (
 				return n, fmt.Errorf("%s: %w", s, err)
 			}
 			for _, m := range msgs {
-				r.unacked[s] = append(r.unacked[s], m.ID)
+				r.keep(s, m, r.actor())
 			}
 			n += len(msgs)
 			if next == "" || next == "0-0" {
@@ -402,8 +430,7 @@ func (r *Refill) read(ctx context.Context, streams []string, consumer string, bl
 	}
 	for _, s := range res {
 		for _, m := range s.Messages {
-			r.unacked[s.Stream] = append(r.unacked[s.Stream], m.ID)
-			switch Classify(s.Stream, m.Values, r.actor()) {
+			switch r.keep(s.Stream, m, r.actor()) {
 			case WakeDeal:
 				w.Deal++
 			case WakeRoute:
@@ -414,21 +441,57 @@ func (r *Refill) read(ctx context.Context, streams []string, consumer string, bl
 	return nil
 }
 
-// ack acknowledges every wake read since the last ack, one pipelined round.
-func (r *Refill) ack(ctx context.Context) error {
-	if len(r.unacked) == 0 {
+// keep holds one read or claimed entry until it may be acknowledged: a route
+// wake until Route succeeds, anything else until the deal it woke (or the
+// pass that had nothing to deal) is done. It returns the entry's class.
+func (r *Refill) keep(stream string, m redis.XMessage, actor string) string {
+	class := Classify(stream, m.Values, actor)
+	if class == WakeRoute {
+		r.routeIDs[stream] = append(r.routeIDs[stream], m.ID)
+	} else {
+		r.unacked[stream] = append(r.unacked[stream], m.ID)
+	}
+	return class
+}
+
+func pending(ids map[string][]string) int {
+	n := 0
+	for _, v := range ids {
+		n += len(v)
+	}
+	return n
+}
+
+// ack acknowledges, in one pipelined round, the deal and no-wake entries
+// held since the last ack (when deals) and the route entries (when routes).
+func (r *Refill) ack(ctx context.Context, deals, routes bool) error {
+	var sets []map[string][]string
+	if deals && pending(r.unacked) > 0 {
+		sets = append(sets, r.unacked)
+	}
+	if routes && pending(r.routeIDs) > 0 {
+		sets = append(sets, r.routeIDs)
+	}
+	if len(sets) == 0 {
 		return nil
 	}
 	pipe := r.Client.Pipeline()
-	for s, ids := range r.unacked {
-		if len(ids) > 0 {
-			pipe.XAck(ctx, s, Group, ids...)
+	for _, set := range sets {
+		for s, ids := range set {
+			if len(ids) > 0 {
+				pipe.XAck(ctx, s, Group, ids...)
+			}
 		}
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
-	r.unacked = map[string][]string{}
+	if deals {
+		r.unacked = map[string][]string{}
+	}
+	if routes {
+		r.routeIDs = map[string][]string{}
+	}
 	return nil
 }
 

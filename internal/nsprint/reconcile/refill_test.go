@@ -482,3 +482,147 @@ func TestRefillBlockWakesOnEvent(t *testing.T) {
 		t.Fatalf("working %d, want min(slots 2, 1 + open 1) = 2", n)
 	}
 }
+
+// routeEvent writes one task event on the sprint log: a route wake.
+func routeEvent(t *testing.T, c *redis.Client, sprint, id string) {
+	t.Helper()
+	if err := c.XAdd(context.Background(), &redis.XAddArgs{Stream: "s:" + sprint + ":log", Values: []string{
+		"kind", "task push", "id", id, "actor", "ctl-rowan"}}).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// groupPending is the reconciler group's pending count on one stream.
+func groupPending(t *testing.T, c *redis.Client, stream string) int64 {
+	t.Helper()
+	p, err := c.XPending(context.Background(), stream, reconcile.Group).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p.Count
+}
+
+// TestRefillFailedRouteReplayedOnceDealt (Stella's hold at 30435ad2): a route
+// event whose Route fails is not acknowledged, on the no-deal branch or the
+// deal branch; the next pass replays it to Route and acknowledges it only
+// then; and the replay never wakes the deal again, so the deal the event rode
+// in with ran exactly once.
+func TestRefillFailedRouteReplayedOnceDealt(t *testing.T) {
+	st, c := controlRedis(t)
+	ctx := context.Background()
+	const bench, S, slots = "ctl-route", "control-2935f00d", 2
+	seedBench(t, c, bench, slots)
+	seedSprint(t, c, S, 1, 4)
+	sprintLog := "s:" + S + ":log"
+	l, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "ctl-host"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dialer := &fakeDialer{}
+	src := &countingSource{inner: deal.RedisSource{Client: c}}
+	var routes []reconcile.Wake
+	fail := false
+	rf := &reconcile.Refill{
+		Client: c,
+		Deal:   &deal.Pass{Source: src, Dialer: dialer},
+		Now:    frozenClock{time.Unix(1_800_000_000, 0)}.Now,
+		Route: func(_ context.Context, _ *reconcile.Lease, w reconcile.Wake) (int, error) {
+			routes = append(routes, w)
+			if fail {
+				return 0, fmt.Errorf("fixture route refused")
+			}
+			return w.Route + w.RouteReplay, nil
+		},
+	}
+	lp := &reconcile.Loop{Lease: l, Duties: []reconcile.Duty{rf.Run}}
+	pass := func(wantErr bool) reconcile.PassResult {
+		t.Helper()
+		res, err := lp.Pass(ctx)
+		if err != nil {
+			t.Fatalf("pass: %v", err)
+		}
+		if got := res.Err != ""; got != wantErr {
+			t.Fatalf("pass recorded err %q, want an error: %v", res.Err, wantErr)
+		}
+		return res
+	}
+
+	pass(false) // restart: deals the bench full
+	if n := leased(t, c, bench); n != slots {
+		t.Fatalf("restart: working %d, want %d", n, slots)
+	}
+
+	// No-deal branch: one route event, Route fails. Not acknowledged.
+	fail = true
+	routeEvent(t, c, S, "task-a")
+	reads := src.reads()
+	pass(true)
+	if len(routes) != 1 || routes[0].Route != 1 {
+		t.Fatalf("route calls %+v, want one with route=1", routes)
+	}
+	if src.reads() != reads {
+		t.Fatal("a route-only pass ran the deal")
+	}
+	if p := groupPending(t, c, sprintLog); p != 1 {
+		t.Fatalf("after a failed route: %d pending on %s, want 1 (the failed route event kept)", p, sprintLog)
+	}
+
+	// Next pass, no new event: the failed route is replayed and, routed,
+	// acknowledged; the replay does not wake the deal.
+	fail = false
+	pass(false)
+	if len(routes) != 2 || routes[1].RouteReplay != 1 || routes[1].Route != 0 {
+		t.Fatalf("route calls %+v, want the second a replay of 1", routes)
+	}
+	if src.reads() != reads {
+		t.Fatal("the route replay ran the deal")
+	}
+	if p := groupPending(t, c, sprintLog); p != 0 {
+		t.Fatalf("after the replay routed: %d pending, want 0", p)
+	}
+	pass(false)
+	if len(routes) != 2 {
+		t.Fatalf("an acknowledged route was replayed again: %+v", routes)
+	}
+
+	// Deal branch: a route event and a child's end in one pass, Route fails.
+	// The deal runs once and its wakes are acknowledged; the route event is
+	// kept. The next pass replays the route only: nothing is dealt twice.
+	fail = true
+	routeEvent(t, c, S, "task-b")
+	childDone(t, c, bench, starting(t, c, bench)[0])
+	_, launchedBefore := dialer.count(bench)
+	p := pass(true)
+	if p.Counts.Dealt != 1 || src.reads() != reads+1 {
+		t.Fatalf("deal-branch pass: dealt %d, deal reads %d, want 1 and 1", p.Counts.Dealt, src.reads()-reads)
+	}
+	if n := groupPending(t, c, "cap:log"); n != 0 {
+		t.Fatalf("the deal's cap:log wake still pending (%d) after the deal succeeded", n)
+	}
+	if n := groupPending(t, c, sprintLog); n != 1 {
+		t.Fatalf("after a failed route on the deal branch: %d pending on %s, want 1 (the route event)", n, sprintLog)
+	}
+	fail = false
+	p = pass(false)
+	if last := routes[len(routes)-1]; last.RouteReplay != 1 {
+		t.Fatalf("replay %+v, want route-replay=1", last)
+	}
+	if p.Counts.Dealt != 0 || src.reads() != reads+1 {
+		t.Fatalf("the replay pass dealt %d (deal reads %d): the card must be dealt exactly once", p.Counts.Dealt, src.reads()-reads)
+	}
+	if n := groupPending(t, c, sprintLog); n != 0 {
+		t.Fatalf("after the replay routed: %d pending on %s, want 0", n, sprintLog)
+	}
+	_, lines := dialer.count(bench)
+	if lines != launchedBefore+1 || lines != slots+1 {
+		t.Fatalf("launch lines %d, want %d: every card dealt exactly once", lines, slots+1)
+	}
+	seen := map[string]bool{}
+	for _, ln := range dialer.lines[bench] {
+		f := strings.Fields(ln)
+		if len(f) < 3 || f[2] != "1" || seen[f[1]] {
+			t.Fatalf("launch line %q: a card dealt twice or past attempt 1: %v", ln, dialer.lines[bench])
+		}
+		seen[f[1]] = true
+	}
+}
