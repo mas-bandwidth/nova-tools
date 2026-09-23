@@ -273,7 +273,7 @@ func TestControl08NoSecondPR(t *testing.T) {
 	forge := newFakeForge(t)
 	forge.crashAfterOpen.Store(true) // the reply is lost after the PR exists
 	host := reconcile.RESTPRHost{BaseURL: forge.srv.URL, Token: "t"}
-	req := reconcile.PRRequest{Sprint: sprint, Repo: repo, Branch: branch, Base: "dev", Title: "c8", Who: "harvest-a"}
+	req := reconcile.PRRequest{Sprint: sprint, Repo: repo, Branch: branch, Base: "dev", Title: "c8", Who: "harvest-a", Fence: fence}
 
 	if _, err := reconcile.EnsurePR(ctx, st, host, req); err == nil {
 		t.Fatal("the crashed open reported success")
@@ -316,6 +316,75 @@ func TestControl08NoSecondPR(t *testing.T) {
 	first, err := reconcile.EnsurePR(ctx, st, host, req2)
 	if err != nil || !first.Opened || forge.opens.Load() != 2 {
 		t.Fatalf("clean open: %+v %v opens=%d", first, err, forge.opens.Load())
+	}
+
+	// A stale reconciler writes no idem key and asks the forge nothing.
+	idem := card.IdemKey(sprint)
+	before := hashAll(t, ctx, client, idem)
+	calls = forge.calls.Load()
+	stale := req
+	stale.Branch, stale.Fence = "nova/control-08a0b1c2/c8c-a1", "rc-0.old"
+	if _, err := reconcile.EnsurePR(ctx, st, host, stale); err == nil || !strings.Contains(err.Error(), "FENCED") {
+		t.Fatalf("stale fence ensure pr: err = %v, want FENCED", err)
+	}
+	if forge.calls.Load() != calls {
+		t.Fatalf("stale fence asked the forge: calls %d -> %d", calls, forge.calls.Load())
+	}
+	sameHash(t, "stale ensure pr", before, hashAll(t, ctx, client, idem))
+	// Each function refuses on its own: begin, and commit over a pending key.
+	pendingKey := reconcile.PRKey(repo, "nova/control-08a0b1c2/c8d-a1")
+	if got := fcall(t, ctx, client, "ns_idem_begin", sprint, pendingKey, "harvest-c", "rc-0.old"); got != "3|FENCED||" {
+		t.Fatalf("stale ns_idem_begin = %q, want 3|FENCED||", got)
+	}
+	sameHash(t, "stale begin", before, hashAll(t, ctx, client, idem))
+	if got := fcall(t, ctx, client, "ns_idem_begin", sprint, pendingKey, "harvest-c", fence); got != "0|BEGUN||" {
+		t.Fatalf("ns_idem_begin = %q, want 0|BEGUN||", got)
+	}
+	before = hashAll(t, ctx, client, idem)
+	logLen := xlen(t, ctx, client, sprint)
+	if got := fcall(t, ctx, client, "ns_idem_commit", sprint, pendingKey, forge.url(9), "harvest-c", "pr-found", "rc-0.old"); got != "3|FENCED||" {
+		t.Fatalf("stale ns_idem_commit = %q, want 3|FENCED||", got)
+	}
+	sameHash(t, "stale commit", before, hashAll(t, ctx, client, idem))
+	if n := xlen(t, ctx, client, sprint); n != logLen {
+		t.Fatalf("stale commit wrote a receipt: log %d -> %d", logLen, n)
+	}
+	// A missing lease fences even the last good token.
+	must(t, client.HDel(ctx, "lease:reconciler", "token").Err())
+	if got := fcall(t, ctx, client, "ns_idem_commit", sprint, pendingKey, forge.url(9), "harvest-c", "pr-found", fence); got != "3|FENCED||" {
+		t.Fatalf("no-lease ns_idem_commit = %q, want 3|FENCED||", got)
+	}
+	if got := fcall(t, ctx, client, "ns_idem_begin", sprint, reconcile.PRKey(repo, "nova/control-08a0b1c2/c8e-a1"), "harvest-c", fence); got != "3|FENCED||" {
+		t.Fatalf("no-lease ns_idem_begin = %q, want 3|FENCED||", got)
+	}
+	sameHash(t, "no lease", before, hashAll(t, ctx, client, idem))
+}
+
+// fcall calls one loaded nova_sprint function directly (the Go wrappers have
+// loaded the library by the time a control uses it).
+func fcall(t *testing.T, ctx context.Context, client *redis.Client, name string, args ...any) string {
+	t.Helper()
+	out, err := client.FCall(ctx, name, nil, args...).Text()
+	must(t, err)
+	return out
+}
+
+func hashAll(t *testing.T, ctx context.Context, client *redis.Client, key string) map[string]string {
+	t.Helper()
+	h, err := client.HGetAll(ctx, key).Result()
+	must(t, err)
+	return h
+}
+
+func sameHash(t *testing.T, what string, want, got map[string]string) {
+	t.Helper()
+	if len(want) != len(got) {
+		t.Fatalf("%s: idem hash changed: %d fields -> %d (%v)", what, len(want), len(got), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("%s: idem %s changed: %q -> %q", what, k, v, got[k])
+		}
 	}
 }
 

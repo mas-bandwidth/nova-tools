@@ -102,6 +102,7 @@ type PRRequest struct {
 	Title  string
 	Body   string
 	Who    string // the harvest worker instance, recorded while the open is pending
+	Fence  string // the reconciler lease token; a stale one writes no idem key
 }
 
 // PRResult is the recorded PR. Opened is true only when this call opened it.
@@ -119,13 +120,16 @@ func PRKey(repo, branch string) string { return "pr:" + repo + ":" + branch }
 // URL after it. A key that is already a URL returns it. A pending key (a crash
 // after the forge opened the PR and before its URL was recorded) and a fresh
 // key both look up an open PR on the branch by REST first: found, record it;
-// absent, open once. A second PR is never opened (control 8).
+// absent, open once. A second PR is never opened (control 8). Both idem
+// calls carry req.Fence: a stale or missing reconciler token is refused
+// (FENCED) before the idem hash is read or written, and before the forge is
+// asked anything.
 func EnsurePR(ctx context.Context, st *store.Store, host PRHost, req PRRequest) (PRResult, error) {
 	if host == nil || req.Repo == "" || req.Branch == "" || req.Who == "" {
 		return PRResult{}, errors.New("ensure pr: host, repo, branch and who are required")
 	}
 	key := PRKey(req.Repo, req.Branch)
-	begun, err := call(ctx, st, "pr open", key, "ns_idem_begin", req.Sprint, key, req.Who)
+	begun, err := call(ctx, st, "pr open", key, "ns_idem_begin", req.Sprint, key, req.Who, req.Fence)
 	if err != nil {
 		return PRResult{}, err
 	}
@@ -146,7 +150,7 @@ func EnsurePR(ctx context.Context, st *store.Store, host PRHost, req PRRequest) 
 		}
 		reason, opened = "pr-opened", true
 	}
-	done, err := call(ctx, st, "pr open", key, "ns_idem_commit", req.Sprint, key, found, req.Who, reason)
+	done, err := call(ctx, st, "pr open", key, "ns_idem_commit", req.Sprint, key, found, req.Who, reason, req.Fence)
 	if err != nil {
 		return PRResult{}, err
 	}

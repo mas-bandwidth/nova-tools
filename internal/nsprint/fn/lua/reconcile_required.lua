@@ -154,9 +154,12 @@ end)
 -- create-only. Returns the stored value when the key already exists: a URL
 -- (done), or pending:<who> (a crash between the effect and its record, which
 -- the caller must resolve by lookup, never by a second effect).
--- args: sprint, key, who
+-- Fenced like every function here: a stale or missing reconciler token
+-- refuses before the idem hash is read or written.
+-- args: sprint, key, who, reconciler token
 redis.register_function('ns_idem_begin', function(keys, args)
-  local S, key, who = args[1], args[2], args[3] or ''
+  local S, key, who, rtoken = args[1], args[2], args[3] or '', args[4] or ''
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
   if key == '' or who == '' then return rr_reply(1, 'USAGE', '', '') end
   local idem = 's:' .. S .. ':idem'
   local prev = rr_get(idem, key)
@@ -167,9 +170,12 @@ end)
 
 -- ns_idem_commit: record the effect's result once, with one receipt.
 -- The same value again returns the stored receipt; a different value is 4.
--- args: sprint, key, value, actor, reason
+-- A stale or missing reconciler token refuses before any read or write.
+-- args: sprint, key, value, actor, reason, reconciler token
 redis.register_function('ns_idem_commit', function(keys, args)
   local S, key, value, actor, reason = args[1], args[2], args[3] or '', args[4] or '', args[5] or ''
+  local rtoken = args[6] or ''
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
   if key == '' or value == '' or string.sub(value, 1, 8) == 'pending:' then return rr_reply(1, 'USAGE', '', '') end
   local idem = 's:' .. S .. ':idem'
   local prev = rr_get(idem, key)
