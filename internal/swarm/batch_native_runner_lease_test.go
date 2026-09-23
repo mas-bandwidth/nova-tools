@@ -89,7 +89,7 @@ func TestBatchNativeRunnerWithSlotsStoreStillRuns(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
 		ID: "with-store", Deadline: 30 * time.Second, Cards: cards, Root: dir,
-		Runner: named, SlotsStore: store, SlotOwner: owner,
+		Runner: named, SlotsStore: store, SlotOwner: owner, Tokens: "unmetered",
 		Stdout: &out, Stderr: &errb,
 	})
 	if strings.Contains(errb.String(), NoSlotsStoreRefusal) {
