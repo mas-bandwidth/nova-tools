@@ -135,6 +135,8 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	secrets := fs.Bool("secrets", false, "secrets are touched")
 	freshTake := fs.Bool("fresh-take", false, "this wants a fresh take: a design with one author")
 	deadline := fs.String("deadline", "", "the deadline, as a duration such as 45m")
+	cardPath := fs.String("card", "", "the card file: its work type is classified (the rules first, Jev only where no rule fires) and WORKTYPE: and ROUTE: jev= are written onto it")
+	allowedPath := fs.String("allowed-routes", "", "with --card: allowed_routes, a JSON object of work type to route list; the WORKTYPE: line carries allowed_routes[type]")
 	attempts := &stringList{}
 	fs.Var(attempts, "attempt", "a prior attempt as rung:outcome[:reason]; outcome is "+strings.Join(attemptOutcomes(), " | ")+"; repeatable, in order")
 	touches := &stringList{}
@@ -189,6 +191,27 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "ROUTE", "no-accounting", fmt.Sprintf(
 				"a jev call must be accounted for: %s missing; pass %s, or --no-jev to answer by the rules alone with no call to account for",
 				strings.Join(missing, " and "), remedyFor(missing)))
+		}
+	}
+	// The card is read and allowed_routes loaded BEFORE any call: a card that
+	// cannot be read or stamped is refused with nothing spent on it.
+	var card string
+	var allowed decide.WorkTypeRoutes
+	if set["allowed-routes"] && !set["card"] {
+		return refuse(stderr, "ROUTE", "bad-flags", "--allowed-routes is read for a card's work type; pass --card, or drop --allowed-routes")
+	}
+	if set["card"] {
+		raw, err := os.ReadFile(*cardPath)
+		if err != nil {
+			return refuse(stderr, "ROUTE", "bad-card", fmt.Sprintf("cannot read the card: %s", oneline.Err(err)))
+		}
+		card = string(raw)
+		if set["allowed-routes"] {
+			loaded, err := decide.LoadWorkTypeRoutes(*allowedPath)
+			if err != nil {
+				return refuse(stderr, "ROUTE", "bad-allowed-routes", oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+			allowed = loaded
 		}
 	}
 	unit, code := buildUnit(*unitPath, set, stderr, decide.Unit{
@@ -296,7 +319,34 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	if persisted != nil {
 		return refuse(stderr, "ROUTE", "bad-record", oneline.Cap(persisted.Error(), oneline.TailBytes))
 	}
+	// THE WORK TYPE ON THE CARD (#2943). The rules read the card with no call;
+	// Jev is asked only where no rule fires, and that call is accounted for
+	// like the route's own. Both lines go onto the card, where the router and
+	// every reader after it read them instead of inferring.
+	var cardLines []string
+	if set["card"] {
+		var d decide.Decider
+		if ask {
+			d = client
+		}
+		wt, err := decide.ClassifyWorkType(context.Background(), d, card)
+		if err != nil {
+			return refuse(stderr, "ROUTE", "bad-card", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		if wt.Usage.Calls > 0 && strings.TrimSpace(*usagePath) != "" {
+			if err := appendUsage(*usagePath, decide.RouteResult{Unit: unit.ID, Usage: wt.Usage}, unit, reg, stderr); err != nil {
+				return refuse(stderr, "ROUTE", "bad-record", "usage: "+oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+		}
+		cardLines = decide.WorkTypeCardLines(wt, res, reg, allowed)
+		if err := os.WriteFile(*cardPath, []byte(decide.StampCard(card, cardLines)), 0o644); err != nil {
+			return refuse(stderr, "ROUTE", "bad-card", fmt.Sprintf("cannot write the card: %s", oneline.Err(err)))
+		}
+	}
 	fmt.Fprintln(stdout, res.Line())
+	for _, line := range cardLines {
+		fmt.Fprintln(stdout, line)
+	}
 	// THE COORDINATOR'S LINE (Glenn 2026-09-19). The decision line above is
 	// the machine's, with every field a gate needs on it. This one is for a
 	// person -- or for the coordinator about to spawn a child -- and it says
