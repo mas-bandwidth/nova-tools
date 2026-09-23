@@ -97,6 +97,11 @@ type PRView struct {
 	RedRuns      int     // red head runs in the last day
 	AgeHours     float64 // how long the PR has been open
 	GroupFailed  bool    // a group this PR joined failed before
+	// HistoryKnown says RedRuns and GroupFailed were observed. GHSource does not
+	// observe them (gh pr view names neither), so it leaves this false and the
+	// ordering question says unknown rather than sending a default zero/false
+	// as if it were history.
+	HistoryKnown bool
 }
 
 // PRSource answers what a pull request looks like right now. The real one runs gh; a test
@@ -117,7 +122,7 @@ type SweepInput struct {
 	Source   PRSource
 	Enqueuer Enqueuer
 	Scorer   Scorer  // nil leaves the enqueue order exactly as it was
-	Floor    float64 // the ordering score's floor; 0 is DefaultOrderFloor
+	Floor    float64 // the ordering score's floor in [0,1]; 0 is honored (every answer stands); negative or NaN is DefaultOrderFloor
 	Now      func() time.Time
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -205,25 +210,31 @@ func Sweep(in SweepInput) int {
 	// #896: order the whole batch once, then enqueue. With no Scorer the batch
 	// keeps the sweep's existing order, so the fallback path is untouched.
 	if in.Scorer != nil && len(batch) > 0 {
-		floor := in.Floor
-		if floor <= 0 {
-			floor = DefaultOrderFloor
-		}
-		batch = scoreBatch(batch, in.Scorer, floor, in.Stdout)
+		batch = scoreBatch(batch, in.Scorer, orderFloor(in.Floor), in.Stdout)
 	}
 	for i := range batch {
 		c := &batch[i]
 		if err := in.Enqueuer.Enqueue(in.Repo, c.row.PR); err != nil {
+			c.outcome = "enqueue-failed"
 			unread++
 			continue
 		}
+		c.outcome = "enqueued"
 		enqueued++
 		marks = append(marks, mark(c.row, stamp, c.row.ClosedAt, c.row.Verdict))
 	}
-
 	if err := AppendLedger(in.Queue, marks...); err != nil {
 		fmt.Fprintf(in.Stderr, "SWEEP REFUSED: %s (fix the ledger under %s, then sweep again)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
+	}
+
+	// Every scored decision is kept with its outcome and the usage the provider
+	// reported: one durable row per attempted call, beside the ledger.
+	if in.Scorer != nil {
+		if err := AppendOrderRecords(in.Queue, stamp, batch); err != nil {
+			fmt.Fprintf(in.Stderr, "SWEEP REFUSED: %s (fix %s under %s, then sweep again)\n", oneline.Err(err), orderFileName, oneline.Field(in.Queue))
+			return 2
+		}
 	}
 
 	fmt.Fprintf(in.Stdout, "SWEEP repo=%s open=%d seeded=%d enqueued=%d stale=%d closed=%d held=%d pending=%d red=%d unread=%d\n",

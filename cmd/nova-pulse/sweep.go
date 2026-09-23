@@ -7,6 +7,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,7 +37,7 @@ func cmdSweep(args []string, stdout, stderr io.Writer) int {
 	if *timeout < 1 {
 		f.add(fmt.Sprintf("--timeout wants a whole number of seconds, got %d", *timeout))
 	}
-	if *floor < 0 || *floor > 1 {
+	if math.IsNaN(*floor) || *floor < 0 || *floor > 1 {
 		f.add(fmt.Sprintf("--floor is the ordering score's floor in [0,1], got %v", *floor))
 	}
 	if f.refused(stderr) {

@@ -7,10 +7,14 @@ package pulse
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -38,7 +42,7 @@ func (f *orderFakeDecider) Decide(ctx context.Context, state string, qs map[stri
 	if f.err != nil {
 		return nil, decide.Usage{}, f.err
 	}
-	return map[string]decide.Answer{"land": f.reply[prFromState(state)]}, decide.Usage{InputTokens: 1, OutputTokens: 1}, nil
+	return map[string]decide.Answer{"land": f.reply[prFromState(state)]}, decide.Usage{InputTokens: 1, OutputTokens: 1, HasInput: true, HasOutput: true}, nil
 }
 
 func prFromState(state string) int {
@@ -62,9 +66,9 @@ func orderFixture(t *testing.T) (string, *fakeSource, *fakeEnqueuer) {
 		LedgerRow{PR: 9, Head: "h9", Card: "card-9.md", Verdict: "APPROVE", At: "2026-09-16T17:00:00Z"},
 	)
 	src := &fakeSource{calls: map[int]int{}, views: map[int][]PRView{
-		7: {{State: "OPEN", Head: "h7", Checks: green(), ChangedFiles: 1, Additions: 120, Deletions: 60, Packages: []string{"cmd/nova-pulse"}, RedRuns: 2, AgeHours: 40, GroupFailed: true}},
-		8: {{State: "OPEN", Head: "h8", Checks: green(), ChangedFiles: 3, Additions: 40, Deletions: 8, Packages: []string{"internal/pulse"}, RedRuns: 0, AgeHours: 5.5, GroupFailed: false}},
-		9: {{State: "OPEN", Head: "h9", Checks: green(), ChangedFiles: 20, Additions: 900, Deletions: 400, Packages: []string{"internal/pulse", "cmd/nova-pulse", "internal/merge"}, RedRuns: 7, AgeHours: 200, GroupFailed: true}},
+		7: {{State: "OPEN", Head: "h7", Checks: green(), ChangedFiles: 1, Additions: 120, Deletions: 60, Packages: []string{"cmd/nova-pulse"}, RedRuns: 2, AgeHours: 40, GroupFailed: true, HistoryKnown: true}},
+		8: {{State: "OPEN", Head: "h8", Checks: green(), ChangedFiles: 3, Additions: 40, Deletions: 8, Packages: []string{"internal/pulse"}, RedRuns: 0, AgeHours: 5.5, GroupFailed: false, HistoryKnown: true}},
+		9: {{State: "OPEN", Head: "h9", Checks: green(), ChangedFiles: 20, Additions: 900, Deletions: 400, Packages: []string{"internal/pulse", "cmd/nova-pulse", "internal/merge"}, RedRuns: 7, AgeHours: 200, GroupFailed: true, HistoryKnown: true}},
 	}}
 	return queue, src, &fakeEnqueuer{}
 }
@@ -231,5 +235,124 @@ func TestSweepAsksTheJevProviderOverHTTP(t *testing.T) {
 	}
 	if len(enq.calls) != 3 || enq.calls[0] != 8 || enq.calls[1] != 7 || enq.calls[2] != 9 {
 		t.Fatalf("enqueue order over HTTP = %v, want [8 7 9]", enq.calls)
+	}
+}
+
+// Stella's hold on #1150: an explicit --floor 0 is honored (every answer
+// stands), not replaced by the default 0.9. The control: with the old
+// "Floor<=0 means default" rule these confidence-0.10 answers fall below 0.9
+// and the order would be [7 8 9].
+func TestSweepExplicitZeroFloorIsHonored(t *testing.T) {
+	queue, src, enq := orderFixture(t)
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
+		7: {Type: "score", Score: 0.50, Confidence: 0.10},
+		8: {Type: "score", Score: 0.95, Confidence: 0.10},
+		9: {Type: "score", Score: 0.05, Confidence: 0.10},
+	}}
+	code, out, errs := sweepWithScorer(t, queue, src, enq, fake, 0, time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC))
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if len(enq.calls) != 3 || enq.calls[0] != 8 || enq.calls[1] != 7 || enq.calls[2] != 9 {
+		t.Fatalf("enqueue order at floor 0 = %v, want [8 7 9] (an explicit zero floor lets every answer stand)", enq.calls)
+	}
+	if !strings.Contains(out, "ORDER pr=8 score=0.95 conf=0.10 floor=0.00") || strings.Contains(out, "below=") {
+		t.Errorf("floor 0 output wrong:\n%s", out)
+	}
+}
+
+// Stella's hold on #1150: a NaN confidence (or score) never passes the floor;
+// NaN compares false both ways, so a bare "conf < floor" check would let it by.
+func TestSweepNaNAnswerFallsBelowTheFloor(t *testing.T) {
+	queue, src, enq := orderFixture(t)
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
+		7: {Type: "score", Score: 0.10, Confidence: math.NaN()},
+		8: {Type: "score", Score: math.NaN(), Confidence: 0.99},
+		9: {Type: "score", Score: 0.99, Confidence: math.NaN()},
+	}}
+	code, out, errs := sweepWithScorer(t, queue, src, enq, fake, 0.9, time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC))
+	if code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	if len(enq.calls) != 3 || enq.calls[0] != 7 || enq.calls[1] != 8 || enq.calls[2] != 9 {
+		t.Fatalf("enqueue order with NaN answers = %v, want [7 8 9] (NaN is below the floor)", enq.calls)
+	}
+	if strings.Count(out, "below=land") != 3 || strings.Contains(out, "NaN") {
+		t.Errorf("every NaN answer should print below=land with no NaN:\n%s", out)
+	}
+}
+
+func TestOrderFloorResolves(t *testing.T) {
+	for _, c := range []struct{ in, want float64 }{
+		{0, 0}, {0.5, 0.5}, {1, 1}, {-1, DefaultOrderFloor}, {math.NaN(), DefaultOrderFloor}, {2, DefaultOrderFloor}, {math.Inf(1), DefaultOrderFloor},
+	} {
+		if got := orderFloor(c.in); got != c.want {
+			t.Errorf("orderFloor(%v) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// Stella's hold on #1150: GHSource does not observe red head runs or past group
+// failures, so a view that did not observe them sends "unknown", never a
+// default 0/false dressed as history.
+func TestOrderStateSaysUnknownForUnobservedHistory(t *testing.T) {
+	st := orderState(orderFeatures(orderCandidate{row: LedgerRow{PR: 4}, view: PRView{ChangedFiles: 2, AgeHours: 3}}))
+	for _, want := range []string{"red_head_runs_24h=unknown", "group_failed_before=unknown"} {
+		if !strings.Contains(st, want) {
+			t.Errorf("state %q missing %q", st, want)
+		}
+	}
+	st = orderState(orderFeatures(orderCandidate{row: LedgerRow{PR: 4}, view: PRView{HistoryKnown: true}}))
+	for _, want := range []string{"red_head_runs_24h=0", "group_failed_before=false"} {
+		if !strings.Contains(st, want) {
+			t.Errorf("observed state %q missing %q", st, want)
+		}
+	}
+}
+
+// Stella's hold on #1150: every attempted ordering call is accounted for in
+// <queue>/order.tsv with its answer, the provider's reported usage and the
+// sweep's outcome; a failed call is recorded too, with "-" for usage the
+// provider never reported (nothing is not zero).
+func TestSweepRecordsEveryOrderDecision(t *testing.T) {
+	queue, src, enq := orderFixture(t)
+	fake := &orderFakeDecider{reply: map[int]decide.Answer{
+		7: {Type: "score", Score: 0.50, Confidence: 0.95},
+		8: {Type: "score", Score: 0.95, Confidence: 0.95},
+		9: {Type: "score", Score: 0.05, Confidence: 0.95},
+	}}
+	if code, _, errs := sweepWithScorer(t, queue, src, enq, fake, 0.9, time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC)); code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	raw, err := os.ReadFile(filepath.Join(queue, orderFileName))
+	if err != nil {
+		t.Fatalf("order record: %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	if len(lines) != 4 || lines[0]+"\n" != orderHeader {
+		t.Fatalf("order.tsv = %q, want a header and three rows", raw)
+	}
+	want := map[string]bool{
+		"2026-09-16T18:00:00Z\t8\th8\t0.9500\t0.9500\t0.9000\tfalse\t1\t1\t-\tenqueued": true,
+		"2026-09-16T18:00:00Z\t7\th7\t0.5000\t0.9500\t0.9000\tfalse\t1\t1\t-\tenqueued": true,
+		"2026-09-16T18:00:00Z\t9\th9\t0.0500\t0.9500\t0.9000\tfalse\t1\t1\t-\tenqueued": true,
+	}
+	for _, l := range lines[1:] {
+		if !want[l] {
+			t.Errorf("unexpected order row %q", l)
+		}
+	}
+
+	queue2, src2, enq2 := orderFixture(t)
+	failing := &orderFakeDecider{err: errors.New("provider down")}
+	if code, _, errs := sweepWithScorer(t, queue2, src2, enq2, failing, 0.9, time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC)); code != 0 {
+		t.Fatalf("exit = %d, stderr=%s", code, errs)
+	}
+	raw, err = os.ReadFile(filepath.Join(queue2, orderFileName))
+	if err != nil {
+		t.Fatalf("order record after failed calls: %v", err)
+	}
+	if n := strings.Count(string(raw), "\t-\t-\tprovider\\x20down\tenqueued"); n != 3 {
+		t.Errorf("want three failed-call rows with unreported usage, got %d:\n%s", n, raw)
 	}
 }

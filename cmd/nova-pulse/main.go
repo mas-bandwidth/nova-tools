@@ -243,7 +243,8 @@ marks a moved head stale, and closes a merged or closed PR. --source replays it
 from a file of PR states instead of gh, and enqueues into <queue>/enqueued.tsv.
 --decide asks TypeSafe Jev one typed score per candidate PR before enqueueing,
 prints ORDER pr=<n> score=<s> conf=<c> per PR, and enqueues in descending score;
-below --floor the score is 0.5 and the existing order stands.
+below --floor the score is 0.5 and the existing order stands (--floor 0 lets every
+answer stand; NaN is refused); every call is recorded in <queue>/order.tsv.
 
 example:
   nova-pulse sweep --repo mas-bandwidth/nova-tools --queue ./queue

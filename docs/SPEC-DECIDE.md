@@ -617,8 +617,15 @@ packages touched, the red head runs in the last day, the PR age in hours and
 whether a group it joined failed before; the sweep prints `ORDER pr=<n>
 score=<s> conf=<c>` per PR and enqueues in descending score. The floor is 0.9;
 below it the PR scores 0.5 and keeps the existing (oldest-first) order, so
-poison candidates go last and small green PRs go first. The decision advises;
-the sweep still holds every hold, the ledger and the merge itself.
+poison candidates go last and small green PRs go first. An explicit `--floor 0`
+is honored (every answer stands); a NaN floor is refused, and a NaN confidence
+or score is below the floor. A feature the source did not observe is sent as
+`unknown`, never a default zero: `gh pr view` names no red head-run history and
+no past group failure, so the gh source sends both as `unknown`. Every attempted
+call is kept in `<queue>/order.tsv` (at, pr, head, score, conf, floor, below,
+input and output tokens or `-` where the provider reported none, error, outcome
+`enqueued|enqueue-failed`). The decision advises; the sweep still holds every
+hold, the ledger and the merge itself.
 
 ### nova-pulse harvest class
 
