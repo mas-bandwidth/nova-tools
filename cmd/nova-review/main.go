@@ -36,6 +36,8 @@ usage:
                          apply ONE seeded defect in a throwaway worktree at the head and run the named suites: they must fail. The edit count is asserted, not reported: exactly one, else MUTATE REFUSED.
   nova-review guard --repo <dir> --head <ref> [--tests <package>[,<package>...]] [--timeout <seconds>] [--max <n>]
                          revert the commit's non-test files, keep the tests, run the named packages: the verdict is computed from exit codes and test names, never judged
+  nova-review reads --lane <nova-merge lane dir> [--bus <dir of bus notes>] [--reviews <pr>:<file>]... [--waiting-on <friend>] [--ready] [--max <n>] [--timeout <seconds>]
+                         the reads ledger: per PR the required reader roles (contract, code, security; derived from the paths touched plus typed ASK lines), and per reader the verdict, scope and exact sha, ingested from GitHub reviews (or --reviews snapshot files) and from bus notes carrying a typed READ line; --waiting-on is that friend's queue in order; --ready lists the PRs whose every required read is an approve at the live head; a push that moves a head marks its reads stale and names who must re-read what delta
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -82,6 +84,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return mutate(args[1:], out, errOut)
 	case "guard":
 		return guard(args[1:], out, errOut)
+	case "reads":
+		return reads(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
