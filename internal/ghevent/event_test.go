@@ -304,23 +304,166 @@ func TestAQuotedDispositionDoesNotSupplyTheHead(t *testing.T) {
 	})
 }
 
-func TestAPingWritesNothing(t *testing.T) {
+// TestAPingIsOneEntry is #3177's gap 1: a hook's ping must reach the stream,
+// so the ping POST /orgs/<org>/hooks/<id>/pings sends is one kind=ping entry.
+func TestAPingIsOneEntry(t *testing.T) {
 	t.Parallel()
-	rdb, ctx := newBus(t)
-	id, err := Accept(ctx, rdb, "ping", []byte(`{"zen":"keep it logically awesome"}`))
-	if !errors.Is(err, ErrNotCarried) {
-		t.Fatalf("ping: err=%v, want ErrNotCarried", err)
+	cases := []struct {
+		name, body string
+		want       map[string]string
+	}{
+		{
+			name: "org hook",
+			body: `{"zen":"keep it logically awesome","hook_id":7,
+				"hook":{"type":"Organization","id":7,"created_at":"2026-09-23T19:00:00Z","updated_at":"2026-09-23T19:00:01Z"},
+				"organization":{"login":"mas-bandwidth"},"sender":{"login":"rowan"}}`,
+			want: map[string]string{"repo": "mas-bandwidth", "kind": "ping", "number": "", "head": "",
+				"action": "ping", "at": "2026-09-23T19:00:01Z", "sender": "rowan", "comment_id": ""},
+		},
+		{
+			name: "repo hook",
+			body: `{"zen":"z","hook_id":8,"hook":{"created_at":"2026-09-23T19:00:00Z"},
+				"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`,
+			want: map[string]string{"repo": "mas-bandwidth/nova-tools", "kind": "ping", "number": "", "head": "",
+				"action": "ping", "at": "2026-09-23T19:00:00Z", "sender": "rowan", "comment_id": ""},
+		},
+		{
+			name: "bare ping is still written",
+			body: `{"zen":"keep it logically awesome"}`,
+			want: map[string]string{"repo": "", "kind": "ping", "number": "", "head": "",
+				"action": "ping", "at": "", "sender": "", "comment_id": ""},
+		},
 	}
-	if id != "" {
-		t.Fatalf("ping wrote id %q", id)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rdb, ctx := newBus(t)
+			id, err := Accept(ctx, rdb, "ping", []byte(tc.body))
+			if err != nil || id == "" {
+				t.Fatalf("ping: id=%q err=%v, want one entry", id, err)
+			}
+			got := readStream(t, rdb, ctx)
+			if len(got) != 1 {
+				t.Fatalf("ev:github has %d entries, want 1", len(got))
+			}
+			equalFields(t, got[0], tc.want)
+		})
 	}
-	n, err := rdb.XLen(ctx, Stream).Result()
-	if err != nil {
-		t.Fatal(err)
+}
+
+// TestIssuesAndWorkflowRunAreCarried is #3177's gap 2: the org hook sends
+// issues and workflow_run, and each is one entry with its kind's fields.
+func TestIssuesAndWorkflowRunAreCarried(t *testing.T) {
+	t.Parallel()
+	for _, action := range []string{"opened", "labeled", "unlabeled", "edited", "closed", "reopened"} {
+		t.Run("issues "+action, func(t *testing.T) {
+			t.Parallel()
+			rdb, ctx := newBus(t)
+			body := `{"action":"` + action + `","issue":{"number":3177,"state":"closed","state_reason":"completed",
+				"body":"PATHS: internal/ghevent\nDONE-WHEN: a ping lands","updated_at":"2026-09-23T19:05:00Z",
+				"labels":[{"name":"swarm"},{"name":"p1, urgent"}]},
+				"label":{"name":"swarm"},
+				"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"gafferongames"}}`
+			if _, err := Accept(ctx, rdb, "issues", []byte(body)); err != nil {
+				t.Fatalf("issues %s: %v", action, err)
+			}
+			got := readStream(t, rdb, ctx)
+			if len(got) != 1 {
+				t.Fatalf("ev:github has %d entries, want 1", len(got))
+			}
+			equalFields(t, got[0], map[string]string{
+				"repo": "mas-bandwidth/nova-tools", "kind": "issues", "number": "3177", "head": "",
+				"action": action, "at": "2026-09-23T19:05:00Z", "sender": "gafferongames", "comment_id": "",
+				"labels": `["swarm","p1, urgent"]`, "body": "PATHS: internal/ghevent\nDONE-WHEN: a ping lands",
+				"state": "closed", "state_reason": "completed",
+			})
+		})
 	}
-	if n != 0 {
-		t.Fatalf("ev:github len = %d, want 0", n)
-	}
+
+	t.Run("issues with null body, reason and no labels keeps the key set", func(t *testing.T) {
+		t.Parallel()
+		rdb, ctx := newBus(t)
+		body := `{"action":"opened","issue":{"number":9,"state":"open","state_reason":null,"body":null,"labels":[]},
+			"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`
+		if _, err := Accept(ctx, rdb, "issues", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		got := readStream(t, rdb, ctx)
+		if len(got) != 1 {
+			t.Fatalf("ev:github has %d entries, want 1", len(got))
+		}
+		equalFields(t, got[0], map[string]string{
+			"repo": "mas-bandwidth/nova-tools", "kind": "issues", "number": "9", "head": "",
+			"action": "opened", "at": "", "sender": "rowan", "comment_id": "",
+			"labels": "[]", "body": "", "state": "open", "state_reason": "",
+		})
+	})
+
+	t.Run("issues action outside the set is not carried", func(t *testing.T) {
+		t.Parallel()
+		rdb, ctx := newBus(t)
+		body := `{"action":"assigned","issue":{"number":9},"repository":{"full_name":"mas-bandwidth/nova-tools"}}`
+		if _, err := Accept(ctx, rdb, "issues", []byte(body)); !errors.Is(err, ErrNotCarried) {
+			t.Fatalf("issues assigned: err=%v, want ErrNotCarried", err)
+		}
+		if n, _ := rdb.XLen(ctx, Stream).Result(); n != 0 {
+			t.Fatalf("ev:github len = %d, want 0", n)
+		}
+	})
+
+	t.Run("workflow_run completed", func(t *testing.T) {
+		t.Parallel()
+		rdb, ctx := newBus(t)
+		body := `{"action":"completed","workflow_run":{"id":17000000001,"name":"ci","status":"completed",
+			"conclusion":"failure","head_sha":"8888888888888888888888888888888888888888",
+			"created_at":"2026-09-23T19:00:00Z","updated_at":"2026-09-23T19:09:00Z",
+			"pull_requests":[{"number":3034},{"number":3035}]},
+			"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`
+		if _, err := Accept(ctx, rdb, "workflow_run", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		got := readStream(t, rdb, ctx)
+		if len(got) != 1 {
+			t.Fatalf("ev:github has %d entries, want 1", len(got))
+		}
+		equalFields(t, got[0], map[string]string{
+			"repo": "mas-bandwidth/nova-tools", "kind": "workflow_run", "number": "3034",
+			"head": "8888888888888888888888888888888888888888", "action": "completed",
+			"at": "2026-09-23T19:09:00Z", "sender": "rowan", "comment_id": "",
+			"run_id": "17000000001", "workflow": "ci", "status": "completed", "conclusion": "failure",
+		})
+	})
+
+	t.Run("workflow_run requested has an empty conclusion", func(t *testing.T) {
+		t.Parallel()
+		rdb, ctx := newBus(t)
+		body := `{"action":"requested","workflow_run":{"id":5,"name":"ci","status":"queued","conclusion":null,
+			"head_sha":"9999999999999999999999999999999999999999","created_at":"2026-09-23T19:00:00Z","pull_requests":[]},
+			"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`
+		if _, err := Accept(ctx, rdb, "workflow_run", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		got := readStream(t, rdb, ctx)
+		if len(got) != 1 {
+			t.Fatalf("ev:github has %d entries, want 1", len(got))
+		}
+		equalFields(t, got[0], map[string]string{
+			"repo": "mas-bandwidth/nova-tools", "kind": "workflow_run", "number": "",
+			"head": "9999999999999999999999999999999999999999", "action": "requested",
+			"at": "2026-09-23T19:00:00Z", "sender": "rowan", "comment_id": "",
+			"run_id": "5", "workflow": "ci", "status": "queued", "conclusion": "",
+		})
+	})
+
+	t.Run("workflow_run with no run object is refused", func(t *testing.T) {
+		t.Parallel()
+		rdb, ctx := newBus(t)
+		body := `{"action":"completed","repository":{"full_name":"mas-bandwidth/nova-tools"}}`
+		_, err := Accept(ctx, rdb, "workflow_run", []byte(body))
+		if err == nil || errors.Is(err, ErrNotCarried) {
+			t.Fatalf("err=%v, want a decode error", err)
+		}
+	})
 }
 
 func TestACarriedEventWithBadJSONWritesNothing(t *testing.T) {
