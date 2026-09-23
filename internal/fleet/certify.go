@@ -44,6 +44,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -531,7 +532,20 @@ func Certify(in CertifyInput) int {
 		}
 		build := in.Build
 		if build == "" && !in.DryRun {
-			build = machineBuild(in, m)
+			var bErr error
+			build, bErr = machineBuild(in, m)
+			if bErr != nil {
+				fail++
+				fmt.Fprintf(in.Stderr, "CERTIFY %s build FAIL evidence=%s\n",
+					oneline.Field(m.Name), oneline.Quote(oneline.Cap(bErr.Error(), EvidenceCap)))
+				continue
+			}
+		}
+		if build != "" && build != "-" && !IsValidBuildVersion(build) {
+			fail++
+			fmt.Fprintf(in.Stderr, "CERTIFY %s build FAIL evidence=%s\n",
+				oneline.Field(m.Name), oneline.Quote(fmt.Sprintf("invalid build version %q", build)))
+			continue
 		}
 		if build == "" {
 			build = "-"
@@ -787,9 +801,16 @@ func workloadsFor(loads []Workload, m Machine) []Workload {
 // machineBuild asks the machine what nova-merge it is running. The build is half of what
 // makes a certificate current, so it is read FROM the machine and never assumed: `release
 // adopt` changes it, and a certificate written before an adopt must not survive it.
-func machineBuild(in CertifyInput, m Machine) string {
-	out, _ := runScript(in, m, "build", BuildScript)
-	return BuildVersion(out)
+func machineBuild(in CertifyInput, m Machine) (string, error) {
+	out, err := runScript(in, m, "build", BuildScript)
+	if err != nil {
+		return "", fmt.Errorf("machine build probe failed: %w", err)
+	}
+	ver := BuildVersion(out)
+	if ver == "" {
+		return "", fmt.Errorf("no valid build version in output: %q", strings.TrimSpace(out))
+	}
+	return ver, nil
 }
 
 // BuildScript is the one question every certification asks first: what build is installed
@@ -797,21 +818,126 @@ func machineBuild(in CertifyInput, m Machine) string {
 // two spellings of it would be two answers.
 const BuildScript = "# nova-certify workload build\nnova-merge version 2>&1 || true\n"
 
-// BuildVersion reads the version token out of a `nova-merge version` line. The token, not
-// the line: `nova-merge v0.17.0` and `v0.17.0` are the same build, and a certificate keyed
-// on the whole line would expire when the banner changed.
+// buildTool is the tool name BuildScript asks for and the only tool name BuildVersion
+// accepts a build identity from. A diagnostic line names no tool of its own -- or names
+// the wrong one, when a workload also prints a version line on the way to a failure --
+// and requiring the field one identity here is what keeps "field two happens to be a
+// hex-shaped word" from being mistaken for "nova-merge said this is its build" (Stella's
+// HOLD 6 on #2478: a two-field diagnostic like `fatal deadbeef1234` has no tool field
+// matching this at all).
+const buildTool = "nova-merge"
+
+// IsValidBuildVersion reports whether tok is a recognized build version format
+// (a semantic version tag like v0.17.0, a vcs timestamp-revision like
+// 20260921145725-c1670c8884cd[-dirty], a 12-to-40 character hex revision, or devel).
+// Diagnostic strings, error messages, and SSH banners are rejected.
+func IsValidBuildVersion(tok string) bool {
+	clean := strings.Trim(tok, "(),\"'")
+	if clean == "devel" {
+		return true
+	}
+	// Semver tag: v<digit>...
+	if len(clean) >= 2 && clean[0] == 'v' && clean[1] >= '0' && clean[1] <= '9' {
+		for i := 0; i < len(clean); i++ {
+			c := clean[i]
+			if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '+') {
+				return false
+			}
+		}
+		return true
+	}
+	// Timestamp-hash: 14 digits + '-' + 12 hex digits (optional -dirty)
+	withoutDirty := strings.TrimSuffix(clean, "-dirty")
+	if len(withoutDirty) == 27 && withoutDirty[14] == '-' {
+		allDigits := true
+		for i := 0; i < 14; i++ {
+			if withoutDirty[i] < '0' || withoutDirty[i] > '9' {
+				allDigits = false
+				break
+			}
+		}
+		if allDigits && isHex(withoutDirty[15:]) {
+			return true
+		}
+	}
+	// 12 to 40 hex character git revision
+	if len(withoutDirty) >= 12 && len(withoutDirty) <= 40 && isHex(withoutDirty) {
+		return true
+	}
+	return false
+}
+
+func isHex(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// validPlatform reports whether s is a <goos>/<goarch> pair: two non-empty tokens either
+// side of exactly one slash, the same shape buildinfo.Parse requires of a version line's
+// third field. "Contains a slash" alone accepted diagnostics like a path fragment; this
+// requires both sides to actually be present the way a real platform token always is,
+// and exactly one slash: `linux/amd64/extra` and `linux//amd64` are not a goos/goarch
+// pair (Stella's hold 7 on #2478 at f5fb27dc), so a goarch that itself contains a slash
+// is rejected.
+func validPlatform(s string) bool {
+	goos, goarch, found := strings.Cut(s, "/")
+	return found && goos != "" && goarch != "" && !strings.Contains(goarch, "/")
+}
+
+// BuildVersion reads the version token out of a `nova-merge version` output. It
+// extracts ONLY from a recognized version-line shape, and ONLY when that shape's tool
+// field names buildTool ("nova-merge"): the full buildinfo.Parse line
+// (`<tool> <version> <goos>/<goarch> <go version> [key=value ...]`), or one of the two
+// shorter standalone forms nova-merge falls back to when it has no platform line to
+// give (`<tool> <version>` or `<tool> <version> <goos>/<goarch>`). It never scans an
+// arbitrary line for any token IsValidBuildVersion happens to accept -- a diagnostic
+// line can carry a 12-to-40 character hex substring that looks like a revision but
+// names no build (`fatal: bad object deadbeef1234` is not a build, it is a git error
+// that happens to contain a hex-shaped word, and it is four fields, not two or three,
+// so none of the recognized shapes match it), so a line that is not one of the three
+// recognized shapes is rejected outright, regardless of what its words spell. Requiring
+// the tool field closes the shorter shapes too: a two-field diagnostic like
+// `fatal deadbeef1234` has no tool field naming nova-merge at all, and a three-field one
+// like `fatal deadbeef1234 x` was previously accepted on nothing more than "the third
+// field contains a slash" -- `x` has none, but a diagnostic that happened to print
+// `error: bad/ref` would have (Stella's HOLD 6 on #2478). SSH banners, diagnostic
+// messages, and error text are rejected the same way. If no line matches a recognized
+// shape naming buildTool, it returns "".
 func BuildVersion(out string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		for _, f := range strings.Fields(line) {
-			if len(f) > 1 && f[0] == 'v' && f[1] >= '0' && f[1] <= '9' {
-				return f
+		// The full buildinfo shape: <tool> <version> <goos>/<goarch> <go version> [k=v...]
+		if f, ok := buildinfo.Parse(line); ok && f.Tool == buildTool && validPlatform(f.Platform) && IsValidBuildVersion(f.Version) {
+			return f.Version
+		}
+		// The shorter standalone forms nova-merge falls back to when it has no
+		// platform line to give: `<tool> <version>` or `<tool> <version> <goos>/<goarch>`.
+		// The identity is always the SECOND field of a line matching one of these two
+		// exact shapes, with the FIRST field naming buildTool and (in the three-field
+		// case) the THIRD field an actual goos/goarch pair -- never a token found
+		// anywhere else on the line, and never accepted from a line some other tool or
+		// a bare diagnostic sentence happened to produce.
+		fields := strings.Fields(line)
+		if fields[0] != buildTool {
+			continue
+		}
+		if len(fields) == 2 || (len(fields) == 3 && validPlatform(fields[2])) {
+			clean := strings.Trim(fields[1], "(),\"'")
+			if IsValidBuildVersion(clean) {
+				return clean
 			}
 		}
-		return oneline.Field(line)
 	}
 	return ""
 }

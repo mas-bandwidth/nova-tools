@@ -811,3 +811,195 @@ func readFile(t *testing.T, path string) string {
 	}
 	return string(raw)
 }
+
+// TestBuildVersionRejectsErrorAndBannerText verifies that BuildVersion extracts valid
+// build version tokens and rejects SSH banners, diagnostics, and error messages.
+func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
+	cases := []struct {
+		name string
+		out  string
+		want string
+	}{
+		{
+			name: "semver tag with binary prefix",
+			out:  "nova-merge v0.17.0\n",
+			want: "v0.17.0",
+		},
+		{
+			name: "four token buildinfo line",
+			out:  "nova-merge v0.17.0 linux/amd64 go1.26.5 build=ed95537c43b4\n",
+			want: "v0.17.0",
+		},
+		{
+			name: "vcs hex revision",
+			out:  "nova-merge ed95537c43b4\n",
+			want: "ed95537c43b4",
+		},
+		{
+			name: "devel build",
+			out:  "nova-merge devel\n",
+			want: "devel",
+		},
+		{
+			name: "pseudo version",
+			out:  "nova-merge 20260921145725-c1670c8884cd\n",
+			want: "20260921145725-c1670c8884cd",
+		},
+		{
+			name: "banner followed by valid version",
+			out:  "Authorized uses only. All activity may be monitored.\nnova-merge v0.17.0\n",
+			want: "v0.17.0",
+		},
+		{
+			name: "banner only rejected",
+			out:  "Authorized uses only. All activity may be monitored.\n",
+			want: "",
+		},
+		{
+			name: "ssh connection refused rejected",
+			out:  "ssh: connect to host hulk port 22: Connection refused\n",
+			want: "",
+		},
+		{
+			name: "command not found rejected",
+			out:  "bash: nova-merge: command not found\n",
+			want: "",
+		},
+		{
+			name: "permission denied rejected",
+			out:  "Permission denied (publickey).\n",
+			want: "",
+		},
+		{
+			name: "diagnostic text rejected",
+			out:  "fatal: not a git repository (or any of the parent directories): .git\n",
+			want: "",
+		},
+		{
+			name: "diagnostic containing a hex revision rejected",
+			out:  "fatal: bad object deadbeef1234\n",
+			want: "",
+		},
+		{
+			name: "two field diagnostic with hex token rejected (no nova-merge tool field)",
+			out:  "fatal deadbeef1234\n",
+			want: "",
+		},
+		{
+			name: "three field diagnostic with malformed platform rejected (empty goarch)",
+			out:  "nova-merge deadbeef1234 bad/\n",
+			want: "",
+		},
+		{
+			name: "three field platform with an extra slash rejected",
+			out:  "nova-merge deadbeef1234 linux/amd64/extra\n",
+			want: "",
+		},
+		{
+			name: "three field platform with a repeated slash rejected",
+			out:  "nova-merge deadbeef1234 linux//amd64\n",
+			want: "",
+		},
+		{
+			name: "four token buildinfo line with an extra platform slash rejected",
+			out:  "nova-merge deadbeef1234 linux/amd64/extra go1.26.5\n",
+			want: "",
+		},
+		{
+			name: "four token buildinfo line from a different tool rejected",
+			out:  "nova-sandbox v0.17.0 linux/amd64 go1.26.5\n",
+			want: "",
+		},
+		{
+			name: "empty output",
+			out:  "",
+			want: "",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := BuildVersion(tc.out)
+			if got != tc.want {
+				t.Errorf("BuildVersion(%q) = %q, want %q", tc.out, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMachineBuildProbeFailsOnRunScriptError tests that a failure in the machine-build probe's
+// remote script execution fails the certification, prints FAIL to stderr, and writes no row.
+func TestMachineBuildProbeFailsOnRunScriptError(t *testing.T) {
+	certs := writeFile(t, "certs.tsv", "")
+	ans := benchOK()
+	ans["space|build"] = remoteAnswer{err: errors.New("ssh: connection timed out")}
+	remote := &fakeRemote{answers: ans}
+
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: remote, Hash: "h", Now: fixedNow,
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+	}
+	if !strings.Contains(errs, "CERTIFY space build FAIL evidence=") {
+		t.Errorf("stderr missing build FAIL line:\n%s", errs)
+	}
+	if !strings.Contains(errs, "ssh: connection timed out") {
+		t.Errorf("stderr does not name the connection error:\n%s", errs)
+	}
+	rows := mustRead(t, certs)
+	if len(rows) != 0 {
+		t.Fatalf("wrote %d certificate rows on build probe failure, want 0", len(rows))
+	}
+}
+
+// TestMachineBuildProbeFailsOnBannerOrErrorOutput tests that when the build probe script exits 0
+// but outputs banner or error text without a valid build version, certification fails cleanly with no row.
+func TestMachineBuildProbeFailsOnBannerOrErrorOutput(t *testing.T) {
+	certs := writeFile(t, "certs.tsv", "")
+	ans := benchOK()
+	ans["space|build"] = remoteAnswer{out: "Authorized uses only. All activity may be monitored.\n"}
+	remote := &fakeRemote{answers: ans}
+
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: remote, Hash: "h", Now: fixedNow,
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+	}
+	if !strings.Contains(errs, "CERTIFY space build FAIL evidence=") {
+		t.Errorf("stderr missing build FAIL line:\n%s", errs)
+	}
+	if !strings.Contains(errs, "no valid build version in output") {
+		t.Errorf("stderr does not explain missing version:\n%s", errs)
+	}
+	rows := mustRead(t, certs)
+	if len(rows) != 0 {
+		t.Fatalf("wrote %d certificate rows on invalid build output, want 0", len(rows))
+	}
+}
+
+// TestCertifyRefusesInvalidBuildOverride tests that passing an invalid build version string
+// to Certify causes failure and writes no certificate rows.
+func TestCertifyRefusesInvalidBuildOverride(t *testing.T) {
+	certs := writeFile(t, "certs.tsv", "")
+	remote := &fakeRemote{answers: benchOK()}
+
+	out, errs, code := runCertify(t, CertifyInput{
+		Machines: testRegistry(t), Only: "space", Certs: certs,
+		Remote: remote, Hash: "h", Now: fixedNow,
+		Build: "ssh: Connection refused",
+	})
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\nstdout:%s\nstderr:%s", code, out, errs)
+	}
+	if !strings.Contains(errs, "CERTIFY space build FAIL evidence=\"invalid build version") {
+		t.Errorf("stderr missing invalid build version refusal:\n%s", errs)
+	}
+	rows := mustRead(t, certs)
+	if len(rows) != 0 {
+		t.Fatalf("wrote %d certificate rows on invalid build override, want 0", len(rows))
+	}
+}
