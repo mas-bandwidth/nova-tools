@@ -128,18 +128,14 @@ branch's name and not that list, so a land that carries no members= to fold is r
 branch, a green swarm result, a revert -- is a member of a batch somebody has yet to
 build, and this verb says so and stops.
 
-receipt IS THE READ SIDE OF #2693. A gate receipt -- the BATCH OK line batch
-prints -- is what proves an integration batch ran the gate, on which bench, on
-which tree; quoting it in the pull request body is not enough on its own, because
-a reader on another machine cannot check that the line is what the gate said
-without seeing the gate's own output. nova-merge receipt --repo <owner>/<name>
---pr <n> reads the pull request, finds the BATCH OK line its body quotes, and
-prints it on stdout -- the same line a caller hands to nova-merge land --receipt.
-A PR whose body quotes no BATCH OK line is refused with the reason named on
-stderr (exit 1), so a reader who names a PR the gate never built for is not
-handed a green receipt over nothing. The verb never writes a receipt and never
-pushes one: the lander quotes the gate's own line into the PR body when they
-open it, and the body is the only place any reader can fetch it from.
+receipt IS THE READ SIDE OF #2693, AND ONLY THAT. nova-merge receipt --repo
+<owner>/<name> --pr <n> reads the pull request, finds the BATCH OK lines its body
+quotes, and prints the last one naming the pull request's current head on stdout
+-- the same line a caller hands to nova-merge land --receipt. The body is editable,
+so the line is a quote and not evidence bound to the gate run; stderr says so
+(RECEIPT SOURCE pr-body). A PR whose body quotes no BATCH OK line, or only lines
+naming other heads, is refused with the reason named on stderr (exit 1). Storing
+the gate's own receipt artifact and fetching it from another machine is #3183.
 
 queue audit is the other half of that lock: it lists every open pull request carrying
 GitHub's auto-merge and TAKES IT OFF, because auto-merge is not an enqueue -- it is a

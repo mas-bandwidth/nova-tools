@@ -11,19 +11,21 @@ import (
 )
 
 // cmdReceipt reads the gate receipt a pull request's body quotes: the BATCH OK
-// line `nova-merge batch` prints, which is the gate's own evidence that the
-// merged tree built, vetted, tested and ran the lisp suite on the bench that
-// ran it (#2693). A reader on another machine who can name the pull request
-// can fetch the receipt with this verb -- the line a caller hands to
-// `nova-merge land --receipt` -- without ssh and without the lander's word.
+// line `nova-merge batch` prints (#2693). It is the READ SIDE ONLY. The body is
+// editable by anyone who can edit the pull request, so the line printed here is
+// a quote, not evidence bound to the gate run: the verb checks that it parses
+// and that it names the pull request's current head, and it says on stderr
+// (RECEIPT SOURCE pr-body) that the line was not fetched from a store the gate
+// wrote. Retaining the gate's own artifact and fetching it from another machine
+// is #3183; until then this verb is a convenience, not a verification.
 //
-// IT DOES NOT WRITE A RECEIPT and it does not push one: the lander prints the
-// BATCH OK line into the PR body when they open the pull request, and the
-// receipt lives there. The verb is the read side of that contract.
+// IT DOES NOT WRITE A RECEIPT and it does not push one.
 //
 // A PR whose body quotes no BATCH OK line is refused with a reason that names
-// the absence, not a silent empty answer: a reader who names a PR the gate
-// never built for is not handed a green receipt over nothing.
+// the absence, not a silent empty answer. A body that quotes several receipts
+// (an earlier batch's line kept for history, say) is answered with the LAST one
+// naming the pull request's current head; a body whose receipts all name other
+// heads is refused and the refusal names them.
 func cmdReceipt(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f := newFlags("receipt")
 	repo := f.fs.String("repo", "", "")
@@ -32,6 +34,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	f.require("repo", *repo, "the repository whose pull request body quotes the receipt, as <owner>/<name>")
 	if *repo != "" {
 		if err := validRepoSlug(*repo); err != nil {
 			f.problem(fmt.Sprintf("--repo is <owner>/<name>, got %q: %s", *repo, oneline.Escape(err.Error())))
@@ -53,52 +56,60 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, deps Deps) int {
 			*pr, oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
-	line := receiptLineInBody(data.Body)
-	if line == "" {
+	lines := receiptLinesInBody(data.Body)
+	if len(lines) == 0 {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's body quotes no BATCH OK line; a receipt is the gate's own green line, not a hand-written summary\n",
 			*pr)
 		return 1
 	}
-	// The line is parsed so a caller is handed the SAME receipt `nova-merge land
-	// --receipt` would accept: a truncated sha would match another commit and a
-	// receipt whose members= is "none" lands the base. The PR body is the place
-	// anyone can edit it, and a quoted line that won't parse is a quoted line
-	// nobody should trust.
-	rec, err := merge.ParseBatchReceipt(line)
-	if err != nil {
-		fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's body quotes a BATCH OK line this tool cannot read: %s\n",
-			*pr, oneline.Escape(err.Error()))
+	// Every quoted line is parsed so a caller is handed the SAME receipt `nova-merge
+	// land --receipt` would accept: a truncated sha would match another commit. A
+	// line that won't parse is skipped only when another line answers; when none
+	// does, the first parse error is the refusal.
+	var firstErr error
+	var heads []string
+	answer := ""
+	for _, line := range lines {
+		rec, err := merge.ParseBatchReceipt(line)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		heads = append(heads, rec.Head)
+		if data.HeadOID == "" || strings.EqualFold(rec.Head, data.HeadOID) {
+			answer = line
+		}
+	}
+	if answer == "" {
+		if len(heads) == 0 {
+			fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's body quotes a BATCH OK line this tool cannot read: %s\n",
+				*pr, oneline.Escape(firstErr.Error()))
+			return 1
+		}
+		fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's receipts name head=%s but the pull request's head is %s; the receipt is for a tree nobody is landing\n",
+			*pr, oneline.Field(strings.Join(heads, ",")), oneline.Field(data.HeadOID))
 		return 1
 	}
-	if rec.Head != "" && data.HeadOID != "" && !strings.EqualFold(rec.Head, data.HeadOID) {
-		fmt.Fprintf(stderr, "RECEIPT REFUSED: pull request %d's receipt names head=%s but the pull request's head is %s; the receipt is for a tree nobody is landing\n",
-			*pr, oneline.Field(rec.Head), oneline.Field(data.HeadOID))
-		return 1
-	}
-	fmt.Fprintf(stdout, "%s\n", oneline.Escape(line))
+	fmt.Fprintf(stderr, "RECEIPT SOURCE pr-body pr=%d: quoted from the pull request body, which anyone who can edit the PR can write; not fetched from a store the gate wrote (#3183)\n", *pr)
+	fmt.Fprintf(stdout, "%s\n", oneline.Escape(answer))
 	return 0
 }
 
-// receiptLineInBody is the BATCH OK line a pull request's body quotes, or the
-// empty string when it quotes none. The body may carry many lines and the
-// receipt may be preceded by prose; the line is the only thing worth printing.
-//
-// A line that begins with `BATCH OK ` and is followed by `name=<value>` is a
-// receipt. Anything else is not -- a BATCH FAIL is not a receipt (it's a red
-// gate, see merge.batchOKPrefix), and a hand-typed summary is not a receipt
-// (parseBatchReceipt would refuse it on the field shape, but the body may carry
-// both and we pick the receipt rather than the summary).
-func receiptLineInBody(body string) string {
+// receiptLinesInBody is every BATCH OK line a pull request's body quotes, in
+// order, or none. The body may carry many lines and prose between them. A BATCH
+// FAIL is not a receipt (it's a red gate, see merge.batchOKPrefix). Field order
+// inside the line is not checked here: merge.ParseBatchReceipt reads the line as
+// key=value fields, never by position, and this finder agrees with it.
+func receiptLinesInBody(body string) []string {
+	var out []string
 	for _, line := range strings.Split(body, "\n") {
 		s := strings.TrimSpace(line)
 		if !strings.HasPrefix(s, "BATCH OK ") {
 			continue
 		}
-		rest := strings.TrimPrefix(s, "BATCH OK ")
-		if !strings.HasPrefix(rest, "name=") {
-			continue
-		}
-		return s
+		out = append(out, s)
 	}
-	return ""
+	return out
 }
