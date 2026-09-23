@@ -92,3 +92,52 @@ func globNames(t *testing.T, dir string) []string {
 	}
 	return out
 }
+
+// TestDealRefusesANonFiniteLoadCeiling is Stella's hold on #3304 at 4c63ac13: cmdDeal
+// refused only a negative --max-load-per-core, so NaN and +Inf passed, and in the dealer a
+// load ratio is never greater than NaN or +Inf, which silently switched the ceiling off (0
+// is the one documented no-ceiling value). Over a bench at 25 per core, every non-finite
+// value must refuse with exit 2, naming the flag, before any card is dealt.
+func TestDealRefusesANonFiniteLoadCeiling(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.HSet("bench:hot", "working", "0", "load1", "200", "ncpu", "8")
+	mr.HSet("bench:hot:desired", "slots", "8", "legs", "go")
+
+	for _, v := range []string{"NaN", "nan", "+Inf", "Inf", "inf", "-Inf", "-1"} {
+		t.Run(v, func(t *testing.T) {
+			root := t.TempDir()
+			undealt := filepath.Join(root, "undealt")
+			ready := filepath.Join(root, "ready")
+			table := filepath.Join(root, "routes.tsv")
+			if err := os.WriteFile(table, []byte("*\troute-a\tmodel-a\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(undealt, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for _, n := range []string{"card-1.md", "card-2.md"} {
+				if err := os.WriteFile(filepath.Join(undealt, n), []byte("KIND: build\nLEG: go\nDEPENDS-ON: -\n"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var out, errb bytes.Buffer
+			code := run([]string{"deal", "--undealt", undealt, "--ready-root", ready, "--bench", "hot",
+				"--redis", mr.Addr(), "--route-table", table, "--max-load-per-core", v}, &out, &errb, time.Now())
+			if code != 2 {
+				t.Fatalf("--max-load-per-core %s exited %d, want 2 (refused); out:\n%s\nstderr:\n%s", v, code, out.String(), errb.String())
+			}
+			if !strings.Contains(errb.String(), "--max-load-per-core") {
+				t.Fatalf("the refusal does not name --max-load-per-core:\n%s", errb.String())
+			}
+			if got := globNames(t, filepath.Join(ready, "hot")); len(got) != 0 {
+				t.Fatalf("--max-load-per-core %s dealt %v to a bench at 25 per core", v, got)
+			}
+			if left := globNames(t, undealt); len(left) != 2 {
+				t.Fatalf("--max-load-per-core %s moved cards before refusing: undealt now %v", v, left)
+			}
+			if strings.Contains(out.String(), "DEAL ") {
+				t.Fatalf("--max-load-per-core %s ran a deal pass before refusing:\n%s", v, out.String())
+			}
+		})
+	}
+}

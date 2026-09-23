@@ -23,6 +23,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,8 +80,10 @@ func cmdDeal(args []string, stdout, stderr io.Writer) int {
 	if len(benches) == 0 {
 		f.add("--bench is required (repeatable or comma separated); it wants the benches to deal to; refusing to guess")
 	}
-	if *maxLoad < 0 {
-		f.add(fmt.Sprintf("--max-load-per-core is 0 (no ceiling) or more, got %g", *maxLoad))
+	// NaN and +Inf parse as floats, but a load ratio is never greater than either, so they
+	// would switch the dealer's ceiling off silently; 0 is the one no-ceiling value.
+	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
+		f.add(fmt.Sprintf("--max-load-per-core is a finite number, 0 (no ceiling) or more, got %g", *maxLoad))
 	}
 	if f.refused(stderr) {
 		return 2

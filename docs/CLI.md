@@ -2063,8 +2063,9 @@ waits in each ready queue, and takes the live lanes from those cards and every
 of `--repo`/`--base`/`--results`; with no `--repo` a card with a parent is held), bulk
 is not over the reading-debt cap, its lane is free, the `--route-table` gives it a
 route and model, and a bench that is up, carries its leg and has room is under
-`--max-load-per-core` (`1.5` by default, `0` for none; a bench whose load was not read
-is dealt nothing while a ceiling is set). The dealt card gets its `ROUTE:` and `MODEL:`
+`--max-load-per-core` (`1.5` by default, `0` for none; a negative, `NaN` or infinite value
+is refused before any card is dealt; a bench whose load was not read is dealt nothing
+while a ceiling is set). The dealt card gets its `ROUTE:` and `MODEL:`
 lines and is renamed into the ready queue; every other card stays where it is.
 
 ```
