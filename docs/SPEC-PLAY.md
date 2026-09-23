@@ -92,3 +92,57 @@ REPLY FAIL <reason>
 1. **Multi-participant note sharing.** The sidecar file is local. How do Emma and Stella see each other's notes? Options: a shared directory (git, a mounted volume, a bus lane), or manual file exchange. The experiment should try both before deciding.
 2. **Passage matching tolerance.** Currently exact string match. Should fuzzy matching, line-number fallback, or paragraph-level anchoring be added when exact matches become fragile under editing?
 3. **Note migration.** When a source changes and the anchor goes stale, should there be a `migrate` verb that re-anchors notes to the best matching passage in the new source?
+
+## Tests this spec demands
+
+All existing tests run against a throwaway source written in each test's own `t.TempDir()`; the package tests in `internal/play` exercise `Annotate`, `ReadNotes`, `ReplyTo`, `Export`, `LoadStore` and `SaveStore` directly, and the CLI tests in `cmd/nova-play` drive the actual `run` surface with `bytes.Buffer` stdout/stderr, so nothing touches a real file outside the temp dir and nothing reaches a network or a key. Tests are proven able to fail before trusted.
+
+1. `TestTwoParticipantsAnnotateReplyResumeExport` — `annotate` anchors a note to an exact passage and stores author, passage and note; `reply` answers an existing note; `read` lists the notes; `Export` returns a string naming authors and ids.
+2. `TestAnnotatePassageNotFoundRefuses` (absent) — `annotate` whose passage is not present verbatim in the source refuses ("passage not found").
+3. `TestAnnotateAndRead`, `TestTwoParticipantsAnnotateReplyResumeExport` — `read --source` lists all notes with their anchor status.
+4. `TestTwoParticipantsAnnotateReplyResumeExport`, `TestPathWithSpaces` — `reply --source --id --author --body` replies to an existing note id.
+5. `TestReplyUnknownNoteRefuses` (absent) — `reply` naming an unknown note id refuses with "note not found" and writes nothing into the sidecar.
+6. `internal/ci/version_class_test.go` (walks `cmd/`) — `nova-play version` prints the one version line.
+7. `TestHelp` — `help` prints usage and exits 0.
+8. `TestNoVerbRefused` — no verb refuses with "refusing to guess" and exits 2.
+9. `TestUnknownVerbRefused` — an unknown verb exits 2.
+10. `TestAnnotateRequiresAllFlags` — `annotate` missing any of `--source/--author/--passage/--note` exits 2.
+11. `TestReadRequiresSource` (absent) — `read` without `--source` exits 2.
+12. `TestReplyRequiresAllFlags` (absent) — `reply` missing any of `--source/--id/--author/--body` exits 2.
+13. `TestStaleAnchorAfterSourceEdit`, `TestStaleSourceReplyRefusal` — a source edited between sessions makes the next operation refuse `ANCHOR STALE` rather than silently reassign.
+14. `TestStaleAnchorNamesBothHashes` (absent) — the `ANCHOR STALE` report names BOTH the stored hash and the current hash.
+15. `TestStaleAnchorInRead` — `read` on a stale source prints `READ ANCHOR STALE` and exits 1.
+16. `TestQuotedAuthorAndTextRoundTrip`, `TestStaleAnchorAfterSourceEdit` — every annotation records the SHA-256 of the source at write time on the `ANCHOR` line.
+17. `TestExistingSidecarFixturePreserved`, `NoteFile` — notes live in `<source>.notes` beside the source; the source itself is never modified.
+18. `TestQuotedAuthorAndTextRoundTrip` — everything written is version 2: `VERSION 2` is the second line.
+19. `TestQuotedAuthorAndTextRoundTrip` — the `ANCHOR` line is always the first line.
+20. `TestTwoParticipantsAnnotateReplyResumeExport`, `TestMultilineNotePassageReplyRoundTrip` — notes are written in order; each note owns the replies listed under it.
+21. `TestBlankAndCommentLinesIgnored` (absent) — blank lines and lines beginning `#` are ignored on read.
+22. `TestQuotedAuthorAndTextRoundTrip`, `TestMultilineNotePassageReplyRoundTrip` — every record is exactly one physical line.
+23. `TestQuotedAuthorAndTextRoundTrip`, `TestCRLFPreservation`, `TestMultilineNotePassageReplyRoundTrip` — three escapes and no others (`\\`, `\n`, `\r`); a backslash before any other byte is literal.
+24. `TestProseBeginningWithKeywordsRoundTrip`, `TestQuotedAuthorAndTextRoundTrip` — a trailing space, a tab, a `"` and prose beginning with a keyword survive unchanged.
+25. `TestProseBeginningWithKeywordsRoundTrip` — a record boundary can only ever be the start of a line; a value is read as everything after the single space following the keyword, then unescaped.
+26. `TestQuotedAuthorAndTextRoundTrip` — an author carrying a space, a quote or a backslash is written as a Go-quoted string.
+27. `TestEmptyAndUnprintableAuthorFramed` (absent) — an empty author or one containing an unprintable rune is written Go-quoted.
+28. `TestFullAuthorNamesRoundTrip`, `TestTwoParticipantsAnnotateReplyResumeExport` — the bare-token and quoted author shapes never collide; the reader tells them apart by the leading byte.
+29. `TestQuotedAuthorAndTextRoundTrip` — field splitting inside a quoted value is escape-aware; an escaped quote does not end the value.
+30. `TestPathWithSpaces`, `TestCLIPathWithSpaces` — a source path containing spaces is split at the LAST space on the `ANCHOR` line.
+31. `cmd/nova-play/firstrun_test.go` (byte-for-byte ids) — the note id is the first 12 hex chars of SHA-256 of `author + passage + note`.
+32. `cmd/nova-play/firstrun_test.go` — the reply id is the first 12 hex chars of SHA-256 of `author + body`.
+33. `TestLegacySidecarReadThenUpgradeOnNextWrite` — a sidecar whose second line is not `VERSION` is version 1 and is read by the version-1 rules, with a backslash taken literally.
+34. `TestLegacySidecarReadThenUpgradeOnNextWrite` — a version-1 line not beginning with a keyword is a continuation joined to the value above it with a line feed.
+35. `TestLegacySidecarReadThenUpgradeOnNextWrite` — in version 1 the author is never unquoted; an unquoted multi-word author runs on to the next `key=value` token.
+36. `TestLegacySidecarReadThenUpgradeOnNextWrite` — `read` never writes: a version-1 sidecar is left byte for byte.
+37. `TestLegacySidecarReadThenUpgradeOnNextWrite` — the next write upgrades in place to version 2, one way, no backup, carrying the `ANCHOR` line over unchanged.
+38. `TestLegacySidecarReadThenUpgradeOnNextWrite` — every value read under version-1 rules is written back escaped and framed; the values are not reinterpreted.
+39. `TestLegacySidecarReadThenUpgradeOnNextWrite` — once upgraded the file is stable: writing the same store again produces identical bytes.
+40. `TestStaleSourceReplyRefusal`, `TestCLIStaleSourceReplyRefusal` — a refused operation (stale anchor, missing source) writes nothing: the sidecar stays byte-identical.
+41. `TestRefusedOpLeavesLegacySidecarUntouched` (absent) — a refused operation also leaves a version-1 sidecar untouched.
+42. `TestAnnotateAndRead`, `TestStaleAnchorInRead`, `TestNoVerbRefused` — exit codes: 0 success, 1 anchor conflict or note not found, 2 bad invocation.
+43. `TestAnnotateAndRead` — a successful annotate prints `ANNOTATE OK id= author= created=`.
+44. `TestAnnotateFailureLine` (absent) — a failed annotate prints `ANNOTATE FAIL <reason>` and exits 1.
+45. `TestReadEmptySource`, `TestAnnotateAndRead` — a successful read prints `READ OK source= notes=`.
+46. `cmd/nova-play/firstrun_test.go`, `TestAnnotateAndRead` — read lists `NOTE / PASSAGE / BODY / REPLY / BODY` blocks.
+47. `TestCLIPathWithSpaces` — a successful reply prints `REPLY OK id= author= created=`.
+48. `TestCLIStaleSourceReplyRefusal` — a failed reply prints `REPLY FAIL <reason>` and exits 1.
+49. `TestTwoParticipantsAnnotateReplyResumeExport`, `TestMultilineNotePassageReplyRoundTrip` — `play.Export` returns a portable markdown string naming authors, ids and replies.

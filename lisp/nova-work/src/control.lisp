@@ -191,9 +191,23 @@ the same id, anchor, span and target identities."
         (values nil (format nil "EXECUTION FAIL control=~A: unrepresentable pin span=~D retention=~D"
                             id span retention)
                 2 nil)))
-    ;; Durable before it is acknowledged, and before any capture or send.
-    (let ((line (%control-record-line id action scope anchor span target-ids rev)))
-      (journal-record (kernel-journal kernel) id (sha256-hex line) line rev))
+    ;; Durable before it is acknowledged, and before any capture or send. The
+    ;; record goes through the journal's own two-step -- accept, then record --
+    ;; because a real file journal writes only what it has accepted
+    ;; (src/journal.lisp:360-381): a `journal-record` with no accepted envelope
+    ;; before it signals, so a hold recorded the short way was durable against
+    ;; the fake ordering journal alone. A journal that refuses the record
+    ;; refuses the control: no hold is installed and nothing is acknowledged
+    ;; (SPEC-WORK.md:3946, :3962).
+    (let* ((line (%control-record-line id action scope anchor span target-ids rev))
+           (digest (sha256-hex line)))
+      (multiple-value-bind (accepted reason)
+          (journal-accept (kernel-journal kernel)
+                          (list :request id :digest digest :line line :rev rev :events '()))
+        (unless accepted
+          (return-from %install-control
+            (values nil (format nil "EXECUTION FAIL control=~A: ~A" id reason) 1 nil))))
+      (journal-record (kernel-journal kernel) id digest line rev))
     (let ((hold (make-ctl-hold :id id :action action :scope scope :targets target-ids
                            :directives (loop for target in target-ids
                                              collect (format nil "~A/~A" id target))

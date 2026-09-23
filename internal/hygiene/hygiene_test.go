@@ -397,6 +397,79 @@ func TestHygieneRejectsAPEMPrivateKeyHeader(t *testing.T) {
 	}
 }
 
+// hygiene-recognises-the-xai-provider-key: the harvest backstop (internal/keyshape)
+// carries an xai-api-key row and a shorter sk- bound for the seat key this fleet
+// holds (#1814); the hygiene gate must agree, or a card dumping an xai- key into a
+// committed file reads HYGIENE OK.
+func TestHygieneRejectsAnXAIProviderKey(t *testing.T) {
+	dir := lab(t)
+	git(t, dir, "checkout", "-q", "-b", "card")
+	// Built by parts so no key-shaped string lands in the tree.
+	xai := "xa" + "i-" + strings.Repeat("B", 30)
+	write(t, dir, "sign/sign.go", "package sign\n\nconst token = \""+xai+"\"\n")
+	git(t, dir, "add", "-A")
+	git(t, dir, "commit", "-q", "-m", "oops")
+	fs := check(t, dir, Options{})
+	f := has(fs, "secret")
+	if f == nil {
+		t.Fatalf("an xai- provider key drew no secret finding: %v", tokens(fs))
+	}
+	if f.At != "sign/sign.go:3" {
+		t.Fatalf("at=%q, want sign/sign.go:3", f.At)
+	}
+	all := f.Token + " " + f.At + " " + f.Why + " " + f.String()
+	if strings.Contains(all, xai) {
+		t.Fatalf("the matched text reached the finding: %q", all)
+	}
+	// A truncated sk- copy (below the old {32,} bound, at the seat key's measured
+	// length in #1814) is still a finding.
+	dir2 := lab(t)
+	git(t, dir2, "checkout", "-q", "-b", "card")
+	short := "sk-" + strings.Repeat("C", 20)
+	write(t, dir2, "sign/sign.go", "package sign\n\nconst token = \""+short+"\"\n")
+	git(t, dir2, "add", "-A")
+	git(t, dir2, "commit", "-q", "-m", "oops")
+	fs2 := check(t, dir2, Options{})
+	if has(fs2, "secret") == nil {
+		t.Fatalf("a truncated sk- provider key drew no secret finding: %v", tokens(fs2))
+	}
+}
+
+// The two embedded lists are one list: a class test fails when they differ, so the
+// gate and the harvest cannot drift the way #1899 found (no xai- row, sk- {32,}).
+func TestHygieneKeyShapesMatchTheHarvestBackstop(t *testing.T) {
+	hygiene := shapeDataRows(t, keyShapeData)
+	raw, err := os.ReadFile(filepath.Join("..", "keyshape", "keyshapes.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	harvest := shapeDataRows(t, string(raw))
+	if len(hygiene) != len(harvest) {
+		t.Fatalf("hygiene has %d shape rows, keyshape has %d\nhygiene=%v\nkeyshape=%v", len(hygiene), len(harvest), hygiene, harvest)
+	}
+	for i := range hygiene {
+		if hygiene[i] != harvest[i] {
+			t.Fatalf("shape row %d drifted: hygiene=%q keyshape=%q", i, hygiene[i], harvest[i])
+		}
+	}
+}
+
+func shapeDataRows(t *testing.T, data string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(data, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	if len(out) == 0 {
+		t.Fatal("no shape rows")
+	}
+	return out
+}
+
 // A key shape that was ALREADY in the base is not this card's finding: the check reads
 // added lines, because a range is judged by what it added.
 func TestHygieneReadsAddedLinesOnly(t *testing.T) {
@@ -438,6 +511,31 @@ func TestValidatePathsRefusesDotDotAndBareDoubleStar(t *testing.T) {
 		if err := ValidatePaths(ok); err != nil {
 			t.Fatalf("ValidatePaths(%v) = %v, want nil", ok, err)
 		}
+	}
+}
+
+// #1853.1 A WINDOWS DRIVE LETTER IS AN ABSOLUTE PATH ON EVERY BENCH. The check is
+// lexical (`^[A-Za-z]:`), not filepath.VolumeName, because a card is linted on one
+// bench and run on another.
+func TestValidatePathsRefusesAWindowsDriveLetter(t *testing.T) {
+	for _, bad := range []string{`C:/foo/bar`, `C:\Windows\system32\evil.go`, `d:/x/y.go`} {
+		if err := ValidatePaths([]string{bad}); err == nil {
+			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: a drive letter is absolute", bad)
+		}
+	}
+	if err := ValidatePaths([]string{"internal/hygiene/glob.go"}); err != nil {
+		t.Fatalf("a repo-relative path is clean: %v", err)
+	}
+}
+
+// #1853.4 THE NAME SET IS kinds.txt. A kind the file does not hold is not declared;
+// there is no default kind (SPEC-TOOLWORK.md §5 rule 3).
+func TestKindDeclaredRefusesAnUnknownKind(t *testing.T) {
+	if KindDeclared("completely-unknown-kind") {
+		t.Fatal("completely-unknown-kind is not in kinds.txt")
+	}
+	if !KindDeclared("fix-red") {
+		t.Fatal("fix-red is a kind this toolchain declares")
 	}
 }
 
@@ -611,6 +709,72 @@ func TestValidatePathsRefusesAGlobThatBoundsNothing(t *testing.T) {
 	for _, ok := range []string{"sign/**", "*.go", "**/*.go", "sign/*", "internal/*/doc.go", "a/**/b"} {
 		if err := ValidatePaths([]string{ok}); err != nil {
 			t.Errorf("ValidatePaths([%q]) = %v, want nil", ok, err)
+		}
+	}
+}
+
+// #1853: a Windows drive letter is absolute on every bench. ValidatePaths used to
+// refuse a leading `/` and let `C:/Windows/...` through, so a card cut on darwin
+// could declare paths outside the repo. The rule is lexical (`^[A-Za-z]:`) and the
+// same on darwin, linux and windows; a leading `\` is the other spelling. Reverting
+// 6ad85012's glob.go left this package green: the existing ValidatePaths tests name
+// `/etc/passwd` and `**`, not a drive letter.
+func TestValidatePathsRefusesAWindowsDriveLetterAndALeadingBackslash(t *testing.T) {
+	for _, bad := range []string{
+		`C:/Windows/system32/evil.go`,
+		`C:\Windows\system32\evil.go`,
+		`d:/x/y.go`,
+		`\Windows\system32\evil.go`,
+	} {
+		err := ValidatePaths([]string{bad})
+		if err == nil {
+			t.Errorf("ValidatePaths([%q]) = nil, want a refusal: it is absolute", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "absolute") {
+			t.Errorf("ValidatePaths([%q]) = %v, want it to name absolute", bad, err)
+		}
+	}
+}
+
+// KindDeclared, Kinds and the embedded kinds.txt landed in a78f3ea9. The tests that
+// landed with them live in cmd/nova-check, so reverting this package's data.go and
+// kinds.txt left ./internal/hygiene green. The name set is data here; a stray
+// exception granted to a kind that does not exist is an exception granted to nobody.
+func TestKindDeclaredHoldsTheEmbeddedNameSet(t *testing.T) {
+	raw, err := os.ReadFile("kinds.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		name := strings.TrimSpace(strings.SplitN(line, "\t", 2)[0])
+		if name != "" {
+			want = append(want, name)
+		}
+	}
+	if len(want) == 0 {
+		t.Fatal("kinds.txt names no kinds")
+	}
+	got := Kinds()
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Kinds() = %q, want the kinds.txt name set in order %q", got, want)
+	}
+	for _, name := range want {
+		if !KindDeclared(name) {
+			t.Errorf("KindDeclared(%q) = false, want true", name)
+		}
+	}
+	if KindDeclared("not-a-declared-kind") {
+		t.Fatal("an undeclared kind was accepted")
+	}
+	for _, kind := range StrayKinds() {
+		if !KindDeclared(kind) {
+			t.Errorf("the stray list excuses kind %q, which is not declared", kind)
 		}
 	}
 }

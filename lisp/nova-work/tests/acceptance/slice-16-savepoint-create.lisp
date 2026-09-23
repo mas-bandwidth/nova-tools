@@ -14,16 +14,12 @@
 
 (in-package #:nova-work/tests)
 
-(defvar *savepoint-test-counter* 0)
-
 (defun test-savepoint-root ()
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames (format nil "nova-work-test-savepoints/~D-~D/"
-                                       (get-universal-time)
-                                       (incf *savepoint-test-counter*))
-                               base)))
-    (ensure-directories-exist dir)
-    dir))
+  "A fresh savepoint root under this run's own root. The old name --
+`nova-work-test-savepoints/<universal-time>-<counter>/` under the shared
+temporary directory -- was identical in two suites that started inside one
+second (nova-tools#1699)."
+  (test-temp-dir "savepoint"))
 
 (defun savepoint-file-text (path)
   (with-open-file (in path :direction :input :element-type 'character

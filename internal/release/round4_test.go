@@ -388,14 +388,19 @@ func TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("code=%d errs=%s out=%s", code, errs.String(), out.String())
 	}
-	// THE VERB NEVER HASHES A REMOTE FILE. Not `sha256sum`, not `shasum`, not
-	// `openssl dgst`: a digest computed where the bits live is not evidence
-	// about the bits.
+	// THE FETCH SOURCE NEVER HASHES. Decision 2: a digest computed where the
+	// bits live is not evidence about the bits. Destination `sha256sum -c` of
+	// a copy this host already verified is #1981, not this lesson.
 	for _, run := range s.runs {
-		for _, banned := range []string{"sha256sum", "shasum", "openssl", "md5"} {
-			if strings.Contains(run, banned) {
-				t.Fatalf("adopt asked a machine to hash something: %s", run)
+		if strings.HasPrefix(run, "build-host:") {
+			for _, banned := range []string{"sha256sum", "shasum", "openssl", "md5"} {
+				if strings.Contains(run, banned) {
+					t.Fatalf("adopt asked the machine holding the bits to hash them: %s", run)
+				}
 			}
+		}
+		if strings.Contains(run, "sha256sum") && strings.Contains(run, SumsFile) && !strings.Contains(run, "-c") {
+			t.Fatalf("adopt asked a machine to hash %s as if that were --expect-sums: %s", SumsFile, run)
 		}
 	}
 }
