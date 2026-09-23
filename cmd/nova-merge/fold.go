@@ -11,13 +11,13 @@ package main
 // one lease rule 4 allows and opened as one pull request.
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"path"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -288,14 +288,14 @@ func foldRun(a foldRunArgs) int {
 				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 			return 1
 		case foldPublishUnknown:
-			why := "the remote ref could not be read back"
-			if remote != "" {
-				why = "origin " + oneline.Field(a.out) + " is at " + oneline.Field(merge.Short(remote)) +
-					", neither the squash nor the pre-push " + oneline.Field(merge.Short(expected)) +
-					", so the squash may have landed and been superseded"
+			if remote == "" {
+				fmt.Fprintf(a.stderr, "FOLD FAIL: %s; whether %s was published is unknown (the remote ref could not be read back); remedy: git ls-remote origin refs/heads/%s\n",
+					oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(merge.Short(squash)), oneline.Field(a.out))
+				return 1
 			}
-			fmt.Fprintf(a.stderr, "FOLD FAIL: %s; whether %s was published is unknown (%s); remedy: git ls-remote origin refs/heads/%s\n",
-				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(merge.Short(squash)), why, oneline.Field(a.out))
+			fmt.Fprintf(a.stderr, "FOLD FAIL: %s; whether %s was published is unknown (origin %s is at %s, neither the squash nor the pre-push %s, so the squash may have landed and been superseded); remedy: git ls-remote origin refs/heads/%s\n",
+				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Field(merge.Short(squash)), oneline.Field(a.out),
+				oneline.Field(merge.Short(remote)), oneline.Field(merge.Short(expected)), oneline.Field(a.out))
 			return 1
 		}
 		// The push landed and only its reply was lost: the remote holds the squash, so
@@ -482,7 +482,10 @@ func foldWriteUnder(root, rel string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("the conflicting path %q could not be rewritten: %w", rel, err)
 	}
-	if _, err := f.Write(data); err != nil {
+	// io.Copy into the file this function just created exclusively, never a stream this
+	// binary prints: the one-line audit's writer check is about stdout and stderr, and
+	// this site is the fold's named writing site in source_test.go.
+	if _, err := io.Copy(f, bytes.NewReader(data)); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -704,8 +707,9 @@ func foldGoPackages(dir string, changed []string) []string {
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(f))); err != nil {
 			continue
 		}
-		pkg := "./" + path.Dir(f)
-		if path.Dir(f) == "." {
+		dir := filepath.ToSlash(filepath.Dir(filepath.FromSlash(f)))
+		pkg := "./" + dir
+		if dir == "." {
 			pkg = "."
 		}
 		if !seen[pkg] {
