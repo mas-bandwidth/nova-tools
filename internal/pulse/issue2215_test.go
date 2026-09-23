@@ -316,6 +316,31 @@ func TestIssue2215(t *testing.T) {
 		}
 	})
 
+	// A row with more than three fields is not a verdict row, whatever its third field
+	// says: the reader proves a pair only on exactly kind, template, verdict.
+	t.Run("an extra-column ACCEPT OK row leaves the pair unproven", func(t *testing.T) {
+		root := t.TempDir()
+		argvLog := filepath.Join(root, "argv.log")
+		fakeSwarm(t, argvLog)
+		if err := os.MkdirAll(filepath.Join(root, "accept"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "accept", "first.tsv"),
+			[]byte("fix-red\t59007f0ee12a\tACCEPT OK\tunexpected\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cards, _ := writeTypedCards(t, root, 2, "fix-red", "59007f0ee12a")
+		code, out, errb := runLaunch(t, LaunchInput{
+			Cards: cards, Root: root, Slots: 4, Deadline: "120", Now: issue2215Now,
+		})
+		if code != 2 {
+			t.Fatalf("exit=%d, want 2; stderr=%q stdout=%q", code, errb, out)
+		}
+		if want := "PULSE REFUSED: no accepted first card for kind=fix-red template=59007f0ee12a (launch one card first)\n"; errb != want {
+			t.Fatalf("stderr=%q, want %q", errb, want)
+		}
+	})
+
 	// A typed card that names no template is a pair with no template half, and it runs
 	// alone like any other unproven pair — which is the state of every v2 card until the
 	// cutter writes the TEMPLATE: line.

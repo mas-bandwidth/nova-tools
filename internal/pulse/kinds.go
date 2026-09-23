@@ -198,7 +198,7 @@ func acceptedFirstPairs(root string) (map[string]bool, error) {
 			continue
 		}
 		f := strings.Split(line, "\t")
-		if len(f) < 3 || f[0] == "" {
+		if len(f) != 3 || f[0] == "" {
 			continue
 		}
 		if strings.TrimSpace(f[2]) == acceptOK {
