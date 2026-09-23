@@ -274,7 +274,9 @@ func TestFoldCloseFoldedClosesSupersededPullRequests(t *testing.T) {
 	t.Parallel()
 	l := newLab(t)
 	l.init("main")
-	l.host.PRs[500] = merge.PR{Number: 500, Body: "nova-merge fold of fold-out onto main\n\nsupersedes #11\nsupersedes #12\n"}
+	l.host.PRs[500] = merge.PR{Number: 500, Merged: true, Body: "nova-merge fold of fold-out onto main\n\nsupersedes #11 branch=feature-a\nsupersedes #12 branch=feature-b\n"}
+	l.host.PRs[11] = merge.PR{Number: 11, HeadRef: "feature-a"}
+	l.host.PRs[12] = merge.PR{Number: 12, HeadRef: "feature-b"}
 
 	exit, stdout, stderr := l.run("fold", "--lane", l.lane, "--close-folded", "--pr", "500")
 	if exit != 0 {
