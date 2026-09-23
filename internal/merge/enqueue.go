@@ -110,7 +110,14 @@ type EnqueueHost interface {
 
 // Enqueuer is the one door. It is a struct rather than a free function so that the host is
 // injected once and every caller in the tools reaches the queue the same way.
-type Enqueuer struct{ Host EnqueueHost }
+//
+// Events, when set, is the structured log sink the admission is told to after
+// the mutation lands: one `enqueue` line with the PR and head sha, beside the
+// queue itself. A nil Events writes nothing.
+type Enqueuer struct {
+	Host   EnqueueHost
+	Events *Events
+}
 
 // NewEnqueuer returns the door onto one forge.
 func NewEnqueuer(host EnqueueHost) *Enqueuer { return &Enqueuer{Host: host} }
@@ -137,6 +144,7 @@ func (e *Enqueuer) Enqueue(ctx context.Context, pr EnqueuePR, jump bool) error {
 	if err := e.Host.EnqueuePullRequest(ctx, strings.TrimSpace(id), jump); err != nil {
 		return fmt.Errorf("enqueue pull request %d: %w", pr.Number, err)
 	}
+	e.Events.Enqueue(pr.Number, pr.HeadSHA)
 	return nil
 }
 

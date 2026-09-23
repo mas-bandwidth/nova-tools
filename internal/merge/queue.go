@@ -244,6 +244,14 @@ func UpdateQueue(lane string, s *State, wait time.Duration, change func(*Queue) 
 // PutPark records one poison decision in the queue under the state lock. It is the sweep's
 // own write; the caller has already decided.
 func PutPark(lane string, p Park) error {
+	return PutParkWithEvents(lane, p, time.Now().UTC(), nil)
+}
+
+// PutParkWithEvents records one poison decision in the queue under the state
+// lock and logs the park event beside it: the reason and the age. The queue
+// stays the durable store; the line points at it. A nil Events writes no
+// line, so this is PutPark with a sink.
+func PutParkWithEvents(lane string, p Park, now time.Time, ev *Events) error {
 	s, err := Load(lane)
 	if err != nil {
 		return err
@@ -255,7 +263,43 @@ func PutPark(lane string, p Park) error {
 		q.Queued = QueueRemove(q.Queued, p.PR)
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	ev.Park(ParkReason(p), parkAge(p, now))
+	return nil
+}
+
+// ParkReason is the sentence a park event carries: the poison verdict in the
+// words the sweep's own QUEUE PARK line uses -- the test, the package it
+// lives in, and how many runs it failed in.
+func ParkReason(p Park) string {
+	test, pkg := p.Test, p.Package
+	if strings.TrimSpace(test) == "" {
+		test = "-"
+	}
+	if strings.TrimSpace(pkg) == "" {
+		pkg = "-"
+	}
+	return fmt.Sprintf("poison %s in %s failed %d runs", test, pkg, p.Runs)
+}
+
+// parkAge is how long the park record had stood when it was set aside: now
+// minus the record's own instant, or "-" when the record names none.
+func parkAge(p Park, now time.Time) string {
+	at := strings.TrimSpace(p.At)
+	if at == "" {
+		return "-"
+	}
+	stand, err := time.Parse(Stamp, at)
+	if err != nil {
+		return "-"
+	}
+	d := now.Sub(stand)
+	if d < 0 {
+		d = 0
+	}
+	return d.String()
 }
 
 // Hold is the state of <lane>/hold: its first line is the reason.
