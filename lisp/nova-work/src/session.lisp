@@ -302,8 +302,10 @@ Returns (values admitted-p reason exit-code)."
 Checks completion before until, tip == base, and OWNER generation/token."
   (let ((now-ut (if now (parse-rfc3339 now) (get-universal-time)))
         (until-ut (parse-rfc3339 (session-until sess))))
-    ;; 1. Check completion deadline: must complete before until
-    (when (> now-ut until-ut)
+    ;; 1. Check completion deadline: must complete strictly before until.
+    ;; An owner unable to reconfirm before until is fenced at the exact
+    ;; boundary, so now == until already refuses.
+    (when (>= now-ut until-ut)
       (setf (session-state sess) :fenced)
       (return-from session-reconfirm
         (values nil
