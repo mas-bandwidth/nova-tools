@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// TestClearStaleIndexLockAgeBoundary pins the age rule and nothing else. The clock is
+// the lock's own mtime plus a fixed offset, and the process scan is injected: the real
+// scan reads every git on the host, and on a gate bench another lane's git caught
+// mid-exit (comm git, empty cmdline, not yet a zombie) made the scan unknown and failed
+// this test for a reason that has nothing to do with age (#2958). Ownership has its own
+// tests below; here no git owns the checkout, so age alone decides.
 func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -25,19 +31,32 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleared, err := ClearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge))
-	if err != nil || cleared {
-		t.Fatalf("a lock aged exactly 60s: cleared=%v err=%v, want left alone", cleared, err)
+	scans := 0
+	noGit := func() ([]gitProc, error) {
+		scans++
+		return nil, nil
 	}
-	if _, err := os.Lstat(lock); err != nil {
-		t.Fatalf("the lock was removed at exactly 60s: %v", err)
+	for _, young := range []time.Duration{0, staleIndexLockAge - time.Nanosecond, staleIndexLockAge} {
+		cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(young), noGit)
+		if err != nil || cleared {
+			t.Fatalf("a lock aged %v: cleared=%v err=%v, want left alone", young, cleared, err)
+		}
+		if _, err := os.Lstat(lock); err != nil {
+			t.Fatalf("the lock was removed at %v, not older than %v: %v", young, staleIndexLockAge, err)
+		}
 	}
-	cleared, err = ClearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge+time.Nanosecond))
+	if scans != 0 {
+		t.Fatalf("a lock not older than %v was put to the process scan %d times; age must decide first", staleIndexLockAge, scans)
+	}
+	cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge+time.Nanosecond), noGit)
 	if err != nil || !cleared {
 		t.Fatalf("a lock older than 60s: cleared=%v err=%v, want removed", cleared, err)
 	}
 	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
 		t.Fatalf("the stale lock is still there: %v", err)
+	}
+	if scans != 1 {
+		t.Fatalf("a stale lock was removed after %d process scans, want exactly 1", scans)
 	}
 }
 
