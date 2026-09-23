@@ -876,6 +876,11 @@ func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "diagnostic containing a hex revision rejected",
+			out:  "fatal: bad object deadbeef1234\n",
+			want: "",
+		},
+		{
 			name: "empty output",
 			out:  "",
 			want: "",

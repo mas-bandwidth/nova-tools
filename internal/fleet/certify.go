@@ -871,22 +871,42 @@ func isHex(s string) bool {
 	return true
 }
 
-// BuildVersion reads the version token out of a `nova-merge version` output.
-// It searches each line for a valid build version token and rejects SSH banners,
-// diagnostic messages, and error text. If no valid version is found, it returns "".
+// BuildVersion reads the version token out of a `nova-merge version` output. It
+// extracts ONLY from a recognized version-line shape: the full buildinfo.Parse line
+// (`<tool> <version> <goos>/<goarch> <go version> [key=value ...]`), or one of the two
+// shorter standalone forms nova-merge falls back to when it has no platform line to
+// give (`<tool> <version>` or `<tool> <version> <goos>/<goarch>`). It never scans an
+// arbitrary line for any token IsValidBuildVersion happens to accept -- a diagnostic
+// line can carry a 12-to-40 character hex substring that looks like a revision but
+// names no build (`fatal: bad object deadbeef1234` is not a build, it is a git error
+// that happens to contain a hex-shaped word, and it is four fields, not two or three,
+// so none of the recognized shapes match it), so a line that is not one of the three
+// recognized shapes is rejected outright, regardless of what its words spell. SSH
+// banners, diagnostic messages, and error text are rejected the same way. If no line
+// matches a recognized shape, it returns "".
 func BuildVersion(out string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		// If the line parses as a four-token buildinfo.Line, inspect its version field.
+		// The full buildinfo shape: <tool> <version> <goos>/<goarch> <go version> [k=v...]
 		if f, ok := buildinfo.Parse(line); ok && IsValidBuildVersion(f.Version) {
 			return f.Version
 		}
-		// Otherwise inspect individual fields in the line.
-		for _, tok := range strings.Fields(line) {
-			clean := strings.Trim(tok, "(),\"'")
+		// The shorter standalone forms nova-merge falls back to when it has no
+		// platform line to give: `<tool> <version>` or `<tool> <version> <goos>/<goarch>`.
+		// The identity is always the SECOND field of a line matching one of these two
+		// exact shapes -- never a token found anywhere else on the line -- because a
+		// diagnostic sentence's second word essentially never happens to be a whole
+		// valid version, unlike some hex-shaped word buried further into it (a git
+		// error naming a truncated object id, say: "fatal: bad object deadbeef1234"
+		// is four fields, not two, and its third field is not a goos/goarch pair, so
+		// it is rejected here rather than accepted by scanning every field for one
+		// that happens to parse).
+		fields := strings.Fields(line)
+		if len(fields) == 2 || (len(fields) == 3 && strings.Contains(fields[2], "/")) {
+			clean := strings.Trim(fields[1], "(),\"'")
 			if IsValidBuildVersion(clean) {
 				return clean
 			}
