@@ -25,22 +25,35 @@ import (
 	"strings"
 )
 
+// Acceptance is the evidence that closes a unit (A14). Each entry names a
+// criterion with an id, kind, subject and predicate; the reader shape-checks
+// the closed sets and the kernel refuses a unit whose acceptance list is empty
+// once the set names acceptance.
+type Acceptance struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Subject   string `json:"subject"`
+	Predicate string `json:"predicate"`
+}
+
 // Node is one job in the graph. Merged and Green are the two facts that make a need
 // terminal accepted; a node that is neither is an open PR.
 type Node struct {
-	ID     string   `json:"id"`
-	Needs  []string `json:"needs,omitempty"`
-	Merged bool     `json:"merged,omitempty"`
-	Green  bool     `json:"green,omitempty"`
+	ID         string       `json:"id"`
+	Needs      []string     `json:"needs,omitempty"`
+	Merged     bool         `json:"merged,omitempty"`
+	Green      bool         `json:"green,omitempty"`
+	Acceptance []Acceptance `json:"acceptance,omitempty"`
 }
 
 // Graph is the job graph: the nodes in seed order, the forward needs edges and the
 // reverse blocks edges built by the same insert.
 type Graph struct {
-	order  []string
-	node   map[string]Node
-	needs  map[string][]string
-	blocks map[string][]string
+	order    []string
+	node     map[string]Node
+	needs    map[string][]string
+	blocks   map[string][]string
+	doneWhen string // report-only; never a gate on readiness (A9)
 }
 
 // Seed builds and validates a graph from nodes in seed order. It refuses a duplicate or
@@ -90,6 +103,38 @@ func Seed(nodes []Node) (*Graph, error) {
 	}
 	return g, nil
 }
+
+// SeedSet seeds a graph with a done-when report. The done-when is report-only
+// metadata (A9): it describes the set's finish line but never gates readiness.
+// Once the set names acceptance (any node carries it), a unit whose acceptance
+// list is empty is refused at load (A14).
+func SeedSet(doneWhen string, nodes []Node) (*Graph, error) {
+	hasAcceptance := false
+	for _, n := range nodes {
+		if len(n.Acceptance) > 0 {
+			hasAcceptance = true
+			break
+		}
+	}
+	if hasAcceptance {
+		for _, n := range nodes {
+			if len(n.Acceptance) == 0 {
+				return nil, fmt.Errorf("unit %q carries no acceptance; once a set names acceptance, every unit must carry it", n.ID)
+			}
+		}
+	}
+	g, err := Seed(nodes)
+	if err != nil {
+		return nil, err
+	}
+	g.doneWhen = doneWhen
+	return g, nil
+}
+
+// DoneWhen returns the set's finish-line report. It is report-only metadata
+// (A9): readiness is per-unit, and this value never gates a member whose own
+// needs are closed.
+func (g *Graph) DoneWhen() string { return g.doneWhen }
 
 // ParseNodes reads the node list from JSON: a bare array of nodes, or an object with a
 // "nodes" array. Bytes that are not a node list are a refusal, never a guess.
