@@ -1,0 +1,38 @@
+# The fixes sprint of 2026-09-22, as Rowan held it by hand: the task set behind the numbers
+# posted on nova-tools #2593 at 12:32 PM Eastern (14/23 61% -> ~4h, critical lane Johnny
+# A5 -> #2550 -> #2548) and the hand-over that halved it (rowan-34593b5bb7a9: "yes -> wall
+# ~2 h, no -> ~4 h"). cmd/nova-pulse/sprint_replay_test.go replays it through the verbs.
+#
+# id<TAB>kind<TAB>ref<TAB>owner<TAB>est<TAB>paths<TAB>depends_on<TAB>leased_at<TAB>done_at<TAB>evidence
+#
+# The fourteen closed rows carry the primary record that closed them, and their leased and
+# done stamps are what the actual is measured from; the nine open rows carry the estimate
+# made BEFORE the work, which is the only kind of estimate the calibration can learn from.
+#
+# NOTE ON THE LANES: Johnny's three open fixes sit in three packages with no file in common.
+# Nothing in this file says they depend on each other, because they do not: the four hours
+# were one person holding three tasks, which is the false serial dependency the wall
+# computation names and the hand-over removes.
+pulse-2546	fix	mas-bandwidth/nova-tools#2546	rowan	90	internal/wait/wait.go	-	2026-09-22T15:00:00Z	2026-09-22T16:15:00Z	nova-tools#2546 merged 4a1c9e2b77d0
+tools-2547	fix	mas-bandwidth/nova-tools#2547	stella	90	internal/pulse/stalebase.go	-	2026-09-22T14:30:00Z	2026-09-22T16:20:00Z	nova-tools#2598 merged affffdf1d
+tools-2549	fix	mas-bandwidth/nova-tools#2549	johnny	120	internal/harvest/commit.go	-	2026-09-22T13:30:00Z	2026-09-22T16:00:00Z	nova-tools#2549 merged 9f2b1c04aa31
+tools-2559	fix	mas-bandwidth/nova-tools#2559	emma	90	cmd/nova-swarm/launcher.go	-	2026-09-22T14:00:00Z	2026-09-22T15:40:00Z	nova-tools#2559 merged 0b77c1de5520
+tools-2561	fix	mas-bandwidth/nova-tools#2561	rowan	90	cmd/nova-pulse/status_html.go	-	2026-09-22T13:00:00Z	2026-09-22T14:20:00Z	nova-tools#2561 merged 6c30ab12de44
+tools-2562	fix	mas-bandwidth/nova-tools#2562	stella	90	cmd/nova-pulse/canary.go	-	2026-09-22T13:10:00Z	2026-09-22T14:45:00Z	nova-tools#2562 merged 51aa9c7e0b13
+a12-receipt	ruling	memory/a12-readiness-receipt	rowan	60	-	-	2026-09-22T12:00:00Z	2026-09-22T12:55:00Z	bus rowan-2f9c4a17b3de readiness receipt posted
+read-2598	read	mas-bandwidth/nova-tools#2598	johnny	10	-	-	2026-09-22T16:00:00Z	2026-09-22T16:12:00Z	typed line at head affffdf1d by johnny
+read-2595	read	mas-bandwidth/nova-tools#2595	stella	10	-	-	2026-09-22T15:50:00Z	2026-09-22T15:58:00Z	typed line at head 3c1d90f7ba28 by stella
+tools-2551	fix	mas-bandwidth/nova-tools#2551	emma	90	infra/supervisor.yml	-	2026-09-22T13:00:00Z	2026-09-22T14:25:00Z	nova-tools#2551 merged 8ad3f0c21b95
+tools-2552	fix	mas-bandwidth/nova-tools#2552	rowan	60	tools/ci/shellcheck.sh	-	2026-09-22T14:30:00Z	2026-09-22T15:40:00Z	nova-tools#2552 merged cc41b8907ee2
+a11-cells	review	memory/a11-false-confidence-cells	rowan	60	-	-	2026-09-22T12:30:00Z	2026-09-22T14:00:00Z	reports/false-confidence-cells-2026-09-22.md at d2dc598d
+tools-2568	fix	mas-bandwidth/nova-tools#2568	johnny	30	cmd/nova-bus/inbox.go	-	2026-09-22T15:00:00Z	2026-09-22T15:25:00Z	nova-tools#2568 merged 7b0e5da31c46
+tools-2592	fix	mas-bandwidth/nova-tools#2592	emma	60	cmd/nova-wake/serve.go	-	2026-09-22T14:00:00Z	2026-09-22T15:05:00Z	nova-tools#2592 merged e21c7f4a9d08
+a5-2544	fix	mas-bandwidth/nova-tools#2544	johnny	90	internal/swarm/provider.go	-	-	-	-
+tools-2550	fix	mas-bandwidth/nova-tools#2550	johnny	90	internal/merge/batch.go	-	-	-	-
+tools-2548	fix	mas-bandwidth/nova-tools#2548	johnny	60	internal/swarm/native/result.go	-	-	-	-
+decision-2608	decision	mas-bandwidth/nova-tools#2608	stella	30	-	-	-	-	-
+recut-59	fix	memory/59-card-recut	rowan	60	cmd/nova-pulse/cut_kind.go	-	-	-	-
+read-2587	read	mas-bandwidth/nova-tools#2587	stella	10	-	-	-	-	-
+read-2601	read	mas-bandwidth/nova-tools#2601	emma	10	-	-	-	-	-
+cards-v2-2522	fix	mas-bandwidth/nova-tools#2522	emma	60	cmd/nova-pulse/cut.go	-	-	-	-
+tools-2560	fix	mas-bandwidth/nova-tools#2560	rowan	60	internal/merge/land.go	-	-	-	-

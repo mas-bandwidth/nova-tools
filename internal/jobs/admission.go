@@ -99,15 +99,56 @@ type Request struct {
 	// A nested scheduler -- a CI runner set, an external engine -- holds its
 	// sub-budget as a grant and admits its own units under it (A8).
 	Parent string
+	// Revision is the unit's revision for outcomes to bind to. An executor
+	// result carried back must name this revision or it is refused.
+	Revision string
+	// Acceptance is the :acceptance criteria the unit's outcome must satisfy.
+	Acceptance []string
 }
 
 // Grant is a live reservation. It is returned to the caller by value: the
 // writer's copy is the only one that counts, and a caller cannot edit it.
 type Grant struct {
+	ID         string
+	Vector     Vector
+	Writes     []string
+	Parent     string
+	Revision   string
+	Acceptance []string
+}
+
+// Executor is a proposal for an external execution engine. It names a parent
+// unit grant and the sub-budget it draws from it; no concrete engine is grown
+// here, only the typed seam (docs/SPEC-JOBS.md section 9).
+type Executor struct {
 	ID     string
-	Vector Vector
-	Writes []string
 	Parent string
+	Vector Vector
+}
+
+// ExecutorGrant is the live reservation handed to an executor seam.
+type ExecutorGrant struct {
+	ID     string
+	Parent string
+	Vector Vector
+}
+
+// Outcome is what arrives back across the executor seam: either a completed
+// result carrying its termination proof and bound to the unit's revision and
+// :acceptance criteria, or uncertain when termination is not proved
+// (docs/SPEC-JOBS.md section 9: "an outcome (with its termination proof, or
+// uncertain)"). A completion without Proof is refused, never read as done.
+type Outcome struct {
+	UnitID     string
+	ExecutorID string
+	Revision   string
+	Acceptance []string
+	Result     string
+	// Proof is the engine's termination proof for a completed outcome (an
+	// exit record, a supervisor's reap receipt). Empty means termination is
+	// not proved: report Uncertain instead.
+	Proof     string
+	Uncertain bool
 }
 
 // Refusal is why a request was not granted. It is an error rather than a wait,
@@ -167,6 +208,14 @@ type state struct {
 	order    []string
 	children map[string][]string
 	writers  map[string]string
+	// uncertain holds executor grants that reported uncertain: their engine
+	// disconnected without termination proof, so they keep their reservation
+	// until termination is proved (a completed Report carrying Proof) or a
+	// fence is written (Fence). Release refuses them until then.
+	uncertain map[string]bool
+	// fences records the fence written for a grant that was uncertain: the
+	// token that makes any late write from the old executor stale.
+	fences map[string]string
 }
 
 // New starts an Admission over a capacity. Lanes are NOT declared: a lane is
@@ -238,9 +287,57 @@ func (a *Admission) Held(id string) (Grant, bool) {
 			g, ok = *held, true
 			g.Vector = held.Vector.Clone()
 			g.Writes = append([]string(nil), held.Writes...)
+			g.Acceptance = append([]string(nil), held.Acceptance...)
 		}
 	})
 	return g, ok
+}
+
+// AdmitExecutor creates an executor seam: a delegated sub-budget drawn from the
+// parent unit's reservation. The executor's budget returns to the parent on
+// ReleaseExecutor, never to the machine directly.
+func (a *Admission) AdmitExecutor(e Executor) (ExecutorGrant, error) {
+	var out ExecutorGrant
+	var err error
+	a.do(func(st *state) { out, err = st.admitExecutor(e) })
+	return out, err
+}
+
+// ReleaseExecutor returns an executor's sub-budget to its parent reservation.
+// An executor that reported uncertain is refused: its engine may still be
+// running, so the reservation stays until termination is proved or a fence is
+// written (docs/SPEC-JOBS.md section 9, jobs-uncertain-keeps-its-resources).
+func (a *Admission) ReleaseExecutor(id string) error {
+	var err error
+	a.do(func(st *state) { err = st.releaseExecutor(id) })
+	return err
+}
+
+// Report accepts an outcome from an executor. A result must bind to the unit's
+// revision and :acceptance criteria; an uncertain outcome keeps the executor's
+// reservation because termination is not proved.
+func (a *Admission) Report(o Outcome) error {
+	var err error
+	a.do(func(st *state) { err = st.report(o) })
+	return err
+}
+
+// Fence writes a fence for an uncertain executor: a non-empty token that
+// makes any late write from the old executor stale. It resolves the
+// uncertainty, so the grant may then be released. A grant that is not
+// uncertain needs no fence and is refused, as is an empty fence.
+func (a *Admission) Fence(id, fence string) error {
+	var err error
+	a.do(func(st *state) { err = st.fence(id, fence) })
+	return err
+}
+
+// IsUncertain reports whether an executor grant reported uncertain and still
+// holds its reservation.
+func (a *Admission) IsUncertain(id string) bool {
+	var ok bool
+	a.do(func(st *state) { _, ok = st.uncertain[id] })
+	return ok
 }
 
 func (st *state) grant(req Request) (Grant, error) {
@@ -316,6 +413,7 @@ func (st *state) grant(req Request) (Grant, error) {
 	}
 
 	g := &Grant{ID: id, Vector: req.Vector.Clone(), Parent: req.Parent,
+		Revision: req.Revision, Acceptance: append([]string(nil), req.Acceptance...),
 		Writes: append([]string(nil), req.Writes...)}
 	st.grants[id] = g
 	st.order = append(st.order, id)
@@ -330,7 +428,89 @@ func (st *state) grant(req Request) (Grant, error) {
 	out := *g
 	out.Vector = g.Vector.Clone()
 	out.Writes = append([]string(nil), g.Writes...)
+	out.Acceptance = append([]string(nil), g.Acceptance...)
 	return out, nil
+}
+
+func (st *state) admitExecutor(e Executor) (ExecutorGrant, error) {
+	g, err := st.grant(Request{ID: e.ID, Parent: e.Parent, Vector: e.Vector})
+	if err != nil {
+		return ExecutorGrant{}, err
+	}
+	return ExecutorGrant{ID: g.ID, Parent: g.Parent, Vector: g.Vector.Clone()}, nil
+}
+
+func (st *state) releaseExecutor(id string) error {
+	return st.release(id)
+}
+
+func (st *state) fence(id, fence string) error {
+	if _, live := st.grants[id]; !live {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("no live grant %q to fence", id)}
+	}
+	if !st.uncertain[id] {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("%s is not uncertain; a fence is written only for an executor whose termination is not proved", id)}
+	}
+	if strings.TrimSpace(fence) == "" {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("an empty fence does not fence %s; write a token that makes its late writes stale", id)}
+	}
+	if st.fences == nil {
+		st.fences = map[string]string{}
+	}
+	st.fences[id] = fence
+	delete(st.uncertain, id)
+	return nil
+}
+
+func (st *state) report(o Outcome) error {
+	unit, liveUnit := st.grants[o.UnitID]
+	if !liveUnit {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("no live grant %q to report against", o.UnitID)}
+	}
+	exec, liveExec := st.grants[o.ExecutorID]
+	if !liveExec {
+		return &Refusal{ID: o.ExecutorID, Reason: fmt.Sprintf("no live executor grant %q to report against", o.ExecutorID)}
+	}
+	if exec.Parent != o.UnitID {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("executor %q is not bound to unit %q", o.ExecutorID, o.UnitID)}
+	}
+	if o.Uncertain {
+		if st.uncertain == nil {
+			st.uncertain = map[string]bool{}
+		}
+		st.uncertain[o.ExecutorID] = true
+		return nil
+	}
+	if strings.TrimSpace(o.Proof) == "" {
+		return &Refusal{ID: o.ExecutorID, Reason: fmt.Sprintf("outcome from executor %q carries no termination proof; report it uncertain", o.ExecutorID)}
+	}
+	if strings.TrimSpace(o.Result) == "" {
+		return &Refusal{ID: o.ExecutorID, Reason: fmt.Sprintf("completed outcome from executor %q carries no result", o.ExecutorID)}
+	}
+	if o.Revision != unit.Revision {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("outcome revision %q does not match unit revision %q", o.Revision, unit.Revision)}
+	}
+	if !acceptanceMatch(o.Acceptance, unit.Acceptance) {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("outcome acceptance %v does not match unit acceptance %v", o.Acceptance, unit.Acceptance)}
+	}
+	delete(st.uncertain, o.ExecutorID)
+	return nil
+}
+
+func acceptanceMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aa := append([]string(nil), a...)
+	bb := append([]string(nil), b...)
+	sort.Strings(aa)
+	sort.Strings(bb)
+	for i := range aa {
+		if aa[i] != bb[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // total is the capacity of one dimension under one authority. A lane is 1
@@ -413,6 +593,15 @@ func (st *state) release(id string) error {
 			"%s still holds %d nested grant(s) (%s); a parent's reservation is returned only after the grants drawn from it",
 			id, len(kids), strings.Join(kids, ", "))}
 	}
+	// jobs-uncertain-keeps-its-resources: an uncertain executor may still be
+	// running, so freeing its reservation could hand the same capacity out
+	// twice. It is released only after termination is proved or a fence is
+	// written.
+	if st.uncertain[id] {
+		return &Refusal{ID: id, Holder: id, Reason: fmt.Sprintf(
+			"%s reported uncertain; its reservation is kept until termination is proved (Report with Proof) or a fence is written (Fence)",
+			id)}
+	}
 	delete(st.grants, id)
 	for i, held := range st.order {
 		if held == id {
@@ -434,6 +623,7 @@ func (st *state) release(id string) error {
 			delete(st.writers, path)
 		}
 	}
+	delete(st.fences, id)
 	return nil
 }
 

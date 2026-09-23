@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -291,4 +293,158 @@ func TestSimulateRequiresRepoAndBase(t *testing.T) {
 	}
 	contains(t, stderr, "--repo is required")
 	absent(t, stdout, "SIMULATE")
+}
+
+// Dummy parent names the check child must not see (#1836). FAKE_SECRET_FOR_PROBE
+// is the dogfood probe; FAKE_PASSWORD_FOR_PROBE is a credential NAME this tree
+// holds (SMTP_PASSWORD) that Clean still keeps. Neither VALUE is a credential;
+// the check reports only set or unset.
+const (
+	parentSecretProbe     = "FAKE_SECRET_FOR_PROBE"
+	parentPasswordProbe   = "FAKE_PASSWORD_FOR_PROBE"
+	parentSecretProbeLine = "CHILD_FAKE_SECRET_FOR_PROBE="
+	parentPasswordLine    = "CHILD_FAKE_PASSWORD_FOR_PROBE="
+)
+
+// childEnvProbe is the check that names whether a parent dummy reached the
+// child, without printing a value. SIMULATE POISON quotes the first line, so
+// the original dogfood used a failing check; here runCheck returns the output
+// either way.
+func childEnvProbe(name string) string {
+	if runtime.GOOS == "windows" {
+		return "if defined " + name + " (echo CHILD_" + name + "=set) else (echo CHILD_" + name + "=unset)"
+	}
+	return "if [ -n \"${" + name + "+x}\" ]; then echo CHILD_" + name + "=set; else echo CHILD_" + name + "=unset; fi"
+}
+
+func assertChildMissesParentDummy(t *testing.T, out, name, line string) {
+	t.Helper()
+	if strings.Contains(out, line+"set") {
+		t.Errorf("the check child inherited the parent's dummy %s; a member's code can read it", name)
+	}
+	if !strings.Contains(out, line+"unset") {
+		t.Errorf("the check did not say the dummy %s was unset; got %q", name, out)
+	}
+}
+
+// ISSUE #1836: simulate (nil env) and batch (ciTestEnv) run checks — code from
+// the tree under test — through a child. A dummy in the caller's environment
+// reached that child. The child must not see it. The dummy is not a credential
+// and is never printed.
+func TestCheckChildrenDoNotInheritAParentSecret(t *testing.T) {
+	t.Setenv(parentSecretProbe, "dummy-not-a-credential")
+	t.Setenv(parentPasswordProbe, "dummy-not-a-credential")
+	dir := t.TempDir()
+	sep := "; "
+	if runtime.GOOS == "windows" {
+		sep = " & "
+	}
+	probe := childEnvProbe(parentSecretProbe) + sep + childEnvProbe(parentPasswordProbe)
+
+	out, err := runCheck(dir, probe, time.Second, nil)
+	if err != nil && out == "" {
+		t.Fatalf("simulate's nil-env check did not run: %v", err)
+	}
+	assertChildMissesParentDummy(t, out, parentSecretProbe, parentSecretProbeLine)
+	assertChildMissesParentDummy(t, out, parentPasswordProbe, parentPasswordLine)
+
+	tmp := t.TempDir()
+	out, err = runCheck(dir, probe, time.Second, ciTestEnv(tmp, 0))
+	if err != nil && out == "" {
+		t.Fatalf("batch's ciTestEnv check did not run: %v", err)
+	}
+	assertChildMissesParentDummy(t, out, parentSecretProbe, parentSecretProbeLine)
+	assertChildMissesParentDummy(t, out, parentPasswordProbe, parentPasswordLine)
+}
+
+// ISSUE #2499 item 4 / #2508: the fleet-wide gate reached go test with SHLVL=0.
+// A test that runs `bash -euo pipefail` is then a top-level shell (bash
+// shell_level < 2). SSH_CLIENT is set; Ubuntu sources /etc/bash.bashrc;
+// `PS1: unbound variable` lands in the captured output. The coordinator
+// exports SHLVL=1 before exec. The tests this verb runs get the same floor.
+// SSH_CLIENT is not stripped.
+func TestCheckChildrenSeeASaneSHLVL(t *testing.T) {
+	t.Setenv("SHLVL", "0")
+	t.Setenv("SSH_CLIENT", "127.0.0.1 54321 22")
+
+	cases := []struct {
+		name string
+		env  []string
+	}{
+		{"simulate nil", nil},
+		{"batch ciTestEnv", ciTestEnv(t.TempDir(), 0)},
+		{"explicit SHLVL=0", []string{
+			"PATH=/usr/bin:/bin",
+			"HOME=/tmp",
+			"SHLVL=0",
+			"SSH_CLIENT=127.0.0.1 54321 22",
+		}},
+		{"SHLVL missing", []string{
+			"PATH=/usr/bin:/bin",
+			"HOME=/tmp",
+			"SSH_CLIENT=127.0.0.1 54321 22",
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := checkChildEnv(c.env)
+			n, ok := envSHLVL(got)
+			if !ok || n < 1 {
+				t.Fatalf("check child env has SHLVL ok=%v value=%d; a child bash -u would be a top-level shell and Ubuntu would source /etc/bash.bashrc (PS1: unbound variable). want SHLVL>=1", ok, n)
+			}
+			if _, has := envLookup(got, "SSH_CLIENT"); !has {
+				t.Fatal("SSH_CLIENT was stripped; the adopted fix is SHLVL=1, not dropping SSH_CLIENT")
+			}
+			assertBashUInheritsSHLVLAtLeast1(t, got)
+		})
+	}
+}
+
+func envLookup(env []string, name string) (string, bool) {
+	var val string
+	ok := false
+	for _, kv := range env {
+		k, v, found := strings.Cut(kv, "=")
+		if found && strings.EqualFold(k, name) {
+			val = v
+			ok = true
+		}
+	}
+	return val, ok
+}
+
+func envSHLVL(env []string) (int, bool) {
+	raw, ok := envLookup(env, "SHLVL")
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// assertBashUInheritsSHLVLAtLeast1 runs bash -u under env. bash increments
+// SHLVL at start, so $((SHLVL-1)) is the value a child inherits — the value
+// that was 0 under the fleet-wide gate.
+func assertBashUInheritsSHLVLAtLeast1(t *testing.T, env []string) {
+	t.Helper()
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		if runtime.GOOS == "windows" {
+			return
+		}
+		t.Skip("bash is not on PATH")
+	}
+	cmd := exec.Command(bash, "-u", "-c", `printf '%s\n' "$((SHLVL-1))"`)
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("bash -u failed under the check env: %v\n%s", err, out)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || n < 1 {
+		t.Fatalf("child bash -u inherited SHLVL=%q, want >=1", bytes.TrimSpace(out))
+	}
 }

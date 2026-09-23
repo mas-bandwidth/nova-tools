@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -30,6 +31,48 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
+// answerHelp is the sub-verb help answer (the #1358 class). Package flag returns
+// -h and --help from Parse as flag.ErrHelp, and a flag set whose output is
+// io.Discard -- which every verb here uses, because the oneline audit will not
+// let package flag print a line the binary did not author -- turned a
+// reasonable question into `flag: help requested` at exit 2. It is answered
+// here instead: that verb's own lines of the usage block, on stdout, at exit 0.
+//
+// The lines come out of the usage block and the verb asked about is never
+// echoed, so nothing read off the command line reaches a stream through this.
+func answerHelp(err error, stdout io.Writer, verb string) bool {
+	if !errors.Is(err, flag.ErrHelp) {
+		return false
+	}
+	fmt.Fprint(stdout, verbUsage(usage, verb))
+	return true
+}
+
+// verbUsage is the lines of a usage block that name one verb: every line
+// opening `  nova-decide <verb>`, and the wrapped lines under it, which are
+// indented further and carry no verb of their own. A verb the block does not
+// name falls back to the whole block rather than to nothing.
+func verbUsage(block, verb string) string {
+	head := "  nova-decide " + verb
+	var out []string
+	carry := false
+	for _, line := range strings.Split(block, "\n") {
+		switch {
+		case line == head || strings.HasPrefix(line, head+" "):
+			out = append(out, line)
+			carry = true
+		case carry && strings.HasPrefix(line, "     ") && strings.TrimSpace(line) != "":
+			out = append(out, line)
+		default:
+			carry = false
+		}
+	}
+	if len(out) == 0 {
+		return block
+	}
+	return strings.Join(out, "\n") + "\n"
+}
+
 // deciderOpener opens the typed-decision client. It is the seam a test replaces
 // with a fake, so no unit test dials the provider or needs a key on disk.
 var deciderOpener = func(baseURL, keyEnv string) (decide.Decider, error) {
@@ -38,6 +81,13 @@ var deciderOpener = func(baseURL, keyEnv string) (decide.Decider, error) {
 		return nil, err
 	}
 	return client, nil
+}
+
+// logSinkOpener opens the decision log --log names: a path (JSON lines) or the
+// table beside the card results. It is the seam a test replaces with an
+// in-memory sink, so no unit test opens a socket to Postgres.
+var logSinkOpener = func(name, dsnEnv string) (decide.LogSink, error) {
+	return decide.OpenLogSink(name, dsnEnv)
 }
 
 // now is a var so a test can pin the log's timestamp.
@@ -56,12 +106,17 @@ func (s *stringList) Set(v string) error {
 // runRoute is the route verb: it builds the evidence, asks for a rung, applies
 // the floor, prints one line and appends one log row.
 func runRoute(args []string, stdout, stderr io.Writer) int {
+	// wall_ms is the verb's start to its line: the clock starts here, on the
+	// first line of the verb, and every decision this run prints or persists
+	// is stamped with the milliseconds to it.
+	verbStart := now()
 	fs := flag.NewFlagSet("nova-decide route", flag.ContinueOnError)
 	unitPath := fs.String("unit", "", "a JSON file (or inline JSON) holding the unit of work's evidence")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
-	logPath := fs.String("log", "", "append the decision to this log (JSON lines)")
+	logPath := fs.String("log", "", "append the decision to this log: a path (JSON lines) or "+decide.PostgresLog+" (the table beside the card results)")
+	dsnEnv := fs.String("dsn-env", "", "with --log "+decide.PostgresLog+": the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
 	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
-	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung")
+	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung. Absent, the registry's floor for this unit's KIND answers, and the built-in default only where the kind has none")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
 	maxSteps := fs.Int("max-steps", decide.DefaultMaxSteps, "how many decisions --step-up makes before it stops")
 	paste := fs.Bool("paste", false, "print one more line the coordinator pastes: ROUTE <unit> -> <mind> (<model id>) conf=<x>")
@@ -87,6 +142,9 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "route") {
+			return 0
+		}
 		return refuse(stderr, "ROUTE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -145,7 +203,30 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "ROUTE", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	// The floor is PER KIND. One floor for every kind is one number standing in
+	// for ten different questions, and on 2026-09-18 it put 13 of 13 provider
+	// answers below itself and stepped every one of them up. A --floor given on
+	// the command line still wins -- the person asking is looking at something
+	// the table does not know -- and every line says which it was.
+	effectiveFloor, floorFrom := decide.ResolveFloor(reg, unit.Kind, *floor, set["floor"])
 	ask := *useJev && !*noJev
+	// The log is OPENED before the call, not after it. --log names a path or the
+	// table, and a table that will not open is nowhere to record the decision:
+	// the rule of #1327 is that a jev call with nowhere to record it is refused
+	// BEFORE it is made, and a DSN that is not there is exactly that case.
+	var sink decide.LogSink
+	if strings.TrimSpace(*logPath) != "" {
+		opened, err := logSinkOpener(*logPath, *dsnEnv)
+		if err != nil {
+			reason := "bad-log"
+			if ask {
+				reason = "no-accounting"
+			}
+			return refuse(stderr, "ROUTE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		sink = opened
+		defer sink.Close()
+	}
 	var res decide.RouteResult
 	var routeErr error
 	var steps []decide.RouteResult
@@ -156,23 +237,42 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "ROUTE", "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
 		client = opened
-		fmt.Fprintf(stderr, "nova-decide route: asking jev about unit %s (kind %s, floor %.2f)\n", oneline.Field(unit.ID), oneline.Field(unit.Kind), *floor)
+		fmt.Fprintf(stderr, "nova-decide route: asking jev about unit %s (kind %s, floor %.2f from %s)\n",
+			oneline.Field(unit.ID), oneline.Field(unit.Kind), effectiveFloor, oneline.Field(floorFrom))
 	}
 	switch {
 	case *stepUp:
 		// The step-up is a SEQUENCE of decisions, and the caller gets all of
 		// them: the last is the answer, and every one of them is a row.
-		steps, routeErr = decide.RouteStepUp(context.Background(), client, reg, unit, *floor, *maxSteps)
+		steps, routeErr = decide.RouteStepUp(context.Background(), client, reg, unit, effectiveFloor, *maxSteps)
 		if len(steps) > 0 {
 			res = steps[len(steps)-1]
 		}
 	case ask:
-		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, *floor)
+		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, effectiveFloor)
 	default:
-		res, routeErr = decide.RouteRules(reg, unit, *floor)
+		res, routeErr = decide.RouteRules(reg, unit, effectiveFloor)
+	}
+	// Where the floor came from is the decision's own fact, and it travels with
+	// it onto the line and into every log row -- including the steps, each of
+	// which was gated on the same floor.
+	res.FloorFrom = floorFrom
+	for i := range steps {
+		steps[i].FloorFrom = floorFrom
 	}
 	if ask {
 		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
+	}
+	// Stamp the wall clock on every decision the verb prints or persists,
+	// answer and refusal alike: wall_ms is the verb's start to its line, and
+	// a row with no stamp carries no measurement, never a zero.
+	stampWall := func(r *decide.RouteResult) {
+		r.WallMs = int(now().Sub(verbStart).Milliseconds())
+		r.HasWallMs = true
+	}
+	stampWall(&res)
+	for i := range steps {
+		stampWall(&steps[i])
 	}
 	// The record is written BEFORE the refusal is returned. A call that has
 	// already been made has already been paid for, and a decision that could
@@ -182,9 +282,9 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	// made, and the last one is the answer the line prints.
 	var persisted error
 	if *stepUp {
-		persisted = persistSteps(steps, unit, *logPath, *usagePath)
+		persisted = persistSteps(steps, unit, sink, *usagePath, reg, stderr)
 	} else {
-		persisted = persist(res, unit, *logPath, *usagePath)
+		persisted = persist(res, unit, sink, *usagePath, reg, stderr)
 	}
 	if routeErr != nil {
 		detail := oneline.Cap(routeErr.Error(), oneline.TailBytes)
@@ -212,7 +312,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		// and a wait is not permission: the rung named owns the work, and the
 		// caller's next move is to establish what happened to the attempt.
 		return 1
-	case res.Confidence < *floor:
+	case res.Confidence < effectiveFloor:
 		return 3
 	}
 	return 0
@@ -222,10 +322,10 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 // step-up is not one decision with a bigger number on it: it is N decisions,
 // each asked, each answered, each paid for, and the record says so -- so the
 // log can be read back and the spend adds up whichever step landed.
-func persistSteps(steps []decide.RouteResult, u decide.Unit, logPath, usagePath string) error {
+func persistSteps(steps []decide.RouteResult, u decide.Unit, sink decide.LogSink, usagePath string, reg *decide.Registry, stderr io.Writer) error {
 	var failures []string
 	for i, step := range steps {
-		if err := persist(step, u, logPath, usagePath); err != nil {
+		if err := persist(step, u, sink, usagePath, reg, stderr); err != nil {
 			failures = append(failures, fmt.Sprintf("step %d: %s", i+1, err))
 		}
 	}
@@ -239,20 +339,20 @@ func persistSteps(steps []decide.RouteResult, u decide.Unit, logPath, usagePath 
 // far enough to be one, and the usage row for any provider call that was
 // actually made. It runs on the way out of BOTH paths -- the answer and the
 // refusal -- so no row is lost to an error that came after the spend.
-func persist(res decide.RouteResult, u decide.Unit, logPath, usagePath string) error {
+func persist(res decide.RouteResult, u decide.Unit, sink decide.LogSink, usagePath string, reg *decide.Registry, stderr io.Writer) error {
 	if res.Unit == "" {
 		return nil // nothing got as far as being a decision
 	}
 	var failures []string
-	if strings.TrimSpace(logPath) != "" {
-		if err := decide.AppendEntry(logPath, decide.EntryFor(res, u, now())); err != nil {
+	if sink != nil {
+		if err := sink.Append(decide.EntryFor(res, u, now())); err != nil {
 			failures = append(failures, "log: "+err.Error())
 		}
 	}
 	// A decision that made no call writes no usage row: an empty row would be a
 	// claim that a call was made.
 	if strings.TrimSpace(usagePath) != "" && res.Usage.Calls > 0 {
-		if err := appendUsage(usagePath, res, u); err != nil {
+		if err := appendUsage(usagePath, res, u, reg, stderr); err != nil {
 			failures = append(failures, "usage: "+err.Error())
 		}
 	}
@@ -268,7 +368,7 @@ func persist(res decide.RouteResult, u decide.Unit, logPath, usagePath string) e
 // it reads everything else. A field the provider did not report is the literal
 // "-" and never a 0 (SPEC-TOKENS rule 14), so a failed call's tokens are an
 // absence rather than a claim that it was free.
-func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
+func appendUsage(path string, res decide.RouteResult, u decide.Unit, reg *decide.Registry, stderr io.Writer) error {
 	row := swarm.UsageRow{
 		"job":      u.ID,
 		"attempt":  strconv.Itoa(len(u.Attempts) + 1),
@@ -290,7 +390,38 @@ func appendUsage(path string, res decide.RouteResult, u decide.Unit) error {
 	if res.Usage.Failed {
 		row["rc"] = "2"
 	}
+	if usd, note := priceRow(res, reg); usd != "" {
+		row["usd"] = usd
+	} else if note != "" {
+		fmt.Fprintf(stderr, "ROUTE NOTE %s\n", oneline.Escape(note))
+	}
 	return swarm.AppendCardUsage(path, row)
+}
+
+// priceRow is what this call cost in dollars, or the reason the cost is a dash.
+// Token spend reporting is an obligation (Glenn), and `usd` was a dash on every
+// rc=0 row: the ledger counted tokens and never a cent. The tokens are priced
+// from the registry's rate table -- data, per model, with the published rate it
+// came from -- and a model the table does not hold is a dash and a NOTE naming
+// the model and the row to add. A price nobody published is not invented here.
+func priceRow(res decide.RouteResult, reg *decide.Registry) (usd, note string) {
+	rate, ok := reg.RateFor(decide.DefaultModel)
+	if !ok {
+		return "", fmt.Sprintf("no rate for model %s in the registry's rate table, so usd is a dash and the ledger counts tokens but not cost; add {\"model\": %q, \"provider\": %q, \"input_usd_per_mtok\": <n>, \"output_usd_per_mtok\": <n>} to the registry's rates",
+			decide.DefaultModel, decide.DefaultModel, usageProvider)
+	}
+	var missing []string
+	if !res.Usage.HasInput {
+		missing = append(missing, "input")
+	}
+	if !res.Usage.HasOutput {
+		missing = append(missing, "output")
+	}
+	if len(missing) > 0 {
+		return "", fmt.Sprintf("model %s has a rate but the provider reported no %s tokens for unit %s, so usd is a dash: an unmeasured cost is an absence, never a zero",
+			decide.DefaultModel, strings.Join(missing, " or "), oneline.Field(res.Unit))
+	}
+	return fmt.Sprintf("%.6f", rate.USD(res.Usage.InputTokens, res.Usage.OutputTokens)), ""
 }
 
 // usageProvider is who the tokens were spent with, in the usage file's own
@@ -357,6 +488,8 @@ func buildUnit(path string, set map[string]bool, stderr io.Writer, fromFlags dec
 		}
 		return unit, 0
 	}
+	// ...and here for the flag path, the one the manager lanes use.
+	fromFlags.Kind = decide.CanonicalKind(fromFlags.Kind)
 	if len(given) == 0 {
 		return decide.Unit{}, refuse(stderr, "ROUTE", "bad-unit", "--unit (or --unit-id and --kind) is required; the evidence is not guessed")
 	}
@@ -404,6 +537,9 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "help") {
+			return 0
+		}
 		return refuse(stderr, "HELP", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -442,20 +578,27 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 // runLog is the log verb: the escalation counts per kind and the starting rung
 // regenerated from the rows.
 func runLog(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "migrate" {
+		return runLogMigrate(args[1:], stdout, stderr)
+	}
 	fs := flag.NewFlagSet("nova-decide log", flag.ContinueOnError)
-	logPath := fs.String("log", "", "the escalation log to read (JSON lines)")
+	logPath := fs.String("log", "", "the escalation log to read: a path (JSON lines) or "+decide.PostgresLog+" (the table)")
+	dsnEnv := fs.String("dsn-env", "", "with --log "+decide.PostgresLog+": the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	summary := fs.Bool("summary", false, "print the per-kind escalation counts and the regenerated starting rung")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "log") {
+			return 0
+		}
 		return refuse(stderr, "LOG", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "LOG", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if strings.TrimSpace(*logPath) == "" {
-		return refuse(stderr, "LOG", "bad-arguments", "--log is required; refusing to guess the log's path")
+		return refuse(stderr, "LOG", "bad-arguments", "--log is required; refusing to guess the log's path. Pass a path, or "+decide.PostgresLog+" for the table")
 	}
 	if !*summary {
 		return refuse(stderr, "LOG", "bad-arguments", "--summary is the read this verb offers; pass it")
@@ -464,7 +607,14 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	entries, err := decide.ReadEntries(*logPath)
+	// One read for both sinks: the rows are the record and the summary is a
+	// projection of them, so the file and the table print the same lines.
+	sink, err := logSinkOpener(*logPath, *dsnEnv)
+	if err != nil {
+		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	defer sink.Close()
+	entries, err := sink.Entries()
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -474,4 +624,54 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, sum.Render())
 	return 0
+}
+
+// migrator is what a sink that has a schema offers: the table's migration,
+// applied from the files in internal/decide/migrations. A file sink has no
+// schema and does not satisfy it, which is how `log migrate` knows it was
+// pointed at a file.
+type migrator interface {
+	Migrate(ctx context.Context) error
+}
+
+// runLogMigrate installs the decision log's table. It is always the table's
+// verb: there is no path to migrate, and the DSN arrives in the environment
+// under the name --dsn-env gives, put there by nova-secrets exec.
+func runLogMigrate(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("nova-decide log migrate", flag.ContinueOnError)
+	dsnEnv := fs.String("dsn-env", "", "the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "MIGRATE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if fs.NArg() > 0 {
+		return refuse(stderr, "MIGRATE", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	}
+	sink, err := logSinkOpener(decide.PostgresLog, *dsnEnv)
+	if err != nil {
+		return refuse(stderr, "MIGRATE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	defer sink.Close()
+	m, ok := sink.(migrator)
+	if !ok {
+		return refuse(stderr, "MIGRATE", "bad-migration",
+			fmt.Sprintf("%T has no schema to install; migrate is the table's verb and the JSON lines log has none", sink))
+	}
+	fmt.Fprintln(stderr, "nova-decide log migrate: applying the decision log's migrations")
+	if err := m.Migrate(context.Background()); err != nil {
+		return refuse(stderr, "MIGRATE", "bad-migration", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	fmt.Fprintf(stdout, "MIGRATE OK table=decide_log version=%d dsn_env=%s\n",
+		decide.LogSchemaVersion, oneline.Field(dsnEnvName(*dsnEnv)))
+	return 0
+}
+
+// dsnEnvName is the variable the DSN came from, for the line that says what was
+// done. The name is not a secret; the value never appears.
+func dsnEnvName(dsnEnv string) string {
+	if s := strings.TrimSpace(dsnEnv); s != "" {
+		return s
+	}
+	return decide.LogDSNEnv
 }

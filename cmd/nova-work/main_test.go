@@ -178,11 +178,19 @@ func TestMissingSocketExitsTwoWithTheSpecsRemedy(t *testing.T) {
 	}
 }
 
-func TestHelpListsEveryVerbTheSwitchAccepts(t *testing.T) {
-	verbs := switchVerbs(t)
-	want := []string{"help", "query", "session start", "session status", "session stop", "version"}
-	if got := strings.Join(verbs, ","); got != strings.Join(want, ",") {
-		t.Fatalf("the switch accepts %q, want exactly %q", got, strings.Join(want, ","))
+func TestHelpListsEveryVerbTheClientAccepts(t *testing.T) {
+	// The switch is now two verbs and a table: help and version answer
+	// without a session, query has constraints of its own, and every other
+	// socket verb is a row of socketVerbs (see socketverbs.go). So the thing
+	// worth pinning is not the shape of the switch but the promise the switch
+	// used to carry: that a caller can find in help every verb the client
+	// will accept.
+	if got, want := strings.Join(switchVerbs(t), ","), "help,query,version"; got != want {
+		t.Fatalf("the switch accepts %q, want exactly %q -- every other socket verb belongs in socketVerbs", got, want)
+	}
+	verbs := allSocketVerbs()
+	if len(verbs) < 60 {
+		t.Fatalf("the client accepts %d socket verbs; the spec's verbs block holds far more", len(verbs))
 	}
 	var stdout, stderr bytes.Buffer
 	if code := run([]string{"help"}, &stdout, &stderr, ""); code != 0 {
@@ -691,6 +699,58 @@ func TestPlanExpandRefusesANeedsCycle(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(out); len(entries) != 0 {
 		t.Fatalf("a refused cycle wrote %d cards", len(entries))
+	}
+}
+
+// TestIssue1808Repro pins nova-tools #1808: a plan that `plan check` calls OK
+// but whose hand-written :node still owes required fields is refused by
+// `plan expand` naming EVERY field it owes in ONE run -- an :output with no
+// :branch, a :budget with no :tokens and no :model-floor together -- so a
+// defective plan costs one round trip, never one per field, and the CLI's help
+// names the fields a card node owes.
+func TestIssue1808Repro(t *testing.T) {
+	body := `(:plan :version 1
+ (:node :id "n1" :kind docs :repo "o/r" :base "dev"
+  :output (:green ("test:a"))
+  :budget (:minutes 30))
+ (:clip :per-node))`
+	path := writePlan(t, body)
+	if code, _, stderr := invoke("plan", "check", "--file", path); code != 0 {
+		t.Fatalf("plan check exit = %d, want 0 (the plan reads whole); stderr=%s", code, stderr)
+	}
+	out := t.TempDir()
+	code, stdout, stderr := invoke("plan", "expand", "--file", path, "--out", out)
+	if code != 2 {
+		t.Fatalf("plan expand exit = %d, want 2; stderr=%s", code, stderr)
+	}
+	for _, want := range []string{
+		":output of n1 has no :branch",
+		":node n1 :budget has no :tokens",
+		":node n1 :budget has no :model-floor",
+	} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("one-run refusal does not name %q; the tool stops at the first defect instead of naming every field a node owes: %s", want, stderr)
+		}
+	}
+	if lines := strings.Split(strings.TrimSpace(stderr), "\n"); len(lines) != 1 {
+		t.Errorf("a defective plan is one refusal line, not one line per defect: %q", stderr)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Errorf("a refused expansion wrote to stdout: %q", stdout)
+	}
+	if entries, _ := os.ReadDir(out); len(entries) != 0 {
+		t.Fatalf("a refused expansion wrote %d cards", len(entries))
+	}
+	// The other head of #1808: the CLI documents the fields a card node owes,
+	// so a reader of nova-work help alone can write a plan that expands.
+	code, help, _ := invoke("help")
+	if code != 0 {
+		t.Fatalf("help exit = %d, want 0", code)
+	}
+	for _, want := range []string{":output", ":budget"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("nova-work help does not name the required :node field %s; a reader of the CLI cannot learn what a card node owes", want)
+		}
 	}
 }
 

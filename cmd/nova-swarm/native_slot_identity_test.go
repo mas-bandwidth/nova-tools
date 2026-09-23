@@ -124,7 +124,7 @@ func releaseBarrier(t *testing.T, slot string) {
 
 // nativeArgs is one native launch against a store, as every case here runs it.
 func nativeArgs(harness, card, slot, root, store, deadline string) []string {
-	return []string{"native", "--harness", harness, "--model", "fake/fake-model",
+	return []string{"native", "--tokens", "unmetered", "--harness", harness, "--model", "fake/fake-model",
 		"--label", "shared-label", "--card", card, "--slot", slot, "--root", root,
 		"--deadline", deadline, "--no-wall",
 		"--slots-store", store, "--owner", identityOwner}
@@ -208,8 +208,10 @@ func TestUnrelatedLeasesSurviveTheDeadline(t *testing.T) {
 		t.Errorf("a run cut at its deadline exits 1, got %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "NATIVE OK") {
-		t.Fatalf("a run cut at its deadline still prints the NATIVE OK line:\n%s", out)
+	// Still one verdict line, and it no longer says OK for a run that left nothing
+	// behind (nova-tools #1844).
+	if !strings.Contains(out, "NATIVE INCOMPLETE ") || strings.Contains(out, "NATIVE OK") {
+		t.Fatalf("a run cut at its deadline prints its verdict line, and it is not OK:\n%s", out)
 	}
 	if !strings.Contains(out, " rc=-1 ") {
 		t.Errorf("a run cut at its deadline reports rc=-1 for the child it killed:\n%s", out)

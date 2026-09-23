@@ -43,7 +43,7 @@ func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
 	if line := lineWith(body, "grok-model-example"); line == "" {
 		t.Fatalf("no Grok ledger row in the day file:\n%s", body)
-	} else if line != "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny" {
+	} else if line != "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny\t-" {
 		t.Errorf("Grok row is %q, want input/output/cost columns filled", line)
 	}
 
