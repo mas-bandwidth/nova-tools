@@ -1346,7 +1346,19 @@ PROGRESS cards=<n> rc0=<n> wall_p50_s=<n> wall_p90_s=<n> usd_per_card=<x.xxxx> s
 ESTIMATE remaining_cards=<n> hours=<n.n>
 <TOKEN> MORE kind=<k> shown=<n> total=<t> <remedy>
 <TOKEN> NOTE <something true about this run that is not a finding>
+GATEFACTS OK ci-ok=success merge-tree=clean files=- paths=ok extra=- base=<sha12> head=<sha12>
+GATEFACTS FAIL ci-ok=failure|pending job=<name> test=<name> merge-tree=clean|conflict files=<list|-> paths=ok|extra|- extra=<list|->
+GATEFACTS REFUSED: <reason> (<remedy>)
 ```
+
+`gate-facts` is the G1/G2/G3 stamp: `ci-ok` at the head, `merge-tree` against the
+landing base, and card PATHS versus `git diff --name-only base...head`. One line
+to stdout and optionally `--receipt-file`. A conflicting merge-tree prints
+`merge-tree=conflict` and exits 2; a clean tree prints `merge-tree=clean` and
+exits 0 when `ci-ok` is success and the diff stays inside PATHS. `--rollup` is
+the check rollup as a file and must name this head (`head` or `headRefOid`);
+a live `--pr` accepts the rollup only when `headRefOid` is that commit. Unit
+tests never call GitHub.
 
 `POOL`, `CUT`, `ADMIT`, `PULSE`, `HARVEST`, `HANDOFF` and `TAKEOVER` are the first tokens;
 `OK`, `REFUSED`, `WIDTH`, `UNDER-WIDTH` and `POOL EMPTY` the verdicts and the **last** line of

@@ -2553,6 +2553,40 @@ found, with one `HARVEST LEFT reason=<r> cards=<n>` line per reason. A `--root` 
 not resolve on the bench is `HARVEST REFUSED` before anything moves — a quoted `'~/…'` is
 not expanded by this verb.
 
+### gate-facts
+
+```
+nova-pulse gate-facts --dir <git-dir> --base <ref> --head <ref> [--pr <n>] [--repo <owner/name>] [--card <file>] [--paths <glob>[,<glob>...]] [--rollup <file>] [--receipt-file <path>] [--timeout <s>] [--max <n>]
+```
+
+The G1/G2/G3 stamp harvest writes on a PR body, callable on a pull request or a
+local head. One line to stdout, and the same line to `--receipt-file` when that
+flag is given. No path is guessed: `--dir`, `--base` and `--head` are required.
+
+- **G1** `ci-ok=success|failure|pending`. When it is not success, `job=` and
+  `test=` come from the rollup. `--rollup <file>` is the check rollup as JSON
+  (`{"ci-ok":"failure","job":"…","test":"…","head":"<sha>"}` or gh's
+  `statusCheckRollup` with `headRefOid`) and that id must be the resolved
+  `--head`. A file with no head, or a different one, is refused: an unbound
+  rollup is not this revision. Unit tests never call GitHub. `--pr` with
+  `--repo` reads `gh pr view --json statusCheckRollup,headRefOid` and accepts
+  the checks only when `headRefOid` is that same commit. With neither source,
+  `ci-ok=pending`.
+- **G2** `merge-tree=clean` or `merge-tree=conflict` from
+  `git merge-tree --write-tree --name-only` of `--head` onto `--base` (the
+  landing base, `origin/dev` in nova-tools). Conflict names the files and
+  **exits 2**. Clean prints `merge-tree=clean` and exits 0 when G1 is success
+  and G3 is inside PATHS.
+- **G3** `paths=` the card `PATHS:` versus `git diff --name-only base...head`.
+  `--paths` or `--card` supplies the globs; extra files are named. With neither,
+  `paths=-` and the bound is not guessed.
+
+```
+GATEFACTS OK ci-ok=success merge-tree=clean files=- paths=ok extra=- base=<sha12> head=<sha12>
+GATEFACTS FAIL ci-ok=failure job=<name> test=<name> merge-tree=clean files=- paths=extra extra=<path> extra-n=1 base=<sha12> head=<sha12>
+GATEFACTS FAIL ci-ok=success merge-tree=conflict files=<path> conflicts=1 paths=ok extra=- base=<sha12> head=<sha12>
+```
+
 ### fleet add
 
 ```
