@@ -20,6 +20,7 @@ type idleWorld struct {
 	queues      map[string][]string
 	present     map[string]bool
 	working     map[string]int
+	slots       map[string]int
 	unitLoaded  map[string]bool
 	keeper      map[string]string
 
@@ -35,6 +36,12 @@ type idleWorld struct {
 	// to regress the failure-path resume defect (stella's HOLD on #3058).
 	failNudge map[string]bool
 	failWake  map[string]bool
+
+	// lastIdem records the idem key passed to the most recent Nudge/Wake
+	// call, keyed "nudge <friend>" / "wake <friend>", win or fail. Used to
+	// regress stella's idempotency-key HOLD (score 7): a retry of the same
+	// rung must reuse the key, a new episode must not.
+	lastIdem map[string]string
 }
 
 func newIdleWorld() *idleWorld {
@@ -43,6 +50,7 @@ func newIdleWorld() *idleWorld {
 		queues:      map[string][]string{},
 		present:     map[string]bool{},
 		working:     map[string]int{},
+		slots:       map[string]int{},
 		unitLoaded:  map[string]bool{},
 		keeper:      map[string]string{},
 		takeOnNudge: map[string]bool{},
@@ -50,6 +58,7 @@ func newIdleWorld() *idleWorld {
 		upOnRepair:  map[string]bool{},
 		failNudge:   map[string]bool{},
 		failWake:    map[string]bool{},
+		lastIdem:    map[string]string{},
 	}
 }
 
@@ -65,7 +74,7 @@ func (w *idleWorld) observe() []IdleObservation {
 	var out []IdleObservation
 	for f := range w.present {
 		out = append(out, IdleObservation{
-			Friend: f, Present: w.present[f], Working: w.working[f],
+			Friend: f, Present: w.present[f], Working: w.working[f], Slots: w.slots[f],
 			Open: len(w.queues[f]), KeeperState: w.keeper[f],
 		})
 	}
@@ -86,8 +95,9 @@ func (w *idleWorld) touch(f string) {
 	}
 }
 
-func (w *idleWorld) Nudge(_ context.Context, f, _ string) error {
+func (w *idleWorld) Nudge(_ context.Context, f, _, idem string) error {
 	w.touch(f)
+	w.lastIdem["nudge "+f] = idem
 	if w.failNudge[f] {
 		w.failNudge[f] = false
 		w.calls = append(w.calls, "nudge-error "+f)
@@ -100,8 +110,9 @@ func (w *idleWorld) Nudge(_ context.Context, f, _ string) error {
 	return nil
 }
 
-func (w *idleWorld) Wake(_ context.Context, f, _ string) error {
+func (w *idleWorld) Wake(_ context.Context, f, _, idem string) error {
 	w.touch(f)
+	w.lastIdem["wake "+f] = idem
 	if w.failWake[f] {
 		w.failWake[f] = false
 		w.calls = append(w.calls, "wake-error "+f)
@@ -549,5 +560,115 @@ func TestIdleStatesMutationCannotWidenLedger(t *testing.T) {
 	ledger, _ := redisIdleLedger(t)
 	if err := ledger.Save(ctx, map[string]IdleMark{"johnny": {State: "asleep"}}); err == nil {
 		t.Fatal("redis ledger accepted \"asleep\" after external mutation of IdleStates")
+	}
+}
+
+// TestIdleActionIdemKeyStableAcrossRetryDistinctAcrossEpisodes regresses
+// stella's second #3058 hold (score 7): Nudge and Wake carried no
+// idempotency key, so an adapter whose transport loses a success response
+// (the call happened, the error came back anyway) would replay it as a
+// second side effect on the next tick's retry. The key must stay the same
+// across a retry of the same rung within the same idle episode (so an
+// adapter can dedupe the replay) and must not be reused by a later,
+// unrelated episode for the same friend.
+func TestIdleActionIdemKeyStableAcrossRetryDistinctAcrossEpisodes(t *testing.T) {
+	ctx := context.Background()
+	w := newIdleWorld()
+	w.addFriend("johnny", 3)
+	w.addFriend("stella", 0)
+	w.redistTarget = []string{"stella"}
+	ledger := &MemoryIdleLedger{}
+	ladder := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: ledger, Actions: w}
+
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil { // within idle_ticks
+		t.Fatalf("tick 1: %v", err)
+	}
+
+	w.failNudge["johnny"] = true
+	if _, err := ladder.Tick(ctx, w.observe()); err == nil { // ladder tick 1: nudge errors
+		t.Fatal("tick 2: injected nudge failure was not surfaced")
+	}
+	firstIdem := w.lastIdem["nudge johnny"]
+	if firstIdem == "" {
+		t.Fatal("no idem recorded on the failed nudge")
+	}
+
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil { // retry: nudge succeeds
+		t.Fatalf("tick 3 (retry): %v", err)
+	}
+	if retryIdem := w.lastIdem["nudge johnny"]; retryIdem != firstIdem {
+		t.Fatalf("nudge idem changed across a retry of the same rung: %q -> %q; a lost response would duplicate the side effect", firstIdem, retryIdem)
+	}
+
+	// A later, unrelated idle episode for the same friend (open drains to
+	// 0 and comes back) must not reuse the first episode's idem.
+	w.queues["johnny"] = nil
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil { // open 0: state up, mark resets
+		t.Fatalf("drain tick: %v", err)
+	}
+	w.addFriend("johnny", 3) // new open work: a new idle episode
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil {
+		t.Fatalf("second episode tick 1: %v", err)
+	}
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil { // ladder tick 1 again: nudge
+		t.Fatalf("second episode ladder tick 1: %v", err)
+	}
+	if secondIdem := w.lastIdem["nudge johnny"]; secondIdem == firstIdem {
+		t.Fatalf("a new idle episode reused the prior episode's idem key %q", secondIdem)
+	}
+}
+
+// TestIdleDeficitAdvancesDespitePartialWorking regresses rowan's bus finding
+// (Stella): IdleLadder.step read `working` whenever Working > 0, so a
+// friend with 2 of 16 slots busy and 10 open tasks was reported simply
+// "working" and the ladder never advanced, masking a 14-slot deficit. With
+// Slots observed, a friend under its slot count with open work must still
+// escalate.
+func TestIdleDeficitAdvancesDespitePartialWorking(t *testing.T) {
+	ctx := context.Background()
+	w := newIdleWorld()
+	w.addFriend("johnny", 10)
+	w.addFriend("stella", 0)
+	w.redistTarget = []string{"stella"}
+	w.working["johnny"] = 2
+	w.slots["johnny"] = 16
+	ledger := &MemoryIdleLedger{}
+	ladder := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: ledger, Actions: w}
+
+	if rows, err := ladder.Tick(ctx, w.observe()); err != nil { // within idle_ticks
+		t.Fatalf("tick 1: %v", err)
+	} else if r := rowFor(t, rows, "johnny"); r.State == IdleStateWorking {
+		t.Fatalf("2 of 16 slots working with 10 open must not read as fully working: %+v", r)
+	}
+
+	rows, err := ladder.Tick(ctx, w.observe()) // ladder tick 1: must still nudge
+	if err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	if r := rowFor(t, rows, "johnny"); r.State != IdleStateIdle || r.Action != IdleActionNudge {
+		t.Fatalf("deficit (2 of 16 working, 10 open) never advanced the ladder: %+v", r)
+	}
+	if w.count("nudge johnny") != 1 {
+		t.Fatalf("deficit never nudged: %v", w.calls)
+	}
+
+	// Control: fully busy (working == slots) reads as working and the
+	// ladder does not fire.
+	w2 := newIdleWorld()
+	w2.addFriend("nia", 10)
+	w2.working["nia"] = 16
+	w2.slots["nia"] = 16
+	ladder2 := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: &MemoryIdleLedger{}, Actions: w2}
+	for i := 0; i < 4; i++ {
+		rows, err := ladder2.Tick(ctx, w2.observe())
+		if err != nil {
+			t.Fatalf("nia tick %d: %v", i, err)
+		}
+		if r := rowFor(t, rows, "nia"); r.State != IdleStateWorking || r.Action != "" {
+			t.Fatalf("fully busy (16 of 16) must read working, not escalate: %+v", r)
+		}
+	}
+	if len(w2.calls) != 0 {
+		t.Fatalf("fully busy friend triggered actions: %v", w2.calls)
 	}
 }

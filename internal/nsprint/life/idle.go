@@ -118,25 +118,36 @@ func IdleTicksFromTakeLatency(samples []time.Duration, tick time.Duration) (int,
 }
 
 // IdleObservation is what the tick read for one friend from Redis: its beat
-// is within TTL (Present), its live children (Working), its open tasks
-// (Open), and the keeper-written state (KeeperState, e.g. out-of-credits).
+// is within TTL (Present), its live children (Working), its width (Slots),
+// its open tasks (Open), and the keeper-written state (KeeperState, e.g.
+// out-of-credits). Slots is optional: 0 means "unknown" and the row falls
+// back to the old any-Working-is-busy read; when Slots is set, a friend with
+// Working < Slots and Open > 0 has a deficit (unfilled capacity next to
+// open work) and is not simply "working" — some of its table is idle and
+// the ladder must still be able to advance for it.
 type IdleObservation struct {
 	Friend      string
 	Present     bool
 	Working     int
+	Slots       int
 	Open        int
 	KeeperState string
 }
 
 // IdleMark is one friend's ladder position, kept across ticks by an
-// IdleLedger. Count is consecutive ticks at working 0 with open > 0 while
-// present; Step is the escalation already taken (0 none, 1 nudge, 2 wake,
-// 3 redistribute); DownTicks is consecutive ticks down with open > 0.
+// IdleLedger. Count is consecutive ticks at a deficit (working under slots,
+// or slots unknown and working 0) with open > 0 while present; Step is the
+// escalation already taken (0 none, 1 nudge, 2 wake, 3 redistribute);
+// DownTicks is consecutive ticks down with open > 0. Since is the tick the
+// current deficit episode began (0 outside one); it is the idempotency
+// key's episode component, so a retried Nudge/Wake reuses the same key
+// while a later, unrelated episode never does.
 type IdleMark struct {
 	State     string
 	Count     int
 	Step      int
 	DownTicks int
+	Since     int64
 	Tick      int64
 }
 
@@ -150,12 +161,19 @@ type IdleRow struct {
 }
 
 // IdleActions is every side effect of the ladder. The production adapter
-// maps Nudge to a bus nudge, Wake to life.Wake (#2938), RepairWake to the
-// wake-unit repair of #3048 and Redistribute to the redistribution of #3047.
-// There is deliberately no coordinator method.
+// maps Nudge to a bus nudge, Wake to life.Wake (#2938, which itself takes an
+// idem argument), RepairWake to the wake-unit repair of #3048 and
+// Redistribute to the redistribution of #3047. There is deliberately no
+// coordinator method.
+//
+// idem identifies one escalation attempt (friend + episode + rung); it is
+// the same string on every retry of the same rung within the same episode
+// and different otherwise, so an adapter whose transport can lose a
+// response (call succeeds, error comes back anyway) can dedupe the replay
+// instead of firing the side effect twice.
 type IdleActions interface {
-	Nudge(ctx context.Context, friend, reason string) error
-	Wake(ctx context.Context, friend, reason string) error
+	Nudge(ctx context.Context, friend, reason, idem string) error
+	Wake(ctx context.Context, friend, reason, idem string) error
 	RepairWake(ctx context.Context, friend string) (repaired bool, err error)
 	Redistribute(ctx context.Context, friend, reason string) (moved int, err error)
 }
@@ -243,10 +261,11 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 		m.DownTicks++
 		if m.DownTicks == 1 {
 			row.Action = IdleActionRepairWake
+			downIdem := fmt.Sprintf("%s:down:%d", o.Friend, l.tick)
 			if _, err := l.Actions.RepairWake(ctx, o.Friend); err != nil {
 				return m, row, fmt.Errorf("repair wake %s: %w", o.Friend, err)
 			}
-			if err := l.Actions.Wake(ctx, o.Friend, "down with open work"); err != nil {
+			if err := l.Actions.Wake(ctx, o.Friend, "down with open work", downIdem); err != nil {
 				return m, row, fmt.Errorf("wake %s: %w", o.Friend, err)
 			}
 			return m, row, nil
@@ -259,7 +278,11 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 		}
 		return m, row, nil
 
-	case o.Working > 0:
+	case o.Working > 0 && (o.Slots <= 0 || o.Working >= o.Slots):
+		// Fully busy: Slots unknown (old behavior, any Working is busy) or
+		// Working has filled every slot. When Slots is known and Working is
+		// under it, this case does not match — a deficit next to open work
+		// falls through to the ladder below instead of being masked here.
 		m = IdleMark{State: IdleStateWorking}
 		row.State = m.State
 		return m, row, nil
@@ -270,8 +293,12 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 		return m, row, nil
 	}
 
-	// Present, working 0, open > 0.
+	// Present, with a deficit (working 0, or working under a known Slots)
+	// and open > 0.
 	m.DownTicks = 0
+	if m.Since == 0 {
+		m.Since = l.tick
+	}
 	m.Count++
 	if m.Count <= l.Policy.IdleTicks {
 		// Within the measured take latency: not idle yet.
@@ -294,7 +321,8 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 		// names the rung attempted this tick, for the table.
 		row.Action = IdleActionNudge
 		row.Step = 1
-		if err := l.Actions.Nudge(ctx, o.Friend, fmt.Sprintf("idle: working 0, open %d", o.Open)); err != nil {
+		idem := fmt.Sprintf("%s:idle:%d:1", o.Friend, m.Since)
+		if err := l.Actions.Nudge(ctx, o.Friend, fmt.Sprintf("idle: working %d, open %d", o.Working, o.Open), idem); err != nil {
 			return m, row, fmt.Errorf("nudge %s: %w", o.Friend, err)
 		}
 		m.Step = 1
@@ -308,7 +336,8 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 		if _, err := l.Actions.RepairWake(ctx, o.Friend); err != nil {
 			return m, row, fmt.Errorf("repair wake %s: %w", o.Friend, err)
 		}
-		if err := l.Actions.Wake(ctx, o.Friend, "idle ladder"); err != nil {
+		idem := fmt.Sprintf("%s:idle:%d:2", o.Friend, m.Since)
+		if err := l.Actions.Wake(ctx, o.Friend, "idle ladder", idem); err != nil {
 			return m, row, fmt.Errorf("wake %s: %w", o.Friend, err)
 		}
 		m.Step = 2
@@ -367,7 +396,7 @@ type RedisIdleLedger struct {
 	Store *store.Store
 }
 
-var idleFields = []string{"state", "count", "step", "down_ticks", "tick"}
+var idleFields = []string{"state", "count", "step", "down_ticks", "since", "tick"}
 
 func (r RedisIdleLedger) Load(ctx context.Context, friends []string) (map[string]IdleMark, error) {
 	if r.Store == nil {
@@ -392,7 +421,8 @@ func (r RedisIdleLedger) Load(ctx context.Context, friends []string) (map[string
 			Count:     idleAtoi(v[1]),
 			Step:      idleAtoi(v[2]),
 			DownTicks: idleAtoi(v[3]),
-			Tick:      int64(idleAtoi(v[4])),
+			Since:     int64(idleAtoi(v[4])),
+			Tick:      int64(idleAtoi(v[5])),
 		}
 	}
 	return out, nil
@@ -415,6 +445,7 @@ func (r RedisIdleLedger) Save(ctx context.Context, marks map[string]IdleMark) er
 			"count", strconv.Itoa(m.Count),
 			"step", strconv.Itoa(m.Step),
 			"down_ticks", strconv.Itoa(m.DownTicks),
+			"since", strconv.FormatInt(m.Since, 10),
 			"tick", strconv.FormatInt(m.Tick, 10))
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
