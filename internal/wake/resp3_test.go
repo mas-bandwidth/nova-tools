@@ -12,7 +12,10 @@ import (
 
 // TestWakeReachesTheWindowWithoutPolling checks that a friend window's
 // heartbeat and its wake ride one RESP3 connection, and a wake reaches the
-// window within 1 s of the XADD with no polling.
+// window from the parked blocking read with no polling. The test asserts the
+// events (delivery, the delivered entry, the command count around it), never
+// elapsed wall time (docs/SPEC-CI.md CI-WAITS): a wake delivered by the one
+// parked XREAD, with the beat interval at 5 s, is the no-polling latency bound.
 func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 	mr := miniredis.RunT(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -35,7 +38,6 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 		t.Fatalf("Subscribe: %v", err)
 	}
 
-	woke := make(chan time.Time, 4)
 	got := make(chan redis.XMessage, 4)
 	runCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
@@ -43,7 +45,6 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 		// Beat interval far above the wake window: a wake inside 1 s can only
 		// come from the blocking read, not from a timed re-check.
 		done <- pool.Run(runCtx, 5*time.Second, func(m redis.XMessage) {
-			woke <- time.Now()
 			got <- m
 		})
 	}()
@@ -63,7 +64,6 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 	conns := mr.TotalConnectionCount()
 	cmdsBefore := mr.CommandCount()
 
-	sent := time.Now()
 	if err := pub.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]any{"kind": "wake"}}).Err(); err != nil {
 		t.Fatalf("XADD: %v", err)
 	}
@@ -73,18 +73,15 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 			wait = d
 		}
 	}
-	var at time.Time
+	// The event, not the clock: the wake is delivered, and it is the
+	// post-Subscribe entry. The environment-bounded wait only stops a hung test.
 	select {
-	case at = <-woke:
+	case m := <-got:
+		if m.Values["kind"] != "wake" {
+			t.Fatalf("delivered %v, want the post-Subscribe wake (stale entry leaked)", m.Values)
+		}
 	case <-time.After(wait):
 		t.Fatal("wake never reached the window")
-	}
-	// The card's DONE-WHEN: delivery within 1 s of the XADD.
-	if lag := at.Sub(sent); lag >= time.Second {
-		t.Fatalf("wake lag %s, want < 1s", lag)
-	}
-	if m := <-got; m.Values["kind"] != "wake" {
-		t.Fatalf("delivered %v, want the post-Subscribe wake (stale entry leaked)", m.Values)
 	}
 
 	// No polling: between park and delivery the window issued at most its
