@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Work list 5: the host, and the one sentence that governs everything it returns --
@@ -38,6 +40,12 @@ type Checks struct {
 	RedNames     []string
 	Details      []CheckDetail
 	PendingNames []string
+	// Source is where the evidence came from: CIFromRedis (the verdict
+	// record), CIFromGitHub (check-runs, because the record said nothing), or
+	// "" for a host that does not say. SourceWhy is the record's state when
+	// the forge answered.
+	Source    string
+	SourceWhy string
 }
 
 // Bucket classifies one check's state the way the merge condition counts it.
@@ -94,7 +102,7 @@ func (c *Checks) AddRun(name, state, sha string) {
 // stale sha cannot make a head with a run in progress red (nova-tools #1014).
 func (c Checks) ForSHA(oid string) Checks {
 	oid = strings.TrimSpace(oid)
-	var out Checks
+	out := Checks{Source: c.Source, SourceWhy: c.SourceWhy}
 	for _, d := range c.Details {
 		if d.SHA == "" || oid == "" || d.SHA == oid {
 			out.AddRun(d.Name, d.Conclusion, d.SHA)
@@ -396,25 +404,54 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's CI verdict from the injectable source, at
-// ci:<owner/repo>:<sha>, and NEVER from GitHub's check-runs. A check-run the
-// forge reports -- green or not -- is not evidence this tool may merge on
-// (nova-tools #2924), so this method does not invoke gh at all. A missing,
-// empty or non-OK key answers ErrCIMissing, which a caller reports as
-// "ci: MISSING"; only an OK value answers green.
+// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<sha>
+// (the injectable source) answers first; when it says nothing -- absent, no
+// verdict, or unreadable -- the commit's GitHub check-runs answer, and the
+// result's Source is "from-github". A missing record is not a verdict.
+// ErrCIMissing is returned only when both say nothing.
 func (h *GH) Checks(oid string) (Checks, error) {
-	if h.CI == nil {
-		return Checks{}, ErrCIMissing
+	oid = strings.TrimSpace(oid)
+	why := "no ci source"
+	if h.CI != nil {
+		value, ok, err := h.CI.Read(h.Repo, oid)
+		switch {
+		case err != nil:
+			why = CIKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
+		case ok:
+			c := Checks{Source: CIFromRedis}
+			c.AddRun("ci", ciState(value), oid)
+			return c, nil
+		default:
+			why = CIKey(h.Repo, oid) + " absent"
+		}
 	}
-	value, ok, err := h.CI.Read(h.Repo, oid)
+	c, err := h.checkRuns(oid)
 	if err != nil {
-		return Checks{}, fmt.Errorf("%w: %v", ErrCIMissing, err)
+		return Checks{}, fmt.Errorf("ci: %s, and the github check-runs could not be read: %w", why, err)
 	}
-	if !ok || !ciGreen(value) {
-		return Checks{}, ErrCIMissing
+	if c.Total() == 0 {
+		return Checks{}, fmt.Errorf("%w (%s, and github has no check-runs at %s)", ErrCIMissing, why, oid)
+	}
+	c.Source, c.SourceWhy = CIFromGitHub, why
+	return c, nil
+}
+
+// checkRuns reads a commit's GitHub check-runs and buckets them.
+func (h *GH) checkRuns(oid string) (Checks, error) {
+	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
+		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
+	if err != nil {
+		return Checks{}, err
 	}
 	var c Checks
-	c.AddRun("ci", "success", strings.TrimSpace(oid))
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		name, rest, _ := strings.Cut(line, "\t")
+		state, sha, _ := strings.Cut(rest, "\t")
+		c.AddRun(name, state, sha)
+	}
 	return c, nil
 }
 
