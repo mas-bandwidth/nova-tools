@@ -1349,8 +1349,9 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 // keepNativeEnv says whether one inherited name survives into the native child: the names a
 // program needs (PATH, LANG, TERM), explicit Git pool identity variables (GIT_AUTHOR_NAME,
 // GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL), the XDG_ and NOVA_SWARM_ families,
-// and any provider credential whose name carries KEY, TOKEN or SECRET. Everything else is the
-// caller's own noise and is dropped, so no path the caller happened to export reaches the child.
+// any harness configuration whose name starts with OPENCODE_, and any provider credential whose
+// name carries KEY, TOKEN or SECRET. Everything else is the caller's own noise and is dropped,
+// so no path the caller happened to export reaches the child.
 func keepNativeEnv(name string) bool {
 	switch name {
 	case "PATH", "LANG", "TERM":
@@ -1358,7 +1359,7 @@ func keepNativeEnv(name string) bool {
 	case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL":
 		return true
 	}
-	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") {
+	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") || strings.HasPrefix(name, "OPENCODE_") {
 		return true
 	}
 	up := strings.ToUpper(name)
