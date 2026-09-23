@@ -203,6 +203,27 @@ func TestDependencyCheckerResultsStoreAuthoritativeDone(t *testing.T) {
 			t.Fatalf("expected DONE text %q to be accepted, got merged=false: %s", text, reason)
 		}
 	}
+
+	// 6. Near-miss text that merely contains "DONE" as a substring, or negates
+	// it, is rejected (Stella HOLD 7 / Emma HOLD 6 on nova-tools#2484): the
+	// gate must require an exact DONE status token, not a Contains() match.
+	nearMissTexts := []string{
+		"RESULT card-prereq NOT DONE\n",
+		"RESULT card-prereq DONEISH\n",
+		"RESULT card-prereq ABANDONED\n",
+		"RESULT card-prereq CONDONED\n",
+		"DONE: false\n",
+		"DONE: 0\n",
+	}
+	for _, text := range nearMissTexts {
+		if err := os.WriteFile(resPath, []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		merged, reason = checker.IsDependencyMerged("card-prereq")
+		if merged {
+			t.Fatalf("expected near-miss text %q to be rejected, got merged=true: %s", text, reason)
+		}
+	}
 }
 
 func TestDependencyCheckerGitMock(t *testing.T) {
