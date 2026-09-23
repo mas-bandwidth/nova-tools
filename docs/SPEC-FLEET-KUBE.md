@@ -170,7 +170,7 @@ The kernel's ready set is not a thing Kubernetes exposes and is not invented her
 *is* the ready set, and the take is its lock. A card whose Job dies is returned by the puller to
 the lane it came from; `taken/` is the only place a card waits on a lease.
 
-**Secrets: sealed, decrypted at apply, named key by key.** The store stays sops. At apply, the
+**Secrets: sealed, decrypted at apply, named key by key.** Seal secrets per kind and deliver only the named keys via secretKeyRef, never envFrom. The store stays sops. At apply, the
 plaintext is produced from the store and immediately sealed into a SealedSecret, so state and git
 hold only the ciphertext, and the sealed-secrets controller decrypts it in-cluster into an
 ordinary Secret. **That Secret holds only the keys one worker kind is entitled to, and no other
