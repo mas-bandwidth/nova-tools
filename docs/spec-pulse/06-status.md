@@ -22,6 +22,7 @@ closed, remaining by depth, completion by epic) once the tree is the pool (#500)
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING>
@@ -33,6 +34,13 @@ STATUS SWARM first_attempt=<x.xx|-> done=<n> abstain=<n> batches=<n> hedge=<none
 STATUS FAULT reason=<token> count=<n>
 STATUS PIT-STOP reason=<token> count=<n> remedy=fix the machinery before more cards
 ```
+
+**Gateway deaths are not card failures** (#2634). `STATUS FAILURES` counts
+attempt results: `gateway` is an attempt that ended with no model turn — a
+provider gateway 5xx, or no tokens and no recorded error on an attempt that
+still failed — and `card_fail` is abstain, blocked and every other failed
+attempt. A gateway death increments only `gateway`. `QUEUE failed=` stays the
+cards in the failed directory.
 
 **The swarm's own health is a flag, never a guess** (`--batches <dir>`, `bin/status.sh`'s
 last two lines). With `--batches` status folds the newest 60 `batch-*.out` outputs in that

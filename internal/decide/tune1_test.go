@@ -332,15 +332,23 @@ func TestDogfoodIsItsOwnKindAndGuardIsUntouched(t *testing.T) {
 		t.Error("dogfood is a known, mechanical kind: a card rung may take it")
 	}
 	// The same work named guard is still security, and security never falls
-	// through: designated, at confidence 1, with no provider call to make.
+	// through: the designated mind is attached as the READER, at any height, at
+	// any floor and after any attempt. Johnny is reserved, so he takes the read
+	// and the work goes to the rung the evidence supports.
 	guarded := mustRoute(t, reg, Unit{ID: "dogfood-as-guard", Kind: KindGuard, Files: 1, Packages: 1}, DefaultFloor)
-	if !guarded.Designated || guarded.Rung.Name != "johnny" {
-		t.Errorf("guard is a security kind and resolves to its designated mind, got %s (designated %v)", guarded.Rung.Name, guarded.Designated)
+	if guarded.ReadField() != "johnny" {
+		t.Errorf("guard is a security kind and attaches johnny as its reader, got %s", guarded.ReadField())
+	}
+	if guarded.Rung.Name == "johnny" {
+		t.Errorf("johnny is reserved for reads and the STOP, never for the work; got rung=johnny")
 	}
 	// And a dogfood unit that DOES touch something security-shaped is security
 	// again, by touch and not by name: the new kind is not a way around it.
 	touched := mustRoute(t, reg, Unit{ID: "dogfood-touches", Kind: KindDogfood, Files: 1, Touches: []string{TouchSecrets}}, DefaultFloor)
-	if !touched.Designated || touched.Rung.Name != "johnny" {
-		t.Errorf("a dogfood unit that touches secrets is still security, got %s (designated %v)", touched.Rung.Name, touched.Designated)
+	if touched.ReadField() != "johnny" {
+		t.Errorf("a dogfood unit that touches secrets is still security, got read %s", touched.ReadField())
+	}
+	if touched.Rung.Name == "johnny" {
+		t.Errorf("a security touch attaches a reader, not the rung; johnny is reserved for reads")
 	}
 }

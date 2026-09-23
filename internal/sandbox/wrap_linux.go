@@ -26,7 +26,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"syscall"
@@ -71,12 +70,8 @@ var resolvConfPath = "/etc/resolv.conf"
 // config is the machine's shape, not a caller's mistake.
 func linuxRoots() []string {
 	roots := append([]string{}, linuxReadRoots...)
-	resolved, err := filepath.EvalSymlinks(resolvConfPath)
-	if err != nil {
-		return roots
-	}
-	dir := filepath.Dir(resolved)
-	if dir == "" || dir == "/" || dir == "." {
+	dir := resolverConfigDirectory(resolvConfPath)
+	if dir == "" {
 		return roots
 	}
 	for _, r := range roots {
