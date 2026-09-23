@@ -107,3 +107,73 @@ slice's `run`).
 `ci-matrix-matches-package-list`, `ci-prs-never-use-hosted-runners`,
 `ci-fork-guard-present`, `runners-register-with-pinning`,
 `local-runs-fast-suite`.
+
+## Tests this spec demands
+
+These tests run against fake manifests, a temp-dir run store and a fake swarm/runner
+substrate; nothing reaches a network, a real runner or a real secret, and each test is
+proven able to fail (seen red) before it is trusted. `nova-test` is a **proposed** binary:
+`git ls-files` shows no `cmd/nova-test` and no implementation, so every behaviour below is
+the work that turns the two document-only tests in `internal/docs` (which assert that
+`docs/SPEC-TEST.md` *mentions* strings, not that anything behaves) into real coverage.
+
+1. `TestPlanPrintsConcretePlanBeforeExecution` — `plan` reads a versioned repository validation manifest and prints the concrete plan before execution (it never dispatches).
+2. `TestPlanNamesManifestIdentity` — the printed plan names source, dependency and environment identity.
+3. `TestPlanNamesAffectedScope` — the printed plan names affected scope.
+4. `TestPlanNamesCheckAndTierList` — the printed plan names required fast checks and explicitly requested/full/nightly tiers.
+5. `TestConfiguredRecipeDoesNotExpandAuthority` — configured recipes do not expand caller authority.
+6. `TestEquivalentRunIsReusedBeforeDispatch` — `run` finds an equivalent running or completed local or hosted run before dispatch and reuses it.
+7. `TestChangedSourceBreaksEquivalence` — a changed source breaks equivalence and must not reuse.
+8. `TestChangedDependencyBreaksEquivalence` — a changed dependency breaks equivalence.
+9. `TestChangedRecipeRevisionBreaksEquivalence` — a changed workflow/recipe revision breaks equivalence.
+10. `TestChangedEnvironmentBreaksEquivalence` — a changed environment breaks equivalence.
+11. `TestChangedPolicyBreaksEquivalence` — a changed policy breaks equivalence.
+12. `TestChangedEventTrustContextBreaksEquivalence` — a changed event/trust context breaks equivalence.
+13. `TestChangedRequiredCoverageBreaksEquivalence` — a changed required coverage breaks equivalence.
+14. `TestSHAAloneDoesNotReuse` — matching SHA alone is insufficient: a SHA match with any changed factor above must not reuse.
+15. `TestStatusSinceSurveysRecentRuns` — `status --since` surveys recent runs.
+16. `TestStatusReportsQueueAndCancellationDrain` — status reports queue and cancellation drain per run.
+17. `TestStatusReportsLatency` — status reports execution and end-to-end latency per run.
+18. `TestStatusPreservesAttemptsAndPriorFailures` — attempt identities and prior failures are preserved.
+19. `TestFailuresListsBoundedStepsWithExcerpts` — `failures` lists the bounded failing steps of a run with source-backed excerpts.
+20. `TestFullLogsRemainRetrievable` — full logs remain retrievable.
+21. `TestFailuresDistinguishUnexecutedSkippedMissing` — successful checks are distinguished from unexecuted, skipped or missing ones.
+22. `TestReceiptPrintsIdentity` — `receipt` prints the run identity.
+23. `TestReceiptPrintsEquivalenceKey` — receipt prints the equivalence key.
+24. `TestReceiptPrintsBoundedStepsAndExcerpts` — receipt prints bounded failing steps and excerpts.
+25. `TestReceiptPrintsLatency` — receipt prints latency.
+26. `TestPlanNamesManifestRevisionOnFirstLine` — the manifest is versioned; `plan` names its revision in the first line.
+27. `TestReceiptIsBoundedToFailingStepsAndExcerpts` — a receipt holds at most the failing steps plus excerpts.
+28. `TestReceiptNamesRemedyLogLine` — the receipt carries one MORE line naming the remedy (the log holding the whole list).
+29. `TestPerChangeCIInFastTierUnderTwoMinutes` — per-change CI belongs in fast tiers (one minute ideal, two minutes maximum).
+30. `TestLongerWorkGoesToNightlyWithoutDiscardingCoverage` — longer work belongs to explicit/nightly certification without discarding coverage.
+31. `TestEverySubprocessHasADeadline` — deadlines bound every subprocess.
+32. `TestReusesSwarmSubstrateNotANewSupervisor` — bounded output, supervisor receipts and safe ambiguous-dispatch reconciliation reuse the swarm execution substrate rather than creating another supervisor.
+33. `TestDuplicateRequestReusesTheRun` — a duplicate request reuses the run.
+34. `TestStaleGreenDoesNotCoverNewerCommit` — stale green does not cover a newer commit.
+35. `TestNewerFailedAttemptSupersedes` — a newer failed attempt supersedes.
+36. `TestPartialRerunCoversOnlyItsScope` — a partial rerun covers only its scope.
+37. `TestTimeoutReadsAsItsOwnReceipt` — a timeout reads as its own receipt.
+38. `TestMissingJobReadsAsItsOwnReceipt` — a missing job reads as its own receipt.
+39. `TestSupersededCancellationReadsAsItsOwnReceipt` — a superseded cancellation reads as its own receipt.
+40. `TestCoordinatorTurnsAndDuplicateExecutionMeasured` — coordinator turns are measured and duplicate execution is not paid with unchanged coverage.
+41. `TestFastRunsSuiteUnderOneMinuteBudget` — `fast` runs the per-package suite under the one-minute budget.
+42. `TestFastPrintsOneLinePerPackageWithSeconds` — `fast` prints one line per package with its seconds.
+43. `TestFastFailsOnBudgetBreach` — `fast` fails on a budget breach (`fast-fails-on-budget-breach`).
+44. `TestFastRecordsDurationsFile` — `docs/TEST-DURATIONS.md` is `fast`'s record.
+45. `TestSlowRunsSlowTaggedSuite` — `slow` runs the slow-tagged suite (`slow-runs-only-with-tag`).
+46. `TestSlowIsNightlyNotPerChange` — `slow` is the nightly job, never the per-change path.
+47. `TestCiGeneratesMatrixFromPackageList` — `ci` generates and validates the workflow matrix from the package list (`ci-matrix-matches-package-list`).
+48. `TestCiPRsRunSelfHostedParallelFailFastOff` — pull requests run on self-hosted runners in parallel with fail-fast off.
+49. `TestCiForkGuardPresent` — the workflow carries a fork guard (`ci-fork-guard-present`).
+50. `TestCiConcurrencyGroupPresent` — the workflow carries a concurrency group.
+51. `TestHostedRunnersOnlyMainAndNightly` — hosted runners run only on main and nightly (`ci-prs-never-use-hosted-runners`).
+52. `TestCiOkAggregatesTier` — `ci-ok` aggregates the tier.
+53. `TestEveryActionPinnedBySHA` — every action is pinned by SHA.
+54. `TestCiYAMLNeverHandEdited` — the YAML is never hand-edited.
+55. `TestRunnersMintsRegistrationToken` — `runners` mints the registration token (`runners-register-with-pinning`).
+56. `TestRunnersRegisterWithPlatformLabelsAndCorePinning` — `runners` registers N runners per bench with platform labels and core pinning.
+57. `TestRunnersListsStatus` — `runners` lists status.
+58. `TestAnySSHMachineMayBeARunner` — any machine a person can ssh to may be a runner.
+59. `TestLocalRunsFastSuite` — `local` runs the fast suite (`local-runs-fast-suite`).
+60. `TestTestsAnswerWithinTwoMinuteRule` — tests answer inside the two-minute rule: one minute per package, two at most (#516).

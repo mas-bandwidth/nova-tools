@@ -23,7 +23,9 @@ transcript-test	makes one docs/TESTS.md section executed line for line
 rebase	replays one of our own open PRs onto the base, changing nothing
 sweep	applies one mechanical class fix at every site the class test names
 mutation-kill	writes the test that kills one surviving mutant
+guard	reverts one commit's non-test files; the named tests must go red
 read	read and report
 probe	read and report
 text	read and report
 tone	read and report
+report	read and report

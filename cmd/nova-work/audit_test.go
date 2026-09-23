@@ -89,6 +89,16 @@ var workAudit = audit.Config{
 		// two runs print one line. It reorders strings this package already
 		// holds and writes nothing itself.
 		`"sort"`,
+		// landed is set check --evaluate's resolver (#2664): it runs gh through the
+		// Runner seam and returns verdicts; it writes nothing to stdout or stderr, and
+		// every token of a verdict reaches a SET EVAL line through field.
+		`"github.com/mas-bandwidth/nova-tools/internal/landed"`,
+		// bytes holds set check's SET EVAL lines until the findings are printed; every
+		// line in it was already written through the escaped sites of setland.go.
+		`"bytes"`,
+		// path/filepath names the temp file --write-status renames over the work set,
+		// beside it in the same directory; it prints nothing.
+		`"path/filepath"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

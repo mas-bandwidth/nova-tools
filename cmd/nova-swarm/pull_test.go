@@ -41,6 +41,23 @@ func TestHelpNamesThePullVerbAndItsRename(t *testing.T) {
 	}
 }
 
+// The help carries the pull worker daemon and the lease take, so the new flags are
+// discoverable from `help` and not only from the source.
+func TestHelpNamesThePullWorkerFlags(t *testing.T) {
+	code, stdout, _ := invokePull("help")
+	if code != 0 {
+		t.Fatalf("help exit = %d, want 0", code)
+	}
+	for _, want := range []string{
+		"nova-swarm pull      --bench <name> --slots <n> --seat <seat>",
+		"nova-swarm pull      --store <dir> --owner <o> --for <duration>",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("help does not name the pull worker line %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // pull lists a bench's queue/ and takes one card by rename, as one line.
 func TestPullTakesOneCardByRename(t *testing.T) {
 	bench := t.TempDir()

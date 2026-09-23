@@ -13,44 +13,70 @@ import (
 // A ROUTE AT ITS CAP LAUNCHES NOTHING FURTHER until one in flight finishes (#917). This is
 // the whole mechanism: with the cap at 2 and five cards wanting the same route, exactly two
 // are ever running, and the third starts only when one of the first two has ended.
+//
+// DETERMINISTIC BY CONSTRUCTION (#2994). The old shape released all five goroutines at once
+// and let the first two finish as soon as two were running; under -race and a loaded gate a
+// late goroutine reached acquire AFTER a slot was free, never waited, and the line said
+// held-back=2. Now the two slots are taken on this goroutine, the three others are checked
+// PARKED on the cap (inflight.waiting) before anything finishes, and slots are handed back
+// one at a time with the state checked after each. Without the hold-back the three are never
+// parked, the running count passes the cap, and the first check fails at once.
 func TestARouteAtItsCapHoldsTheRestBack(t *testing.T) {
 	f := newInflight(2)
 	const route = "opencode/muse-spark-1.3-contributor-free@muse"
 	var running, peak atomic.Int64
-	var wg sync.WaitGroup
-	start := make(chan struct{})
+	enter := func() {
+		n := running.Add(1)
+		for {
+			p := peak.Load()
+			if n <= p || peak.CompareAndSwap(p, n) {
+				break
+			}
+		}
+	}
+	// The first two launches take the route's two slots and never wait.
+	for i := 0; i < 2; i++ {
+		if !f.acquire(route) {
+			t.Fatalf("launch %d under a cap of 2 is refused", i)
+		}
+		enter()
+	}
 	finish := make(chan struct{})
-	for i := 0; i < 5; i++ {
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			<-start
 			if !f.acquire(route) {
 				return
 			}
-			n := running.Add(1)
-			for {
-				p := peak.Load()
-				if n <= p || peak.CompareAndSwap(p, n) {
-					break
-				}
-			}
+			enter()
 			<-finish
 			running.Add(-1)
 			f.release(route)
 		}()
 	}
-	close(start)
-	// Let every goroutine reach its acquire. Two get in; three block on the condition
-	// variable, which is the state this test is about.
-	waitFor(t, func() bool { return running.Load() == 2 })
+	// The explicit synchronisation: all three are parked on the cap -- or one got past it,
+	// which is the failure -- before anything is checked or released.
+	waitFor(t, func() bool { return f.waiting(route) == 3 || running.Load() > 2 })
 	if got := running.Load(); got != 2 {
 		t.Fatalf("a cap of 2 admits 2 at once, got %d", got)
 	}
+	// One of the first two ends: exactly one held card starts, and two stay parked.
+	running.Add(-1)
+	f.release(route)
+	waitFor(t, func() bool { return f.waiting(route) == 2 && running.Load() == 2 })
+	// The other ends: the next held card starts, and one stays parked.
+	running.Add(-1)
+	f.release(route)
+	waitFor(t, func() bool { return f.waiting(route) == 1 && running.Load() == 2 })
 	close(finish)
 	wg.Wait()
 	if got := peak.Load(); got != 2 {
 		t.Fatalf("no more than the cap is ever in flight at once; peak was %d", got)
+	}
+	if got := f.waiting(route); got != 0 {
+		t.Fatalf("every held card was launched, yet %d are still parked", got)
 	}
 	lines := f.statusLines()
 	if len(lines) != 1 || !strings.Contains(lines[0], "cap=2 peak=2 held-back=3") {

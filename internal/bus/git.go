@@ -632,6 +632,14 @@ func EnsureClean(dir string, allow []string) error {
 	for _, a := range allow {
 		permitted[a] = true
 	}
+	// A wait's BEAT in a lane being sent to is wait-owned, not send-owned.
+	// Allow it so send does not refuse over an uncommitted BEAT.
+	for _, a := range allow {
+		if i := strings.IndexByte(a, '/'); i > 0 {
+			lane := a[:i]
+			permitted[lane+"/"+BeatName] = true
+		}
+	}
 	recs := strings.Split(out, "\x00")
 	var dirty []string
 	for i := 0; i < len(recs); i++ {

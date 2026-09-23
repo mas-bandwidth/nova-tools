@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
+	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
 // The verb's own surface: the one HYGIENE line, the cap-and-count listing, and the
@@ -301,6 +302,135 @@ func TestHygieneIdentityFormIsSpelledTheSameEverywhere(t *testing.T) {
 		}
 		if !strings.Contains(text, `--identity "<Name> <email>"`) {
 			t.Errorf("%s does not spell the identity form `--identity \"<Name> <email>\"`", name)
+		}
+	}
+}
+
+// #1805, recut of #1956 on the tip: the help, the command reference and the
+// transcript agree on ONE `Name <email>` pair, and the spelled form is the one
+// the check matches against the author. The tip already carries #1956's help
+// and CLI.md lines; what moved under it is the TESTS.md heading (now
+// `### hygiene, on a branch`) and the kind list the refusal transcripts paste
+// (kinds.txt grew `guard` after they were written, so #1848's pasted list is
+// stale there).
+func TestHygieneIdentityIsDocumentedAsOneNameAndEmail(t *testing.T) {
+	var helpOut, helpErr bytes.Buffer
+	if code := run([]string{"help"}, &helpOut, &helpErr); code != 0 {
+		t.Fatalf("`nova-check help` exits %d, want 0; stderr: %s", code, helpErr.String())
+	}
+	const (
+		malformed = `--identity "<Name> <<email>>"`
+		want      = `--identity "<Name> <email>"`
+	)
+	if strings.Contains(helpOut.String(), malformed) {
+		t.Fatalf("the help still spells %s: the doubled brackets are read as part of the email, so a commit authored under that address is reported as an identity finding; SPEC.md:1396 says %s", malformed, want)
+	}
+	if !strings.Contains(helpOut.String(), want) {
+		t.Errorf("the help does not spell the identity as %s", want)
+	}
+	cli, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(cli), malformed) {
+		t.Fatalf("docs/CLI.md still spells %s: the doubled brackets are read as part of the email and break the author match; SPEC.md:1396 says %s", malformed, want)
+	}
+	if !strings.Contains(string(cli), want) {
+		t.Errorf("docs/CLI.md does not spell the identity as %s", want)
+	}
+
+	// The documented form is the one the check matches: a clean branch authored
+	// under that address is no identity finding.
+	dir := hygLab(t)
+	hygWrite(t, dir, "sign/sign.go", "package sign\n\nfunc F() {}\n")
+	hygGit(t, dir, "add", "-A")
+	hygGit(t, dir, "commit", "-q", "-m", "clean")
+	var out, errb bytes.Buffer
+	code := run([]string{"hygiene", "--repo", dir, "--base", "main", "--head", "HEAD", "--identity", "Rowan <rowan@example.com>", "--paths", "sign/**"}, &out, &errb)
+	if code != 0 {
+		t.Fatalf("the documented identity form did not match the author: exit %d\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "findings=0") {
+		t.Fatalf("stdout = %q, want findings=0", out.String())
+	}
+
+	// The `### hygiene, on a branch` transcript docs/TESTS.md promises is
+	// EXECUTED, not only read -- but only its refusal steps. The lab stanzas
+	// need the two-commit lab the section describes, with its recorded shas: a
+	// rerun cannot reproduce `at=0a19082d2973`, and the clean `HYGIENE OK`
+	// stanza and the four-finding stanzas are two states of that lab, not one
+	// sitting, so running them here would invent steps the document does not
+	// show. The refusal promises (`nova-check hygiene: ...`) fire before the
+	// repository is opened, so they run anywhere, and they are exactly the
+	// lines #1805 is about: what the flag wants, spelled where a reader reads.
+	//
+	// The steps are cut here rather than with onboarding.Steps: every hygiene
+	// command carries `<email>` quoted in `--identity`, and the shared parser
+	// does not run a line holding `>` even quoted. Splitting, running and
+	// comparing stay the shared ones -- SplitShell, runDocumented, Compare --
+	// so this pins the same promise the harness keeps.
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.Transcript(string(raw), "nova-check", "hygiene, on a branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []onboarding.Step
+	for _, line := range lines {
+		cmd, isCommand := strings.CutPrefix(line, "$ ")
+		if !isCommand {
+			if len(steps) == 0 {
+				if strings.TrimSpace(line) == "" {
+					continue
+				}
+				t.Fatalf("a transcript line stands before any command:\n  %s", line)
+			}
+			steps[len(steps)-1].Want = append(steps[len(steps)-1].Want, line)
+			continue
+		}
+		args, err := onboarding.SplitShell(cmd)
+		if err != nil {
+			t.Fatalf("cannot split the transcript line %q: %v", line, err)
+		}
+		if len(args) == 0 || args[0] != "nova-check" {
+			t.Fatalf("the transcript line %q is not a nova-check command", line)
+		}
+		steps = append(steps, onboarding.Step{Line: line, Args: args[1:]})
+	}
+	for i := range steps {
+		for len(steps[i].Want) > 0 && strings.TrimSpace(steps[i].Want[len(steps[i].Want)-1]) == "" {
+			steps[i].Want = steps[i].Want[:len(steps[i].Want)-1]
+		}
+	}
+	var refusals []onboarding.Step
+	for _, s := range steps {
+		if len(s.Want) == 0 {
+			continue
+		}
+		refused := true
+		for _, line := range s.Want {
+			if !strings.HasPrefix(line, "nova-check hygiene: ") {
+				refused = false
+				break
+			}
+		}
+		if refused {
+			refusals = append(refusals, s)
+		}
+	}
+	if len(refusals) == 0 {
+		t.Fatal("the `### hygiene, on a branch` block holds no refusal step; this test would pass by running nothing")
+	}
+	for _, s := range refusals {
+		res, err := runDocumented(s)
+		if err != nil {
+			t.Errorf("the documented command\n  %s\ncould not be run: %v", s.Line, err)
+			continue
+		}
+		for _, p := range onboarding.Compare(s, res, nil) {
+			t.Error(p)
 		}
 	}
 }

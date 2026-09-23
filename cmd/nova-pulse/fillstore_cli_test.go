@@ -159,7 +159,11 @@ func TestFillFillsABenchWhoseSlotsListIsEmpty(t *testing.T) {
 	fillReady(t, filepath.Join(dir, "ready"), 5)
 	store := fillStore(t, dir, "swarm-bench-a", 2)
 
-	code, out, errb, ready, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
+	// The brake is off: a local bench is this machine, so its load is the machine's own,
+	// and this test is about the empty listing, not the brake. Left on, a busy hosted
+	// darwin shard braked a full bench to zero and failed the test by nothing except load.
+	code, out, errb, ready, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
+		"--max-load-per-core", "0")
 	if code != 0 {
 		t.Fatalf("an empty lease list is a free bench; exit = %d, stdout=%q stderr=%q", code, out, errb)
 	}
@@ -187,7 +191,10 @@ func TestFillCountsTheOwnersLiveLeasesAndNobodyElses(t *testing.T) {
 	fillReady(t, filepath.Join(dir, "ready"), 6)
 	store := fillStore(t, dir, "swarm-bench-a", 5)
 
-	code, out, errb, _, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
+	// Brake off, for the same reason as TestFillFillsABenchWhoseSlotsListIsEmpty: this
+	// test counts the owner's own live leases, and the ambient load is not its input.
+	code, out, errb, _, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
+		"--max-load-per-core", "0")
 	if code != 0 {
 		t.Fatalf("exit = %d; stdout=%q stderr=%q", code, out, errb)
 	}

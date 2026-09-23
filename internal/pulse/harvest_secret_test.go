@@ -186,7 +186,7 @@ func TestHarvestBenchRefusesToPushAKeyShape(t *testing.T) {
 		t.Fatalf("a PR was opened for a card carrying a key shape: %+v", forge.opened)
 	}
 	for _, l := range arglogLines(t, arglog) {
-		if strings.Contains(l, "push") {
+		if arglogPushed(l) {
 			t.Fatalf("the quarantined card was pushed: %s", l)
 		}
 	}
@@ -242,7 +242,7 @@ func TestHarvestWorkingRefusesToPushAKeyShape(t *testing.T) {
 		t.Fatalf("no working refusal line:\n%s", errb.String())
 	}
 	for _, l := range arglogLines(t, arglog) {
-		if strings.Contains(l, "push") || strings.Contains(l, "pr create") || strings.Contains(l, "pr edit") {
+		if arglogPushed(l) || arglogOpenedOrEditedPR(l) {
 			t.Fatalf("the quarantined card reached the forge: %s", l)
 		}
 	}
@@ -291,7 +291,7 @@ func TestManagerOpenPRRefusesToPushAKeyShape(t *testing.T) {
 		t.Fatalf("no manager refusal line:\n%s", out.String())
 	}
 	for _, l := range arglogLines(t, arglog) {
-		if strings.Contains(l, "push") || strings.Contains(l, "pr create") {
+		if arglogPushed(l) || arglogOpenedOrEditedPR(l) {
 			t.Fatalf("the quarantined card reached the forge: %s", l)
 		}
 	}
@@ -419,6 +419,79 @@ func TestManagerRefusesAnUnreadDiff(t *testing.T) {
 	}
 }
 
+// arglogSubcommand reports whether a logged fake git/gh line actually INVOKED the given
+// subcommand words (e.g. "push", or "pr", "create") as its own argv -- never merely
+// present somewhere on the line. A logged line is "<tool> <args...>" and can carry a
+// `git -C <tempdir>`; a landing lane's TMPDIR is named `push-<n>` (nova-merge batch sets
+// it from the lane name), so a whole-line strings.Contains(l, "push") goes red on a TMPDIR
+// that merely SPELLS the word, not on an actual push (#2626). The subcommand is the first
+// field after the tool name and any `-C <dir>` / `-c k=v` options.
+func arglogSubcommand(l string, words ...string) bool {
+	fields := strings.Fields(l)
+	if len(fields) == 0 {
+		return false
+	}
+	rest := fields[1:] // drop the tool name (git, gh, ...)
+	for len(rest) >= 2 && (rest[0] == "-C" || rest[0] == "-c") {
+		rest = rest[2:] // the option and its argument, e.g. "-C /tmp/x" or "-c k=v"
+	}
+	if len(rest) < len(words) {
+		return false
+	}
+	for i, w := range words {
+		if rest[i] != w {
+			return false
+		}
+	}
+	return true
+}
+
+// arglogPushed reports whether a logged line ran `push` as its git subcommand.
+func arglogPushed(l string) bool { return arglogSubcommand(l, "push") }
+
+// arglogOpenedOrEditedPR reports whether a logged line ran `gh pr create` or `gh pr edit`.
+func arglogOpenedOrEditedPR(l string) bool {
+	return arglogSubcommand(l, "pr", "create") || arglogSubcommand(l, "pr", "edit")
+}
+
+// TestArglogSubcommandIgnoresPushInTheTempDirPath is the regression control for #2626: the
+// landing gate's TMPDIR carries the lane name, and lanes are named push-<n>. A logged
+// fake-git line carries that whole path in its `-C <dir>`, and the fix must read past it,
+// not around it.
+func TestArglogSubcommandIgnoresPushInTheTempDirPath(t *testing.T) {
+	// A TMPDIR whose path spells "push", exactly as a push-* landing lane's does.
+	push := filepath.Join(t.TempDir(), "push-x")
+	if err := os.MkdirAll(push, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", push)
+
+	clone := filepath.Join(push, "tmp", "clone")
+
+	// Negative (the bug itself): a non-push command run in a TMPDIR that merely spells the
+	// word must PASS the assertion. A whole-line strings.Contains(l, "push") fails this.
+	fetched := "git -C " + clone + " fetch ssh://hulk/owner/repo"
+	if arglogPushed(fetched) {
+		t.Fatalf("a fetch was read as a push because its TMPDIR spells %q: %s", "push", fetched)
+	}
+	if arglogOpenedOrEditedPR(fetched) {
+		t.Fatalf("a fetch was read as an opened/edited PR because its TMPDIR spells %q: %s", "push", fetched)
+	}
+
+	// Positive: a real push, in the very same push-named TMPDIR, must still be caught.
+	pushed := "git -C " + clone + " push origin rowan/br2"
+	if !arglogPushed(pushed) {
+		t.Fatalf("a real push under a TMPDIR spelling %q was not caught: %s", "push", pushed)
+	}
+
+	// A real PR create/edit, run with the same push-named clone in an argument gh takes no
+	// -C for, must still be caught too.
+	created := "gh pr create -R owner/repo --head rowan/br2 --title t --body-file " + clone
+	if !arglogOpenedOrEditedPR(created) {
+		t.Fatalf("a real pr create under a TMPDIR spelling %q was not caught: %s", "push", created)
+	}
+}
+
 // assertDiffUnread is the one shape all four refusals share: Johnny's token, the reason,
 // and nothing on the forge.
 func assertDiffUnread(t *testing.T, site, stdout, stderr, arglog string) {
@@ -434,7 +507,7 @@ func assertDiffUnread(t *testing.T, site, stdout, stderr, arglog string) {
 		t.Errorf("%s: the refusal does not name its site:\n%s", site, both)
 	}
 	for _, l := range arglogLines(t, arglog) {
-		if strings.Contains(l, "push") || strings.Contains(l, "pr create") || strings.Contains(l, "pr edit") {
+		if arglogPushed(l) || arglogOpenedOrEditedPR(l) {
 			t.Fatalf("%s: something reached the forge behind an unread diff: %s", site, l)
 		}
 	}

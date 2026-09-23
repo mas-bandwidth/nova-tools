@@ -269,7 +269,7 @@ func checkPaths(entries []entry, globs []string) []Finding {
 	for _, e := range entries {
 		matched := false
 		for _, g := range globs {
-			if matchGlob(g, e.path) {
+			if MatchGlob(g, e.path) {
 				matched = true
 				break
 			}
