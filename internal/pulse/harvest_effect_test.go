@@ -14,7 +14,7 @@ import (
 func TestHarvestWithEffectOwner_CurrentWorkerSucceeds(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/101\n")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/101\n")
 	fakeTool(t, specs, "nova-pulse", fakeSpec{Log: arglog, Default: fakeRule{
 		Stdout: "PULSE OK id=p-effect-2 n=5 free-before=5 queued=1 batches=1 deadline=300",
 	}})
@@ -101,7 +101,7 @@ func TestHarvestWithEffectOwner_CurrentWorkerSucceeds(t *testing.T) {
 func TestHarvestWithEffectOwner_StaleFenceRefused(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/102\n")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/102\n")
 
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	ctrl := harvest.NewFakeControl(1, now.Add(time.Hour))
@@ -186,7 +186,7 @@ func TestHarvestWithEffectOwner_StaleFenceRefused(t *testing.T) {
 func TestHarvestWithEffectOwner_ControlPausedRefused(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/103\n")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/103\n")
 
 	now := time.Date(2026, 9, 20, 16, 0, 0, 0, time.UTC)
 	ctrl := harvest.NewFakeControl(1, now.Add(time.Hour))
