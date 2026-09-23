@@ -783,7 +783,9 @@ are not new card admissions.
     before identify, before `aborted.json` and before `exit.json` — a job that
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
-    at its budget, at the runner's group kill, or by `stop`.
+    at its budget, at the runner's group kill, by `stop`, on SIGTERM (which
+    reaps the harness group; default death of the supervisor alone would leave
+    it), or when the pool root disappears.
 19. **The caches are shared per bench, and a finished slot's working bytes are
     reaped.** A native job's toolchain and modules are the same for every card
     under one root, so `native` and the supervisor point the harness child at
@@ -4132,7 +4134,8 @@ verb, and tests that pin all three by executing them.
    and renamed **before** exit 2, `survivors` counted rather than assumed,
    spawn the harness in its group, hold the
    deadline
-   and the budget sampling (rule 13), write `<job>/exit.json` as the
+   and the budget sampling (rule 13), end on SIGTERM and when the pool root
+   is gone (reaping the harness group), write `<job>/exit.json` as the
    completion evidence, refuse a hand-typed invocation. Tests: the identity
    in the files is the supervisor's own; an identify against a changed slot
    never spawns the harness and leaves `aborted.json` on disk before its
