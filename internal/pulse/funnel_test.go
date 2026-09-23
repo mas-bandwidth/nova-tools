@@ -3,7 +3,9 @@ package pulse
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -414,5 +416,109 @@ func TestFunnelNonFiniteFloatsHandledAsUnmeasured(t *testing.T) {
 	}
 	if decoded.HasMeasuredSpend {
 		t.Errorf("decoded.HasMeasuredSpend should be false")
+	}
+}
+
+func TestFunnelAggregateOverflowStaysBoundedAndJSONValid(t *testing.T) {
+	// Stella HOLD 7 (second read, aa956055): two individually finite spend
+	// values near float64's max can sum to +Inf in ComputeFunnelSummary,
+	// which then fails JSON marshaling and can print "+Inf" through OneLine
+	// and the table report. The aggregate must stay bounded and finite even
+	// when accumulation would overflow.
+	hugeSpend := "1.7e308" // finite: strconv.ParseFloat succeeds, math.IsInf is false
+	overflowRecords := []FunnelRecord{
+		{Event: EventAdmit, Card: "c1", Attempt: "1", Spend: hugeSpend},
+		{Event: EventLaunch, Card: "c1", Attempt: "1", Spend: hugeSpend},
+		{Event: EventHarvest, Card: "c1", Attempt: "1", Spend: "-"},
+		{Event: EventGate, Card: "c1", Attempt: "1", Spend: "-"},
+		{Event: EventLand, Card: "c1", Attempt: "1", Spend: "-"},
+	}
+
+	// Sanity: each individual value parses as finite (this is accumulation
+	// overflow, not a non-finite input -- FormatSpend already rejects those).
+	v, err := strconv.ParseFloat(hugeSpend, 64)
+	if err != nil || math.IsInf(v, 0) || math.IsNaN(v) {
+		t.Fatalf("test fixture %q must itself be finite, got v=%v err=%v", hugeSpend, v, err)
+	}
+
+	summary := ComputeFunnelSummary(overflowRecords)
+
+	if math.IsInf(summary.MeasuredSpend, 0) || math.IsNaN(summary.MeasuredSpend) {
+		t.Fatalf("MeasuredSpend must stay bounded/finite after overflowing accumulation, got %v", summary.MeasuredSpend)
+	}
+	if !summary.SpendOverflow {
+		t.Errorf("SpendOverflow should be true when accumulation exceeds float64 range")
+	}
+	// The second record could not be safely added once the running total
+	// would have gone non-finite, so it is counted as unmeasured.
+	if summary.UnmeasuredEvents < 1 {
+		t.Errorf("UnmeasuredEvents = %d, want at least 1 for the overflowing record", summary.UnmeasuredEvents)
+	}
+
+	data, err := json.Marshal(summary)
+	if err != nil {
+		t.Fatalf("json.Marshal(summary) failed on overflowing aggregate: %v", err)
+	}
+	if strings.Contains(string(data), "NaN") || strings.Contains(string(data), "Inf") {
+		t.Errorf("marshaled JSON contains non-finite float: %s", string(data))
+	}
+
+	line := summary.OneLine()
+	if strings.Contains(line, "+Inf") || strings.Contains(line, "-Inf") || strings.Contains(line, "NaN") {
+		t.Errorf("OneLine emitted a non-finite value: %s", line)
+	}
+	if !strings.Contains(line, "spend_overflow=true") {
+		t.Errorf("OneLine should surface the overflow: %s", line)
+	}
+
+	// CostPerLanded must be computed from the bounded MeasuredSpend, never
+	// from an infinite running total, and must format cleanly.
+	if summary.LandedCards > 0 && summary.HasMeasuredSpend {
+		if summary.CostPerLanded == "" || strings.Contains(summary.CostPerLanded, "Inf") || strings.Contains(summary.CostPerLanded, "NaN") {
+			t.Errorf("CostPerLanded is not a clean finite value: %q", summary.CostPerLanded)
+		}
+	}
+
+	// End-to-end: the CLI JSON report over the same overflowing history must
+	// also decode cleanly (this previously failed encoding entirely).
+	tmpDir := t.TempDir()
+	queueDir := filepath.Join(tmpDir, "queue")
+	var out, errb bytes.Buffer
+	nowFn := func() time.Time { return time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC) }
+
+	for i, r := range overflowRecords {
+		code := SprintFunnel(SprintFunnelInput{
+			Queue:   queueDir,
+			Action:  "record",
+			Event:   r.Event,
+			Card:    r.Card,
+			Attempt: r.Attempt,
+			Spend:   r.Spend,
+			Now:     nowFn,
+			Stdout:  &out,
+			Stderr:  &errb,
+		})
+		if code != 0 {
+			t.Fatalf("record %d exit = %d; err=%s", i, code, errb.String())
+		}
+	}
+
+	out.Reset()
+	code := SprintFunnel(SprintFunnelInput{
+		Queue:  queueDir,
+		Action: "report",
+		JSON:   true,
+		Stdout: &out,
+		Stderr: &errb,
+	})
+	if code != 0 {
+		t.Fatalf("report with JSON over overflowing history exit = %d, want 0; err=%s", code, errb.String())
+	}
+	var decoded FunnelSummary
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("failed to decode JSON report output over overflowing history: %v; raw=%s", err, out.String())
+	}
+	if !decoded.SpendOverflow {
+		t.Errorf("decoded.SpendOverflow should be true")
 	}
 }

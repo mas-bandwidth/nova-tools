@@ -66,6 +66,7 @@ type FunnelSummary struct {
 	MeasuredSpend    float64 `json:"measured_spend"`
 	HasMeasuredSpend bool    `json:"has_measured_spend"`
 	UnmeasuredEvents int     `json:"unmeasured_events"`
+	SpendOverflow    bool    `json:"spend_overflow"`
 	CostPerLanded    string  `json:"cost_per_landed"`
 }
 
@@ -79,8 +80,12 @@ func (s FunnelSummary) OneLine() string {
 	if costStr == "" {
 		costStr = "-"
 	}
-	return fmt.Sprintf("FUNNEL admit=%d launch=%d harvest=%d gate=%d land=%d void=%d spend=%s cost_per_landed=%s",
+	line := fmt.Sprintf("FUNNEL admit=%d launch=%d harvest=%d gate=%d land=%d void=%d spend=%s cost_per_landed=%s",
 		s.AdmittedCards, s.LaunchedCards, s.HarvestedCards, s.GatedCards, s.LandedCards, s.VoidedCards, spendStr, costStr)
+	if s.SpendOverflow {
+		line += " spend_overflow=true"
+	}
+	return line
 }
 
 // FormatSpend ensures unmeasured spend is recorded as "-", never manufactured zeros.
@@ -278,8 +283,19 @@ func ComputeFunnelSummary(records []FunnelRecord) FunnelSummary {
 		spend := r.Spend
 		if spend != "" && spend != "-" {
 			if v, err := strconv.ParseFloat(spend, 64); err == nil && v >= 0 && !math.IsNaN(v) && !math.IsInf(v, 0) {
-				summary.MeasuredSpend += v
-				summary.HasMeasuredSpend = true
+				// Individually finite values can still overflow float64 when
+				// accumulated (e.g. two records near 1e308). Check the candidate
+				// sum before committing it, so MeasuredSpend can never become
+				// NaN/Inf itself -- that would break JSON encoding of the
+				// summary and print "+Inf" through OneLine/the table report.
+				next := summary.MeasuredSpend + v
+				if math.IsNaN(next) || math.IsInf(next, 0) {
+					summary.SpendOverflow = true
+					summary.UnmeasuredEvents++
+				} else {
+					summary.MeasuredSpend = next
+					summary.HasMeasuredSpend = true
+				}
 			} else {
 				summary.UnmeasuredEvents++
 			}
@@ -467,6 +483,9 @@ func SprintFunnel(in SprintFunnelInput) int {
 			fmt.Fprintf(in.Stdout, "  Measured Spend:      -\n")
 		}
 		fmt.Fprintf(in.Stdout, "  Unmeasured Events:   %d\n", summary.UnmeasuredEvents)
+		if summary.SpendOverflow {
+			fmt.Fprintf(in.Stdout, "  Spend Overflow:      true (one or more finite records exceeded float64 range on accumulation; excluded, counted as unmeasured)\n")
+		}
 		if summary.CostPerLanded != "-" {
 			fmt.Fprintf(in.Stdout, "  Cost / Landed Card:  $%s\n", summary.CostPerLanded)
 		} else {
