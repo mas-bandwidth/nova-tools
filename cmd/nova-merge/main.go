@@ -211,6 +211,11 @@ The lane never edits an entry's content. A conflict is BLOCKED with every
 conflicting file named and the exact hand command on the line; no code path here
 writes a resolved file.
 
+The five lines below are one sitting against a bare repository of your own, so
+make that repository first if the rehearsal above did:
+
+  git init -q --bare ./rehearsal.git
+
 example:
   nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
   nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read
