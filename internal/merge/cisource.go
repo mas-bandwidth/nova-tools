@@ -93,8 +93,8 @@ func redisAddrFromEnv() string {
 	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
 		return addr
 	}
-	host := envOr("NOVA_REDIS_HOST", "100.115.99.19")
-	port := envOr("NOVA_REDIS_PORT", "6380")
+	host := envOr("NOVA_REDIS_HOST", "localhost")
+	port := envOr("NOVA_REDIS_PORT", "6379")
 	return host + ":" + port
 }
 

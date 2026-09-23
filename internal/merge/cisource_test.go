@@ -37,12 +37,21 @@ func (s *ciFakeSource) Read(repo, sha string) (string, bool, error) {
 func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
 	const repo, sha = "owner/repo", "deadbeef"
 
-	t.Run("production address matches land-lane defaults", func(t *testing.T) {
+	t.Run("production address has safe local default", func(t *testing.T) {
 		t.Setenv("REDIS_ADDR", "")
 		t.Setenv("NOVA_REDIS_HOST", "")
 		t.Setenv("NOVA_REDIS_PORT", "")
-		if got := redisAddrFromEnv(); got != "100.115.99.19:6380" {
-			t.Fatalf("redisAddrFromEnv() = %q, want land-lane default 100.115.99.19:6380", got)
+		if got := redisAddrFromEnv(); got != "localhost:6379" {
+			t.Fatalf("redisAddrFromEnv() = %q, want localhost:6379", got)
+		}
+	})
+
+	t.Run("production address accepts land-lane endpoint", func(t *testing.T) {
+		t.Setenv("REDIS_ADDR", "")
+		t.Setenv("NOVA_REDIS_HOST", "redis.example.test")
+		t.Setenv("NOVA_REDIS_PORT", "6380")
+		if got := redisAddrFromEnv(); got != "redis.example.test:6380" {
+			t.Fatalf("redisAddrFromEnv() = %q, want redis.example.test:6380", got)
 		}
 	})
 
