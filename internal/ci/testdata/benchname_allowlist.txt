@@ -20,10 +20,21 @@ internal/pulse/harvestbench.go:sshShell.Run the raw ssh seam; the same road as c
 
 cmd/nova-pulse/fill.go:sshCapacity.Capacity the raw ssh capacity probe; it is reached only through pulse.Fill, which wraps every Capacity in guardedCapacity and asks RequireBench first, and it is constructed in exactly one place (cmd/nova-pulse/fill.go) and handed straight to pulse.Fill
 cmd/nova-pulse/fill.go:flashLauncher.Launch the raw per-card launcher; the same road, wrapped by pulse.Fill in guardedLauncher, constructed in exactly one place and handed straight to it
-cmd/nova-pulse/fillstore.go:storeProbeConfig.probe the slot-store capacity probe (#1914); the same road as sshCapacity.Capacity -- it is the Probe seam of pulse.StoreCapacity, which pulse.Fill wraps in guardedCapacity and asks RequireBench first, and it is constructed in exactly one place (cmdFill) and handed straight to pulse.Fill
-cmd/nova-pulse/fillstore.go:storeProbeConfig.runProbeOverSSH the ssh half of that probe, reached from storeProbeConfig.probe and from nothing else, below the same guard
-internal/pulse/fillstore.go:StoreCapacity.ownerFor formats the store row whose leases are counted (`swarm-<bench>`, the seat flashLauncher already hands it) and touches no machine; it is called only from StoreCapacity.Capacity, below pulse.Fill's guardedCapacity
+cmd/nova-pulse/fill.go:flashLauncher.LaunchSeat the raw seat-aware per-card launcher; the same road as flashLauncher.Launch -- pulse.Fill wraps it in guardedLauncher, whose LaunchSeat asks fleet.Registry.RequireBench before the card reaches it, and it is constructed in exactly one place (cmdFill) and handed straight to pulse.Fill
+cmd/nova-pulse/fillstore.go:storeProbeConfig.probeOwner the slot-store capacity probe, seat-aware since 368d348 (#1914); the same road as sshCapacity.Capacity -- it is the SeatProbe seam of pulse.StoreCapacity, which pulse.Fill wraps in guardedCapacity and asks RequireBench first, and it is constructed in exactly one place (cmdFill) and handed straight to pulse.Fill
+cmd/nova-pulse/fillstore.go:storeProbeConfig.runProbeOverSSH the ssh half of that probe, reached from storeProbeConfig.probeOwner and from nothing else, below the same guard
+internal/pulse/fillstore.go:StoreCapacity.ownerFor formats the store row whose leases are counted (`swarm-<bench>`, the seat flashLauncher already hands it) and touches no machine; it is called only from the store capacity seam, below pulse.Fill's guardedCapacity
 internal/pulse/fillstore.go:StoreCapacity.Capacity the pulse.Capacity the fleet runs on; pulse.Fill wraps EVERY Capacity in guardedCapacity, which asks fleet.Registry.RequireBench before the name reaches this call, and this function starts no child of its own -- its injected Probe does
+internal/pulse/fillstore.go:StoreCapacity.capacityForSeat the seat-aware store capacity seam; the same road as StoreCapacity.Capacity above -- pulse.Fill wraps EVERY Capacity in guardedCapacity, which asks fleet.Registry.RequireBench before the name reaches this call, and this function starts no child of its own -- its injected Probe does
+
+# `#2029 remainder` seat reservations. pulse.Fill validates every bench before the first
+# tick and wraps both seams in guardedLauncher / guardedCapacity, whose methods ask the
+# registry again. These are the reservation and reconciliation helpers below that guard;
+# they open nothing on a machine themselves.
+internal/pulse/fill.go:guardedCapacity.OwnedLeaseLabels forwards to the wrapped reader's memory of the labels its last probe saw held and touches no machine; pulse.Fill reads it to reconcile a held reservation against an owned lease, never to reach a host
+internal/pulse/fillreserve.go:fileReserver.Reserve writes one numbered reservation file under --launched/.fill-seats/<bench>/ on the coordinator's own disk and touches no machine; the bench is a directory name, and every card that could take that seat goes through guardedLauncher before any ssh
+internal/pulse/fillstore.go:StoreCapacity.OwnedLeaseLabels reads the memo of the labels the last store probe saw held and touches no machine; it is how pulse.Fill reconciles a reservation against an owned lease
+internal/pulse/fillstore.go:StoreCapacity.rememberLabels writes that memo and touches no machine; the bench name is the one the capacity probe just read
 
 cmd/nova-pulse/power.go:powerOnlineCount the Mac power verbs exist FOR the CI runner hosts: nova-pulse wake and sleep are how batman and superman are woken for the merge group and let sleep again (the fleet runs on solar). A runner host is the RIGHT answer here, so a bench guard would refuse the verb's whole purpose; they place no card and no load, only a magic packet and a runner-list read
 cmd/nova-pulse/power.go:powerBusyCount the same verbs, asking GitHub whether that runner host's runners are busy before letting it sleep

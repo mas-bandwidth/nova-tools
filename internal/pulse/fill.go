@@ -100,13 +100,6 @@ type SeatLauncher interface {
 	LaunchSeat(bench, seat, card string) (unknown bool, err error)
 }
 
-func launchSeat(l CardLauncher, bench, seat, card string) (unknown bool, err error) {
-	if sl, ok := l.(SeatLauncher); ok {
-		return sl.LaunchSeat(bench, seat, card)
-	}
-	return false, l.Launch(bench, seat, card)
-}
-
 // Capacity answers how many cards the named bench can take this tick -- card 9316's
 // formula, the min of core, disk and memory headroom. The real one runs it over ssh; tests
 // inject a fixed number.
@@ -177,22 +170,16 @@ func (g guardedCapacity) Capacity(bench string) (int, error) {
 }
 
 // capacityForSeat carries the registry seat through the guard to a seat-aware reader and
-// falls back to the plain seam for a fixed number or a legacy fixture (368d348).
+// falls back to the plain seam for a fixed number or a legacy fixture (368d348). A reader
+// that knows only Capacity(bench) -- fixedCapacity, a test fixture -- is asked the old way.
 func (g guardedCapacity) capacityForSeat(bench, seat string) (int, error) {
 	if err := g.reg.RequireBench(bench); err != nil {
 		return 0, err
 	}
-	return capacityFor(g.next, bench, seat)
-}
-
-// capacityFor asks a reader for one bench's free count, handing a seat-aware reader the
-// registry seat Fill resolved once (368d348). A reader that knows only Capacity(bench) --
-// fixedCapacity, a test fixture -- is asked the old way.
-func capacityFor(c Capacity, bench, seat string) (int, error) {
-	if sc, ok := c.(seatCapacity); ok {
+	if sc, ok := g.next.(seatCapacity); ok {
 		return sc.capacityForSeat(bench, seat)
 	}
-	return c.Capacity(bench)
+	return g.next.Capacity(bench)
 }
 
 type leaseViewer interface {
@@ -308,7 +295,10 @@ func (g guardedLauncher) LaunchSeat(bench, seat, card string) (bool, error) {
 	if err := g.reg.RequireBench(bench); err != nil {
 		return false, err
 	}
-	return launchSeat(g.next, bench, seat, card)
+	if sl, ok := g.next.(SeatLauncher); ok {
+		return sl.LaunchSeat(bench, seat, card)
+	}
+	return false, g.next.Launch(bench, seat, card)
 }
 
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
@@ -494,7 +484,14 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 	want := make([]int, len(in.Benches))
 	capacityFailed := make([]bool, len(in.Benches))
 	for i, bench := range in.Benches {
-		if n, err := capacityFor(in.Capacity, bench, seats[bench]); err != nil {
+		var n int
+		var err error
+		if sc, ok := in.Capacity.(seatCapacity); ok {
+			n, err = sc.capacityForSeat(bench, seats[bench])
+		} else {
+			n, err = in.Capacity.Capacity(bench)
+		}
+		if err != nil {
 			capacityFailed[i] = true
 			// FAIL CLOSED, AND SAY SO, PER BENCH. A probe or parse failure is zero free
 			// slots on THAT bench -- never a deal, never a fall-through -- and every
@@ -583,7 +580,13 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 				live[lane] = base
 			}
 			want[i]--
-			unknown, err := launchSeat(in.Launcher, bench, seats[bench], moved)
+			var unknown bool
+			var err error
+			if sl, ok := in.Launcher.(SeatLauncher); ok {
+				unknown, err = sl.LaunchSeat(bench, seats[bench], moved)
+			} else {
+				err = in.Launcher.Launch(bench, seats[bench], moved)
+			}
 			if err != nil {
 				if hold != nil {
 					hold.Release()

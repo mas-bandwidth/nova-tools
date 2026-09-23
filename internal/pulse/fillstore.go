@@ -408,16 +408,12 @@ func (c StoreCapacity) ownerFor(bench, seat string) string {
 // Capacity is the legacy seam: a caller with no registry seat gets the old
 // `swarm-<bench>` derivation. Fill does NOT call this; it calls capacityForSeat.
 func (c StoreCapacity) Capacity(bench string) (int, error) {
-	return c.capacity(bench, "")
+	return c.capacityForSeat(bench, "")
 }
 
 // capacityForSeat is the seat-aware seam: the registry seat resolved by Fill (368d348)
 // becomes the store row whose leases are counted.
 func (c StoreCapacity) capacityForSeat(bench, seat string) (int, error) {
-	return c.capacity(bench, seat)
-}
-
-func (c StoreCapacity) capacity(bench, seat string) (int, error) {
 	if c.Probe == nil && c.SeatProbe == nil {
 		return 0, fmt.Errorf("no capacity probe; refusing to guess a free count")
 	}
