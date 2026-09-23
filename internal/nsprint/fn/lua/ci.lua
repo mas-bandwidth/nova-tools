@@ -11,6 +11,20 @@
 -- Execution state and verdict are distinct (10.5 item 5): a script that ran
 -- to its end ends DONE with verdict OK or FAIL; a wrapper failure ends FAILED
 -- or BLOCKED and writes no verdict, so the head reads MISSING.
+--
+-- Tasks wait on a head (nova-tools #3382, the waiting-ci step of the closed
+-- #3128 rebuilt here per ci card): a task parked on ci:<repo>:<sha> is state
+-- waiting-ci in its sprint's idx:task:waiting-ci, on no open queue, with its
+-- queue in `to` ('' is the ready pool), and <sprint>/<id> is a member of the
+-- head's set ci:<repo>:<sha>:waiting. ns_ci_end settles that set in the call
+-- that writes the verdict: OK opens every member to its queue (enqueued_at is
+-- this TIME, so the read clock starts at the OK); FAIL parks them (state
+-- parked, reason ci-fail); FLAKY and MISSING leave them waiting.
+--
+-- The ci-fail item <pr>:<head>:ci-fail:<pkg> in s:<S>:unresolved has one
+-- writer, ns_ci_end, when the failure stands with the rerun budget spent.
+-- Parking cuts no item of its own, and a HOLD on a FLAKY head writes its fix
+-- item under <pr>:<head>:flaky-hold:<pkg>.
 
 local CI_FRONT = -1000000000
 
@@ -55,6 +69,47 @@ local function ci_healthy(bench, leg)
   local paused = ci_hget('bench:' .. bench .. ':desired', 'paused')
   if paused == '1' or paused == 'true' then return false end
   return ci_carries(bench, leg)
+end
+
+-- ci_settle_waiting opens (OK) or parks (FAIL) every task waiting on
+-- ci:<repo>:<head>, in whichever sprint it lives, with one receipt each in
+-- that sprint's log. A member whose task is gone, has moved on or names
+-- another head is dropped. Released members leave the set; parked ones stay,
+-- so an OK at this exact head still reaches them.
+local function ci_settle_waiting(repo, head, final, pkg, actor, at)
+  if final ~= 'OK' and final ~= 'FAIL' then return end
+  local wkey = 'ci:' .. repo .. ':' .. head .. ':waiting'
+  for _, member in ipairs(redis.call('SMEMBERS', wkey)) do
+    local T, id = string.match(member, '^([^/]+)/(.+)$')
+    local key = T and ('s:' .. T .. ':task:' .. id) or ''
+    local row = T and redis.call('HMGET', key, 'state', 'repo', 'head', 'to', 'priority', 'reason') or {}
+    local state = row[1]
+    local live = row[2] == repo and row[3] == head and
+      (state == 'waiting-ci' or (state == 'parked' and row[6] == 'ci-fail'))
+    if not live then
+      redis.call('SREM', wkey, member)
+    elseif final == 'OK' then
+      local to = row[4] or ''
+      local score = -(tonumber(row[5]) or 0)
+      redis.call('HSET', key, 'state', 'open', 'reason', '', 'enqueued_at', at)
+      redis.call('SREM', 's:' .. T .. ':idx:task:' .. state, id)
+      redis.call('SADD', 's:' .. T .. ':idx:task:open', id)
+      if to ~= '' then
+        redis.call('ZADD', 's:' .. T .. ':open:' .. to, score, id)
+      else
+        redis.call('ZADD', 's:' .. T .. ':ready', score, id)
+      end
+      redis.call('SREM', wkey, member)
+      ci_receipt(T, 'task', id, state, 'open', 0, '', actor, 'ci-ok',
+        'ci:' .. repo .. ':' .. head .. ' OK', 'ci-ok:' .. head .. ':' .. id, at)
+    elseif state == 'waiting-ci' then
+      redis.call('HSET', key, 'state', 'parked', 'reason', 'ci-fail')
+      redis.call('SREM', 's:' .. T .. ':idx:task:waiting-ci', id)
+      redis.call('SADD', 's:' .. T .. ':idx:task:parked', id)
+      ci_receipt(T, 'task', id, 'waiting-ci', 'parked', 0, '', actor, 'ci-fail',
+        'ci:' .. repo .. ':' .. head .. ' FAIL pkg=' .. pkg, 'ci-fail:' .. head .. ':' .. id, at)
+    end
+  end
 end
 
 local function ci_sorted_benches()
@@ -179,10 +234,11 @@ local function ci_end(keys, args)
       redis.call('HSETNX', 's:' .. S .. ':unresolved', pr .. ':' .. head .. ':flaky:' .. fpkg,
         'flaky ' .. repo .. ' ' .. head .. ' ' .. flaky .. ' ' .. S .. '/' .. label)
     end
-    if final == 'FAIL' and pverdict ~= nil and pverdict ~= '' and
-        tonumber(ci_hget(card_key, 'reruns')) >= 1 then
+    local budget = tonumber(ci_hget('s:' .. S .. ':policy', 'ci_reruns')) or 1
+    if final == 'FAIL' and (tonumber(ci_hget(card_key, 'reruns')) or 0) >= budget then
       -- The rerun budget is spent and the failure stands: one fix item for
-      -- the author, deduplicated by <pr>:<head>:ci-fail:<pkg> (3.3).
+      -- the author, deduplicated by <pr>:<head>:ci-fail:<pkg> (3.3). This
+      -- is the item's one writer (#3382).
       redis.call('HSETNX', 's:' .. S .. ':unresolved', pr .. ':' .. head .. ':ci-fail:' .. pkg,
         'ci-fail ' .. repo .. ' ' .. head .. ' ' .. pkg .. ' ' .. test .. ' ' .. S .. '/' .. label)
     end
@@ -192,6 +248,7 @@ local function ci_end(keys, args)
     redis.call('HSET', rec_key, 'pkg', pkg, 'test', test, 'wall_s', wall_s, 'bench', bench,
       'log', log, 'tree', tree, 'end_at', at, 'flaky', flaky, 'why', (final == '' and reason or ''),
       'at', at)
+    ci_settle_waiting(repo, head, final, pkg, actor, at)
   end
   local evidence = rec_key .. ' ' .. (verdict ~= '' and verdict or 'MISSING') ..
     ' bench=' .. bench .. ' pkg=' .. pkg .. ' test=' .. test .. ' wall_s=' .. wall_s ..
@@ -282,8 +339,9 @@ local function ci_dispose(keys, args)
     redis.call('HSET', rec_key, 'verdict', 'OK', 'log', url, 'disposition', 'APPROVE ' .. friend .. ' ' .. url, 'at', at)
   elseif disposition == 'HOLD' then
     redis.call('HSET', rec_key, 'disposition', 'HOLD ' .. friend .. ' ' .. url, 'at', at)
-    redis.call('HSETNX', unresolved, pr .. ':' .. head .. ':ci-fail:' .. pkg,
-      'ci-fail ' .. repo .. ' ' .. head .. ' ' .. pkg .. ' flaky-hold ' .. card)
+    -- Its own key: ns_ci_end is the one writer of the ci-fail item (#3382).
+    redis.call('HSETNX', unresolved, pr .. ':' .. head .. ':flaky-hold:' .. pkg,
+      'flaky-hold ' .. repo .. ' ' .. head .. ' ' .. pkg .. ' ' .. card)
   else
     return { 'RECORD' }
   end
