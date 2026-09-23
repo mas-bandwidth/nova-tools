@@ -198,8 +198,9 @@ local function redistribute_from(keys, args)
   if state == RD_OUT and up then
     local until_ms = tonumber(redis.call('HGET', skey, 'until') or '')
     if until_ms and at >= until_ms then
-      redis.call('DEL', skey)
-      rd_caplog('friend-state-clear', f, RD_OUT .. ' window reset', actor, idem, at)
+      -- friend.lua's fs_clear is the key's one writer (#3101); it logs the
+      -- same friend-state-clear line (<had> window reset).
+      fs_clear(f, 'window reset', actor, idem, at)
       state = ''
     end
   end

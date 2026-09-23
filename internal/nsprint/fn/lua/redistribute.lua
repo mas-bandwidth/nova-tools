@@ -5,16 +5,19 @@
 -- header. Locals carry an rd_ prefix because every lua/ file shares one chunk.
 --
 -- Keys:
---   friend:<f>:state   hash (state, until, reason, since, at). state is
---                      `out-of-credits` (written by the friend's keeper through
---                      ns_friend_state when the harness reports a usage limit;
---                      until = the reset in unix ms when the harness says) or
---                      `down` (written by the tick when the presence key
---                      friend:<f>:beat has expired with work still on f).
+--   friend:<f>:state   hash, written only through friend.lua's fs_set and
+--                      fs_clear (ns_friend_state, #3101). This tick reads it
+--                      and, through those same two functions, writes state
+--                      `down` when the presence key friend:<f>:beat has expired
+--                      with work still on f, and clears a state whose reason is
+--                      over (a beat back, an out-of-credits or away `until`
+--                      passed with the friend up). `out-of-credits` and `away`
+--                      come from `friend report`; `idle` at rung 3 from the
+--                      ladder (friend.lua).
 --
 -- ns_friend_redistribute is one atomic call over every registered friend:
---   * out-of-credits: every open task on f's queues and every lease f holds is
---     moved in this same call.
+--   * out-of-credits, away, or idle at rung 3: every open task on f's queues
+--     and every lease f holds is moved in this same call.
 --   * presence expired with open work or leases: the first tick writes
 --     state=down and moves nothing; the next tick that still finds no beat
 --     moves everything (one tick later). A beat back before then clears it.
@@ -79,12 +82,12 @@ local function rd_open_sprints()
 end
 
 -- rd_free is nil for a friend who cannot receive work (unregistered, no beat,
--- paused, or itself in a state), else its free width.
+-- paused, or in a state that bars routing: fs_blocks), else its free width.
 local function rd_free(g, sprints)
   if redis.call('SISMEMBER', 'friends', g) == 0 or
       redis.call('EXISTS', 'friend:' .. g .. ':beat') == 0 or
       redis.call('HGET', 'friend:' .. g .. ':desired', 'paused') == '1' or
-      redis.call('EXISTS', 'friend:' .. g .. ':state') == 1 then
+      fs_blocks(g) then
     return nil
   end
   local free = tonumber(redis.call('HGET', 'friend:' .. g .. ':desired', 'slots') or '0') or 0
@@ -424,41 +427,6 @@ local function rd_move_open(ctx)
   end
 end
 
--- ns_friend_state: the keeper's writer. args = friend, state
--- (out-of-credits or clear), until (unix ms or ''), reason, actor, idem.
-local function friend_state(keys, args)
-  local friend, state, until_ms, reason = args[1], args[2], args[3] or '', args[4] or ''
-  local actor, idem = args[5], args[6]
-  if not friend or friend == '' then
-    return { 'INVALID' }
-  end
-  if redis.call('SISMEMBER', 'friends', friend) == 0 then
-    return { 'NOTFOUND' }
-  end
-  local key = 'friend:' .. friend .. ':state'
-  local at = rd_now_ms()
-  if state == 'clear' then
-    local had = redis.call('HGET', key, 'state') or ''
-    redis.call('DEL', key)
-    rd_caplog('friend-state-clear', friend, had .. ' ' .. reason, actor, idem, at)
-    return { 'OK', '' }
-  end
-  if state ~= RD_OUT then
-    return { 'INVALID' }
-  end
-  if until_ms ~= '' and not tonumber(until_ms) then
-    return { 'INVALID' }
-  end
-  local since = redis.call('HGET', key, 'since')
-  if redis.call('HGET', key, 'state') ~= RD_OUT or not since then
-    since = tostring(at)
-  end
-  redis.call('HSET', key, 'state', RD_OUT, 'until', until_ms, 'reason', reason,
-    'since', since, 'at', tostring(at))
-  rd_caplog('friend-state', friend, RD_OUT .. ' ' .. reason, actor, idem, at)
-  return { 'OK', RD_OUT }
-end
-
 -- ns_friend_redistribute: args = may-hold readers (csv), builders (csv),
 -- coordinator, actor, idem. Returns, per friend in a state, the flat record
 -- friend name state moved leases released unrouted pending.
@@ -482,31 +450,36 @@ local function friend_redistribute(keys, args)
   table.sort(friends)
   local out = {}
   for _, f in ipairs(friends) do
-    local skey = 'friend:' .. f .. ':state'
-    local state = redis.call('HGET', skey, 'state')
+    local st = redis.call('HMGET', 'friend:' .. f .. ':state', 'state', 'until', 'rung')
+    local state = st[1]
     local up = redis.call('EXISTS', 'friend:' .. f .. ':beat') == 1
     local why, pending = nil, false
-    if state == RD_OUT then
-      local until_ms = tonumber(redis.call('HGET', skey, 'until') or '')
+    if (state == FS_IDLE or state == FS_UNDER) and not up then
+      -- a ladder state whose beat expired is judged as any absent friend
+      state = nil
+    end
+    if state == RD_OUT or state == FS_AWAY then
+      local until_ms = tonumber(st[2] or '')
       if up and until_ms and at >= until_ms then
-        redis.call('DEL', skey)
-        rd_caplog('friend-state-clear', f, RD_OUT .. ' window reset', actor, idem, at)
+        fs_clear(f, state .. ' window over', actor, idem, at)
         state = nil
-      else
+      elseif state == RD_OUT then
         why = 'out of credits'
+      else
+        why = 'away'
       end
     elseif state == RD_DOWN then
       if up then
-        redis.call('DEL', skey)
-        rd_caplog('friend-state-clear', f, 'down: beat returned', actor, idem, at)
+        fs_clear(f, 'down: beat returned', actor, idem, at)
         state = nil
       else
         why = 'down'
       end
+    elseif state == FS_IDLE and (tonumber(st[3]) or 0) >= 3 then
+      -- rung 3 of the idle ladder (5.5): as down. underfull stops at rung 2.
+      why = 'idle'
     elseif not up and rd_has_work(f, sprints) then
-      redis.call('HSET', skey, 'state', RD_DOWN, 'until', '', 'reason', 'presence expired with work',
-        'since', tostring(at), 'at', tostring(at))
-      rd_caplog('friend-state', f, 'down: presence expired with work', actor, idem, at)
+      fs_set(f, RD_DOWN, '', 'presence expired with work', 0, 0, 0, actor, idem, at, false)
       state, pending = RD_DOWN, true
     end
     if why or pending then
@@ -539,5 +512,4 @@ local function friend_redistribute(keys, args)
   return out
 end
 
-redis.register_function('ns_friend_state', friend_state)
 redis.register_function('ns_friend_redistribute', friend_redistribute)
