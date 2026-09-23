@@ -492,59 +492,64 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 			holds = append(holds, v)
 		}
 	}
-	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs, currentHead)
+	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs)
 }
 
-// releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD at a SUPERSEDED
-// head is released by a later typed verdict from the same friend at the CURRENT head),
-// amended by the coordinator's 2026-09-22 4:55 PM decision to cover a HOLD still AT the
-// current head too:
+// releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD is released by a
+// later typed verdict from the same friend), as amended twice:
 //
-//	A HOLD by friend X at head H, however it was written, is released by X's LATER typed
-//	`DISPOSITION who=x head=H verdict=APPROVE` comment at that same head H; the last
-//	typed verdict per friend at head wins, whether H is superseded or current.
+//   - the coordinator's 2026-09-22 4:55 PM decision: it covers a HOLD still AT the
+//     current head too, not only one at a superseded head;
+//   - Glenn's lander-keys-reads-by-who ruling (2026-09-23): the releasing verdict may be
+//     at ANY head. A hold by X is released when X's last typed verdict written after
+//     the hold is APPROVE, whichever head that APPROVE names.
 //
-// The reasoning given for lifting SPEC-DECIDE reading 3's older "a comment releases
-// nothing at the current head; only the holder's lane record does" restriction: Glenn's
-// one-read rule is about typed lines, and a friend's own typed DISPOSITION comment IS
-// their lane record for their own hold. It never was evidence good enough for a
-// DIFFERENT friend's hold or for the needs_read approval gate (read.go's EvaluateReads,
-// which remains lane-record-only and is untouched here) -- only for superseding one's
-// own earlier word with one's own later word, the same friend, the same head.
+// The 2026-09-23 amendment is measured: the gate dropped 57 distinct pull requests with
+// "carries an unreleased HOLD", and five (#2619 johnny, #2628 stella, #2707 rowan, #2879
+// rowan, #3080 johnny) were holds whose author's own later typed APPROVE sat at a head
+// the branch had since moved past. #2879: rowan HOLD 6 at fc15f98d, rowan APPROVE 8 at
+// fc15f98d 30 minutes later, head now 8984b941 -- the hold pinned because the APPROVE was
+// not at the current head (TestAHoldIsReleasedByTheHoldersLaterApproveAtAnOlderHead).
+// The APPROVE is the holder's own last word on their own hold; the head it names says
+// what they read, not whether they still hold.
 //
-// Measured control: #2522 comment 5766104067, Stella's untyped prose hold ("HOLD --
-// Stella, independent contract/source read..."), binds to the current head because an
-// untyped comment always does (SPEC-DECIDE lines 1037-1040); her own later typed
-// `DISPOSITION who=stella head=<that same head> verdict=APPROVE score=9` comment
-// (5783400393) now releases it. Emma's typed APPROVE at that same head does not: the
-// rule is same-friend, never "somebody approved".
+// The reasoning for letting a typed comment release at all: Glenn's one-read rule is
+// about typed lines, and a friend's own typed DISPOSITION comment IS their lane record
+// for their own hold. It never was evidence good enough for a DIFFERENT friend's hold or
+// for the needs_read approval gate (read.go's EvaluateReads, which remains
+// lane-record-only and is untouched here) -- only for superseding one's own earlier word
+// with one's own later word.
 //
 // What this does NOT do, and must not:
 //
-//   - An APPROVE at some OTHER, non-matching head releases nothing. Release keys on the
-//     head, never on "somebody approved at some point".
+//   - A DIFFERENT friend's APPROVE releases nothing, at any head.
+//   - A verdict with no stamp is no evidence of order and releases nothing.
+//   - A scoped APPROVE releases only the holds it names; a later HOLD replaces an
+//     earlier one only on the same scope. The later HOLD itself stands on its own, so
+//     a friend whose last word is HOLD still pins (TestAHoldAfterTheHoldersOlderHeadApproveStillPins).
 //   - A hold with who=unknown is left alone. An untyped hold-shaped line with no
 //     attributable name has no author to match, so nothing can supersede it this way;
 //     SPEC-DECIDE reading 3's other release path (a different may-hold reader's lane
 //     record naming it) is unaffected.
-//   - The needs_read approval gate (read.go) still counts only lane records. This
-//     decision is about a hold's own author superseding themselves, not about who counts
-//     as a second friend's read.
-func releaseSameFriendSupersededHolds(unreleased []Verdict, vs []Verdict, currentHead string) []Verdict {
+//   - The needs_read approval gate (read.go) still counts only lane records, at head.
+func releaseSameFriendSupersededHolds(unreleased []Verdict, vs []Verdict) []Verdict {
 	var kept []Verdict
 	for _, h := range unreleased {
 		if h.Who == "unknown" || h.Who == "" {
 			kept = append(kept, h)
 			continue
 		}
-		if !supersededByVerdictAtHead(h, vs, currentHead) {
+		if !supersededByHoldersLaterVerdict(h, vs) {
 			kept = append(kept, h)
 		}
 	}
 	return kept
 }
 
-func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool {
+// supersededByHoldersLaterVerdict reports whether the holder of h wrote a later typed
+// verdict, at any head, that speaks to h: an APPROVE (unscoped, or scoped and naming
+// h), or a HOLD on the same scope, which replaces h and stands in its own right.
+func supersededByHoldersLaterVerdict(h Verdict, vs []Verdict) bool {
 	for _, v := range vs {
 		if v.Kind != "" && v.Kind != "line" {
 			continue
@@ -565,16 +570,14 @@ func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool
 		if !sameLine(v.Who, h.Who) {
 			continue
 		}
-		if !headMatch(v.Head, currentHead) {
-			continue
-		}
-		// The tie rule of UnreleasedHolds: a verdict stamped at or before the hold is
-		// not later than it, and a verdict with no stamp is not evidence of order.
+		// No head check: the ruling is ANY head. The tie rule of UnreleasedHolds
+		// stays: a verdict stamped at or before the hold is not later than it, and a
+		// verdict with no stamp is not evidence of order.
 		if v.At == "" || v.At <= h.At {
 			continue
 		}
 		if v.Word == "approve" {
-			// A scoped APPROVE releases only what it names, the same way it does at head.
+			// A scoped APPROVE releases only what it names.
 			if v.Scope != "" && !releasesContains(v.Releases, h.ID) {
 				continue
 			}
