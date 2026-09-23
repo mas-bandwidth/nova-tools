@@ -14,14 +14,17 @@ import (
 func init() {
 	register(Verb{
 		Name:    "card",
-		Summary: "launched, beat, and end one card attempt",
+		Summary: "push, release, launched, beat, and end one card attempt",
 		Run:     runCard,
 	})
 }
 
 func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && (args[0] == "push" || args[0] == "release") {
+		return runCardPool(ctx, args, stdout, stderr)
+	}
 	if len(args) == 0 {
-		return cardUsage(stderr, "", "wants launched, beat, or end")
+		return cardUsage(stderr, "", "wants push, release, launched, beat, or end")
 	}
 	sub := args[0]
 	want, ok := cardWant(sub)

@@ -15,15 +15,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func init() {
-	register(Verb{
-		Name:    "card",
-		Summary: "push a card into the pool or waiting, and release it after its parent lands",
-		Run:     runCard,
-	})
-}
-
-func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+// runCardPool runs card push and card release; runCard (card_run.go) routes them here.
+func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "card", "needs push or release")
 	}
@@ -109,7 +102,7 @@ func openCardRedis(ctx context.Context, addr string, stderr io.Writer) (*redis.C
 	return st.Client(), 0
 }
 
-func writeCardResult(stdout, stderr io.Writer, res card.Result) int {
+func writeCardResult(stdout, stderr io.Writer, res card.VerbResult) int {
 	if res.Code != 0 {
 		fmt.Fprintf(stderr, "nova-sprint card: %s; run: nova-sprint help\n", oneline.Escape(strings.TrimSpace(res.Stderr)))
 		return res.Code

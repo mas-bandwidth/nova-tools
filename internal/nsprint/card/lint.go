@@ -26,9 +26,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// Result is one card verb. Code 0 wrote or found the same card. Code 2 is a
+// VerbResult is one card verb (push, release, land, lint). Code 0 wrote or found the same card. Code 2 is a
 // refusal. Code 4 is a label whose payload differs from the card already stored.
-type Result struct {
+type VerbResult struct {
 	Code   int
 	Stdout string
 	Stderr string
@@ -45,10 +45,9 @@ const (
 var requiredKeys = []string{"BASE", "base-sha", "PATHS", "DEPENDS-ON", "DONE-WHEN"}
 
 var (
-	keyRE    = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
-	idRE     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	sprintRE = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
-	shaRE    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	keyRE = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
+	idRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	shaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
 // probeClient is the unauthenticated repository check. It does not follow
@@ -74,8 +73,8 @@ type cardDoc struct {
 	Payload   string
 }
 
-func refused(reason string) Result {
-	return Result{Code: exitRefused, Stderr: oneline.Escape(reason) + "\n"}
+func refused(reason string) VerbResult {
+	return VerbResult{Code: exitRefused, Stderr: oneline.Escape(reason) + "\n"}
 }
 
 func lint(ctx context.Context, body []byte) (cardDoc, error) {
