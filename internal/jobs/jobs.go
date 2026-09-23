@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 )
 
@@ -229,6 +230,34 @@ func (g *Graph) Accept(id string) error {
 	n.Green = true
 	g.node[id] = n
 	return nil
+}
+
+// AcceptFile accepts id in the graph file at path and writes the graph back in seed
+// order. The file is read, seeded and the node found before anything is written, so
+// an unreadable or invalid graph, or an id the graph does not hold, leaves the file
+// byte-identical.
+func AcceptFile(path, id string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	g, err := ParseSeed(raw)
+	if err != nil {
+		return err
+	}
+	if err := g.Accept(id); err != nil {
+		return err
+	}
+	nodes := make([]Node, 0, g.Len())
+	for _, n := range g.Order() {
+		node, _ := g.Node(n)
+		nodes = append(nodes, node)
+	}
+	out, err := MarshalNodes(nodes)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
 }
 
 // State names a node's progress: open, merged, or accepted. A merged node that is not

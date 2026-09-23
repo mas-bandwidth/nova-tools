@@ -1,6 +1,9 @@
 package jobs
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -33,5 +36,61 @@ func TestIssue1796(t *testing.T) {
 	// An accepted node is not itself ready.
 	if ready, _ := g.Ready("cutter-C2"); ready {
 		t.Fatalf("cutter-C2: ready after being accepted")
+	}
+}
+
+// TestIssue1796AcceptPersists is the file boundary nova-work accept --graph uses:
+// write a graph, accept a node through AcceptFile, reread the file from disk, and see
+// the dependent become ready. A missing node or an invalid graph leaves the file
+// byte-identical.
+func TestIssue1796AcceptPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deps.json")
+	seed, err := MarshalNodes([]Node{
+		{ID: "issues-sweep", Needs: []string{"cutter-C2"}},
+		{ID: "cutter-C2"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, seed, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	if err := AcceptFile(path, "no-such-node"); err == nil {
+		t.Fatal("AcceptFile(no-such-node): accepted a node the graph does not hold")
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, seed) {
+		t.Fatalf("a refused accept changed the file:\n%s", got)
+	}
+
+	if err := AcceptFile(path, "cutter-C2"); err != nil {
+		t.Fatalf("AcceptFile(cutter-C2): %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reread: %v", err)
+	}
+	g, err := ParseSeed(raw)
+	if err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	if !g.Accepted("cutter-C2") {
+		t.Fatal("cutter-C2 is not accepted in the file on disk")
+	}
+	if ready, blocker := g.Ready("issues-sweep"); !ready {
+		t.Fatalf("issues-sweep: not ready from the file on disk, blocker: %v", blocker)
+	}
+
+	bad := filepath.Join(dir, "bad.json")
+	invalid := []byte(`{"nodes":[{"id":"a","needs":["b"]},{"id":"b","needs":["a"]}]}` + "\n")
+	if err := os.WriteFile(bad, invalid, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := AcceptFile(bad, "a"); err == nil {
+		t.Fatal("AcceptFile on a cyclic graph: accepted")
+	}
+	if got, _ := os.ReadFile(bad); !bytes.Equal(got, invalid) {
+		t.Fatalf("a refused accept changed the invalid file:\n%s", got)
 	}
 }

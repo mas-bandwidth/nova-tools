@@ -155,8 +155,7 @@ usage:
   nova-work version        print this build identity (--version also accepted)
   nova-work help
   nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
-   nova-work ready --node X --graph <file>
-   nova-work accept --node X --graph <file>
+  nova-work ready --node X --graph <file>
   nova-work clip --worktree <dir> --branch <name> --base <ref> --harvest <dir> [--result <file>] [--message <text>]
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
@@ -185,9 +184,8 @@ wire:
   already past refuses before anything is dialled.
 
 verbs:
-   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
-   nova-work ready --node X is the ready set
-   nova-work accept --node X accepts a node and satisfies its dependents
+  nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
+  nova-work ready --node X is the ready set
   nova-work clip           commits the card's branch, harvests its result, resets the worktree to base
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
@@ -271,11 +269,9 @@ EVENTS OK line is unchanged; the JSON line is written beside it, never instead o
 flags:
   --graph <file>  the node graph, as JSON: {"nodes":[{"id":"a","needs":["b"]}, ...]}
                   Required on both graph verbs; there is no default and no discovery.
-   --node <id>     dependencies: the node to write a needs edge to, creating it when the
-                   graph does not hold it yet. ready: the one node to evaluate; without
-                   it, ready prints one row per node in seed order. accept: the one node to
-                   mark terminal accepted.
-
+  --node <id>     dependencies: the node to write a needs edge to, creating it when the
+                  graph does not hold it yet. ready: the one node to evaluate; without
+                  it, ready prints one row per node in seed order.
   --needs <ids>   a comma-separated list of needs for --node. --needs needs --node;
                   --node alone creates a node needing nothing.
   --file <path>   plan check and plan expand: the plan to read. set check: the work set.
@@ -335,8 +331,7 @@ unreadable graph, plan or work set, a :deps cycle, an unknown node, a refusal).
 example:
   nova-work dependencies --graph ./deps.json --node b
   nova-work dependencies --graph ./deps.json --node a --needs b
-   nova-work ready --node a --graph ./deps.json
-   nova-work accept --node b --graph ./deps.json
+  nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
   nova-work set check --file ./work-set.lisp --ready
   nova-work events --redis 127.0.0.1:6379 --once
@@ -375,7 +370,6 @@ func refused(stderr io.Writer, what string) int {
 var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"dependencies": cmdDependencies,
 	"ready":        cmdReady,
-	"accept":       cmdAccept,
 	"clip":         cmdClip,
 	"plan":         cmdPlan,
 	"set":          cmdSet,
@@ -432,6 +426,12 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	}
 	if h, ok := legacyVerbs[args[0]]; ok {
 		return h(args[1:], stdout, stderr)
+	}
+	// accept is also a resident-session socket verb (accept --session ...). The
+	// in-process graph form is the one that names --graph, and only that form is
+	// taken here; every other accept line falls through to the socket verb table.
+	if args[0] == "accept" && namesGraphFlag(args[1:]) {
+		return cmdAccept(args[1:], stdout, stderr)
 	}
 	if args[0] == "events" {
 		return cmdEvents(args[1:], stdout, stderr, deps)
@@ -648,6 +648,24 @@ func writeRow(stdout io.Writer, n jobs.Node, g *jobs.Graph) {
 	fmt.Fprintln(stdout)
 }
 
+// namesGraphFlag reports whether an accept line carries --graph, the flag only the
+// in-process graph form of accept takes.
+func namesGraphFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		name := strings.TrimLeft(a, "-")
+		if name == a {
+			continue
+		}
+		if name == "graph" || strings.HasPrefix(name, "graph=") {
+			return true
+		}
+	}
+	return false
+}
+
 func cmdAccept(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -666,36 +684,8 @@ func cmdAccept(args []string, stdout, stderr io.Writer) int {
 	if strings.TrimSpace(*node) == "" {
 		return refuse(stderr, " accept", "--node is required; refusing to guess")
 	}
-	raw, err := os.ReadFile(*graph)
-	if err != nil {
-		return refuse(stderr, " accept", oneline.Err(err))
-	}
-	nodes, err := jobs.ParseNodes(raw)
-	if err != nil {
-		return refuse(stderr, " accept", err.Error())
-	}
-	g, err := jobs.Seed(nodes)
-	if err != nil {
-		return refuse(stderr, " accept", err.Error())
-	}
 	id := strings.TrimSpace(*node)
-	if err := g.Accept(id); err != nil {
-		return refuse(stderr, " accept", err.Error())
-	}
-
-	// The graph's Accept method mutates the node map but not the source list, so
-	// the state on disk is updated by walking the graph's node list and writing
-	// that view of it.
-	var accepted []jobs.Node
-	for _, n := range g.Order() {
-		node, _ := g.Node(n)
-		accepted = append(accepted, node)
-	}
-	out, err := jobs.MarshalNodes(accepted)
-	if err != nil {
-		return refuse(stderr, " accept", err.Error())
-	}
-	if err := os.WriteFile(*graph, out, 0o644); err != nil {
+	if err := jobs.AcceptFile(*graph, id); err != nil {
 		return refuse(stderr, " accept", oneline.Err(err))
 	}
 	fmt.Fprintf(stdout, "ACCEPT OK node=%s\n", oneline.Field(id))
