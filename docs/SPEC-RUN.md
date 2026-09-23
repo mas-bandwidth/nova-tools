@@ -19,6 +19,12 @@ no guessed paths, the one-line output grammar, the field law, the cap-and-count 
 > **the wall has a body on darwin alone today, so `up` refuses at step 5 on linux**, said
 > plainly (rule 17); and `role=` is printed on the lines a reader reads it from, with the
 > `account` scope's own OK line and its own exit row.
+>
+> Repaired 2026-09-23 on Stella's read at `9efe6d40`: **the windows stop is reopenable by
+> a second process** — `up` records the Job Object's **name** in state, never a handle,
+> and `down` opens its own handle by that name (rule 13, `--state`, `down`); test 13 walks
+> `up` and `down` as two processes, and a windows build refuses at step 11 until that leg
+> is green.
 
 `nova-run` is one binary at the **line layer**. It brings **one declared line to a
 running state on one box, from one declaration, with one command, over and over.**
@@ -535,10 +541,27 @@ Every rule is normative and has one line in **tests this spec demands**.
     [SPEC-SANDBOX.md](SPEC-SANDBOX.md) rule 12) and this tool is the caller: a signal to the
     pid alone kills the waiting wrapper and orphans the harness, which is the same day's
     failure with a better name. **Windows has no process group and the rule is kept by its
-    own mechanism**: the line is assigned to a Job Object created for it, whose handle's
-    identity is recorded in the `pgid` field, and `down` terminates the job rather than the
-    pid — the same guarantee, that nothing this tool started outlives the stop. A build that
-    cannot make one refuses at step 11 naming the platform, because a line nothing can stop
+    own mechanism, which must survive the exit of the process that made it**: a kernel
+    handle is process-local ([Kernel Objects](https://learn.microsoft.com/en-us/windows/win32/sysinfo/kernel-objects))
+    and dies with `up`, so **the state never records a handle**. `up` creates a **named**
+    Job Object, `Local\nova-run-<line>-<16 hex>` with 64 random bits drawn per start,
+    assigns the outermost child to it before that child runs, and records the **name** in
+    the state file's `job` field (`pgid` is `-` on windows). A kernel object's name lasts
+    only while some handle to it is open, so `up` hands the outermost child one inheritable
+    handle to the job and the line itself keeps the name alive after `up` returns. `down`,
+    a different process, gets **its own** handle with
+    `OpenJobObjectW(JOB_OBJECT_TERMINATE | JOB_OBJECT_QUERY, FALSE, <job>)`
+    ([OpenJobObject](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-openjobobjecta)),
+    confirms with `IsProcessInJob` that the recorded pid, with its recorded start time
+    (rule 18), is in that job, and terminates the job rather than the pid — the same
+    guarantee, that nothing this tool started outlives the stop. A name that does not open,
+    or a job the recorded pid is not in, while that pid is alive and is the process this
+    tool started, is exit 1 naming the platform, the job and the pid (a `down` from another
+    logon session sees another `Local\` namespace and lands here) — **never a fall back to
+    a signal to the pid**. **Until test 13's windows leg, `up` and `down` as two separate
+    processes sharing nothing but the state file, is green on a windows runner, a windows
+    build refuses at step 11 naming the platform**, exactly as a build that cannot make a
+    job does. A build that cannot make one refuses at step 11 naming the platform, because a line nothing can stop
     as a whole is the orphan this rule was written for; this document does not stub it as a
     pid signal and call that a group. (2026-09-10: nineteen orphaned shells from wait loops
     with no end condition of their own.)
@@ -737,8 +760,8 @@ Every rule is normative and has one line in **tests this spec demands**.
     Readiness is measured again on a repair as on any other run (rules 5 and 12, which this
     rule obeys rather than re-decides).
     **The lock's window is stated, because the failure it prevents happens in seconds**: the
-    lock is taken before the state file is read and released after `pid`, `pgid`, the start
-    time, `home_env` and `process.log` are written — which is **before the first readiness
+    lock is taken before the state file is read and released after `pid`, `pgid` (on
+    windows `job`), the start time, `home_env` and `process.log` are written — which is **before the first readiness
     poll**, never across the ready wait, so a Ctrl-C during that wait cannot leave a running
     line the next `up` has no record of, and two `up` runs five seconds apart cannot both
     read no pid, both pass every step and both start. A lock another run holds is a fact of
@@ -878,7 +901,9 @@ must equal a file is a second record of one fact, and a disagreement is a refusa
 both.
 
 `--state <path>` is this tool's one piece of local state: a JSON file naming, per line,
-the pid it started, **the process group id it made** (rule 13 and `down`), **the start time
+the pid it started, **the process group id it made** — on windows `-`, with **the Job
+Object's name** in `job` instead, because a handle does not outlive the process that
+opened it and `down` is another process (rule 13 and `down`), **the start time
 the operating system reports for that pid** (rule 18 names its source on each platform),
 the declaration's sha256, the box label, the
 harness identity it proved, **`sandbox.home_env`**, **`process.log`**, **the size
@@ -957,9 +982,11 @@ run this late is the reason the wall and the secrets are cheap refusals ahead of
 ### `down`
 
 Stops the process the state file names — a term signal to **the process group** this tool
-made at `up` (rule 13), then the declared timeout, then a kill to the same group — pushes
+made at `up` (rule 13), then the declared timeout, then a kill to the same group; **on
+windows, a handle of its own to the Job Object opened by the name the state records, the
+recorded pid confirmed in it, then `TerminateJobObject`** (rule 13) — pushes
 `home.path` to its own remote with `tools.git` (rules 6 and 20), reports `dirty=<n>` for
-uncommitted work it did not touch, and clears the state file's pid, pgid and start time
+uncommitted work it did not touch, and clears the state file's pid, pgid, job and start time
 under the same lock, leaving that line's `home_env` and `process.log` recorded as a report
 and not as a claim (rule 18). A line already down is exit 0 and says
 `already stopped`. It **never** commits, never removes the home, never removes a link,
@@ -1055,7 +1082,7 @@ holds, a harness printed or a caller typed can author a second line (rule 23).
 RUN UP     at=<stamp> line=<name> box=<label> scope=<account|home> role=<label> file=<path> sha256=<12 hex> budget=<d> timeout=<d>
 RUN STEP   <n>/<total> <step> <OK|SKIP|FAIL|WOULD> took=<d>[ <field>=<value>...]
 RUN STEP   <n>/<total> <step> FAIL: <reason> — remedy: <command>
-RUN UP     OK   line=<name> scope=home home=<12 hex> branch=<name> harness=<label>/<identity> pid=<n> pgid=<n> holder=<label|none> ready=<d> polls=<n> steps=<n> skipped=<n> took=<d>
+RUN UP     OK   line=<name> scope=home home=<12 hex> branch=<name> harness=<label>/<identity> pid=<n> pgid=<n|-> holder=<label|none> ready=<d> polls=<n> steps=<n> skipped=<n> took=<d>
 RUN UP     OK   line=<name> scope=account steps=<n> skipped=<n> took=<d>
 RUN UP     FAIL line=<name> step=<step> reason=<budget|refused|died|output|...> steps=<n> skipped=<n> done=<n> took=<d>
 RUN DOWN   OK   line=<name> stopped=<yes|no|already> pid=<n|-> pgid=<n|-> pushed=<true|false> remote=<url|-> dirty=<n> took=<d>
@@ -1304,8 +1331,14 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     exit, including a signal, **no child of this tool is alive** but the line's own process,
     asserted by the process group `up` itself created and recorded — and on windows by the
     Job Object it created in its place, with a build that can make neither asserted to refuse
-    at step 11 naming the platform rather than to signal a bare pid; `--budget 0` and a
-    negative are refused.
+    at step 11 naming the platform rather than to signal a bare pid; **the windows leg runs
+    `up` and `down` as two separate processes sharing nothing but the state file**: `up`
+    exits, `down` reopens the job by the name in `job` and no descendant of the line
+    survives it — the mutation is recording a handle value (or any number in `pgid`) in
+    place of the name, which the second process cannot use; a `job` name that does not open
+    over a live recorded pid is exit 1 naming the job and the pid and sends no signal to
+    the pid; and a windows build without this leg green refuses at step 11 naming the
+    platform; `--budget 0` and a negative are refused.
 14. `TestNoKeyFileIsEverOpened` — a distinctive 40-byte fixture value in the throwaway
     store: it appears in **no byte** of stdout or stderr in every verb and every refusal;
     **the proof of non-opening is the process's own open-file list, which never contains
@@ -1390,7 +1423,7 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     from the state file's recorded **live** `home_env` and not from a second declaration —
     a fact of this box, which test 22 walks the same table for — while the same pair with
     the first line **down** is not a refusal; an interrupt during
-    the readiness wait still leaves the pid, pgid and start time recorded, because the lock
+    the readiness wait still leaves the pid, pgid (on windows job) and start time recorded, because the lock
     is released before the first poll; concurrent
     `up` runs over one state file leave it parseable and one of them **exits 1** naming the
     holder's pid — a lock another process holds is a fact of the box, and test 22 walks the
