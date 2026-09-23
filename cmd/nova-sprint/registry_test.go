@@ -28,7 +28,7 @@ func TestRegisteredVerbDispatchAndHelp(t *testing.T) {
 	if code != 0 || stderr != "" || !strings.Contains(stdout, "  probe  exercise the registration seam\n") {
 		t.Fatalf("help omits registered verb: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
-	if !strings.HasSuffix(stdout, "  nova-sprint table --once --refresh pending --out sprint-table.txt\n") {
+	if !strings.HasSuffix(stdout, "  nova-sprint table --check --redis 127.0.0.1:6379\n") {
 		t.Fatalf("registration displaced the runnable examples: %q", stdout)
 	}
 }
