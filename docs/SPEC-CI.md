@@ -1549,6 +1549,45 @@ or a cleanup inlined into another step would not be counted; and it reads the
 workflow as text, so a value built elsewhere and interpolated in is invisible to
 it.
 
+### `admitkind` — every admitting kind has a negative fixture, so the coverage list cannot shrink
+
+**The rule.** Rule 3 (`docs/SPEC-WORK.md:4878`, nova-work #785): the one
+generated schema file names every verb's event kinds, and its coverage test
+holds a CLOSED list of admitting kinds — `:lease`, `:handoff`, `:reassign`,
+`:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that
+can carry `:to :doing` — and fails any verb able to write one, in its own
+envelope or one it derives, whose entry carries none of the three marks
+(`needs-gate: refuses`, `needs-gate: withholds`, `needs-gate: exempt` with its
+reason). The closed list only holds if every kind on it is actually exercised:
+a kind added to the rule's own map with no fixture behind it is a kind the
+coverage rule could silently stop checking, and nothing would go red.
+**The hurt.** The first cut of `admittingEventKinds` listed only the kinds the
+SHIPPED file happened to use, so a schema carrying an unmarked verb of a kind
+the shipped file does not use — `:reassign`, `:packet` — passed the coverage
+test though rule 3 names them by the spec's own closed list. A closed list
+that is closed on paper and open in practice is worse than an open one,
+because it reads like a guarantee.
+**The test.** `TestEveryCanonicalAdmittingKindIsCovered`
+(`internal/ci/work_schema_test.go`). For every kind in
+`canonicalAdmittingKinds` — the spec's closed list, held apart from the
+coverage map so the two sides can be checked against each other — it builds
+one hypothetical verb of that kind with no `needs_gate`, runs it through
+`checkNeedsGateCoverage`, and requires exactly one finding naming the verb;
+then marks the same verb `needs-gate: refuses` and requires zero findings. A
+kind present in the spec's closed list but absent from `admittingEventKinds`
+fails here before it can hide behind a passing shipped-file check.
+**Its allowlist.** None. `canonicalAdmittingKinds` is the closed list itself;
+every entry on it gets a fixture, so a kind added to the list with no matching
+case is the thing this test exists to catch.
+**Its remedy line.** `` `<verb>` can write the admitting kind `<kind>` and
+carries no needs-gate mark``, from `checkNeedsGateCoverage`
+(`internal/ci/work_schema_test.go`).
+**Its narrowings.** It only checks that the coverage RULE fires for each kind,
+over a one-verb fixture schema; it does not check the SHIPPED file for an
+injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb`,
+its neighbor in the same file) and it does not check that the shipped file uses
+only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with
