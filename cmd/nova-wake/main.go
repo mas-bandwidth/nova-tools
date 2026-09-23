@@ -80,6 +80,8 @@ usage:
   nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
   nova-wake beat --as <name> --store <host:port>
         [--every <duration>] [--ttl <duration>]   default 30s and 90s
+        [--window <time>]   the cap's reset time, written to friend:<name>:window only when passed; this beat does not read a clock to invent one
+        [--width <n>]       how many children are in use now, written to friend:<name>:width only when passed; zero is a count
         [--once]            write one beat and return, for a check or a test
         [--user <name>]     the store's ACL user; default bench
   nova-wake presence --store <host:port>
@@ -99,7 +101,11 @@ no verb for it.
 beat and presence are the one heartbeat that is NOT a wake and spends nothing:
 beat is a process a friend's window starts once and forgets, writing
 friend:<name> = <utc> with a TTL every --every and reading nothing, and
-presence prints one line saying who is here. No model runs on either side, and
+presence prints one line saying who is here. When the caller passes them, the
+beat also writes friend:<name>:window (the cap's reset time, as given -- not a
+clock this beat reads) and friend:<name>:width (how many children are in use);
+a missing flag writes no key and does not fail the beat, and presence prints
+whichever of the two the store holds. No model runs on either side, and
 a window that exits, runs out of credit or is killed simply stops writing until
 the key lapses. The password is never a flag: it reaches beat as
 NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
