@@ -382,20 +382,57 @@ func TestRingBufferBelowCapacityKeepsEverythingUntruncated(t *testing.T) {
 // crosses the ceiling gets CeilingExceededError, not a partial parse, and the command is
 // cancelled rather than left to run to completion uncancelled. It goes through
 // runUncappedCapture with small synthetic limits (see that function's doc) so this proves
-// the wiring deterministically without a fixture anywhere near the real 64 MiB ceiling.
+// the wiring without a fixture anywhere near the real 64 MiB ceiling.
+//
+// The first cut of this test (#2663) was flaky on the gate benches: it failed the gates of
+// tools-20260922T235858Z, tools-20260923T004933Z and tools-20260923T054113Z, because its
+// producer raced the parent. The helper wrote
+// ceiling*3 bytes in one write and the marker in a SECOND write, then exited on its own.
+// The parent crossed the ceiling on the first write and killed the helper, so under load
+// the kill could land before the marker's write ran and the marker was missing from the
+// tail. And because the helper exited on its own, the test never showed that the ceiling
+// cancelled anything. The producer is now deterministic, and the cancellation is observed:
+//
+//   - The helper writes EXACTLY ceiling bytes first. That reaches the ceiling but does not
+//     cross it (ceilingWriter.Over is written > limit), so nothing is cancelled yet.
+//   - It then writes the marker in ONE write smaller than PIPE_BUF (512 bytes on macOS,
+//     4096 on Linux). A write that size goes into the pipe whole, so the parent cannot see
+//     the byte that crosses the ceiling before the whole marker is in the pipe. The parent
+//     reads the pipe to EOF after the kill, so the marker always ends up in the ring.
+//   - Then the helper sleeps far longer than this test's deadline and never exits on its
+//     own. If runUncappedCapture returns while the parent context is still live, the
+//     ceiling's cancel killed the command. The check below reads that from ctx.Err()
+//     directly. It does not depend on timing.
+//
+// Both halves have a control. Remove the `if stdout.Over()` refusal from
+// runUncappedCapture and the killed command's own "signal: killed" comes back instead of
+// *CeilingExceededError, so the first assertion fails. Remove the cancel from
+// ceilingWriter and the helper outlives the parent's deadline, so the cancellation
+// assertion fails.
 func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T) {
 	const ceiling = 4096
 	const ringSize = 256
 	const marker = "TAIL-written-just-past-the-ceiling-must-survive"
+	// deadline is the parent's own limit. The helper sleeps helperSleep, well past it, so
+	// only the ceiling's cancel can end the helper before the deadline.
+	const deadline = 30 * time.Second
+	const helperSleep = 2 * time.Minute
 
 	if os.Getenv("NOVA_MERGE_UNCAPPED_OVERCEILING_HELPER") == "1" {
-		_, _ = io.WriteString(os.Stdout, strings.Repeat("o", ceiling*3))
+		// Exactly the ceiling: reached, not crossed. Nothing is cancelled by this write.
+		_, _ = io.WriteString(os.Stdout, strings.Repeat("o", ceiling))
+		// One write under PIPE_BUF crosses the ceiling. The pipe takes it whole.
 		_, _ = io.WriteString(os.Stdout, marker)
+		// Never exit on its own: the parent's kill is the only way out before its deadline.
+		time.Sleep(helperSleep)
 		os.Exit(0)
+	}
+	if len(marker) >= 512 {
+		t.Fatalf("marker is %d bytes; it must stay under macOS's 512-byte PIPE_BUF to be written whole", len(marker))
 	}
 	t.Setenv("NOVA_MERGE_UNCAPPED_OVERCEILING_HELPER", "1")
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
 	defer cancel()
 	out, err := runUncappedCapture(ctx, "", os.Args[0], ceiling, ringSize,
 		"-test.run=TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand")
@@ -403,6 +440,11 @@ func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T
 	ce, ok := AsCeilingExceededError(err)
 	if !ok {
 		t.Fatalf("error is %v (%T), want *CeilingExceededError naming the ceiling", err, err)
+	}
+	// Explicit cancellation observation: the helper never exits on its own, so if the
+	// parent's deadline has not expired, the ceiling's cancel is what ended it.
+	if ctx.Err() != nil {
+		t.Fatalf("the command ran until the parent's %s deadline (%v): crossing the ceiling did not cancel it", deadline, ctx.Err())
 	}
 	if ce.Ceiling != ceiling {
 		t.Fatalf("CeilingExceededError.Ceiling = %d, want %d", ce.Ceiling, ceiling)
