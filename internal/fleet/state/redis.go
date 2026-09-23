@@ -80,6 +80,8 @@ func ReadRedis(ctx context.Context, c *redis.Client) ([]Bench, time.Time, error)
 		}
 		if len(beat) > 0 {
 			b.Key = keyFrom(beat["at"], cs[i].ttl.Val(), now)
+		}
+		if b.Key != nil {
 			p := cs[i].paused.Val()
 			b.Key.Held = p == "1" || p == "true"
 		}
@@ -91,13 +93,18 @@ func ReadRedis(ctx context.Context, c *redis.Client) ([]Bench, time.Time, error)
 // keyFrom rebuilds one heartbeat write from what the store says of it: the key
 // expires at now+remaining. Written is the beat's own `at` when it parses and
 // is not after now; otherwise the write is dated now, which changes nothing in
-// the decision (that is the expiry alone). A key with no expiry (PTTL -1) is a
-// beat some writer forgot to PEXPIRE: it exists, so it counts at this read and
-// no longer -- one millisecond, never forever.
+// the decision (that is the expiry alone). PTTL -2 is Redis saying the key does
+// not exist: HGETALL runs before PTTL, so a beat can expire between them and
+// leave a nonempty hash beside -2; that is no key (nil, DOWN), never a live one.
+// A key with no expiry (PTTL -1) is a beat some writer forgot to PEXPIRE: it
+// exists, so it counts at this read and no longer -- one millisecond, never
+// forever. Only a non-negative PTTL is a remaining lifetime (0 counts at the
+// read, as -1 does). go-redis delivers -2 and -1 unscaled.
 func keyFrom(at string, remaining time.Duration, now time.Time) *Key {
-	if remaining <= 0 {
-		// -1: no expiry. (-2, the key vanished between the two reads, only
-		// reaches here with an empty hash, which is no key at all.)
+	switch {
+	case remaining == -2:
+		return nil
+	case remaining <= 0:
 		remaining = time.Millisecond
 	}
 	expires := now.Add(remaining)

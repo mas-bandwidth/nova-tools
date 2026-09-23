@@ -74,3 +74,54 @@ func TestReadRedisEmptyFleet(t *testing.T) {
 		t.Fatalf("benches=%v err=%v, want none and no error", benches, err)
 	}
 }
+
+// vanishBetween is a go-redis pipeline hook that plays the race Stella named on
+// #3367: the beat key expires after the pipeline's HGETALL has read it and
+// before its PTTL runs, so the hash comes back nonempty and PTTL answers -2
+// (no such key), which go-redis delivers as time.Duration(-2).
+type vanishBetween struct{ key string }
+
+func (vanishBetween) DialHook(next redis.DialHook) redis.DialHook          { return next }
+func (vanishBetween) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+func (h vanishBetween) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		for _, c := range cmds {
+			if d, ok := c.(*redis.DurationCmd); ok && c.Name() == "pttl" && len(c.Args()) > 1 && c.Args()[1] == h.key {
+				d.SetVal(time.Duration(-2))
+			}
+		}
+		return err
+	}
+}
+
+// TestReadRedisPTTLMinusTwoIsAbsent: PTTL -2 means Redis confirmed the key is
+// gone, so a hash read a moment earlier is no key at all -- DOWN and not live,
+// never a one-millisecond live record. PTTL -1 (present, no expiry) still
+// counts at the read.
+func TestReadRedisPTTLMinusTwoIsAbsent(t *testing.T) {
+	mr := miniredis.RunT(t)
+	t0 := time.Date(2026, 9, 23, 18, 0, 0, 0, time.UTC)
+	mr.SetTime(t0)
+	mr.SAdd(state.Registry, "space", "hulk")
+	mr.HSet(state.BeatKey("space"), "at", "1790186398000", "load1", "3")
+	mr.SetTTL(state.BeatKey("space"), 3*time.Second)
+	mr.HSet(state.BeatKey("hulk"), "at", "1790186398000")
+
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
+	c.AddHook(vanishBetween{key: state.BeatKey("space")})
+	benches, now, err := state.ReadRedis(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(benches) != 2 || benches[0].Name != "hulk" || benches[1].Name != "space" {
+		t.Fatalf("benches = %+v, want hulk, space", benches)
+	}
+	if sp := benches[1]; sp.Key != nil || sp.State(now) != state.Down {
+		t.Fatalf("space (HGETALL present, PTTL -2) = %s with key %+v, want DOWN and no key", sp.State(now), sp.Key)
+	}
+	if got := state.Live(benches, now); len(got) != 1 || got[0] != "hulk" {
+		t.Fatalf("Live = %v, want [hulk] (PTTL -1 is present; PTTL -2 is absent)", got)
+	}
+}
