@@ -163,8 +163,8 @@ func stamp(n int, name, raw string) (time.Time, error) {
 }
 
 // Select keeps the events of the named repositories and, per repository, of
-// the last `last` pull requests the log holds -- by number, the log's own
-// ordering of recency. A pull request is selected WHOLE, every line of it or
+// the last `last` pull requests the log holds -- the `last` greatest distinct
+// PR numbers, the log's own ordering of recency (numbers may have gaps). A pull request is selected WHOLE, every line of it or
 // none, because a table that dropped one job of a PR it kept would invent an
 // all-green the forge never reported. A `last` of zero or less keeps
 // everything.
@@ -173,21 +173,39 @@ func Select(events []Event, repos []string, last int) []Event {
 	for _, r := range repos {
 		want[r] = true
 	}
-	top := map[string]int{}
-	for _, e := range events {
-		if want[e.Repo] && e.PR > top[e.Repo] {
-			top[e.Repo] = e.PR
-		}
-	}
-	var kept []Event
+	// The N greatest DISTINCT PR numbers per repository, not a numeric window
+	// below the top: issues and pull requests share one counter on GitHub, so
+	// PR numbers have gaps and `top-last+1` would select fewer than `last`.
+	prs := map[string]map[int]bool{}
 	for _, e := range events {
 		if !want[e.Repo] {
 			continue
 		}
-		if last > 0 && e.PR < top[e.Repo]-last+1 {
-			continue
+		if prs[e.Repo] == nil {
+			prs[e.Repo] = map[int]bool{}
 		}
-		kept = append(kept, e)
+		prs[e.Repo][e.PR] = true
+	}
+	keep := map[string]map[int]bool{}
+	for repo, set := range prs {
+		nums := make([]int, 0, len(set))
+		for pr := range set {
+			nums = append(nums, pr)
+		}
+		sort.Sort(sort.Reverse(sort.IntSlice(nums)))
+		if last > 0 && len(nums) > last {
+			nums = nums[:last]
+		}
+		keep[repo] = map[int]bool{}
+		for _, pr := range nums {
+			keep[repo][pr] = true
+		}
+	}
+	var kept []Event
+	for _, e := range events {
+		if want[e.Repo] && keep[e.Repo][e.PR] {
+			kept = append(kept, e)
+		}
 	}
 	return kept
 }

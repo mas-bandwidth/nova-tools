@@ -139,6 +139,22 @@ func TestTimingSelectAndRender(t *testing.T) {
 			t.Fatalf("Select kept %+v, want both jobs of nova-tools PR 1404 and the whole of schema PR 700", kept)
 		}
 	})
+	t.Run("PR numbers with gaps still select the last N", func(t *testing.T) {
+		gap := []Event{
+			job("mas-bandwidth/nova-tools", 100, "test", "2026-08-01T06:00:00Z", "2026-08-01T06:01:00Z", "2026-08-01T06:02:00Z", "2026-08-01T06:04:00Z", "2026-08-01T06:24:00Z", true),
+			job("mas-bandwidth/nova-tools", 98, "test", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:04:00Z", "2026-08-01T05:24:00Z", true),
+			job("mas-bandwidth/nova-tools", 98, "check", "2026-08-01T05:00:00Z", "2026-08-01T05:01:00Z", "2026-08-01T05:02:00Z", "2026-08-01T05:04:00Z", "2026-08-01T05:14:00Z", true),
+			job("mas-bandwidth/nova-tools", 90, "test", "2026-08-01T04:00:00Z", "2026-08-01T04:01:00Z", "2026-08-01T04:02:00Z", "2026-08-01T04:04:00Z", "2026-08-01T04:24:00Z", true),
+		}
+		kept := Select(gap, DefaultRepos, 2)
+		got := map[int]int{}
+		for _, e := range kept {
+			got[e.PR]++
+		}
+		if len(kept) != 3 || got[100] != 1 || got[98] != 2 || got[90] != 0 {
+			t.Fatalf("Select(last=2) over PRs 100, 98, 90 kept %+v, want PR 100 and both jobs of PR 98", kept)
+		}
+	})
 	t.Run("last of zero or less keeps everything", func(t *testing.T) {
 		if kept := Select(events, DefaultRepos, 0); len(kept) != 5 {
 			t.Fatalf("Select with last=0 kept %d events, want 5 (the other repo dropped)", len(kept))
