@@ -26,7 +26,12 @@ import (
 // (#3061 hold 7). A bench whose dir holds `dropafter-reset` does the same but
 // with the "Connection reset by" wording instead of "Connection closed by"
 // (#3061 hold 7, stella's second pass: the reset wording was still
-// unconditional in preExecRefused). Every other accepted session appends one line to
+// unconditional in preExecRefused). A bench whose dir holds
+// `dropafter-refused` does the same with plain "Connection refused" (no
+// "ssh: connect to host ..." prefix), and `dropafter-timedout` with plain
+// "Connection timed out" (#3061 hold 6: both generic phrases were still
+// accepted unconditionally, with no connect-phase proof, before this fix).
+// Every other accepted session appends one line to
 // sessions.log and its stdin to launched, then holds the session for a
 // second, as a slow remote verb would. It lives in t.TempDir(), so testguard
 // sees a fake.
@@ -63,6 +68,14 @@ if [ -e "$dir/dropafter" ]; then
 fi
 if [ -e "$dir/dropafter-reset" ]; then
   echo "Connection reset by 127.0.0.1 port 22" >&2
+  exit 255
+fi
+if [ -e "$dir/dropafter-refused" ]; then
+  echo "Connection refused" >&2
+  exit 255
+fi
+if [ -e "$dir/dropafter-timedout" ]; then
+  echo "Connection timed out" >&2
   exit 255
 fi
 sleep 1
@@ -112,6 +125,30 @@ func (f *fixture) dropAfterReset(t *testing.T, bench string) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(f.dir, bench, "dropafter-reset"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dropAfterRefused is dropAfter's twin for the plain "Connection refused"
+// wording, with no "ssh: connect to host ..." prefix (#3061 hold 6).
+func (f *fixture) dropAfterRefused(t *testing.T, bench string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.dir, bench), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.dir, bench, "dropafter-refused"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// dropAfterTimedOut is dropAfter's twin for the plain "Connection timed out"
+// wording, with no "ssh: connect to host ..." prefix (#3061 hold 6).
+func (f *fixture) dropAfterTimedOut(t *testing.T, bench string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.dir, bench), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.dir, bench, "dropafter-timedout"), nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -503,6 +540,73 @@ func TestPostCommandResetKeepsReservationsDealt(t *testing.T) {
 	}
 }
 
+// TestPostCommandRefusedKeepsReservationsDealt is #3061 hold 6 (stella): the
+// generic "Connection refused" wording was still accepted unconditionally by
+// preExecRefused, with no connect-phase proof, even though it can be printed
+// after the remote launch already has the batch on stdin.
+func TestPostCommandRefusedKeepsReservationsDealt(t *testing.T) {
+	const sprint = "control-3061-hold6-refused"
+	ctx := context.Background()
+	f := newFixture(t)
+	f.dropAfterRefused(t, "ctl-a")
+	in := Input{Now: time.Now(), Benches: []Bench{upBench("ctl-a", 64)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
+	st := newFakeStore("lease-1", in)
+	p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: f.remote()}
+	res, err := p.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(f.lines("ctl-a", "launched")); got != 50 {
+		t.Fatalf("card launch --stdin got %d lines, want 50 (the batch must reach the remote command before the drop)", got)
+	}
+	br := res.Benches[0]
+	if br.SSH != SSHError {
+		t.Fatalf("post-command refused classified %s, want %s: it is ambiguous, not pre-exec", br.SSH, SSHError)
+	}
+	if br.Returned != 0 {
+		t.Fatalf("post-command refused returned %d reservations to the pool, want 0", br.Returned)
+	}
+	if n := st.dealtOn("ctl-a"); n != 50 {
+		t.Fatalf("%d of 50 cards stayed dealt on ctl-a after a post-command refused, want all 50 retained", n)
+	}
+	if res.Launched() != 0 {
+		t.Fatalf("res.Launched() = %d, want 0: the pass does not know the batch succeeded", res.Launched())
+	}
+}
+
+// TestPostCommandTimedOutKeepsReservationsDealt is #3061 hold 6's twin for
+// the generic "Connection timed out" wording, the second phrase stella
+// named as still unconditional in preExecTimeout.
+func TestPostCommandTimedOutKeepsReservationsDealt(t *testing.T) {
+	const sprint = "control-3061-hold6-timedout"
+	ctx := context.Background()
+	f := newFixture(t)
+	f.dropAfterTimedOut(t, "ctl-a")
+	in := Input{Now: time.Now(), Benches: []Bench{upBench("ctl-a", 64)}, Sprints: []Sprint{{Name: sprint, Pool: fiftyCards(sprint)}}}
+	st := newFakeStore("lease-1", in)
+	p := &Pass{Source: staticSource{in}, Fence: fence("lease-1"), Reserver: st, Row: st, Dialer: f.remote()}
+	res, err := p.Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(f.lines("ctl-a", "launched")); got != 50 {
+		t.Fatalf("card launch --stdin got %d lines, want 50 (the batch must reach the remote command before the drop)", got)
+	}
+	br := res.Benches[0]
+	if br.SSH != SSHError {
+		t.Fatalf("post-command timed out classified %s, want %s: it is ambiguous, not pre-exec", br.SSH, SSHError)
+	}
+	if br.Returned != 0 {
+		t.Fatalf("post-command timed out returned %d reservations to the pool, want 0", br.Returned)
+	}
+	if n := st.dealtOn("ctl-a"); n != 50 {
+		t.Fatalf("%d of 50 cards stayed dealt on ctl-a after a post-command timed out, want all 50 retained", n)
+	}
+	if res.Launched() != 0 {
+		t.Fatalf("res.Launched() = %d, want 0: the pass does not know the batch succeeded", res.Launched())
+	}
+}
+
 func TestPlanSharesAndFilters(t *testing.T) {
 	now := time.Now()
 	a := []Card{{Sprint: "a", Label: "a1", Priority: 1}, {Sprint: "a", Label: "a2", Priority: 2}, {Sprint: "a", Label: "a3", Priority: 3}, {Sprint: "a", Label: "a4", Priority: 4}}
@@ -556,6 +660,12 @@ func TestClassifyOpenSSHMessages(t *testing.T) {
 		// same ambiguity as "connection closed by" and must require the
 		// same connect-phase context.
 		{255, "Connection reset by 100.64.0.7 port 22", SSHError},
+		// #3061 hold 6: the generic "connection refused" and "connection
+		// timed out" phrases were still accepted unconditionally, with no
+		// connect-phase proof; bare, they are just as ambiguous as the
+		// closed/reset/operation-timed-out cases above.
+		{255, "Connection refused", SSHError},
+		{255, "Connection timed out", SSHError},
 	} {
 		if got := Classify(tc.exit, tc.stderr); got != tc.want {
 			t.Errorf("Classify(%d, %q) = %s, want %s", tc.exit, tc.stderr, got, tc.want)

@@ -183,8 +183,13 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 
 // preExec are OpenSSH client messages that mean the session never reached the
 // remote command: the TCP connect, the banner or the key exchange failed.
+// Every entry here is unambiguous on its own -- none of these strings is
+// also something the remote command's own output, or a mid-command network
+// drop, could print once the batch is already running (#3061 hold 6/7: any
+// message that is NOT unambiguous belongs in connectPhaseOnly instead, gated
+// on the client's own "connect to host" prefix, never here as a bare
+// shortcut).
 var preExecRefused = []string{
-	"connection refused",
 	"kex_exchange_identification",
 	"no route to host",
 	"host is down",
@@ -192,7 +197,6 @@ var preExecRefused = []string{
 }
 
 var preExecTimeout = []string{
-	"connection timed out",
 	"timed out during banner exchange",
 }
 
@@ -200,18 +204,24 @@ var preExecTimeout = []string{
 // (and so mean the remote command never started) only when they carry the
 // client's own "ssh: connect to host ..." prefix. Bare, any of these messages
 // can also be printed once the remote command is already running: a
-// mid-command network drop prints "Connection closed by <host> port 22" or
-// "Connection reset by <host> port 22" with no kex_exchange_identification
-// prefix, and some platforms print "Operation timed out" for a lost
-// keepalive as well as for a failed connect. Treating those bare messages as
-// pre-exec would return the reservations to the pool while the launch may
-// already be under way, dealing the same cards twice (#3061 hold 7); they
-// classify as SSHError instead, so the reconciler's start-ack rule (3.2)
-// keeps the batch dealt.
+// mid-command network drop prints "Connection closed by <host> port 22",
+// "Connection reset by <host> port 22", plain "Connection refused" or plain
+// "Connection timed out" with no kex_exchange_identification prefix and no
+// "connect to host" context, and some platforms print "Operation timed out"
+// for a lost keepalive as well as for a failed connect. Treating any of
+// these bare messages as pre-exec would return the reservations to the pool
+// while the launch may already be under way, dealing the same cards twice
+// (#3061 hold 6/7). Every message shape that is ambiguous this way -- closed,
+// reset, refused, and both timed-out wordings -- lives here, gated on the
+// connect-phase prefix; none of them may be classified pre-exec on the bare
+// message alone. Without the prefix they classify as SSHError instead, so
+// the reconciler's start-ack rule (3.2) keeps the batch dealt.
 var connectPhaseOnly = map[string]string{
 	"connection closed by": SSHRefused,
 	"connection reset by":  SSHRefused,
+	"connection refused":   SSHRefused,
 	"operation timed out":  SSHTimeout,
+	"connection timed out": SSHTimeout,
 }
 
 // Classify reads an ssh exit and its stderr. Exit 255 with a pre-exec message
