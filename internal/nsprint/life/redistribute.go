@@ -20,7 +20,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
-// Function names registered by internal/nsprint/fn/lua/redistribute.lua.
+// Function names: ns_friend_state is registered by internal/nsprint/fn/lua/friend.lua
+// (the one writer of friend:<f>:state, #3101), ns_friend_redistribute by redistribute.lua.
 const (
 	FunctionFriendState  = "ns_friend_state"
 	FunctionRedistribute = "ns_friend_redistribute"
