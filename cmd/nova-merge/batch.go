@@ -445,6 +445,23 @@ func cloneSiblings(work string, siblings []siblingSpec, timeout time.Duration, r
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	start := time.Now()
+	// nova-tools #2167: THE REFERENCE IS CHECKED BEFORE ANYTHING IS TOUCHED. The working
+	// copy a dogfooder stands in is a shallow clone, and it is the --reference a person
+	// standing in the repository types. git refuses it as a reference repository with a
+	// sentence that names no remedy,
+	//
+	//	fatal: reference repository '<path>' is shallow
+	//
+	// and relayed as BATCH REFUSED that sent the caller to the network for a reason that
+	// was on their own bench all along. The shallowness of the caller's reference is a
+	// fact of the bench rather than of the tree, so the earliest point it can be known at
+	// is before the root is made at all: nothing is removed, nothing is cloned, and the
+	// remedy is on the refusal's own line.
+	if strings.TrimSpace(in.reference) != "" {
+		if err := checkReference(in.reference, in.timeout, deps.Runner); err != nil {
+			return batchRefused(stderr, err)
+		}
+	}
 	rootAbs, err := filepath.Abs(in.root)
 	if err != nil {
 		return batchRefused(stderr, err)
@@ -595,6 +612,28 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
 	return 0
+}
+
+// checkReference refuses a --reference that is a shallow repository, with the remedy on
+// the line (#2167). A shallow clone holds only the history its own checkout needed, so
+// it cannot be the local store a clone with --reference borrows its objects from, and
+// git refuses the clone rather than build one that can be missing commits it has not
+// fetched yet -- a refusal whose sentence names no remedy, which is why it is made here
+// instead, where the remedy can be said.
+//
+// A reference this cannot say anything about -- not a repository, not on this bench, a
+// git too old to know --is-shallow-repository -- is left to the clone, which names it in
+// git's own words: this check refuses what it KNOWS is wrong and never guesses, the same
+// law as checkToolchain's below it.
+func checkReference(reference string, timeout time.Duration, runner merge.Runner) error {
+	out, err := merge.NewGit(reference, timeout, runner).Out("rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(out) != "true" {
+		return nil
+	}
+	return fmt.Errorf("--reference %s is shallow: a shallow repository holds only part of the history, so it cannot be the local store the clone borrows its objects from; omit --reference and the batch makes an ordinary clone over the network, or name a full clone as --reference", reference)
 }
 
 // batchLine is the fields every verdict line carries, green or red.
