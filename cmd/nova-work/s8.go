@@ -204,5 +204,5 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(&b, " --%s %s", oneline.Field(s.name), oneline.Field(v))
 		}
 	}
-	return ask(socket, b.String(), askTimeout, stdout, stderr)
+	return ask(socket, b.String(), frameFor("query", verbFlags["query"], strs, nil, nil), askTimeout, stdout, stderr)
 }
