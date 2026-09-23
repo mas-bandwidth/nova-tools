@@ -1,0 +1,24 @@
+{
+  "sprint": "control-2618f01d",
+  "hash": {"goal": "fold fixture", "selector": "tier:1", "nova_work_sha": "09fbedc905218d5d4bdf5d039d0baff366ef2545", "status": "closed", "opened_at": "2026-09-23T01:00:00Z", "closed_at": "2026-09-23T05:00:00Z"},
+  "policy": {"useful_min": "8"},
+  "cards": {
+    "c1": {"kind": "model", "route": "fable", "state": "landed", "outcome": "DONE", "repo": "nova-tools", "pr": "101", "head": "aaaa1111", "usd": "0.40"},
+    "c2": {"kind": "model", "route": "fable", "state": "landed", "outcome": "DONE", "repo": "nova-tools", "pr": "102", "head": "aaaa2222", "usd": "0.60"},
+    "c3": {"kind": "model", "route": "fable", "state": "review-ready", "outcome": "DONE", "repo": "nova-tools", "pr": "103", "head": "aaaa3333", "usd": "0.50"},
+    "c4": {"kind": "model", "route": "fable", "state": "unresolved", "outcome": "FAILED", "usd": "0.30"},
+    "c5": {"kind": "model", "route": "sonnet", "state": "landed", "outcome": "DONE", "repo": "nova-tools", "pr": "105", "head": "bbbb5555", "usd": "0.20"},
+    "c6": {"kind": "model", "route": "sonnet", "state": "review-ready", "outcome": "DONE", "repo": "nova-tools", "pr": "106", "head": "bbbb6666", "usd": "0.20"},
+    "c7": {"kind": "model", "route": "sonnet", "state": "harvested", "outcome": "DONE", "repo": "nova-tools", "pr": "107", "head": "bbbb7777", "usd": "0.20"},
+    "c8": {"kind": "model", "route": "kimi", "state": "unresolved", "outcome": "FAILED"},
+    "c9": {"kind": "model", "route": "kimi", "state": "harvested", "outcome": "DONE", "repo": "nova-tools", "pr": "109", "head": "cccc9999", "usd": "0.05"},
+    "ci1": {"kind": "script", "state": "ended", "outcome": "DONE", "ci_for": "101 aaaa1111"}
+  },
+  "disp": {
+    "nova-tools:103": {"stella@aaaa3333": "APPROVE 9 https://example.invalid/r/103"},
+    "nova-tools:106": {"emma@bbbb6666": "HOLD 6 https://example.invalid/r/106"},
+    "nova-tools:107": {"emma@bbbb0000": "APPROVE 9 https://example.invalid/r/107-old-head"}
+  },
+  "tasks": {"closed": ["t1", "t2", "t3", "t4"], "open": ["t5"]},
+  "log": 42
+}
