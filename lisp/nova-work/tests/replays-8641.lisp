@@ -253,3 +253,50 @@
                     (make-archive-capture :source-issue "acme/widget#7"
                                           :author :known :gaps '()))
                  "a complete capture is absorbable")))
+
+;;; ------------------------------------------------------------------
+;;; E01-F04-02 (docs/SPEC-WORK.md:888, :945-947) --- represent leaf
+;;; tasks separately from parent tasks and attempts.
+;;; ------------------------------------------------------------------
+;;; :888 makes features, tasks, attempts and leaf subtasks distinct units,
+;;; and :945-947 states the rule: "A task with no :children is a leaf
+;;; subtask ... a task with children is counted by its leaves, never
+;;; itself; so the four units ... are :feature, :task, the leaf :task,
+;;; and the :attempt event". A leaf subtask is therefore a kind of its
+;;; own, told apart from the parent :task and never confused with an
+;;; attempt, which is an event's field and not a node kind.
+
+(deftest "TestE01F04RepresentLeafTasksSeparatelyFrom" "docs/SPEC-WORK.md:888"
+    "expected=leaf-task-distinct-kind-from-parent-task;attempt-is-not-a-node-kind"
+  (let ((state (make-seed-state
+                '((:id "root"       :type :work-set :parent nil        :state :unknown)
+                  (:id "root/f"     :type :feature  :parent "root"     :state :unknown)
+                  (:id "root/f/p"   :type :task     :parent "root/f"   :state :doing)
+                  (:id "root/f/p/l" :type :task     :parent "root/f/p" :state :doing)
+                  (:id "root/f/l2"  :type :task     :parent "root/f"   :state :doing)))))
+    ;; A task with children is the parent :task; a task with none is a leaf
+    ;; subtask, a distinct kind read back from the model, never the same unit.
+    (check-equal :task (node-kind state "root/f/p")
+                 "a task with children is represented as the parent :task")
+    (check-equal :leaf-task (node-kind state "root/f/p/l")
+                 "a task with no children is represented as a leaf subtask")
+    (check-equal :leaf-task (node-kind state "root/f/l2")
+                 "every leaf subtask answers the leaf kind, never :task")
+    (check-equal :feature (node-kind state "root/f")
+                 "a container keeps its own kind, never inferred from a title")
+    (check-equal nil (equal (node-kind state "root/f/p")
+                            (node-kind state "root/f/p/l"))
+                 "the leaf kind differs from its parent task's kind")
+    ;; An attempt is a unit of its own and never a node kind: it rides an
+    ;; :evidence event's :attempt field, separate from the leaf task it
+    ;; addresses.
+    (let ((ev (make-work-event
+               :kind :evidence :node "root/f/p/l" :by "rowan"
+               :fields (list :pointer "p1" :criterion "c1" :against "a1"
+                             :generation "g4" :attempt "att-1")
+               :stamp "2026-09-20T00:00:00Z" :clock :tool :request "r1"
+               :generation-owner "g4" :rev 1)))
+      (check-string= "att-1" (getf (work-event-fields ev) :attempt)
+                     "the attempt is a field on the event, never a node kind")
+      (check-string= "root/f/p/l" (work-event-node ev)
+                     "the attempt's event addresses the leaf task, never replaces it"))))
