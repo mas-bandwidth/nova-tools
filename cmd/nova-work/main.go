@@ -457,13 +457,18 @@ func refused(stderr io.Writer, what string) int {
 // legacyVerbs are the in-process graph and plan verbs, dispatched without a switch so
 // that the verb switch a reader (and TestHelpListsEveryVerbTheSwitchAccepts) walks holds
 // exactly the socket verbs.
+//
+// `attempt` COLLIDES: the spec's `attempt --session <path> ... --result <pointer>` is a
+// write the resident session answers, and `attempt record`/`attempt list` are this
+// binary's own local verbs over a work set file. Same word, two verbs, so `attempt` is
+// dispatched by its second token (below, beside `record`/`results`) instead of living in
+// this table: the bare word and every other second token still reach the socket switch.
 var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"dependencies": cmdDependencies,
 	"ready":        cmdReady,
 	"clip":         cmdClip,
 	"plan":         cmdPlan,
 	"set":          cmdSet,
-	"attempt":      cmdAttempt,
 	"next":         cmdNext,
 	"ask":          cmdAsk,
 	"asks":         cmdAsks,
@@ -536,6 +541,13 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	}
 	if verb == "results" {
 		return cmdResults(rest, stdout, stderr, deps)
+	}
+	// attempt COLLIDES with the socket verb of the same name (see legacyVerbs): only
+	// its two known second tokens are this binary's own local verb; the bare word and
+	// anything else falls through to the socket switch below, which refuses rather
+	// than guesses.
+	if verb == "attempt" && len(rest) > 0 && (rest[0] == "record" || rest[0] == "list") {
+		return cmdAttempt(rest, stdout, stderr)
 	}
 	switch verb {
 	case "help", "--help", "-h":
