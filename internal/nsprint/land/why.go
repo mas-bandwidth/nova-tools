@@ -207,6 +207,10 @@ func parentLine(p *PR) (string, bool) {
 	case len(p.ParentRec) == 0:
 		return "stack parent " + name + " MISSING " + p.Parent.Key(p.Sprint), false
 	case st == "landed":
+		// landed without its merge_sha is an incomplete record: MISSING, never a pass.
+		if p.ParentRec["merge_sha"] == "" {
+			return "stack parent " + name + " landed, merge_sha MISSING " + p.Parent.Key(p.Sprint), false
+		}
 		return "stack parent " + name + " merged @" + short(p.ParentRec["merge_sha"]), true
 	default:
 		if st == "" {

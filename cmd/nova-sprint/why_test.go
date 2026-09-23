@@ -135,6 +135,28 @@ func TestWhyDropKeyAndStackParent(t *testing.T) {
 	mustLine(t, out, "drop tools-20260923T132214Z: carried HOLD, key changed (re-evaluation due)")
 }
 
+// Negative control (stella's review at 9444edf4): a parent record with
+// state=landed but no merge_sha is incomplete; the stack-parent gate fails
+// and the state line never claims every gate passes.
+func TestWhyLandedParentWithoutMergeSHAIsNeverAPass(t *testing.T) {
+	mr := control35(t)
+	mr.HDel("s:"+c35Sprint+":hold:nova-tools:3200", "h2")
+	mr.HSet("s:"+c35Sprint+":pr:nova-tools:3200", "stack_parent", "#3011")
+	mr.HSet("s:"+c35Sprint+":pr:nova-tools:3011", "state", "landed", "head", c35Head)
+	out := why(t, mr)
+	mustLine(t, out, "stack parent #3011 landed, merge_sha MISSING s:"+c35Sprint+":pr:nova-tools:3011")
+	mustLine(t, out, "state reading")
+	if strings.Contains(out, "every gate passes") || strings.Contains(out, "merged @") {
+		t.Fatalf("a landed parent without merge_sha passed the stack-parent gate:\n%s", out)
+	}
+
+	// Positive control: the same record with its merge_sha passes.
+	mr.HSet("s:"+c35Sprint+":pr:nova-tools:3011", "merge_sha", c35Head)
+	out = why(t, mr)
+	mustLine(t, out, "stack parent #3011 merged @4139b79f")
+	mustLine(t, out, "state reading: every gate passes; ns_pr_eval has not run since (not in landable)")
+}
+
 func TestWhyRefusesAnUnknownPR(t *testing.T) {
 	mr := control35(t)
 	code, stdout, _ := runSprint("why", "nova-tools#9999", "--redis", mr.Addr(), "--sprint", c35Sprint)
