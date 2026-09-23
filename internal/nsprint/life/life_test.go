@@ -79,32 +79,6 @@ func controlRedis(t *testing.T) (*store.Store, *redis.Client, string) {
 	return store.New(client), client, addr
 }
 
-// seedAssignedOpen writes one open work task into a friend's assigned queue
-// exactly as ns_task_push would (the function itself cannot seed a down
-// friend, which is the point of control 15).
-func seedAssignedOpen(t *testing.T, client *redis.Client, sprint, id, friend string, priority int) {
-	t.Helper()
-	ctx := context.Background()
-	key := "s:" + sprint + ":task:" + id
-	fields := map[string]any{
-		"kind": "work", "repo": "", "ref": "", "pr": "", "head": "", "title": id,
-		"effects": "none", "owner": "", "priority": priority, "state": "open",
-		"attempt": 0, "token": "0", "payload_sha": id, "reason": "", "evidence": "",
-		"claimed_at": "", "started_at": "", "beat_at": "", "closed_at": "",
-		"verdict": "", "score": "",
-	}
-	if err := client.HSet(ctx, key, fields).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.ZAdd(ctx, "s:"+sprint+":open:"+friend,
-		redis.Z{Score: float64(priority), Member: id}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.SAdd(ctx, "s:"+sprint+":idx:task:open", id).Err(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 // TestControl15FriendReturnTakesWork is #2756 control 15 against a real Redis
 // and the real Lua functions: a registered-but-down friend owns open ready
 // work, one hello takes that work with no manual take, the fence token is
@@ -131,8 +105,14 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 	if exists := client.Exists(ctx, "friend:"+friend+":beat").Val(); exists != 0 {
 		t.Fatalf("seed friend must start down, but a beat exists")
 	}
-	seedAssignedOpen(t, client, sprint, "w1", friend, 0)
-	seedAssignedOpen(t, client, sprint, "w2", friend, 0)
+	for _, id := range []string{"w1", "w2"} {
+		if got, err := task.Push(ctx, st, task.PushRequest{
+			Sprint: sprint, ID: id, Kind: task.KindWork, Title: id,
+			Effects: task.EffectsNone, PayloadSHA: id, To: friend,
+		}); err != nil || got != task.PushCreated {
+			t.Fatalf("push assigned work while friend is down: %s, %v", got, err)
+		}
+	}
 
 	// No manual take: Hello must claim the friend's own queued work.
 	res, err := life.Hello(ctx, st, life.HelloRequest{
