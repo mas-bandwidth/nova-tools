@@ -1,6 +1,6 @@
 // The task verb registers itself through the S0 registry (registry.go), so
-// adding push/take/done never edits main.go. Each subverb is one call into
-// internal/nsprint/task, which is one Redis Function call.
+// adding task subverbs never edits main.go. Mutating subverbs use one
+// guarded Redis Function call; list and width read indexed task state.
 package main
 
 import (
@@ -17,7 +17,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take and done are one atomic task transition each",
+		Summary: "push, take, beat, done, cancel, list and width tasks",
 		Run:     runTask,
 	})
 }
@@ -29,7 +29,7 @@ func openTaskStore(ctx context.Context, addr string) (*store.Store, error) {
 
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "task", "want push, take or done")
+		return refuse(errOut, "task", "want push, take, beat, done, cancel, list or width")
 	}
 	switch args[0] {
 	case "push":
@@ -42,8 +42,12 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTaskBeat(ctx, args[1:], out, errOut)
 	case "cancel":
 		return runTaskCancel(ctx, args[1:], out, errOut)
+	case "list":
+		return runTaskList(ctx, args[1:], out, errOut)
+	case "width":
+		return runTaskWidth(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take or done", args[0]))
+		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or width", args[0]))
 	}
 }
 
