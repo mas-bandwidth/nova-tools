@@ -320,7 +320,7 @@ func (l flashLauncher) Launch(bench, card string) error {
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
 	cmd := exec.Command(bin, bench, "swarm-"+bench, card, label, strconv.Itoa(deadline))
 	said := &tail{}
-	cmd.Stdout, cmd.Stderr = io.Discard, said
+	cmd.Stdout, cmd.Stderr = said, said
 	if err := cmd.Start(); err != nil {
 		return said.wrap(err)
 	}
@@ -329,6 +329,9 @@ func (l flashLauncher) Launch(bench, card string) error {
 	if l.grace <= 0 {
 		if err := <-done; err != nil {
 			return said.wrap(err)
+		}
+		if strings.Contains(string(said.buf), "SLOTS REFUSED") {
+			return fmt.Errorf("slots refused: %s", said.lastLine())
 		}
 		return nil
 	}
@@ -339,8 +342,14 @@ func (l flashLauncher) Launch(bench, card string) error {
 		if err != nil {
 			return said.wrap(err)
 		}
+		if strings.Contains(string(said.buf), "SLOTS REFUSED") {
+			return fmt.Errorf("slots refused: %s", said.lastLine())
+		}
 		return nil
 	case <-timer.C:
+		if strings.Contains(string(said.buf), "SLOTS REFUSED") {
+			return fmt.Errorf("slots refused: %s", said.lastLine())
+		}
 		return nil
 	}
 }

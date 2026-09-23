@@ -1688,6 +1688,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// swarm.NoSlotsStoreRefusal for why there is no optional mode and no default.
 	slotsStore := f.fs.String("slots-store", "", "")
 	slotOwner := f.fs.String("owner", "", "")
+	benchName := f.fs.String("bench", "", "")
+	stageTimeout := f.fs.String("stage-timeout", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1798,6 +1800,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			effectiveModel = w.Provider + "/" + w.Model
 		}
 	}
+	var stageDur time.Duration
+	if *stageTimeout != "" {
+		v, serr := time.ParseDuration(*stageTimeout)
+		if serr != nil || v <= 0 {
+			fmt.Fprintf(stderr, "nova-swarm native: --stage-timeout wants a positive duration: %s\n", oneline.Field(*stageTimeout))
+			return 2
+		}
+		stageDur = v
+	}
 	cfg := nativeRunConfig{
 		binary:         *harness,
 		model:          effectiveModel,
@@ -1814,6 +1825,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		sandbox:        *sandbox,
 		noWall:         *noWall,
 		noSharedCaches: *noSharedCaches,
+		benchName:      *benchName,
+		stageTimeout:   stageDur,
 	}
 	if workerGiven {
 		cfg.worker = &w
