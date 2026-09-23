@@ -55,6 +55,9 @@ func Deal(cardPath, mirrorDir, landingTip string) (DealResult, error) {
 	if err := BaseOnMirror(mirrorDir, base); err != nil {
 		return DealResult{}, err
 	}
+	if err := BaseOnMirror(mirrorDir, strings.TrimSpace(landingTip)); err != nil {
+		return DealResult{}, err
+	}
 	pinned, err := pinBaseAtDeal(cardPath, strings.TrimSpace(landingTip))
 	if err != nil {
 		return DealResult{}, err
