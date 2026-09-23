@@ -35,11 +35,11 @@ type LaunchInput struct {
 	// batch runs on this machine exactly as before (issue #637).
 	Benches string // the benches table file
 	Bench   string // the benches to fill, comma separated
-	// Machines is the machines registry the named benches are resolved against before
-	// the batch is admitted. Empty leaves the verb unguarded, the same narrowing the
-	// fleet verbs and harvest --bench carry; cmd/nova-pulse names it on every real
-	// invocation.
-	Machines string // the machines registry; empty resolves no bench name
+	// Machines is the machines registry every named bench is resolved against before the
+	// batch is admitted. Empty is only legal when no bench is named: a launch with no
+	// --bench runs on this machine, and a launch that names a bench without the registry
+	// cannot tell a bench from a CI runner host (issue #1905).
+	Machines string
 	// Routes is the routes.tsv the typed decision reads to pick each card's worker. Empty
 	// means no routing: the cards group by their own model column, exactly as before.
 	Routes  string
@@ -122,6 +122,13 @@ func Launch(in LaunchInput) int {
 		fmt.Fprintf(in.Stderr, "PULSE NOTE max=%d: %s holds %d cards; this pulse considers the first %d and leaves the rest where they are\n",
 			in.Max, oneline.Field(in.Cards), len(cards), in.Max)
 		cards = cards[:in.Max]
+	}
+	// THE LOCK (Glenn, 2026-09-18): runner hosts are CI-only, and the batch this verb
+	// admits reaches every named bench over ssh. The NAMES are resolved against the
+	// machines registry before the batch is admitted, so a runner host is refused here
+	// rather than handed to nova-swarm batch (issue #1905).
+	if code := requireLaunchBenches(in.Stderr, in.Machines, in.Bench); code != 0 {
+		return code
 	}
 	// ROUTE (SPEC-DECIDE rule 8): with --routes, each card's worker is a typed decision, and
 	// the ROUTE line is logged beside the card and the time. Below the floor the card keeps
