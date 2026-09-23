@@ -69,7 +69,7 @@ func TestXaiProviderOneUsageFileFoldsRow(t *testing.T) {
 	}
 	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-12 rows=1 ")
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
-	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny"
+	const wantRow = "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t-\t-\t-\t0\tutc\txai:johnny\t-"
 	var data []string
 	for _, line := range strings.Split(strings.TrimSuffix(body, "\n"), "\n") {
 		if strings.HasPrefix(line, "2026-") {

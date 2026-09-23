@@ -2,12 +2,15 @@
 // "The engine and its client") and the kernel's side of the work description language
 // (docs/SPEC-WORKLANG.md) and the job graph of docs/SPEC-JOBS.md.
 //
-// The client sends ONE request line over the Unix socket --session names,
-// newline-terminated, and prints the ONE line the session answers, byte for byte: OK, ROW,
-// NOTE and MORE to stdout and exit 0, FAIL, RACED and REFUSED to stderr and exit 1. What
-// cannot run at all -- no verb, no --session, no socket that answers -- is one WORK REFUSED
-// line on stderr, exit 2, ending "run: nova-work help". The values travel as the caller
-// spelled them and the session validates every one.
+// The client sends one request over the Unix socket --session names and prints the
+// session's answer byte for byte: OK, ROW, NOTE and MORE to stdout and exit 0, FAIL,
+// RACED and REFUSED to stderr and exit 1. The wire is the spec's versioned,
+// length-prefixed JSON protocol when the session answers in frames -- the only wire a
+// listing verb's many ROW/NOTE/MORE lines can come home on (nova-tools#1696) -- and the
+// S1 one-line wire when it does not. What cannot run at all -- no verb, no --session, no
+// socket that answers -- is one WORK REFUSED line on stderr, exit 2, ending "run:
+// nova-work help". The values travel as the caller spelled them and the session
+// validates every one.
 //
 // The bounded reader: `plan check` reads one plan under --max-bytes, --max-depth and
 // --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses any
@@ -160,6 +163,7 @@ usage:
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
+                      [--evaluate] [--base <branch>] [--cache <dir>] [--write-status]
                       [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
@@ -240,13 +244,32 @@ Exit 1 is findings: it was read whole and its content is wrong -- a duplicate id
 :lane no --lanes file names, a :deadline that is not an instant. Every rule runs over
 every unit in ONE pass, one SET line per finding, because a checker that stopped at the
 first would cost one round trip per defect. The SET OK line prints either way, and
-units = ready + blocked + done closes its arithmetic.
+units = ready + blocked + done closes its arithmetic; one SET DONE done=<n> percent=<p>
+line follows it, percent rounded down, so x/y z% comes from the tool and not from awk.
 
 --ready is the mechanical ready set, derived from the language rather than maintained by
 hand: a unit is done when it says so (:done, or a :status of closed, done, landed or
 merged) or when --done names it, and ready when it is not done and every need is done.
 Without --minds and without --lanes those two rules are OFF rather than run against a
 guessed file: there is no default registry and no discovery.
+
+--evaluate derives done from each unit's :acceptance instead of its :status, through gh
+(nova-tools #2664). Two criteria are evaluable: (:kind :landed :subject "pr:<o/r>#<n>"
+:predicate :merged-or-closed-in-base) holds when the PR is merged, OR closed with its
+content in the base by the lander's rule -- git merge-tree --write-tree <base> <head>
+yields the base's own tree, so merging it changes nothing, which holds for a PR the lander
+combined with another -- and :subject "commit:<sha>" holds when the commit is reachable
+from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
+A subject pinned as pr:<o/r>#<n>@<sha> asks about that head only: a pin the PR's last
+head does not match was superseded and is not landed. The merge runs in one blobless
+bare repository per repo under --cache. The base is
+--base, else the set's :base, and one is required. Each evaluable criterion prints one
+SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
+answer is unknown and counts as not done. A unit is decided by its criteria when every
+one is evaluable or one fails; a unit naming only :test, :job or :attested criteria keeps
+its :status. Each question is asked once per run.
+--write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
+whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
 events publishes the family's three event channels from two sources: the cards:done
 stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
@@ -289,6 +312,12 @@ flags:
   --ready         set check: also print one SET READY line per unit of the ready set,
                   each carrying its admission verdict (admit=go, or admit=held with the
                   dimension or path that held it and the unit holding it).
+  --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
+  --base <branch> set check: the branch :landed means; default the set's :base.
+  --cache <dir>   set check: where --evaluate keeps one blobless bare repository per
+                  repo for the merge; default <user cache dir>/nova-work/landed.
+  --write-status  set check: rewrite :status "open" to "landed" where every criterion
+                  holds, in place, one line per unit; implies --evaluate.
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -421,6 +450,11 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		if d, ok := opt.(Deps); ok {
 			deps = d
 		}
+	}
+	// The framed wire's hello names the build identity it is; the empty stamp
+	// of a test run leaves the package's own floor.
+	if stamp != "" {
+		workclient.ClientIdentity = stamp
 	}
 	if len(args) == 0 {
 		return refused(stderr, "a verb is required")
@@ -906,7 +940,7 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	return ask(socket, b.String(), within, stdout, stderr)
+	return ask(socket, b.String(), frameFor(verb, specs, strs, bools, mults), within, stdout, stderr)
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable
@@ -914,9 +948,70 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 // by design and a test suite cannot afford one per case.
 var askTimeout = workclient.DefaultTimeout
 
-// ask is the whole wire: one line in, one line out, newline-terminated both
-// ways. The dial and the read live in internal/workclient so that this package
-// keeps a single print path; here only the reply is classified.
+// frameFor spells the same request the v1 framed wire carries, built from the
+// same parsed flags the request line is spelled from, so the two wires can
+// never disagree about what was asked. The verb is the op; the envelope fields
+// the spec names -- request, as, expect, now, max, deadline -- are hoisted out
+// of the flags that spell them; --session is the endpoint the frame travels
+// over and never an argument of it; and every other set flag travels in args
+// as the caller spelled it: a string, an array for a repeated flag, true for a
+// switch, and never a JSON number, which the protocol forbids.
+func frameFor(verb string, specs []flagSpec, strs map[string]*string, bools map[string]*bool, mults map[string]*repeatFlag) workclient.Frame {
+	frame := workclient.Frame{Op: verb, Args: map[string]any{}}
+	for _, s := range specs {
+		switch {
+		case s.bool:
+			if *bools[s.name] {
+				frame.Args[s.name] = true
+			}
+		case s.multi:
+			if vs := *mults[s.name]; len(vs) > 0 {
+				arr := make([]any, len(vs))
+				for i, v := range vs {
+					arr[i] = v
+				}
+				frame.Args[s.name] = arr
+			}
+		default:
+			v := *strs[s.name]
+			if v == "" {
+				continue
+			}
+			switch s.name {
+			case "session":
+				// the endpoint the frame travels over, not an argument of it
+			case "request":
+				frame.Request = v
+			case "as":
+				frame.As = v
+			case "expect":
+				frame.Expect = v
+			case "now":
+				frame.Now = v
+			case "max":
+				frame.Max = v
+			case "deadline":
+				frame.Deadline = v
+			default:
+				frame.Args[s.name] = v
+			}
+		}
+	}
+	if frame.Request == "" {
+		// The v1 wire correlates every response by its request id, so a verb
+		// whose flags draw none has this run draw one.
+		frame.Request = fmt.Sprintf("nova-work-%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	return frame
+}
+
+// ask is the whole wire: the request line out on the S1 wire, and -- when the
+// session proves it speaks v1 frames by answering the line's bytes with the
+// framed refusal the spec pins for them -- the same request again as one v1
+// frame, so a listing verb's many answer lines reach the caller
+// (nova-tools#1696). The dial and the reads live in internal/workclient so
+// that this package keeps a single print path; here only the reply is
+// classified.
 //
 // Three ways there is no reply line, and they are three different refusals,
 // because they send a person to three different places. A socket nothing is
@@ -926,15 +1021,20 @@ var askTimeout = workclient.DefaultTimeout
 // client that stopped waiting is no more a rollback than a disconnect is
 // (docs/SPEC-WORK.md, "The engine and its client"). A reply past the wire's cap
 // is a session speaking a shape this wire does not carry.
-func ask(socket, request string, within time.Duration, stdout, stderr io.Writer) int {
-	line, err := workclient.ExchangeWithin(socket, request, within)
+func ask(socket, request string, frame workclient.Frame, within time.Duration, stdout, stderr io.Writer) int {
+	answer, err := workclient.ExchangeWireWithin(socket, request, frame, within)
 	switch {
+	case err == nil && answer.Framed:
+		return printReplyLines(answer.Reply, stdout, stderr)
 	case err == nil:
-		return printReply(line, stdout, stderr)
+		return printReply(answer.Line, stdout, stderr)
 	case errors.Is(err, workclient.ErrSilent):
 		return refused(stderr, "the session at "+socket+" accepted the request and did not answer: "+err.Error()+"; a mutation may still have been accepted -- ask the session rather than retrying blind")
 	case errors.Is(err, workclient.ErrTooLong):
 		return refused(stderr, "the session at "+socket+" answered past the wire's bound: "+err.Error())
+	case errors.Is(err, workclient.ErrFrameVersion), errors.Is(err, workclient.ErrFrameMalformed),
+		errors.Is(err, workclient.ErrFrameCorrelation), errors.Is(err, workclient.ErrFrameTooLong):
+		return refused(stderr, "the session at "+socket+" answered in v1 frames and the framed exchange failed: "+err.Error())
 	default:
 		return refused(stderr, "no such session: cannot reach "+socket+": "+err.Error())
 	}
@@ -962,6 +1062,39 @@ func printReply(line string, stdout, stderr io.Writer) int {
 	default:
 		return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
 	}
+}
+
+// printReplyLines is printReply for the v1 wire's ordered answer: the spec's
+// one client rule -- "the client splits them by the second token and by
+// nothing else" -- applied to every line of the response's array, and the
+// response's own exit as the run's verdict, the field the one-line wire has
+// no place for (nova-tools#1696). OK, ROW, NOTE and MORE go to stdout, FAIL,
+// RACED and REFUSED to stderr, each rendered through oneline.Escape, the
+// identity on a well-formed grammar line, so the byte-for-byte promise holds
+// per line. decodeReply has already read the exit as one of the three codes.
+func printReplyLines(reply workclient.Reply, stdout, stderr io.Writer) int {
+	code := 2
+	switch reply.Exit {
+	case "0":
+		code = 0
+	case "1":
+		code = 1
+	}
+	for _, line := range reply.Lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return refused(stderr, "the session's reply is not an answer line: "+line)
+		}
+		switch fields[1] {
+		case "OK", "ROW", "NOTE", "MORE":
+			fmt.Fprintln(stdout, oneline.Escape(line))
+		case "FAIL", "RACED", "REFUSED":
+			fmt.Fprintln(stderr, oneline.Escape(line))
+		default:
+			return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
+		}
+	}
+	return code
 }
 
 // cmdEvents is the events verb. Its flags are parsed with flag's usage dump discarded, so
