@@ -19,9 +19,11 @@ import (
 )
 
 // lineup is #3108 (#2756 v6 section 7, controls 49, 64, 65): run the conform
-// publish across the UP benches in one batch, cut the five probes, then print
-// every DRIFT line, the 7.18-7.21, 7.24 and 7.25 checks and the x/y tally.
-// Any RED refuses sprint open (exit 1).
+// publish across the UP benches in one batch, run the preflight checks, and
+// only when they are all GREEN cut the five probes; then print every DRIFT
+// line, the 7.18-7.21, 7.24 and 7.25 checks and the x/y tally. A failed
+// publish or a record not republished in this run is RED. Any RED refuses
+// sprint open (exit 1) and leaves the probe set untouched.
 //
 //	nova-sprint lineup --redis <addr> --sprint <S> [--probes a,b,c,d,e]
 //	    [--conform-cmd "bench-conform --publish" | --no-conform]
@@ -78,54 +80,61 @@ func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	client := lineupClient(*addr)
 	defer client.Close()
 
-	if !*noConform {
-		code, err := runConformPublish(ctx, strings.Fields(*conformCmd), stderr)
-		switch {
-		case err != nil:
-			fmt.Fprintf(stdout, "CONFORM ERROR %s\n", oneline.Err(err))
-		default:
-			fmt.Fprintf(stdout, "CONFORM exit=%d\n", code)
-		}
+	if *probes != "" && *sprint == "" {
+		return refuse(stderr, "lineup", "--probes needs --sprint <S>")
 	}
+	run := preflight.LineupRun{Sprint: *sprint}
 	if *probes != "" {
-		if *sprint == "" {
-			return refuse(stderr, "lineup", "--probes needs --sprint <S>")
-		}
-		if err := preflight.CutProbes(ctx, client, *sprint, strings.Split(*probes, ",")); err != nil {
-			return refuse(stderr, "lineup", "probe cut: "+err.Error())
+		run.Probes = strings.Split(*probes, ",")
+	}
+	if !*noConform {
+		argv := strings.Fields(*conformCmd)
+		run.Conform = func(ctx context.Context) error {
+			err := runConformPublish(ctx, argv, stderr)
+			if err != nil {
+				fmt.Fprintf(stdout, "CONFORM ERROR %s\n", oneline.Err(err))
+			} else {
+				fmt.Fprintln(stdout, "CONFORM exit=0")
+			}
+			return err
 		}
 	}
-	in, err := preflight.GatherLineup(ctx, client, *sprint)
+	run.Enrich = func(in *preflight.LineupInput) {
+		in.GraphQL = preflight.GraphQLBudget{Remaining: *remaining, CallsPerPass: *perPass, Cadence: *cadence, Known: *remaining >= 0}
+		if !in.GraphQL.Known {
+			if n, err := ghGraphQLRemaining(ctx); err == nil {
+				in.GraphQL.Remaining, in.GraphQL.Known = n, true
+			} else {
+				fmt.Fprintf(stderr, "nova-sprint lineup: GraphQL budget: %s\n", oneline.Err(err))
+			}
+		}
+		if exe, err := os.Executable(); err == nil {
+			if hits, err := preflight.ScanBinaryForGraphQL(exe); err == nil {
+				in.BinaryScanned, in.BinaryHits = true, hits
+			}
+		}
+	}
+	res, err := preflight.RunLineup(ctx, client, run)
 	if err != nil {
-		return refuse(stderr, "lineup", "redis: "+err.Error())
+		return refuse(stderr, "lineup", err.Error())
 	}
-	in.GraphQL = preflight.GraphQLBudget{Remaining: *remaining, CallsPerPass: *perPass, Cadence: *cadence, Known: *remaining >= 0}
-	if !in.GraphQL.Known {
-		if n, err := ghGraphQLRemaining(ctx); err == nil {
-			in.GraphQL.Remaining, in.GraphQL.Known = n, true
-		} else {
-			fmt.Fprintf(stderr, "nova-sprint lineup: GraphQL budget: %s\n", oneline.Err(err))
-		}
+	if res.ProbesHeld != "" {
+		fmt.Fprintln(stdout, res.ProbesHeld)
 	}
-	if exe, err := os.Executable(); err == nil {
-		if hits, err := preflight.ScanBinaryForGraphQL(exe); err == nil {
-			in.BinaryScanned, in.BinaryHits = true, hits
-		}
-	}
-	lines := preflight.LineupChecks(in)
-	fmt.Fprint(stdout, preflight.RenderLineup(in, lines))
-	if preflight.OpenGate(lines) != nil {
+	fmt.Fprint(stdout, preflight.RenderLineup(res.In, res.Lines))
+	if preflight.OpenGate(res.Lines) != nil {
 		return 1
 	}
 	return 0
 }
 
 // runConformPublish runs bench-conform --publish, which probes every UP bench
-// in one ssh batch and pipes each answer into `lineup publish`. Its exit is
-// reported, not trusted: the records it wrote are what the checks read.
-func runConformPublish(ctx context.Context, argv []string, stderr io.Writer) (int, error) {
+// in one ssh batch and pipes each answer into `lineup publish`. An error or a
+// nonzero exit is a failed publish (RED on 7.18); a clean exit is still not
+// trusted alone: every UP bench's record must be stamped in this run.
+func runConformPublish(ctx context.Context, argv []string, stderr io.Writer) error {
 	if len(argv) == 0 {
-		return 0, fmt.Errorf("--conform-cmd is empty")
+		return fmt.Errorf("--conform-cmd is empty")
 	}
 	testguard.RefuseHosts(argv[0], argv[1:]...)
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -133,9 +142,9 @@ func runConformPublish(ctx context.Context, argv []string, stderr io.Writer) (in
 	cmd.Stderr = stderr
 	err := cmd.Run()
 	if ee, ok := err.(*exec.ExitError); ok {
-		return ee.ExitCode(), nil
+		return fmt.Errorf("%s exit=%d", argv[0], ee.ExitCode())
 	}
-	return 0, err
+	return err
 }
 
 // ghGraphQLRemaining reads the login's GraphQL budget by REST (GET

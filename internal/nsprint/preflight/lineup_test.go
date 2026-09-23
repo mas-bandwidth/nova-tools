@@ -2,6 +2,7 @@ package preflight
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -336,5 +338,119 @@ func moduleRoot(t *testing.T) string {
 			t.Fatal("no go.mod above the test")
 		}
 		dir = up
+	}
+}
+
+// runFixture registers the benches with a live beat and returns a lineup run
+// whose Enrich fills a sufficient GraphQL budget and a clean binary scan.
+func runFixture(t *testing.T, benches ...string) (*miniredis.Miniredis, *redis.Client, LineupRun) {
+	t.Helper()
+	mr, c := fixture(t)
+	ctx := context.Background()
+	for _, b := range benches {
+		c.SAdd(ctx, "benches", b)
+		c.HSet(ctx, "bench:"+b+":beat", "at", t0.Unix())
+	}
+	c.HSet(ctx, "s:s1", "status", "lining-up")
+	return mr, c, LineupRun{Sprint: "s1", Probes: probes, Enrich: func(in *LineupInput) {
+		in.GraphQL = GraphQLBudget{Known: true, Remaining: 5000, CallsPerPass: 0, Cadence: 10 * time.Second}
+		in.BinaryScanned = true
+	}}
+}
+
+func probeSet(t *testing.T, c *redis.Client) []string {
+	t.Helper()
+	have, err := c.SMembers(context.Background(), "s:s1:probes").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return have
+}
+
+// Stella's hold at 4ad6025e, item 1: a failed bench-conform --publish cannot
+// reuse an earlier PASS record still inside its 15 min TTL. A failed publish
+// is RED on 7.18, and a clean exit that did not republish a bench is RED too.
+func TestLineupConformFailureRefuses(t *testing.T) {
+	mr, c, run := runFixture(t, "hulk")
+	ctx := context.Background()
+	if err := PublishConform(ctx, c, Evaluate("hulk", goodAnswers(), declared)); err != nil {
+		t.Fatal(err)
+	}
+	mr.SetTime(t0.Add(2 * time.Minute))
+	run.Conform = func(context.Context) error { return errors.New("bench-conform exit=1") }
+	res, err := RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustRefuse(t, res.Lines, "7.18")
+	l := lineFor(t, res.Lines, "7.18")
+	if !strings.Contains(l.Why, "conform publish failed: bench-conform exit=1") || !strings.Contains(l.Why, "hulk conform not republished this run (at 120s before it)") {
+		t.Fatalf("7.18 %v", l)
+	}
+	if res.ProbesCut || len(probeSet(t, c)) != 0 || !strings.Contains(res.ProbesHeld, "7.18") {
+		t.Fatalf("probes cut after a failed publish: %+v %v", res, probeSet(t, c))
+	}
+
+	// A clean exit that published nothing: the earlier PASS is still not this run's.
+	run.Conform = func(context.Context) error { return nil }
+	res, err = RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustRefuse(t, res.Lines, "7.18", "7.19", "7.24", "7.25")
+	if l := lineFor(t, res.Lines, "7.18"); strings.Contains(l.Why, "publish failed") || !strings.Contains(l.Why, "hulk conform not republished this run") {
+		t.Fatalf("7.18 %v", l)
+	}
+	if len(probeSet(t, c)) != 0 {
+		t.Fatalf("probes cut: %v", probeSet(t, c))
+	}
+}
+
+// Stella's hold at 4ad6025e, item 2: conform, then preflight, then the probe
+// cut. A RED prerequisite leaves the probe set untouched; all GREEN cuts it,
+// and a rerun with the five landed opens.
+func TestLineupOrderProbeCutAfterPreflight(t *testing.T) {
+	_, c, run := runFixture(t, "hulk")
+	ctx := context.Background()
+	sealed := goodAnswers()
+	sealed[KeySecretsStore] = "branch=seal/x,upstream=no,rev=0fa4aa554bef,clean=yes"
+	answers := sealed
+	run.Conform = func(ctx context.Context) error { return PublishConform(ctx, c, Evaluate("hulk", answers, declared)) }
+
+	res, err := RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustRefuse(t, res.Lines, "7.24")
+	if res.ProbesCut || len(probeSet(t, c)) != 0 || res.ProbesHeld != "probes not cut: prerequisite checks RED (7.18, 7.24)" {
+		t.Fatalf("a RED prerequisite cut the probes: %q %v", res.ProbesHeld, probeSet(t, c))
+	}
+
+	answers = goodAnswers()
+	res, err = RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.ProbesCut || res.ProbesHeld != "" || len(probeSet(t, c)) != ProbeCount {
+		t.Fatalf("a GREEN preflight did not cut the probes: %+v %v", res, probeSet(t, c))
+	}
+	for _, l := range PrerequisiteChecks(res.In) {
+		if l.Red {
+			t.Fatalf("prerequisite RED after the cut: %v", l)
+		}
+	}
+	if l := lineFor(t, res.Lines, "7.20"); !l.Red || !strings.Contains(l.Why, "0 of 5 probes landed") {
+		t.Fatalf("7.20 after the cut %v", l)
+	}
+
+	for _, p := range probes {
+		c.SAdd(ctx, "s:s1:idx:card:landed", p)
+	}
+	res, err = RunLineup(ctx, c, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := OpenGate(res.Lines); err != nil {
+		t.Fatalf("lined up with five landed probes refused: %v\n%s", err, RenderLineup(res.In, res.Lines))
 	}
 }

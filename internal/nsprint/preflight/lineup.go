@@ -351,6 +351,13 @@ type LineupInput struct {
 	BenchesLoaded bool      // the registry and beats were read
 	Up            []string  // registered benches with a beat, sorted
 	Conform       map[string]ConformRecord
+	// ConformSince is this run's start (Redis server time) when the run
+	// published conform; a record stamped before it was not republished by
+	// this run and is RED, however fresh. Zero when the run did not publish.
+	ConformSince time.Time
+	// ConformFail is why this run's conform publish failed (error or
+	// nonzero exit); non-empty is RED on 7.18.
+	ConformFail string
 
 	Sprint        string
 	ProbesLoaded  bool
@@ -434,6 +441,90 @@ func LineupChecks(in LineupInput) []Line {
 	return []Line{CheckConform(in), CheckCodingKeys(in), CheckProbes(in), CheckGraphQL(in), CheckSecretsStore(in), CheckCloneVerb(in)}
 }
 
+// PrerequisiteChecks are the lineup checks that must be GREEN before the
+// probe cut: every check but 7.20, in section order.
+func PrerequisiteChecks(in LineupInput) []Line {
+	return []Line{CheckConform(in), CheckCodingKeys(in), CheckGraphQL(in), CheckSecretsStore(in), CheckCloneVerb(in)}
+}
+
+// LineupRun is one `nova-sprint lineup` pass.
+type LineupRun struct {
+	Sprint string
+	Probes []string // the five probe cards to cut; nil cuts none
+	// Conform runs bench-conform --publish; an error or nonzero exit is its
+	// failure. nil is --no-conform: the records are then only TTL-fresh.
+	Conform func(context.Context) error
+	// Enrich fills what Redis does not hold: the GraphQL budget and the
+	// binary scan. It runs once.
+	Enrich func(*LineupInput)
+}
+
+// LineupResult is a lineup pass's input, its check lines and the probe cut.
+type LineupResult struct {
+	In         LineupInput
+	Lines      []Line
+	ProbesCut  bool
+	ProbesHeld string // why the asked-for probe cut was not made
+}
+
+// RunLineup runs the lineup in the order #2756 v6 section 7 names: conform
+// publish, then the preflight checks, then the probe cut. A failed publish is
+// RED on 7.18, and a record this run did not republish is RED whatever its
+// age, so an earlier PASS cannot stand in for the current probe. The probe
+// set is cut only when every prerequisite check is GREEN; on any RED it is
+// left untouched and ProbesHeld names the red checks.
+func RunLineup(ctx context.Context, c *redis.Client, run LineupRun) (LineupResult, error) {
+	var res LineupResult
+	if len(run.Probes) > 0 && run.Sprint == "" {
+		return res, fmt.Errorf("--probes needs --sprint <S>")
+	}
+	var since time.Time
+	var fail string
+	if run.Conform != nil {
+		t, err := c.Time(ctx).Result()
+		if err != nil {
+			return res, err
+		}
+		since = t
+		if err := run.Conform(ctx); err != nil {
+			fail = oneline.Err(err)
+		}
+	}
+	in, err := GatherLineup(ctx, c, run.Sprint)
+	if err != nil {
+		return res, err
+	}
+	in.ConformSince, in.ConformFail = since, fail
+	if run.Enrich != nil {
+		run.Enrich(&in)
+	}
+	if len(run.Probes) > 0 {
+		var red []string
+		for _, l := range PrerequisiteChecks(in) {
+			if l.Red {
+				red = append(red, l.N)
+			}
+		}
+		if len(red) > 0 {
+			res.ProbesHeld = "probes not cut: prerequisite checks RED (" + strings.Join(red, ", ") + ")"
+		} else {
+			if err := CutProbes(ctx, c, run.Sprint, run.Probes); err != nil {
+				return res, fmt.Errorf("probe cut: %w", err)
+			}
+			res.ProbesCut = true
+			again, err := GatherLineup(ctx, c, run.Sprint)
+			if err != nil {
+				return res, err
+			}
+			again.ConformSince, again.ConformFail = since, fail
+			again.GraphQL, again.BinaryScanned, again.BinaryHits = in.GraphQL, in.BinaryScanned, in.BinaryHits
+			in = again
+		}
+	}
+	res.In, res.Lines = in, LineupChecks(in)
+	return res, nil
+}
+
 // record returns the bench's record, or the red reason it cannot be used.
 func (in LineupInput) record(b string) (ConformRecord, string) {
 	r, ok := in.Conform[b]
@@ -446,6 +537,9 @@ func (in LineupInput) record(b string) (ConformRecord, string) {
 	}
 	if age := in.Now.Sub(at); age > ConformTTL {
 		return r, fmt.Sprintf("%s conform %ds old", oneline.Escape(b), int64(age/time.Second))
+	}
+	if since := in.ConformSince.Truncate(time.Second); !since.IsZero() && at.Before(since) {
+		return r, fmt.Sprintf("%s conform not republished this run (at %ds before it)", oneline.Escape(b), int64(since.Sub(at)/time.Second))
 	}
 	return r, ""
 }
@@ -480,10 +574,13 @@ func CheckConform(in LineupInput) Line {
 	if !in.BenchesLoaded {
 		return verdict(n, name, []string{"bench registry unread (MISSING)"}, "")
 	}
-	if len(in.Up) == 0 {
-		return verdict(n, name, []string{"no UP bench"}, "")
-	}
 	var reds []string
+	if in.ConformFail != "" {
+		reds = append(reds, "conform publish failed: "+oneline.Escape(in.ConformFail))
+	}
+	if len(in.Up) == 0 {
+		return verdict(n, name, append(reds, "no UP bench"), "")
+	}
 	for _, b := range in.Up {
 		r, why := in.record(b)
 		if why != "" {
