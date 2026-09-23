@@ -3,17 +3,19 @@ package docs
 import (
 	"context"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
-	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/presence"
 )
 
-// TestIssue2282 proves the presence behaviour described in nova-tools #2282:
-// presence lists live lines from heartbeat keys that expire on their own,
-// and ages out expired heartbeats with no tombstone written.
+// TestIssue2282 pins the presence behaviour of nova-tools #2282 against the
+// production heartbeat writer and reader (internal/presence: Beat, Read, Line
+// over the live go-redis Store), not against hand-made keys:
 //
 // The spec (docs/SPEC-REDIS.md:68-69):
 //
@@ -25,155 +27,128 @@ import (
 //	"presence ageing out a heartbeat"
 //
 // This test verifies:
-//  1. The spec file contains the required text about presence and heartbeats.
-//  2. The behaviour is implemented: heartbeat keys with TTL are listed via SCAN,
-//     and expiry removes them silently with no tombstone.
+//  1. The spec file carries the presence and heartbeat contract text.
+//  2. Live: every friend whose presence.Beat landed inside the TTL is read Up
+//     by presence.Read and listed live on presence.Line.
+//  3. Missing: a friend that never beat is read Never, not Up.
+//  4. Expired: a friend that stops beating ages out to Away once the TTL
+//     passes, while a friend still beating stays Up.
+//  5. No tombstone: ageing out writes nothing. The expired presence key is
+//     simply gone, and the only key left for that friend is the untimed
+//     memory Beat itself wrote, unchanged since the last beat.
 func TestIssue2282(t *testing.T) {
 	t.Parallel()
 
-	// Step 1: Verify the spec file contains the required text.
 	body, err := os.ReadFile("../../docs/SPEC-REDIS.md")
 	if err != nil {
 		t.Fatalf("docs/SPEC-REDIS.md: %v", err)
 	}
-	content := string(body)
-
-	requiredText := []string{
+	for _, want := range []string{
 		"presence` lists the live lines seen by heartbeat keys that expire",
 		"crashed line ages out without anyone writing a tombstone",
 		"presence` ageing out a heartbeat",
-	}
-	for _, want := range requiredText {
-		if !strings.Contains(content, want) {
+	} {
+		if !strings.Contains(string(body), want) {
 			t.Errorf("docs/SPEC-REDIS.md missing required text: %q", want)
 		}
 	}
 
-	// Step 2: Test the behaviour with miniredis and a faked clock.
-	// Start miniredis for a fake local Redis instance.
-	mr, err := miniredis.Run()
-	if err != nil {
-		t.Fatalf("miniredis.Run: %v", err)
-	}
-	defer mr.Close()
-
-	// Connect a Redis client.
-	client := redis.NewClient(&redis.Options{
-		Addr: mr.Addr(),
-	})
-	defer client.Close()
-
+	mr := miniredis.RunT(t)
 	ctx := context.Background()
+	st, err := presence.Open(ctx, mr.Addr(), presence.DefaultUser)
+	if err != nil {
+		t.Fatalf("presence.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
 
-	// Test 2a: PresenceListsLiveLines
-	// Set heartbeat keys with TTL and read them via SCAN. All unexpired keys
-	// should be listed.
+	t0 := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	ttl := presence.DefaultTTL
+	live := []string{"johnny", "stella", "emma"}
+	roster := append(append([]string{}, live...), "freddy") // freddy never beats
+
+	for _, n := range live {
+		if err := presence.Beat(ctx, st, n, t0, ttl); err != nil {
+			t.Fatalf("presence.Beat %s: %v", n, err)
+		}
+	}
+
 	t.Run("PresenceListsLiveLines", func(t *testing.T) {
-		// Clean up from any prior test.
-		client.FlushDB(ctx)
-
-		// Set heartbeat keys for three lines with a 10-second TTL.
-		ttl := 10 * time.Second
-		lines := []string{"line1", "line2", "line3"}
-		for _, line := range lines {
-			key := "heartbeat:" + line
-			err := client.Set(ctx, key, "1", ttl).Err()
-			if err != nil {
-				t.Fatalf("Set heartbeat key %q: %v", key, err)
+		now := t0.Add(5 * time.Second)
+		sts, err := presence.Read(ctx, st, roster, now)
+		if err != nil {
+			t.Fatalf("presence.Read: %v", err)
+		}
+		for i, n := range live {
+			if sts[i].State != presence.Up {
+				t.Errorf("%s inside the ttl: state %v; want Up", n, sts[i].State)
 			}
 		}
-
-		// Use SCAN to list all heartbeat keys. This mimics how presence
-		// reads the keys without using KEYS (which is O(n)).
-		var keys []string
-		iter := client.Scan(ctx, 0, "heartbeat:*", 0).Iterator()
-		for iter.Next(ctx) {
-			keys = append(keys, iter.Val())
+		if got := sts[3].State; got != presence.Never {
+			t.Errorf("freddy never beat: state %v; want Never", got)
 		}
-		if err := iter.Err(); err != nil {
-			t.Fatalf("SCAN: %v", err)
-		}
-
-		// All three lines should be present (no expiry has occurred yet).
-		if len(keys) != 3 {
-			t.Errorf("expected 3 live keys, got %d: %v", len(keys), keys)
-		}
-
-		// Verify the keys exist.
-		for _, line := range lines {
-			key := "heartbeat:" + line
-			val, err := client.Get(ctx, key).Result()
-			if err != nil {
-				t.Errorf("Get %q: %v", key, err)
-			}
-			if val != "1" {
-				t.Errorf("Get %q: expected '1', got %q", key, val)
+		line := presence.Line(sts, now)
+		for _, want := range []string{"johnny up 5s", "stella up 5s", "emma up 5s", "freddy none"} {
+			if !strings.Contains(line, want) {
+				t.Errorf("presence line %q does not list %q", line, want)
 			}
 		}
 	})
 
-	// Test 2b: PresenceAgesOutHeartbeats
-	// Advance the clock past a heartbeat's TTL and verify it is dropped from
-	// presence. No delete or tombstone should be written.
 	t.Run("PresenceAgesOutHeartbeats", func(t *testing.T) {
-		// Clean up from any prior test.
-		client.FlushDB(ctx)
+		// emma crashes: she never beats again. johnny and stella keep
+		// beating on the production cadence while the clock passes
+		// emma's TTL.
+		lastBeat := t0
+		for elapsed := presence.DefaultEvery; elapsed <= ttl+presence.DefaultEvery; elapsed += presence.DefaultEvery {
+			mr.FastForward(presence.DefaultEvery)
+			lastBeat = t0.Add(elapsed)
+			for _, n := range []string{"johnny", "stella"} {
+				if err := presence.Beat(ctx, st, n, lastBeat, ttl); err != nil {
+					t.Fatalf("presence.Beat %s: %v", n, err)
+				}
+			}
+		}
+		now := lastBeat.Add(time.Second)
 
-		// Set a heartbeat key with a 1-second TTL.
-		key := "heartbeat:line1"
-		ttl := 1 * time.Second
-		err := client.Set(ctx, key, "1", ttl).Err()
+		sts, err := presence.Read(ctx, st, roster, now)
 		if err != nil {
-			t.Fatalf("Set heartbeat key: %v", err)
+			t.Fatalf("presence.Read: %v", err)
+		}
+		want := []presence.State{presence.Up, presence.Up, presence.Away, presence.Never}
+		for i, n := range roster {
+			if sts[i].State != want[i] {
+				t.Errorf("%s past emma's ttl: state %v; want %v", n, sts[i].State, want[i])
+			}
+		}
+		if !sts[2].Dated || !sts[2].Last.Equal(t0) {
+			t.Errorf("emma aged out without her last beat: dated=%v last=%v; want %v", sts[2].Dated, sts[2].Last, t0)
+		}
+		line := presence.Line(sts, now)
+		if strings.Contains(line, "emma up") || !strings.Contains(line, "emma AWAY") {
+			t.Errorf("presence line %q still lists emma live after her ttl", line)
 		}
 
-		// Verify the key exists.
-		val, err := client.Get(ctx, key).Result()
-		if err != nil {
-			t.Fatalf("Get key before expiry: %v", err)
+		// No tombstone: nothing was written when emma aged out. Her
+		// presence key is gone, and the keys left under her name are
+		// exactly the untimed memory Beat wrote at t0, byte for byte.
+		if mr.Exists(presence.Key("emma")) {
+			t.Errorf("%s survived its ttl", presence.Key("emma"))
 		}
-		if val != "1" {
-			t.Errorf("Get key: expected '1', got %q", val)
+		var emmaKeys []string
+		for _, k := range mr.Keys() {
+			if strings.HasPrefix(k, presence.Key("emma")) {
+				emmaKeys = append(emmaKeys, k)
+			}
 		}
-
-		// List heartbeat keys via SCAN—should be present.
-		var beforeKeys []string
-		iter := client.Scan(ctx, 0, "heartbeat:*", 0).Iterator()
-		for iter.Next(ctx) {
-			beforeKeys = append(beforeKeys, iter.Val())
+		sort.Strings(emmaKeys)
+		if len(emmaKeys) != 1 || emmaKeys[0] != presence.LastKey("emma") {
+			t.Errorf("keys left for emma after ageing out: %v; want only %s (no tombstone)", emmaKeys, presence.LastKey("emma"))
 		}
-		if err := iter.Err(); err != nil {
-			t.Fatalf("SCAN before expiry: %v", err)
+		if v, _ := mr.Get(presence.LastKey("emma")); v != t0.Format(presence.Stamp) {
+			t.Errorf("%s = %q after ageing out; want the last beat %q untouched", presence.LastKey("emma"), v, t0.Format(presence.Stamp))
 		}
-		if len(beforeKeys) != 1 {
-			t.Errorf("expected 1 key before expiry, got %d", len(beforeKeys))
-		}
-
-		// Advance the miniredis clock past the TTL.
-		// miniredis uses FastForward to simulate time passing.
-		mr.FastForward(ttl + 100*time.Millisecond)
-
-		// List heartbeat keys via SCAN—should be empty now (key expired).
-		var afterKeys []string
-		iter = client.Scan(ctx, 0, "heartbeat:*", 0).Iterator()
-		for iter.Next(ctx) {
-			afterKeys = append(afterKeys, iter.Val())
-		}
-		if err := iter.Err(); err != nil {
-			t.Fatalf("SCAN after expiry: %v", err)
-		}
-		if len(afterKeys) != 0 {
-			t.Errorf("expected 0 keys after expiry, got %d: %v", len(afterKeys), afterKeys)
-		}
-
-		// Verify no delete was written to the DB. Check the DB size.
-		// (In miniredis, only active keys are counted; expired ones are gone.)
-		dbsize, err := client.DBSize(ctx).Result()
-		if err != nil {
-			t.Fatalf("DBSize: %v", err)
-		}
-		if dbsize != 0 {
-			t.Errorf("expected DBSize 0, got %d (no tombstone should exist)", dbsize)
+		if got := len(mr.Keys()); got != 2*len(live)-1 {
+			t.Errorf("store holds %d keys after emma aged out; want %d (two per live friend, one memory for emma, no tombstone)", got, 2*len(live)-1)
 		}
 	})
 }
