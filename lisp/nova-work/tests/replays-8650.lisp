@@ -174,3 +174,58 @@
                                    :priced-p nil)))
       (ok (absentp (getf unknown :measured-cash))
           "an unsupported cash dimension was reported as zero"))))
+
+;;; ------------------------------------------------------------------
+;;; E10-F07-03  session start --repair only when findings strictly
+;;; decrease                                  (SPEC-WORK.md:2430-2440)
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F07SupportSessionStartRepairOnly" "docs/SPEC-WORK.md:2430"
+    "expected=red-load-names-its-findings;source-unmodified;strict-decrease-admitted;otherwise-refused-with-no-repair"
+  ;; A red set under rule 18 (SPEC-WORK.md:5496): an id whose latest closed row
+  ;; settles it while its node still reads :o. One hand-written row = one
+  ;; finding; two rows over two still-open ids = two findings.
+  (let* ((red (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7))
+         (red-again (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7))
+         (redder (hand-write-closed-row
+                  (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7)
+                  "acme/work/f1/t2" 8))
+         (clean (make-seed-state *seed*)))
+    (ok (= 1 (length (cow-load-findings red))) "the red fixture is not red")
+    (multiple-value-bind (sess line code)
+        (session-start :repair t :state-seed red :owner "rowan" :base "tip")
+      (ok sess "session start --repair did not start a session: ~A" line)
+      ;; A red load under --repair still names its findings, and only a load
+      ;; with zero findings exits 0 (SPEC-WORK.md:2438).
+      (check-equal 1 (session-findings sess)
+                   "session start --repair did not name its loaded finding count")
+      (check-equal 1 code "a red --repair load did not exit 1")
+      (ok (search "findings=1" (session-status-line sess))
+          "the SESSION OK line does not carry findings=: ~A"
+          (session-status-line sess))
+      ;; The unmodified source: starting left the red state it was given alone.
+      (check-equal 1 (length (cow-load-findings red))
+                   "session start --repair rewrote the unmodified source")
+      ;; Repair admits a candidate only when its finding count strictly drops.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess clean :node "acme/work/f1/t1")
+        (ok admitted "a repair dropping findings to zero was refused: ~A" rline)
+        (check-equal 0 rcode "the admitted repair is not exit 0"))
+      ;; The same count is no repair: refused at exit 1 with the repair diff.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess red-again :node "acme/work/f1/t1")
+        (ok (not admitted) "a repair that keeps the finding count was admitted")
+        (check-equal 1 rcode "the refused non-decrease is not exit 1")
+        (ok (search "no repair" rline)
+            "the refusal is not the `no repair` line: ~A" rline)
+        (ok (search "findings=1" rline)
+            "the refusal does not name the candidate findings: ~A" rline)
+        (ok (search "was=1" rline)
+            "the refusal does not name the current findings: ~A" rline))
+      ;; A candidate that raises the count is refused too.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess redder :node "acme/work/f1/t2")
+        (ok (not admitted) "a repair that raises the finding count was admitted")
+        (check-equal 1 rcode "the refused increase is not exit 1")
+        (ok (search "no repair" rline)
+            "the refusal is not the `no repair` line: ~A" rline)))))

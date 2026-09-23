@@ -246,6 +246,7 @@ rather than resumed."
   (parses 0 :type integer)
   (replays 0 :type integer)
   (emitted 0 :type integer)
+  (repair nil)
   (cache "" :type string)
   (verification nil))
 
@@ -345,6 +346,7 @@ Checks completion before until, tip == base, and OWNER generation/token."
                            (journal-token nil) (owner-record nil) (now nil)
                            (my-bench "") (lock-held t)
                            (socket-path nil) (serve nil) (foreground t)
+                           (repair nil)
                            (cache nil) (resolvers nil))
   "Start or resume a session. With SERVE the session becomes the resident
 process: it binds the local listener at SOCKET-PATH and serves reads, and with
@@ -367,20 +369,44 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                :journal (or journal (make-ordering-journal))))
                (cache-path (or cache ""))
                (verification (session-verification-from-cache cache-path resolvers))
-               (sess (make-session :path (or path "")
-                                   :owner (owner-owner record)
-                                   :generation (owner-generation record)
-                                   :token (owner-token record)
-                                   :until (owner-until record)
-                                   :state :live
-                                   :kernel k
-                                   :base base
-                                   :every every
-                                   :skew skew
-                                   :cache cache-path
-                                   :verification verification)))
-          (if serve
-              (start-session-server sess
-                                    :socket-path (or socket-path path)
-                                    :foreground foreground)
-              (values sess line 0))))))
+                (sess (make-session :path (or path "")
+                                    :owner (owner-owner record)
+                                    :generation (owner-generation record)
+                                    :token (owner-token record)
+                                    :until (owner-until record)
+                                    :state :live
+                                    :kernel k
+                                    :base base
+                                    :every every
+                                    :skew skew
+                                    :repair repair
+                                    :cache cache-path
+                                    :verification verification)))
+           (when repair
+             ;; A red set under --repair loads and validates the same way,
+             ;; names its findings, and exits 1 while any finding stands
+             ;; (SPEC-WORK.md:2430-2440). The source is never rewritten.
+             (setf (session-findings sess)
+                   (length (cow-load-findings (kernel-state k)))))
+           (if serve
+               (start-session-server sess
+                                     :socket-path (or socket-path path)
+                                     :foreground foreground)
+                (values sess line
+                        (if (and repair (plusp (session-findings sess))) 1 0)))))))
+
+(defun session-repair-gate (sess candidate-state &key node)
+  "The repair gate (SPEC-WORK.md:2430-2440): under `session start --repair` a
+candidate is admitted only when its whole-validation finding count is strictly
+below the session's current count, refused otherwise at exit 1 with the repair
+diff `<MUTATION> FAIL node=<id> findings=<n> was=<n>: no repair`. The candidate
+is the resident O as it would be with the event applied; neither the session's
+source nor the candidate is rewritten here (values admitted-p line exit-code)."
+  (let* ((current (session-findings sess))
+         (candidate (length (cow-load-findings candidate-state))))
+    (if (< candidate current)
+        (values t nil 0)
+        (values nil
+                (format nil "<MUTATION> FAIL node=~A findings=~D was=~D: no repair"
+                        (or node "<id>") candidate current)
+                1))))
