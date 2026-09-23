@@ -438,23 +438,19 @@ func isAllowed(rel string, allow []string) bool {
 	return false
 }
 
-// classify returns every reason the file is machinery, or nil if it is prose.
-// All reasons are reported when more than one holds: a gate that says only
-// "no" teaches nothing, and each reason is separately actionable.
-func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
+// classifyParametrised returns every reason the file is machinery, or nil if
+// it is prose. The permission-bit value and a first-two-bytes reader (with its
+// read error) are supplied by the caller, so both the walk and a future index
+// path call this one function, guaranteeing parity by construction.
+//
+// peekTwo returns the first two bytes as a string and whether they are "#!",
+// or an error if the read failed. A nil peekTwo means the caller knows there
+// are no first two bytes (e.g. a symlink whose target is not followed).
+func classifyParametrised(rel string, perm os.FileMode, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string, peekTwo func() (string, bool, error)) []string {
 	var reasons []string
-	// Name and location are checked FIRST, and before the symlink return
-	// below, because both read only the path. A symlink called Makefile is
-	// machinery by the same argument that catches a file called Makefile, and
-	// deciding that requires no dereference.
 	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
 		reasons = append(reasons, fmt.Sprintf("build machinery by name %s (floor name list)", base))
 	}
-	// Lowercased on both sides so location matching agrees with name matching.
-	// They disagreed: on a case-insensitive filesystem a tree checked out as
-	// .GitHub/workflows/ is the same directory on disk and the floor did not
-	// fire, while a file named MAKEFILE did. An asymmetry a reader cannot tell
-	// was decided is worse than either choice.
 	lowerRel := strings.ToLower(rel)
 	for _, pre := range denyPrefixes {
 		if lowerRel == pre || strings.HasPrefix(lowerRel, pre+"/") {
@@ -462,31 +458,57 @@ func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[str
 			break
 		}
 	}
-	// Trailing whitespace is trimmed for MATCHING only: a file named "x.py "
-	// has extension ".py " by Go's reckoning and would otherwise miss the list
-	// while being every bit as much a script.
 	if ext := strings.TrimSpace(strings.ToLower(filepath.Ext(rel))); denySet[ext] {
 		reasons = append(reasons, fmt.Sprintf("code extension %s (%s)", ext, source))
 	}
 	if isLink {
-		// Never dereferenced: the name is classified, the target is not read
-		// and its mode is not consulted.
 		if len(reasons) > 0 {
 			reasons = append(reasons, "symlink (target not followed)")
 		}
 		return reasons
 	}
-	if fi.Mode().Perm()&0o111 != 0 {
-		reasons = append(reasons, fmt.Sprintf("executable (mode %04o)", fi.Mode().Perm()))
+	if perm&0o111 != 0 {
+		reasons = append(reasons, fmt.Sprintf("executable (mode %04o)", perm))
 	}
-	shebang, err := hasShebang(fullPath)
-	switch {
-	case err != nil:
-		reasons = append(reasons, "unreadable: "+err.Error()+" (cannot rule out machinery)")
-	case shebang:
-		reasons = append(reasons, "executable script (shebang)")
+	if peekTwo != nil {
+		_, shebang, err := peekTwo()
+		switch {
+		case err != nil:
+			reasons = append(reasons, "unreadable: "+err.Error()+" (cannot rule out machinery)")
+		case shebang:
+			reasons = append(reasons, "executable script (shebang)")
+		}
 	}
 	return reasons
+}
+
+// classify is a thin wrapper for the filesystem walk: it extracts the
+// permission mask from fi and builds a peekTwo from the path, then
+// delegates to classifyParametrised.
+func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
+	peekTwo := func() (string, bool, error) {
+		return hasShebangResult(fullPath)
+	}
+	return classifyParametrised(rel, fi.Mode().Perm(), isLink, denySet, source, denyNames, denyPrefixes, peekTwo)
+}
+
+// hasShebangResult returns the first two bytes, whether they are "#!", and
+// any read error. It is the peekTwo implementation for the filesystem walk.
+func hasShebangResult(p string) (string, bool, error) {
+	f, err := os.Open(p)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	b, err := bufio.NewReader(f).Peek(2)
+	if err != nil {
+		if errors.Is(err, io.EOF) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	s := string(b)
+	return s, s == "#!", nil
 }
 
 // hasShebang reports whether a file begins with "#!".
@@ -495,21 +517,8 @@ func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[str
 // shebang" for a file nobody could open would mean a chmod 000 makes this
 // gate greener, which is the fail-open shape this whole check exists against.
 func hasShebang(p string) (bool, error) {
-	f, err := os.Open(p)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-	b, err := bufio.NewReader(f).Peek(2)
-	if err != nil {
-		// Short file: genuinely no shebang. Anything else is a read that
-		// failed, and scoring that as "no shebang" is the fail-open shape.
-		if errors.Is(err, io.EOF) {
-			return false, nil
-		}
-		return false, err
-	}
-	return string(b) == "#!", nil
+	_, shebang, err := hasShebangResult(p)
+	return shebang, err
 }
 
 func sortedKeys(m map[string]bool) []string {
