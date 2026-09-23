@@ -186,5 +186,84 @@ func TestIssue2240(t *testing.T) {
 		if !strings.Contains(err.Error(), "exec:live") {
 			t.Errorf("parent release refusal %q does not name the nested grant", err)
 		}
+
+		// jobs-uncertain-keeps-its-resources: the uncertain executor itself is
+		// not released either, by either door, while termination is unproved
+		// and no fence is written.
+		for name, release := range map[string]func(string) error{
+			"ReleaseExecutor": a.ReleaseExecutor,
+			"Release":         a.Release,
+		} {
+			err := release("exec:live")
+			if err == nil {
+				t.Fatalf("%s freed an uncertain executor's reservation without proof or fence", name)
+			}
+			if !strings.Contains(err.Error(), "uncertain") {
+				t.Errorf("%s refusal %q does not name the uncertainty", name, err)
+			}
+			if _, held := a.Held("exec:live"); !held {
+				t.Fatalf("%s dropped the uncertain executor's grant", name)
+			}
+			if !a.IsUncertain("exec:live") {
+				t.Fatalf("%s lost the uncertain mark", name)
+			}
+		}
+
+		// An empty fence fences nothing; a grant that is not uncertain needs
+		// no fence.
+		if err := a.Fence("exec:live", " "); err == nil {
+			t.Fatal("accepted an empty fence")
+		}
+		if err := a.Fence("unit:live", "fence-1"); err == nil {
+			t.Fatal("fenced a grant that is not uncertain")
+		}
+
+		// Writing a fence resolves the uncertainty; then the reservation
+		// returns to the parent and the parent can be released.
+		if err := a.Fence("exec:live", "fence-1"); err != nil {
+			t.Fatalf("fence: %v", err)
+		}
+		if a.IsUncertain("exec:live") {
+			t.Fatal("fenced executor is still uncertain")
+		}
+		if err := a.ReleaseExecutor("exec:live"); err != nil {
+			t.Fatalf("release fenced executor: %v", err)
+		}
+		if _, held := a.Held("exec:live"); held {
+			t.Fatal("fenced executor still holds its reservation after release")
+		}
+		if err := a.Release("unit:live"); err != nil {
+			t.Fatalf("release parent after fenced child: %v", err)
+		}
+	})
+
+	// Termination proved: a later completed outcome carrying Proof resolves an
+	// uncertain executor, and only then is it released.
+	t.Run("jobs-uncertain-released-after-termination-proof", func(t *testing.T) {
+		a := jobs.New(jobs.Vector{"cpu": 8})
+		defer a.Close()
+
+		if _, err := a.Grant(jobs.Request{ID: "unit:p", Vector: jobs.Vector{"cpu": 4}, Revision: "r1", Acceptance: []string{"t"}}); err != nil {
+			t.Fatalf("parent grant: %v", err)
+		}
+		if _, err := a.AdmitExecutor(jobs.Executor{ID: "exec:p", Parent: "unit:p", Vector: jobs.Vector{"cpu": 2}}); err != nil {
+			t.Fatalf("admit executor: %v", err)
+		}
+		if err := a.Report(jobs.Outcome{UnitID: "unit:p", ExecutorID: "exec:p", Uncertain: true}); err != nil {
+			t.Fatalf("report uncertain: %v", err)
+		}
+		if err := a.ReleaseExecutor("exec:p"); err == nil {
+			t.Fatal("released uncertain executor before termination proof")
+		}
+		if err := a.Report(jobs.Outcome{UnitID: "unit:p", ExecutorID: "exec:p", Revision: "r1",
+			Acceptance: []string{"t"}, Result: "pass", Proof: "exit 0 reaped"}); err != nil {
+			t.Fatalf("report proved completion: %v", err)
+		}
+		if err := a.ReleaseExecutor("exec:p"); err != nil {
+			t.Fatalf("release after termination proof: %v", err)
+		}
+		if _, held := a.Held("exec:p"); held {
+			t.Fatal("executor still held after proved release")
+		}
 	})
 }

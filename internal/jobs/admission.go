@@ -210,8 +210,12 @@ type state struct {
 	writers  map[string]string
 	// uncertain holds executor grants that reported uncertain: their engine
 	// disconnected without termination proof, so they keep their reservation
-	// until termination is proved or they are explicitly released.
+	// until termination is proved (a completed Report carrying Proof) or a
+	// fence is written (Fence). Release refuses them until then.
 	uncertain map[string]bool
+	// fences records the fence written for a grant that was uncertain: the
+	// token that makes any late write from the old executor stale.
+	fences map[string]string
 }
 
 // New starts an Admission over a capacity. Lanes are NOT declared: a lane is
@@ -300,6 +304,9 @@ func (a *Admission) AdmitExecutor(e Executor) (ExecutorGrant, error) {
 }
 
 // ReleaseExecutor returns an executor's sub-budget to its parent reservation.
+// An executor that reported uncertain is refused: its engine may still be
+// running, so the reservation stays until termination is proved or a fence is
+// written (docs/SPEC-JOBS.md section 9, jobs-uncertain-keeps-its-resources).
 func (a *Admission) ReleaseExecutor(id string) error {
 	var err error
 	a.do(func(st *state) { err = st.releaseExecutor(id) })
@@ -312,6 +319,16 @@ func (a *Admission) ReleaseExecutor(id string) error {
 func (a *Admission) Report(o Outcome) error {
 	var err error
 	a.do(func(st *state) { err = st.report(o) })
+	return err
+}
+
+// Fence writes a fence for an uncertain executor: a non-empty token that
+// makes any late write from the old executor stale. It resolves the
+// uncertainty, so the grant may then be released. A grant that is not
+// uncertain needs no fence and is refused, as is an empty fence.
+func (a *Admission) Fence(id, fence string) error {
+	var err error
+	a.do(func(st *state) { err = st.fence(id, fence) })
 	return err
 }
 
@@ -425,6 +442,24 @@ func (st *state) admitExecutor(e Executor) (ExecutorGrant, error) {
 
 func (st *state) releaseExecutor(id string) error {
 	return st.release(id)
+}
+
+func (st *state) fence(id, fence string) error {
+	if _, live := st.grants[id]; !live {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("no live grant %q to fence", id)}
+	}
+	if !st.uncertain[id] {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("%s is not uncertain; a fence is written only for an executor whose termination is not proved", id)}
+	}
+	if strings.TrimSpace(fence) == "" {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("an empty fence does not fence %s; write a token that makes its late writes stale", id)}
+	}
+	if st.fences == nil {
+		st.fences = map[string]string{}
+	}
+	st.fences[id] = fence
+	delete(st.uncertain, id)
+	return nil
 }
 
 func (st *state) report(o Outcome) error {
@@ -558,6 +593,15 @@ func (st *state) release(id string) error {
 			"%s still holds %d nested grant(s) (%s); a parent's reservation is returned only after the grants drawn from it",
 			id, len(kids), strings.Join(kids, ", "))}
 	}
+	// jobs-uncertain-keeps-its-resources: an uncertain executor may still be
+	// running, so freeing its reservation could hand the same capacity out
+	// twice. It is released only after termination is proved or a fence is
+	// written.
+	if st.uncertain[id] {
+		return &Refusal{ID: id, Holder: id, Reason: fmt.Sprintf(
+			"%s reported uncertain; its reservation is kept until termination is proved (Report with Proof) or a fence is written (Fence)",
+			id)}
+	}
 	delete(st.grants, id)
 	for i, held := range st.order {
 		if held == id {
@@ -579,7 +623,7 @@ func (st *state) release(id string) error {
 			delete(st.writers, path)
 		}
 	}
-	delete(st.uncertain, id)
+	delete(st.fences, id)
 	return nil
 }
 
