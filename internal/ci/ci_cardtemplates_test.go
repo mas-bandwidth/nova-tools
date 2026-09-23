@@ -117,8 +117,10 @@ func TestCardTemplateAcceptsThePortableSpellings(t *testing.T) {
 // 2b. The `readlink -f` exception is a fallback attached to THAT invocation.
 // Hiding stderr is not a fallback (stock macOS readlink still fails and the
 // result is empty), and a `||` after the substitution closes, after a `;`, or
-// after a later command belongs to something else. Each of these is refused;
-// the attached forms after them are not.
+// after a later command belongs to something else, and so does one after an
+// unquoted `#` (a comment: it never runs), inside quotes (it is text) or
+// inside a nested $(...) (it rescues the inner command). Each of these is
+// refused; the attached forms after them are not.
 func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
 	refused := []string{
 		"p=$(readlink -f \"$f\" 2>/dev/null)",
@@ -127,6 +129,16 @@ func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
 		"readlink -f \"$f\" | head -1 || true",
 		"test -e \"$f\" || true; readlink -f \"$f\"",
 		"a=$(readlink -f x || echo x); b=$(readlink -f y)",
+		// A `#` comments out the rest of the line: the apparent `||` never runs.
+		"p=$(readlink -f \"$f\") # || printf '%s' \"$f\"",
+		"p=$(readlink -f \"$f\" # || printf '%s' \"$f\"",
+		"readlink -f \"$f\"\t# || true",
+		// A `||` inside a quoted string is text, not a fallback.
+		"p=$(readlink -f \"$f ||\")",
+		"p=$(readlink -f '|| true' \"$f\")",
+		"echo \"$(readlink -f \"$f\") || none\"",
+		// A `||` inside a nested substitution belongs to that inner command.
+		"p=$(readlink -f \"$(command -v go || echo go)\")",
 	}
 	for _, line := range refused {
 		root := cardTree(t, "templates", "rl.md", "STEP 1. "+line+"\n")
@@ -139,6 +151,10 @@ func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
 		"p=$(readlink -f \"$f\" || printf '%s' \"$f\")",
 		"p=$(readlink -f \"$f\" 2>/dev/null || printf '%s' \"$f\")",
 		"p=$(readlink -f \"$(command -v go)\" 2>&1 || command -v go)",
+		// A `#` inside quotes, or inside a word, is not a comment marker.
+		"p=$(readlink -f \"$f#x\" || printf '%s' \"$f\")",
+		"p=$(readlink -f \"$f\" || printf '%s' \"$f\") # a portable path",
+		"p=$(readlink -f \"$f\" 2>/dev/null || printf '# %s' \"$f\")",
 	}
 	for _, line := range accepted {
 		root := cardTree(t, "templates", "rl.md", "STEP 1. "+line+"\n")

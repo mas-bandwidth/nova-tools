@@ -1469,7 +1469,9 @@ variables, or spelt across two lines, is not seen — and a rule whose line also
 names its portable other half (`nproc` beside `hw.ncpu`, `readlink -f` with its
 own `||` fallback) is not refused, because that IS the portable spelling. The
 `readlink -f` fallback is checked per invocation: the `||` must follow that
-`readlink -f` before any `;`, `)`, pipe or `&&`, and `2>/dev/null` alone is
+`readlink -f` before any `;`, `)`, pipe or `&&`, unquoted and at that
+command's own level (a `||` inside quotes, inside a nested `$(...)`, or after an
+unquoted `#` comment marker does not count), and `2>/dev/null` alone is
 refused, since it hides the failure but leaves the result empty. A `.tsv`
 beside the templates is a table and is not read. Prose that merely discusses a
 spelling is refused like any other line: a template is not the place to write

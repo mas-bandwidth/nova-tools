@@ -106,20 +106,91 @@ type cardTemplateRule struct {
 	pattern *regexp.Regexp
 	unless  *regexp.Regexp
 	// fallback, when it is set, is checked per invocation instead of per
-	// line: the text right after EACH pattern match must match it (it is
-	// anchored at the match's end), so a fallback must belong to the command
-	// it rescues. A `||` after an unrelated `;`, `)`, pipe or `&&` does not
-	// count, and neither does `2>/dev/null`, which hides the failure but does
-	// not replace the empty result.
-	fallback *regexp.Regexp
+	// line: it is handed the text right after EACH pattern match and says
+	// whether that invocation carries its own rescue, so a fallback must
+	// belong to the command it rescues. A `||` after an unrelated `;`, `)`,
+	// pipe or `&&` does not count, nor one inside quotes or after a `#`
+	// comment marker, and neither does `2>/dev/null`, which hides the failure
+	// but does not replace the empty result.
+	fallback func(rest string) bool
 	remedy   string
 }
 
-// attachedOrFallback is what a `|| <fallback>` looks like when it belongs to
-// the command just matched: anything but a command separator, a pipe, `&`
-// or a closing paren (a whole `$(...)` argument and a `2>&1` are allowed),
-// then `||`.
-var attachedOrFallback = regexp.MustCompile(`^(?:[^;|&()\n]|\$\([^()]*\)|[0-9]?>&[0-9])*\|\|`)
+// attachedOrFallback reports whether rest -- the shell text right after a
+// matched command -- carries that command's own `|| <fallback>`. It is a
+// small quote-aware scan, not a regex, because the tail is shell: it walks
+// forward tracking single quotes, double quotes, backslash escapes and nested
+// `$(...)`, and answers true only at an unquoted `||` at the command's own
+// level. It answers false at the first thing that ends the command first: a
+// `;`, a lone `|` or `&`, a `)` closing the substitution the command sits in,
+// or an unquoted `#` at the start of a word, which comments out the rest of
+// the line -- `p=$(readlink -f "$f") # || true` has no fallback at all. A
+// `||` inside quotes is text, and inside a nested `$(...)` belongs to that
+// inner command; a redirection such as `2>&1` or `&>` is not a separator.
+func attachedOrFallback(rest string) bool {
+	var stack []byte // open contexts, innermost last: '\'', '"' or '('
+	top := func() byte {
+		if len(stack) == 0 {
+			return 0
+		}
+		return stack[len(stack)-1]
+	}
+	at := func(i int) byte {
+		if i < 0 || i >= len(rest) {
+			return 0
+		}
+		return rest[i]
+	}
+	for i := 0; i < len(rest); i++ {
+		c := rest[i]
+		switch top() {
+		case '\'':
+			if c == '\'' {
+				stack = stack[:len(stack)-1]
+			}
+			continue
+		case '"':
+			switch {
+			case c == '\\':
+				i++
+			case c == '"':
+				stack = stack[:len(stack)-1]
+			case c == '$' && at(i+1) == '(':
+				stack = append(stack, '(')
+				i++
+			}
+			continue
+		}
+		// Unquoted: at the command's own level, or inside a nested $(...).
+		switch {
+		case c == '\\':
+			i++
+		case c == '\'' || c == '"':
+			stack = append(stack, c)
+		case c == '$' && at(i+1) == '(':
+			stack = append(stack, '(')
+			i++
+		case c == '#' && i > 0 && (at(i-1) == ' ' || at(i-1) == '\t'):
+			return false // a comment: nothing after it runs
+		case c == '\n':
+			return false
+		case len(stack) > 0:
+			// Inside a nested $(...): its separators are its own.
+			if c == '(' {
+				stack = append(stack, '(')
+			} else if c == ')' {
+				stack = stack[:len(stack)-1]
+			}
+		case c == '|' && at(i+1) == '|':
+			return true
+		case c == '&' && (at(i-1) == '>' || at(i+1) == '>'):
+			// a redirection (2>&1, >&2, &>file), not a separator
+		case c == ';' || c == '|' || c == '&' || c == '(' || c == ')':
+			return false
+		}
+	}
+	return false
+}
 
 // cardTemplateRules is the list, and it GROWS: every card that dies on a bench
 // for a spelling reason adds a row here, so the next card cannot. (The
@@ -340,7 +411,7 @@ func scanCardTemplate(rel, src string) []CardTemplateFinding {
 // line that also carries a rescued one is still refused.
 func everyMatchHasFallback(rule cardTemplateRule, text string) bool {
 	for _, m := range rule.pattern.FindAllStringIndex(text, -1) {
-		if !rule.fallback.MatchString(text[m[1]:]) {
+		if !rule.fallback(text[m[1]:]) {
 			return false
 		}
 	}
