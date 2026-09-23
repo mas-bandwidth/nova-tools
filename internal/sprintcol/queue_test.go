@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -68,12 +69,21 @@ func xaddValues(t *testing.T, store *Redis, stream string, values map[string]any
 	}
 }
 
+func hsetTask(t *testing.T, store *Redis, id, owner, state string) {
+	t.Helper()
+	err := store.rdb.HSet(context.Background(), taskPrefix+id, fieldOwner, owner, fieldState, state).Err()
+	if err != nil {
+		t.Fatalf("hset %s%s owner=%s state=%s: %s", taskPrefix, id, owner, state, err)
+	}
+}
+
 // TestQueueColumnReadsTheFixtureStoreAndNeverCallsGitHub is the counter.
-// The fixture stream q:rowan holds two tasks and q:emma holds five. The
-// queue column for rowan is 2, emma is 5, and a friend with no stream is 0.
-// The GitHub client is in hand for every render and is never called, including
-// when the stream is absent. Each render reads the two dealer streams and
-// does not call GitHub.
+// The fixture stream q:rowan holds two tasks and q:emma holds five. Each
+// task:<id> hash says that friend owns it and state is open, so the tasks
+// are still queued. The queue column for rowan is 2, emma is 5, and a friend
+// with no stream is 0. The GitHub client is in hand for every render and is
+// never called, including when the stream is absent. Each render reads the
+// two dealer streams and the task hashes, and does not call GitHub.
 func TestQueueColumnReadsTheFixtureStoreAndNeverCallsGitHub(t *testing.T) {
 	store, hook := fixture(t)
 	xadd(t, store, "q:rowan", "t1")
@@ -83,6 +93,12 @@ func TestQueueColumnReadsTheFixtureStoreAndNeverCallsGitHub(t *testing.T) {
 	xadd(t, store, "q:emma", "t5")
 	xadd(t, store, "q:emma", "t6")
 	xadd(t, store, "q:emma", "t7")
+	for _, id := range []string{"t1", "t2"} {
+		hsetTask(t, store, id, "rowan", stateOpen)
+	}
+	for _, id := range []string{"t3", "t4", "t5", "t6", "t7"} {
+		hsetTask(t, store, id, "emma", stateOpen)
+	}
 	hook.names = nil
 	hook.args = nil
 
@@ -117,14 +133,31 @@ func TestQueueColumnReadsTheFixtureStoreAndNeverCallsGitHub(t *testing.T) {
 	if gh.calls != 0 {
 		t.Fatalf("GitHub was called %d times while the queue column rendered", gh.calls)
 	}
-	// Three friends, two streams each. A raw XLEN of one stream is not a render.
-	if len(hook.names) != 6 {
-		t.Fatalf("redis commands during three renders: %q, want six xrange", hook.names)
-	}
-	for _, name := range hook.names {
-		if name != "xrange" {
-			t.Fatalf("render issued %q; the queue column reads the dealer streams and does not call GitHub", name)
+	// Three friends, two streams each, plus one hash read per seeded task
+	// (rowan two, emma five). A raw XLEN of one stream is not a render.
+	var xrangeN, hmgetN int
+	for i, name := range hook.names {
+		switch name {
+		case "xrange":
+			xrangeN++
+		case "hmget":
+			hmgetN++
+			if i >= len(hook.args) || len(hook.args[i]) < 4 {
+				t.Fatalf("hmget args %v", hook.args)
+			}
+			key := fmt.Sprint(hook.args[i][1])
+			if !strings.HasPrefix(key, taskPrefix) {
+				t.Fatalf("render read %s; the live queue is task:<id> owner and state", key)
+			}
+			if fmt.Sprint(hook.args[i][2]) != fieldOwner || fmt.Sprint(hook.args[i][3]) != fieldState {
+				t.Fatalf("hmget %v; want owner and state", hook.args[i])
+			}
+		default:
+			t.Fatalf("render issued %q; the queue column reads the dealer streams and task hashes, and does not call GitHub", name)
 		}
+	}
+	if xrangeN != 6 || hmgetN != 7 {
+		t.Fatalf("redis commands during three renders: %q, want six xrange and seven hmget", hook.names)
 	}
 }
 
@@ -180,6 +213,11 @@ func TestQueueColumnCountsFrontAndBulkDedupedNotARawXLen(t *testing.T) {
 	xadd(t, store, bulk, "B")
 	xaddValues(t, store, bulk, map[string]any{"note": "not-a-task"})
 	xaddValues(t, store, bulk, map[string]any{"task": "   "})
+	// F, S, and B are still ada's open tasks. The dedup count is not a
+	// missing hash that happens to be three ids.
+	for _, id := range []string{"F", "S", "B"} {
+		hsetTask(t, store, id, friend, stateOpen)
+	}
 
 	frontN, err := store.rdb.XLen(ctx, front).Result()
 	if err != nil {
@@ -211,6 +249,9 @@ func TestQueueColumnCountsFrontAndBulkDedupedNotARawXLen(t *testing.T) {
 	}
 	sawFront, sawBulk := false, false
 	for i, name := range hook.names {
+		if name == "hmget" {
+			continue
+		}
 		if name == "xlen" {
 			t.Fatalf("render used XLEN %v; the column is not a raw length of one stream", hook.args)
 		}
@@ -231,5 +272,86 @@ func TestQueueColumnCountsFrontAndBulkDedupedNotARawXLen(t *testing.T) {
 	}
 	if !sawFront || !sawBulk {
 		t.Fatalf("render missed a dealer stream: front=%v bulk=%v args=%v", sawFront, sawBulk, hook.args)
+	}
+}
+
+// TestQueueColumnCountsOnlyOpenTasksOwnedByThisFriend is the live-count
+// fixture. Stream history is not the queue. q:ada:front holds an open task F
+// and a closed task C. q:ada holds C again, a working task W, an open task
+// owned by emma, a task with no hash, and an open task B owned by ada. The
+// column is F and B. Closing B, then giving F to emma, drops the count. The
+// stream lengths do not change: the dealer does not delete on close, and this
+// column does not either. GitHub is not called.
+func TestQueueColumnCountsOnlyOpenTasksOwnedByThisFriend(t *testing.T) {
+	store, _ := fixture(t)
+	ctx := context.Background()
+	const friend = "ada"
+	front, bulk := queueKeys(friend)
+
+	xadd(t, store, front, "F")
+	xadd(t, store, front, "C")
+	xadd(t, store, bulk, "C")
+	xadd(t, store, bulk, "W")
+	xadd(t, store, bulk, "R")
+	xadd(t, store, bulk, "M")
+	xadd(t, store, bulk, "B")
+	hsetTask(t, store, "F", friend, stateOpen)
+	hsetTask(t, store, "C", friend, "closed")
+	hsetTask(t, store, "W", friend, "working")
+	hsetTask(t, store, "R", "emma", stateOpen)
+	hsetTask(t, store, "B", friend, stateOpen)
+	// M is a stream id with no task:<id> hash.
+
+	frontN, err := store.rdb.XLen(ctx, front).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bulkN, err := store.rdb.XLen(ctx, bulk).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frontN != 2 || bulkN != 5 {
+		t.Fatalf("fixture XLEN front=%d bulk=%d, want 2 and 5 so closed, working, reassigned, and missing-hash history is longer than the live queue", frontN, bulkN)
+	}
+
+	gh := &spyGitHub{}
+	got, err := (Queue{}).Render(ctx, store, gh, friend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (Cell{Column: "queue", Subject: friend, N: 2}) {
+		t.Fatalf("ada: got %+v, want queue=2 (open F and B; not closed C, working W, reassigned R, or missing-hash M)", got)
+	}
+
+	hsetTask(t, store, "B", friend, "closed")
+	got, err = (Queue{}).Render(ctx, store, gh, friend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.N != 1 {
+		t.Fatalf("after B closed: got %+v, want queue=1 (only F); the stream entry for B is still history", got)
+	}
+
+	hsetTask(t, store, "F", "emma", stateOpen)
+	got, err = (Queue{}).Render(ctx, store, gh, friend)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.N != 0 {
+		t.Fatalf("after F was reassigned to emma: got %+v, want queue=0", got)
+	}
+	if gh.calls != 0 {
+		t.Fatalf("GitHub was called %d times while the queue column rendered", gh.calls)
+	}
+	frontAfter, err := store.rdb.XLen(ctx, front).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bulkAfter, err := store.rdb.XLen(ctx, bulk).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if frontAfter != frontN || bulkAfter != bulkN {
+		t.Fatalf("render rewrote the streams: front %d->%d bulk %d->%d; history stays and the hash decides", frontN, frontAfter, bulkN, bulkAfter)
 	}
 }
