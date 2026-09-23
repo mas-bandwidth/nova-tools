@@ -328,3 +328,27 @@ func TestLaunchPassesTheDeadlineFlag(t *testing.T) {
 		t.Fatalf("the launcher was given the hardcoded deadline: %q", raw)
 	}
 }
+
+// TestLaunchSlotsRefusedMakesLauncherExitNonZero (issue #2882): when the bench is full
+// and the launcher prints SLOTS REFUSED, even if the launcher script exits 0, flashLauncher
+// must return an error so the fill loop fails the launch and does not count it as launched.
+func TestLaunchSlotsRefusedMakesLauncherExitNonZero(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{
+		Stdout: "hulk card-001 attempt=1 wall=0s SLOTS REFUSED owner=swarm-hulk want=1 held=64 share=64",
+		Exit:   0,
+	}})
+	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
+	card := filepath.Join(t.TempDir(), "card-001.md")
+	writeMainFile(t, filepath.Dir(card), filepath.Base(card), "a card\n")
+
+	l := flashLauncher{bin: bin, grace: 10 * time.Second}
+	err := l.Launch("bench-a", card)
+	if err == nil {
+		t.Fatal("flashLauncher.Launch succeeded despite SLOTS REFUSED output and exit 0")
+	}
+	if !strings.Contains(err.Error(), "slots refused") {
+		t.Fatalf("expected error mentioning slots refused, got %v", err)
+	}
+}
+

@@ -1713,6 +1713,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// non-number and a zero in the same sentence: a card launched by `native` and a job
 	// launched by `run` can spend the same key, so they answer to the same rule.
 	tokensWord := f.fs.String("tokens", "", "")
+	benchName := f.fs.String("bench", "", "")
+	stageTimeout := f.fs.String("stage-timeout", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1829,6 +1831,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			effectiveModel = w.Provider + "/" + w.Model
 		}
 	}
+	var stageDur time.Duration
+	if *stageTimeout != "" {
+		v, serr := time.ParseDuration(*stageTimeout)
+		if serr != nil || v <= 0 {
+			fmt.Fprintf(stderr, "nova-swarm native: --stage-timeout wants a positive duration: %s\n", oneline.Field(*stageTimeout))
+			return 2
+		}
+		stageDur = v
+	}
 	cfg := nativeRunConfig{
 		binary:         *harness,
 		model:          effectiveModel,
@@ -1848,6 +1859,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 		tokens:         budgetTokens,
 		unmetered:      budgetUnmetered,
+		benchName:      *benchName,
+		stageTimeout:   stageDur,
 	}
 	if workerGiven {
 		cfg.worker = &w

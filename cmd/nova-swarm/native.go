@@ -106,6 +106,10 @@ type nativeRunConfig struct {
 	// `unmetered`.
 	tokens    int
 	unmetered bool
+	// benchName is the name of this bench (e.g. hulk, vision); "" means resolve via os.Hostname.
+	benchName string
+	// stageTimeout is the hard timeout for staging (default 120s).
+	stageTimeout time.Duration
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -176,6 +180,7 @@ var (
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
@@ -531,6 +536,59 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// caller can prove later that neither the card nor the binary changed under it.
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
+	// (4e) STAGING FROM BENCH MIRROR (issue #2882).
+	// Staging clones from the bench's local mirror (--reference or clone --shared)
+	// with a hard timeout (120 s) that ends the card RESULT: BLOCKED stage-timeout <bench> <secs>
+	// and writes the end record like any other card.
+	stageOpts := swarm.StageOptions{
+		Card:      cfg.card,
+		TargetDir: filepath.Join(jobDir, "repo"),
+		JobDir:    jobDir,
+		BenchHome: cfg.benchHome,
+		BenchName: cfg.benchName,
+		Timeout:   cfg.stageTimeout,
+	}
+	stageRes, stageErr := swarm.StageCard(stageOpts)
+	if stageErr != nil {
+		if stageRes.TimedOut {
+			secs := int(cfg.stageTimeout.Seconds())
+			if secs <= 0 {
+				if cfg.stageTimeout > 0 {
+					secs = 1
+				} else {
+					secs = int(swarm.DefaultStageTimeout.Seconds())
+				}
+			}
+			bench := cfg.benchName
+			if bench == "" {
+				if h, err := os.Hostname(); err == nil {
+					if idx := strings.Index(h, "."); idx != -1 {
+						h = h[:idx]
+					}
+					bench = h
+				}
+			}
+			if bench == "" {
+				bench = "bench"
+			}
+			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
+			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), -1, 1, "stage-timeout", errOut)
+			res := nativeRunResult{
+				rc:           -1,
+				cardSHA256:   hex.EncodeToString(cardHash[:]),
+				binarySHA256: binaryHash,
+				job:          jobDir,
+				wall:         "none",
+				configSHA:    configSHA,
+				tmp:          tmpDir,
+				end:          "stage-timeout",
+				wallSeconds:  time.Since(startTime).Seconds(),
+			}
+			return res, 1
+		}
+		refuseNative(errOut, stageErr.Error())
+		return nativeRunResult{}, 2
+	}
 
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
