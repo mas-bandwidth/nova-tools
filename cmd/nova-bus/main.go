@@ -2907,7 +2907,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			missing = append(missing, "--branch")
 		}
 		if len(missing) > 0 {
-			fmt.Fprintf(stderr, "nova-bus wait: --on-note needs %s; give it, refusing to guess\n", missing[0])
+			fmt.Fprintf(stderr, "nova-bus wait: --on-note needs %s; give it, refusing to guess\n", oneline.Field(missing[0]))
 			return 2
 		}
 		// --on-note WITH --open IS REFUSED (#2178). --on-note prints no open frame.
