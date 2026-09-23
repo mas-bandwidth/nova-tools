@@ -96,12 +96,20 @@ type Asker interface {
 }
 
 // ClientAsker is the real one: internal/decide's client, which reads its key
-// from the environment and never prints it.
-type ClientAsker struct{ Client *decide.Client }
+// from the environment and never prints it. Last, when set, receives the usage
+// of the most recent call -- a refused call's too, because it cost what it
+// cost -- so the line can say what the score was bought for.
+type ClientAsker struct {
+	Client *decide.Client
+	Last   *decide.Usage
+}
 
 // Ask asks the provider once.
 func (a ClientAsker) Ask(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, error) {
-	answers, _, err := a.Client.Decide(ctx, state, qs)
+	answers, usage, err := a.Client.Decide(ctx, state, qs)
+	if a.Last != nil {
+		*a.Last = usage
+	}
 	return answers, err
 }
 

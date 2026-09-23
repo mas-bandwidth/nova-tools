@@ -42,6 +42,9 @@ func TestBenchSlotLeasesSectionNamesItsRules(t *testing.T) {
 		"an expired lease with a dead pid frees its slot",
 		"an expired lease with a live pid is DRIFT and stays",
 		"a launch without a lease is refused by the launcher",
+		"a schema card is refused at take when the remaining share fits only a read",
+		"a live-until lease whose pid is gone is stranded with its label",
+		"Card kinds carry a weight",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("SPEC-SWARM.md Bench slot leases names %q; the section holds:\n%s", want, section)
