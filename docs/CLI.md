@@ -4955,11 +4955,15 @@ shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 
 ## nova-sprint
 
-Renders a sprint table and keeps the last published one across a unit restart.
-It does not read the fleet Redis and it does not loop once a second; those
-cuts are the rest of the table. `table --fixture` prints a finished render
-byte for byte. `table --refresh pending` leaves `--out` untouched and prints
-it again, which is what a start does while the refresh is still running.
+Renders the sprint table from Redis and writes it nowhere (#3326).
+`table --redis <addr>` makes one `FCALL_RO ns_snapshot` per render over the
+`s:<S>:*`, `bench:*` and `friend:*` keys and prints the table to standard
+output; `--once` renders one, `--loop` one per second, and `--sprint <name>`
+shows a control sprint. There is no published file, no `--out`, no
+`--fixture` and no `--refresh pending`: a reader runs the verb and reads
+stdout, and a restarted unit re-renders from Redis on its next tick, so
+there is no last table to keep. `table --check --redis <addr>` renders the
+fixture keyspace on a throwaway server and compares it byte for byte.
 `refresh -- <command>` runs that command in its own session (POSIX setsid) and
 returns without waiting, so `launchctl kickstart -k` of the loop unit does not
 kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
@@ -4968,56 +4972,26 @@ itself signals only the unit's pid.
 
 ### First run
 
-Copy `cmd/nova-sprint/testdata/table.txt` to `table.txt` in an empty directory
-and run the three lines. The first is the byte-identical fixture. The third
-is a second start: the published file stays, and the screen is the previous
-table rather than an empty one.
+Run the three lines in an empty directory. They are the three file-shaped
+first tries, and each is refused with the whole verb, because the table is
+read from Redis and written nowhere; the directory stays empty. With a server,
+`nova-sprint table --redis 127.0.0.1:6379 --once` prints the table.
 
 ```text
-$ nova-sprint table --once --fixture table.txt
-SPRINT TABLE
+$ nova-sprint table --once --out sprint-table.txt
+! nova-sprint table: flag provided but not defined: -out; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
 
-host       | queue | working |  done |    ok |  fail |  ok% |   load
------------+-------+---------+-------+-------+-------+------+-------
-alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
------------+-------+---------+-------+-------+-------+------+-------
-total      |     1 |       2 |     3 |     2 |     1 |  66% |
+$ nova-sprint table --once
+! nova-sprint table: --redis <addr> is required; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
 
-friend     | queue | working |  done |    ok |  fail | status
------------+-------+---------+-------+-------+-------+--------
-ada        |     4 |       1 |     2 |     2 |     0 |     up
------------+-------+---------+-------+-------+-------+--------
-total      |     4 |       1 |     2 |     2 |     0 |
-
-1/2 50% -> ~10m
-
-$ nova-sprint table --once --fixture table.txt --out sprint-table.txt
-TABLE PUBLISHED out=sprint-table.txt bytes=675
-
-$ nova-sprint table --once --refresh pending --out sprint-table.txt
-TABLE KEPT out=sprint-table.txt bytes=675 reason=refresh-not-ready
-SPRINT TABLE
-
-host       | queue | working |  done |    ok |  fail |  ok% |   load
------------+-------+---------+-------+-------+-------+------+-------
-alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
------------+-------+---------+-------+-------+-------+------+-------
-total      |     1 |       2 |     3 |     2 |     1 |  66% |
-
-friend     | queue | working |  done |    ok |  fail | status
------------+-------+---------+-------+-------+-------+--------
-ada        |     4 |       1 |     2 |     2 |     0 |     up
------------+-------+---------+-------+-------+-------+--------
-total      |     4 |       1 |     2 |     2 |     0 |
-
-1/2 50% -> ~10m
+$ nova-sprint table --check
+! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
 ```
 
 What a first run gets wrong, and what each one wants:
 
-- **`nova-sprint table` with no flags.** It wants `--once`, and either `--fixture <file>` or `--refresh pending` with `--out <file>`. One run names every missing piece. There is no default path and no default loop.
-- **An empty `--fixture`.** An empty file would blank the screen. The command refuses and does not create `--out`.
-- **`--refresh pending` without `--out`.** Pending means "keep the published table". It wants the path of that table.
-- **`--refresh ready`, or a one-second loop.** This cut does not read the store. `--refresh` wants `pending`.
+- **`--out`, `--fixture` or `--refresh pending`.** These were the file cut, deleted by #3326; each is now an unknown flag. Read the table from stdout.
+- **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
+- **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
 
-There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
+There is **no `quickstart` verb**. A one-word first run would have to invent a server address. The three lines above are the first run, in an empty directory that stays empty.
