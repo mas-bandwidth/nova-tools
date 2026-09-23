@@ -1720,9 +1720,13 @@ Cellar prefix is read off the launcher rather than guessed by
 
 **The rule.** `tools/bench-standard.sh` check **(3c)** resolves each of `go` and
 `sbcl` off PATH with `readlink -f` and drifts unless the real path lies under a
-read root the sandbox wall grants execute: the system read roots of
-`internal/sandbox/wrap_linux.go`, and `$HOME/sdk` from
-`internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
+read root the sandbox wall grants: the WHOLE linux system table
+(`linuxReadRoots` in `internal/sandbox/wrap_linux.go`, copied between the
+`NOVA_WALL_READ_ROOTS` markers — `/usr /bin /sbin /lib /lib64 /etc
+/run/systemd/resolve /opt /dev /proc`, every one landlock's read subset, which
+carries execute), the directory `/etc/resolv.conf` resolves to on this machine
+(the wall's `linuxRoots`, #1737; `NOVA_RESOLV_CONF` is the script's test seam
+for that file), and `$HOME/sdk` from `internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
 resolves to, the granted home, and the remedy — `$HOME/sdk/<tool>-<ver>/` — so
 the finding carries its own fix. `(3c)` is about EXECUTABILITY INSIDE THE WALL
 and is a separate line from `(3)`'s `sbcl not on PATH`, which is about presence:
@@ -1748,11 +1752,19 @@ layout and a HOME of its own. The negative half puts the tool at
 one DRIFT line carrying the remedy. The positive half puts it at
 `$HOME/sdk/<tool>-<ver>/bin` and demands NO line, which is the half that catches
 a check written as "always drift".
+`TestBenchStandardAndTheWallNameTheSameReadRoots` holds the script's marker
+block equal, in order, to `linuxReadRoots` read from the wall's source, and the
+root loop to reading it — the first cut of `(3c)` carried a hand-picked subset
+without `/etc`, `/run/systemd/resolve`, `/dev` or `/proc`, which rejects a
+conforming bench (Stella's hold on #1870).
+`TestBenchStandardGrantsTheResolverDirectoryTheWallGrants` is the dynamic root:
+a WSL2-shaped symlinked resolver config makes a tool under its directory
+accepted, and the same layout with no resolver pointing there drifts.
 **Its allowlist.** None. Both tools are held to the same rule by one loop; a
 tool that needs an exception is a tool the wall cannot run.
 **Its remedy line.** `<tool> on PATH is <p> -> <resolved>, under NO read root
-the sandbox wall grants (the system roots, and $HOME/sdk from
-internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install
+the sandbox wall grants (the system roots of internal/sandbox/wrap_linux.go,
+the resolver directory, and $HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install
 it under $HOME/sdk/<tool>-<ver>/ and point the PATH entry there`.
 **Its narrowings.** It reads PATH, so a card that calls a toolchain by absolute
 path never consulted it; it checks READABILITY OF THE PATH, not that the wall
