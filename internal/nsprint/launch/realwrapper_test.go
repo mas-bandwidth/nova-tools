@@ -149,8 +149,61 @@ func TestLaunchRealWrapper(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "RESULT.md")); err != nil {
 		t.Fatalf("the harness's out dir did not reach the results dir: %v", err)
 	}
-	if entries, _ := os.ReadDir(jobs); len(entries) != 0 {
-		t.Fatalf("job directory left behind under %s: %v", jobs, entries)
+	// The wrapper removes the job dir after it ends the card, so the hash
+	// reading ended does not mean the dir is gone yet (#3218's flake): poll.
+	if left := waitJobsEmpty(jobs, jobsGoneWait); len(left) != 0 {
+		t.Fatalf("job directory left behind under %s after %s: %v", jobs, jobsGoneWait, left)
+	}
+}
+
+// jobsGoneWait bounds the wait for the wrapper to remove the job directory
+// after card end.
+const jobsGoneWait = 5 * time.Second
+
+// waitJobsEmpty polls dir until it has no entries or bound passes, and
+// returns what is left (nil once empty).
+func waitJobsEmpty(dir string, bound time.Duration) []string {
+	until := time.Now().Add(bound)
+	for {
+		entries, _ := os.ReadDir(dir)
+		if len(entries) == 0 {
+			return nil
+		}
+		if time.Now().After(until) {
+			names := make([]string, len(entries))
+			for i, e := range entries {
+				names[i] = e.Name()
+			}
+			return names
+		}
+		// Waits only for the next probe; the bound above is the assertion.
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// TestWaitJobsEmptyStillFailsWhenNothingDeletes is the control for the poll
+// above: a job dir the wrapper never removes is still reported left behind,
+// and one removed mid-wait is not.
+func TestWaitJobsEmptyStillFailsWhenNothingDeletes(t *testing.T) {
+	jobs := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(jobs, "adopt-real", "card-real-wrapper", "1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if left := waitJobsEmpty(jobs, 100*time.Millisecond); len(left) != 1 || left[0] != "adopt-real" {
+		t.Fatalf("never-deleted job dir: left %v, want [adopt-real]", left)
+	}
+
+	removed := make(chan error, 1)
+	go func() {
+		// The deleter runs a few probes after the poll starts.
+		time.Sleep(60 * time.Millisecond)
+		removed <- os.RemoveAll(filepath.Join(jobs, "adopt-real"))
+	}()
+	if left := waitJobsEmpty(jobs, jobsGoneWait); len(left) != 0 {
+		t.Fatalf("job dir removed mid-wait still reported: %v", left)
+	}
+	if err := <-removed; err != nil {
+		t.Fatal(err)
 	}
 }
 
