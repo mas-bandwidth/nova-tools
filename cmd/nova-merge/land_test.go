@@ -250,3 +250,75 @@ func TestLandRefusesAnInvocationThatGuesses(t *testing.T) {
 		}
 	}
 }
+
+// ghChecksHost is the fake lane host with the production GH.Checks behind it, so
+// land is driven through the real record-then-forge CI read (nova-tools #2924
+// follow-up: a missing ci record refused six green batches as ci: MISSING).
+type ghChecksHost struct {
+	*merge.FakeHost
+	gh *merge.GH
+}
+
+func (h ghChecksHost) Checks(oid string) (merge.Checks, error) { return h.gh.Checks(oid) }
+
+type landCIRunner struct {
+	merge.Exec
+	out   string
+	calls int
+}
+
+func (r *landCIRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+	r.calls++
+	return r.out, nil
+}
+
+type landCISource map[string]string
+
+func (s landCISource) Read(repo, sha string) (string, bool, error) {
+	v, ok := s[merge.CIKey(repo, sha)]
+	return v, ok, nil
+}
+
+func TestLandReadsCIRecordThenFallsBackToGitHub(t *testing.T) {
+	head := strings.Repeat("e", 40)
+	receipt := "BATCH OK name=integration-6 base=" + strings.Repeat("d", 40) + " head=" + head + " members=1341 dropped=none"
+	green := "lint\tsuccess\t" + head + "\ntest-packages\tsuccess\t" + head + "\n"
+	red := "lint\tsuccess\t" + head + "\ntest-packages\tfailure\t" + head + "\n"
+	for _, tc := range []struct {
+		name      string
+		record    landCISource
+		forge     string
+		exit      int
+		enqueued  int
+		ghCalls   int
+		stderrHas string
+	}{
+		{"record OK lands", landCISource{merge.CIKey("o/n", head): "OK"}, red, 0, 1, 0, ""},
+		{"absent record and green forge lands from-github", landCISource{}, green, 0, 1, 1, "ci: from-github"},
+		{"absent record and red forge is refused", landCISource{}, red, 1, 0, 1, "LAND REFUSED"},
+		{"absent record and no check-runs is MISSING", landCISource{}, "", 2, 0, 1, "ci: MISSING"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := greenBatchPR(t, 1341, head)
+			runner := &landCIRunner{out: tc.forge}
+			host := ghChecksHost{FakeHost: fake, gh: merge.NewGH("o/n", time.Second, runner, merge.WithCISource(tc.record))}
+			q := &fakeLandEnqueue{}
+			deps := Deps{
+				NewHost:        func(repo string, timeout time.Duration) merge.Host { return host },
+				NewEnqueueHost: func(repo string, timeout time.Duration) merge.EnqueueHost { return q },
+			}
+			var out, errb bytes.Buffer
+			exit := run([]string{"land", "--repo", "o/n", "--pr", "1341", "--receipt", receipt,
+				"--no-require-holds", "--reason", "test", "--lane", t.TempDir()}, &out, &errb, deps)
+			if tc.exit >= 0 && exit != tc.exit {
+				t.Fatalf("exit %d, want %d\n%s\n%s", exit, tc.exit, out.String(), errb.String())
+			}
+			if len(q.enqueued) != tc.enqueued || runner.calls != tc.ghCalls {
+				t.Fatalf("enqueued %d (want %d), GitHub reads %d (want %d)\n%s", len(q.enqueued), tc.enqueued, runner.calls, tc.ghCalls, errb.String())
+			}
+			if tc.stderrHas != "" {
+				contains(t, errb.String(), tc.stderrHas)
+			}
+		})
+	}
+}
