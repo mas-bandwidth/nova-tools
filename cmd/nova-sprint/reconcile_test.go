@@ -217,3 +217,56 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 		t.Fatalf("a pass failed: %s", errOut.String())
 	}
 }
+
+// failingDuty stands in for a duty whose pass fails (the deal pass of #3321).
+type failingDuty struct{}
+
+func (failingDuty) Run(context.Context, *reconcile.Lease) (reconcile.Counts, error) {
+	return reconcile.Counts{}, fmt.Errorf("deal: reserve control-00003321: ns_card_deal: boom")
+}
+
+// TestReconcileOnceSurfacesDutyErrors (nova-tools #3321): a duty error used
+// to reach only proc:reconciler err while `reconcile --once` printed RELEASED
+// and exited 0. Now --once still releases the lease, then prints the duty's
+// name and error and exits 1; a clean --once pass still exits 0.
+func TestReconcileOnceSurfacesDutyErrors(t *testing.T) {
+	addr := startThrowawayRedis(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = c.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatalf("load nova_sprint library: %v", err)
+	}
+	seams := reconcileSeams
+	reconcileSeams = func() (deal.Dialer, deal.PRs) { return &verbSSH{}, verbForge{} }
+	registered := reconcileDuties
+	t.Cleanup(func() { reconcileSeams, reconcileDuties = seams, registered })
+
+	extra := &countingDuty{}
+	registerReconcileDuty("ctl-extra", func(*store.Store) (reconcileDuty, error) { return extra, nil })
+	var out, errOut bytes.Buffer
+	if got := runReconcile(ctx, []string{"--redis", addr, "--host", "ctl-host", "--once"}, &out, &errOut); got != 0 {
+		t.Fatalf("clean --once exit %d, want 0; stdout %q stderr %q", got, out.String(), errOut.String())
+	}
+	if extra.n.Load() != 1 || errOut.Len() != 0 {
+		t.Fatalf("clean --once: duty ran %d passes, stderr %q; want 1 and empty", extra.n.Load(), errOut.String())
+	}
+
+	registerReconcileDuty("ctl-broken", func(*store.Store) (reconcileDuty, error) { return failingDuty{}, nil })
+	out.Reset()
+	errOut.Reset()
+	got := runReconcile(ctx, []string{"--redis", addr, "--host", "ctl-host", "--once"}, &out, &errOut)
+	if got != 1 {
+		t.Fatalf("--once with a failing duty exit %d, want 1; stdout %q stderr %q", got, out.String(), errOut.String())
+	}
+	want := "duty ctl-broken: deal: reserve control-00003321: ns_card_deal: boom"
+	if !strings.Contains(errOut.String(), want) {
+		t.Fatalf("stderr %q, want the duty name and error %q", errOut.String(), want)
+	}
+	if !strings.Contains(out.String(), "RELEASED reconcile") {
+		t.Fatalf("stdout %q, want the lease released before the failure exit", out.String())
+	}
+	if n, err := c.Exists(ctx, "lease:reconciler").Result(); err != nil || n != 0 {
+		t.Fatalf("lease:reconciler exists=%d err=%v after --once, want released", n, err)
+	}
+}
