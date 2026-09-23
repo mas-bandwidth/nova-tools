@@ -32,6 +32,7 @@ const (
 	Bsky    Channel = "bsky"
 	Email   Channel = "email"
 	Discord Channel = "discord"
+	Fake    Channel = "fake"
 )
 
 // Mailer delivers one email payload. It is an interface so tests can record the
@@ -112,7 +113,7 @@ func ExitCode(err error) int {
 func ParseChannel(s string) (Channel, error) {
 	c := Channel(s)
 	switch c {
-	case Ghost, Bsky, Email, Discord:
+	case Ghost, Bsky, Email, Discord, Fake:
 		return c, nil
 	}
 	return "", Refuse("bad-channel", fmt.Sprintf("--channel %q is not ghost, bsky, email or discord; give one of the four", oneline.Field(s)), 2)
