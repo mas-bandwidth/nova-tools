@@ -257,6 +257,84 @@ func TestReleaseJobDirRefusesASharedCacheAndAMirror(t *testing.T) {
 	}
 }
 
+// results/<label> is a symlink. The lexical path is under the results root and
+// outside the job, which is the check ReleaseJobDir used to trust. One alias
+// points at <job>/saved, so the copy lands inside the job and removing the job
+// deletes the only durable copy. The other points outside the results root.
+// Both must keep the job and the evidence, and neither may be written through.
+func TestReleaseJobDirKeepsJobEvidenceWhenResultsDirIsAnAlias(t *testing.T) {
+	t.Run("into the job", func(t *testing.T) {
+		root, slot, job, tmp, results := releaseLayout(t)
+		saved := filepath.Join(job, "saved")
+		if err := os.MkdirAll(saved, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "RESULT: BLOCKED card\nwritten-by: nova-swarm native\n"
+		if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		const only = "only-copy\n"
+		if err := os.WriteFile(filepath.Join(saved, "only-copy"), []byte(only), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(results), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(saved, results); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+
+		_, err := ReleaseJobDir(releaseInput(root, slot, job, tmp, results, t.TempDir()))
+		if err == nil {
+			t.Fatal("a results directory that aliases the job was released")
+		}
+		got, readErr := os.ReadFile(filepath.Join(job, "RESULT.md"))
+		if readErr != nil || string(got) != body {
+			t.Fatalf("job RESULT.md = %q, %v (release: %v)", got, readErr, err)
+		}
+		got, readErr = os.ReadFile(filepath.Join(saved, "only-copy"))
+		if readErr != nil || string(got) != only {
+			t.Fatalf("aliased evidence = %q, %v (release: %v)", got, readErr, err)
+		}
+		if _, statErr := os.Stat(filepath.Join(saved, "release-manifest.txt")); !os.IsNotExist(statErr) {
+			t.Fatalf("release wrote through the results alias: %v", statErr)
+		}
+	})
+
+	t.Run("outside the results root", func(t *testing.T) {
+		root, slot, job, tmp, results := releaseLayout(t)
+		outside := filepath.Join(root, "elsewhere")
+		if err := os.MkdirAll(outside, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		const keep = "keep-the-job\n"
+		if err := os.WriteFile(filepath.Join(job, "keep"), []byte(keep), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Dir(results), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, results); err != nil {
+			t.Skipf("symlink: %v", err)
+		}
+
+		_, err := ReleaseJobDir(releaseInput(root, slot, job, tmp, results, t.TempDir()))
+		if err == nil {
+			t.Fatal("a results directory that resolves outside the results root was released")
+		}
+		got, readErr := os.ReadFile(filepath.Join(job, "keep"))
+		if readErr != nil || string(got) != keep {
+			t.Fatalf("job evidence = %q, %v (release: %v)", got, readErr, err)
+		}
+		if _, statErr := os.Stat(filepath.Join(outside, "release-manifest.txt")); !os.IsNotExist(statErr) {
+			t.Fatalf("release wrote outside the results root: %v", statErr)
+		}
+		if _, statErr := os.Stat(filepath.Join(outside, "keep")); !os.IsNotExist(statErr) {
+			t.Fatalf("release copied the job through the alias: %v", statErr)
+		}
+	})
+}
+
 func TestReleaseJobDirDoesNotFollowASymlink(t *testing.T) {
 	root, slot, job, tmp, results := releaseLayout(t)
 	outside := filepath.Join(t.TempDir(), "outside")

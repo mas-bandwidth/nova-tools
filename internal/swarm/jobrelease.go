@@ -27,7 +27,10 @@ import (
 //
 //  1. RESULT.md, the job's other regular files (usage.tsv, the harness log, notes),
 //     and the slot's native.log are copied into ResultsDir. A copy whose bytes do not
-//     hash back to the source is not a copy.
+//     hash back to the source is not a copy. The results path is resolved before that
+//     copy: a component that is a symlink into the job or the temp directory, or that
+//     resolves outside <root>/results, is not a destination. The lexical path can look
+//     contained while the copy sits in the directory that is about to be removed.
 //  2. A commit the clone holds that is not already in its remote-tracking base, and a
 //     BRANCH line in RESULT.md whose ref is not already in that base, are written to
 //     branch.bundle. The bundle is verified, and its listed tips have to be those
@@ -154,9 +157,17 @@ func ReleaseJobDir(in ReleaseJobInput) (ReleaseJobResult, error) {
 	if tmp != "" && !releaseStrictlyWithin(slot, tmp) {
 		return ReleaseJobResult{}, fmt.Errorf("the temp directory %s is not under the slot %s", tmp, slot)
 	}
+	if err := refuseResultsAlias(results, root, job, tmp); err != nil {
+		return ReleaseJobResult{}, err
+	}
 
 	if err := os.MkdirAll(results, 0o755); err != nil {
 		return ReleaseJobResult{}, fmt.Errorf("the results directory could not be made: %w", err)
+	}
+	// MkdirAll follows a directory symlink. Re-resolve after it exists so a
+	// destination created through an alias is still refused before the copy.
+	if err := refuseResultsAlias(results, root, job, tmp); err != nil {
+		return ReleaseJobResult{}, err
 	}
 	sums, err := copyJobEvidence(job, results, in.NativeLog)
 	if err != nil {
@@ -257,6 +268,181 @@ func releaseStrictlyWithin(root, path string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// refuseResultsAlias refuses a results directory that is not really inside the
+// results root and outside the job. Containment of the cleaned path is not
+// enough: results/<label> can be a symlink into <job>/saved, the copy and the
+// manifest land there, and removeReleased then deletes the only durable copy.
+// Every component at and below the results root is resolved before writing.
+func refuseResultsAlias(results, root, job, tmp string) error {
+	resolvedJob, err := AbsResolved(job)
+	if err != nil {
+		return fmt.Errorf("the job directory could not be resolved: %w", err)
+	}
+	resolvedTmp := ""
+	if tmp != "" {
+		resolvedTmp, err = AbsResolved(tmp)
+		if err != nil {
+			return fmt.Errorf("the temp directory could not be resolved: %w", err)
+		}
+	}
+	start, rel, resultsRoot, err := resultsAliasWalk(results, root)
+	if err != nil {
+		return err
+	}
+	dest, err := resolveResultsDestination(start, rel, resultsRoot, resolvedJob, resolvedTmp)
+	if err != nil {
+		return err
+	}
+	return requireResultsContainment(results, dest, resultsRoot, resolvedJob, resolvedTmp)
+}
+
+// resultsAliasWalk is the walk from a resolved ancestor over the lexical
+// components of the destination. The results root is <root>/results when a
+// swarm root was named, and the parent of ResultsDir otherwise. The root of
+// that walk is resolved; the results directory itself is not, so a symlink
+// there cannot move the boundary onto its target.
+func resultsAliasWalk(results, root string) (start, rel, resultsRoot string, err error) {
+	if strings.TrimSpace(root) != "" {
+		var resolvedRoot string
+		resolvedRoot, err = AbsResolved(root)
+		if err != nil {
+			return "", "", "", fmt.Errorf("the swarm root could not be resolved: %w", err)
+		}
+		rel, err = filepath.Rel(filepath.Clean(root), filepath.Clean(results))
+		if err != nil {
+			return "", "", "", fmt.Errorf("the results directory %s is not under the swarm root: %w", results, err)
+		}
+		return resolvedRoot, rel, filepath.Join(resolvedRoot, "results"), nil
+	}
+	parent := filepath.Dir(filepath.Clean(results))
+	grand := filepath.Dir(parent)
+	var resolvedGrand string
+	resolvedGrand, err = AbsResolved(grand)
+	if err != nil {
+		return "", "", "", fmt.Errorf("the results directory could not be resolved: %w", err)
+	}
+	rel = filepath.Join(filepath.Base(parent), filepath.Base(results))
+	return resolvedGrand, rel, filepath.Join(resolvedGrand, filepath.Base(parent)), nil
+}
+
+func resolveResultsDestination(start, rel, resultsRoot, job, tmp string) (string, error) {
+	if rel == "" || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("the results directory is not under the results root")
+	}
+	cur := start
+	elems := strings.Split(rel, string(filepath.Separator))
+	for i, elem := range elems {
+		if elem == "" || elem == "." {
+			continue
+		}
+		if elem == ".." {
+			return "", fmt.Errorf("the results directory resolves through %q", elem)
+		}
+		next := filepath.Join(cur, elem)
+		fi, err := os.Lstat(next)
+		if os.IsNotExist(err) {
+			for _, e := range elems[i:] {
+				if e == "" || e == "." || e == ".." {
+					return "", fmt.Errorf("the results directory resolves through %q", e)
+				}
+			}
+			parts := append([]string{cur}, elems[i:]...)
+			return filepath.Clean(filepath.Join(parts...)), nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("the results directory could not be resolved: %w", err)
+		}
+		if fi.Mode()&os.ModeSymlink != 0 {
+			target, err := filepath.EvalSymlinks(next)
+			if err != nil {
+				return "", fmt.Errorf("the results directory %s is a symlink that could not be resolved: %w", next, err)
+			}
+			target = filepath.Clean(target)
+			if err := judgeResultsSymlink(next, target, resultsRoot, job, tmp); err != nil {
+				return "", err
+			}
+			cur = target
+			continue
+		}
+		if !fi.IsDir() {
+			return "", fmt.Errorf("the results directory %s is not a directory", next)
+		}
+		cur = next
+	}
+	return filepath.Clean(cur), nil
+}
+
+func judgeResultsSymlink(link, target, resultsRoot, job, tmp string) error {
+	in, err := releaseLocated(job, target, false)
+	if err != nil {
+		return fmt.Errorf("the results directory %s is a symlink that could not be placed against the job: %w", link, err)
+	}
+	if in {
+		return fmt.Errorf("the results directory %s is a symlink into the job", link)
+	}
+	if tmp != "" {
+		in, err = releaseLocated(tmp, target, false)
+		if err != nil {
+			return fmt.Errorf("the results directory %s is a symlink that could not be placed against the temp directory: %w", link, err)
+		}
+		if in {
+			return fmt.Errorf("the results directory %s is a symlink into the temp directory", link)
+		}
+	}
+	in, err = releaseLocated(resultsRoot, target, true)
+	if err != nil {
+		return fmt.Errorf("the results directory %s is a symlink that could not be placed under the results root: %w", link, err)
+	}
+	if !in {
+		return fmt.Errorf("the results directory %s is a symlink outside the results root", link)
+	}
+	return nil
+}
+
+func requireResultsContainment(results, dest, resultsRoot, job, tmp string) error {
+	in, err := releaseLocated(resultsRoot, dest, true)
+	if err != nil {
+		return fmt.Errorf("the results directory %s could not be placed under the results root: %w", results, err)
+	}
+	if !in {
+		return fmt.Errorf("the results directory %s resolves outside the results root %s", results, resultsRoot)
+	}
+	in, err = releaseLocated(job, dest, false)
+	if err != nil {
+		return fmt.Errorf("the results directory %s could not be placed against the job: %w", results, err)
+	}
+	if in {
+		return fmt.Errorf("the results directory %s resolves inside the job directory", results)
+	}
+	if tmp == "" {
+		return nil
+	}
+	in, err = releaseLocated(tmp, dest, false)
+	if err != nil {
+		return fmt.Errorf("the results directory %s could not be placed against the temp directory: %w", results, err)
+	}
+	if in {
+		return fmt.Errorf("the results directory %s resolves inside the temp directory", results)
+	}
+	return nil
+}
+
+// releaseLocated reports whether path is inside root. When strict is set, the
+// root itself does not count. An uncomputable relative path is an error, not a no.
+func releaseLocated(root, path string, strict bool) (bool, error) {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	if err != nil {
+		return false, err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false, nil
+	}
+	if rel == "." {
+		return !strict, nil
+	}
+	return true, nil
 }
 
 // copyJobEvidence copies the durable files out of the job. Top-level regular files
