@@ -40,11 +40,9 @@ const (
 const PolicyField = "backpressure_missing"
 
 // Card tiers the deal pass asks about. Backpressure never holds the priority
-// tier (ci cards and front cards are priority).
-const (
-	TierPriority = "priority"
-	TierBulk     = "bulk"
-)
+// tier (ci cards and front cards are priority). TierPriority itself is
+// declared in pass.go (#3061).
+const TierBulk = "bulk"
 
 // Where a verdict came from.
 const (
