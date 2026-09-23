@@ -196,8 +196,8 @@ var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "
 
 // ungatedKinds is the set of kinds that may carry TEST: none. It matches the third
 // column of internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 2: read, probe, text,
-// tone) until internal/pulse/kinds.go lands with the gate table.
-var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true}
+// tone, report) until internal/pulse/kinds.go lands with the gate table.
+var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true, "report": true}
 
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
 // token of their own, so a stranded or repeated one answers under `kind-declared`, which

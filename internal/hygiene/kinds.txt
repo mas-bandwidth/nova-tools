@@ -28,4 +28,4 @@ read	read and report	ungated
 probe	read and report	ungated
 text	read and report	ungated
 tone	read and report	ungated
-report	read and report	gated
+report	read and report	ungated

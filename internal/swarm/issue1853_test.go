@@ -93,7 +93,7 @@ func TestIssue1853(t *testing.T) {
 			}
 		})
 	}
-	for _, kind := range []string{"read", "probe", "text", "tone"} {
+	for _, kind := range []string{"read", "probe", "text", "tone", "report"} {
 		t.Run(fmt.Sprintf("TEST: none on ungated kind %s", kind), func(t *testing.T) {
 			raw := headerCard(t, "KIND: "+kind, "PATHS: internal/swarm/a.go", "TEST: none")
 			fs := findingsOn(raw)
