@@ -187,6 +187,49 @@ fi
 if ! command -v sbcl >/dev/null 2>&1; then
   drift "sbcl not on PATH"
 fi
+
+# (3b) THE TOOLCHAIN MUST BE RUNNABLE INSIDE THE WALL, not merely on PATH.
+# `command -v sbcl` answers about the bench user's own shell. A card runs behind the
+# sandbox wall, whose linux read roots are the system table of
+# internal/sandbox/wrap_linux.go plus the toolchain roots of internal/swarm/toolchain.go
+# ($HOME/sdk, exec; $HOME/go/pkg/mod, no exec). An sbcl at $HOME/.local/bin/sbcl is on
+# PATH and is `Permission denied` inside the wall, which is why every lisp card was
+# forced onto the one bench whose sbcl is /usr/bin/sbcl -- measured 2026-09-19: E09-G1
+# on vision 1036 s against 248-393 s for the same class on space, and the r1785 worker
+# on mini fetched an SBCL 2.4.0 of its own into $TMPDIR before it could run a test.
+#
+# THE ROOTS ARE THE WALL'S, WHOLE. The system table below and linuxReadRoots in
+# internal/sandbox/wrap_linux.go are ONE list: internal/ci's class test fails when they
+# drift apart (a hand-picked subset reported a tool under /etc or /dev "under NO read
+# root" while the wall executes it). Every entry there is landlock's read subset, which
+# carries EXECUTE. The wall also grants, per machine, the directory /etc/resolv.conf
+# RESOLVES to (linuxRoots, #1737: /mnt/wsl on WSL2), so this check grants it too.
+# NOVA_RESOLV_CONF is the test seam for that file, as resolvConfPath is the wall's.
+# NOVA_WALL_READ_ROOTS BEGIN
+NOVA_WALL_READ_ROOTS="/usr /bin /sbin /lib /lib64 /etc /run/systemd/resolve /opt /dev /proc"
+# NOVA_WALL_READ_ROOTS END
+wall_resolv_dir=""
+wall_resolv="$(readlink -f "${NOVA_RESOLV_CONF:-/etc/resolv.conf}" 2>/dev/null || true)"
+if [ -n "$wall_resolv" ] && [ -e "$wall_resolv" ]; then
+  wall_resolv_dir="$(dirname "$wall_resolv")"
+  case "$wall_resolv_dir" in /|.|"") wall_resolv_dir="" ;; esac
+fi
+for tool in go sbcl; do
+  p="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$p" ] || continue          # absent is the check above's DRIFT, not this one's
+  rp="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+  granted=0
+  # $HOME/sdk is the one toolchain root granted WITH execute (internal/swarm/toolchain.go);
+  # go/pkg/mod is granted without it, so a tool there is still undrivable and not listed.
+  for root in $NOVA_WALL_READ_ROOTS $wall_resolv_dir "$HOME_DIR/sdk"; do
+    rroot="$(readlink -f "$root" 2>/dev/null || echo "$root")"
+    [ -n "$rroot" ] || continue
+    case "$rp" in "$rroot"/*) granted=1 ;; esac
+  done
+  if [ "$granted" != "1" ]; then
+    drift "$tool on PATH is $p -> $rp, under NO read root the sandbox wall grants (the system roots of internal/sandbox/wrap_linux.go, the resolver directory, and \$HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under $HOME_DIR/sdk/$tool-<ver>/ and point the PATH entry there"
+  fi
+done
 harness_ok=0
 if [ -n "$NOVA_HARNESS" ]; then
   if [ -x "$NOVA_HARNESS" ]; then
