@@ -6,6 +6,7 @@
 ;;;;   a-torn-stage-is-never-admitted                             :2752-2754
 ;;;;   the-restart-reconciles-staged-inputs-and-reports-a-missing-one  :2759-2760
 ;;;;   only-the-owning-engine-admits-at-the-expected-revision     :2752-2754
+;;;;   a-traversal-id-stages-nothing-outside-the-staging-root     :2752-2754
 ;;;;
 ;;;; The pure model of src/capture.lisp stages a byte COUNT and no bytes. Every
 ;;;; case here reads the staging root off the disk with its own WITH-OPEN-FILE,
@@ -198,3 +199,45 @@ operation. Answers (values STAGE JOURNAL-PATH ROOT)."
       (check-equal 7 (getf row :revision) "the retained result names the revision it was admitted at")
       (check-equal 10 (getf (getf row :result) :bytes)
                    "and carries the verified byte count of the staged input"))))
+
+;;; ------------------------------------------------------------------
+;;; a-traversal-id-stages-nothing-outside-the-staging-root    :2752-2754
+;;; ------------------------------------------------------------------
+
+(deftest "a-traversal-id-stages-nothing-outside-the-staging-root" "docs/SPEC-WORK.md:2752-2754"
+    "expected=a-traversal-id-refuses;no-outside-file-is-created-or-changed;nothing-is-recorded"
+  (multiple-value-bind (stage journal-path root) (staging-fixture "traversal")
+    (declare (ignore journal-path))
+    ;; A victim beside the staging root, and the places a traversal would land.
+    (let* ((victim (format nil "~A/victim.stage" root))
+           (inside (format nil "~A/stage/victim.stage" root))
+           (before (operation-journal-length (capture-stage-registry stage))))
+      (with-open-file (out victim :direction :output :if-exists :supersede
+                                  :element-type 'character :external-format :utf-8)
+        (write-string "original" out))
+      (dolist (ids '(("op-cap" "../../victim") ("op-cap" "../victim")
+                     (".." "victim") ("." "../victim") ("op-cap" "..")
+                     ("op-cap" "a/b") ("op-cap" "a\\b") ("op-cap" "")
+                     ("../.." "victim") ("op-cap" "*")))
+        (destructuring-bind (operation id) ids
+          (multiple-value-bind (staged line code)
+              (stage-source-bytes stage :operation operation :id id :kind :capture
+                                        :content "overwritten" :request "req-evil")
+            (check-equal nil staged (format nil "operation ~S id ~S refuses" operation id))
+            (check-equal 2 code "and exits 2")
+            (ok (and line (search "unsafe" line)) "the refusal names the unsafe id: ~A" line))
+          (ok (handler-case (progn (staged-input-path stage operation id) nil)
+                (error () t))
+              (format nil "staged-input-path names no path for ~S ~S" operation id))))
+      (check-string= "original" (read-file-text victim)
+                     "the file outside the staging root is unchanged")
+      (ok (null (probe-file inside)) "no file is created at the staging root's top")
+      (ok (null (probe-file (format nil "~A/stage/op-cap/a" root)))
+          "no subdirectory is created from a separator in an id")
+      (check-equal before (operation-journal-length (capture-stage-registry stage))
+                   "nothing is recorded on the recovery journal")
+      (check-equal '() (capture-stage-inputs stage) "and nothing is registered")
+      ;; A safe id still stages, so the guard is not a blanket refusal.
+      (ok (stage-source-bytes stage :operation "op-cap" :id "in.1_ok-2" :kind :capture
+                                    :content "fine" :request "req-ok")
+          "a safe id still stages"))))

@@ -46,10 +46,56 @@
 ;;; Where a staged input lives, and what the journal records about it
 ;;; ------------------------------------------------------------------
 
+(defun staging-path-component-p (component)
+  "True when COMPONENT may name one path component under the staging root: a
+non-empty string of at most 128 characters drawn only from A-Z a-z 0-9 . _ -,
+and not made of dots alone. That rejects every separator (/ and \\), every
+dot component (. and ..), NUL and the characters a Lisp namestring reads as
+wild or as an escape, so a caller-supplied operation or input id can never
+walk out of the staging root."
+  (and (stringp component)
+       (< 0 (length component) 129)
+       (every (lambda (c)
+                (or (char<= #\a c #\z) (char<= #\A c #\Z) (char<= #\0 c #\9)
+                    (member c '(#\. #\_ #\-))))
+              component)
+       (notevery (lambda (c) (char= c #\.)) component)))
+
+(defun unsafe-staging-component (operation id)
+  "NIL when OPERATION and ID are both safe path components, otherwise a line
+naming the first one that is not."
+  (cond ((not (staging-path-component-p operation))
+         (format nil "unsafe operation id ~S: not a single path component" operation))
+        ((not (staging-path-component-p id))
+         (format nil "unsafe input id ~S: not a single path component" id))))
+
+(defun path-under-root-p (root path)
+  "True when PATH lies strictly beneath ROOT, both textually and, for the part
+of it that already exists, canonically (a symlinked operation directory that
+resolves outside ROOT is outside ROOT)."
+  (let ((prefix (concatenate 'string root "/")))
+    (and (> (length path) (length prefix))
+         (string= prefix path :end2 (length prefix))
+         (let* ((directory (subseq path 0 (1+ (position #\/ path :from-end t))))
+                (root-true (ignore-errors (probe-file prefix)))
+                (dir-true (ignore-errors (probe-file directory))))
+           (or (null root-true) (null dir-true)
+               (let ((r (namestring root-true)) (d (namestring dir-true)))
+                 (and (>= (length d) (length r))
+                      (string= r d :end2 (length r)))))))))
+
 (defun staged-input-path (stage operation id)
   "The staged bytes for input ID of operation OPERATION. One directory per
-operation, so an interrupted operation's staged inputs are found together."
-  (format nil "~A/~A/~A.stage" (filesystem-capture-stage-root stage) operation id))
+operation, so an interrupted operation's staged inputs are found together.
+Both ids must be single safe path components and the result must stay under
+the staging root; otherwise this signals an error and names no path at all."
+  (let ((unsafe (unsafe-staging-component operation id)))
+    (when unsafe (error "STAGE FAIL: ~A" unsafe))
+    (let* ((root (filesystem-capture-stage-root stage))
+           (path (format nil "~A/~A/~A.stage" root operation id)))
+      (unless (path-under-root-p root path)
+        (error "STAGE FAIL: ~A escapes the staging root ~A" path root))
+      path)))
 
 (defun stage-record-p (record)
   "True when RECORD is a staging record and not an accept or a cancel."
@@ -115,7 +161,13 @@ on the recovery journal before the stage is acknowledged
 Answers (values T LINE 0) or (values NIL LINE 2)."
   (let* ((text (or content ""))
          (bytes (length (utf8-octets text)))
-         (sha (sha256-hex text)))
+         (sha (sha256-hex text))
+         (unsafe (unsafe-staging-component operation id)))
+    ;; An id that is not one safe path component refuses before the bound is
+    ;; consulted: nothing is registered, written or recorded.
+    (when unsafe
+      (return-from stage-source-bytes
+        (values nil (format nil "STAGE FAIL id=~S: ~A" id unsafe) 2)))
     (multiple-value-bind (staged line)
         (capture-stage-input stage :id id :kind kind
                                    :expected-revision expected-revision
@@ -200,9 +252,15 @@ not a licence to admit what is not. Answers (values VERIFIED UNVERIFIED)."
         (when (stage-record-p record)
           (let* ((input (getf record :input))
                  (operation (getf record :operation))
-                 (path (staged-input-path stage operation input))
-                 (text (read-staged-file path)))
+                 (unsafe (unsafe-staging-component operation input))
+                 (path (and (not unsafe)
+                            (ignore-errors (staged-input-path stage operation input))))
+                 (text (and path (read-staged-file path))))
             (cond
+              (unsafe
+               (push (cons input unsafe) unverified))
+              ((null path)
+               (push (cons input "the staged path escapes the staging root") unverified))
               ((null text)
                (push (cons input "the staged file is missing") unverified))
               ((/= (length (utf8-octets text)) (getf record :bytes))
