@@ -95,12 +95,21 @@ type Row struct {
 	// Idle is the typed reason of every slot not working, for example
 	// "starting=1 fillable=2 deps=1 no-work=4 capped=5".
 	Idle string
+	// Waiting is the tasks the friend owns that wait on CI, a read, a
+	// dependency or a person with no child (#3090). It holds no slot and is
+	// counted in neither Working nor ReadyOpen.
+	Waiting int
 }
 
 // Line is the friend's width line: working/desired first.
 func (r Row) Line() string {
-	line := fmt.Sprintf("WIDTH %s %d/%d slots=%d cap=%d deficit=%d starting=%d ready=%d",
-		r.Friend, r.Working, r.Desired, r.Slots, r.Cap, r.Deficit, r.Starting, r.ReadyOpen)
+	line := fmt.Sprintf("WIDTH %s %d/%d", r.Friend, r.Working, r.Desired)
+	if r.Waiting > 0 {
+		// Beside working (#3090): owned builds holding no child.
+		line += fmt.Sprintf(" waiting=%d", r.Waiting)
+	}
+	line += fmt.Sprintf(" slots=%d cap=%d deficit=%d starting=%d ready=%d",
+		r.Slots, r.Cap, r.Deficit, r.Starting, r.ReadyOpen)
 	if r.Idle != "" {
 		line += " idle=" + strings.ReplaceAll(r.Idle, " ", ",")
 	}
@@ -174,7 +183,7 @@ func Tick(ctx context.Context, st *store.Store, p Policy, fence, actor, idem str
 	var res Result
 	for _, raw := range rows {
 		rec, ok := raw.([]any)
-		if !ok || len(rec) != 10 {
+		if !ok || len(rec) != 11 {
 			return Result{}, fmt.Errorf("width tick: malformed row %v", raw)
 		}
 		s := make([]string, len(rec))
@@ -182,6 +191,9 @@ func Tick(ctx context.Context, st *store.Store, p Policy, fence, actor, idem str
 			s[i] = fmt.Sprint(v)
 		}
 		row := Row{Friend: s[0], Idle: s[9]}
+		if row.Waiting, err = strconv.Atoi(s[10]); err != nil {
+			return Result{}, fmt.Errorf("width tick: %s waiting: %w", row.Friend, err)
+		}
 		for i, dst := range []*int{&row.Slots, &row.Cap, &row.Working, &row.Starting, &row.ReadyOpen, &row.Desired, &row.Deficit, &row.Fillable} {
 			n, err := strconv.Atoi(s[1+i])
 			if err != nil {
