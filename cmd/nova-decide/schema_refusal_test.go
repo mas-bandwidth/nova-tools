@@ -112,6 +112,42 @@ func TestTheMigrateVerbInstallsTheSchemaAndSaysSo(t *testing.T) {
 	}
 }
 
+// A too-new schema refuses with a reason of its own, on the write path and on
+// the migrate verb, and never prints a receipt.
+func TestATooNewDecisionsSchemaRefusesWithItsOwnReason(t *testing.T) {
+	restore := decisionsOpener
+	defer func() { decisionsOpener = restore }()
+	decisionsOpener = func(dsn string) (decide.DecisionDriver, error) { return &tooNewStore{}, nil }
+
+	var out, errb bytes.Buffer
+	if code := run([]string{"migrate", "--dsn", "postgres://example/db"}, &out, &errb); code != 2 {
+		t.Fatalf("migrate on a too-new schema exited %d, want 2; stdout=%q", code, out.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("a refused migrate printed on stdout: %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "reason=decisions-schema-too-new") {
+		t.Errorf("the refusal has no reason of its own: %q", errb.String())
+	}
+
+	errb.Reset()
+	if code := refuseWrite(&errb, "DECIDE", "the decision was made", (&tooNewStore{}).Append(decide.DecisionRow{})); code != 2 {
+		t.Fatalf("refuseWrite exited %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "reason=decisions-schema-too-new") || strings.Contains(errb.String(), "receipt=recorded") {
+		t.Errorf("write refusal on a too-new schema: %q", errb.String())
+	}
+}
+
+type tooNewStore struct{}
+
+func (s *tooNewStore) Append(decide.DecisionRow) error { return decide.ErrDecisionsSchemaTooNew }
+func (s *tooNewStore) Rows(string) ([]decide.DecisionRow, error) {
+	return nil, decide.ErrDecisionsSchemaTooNew
+}
+func (s *tooNewStore) Close() error   { return nil }
+func (s *tooNewStore) Migrate() error { return decide.ErrDecisionsSchemaTooNew }
+
 // unmigratedStore is a decisions table that has not been migrated: every write
 // is the typed refusal, and it counts the attempts so a test can tell "refused"
 // from "never tried".

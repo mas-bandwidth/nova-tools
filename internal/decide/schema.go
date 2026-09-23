@@ -41,13 +41,26 @@ var decisionsSchemaSQL string
 // and prints no receipt: an append that did not happen is not a row.
 var ErrDecisionsSchemaUnmigrated = errors.New("decide: the decisions table has not been migrated to this writer's schema")
 
+// ErrDecisionsSchemaTooNew is the typed refusal for the other side of the
+// version gate: a database a NEWER migration has moved past this writer's
+// version. This writer does not know what that version changed -- a renamed
+// column, a new NOT NULL, a different meaning for source -- so it declares no
+// compatibility with it: it neither writes a row nor reads one, and it does not
+// run its own older migration over it. The fix is a nova-decide built at or
+// above the database's version, never a downgrade.
+var ErrDecisionsSchemaTooNew = errors.New("decide: the decisions table is at a newer schema version than this writer knows")
+
 // decisionsSchema is the schema half of a decisions store: applying the
 // migration, and reading back the version that is installed. It is a seam so
 // the migration's EFFECT and the version gate are testable without standing up
 // a database; the SQL text itself is exercised by the live-Postgres round trip,
 // which states its skip reason.
 type decisionsSchema interface {
-	Exec(stmt string) error
+	// ExecInOneTransaction runs every statement in ONE transaction: all of
+	// them take effect or none does. A failure part way rolls back what the
+	// earlier statements did, so a migration never leaves partial DDL behind
+	// (Postgres DDL is transactional).
+	ExecInOneTransaction(stmts []string) error
 	// MaxSchemaVersion is 0 where no version table exists, which is what an
 	// unmigrated database looks like whatever else it carries.
 	MaxSchemaVersion() (int, error)
@@ -68,22 +81,39 @@ type Migrator interface{ Migrate() error }
 // Migrate installs this package's schema into the Postgres decisions table.
 func (p *postgresDriver) Migrate() error { return MigrateDecisions(p.schema) }
 
-// MigrateDecisions applies schema.sql statement by statement. It is idempotent
-// in both directions -- a fresh database gets the whole table, a database
-// carrying the hand-made six-column shape is upgraded in place -- so it is safe
-// to run on every start, and running it twice is a no-op.
+// MigrateDecisions applies schema.sql in ONE transaction: a statement that
+// fails rolls back every statement before it, so the database is left exactly
+// as it was found and never half-migrated (Stella's hold on #1990 at bab19122).
+// It is idempotent in both directions -- a fresh database gets the whole table,
+// a database carrying the hand-made six-column shape is upgraded in place -- so
+// it is safe to run on every start, and running it twice is a no-op.
+//
+// A database already at a NEWER version is refused, not migrated: this
+// writer's older statements declare nothing about a shape it does not know.
 func MigrateDecisions(db decisionsSchema) error {
-	for _, stmt := range splitDecisionsSQL(decisionsSchemaSQL) {
-		if err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("decide: migrate decisions: %w", err)
-		}
+	have, err := db.MaxSchemaVersion()
+	if err != nil {
+		return fmt.Errorf("decide: reading the decisions schema version: %w", err)
+	}
+	if have > DecisionsSchemaVersion {
+		return tooNew(have)
+	}
+	if err := db.ExecInOneTransaction(splitDecisionsSQL(decisionsSchemaSQL)); err != nil {
+		return fmt.Errorf("decide: migrate decisions (rolled back, nothing applied): %w", err)
 	}
 	return nil
 }
 
-// EnsureDecisionsSchema is the gate in front of every write. Below the required
-// version it refuses, naming the version it found, the version it needs and the
-// verb that installs it -- and the caller writes nothing and claims no receipt.
+func tooNew(have int) error {
+	return fmt.Errorf("%w: it is at version %d and this writer knows only up to %d, so it declares no compatibility with that shape and neither writes nor reads a row; run a nova-decide built for schema version %d or later",
+		ErrDecisionsSchemaTooNew, have, DecisionsSchemaVersion, have)
+}
+
+// EnsureDecisionsSchema is the gate in front of every write and every read. The
+// contract is EXACT: below the required version it refuses as unmigrated,
+// naming the version it found, the version it needs and the verb that installs
+// it; ABOVE it, it refuses as too new, because a future version's shape is
+// undeclared here. Either way the caller writes nothing and claims no receipt.
 func EnsureDecisionsSchema(db decisionsSchema) error {
 	have, err := db.MaxSchemaVersion()
 	if err != nil {
@@ -92,6 +122,9 @@ func EnsureDecisionsSchema(db decisionsSchema) error {
 	if have < DecisionsSchemaVersion {
 		return fmt.Errorf("%w: it is at version %d and this writer needs %d, so the row's source and its absent provider confidence have nowhere to go; run: %s",
 			ErrDecisionsSchemaUnmigrated, have, DecisionsSchemaVersion, MigrateVerb)
+	}
+	if have > DecisionsSchemaVersion {
+		return tooNew(have)
 	}
 	return nil
 }

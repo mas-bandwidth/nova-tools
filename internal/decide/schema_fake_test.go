@@ -18,6 +18,48 @@ type fakeSchemaDB struct {
 	tables   map[string]*fakeTable
 	versions []int
 	inserts  int
+	// failOn makes the first statement starting with this prefix fail, so a
+	// test can break a migration part way and watch it roll back.
+	failOn string
+}
+
+// ExecInOneTransaction models a transaction: it snapshots the database, runs
+// every statement, and on any failure restores the snapshot, so nothing an
+// earlier statement did survives.
+func (f *fakeSchemaDB) ExecInOneTransaction(stmts []string) error {
+	saved := f.snapshot()
+	for _, stmt := range stmts {
+		err := f.Exec(stmt)
+		if err == nil && f.failOn != "" && strings.HasPrefix(strings.Join(strings.Fields(stmt), " "), f.failOn) {
+			err = fmt.Errorf("fake: injected failure on %q", f.failOn)
+		}
+		if err != nil {
+			f.tables, f.versions = saved.tables, saved.versions
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *fakeSchemaDB) snapshot() *fakeSchemaDB {
+	c := &fakeSchemaDB{tables: map[string]*fakeTable{}, versions: append([]int(nil), f.versions...)}
+	for name, t := range f.tables {
+		cols := map[string]bool{}
+		for k, v := range t.columns {
+			cols[k] = v
+		}
+		c.tables[name] = &fakeTable{columns: cols, rows: append([]DecisionRow(nil), t.rows...)}
+	}
+	return c
+}
+
+// installVersion stands the database at a given schema version, as a newer
+// migration would have left it.
+func (f *fakeSchemaDB) installVersion(v int) {
+	if err := MigrateDecisions(f); err != nil {
+		panic(err)
+	}
+	f.versions = append(f.versions, v)
 }
 
 type fakeTable struct {

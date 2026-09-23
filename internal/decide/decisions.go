@@ -262,9 +262,25 @@ type postgresDriver struct {
 type pgSchema struct{ db *sql.DB }
 type pgRows struct{ db *sql.DB }
 
-func (p pgSchema) Exec(stmt string) error {
-	_, err := p.db.Exec(stmt)
-	return err
+// ExecInOneTransaction runs the migration's statements in one transaction and
+// rolls all of them back if any one fails. Postgres DDL is transactional, so a
+// failed migration leaves no partial table, column or version row behind.
+func (p pgSchema) ExecInOneTransaction(stmts []string) (err error) {
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // MaxSchemaVersion answers 0 for a database with no version table at all,

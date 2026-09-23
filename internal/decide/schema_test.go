@@ -128,6 +128,86 @@ func TestAnUnmigratedSchemaIsATypedRefusalThatNamesThePrerequisite(t *testing.T)
 	}
 }
 
+// A MIGRATION THAT FAILS PART WAY LEAVES NOTHING BEHIND (Stella's hold on
+// #1990 at bab19122: statements ran one by one through sql.DB.Exec, so a later
+// failure left partial DDL). Every statement after the first is broken in turn
+// on the old six-column table; each time the table must come back exactly as
+// it was: no source column, provider_confidence still NOT NULL, no version.
+func TestAMigrationThatFailsPartWayRollsBackEveryStatement(t *testing.T) {
+	stmts := splitDecisionsSQL(decisionsSchemaSQL)
+	if len(stmts) < 3 {
+		t.Fatalf("the migration has %d statements; this control needs a later one to fail", len(stmts))
+	}
+	for _, stmt := range stmts[1:] {
+		prefix := strings.Join(strings.Fields(stmt), " ")
+		if len(prefix) > 48 {
+			prefix = prefix[:48]
+		}
+		t.Run(prefix, func(t *testing.T) {
+			db := newFakeSchemaDB()
+			db.installOldDecisionsTable()
+			db.failOn = prefix
+			err := MigrateDecisions(db)
+			if err == nil {
+				t.Fatal("a migration with a failing statement reported success")
+			}
+			if db.hasColumn("decisions", "source") {
+				t.Error("a failed migration left the source column behind")
+			}
+			if !db.notNull("decisions", "provider_confidence") {
+				t.Error("a failed migration left provider_confidence nullable")
+			}
+			if _, ok := db.tables["decisions_schema_version"]; ok {
+				t.Error("a failed migration left the version table behind")
+			}
+			if v, _ := db.MaxSchemaVersion(); v != 0 {
+				t.Errorf("a failed migration left version %d", v)
+			}
+			// And the gate still refuses it as unmigrated: nothing half-done
+			// can pass for migrated.
+			driver := &postgresDriver{schema: db, rows: db}
+			if err := driver.Append(DecisionRow{QuestionHash: "h", Kind: "choice", Answer: "a", Source: SourceMachinery}); !errors.Is(err, ErrDecisionsSchemaUnmigrated) {
+				t.Errorf("after a rolled-back migration, want ErrDecisionsSchemaUnmigrated, got %v", err)
+			}
+		})
+	}
+}
+
+// A DATABASE AT A FUTURE VERSION IS REFUSED, NOT ACCEPTED (Stella's hold on
+// #1990 at bab19122: version 2 passed a gate that checked only "below 1").
+// This writer declares compatibility with exactly DecisionsSchemaVersion, so
+// write, read and its own migration all refuse, with a sentinel of their own.
+func TestAFutureSchemaVersionIsATypedRefusalOnWriteReadAndMigrate(t *testing.T) {
+	db := newFakeSchemaDB()
+	db.installVersion(DecisionsSchemaVersion + 1)
+	driver := &postgresDriver{schema: db, rows: db}
+
+	err := driver.Append(DecisionRow{QuestionHash: "h", Kind: "choice", Answer: "a", Source: SourceMachinery})
+	if !errors.Is(err, ErrDecisionsSchemaTooNew) {
+		t.Fatalf("Append on version %d: want ErrDecisionsSchemaTooNew, got %v", DecisionsSchemaVersion+1, err)
+	}
+	if errors.Is(err, ErrDecisionsSchemaUnmigrated) {
+		t.Error("a too-new database was called unmigrated; the two refusals must stay distinct")
+	}
+	if db.inserts != 0 {
+		t.Errorf("%d row(s) were written into a too-new schema", db.inserts)
+	}
+	if _, err := driver.Rows("choice"); !errors.Is(err, ErrDecisionsSchemaTooNew) {
+		t.Errorf("Rows on a too-new schema: want ErrDecisionsSchemaTooNew, got %v", err)
+	}
+	if err := MigrateDecisions(db); !errors.Is(err, ErrDecisionsSchemaTooNew) {
+		t.Errorf("MigrateDecisions on a too-new schema: want ErrDecisionsSchemaTooNew, got %v", err)
+	}
+	// The exact version is still accepted: the gate is equality, not a floor.
+	ok := newFakeSchemaDB()
+	if err := MigrateDecisions(ok); err != nil {
+		t.Fatal(err)
+	}
+	if err := EnsureDecisionsSchema(ok); err != nil {
+		t.Errorf("the writer's own version was refused: %v", err)
+	}
+}
+
 // The migration file is the contract, so it says both halves out loud.
 func TestTheMigrationCarriesBothTheFreshAndTheUpgradePath(t *testing.T) {
 	raw, err := os.ReadFile("schema.sql")

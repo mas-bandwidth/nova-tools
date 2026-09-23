@@ -479,6 +479,9 @@ func runMigrate(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	if err := migrator.Migrate(); err != nil {
+		if errors.Is(err, decide.ErrDecisionsSchemaTooNew) {
+			return refuse(stderr, "MIGRATE", "decisions-schema-too-new", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
 		return refuse(stderr, "MIGRATE", "migrate-failed", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	fmt.Fprintf(stdout, "MIGRATE OK store=postgres version=%d\n", decide.DecisionsSchemaVersion)
@@ -794,6 +797,11 @@ func refuseWrite(stderr io.Writer, prefix, what string, err error) int {
 		return refuse(stderr, prefix, "decisions-schema-unmigrated",
 			fmt.Sprintf("%s and its configured decisions table cannot hold the row's source or its absent provider confidence, so there is no receipt and nothing was written: %s; run: %s",
 				what, oneline.Err(err), decide.MigrateVerb))
+	}
+	if errors.Is(err, decide.ErrDecisionsSchemaTooNew) {
+		return refuse(stderr, prefix, "decisions-schema-too-new",
+			fmt.Sprintf("%s and its configured decisions table is at a schema version newer than this writer declares compatibility with, so there is no receipt and nothing was written: %s",
+				what, oneline.Err(err)))
 	}
 	return refuse(stderr, prefix, "decisions-write-failed",
 		fmt.Sprintf("%s and its configured decisions table refused the row, so there is no receipt: %s", what, oneline.Err(err)))
