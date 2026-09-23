@@ -65,6 +65,12 @@ writer's, and this tool never makes it.
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
 run (bad invocation, unreadable file).
 
+First run, from the root of this checkout: copy the example pages the lines
+below read, so ./pages is a directory you have made, then paste them as they
+are.
+
+  cp -R cmd/nova-self-talk/testdata/example-pages ./pages
+
 example:
   nova-self-talk ./pages/journal.md
   nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
