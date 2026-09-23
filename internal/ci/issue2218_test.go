@@ -36,9 +36,6 @@ func TestIssue2218(t *testing.T) {
 
 		listPath := filepath.Join("testdata", "unexecuted_examples.txt")
 		allow := readUnexecuted(t, listPath)
-		if len(allow) == 0 {
-			t.Skipf("%s is empty; bootstrap it with the unexecuted examples a first pass discovers", listPath)
-		}
 
 		seen := make(map[string]bool, len(examples))
 		for _, ex := range examples {
@@ -62,10 +59,10 @@ func TestIssue2218(t *testing.T) {
 			t.Errorf("%s lists %q which is not a $  line in any of the named docs; delete the stale entry (the list only shrinks)", listPath, s)
 		}
 		if len(unmatched) > 0 {
-			t.Errorf("%d unlisted pasted example(s) in the named docs; add each to %s with its reason, or cover it with a comparator test (the list is shrink-only)", len(unmatched), listPath)
+			t.Errorf("%d unlisted pasted example(s) in the named docs are not covered by a test through onboarding.CompareTranscript; %s is shrink-only and does not grow to match new doc examples -- cover each with a comparator test instead of listing it", len(unmatched), listPath)
 		}
 		for _, u := range unmatched {
-			t.Logf("  unlisted: %s", u)
+			t.Logf("  unlisted (needs a comparator test, not a list entry): %s", u)
 		}
 	})
 }
