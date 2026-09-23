@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -149,11 +150,27 @@ func cmdTableCheck(addr string, stdout, stderr io.Writer) int {
 
 // publishAtomic is the atomic file write of 6.7: temp file then rename.
 func publishAtomic(path, body string) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
+	file, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-")
+	if err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	defer os.Remove(file.Name())
+	if _, err := io.WriteString(file, body); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Chmod(0o644); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return os.Rename(file.Name(), path)
 }
 
 // cmdTableRestart is the original restart cut, unchanged.
