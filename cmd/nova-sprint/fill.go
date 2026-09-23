@@ -4,15 +4,21 @@
 // and prints one per line with its brief, so the spawner starts one child per
 // line with no judgement. `width` runs one width tick (desired, deficit, CAP,
 // underfull rebalance, READ-BOUND, the coordinator's wake) and prints its
-// lines; the reconciler pass calls the same width.Tick once per second.
+// lines. The tick has one writer: the reconciler pass runs it every pass
+// (width.Duty, `nova-sprint reconcile --width-rebalance-ticks n`), so `width`
+// takes lease:reconciler for its one tick and refuses (exit 2) while a
+// reconciler holds it.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
 )
@@ -101,12 +107,25 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "width", err.Error())
 	}
 	defer st.Close()
+	host, _ := os.Hostname()
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: host, Instance: "width-verb"})
+	var held *reconcile.HeldError
+	if errors.As(err, &held) {
+		fmt.Fprintf(out, "REFUSED width: the reconciler ticks width every pass; %s\n", held.Error())
+		return 2
+	}
+	if err != nil {
+		return refuse(errOut, "width", err.Error())
+	}
 	res, err := width.Tick(ctx, st, width.Policy{
 		RebalanceTicks: *ticks,
 		Readers:        splitNames(*readers),
 		Builders:       splitNames(*builders),
 		Coordinator:    *coordinator,
-	}, *actor, *idem)
+	}, lease.Token(), *actor, *idem)
+	if rerr := lease.Release(context.Background()); err == nil && rerr != nil {
+		err = rerr
+	}
 	if err != nil {
 		return refuse(errOut, "width", err.Error())
 	}

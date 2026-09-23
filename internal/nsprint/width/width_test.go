@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
@@ -125,9 +126,27 @@ func pushN(t *testing.T, st *store.Store, to, prefix string, n int) []string {
 	return ids
 }
 
+// leases holds each control store's lease:reconciler: the tick is fenced, so
+// a control ticks as the reconciler would, with the holder's token.
+var leases sync.Map // *store.Store -> *reconcile.Lease
+
+func lease(t *testing.T, st *store.Store) *reconcile.Lease {
+	t.Helper()
+	if l, ok := leases.Load(st); ok {
+		return l.(*reconcile.Lease)
+	}
+	l, err := reconcile.Acquire(context.Background(), st, reconcile.AcquireOptions{Host: "fixture", TTL: time.Minute})
+	if err != nil {
+		t.Fatalf("acquire lease:reconciler: %v", err)
+	}
+	leases.Store(st, l)
+	t.Cleanup(func() { leases.Delete(st) })
+	return l
+}
+
 func tick(t *testing.T, st *store.Store, p width.Policy) width.Result {
 	t.Helper()
-	res, err := width.Tick(context.Background(), st, p, "control", "")
+	res, err := width.Tick(context.Background(), st, p, lease(t, st).Token(), "control", "")
 	if err != nil {
 		t.Fatalf("tick: %v", err)
 	}

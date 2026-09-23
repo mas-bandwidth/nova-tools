@@ -26,7 +26,14 @@
 --   deficit  = desired - working          (from slots, not from "any WORKING")
 --   fillable = desired - working - starting (what a take may start now)
 -- ready_open counts only open tasks on the friend's queue whose DEPENDS-ON
--- are merged (#3066) and, for a read, whose head is the PR's head.
+-- are merged (#3066) and, for a read, whose head is the PR's known head.
+--
+-- Fencing (Stella's hold 3 on #3086): ns_width_tick always, and
+-- ns_width_reserve when it is the reconciler dealing, take the
+-- lease:reconciler token and refuse FENCED unless it is the stored one, in
+-- the same call, before any write (the rule in reconciler.lua). The tick has
+-- one writer: the reconciler pass (width.Duty); `nova-sprint width` takes the
+-- lease for its one tick and refuses while a reconciler holds it.
 
 local WD = {}
 
@@ -82,49 +89,82 @@ end
 -- dependencies in the task hash field `depends_on` (task ids in the same
 -- sprint, separated by spaces or commas). A dependency is met when its task is
 -- closed and either carries no PR or its PR hash s:<S>:pr:<repo>:<pr> has
--- merged=1. A read is ready only at the PR's current head.
+-- merged=1. A read is ready only at the PR's current head, and fails closed:
+-- a PR hash with no head, or a read task with no head, cannot establish that
+-- the read targets the head, so it is not ready (reason head:missing), never
+-- dealt. Returns ready, reason (head:missing, head:moved, deps).
 function WD.ready(S, key)
   local kind = redis.call('HGET', key, 'kind') or ''
   if WD.is_read(kind) then
     local repo = redis.call('HGET', key, 'repo') or ''
     local pr = redis.call('HGET', key, 'pr') or ''
-    local head = redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'head')
-    if head and head ~= (redis.call('HGET', key, 'head') or '') then
-      return false
+    local head = redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'head') or ''
+    local want = redis.call('HGET', key, 'head') or ''
+    if head == '' or want == '' then
+      return false, 'head:missing'
+    end
+    if head ~= want then
+      return false, 'head:moved'
     end
   end
   local deps = redis.call('HGET', key, 'depends_on') or ''
   for dep in string.gmatch(deps, '[^%s,]+') do
     local dk = 's:' .. S .. ':task:' .. dep
     if redis.call('HGET', dk, 'state') ~= 'closed' then
-      return false
+      return false, 'deps'
     end
     local pr = redis.call('HGET', dk, 'pr') or ''
     if pr ~= '' and pr ~= '0' then
       local repo = redis.call('HGET', dk, 'repo') or ''
       if redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'merged') ~= '1' then
-        return false
+        return false, 'deps'
       end
     end
   end
-  return true
+  return true, ''
+end
+
+-- WD.holds: the lease:reconciler fence, checked inline (reconciler.lua).
+function WD.holds(token)
+  return token ~= nil and token ~= '' and redis.call('HGET', 'lease:reconciler', 'token') == token
+end
+
+function WD.fenced()
+  local h = redis.call('HMGET', 'lease:reconciler', 'instance', 'host')
+  return { 'FENCED', h[1] or '', h[2] or '' }
+end
+
+-- WD.why: the blocked reasons as one line, sorted ("deps=2 head:missing=1").
+function WD.why(counts)
+  local names = {}
+  for name in pairs(counts) do names[#names + 1] = name end
+  table.sort(names)
+  local parts = {}
+  for _, name in ipairs(names) do parts[#parts + 1] = name .. '=' .. counts[name] end
+  return table.concat(parts, ' ')
 end
 
 -- WD.queue: the friend's open queue over open sprints, in sprint order then
--- queue order, split into ready entries and a blocked count.
+-- queue order, split into ready entries, a blocked count and the blocked
+-- reasons counted by name.
 function WD.queue(f, sprints)
-  local ready, blocked = {}, 0
+  local ready, blocked, why = {}, 0, {}
   for _, S in ipairs(sprints) do
     for _, id in ipairs(redis.call('ZRANGE', 's:' .. S .. ':open:' .. f, 0, -1)) do
       local key = 's:' .. S .. ':task:' .. id
-      if redis.call('HGET', key, 'state') == 'open' and WD.ready(S, key) then
+      local ok, reason = false, 'state'
+      if redis.call('HGET', key, 'state') == 'open' then
+        ok, reason = WD.ready(S, key)
+      end
+      if ok then
         ready[#ready + 1] = { S = S, id = id, kind = redis.call('HGET', key, 'kind') or '' }
       else
         blocked = blocked + 1
+        why[reason] = (why[reason] or 0) + 1
       end
     end
   end
-  return ready, blocked
+  return ready, blocked, why
 end
 
 function WD.declared(f)
@@ -236,11 +276,15 @@ function WD.idle(declared, slots, working, starting, fillable, blocked)
 end
 
 -- ns_width_tick: one reconciler tick over every registered friend.
--- args = rebalance_ticks, readers csv, builders csv, coordinator, actor, idem.
+-- args = rebalance_ticks, readers csv, builders csv, coordinator, actor, idem,
+-- fence (the lease:reconciler token; any other refuses FENCED, nothing written).
 -- Returns { rows, events }: a row per friend
 --   { f, slots, cap, working, starting, ready_open, desired, deficit, fillable, idle }
 -- and event lines CAP, MOVE, READ-BOUND, UNDERFULL.
 local function width_tick(keys, args)
+  if not WD.holds(args[7]) then
+    return WD.fenced()
+  end
   local rebalance_ticks = WD.num(args[1])
   if rebalance_ticks < 1 then
     return redis.error_reply('ns_width_tick: rebalance_ticks must be >= 1 (measured p95 take latency)')
@@ -259,7 +303,7 @@ local function width_tick(keys, args)
     local declared = WD.declared(f)
     local working = redis.call('ZCARD', 'friend:' .. f .. ':living')
     local starting = redis.call('ZCARD', 'friend:' .. f .. ':starting')
-    local ready, blocked = WD.queue(f, sprints)
+    local ready, blocked, why = WD.queue(f, sprints)
     local slots = WD.effective(f, declared, working)
     local cap_before, cap = WD.peak(f, working, at)
 
@@ -289,7 +333,7 @@ local function width_tick(keys, args)
 
     st[#st + 1] = {
       f = f, declared = declared, slots = slots, cap = cap, working = working,
-      starting = starting, ready = ready, blocked = blocked, desired = desired,
+      starting = starting, ready = ready, blocked = blocked, why = WD.why(why), desired = desired,
       deficit = deficit, fillable = fillable, under = under, stuck = stuck,
       present = WD.present(f),
     }
@@ -373,7 +417,7 @@ local function width_tick(keys, args)
     redis.call('HSET', wkey,
       'slots', tostring(s.slots), 'declared', tostring(s.declared), 'cap', tostring(s.cap),
       'working', tostring(s.working), 'starting', tostring(s.starting),
-      'ready_open', tostring(#s.ready), 'blocked', tostring(s.blocked),
+      'ready_open', tostring(#s.ready), 'blocked', tostring(s.blocked), 'blocked_why', s.why,
       'desired', tostring(s.desired), 'deficit', tostring(s.deficit),
       'fillable', tostring(s.fillable), 'idle', idle,
       'stuck', tostring(s.stuck), 'under', tostring(s.under),
@@ -455,14 +499,22 @@ end
 -- anyone else since then refuses STALE) and a free effective slot. The task
 -- becomes claimed (friend:<f>:starting); it becomes WORKING only on the
 -- child's first beat (ns_task_beat), never here.
--- args = S, id, friend, gen, attempt, token, token_sha, actor, idem.
+-- args = S, id, friend, gen, attempt, token, token_sha, actor, idem, fence.
+-- fence empty: the friend reserving for its own loop. fence set: the
+-- reconciler dealing a replacement (width.Duty); it must be the
+-- lease:reconciler token (else FENCED, nothing written), and the same call
+-- appends the spawn line to friend:<f>:wake (kind fill), so a claim the
+-- reconciler makes always reaches the friend's harness.
 local function width_reserve(keys, args)
   local S, id, f, gen = args[1], args[2], args[3], args[4]
   local attempt_arg, token, token_sha = tonumber(args[5]), args[6], args[7]
-  local actor, idem = args[8], args[9]
+  local actor, idem, fence = args[8], args[9], args[10] or ''
   local key = 's:' .. S .. ':task:' .. id
   local wkey = 'friend:' .. f .. ':width'
 
+  if fence ~= '' and not WD.holds(fence) then
+    return WD.fenced()
+  end
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
   end
@@ -474,8 +526,9 @@ local function width_reserve(keys, args)
       not redis.call('ZSCORE', 's:' .. S .. ':open:' .. f, id) then
     return { 'NONE' }
   end
-  if not WD.ready(S, key) then
-    return { 'NOTREADY' }
+  local ok, why = WD.ready(S, key)
+  if not ok then
+    return { 'NOTREADY', why }
   end
   if redis.call('SISMEMBER', 'friends', f) == 0 or
       redis.call('EXISTS', 'friend:' .. f .. ':beat') == 0 or
@@ -517,6 +570,13 @@ local function width_reserve(keys, args)
     'attempt', tostring(attempt), 'token_sha', token_sha,
     'actor', actor or '', 'reason', 'width-reserve gen=' .. gen, 'evidence', '',
     'idem', idem or '', 'at', tostring(at))
+  if fence ~= '' then
+    local brief = redis.call('HGET', key, 'brief') or ''
+    if brief == '' then brief = redis.call('HGET', key, 'ref') or '' end
+    redis.call('XADD', 'friend:' .. f .. ':wake', 'MAXLEN', '~', 1000, '*',
+      'kind', 'fill', 'id', id, 'sprint', S, 'brief', brief, 'attempt', tostring(attempt),
+      'token', token, 'at', tostring(at))
+  end
   return { 'CLAIMED', S, id, tostring(attempt), token, next_gen }
 end
 

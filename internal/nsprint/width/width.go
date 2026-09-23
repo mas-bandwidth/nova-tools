@@ -41,6 +41,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
@@ -133,12 +134,17 @@ func (r Result) ReadBound() bool {
 	return false
 }
 
-// Tick runs one width tick. It is one atomic Redis Function call; the
-// reconciler pass (#2726, internal/nsprint/reconcile once it lands) calls it
-// once per second.
-func Tick(ctx context.Context, st *store.Store, p Policy, actor, idem string) (Result, error) {
+// Tick runs one width tick. It is one atomic Redis Function call fenced by
+// lease:reconciler: fence is the holder's token (reconcile.Lease.Token), and
+// any other token refuses with an error wrapping reconcile.ErrFenced before
+// anything is written. The reconciler pass runs it through Duty once per pass;
+// the `nova-sprint width` verb takes the lease for its one tick.
+func Tick(ctx context.Context, st *store.Store, p Policy, fence, actor, idem string) (Result, error) {
 	if st == nil {
 		return Result{}, fmt.Errorf("width tick: nil store")
+	}
+	if fence == "" {
+		return Result{}, fmt.Errorf("width tick: %w: no lease:reconciler token", reconcile.ErrFenced)
 	}
 	if p.RebalanceTicks < 1 {
 		return Result{}, fmt.Errorf("width tick: rebalance_ticks must be >= 1; measure it from the p95 take latency")
@@ -152,9 +158,12 @@ func Tick(ctx context.Context, st *store.Store, p Policy, actor, idem string) (R
 	}
 	reply, err := st.Client().FCall(ctx, FunctionTick, nil,
 		strconv.Itoa(p.RebalanceTicks), strings.Join(p.Readers, ","),
-		strings.Join(p.Builders, ","), p.Coordinator, actor, idem).Result()
+		strings.Join(p.Builders, ","), p.Coordinator, actor, idem, fence).Result()
 	if err != nil {
 		return Result{}, fmt.Errorf("width tick: %w", err)
+	}
+	if err := fencedReply("width tick", reply); err != nil {
+		return Result{}, err
 	}
 	top, ok := reply.([]any)
 	if !ok || len(top) != 2 {
@@ -186,6 +195,20 @@ func Tick(ctx context.Context, st *store.Store, p Policy, actor, idem string) (R
 		res.Events = append(res.Events, fmt.Sprint(e))
 	}
 	return res, nil
+}
+
+// fencedReply maps a FENCED function reply to an error wrapping
+// reconcile.ErrFenced, naming the holder.
+func fencedReply(what string, reply any) error {
+	vals, ok := reply.([]any)
+	if !ok || len(vals) == 0 || fmt.Sprint(vals[0]) != "FENCED" {
+		return nil
+	}
+	holder := ""
+	if len(vals) >= 3 {
+		holder = fmt.Sprintf(" (holder instance=%v host=%v)", vals[1], vals[2])
+	}
+	return fmt.Errorf("%s%s: %w", what, holder, reconcile.ErrFenced)
 }
 
 // Ready is one id a fill may start now, with the brief the child reads.
@@ -231,7 +254,8 @@ var (
 	ErrStale = errors.New("STALE")
 	// ErrFull: no free effective slot.
 	ErrFull = errors.New("FULL")
-	// ErrNotReady: a dependency is not merged or the read's head moved.
+	// ErrNotReady: a dependency is not merged, or a read's head is missing
+	// (head:missing) or moved (head:moved). The error names the reason.
 	ErrNotReady = errors.New("NOTREADY")
 	// ErrReadBound: a PR-producing task while every reader is at its slots.
 	ErrReadBound = errors.New("READBOUND")
@@ -245,6 +269,14 @@ var (
 // gen. The task is claimed (starting); it becomes WORKING only when the
 // child's first beat arrives. It returns the claim and the next generation.
 func Reserve(ctx context.Context, st *store.Store, r Ready, friend, gen, actor, idem string) (task.Claim, string, error) {
+	return reserve(ctx, st, r, friend, gen, "", actor, idem)
+}
+
+// reserve is Reserve with an optional lease:reconciler fence: set, the
+// reservation is the reconciler dealing a replacement, refused FENCED unless
+// the token holds the lease, and the spawn line lands on friend:<f>:wake in
+// the same call.
+func reserve(ctx context.Context, st *store.Store, r Ready, friend, gen, fence, actor, idem string) (task.Claim, string, error) {
 	if st == nil || friend == "" || r.Sprint == "" || r.ID == "" {
 		return task.Claim{}, "", fmt.Errorf("width reserve: store, friend, sprint and id are required")
 	}
@@ -261,9 +293,12 @@ func Reserve(ctx context.Context, st *store.Store, r Ready, friend, gen, actor, 
 		token := fmt.Sprintf("%d.%s", attempt, random)
 		sum := sha256.Sum256([]byte(token))
 		reply, err := st.Client().FCall(ctx, FunctionReserve, nil,
-			r.Sprint, r.ID, friend, gen, attempt, token, hex.EncodeToString(sum[:])[:12], actor, idem).Result()
+			r.Sprint, r.ID, friend, gen, attempt, token, hex.EncodeToString(sum[:])[:12], actor, idem, fence).Result()
 		if err != nil {
 			return task.Claim{}, "", fmt.Errorf("width reserve %s: %w", r.ID, err)
+		}
+		if err := fencedReply("width reserve "+r.ID, reply); err != nil {
+			return task.Claim{}, "", err
 		}
 		vals, ok := reply.([]any)
 		if !ok || len(vals) == 0 {
@@ -287,7 +322,11 @@ func Reserve(ctx context.Context, st *store.Store, r Ready, friend, gen, actor, 
 		case "FULL":
 			return task.Claim{}, "", ErrFull
 		case "NOTREADY":
-			return task.Claim{}, "", ErrNotReady
+			why := "unknown"
+			if len(vals) >= 2 {
+				why = fmt.Sprint(vals[1])
+			}
+			return task.Claim{}, "", fmt.Errorf("width reserve %s: %w %s", r.ID, ErrNotReady, why)
 		case "READBOUND":
 			return task.Claim{}, "", ErrReadBound
 		case "NONE", "NOTFOUND":
@@ -323,6 +362,10 @@ func (r Reserved) Line() string {
 // dispatcher re-reads once per loss; a FULL stops (the other dispatcher has
 // the slot). It never takes more than the fillable count it read.
 func Fill(ctx context.Context, st *store.Store, friend, actor, idem string) ([]Reserved, error) {
+	return fill(ctx, st, friend, "", actor, idem)
+}
+
+func fill(ctx context.Context, st *store.Store, friend, fence, actor, idem string) ([]Reserved, error) {
 	var out []Reserved
 	for rounds := 0; rounds < 64; rounds++ {
 		gen, _, ids, err := ReadyIDs(ctx, st, friend)
@@ -334,7 +377,7 @@ func Fill(ctx context.Context, st *store.Store, friend, actor, idem string) ([]R
 		}
 		restart := false
 		for _, r := range ids {
-			claim, next, err := Reserve(ctx, st, r, friend, gen, actor, idem)
+			claim, next, err := reserve(ctx, st, r, friend, gen, fence, actor, idem)
 			switch {
 			case err == nil:
 				out = append(out, Reserved{Ready: r, Claim: claim})
