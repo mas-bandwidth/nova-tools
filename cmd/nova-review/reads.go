@@ -58,30 +58,69 @@ type prReview struct {
 var viewPRReviews = ghPRReviews
 
 // ghPRReviews is the real viewPRReviews: `gh pr view <n> --json author,reviews`.
-// It reports ok=false on any failure, so the ledger runs on the bus alone.
-func ghPRReviews(ctx context.Context, pr int, hostRepo string) (string, []prReview, bool) {
+// Any failure is an error naming what failed, never an empty review list: a
+// GitHub read that did not happen is not "no reviews", and a ledger built on
+// the bus alone could report ready past an existing GitHub hold and could not
+// tell the author's own bus read from a friend's (Stella's hold, #2863).
+func ghPRReviews(ctx context.Context, pr int, hostRepo string) (string, []prReview, error) {
 	c := exec.CommandContext(ctx, "gh", "pr", "view", strconv.Itoa(pr), "--repo", hostRepo, "--json", "author,reviews")
+	var stderr strings.Builder
+	c.Stderr = &limitedWriter{w: &stderr, n: 512}
 	stdout, err := c.StdoutPipe()
 	if err != nil {
-		return "", nil, false
+		return "", nil, err
 	}
 	if err := c.Start(); err != nil {
-		return "", nil, false
+		return "", nil, fmt.Errorf("gh did not start: %w", err)
 	}
 	const maxRead = 4 << 20
-	b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
-	if err != nil || len(b) > maxRead || c.Wait() != nil {
-		return "", nil, false
+	b, rerr := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+	werr := c.Wait()
+	switch {
+	case rerr != nil:
+		return "", nil, fmt.Errorf("reading gh output: %w", rerr)
+	case len(b) > maxRead:
+		return "", nil, fmt.Errorf("gh output over %d bytes", maxRead)
+	case werr != nil:
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			return "", nil, fmt.Errorf("gh: %w", werr)
+		}
+		return "", nil, fmt.Errorf("gh: %w: %s", werr, msg)
 	}
 	var v reviewsFile
 	if err := json.Unmarshal(b, &v); err != nil {
-		return "", nil, false
+		return "", nil, fmt.Errorf("gh printed JSON that is not author,reviews: %w", err)
+	}
+	if v.Author.Login == "" {
+		return "", nil, errors.New("gh printed no PR author")
 	}
 	revs := make([]prReview, 0, len(v.Reviews))
 	for _, r := range v.Reviews {
 		revs = append(revs, prReview{Author: r.Author.Login, State: r.State, CommitID: r.CommitID, Body: r.Body, SubmittedAt: r.SubmittedAt})
 	}
-	return v.Author.Login, revs, true
+	return v.Author.Login, revs, nil
+}
+
+// limitedWriter keeps the first n bytes written to it and drops the rest, so a
+// chatty gh cannot grow a refusal reason without bound.
+type limitedWriter struct {
+	w io.Writer
+	n int
+}
+
+func (l *limitedWriter) Write(p []byte) (int, error) {
+	if l.n > 0 {
+		k := len(p)
+		if k > l.n {
+			k = l.n
+		}
+		if _, err := l.w.Write(p[:k]); err != nil {
+			return 0, err
+		}
+		l.n -= k
+	}
+	return len(p), nil
 }
 
 // reviewsFile is the shape `gh pr view <n> --json author,reviews` prints, and
@@ -547,8 +586,15 @@ func buildEntryLedger(ctx context.Context, st *merge.State, repo string, e *merg
 			for _, r := range v.Reviews {
 				revs = append(revs, prReview{Author: r.Author.Login, State: r.State, CommitID: r.CommitID, Body: r.Body, SubmittedAt: r.SubmittedAt})
 			}
-		} else if a, ghRevs, ok := viewPRReviews(ctx, e.PR, st.Repo); ok {
+		} else {
+			a, ghRevs, verr := viewPRReviews(ctx, e.PR, st.Repo)
+			if verr != nil {
+				return nil, readsRefuse(errOut, fmt.Sprintf("could not read the GitHub reviews of pr %d, so no ledger for it (a failed read is not \"no reviews\"; pass --reviews %d:<file> to read a snapshot): %v", e.PR, e.PR, verr))
+			}
 			author, revs = a, ghRevs
+		}
+		if author == "" {
+			return nil, readsRefuse(errOut, fmt.Sprintf("the GitHub reviews of pr %d name no author, so the author's own reads cannot be told from a friend's", e.PR))
 		}
 		ghReads, gerr := ingestPRReviews(e.PR, revs)
 		if gerr != nil {

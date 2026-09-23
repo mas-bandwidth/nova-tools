@@ -251,4 +251,40 @@ func TestIssue2063(t *testing.T) {
 	if code := run(readArgs(), &out, &errb); code != 2 || !strings.Contains(errb.String(), "READS REFUSED") || !strings.Contains(errb.String(), "04-typo.md body line 1") {
 		t.Errorf("a mistyped READ on held PR 1945 must refuse naming the note and line: exit %d stderr %s", code, errb.String())
 	}
+	must(os.Remove(filepath.Join(bus, "04-typo.md")))
+
+	// A failed GitHub read is a refusal, never an empty review list (Stella's
+	// hold, #2863): with no --reviews snapshot for 1945, the real seam runs gh;
+	// a gh that exits non-zero must not leave a ledger that sees no GitHub hold
+	// and cannot tell the author's own bus approve from a friend's.
+	fakeBin := filepath.Join(dir, "fakebin")
+	must(os.MkdirAll(fakeBin, 0o755))
+	must(os.WriteFile(filepath.Join(fakeBin, "gh"), []byte("#!/bin/sh\necho 'fake gh: HTTP 502 Bad Gateway' >&2\nexit 1\n"), 0o755))
+	t.Setenv("PATH", fakeBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	prevView := viewPRReviews
+	viewPRReviews = ghPRReviews
+	t.Cleanup(func() { viewPRReviews = prevView })
+	for _, extra := range [][]string{nil, {"--ready"}} {
+		out.Reset()
+		errb.Reset()
+		args := append([]string{"reads", "--lane", lane, "--bus", bus, "--reviews", "1901:" + reviews1901}, extra...)
+		code := run(args, &out, &errb)
+		if code != 2 || !strings.Contains(errb.String(), "READS REFUSED") ||
+			!strings.Contains(errb.String(), "GitHub reviews of pr 1945") || !strings.Contains(errb.String(), "fake gh: HTTP 502") {
+			t.Errorf("reads %v with gh failing must refuse naming the GitHub read of 1945 and gh's reason: exit %d\nstdout: %s\nstderr: %s", extra, code, out.String(), errb.String())
+		}
+		if strings.Contains(out.String(), "READS READY") || strings.Contains(out.String(), "id=1945") {
+			t.Errorf("reads %v with gh failing printed a ledger or readiness anyway:\n%s", extra, out.String())
+		}
+	}
+
+	// A snapshot that names no author is refused the same way: the author's
+	// own reads could not be told from a friend's.
+	noAuthor := snapshot("reviews-1945-noauthor.json", map[string]any{"reviews": []any{}})
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"reads", "--lane", lane, "--bus", bus, "--reviews", "1945:" + noAuthor, "--reviews", "1901:" + reviews1901, "--ready"}, &out, &errb); code != 2 ||
+		!strings.Contains(errb.String(), "pr 1945 name no author") || strings.Contains(out.String(), "READS READY") {
+		t.Errorf("a reviews snapshot with no author must refuse: exit %d\nstdout: %s\nstderr: %s", code, out.String(), errb.String())
+	}
 }
