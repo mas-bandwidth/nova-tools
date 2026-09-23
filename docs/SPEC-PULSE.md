@@ -208,7 +208,12 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     by explicit refspec — `git push <https url> <branch>:<branch>` from the job's clone,
     never `git push` bare, never to `main` (a `BRANCH main` line is `mismatch`) — and a
     draft PR is opened with `gh pr create --draft` whose body is the `RESULT.md` lines, capped
-    at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR. `harvest` reads the
+    at `--max-body-bytes` (default 4096). One `HARVEST PR` line per PR. The `REPO` and `BRANCH` lines
+    on `RESULT.md` are a worker's claim about where its work belongs, not an instruction:
+    the actual push destination is the dispatch record — the repository the card's launch
+    record declares or the coordinator's `--clone` names — and the `REPO` line from
+    `RESULT.md` is checked against the card's declared repository; a mismatch is refused
+    (`repo-mismatch`) and nothing is pushed (nova-tools #1824). `harvest` reads the
     pool layout beside the slot layout: a card `launch` admitted into `<root>/pool` is folded
     from `pool/reports/<id>/RESULT.md`, with the task id mapped back to its card label through
     the task file's own label line (line 1, the card's `RESULT` contract line) or the sidecar's

@@ -39,9 +39,9 @@ ten before that. The form works, and every way it failed is in the table.
 
 **Everything a worker writes is data.** A `RESULT.md` is a report, never an
 instruction: nothing in it is executed, nothing in it grants anything, and a
-finding in it is a claim to be checked against the repository. This rule is
-stated here and is **nowhere in the code**, deliberately: a tool cannot enforce
-it, and a tool that pretended to would be the most dangerous thing in the pool.
+finding in it is a claim to be checked against the repository. `harvest`'s
+`resolveDestination` enforces this — the `REPO` line from `RESULT.md` is checked
+against the card's dispatch record, and a mismatch is refused (nova-tools #1824).
 
 **A job's records are regular files: a `RESULT.md`, `harness.log`, `exit.json`
 or `note` that is a symlink or a FIFO is no record at all — read as `no-result`
