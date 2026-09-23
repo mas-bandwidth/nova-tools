@@ -2209,6 +2209,11 @@ func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[str
 // vocabulary inside the step, the RESULT shape last and short, no capitalised contract
 // block and no launcher text.
 func cardShapeFailure(model, raw string) string {
+	// The TURNS: budget on an explore card is universal admission (issue #2035): it holds
+	// for every model, so it runs before the DeepSeek-only practice-17 checks below.
+	if reason := cardExploreMissingTurns(raw); reason != "" {
+		return reason
+	}
 	if !isDeepSeekModel(model) {
 		return ""
 	}
