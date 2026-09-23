@@ -106,9 +106,12 @@ type nativeRunConfig struct {
 	// `unmetered`.
 	tokens    int
 	unmetered bool
-	// usageInterval is how often a live sample reads the harness's database while the
+	// usageInterval is how often a live sample will read the harness's database while the
 	// launch runs (rule 13d). cmdNative has already refused one under a second and one not
-	// shorter than the deadline, so what reaches here is a usable interval.
+	// shorter than the deadline, so what reaches here is a usable interval. Nothing in
+	// nativeRun reads it yet: this slice reads usage once, after the child exits
+	// (writeNativeUsage). The live sampler that consumes it, and stops the card at the
+	// budget or after three failed reads, is slice 3 (#1712), stacked on this branch.
 	usageInterval time.Duration
 }
 

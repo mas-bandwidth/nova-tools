@@ -3414,10 +3414,19 @@ same source; so `--tokens unmetered` beside a `max_turns` on a `usage: none` ben
 refused too. `--tokens unmetered` with no such description runs under both, as it does
 today.
 
-**`--usage-interval <s>`** is how often a live sample reads that source, default 5, the
+**`--usage-interval <s>`** is how often a live sample will read that source, default 5, the
 same flag `run` takes. On `native` an interval **under one second**, or one **not shorter
 than `--deadline`**, is exit 2: under the first, three quick failed reads would end an
 honest card `budget-unverifiable`; under the second no sample would ever run.
+
+**What this slice does not do yet.** At this point in the cap (slice 2 of 5, #1545) `native`
+checks the source and validates the interval before anything is made, and reads usage
+**once, after the child exits**, for the `budget=` word on the `NATIVE OK` line. It does
+**not** sample while the card runs: a numeric `--tokens` is not enforced mid-run, and three
+failed reads cannot stop a card. The live sampler that reads the source every
+`--usage-interval`, stops and reaps the process group at the budget or after three failed
+reads in a row, and keeps the final read's accounting is slice 3 (#1712), stacked on this
+one. Until it lands, `--usage-interval` is accepted and checked but read by nothing.
 
 **Every caller passes the word along.** `batch --cards` takes `--tokens <n>|unmetered`,
 required, and refuses the whole batch before any card starts:
