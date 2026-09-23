@@ -38,6 +38,10 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTaskTake(ctx, args[1:], out, errOut)
 	case "done":
 		return runTaskDone(ctx, args[1:], out, errOut)
+	case "beat":
+		return runTaskBeat(ctx, args[1:], out, errOut)
+	case "cancel":
+		return runTaskCancel(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take or done", args[0]))
 	}
