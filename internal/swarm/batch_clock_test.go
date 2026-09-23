@@ -19,6 +19,8 @@ type manualClock struct {
 	afterDone chan struct{}
 	tickCh    chan time.Time
 	tickDone  chan struct{}
+	polled    chan struct{}
+	gone      chan struct{}
 	afterOnce sync.Once
 	tickOnce  sync.Once
 }
@@ -30,6 +32,8 @@ func newManualClock() *manualClock {
 		afterDone: make(chan struct{}),
 		tickCh:    make(chan time.Time),
 		tickDone:  make(chan struct{}),
+		polled:    make(chan struct{}, 1),
+		gone:      make(chan struct{}),
 	}
 }
 
@@ -73,13 +77,29 @@ func (c *manualClock) advance(d time.Duration) {
 	}
 }
 
-// tick delivers one idle poll and waits for the monitor to receive it, so the
-// monitor's state after the call is settled.
+// tick delivers one idle poll and waits for the monitor to FINISH it -- every card
+// sampled, every decision taken, every kill reaped -- so the monitor's state after the
+// call is settled. Waiting only for the receive was not enough: the monitor could
+// still be reading a card's store when the test's next write landed, and read the
+// write as part of the tick before it (#2958).
+//
+// A tick after the batch has returned is a no-op: every card is done, the monitor has
+// left on allDone, and a bare send would block the test forever (the hang a loaded
+// bench found in TestBatchIdleDoesNotKillAWritingCard, whose card can finish before
+// its second tick).
 func (c *manualClock) tick() {
 	c.mu.Lock()
 	now := c.now
 	c.mu.Unlock()
-	c.tickCh <- now
+	select {
+	case c.tickCh <- now:
+	case <-c.gone:
+		return
+	}
+	select {
+	case <-c.polled:
+	case <-c.gone:
+	}
 }
 
 // runBatchClock drives one Batch under the given manual clock. drive runs while the
@@ -88,11 +108,12 @@ func (c *manualClock) tick() {
 // clock the kill logic reads is injected.
 func runBatchClock(in BatchInput, clk *manualClock, drive func()) (int, string, string) {
 	in.clock = clk
+	in.polled = func() { clk.polled <- struct{}{} }
 	var out, errb bytes.Buffer
 	in.Stdout = &out
 	in.Stderr = &errb
 	done := make(chan int, 1)
-	go func() { done <- Batch(in) }()
+	go func() { done <- Batch(in); close(clk.gone) }()
 	drive()
 	code := <-done
 	return code, out.String(), errb.String()
