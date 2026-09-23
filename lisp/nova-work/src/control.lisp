@@ -245,11 +245,82 @@ never reads a newer scope, so a ctl-clip or a later assignment cannot change it.
                                  (list :anchor (hold-anchor hold)
                                        :targets (hold-targets hold))))))
 
-(defun ctl-clip (kernel)
+(defun ctl-clip (kernel &key clip-after clip-every retain last-clip-time pending-count events structure path)
   "Publish a ctl-clip. A live hold's anchor and span are carried forward, never
-reconstructed from the newer scope."
-  (incf (ctl-clip-revision (kernel-controls kernel)))
-  (values t "CLIP OK" 0))
+reconstructed from the newer scope. The session clips when its pending accepted events
+reach --clip-after, or when --clip-every has elapsed since the last clip with at least
+one event pending, whichever comes first; a clip with nothing pending is not run
+(SPEC-WORK.md:498-499)."
+  (if (or clip-after clip-every retain last-clip-time pending-count events structure path)
+      ;; New behavior: use the periodic clipping logic
+      (when (clip-should-trigger-p kernel :clip-after clip-after :clip-every clip-every
+                            :last-clip-time last-clip-time :pending-count pending-count)
+        (let* ((clip-stamp (get-universal-time))
+               (boundary (calculate-retention-boundary events retain clip-stamp))
+               (retained-events (loop for event in events
+                                      when (>= (getf event :rev) boundary)
+                                        collect event))
+               (pre-boundary-events (loop for event in events
+                                           when (< (getf event :rev) boundary)
+                                             collect event))
+               (snapshot-path (or path "snapshot.lisp"))
+               (archive-path (format nil "~A-archive.lisp" (pathname-name snapshot-path))))
+          (write-clip-snapshot structure boundary retained-events snapshot-path)
+          (write-retention-archive pre-boundary-events archive-path :revision-range (list 0 boundary))
+          (incf (ctl-clip-revision (kernel-controls kernel)))
+          (values t "CLIP OK" 0)))
+      ;; Old behavior: just increment the clip-revision
+      (progn
+        (incf (ctl-clip-revision (kernel-controls kernel)))
+        (values t "CLIP OK" 0))))
+
+;;; ------------------------------------------------------------------
+;;; SPEC-WORK work-a: periodic clipping triggers and retention-boundary logic
+;;; (nova-tools#2333, docs/SPEC-WORK.md:495-533)
+;;; ------------------------------------------------------------------
+
+(defun clip-should-trigger-p (kernel &key clip-after clip-every last-clip-time pending-count)
+  "Check if a clip should be triggered based on --clip-after or --clip-every.
+According to SPEC-WORK.md:498: the session clips when its pending accepted events
+reach --clip-after, or when --clip-every has elapsed since the last clip with at
+least one event pending, whichever comes first; a clip with nothing pending is not run."
+  (and (> pending-count 0)
+       (or (>= pending-count clip-after)
+           (and clip-every last-clip-time
+                (> (get-universal-time) (+ last-clip-time clip-every))))))
+
+(defun calculate-retention-boundary (events retain-duration clip-stamp)
+  "Calculate the retention boundary revision.
+According to SPEC-WORK.md:522-525: the revision it names is the newest clipped
+revision whose commit stamp is older than the clip's own stamp less --retain."
+  (let ((cutoff (- clip-stamp retain-duration)))
+    (loop for event in (reverse events)
+          for stamp = (getf event :stamp)
+          for revision = (getf event :rev)
+          when (and stamp (< (parse-rfc3339 stamp) cutoff))
+            return revision
+          finally (return 0))))
+
+(defun write-clip-snapshot (structure retention-boundary retained-events path)
+  "Write the deterministic snapshot with three components.
+According to SPEC-WORK.md:527-529: Every clip writes three things into its one
+deterministic snapshot: the structure; the retention boundary, the derived state
+as the tool computed it at the revision --retain names; and every event after that
+boundary."
+  (with-open-file (out path :direction :output :if-exists :supersede)
+    (format out "~S~%~S~%~S~%" structure retention-boundary retained-events))
+  t)
+
+(defun write-retention-archive (pre-boundary-events path &key revision-range)
+  "Write the retention archive with pre-boundary events.
+According to SPEC-WORK.md:530: Events before it are written unchanged and in order
+into a sibling retention archive file the same clip commits, named in the
+snapshot's header with its revision range."
+  (with-open-file (out path :direction :output :if-exists :supersede)
+    (format out ";; retention archive revision-range=~A~%" revision-range)
+    (dolist (event pre-boundary-events)
+      (format out "~S~%" event)))
+  t)
 
 ;;; ------------------------------------------------------------------
 ;;; The dispatch barrier: revalidated at offer, at conversion, at send.
