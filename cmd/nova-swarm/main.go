@@ -1713,6 +1713,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// non-number and a zero in the same sentence: a card launched by `native` and a job
 	// launched by `run` can spend the same key, so they answer to the same rule.
 	tokensWord := f.fs.String("tokens", "", "")
+	// THE SAMPLE INTERVAL (rule 13d): "a flag `native` takes as `run` does", same name,
+	// same default, same spelling -- a bare number of seconds or a Go duration.
+	usageInterval := newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1800,6 +1803,27 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
 		return 2
 	}
+	// A BUDGET NEEDS A SOURCE THE TOOL CAN READ (rule 13d), AND THE INTERVAL HAS A FLOOR
+	// AND A CEILING. Both are checked HERE: after the deadline is parsed, because the
+	// interval's ceiling is the deadline; and above everything below, because 13d refuses
+	// "before any directory is made" and nativeRun's first act is to make the job
+	// directory. Neither check reads a file or starts a process.
+	//
+	// The source is the worker description's `usage`, and `opencode` when there is no
+	// `--worker` -- rule 13d's own sentence, which swarm.NativeUsageSource holds so that
+	// nobody retypes the default.
+	var workerForBudget *swarm.Worker
+	if workerGiven {
+		workerForBudget = &w
+	}
+	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, workerForBudget); reason != "" {
+		refuseNative(stderr, reason)
+		return 2
+	}
+	if reason := swarm.NativeUsageIntervalRefusal(usageInterval.d, d); reason != "" {
+		fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.Escape(reason))
+		return 2
+	}
 	idleDur := swarm.DefaultNativeIdle
 	if *idle != "" {
 		v, ierr := time.ParseDuration(*idle)
@@ -1848,6 +1872,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 		tokens:         budgetTokens,
 		unmetered:      budgetUnmetered,
+		usageInterval:  usageInterval.d,
 	}
 	if workerGiven {
 		cfg.worker = &w
@@ -1929,16 +1954,25 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// grammar puts it (docs/SPEC-SWARM.md, "Output grammar", the NATIVE OK line), so the
 	// fixed part of the line stays one fixed part. It is the JOB's figure -- the sum over
 	// every launch at the final read -- and never a launch's row. The VERDICT above and
-	// this field are independent: budget= is carried by INCOMPLETE too, because #1844's
-	// own sentence is that "every other field is byte-for-byte the same".
-	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s",
+	// this field are independent: budget= and stopped= are carried by an INCOMPLETE line
+	// too, because #1844's own sentence is that "every other field is byte-for-byte the
+	// same, so a reader that parses fields still reads them all".
+	fmt.Fprintf(stdout, "NATIVE %s label=%s job=%s tmp=%s rc=%d wall=%.2fs sandbox=%s card_sha256=%s binary_sha256=%s config=%s harness=%s budget=%s%s%s%s%s",
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
-		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated))
+		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}
 	fmt.Fprintln(stdout)
+	// THE PROMPT-DEFECT LINE, ON NATIVE'S OWN STDOUT AFTER THE `NATIVE` LINE, AND IN NO
+	// FILE (rule 13d, decision 16). The pool appends it to the job's RESULT.md, creating the
+	// file where the worker published none; on this route that would score the card
+	// `line1-mismatch`, and 13d promises the published report is kept byte for byte -- so
+	// here it is printed and nothing is written.
+	if res.defect != "" {
+		fmt.Fprintln(stdout, oneline.Escape(res.defect))
+	}
 	// THE WALL REPORT (issue #918): a run the fence stopped with no result ends `wall`,
 	// and the line names the path and the commits so the harvester pushes the work.
 	if res.wallReport != "" {
@@ -2130,6 +2164,22 @@ func fenceSuffix(path string) string {
 // coordinator reading the NATIVE OK line knows the run was stopped from outside and never
 // reads a silent exit as a spent failure (issue #779). The token is a literal put through
 // oneline.Field like every other tail, so it cannot carry anything past the escape.
+// stoppedSuffix renders rule 13d's one new key: ` stopped=<tokens|max_turns|max_cache_read|
+// unverifiable>` for a card the machinery stopped under that rule, and the empty string for
+// every other card.
+//
+// IT IS A KEY OF ITS OWN and NOT a second `reason=` (PR #1566 decision 17): one key with one
+// meaning, which also says WHICH budget fired. `reason=terminated` stays what a TERM from
+// outside prints and the `reason=` inside the `usage=none` group stays the usage read's --
+// that those two can still meet on one line is issue #1611, deliberately not this rule's to
+// repair.
+func stoppedSuffix(stopped string) string {
+	if stopped == "" {
+		return ""
+	}
+	return " stopped=" + oneline.Field(stopped)
+}
+
 func termSuffix(terminated bool) string {
 	if terminated {
 		return " reason=" + oneline.Field("terminated")
