@@ -131,7 +131,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 		return want, true
 	})
 
-	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
+	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "stillcard", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
@@ -224,7 +224,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 		return want, true
 	})
 
-	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
+	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "quietcard", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
@@ -241,6 +241,12 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
 		t.Fatalf("a card the watch ended is given the report it owes:\n%s\n%s", stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "why=unknown-acceptance") {
+		t.Fatalf("a card that went still is not an unknown provider acceptance:\n%s", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(job, "provider-acceptance")); !os.IsNotExist(err) {
+		t.Fatalf("a quiet card wrote an acceptance mark: %v", err)
 	}
 }
 
@@ -268,7 +274,7 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 		return swarm.IdleEnd{Idle: 240 * time.Second}, true
 	})
 
-	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
+	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "politecard", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
 	var stdout, stderr bytes.Buffer
@@ -292,7 +298,7 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-SAY sh: 1: cannot create /etc/hosts: Permission denied\nFAKE-SLEEP 3\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
+	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
 		"--model", "fake/fake-model", "--label", "unwatched", "--card", cardPath, "--slot", slot,
 		"--root", root, "--deadline", "60s", "--idle", "0", "--no-wall"}
 	var stdout, stderr bytes.Buffer

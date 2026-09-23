@@ -71,8 +71,16 @@ func TestRouteWaitIsTypedAndNotPermission(t *testing.T) {
 			t.Errorf("%s: the line carries no typed wait: %s", name, line)
 		}
 		if strings.HasPrefix(name, "security") || name == "touch" {
+			// The wait and the security read are two facts and neither hides
+			// the other. The rung is the one the open attempt left occupied --
+			// here johnny's own, because that is who the evidence says timed
+			// out -- and the read is attached beside it. A wait naming a
+			// reserved rung is a report, not a dispatch: exit 1 says so.
+			if !strings.Contains(line, "read=johnny") {
+				t.Errorf("%s: the security read must stand beside the wait: %s", name, line)
+			}
 			if !strings.Contains(line, "rung=johnny") {
-				t.Errorf("%s: the designated owner must stand beside the wait: %s", name, line)
+				t.Errorf("%s: the rung an open attempt occupies is the one named: %s", name, line)
 			}
 		}
 	}
