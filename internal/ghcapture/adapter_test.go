@@ -629,3 +629,66 @@ func TestRecordReplaysTheCaptureAndRefusesMutation(t *testing.T) {
 		}
 	}
 }
+
+// TestRecordDoesNotFollowSymlinksOutOfTheBundle: Record never writes through a
+// pre-existing symlink (an issue file, manifest.json or the issues directory)
+// into a file outside the bundle; it refuses, and the outside target keeps its
+// bytes (stella, nova-tools#3242).
+func TestRecordDoesNotFollowSymlinksOutOfTheBundle(t *testing.T) {
+	man := readManifest(t, bundleDir)
+	first := man.Pages[0]
+	var nodes []string
+	for _, n := range first.Issues {
+		b, err := os.ReadFile(filepath.Join(bundleDir, "issues", strconv.Itoa(n)+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodes = append(nodes, string(b))
+	}
+	onePage := func(query string, vars map[string]string) ([]byte, error) {
+		return []byte(fmt.Sprintf(`{"data":{"repository":{"issues":{"totalCount":%d,"pageInfo":{"hasNextPage":false,"endCursor":%q},"nodes":[%s]}}}}`,
+			len(first.Issues), first.EndCursor, strings.Join(nodes, ","))), nil
+	}
+	fetched, _ := time.Parse(time.RFC3339, man.FetchedAt)
+	const keep = "outside the bundle, must not change\n"
+	for _, tc := range []struct{ name, link string }{
+		{"issue file", filepath.Join("issues", strconv.Itoa(first.Issues[0])+".json")},
+		{"manifest", "manifest.json"},
+		{"issues directory", "issues"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outside := t.TempDir()
+			target := filepath.Join(outside, "victim")
+			if tc.link == "issues" {
+				if err := os.Mkdir(target, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				target = filepath.Join(target, strconv.Itoa(first.Issues[0])+".json")
+			}
+			if err := os.WriteFile(target, []byte(keep), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(out, "issues"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			linkTo := target
+			if tc.link == "issues" {
+				linkTo = filepath.Dir(target)
+				if err := os.Remove(filepath.Join(out, "issues")); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.Symlink(linkTo, filepath.Join(out, tc.link)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			_, err := Record(onePage, "mas-bandwidth", "netcode", 25, 1, fetched, out)
+			if err == nil || !strings.Contains(err.Error(), "not a regular") {
+				t.Errorf("Record through a %s symlink = %v, want a not-a-regular refusal", tc.name, err)
+			}
+			if got, _ := os.ReadFile(target); string(got) != keep {
+				t.Fatalf("Record wrote through the %s symlink: target now %d bytes", tc.name, len(got))
+			}
+		})
+	}
+}

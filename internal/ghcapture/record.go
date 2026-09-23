@@ -100,7 +100,10 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 		return nil, fmt.Errorf("ghcapture: page size 1..100 and at least one page, got %d/%d", pageSize, maxPages)
 	}
 	m := &Manifest{Provider: "github", Owner: owner, Repo: repo, FetchedAt: fetchedAt.UTC().Format(time.RFC3339), PageSize: pageSize}
-	if err := os.MkdirAll(filepath.Join(dir, "issues"), 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := makeBundleSubdir(filepath.Join(dir, "issues")); err != nil {
 		return nil, err
 	}
 	after := ""
@@ -132,7 +135,7 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 				return nil, fmt.Errorf("ghcapture: page %d: an issue without a number", page)
 			}
 			rel := fmt.Sprintf("issues/%d.json", head.Number)
-			if err := os.WriteFile(filepath.Join(dir, rel), node, 0o644); err != nil {
+			if err := writeBundleFile(dir, rel, node); err != nil {
 				return nil, err
 			}
 			sum := sha256.Sum256(node)
@@ -151,11 +154,66 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 	if err := enc.Encode(m); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(filepath.Join(dir, "manifest.json"), buf.Bytes(), 0o644); err != nil {
+	if err := writeBundleFile(dir, "manifest.json", buf.Bytes()); err != nil {
 		return nil, err
 	}
 	if last := m.Pages[len(m.Pages)-1]; last.HasNext {
 		return m, errors.New("ghcapture: stopped at the page bound with pages left; the bundle is incomplete and Open will refuse it")
 	}
 	return m, nil
+}
+
+// makeBundleSubdir makes p as a real directory, or accepts it if it already is one.
+// A symlink (or any other non-directory) at p is refused: following it would
+// put the bundle's writes outside the directory the caller chose.
+func makeBundleSubdir(p string) error {
+	fi, err := os.Lstat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return os.Mkdir(p, 0o755)
+	}
+	if err != nil {
+		return err
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("ghcapture: %s exists and is not a regular directory (%s); refusing to write through it", p, fi.Mode().Type())
+	}
+	return nil
+}
+
+// writeBundleFile writes data to dir/rel without ever following a link at
+// the destination. A pre-existing non-regular file (a symlink, a directory, a
+// device) is refused. The bytes go to a fresh temporary file in the same
+// directory (created exclusively, so it cannot be a link), which is then
+// renamed over the destination; rename replaces a link itself rather than its
+// target, so a link planted after the check still cannot redirect the write.
+func writeBundleFile(dir, rel string, data []byte) error {
+	p := filepath.Join(dir, rel)
+	if fi, err := os.Lstat(p); err == nil {
+		if !fi.Mode().IsRegular() {
+			return fmt.Errorf("ghcapture: %s exists and is not a regular file (%s); refusing to write through it", rel, fi.Mode().Type())
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(p), ".ghcapture-*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Chmod(tmp, 0o644)
+	}
+	if werr == nil {
+		werr = os.Rename(tmp, p)
+	}
+	if werr != nil {
+		os.Remove(tmp)
+		return werr
+	}
+	return nil
 }
