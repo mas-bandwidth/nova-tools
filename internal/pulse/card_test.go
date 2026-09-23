@@ -176,3 +176,26 @@ func TestParseSexpDocumentDependencies(t *testing.T) {
 		t.Errorf("E01-F03 deps = %v, want [E01-F01, E01-F02]", got["E01-F03"])
 	}
 }
+
+// TestCardDependsOnDashIsNone: the cut template writes "DEPENDS-ON: -" for a card with no
+// dependency (FormatDependsOn). The fill gate must read that as none, not as a dependency named
+// "-": on 2026-09-23 every holdfix card on hulk/vision/hetzner/space was HELD with
+// "dependency - not merged into dev" while the table showed them as ready (rowan-tools phantom-ready).
+func TestCardDependsOnDashIsNone(t *testing.T) {
+	for _, content := range []string{
+		"RESULT card-1\nDEPENDS-ON: -\n",
+		"RESULT card-1\ndepends-on: -  \n",
+		"(card :id c1 :depends-on (-))\n",
+		"RESULT card-1\nDEPENDS-ON: -, card-0\n",
+	} {
+		got := ParseCardDependencies(content)
+		for _, d := range got {
+			if d == "-" {
+				t.Errorf("ParseCardDependencies(%q) = %q; \"-\" means no dependency", content, got)
+			}
+		}
+	}
+	if ok, reason := NewGitAndResultsChecker(t.TempDir(), "dev", t.TempDir()).IsDependencyMerged("-"); !ok {
+		t.Errorf("IsDependencyMerged(\"-\") = false (%s); \"-\" means no dependency", reason)
+	}
+}
