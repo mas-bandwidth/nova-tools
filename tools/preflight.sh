@@ -16,6 +16,7 @@
 # Environment variables:
 #   GO               Go toolchain command (default: go)
 #   GOFMT            gofmt command (default: gofmt)
+#   MAKE             make command for the test step (default: make)
 #   PKGS             Package set when none given on CLI (default: ./cmd/... ./internal/...)
 #   RUN              Test regex filter if not given via -run
 #   NOVA_TEST_NO_HOST Safe test seam guard (default: 1)
@@ -26,6 +27,7 @@ cd "$REPO_ROOT" || exit 1
 
 GO="${GO:-go}"
 GOFMT="${GOFMT:-gofmt}"
+MAKE="${MAKE:-make}"
 export NOVA_TEST_NO_HOST="${NOVA_TEST_NO_HOST:-1}"
 
 RUN_PATTERN=""
@@ -46,6 +48,7 @@ while [ $# -gt 0 ]; do
       echo "Environment variables:"
       echo "  GO                Go command (default: go)"
       echo "  GOFMT             gofmt command (default: gofmt)"
+      echo "  MAKE              make command for the test step (default: make)"
       echo "  PKGS              Packages to test when no arguments provided"
       echo "  RUN               Test regex filter"
       echo "  NOVA_TEST_NO_HOST Safe test seam guard (default: 1)"
@@ -93,8 +96,9 @@ if [ -n "$RUN_PATTERN" ]; then
 elif [ -n "${RUN:-}" ]; then
   test_args+=(RUN="$RUN")
 fi
-# shellcheck disable=SC2086
-make test-full PKGS="$PKGS" "${test_args[@]}"
+# GO is forwarded so the Makefile's test-full runs the same toolchain vet did.
+# The ${arr[@]+...} form keeps an empty array safe under set -u on bash 3.2.
+"$MAKE" test-full GO="$GO" PKGS="$PKGS" ${test_args[@]+"${test_args[@]}"}
 echo "unit tests: OK"
 
 echo "=== Preflight: ALL CHECKS PASSED ==="
