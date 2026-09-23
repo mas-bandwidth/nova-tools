@@ -21,7 +21,11 @@ package jobs
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 )
 
@@ -217,6 +221,97 @@ func (g *Graph) Accepted(id string) bool {
 }
 
 func (n Node) accepted() bool { return n.Merged && n.Green }
+
+// Accept marks id as terminal accepted: merged and green. It is the join that
+// satisfies a dependent node's need.
+func (g *Graph) Accept(id string) error {
+	n, ok := g.node[id]
+	if !ok {
+		return fmt.Errorf("node %q not found in graph", id)
+	}
+	n.Merged = true
+	n.Green = true
+	g.node[id] = n
+	return nil
+}
+
+// AcceptFile accepts id in the graph file at path and writes the graph back in seed
+// order. The file is read, seeded and the node found before anything is written, so
+// an unreadable or invalid graph, or an id the graph does not hold, leaves the file
+// byte-identical.
+func AcceptFile(path, id string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	g, err := ParseSeed(raw)
+	if err != nil {
+		return err
+	}
+	if err := g.Accept(id); err != nil {
+		return err
+	}
+	nodes := make([]Node, 0, g.Len())
+	for _, n := range g.Order() {
+		node, _ := g.Node(n)
+		nodes = append(nodes, node)
+	}
+	out, err := MarshalNodes(nodes)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+// NamesGraphFlag reports whether an accept line carries --graph, the flag only the
+// in-process graph form of nova-work accept takes. nova-work dispatches on it: a line
+// that names --graph is the graph form, every other accept line is the resident
+// session's socket verb. A bare "--" ends the flags.
+func NamesGraphFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		name := strings.TrimLeft(a, "-")
+		if name == a {
+			continue
+		}
+		if name == "graph" || strings.HasPrefix(name, "graph=") {
+			return true
+		}
+	}
+	return false
+}
+
+// AcceptArgs is nova-work accept --graph <path> --node <id> after the verb word: it
+// parses the line, refuses a missing --graph or --node or a stray argument, and
+// accepts the node through AcceptFile. It returns the accepted id. Every refusal,
+// whether of the line or of the graph, happens before the file is written, so the
+// file is byte-identical after an error.
+func AcceptArgs(args []string) (string, error) {
+	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	graph := fs.String("graph", "", "the :deps graph file (required)")
+	node := fs.String("node", "", "the one node to accept (required)")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() > 0 {
+		return "", fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*graph) == "" {
+		return "", errors.New("--graph is required; refusing to guess")
+	}
+	id := strings.TrimSpace(*node)
+	if id == "" {
+		return "", errors.New("--node is required; refusing to guess")
+	}
+	if err := AcceptFile(*graph, id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
 
 // State names a node's progress: open, merged, or accepted. A merged node that is not
 // yet green is the blocker nova-pulse harvest settles.

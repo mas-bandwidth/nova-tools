@@ -461,6 +461,12 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	if h, ok := legacyVerbs[args[0]]; ok {
 		return h(args[1:], stdout, stderr)
 	}
+	// accept is also a resident-session socket verb (accept --session ...). The
+	// in-process graph form is the one that names --graph, and only that form is
+	// taken here; every other accept line falls through to the socket verb table.
+	if args[0] == "accept" && jobs.NamesGraphFlag(args[1:]) {
+		return cmdAccept(args[1:], stdout, stderr)
+	}
 	if args[0] == "events" {
 		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
@@ -674,6 +680,17 @@ func writeRow(stdout io.Writer, n jobs.Node, g *jobs.Graph) {
 		fmt.Fprintf(stdout, " state=%s blocker=- resolver=-", oneline.Field(n.State()))
 	}
 	fmt.Fprintln(stdout)
+}
+
+// cmdAccept is the in-process graph form of accept. jobs.AcceptArgs parses the line
+// and accepts the node, so the tested argv boundary is the one this verb ships.
+func cmdAccept(args []string, stdout, stderr io.Writer) int {
+	id, err := jobs.AcceptArgs(args)
+	if err != nil {
+		return refuse(stderr, " accept", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	fmt.Fprintf(stdout, "ACCEPT OK node=%s\n", oneline.Field(id))
+	return 0
 }
 
 func cmdPlan(args []string, stdout, stderr io.Writer) int {
