@@ -190,9 +190,13 @@ each of its UTF-8 characters is counted exactly once."
           form)
     (t (error 'restricted-data-violation :value form))))
 
-(defun read-restricted (text)
-  "Read one restricted s-expression from TEXT. Counted in *PARSES*."
+(defun read-restricted (text &key max-bytes max-depth max-nodes)
+  "Read one restricted s-expression from TEXT. Counted in *PARSES*.
+When MAX-BYTES, MAX-DEPTH or MAX-NODES are given, refuse inputs that exceed them."
   (refuse-evaluation-syntax text)
+  (when (and max-bytes (> (length text) max-bytes))
+    (error 'restricted-data-violation
+           :value (format nil "input ~D bytes exceeds max-bytes ~D" (length text) max-bytes)))
   (let ((*read-eval* nil)
         (*package* (find-package '#:nova-work.read))
         (*read-base* 10)
@@ -218,4 +222,32 @@ each of its UTF-8 characters is counted exactly once."
               (error 'restricted-data-violation
                      :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
           (incf *parses*)
-          (check-restricted form))))))
+          (let ((form (check-restricted form)))
+            (when (and max-depth (plusp max-depth))
+              (let ((peak (scan-depth form 0)))
+                (when (> peak max-depth)
+                  (error 'restricted-data-violation
+                         :value (format nil "depth ~D exceeds max-depth ~D" peak max-depth)))))
+            (when (and max-nodes (plusp max-nodes))
+              (let ((nodes (count-nodes form)))
+                (when (> nodes max-nodes)
+                  (error 'restricted-data-violation
+                         :value (format nil "nodes ~D exceeds max-nodes ~D" nodes max-nodes)))))
+            form))))))
+
+(defun scan-depth (form current)
+  "Return the peak nesting depth of FORM, where CURRENT is the depth already reached."
+  (typecase form
+    (cons (let ((child-depth (1+ current)))
+            (loop for sub in form
+                  maximize (scan-depth sub child-depth))))
+    (t current)))
+
+(defun count-nodes (form)
+  "Count the total number of cons cells in FORM."
+  (typecase form
+    (cons (loop for sub in form
+                summing (count-nodes sub)
+                into total
+                finally (return (1+ total))))
+    (t 1)))
