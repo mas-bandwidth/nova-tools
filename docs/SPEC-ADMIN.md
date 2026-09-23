@@ -124,10 +124,12 @@ the day the hurt behind it was learned.
    one hand with no record, while the declaring repository is edited by a commit
    with a diff, an author and a history. The trade is only worth making while
    the declaring repository is itself protected, so:
-   - the scope `--fleet` names **must itself be a declared scope** carrying at
-     least one `ruleset` row in the declaration it is reading. A declaration
-     that does not declare its own protection is `APPLY REFUSED`, exit 2,
-     remedy *declare a rule on the repository this file lives in*;
+   - the scope `--fleet` names must pass the **self-protection guard** below,
+     measured from the wire in the run that acts. A declaration that fails it,
+     or whose guard cannot be measured, is `APPLY REFUSED`, exit 2, naming the
+     condition that failed or was `unknown`, remedy *declare and put in force a
+     rule that covers the default branch of the repository this file lives in,
+     requires review there, and that this seat cannot bypass*;
    - `APPLY BEFORE` prints what the host says about the commit the blob came
      from — `commit=<sha> signed=<yes|no|unknown> reviewed=<yes|no|unknown>` —
      so the claim *a diff somebody read and a commit somebody signed* is a
@@ -139,6 +141,39 @@ the day the hurt behind it was learned.
    rule 7 distrusts, and nothing gives it a floor … a seat with write there
    commits a `seat` row, a `collab` row and a `ruling` row for it, and every rule
    in this spec passes."*)
+   **The self-protection guard.** A rule's name is not a protection (**the
+   kinds**: *a `present` row measures that a rule of that name exists and
+   nothing about what it does*), so a `ruleset … present` row on the declaring
+   scope proves nothing on its own: a rule set aside, or one whose refs cover
+   some other branch, still carries its name. The guard holds only when there
+   is one rule `R` on the declaring scope for which **all** of these are true,
+   each measured, never inferred:
+   - **declared:** the declaration carries, for the declaring scope, the rows
+     `R present`, `R/enforcement` at the host's in-force value, `R/refs`, and
+     `R/review` at a value other than `absent` — so every half of the guard is
+     also a row `plan` measures on a calm day, and its drift is a finding;
+   - **in force:** the wire's `R/enforcement` is the host's in-force value. A
+     rule the host reports as disabled, or only evaluated, fails the guard;
+   - **covers the branch the authority was read from:** the host's own read of
+     the rules in force on the default branch it reported for the declaring
+     scope (the branch the blob came from) names `R`. Coverage is the host's
+     answer, never the tool's evaluation of `R/refs`: matching a ref pattern
+     would need a catalog of the host's pattern syntax, which rule 3 forbids. A
+     host that offers no such read leaves coverage `unknown`;
+   - **requires review:** the wire's `R/review` is not `absent`, so an edit to
+     that branch arrives as a change somebody reviewed rather than a push;
+   - **the acting seat cannot bypass it:** no bypass actor the wire carries on
+     `R` contains the acting identity's reach as rule 13 measures it. A reach
+     the host will not report, against a rule carrying any bypass actor whose
+     membership the host does not state, is `unknown`.
+   Any condition `unknown` is a failed guard (rule 17: unknown is never a
+   pass), unlike `signed=` and `reviewed=` above, which are provenance of one
+   commit; the guard is the control that makes every commit's provenance
+   worth reading. The rule that passed is printed as `guard=<scope>:<R>` on
+   `APPLY BEFORE`. (2026-09-23 read of draft 3: the guard accepted *any*
+   `ruleset` row for the declaring scope, so a present-but-disabled rule, or
+   an active rule over unrelated refs, satisfied it while the default branch
+   and the declaration stayed open to one hand.)
 
 2. **One row per fact, six fields, and nothing implied.** One row is one
    tab-separated line: `kind`, `scope`, `key`, `want`, `owner`, `source`. The
@@ -656,7 +691,7 @@ rule 17 and never a pass.
 |---|---|---|---|
 | `repo` | a repository's own setting, `key` the setting's name as the host spells it | the host's repository read | the host's repository write |
 | `visibility` | whether a repository is public | the host's repository read | the host's repository write |
-| `ruleset` | a named rule's existence, and its enforcement and ref facets by key (below) | the host's rules read, at rule 8's origin | the host's rules write, at rule 8's address |
+| `ruleset` | a named rule's existence, and its enforcement, ref and review facets by key (below) | the host's rules read, at rule 8's origin | the host's rules write, at rule 8's address |
 | `check` | a required context on a rule | the host's rules read **and** the check runs and commit statuses on the heads rule 9 names | the host's rules write |
 | `workflow` | the file that emits a context | the host's contents read, and the check run → check suite → workflow run path (below) | **nothing — there is no act** (below) |
 | `bypass` | one bypass actor and its mode on a rule | the host's rules read | the host's rules write |
@@ -738,6 +773,7 @@ one wire fact, which is rule 5's own hurt (2026-09-13 read):
 |---|---|---|---|
 | `<rule>/enforcement` | `ruleset` | `active`, `evaluate` or `disabled` as the host spells them | whether the rule is in force at all |
 | `<rule>/refs` | `ruleset` | the ref condition as the host spells it | what the rule covers |
+| `<rule>/review` | `ruleset` | the rule's pull-request requirement as the host spells it, or `absent` | whether an edit to a covered branch must arrive as a reviewed change rather than a push |
 | `<rule>/<context>@<producer\|any>` | `check` | `present` or `absent` | a required check, and whether any producer satisfies it or one named one does |
 | `<rule>/actor:<type>:<id>` | `bypass` | a bypass mode as the host spells it, or `absent` | one bypass actor **and its mode**, which are two different grants |
 
@@ -780,6 +816,9 @@ a reader must be able to check a build against it.
 | `ruleset` facet `…/enforcement` | the host's in-force value | put a rule into force | narrows |
 | `ruleset` facet `…/enforcement` | any other value the host offers | take a rule out of force | **widens** |
 | `ruleset` facet `…/refs` | any ref condition | change what a rule covers | **widens** |
+| `ruleset` facet `…/review` | any requirement the host spells, wire `absent` | require review where none was required | narrows |
+| `ruleset` facet `…/review` | any requirement the host spells, wire another requirement | change what review a rule requires | **unjudged** |
+| `ruleset` facet `…/review` | `absent` | stop requiring review | **widens** |
 | `bypass` | any mode the host spells | add a bypass actor, or change its mode | **widens** |
 | `bypass` | `absent` | remove a bypass actor | narrows |
 | `feature` | any value | turn a named feature on or off | **unjudged**, either way |
@@ -837,6 +876,9 @@ seat	acme/widget	seat-one	present	line-one	policy-0
 repo	acme/widget	default-branch	trunk	line-one	policy-1
 visibility	acme/widget	-	public	line-one	policy-1
 ruleset	acme/policy	protect-the-declaration	present	line-one	policy-0
+ruleset	acme/policy	protect-the-declaration/enforcement	enforcement-a	line-one	policy-0
+ruleset	acme/policy	protect-the-declaration/refs	ref-condition-default	line-one	policy-0
+ruleset	acme/policy	protect-the-declaration/review	review-a	line-one	policy-0
 ruleset	acme/widget	protect-trunk	present	line-one	policy-1
 ruleset	acme/widget	protect-trunk/enforcement	enforcement-a	line-one	policy-1
 ruleset	acme/widget	protect-trunk/refs	ref-condition-a	line-one	policy-1
@@ -852,9 +894,15 @@ ruling	bypass:acme/widget:protect-trunk/actor:actor-type-a:actor-id-a	2026-09-11
 
 - **`scope`** is the thing the row is about: a repository in the host's own
   `<owner>/<name>` spelling, or the organization.
-- The `acme/policy` row is the declaration's **own** repository, which rule 1
-  requires it to declare a rule on: a declaration that does not protect the place
-  it lives in is a declaration one hand can rewrite.
+- The four `acme/policy` rows are the declaration's **own** repository and
+  rule 1's self-protection guard, declared whole: the rule exists, is in force
+  (`enforcement-a` stands for the host's in-force value), covers the default
+  branch (`ref-condition-default` stands for a condition the host reports as
+  covering it), and requires review. No `bypass` row is declared on it, so a
+  bypass actor the wire carries there is `EXTRA`, and one that contains the
+  acting seat's reach fails the guard. The `present` row alone would not pass:
+  a declaration that does not protect the place it lives in is a declaration
+  one hand can rewrite, and a name is not a protection.
 - **`key`** is the thing within the scope, and `-` where the kind has none.
 - **`want`** is the declared value.
 - **`owner`** is the line that answers when this row drifts, printed on every
@@ -916,7 +964,8 @@ apply it* on every line, and on a local run there is no such command.)
 **`apply`** is the acting verb and the only one. One change, named, under a
 declaration read from the wire (rule 1), against a value the caller was shown
 (`--expect`, rule 14). It is refused from a local `--fleet` (rule 1), refused
-when the declaration does not declare a rule on its own repository (rule 1),
+when the declaring repository fails or cannot be measured against the
+self-protection guard (rule 1),
 refused
 from an undeclared seat (rule 22), refused when the host's own grant header
 proves the permission absent (rule 12), refused when the change's target contains
@@ -972,7 +1021,7 @@ one number the coordinator's grant is conditioned on.)
 |------|---------|
 | 0 | the verb ran and passed: every measured row matched, a change applied and read back, a probe with the seat matched and no permission lacking, an audit that answered |
 | 1 | the verb ran and said **NO**: any drift, any wedge (rule 9), any UNKNOWN, a readback that did not match, an audit append that failed after the act happened, a probe whose seat did not match or whose grant header proved a required permission absent, an audit with an act unannounced for longer than `--unannounced-after` |
-| 2 | could not run: a missing flag, an unreadable or malformed declaration, an unknown kind, a duplicate change name, a second `seat` row, a change name no row carries, a local `--fleet` given to `apply` (rule 1), a declaration that declares no rule on its own repository (rule 1), an `--expect` digest the wire does not match (rule 14), a change on a kind with no act (**the kinds**), a refusal under rules 6, 9, 11, 12, 13, 18 or 22, a bad invocation |
+| 2 | could not run: a missing flag, an unreadable or malformed declaration, an unknown kind, a duplicate change name, a second `seat` row, a change name no row carries, a local `--fleet` given to `apply` (rule 1), a declaring repository that fails or cannot be measured against the self-protection guard (rule 1), an `--expect` digest the wire does not match (rule 14), a change on a kind with no act (**the kinds**), a refusal under rules 6, 9, 11, 12, 13, 18 or 22, a bad invocation |
 
 A `PLAN RISK … bypass=none` line is exit **0** on its own (rule 10), a
 `PLAN NOTE … never-run` line is exit 0 (rule 9), and `APPLY NOTE already` is
@@ -1006,7 +1055,7 @@ PLAN MORE kind=<looser|tighter|different|absent|extra|wedge|nobypass|unknown> sh
 PLAN <OK|FAIL> rows=<n> read=<n> match=<n> drift=<n> looser=<n> tighter=<n> different=<n> absent=<n> extra=<n> wedges=<n> nobypass=<n> unknown=<n> took=<d> fleet=<path|scope:path@sha>
 PLAN REFUSED: <reason> (<remedy>)
 APPLY SEAT running=<login> declared=<login> host=<label> match=<yes|no> reach=<role,team,org-role,…|unknown>
-APPLY BEFORE change=<name> fleet=<scope>:<path>@<sha> commit=<sha> signed=<yes|no|unknown> reviewed=<yes|no|unknown> wire=<v|-> digest=<sha256:<12 hex>|-> expect=<sha256:<12 hex>|-> want=<v> act=<narrows|widens|unjudged> origin=<repo|org|protection|-> source=<source> ruling=<date:person|-> precondition=<sent:<token>|none> address=<METHOD> <url>
+APPLY BEFORE change=<name> fleet=<scope>:<path>@<sha> guard=<scope>:<rule> commit=<sha> signed=<yes|no|unknown> reviewed=<yes|no|unknown> wire=<v|-> digest=<sha256:<12 hex>|-> expect=<sha256:<12 hex>|-> want=<v> act=<narrows|widens|unjudged> origin=<repo|org|protection|-> source=<source> ruling=<date:person|-> precondition=<sent:<token>|none> address=<METHOD> <url>
 APPLY PROBE change=<name> permission=<name|-> have=<no|unknown> header=<value|->
 APPLY NOTE change=<name> note=<already> wire=<v>: <detail>
 APPLY AFTER change=<name> wire=<v|-> was=<v|-> address=<METHOD> <url> facets=<unchanged|moved:<facet>> matched=<yes|no>
@@ -1046,7 +1095,9 @@ Twelve things the grammar is carrying deliberately:
 - **`APPLY BEFORE` carries the declaring commit's provenance.** `commit=`,
   `signed=` and `reviewed=` are what the host says about the commit the authority
   was read from (rule 1), so *a diff somebody read* is on the line as a
-  measurement.
+  measurement; `guard=` names the rule that passed rule 1's self-protection
+  guard in this run, and there is no `guard=-`, because a run with no such
+  rule has already been refused.
 - **`precondition=` says whether the host took one.** `sent:<token>` where the
   host offered a conditional write and `none` where it did not, because rule 14's
   window is only closed in the first case and a reader of the record is entitled
@@ -1216,10 +1267,16 @@ nowhere is there an `os.Getwd`, a `$HOME` read or a path that is not from a flag
    wire declaration differs from a local file of the same name acts on the
    **wire's** rows, and the local file is never opened; the blob sha the fixture
    served is on `APPLY BEFORE` and in the audit row, with the commit's `signed=`
-   and `reviewed=` from the fixture beside it. A declaration carrying no
-   `ruleset` row for its own declaring scope is `APPLY REFUSED`, exit 2, and the
-   same declaration with one proceeds, proved by two fixtures differing in that
-   row alone.
+   and `reviewed=` from the fixture beside it. The self-protection guard is
+   proved by one passing fixture and seven that each differ from it in one fact
+   and are each `APPLY REFUSED`, exit 2, naming that condition, before any
+   write: the declaring scope carries only the `present` row; the rule is
+   present but its wire enforcement is disabled; present but only evaluated;
+   active but the host's rules-in-force read for the default branch does not
+   name it (its refs cover another branch); active and covering but its wire
+   review is `absent`; a bypass actor on it contains the acting seat's reach;
+   and the host answers the rules-in-force read with an error, so coverage is
+   `unknown`. The passing fixture proceeds and prints `guard=` naming the rule.
 2. A header that differs by one byte is exit 2 naming line 1; a five-field and a
    seven-field row are each exit 2 naming the line number; an empty field is
    refused and `-` is accepted; a `#` line and the header are not counted in
