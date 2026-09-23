@@ -82,12 +82,11 @@ func newDestBench(t *testing.T) *destBench {
 	realGit(t, "init", "--bare", "-b", "main", b.attacker)
 
 	// The one seam, and it is git's own: the forge URLs this package forms are rewritten
-	// onto the bare repositories above. The package's push and PR-open are untouched.
+	// onto the bare repositories above. The package's push, fetch and PR-open are untouched.
 	//
-	// `pushInsteadOf` and not `insteadOf`, deliberately: `git remote get-url origin`
-	// applies a plain `insteadOf`, which would make the clone's recorded origin come back
-	// as a local path and hide the very comparison this file is about. pushInsteadOf
-	// rewrites the transport and leaves what the clone SAYS its origin is alone.
+	// `insteadOf` rewrites fetch of dest.url onto the local bare repo (HOLD on #2117).
+	// cloneOrigin reads `git config --get remote.origin.url`, which does not apply
+	// insteadOf, so the recorded origin stays the forge URL this comparison is about.
 	//
 	// The forge host is never spelled in this file: every URL below is the package's own
 	// githubCloneBase, which is what internal/ci's net class test asks of a test file and
@@ -101,10 +100,12 @@ func newDestBench(t *testing.T) *destBench {
 [commit]
 	gpgsign = false
 [url "%s"]
+	insteadOf = %s
 	pushInsteadOf = %s
 [url "%s"]
+	insteadOf = %s
 	pushInsteadOf = %s
-`, filepath.ToSlash(b.honest), honestURL, filepath.ToSlash(b.attacker), attackerURL)
+`, filepath.ToSlash(b.honest), honestURL, honestURL, filepath.ToSlash(b.attacker), attackerURL, attackerURL)
 	if err := os.WriteFile(cfg, []byte(conf), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +218,7 @@ func TestARewrittenOriginIsRefusedEvenWhenTheResultIsHonest(t *testing.T) {
 func TestTheHonestJobStillLandsOnTheDispatchedRepo(t *testing.T) {
 	b := newDestBench(t)
 	b.card(t, "card-882", "rowan/br-882", "owner/repo")
+	realGit(t, "-C", b.job, "push", "origin", "HEAD:dev")
 
 	out, errs := runHarvest(t, b.root)
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -61,7 +62,7 @@ func ParseDispositionLine(line string) (who, head, verdict, scope string, ok boo
 	}
 	rest := strings.TrimSpace(strings.TrimPrefix(line, "DISPOSITION"))
 	fields := parseKeyValueFields(rest)
-	who = fields["who"]
+	who = normWho(fields["who"])
 	head = strings.ToLower(fields["head"])
 	verdict = strings.ToUpper(fields["verdict"])
 	scope = fields["scope"]
@@ -69,6 +70,93 @@ func ParseDispositionLine(line string) (who, head, verdict, scope string, ok boo
 		return who, head, verdict, scope, true
 	}
 	return "", "", "", "", false
+}
+
+// dispositionWholeLine parses a line that is a DISPOSITION line WHOLE and nothing else:
+// the first token is exactly DISPOSITION, and everything after it is key=value fields with
+// no stray prose and no repeated key.
+//
+// nova-tools #2550, second ask: "the DISPOSITION line must be the whole line (no smuggled
+// verdict inside a multi-line body)". This strict form gates the RELEASING verdict only --
+// a typed APPROVE. A HOLD keeps the lenient ParseDispositionLine, on purpose: tightening
+// the parser on the holding side would turn a sloppily typed HOLD into a non-hold, and a
+// rule about smuggling must never fail open on the side that stops a merge.
+func dispositionWholeLine(line string) (map[string]string, bool) {
+	line = strings.TrimSpace(line)
+	const word = "DISPOSITION"
+	if !strings.HasPrefix(line, word) {
+		return nil, false
+	}
+	rest := line[len(word):]
+	if rest != "" && !isSpaceByte(rest[0]) {
+		// DISPOSITIONS, DISPOSITION: and friends are not the typed line.
+		return nil, false
+	}
+	return parseKeyValueFieldsStrict(rest)
+}
+
+func isSpaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == '\v' || b == '\f'
+}
+
+// parseKeyValueFieldsStrict is parseKeyValueFields with the tolerance taken out: every
+// token must belong to a key=value field, keys must be bare words, a quoted value must
+// close, and no key may be given twice. Anything else and the line is not a typed line.
+func parseKeyValueFieldsStrict(s string) (map[string]string, bool) {
+	res := make(map[string]string)
+	for {
+		s = strings.TrimLeft(s, " \t\r\n\v\f")
+		if s == "" {
+			return res, true
+		}
+		eq := strings.IndexByte(s, '=')
+		if eq <= 0 {
+			return nil, false
+		}
+		key := s[:eq]
+		if !isBareKey(key) {
+			return nil, false
+		}
+		s = s[eq+1:]
+		var val string
+		if len(s) > 0 && s[0] == '"' {
+			s = s[1:]
+			closeQuote := strings.IndexByte(s, '"')
+			if closeQuote < 0 {
+				return nil, false
+			}
+			val = s[:closeQuote]
+			s = s[closeQuote+1:]
+			if s != "" && !isSpaceByte(s[0]) {
+				return nil, false
+			}
+		} else {
+			sp := strings.IndexFunc(s, unicode.IsSpace)
+			if sp >= 0 {
+				val, s = s[:sp], s[sp:]
+			} else {
+				val, s = s, ""
+			}
+		}
+		if _, dup := res[key]; dup {
+			return nil, false
+		}
+		res[key] = val
+	}
+}
+
+func isBareKey(k string) bool {
+	if k == "" {
+		return false
+	}
+	for _, r := range k {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func parseKeyValueFields(s string) map[string]string {
@@ -171,21 +259,48 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 		}
 	}
 
-	// Untyped check: rule table hold tokens
-	// 1. First non-empty line begins with HOLD token
-	first := firstNonEmptyLine(clean)
-	firstWord := firstToken(first)
-	isHoldFirstLine := strings.EqualFold(firstWord, "HOLD")
+	// A typed APPROVE (nova-tools #2550), read BEFORE the untyped hold-shape check below
+	// (nova-tools #2631): the typed line wins when a comment carries both a typed verdict
+	// and prose that happens to be hold-shaped. Before this reordering, an APPROVE comment
+	// whose body praised a HOLD by name in passing -- "**Johnny's HOLD Conclusively
+	// Satisfied**" inside a `DISPOSITION who=emma ... verdict=APPROVE` comment -- was read
+	// as an untyped HOLD by whoever's word HOLD appeared in bold, before its own typed
+	// APPROVE line was ever consulted (#2587 comment 5782779847, #2616 comment 5782724650).
+	//
+	// Before this, a comment carrying `DISPOSITION who=<name> head=<sha> verdict=APPROVE`
+	// fell through to the untyped branch below and came back as a PENDING comment -- a
+	// typed verdict read as evidence of nothing, and then as a second reason to drop the
+	// pull request. It is read here so that UnreleasedHolds can see it.
+	//
+	// It is still true that a comment releases nothing at the current head: an approve
+	// with Source "comment-rule" is not a lane record, so UnreleasedHolds never folds it
+	// against a hold that binds to the head. Its one job is the carried case.
+	if v, ok := approveVerdict(id, login, lines, at, rs, currentHead); ok {
+		return v, true
+	}
 
-	// 2. Word HOLD as heading or inside bold anywhere in unquoted body
-	isHoldHeadingOrBold := containsHoldHeadingOrBold(clean)
-
-	if isHoldFirstLine || isHoldHeadingOrBold {
+	// Untyped check: a comment yields HOLD only from a verdict-SHAPED line (nova-tools
+	// #2631). The word HOLD inside a body -- a bold aside inside a bullet about somebody
+	// else's hold, a heading recapping one, a quoted line -- is never a verdict; a LINE
+	// that is, on its own, one of the recognised shapes is. Every line is checked, not
+	// only the first, because a genuine standalone `**HOLD: ...**` line can follow a
+	// leading DISPOSITION/NOTE line (TestAuthorLoginExcusesNothingOnSharedLoginNote) --
+	// but "Johnny's HOLD Conclusively Satisfied" is a bullet ABOUT a hold, not a line
+	// whose own shape is HOLD, so it never matches isHoldShapedLine on any line by itself.
+	holdLine := ""
+	for _, l := range lines {
+		if isHoldShapedLine(l) {
+			holdLine = strings.TrimSpace(l)
+			break
+		}
+	}
+	if holdLine != "" {
 		// SPEC-DECIDE lines 1037-1040: untyped comment binds to current head
 		head := currentHead
+		who := deriveHoldWho(holdLine)
 		v := Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
-			Who:    "unknown",
+			Who:    who,
 			Word:   "hold",
 			Head:   head,
 			At:     at,
@@ -216,6 +331,53 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 		return v, true
 	}
 
+	return Verdict{}, false
+}
+
+// approveVerdict reads a typed APPROVE off a comment body's lines.
+//
+// Two guards, both from nova-tools #2550:
+//
+//   - the DISPOSITION must be the WHOLE line (dispositionWholeLine), so a release cannot
+//     be smuggled into a sentence in a long body;
+//   - its head= is kept as typed and compared later by headMatch, which is the same
+//     prefix rule a typed HOLD's head= gets. `head=5adf9cb2` and the whole 40-character
+//     object name are the same head to this tool, on both verdicts, or a friend who
+//     abbreviates holds a pull request forever without meaning to.
+//
+// A who the reviewer file does not map to this login resolves to "unknown", and ambiguity
+// approves nothing (S6), so no verdict is returned at all: the comment falls through to
+// the pending branch and fails closed.
+func approveVerdict(id int64, login string, lines []string, at string, rs *ReviewerSet, currentHead string) (Verdict, bool) {
+	for _, l := range lines {
+		fields, ok := dispositionWholeLine(l)
+		if !ok {
+			continue
+		}
+		if !strings.EqualFold(fields["verdict"], "APPROVE") {
+			continue
+		}
+		resolvedWho, _ := rs.ResolveWho(login, fields["who"])
+		if resolvedWho == "" || resolvedWho == "unknown" {
+			continue
+		}
+		head := strings.ToLower(strings.TrimSpace(fields["head"]))
+		if head == "" {
+			head = currentHead
+		}
+		return Verdict{
+			ID:     fmt.Sprintf("comment:%d", id),
+			Who:    resolvedWho,
+			Word:   "approve",
+			Head:   head,
+			At:     at,
+			Source: "comment-rule",
+			Scope:  fields["scope"],
+			RawID:  id,
+			Conf:   "-",
+			Kind:   "line",
+		}, true
+	}
 	return Verdict{}, false
 }
 
@@ -298,7 +460,103 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 			holds = append(holds, v)
 		}
 	}
-	return UnreleasedHolds(holds, reads, currentHead, author, rs)
+	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs, currentHead)
+}
+
+// releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD at a SUPERSEDED
+// head is released by a later typed verdict from the same friend at the CURRENT head),
+// amended by the coordinator's 2026-09-22 4:55 PM decision to cover a HOLD still AT the
+// current head too:
+//
+//	A HOLD by friend X at head H, however it was written, is released by X's LATER typed
+//	`DISPOSITION who=x head=H verdict=APPROVE` comment at that same head H; the last
+//	typed verdict per friend at head wins, whether H is superseded or current.
+//
+// The reasoning given for lifting SPEC-DECIDE reading 3's older "a comment releases
+// nothing at the current head; only the holder's lane record does" restriction: Glenn's
+// one-read rule is about typed lines, and a friend's own typed DISPOSITION comment IS
+// their lane record for their own hold. It never was evidence good enough for a
+// DIFFERENT friend's hold or for the needs_read approval gate (read.go's EvaluateReads,
+// which remains lane-record-only and is untouched here) -- only for superseding one's
+// own earlier word with one's own later word, the same friend, the same head.
+//
+// Measured control: #2522 comment 5766104067, Stella's untyped prose hold ("HOLD --
+// Stella, independent contract/source read..."), binds to the current head because an
+// untyped comment always does (SPEC-DECIDE lines 1037-1040); her own later typed
+// `DISPOSITION who=stella head=<that same head> verdict=APPROVE score=9` comment
+// (5783400393) now releases it. Emma's typed APPROVE at that same head does not: the
+// rule is same-friend, never "somebody approved".
+//
+// What this does NOT do, and must not:
+//
+//   - An APPROVE at some OTHER, non-matching head releases nothing. Release keys on the
+//     head, never on "somebody approved at some point".
+//   - A hold with who=unknown is left alone. An untyped hold-shaped line with no
+//     attributable name has no author to match, so nothing can supersede it this way;
+//     SPEC-DECIDE reading 3's other release path (a different may-hold reader's lane
+//     record naming it) is unaffected.
+//   - The needs_read approval gate (read.go) still counts only lane records. This
+//     decision is about a hold's own author superseding themselves, not about who counts
+//     as a second friend's read.
+func releaseSameFriendSupersededHolds(unreleased []Verdict, vs []Verdict, currentHead string) []Verdict {
+	var kept []Verdict
+	for _, h := range unreleased {
+		if h.Who == "unknown" || h.Who == "" {
+			kept = append(kept, h)
+			continue
+		}
+		if !supersededByVerdictAtHead(h, vs, currentHead) {
+			kept = append(kept, h)
+		}
+	}
+	return kept
+}
+
+func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool {
+	for _, v := range vs {
+		if v.Kind != "" && v.Kind != "line" {
+			continue
+		}
+		if v.Word != "approve" && v.Word != "hold" {
+			continue
+		}
+		// Only a TYPED word counts as the friend's own lane record: Source "record" (a
+		// `nova-merge read`) or "comment-rule" (a typed DISPOSITION line, ParseComment's
+		// only way to produce Word "approve" or a named "hold"). A forge-native review
+		// click never reaches here as an approve at all -- ParseReview drops an APPROVED
+		// review outright (SPEC-DECIDE reading 3) -- but excluding every other Source
+		// here too means a verdict shaped like one, real or synthetic, still supersedes
+		// nothing (TestAForgeApprovedReviewReleasesNothing, TestACommentNeverReleasesAnything).
+		if v.Source != "record" && v.Source != "comment-rule" {
+			continue
+		}
+		if !sameLine(v.Who, h.Who) {
+			continue
+		}
+		if !headMatch(v.Head, currentHead) {
+			continue
+		}
+		// The tie rule of UnreleasedHolds: a verdict stamped at or before the hold is
+		// not later than it, and a verdict with no stamp is not evidence of order.
+		if v.At == "" || v.At <= h.At {
+			continue
+		}
+		if v.Word == "approve" {
+			// A scoped APPROVE releases only what it names, the same way it does at head.
+			if v.Scope != "" && !releasesContains(v.Releases, h.ID) {
+				continue
+			}
+		} else {
+			// A later HOLD replaces the held one only when it is the same topic: a
+			// friend's new hold on "docs" is not their last word on an unrelated,
+			// still-standing "parser" hold (TestAScopedApproveReleasesOnlyTheHoldsItNames).
+			if v.Scope != h.Scope {
+				continue
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // UnreleasedHolds folds active holds against lane read records.
@@ -479,28 +737,53 @@ func isHex(s string) bool {
 	return len(s) > 0
 }
 
-func containsHoldHeadingOrBold(body string) bool {
-	lines := strings.Split(body, "\n")
-	for _, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		// Heading: # HOLD ...
-		if strings.HasPrefix(trimmed, "#") {
-			words := strings.Fields(trimmed)
-			for _, w := range words {
-				if strings.Trim(w, ".,:;!?()[]*#_`") == "HOLD" {
-					return true
-				}
-			}
-		}
-		// Bold: **HOLD...** or __HOLD...__
-		if containsBoldWord(trimmed, "HOLD") {
-			return true
-		}
+// holdNamePrefix reads a friend's name off an untyped HOLD's leading prose, exactly as the
+// bash lander already did: a name first ("Stella: HOLD ...") or HOLD first, then a name
+// ("HOLD -- Stella, ..."), for the fixed set of reviewers the lander recognised this way.
+var holdNamePrefix = regexp.MustCompile(`(?i)^(?:hold[^a-z]*)?(emma|stella|johnny|glenn)\b`)
+
+// holdVerdictLine, holdParenLine and holdReviewLine are the remaining recognised line
+// shapes nova-tools #2631 named as a HOLD without a typed DISPOSITION line: `Verdict:
+// HOLD`, `(HOLD)`, and `<name> review: HOLD`. `HOLD ...` itself (including `HOLD #n` and
+// `HOLD at <sha>`) is matched directly in isHoldShapedLine by its first token.
+var (
+	holdVerdictLine = regexp.MustCompile(`(?i)^verdict:\s*\**\s*hold\b`)
+	holdParenLine   = regexp.MustCompile(`(?i)\(\s*hold\s*\)`)
+	holdReviewLine  = regexp.MustCompile(`(?i)^(?:emma|stella|johnny|glenn)\s+review:\s*\**\s*hold\b`)
+)
+
+// isHoldShapedLine reports whether a single line, taken on its own, is one of the
+// recognised untyped HOLD shapes (nova-tools #2631): `HOLD ...` as the line's own first
+// word (which also covers `HOLD #n`, `HOLD at <sha>`, and `HOLD -- Name, ...`), `Verdict:
+// HOLD`, `(HOLD)`, a standalone bold/underscored `**HOLD:**` marker, or `<name> review:
+// HOLD`. ParseComment checks every line, not only the first, so a standalone HOLD line may
+// still follow a leading DISPOSITION/NOTE line -- but the word HOLD used AS PROSE inside a
+// longer line, such as a bullet reading "Johnny's HOLD Conclusively Satisfied", is never a
+// verdict: read on its own, that line's first token is "Johnny's", not HOLD, its one bold
+// span carries three other words besides HOLD, and it matches none of the other shapes
+// either. Reading it as a hold dropped APPROVE comments whose body happened to praise a
+// HOLD by name (#2587 comment 5782779847, #2616 comment 5782724650) -- the distinction from
+// a genuine `**HOLD:**` marker is exactly that the marker's bold span names nothing else.
+func isHoldShapedLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
 	}
-	return false
+	if strings.EqualFold(firstToken(line), "HOLD") {
+		return true
+	}
+	if holdVerdictLine.MatchString(line) || holdParenLine.MatchString(line) || holdReviewLine.MatchString(line) {
+		return true
+	}
+	return hasStandaloneBoldHold(line)
 }
 
-func containsBoldWord(line, word string) bool {
+// hasStandaloneBoldHold reports whether line contains a bold (`**...**`) or underscored
+// (`__..__`) span whose content is the word HOLD alone (plus trailing punctuation such as
+// a colon) and nothing else -- "Please note: **HOLD:** we need clarification" -- as
+// distinct from a bold span that merely mentions HOLD among other words, such as
+// "**Johnny's HOLD Conclusively Satisfied**", which is prose about a hold, not a marker.
+func hasStandaloneBoldHold(line string) bool {
 	for _, marker := range []string{"**", "__"} {
 		idx := 0
 		for {
@@ -513,16 +796,27 @@ func containsBoldWord(line, word string) bool {
 			if end == -1 {
 				break
 			}
-			inner := line[start : start+end]
-			for _, f := range strings.Fields(inner) {
-				if strings.Trim(f, ".,:;!?()[]`") == word {
-					return true
-				}
+			inner := strings.Fields(line[start : start+end])
+			if len(inner) == 1 && strings.EqualFold(strings.Trim(inner[0], ".,:;!?()[]`"), "HOLD") {
+				return true
 			}
 			idx = start + end + len(marker)
 		}
 	}
 	return false
+}
+
+// deriveHoldWho reads the friend's name off an untyped HOLD's own line via holdNamePrefix.
+// A hold with a name is that friend's hold even when nobody typed a DISPOSITION line
+// (nova-tools #2615 follow-up; #2522 comment 5766104067, "HOLD -- Stella, independent
+// contract/source read..."); it returns "unknown" -- same as before this fix -- when the
+// line names none of the fixed set of reviewers.
+func deriveHoldWho(line string) string {
+	m := holdNamePrefix.FindStringSubmatch(strings.TrimSpace(line))
+	if m == nil {
+		return "unknown"
+	}
+	return normWho(m[1])
 }
 
 // ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.

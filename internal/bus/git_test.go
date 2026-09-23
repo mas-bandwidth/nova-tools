@@ -908,6 +908,29 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	}
 }
 
+// TestIssue462: send must not refuse over the wait's own BEAT file in the same lane.
+//
+// The failure: wait writes from-ada/BEAT every tick and may not have pushed yet. When
+// send calls EnsureClean it sees that untracked BEAT as dirty and refuses:
+// "the bus's checkout holds changes that are not this note: from-ada/BEAT".
+// SPEC.md lists BEAT as wait's file, not send's. The fix treats from-<lane>/BEAT
+// as permitted when the lane being sent to is the same lane.
+func TestIssue462(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+
+	write(t, clone, "from-ada/BEAT", "2026-09-15T12:00:00Z abcdef1\n")
+
+	err := EnsureClean(clone, []string{"from-ada/a.md"})
+	if err != nil {
+		t.Fatalf("EnsureClean refused over the wait's own BEAT in the same lane: %v", err)
+	}
+}
+
 // THE RETRY LOOP WAITS BETWEEN ATTEMPTS, and it did not before. Every retry here was
 // started by somebody else's push landing first, so the two lines are in step by
 // construction: they fetch, rebase and push again together. A loop with no wait in it

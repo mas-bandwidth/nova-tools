@@ -14,6 +14,12 @@ import (
 // this since issue #593; `native` -- the verb every card on every bench runs through -- had
 // no watch at all.
 
+func TestDefaultNativeIdleIsTheBatchWindowNotAProviderDeadline(t *testing.T) {
+	if DefaultNativeIdle != 300*time.Second {
+		t.Fatalf("native idle is %s, want the same 300s window as batch", DefaultNativeIdle)
+	}
+}
+
 // fakeSnap is one reading of a process tree, handed to the watch instead of the machine's
 // own table so a still card and a working one are both expressible in a test.
 type fakeSnap struct {
