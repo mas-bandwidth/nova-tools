@@ -160,6 +160,28 @@ func TestIssue2012(t *testing.T) {
 		}
 	})
 
+	t.Run("mapfile-inside-quotes-is-prose", func(t *testing.T) {
+		// Held on #2872 (emma, stella): fleetLineScan kept quoted bytes in bare, so a
+		// quoted `mapfile` drifted bash4-builtin. Quoted text is prose; `$( )` is code.
+		body := strings.Join([]string{
+			"#!/usr/bin/env bash",
+			"echo \"mapfile\"",
+			"echo 'readarray is bash 4'",
+			"printf '%s\\n' \"use while read, not mapfile\"",
+			"",
+		}, "\n")
+		path := fleetScript(t, "quoted-mapfile.sh", body)
+		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
+		if exit != 0 || !strings.Contains(stdout, "LINT OK script=quoted-mapfile.sh checks=3") {
+			t.Fatalf("`mapfile` inside single or double quotes is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		}
+		code := fleetScript(t, "subst-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(mapfile -t a < f)\"\n")
+		exit, stdout, _ = runSwarm(t, "lint", "--fleet", code)
+		if exit != 2 || !strings.Contains(stdout, "bash4-builtin: 2:") {
+			t.Fatalf("`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
+		}
+	})
+
 	t.Run("card-and-fleet-are-two-inputs", func(t *testing.T) {
 		path := fleetScript(t, "two-inputs.sh", "#!/bin/bash\nexit 0\n")
 		exit, _, stderr := runSwarm(t, "lint", "--fleet", path, "--card", path)

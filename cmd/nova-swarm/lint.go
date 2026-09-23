@@ -481,7 +481,9 @@ func fleetLineScan(line string) (bare string, unquoted bool, heredoc string) {
 		switch {
 		case c == '\\' && !inSingle && i+1 < len(line):
 			// an escaped character is literal; no quote it spells opens anything
-			out = append(out, line[i:i+2]...)
+			if !inDouble {
+				out = append(out, line[i:i+2]...)
+			}
 			i += 2
 		case c == '\'' && !inDouble:
 			inSingle = !inSingle
@@ -495,7 +497,9 @@ func fleetLineScan(line string) (bare string, unquoted bool, heredoc string) {
 		case c == '$' && !inSingle:
 			n, splits := fleetExpansionSpan(line, i)
 			if n == 0 {
-				out = append(out, c)
+				if !inDouble {
+					out = append(out, c)
+				}
 				i++
 				continue
 			}
@@ -513,7 +517,10 @@ func fleetLineScan(line string) (bare string, unquoted bool, heredoc string) {
 			out = append(out, c)
 			i++
 		default:
-			out = append(out, c)
+			// quoted text is prose: only bytes outside both quote kinds reach bare
+			if !inSingle && !inDouble {
+				out = append(out, c)
+			}
 			i++
 		}
 	}
