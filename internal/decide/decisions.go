@@ -6,15 +6,14 @@
 // every call -- and every other verb only reads it. The table is a projection
 // of the decision journal and never an authority over the machinery.
 //
-// Postgres is the durable record, reached through a database/sql driver named
-// by the DSN, where a build links one. A bench with no Postgres falls back to
-// a TSV file, so the files stay the record and the table is an index; the
-// fallback is the same contract and never a second one.
+// The table is a TSV file: the file is the record. There is no database
+// behind it (the driver it once reached for was never linked, and the
+// database is retired, #2623), so a DSN that is a URL is refused rather than
+// taken for a path.
 package decide
 
 import (
 	"crypto/sha256"
-	"database/sql"
 	"encoding/csv"
 	"encoding/hex"
 	"errors"
@@ -27,14 +26,9 @@ import (
 	"sync"
 )
 
-// DecisionsEnv names the environment variable a decisions table DSN is read
+// DecisionsEnv names the environment variable a decisions table path is read
 // from when a verb is not given one on the command line.
 const DecisionsEnv = "NOVA_DSN"
-
-// PGDriverName is the database/sql driver a postgres:// DSN opens. A build that
-// links a Postgres driver (lib/pq, pgx) registers this name; a build with none
-// refuses rather than guessing.
-const PGDriverName = "postgres"
 
 // decisionsHeader is the TSV fallback's first line, in the column order the
 // table is declared in. `source` is LAST because it was added after the other
@@ -83,23 +77,35 @@ type DecisionDriver interface {
 	Close() error
 }
 
-// OpenDecisions opens the decisions table a DSN names. A postgres:// or
-// postgresql:// DSN opens the linked Postgres driver; any other value is a
-// path to the TSV fallback, where the files stay the record. An empty DSN is a
-// refusal, never a guess.
+// OpenDecisions opens the decisions table at a TSV path. An empty value is a
+// refusal, never a guess; so is a URL, which names a database this tool no
+// longer reaches rather than a file.
 func OpenDecisions(dsn string) (DecisionDriver, error) {
 	dsn = strings.TrimSpace(dsn)
 	if dsn == "" {
-		return nil, fmt.Errorf("decide: no decisions table configured; set %s or --dsn", DecisionsEnv)
+		return nil, fmt.Errorf("decide: no decisions table configured; set %s or --dsn to a TSV path", DecisionsEnv)
 	}
-	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		db, err := sql.Open(PGDriverName, dsn)
-		if err != nil {
-			return nil, fmt.Errorf("decide: open postgres: %w", err)
-		}
-		return &postgresDriver{db: db}, nil
+	if strings.Contains(dsn, "://") {
+		return nil, fmt.Errorf("decide: %s is a URL, and the decisions table is a TSV file; pass its path", RedactURL(dsn))
 	}
 	return &tsvDriver{path: dsn}, nil
+}
+
+// RedactURL prints a URL with any password in it replaced, so a refusal that
+// names what it was given never prints a credential.
+func RedactURL(u string) string {
+	scheme, rest, ok := strings.Cut(u, "://")
+	if !ok {
+		return u
+	}
+	creds, host, ok := strings.Cut(rest, "@")
+	if !ok {
+		return u
+	}
+	if user, _, hasPass := strings.Cut(creds, ":"); hasPass {
+		return scheme + "://" + user + ":xxxxx@" + host
+	}
+	return u
 }
 
 // QuestionHash is the stable hash of one question over its state: the kind,
@@ -241,50 +247,7 @@ func (c *Client) record(state string, qs map[string]Question, answers map[string
 	}
 }
 
-// postgresDriver is the decisions table in Postgres, one writer per row.
-type postgresDriver struct{ db *sql.DB }
-
-// The durable table carries the same two facts the TSV does: a confidence that
-// is NULL where no provider answered, and the source that says which of the
-// two decided. A table with no `source` column and a NOT NULL
-// `provider_confidence` cannot hold a machinery receipt, and the append fails
-// loudly rather than writing a number about a call nobody made.
-func (p *postgresDriver) Append(row DecisionRow) error {
-	_, err := p.db.Exec(
-		`INSERT INTO decisions (question_hash, kind, answer, provider_confidence, floor, outcome, source) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-		row.QuestionHash, row.Kind, row.Answer,
-		sql.NullFloat64{Float64: row.ProviderConfidence, Valid: row.HasProviderConfidence},
-		row.Floor, row.Outcome, row.Source)
-	return err
-}
-
-func (p *postgresDriver) Rows(kind string) ([]DecisionRow, error) {
-	rows, err := p.db.Query(
-		`SELECT question_hash, kind, answer, provider_confidence, floor, outcome, source FROM decisions WHERE kind = $1 ORDER BY question_hash`,
-		kind)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]DecisionRow, 0)
-	for rows.Next() {
-		var row DecisionRow
-		var confidence sql.NullFloat64
-		var source sql.NullString
-		if err := rows.Scan(&row.QuestionHash, &row.Kind, &row.Answer, &confidence, &row.Floor, &row.Outcome, &source); err != nil {
-			return nil, err
-		}
-		row.ProviderConfidence, row.HasProviderConfidence = confidence.Float64, confidence.Valid
-		row.Source = source.String
-		out = append(out, row)
-	}
-	return out, rows.Err()
-}
-
-func (p *postgresDriver) Close() error { return p.db.Close() }
-
-// tsvDriver is the decisions table as a TSV file, the fallback where no
-// Postgres is linked. The file stays the record; the table is its index.
+// tsvDriver is the decisions table as a TSV file. The file is the record.
 type tsvDriver struct {
 	path string
 	mu   sync.Mutex

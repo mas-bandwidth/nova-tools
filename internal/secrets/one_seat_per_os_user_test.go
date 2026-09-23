@@ -77,8 +77,18 @@ func oneSeatBenchHome(t *testing.T, seatFiles ...string) (home, bin string) {
 		"done\n"+
 		"exit 0\n")
 	writeSeatBenchExe(t, filepath.Join(bin, "curl"), "#!/bin/sh\necho 200\n")
-	writeSeatBenchExe(t, filepath.Join(bin, "go"), "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
-	writeSeatBenchExe(t, filepath.Join(bin, "sbcl"), "#!/bin/sh\nexit 0\n")
+	// Fake go and sbcl under $HOME/sdk/<tool>-<ver>/bin, the home root the wall grants
+	// EXECUTE, with symlinked PATH entries: check (3c) drifts on a tool whose real path
+	// is outside a granted root, and this test is about the seat count, not that rule.
+	goReal := filepath.Join(home, "sdk", "go-"+goVer, "bin", "go")
+	writeSeatBenchExe(t, goReal, "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
+	sbclReal := filepath.Join(home, "sdk", "sbcl-test", "bin", "sbcl")
+	writeSeatBenchExe(t, sbclReal, "#!/bin/sh\nexit 0\n")
+	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal} {
+		if err := os.Symlink(real, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Fake nova-secrets whose check passes for any key: this test is about
 	// the seat-count rule, not about whether check could fail.
 	writeSeatBenchExe(t, filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nexit 0\n")

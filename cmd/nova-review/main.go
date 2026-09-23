@@ -38,6 +38,8 @@ usage:
                          revert the commit's non-test files, keep the tests, run the named packages: the verdict is computed from exit codes and test names, never judged
   nova-review dedupe --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
                          print the open findings ledger for the entry: who saw each, who duped it, and what still stands
+  nova-review reads --lane <nova-merge lane dir> [--bus <dir of bus notes>] [--reviews <pr>:<file>]... [--waiting-on <friend>] [--ready] [--max <n>] [--timeout <seconds>]
+                         the reads ledger: per PR the required reader roles (contract, code, security; derived from the paths touched plus typed ASK lines), and per reader the verdict, scope and exact sha, ingested from GitHub reviews (or --reviews snapshot files) and from bus notes carrying a typed READ line; --waiting-on is that friend's queue in order; --ready lists the PRs whose every required read is an approve at the live head; a push that moves a head marks its reads stale and names who must re-read what delta
   nova-review version    print this build identity (--version also accepted)
   nova-review help
 
@@ -86,6 +88,8 @@ func run(args []string, out, errOut io.Writer) int {
 		return guard(args[1:], out, errOut)
 	case "dedupe":
 		return dedupe(args[1:], out, errOut)
+	case "reads":
+		return reads(args[1:], out, errOut)
 	default:
 		return refuse(errOut, fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
@@ -461,6 +465,14 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 	return string(b), nil
 }
 
+// prRemoteURL is the forge remote a PR's head and base are fetched from, derived from
+// the lane's --repo. It is a variable only so a unit test can point it at a local bare
+// repository -- the endpoint mocked with a local fake, never a real host on the CI path
+// (TestNoRealNetworkHostsOnTheCIPath, nova-tools #2863).
+var prRemoteURL = func(hostRepo string) string {
+	return fmt.Sprintf("https://github.com/%s.git", hostRepo)
+}
+
 // fetchEntryHead fetches the entry's current head into the lane's clone: the pull request's
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
@@ -475,7 +487,7 @@ func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo s
 	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = prRemoteURL(hostRepo)
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
 		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
@@ -491,7 +503,7 @@ func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) 
 	remote := "origin"
 	refOut := "refs/remotes/origin/" + base + "^{commit}"
 	if pr > 0 {
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = prRemoteURL(hostRepo)
 		refOut = "FETCH_HEAD"
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {

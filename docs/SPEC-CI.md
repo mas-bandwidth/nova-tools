@@ -1418,16 +1418,6 @@ from those files``.
 reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
-**A leg that needs a service.** `postgres` — `internal/decide`'s decision log
-against a real server, which is what keeps the in-memory fake the unit suite runs
-on honest — is a JOB of its own in `nightly-slow.yml` rather than a row of the
-shared matrix, because it carries a `services:` container and service containers
-run on Linux runners only: a `services:` block on the shared job would be
-inherited by its macOS legs and fail them for a reason that is not the code. It
-is still declared as `tag: postgres` in a matrix, so the class test reads it
-exactly as it reads the others, and it is in the `report` job's `needs:` so a red
-night is still one issue in the morning.
-
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
@@ -1503,6 +1493,52 @@ root under its own flag by `TestNativeArgvReadsTheBenchToolchainRoots` and, on a
 Mac, `TestNativeArgvReadsTheDarwinToolchainRoots`, and that the version under a
 Cellar prefix is read off the launcher rather than guessed by
 `TestToolchainVersionDirReadsTheVersionOffTheLauncher`.
+
+### `walltoolchain` — a toolchain on PATH is a toolchain the WALL can execute
+
+**The rule.** `tools/bench-standard.sh` check **(3c)** resolves each of `go` and
+`sbcl` off PATH with `readlink -f` and drifts unless the real path lies under a
+read root the sandbox wall grants execute: the system read roots of
+`internal/sandbox/wrap_linux.go`, and `$HOME/sdk` from
+`internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
+resolves to, the granted home, and the remedy — `$HOME/sdk/<tool>-<ver>/` — so
+the finding carries its own fix. `(3c)` is about EXECUTABILITY INSIDE THE WALL
+and is a separate line from `(3)`'s `sbcl not on PATH`, which is about presence:
+a bench can fail either, both, or neither.
+**The hurt.** `command -v sbcl` answers about the bench user's own shell. A card
+runs behind the wall, and an interpreter at `$HOME/.local/bin/sbcl` satisfies
+`command -v` while being `Permission denied` to the card — so the bench passed
+the standard and every card on it died. Every lisp card was forced onto the one
+bench whose sbcl is `/usr/bin/sbcl`: E09-G1 took **1036 s** on vision against
+**248-393 s** for the same class on space, and the r1785 worker on mini fetched
+an SBCL 2.4.0 of its own into `$TMPDIR` before it could run a test. On
+2026-09-19 the fleet was measured with sbcl under `$HOME/.local/bin` on hulk,
+vision, mini and captainamerica: `sbcl: Permission denied` inside the wall on
+all four, and, once moved under `$HOME/sdk/sbcl-2.5.8/`, a real probe card on
+each — hulk **117 s**, vision **34 s**, mini **46 s**, captainamerica **45 s**.
+The standard had been silent about all of it.
+**The test.** `TestBenchStandardDriftsOnAToolTheWallCannotExecute` and
+`TestBenchStandardAcceptsAToolUnderAGrantedRoot`
+(`internal/ci/benchstandard_wall_toolchain_test.go`), in the shape
+`benchstandard_disk_test.go` already uses: run the REAL script with a FAKE PATH
+layout and a HOME of its own. The negative half puts the tool at
+`$HOME/.local/bin` — where the fleet's sbcl actually was — and demands exactly
+one DRIFT line carrying the remedy. The positive half puts it at
+`$HOME/sdk/<tool>-<ver>/bin` and demands NO line, which is the half that catches
+a check written as "always drift".
+**Its allowlist.** None. Both tools are held to the same rule by one loop; a
+tool that needs an exception is a tool the wall cannot run.
+**Its remedy line.** `<tool> on PATH is <p> -> <resolved>, under NO read root
+the sandbox wall grants (the system roots, and $HOME/sdk from
+internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install
+it under $HOME/sdk/<tool>-<ver>/ and point the PATH entry there`.
+**Its narrowings.** It reads PATH, so a card that calls a toolchain by absolute
+path never consulted it; it checks READABILITY OF THE PATH, not that the wall
+would in fact grant execute on that root — `toolchainroots` holds the kinds, and
+only `sdk` is the execute kind, so `go/pkg/mod` is deliberately not a root this
+check accepts; it covers `go` and `sbcl` only, so a third toolchain added to a
+bench is invisible until it joins the loop; and the root list here is the LINUX
+one, because `tools/bench-standard.sh` is the linux bench's standard.
 
 ### `ciworkspace` — the workspace cleanup never fails a job before checkout
 

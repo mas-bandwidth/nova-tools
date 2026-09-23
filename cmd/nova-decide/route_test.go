@@ -135,7 +135,7 @@ func TestRouteAppendsToTheLog(t *testing.T) {
 	if err := json.Unmarshal([]byte(lines[0]), &e); err != nil {
 		t.Fatalf("the log line is not one JSON object: %v", err)
 	}
-	if e.Unit != "card-9" || e.RungTried != "flash" || e.RowanPick != "flash" || e.Floor != decide.DefaultFloor {
+	if e.Unit != "card-9" || e.RungTried != "flash" || e.RowanPick != "flash" || e.Floor == nil || *e.Floor != decide.DefaultFloor {
 		t.Errorf("the row lost its evidence: %+v", e)
 	}
 }

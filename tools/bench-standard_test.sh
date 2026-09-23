@@ -271,6 +271,160 @@ else
 fi
 rm -rf "$TMP_GM"
 
+# (3g) The script builds the card's environment itself: with ~/sdk/env.sh
+# present, a poisoned caller PATH (a shadow go first) must not decide the
+# verdict (nova-tools#2052: three verdicts on one bench in ten minutes).
+# Also: a seat store at ~/nova-bench/secrets is found without
+# NOVA_SECRETS_STORE. One seat key only: the stream's one-key-per-owner
+# design (SPEC-SECRETS.md dogfooding item 6) is not relaxed here.
+TMP_2052=$(mktemp -d 2>/dev/null || mktemp -d -t bench.XXXXXX)
+H2052="$TMP_2052/home"
+mkdir -p "$H2052/sdk/go/bin" "$H2052/shadow/bin" "$H2052/.local/bin" \
+  "$H2052/go/pkg/mod" "$H2052/nova-bench/harness-0" "$H2052/nova-bench/secrets" \
+  "$H2052/.config/nova-secrets"
+printf 'export PATH="$HOME/sdk/go/bin:$HOME/sdk/bin:$HOME/.local/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin"\n' > "$H2052/sdk/env.sh"
+printf '#!/usr/bin/env bash\necho "go version go1.26.6 linux/amd64"\n' > "$H2052/sdk/go/bin/go"
+printf '#!/usr/bin/env bash\necho "go version go1.20.0 linux/amd64"\n' > "$H2052/shadow/bin/go"
+for t in sbcl sops; do printf '#!/usr/bin/env bash\nexit 0\n' > "$H2052/.local/bin/$t"; done
+for b in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge nova-pulse nova-review nova-sandbox nova-secrets nova-self-talk nova-swarm nova-tokens nova-update nova-version nova-wake; do
+  printf '#!/usr/bin/env bash\necho v1.0.0\n' > "$H2052/.local/bin/$b"
+done
+printf '#!/usr/bin/env bash\nexit 0\n' > "$H2052/nova-bench/harness-0/opencode"
+chmod +x "$H2052"/sdk/go/bin/go "$H2052"/shadow/bin/go "$H2052"/.local/bin/* "$H2052/nova-bench/harness-0/opencode"
+echo "bench: test-bench" > "$H2052/nova-bench/secrets/test-bench.yaml"
+: > "$H2052/.config/nova-secrets/test-bench.key"
+out_2052=$(HOME="$H2052" PATH="$H2052/shadow/bin:/usr/bin:/bin" NOVA_WANT=v1.0.0 \
+  bash "$SCRIPT" 2>&1 || true)
+if printf '%s' "$out_2052" | grep -q 'go1\.20\.0'; then
+  bad "the script used the caller's shadow go, not the card environment (#2052):\n$out_2052"
+else
+  ok "the script builds the card environment from ~/sdk/env.sh; a poisoned PATH does not decide the verdict (#2052)"
+fi
+if printf '%s' "$out_2052" | grep -q 'seat keys=\|seat nova-secrets check failed'; then
+  bad "one seat key with a store at ~/nova-bench/secrets drifted (#2052):\n$out_2052"
+else
+  ok "one seat key with the store at ~/nova-bench/secrets passes the seat check (#2052)"
+fi
+rm -rf "$TMP_2052"
+
+# ---------------------------------------------------------------------------
+# (4) TestHarnessCanaryDetectsSandboxWallDenial (nova-tools#2388)
+# ---------------------------------------------------------------------------
+# A harness that cannot start inside the sandbox wall means the bench is
+# unfit for cards -- every card would fail at startup. This builds a
+# throwaway mock bench: a harness binary that exists but that the sandbox
+# wall refuses to run, and checks that bench-standard.sh drifts on it.
+TMP_HW=$(mktemp -d 2>/dev/null || mktemp -d -t bench.XXXXXX)
+HOME_HW="$TMP_HW/home"
+mkdir -p "$HOME_HW/sdk" "$HOME_HW/go/pkg/mod"
+mkdir -p "$HOME_HW/.local/bin"
+mkdir -p "$HOME_HW/nova-bench/harness-v0"
+mkdir -p "$HOME_HW/.config/nova-secrets"
+touch "$HOME_HW/.config/nova-secrets/test.key"
+
+# -- Mock go: prints the version bench-standard expects.
+printf '#!/bin/sh\necho "go version go1.26.5 linux/amd64"\n' > "$HOME_HW/.local/bin/go"
+chmod +x "$HOME_HW/.local/bin/go"
+
+# -- Mock sbcl.
+printf '#!/bin/sh\necho "SBCL 2.4.0"\n' > "$HOME_HW/.local/bin/sbcl"
+chmod +x "$HOME_HW/.local/bin/sbcl"
+
+# -- Mock curl: returns 200 for the network probe.
+printf '#!/bin/sh\necho "200"\n' > "$HOME_HW/.local/bin/curl"
+chmod +x "$HOME_HW/.local/bin/curl"
+
+# -- Mock nova-secrets: handles version and check, always succeeds.
+cat > "$HOME_HW/.local/bin/nova-secrets" <<'EOF'
+#!/bin/sh
+case "${1:-}" in
+  version|--version) echo "nova-secrets v0.0.0-test"; exit 0 ;;
+esac
+exit 0
+EOF
+chmod +x "$HOME_HW/.local/bin/nova-secrets"
+
+# -- Mock the 16 nova-* binaries (each prints name + wanted version).
+for name in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge \
+            nova-pulse nova-review nova-sandbox nova-self-talk \
+            nova-swarm nova-tokens nova-update nova-version nova-wake; do
+  printf '#!/bin/sh\necho "%s v0.0.0-test"\n' "$name" > "$HOME_HW/.local/bin/$name"
+  chmod +x "$HOME_HW/.local/bin/$name"
+done
+
+# -- Mock harness: exists and is executable.
+printf '#!/bin/sh\necho "opencode v0.0.0-test"\n' > "$HOME_HW/nova-bench/harness-v0/opencode"
+chmod +x "$HOME_HW/nova-bench/harness-v0/opencode"
+
+# -- Mock nova-sandbox: refuses to run the opencode harness (simulating wall
+#    denial) but passes through other commands (e.g. curl for the network probe).
+cat > "$HOME_HW/.local/bin/nova-sandbox" <<'EOF'
+#!/bin/sh
+# Handle version check.
+case "${1:-}" in
+  version|--version) echo "nova-sandbox v0.0.0-test"; exit 0 ;;
+esac
+# Check if the command after -- is the opencode harness.
+found_dd=0
+for arg in "$@"; do
+  if [ "$found_dd" = "1" ]; then
+    case "$arg" in
+      *opencode*)
+        echo "SANDBOX REFUSED: harness denied by wall" >&2
+        exit 1
+        ;;
+    esac
+    break
+  fi
+  if [ "$arg" = "--" ]; then
+    found_dd=1
+  fi
+done
+# No -- found: nothing to exec.
+if [ "$found_dd" = "0" ]; then
+  exit 0
+fi
+# Pass through: find command after -- and exec it.
+past_dd=0
+cmdline=""
+for arg in "$@"; do
+  if [ "$past_dd" = "1" ]; then
+    cmdline="$cmdline '$arg'"
+  fi
+  if [ "$arg" = "--" ]; then
+    past_dd=1
+  fi
+done
+if [ -n "$cmdline" ]; then
+  eval "exec $cmdline"
+fi
+exit 0
+EOF
+chmod +x "$HOME_HW/.local/bin/nova-sandbox"
+
+# -- Run bench-standard.sh with the mock environment.
+HW_OUT="$(PATH="$HOME_HW/.local/bin:${PATH:-}" HOME="$HOME_HW" NOVA_GO="go1.26.5" NOVA_WANT="v0.0.0-test" \
+       NOVA_PROBE_URL="http://localhost/test" \
+       bash "$SCRIPT" 2>&1)" || true
+
+# -- The output must contain a drift about the harness failing inside the wall.
+if [ "$(uname -s)" != "Linux" ]; then
+  case "$HW_OUT" in
+    *"cannot start inside the sandbox wall"*) bad "the harness canary ran on $(uname -s); it is Linux-only [$HW_OUT]" ;;
+    *) ok "the harness canary is Linux-only: not run on $(uname -s)" ;;
+  esac
+else
+case "$HW_OUT" in
+  *"DRIFT"*"harness"*"sandbox wall"*|*"DRIFT"*"harness"*"cannot start inside"*)
+    ok "bench-standard refuses a bench whose harness cannot start inside the wall"
+    ;;
+  *)
+    bad "bench-standard did not detect harness failure in the sandbox wall [$HW_OUT]"
+    ;;
+esac
+fi
+rm -rf "$TMP_HW"
+
 printf '1..%s\n' "$n"
 [ "$fails" = 0 ] || { printf 'FAILED\n'; exit 1; }
 printf 'PASSED\n'

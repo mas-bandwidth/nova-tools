@@ -59,6 +59,14 @@ HOME_DIR="${HOME:-}"
 DRIFTS=0
 STRAY_PIDS=""
 
+# Build the card environment before any tool resolution so the verdict
+# does not depend on the caller's PATH (nova-tools#2052).
+if [ -f "$HOME_DIR/sdk/env.sh" ]; then
+  set +u
+  . "$HOME_DIR/sdk/env.sh"
+  set -u
+fi
+
 drift() {
   echo "DRIFT $*"
   DRIFTS=$((DRIFTS + 1))
@@ -187,6 +195,32 @@ fi
 if ! command -v sbcl >/dev/null 2>&1; then
   drift "sbcl not on PATH"
 fi
+
+# (3c) THE TOOLCHAIN MUST BE RUNNABLE INSIDE THE WALL, not merely on PATH.
+# `command -v sbcl` answers about the bench user's own shell. A card runs behind the
+# sandbox wall, whose linux read roots are the system table of
+# internal/sandbox/wrap_linux.go plus the toolchain roots of internal/swarm/toolchain.go.
+# Of the toolchain roots only `sdk` carries EXECUTE (`go/pkg/mod` is read WITHOUT execute),
+# so the roots that can run a tool are the system table plus `$HOME/sdk`. An sbcl at
+# $HOME/.local/bin/sbcl is on PATH and is `Permission denied` inside the wall, which is why
+# every lisp card was forced onto the one bench whose sbcl is /usr/bin/sbcl -- measured
+# 2026-09-19: E09-G1 on vision 1036 s against 248-393 s for the same class on space, and the
+# r1785 worker on mini fetched an SBCL 2.4.0 of its own into $TMPDIR before it could run a
+# test.
+for tool in go sbcl; do
+  p="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$p" ] || continue          # absent is the check above's DRIFT, not this one's
+  rp="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+  granted=0
+  for root in /usr /bin /sbin /lib /lib64 /opt "$HOME_DIR/sdk"; do
+    rroot="$(readlink -f "$root" 2>/dev/null || echo "$root")"
+    [ -n "$rroot" ] || continue
+    case "$rp" in "$rroot"/*) granted=1 ;; esac
+  done
+  if [ "$granted" != "1" ]; then
+    drift "$tool on PATH is $p -> $rp, under NO read root the sandbox wall grants (the system roots, and \$HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under $HOME_DIR/sdk/$tool-<ver>/ and point the PATH entry there"
+  fi
+done
 harness_ok=0
 if [ -n "$NOVA_HARNESS" ]; then
   if [ -x "$NOVA_HARNESS" ]; then
@@ -203,6 +237,35 @@ else
   done
   if [ "$harness_ok" = "0" ]; then
     drift "harness missing at $HOME_DIR/nova-bench/harness-<ver>/opencode"
+  fi
+fi
+
+# (3c) harness canary: try to start the harness inside the sandbox wall.
+# A harness that cannot start inside the wall means the bench is unfit for
+# cards -- every card would fail at startup (#2388).
+if [ "$harness_ok" = "1" ] && [ "$OS" = "Linux" ]; then
+  _hbin=""
+  if [ -n "$NOVA_HARNESS" ]; then
+    _hbin="$NOVA_HARNESS"
+  else
+    for _h in "$HOME_DIR"/nova-bench/harness-*/opencode; do
+      [ -x "$_h" ] || continue
+      _hbin="$_h"
+      break
+    done
+  fi
+  if [ -n "$_hbin" ]; then
+    _sbin="$HOME_DIR/.local/bin/nova-sandbox"
+    if [ -x "$_sbin" ]; then
+      _cdir="$(mktemp -d "$HOME_DIR/nova-bench/nova-canary.XXXXXX" 2>/dev/null || true)"
+      if [ -n "$_cdir" ]; then
+        mkdir -p "$_cdir/home"
+        if ! HOME="$_cdir/home" "$_sbin" --read "$HOME_DIR/nova-bench" --write "$_cdir" --cwd "$_cdir" -- "$_hbin" --help >/dev/null 2>&1; then
+          drift "harness cannot start inside the sandbox wall; $_hbin --help failed under nova-sandbox"
+        fi
+        rm -rf "$_cdir"
+      fi
+    fi
   fi
 fi
 
@@ -296,6 +359,9 @@ else
   else
     seat="$(basename "$seatkey" .key)"
     store="${NOVA_SECRETS_STORE:-}"
+    if [ -z "$store" ] && [ -d "$HOME_DIR/nova-bench/secrets" ]; then
+      store="$HOME_DIR/nova-bench/secrets"
+    fi
     if [ -z "$store" ] && [ -d "$HOME_DIR/secrets" ]; then
       store="$HOME_DIR/secrets"
     fi

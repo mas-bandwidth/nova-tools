@@ -15,7 +15,7 @@ reading any of it is `ssh` and `grep` by hand. This spec chooses one stack for a
 invents nothing: the lines go out through Go's own `log/slog` and the systemd journal, and the
 reading, shipping and alerting are open-source programs. Related: [SPEC.md](SPEC.md) (an event is
 exactly one line), [../internal/oneline](../internal/oneline/oneline.go) (the one escape),
-[SPEC-STATE.md](SPEC-STATE.md) (Postgres is the durable record; **logs are not the record**),
+[SPEC-STATE.md](SPEC-STATE.md) (the `cards:done` stream and its fold are the durable record; **logs are not the record**),
 [SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md),
 [SPEC-PULSE.md](SPEC-PULSE.md) (the loops), [SPEC-SWARM.md](SPEC-SWARM.md) (the harness),
 [SPEC-MERGE.md](SPEC-MERGE.md) (the queue).
@@ -42,8 +42,8 @@ the body of a harness log, and we do not need to, because the fields we ask ques
 fixed (Part 2) and the body is evidence we read rarely and can compress. Loki's label index is
 small and cheap; its rules are the same language as its queries, so the alert in Part 4 is a
 query a person already wrote by hand. Alloy replaces the hand-rolled shipper and is the OTel
-path when traces arrive. Grafana is the reader because it is one pane over Loki today and Tempo,
-Postgres and Prometheus later.
+path when traces arrive. Grafana is the reader because it is one pane over Loki today and Tempo
+and Prometheus later.
 
 **What would change the choice.** (a) A query that must full-text search arbitrary body text as
 the *common* case, not the rare one — then OpenSearch. (b) A fleet where a bench cannot reach
@@ -187,7 +187,7 @@ sum(count_over_time({source="nova-swarm", event="start"}[5m]))
 systemd journal (so every verb and every service is already a source), plus the two timer logs
 (`hygiene`, `mirror`) and the fill loop's log. Grafana pointed at Loki, with **one dashboard**:
 fleet width, queue depth, cards per hour, minutes per card, and free disk per bench. Nothing else
-changes; the files stay the record, Postgres stays the durable record, and the JSON lines are the
+changes; the files stay the record, the stream and its fold stay the durable record, and the JSON lines are the
 new second copy. Old readers (`ssh` and `grep`) still work, so the slice is additive.
 
 **The measure.** **Seconds to answer "why is card X hung"** — today an `ssh`, a `find` across
@@ -240,7 +240,7 @@ The logging primitive (`internal/log`) and the two wired emitters (`nova-work ev
 30. `TestRulerAlertsFireOnTheFourConditions` (ABSENT) — four rules: a bench under 25 GB free; a loop with no event for 15 minutes; a job past its deadline (a `start` older than its `budget` with no `done`); a group failure twice on one PR.
 31. `TestSliceRunsLokiAlloyGrafanaOnSpace` (ABSENT) — on `space`: Loki with local disk, one Alloy reading the systemd journal plus the two timer logs and the fill loop's log.
 32. `TestGrafanaHasTheOneDashboard` (ABSENT) — Grafana pointed at Loki with one dashboard: fleet width, queue depth, cards per hour, minutes per card, free disk per bench.
-33. `TestSliceIsAdditive` (ABSENT) — nothing else changes: files stay the record, Postgres stays the durable record, old readers (`ssh` and `grep`) still work.
+33. `TestSliceIsAdditive` (ABSENT) — nothing else changes: files stay the record, the stream and its fold stay the durable record, old readers (`ssh` and `grep`) still work.
 34. `TestScopeAndMeasureUnderFiveSeconds` (ABSENT) — the slice is done when "seconds to answer why is card X hung" prints, one pane, under five seconds.
 35. `a-slog-line-from-a-verb-appears-in-loki-within-five-seconds-with-its-labels` (ABSENT) — run a verb that changes state; within five seconds `{source, verb, card}` returns the JSON line in Loki.
 36. `a-secret-value-in-a-message-is-refused-by-the-test-hook-before-it-leaves-the-process` — see 6; a known secret in a `msg` is refused before no line reaches the journal.

@@ -66,7 +66,7 @@ func TestJevWithAccountingRuns(t *testing.T) {
 	usage := filepath.Join(dir, "usage.tsv")
 	log := filepath.Join(dir, "decide.jsonl")
 	var stdout, stderr bytes.Buffer
-	if code := run([]string{"route", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--packages", "1",
+	if code := run([]string{"route", "--unit-id", "u", "--kind", "new-verb", "--files", "2", "--packages", "1",
 		"--usage", usage, "--log", log}, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
 	}
