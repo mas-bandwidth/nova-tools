@@ -1893,6 +1893,20 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 && !res.lost && !res.unrecorded {
 		return code
 	}
+	// AN UNREAD DENIAL IS NEVER AN OK (issue #1465; Stella's HOLD on #1478). This is the ONE
+	// refusal that lands AFTER the spend, and it is a refusal rather than a token on the OK
+	// line on purpose: the run of #1465 carried `rc=0 sandbox=landlock harness=ok` over a
+	// card whose shell had been denied the toolchain, and a coordinator reading dispositions
+	// and not prose shipped a commit nobody had compiled. There is no OK line here at all.
+	//
+	// THE REFUSAL ASSERTS NO CAUSE. The shell's words name a path, not an operation, so the
+	// reason labels it `operation=unverified`, quotes the line, and asks for the one
+	// measurement that would settle it. The job directory is named, so the work and the usage
+	// row the child did produce are still harvestable.
+	if (res.shellDenial != swarm.ShellDenial{}) {
+		refuseNative(stderr, swarm.ShellDenialReason(cfg.label, res.job, res.wall, res.rc, res.shellDenial))
+		return 2
+	}
 	// OK IS A VERDICT, NOT A PUNCTUATION MARK (nova-tools #1844). This line said
 	// `NATIVE OK` for every run that reached it, including a run that produced NOTHING:
 	// card tools12c18 on vision came back rc=1 on both attempts, zero tokens, zero
