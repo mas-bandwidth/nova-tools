@@ -1808,9 +1808,27 @@
     #:prompt-profile-evidence
     #:prompt-profile-expiry
     #:prompt-profile-owner
+    #:prompt-profile-model
+    #:prompt-profile-harness
+    #:prompt-profile-work-type
     #:prompt-profile-state
     #:prompt-profile-status-line
     #:prompt-profile-invocation
+    #:make-profile-registry
+    #:profile-registry-profiles
+    #:profile-registry-journal
+    #:profile-triple
+    #:profile-registry-find
+    #:profile-registry-find-triple
+    #:register-profile
+    #:make-profile-edit-record
+    #:profile-edit-record-profile-name
+    #:profile-edit-record-version
+    #:profile-edit-record-fields
+    #:profile-edit-record-by
+    #:profile-edit-record-stamp
+    #:profile-edit
+    #:profile-edit-journal
     #:make-machine-record
     #:machine-record-id
     #:machine-record-name
