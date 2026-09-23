@@ -131,8 +131,17 @@ type fakeSSH struct {
 	// standing in for `ssh host tar -cf -`.
 	serves map[string]string
 	// remoteSums is what `cat <dest>/SHA256SUMS` answers on that machine: the
-	// release it is already holding, if any.
+	// checksum file it is already holding, if any. SHA256SUMS matching is not
+	// the same fact as the artifacts verifying; missingNamed and corruptNamed
+	// are how a test says the directory is a killed transfer's leftover.
 	remoteSums map[string]string
+	// missingNamed is artifact names SHA256SUMS lists that are not on disk.
+	missingNamed map[string][]string
+	// corruptNamed is artifact names whose bytes do not match SHA256SUMS.
+	corruptNamed map[string][]string
+	// landedSums is the checksum file Send last streamed to that machine, so a
+	// verify of the .partial directory can answer after a re-stream.
+	landedSums map[string]string
 }
 
 func (s *fakeSSH) Run(_ context.Context, machine string, argv []string) (string, error) {
@@ -141,13 +150,18 @@ func (s *fakeSSH) Run(_ context.Context, machine string, argv []string) (string,
 		return "", err
 	}
 	// `cat <dir>/SHA256SUMS` is answered from remoteSums, so a test can say
-	// "this machine already holds that release" without a filesystem there.
+	// the checksum file is present without a filesystem there.
 	if len(argv) > 0 && argv[0] == "cat" {
 		sums, ok := s.remoteSums[machine]
 		if !ok {
 			return "", fmt.Errorf("cat: %s: No such file or directory", argv[len(argv)-1])
 		}
 		return sums, nil
+	}
+	// `cd <dir> && ( sha256sum -c SHA256SUMS || shasum ... )` is the verify
+	// adopt runs against a final dir and against the .partial staging dir.
+	if len(argv) > 0 && argv[0] == "cd" {
+		return s.verify(machine, argv[1])
 	}
 	return s.answer[machine], nil
 }
@@ -156,7 +170,67 @@ func (s *fakeSSH) Send(_ context.Context, machine, dir, dest string) (string, er
 	if err := s.refuse[machine]; err != nil {
 		return "", err
 	}
+	body, err := os.ReadFile(filepath.Join(dir, SumsFile))
+	if err != nil {
+		return "", err
+	}
+	if s.landedSums == nil {
+		s.landedSums = map[string]string{}
+	}
+	s.landedSums[machine] = string(body)
 	return "", nil
+}
+
+func (s *fakeSSH) verify(machine, dir string) (string, error) {
+	if strings.Contains(dir, ".partial/") || strings.HasSuffix(dir, ".partial") {
+		sums, ok := s.landedSums[machine]
+		if !ok {
+			return "", fmt.Errorf("sha256sum: %s: No such file or directory", SumsFile)
+		}
+		return checksumOKLines(sumFileNames(sums), nil, nil), nil
+	}
+	sums, ok := s.remoteSums[machine]
+	if !ok {
+		return "", fmt.Errorf("sha256sum: %s: No such file or directory", SumsFile)
+	}
+	names := sumFileNames(sums)
+	missing, corrupt := s.missingNamed[machine], s.corruptNamed[machine]
+	if len(missing) > 0 || len(corrupt) > 0 {
+		return checksumOKLines(names, missing, corrupt), fmt.Errorf("sha256sum: WARNING: %d computed checksum did NOT match", len(missing)+len(corrupt))
+	}
+	return checksumOKLines(names, nil, nil), nil
+}
+
+func sumFileNames(body string) []string {
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(body), "\n") {
+		if _, name, ok := strings.Cut(line, "  "); ok && name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func checksumOKLines(names, missing, corrupt []string) string {
+	miss, cor := map[string]bool{}, map[string]bool{}
+	for _, n := range missing {
+		miss[n] = true
+	}
+	for _, n := range corrupt {
+		cor[n] = true
+	}
+	var b strings.Builder
+	for _, n := range names {
+		switch {
+		case miss[n]:
+			fmt.Fprintf(&b, "sha256sum: %s: No such file or directory\n%s: FAILED open or read\n", n, n)
+		case cor[n]:
+			fmt.Fprintf(&b, "%s: FAILED\n", n)
+		default:
+			fmt.Fprintf(&b, "%s: OK\n", n)
+		}
+	}
+	return b.String()
 }
 
 // Fetch stands in for `ssh host tar -cf - .` by copying the local directory the
@@ -1831,6 +1905,9 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 	if !strings.Contains(o.String(), "machine=hulk") || !strings.Contains(o.String(), "sent=no") {
 		t.Fatalf("hulk's receipt does not say the stream was skipped:\n%s", o.String())
 	}
+	if !strings.Contains(e.String(), "already holds v0.16.0 (2/2)") {
+		t.Fatalf("already holds did not print the verified count:\n%s", e.String())
+	}
 	if !strings.Contains(o.String(), "machine=vision") || !strings.Contains(o.String(), "sent=yes") {
 		t.Fatalf("vision's receipt does not say it was streamed:\n%s", o.String())
 	}
@@ -1838,6 +1915,66 @@ func TestAdoptStreamsNothingToAMachineThatAlreadyHasTheRelease(t *testing.T) {
 	// same fact as the tools being installed from them.
 	if len(s.runs) < 2 {
 		t.Fatalf("a machine was skipped entirely: %v", s.runs)
+	}
+}
+
+// A killed transfer leaves SHA256SUMS in place (it is first in the tar) and
+// some of the artifacts missing or truncated. The next adopt must not treat
+// that directory as complete: it re-streams into <version>.partial/ and
+// renames into place only after the bench verifies every named file.
+func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
+	goos, goarch := platformOf(t, "linux-amd64")
+	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
+	local := ArtifactDir(from, "v0.16.0", goos, goarch)
+	localSums, err := os.ReadFile(filepath.Join(local, SumsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		missing []string
+		corrupt []string
+	}{
+		{"a missing artifact", []string{"nova-update"}, nil},
+		{"a corrupt artifact", nil, []string{"nova-bus"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &fakeSSH{
+				remoteSums:   map[string]string{"hulk": string(localSums)},
+				missingNamed: map[string][]string{"hulk": tc.missing},
+				corruptNamed: map[string][]string{"hulk": tc.corrupt},
+				answer:       map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"},
+			}
+			var o, e bytes.Buffer
+			code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+				"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
+				"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
+				"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+			if code != 0 {
+				t.Fatalf("code=%d errs=%s", code, e.String())
+			}
+			if strings.Contains(e.String(), "streaming nothing") {
+				t.Fatalf("a partial release dir was trusted as complete:\n%s", e.String())
+			}
+			if len(s.sends) != 1 {
+				t.Fatalf("the partial dir was not re-streamed: sends=%v errs=%s", s.sends, e.String())
+			}
+			if !strings.HasSuffix(s.sends[0], "-> ~/build/v0.16.0.partial") {
+				t.Fatalf("the stream did not land in <version>.partial/: %v", s.sends)
+			}
+			promoted := false
+			for _, run := range s.runs {
+				if strings.Contains(run, "mv ") && strings.Contains(run, "v0.16.0.partial") && strings.Contains(run, "~/build/v0.16.0") {
+					promoted = true
+				}
+			}
+			if !promoted {
+				t.Fatalf("the verified .partial dir was not renamed into place: %v", s.runs)
+			}
+			if !strings.Contains(o.String(), "sent=yes") {
+				t.Fatalf("the receipt does not say the stream ran:\n%s", o.String())
+			}
+		})
 	}
 }
 
