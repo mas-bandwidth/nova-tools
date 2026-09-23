@@ -1,69 +1,68 @@
 ;;;; criterion-e11-f05-01.lisp --- E11-F05-01 decision packet per item and revision
 ;;;;
-;;;; Criterion E11-F05-01 (Decision packets): "machinery builds one packet per item and revision;
-;;;; a newer revision supersedes it keeping its open findings; a busy reader's packet is amended,
-;;;; not duplicated; an empty pulse wakes no model"
+;;;; Replay row `decision-packet-per-item-revision` (docs/SPEC-WORK.md:4648),
+;;;; contract at docs/SPEC-WORK.md:4546-4556: machinery builds one packet per
+;;;; item and revision; a newer revision supersedes it keeping its open
+;;;; findings; while the reader is busy the packet is amended, not duplicated;
+;;;; an empty pulse wakes no model and re-executes nothing.
 ;;;;
-;;;; The decision packet mechanism is realized through dispatch-pulse tracking in src/pricing.lisp.
-;;;; The crucial behavior is in observe-pulse (pricing.lisp line ~215):
-;;;;    (if (equal digest (dispatch-pulse-last pulse)) 0 ...)
-;;;; This ensures one packet per (item-digest, revision) by returning 0 (no dispatch) when the
-;;;; digest repeats, proving amendments not duplications.
+;;;; The production mechanism is `book-observation` in src/decide.lisp.
 
 (in-package #:nova-work/tests)
 
 (deftest "e11-f05-01-decision-packet-per-item"
-    "docs/SPEC-WORK.md:6067-6079"
+    "docs/SPEC-WORK.md:4648"
     "expected=one-packet-per-item-revision;newer-revision-supersedes-with-open-findings;busy-reader-amendment-not-duplication;empty-pulse-wakes-no-model"
-  ;; Test the four behaviors outlined in the criterion
-  
-  ;; 1. One packet per item-revision: identical digest -> no new dispatch
-  (let ((pulse (make-dispatch-pulse :record-bound 10 :byte-bound 8192)))
-    (let ((obs (list :kind :correction :node "item-1" :digest "v1")))
-      ;; First observation with digest "v1"
-      (observe-pulse pulse obs)
-      ;; Same digest again - should return 0 (no new dispatch)
-      ;; This proves "one packet per item-revision"
-      (let ((result (observe-pulse pulse obs)))
-        (ok (zerop result)
-            "same item-revision (digest) returns 0: no duplicate dispatch"))))
-  
-  ;; 2. Newer revision supersedes: different digest triggers dispatch
-  (let ((pulse (make-dispatch-pulse)))
-    ;; Observation with digest "v1"
-    (let ((obs-v1 (list :kind :correction :node "item-1" :digest "v1")))
-      (observe-pulse pulse obs-v1)
-      ;; New revision: same item, different digest
-      ;; This new digest triggers a new dispatch (packet supersedes)
-      (let ((obs-v2 (list :kind :correction :node "item-1" :digest "v2")))
-        ;; observe-pulse tracks the last digest; different digest may dispatch
-        (let ((result (observe-pulse pulse obs-v2)))
-          (ok (not (zerop result))
-              "new revision (different digest) may trigger dispatch")))))
-  
-  ;; 3. Busy reader's packet is amended, not duplicated
-  (let ((pulse (make-dispatch-pulse :record-bound 3 :byte-bound 1000)))
-    ;; Multiple observations accumulate (amendments) rather than duplicating
-    (let ((obs-a (list :kind :correction :node "item-1" :digest "a" :bytes 100))
-          (obs-b (list :kind :correction :node "item-1" :digest "b" :bytes 100)))
-      (observe-pulse pulse obs-a)
-      (let ((pending-after-a (length (dispatch-pulse-pending pulse))))
-        (observe-pulse pulse obs-b)
-        (let ((pending-after-b (length (dispatch-pulse-pending pulse))))
-          ;; Pending list grows (amendments accumulate)
-          (ok (>= pending-after-b pending-after-a)
-              "observations accumulate in pending list (amendment not duplication)")))))
-  
-  ;; 4. Empty pulse wakes no model
-  (let ((pulse (make-dispatch-pulse)))
-    ;; Fresh pulse has no dispatches and no pending observations
-    (ok (zerop (dispatch-pulse-dispatches pulse))
-        "empty pulse has no dispatches (model not woken)")
-    (ok (null (dispatch-pulse-pending pulse))
-        "empty pulse has no pending observations"))
-  
-  ;; Final proof: the core mechanism preventing duplication
-  ;; is the digest equality check in observe-pulse that returns 0.
-  ;; If that line (pricing.lisp ~215) is mutated (e.g., always dispatch),
-  ;; this test will fail because observe-pulse will return 1 instead of 0.
-  (ok t "machinery builds one packet per item and revision correctly"))
+  (let ((book (nova-work::make-packet-book)))
+    ;; 1. One packet per item and revision, and it wakes the reader once.
+    (multiple-value-bind (p1 action)
+        (nova-work::book-observation
+         book (list :item "acme/work/f1" :revision 1
+                    :facts '("check test red")
+                    :findings '(("f-scope" . :open) ("f-ci" . :open))))
+      (check-equal :built action "first observation of (item, revision) builds a packet")
+      (check-equal 1 (nova-work::packet-book-wakes book) "a built packet wakes the reader once")
+      ;; 2. Busy reader: the same revision amends the packet, never a second one.
+      (multiple-value-bind (p1b action)
+          (nova-work::book-observation
+           book (list :item "acme/work/f1" :revision 1
+                      :facts '("check lint green")
+                      :findings '(("f-ci" . :fixed)))
+           :reader-busy-p t)
+        (check-equal :amended action "same (item, revision) amends")
+        (ok (eq p1 p1b) "the amendment is the same packet, not a duplicate")
+        (check-equal 1 (length (nova-work::packets-for book "acme/work/f1" 1))
+                     "exactly one packet exists for (item, revision 1)")
+        (check-equal 1 (nova-work::decision-packet-amendments p1) "one amendment recorded")
+        (check-equal '("check test red" "check lint green")
+                     (nova-work::decision-packet-facts p1) "amended facts appended")
+        (check-equal 1 (nova-work::packet-book-wakes book)
+                     "an amendment while the reader is busy wakes nothing"))
+      ;; 3. Empty pulse: no packet, no amendment, no wake.
+      (multiple-value-bind (p action)
+          (nova-work::book-observation book (list :item "acme/work/f1" :revision 1))
+        (declare (ignore p))
+        (check-equal :empty action "an empty pulse books nothing")
+        (check-equal 1 (nova-work::decision-packet-amendments p1) "empty pulse amends nothing")
+        (check-equal 1 (nova-work::packet-book-wakes book) "an empty pulse wakes no model")
+        (check-equal 1 (length (nova-work::packets-for book "acme/work/f1"))
+                     "an empty pulse builds no packet"))
+      ;; 4. A newer revision supersedes, carrying only the still-open findings.
+      (multiple-value-bind (p2 action)
+          (nova-work::book-observation
+           book (list :item "acme/work/f1" :revision 2 :facts '("rebased onto dev")))
+        (check-equal :superseded action "a newer revision supersedes")
+        (ok (not (eq p1 p2)) "the newer revision has its own packet")
+        (check-equal 2 (nova-work::decision-packet-superseded-by p1)
+                     "the old packet names its successor revision")
+        (check-equal '(("f-scope" . :open)) (nova-work::decision-packet-findings p2)
+                     "the open finding survives the supersede; the fixed one does not")
+        (check-equal 2 (nova-work::packet-book-wakes book) "the new revision wakes the reader")
+        ;; A stale (older) revision is booked nowhere.
+        (multiple-value-bind (p action)
+            (nova-work::book-observation
+             book (list :item "acme/work/f1" :revision 1 :facts '("late")))
+          (check-equal :stale action "an older revision is stale")
+          (ok (eq p p2) "the current packet stays the newer one")
+          (check-equal 2 (length (nova-work::packets-for book "acme/work/f1"))
+                       "one packet per revision, two revisions, two packets"))))))
