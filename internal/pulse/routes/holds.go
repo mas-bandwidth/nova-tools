@@ -6,9 +6,16 @@
 // A route is a string: the identifier the launch path uses to pick the
 // worker it dispatches a card with. The identifier is owned by the routes
 // table (swarm.ParseRoutes in internal/swarm/route.go) and is whatever
-// shape that table picks, so this package never parses or normalises one --
-// it stores the string callers hand it and answers the only question it
-// ever has to answer: is this route currently held.
+// shape that table picks, so this package never parses one. The only
+// normalisation is trimming surrounding whitespace, applied identically in
+// Set, IsHeld and Lift, so a key stored by Set is the key IsHeld and Lift
+// look up. It answers the only question it ever has to answer: is this
+// route currently held.
+//
+// Stage: this is the primitive stage only. No production caller consults the
+// hold set yet; wiring it into internal/pulse/launch.go (Launch/LaunchInput)
+// so held routes are not dispatched is a follow-up card outside this
+// package's PATHS.
 //
 // The hold set is the in-process equivalent of the STOP sentinel for routes:
 // one Set places a hold and one IsHeld reads it back, both in O(1) and
@@ -95,7 +102,8 @@ func NewHoldSet(now func() time.Time) *HoldSet {
 // A blank route is a typo: Set is a no-op when the route's name trims to
 // empty, the same way an IsHeld on a blank route answers false.
 func (h *HoldSet) Set(route string, ttl time.Duration, now time.Time) {
-	if strings.TrimSpace(route) == "" {
+	route = strings.TrimSpace(route)
+	if route == "" {
 		return
 	}
 	if ttl < 0 {
@@ -161,16 +169,19 @@ func (h *HoldSet) Lift(route string) bool {
 // Snapshot returns one Hold per currently-held route, sorted by route
 // name. The slice is a fresh copy on every call: callers may sort, slice
 // or send it through any channel without racing with a concurrent Set.
-// Expired holds are pruned; the returned slice is the set as the
-// supplied now sees it.
+// Expired holds (expiry at or before now) are pruned: omitted from the
+// returned slice AND deleted from the set, the same way IsHeld prunes; the
+// returned slice is the set as the supplied now sees it.
 func (h *HoldSet) Snapshot(now time.Time) []Hold {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := make([]Hold, 0, len(h.holds))
 	for route, expiry := range h.holds {
-		if expiry.After(now) {
-			out = append(out, Hold{Route: route, ExpiresAt: expiry})
+		if !expiry.After(now) {
+			delete(h.holds, route)
+			continue
 		}
+		out = append(out, Hold{Route: route, ExpiresAt: expiry})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Route < out[j].Route })
 	if len(out) == 0 {
