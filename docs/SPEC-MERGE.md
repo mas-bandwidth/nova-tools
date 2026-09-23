@@ -858,6 +858,44 @@ and never counts. This is the fourth race in **the races** below, and it is the
 one the prototype leaves open: an approve recorded at 12:31Z counted for a head
 pushed at 12:47Z.
 
+### The landing verb: the whole read, both times, in one command
+
+The read condition above is the law; **`nova-merge integrate` is the loop that obeys it
+end to end** (#1845, L6 of #1725). Until 2026-09-19 that loop was typed by hand: seven
+landing shifts ran it that day — sixteen times in land6's shift alone — and every run was
+the same eleven steps, each of them a place a tired hand skips a read.
+
+```
+nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... \
+                     --lane <dir> --reviewers <file> --on <bench> --name <name> \
+                     --root <dir> --basis <file> [--base <branch>] [--dry-run]
+```
+
+1. every member's head is exactly the sha the caller passed, and a moved head is refused
+   **by name**: the reads this landing folds were recorded at the head the caller named;
+2. the hold read, per member, **at that exact head** — the lane's read records, the
+   forge's reviews and comments, and the sensitive-prefix rule — through the verdict fold
+   of reading 3 and **never a second parser**;
+3. the grouping simulated onto the base **as it stands now**, refusing a member that
+   conflicts with the entries ahead and naming it;
+4. `batch --on <bench>`, whose own admission folds the holds again — **so a member is read
+   three times in one landing**, not two;
+5. the push of `rowan/<name>` under a **must-not-exist lease**: the remote is asked for the
+   ref first, a branch that exists is a refusal, the push is a plain one and never a force,
+   and the ref is read back;
+6. the pull request, carrying the `BATCH OK` receipt and the caller's basis sentence per
+   member;
+7. `ci-ok`, polled to a deadline, one typed line per state; **a red is terminal** and its
+   failing tests are named;
+8. the hold read **again, at the door**, which is reading 3's own rule;
+9. `land` — which stays the one caller of the one door;
+10. each member closed with the pointer comment;
+11. every remaining open pull request re-verified against the **new** base, as a table.
+
+`--dry-run` runs 1-3 and lands nothing. No flag in the verb lifts a hold, `--lane` is
+required, and every refusal names the member and the reason. The grammar and the flags are
+in [CLI.md](CLI.md).
+
 ## The local gate
 
 The local gate is the fast lane's **exact steps, run on our own hardware**. It
