@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -349,5 +350,34 @@ func TestLaunchSlotsRefusedMakesLauncherExitNonZero(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "slots refused") {
 		t.Fatalf("expected error mentioning slots refused, got %v", err)
+	}
+}
+
+// TestTailReadsWhileTheChildWrites (johnny's read of #3050): on the grace path Launch reads
+// the tail while the child is still running and writing to it. Run under -race, a tail
+// whose Write and refused/lastLine do not share a lock fails here; without -race it still
+// checks that the refusal is seen once written.
+func TestTailReadsWhileTheChildWrites(t *testing.T) {
+	said := &tail{}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			fmt.Fprintf(said, "line %d\n", i)
+		}
+		fmt.Fprintln(said, "hulk card-001 SLOTS REFUSED held=64")
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			said.refused()
+			said.lastLine()
+		}
+	}()
+	wg.Wait()
+	line, refused := said.refused()
+	if !refused || !strings.Contains(line, "SLOTS REFUSED") {
+		t.Fatalf("refused() = %q, %v after the child printed SLOTS REFUSED", line, refused)
 	}
 }
