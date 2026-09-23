@@ -106,12 +106,18 @@ func TestTableCLICheckFixture(t *testing.T) {
 	if got, want := stdout.String(), table.DefectGolden(); got != want {
 		t.Fatalf("table --check output mismatch\ngot:\n%s\nwant:\n%s", got, want)
 	}
-	seed(t, addr, [][]string{{"SET", "friend:fran:width", "9"}})
-	stdout.Reset()
-	stderr.Reset()
-	code = run([]string{"table", "--check", "--redis", addr}, &stdout, &stderr)
-	if code == 0 || !strings.Contains(stdout.String(), "two writers: friend:fran:width") {
-		t.Fatalf("sidecar was accepted: exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	for _, key := range []string{
+		"bench:b1:width", "bench:b1:queue", "bench:b1:done",
+		"friend:fran:width", "friend:fran:queue", "friend:fran:done",
+	} {
+		seed(t, addr, [][]string{{"SET", key, "9"}})
+		stdout.Reset()
+		stderr.Reset()
+		code = run([]string{"table", "--check", "--redis", addr}, &stdout, &stderr)
+		if code == 0 || !strings.Contains(stdout.String(), "two writers: "+key) || !strings.Contains(stderr.String(), "two writers: "+key) {
+			t.Fatalf("%s sidecar was accepted: exit=%d stdout=%s stderr=%s", key, code, stdout.String(), stderr.String())
+		}
+		seed(t, addr, [][]string{{"DEL", key}})
 	}
 }
 
