@@ -176,3 +176,47 @@ func TestLintIgnoresACardWithoutATestLine(t *testing.T) {
 		t.Fatalf("no TEST: line means nothing to check; got %v", fs)
 	}
 }
+
+// RED (Stella's HOLD on #2878): a detached `-run` value that looks like the TEST package
+// is the -run regexp, not a package; `go test -run ./internal/pulse ./internal/swarm/`
+// runs ./internal/swarm only, so no gate runs ./internal/pulse and the lint refuses.
+func TestLintRefusesADetachedFlagValueAsPackage(t *testing.T) {
+	for _, run := range []string{
+		"RUN: go test -run ./internal/pulse ./internal/swarm/",
+		"RUN: go test -count 1 -run ./internal/pulse/ ./internal/swarm/",
+		"RUN: go test -test.run ./internal/pulse ./internal/swarm/",
+		"RUN: go test -coverpkg ./internal/pulse ./internal/swarm/",
+		"RUN: go test ./internal/swarm/ -args ./internal/pulse",
+	} {
+		raw := gateCard("",
+			"KIND: fix-red",
+			"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
+			"TEST: ./internal/pulse TestX",
+			run,
+		)
+		if !testGateDrew(LintCardTestGate(raw)) {
+			t.Errorf("%s runs only ./internal/swarm; a flag value is not a package and must draw test-gate, got %v", run, LintCardTestGate(raw))
+		}
+	}
+}
+
+// NEGATIVE CONTROL for the red above: a boolean flag takes no value, a `=`-joined value
+// consumes nothing, and a detached value is followed by the real package -- each runs it.
+func TestLintAcceptsAPackageAfterFlags(t *testing.T) {
+	for _, run := range []string{
+		"RUN: go test -v ./internal/pulse/",
+		"RUN: go test -run=TestX ./internal/pulse/",
+		"RUN: go test -run TestX ./internal/pulse/",
+		"RUN: go test -count 1 -race -run TestX ./internal/pulse/ -args -foo",
+	} {
+		raw := gateCard("",
+			"KIND: fix-red",
+			"PATHS: internal/pulse/thing.go, internal/pulse/thing_test.go",
+			"TEST: ./internal/pulse TestX",
+			run,
+		)
+		if fs := LintCardTestGate(raw); testGateDrew(fs) {
+			t.Errorf("%s runs ./internal/pulse; got %v", run, fs)
+		}
+	}
+}

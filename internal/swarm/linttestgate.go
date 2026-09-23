@@ -137,13 +137,27 @@ func gateRunsPkg(commands []string, pkg string) bool {
 
 // goTestSegmentsRun reports whether one whitespace-split command is a `go test` that runs
 // the package: `go` immediately followed by `test`, with a package argument covering pkg.
+//
+// A token after a value-taking flag written detached (`-run ./internal/pulse`) is that
+// flag's VALUE, not a package: `go test -run ./internal/pulse ./internal/swarm/` runs
+// ./internal/swarm with ./internal/pulse as the -run regexp. Such a value is skipped, and
+// everything after `-args` goes to the test binary, so neither can cover the package.
 func goTestSegmentsRun(fields []string, pkg string) bool {
 	for i := 0; i+1 < len(fields); i++ {
 		if fields[i] != "go" || fields[i+1] != "test" {
 			continue
 		}
-		for _, arg := range fields[i+2:] {
+		args := fields[i+2:]
+		for j := 0; j < len(args); j++ {
+			arg := args[j]
 			if strings.HasPrefix(arg, "-") {
+				name := goTestFlagName(arg)
+				if name == "args" {
+					break // the rest is the test binary's argv, never a package
+				}
+				if !strings.Contains(arg, "=") && goTestValueFlags[name] {
+					j++ // the next token is this flag's detached value
+				}
 				continue // a flag, never a package selector
 			}
 			if selectorRunsPkg(arg, pkg) {
@@ -153,6 +167,34 @@ func goTestSegmentsRun(fields []string, pkg string) bool {
 		return false // a `go test` with no covering package argument
 	}
 	return false
+}
+
+// goTestFlagName is a flag token's bare name: leading dashes, any `=value`, and the
+// test binary's `test.` prefix removed (`--test.run=X` -> `run`).
+func goTestFlagName(arg string) string {
+	name := strings.TrimLeft(arg, "-")
+	if k := strings.IndexByte(name, '='); k >= 0 {
+		name = name[:k]
+	}
+	return strings.TrimPrefix(name, "test.")
+}
+
+// goTestValueFlags are the `go test` flags (its own, the test binary's, and the build
+// flags it accepts) that take a value, so a detached next token is that value. Boolean
+// flags (-v, -race, -short, -cover, -failfast, -json, ...) take none and are absent.
+var goTestValueFlags = map[string]bool{
+	// test and test-binary flags
+	"bench": true, "benchtime": true, "blockprofile": true, "blockprofilerate": true,
+	"count": true, "coverprofile": true, "covermode": true, "coverpkg": true, "cpu": true,
+	"cpuprofile": true, "exec": true, "fuzz": true, "fuzzcachedir": true,
+	"fuzzminimizetime": true, "fuzztime": true, "list": true, "memprofile": true,
+	"memprofilerate": true, "mutexprofile": true, "mutexprofilefraction": true, "o": true,
+	"outputdir": true, "parallel": true, "run": true, "shuffle": true, "skip": true,
+	"timeout": true, "trace": true, "vet": true,
+	// build flags go test accepts
+	"C": true, "asmflags": true, "buildmode": true, "compiler": true, "gccgoflags": true,
+	"gcflags": true, "installsuffix": true, "ldflags": true, "mod": true, "modfile": true,
+	"overlay": true, "p": true, "pgo": true, "pkgdir": true, "tags": true, "toolexec": true,
 }
 
 // selectorRunsPkg says whether one `go test` argument names the package, every package
