@@ -9,18 +9,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
-func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
-	if len(args) == 0 {
-		return refuse(stderr, " sprint", "a sub-verb is required (funnel)")
-	}
-	sub, rest := args[0], args[1:]
-	switch sub {
-	case "funnel":
-		return cmdSprintFunnel(rest, stdout, stderr, now)
-	}
-	fmt.Fprintf(stderr, "nova-pulse sprint: unknown sub-verb %q (the sub-verbs are funnel; run: nova-pulse help)\n", sub)
-	return 2
-}
+// cmdSprint (the "nova-pulse sprint" dispatcher, including "funnel") lives in sprint.go:
+// this file owns only the funnel sub-verb's own implementation, cmdSprintFunnel.
 
 func cmdSprintFunnel(args []string, stdout, stderr io.Writer, now time.Time) int {
 	actionFromPositional := ""
