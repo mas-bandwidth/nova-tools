@@ -321,6 +321,25 @@
                    (archive-deletion-gate clean :capture-revision (first revs)
                                                 :source-revision (second revs))
                    (format nil "an unnamed revision ~S leaves deletion pending" revs)))
+    ;; A blank revision names nothing: equal empty or whitespace-only
+    ;; revisions are no recheck at all, so deletion stays pending on a source
+    ;; change with the archive preserved, even with a confirmed delete offered.
+    (let ((tab (string #\Tab)) (newline (string #\Newline)))
+      (dolist (revs (list '("" "") '("  " "  ") (list tab tab)
+                          (list newline newline) '("" "r1") '("r1" "")
+                          '(" " "r1") '("r1" " ")))
+        (dolist (result '(nil :deleted))
+          (multiple-value-bind (state reason archive)
+              (archive-deletion-gate clean :capture-revision (first revs)
+                                           :source-revision (second revs)
+                                           :delete-result result)
+            (check-equal :pending state
+                         (format nil "a blank revision ~S (delete result ~S) leaves deletion pending"
+                                 revs result))
+            (check-equal :source-changed reason
+                         (format nil "a blank revision ~S is an unnamed revision" revs))
+            (check-equal t (eq clean archive)
+                         (format nil "a blank revision ~S preserves the archive" revs))))))
     (check-equal :pending
                  (archive-deletion-gate clean :capture-revision "r1"
                                               :source-revision "r2"
