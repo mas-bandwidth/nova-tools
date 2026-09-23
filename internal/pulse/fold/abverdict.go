@@ -2,10 +2,22 @@ package fold
 
 // TemplateDecision holds the A/B test decision for a card type.
 type TemplateDecision struct {
-	TypeID   string // the card type ID
-	Winner   string // "A", "B", or "" if no winner
+	TypeID string // the card type ID
+	Winner string // "A", "B", or "" if no winner
+	// CostPerA and CostPerB are cost per useful card (cost / score). When a
+	// variant's score is zero the ratio is undefined; it is reported as 0
+	// (never +Inf or NaN) and Winner is "".
 	CostPerA float64
 	CostPerB float64
+}
+
+// costPerUseful returns cost / score, or 0 when score is zero so the
+// exported decision never carries +Inf or NaN.
+func costPerUseful(cost, score float64) float64 {
+	if score == 0 {
+		return 0
+	}
+	return cost / score
 }
 
 // DeclareWinner determines A/B winners for a set of card types and returns
@@ -18,8 +30,8 @@ func DeclareWinner(types map[string]*ABTestData, interval float64) []TemplateDec
 		decisions = append(decisions, TemplateDecision{
 			TypeID:   typeID,
 			Winner:   winner,
-			CostPerA: data.CostA / data.ScoreA,
-			CostPerB: data.CostB / data.ScoreB,
+			CostPerA: costPerUseful(data.CostA, data.ScoreA),
+			CostPerB: costPerUseful(data.CostB, data.ScoreB),
 		})
 	}
 	return decisions
@@ -56,8 +68,8 @@ func ABWinner(
 		return ""
 	}
 
-	costPerUsefulA := costA / scoreA
-	costPerUsefulB := costB / scoreB
+	costPerUsefulA := costPerUseful(costA, scoreA)
+	costPerUsefulB := costPerUseful(costB, scoreB)
 
 	// Determine the absolute difference in cost per useful card
 	// The winner is the one with lower cost per useful card

@@ -1,6 +1,7 @@
 package fold
 
 import (
+	"math"
 	"testing"
 )
 
@@ -126,6 +127,41 @@ func TestDeclareWinnerCallsABWinner(t *testing.T) {
 	for _, decision := range decisions {
 		if decision.Winner == "" {
 			t.Errorf("DeclareWinner returned no winner for %s, but expected one", decision.TypeID)
+		}
+	}
+}
+
+// TestDeclareWinnerZeroScore verifies that a zero score on either side yields
+// no winner and finite cost-per-useful fields (0, never +Inf or NaN) through
+// the production path.
+func TestDeclareWinnerZeroScore(t *testing.T) {
+	types := map[string]*ABTestData{
+		"zeroA":    {CostA: 1.0, ScoreA: 0, CostB: 1.0, ScoreB: 10.0},
+		"zeroB":    {CostA: 1.0, ScoreA: 10.0, CostB: 1.0, ScoreB: 0},
+		"zeroBoth": {CostA: 0, ScoreA: 0, CostB: 0, ScoreB: 0},
+	}
+	want := map[string][2]float64{
+		"zeroA":    {0, 0.1},
+		"zeroB":    {0.1, 0},
+		"zeroBoth": {0, 0},
+	}
+
+	decisions := DeclareWinner(types, 0.01)
+	if len(decisions) != len(types) {
+		t.Fatalf("DeclareWinner returned %d decisions, want %d", len(decisions), len(types))
+	}
+	for _, d := range decisions {
+		if d.Winner != "" {
+			t.Errorf("%s: Winner = %q, want \"\" for a zero score", d.TypeID, d.Winner)
+		}
+		for _, v := range []float64{d.CostPerA, d.CostPerB} {
+			if math.IsInf(v, 0) || math.IsNaN(v) {
+				t.Errorf("%s: cost per useful card = %v, want finite", d.TypeID, v)
+			}
+		}
+		w := want[d.TypeID]
+		if d.CostPerA != w[0] || d.CostPerB != w[1] {
+			t.Errorf("%s: CostPerA, CostPerB = %v, %v, want %v, %v", d.TypeID, d.CostPerA, d.CostPerB, w[0], w[1])
 		}
 	}
 }
