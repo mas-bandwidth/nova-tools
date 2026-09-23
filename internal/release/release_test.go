@@ -1949,7 +1949,9 @@ func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
 				answer:       map[string]string{"hulk": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"},
 			}
 			var o, e bytes.Buffer
-			code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
+			// --no-certify: this case is about the partial release dir, and an adopt
+			// certifies by default (the same waiver the other adopt tests pass).
+			code := Run("nova-update", []string{"adopt", "--no-certify", "--version", "v0.16.0",
 				"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
 				"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
 				"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
