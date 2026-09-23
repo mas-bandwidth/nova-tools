@@ -244,19 +244,93 @@ it to the harness's exit cleanup."
     (pathname (concatenate 'string name "/"))))
 
 (defun short-socket-base-under-run-root (prefix)
-  "A base name short enough to carry a `sun_path`, named relative to the
-working directory. The candidates the old spelling tried -- /dev/shm,
-/run/user/<uid>, /var/tmp, the ambient temporary directory -- are each either
-refused by the card wall or too deep for the 108-byte bound: inside the wall no
-absolute path is both writable and short, and a relative one is short wherever
-the process can write at all. It resolves inside directories this run already
-owns. The absolute spelling of the same name is registered for the exit
-cleanup, in case the run dies before its own."
+  "A base name short enough to carry a `sun_path`, named relative to TMPDIR --
+not to the working directory. The candidates the old spelling tried --
+/dev/shm, /run/user/<uid>, /var/tmp, the ambient temporary directory -- are
+each either refused by the card wall or too deep for the 108-byte bound:
+inside the wall no absolute path is both writable and short, and a relative
+one is short wherever the process can write at all.
+
+The caller (slice-05-durable-journal.lisp's long-TMPDIR fixture) chdir's to
+TMPDIR before it ever uses the name this returns, so a bare CLEAN and the
+absolute `merge-pathnames ... (test-run-root)` registered below for exit
+cleanup named two different directories: the fixture's own `mkdir` landed the
+socket directory straight in TMPDIR, while cleanup only ever knew to look
+under `test-run-root`. A normal run's own unwind-protect removes both, so the
+mismatch was invisible; an interrupted run -- no unwind-protect, no exit-hook,
+just gone -- left the one under TMPDIR behind for good (nova-tools#2769 hold
+7, review 5291983669).
+
+The run root is always TMPDIR's direct child, so prefixing CLEAN with the run
+root's own single path component keeps the name just as short and makes both
+resolutions agree: read relative to TMPDIR (the caller's chdir'd cwd) or
+merged onto `test-run-root` (this function's own bookkeeping), the name lands
+in the one directory a run owns and removes."
   (let ((clean (remove-if-not #'alphanumericp prefix)))
-    (when (plusp (length clean))
-      (test-temp-register
-       (namestring (merge-pathnames clean (test-run-root)))))
-    clean))
+    (if (plusp (length clean))
+        (progn
+          (test-temp-register
+           (namestring (merge-pathnames clean (test-run-root))))
+          (let* ((root (string-right-trim "/" (namestring (test-run-root))))
+                 (tmp (string-right-trim "/" (namestring (uiop:temporary-directory))))
+                 (root-name (if (and (> (length root) (length tmp))
+                                      (string= tmp root :end2 (length tmp)))
+                                (string-left-trim "/" (subseq root (length tmp)))
+                                root)))
+            (concatenate 'string root-name "/" clean)))
+        clean)))
+
+;;; long-tmpdir-interrupted-run-leaves-nothing-outside-its-root
+;;;
+;;; Regression for Stella's hold on nova-tools#2769 (review 5291983669, hold
+;;; 7): a normal run's own unwind-protect always removed both the run root and
+;;; the socket directory the long-TMPDIR branch actually created, so the
+;;; mismatch above was invisible until a run never got the chance to unwind at
+;;; all. This drives a real child process down exactly that path -- its own
+;;; TMPDIR, its own `install-run-local-paths`, its own long-TMPDIR
+;;; `short-socket-base` call and `mkdir` -- then kills it outright (SIGKILL:
+;;; no unwind-protect, no exit-hook) and checks what the child left directly
+;;; under its TMPDIR: the run root, one directory every run makes and a later
+;;; reaper's job, and -- the property this test exists to pin -- nothing
+;;; beside it.
+(deftest "long-tmpdir-interrupted-run-leaves-nothing-outside-its-root"
+    "nova-tools#2769 hold 7 (review 5291983669)"
+    "interrupted-child-leaves-exactly-one-entry-directly-under-tmpdir"
+  (let* ((probe-dir (test-temp-dir "long-tmpdir-probe"))
+         (padded (concatenate 'string (string-right-trim "/" (namestring probe-dir))
+                              "/" (make-string 60 :initial-element #\x)))
+         (sysdir (asdf:system-source-directory "nova-work")))
+    (ensure-directories-exist (concatenate 'string padded "/"))
+    (ok (>= (length padded) 80)
+        "the probe TMPDIR is long enough to hit slice-05's >=80 branch (measured, not assumed)")
+    (let* ((child-forms
+             (list '(require :asdf)
+                   `(push ,sysdir asdf:*central-registry*)
+                   '(handler-bind ((warning (function muffle-warning)))
+                     (asdf:load-system :nova-work/tests))
+                   '(in-package :nova-work/tests)
+                   '(install-run-local-paths)
+                   `(let ((base (short-socket-base-under-run-root "interruptprobe")))
+                      (sb-posix:chdir ,padded)
+                      (sb-posix:mkdir base #o700))
+                   '(sb-posix:kill (sb-posix:getpid) sb-posix:sigkill)))
+           (args (list* "--non-interactive"
+                        (mapcan (lambda (f) (list "--eval" (prin1-to-string f)))
+                                child-forms)))
+           (env (cons (concatenate 'string "TMPDIR=" padded "/")
+                      (remove-if (lambda (kv)
+                                   (and (>= (length kv) 7)
+                                        (string= "TMPDIR=" kv :end2 7)))
+                                 (sb-ext:posix-environ))))
+           (process (sb-ext:run-program "sbcl" args
+                                        :environment env
+                                        :output nil :error nil
+                                        :search t :wait t)))
+      (ok (eq :signaled (sb-ext:process-status process))
+          "the child was killed outright -- no unwind-protect, no exit-hook ran")
+      (let ((left (uiop:subdirectories (uiop:ensure-directory-pathname padded))))
+        (check-equal 1 (length left)
+                     "the fixture's directory landed inside the run root, not beside it -- exactly one entry sits directly under TMPDIR")))))
 
 (defun install-run-local-paths ()
   "Move this run's temporary paths where this run owns them, end to end
