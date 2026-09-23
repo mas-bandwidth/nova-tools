@@ -813,13 +813,26 @@ refused the push (SPEC-WORK.md:2740-2747, output grammar :5362-5363)."
                 (session-base session) commit (session-pushed session)))))
 
 (defun session-stop-lifecycle (session &key no-clip race
+                                           clip-registry clip-operation
+                                           (git-timeout "30s")
                                            (now (format-rfc3339 (get-universal-time))))
   "`session stop` is the same sequence as a handoff without a successor: clip
 unless NO-CLIP, then release the owner with `until` at the stop's stamp, so a
 taker after a planned stop waits `--skew` (SPEC-WORK.md:824-826). Answers
 (values T LINES RECORD); LINES is the CLIP OK line (unless NO-CLIP) followed by
-the SESSION OK identity line."
-  (let ((clip-line (unless no-clip (session-clip-line session :race race)))
+the SESSION OK identity line.
+
+When the stop's own clip is a long operation on the scheduler -- CLIP-REGISTRY
+and CLIP-OPERATION, launched by CLIP-REQUEST -- the stop waits for it by the
+same `operation wait`, inside GIT-TIMEOUT (SESSION-STOP-WAIT-FOR-CLIP,
+SPEC-WORK.md:2748-2750, :6091-6095), and prints the line the transport
+settled, or the wait's NOTE line with the transport left running."
+  (let ((clip-line (unless no-clip
+                     (if (and clip-registry clip-operation)
+                         (values (session-stop-wait-for-clip
+                                  clip-registry clip-operation
+                                  :git-timeout git-timeout))
+                         (session-clip-line session :race race))))
         (status-line (session-status-line session))
         (released (%released-ownership-record (session-owning-record session)
                                               :now now :successor nil)))

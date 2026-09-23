@@ -776,6 +776,9 @@
    #:clip-fail-line
    #:run-clip-transport
    #:session-stop-wait-for-clip
+   #:clip-launch-transport
+   #:clip-operation-observe
+   #:clip-git-timeout-duration
    ;; the cancellation as a request of its own on the same journal
    ;; (SPEC-WORK.md:2717-2720, :2740-2744)
    #:cancel-record-p

@@ -195,6 +195,13 @@ read out of `operation wait`: CLIP OK, CLIP RACED or CLIP FAIL
 
 `clip` itself has already printed OPERATION OK and exited; this is what happens
 afterwards, and the only way anyone learns of it is the wait."
+  (when (null remote)
+    (let ((line (clip-fail-line :session session :operation id :boundary boundary
+                                :events events :base base
+                                :reason "no clip remote")))
+      (operation-settle registry id :state :failed :result line :stamp stamp
+                                    :kind :clip-settled)
+      (return-from run-clip-transport line)))
   (let* ((base (or base (clip-remote-tip remote)))
          (line nil)
          (state :done))
@@ -235,3 +242,46 @@ leaves the transport running."
     (if (terminal-operation-state-p state)
         (values (registry-operation-result registry id) state 0)
         (values line state code))))
+
+(defun clip-launch-transport (registry op &key stamp)
+  "Start OP's clip transport on a worker thread of its own and answer the
+thread. This is what `clip` does after its accept record is durable and before
+it prints OPERATION OK (SPEC-WORK.md:2744-2750): the caller never runs the
+push, and the settled line reaches it only through the wait.
+
+The pinned spec is read now, on the caller's thread, so nothing the caller does
+after `clip` returns changes what is pushed. A resident O that names no event
+boundary is settled CLIP FAIL on the worker without pushing, the same way the
+other outcomes arrive. Any error on the worker settles the operation CLIP FAIL
+rather than leaving a waiter blocked until its timeout."
+  (let* ((spec (operation-spec op))
+         (id (operation-id op))
+         (remote (getf spec :remote))
+         (base (getf spec :base))
+         (boundary (getf spec :boundary))
+         (events (getf spec :events))
+         (session (getf spec :path))
+         (commit (getf spec :commit))
+         (revision (getf spec :revision)))
+    (sb-thread:make-thread
+     (lambda ()
+       (handler-case
+           (if (and events (null boundary))
+               (operation-settle
+                registry id :state :failed :stamp stamp :kind :clip-settled
+                :result (format nil "CLIP FAIL session=~A operation=~A boundary=- events=~D base=~A pushed=- attempts=0: resident O invalid"
+                                session id (length events) base))
+               (run-clip-transport registry remote
+                                   :id id :session session :boundary boundary
+                                   :events (length events) :base base
+                                   :commit commit :revision revision
+                                   :stamp stamp))
+         (error (condition)
+           (operation-settle
+            registry id :state :failed :stamp stamp :kind :clip-settled
+            :result (clip-fail-line :session session :operation id
+                                    :boundary boundary :events (length events)
+                                    :base base
+                                    :reason (remove #\Newline
+                                                    (princ-to-string condition)))))))
+     :name (format nil "nova-work-clip-~A" id))))

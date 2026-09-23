@@ -872,7 +872,17 @@ scoped exception is retained and the packet dispatches."
   "Read one operation's own record: no journal replay, no whole-queue drain and
 no wait on the I/O the operation is doing, so status answers while the mutation
 loop is busy (SPEC-WORK.md:2731, :2756)."
-  (let ((op (session-operation session id)))
+  (let* ((op (session-operation session id))
+         (registry (and op (getf (operation-spec op) :registry)))
+         (settled (and registry
+                       (not (member (operation-state op) '(:done :raced :failed)))
+                       (terminal-operation-state-p
+                        (registry-operation-state registry id)))))
+    ;; A clip's transport settles on its own worker; status reads the
+    ;; scheduler's record of it without waiting (SPEC-WORK.md:2744-2750).
+    (when settled
+      (clip-operation-observe op (registry-operation-state registry id)
+                              (registry-operation-result registry id)))
     (list :id id
           :op (and op (operation-op op))
           :state (if op (operation-state op) :none)
@@ -929,8 +939,11 @@ claims an uncertain external effect was cancelled (SPEC-WORK.md:2734-2738)."
 ;;; A clip names a local event boundary, fetches the upstream tip, refuses
 ;;; `CLIP RACED` when the tip is not the base, validates the resident O, writes
 ;;; one deterministic snapshot and commits and pushes it. The remote is a
-;;; protocol (a seam): the real implementation is the owned Git branch; the
-;;; in-process implementation below is what the kernel's replay drives.
+;;; protocol (a seam): the real implementation is a git repository
+;;; (GIT-CLIP-REMOTE, src/clip-git.lisp); the in-process implementation below
+;;; is what the kernel's replay drives. Either way the push runs on the
+;;; transport's own worker, launched by CLIP-REQUEST through the operation
+;;; scheduler, and is learned only through OPERATION-WAIT.
 ;;; ------------------------------------------------------------------
 
 (defclass in-process-clip-remote ()
@@ -988,16 +1001,27 @@ the same bytes (SPEC-WORK.md:2749-2754, :3980)."
 (defun clip-request (session &key (id "op-clip-1") (request "req-clip-1")
                                 (staged-bytes 0) remote base attempts
                                 (events (work-session-events session))
-                                (revision (length events)) path)
+                                (revision (length events)) path
+                                registry (author "-") stamp)
   "`clip` prints OPERATION OK id=<id> op=clip state=<queued|running> at once and
 exits; the transport continues. The boundary, revision and snapshot are pinned
 now, so a write admitted while the clip runs is pending for the next one. A full
-queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753)."
+queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753).
+
+\"The clip's transport is that shape and is not a second synchronous one\"
+(:2744-2750): the operation is accepted on the operation scheduler's REGISTRY
+-- durable before its id is printed -- and the transport (CLIP-LAUNCH-TRANSPORT,
+src/clip-git.lisp) is started on a worker thread of its own before this
+returns. Nothing here pushes; the push, and the CLIP OK / CLIP RACED / CLIP FAIL
+line it settles, happen on that worker, and the only way a caller learns of
+them is OPERATION-WAIT. With no REGISTRY the in-process implementation of the
+durable-accept seam is used, over the same scheduler."
   (let ((limits (work-session-limits session)))
     (when (>= (length (work-session-operations session)) (getf limits :queue))
       (return-from clip-request
         (values session nil "OPERATION FAIL: queue full")))
-    (let* ((base (or base (work-session-base session)
+    (let* ((registry (or registry (make-operation-registry)))
+           (base (or base (work-session-base session)
                      (and remote (clip-remote-tip remote))))
            (op (make-operation
                 :id id :op :clip :request request :state :queued
@@ -1008,69 +1032,102 @@ queue refuses rather than growing unbounded (SPEC-WORK.md:2740-2745, :2753)."
                             :commit (clip-commit events revision)
                             :attempts (or attempts 25)
                             :git-timeout (or (work-session-git-timeout session) 30)
-                            :path (or path (work-session-path session))))))
+                            :path (or path (work-session-path session))
+                            :registry registry))))
+      ;; Durable before it is printed (SPEC-WORK.md:2721-2730), then launched.
+      (operation-accept registry :id id :kind "clip" :request request
+                                 :author author :stamp stamp)
+      (clip-launch-transport registry op :stamp stamp)
       (values (session-add-operation session op) op
               (format nil "OPERATION OK id=~A op=clip state=queued" id)))))
 
-(defun operation-wait (session id &key race)
-  "`operation wait --id` is a bounded block over the operation's own result.
-When the transport settles it prints the CLIP OK line carrying operation=<id>
-and its pushed=; a base predicate that refused prints CLIP RACED. The wait is
-idempotent: a settled operation answers its recorded line
-(SPEC-WORK.md:2740-2745, :5930-5934)."
+(defun clip-git-timeout-duration (timeout)
+  "A --git-timeout as the duration a wait takes: a duration string as given, a
+bare number as that many seconds."
+  (cond ((stringp timeout) timeout)
+        ((realp timeout) (format nil "~Ds" (round timeout)))
+        (t "30s")))
+
+(defun clip-operation-observe (op state line)
+  "Record on the session's operation what the scheduler settled: a terminal
+STATE installs its LINE as the operation's result, so a later wait answers the
+recorded line. A wait that timed out changes nothing but the state -- the
+transport is still running (SPEC-WORK.md:2738-2740)."
+  (cond
+    ((terminal-operation-state-p state)
+     (setf (operation-state op)
+           (if (and (eq state :failed) (stringp line)
+                    (eql 0 (search "CLIP RACED" line)))
+               :raced
+               state)
+           (operation-result op) line))
+    ((eq state :timeout)
+     (setf (operation-state op) :running)))
+  line)
+
+(defun operation-wait (session id &key timeout)
+  "`operation wait --id` is a bounded block over the operation's own result, and
+it is the ONLY way the clip's outcome is learned (SPEC-WORK.md:2744-2750). It
+blocks on the scheduler's event cursor (DURABLE-OPERATION-WAIT) until the
+transport running on its own worker settles the operation, or until TIMEOUT
+(default the operation's --git-timeout) passes, which answers the NOTE line and
+leaves the transport running. It never pushes. When the transport settles it
+prints the CLIP OK line carrying operation=<id> and its pushed=; a base
+predicate that refused prints CLIP RACED. The wait is idempotent: a settled
+operation answers its recorded line (SPEC-WORK.md:2740-2745, :5930-5934)."
   (let ((op (session-operation session id)))
     (cond
       ((null op)
        (values session
                (format nil "OPERATION FAIL id=~A op=- state=-: no such operation" id)))
-      ((eq :done (operation-state op))
+      ((and (member (operation-state op) '(:done :raced :failed))
+            (operation-result op))
        (values session (operation-result op)))
       (t
        (let* ((spec (operation-spec op))
-              (remote (getf spec :remote))
-              (base (getf spec :base))
-              (tip (and remote (clip-remote-tip remote)))
-              (path (getf spec :path))
-              (boundary (getf spec :boundary))
-              (events (getf spec :events)))
-         (cond
-           ((or race (and remote (not (equal tip base))))
-            (setf (operation-state op) :raced
-                  (operation-result op) nil)
-            (values session
-                    (format nil "CLIP RACED session=~A operation=~A boundary=~A generation=1 expected=~A found=~A"
-                            path id boundary (clip-sha12 base) (clip-sha12 tip))))
-           ((and events (null boundary))
-            (setf (operation-state op) :failed)
-            (values session
-                    (format nil "CLIP FAIL session=~A operation=~A boundary=- events=~D base=~A pushed=- attempts=0: resident O invalid"
-                            path id (length events) base)))
-           (t
-            (let ((commit (getf spec :commit))
-                  (pushed (getf spec :revision)))
-              (unless (and remote (clip-remote-push remote base commit))
-                (setf (operation-state op) :failed)
-                (return-from operation-wait
-                  (values session
-                          (format nil "CLIP FAIL session=~A operation=~A boundary=~A events=~D base=~A pushed=- attempts=1: push refused"
-                                  path id boundary (length events) base))))
-              (setf (operation-state op) :done
-                    (operation-result op)
-                    (format nil "CLIP OK session=~A operation=~A boundary=~A events=~D base=~A commit=~A pushed=~D attempts=1 emitted=0"
-                            path id boundary (length events) base commit pushed))
-              (values session (operation-result op))))))))))
+              (registry (getf spec :registry)))
+         (if (null registry)
+             (values session
+                     (format nil "OPERATION FAIL id=~A op=~(~A~) state=~(~A~): no scheduler holds this operation"
+                             id (operation-op op) (operation-state op)))
+             (multiple-value-bind (rows state cursor note)
+                 (durable-operation-wait
+                  registry id
+                  :timeout (clip-git-timeout-duration
+                            (or timeout (getf spec :git-timeout)))
+                  :after 0)
+               (declare (ignore rows cursor))
+               (values session
+                       (clip-operation-observe
+                        op state
+                        (if (terminal-operation-state-p state)
+                            (registry-operation-result registry id)
+                            note))))))))))
 
-(defun session-stop (session &key race)
+(defun session-stop (session &key git-timeout)
   "`session stop` is the one caller that waits for its own clip, by the same
-`operation wait` inside its --git-timeout; it prints the CLIP OK first and then
-the SESSION OK (SPEC-WORK.md:2742-2745, :5480-5490)."
+`operation wait` inside its --git-timeout (SESSION-STOP-WAIT-FOR-CLIP,
+src/clip-git.lisp); it prints the CLIP OK first and then the SESSION OK
+(SPEC-WORK.md:2742-2750, :5480-5490, :6091-6095). A git timeout prints the
+wait's NOTE line in the clip's place and leaves the transport running: there is
+no second synchronous clip path for it to fall back on."
   (let* ((clip (find :clip (work-session-operations session) :key #'operation-op))
          (clip-line
            (when clip
-             (multiple-value-bind (settled line)
-                 (operation-wait session (operation-id clip) :race race)
-               (declare (ignore settled))
-               line)))
+             (let ((registry (getf (operation-spec clip) :registry))
+                   (timeout (clip-git-timeout-duration
+                             (or git-timeout (work-session-git-timeout session)))))
+               (cond
+                 ((and (member (operation-state clip) '(:done :raced :failed))
+                       (operation-result clip))
+                  (operation-result clip))
+                 ((null registry)
+                  (nth-value 1 (operation-wait session (operation-id clip))))
+                 (t
+                  (multiple-value-bind (line state)
+                      (session-stop-wait-for-clip registry (operation-id clip)
+                                                  :git-timeout timeout)
+                    (clip-operation-observe clip state line)))))))
          (session-line
            (format nil "SESSION OK session=~A owner=rowan generation=1 state=live events=~D pending=0 pushed=~D"
                    (work-session-path session)
