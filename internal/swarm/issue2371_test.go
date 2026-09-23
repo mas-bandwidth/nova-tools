@@ -375,6 +375,62 @@ func TestIssue2371(t *testing.T) {
 			t.Fatal("--launch-hash did not change when realization.env_hash changed")
 		}
 	})
+
+	// The refusals the HOLDs on #2877 named: each case fails on e449ab98.
+	t.Run("hold_repairs", func(t *testing.T) {
+		dir := t.TempDir()
+		valid, _ := json.Marshal(validLaunchRecord())
+		read := func(name string, body []byte) error {
+			path := filepath.Join(dir, name)
+			if err := writeAtomic(path, body, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := ReadLaunchRecord(path, time.Time{})
+			return err
+		}
+		refused := func(name string, body []byte, want string) {
+			t.Helper()
+			err := read(name, body)
+			if err == nil {
+				t.Fatalf("%s accepted; want a refusal naming %q", name, want)
+			}
+			if lr, ok := err.(LaunchRecordRefusal); !ok || !strings.Contains(lr.Reason, want) {
+				t.Fatalf("%s: unexpected error %v; want a refusal naming %q", name, err, want)
+			}
+		}
+
+		if err := read("valid.json", valid); err != nil {
+			t.Fatalf("valid record refused: %v", err)
+		}
+
+		// A duplicate after a nested object is still found.
+		dupAfterNested := strings.Replace(string(valid), `,"usage_every_ns":`, `,"slot":"2","usage_every_ns":`, 1)
+		refused("dup_after_nested.json", []byte(dupAfterNested), "duplicate")
+		// A duplicate inside a nested object is found too.
+		dupNested := strings.Replace(string(valid), `"context":{"kind":"pool",`, `"context":{"kind":"pool","kind":"pool",`, 1)
+		refused("dup_nested.json", []byte(dupNested), "duplicate")
+		if hasDuplicateKeys([]byte(`{"a":[{"x":1},{"x":2}],"b":1}`)) {
+			t.Fatal("the same key in sibling array elements counted as a duplicate")
+		}
+
+		// Trailing data past the decoder's first read buffer is still found.
+		indented, _ := json.MarshalIndent(validLaunchRecord(), "", "  ")
+		pad := append(append([]byte{}, indented...), []byte(strings.Repeat(" ", 4096)+"extra")...)
+		refused("trailing_far.json", pad, "trailing")
+
+		// Braces and brackets inside strings do not count toward nesting.
+		if exceedsNesting([]byte(`{"k":"{{{{{{{{{{[[[[[[[[[[","e":"\\\"{{{{{{{{{{"}`), 8) {
+			t.Fatal("braces inside strings counted as nesting")
+		}
+		if !exceedsNesting([]byte(`{"s":"}}}}}}}}}}","k":`+string(nestedJSON(8))+`}`), 8) {
+			t.Fatal("closing braces inside a string hid real nesting of 9")
+		}
+
+		// A syntactically valid record missing its members is refused at read.
+		refused("empty_object.json", []byte(`{}`), "schema")
+		missingNonce := strings.Replace(string(valid), `"reservation_nonce":"012345abcdef",`, ``, 1)
+		refused("missing_nonce.json", []byte(missingNonce), "reservation_nonce")
+	})
 }
 
 func validLaunchRecord() LaunchRecord {

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -180,6 +179,9 @@ func ReadLaunchRecord(path string, budget time.Time) (LaunchRecord, error) {
 	if err := dec.Decode(&r); err != nil {
 		return LaunchRecord{}, LaunchRecordRefusal{Reason: fmt.Sprintf("launch record parse error: %v", err)}
 	}
+	if err := ValidateLaunchRecord(r); err != nil {
+		return LaunchRecord{}, err
+	}
 	return r, nil
 }
 
@@ -196,6 +198,9 @@ func hasDuplicateKeys(raw []byte) bool {
 	return scanObjectKeys(dec, seen)
 }
 
+// scanObjectKeys reads the members of an object whose opening '{' has been
+// consumed, and consumes its closing '}' so the caller resumes at its own
+// next member. It reports true on the first key repeated within one object.
 func scanObjectKeys(dec *json.Decoder, seen map[string]bool) bool {
 	for dec.More() {
 		tok, err := dec.Token()
@@ -210,36 +215,56 @@ func scanObjectKeys(dec *json.Decoder, seen map[string]bool) bool {
 			return true
 		}
 		seen[key] = true
-		if dup := scanValueKeys(dec, seen); dup {
+		if dup := scanValueKeys(dec); dup {
 			return true
 		}
 	}
+	_, _ = dec.Token() // the closing '}'
 	return false
 }
 
-func scanValueKeys(dec *json.Decoder, seen map[string]bool) bool {
+// scanValueKeys reads one value, descending into objects and arrays and
+// consuming their closing delimiters.
+func scanValueKeys(dec *json.Decoder) bool {
 	tok, err := dec.Token()
 	if err != nil {
 		return false
 	}
-	if tok == json.Delim('{') {
-		inner := map[string]bool{}
-		return scanObjectKeys(dec, inner)
-	}
-	if tok == json.Delim('[') {
+	switch tok {
+	case json.Delim('{'):
+		return scanObjectKeys(dec, map[string]bool{})
+	case json.Delim('['):
 		for dec.More() {
-			if dup := scanValueKeys(dec, map[string]bool{}); dup {
+			if dup := scanValueKeys(dec); dup {
 				return true
 			}
 		}
+		_, _ = dec.Token() // the closing ']'
 	}
 	return false
 }
 
+// exceedsNesting counts object and array depth outside string literals, so
+// a brace or bracket inside a string (escaped quotes included) never counts.
 func exceedsNesting(raw []byte, max int) bool {
 	depth := 0
+	inString := false
+	escaped := false
 	for _, b := range raw {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case b == '\\':
+				escaped = true
+			case b == '"':
+				inString = false
+			}
+			continue
+		}
 		switch b {
+		case '"':
+			inString = true
 		case '{', '[':
 			depth++
 			if depth > max {
@@ -252,17 +277,16 @@ func exceedsNesting(raw []byte, max int) bool {
 	return false
 }
 
+// hasTrailingData reports anything but whitespace after the first JSON
+// value, measured from the decoder's input offset over the whole input
+// rather than only the bytes left in its read buffer.
 func hasTrailingData(raw []byte) bool {
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	var val json.RawMessage
 	if err := dec.Decode(&val); err != nil {
 		return false
 	}
-	rest, err := io.ReadAll(dec.Buffered())
-	if err != nil {
-		return false
-	}
-	return len(bytes.TrimSpace(rest)) > 0
+	return len(bytes.TrimSpace(raw[dec.InputOffset():])) > 0
 }
 
 func isSHA256Digest(s string) bool {
