@@ -9,65 +9,85 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
-// The injectable CI source. GH.Checks reads one commit's verdict from
-// ci:<owner/repo>:<sha> and NEVER from GitHub's check-runs. A check-run that
-// the forge reports -- a green one included -- is not evidence this tool may
-// merge on (nova-tools #2924). Missing, empty and non-OK values are not green:
-// a caller sees ErrCIMissing and reports "ci: MISSING".
+// The injectable CI source. GH.Checks reads one commit's verdict record,
+// ci:<owner/repo>:<sha>, through internal/civerdict -- the same HASH, key and
+// "verdict" field nova-sprint's land reads. A record that carries a verdict is
+// the answer: OK is green, FAIL is red, anything else is pending.
+//
+// A MISSING RECORD IS NOT A VERDICT (no-evidence-is-not-negative-evidence).
+// When the key is absent, carries no verdict, or cannot be read (WRONGTYPE,
+// NOPERM, a store that is down), GH.Checks falls back to GitHub's check-runs
+// at the head and marks the evidence Source "from-github". ErrCIMissing is
+// only the answer when BOTH say nothing: no verdict record and no check-run.
+// (#2924 made the record the only source and the lander landed nothing for
+// an afternoon because nothing wrote records for its integration heads.)
 
-// ErrCIMissing is the not-green answer: the injectable source held no key, an
-// empty value, or a value that is not OK. It is the only thing a missing,
-// empty or unreadable CI verdict may become -- never a fallback to the forge's
-// check-runs.
+// ErrCIMissing is the answer when neither the verdict record nor the forge's
+// check-runs say anything about a commit. It is never the answer to an absent
+// record alone.
 var ErrCIMissing = errors.New("ci: MISSING")
 
-// CISource answers one commit's CI verdict. Read returns the raw value stored
-// for a commit and whether the key existed at all; ok true with an empty value
-// is still not-OK. Injection is by WithCISource, and the production
-// implementation is RedisCISource.
+// Where a Checks value's evidence came from.
+const (
+	CIFromRedis  = "redis"
+	CIFromGitHub = "from-github"
+)
+
+// CISource answers one commit's CI verdict. Read returns the verdict word
+// stored for a commit and whether the record said anything at all (ok false:
+// absent, or present without a verdict). An error is an unreadable record;
+// GH.Checks treats it exactly like an absent one. Injection is by
+// WithCISource, and the production implementation is RedisCISource.
 type CISource interface {
 	Read(repo, sha string) (value string, ok bool, err error)
 }
 
-// CIKey is where a commit's injectable verdict lives: ci:<owner/repo>:<sha>.
+// CIKey is where a commit's verdict record lives: ci:<owner/repo>:<sha>.
 func CIKey(repo, sha string) string {
-	return "ci:" + repo + ":" + sha
+	return civerdict.Key(repo, sha)
 }
 
-// ciGreen reports whether the value is exactly the protocol's OK token.
-// Anything else -- empty, "fail",
-// "pending", a sentence -- is non-OK and becomes ErrCIMissing.
-func ciGreen(value string) bool {
-	return strings.TrimSpace(value) == "OK"
+// ciState maps a record's verdict word onto a check-run state Checks buckets:
+// exactly OK is success, FAIL... is failure, and any other word is pending.
+func ciState(value string) string {
+	v := strings.TrimSpace(value)
+	switch {
+	case civerdict.Green(v):
+		return "success"
+	case strings.HasPrefix(strings.ToUpper(v), "FAIL"):
+		return "failure"
+	default:
+		return "pending"
+	}
 }
 
 // ciReadTimeout bounds one Redis read so a hung server cannot hang a pass.
 const ciReadTimeout = 5 * time.Second
 
-// RedisCISource is the production CISource: one GET per commit against Redis.
+// RedisCISource is the production CISource: one HGETALL per commit.
 type RedisCISource struct {
 	Client redis.UniversalClient
 }
 
-// Read fetches ci:<owner/repo>:<sha>. A nil client or a missing key reads as
-// not-OK; a transport error is returned so the caller can still treat it as
-// not-green without ever reaching the forge.
+// Read fetches ci:<owner/repo>:<sha> through civerdict.Read. A nil client, a
+// missing key or a record without a verdict reads as ok false; a transport or
+// ACL error is returned, and GH.Checks falls back to the forge on it.
 func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 	if r == nil || r.Client == nil {
 		return "", false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ciReadTimeout)
 	defer cancel()
-	val, err := r.Client.Get(ctx, CIKey(repo, sha)).Result()
-	if err == redis.Nil {
-		return "", false, nil
-	}
+	fields, err := civerdict.Read(ctx, r.Client, repo, sha)
 	if err != nil {
 		return "", false, err
 	}
-	return val, true, nil
+	v := civerdict.Of(fields)
+	return v, v != "", nil
 }
 
 // RedisFromEnv builds the production source from the same NOVA_REDIS_* settings

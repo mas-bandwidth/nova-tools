@@ -25,6 +25,9 @@ usage:
   nova-post show  --draft <hash> --drafts <dir>
   nova-post send  --draft <hash> --approval <receipt-id> --drafts <dir>
                   --bus <dir> --allowlist <file>
+  nova-post hook  --addr <host:port> --redis <host:port> [--user <acl-user>]
+                  [--path /webhook] [--secret-env NOVA_GITHUB_WEBHOOK_SECRET]
+                  [--password-env NOVA_REDIS_BENCH_PASSWORD]
   nova-post version
   nova-post help
 
@@ -42,6 +45,12 @@ usage:
   --draft <hash>    the payload hash the draft verb printed
   --approval <id>   the bus receipt id carrying APPROVE nova-post sha256=<hash>
   --bus <dir>       the bus the receipt is read from; required on send
+
+hook listens for GitHub webhook deliveries and appends each signed, carried
+one to the Redis stream ev:github (ping included). Every delivery's
+X-Hub-Signature-256 is checked against the secret in $NOVA_GITHUB_WEBHOOK_SECRET
+(or the variable --secret-env names); with it empty the verb refuses to start.
+--addr is loopback or a tailnet address, never a wildcard.
 
 exit codes: 0 the verb ran, 1 the gate or a provider said NO, 2 the invocation
 could not run. A credential is read only from the environment nova-secrets exec
@@ -88,6 +97,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runShow(args[1:], stdout, stderr)
 	case "send":
 		return runSend(args[1:], stdout, stderr)
+	case "hook":
+		return runHook(args[1:], stdout, stderr)
 	default:
 		return refuseLine(stderr, "bad-verb", fmt.Sprintf("unknown verb %q", oneline.Field(args[0])), 2)
 	}
