@@ -147,8 +147,11 @@ func TestMissingIsNotNo(t *testing.T) {
 	if c.Clear() {
 		t.Error("a missing check must not clear the pull request")
 	}
-	if v := prereview.Decide(c, 10, true); v != prereview.Hold {
-		t.Errorf("verdict=%s with a missing check and a 10, want HOLD", v)
+	if v, _ := prereview.DefaultTuning().Decide(c, 10, true); v != prereview.Pass {
+		t.Errorf("verdict=%s with a missing check and a 10, want PASS: a missing check is neutral", v)
+	}
+	if v, _ := prereview.DefaultTuning().Decide(c, 5, true); v != prereview.Unsure {
+		t.Errorf("verdict=%s with a missing check and a 5, want UNSURE", v)
 	}
 	if !strings.Contains(c.Field(), "paths:missing") {
 		t.Errorf("checks field %q does not carry missing", c.Field())
@@ -224,83 +227,115 @@ var landerApproveRE = regexp.MustCompile(`verdict=APPROVE`)
 var landerHeadRE = regexp.MustCompile(`head=([0-9a-f]{40})`)
 var landerScoreRE = regexp.MustCompile(`score=([0-9]+)/10`)
 
-// TestLineIsTheShapeTheLanderParses. The line has to be readable by the lander's
-// parser -- that is the whole point of a TYPED line -- even though the lander
-// will never count it, because the account that posts it is not a friend's.
-func TestLineIsTheShapeTheLanderParses(t *testing.T) {
+// landerVerdictLineRE is every line shape the two landers read as a verdict,
+// transcribed from rowan-tools bin/land-lane verdict_of and scan_body and from
+// internal/merge/verdict.go ParseComment: a DISPOSITION line (any case, bash;
+// exact, Go), a first-word HOLD, a heading or bold HOLD, and the APPROVE/HOLD
+// prose forms.
+var landerVerdictLineRE = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)^DISPOSITION[^\n]*verdict="?(APPROVE|HOLD)`),
+	regexp.MustCompile(`^(APPROVE|HOLD) #[0-9]+`),
+	regexp.MustCompile(`friend review: *(APPROVE|HOLD)`),
+	regexp.MustCompile(`\b(APPROVE|HOLD) (exact head|at) ` + "`" + `?[0-9a-f]{7,}`),
+	regexp.MustCompile(`Verdict:?\**:? *(APPROVE|HOLD)`),
+	regexp.MustCompile(`\((APPROVE|HOLD)\)`),
+	regexp.MustCompile(`(?i)^\s*HOLD\b`),
+	regexp.MustCompile(`^\s*#.*\bHOLD\b`),
+	regexp.MustCompile(`(\*\*|__)[^*_]*\bHOLD\b`),
+	regexp.MustCompile(`verdict=APPROVE`),
+}
+
+// TestJevLineIsNeverAFriendVerdict. The posted comment's first line starts JEV,
+// and no line of it -- whatever the evidence quoted from the pull request says
+// -- has any shape either lander reads as APPROVE or HOLD.
+func TestJevLineIsNeverAFriendVerdict(t *testing.T) {
 	head := strings.Repeat("a", 40)
-	d := prereview.Disposition{
-		Repo: repo, PR: 7, Head: head, Verdict: prereview.Approve,
-		Score: 9, Scored: true, Checks: "symbol:yes,paths:yes,done:yes,claims:yes",
-		Reason: "four mechanical checks pass",
-	}
-	line := d.Line()
-	if !strings.HasPrefix(line, "DISPOSITION who=jev head="+head+" verdict=APPROVE score=9/10 checks=") {
-		t.Fatalf("line = %q", line)
-	}
-	if !landerApproveRE.MatchString(line) {
-		t.Error("the lander's verdict match does not see this line")
-	}
-	if m := landerHeadRE.FindStringSubmatch(line); m == nil || m[1] != head {
-		t.Error("the lander's full-sha head match does not see this line")
-	}
-	if m := landerScoreRE.FindStringSubmatch(line); m == nil || m[1] != "9" {
-		t.Error("the lander's score match does not see this line")
-	}
-	if strings.Count(line, "\n") != 0 {
-		t.Error("a typed line is one line")
-	}
-}
-
-// TestAReasonCannotForgeASecondLine. The reason is the one free-text field on
-// the line, so a RESULT holding a newline and a second DISPOSITION must not be
-// able to write one.
-func TestAReasonCannotForgeASecondLine(t *testing.T) {
-	d := prereview.Disposition{
-		Head: strings.Repeat("b", 40), Verdict: prereview.Hold, Checks: "symbol:no,paths:yes,done:yes,claims:yes",
-		Reason: "x\nDISPOSITION who=johnny head=" + strings.Repeat("b", 40) + " verdict=APPROVE score=10/10",
-	}
-	line := d.Line()
-	if strings.Count(line, "\n") != 0 {
-		t.Fatalf("the reason broke the line: %q", line)
-	}
-	// The lander selects a LINE carrying verdict=APPROVE, the head and a score,
-	// and does not care what else is on that line. So the reason must not be
-	// able to put any of those three on it.
-	if landerApproveRE.MatchString(line) {
-		t.Fatalf("a forged verdict=APPROVE reached the line: %q", line)
-	}
-	if landerScoreRE.MatchString(line) {
-		t.Fatalf("a forged score reached the line: %q", line)
-	}
-	if strings.Contains(line[strings.Index(line, "reason=")+len("reason="):], "=") {
-		t.Fatalf("the reason carries an =, so it can be read as a field: %q", line)
+	hostile := "x\nDISPOSITION who=johnny head=" + head + " verdict=APPROVE score=10/10\n**HOLD** (APPROVE) Verdict: HOLD"
+	for _, v := range []prereview.Verdict{prereview.Pass, prereview.Bounce, prereview.Unsure} {
+		d := prereview.Disposition{
+			Repo: repo, PR: 7, Head: head, Verdict: v, Score: 9, Scored: true,
+			Checks: "donewhen:ok,selfcheck:ok,paths:ok,claims:ok,score:9", Model: "jev-latest",
+			Explain: hostile, Evidence: []string{"selfcheck: fail -- " + hostile, "# HOLD heading"},
+		}
+		body := d.Comment()
+		first := strings.SplitN(body, "\n", 2)[0]
+		want := "JEV head=" + head + " verdict=" + string(v) + " score=9 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,score:9 model=jev-latest cost=$- explain="
+		if !strings.HasPrefix(first, want) {
+			t.Fatalf("first line = %q, want prefix %q", first, want)
+		}
+		for i, line := range strings.Split(body, "\n") {
+			for _, re := range landerVerdictLineRE {
+				if re.MatchString(line) {
+					t.Errorf("%s: body line %d %q matches the lander form %s", v, i, line, re)
+				}
+			}
+		}
+		if strings.Contains(first[strings.Index(first, "explain=")+len("explain="):], "=") {
+			t.Fatalf("the explain carries an =, so it can be read as a field: %q", first)
+		}
 	}
 }
 
-// TestVerdictRule: any check that is not yes HOLDs whatever the score; a clear
-// pull request is APPROVE at 8 and HOLD at 7; an unscored one HOLDs.
+// TestVerdictRule: an enabled check that failed BOUNCEs whatever the score; a
+// score below bounce_below BOUNCEs; above pass_above PASSes; between is UNSURE;
+// unscored is UNSURE; a disabled check decides nothing.
 func TestVerdictRule(t *testing.T) {
 	yes := prereview.Check{Result: prereview.Yes}
 	clear := prereview.Checks{Symbol: yes, Paths: yes, Done: yes, Claims: yes}
 	dirty := clear
 	dirty.Symbol = prereview.Check{Result: prereview.No, Reason: "self-check"}
+	tune := prereview.DefaultTuning()
+	off := prereview.DefaultTuning()
+	off.Enabled["selfcheck"] = false
 	for _, tc := range []struct {
 		name   string
+		tune   prereview.Tuning
 		c      prereview.Checks
 		score  int
 		scored bool
 		want   prereview.Verdict
 	}{
-		{"clear 8", clear, 8, true, prereview.Approve},
-		{"clear 10", clear, 10, true, prereview.Approve},
-		{"clear 7", clear, 7, true, prereview.Hold},
-		{"clear unscored", clear, 0, false, prereview.Hold},
-		{"one check no, 10", dirty, 10, true, prereview.Hold},
+		{"clear 8", tune, clear, 8, true, prereview.Pass},
+		{"clear 10", tune, clear, 10, true, prereview.Pass},
+		{"clear 7", tune, clear, 7, true, prereview.Unsure},
+		{"clear 4", tune, clear, 4, true, prereview.Unsure},
+		{"clear 3", tune, clear, 3, true, prereview.Bounce},
+		{"clear unscored", tune, clear, 0, false, prereview.Unsure},
+		{"one check no, 10", tune, dirty, 10, true, prereview.Bounce},
+		{"one check no but off, 10", off, dirty, 10, true, prereview.Pass},
 	} {
-		if got := prereview.Decide(tc.c, tc.score, tc.scored); got != tc.want {
-			t.Errorf("%s: verdict=%s, want %s", tc.name, got, tc.want)
+		if got, why := tc.tune.Decide(tc.c, tc.score, tc.scored); got != tc.want || why == "" {
+			t.Errorf("%s: verdict=%s (%q), want %s", tc.name, got, why, tc.want)
 		}
+	}
+	if f := off.ChecksField(dirty, 10, true); f != "donewhen:ok,selfcheck:off-fail,paths:ok,claims:ok,score:10" {
+		t.Errorf("checks field = %q", f)
+	}
+}
+
+// TestSelfCheckIsMissingOffACell. #2621: on a tool pull request with no card the
+// self-check said no; a pull request that is not a conformance cell has nothing
+// for it to decide, and a testdata fixture quoting a self-check convicts nobody.
+func TestSelfCheckIsMissingOffACell(t *testing.T) {
+	pr := prereview.PR{Repo: "mas-bandwidth/nova-tools", Number: 1, Head: "h",
+		Body:  "RESULT x\nDONE\n",
+		Files: []string{"internal/x/x.go", "internal/x/testdata/cell.go"},
+		Diff: "diff --git a/internal/x/testdata/cell.go b/internal/x/testdata/cell.go\n+++ b/internal/x/testdata/cell.go\n+check(true, \"x\")\n" +
+			"diff --git a/internal/x/x.go b/internal/x/x.go\n+++ b/internal/x/x.go\n+func X() {}\n"}
+	c := prereview.Mechanical(pr, prereview.InferCard(pr))
+	if c.Symbol.Result != prereview.Missing {
+		t.Fatalf("selfcheck on a tool pull request = %s (%s), want missing", c.Symbol.Result, c.Symbol.Reason)
+	}
+	if got := prereview.AddedLinesOutside(pr.Diff, "/testdata/"); strings.Contains(got, "check(true") {
+		t.Fatalf("testdata lines survived: %q", got)
+	}
+	pr.Body = "## Summary\n\nprose, no RESULT block\n"
+	if c := prereview.Mechanical(pr, prereview.InferCard(pr)); c.Done.Result != prereview.Missing {
+		t.Fatalf("donewhen on a body with no RESULT block = %s (%s), want missing", c.Done.Result, c.Done.Reason)
+	}
+	pr.Body = "RESULT x\nFINDING-RED the tree does not build\n"
+	if c := prereview.Mechanical(pr, prereview.InferCard(pr)); c.Done.Result != prereview.No {
+		t.Fatalf("donewhen on a RESULT whose line 2 is not DONE = %s, want no", c.Done.Result)
 	}
 }
 
@@ -420,7 +455,7 @@ func TestStateSaysWhenTheDiffWasTruncated(t *testing.T) {
 // tell is that both numbers are on the record.
 func TestLedgerRowIsOneJSONLineWithBothScores(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "ledger.jsonl")
-	d := prereview.Disposition{Repo: repo, PR: 1488, Head: "abc", Verdict: prereview.Hold,
+	d := prereview.Disposition{Repo: repo, PR: 1488, Head: "abc", Verdict: prereview.Bounce,
 		Score: 6, RawScore: 6.07, Conf: 0.21, Scored: true, Checks: "symbol:yes,paths:yes,done:yes,claims:no",
 		Reason: "claims: a file the RESULT names is not in the diff"}
 	if err := prereview.AppendLedger(path, d); err != nil {
@@ -452,8 +487,8 @@ func TestLedgerRowIsOneJSONLineWithBothScores(t *testing.T) {
 // TestCommentSaysItLandsNothing. The posted body is read by people, and the one
 // thing it must never let a reader assume is that a machine's line is a friend's.
 func TestCommentSaysItLandsNothing(t *testing.T) {
-	body := prereview.Disposition{Head: "abc", Verdict: prereview.Hold, PathsFrom: "pr-body-cell"}.Comment()
-	for _, want := range []string{"LANDS NOTHING", "no friend has read this yet", "inferred from the pull request body"} {
+	body := prereview.Disposition{Head: "abc", Verdict: prereview.Bounce, PathsFrom: "pr-body-cell"}.Comment()
+	for _, want := range []string{"lands nothing", "no friend has read this yet", "inferred from the pull request body"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the comment does not say %q", want)
 		}
@@ -636,7 +671,7 @@ func TestAppendLedgerCreatesParentDirectories(t *testing.T) {
 		Repo:    repo,
 		PR:      100,
 		Head:    "abc",
-		Verdict: prereview.Approve,
+		Verdict: prereview.Pass,
 	}
 	if err := prereview.AppendLedger(nestedPath, d); err != nil {
 		t.Fatalf("AppendLedger failed to create directories: %v", err)

@@ -47,6 +47,13 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	replay := fs.String("replay", "", "replay recorded fixtures from this directory instead of dialling the provider")
 	ghPath := fs.String("gh", "gh", "the gh executable")
 	table := fs.Bool("table", false, "also print one table row per pull request")
+	def := prereview.DefaultTuning()
+	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS")
+	bounceBelow := fs.Int("bounce-below", def.BounceBelow, "a score strictly below this BOUNCEs")
+	checksList := fs.String("checks", strings.Join(prereview.CheckNames, ","), "the checks that may decide: donewhen,selfcheck,paths,claims,score")
+	inRate := fs.Float64("usd-per-mtok-in", 0, "the provider's input rate, US dollars per million tokens; 0 is unknown and prints cost=$-")
+	outRate := fs.Float64("usd-per-mtok-out", 0, "the provider's output rate, US dollars per million tokens; 0 is unknown")
+	skipHeads := fs.String("skip-heads", "", "a file of head shas already posted on; a pull request at one of them is skipped before any call")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -82,12 +89,30 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--ledger is file or redis, got "+oneline.Field(*ledger))
 	}
 
+	enabled, err := prereview.ParseEnabled(*checksList)
+	if err != nil {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--checks: "+oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if *bounceBelow > *passAbove+1 {
+		return refuse(stderr, "REVIEW", "bad-arguments", fmt.Sprintf("--bounce-below %d is above --pass-above %d plus one; a score could both PASS and BOUNCE", *bounceBelow, *passAbove))
+	}
+	tune := prereview.Tuning{PassAbove: *passAbove, BounceBelow: *bounceBelow, Enabled: enabled,
+		Model: decide.DefaultModel, USDPerMTokIn: *inRate, USDPerMTokOut: *outRate}
+	if *noJev {
+		tune.Model = "none"
+	}
+	skip, err := readHeads(*skipHeads)
+	if err != nil {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--skip-heads: "+oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+
 	numbers, err := reviewTargets(*pr, *batch)
 	if err != nil {
 		return refuse(stderr, "REVIEW", "bad-arguments", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 
 	var asker prereview.Asker
+	usage := &decide.Usage{}
 	switch {
 	case *noJev:
 		asker = nil
@@ -98,13 +123,16 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, "REVIEW", "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
-		asker = prereview.ClientAsker{Client: client}
+		asker = prereview.ClientAsker{Client: client, Last: usage}
 	}
 
 	gh := ghRunner{path: *ghPath}
 	held := 0
 	for _, n := range numbers {
-		d, err := reviewOne(gh, *repo, n, *cardPath, asker, *record, posting, stdout, stderr)
+		d, err := reviewOne(gh, *repo, n, *cardPath, asker, usage, tune, skip, *record, posting, stdout, stderr)
+		if err == errSkipped {
+			continue
+		}
 		if err != nil {
 			fmt.Fprintf(stderr, "REVIEW REFUSED pr=%d reason=%s\n", n, oneline.Err(err))
 			held++
@@ -116,7 +144,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		if err := prereview.AppendLedger(*ledgerPath, d); err != nil {
 			fmt.Fprintf(stderr, "REVIEW LEDGER FAILED pr=%d reason=%s\n", n, oneline.Err(err))
 		}
-		if d.Verdict != prereview.Approve {
+		if d.Verdict != prereview.Pass {
 			held++
 		}
 	}
@@ -177,10 +205,14 @@ func reviewTargets(pr int, batch string) ([]int, error) {
 }
 
 // reviewOne is the pass over one pull request.
-func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview.Asker, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
+func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
 	pr, err := gh.pullRequest(repo, n)
 	if err != nil {
 		return prereview.Disposition{}, err
+	}
+	if skip[pr.Head] {
+		fmt.Fprintf(stdout, "JEV SKIP pr=%d head=%s reason=already-posted-at-this-head\n", n, oneline.Field(pr.Head))
+		return prereview.Disposition{}, errSkipped
 	}
 	card := prereview.InferCard(pr)
 	if strings.TrimSpace(cardPath) != "" {
@@ -200,12 +232,14 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 	checks := prereview.Mechanical(pr, card)
 	d := prereview.Disposition{
 		Repo: repo, PR: n, Head: pr.Head,
-		Checks: checks.Field(), Reason: checks.Why(),
+		Checks: checks.Field(), Reason: checks.Why(), Evidence: checks.Evidence(), Model: tune.Model,
 		PathsFrom: card.PathsFrom, SymbolFrom: card.SymbolFrom, CardPath: card.Path,
 		At: time.Now().UTC().Format(time.RFC3339),
 	}
-	if asker != nil {
+	if asker != nil && tune.Enabled["score"] {
+		*usage = decide.Usage{}
 		raw, conf, err := prereview.Score(context.Background(), asker, pr, card)
+		d.InTokens, d.OutTokens, d.UsageKnown = usage.InputTokens, usage.OutputTokens, usage.Known()
 		if err != nil {
 			d.Reason = "score unavailable (" + oneline.Err(err) + "); " + d.Reason
 		} else {
@@ -217,7 +251,14 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 			}
 		}
 	}
-	d.Verdict = prereview.Decide(checks, d.Score, d.Scored)
+	d.Verdict, d.Explain = tune.Decide(checks, d.Score, d.Scored)
+	d.Checks = tune.ChecksField(checks, d.Score, d.Scored)
+	if d.Scored {
+		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, one %s question over the RESULT and the diff", d.Score, d.RawScore, d.Conf, tune.Model))
+	} else {
+		d.Evidence = append(d.Evidence, "score: - -- "+scoreWhy(asker, tune, d.Reason))
+	}
+	tune.Cost(&d)
 	fmt.Fprintln(stdout, d.Line())
 	if posting {
 		if err := gh.comment(repo, n, d.Comment()); err != nil {
@@ -294,4 +335,40 @@ func (g ghRunner) run(args ...string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %s", err, oneline.Cap(strings.TrimSpace(errb.String()), 200))
 	}
 	return out, nil
+}
+
+// errSkipped is a pull request whose head this pass already posted on.
+var errSkipped = fmt.Errorf("skipped: already posted at this head")
+
+// readHeads reads a file of head shas, one a line; an absent file is empty.
+func readHeads(path string) (map[string]bool, error) {
+	out := map[string]bool{}
+	if strings.TrimSpace(path) == "" {
+		return out, nil
+	}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return out, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if f := strings.Fields(line); len(f) > 0 {
+			out[f[0]] = true
+		}
+	}
+	return out, nil
+}
+
+// scoreWhy says why a line carries no score.
+func scoreWhy(asker prereview.Asker, tune prereview.Tuning, reason string) string {
+	switch {
+	case !tune.Enabled["score"]:
+		return "the score is off in this tuning"
+	case asker == nil:
+		return "no provider was asked (--no-jev)"
+	default:
+		return "the provider did not answer: " + reason
+	}
 }
