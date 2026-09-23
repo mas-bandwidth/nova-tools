@@ -303,6 +303,49 @@ func TestLaunchRefusalNamesTheCardTheRcAndTheHarnessError(t *testing.T) {
 	}
 }
 
+// Glenn re-measured #1761 after the job-tree diagnosis landed: a stub runner wrote a
+// non-matching RESULT.md and exited 0, nova-swarm batch printed the ABSTAIN on stdout
+// and exited 3, and launch still said `PULSE REFUSED: exit status 3` because it relays
+// only stderr. The refusal must name the card, the swarm's own reason, and the door.
+func TestLaunchRefusalNamesTheCardWhenSwarmSaidTheReasonOnStdout(t *testing.T) {
+	root := t.TempDir()
+	cards, _ := writeCardsNamed(t, root, "h1")
+	job := writeJobTree(t, root, "1", "h1", "", "")
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("RESULT not-the-contract\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fakeSwarmSaying(t, filepath.Join(root, "argv.log"), nil, fakeRule{
+		Stdout: "BATCH n1 n=1 done=0 abstain=1 in=0 out=0 usd=0.0000 idle=0 stalled=1\n" +
+			"n1 slot=1: ABSTAIN reason=line1-mismatch log=0\n" +
+			"BATCH THEN SKIPPED done=0 n=1 abstain=1 stalled=1\n",
+		Exit: 3,
+	})
+
+	code, _, errb := runLaunch(t, LaunchInput{
+		Cards: cards, Root: root, Slots: 4, Deadline: "120",
+		Attempts: 1, Now: theHour,
+	})
+	if code != 2 {
+		t.Fatalf("exit=%d, want 2; stderr=%s", code, errb)
+	}
+	line := firstSaidLine(errb)
+	if !strings.HasPrefix(line, "PULSE REFUSED:") {
+		t.Fatalf("want a PULSE REFUSED line, got:\n%s", errb)
+	}
+	for _, want := range []string{
+		"card=h1",
+		"line1-mismatch",
+		job,
+	} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the refusal line does not name %q:\n%s", want, line)
+		}
+	}
+	if strings.Contains(line, "it said nothing on stderr") {
+		t.Fatalf("launch discarded the swarm's stdout and invented emptiness:\n%s", line)
+	}
+}
+
 // A batch that refuses before any job directory exists keeps the swarm's own line, which
 // the dogfood called exemplary. Nothing is invented for a run that left nothing.
 func TestLaunchRelaysASwarmRefusalWithNoJobTreeUnchanged(t *testing.T) {
