@@ -51,7 +51,17 @@ func defaultSprintDeps() sprintDeps {
 	}
 }
 
+// cmdSprint is the single "nova-pulse sprint" dispatcher. It owns the funnel sub-verb
+// (implemented in funnel.go, as cmdSprintFunnel: recording/reporting card events) and the
+// bounded-task-set verbs below (via runSprint), because both live under the same "sprint"
+// noun and a second dispatcher for the same verb would drift from this one forever.
 func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
+	if len(args) == 0 {
+		return refuse(stderr, " sprint", "a sub-verb is required; it is one of funnel, open, add, status, route, split, refill, wall, calibration, close")
+	}
+	if args[0] == "funnel" {
+		return cmdSprintFunnel(args[1:], stdout, stderr, now)
+	}
 	return runSprint(args, stdout, stderr, now, defaultSprintDeps())
 }
 
