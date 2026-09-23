@@ -59,6 +59,7 @@ usage:
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --rules
+  nova-swarm result-lint --result <RESULT.md> [--result <RESULT.md> ...] [--base-sha <sha>]   (line 2 grammar; a template DONE or BLOCKED head==base is flagged, exit 1)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm cost      --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
@@ -212,6 +213,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdVerify(rest, stdout, stderr)
 	case "lint":
 		return cmdLint(rest, stdout, stderr)
+	case "result-lint":
+		return cmdResultLint(rest, stdout, stderr)
 	case "template":
 		return cmdTemplate(rest, stdout, stderr)
 	case "cost":
