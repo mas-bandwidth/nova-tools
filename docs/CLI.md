@@ -1182,7 +1182,11 @@ friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · fredd
 
 `up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
 with the age of the last beat and its clock time, both from the untimed key;
-`none` is a friend who has never beaten. `AWAY` is the only word in capitals
+`none` is a friend who has never beaten. A friend is present only while
+`friend:<name>` itself is alive: a missing key is absent (`none`, or `AWAY`
+when only `friend:<name>:last` remains), and a live key is present (`up`).
+The untimed key is not presence, and this verb reads no hand-written override.
+`AWAY` is the only word in capitals
 because it is the only one that changes what the reader does next. The roster is the bus's —
 `--bus <dir>` reads its `participants.json`, `--participants <file>` names that
 file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
