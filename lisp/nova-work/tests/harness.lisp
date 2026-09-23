@@ -280,7 +280,9 @@ named on the summary line, never counted as passed."
             (let ((code (run-tests tests (format nil "NOVA-WORK LANE ~(~A~) suites=~D owed=~D~@[ (~{~A~^ ~})~]"
                                                  lane (length suites) (length owed) owed))))
               (dolist (m missing) (format t "LANE ~(~A~) MISSING case ~A~%" lane m))
-              (if missing 1 code)))))))
+              (cond (missing 1)
+                    (owed 3)
+                    (t code))))))))
 
 (defun main (&key suite lane)
   ;; Cleanup on exit, on both paths: the unwind-protect covers the normal one

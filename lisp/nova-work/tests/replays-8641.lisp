@@ -367,6 +367,13 @@
             "~A duplicates no acceptance evidence" name)))
     (check-string= "lisp/nova-work/run-tests.sh --lane per-change"
                    (lane-command :per-change) "the per-change lane command")
+    (let ((*suite-registry* (list (find-acceptance-suite "retry-protocol")))
+          (*tests* '())
+          (*pass* 0)
+          (*fail* 0)
+          (*problems* '()))
+      (check-equal 3 (run-lane "per-change")
+                   "an owed suite makes its lane nonzero"))
     (check-equal :unknown (plan-suite "no-such-suite") "an unknown suite is refused")
     (check-equal t (suite-owed-p "retry-protocol")
                  "a suite with no case yet is owed, not passed")))
