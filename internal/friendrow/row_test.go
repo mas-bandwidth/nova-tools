@@ -145,6 +145,29 @@ func TestReadOverMiniredisHoldingTheFourKeysReturnsQueueWorkingDoneAndUp(t *test
 	}
 }
 
+// TestAWhitespaceBeatIsStillAPresence: a live key whose value is only
+// whitespace is a beat. Presence is that raw value, so the friend is a
+// row even though the text a caller shows is empty. A missing beat beside
+// leftover counts is still not a presence. The four keys are the same read.
+func TestAWhitespaceBeatIsStillAPresence(t *testing.T) {
+	rows, err := Read(context.Background(), mapStore{
+		"friend:stella":       " \t\n",
+		"friend:stella:width": "2",
+		"friend:stella:queue": "1",
+		"friend:stella:done":  "3",
+		"friend:emma:width":   "9",
+		"friend:emma:queue":   "8",
+		"friend:emma:done":    "7",
+	}, []string{"stella", "emma"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Row{Name: "stella", Beat: "", Width: 2, WidthOK: true, Queue: 1, QueueOK: true, Done: 3, DoneOK: true}
+	if len(rows) != 1 || rows[0] != want {
+		t.Fatalf("rows = %+v, want one presence %+v; whitespace is a beat, and counts with no beat are not", rows, want)
+	}
+}
+
 // TestABeatWithNoWidthIsStillOneRow: presence is the beat. A missing width
 // is not zero children, and it does not drop the friend.
 func TestABeatWithNoWidthIsStillOneRow(t *testing.T) {

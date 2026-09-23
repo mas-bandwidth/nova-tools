@@ -45,7 +45,9 @@ type Store interface {
 // friend's beat key is present, so a row is a presence and not a guess.
 type Row struct {
 	Name string
-	// Beat is the beat key's value, the stamp the friend's own beat wrote.
+	// Beat is the stamp a caller would show: the beat key's value with
+	// surrounding space removed. Empty means that value was blank, not
+	// that the key was absent. Presence is the raw value.
 	Beat string
 	// Width is friend:<name>:width when that key is a whole number,
 	// including zero. WidthOK is false when the key is absent or not a
@@ -137,13 +139,16 @@ func Read(ctx context.Context, st Store, names []string) ([]Row, error) {
 	rows := make([]Row, 0, len(declared))
 	for i, name := range declared {
 		base := i * keysPerFriend
-		beat := strings.TrimSpace(vals[base])
-		if beat == "" {
+		// Presence is the raw value. Any nonempty beat is a friend who
+		// is here, even whitespace or a value that is not a stamp.
+		// Trim only what a caller shows.
+		raw := vals[base]
+		if raw == "" {
 			// Do not read the counts. A width, a queue or a done with no
 			// beat is not a friend who is here.
 			continue
 		}
-		row := Row{Name: name, Beat: beat}
+		row := Row{Name: name, Beat: strings.TrimSpace(raw)}
 		if n, ok := parseCount(vals[base+1]); ok {
 			row.Width = n
 			row.WidthOK = true
