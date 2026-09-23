@@ -210,6 +210,60 @@ func TestStageUsesTheBenchMirrorAndTimesOut(t *testing.T) {
 	t.Run("uses bench mirror and dissociates", TestStageCardUsesMirrorAndDissociates)
 	t.Run("fails without bench mirror", TestStageCardFailsWithoutMirror)
 	t.Run("times out and writes result", TestStageCardTimesOutAndWritesResult)
+	t.Run("a clone that hangs past the timeout ends within it", testStageHungCloneEndsAtTheTimeout)
+}
+
+// testStageHungCloneEndsAtTheTimeout is the hulk shape from #2882: git clone hung 43-65
+// minutes because its helper (git-remote-https, index-pack) kept the output pipe open. The
+// fake git here backgrounds a sleep that holds stdout and waits on it, so killing git alone
+// is not enough: staging must return within the timeout plus a small grace, name the timeout
+// on RESULT.md, and leave no grandchild holding the card.
+func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
+	root := t.TempDir()
+	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "repo.git")
+	if err := os.MkdirAll(mirror, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mirror, "HEAD"), []byte("ref: refs/heads/dev\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := "#!/bin/sh\nsleep 60 &\nwait\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	jobDir := filepath.Join(root, "jobs", "card-1")
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\n")
+	start := time.Now()
+	res, err := StageCard(StageOptions{
+		Card:      card,
+		TargetDir: filepath.Join(jobDir, "repo"),
+		JobDir:    jobDir,
+		BenchHome: filepath.Join(root, "home"),
+		BenchName: "hulk",
+		Timeout:   1 * time.Second,
+	})
+	took := time.Since(start)
+	if !errors.Is(err, ErrStageTimeout) || !res.TimedOut {
+		t.Fatalf("a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
+	}
+	if took > 8*time.Second {
+		t.Fatalf("staging waited %s on a clone that hung past a 1s timeout; the timeout is not hard", took.Round(time.Millisecond))
+	}
+	raw, rerr := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	if rerr != nil {
+		t.Fatalf("RESULT.md not written on timeout: %v", rerr)
+	}
+	if first := strings.SplitN(string(raw), "\n", 2)[0]; first != "RESULT: BLOCKED stage-timeout hulk 1" {
+		t.Fatalf("RESULT.md line 1 = %q", first)
+	}
 }
 
 func execCmd(t *testing.T, dir, name string, args ...string) string {

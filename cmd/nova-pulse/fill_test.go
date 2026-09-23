@@ -351,4 +351,3 @@ func TestLaunchSlotsRefusedMakesLauncherExitNonZero(t *testing.T) {
 		t.Fatalf("expected error mentioning slots refused, got %v", err)
 	}
 }
-

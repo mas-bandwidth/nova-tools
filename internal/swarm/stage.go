@@ -133,6 +133,34 @@ func WriteStageTimeoutResult(jobDir, bench string, secs int) (string, error) {
 	return dest, nil
 }
 
+// stageWaitDelay bounds how long a staging git call waits for its pipes after the deadline
+// kill. git clone runs helpers (git-remote-https, index-pack) that inherit the output pipe;
+// killing git alone left them holding it, which is how hulk had 193 clones stuck 43-65
+// minutes (#2882). Each call leads its own process group, the deadline kills the group, and
+// WaitDelay closes the pipes a bounded time after that, so the 120 s timeout is hard.
+const stageWaitDelay = 2 * time.Second
+
+// stageGit builds one staging git call under ctx: its own process group, killed as a group
+// when ctx ends, no terminal prompt.
+func stageGit(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	ownGroup(cmd)
+	cmd.Cancel = func() error {
+		if cmd.Process != nil {
+			KillGroup(cmd.Process.Pid, "")
+		}
+		return nil
+	}
+	cmd.WaitDelay = stageWaitDelay
+	return cmd
+}
+
+// stageTimedOut reports whether a staging call ended because the deadline passed.
+func stageTimedOut(ctx context.Context, err error) bool {
+	return ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, exec.ErrWaitDelay)
+}
+
 // StageOptions describes a card staging request.
 type StageOptions struct {
 	Card      []byte
@@ -158,7 +186,9 @@ type StageResult struct {
 // If base-repo is remote and no bench mirror is found, staging fails without contacting GitHub.
 // Staging runs git clone --reference <mirror> and git fetch/checkout <base-sha> with a hard timeout (default 120s).
 // If the timeout expires, it writes RESULT.md:
-//   RESULT: BLOCKED stage-timeout <bench> <secs>
+//
+//	RESULT: BLOCKED stage-timeout <bench> <secs>
+//
 // and returns ErrStageTimeout.
 func StageCard(opts StageOptions) (StageResult, error) {
 	if len(opts.Card) == 0 {
@@ -214,10 +244,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 	cloneArgs = append(cloneArgs, cloneSource, opts.TargetDir)
 
-	cloneCmd := exec.CommandContext(ctx, "git", cloneArgs...)
-	cloneCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+	cloneCmd := stageGit(ctx, cloneArgs...)
 	if out, err := cloneCmd.CombinedOutput(); err != nil {
-		if ctx.Err() == context.DeadlineExceeded || errors.Is(err, context.DeadlineExceeded) {
+		if stageTimedOut(ctx, err) {
 			_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
 			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
 		}
@@ -226,21 +255,18 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// Update remote origin to baseRepo if cloned from mirror
 	if cloneSource != baseRepo {
-		remCmd := exec.CommandContext(ctx, "git", "-C", opts.TargetDir, "remote", "set-url", "origin", baseRepo)
-		remCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		remCmd := stageGit(ctx, "-C", opts.TargetDir, "remote", "set-url", "origin", baseRepo)
 		_ = remCmd.Run()
 	}
 
 	// Fetch and checkout the named ref / baseSha
 	if baseSha != "" {
-		catCmd := exec.CommandContext(ctx, "git", "-C", opts.TargetDir, "cat-file", "-e", baseSha+"^{commit}")
-		catCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		catCmd := stageGit(ctx, "-C", opts.TargetDir, "cat-file", "-e", baseSha+"^{commit}")
 		if err := catCmd.Run(); err != nil {
 			// Commit not present locally, fetch from origin
-			fetchCmd := exec.CommandContext(ctx, "git", "-C", opts.TargetDir, "fetch", "-q", "origin", baseSha)
-			fetchCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+			fetchCmd := stageGit(ctx, "-C", opts.TargetDir, "fetch", "-q", "origin", baseSha)
 			if out, ferr := fetchCmd.CombinedOutput(); ferr != nil {
-				if ctx.Err() == context.DeadlineExceeded || errors.Is(ferr, context.DeadlineExceeded) {
+				if stageTimedOut(ctx, ferr) {
 					_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
 					return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
 				}
@@ -248,10 +274,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 			}
 		}
 
-		coCmd := exec.CommandContext(ctx, "git", "-C", opts.TargetDir, "checkout", "-q", baseSha)
-		coCmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", baseSha)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
-			if ctx.Err() == context.DeadlineExceeded || errors.Is(cerr, context.DeadlineExceeded) {
+			if stageTimedOut(ctx, cerr) {
 				_, _ = WriteStageTimeoutResult(opts.JobDir, bench, secs)
 				return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Mirror: mirror, TimedOut: true, Wall: time.Since(start)}, ErrStageTimeout
 			}
