@@ -278,13 +278,21 @@
 ;;; in a fresh engine, independently compared, repeated and resumed, with
 ;;; every gap inspected. The pilot ran for real against the private
 ;;; sandbox mas-bandwidth/nova-pilot (coordinator ruling 2026-09-23
-;;; 1:35 PM ET) via tests/pilots/E10-F04-03-run.sh; this test verifies
-;;; the receipt it recorded. (Renamed from #2390's duplicate
-;;; TestE10F04RunTheAuthorizedReadOnly, which lives in replays-8643.)
+;;; 1:35 PM ET) via tests/pilots/E10-F04-03-run.sh: the import is
+;;; nova-work's own (a state built from the capture, written by
+;;; `write-state-export` into a temp dir), and a fresh SBCL process loaded
+;;; that export through `state-load` + `read-loaded-snapshot` and hashed
+;;; every loaded record itself. The export it loaded is retained at
+;;; tests/pilots/E10-F04-03-export/; this test verifies the receipt and
+;;; loads that retained export again through the same path. (Renamed from
+;;; #2390's duplicate TestE10F04RunTheAuthorizedReadOnly, which lives in
+;;; replays-8643.)
 ;;; ------------------------------------------------------------------
 
 (defparameter *e10-f04-03-receipt*
   "tests/pilots/E10-F04-03-nova-pilot.sexp")
+
+(defparameter *e10-f04-03-repository* "mas-bandwidth/nova-pilot")
 
 (defun %read-pilot-receipt ()
   (let ((path (asdf:system-relative-pathname :nova-work/tests *e10-f04-03-receipt*)))
@@ -298,31 +306,49 @@
                                         :mapping (getf r :mapping)))
           records))
 
+(defun %pilot-sha-p (x) (and (stringp x) (= 64 (length x))))
+
 (defun %pilot-receipt-verdict (receipt)
   "Verify a pilot receipt: authorised repository, GET-only, originals
-untouched, disposable import reconciled, repeated and resumed identically,
-no gap. Returns (values okp line)."
+untouched, a nova-work export in a disposable directory loaded by a fresh
+engine whose re-export and inventory match, repeated and resumed
+identically, no gap. Returns (values okp line)."
   (flet ((no (why) (return-from %pilot-receipt-verdict
                      (values nil (format nil "PILOT FAIL: ~A" why)))))
     (unless receipt (no "no receipt recorded"))
-    (let ((dest (getf receipt :destination))
-          (calls (getf receipt :calls)))
-      (unless (equal "mas-bandwidth/nova-pilot" (getf receipt :repository))
+    (let* ((dest (getf receipt :destination))
+           (imp (getf dest :import))
+           (msha (getf imp :member-sha256))
+           (resume (getf dest :resume))
+           (ld (getf dest :load))
+           (calls (getf receipt :calls)))
+      (unless (equal *e10-f04-03-repository* (getf receipt :repository))
         (no (format nil "unauthorised repository ~S" (getf receipt :repository))))
       (unless calls (no "no reads recorded"))
       (let ((bad (find-if-not (lambda (c) (equal "GET" (first c))) calls)))
         (when bad (no (format nil "mutation call ~A ~A" (first bad) (second bad)))))
       (unless (eql 0 (getf receipt :mutations)) (no "mutation count is not zero"))
-      (unless (and (stringp (getf receipt :source-before))
-                   (= 64 (length (getf receipt :source-before)))
+      (unless (and (%pilot-sha-p (getf receipt :source-before))
                    (string= (getf receipt :source-before) (getf receipt :source-after)))
         (no "source changed across the pilot"))
       (unless (getf receipt :refs) (no "no refs captured"))
       (unless (eq :temp-dir (getf dest :kind)) (no "destination is not disposable"))
-      (unless (and (getf dest :tree)
-                   (equal (getf dest :tree) (getf dest :repeat-tree))
-                   (equal (getf dest :tree) (getf dest :resume-tree)))
+      (unless (and (equal "nova-work write-state-export" (getf imp :engine))
+                   (%pilot-sha-p (getf imp :manifest-sha256)) (%pilot-sha-p msha))
+        (no "the import is not a nova-work export"))
+      (unless (equal msha (getf dest :repeat-member-sha256))
         (no "repeat or resume differs from the first import"))
+      (unless (and (equal msha (getf resume :member-sha256))
+                   (plusp (or (getf resume :kept) 0))
+                   (%pilot-sha-p (getf resume :partial-member-sha256))
+                   (not (equal msha (getf resume :partial-member-sha256))))
+        (no "repeat or resume differs from the first import"))
+      (let ((line (getf ld :line)))
+        (unless (and (stringp line) (eql 0 (search "LOAD OK" line))
+                     (search (format nil "manifest=~A" (getf imp :manifest-sha256)) line))
+          (no (format nil "the fresh engine did not load the export: ~S" line))))
+      (unless (equal msha (getf ld :reexport-sha256))
+        (no "the fresh engine's re-export differs from the import"))
       (when (getf dest :gaps) (no (format nil "gaps ~S" (getf dest :gaps))))
       (multiple-value-bind (okp line)
           (reconcile-inventory (%pilot-inventory (getf receipt :captured))
@@ -333,40 +359,64 @@ no gap. Returns (values okp line)."
                       (getf receipt :disposition) line)))
         (values t line)))))
 
+(defun %pilot-loaded-records (state)
+  "The records a loaded nova-work state holds under the pilot repository's
+work-set, each hashed here from the loaded bytes: receipt-shaped plists."
+  (let ((repo *e10-f04-03-repository*))
+    (loop for id in (nova-work::wstate-order state)
+          for n = (gethash id (nova-work::wstate-nodes state))
+          when (equal repo (nova-work::wnode-parent n))
+            collect (list :id (subseq id (1+ (length repo)))
+                          :kind (intern (string-upcase (nova-work::wnode-category n)) :keyword)
+                          :original (sha256-hex (nova-work::wnode-title n))
+                          :mapping (first (nova-work::wnode-links n))))))
+
 (deftest "TestE10F04PilotReceiptOnNovaPilot" "docs/SPEC-WORK.md:7228-7229"
-    "expected=real-pilot-receipt-recorded;get-only;originals-untouched;disposable-import-reconciled;repeat-and-resume-identical;no-gaps;tampering-refused"
+    "expected=real-pilot-receipt-recorded;get-only;originals-untouched;nova-work-export-in-temp-dir;fresh-engine-load-compares-equal;repeat-and-resume-identical;no-gaps;tampering-refused"
   (let* ((receipt (%read-pilot-receipt))
          (captured (getf receipt :captured))
-         (records (getf (getf receipt :destination) :records)))
+         (dest (getf receipt :destination))
+         (imp (getf dest :import)))
     (ok receipt "the E10-F04-03 pilot receipt is recorded at ~A" *e10-f04-03-receipt*)
     (multiple-value-bind (okp line) (%pilot-receipt-verdict receipt)
       (ok okp "the recorded pilot verifies: ~A" line)
       (ok (search "INVENTORY OK" line) "the reconciliation disposition is published: ~A" line))
     (ok (find :issues captured :key (lambda (r) (getf r :kind)))
         "the pilot captured real issues")
-    ;; independent comparison in this engine: the destination's records hash
-    ;; to the same canonical bytes as the capture.
-    (flet ((by-id (rs) (sort (copy-list (%pilot-inventory rs)) #'string<
-                             :key (lambda (r) (getf r :id)))))
-      (check-string= (sha256-hex (canonical-string (by-id captured)))
-                     (sha256-hex (canonical-string (by-id records)))
-                     "the loaded destination compares equal to the capture"))
-    ;; the captured counts drive the read-only intake: no source mutation, and
-    ;; the disposable destination receives every captured issue.
-    (let* ((n-issues (count :issues captured :key (lambda (r) (getf r :kind))))
-           (n-comments (count :comments captured :key (lambda (r) (getf r :kind))))
-           (source (make-recording-adapter
-                    :inventory (list :issues n-issues :comments n-comments)))
-           (destination (list :applied 0)))
-      (apply-plan source destination (dry-run-capture source))
-      (check-equal 0 (length (adapter-mutation-calls source))
-                   "the replayed intake called no source mutation")
-      (check-equal (count :issues records :key (lambda (r) (getf r :kind)))
-                   (getf destination :applied)
-                   "the replayed import applies every issue the destination holds"))
+    ;; The retained destination is loaded again here through nova-work's
+    ;; isolated read-only load: the manifest is the one the pilot's imp
+    ;; wrote, the rebuilt model re-exports the msha bytes, and every record
+    ;; it holds -- hashed from the loaded bytes -- reconciles with the capture.
+    (let* ((from (namestring (asdf:system-relative-pathname
+                              :nova-work/tests (concatenate 'string (getf dest :retained) "/"))))
+           (into (namestring (merge-pathnames "snap/" (test-temp-dir "e10-f04-03")))))
+      (ok (equal "tests/pilots/E10-F04-03-export" (getf dest :retained))
+          "the pilot's export is retained: ~S" (getf dest :retained))
+      (multiple-value-bind (snap line) (state-load :from from :into into :max-bytes 1000000)
+        (ok snap "the retained export loads: ~A" line)
+        (when snap
+          (check-string= (getf imp :manifest-sha256) (snapshot-manifest-hash snap)
+                         "the retained export is the one the pilot's import wrote")
+          (let* ((state (snapshot-state (read-loaded-snapshot into)))
+                 (loaded (%pilot-loaded-records state)))
+            (check-string= (getf imp :member-sha256)
+                           (sha256-hex (canonical-string (state-canonical-form state)))
+                           "the loaded destination re-exports the imported bytes")
+            (multiple-value-bind (okp line)
+                (reconcile-inventory (%pilot-inventory captured) (%pilot-inventory loaded))
+              (ok okp "the loaded destination reconciles with the capture: ~A" line)
+              (check-string= (getf receipt :disposition) line
+                             "the load here gives the recorded disposition"))
+            (flet ((by-id (rs) (sort (copy-list (%pilot-inventory rs)) #'string<
+                                     :key (lambda (r) (getf r :id)))))
+              (check-string= (sha256-hex (canonical-string (by-id captured)))
+                             (sha256-hex (canonical-string (by-id loaded)))
+                             "the loaded destination compares equal to the capture"))))))
     ;; tampering with the receipt is refused by name.
     (flet ((tampered (key value)
-             (let ((r (copy-tree receipt))) (setf (getf r key) value) r)))
+             (let ((r (copy-tree receipt))) (setf (getf r key) value) r))
+           (dest-with (key value)
+             (let ((d (copy-tree dest))) (setf (getf d key) value) d)))
       (dolist (case (list (list (tampered :calls (cons '("POST" "repos/x/issues")
                                                        (getf receipt :calls)))
                                 "mutation call POST")
@@ -375,15 +425,23 @@ no gap. Returns (values okp line)."
                           (list (tampered :repository "mas-bandwidth/nova-tools")
                                 "unauthorised repository")
                           (list (tampered :destination
-                                          (let ((d (copy-tree (getf receipt :destination))))
-                                            (setf (getf d :records) (rest (getf d :records)))
-                                            d))
+                                          (dest-with :records (rest (getf dest :records))))
                                 "count mismatch")
                           (list (tampered :destination
-                                          (let ((d (copy-tree (getf receipt :destination))))
-                                            (setf (getf d :resume-tree) "0")
-                                            d))
+                                          (dest-with :resume (list :member-sha256 "0")))
                                 "repeat or resume differs")
+                          (list (tampered :destination
+                                          (dest-with :load (list :line "LOAD FAIL: changed digest"
+                                                                 :reexport-sha256 (getf imp :member-sha256))))
+                                "did not load the export")
+                          (list (tampered :destination
+                                          (dest-with :load (list :line (getf (getf dest :load) :line)
+                                                                 :reexport-sha256 (make-string 64 :initial-element #\0))))
+                                "re-export differs")
+                          (list (tampered :destination
+                                          (dest-with :import (list :engine "cp" :manifest-sha256 "x"
+                                                                   :member-sha256 "y")))
+                                "not a nova-work export")
                           (list nil "no receipt recorded")))
         (multiple-value-bind (okp line) (%pilot-receipt-verdict (first case))
           (ok (not okp) "a tampered receipt is refused: ~A" (second case))

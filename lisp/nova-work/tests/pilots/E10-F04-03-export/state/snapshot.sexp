@@ -1,0 +1,6 @@
+(:seed ((:id "mas-bandwidth/nova-pilot" :type :work-set :parent () :state :unknown) (:id "mas-bandwidth/nova-pilot/issue-1" :type :task :parent "mas-bandwidth/nova-pilot" :state :unknown :title "pilot fixture: read-only capture target one
+Seed issue for the E10-F04-03 read-only pilot. Sandbox only.
+" :category "issues" :links ("mas-bandwidth/nova-pilot#1") :version "d42528f89ceb69db4b8c9c70f23ae71b6df664f24abb79f03eaa17e979aafaab") (:id "mas-bandwidth/nova-pilot/issue-2" :type :task :parent "mas-bandwidth/nova-pilot" :state :unknown :title "pilot fixture: read-only capture target two
+Second seed issue; carries one comment.
+" :category "issues" :links ("mas-bandwidth/nova-pilot#2") :version "15a87c708f68871c3cbbf91064e13f60fa04a4be14cdf21d0c8aaa6b3a221178") (:id "mas-bandwidth/nova-pilot/comment-5799642534" :type :task :parent "mas-bandwidth/nova-pilot" :state :unknown :title "Seed comment for the E10-F04-03 pilot inventory.
+" :category "comments" :links ("mas-bandwidth/nova-pilot#2/comment-5799642534") :version "a8e67b06633e184ee56c10529230dfccd514e08e284f3520bcc6b2e6cf289cdf")) :history ())
