@@ -103,4 +103,5 @@
                 (:file "tests/replays-e08-render-file")
                 (:file "tests/replays-new-verb-door")
                 (:file "tests/replays-execution-reconcile")
-                 (:file "tests/issue-2338")))
+                 (:file "tests/issue-2338")
+                 (:file "tests/issue-1695")))
