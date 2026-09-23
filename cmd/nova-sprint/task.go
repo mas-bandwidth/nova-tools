@@ -89,7 +89,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "task push", err.Error())
 	}
 	defer st.Close()
-	status, err := task.Push(ctx, st, task.PushRequest{
+	res, err := task.PushChecked(ctx, st, task.PushRequest{
 		Sprint: *sprint, ID: *id, Kind: task.Kind(*kind), Title: *title,
 		Effects: task.Effects(*effects), Repo: *repo, PR: *pr, Head: *head,
 		Ref: *ref, To: *to, Front: *front, Priority: *priority,
@@ -98,8 +98,13 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if err != nil {
 		return refuse(errOut, "task push", err.Error())
 	}
-	fmt.Fprintf(out, "PUSH %s id=%s\n", status, *id)
-	return status.ExitCode()
+	if res.Overlap != nil {
+		// #3067: both ids on one line, on stdout like every PUSH word.
+		fmt.Fprintf(out, "PUSH %s %s\n", res.Status, res.Overlap)
+		return res.Status.ExitCode()
+	}
+	fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, *id)
+	return res.Status.ExitCode()
 }
 
 func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int {
