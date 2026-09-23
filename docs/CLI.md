@@ -3346,12 +3346,13 @@ same two flags and **refuses the whole batch with the same line before any card 
 batch with its own `--runner` launches no `native` and is not held to this. The store path
 is resolved on the machine that runs the card, which for a bench row is the bench.
 
-**The release is by identity.** `native` keeps the lease ids `TakeSlotLeases` granted it
-and gives back exactly those, pid-fenced. Releasing by owner and label would mean that two
-runs sharing a bench and a card name each give away the other's live seat, and that a run
-refusing before it started — a missing harness, say — deletes a lease it never took
-(Stella, on #1562). `nova-swarm slots release --owner … --label …` keeps the by-owner-and-label
-behaviour, because that is what a person at a prompt means by it.
+**The release is by identity.** `native` and `run` keep the lease ids `TakeSlotLeases`
+granted them and give back exactly those, pid-fenced. Releasing by owner and label would
+mean that two runs sharing a bench and a card name — or two dispatchers sharing an owner
+and a task id — each give away the other's live seat, and that a run refusing before it
+started — a missing harness, say — deletes a lease it never took (Stella, on #1562;
+dispatcher, #1582). `nova-swarm slots release --owner … --label …` keeps the
+by-owner-and-label behaviour, because that is what a person at a prompt means by it.
 
 **A release never frees a seat whose holder is still running (issue #1902).** Deleting a
 lease does not stop the process holding it: the holder keeps running and the seat it is
@@ -3955,6 +3956,16 @@ What a first run gets wrong, and what each one wants:
 - **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
+
+**What one PIECE OF WORK cost: `fold --units <set.lisp>` and `sum --by unit`.** The `repo` column answers "what did this month cost on nova-tools"; the obligation is the other question, and the repo column cannot answer it. A **work set** already names the pieces of work — `(unit "certify:verb" :pr 1369 :lane "pulse" …)` — so `--units` reads the coordinator's own taxonomy rather than inventing one, writes the unit into the day file's twelfth column, and prints one `TOKENS UNITS set=<id> units=<n> file=<file>` line saying what it loaded:
+
+```
+nova-tokens fold --out ./days --day 2026-09-18 --repos ./repos.tsv \
+  --claude glenn=~/.claude/projects --units work/pitstop-2026-09-18-units.lisp
+nova-tokens sum --out ./days --month 2026-09 --by unit
+```
+
+A unit is attributed **per transcript**, not per message: a child is spawned for one unit and works on it until it stops, and attributing per message would put a child's `gh pr view` of a sibling's PR onto the sibling's unit. Inside one transcript the first tool input that names a unit decides the file, by the unit's `:pr` number (`#1369`, `/pull/1369`), its `:branch`, or its `:lane`'s clone directory (`lane-<name>`, as `tmp/lane-three/` or `~/lane-three`). Each is matched at a boundary, so `#141` is not found inside `#1412`. A transcript that names none is `-`, and so is every row from a billing export, a swarm usage file or a bus self-report, which carry no tool inputs to read a unit from. `sum --by unit` prints the `-` group with the rest: the share of a month nobody attributed is the number that says whether the work set is good enough. A fold with no `--units` writes `-` on every row, which is the file it wrote before with one more column on it, and the day-file reader takes either width.
 
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead — six under its first `example:` and one under the `session` example, and `sources` is the one verb that only looks.
 
