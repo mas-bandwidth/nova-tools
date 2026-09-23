@@ -3086,9 +3086,22 @@ contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 
 ### Gate a seat pull request
 
+A throwaway store to try it on: the base commit carries `recovery.pub` and one seat
+rule, the head commit edits `README.md`.
+
 ```sh
-nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" --machines ./queue/control/machines.tsv
+cd "$(mktemp -d)" && git init -q && git config user.name you && git config user.email you@example.com
+echo age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata > recovery.pub
+printf 'creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
+echo 'the store' > README.md && git add -A && git commit -qm base
+echo 'one seat per machine' >> README.md && git commit -qam head
+printf 'mini\tmini.local\tdarwin/arm64\tbench\tmini\t10\t-\n' > ../machines.tsv
+nova-secrets gate --store . --base HEAD~1 --head HEAD --machines ../machines.tsv
 ```
+
+It prints `GATE APPROVE files=1 machines=../machines.tsv` at exit 0. In CI, `--store` is the
+secrets store checkout, `--base` and `--head` are the pull request's two shas, and
+`--machines` is the fleet registry (`./queue/control/machines.tsv`).
 
 The store's own review, as a verb: run it in CI on every pull request against the
 secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
