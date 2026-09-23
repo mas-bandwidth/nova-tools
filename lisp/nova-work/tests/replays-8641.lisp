@@ -300,3 +300,73 @@
                      "the attempt is a field on the event, never a node kind")
       (check-string= "root/f/p/l" (work-event-node ev)
                      "the attempt's event addresses the leaf task, never replaces it"))))
+
+;;; E10-F03-03 (nova-work.sexp): map each suite to an owner, command and CI
+;;; lane without duplicating its acceptance evidence (SPEC-WORK.md:7045,
+;;; :7064-7107, :7235-7240). Recut of PR #2269: the command is a real
+;;; per-suite selector (`run-tests.sh --suite NAME`), each owner is the one the
+;;; spec states for that row, and the lane is runnable (`run-tests.sh --lane`).
+(deftest "TestE10F03MapEachSuiteToAn" "docs/SPEC-WORK.md:7239"
+    "expected=21-suites;per-change=6;nightly=15;owner=spec-stated;command=per-suite-selector;cases=registered-and-real;evidence=not-duplicated"
+  (let ((table '("source-inventory" "read-only-intake" "import-replay"
+                 "moving-source" "archive-completeness" "full-round-trip"
+                 "format-determinism" "old-history" "referential-integrity"
+                 "atomic-mutation" "retry-protocol" "async-operations"
+                 "batches-and-pipelines" "single-writer" "indexes-and-counters"
+                 "materialized-working-set" "roadmap-proof" "undo-redo"
+                 "recovery" "schema-evolution" "hostile-data"))
+        (per-change '("format-determinism" "referential-integrity"
+                      "retry-protocol" "read-only-intake" "undo-redo"
+                      "roadmap-proof"))
+        (adapter '("source-inventory" "read-only-intake" "import-replay"
+                   "moving-source" "archive-completeness" "schema-evolution")))
+    ;; every row of the spec's table is mapped, once, and nothing else is
+    (check-equal (sort (copy-list table) #'string<)
+                 (sort (mapcar #'acceptance-suite-name *suite-registry*) #'string<)
+                 "the registry maps exactly the spec table's 21 suites")
+    ;; lanes as the spec names them (SPEC-WORK.md:7091-7098)
+    (check-equal (sort (copy-list per-change) #'string<)
+                 (sort (copy-list (lane-suites :per-change)) #'string<)
+                 "the six per-change suites")
+    (check-equal 15 (length (lane-suites :nightly)) "fifteen nightly suites")
+    (dolist (name table)
+      (let ((s (find-acceptance-suite name)))
+        (ok s "~A is registered" name)
+        ;; the owner is the one the spec states for the row: the six intake
+        ;; rows are the adapter's gate (:7102-7107), the rest are the section
+        ;; author's (:7045) -- never one owner for every row
+        (check-string= (if (member name adapter :test #'string=)
+                           "intake-adapter" "stella")
+                       (acceptance-suite-owner s)
+                       (format nil "~A owner" name))
+        (ok (search "docs/SPEC-WORK.md:" (acceptance-suite-owner-source s))
+            "~A cites where the spec names its owner" name)
+        ;; the command selects this suite and nothing else
+        (check-string= (format nil "lisp/nova-work/run-tests.sh --suite ~A" name)
+                       (suite-command name)
+                       (format nil "~A command" name))
+        ;; a registered case is a real deftest; an empty suite is owed, never
+        ;; green (SPEC-WORK.md:7098: each row still needs its fixture)
+        (multiple-value-bind (status tests missing) (plan-suite name)
+          (check-equal nil missing (format nil "~A registers only real cases" name))
+          (if (acceptance-suite-cases s)
+              (progn
+                (check-equal :run status (format nil "~A runs" name))
+                (ok (every (lambda (e) (member (first e) (acceptance-suite-cases s)
+                                               :test #'string=))
+                           tests)
+                    "~A selects only its own cases" name)
+                (ok (>= (length tests) (length (acceptance-suite-cases s)))
+                    "~A selects every one of its cases" name))
+              (check-equal :owed status (format nil "~A is owed" name))))
+        ;; the mapping carries name, lane, owner and case names only; the
+        ;; required cases and pass condition stay in the spec's table
+        (ok (and (stringp (acceptance-suite-name s))
+                 (member (acceptance-suite-lane s) '(:per-change :nightly))
+                 (every #'stringp (acceptance-suite-cases s)))
+            "~A duplicates no acceptance evidence" name)))
+    (check-string= "lisp/nova-work/run-tests.sh --lane per-change"
+                   (lane-command :per-change) "the per-change lane command")
+    (check-equal :unknown (plan-suite "no-such-suite") "an unknown suite is refused")
+    (check-equal t (suite-owed-p "retry-protocol")
+                 "a suite with no case yet is owed, not passed")))

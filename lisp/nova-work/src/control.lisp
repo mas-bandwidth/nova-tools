@@ -851,6 +851,97 @@ absorbed (SPEC-WORK.md:6232)."
   (and (member (archive-capture-author capture) '(:mixed :external :unknown))
        (archive-capture-source-issue capture)
        t))
+;;; ------------------------------------------------------------------
+;;; map-each-suite-to-an-owner-command-and-ci-lane (E10-F03-03;
+;;; SPEC-WORK.md:7045, :7064-7107, :7235-7240)
+;;;
+;;; The one registry of the Preservation and recovery suites. Each suite
+;;; carries its lane, the owner the spec states for its row, where the spec
+;;; states it, and the names of the deftests that exercise it -- never the
+;;; row's required cases or pass condition, which stay in the spec's table
+;;; and in those tests. The command is `run-tests.sh --suite NAME`, which the
+;;; harness answers from this registry; a suite with no case yet is OWED and
+;;; its command exits non-zero, never green (SPEC-WORK.md:7098).
+;;; ------------------------------------------------------------------
+
+(defstruct (acceptance-suite
+             (:constructor %make-acceptance-suite
+                 (name lane owner owner-source cases)))
+  "One suite of Preservation and recovery acceptance: NAME, LANE (:per-change
+or :nightly), OWNER and OWNER-SOURCE (the spec line naming the owner), and
+CASES, the deftest names that exercise it."
+  name lane owner owner-source cases)
+
+(defparameter *intake-adapter-suites*
+  '("source-inventory" "read-only-intake" "import-replay" "moving-source"
+    "archive-completeness" "schema-evolution")
+  "The six rows the spec names as the intake adapter's gate
+(SPEC-WORK.md:7102-7107).")
+
+(defun %acceptance-suite (name lane cases)
+  (if (member name *intake-adapter-suites* :test #'string=)
+      (%make-acceptance-suite name lane "intake-adapter"
+                              "docs/SPEC-WORK.md:7102-7107" cases)
+      (%make-acceptance-suite name lane "stella"
+                              "docs/SPEC-WORK.md:7045" cases)))
+
+(defparameter *suite-registry*
+  (list
+   ;; per change, inside the one-minute target and two-minute bound
+   ;; (SPEC-WORK.md:7091-7092)
+   (%acceptance-suite "format-determinism" :per-change
+                      '("supported-subset-format-determinism"))
+   (%acceptance-suite "referential-integrity" :per-change
+                      '("referential-integrity-refuses-a-cycle"))
+   (%acceptance-suite "retry-protocol" :per-change '())
+   (%acceptance-suite "read-only-intake" :per-change '("read-only-intake"))
+   (%acceptance-suite "undo-redo" :per-change '("undo-redo"))
+   (%acceptance-suite "roadmap-proof" :per-change '("roadmap-proof"))
+   ;; nightly or pre-release, whole matrices (SPEC-WORK.md:7093-7098)
+   (%acceptance-suite "source-inventory" :nightly '("source-inventory"))
+   (%acceptance-suite "import-replay" :nightly '())
+   (%acceptance-suite "moving-source" :nightly '("moving-source"))
+   (%acceptance-suite "archive-completeness" :nightly '("archive-completeness"))
+   (%acceptance-suite "full-round-trip" :nightly '("full-round-trip"))
+   (%acceptance-suite "old-history" :nightly '("old-history"))
+   (%acceptance-suite "atomic-mutation" :nightly '())
+   (%acceptance-suite "async-operations" :nightly '("async-operations"))
+   (%acceptance-suite "single-writer" :nightly
+                      '("single-writer" "single-writer-kernel-total-order"))
+   (%acceptance-suite "indexes-and-counters" :nightly '("indexes-and-counters"))
+   (%acceptance-suite "materialized-working-set" :nightly
+                      '("materialized-working-set"))
+   (%acceptance-suite "batches-and-pipelines" :nightly
+                      '("batches-and-pipelines"))
+   (%acceptance-suite "recovery" :nightly '())
+   (%acceptance-suite "schema-evolution" :nightly '("schema-evolution"))
+   (%acceptance-suite "hostile-data" :nightly '("hostile-data")))
+  "Every suite of Preservation and recovery acceptance (SPEC-WORK.md:7064-7086)
+mapped to its lane, owner and cases.")
+
+(defun find-acceptance-suite (name)
+  "The registered suite NAME, or NIL."
+  (find name *suite-registry* :key #'acceptance-suite-name :test #'string=))
+
+(defun lane-suites (lane)
+  "The names of the suites in LANE (:per-change or :nightly), in registry order."
+  (loop for s in *suite-registry*
+        when (eq lane (acceptance-suite-lane s))
+          collect (acceptance-suite-name s)))
+
+(defun suite-command (name)
+  "The command that runs suite NAME and nothing else."
+  (format nil "lisp/nova-work/run-tests.sh --suite ~A" name))
+
+(defun lane-command (lane)
+  "The command that runs every suite of LANE."
+  (format nil "lisp/nova-work/run-tests.sh --lane ~(~A~)" lane))
+
+(defun suite-owed-p (name)
+  "True when suite NAME is registered but has no case yet."
+  (let ((s (find-acceptance-suite name)))
+    (and s (null (acceptance-suite-cases s)) t)))
+
 
 
 ;;; ------------------------------------------------------------------

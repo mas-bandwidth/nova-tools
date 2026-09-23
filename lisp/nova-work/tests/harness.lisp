@@ -200,10 +200,12 @@ this image's random token, which is exactly what the blind
         (uiop:delete-directory-tree root :validate t :if-does-not-exist :ignore))))
   (values))
 
-(defun run-all ()
+(defun run-tests (entries label)
+  "Run ENTRIES (in registration order) and print one summary line headed
+LABEL. Returns 0 when every entry passed, 1 otherwise."
   (reseed-random-state)
   (setf *pass* 0 *fail* 0 *problems* '())
-  (dolist (entry (reverse *tests*))
+  (dolist (entry (reverse entries))
     (destructuring-bind (name spec expected thunk) entry
       (let ((*current* name))
         (handler-case
@@ -214,15 +216,79 @@ this image's random token, which is exactly what the blind
             (incf *fail*)
             (push (list name spec c) *problems*)
             (format t "TEST ~A FAIL spec=~A ~A: ~A~%" name spec expected c))))))
-  (format t "NOVA-WORK SLICE1 total=~D pass=~D fail=~D~%"
-          (+ *pass* *fail*) *pass* *fail*)
+  (format t "~A total=~D pass=~D fail=~D~%"
+          label (+ *pass* *fail*) *pass* *fail*)
   (finish-output)
   (if (zerop *fail*) 0 1))
 
-(defun main ()
+(defun run-all ()
+  (run-tests *tests* "NOVA-WORK SLICE1"))
+
+;;; Per-suite and per-lane selection (E10-F03-03, SPEC-WORK.md:7239-7240):
+;;; `run-tests.sh --suite NAME` and `run-tests.sh --lane LANE` run the cases
+;;; nova-work's *SUITE-REGISTRY* names, and nothing else.
+
+(defun select-tests (names)
+  "The registered deftests whose names are in NAMES, and the NAMES no deftest
+carries."
+  (values (remove-if-not (lambda (e) (member (first e) names :test #'string=))
+                         *tests*)
+          (remove-if (lambda (n) (find n *tests* :key #'first :test #'string=))
+                     names)))
+
+(defun plan-suite (name)
+  "How suite NAME would run: :unknown, :owed (registered, no case yet) or :run,
+with the selected deftests and any registered case names no deftest carries."
+  (let ((s (find-acceptance-suite name)))
+    (cond ((null s) :unknown)
+          ((null (acceptance-suite-cases s)) (values :owed '() '()))
+          (t (multiple-value-bind (tests missing)
+                 (select-tests (acceptance-suite-cases s))
+               (values :run tests missing))))))
+
+(defun run-suite (name)
+  "Run suite NAME. Exit code 0 green, 1 a failure or a registered case missing,
+2 an unknown suite, 3 owed (no case yet: never reported green)."
+  (multiple-value-bind (status tests missing) (plan-suite name)
+    (case status
+      (:unknown (format t "NOVA-WORK SUITE ~A UNKNOWN~%" name) 2)
+      (:owed
+       (let ((s (find-acceptance-suite name)))
+         (format t "NOVA-WORK SUITE ~A lane=~(~A~) owner=~A total=0 OWED no case yet (docs/SPEC-WORK.md:7098)~%"
+                 name (acceptance-suite-lane s) (acceptance-suite-owner s)))
+       3)
+      (t
+       (let* ((s (find-acceptance-suite name))
+              (code (run-tests tests (format nil "NOVA-WORK SUITE ~A lane=~(~A~) owner=~A"
+                                             name (acceptance-suite-lane s)
+                                             (acceptance-suite-owner s)))))
+         (dolist (m missing) (format t "SUITE ~A MISSING case ~A~%" name m))
+         (if missing 1 code))))))
+
+(defun run-lane (lane-name)
+  "Run every suite of LANE-NAME (\"per-change\" or \"nightly\"). Owed suites are
+named on the summary line, never counted as passed."
+  (let ((lane (cond ((string= lane-name "per-change") :per-change)
+                    ((string= lane-name "nightly") :nightly))))
+    (if (null lane)
+        (progn (format t "NOVA-WORK LANE ~A UNKNOWN~%" lane-name) 2)
+        (let* ((suites (lane-suites lane))
+               (owed (remove-if-not #'suite-owed-p suites))
+               (names (loop for n in suites
+                            append (acceptance-suite-cases (find-acceptance-suite n)))))
+          (multiple-value-bind (tests missing) (select-tests names)
+            (let ((code (run-tests tests (format nil "NOVA-WORK LANE ~(~A~) suites=~D owed=~D~@[ (~{~A~^ ~})~]"
+                                                 lane (length suites) (length owed) owed))))
+              (dolist (m missing) (format t "LANE ~(~A~) MISSING case ~A~%" lane m))
+              (if missing 1 code)))))))
+
+(defun main (&key suite lane)
   ;; Cleanup on exit, on both paths: the unwind-protect covers the normal one
   ;; and a Lisp error, and REMOVE-TEST-RUN-ROOT is on SB-EXT:*EXIT-HOOKS* for
   ;; the rest (nova-tools#1699).
-  (let ((code (unwind-protect (run-all) (remove-test-run-root))))
+  (let ((code (unwind-protect (cond (suite (run-suite suite))
+                                    (lane (run-lane lane))
+                                    (t (run-all)))
+                (remove-test-run-root))))
     #+sbcl (sb-ext:exit :code code :abort nil)
     #-sbcl (progn code)))

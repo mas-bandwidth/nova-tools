@@ -1345,6 +1345,12 @@
     #:archive-gaps-explicit-p
     #:archive-absorbable-p
     #:author-retains-source-p
+    ;; map-each-suite-to-an-owner-command-and-ci-lane (E10-F03-03)
+    #:acceptance-suite #:acceptance-suite-p #:acceptance-suite-name
+    #:acceptance-suite-lane #:acceptance-suite-owner
+    #:acceptance-suite-owner-source #:acceptance-suite-cases
+    #:*intake-adapter-suites* #:*suite-registry* #:find-acceptance-suite
+    #:lane-suites #:suite-command #:lane-command #:suite-owed-p
     ;; replays-8642: bounds-are-not-prompts
     #:launcher #:make-launcher
     #:launcher-input-bound #:launcher-output-bound
