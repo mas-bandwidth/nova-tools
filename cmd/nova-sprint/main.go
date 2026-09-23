@@ -36,7 +36,8 @@ table --fixture prints that file byte for byte, and with --out publishes it.
 table --refresh pending does not open --out: the previous table stays, and
 the command prints it again. An empty render is not published.
 The Redis form reads one consistent FCALL_RO snapshot per render; --loop
-renders once per second. The function library must already be loaded.
+renders once per second. Load the function library first with
+nova-sprint fn load --redis <addr> (fn check exits 1 while it is missing or stale).
 Control sprints are hidden unless named with --sprint.
 --check reads an existing throwaway fixture store and compares exact output.
 
