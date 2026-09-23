@@ -2,6 +2,7 @@ package ghcapture
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -9,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -103,9 +103,19 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := makeBundleSubdir(filepath.Join(dir, "issues")); err != nil {
+	// Pin the bundle root and issues/ once, by descriptor. Every later write is
+	// relative to these handles, so replacing either directory (or a parent)
+	// with a symlink after the check cannot move a write out of the bundle.
+	root, err := os.OpenRoot(dir)
+	if err != nil {
 		return nil, err
 	}
+	defer root.Close()
+	issues, err := makeBundleSubdir(root, "issues")
+	if err != nil {
+		return nil, err
+	}
+	defer issues.Close()
 	after := ""
 	for page := 1; page <= maxPages; page++ {
 		vars := map[string]string{"owner": owner, "repo": repo, "n": strconv.Itoa(pageSize)}
@@ -134,8 +144,9 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 			if err := json.Unmarshal(node, &head); err != nil || head.Number == 0 {
 				return nil, fmt.Errorf("ghcapture: page %d: an issue without a number", page)
 			}
-			rel := fmt.Sprintf("issues/%d.json", head.Number)
-			if err := writeBundleFile(dir, rel, node); err != nil {
+			name := fmt.Sprintf("%d.json", head.Number)
+			rel := "issues/" + name
+			if err := writeBundleFile(issues, name, node); err != nil {
 				return nil, err
 			}
 			sum := sha256.Sum256(node)
@@ -154,7 +165,7 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 	if err := enc.Encode(m); err != nil {
 		return nil, err
 	}
-	if err := writeBundleFile(dir, "manifest.json", buf.Bytes()); err != nil {
+	if err := writeBundleFile(root, "manifest.json", buf.Bytes()); err != nil {
 		return nil, err
 	}
 	if last := m.Pages[len(m.Pages)-1]; last.HasNext {
@@ -163,56 +174,72 @@ func Record(q QueryFunc, owner, repo string, pageSize, maxPages int, fetchedAt t
 	return m, nil
 }
 
-// makeBundleSubdir makes p as a real directory, or accepts it if it already is one.
-// A symlink (or any other non-directory) at p is refused: following it would
-// put the bundle's writes outside the directory the caller chose.
-func makeBundleSubdir(p string) error {
-	fi, err := os.Lstat(p)
+// makeBundleSubdir makes name under root as a real directory, or accepts it
+// if it already is one, and returns it pinned as its own Root. A symlink (or
+// any other non-directory) at name is refused: following it would put the
+// bundle's writes outside the directory the caller chose. Callers write
+// through the returned Root, so a swap of name after this check is not
+// followed; os.Root also refuses any path that would resolve outside root.
+func makeBundleSubdir(root *os.Root, name string) (*os.Root, error) {
+	fi, err := root.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {
-		return os.Mkdir(p, 0o755)
+		if err := root.Mkdir(name, 0o755); err != nil {
+			return nil, err
+		}
+		fi, err = root.Lstat(name)
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if !fi.IsDir() {
-		return fmt.Errorf("ghcapture: %s exists and is not a regular directory (%s); refusing to write through it", p, fi.Mode().Type())
+		return nil, fmt.Errorf("ghcapture: %s exists and is not a regular directory (%s); refusing to write through it", name, fi.Mode().Type())
 	}
-	return nil
+	sub, err := root.OpenRoot(name)
+	if err != nil {
+		return nil, err
+	}
+	// The handle must be the directory just checked, not one swapped in between.
+	if pinned, err := sub.Stat("."); err != nil || !os.SameFile(fi, pinned) {
+		sub.Close()
+		return nil, fmt.Errorf("ghcapture: %s changed while it was being opened; refusing to write through it", name)
+	}
+	return sub, nil
 }
 
-// writeBundleFile writes data to dir/rel without ever following a link at
-// the destination. A pre-existing non-regular file (a symlink, a directory, a
-// device) is refused. The bytes go to a fresh temporary file in the same
-// directory (created exclusively, so it cannot be a link), which is then
-// renamed over the destination; rename replaces a link itself rather than its
-// target, so a link planted after the check still cannot redirect the write.
-func writeBundleFile(dir, rel string, data []byte) error {
-	p := filepath.Join(dir, rel)
-	if fi, err := os.Lstat(p); err == nil {
+// writeBundleFile writes data to name inside dir (a pinned directory) without
+// ever following a link at the destination. A pre-existing non-regular file (a
+// symlink, a directory, a device) is refused. The bytes go to a fresh
+// temporary file in the same directory (created exclusively, so it cannot be a
+// link), which is then renamed over the destination; rename replaces a link
+// itself rather than its target, so a link planted after the check still
+// cannot redirect the write. Both steps are relative to dir's descriptor, so a
+// swapped parent directory is never resolved again.
+func writeBundleFile(dir *os.Root, name string, data []byte) error {
+	if fi, err := dir.Lstat(name); err == nil {
 		if !fi.Mode().IsRegular() {
-			return fmt.Errorf("ghcapture: %s exists and is not a regular file (%s); refusing to write through it", rel, fi.Mode().Type())
+			return fmt.Errorf("ghcapture: %s exists and is not a regular file (%s); refusing to write through it", name, fi.Mode().Type())
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	f, err := os.CreateTemp(filepath.Dir(p), ".ghcapture-*")
+	tmp := ".ghcapture-" + rand.Text()
+	f, err := dir.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	tmp := f.Name()
 	_, werr := f.Write(data)
 	cerr := f.Close()
 	if werr == nil {
 		werr = cerr
 	}
 	if werr == nil {
-		werr = os.Chmod(tmp, 0o644)
+		werr = dir.Chmod(tmp, 0o644)
 	}
 	if werr == nil {
-		werr = os.Rename(tmp, p)
+		werr = dir.Rename(tmp, name)
 	}
 	if werr != nil {
-		os.Remove(tmp)
+		dir.Remove(tmp)
 		return werr
 	}
 	return nil

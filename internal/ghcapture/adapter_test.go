@@ -692,3 +692,89 @@ func TestRecordDoesNotFollowSymlinksOutOfTheBundle(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordPinsTheBundleAgainstAParentSwap: Record checks the bundle root and
+// issues/ once, then writes through descriptors pinned to the directories it
+// checked. A writer that swaps issues/ (or the bundle root itself) for a
+// symlink to an outside directory after the check, here from inside the
+// query callback, which runs between the check and the first write, cannot
+// redirect a single byte outside the bundle (stella, nova-tools#3242 hold 7).
+func TestRecordPinsTheBundleAgainstAParentSwap(t *testing.T) {
+	man := readManifest(t, bundleDir)
+	first := man.Pages[0]
+	var nodes []string
+	for _, n := range first.Issues {
+		b, err := os.ReadFile(filepath.Join(bundleDir, "issues", strconv.Itoa(n)+".json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		nodes = append(nodes, string(b))
+	}
+	fetched, _ := time.Parse(time.RFC3339, man.FetchedAt)
+	for _, tc := range []struct{ name, swap string }{
+		{"issues directory", "issues"},
+		{"bundle root", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outside := t.TempDir()
+			if tc.swap == "" {
+				// A swapped root offers a ready issues/ so the write has somewhere to land.
+				if err := os.Mkdir(filepath.Join(outside, "issues"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			parent := t.TempDir()
+			out := filepath.Join(parent, "bundle")
+			victim := filepath.Join(out, tc.swap)
+			moved := victim + ".checked"
+			swapped := false
+			swapParent := func(query string, vars map[string]string) ([]byte, error) {
+				if !swapped {
+					swapped = true
+					if err := os.Rename(victim, moved); err != nil {
+						return nil, err
+					}
+					if err := os.Symlink(outside, victim); err != nil {
+						t.Skipf("symlinks unavailable: %v", err)
+					}
+				}
+				return []byte(fmt.Sprintf(`{"data":{"repository":{"issues":{"totalCount":%d,"pageInfo":{"hasNextPage":false,"endCursor":%q},"nodes":[%s]}}}}`,
+					len(first.Issues), first.EndCursor, strings.Join(nodes, ","))), nil
+			}
+			_, err := Record(swapParent, "mas-bandwidth", "netcode", 25, 1, fetched, out)
+			if !swapped {
+				t.Fatalf("the query callback never ran (Record = %v)", err)
+			}
+			var names []string
+			werr := filepath.WalkDir(outside, func(p string, d os.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					names = append(names, strings.TrimPrefix(p, outside+string(filepath.Separator)))
+				}
+				return err
+			})
+			if werr != nil {
+				t.Fatal(werr)
+			}
+			if len(names) != 0 {
+				t.Fatalf("Record followed the swapped %s out of the bundle: outside now holds %v (Record = %v)", tc.name, names, err)
+			}
+			if err != nil {
+				return // a refusal is also contained
+			}
+			// Written, then only into the directory Record checked.
+			bundle := moved
+			if tc.swap == "issues" {
+				bundle = out
+			}
+			issue := filepath.Join("issues", strconv.Itoa(first.Issues[0])+".json")
+			if tc.swap == "issues" {
+				issue = filepath.Join("issues.checked", strconv.Itoa(first.Issues[0])+".json")
+			}
+			for _, rel := range []string{"manifest.json", issue} {
+				if fi, err := os.Lstat(filepath.Join(bundle, rel)); err != nil || !fi.Mode().IsRegular() {
+					t.Errorf("%s not written into the checked directory: %v", rel, err)
+				}
+			}
+		})
+	}
+}
