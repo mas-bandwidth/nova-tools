@@ -201,6 +201,14 @@ jobs:
       - name: vet
         run: make vet
 
+      - name: vet-laws
+        # tools/analyzers/cmd/vetlaw as a go vet -vettool= analyzer over
+        # ./cmd/..., enforcing verb laws #2573 (exit-zero-with-zero-bytes),
+        # #2575 (help-answers-refused) and #2583 (task-text-in-argv). Its own
+        # step, not folded into `vet`, because this job is the only one that
+        # runs `make vet` unsharded and un-PKGS-scoped (nova-tools #2724).
+        run: make vet-laws
+
       - name: vet-windows
         # `GOOS=windows go vet ./...`, the one Windows guard on the CL path.
         # It is last in this job on purpose: it is the only step that has to
