@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -155,66 +156,99 @@ func hasFmtFprintCall(fd *ast.FuncDecl) bool {
 	return found
 }
 
+// checkHelpRefused flags a help branch that answers REFUSED (law #2575).
+// A help branch is an if whose condition compares against a help literal
+// ("help", "--help", "-h", "-help") with ==, or a switch case that lists one;
+// only a REFUSED string literal inside THAT branch's body is a diagnostic.
+// A function that merely handles help somewhere and refuses somewhere else is
+// the normal shape of a verb and is not flagged, and _test.go files are never
+// flagged: tests name both help and REFUSED to assert the verb's own lines.
 func checkHelpRefused(fset *token.FileSet, file *ast.File) []string {
+	if strings.HasSuffix(fset.Position(file.Pos()).Filename, "_test.go") {
+		return nil
+	}
 	var diags []string
-	var helpRef *ast.FuncDecl
 	ast.Inspect(file, func(n ast.Node) bool {
-		fd, ok := n.(*ast.FuncDecl)
-		if !ok {
+		var body []ast.Stmt
+		switch s := n.(type) {
+		case *ast.IfStmt:
+			if !isHelpTest(s.Cond) {
+				return true
+			}
+			body = s.Body.List
+		case *ast.CaseClause:
+			match := false
+			for _, e := range s.List {
+				if isHelpLit(e) || isHelpTest(e) {
+					match = true
+					break
+				}
+			}
+			if !match {
+				return true
+			}
+			body = s.Body
+		default:
 			return true
 		}
-		if hasHelpHandler(fd) && hasRefusedString(fd) {
-			helpRef = fd
-			return false
+		if lit := refusedLit(body); lit != nil {
+			pos := fset.Position(lit.Pos())
+			diags = append(diags, pos.Filename+":"+
+				itoa(pos.Line)+":"+
+				itoa(pos.Column)+": verb-law: help-answers-refused: the --help branch answers REFUSED (law #2575)")
 		}
 		return true
 	})
-	if helpRef != nil {
-		pos := fset.Position(helpRef.Pos())
-		diags = append(diags, pos.Filename+":"+
-			itoa(pos.Line)+":"+
-			itoa(pos.Column)+": verb-law: help-answers-refused: function handles --help but contains REFUSED string (law #2575)")
-	}
 	return diags
 }
 
-func hasHelpHandler(fd *ast.FuncDecl) bool {
-	if fd.Body == nil {
+// isHelpLit reports whether e is a string literal naming a help door.
+func isHelpLit(e ast.Expr) bool {
+	bl, ok := e.(*ast.BasicLit)
+	if !ok || bl.Kind != token.STRING {
 		return false
 	}
+	s, err := strconv.Unquote(bl.Value)
+	if err != nil {
+		return false
+	}
+	return s == "help" || s == "--help" || s == "-h" || s == "-help"
+}
+
+// isHelpTest reports whether cond contains an == comparison with a help literal.
+func isHelpTest(cond ast.Expr) bool {
 	found := false
-	ast.Inspect(fd.Body, func(n ast.Node) bool {
-		bl, ok := n.(*ast.BasicLit)
-		if !ok || bl.Kind != token.STRING {
-			return true
-		}
-		s := strings.Trim(bl.Value, `"`)
-		if s == "help" || s == "--help" || s == "-h" || s == "-help" {
+	ast.Inspect(cond, func(n ast.Node) bool {
+		be, ok := n.(*ast.BinaryExpr)
+		if ok && be.Op == token.EQL && (isHelpLit(be.X) || isHelpLit(be.Y)) {
 			found = true
 			return false
 		}
-		return true
+		return !found
 	})
 	return found
 }
 
-func hasRefusedString(fd *ast.FuncDecl) bool {
-	if fd.Body == nil {
-		return false
-	}
-	found := false
-	ast.Inspect(fd.Body, func(n ast.Node) bool {
-		bl, ok := n.(*ast.BasicLit)
-		if !ok || bl.Kind != token.STRING {
+// refusedLit returns the first string literal containing REFUSED in body.
+func refusedLit(body []ast.Stmt) *ast.BasicLit {
+	var hit *ast.BasicLit
+	for _, st := range body {
+		ast.Inspect(st, func(n ast.Node) bool {
+			if hit != nil {
+				return false
+			}
+			bl, ok := n.(*ast.BasicLit)
+			if ok && bl.Kind == token.STRING && strings.Contains(bl.Value, "REFUSED") {
+				hit = bl
+				return false
+			}
 			return true
+		})
+		if hit != nil {
+			break
 		}
-		if strings.Contains(bl.Value, "REFUSED") {
-			found = true
-			return false
-		}
-		return true
-	})
-	return found
+	}
+	return hit
 }
 
 func checkArgvText(fset *token.FileSet, file *ast.File) []string {
