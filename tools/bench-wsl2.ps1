@@ -1,4 +1,4 @@
-# tools/bench-wsl2.ps1 -- WSL2 bench bootstrap in one step (#1458).
+# tools/bench-wsl2.ps1 -- the one-step WSL2 bench bootstrap (#1458).
 #
 # Run this ONCE, from an ELEVATED PowerShell, on the Windows box that is to join
 # the fleet as a Linux/WSL2 bench:
@@ -7,9 +7,9 @@
 #
 # The run IS the one approval: a UAC prompt to open it, and a Tailscale auth key
 # minted once in the admin console -- reusable, tagged, pre-approved. After that
-# the keeper adopts over ssh: `nova-pulse fleet add`, the registry row,
-# `nova-update release adopt --platform linux-amd64`, the runners,
-# `nova-pulse fleet standard`. Glenn: "not 20".
+# the keeper does everything else over ssh: `nova-pulse fleet add`, the registry
+# row, `nova-update release adopt --platform linux-amd64`, the Linux runners,
+# `nova-pulse fleet standard`. Not twenty hands.
 #
 # The fleet's public keys -- the half of an ssh keypair that is meant to be
 # published -- are carried beside this script in fleet/authorized_keys. They are
