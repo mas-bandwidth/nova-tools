@@ -808,11 +808,17 @@ SECRETS SEAT ADD OK as=<seat> from=<seat> keys=<n> file=<path> rule=<n>
 SECRETS SEAT ADD FAIL <why>
 ```
 
-**Where a verb prints more than one line, it ends on its verdict.** `seat add` ends on its
-`OK` line; `keygen` ends on its `OK` line followed by two plain closing lines that say it worked
-and name the next step (nova-tools#1560). Either way what is left to do sits above the verdict,
-because the last line on the screen is the one a reader takes for the answer (nova-tools#1393).
-A `NEXT:` line is an instruction and is written as one.
+**Where a verb prints more than one line, its machine-readable block ends on its verdict.**
+Every `SECRETS` line a verb prints comes before its `OK` line, and whatever the receipt leaves
+to do is a `NEXT:` line inside that block, above the verdict, so a caller that parses the
+receipt stops at the `OK` line and has read everything. `seat add` prints nothing after its
+`OK` line, so its verdict is also the last line on the screen. `keygen` is the one verb that
+prints past its verdict: after `SECRETS KEYGEN OK` come two plain closing lines that are not
+part of the machine-readable block — `Done. Your new key is at <path>. Nothing failed.` and
+`Next: send this public key to whoever seals your seat: <pub>` — written for the person, so the
+last line on the screen says it worked and names the next step (nova-tools#1560), because the
+last line on the screen is the one a reader takes for the answer (nova-tools#1393). A `NEXT:`
+line is an instruction and is written as one; so is the plain `Next:` closing line.
 
 **No value, no fragment of a value, and no value's length ever appears on any line, in any
 refusal, or in any error passed through from sops** — a length is a value's shape, and the
@@ -1059,14 +1065,15 @@ red test that carries it. They extend **The model** and **Rotation**; they do no
 
 Two rules, both measured the day a new bench was given its first credentials by hand.
 
-11. **A multi-line receipt ends on its verdict.** The `OK` line is the last machine-readable
-    line a verb prints, and whatever is left to do is a `NEXT:` line above it, phrased as an
-    instruction rather than as a state of the world; `keygen` then closes with two plain lines,
-    `Done. ... Nothing failed.` and `Next: send this public key ...`, so its last line reads as
-    success to a person (nova-tools#1560). A green `keygen` whose last line said a placeholder
-    "stands unfilled" was read as an error by the person who ran it (nova-tools#1393). Red
-    tests: `TestKeygenEndsWithThePlainClosingLine`, `TestKeygenPrintsTheOKLineAfterTheRuleBlock`,
-    `TestKeygenNextStepSaysItIsANextStep`.
+11. **A multi-line receipt's machine-readable block ends on its verdict.** The `OK` line is the
+    last machine-readable line a verb prints, and whatever the receipt leaves to do is a `NEXT:`
+    line above it, phrased as an instruction rather than as a state of the world. Only plain
+    lines for a person may follow the verdict: `keygen` closes with two, `Done. ... Nothing
+    failed.` and `Next: send this public key ...`, which are not part of the machine-readable
+    block, so its last line reads as success to a person (nova-tools#1560). A green `keygen`
+    whose last line said a placeholder "stands unfilled" was read as an error by the person who
+    ran it (nova-tools#1393). Red tests: `TestKeygenEndsWithThePlainClosingLine`,
+    `TestKeygenPrintsTheOKLineAfterTheRuleBlock`, `TestKeygenNextStepSaysItIsANextStep`.
 12. **A new seat is given its first values by `seat add`, never by `seal`.** `seal` decrypts
     before it writes, and only the new seat's own key opens the new seat's file, so the first
     value must be re-sealed out of a seat the operator's machine CAN open — with the new seat's
