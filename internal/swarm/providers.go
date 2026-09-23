@@ -22,8 +22,8 @@ type providerEntry struct {
 }
 
 // readProvidersTable parses the embedded providers.tsv into a map keyed by
-// provider name. The table is the single source of truth for every provider a
-// bench can launch: one row replaces ~45 per-provider scripts x 2 OS twins.
+// provider name. It declares the four providers confirmed in docs/MODELS.md
+// (one row per provider, both OSes) as the data the one launcher will read.
 func readProvidersTable() (map[string]providerEntry, error) {
 	out := map[string]providerEntry{}
 	for i, line := range strings.Split(providersTableData, "\n") {
@@ -68,9 +68,12 @@ func readProvidersTable() (map[string]providerEntry, error) {
 // literal "PROMPT.md". Unknown providers return an error rather than a guessed
 // argv — a launcher that guesses is a bespoke launcher with extra steps.
 //
-// Every provider launches through one verb on both OSes. The table declares
-// OS-specific columns (linuxHarness, darwinHarness) and the code reads only
-// those; no per-provider script is ever named.
+// Scope: this is the table-and-API precursor only. LaunchArgv has no
+// production caller yet (only providers_test.go calls it), so no current
+// provider launch goes through it and no per-provider bench script is retired
+// by this file. Wiring it into cmd/nova-swarm's launch path is a separate
+// card. The table declares OS-specific columns (linuxHarness, darwinHarness)
+// and LaunchArgv reads only those; no per-provider script is ever named.
 func LaunchArgv(provider, goos string) ([]string, error) {
 	table, err := readProvidersTable()
 	if err != nil {
