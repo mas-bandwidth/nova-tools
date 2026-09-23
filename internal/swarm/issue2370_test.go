@@ -124,6 +124,47 @@ func TestAttemptEvidencePublication(t *testing.T) {
 		}
 	})
 
+	t.Run("partial set without MANIFEST refuses and preserves existing bytes", func(t *testing.T) {
+		// stella hold on #2903: a partial snapshot (TASK.txt present, MANIFEST.json
+		// absent) must not be overwritten by a retried publication; the incomplete
+		// set is left for reconciliation with its original bytes.
+		dir := t.TempDir()
+		partialDir := filepath.Join(dir, jobID)
+		if err := os.MkdirAll(partialDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		original := []byte("partial task bytes from an earlier attempt")
+		taskPath := filepath.Join(partialDir, "TASK.txt")
+		if err := os.WriteFile(taskPath, original, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		err := PublishEvidence(partialDir, jobID, taskBytes, promptBytes, profileBytes, preimage)
+		if err == nil {
+			t.Fatal("PublishEvidence must refuse to replace an existing TASK.txt when MANIFEST.json is absent")
+		}
+		got, rerr := os.ReadFile(taskPath)
+		if rerr != nil {
+			t.Fatalf("read TASK.txt after refusal: %v", rerr)
+		}
+		if string(got) != string(original) {
+			t.Fatalf("TASK.txt replaced: got %q, want original %q", got, original)
+		}
+		if _, serr := os.Lstat(filepath.Join(partialDir, "MANIFEST.json")); !os.IsNotExist(serr) {
+			t.Fatalf("MANIFEST.json must not be published over a partial set (lstat err %v)", serr)
+		}
+		entries, derr := os.ReadDir(partialDir)
+		if derr != nil {
+			t.Fatal(derr)
+		}
+		if len(entries) != 1 {
+			names := make([]string, 0, len(entries))
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			t.Fatalf("refused publication left files behind: %v", names)
+		}
+	})
+
 	t.Run("incomplete set is not a committed snapshot", func(t *testing.T) {
 		dir := t.TempDir()
 		evidenceDir := filepath.Join(dir, "incomplete")

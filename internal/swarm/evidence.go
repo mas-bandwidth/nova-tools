@@ -77,6 +77,17 @@ func PublishEvidence(evidenceDir, jobID string, task, prompt, profile []byte, pr
 		return fmt.Errorf("evidence exists for job %q with differing content; refusing to overwrite", jobID)
 	}
 
+	// No MANIFEST.json: any payload already present is a partial snapshot from an
+	// earlier attempt. Refuse before writing anything so the incomplete set is left,
+	// byte for byte, for reconciliation (no-overwrite, no-replace).
+	for _, p := range []string{taskPath, promptPath, profilePath} {
+		if _, err := os.Lstat(p); err == nil {
+			return fmt.Errorf("evidence for job %q is incomplete (%s present, MANIFEST.json absent); refusing to overwrite, left for reconciliation", jobID, filepath.Base(p))
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+	}
+
 	if err := writeAtomicNoFollow(taskPath, task, 0o644); err != nil {
 		return err
 	}
@@ -139,9 +150,47 @@ func writeAtomicNoFollow(path string, data []byte, mode os.FileMode) error {
 		if info.Mode()&os.ModeSymlink != 0 {
 			return fmt.Errorf("target path %q is a symlink; refusing to follow", path)
 		}
+		return fmt.Errorf("target path %q already exists; refusing to replace", path)
+	} else if !os.IsNotExist(err) {
+		return err
 	}
 
-	return writeAtomic(path, data, mode)
+	return writeNoReplace(path, data, mode)
+}
+
+// writeNoReplace publishes data at path atomically and never replaces an existing
+// entry: the bytes go to an exclusive temp file first, then a hard link names them
+// at path. Unlike rename, link fails when path already exists (a file, a symlink or
+// a racing writer's publication), so an existing entry is never overwritten.
+func writeNoReplace(path string, data []byte, mode os.FileMode) error {
+	nonce, err := Nonce()
+	if err != nil {
+		return err
+	}
+	tmp := path + "." + nonce + ".tmp"
+	f, err := openRegularWrite(tmp, os.O_RDWR|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tmp, path); err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("target path %q already exists; refusing to replace", path)
+		}
+		return err
+	}
+	return nil
 }
 
 func computeSnapshotHash(task, prompt, profile []byte, preimage string) string {
