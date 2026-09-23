@@ -13,6 +13,11 @@
 // Reads are batched: the sprint hash, its policy and the log length in one
 // pipeline, a SCAN for the index sets, then one pipeline each for the index
 // members, the card hashes and the dispositions.
+//
+// It also ranks the routes per work type (#3104, #2756 v6 4.10): PR types on $
+// per landed, read types on $ per useful read, with probation and benched
+// states, and replaces routes:<type> in the same call that records the fold
+// (routes.go; the hash shape is route.Fold, the router reads it).
 package fold
 
 import (
@@ -36,6 +41,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/route"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
@@ -111,6 +117,10 @@ type Summary struct {
 	Receipts    int64
 	Jev         *Calibration // nil when the fold ran no Jev calibration
 	Apart       Apart        // code and read cards apart, the unknown gate, approved-not-landed (#3107, split.go)
+	// Types is routes:<type> per work type the sprint dealt (#3104), in type
+	// order; the record writes each one.
+	Types  []*route.Fold
+	Policy Policy
 }
 
 var sprintName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -220,8 +230,10 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 	if opt.Jev != nil {
 		current = opt.Jev.PromptSHA
 	}
-	res, err := record.Run(ctx, client, []string{key, key + ":log", jevPromptKey},
-		sha, opt.Sprint, opt.Actor, opt.Now().UTC().Format(time.RFC3339), adopt, current).StringSlice()
+	at := opt.Now().UTC().Format(time.RFC3339)
+	rkeys, rargv := recordArgs(sum, sha, at)
+	res, err := record.Run(ctx, client, append([]string{key, key + ":log", jevPromptKey}, rkeys...),
+		append([]any{sha, opt.Sprint, opt.Actor, at, adopt, current}, rargv...)...).StringSlice()
 	if err != nil {
 		return Result{FoldSHA: sha, Made: made}, fmt.Errorf("record the fold on %s: %w", key, err)
 	}
@@ -242,7 +254,8 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 // one receipt, in one call. A sprint already folded returns its sha unchanged.
 // ARGV[5], when not empty, is a Jev prompt the calibration adopted: it moves
 // jev:prompt (KEYS[3]) from ARGV[6] in the same call, and refuses if another
-// run moved it first.
+// run moved it first. KEYS[4..] are routes:<type> (#3104): the fold replaces
+// each one in this same call, from ARGV[7..].
 var record = redis.NewScript(`
 local st = redis.call('HGET', KEYS[1], 'status')
 if st == 'folded' then
@@ -262,10 +275,25 @@ redis.call('HSET', KEYS[1], 'status', 'folded', 'fold_sha', ARGV[1])
 redis.call('XADD', KEYS[2], '*', 'kind', 'sprint', 'id', ARGV[2], 'from', 'closed', 'to', 'folded',
   'attempt', '1', 'token_sha', '', 'actor', ARGV[3], 'reason', 'fold', 'evidence', ARGV[1],
   'idem', 'fold:' .. ARGV[2], 'at', ARGV[4])
+-- routes:<type> (#3104): KEYS[4..] with, per key, a count and that many
+-- field, value strings from ARGV[7] on (ARGV[5], ARGV[6] are the Jev
+-- adoption's); the fold is the only writer, so each key is replaced.
+local a = 7
+for k = 4, #KEYS do
+  local n = tonumber(ARGV[a])
+  a = a + 1
+  redis.call('DEL', KEYS[k])
+  for j = 0, n - 1, 2 do
+    redis.call('HSET', KEYS[k], ARGV[a + j], ARGV[a + j + 1])
+  end
+  a = a + n
+end
 return {'RECORDED', ARGV[1]}
 `)
 
-var cardFields = []string{"kind", "state", "outcome", "route", "usd", "repo", "pr", "head", "ci_for"}
+// type is the card's work type and score its own read score (#3104); neither is
+// in the #2756 2.3 card row yet, and a card without them is left out of routes:<type>.
+var cardFields = []string{"kind", "state", "outcome", "route", "usd", "repo", "pr", "head", "ci_for", "type", "score"}
 
 // Read builds the sprint's Summary from the store.
 func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, error) {
@@ -274,14 +302,24 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 
 	pipe := client.Pipeline()
 	headCmd := pipe.HGetAll(ctx, key)
-	policyCmd := pipe.HGet(ctx, key+":policy", "useful_min")
+	policyCmd := pipe.HMGet(ctx, key+":policy", "useful_min", "route_min_landed", "route_bench_after", "probation_share")
 	logCmd := pipe.XLen(ctx, key+":log")
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return sum, fmt.Errorf("read %s: %w", key, err)
 	}
 	head := headCmd.Val()
 	sum.Goal, sum.NovaWorkSHA = head["goal"], head["nova_work_sha"]
-	if v := policyCmd.Val(); v != "" {
+	pol := make([]string, 4)
+	for i, v := range policyCmd.Val() {
+		if s, ok := v.(string); ok {
+			pol[i] = s
+		}
+	}
+	var perr error
+	if sum.Policy, perr = policyFrom(pol[1], pol[2], pol[3]); perr != nil {
+		return sum, fmt.Errorf("%s:%w", key, perr)
+	}
+	if v := pol[0]; v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 10 {
 			return sum, fmt.Errorf("%s:policy useful_min=%q is not a score 1-10", key, v)
@@ -375,6 +413,7 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 	}
 
 	routes := map[string]*Route{}
+	byType := map[string]map[string]*typeTally{}
 	for i, c := range cards {
 		if c["ci_for"] != "" {
 			sum.CICards++
@@ -393,7 +432,8 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 			routes[name] = r
 		}
 		landed := c["state"] == "landed"
-		useful := landed || usefulAtHead(disp[key+":disp:"+c["repo"]+":"+c["pr"]], c["head"], sum.UsefulMin)
+		useful := landed || usefulAtHead(disp[key+":disp:"+c["repo"]+":"+c["pr"]], c["head"], sum.UsefulMin) ||
+			(c["pr"] == "" && scoreAtLeast(c["score"], sum.UsefulMin))
 		priced, micro := false, int64(0)
 		switch v := strings.TrimSpace(c["usd"]); v {
 		case "", tokens.Dash:
@@ -420,12 +460,27 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 				line.USDMicro += micro
 			}
 		}
+		if typ := c["type"]; typ != "" && c["route"] != "" {
+			if !route.ValidType(typ) || !route.ValidRoute(c["route"]) {
+				return sum, fmt.Errorf("card %s has type=%q route=%q; a work type is [a-z0-9_-] and a route one word", labels[i], typ, c["route"])
+			}
+			if byType[typ] == nil {
+				byType[typ] = map[string]*typeTally{}
+			}
+			t := byType[typ][c["route"]]
+			if t == nil {
+				t = &typeTally{}
+				byType[typ][c["route"]] = t
+			}
+			t.add(c["pr"] != "", landed, useful, priced, micro)
+		}
 	}
 	sum.Total.Name = "all"
 	for _, r := range routes {
 		sum.Routes = append(sum.Routes, *r)
 	}
 	sort.Slice(sum.Routes, func(i, j int) bool { return sum.Routes[i].Name < sum.Routes[j].Name })
+	sum.Types = rankTypes(sprint, byType, sum.Policy)
 	ci, err := readCI(ctx, client, sprint, labels, cards)
 	sum.CI = ci
 	if err != nil {
@@ -518,6 +573,7 @@ func PrintLines(out io.Writer, s Summary) {
 		s.Sprint, t.Cards, t.Done, t.Useful, t.Landed, usd(t),
 		per(t, t.Useful), per(t, t.Landed), t.Unpriced(),
 		s.Tasks, s.TasksDone, s.Receipts, s.UsefulMin)
+	printTypes(out, s)
 }
 
 func q(s string) string {
@@ -548,7 +604,8 @@ func Sexp(s Summary) []byte {
 		}
 		b.WriteString(routeSexp("route "+q(r.Name), r))
 	}
-	b.WriteString(")")
+	b.WriteString(")\n")
+	typesSexp(&b, s)
 	b.WriteString(apartSexp(s.Apart))
 	if s.Jev != nil {
 		b.WriteString("\n" + strings.TrimSuffix(jevSexp(s.Jev), "\n"))
@@ -1171,4 +1228,11 @@ func jevSexp(c *Calibration) string {
 	}
 	b.WriteString(")\n")
 	return b.String()
+}
+
+// scoreAtLeast: a read card's own score (a bare number or n/10) at or above min.
+func scoreAtLeast(s string, min int) bool {
+	score, _, _ := strings.Cut(strings.TrimSpace(s), "/")
+	n, err := strconv.Atoi(score)
+	return err == nil && n >= min
 }
