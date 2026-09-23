@@ -1797,28 +1797,42 @@ func dedupe(args []string, out, errOut io.Writer) int {
 		Key      string
 		Severity string
 		Head     string
+		Side     string
+		Path     string
+		Line     int
 		RuleKind string
 		Rule     string
-		SeenBy   []string
-		Members  []string
-		Dups     int
-		Closed   bool
-		Answer   string
+		// Seen holds, per head, every view (who:model) that named this finding
+		// at that head: rule 9 prints one seen=/unreported= pair per head, so
+		// views are never aggregated across heads.
+		Seen    map[string][]string
+		Members []string
+		Dups    int
+		Closed  bool
+		Answer  string
 	}
 
 	findingsMap := make(map[string]*dedupeFinding)
 
-	recordSeen := func(item *dedupeFinding, who, model string) {
-		view := who
+	viewOf := func(who, model string) string {
 		if model != "" && model != "-" {
-			view = who + ":" + model
+			return who + ":" + model
 		}
-		for _, s := range item.SeenBy {
+		return who
+	}
+	addView := func(views []string, view string) []string {
+		for _, s := range views {
 			if s == view {
-				return
+				return views
 			}
 		}
-		item.SeenBy = append(item.SeenBy, view)
+		return append(views, view)
+	}
+	recordSeen := func(item *dedupeFinding, head, view string) {
+		if head == "" {
+			head = item.Head
+		}
+		item.Seen[head] = addView(item.Seen[head], view)
 	}
 
 	for _, rec := range verdicts {
@@ -1838,7 +1852,7 @@ func dedupe(args []string, out, errOut io.Writer) int {
 					targetID = f.Claim
 				}
 				if item, ok := findingsMap[targetID]; ok {
-					recordSeen(item, rec.Who, rec.Model)
+					recordSeen(item, rec.Head, viewOf(rec.Who, rec.Model))
 					item.Dups++
 				}
 				continue
@@ -1848,20 +1862,23 @@ func dedupe(args []string, out, errOut io.Writer) int {
 				fl = "base:" + fl
 			}
 			key := fmt.Sprintf("%s:%d@%s:%s", fl, f.Line, f.RuleKind, f.Rule)
-			if existing, ok := findingsMap[f.ID]; ok {
-				recordSeen(existing, rec.Who, rec.Model)
-			} else {
-				findingsMap[f.ID] = &dedupeFinding{
+			item, ok := findingsMap[f.ID]
+			if !ok {
+				item = &dedupeFinding{
 					ID:       f.ID,
 					Key:      key,
 					Severity: strings.ToLower(f.State),
 					Head:     rec.Head,
+					Side:     f.Side,
+					Path:     f.Path,
+					Line:     f.Line,
 					RuleKind: f.RuleKind,
 					Rule:     f.Rule,
-					SeenBy:   []string{},
+					Seen:     map[string][]string{},
 				}
-				recordSeen(findingsMap[f.ID], rec.Who, rec.Model)
+				findingsMap[f.ID] = item
 			}
+			recordSeen(item, rec.Head, viewOf(rec.Who, rec.Model))
 		}
 	}
 
@@ -1870,7 +1887,7 @@ func dedupe(args []string, out, errOut io.Writer) int {
 			item.Answer = ans.As
 			if ans.As == "dup" && ans.Of != "" {
 				if target, tok := findingsMap[ans.Of]; tok {
-					recordSeen(target, ans.Who, "-")
+					recordSeen(target, ans.Head, viewOf(ans.Who, "-"))
 					target.Dups++
 				}
 			}
@@ -1878,42 +1895,176 @@ func dedupe(args []string, out, errOut io.Writer) int {
 	}
 
 	groups := make(map[string]*dedupeFinding)
-	for _, item := range findingsMap {
+	ids := make([]string, 0, len(findingsMap))
+	for fid := range findingsMap {
+		ids = append(ids, fid)
+	}
+	sort.Strings(ids)
+	for _, fid := range ids {
+		item := findingsMap[fid]
 		if item.Closed {
 			continue
 		}
-		if g, ok := groups[item.Key]; ok {
-			g.Members = append(g.Members, item.ID)
-			for _, s := range item.SeenBy {
-				found := false
-				for _, existing := range g.SeenBy {
-					if existing == s {
-						found = true
-						break
-					}
-				}
-				if !found {
-					g.SeenBy = append(g.SeenBy, s)
-				}
-			}
-			g.Dups += item.Dups
-			if item.Answer != "" {
-				g.Answer = item.Answer
-			}
-		} else {
-			groups[item.Key] = &dedupeFinding{
+		g, ok := groups[item.Key]
+		if !ok {
+			g = &dedupeFinding{
 				ID:       item.ID,
 				Key:      item.Key,
 				Severity: item.Severity,
 				Head:     item.Head,
+				Side:     item.Side,
+				Path:     item.Path,
+				Line:     item.Line,
 				RuleKind: item.RuleKind,
 				Rule:     item.Rule,
-				SeenBy:   append([]string{}, item.SeenBy...),
-				Members:  []string{item.ID},
-				Dups:     item.Dups,
-				Answer:   item.Answer,
+				Seen:     map[string][]string{},
+			}
+			groups[item.Key] = g
+		} else if item.ID < g.ID {
+			g.ID = item.ID
+		}
+		g.Members = append(g.Members, item.ID)
+		for h, views := range item.Seen {
+			for _, v := range views {
+				g.Seen[h] = addView(g.Seen[h], v)
 			}
 		}
+		g.Dups += item.Dups
+		if item.Answer != "" {
+			g.Answer = item.Answer
+		}
+	}
+
+	// Readers of a head are the records at that head (rule 9: "every reader of
+	// that head"); headAt orders heads newest first by their newest record.
+	type headReader struct {
+		Who  string
+		View string
+		At   string
+	}
+	readersAt := make(map[string][]headReader)
+	headAt := make(map[string]string)
+	for _, rec := range verdicts {
+		if rec.Head == "" {
+			continue
+		}
+		if rec.At > headAt[rec.Head] {
+			headAt[rec.Head] = rec.At
+		}
+		list := readersAt[rec.Head]
+		replaced := false
+		for i := range list {
+			if list[i].Who == rec.Who {
+				list[i] = headReader{Who: rec.Who, View: viewOf(rec.Who, rec.Model), At: rec.At}
+				replaced = true
+			}
+		}
+		if !replaced {
+			list = append(list, headReader{Who: rec.Who, View: viewOf(rec.Who, rec.Model), At: rec.At})
+		}
+		readersAt[rec.Head] = list
+	}
+
+	// A reader's range is the packet's (rule 1): since that reader's last
+	// approve/hold at another head, else the lane base's merge-base with the
+	// head. Coverage of path:line is read from that range's diff in the
+	// lane's clone; when the clone cannot answer, the reader is never counted
+	// blind (blind means outside the declared range and nothing else).
+	repo := filepath.Join(*lane, merge.RepoDir)
+	ctx := context.Background()
+	baseSHA := ""
+	if merge.IsSHA(st.Base) {
+		baseSHA = st.Base
+	} else if st.Base != "" {
+		for _, ref := range []string{"origin/" + st.Base, st.Base} {
+			if s, err := gitOut(ctx, repo, "rev-parse", "--verify", "-q", ref+"^{commit}"); err == nil {
+				baseSHA = strings.TrimSpace(s)
+				break
+			}
+		}
+	}
+	rangeOf := func(who, head, at string) string {
+		prior := ""
+		priorAt := ""
+		for _, rec := range verdicts {
+			if rec.Who != who || rec.Head == "" || rec.Head == head || rec.At >= at {
+				continue
+			}
+			if !strings.EqualFold(rec.Verdict, "approve") && !strings.EqualFold(rec.Verdict, "hold") {
+				continue
+			}
+			if rec.At > priorAt {
+				prior, priorAt = rec.Head, rec.At
+			}
+		}
+		if prior != "" {
+			return prior + ".." + head
+		}
+		if baseSHA == "" {
+			return ""
+		}
+		return baseSHA + "..." + head
+	}
+	type span struct{ start, count int }
+	diffCache := make(map[string][2][]span)
+	diffKnown := make(map[string]bool)
+	spansOf := func(rng, path string) ([2][]span, bool) {
+		k := rng + "\x00" + path
+		if known, ok := diffKnown[k]; ok {
+			return diffCache[k], known
+		}
+		var res [2][]span
+		text, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--unified=3", rng, "--", path)
+		if err != nil {
+			diffKnown[k] = false
+			return res, false
+		}
+		parse := func(s string) span {
+			start, count := s, "1"
+			if i := strings.IndexByte(s, ','); i >= 0 {
+				start, count = s[:i], s[i+1:]
+			}
+			a, _ := strconv.Atoi(start)
+			n, _ := strconv.Atoi(count)
+			return span{a, n}
+		}
+		for _, l := range strings.Split(text, "\n") {
+			if !strings.HasPrefix(l, "@@ -") {
+				continue
+			}
+			fields := strings.Fields(l)
+			if len(fields) < 3 {
+				continue
+			}
+			res[0] = append(res[0], parse(strings.TrimPrefix(fields[1], "-")))
+			res[1] = append(res[1], parse(strings.TrimPrefix(fields[2], "+")))
+		}
+		diffCache[k] = res
+		diffKnown[k] = true
+		return res, true
+	}
+	noted := make(map[string]bool)
+	// covered reports whether the reader's range covered side/path:line, and
+	// whether that could be read at all.
+	covered := func(r headReader, head, side, path string, line int) (bool, bool) {
+		rng := rangeOf(r.Who, head, r.At)
+		if rng == "" {
+			return false, false
+		}
+		spans, known := spansOf(rng, path)
+		if !known {
+			return false, false
+		}
+		idx := 1
+		if side == "base" {
+			idx = 0
+		}
+		for _, s := range spans[idx] {
+			if s.count > 0 && line >= s.start && line < s.start+s.count {
+				return true, true
+			}
+		}
+		return false, true
 	}
 
 	var list []*dedupeFinding
@@ -1934,16 +2085,76 @@ func dedupe(args []string, out, errOut io.Writer) int {
 		if answer == "" {
 			answer = "-"
 		}
+		sort.Strings(g.Members)
 		members := strings.Join(g.Members, ",")
 		if members == "" {
 			members = "-"
 		}
-		seen := strings.Join(g.SeenBy, ",")
-		if seen == "" {
-			seen = "-"
+		var heads []string
+		for h := range g.Seen {
+			heads = append(heads, h)
 		}
-		fmt.Fprintf(out, "DEDUPE FINDING id=%s key=%s sev=%s head=%s members=%s seen=%s unreported=- blind=0 dups=%d open=true answer=%s\n",
-			g.ID, g.Key, g.Severity, merge.Short(g.Head), members, seen, g.Dups, answer)
+		sort.Slice(heads, func(a, b int) bool {
+			if headAt[heads[a]] != headAt[heads[b]] {
+				return headAt[heads[a]] > headAt[heads[b]]
+			}
+			return heads[a] < heads[b]
+		})
+		var pairs []string
+		for n, h := range heads {
+			seenViews := g.Seen[h]
+			seenWho := make(map[string]bool)
+			for _, v := range seenViews {
+				who := v
+				if i := strings.IndexByte(v, ':'); i >= 0 {
+					who = v[:i]
+				}
+				seenWho[who] = true
+			}
+			var unreported []string
+			blind := 0
+			for _, r := range readersAt[h] {
+				if seenWho[r.Who] {
+					continue
+				}
+				in, known := covered(r, h, g.Side, g.Path, g.Line)
+				if !known {
+					nk := r.Who + "\x00" + h
+					if !noted[nk] {
+						noted[nk] = true
+						fmt.Fprintf(errOut, "DEDUPE NOTE who=%s head=%s: the range could not be read from the lane's clone; counted unreported, never blind\n", oneline.Field(r.Who), merge.Short(h))
+					}
+					in = true
+				}
+				if in {
+					unreported = append(unreported, r.View)
+				} else {
+					blind++
+				}
+			}
+			seen := strings.Join(seenViews, ",")
+			if seen == "" {
+				seen = "-"
+			}
+			unrep := strings.Join(unreported, ",")
+			if unrep == "" {
+				unrep = "-"
+			}
+			pair := fmt.Sprintf("seen=%s unreported=%s blind=%d", seen, unrep, blind)
+			if n > 0 {
+				pair = fmt.Sprintf("head=%s %s", merge.Short(h), pair)
+			}
+			pairs = append(pairs, pair)
+		}
+		newest := g.Head
+		if len(heads) > 0 {
+			newest = heads[0]
+		}
+		if len(pairs) == 0 {
+			pairs = []string{"seen=- unreported=- blind=0"}
+		}
+		fmt.Fprintf(out, "DEDUPE FINDING id=%s key=%s sev=%s head=%s members=%s %s dups=%d open=true answer=%s\n",
+			g.ID, g.Key, g.Severity, merge.Short(newest), members, strings.Join(pairs, " "), g.Dups, answer)
 	}
 	if *maxFlag > 0 && len(list) > *maxFlag {
 		entryFlag := ""
@@ -1960,8 +2171,9 @@ func dedupe(args []string, out, errOut io.Writer) int {
 	for _, rec := range verdicts {
 		readers[rec.Who] = struct{}{}
 	}
-	baseCount, externalCount, proposedCount := 0, 0, 0
+	baseCount, externalCount, proposedCount, folded := 0, 0, 0, 0
 	for _, item := range findingsMap {
+		folded += item.Dups
 		switch item.RuleKind {
 		case "base":
 			baseCount++
@@ -1972,7 +2184,7 @@ func dedupe(args []string, out, errOut io.Writer) int {
 		}
 	}
 	fmt.Fprintf(out, "DEDUPE OK entry=%s head=%s findings=%d groups=%d folded=%d open=%d base=%d external=%d proposed=%d readers=%d\n",
-		oneline.Field(id), merge.Short(current), len(findingsMap), len(list), 0, len(list), baseCount, externalCount, proposedCount, len(readers))
+		oneline.Field(id), merge.Short(current), len(findingsMap), len(list), folded, len(list), baseCount, externalCount, proposedCount, len(readers))
 	return 0
 }
 
