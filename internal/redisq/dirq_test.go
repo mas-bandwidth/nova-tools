@@ -145,6 +145,79 @@ func TestDirQueuePreChangeFixture(t *testing.T) {
 	}
 }
 
+func TestDirQueueValueMatchingPrefixMarkerRoundTrips(t *testing.T) {
+	// stella's HOLD 7 on #2489 at 24d5bd7c: parseCardFile treated a leading "esc:" or
+	// "v1:" on a value as framing and stripped it, so a legitimate value that happens to
+	// start with either string was corrupted on read. Framing now lives only in the
+	// line-0 marker; a value is never inspected for it.
+	root := t.TempDir()
+	dq := &redisq.DirQueue{Root: root}
+	stream := "nova:queue:test:prefix-collision"
+	id := "card-prefix-1"
+
+	fields := map[string]string{
+		"body":       "esc:literal",
+		"kind":       "v1:tag",
+		"withslash":  `esc:C:\tools\bin`,
+		"plainv1col": "v1:",
+	}
+
+	if _, err := dq.Add(stream, id, fields); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	card, err := dq.Pull(stream)
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+	if card == nil {
+		t.Fatal("Pull returned nil card")
+	}
+	for k, want := range fields {
+		if got := card.Fields[k]; got != want {
+			t.Errorf("field %q corrupted by prefix collision:\ngot:  %q\nwant: %q", k, got, want)
+		}
+	}
+}
+
+func TestDirQueueLegacyValueMatchingPrefixMarkerRoundTrips(t *testing.T) {
+	// Same collision, on the unmarked legacy path: a raw pre-change value that happens
+	// to start with "esc:" or "v1:" must read back byte-for-byte, not stripped.
+	root := t.TempDir()
+	dq := &redisq.DirQueue{Root: root}
+	stream := "nova:queue:test:legacy-prefix-collision"
+	id := "card-legacy-prefix-1"
+
+	streamDir := dq.DirStream(stream)
+	if err := os.MkdirAll(streamDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	rawCardContent := "affinity=v1:pinned-bench\n" +
+		"body=esc:not-actually-escaped\n" +
+		"card=legacy-99\n"
+	cardFile := filepath.Join(streamDir, id+".card")
+	if err := os.WriteFile(cardFile, []byte(rawCardContent), 0o644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	card, err := dq.Pull(stream)
+	if err != nil {
+		t.Fatalf("Pull: %v", err)
+	}
+	if card == nil {
+		t.Fatal("Pull returned nil card for legacy record")
+	}
+	expected := map[string]string{
+		"affinity": "v1:pinned-bench",
+		"body":     "esc:not-actually-escaped",
+		"card":     "legacy-99",
+	}
+	for k, want := range expected {
+		if got := card.Fields[k]; got != want {
+			t.Errorf("legacy field %q corrupted by prefix collision:\ngot:  %q\nwant: %q", k, got, want)
+		}
+	}
+}
+
 func TestDirQueueRejectsEscapedStream(t *testing.T) {
 	root := t.TempDir()
 	dq := &redisq.DirQueue{Root: root}

@@ -216,18 +216,13 @@ func parseCardFile(path string) (map[string]string, error) {
 		if !ok {
 			continue
 		}
+		// The format is decided once, from the line-0 marker, never from a per-value
+		// prefix: a caller-provided field value is free to begin with "esc:" or "v1:"
+		// as ordinary data, and a prefix check here would silently eat it (stella's
+		// HOLD 7 on #2489 at 24d5bd7c). Only escapeValue/unescapeValue -- which never
+		// emit or expect those strings -- decide what a value means.
 		if isEscapedFormat {
-			if strings.HasPrefix(v, "esc:") {
-				fields[k] = unescapeValue(strings.TrimPrefix(v, "esc:"))
-			} else if strings.HasPrefix(v, "v1:") {
-				fields[k] = unescapeValue(strings.TrimPrefix(v, "v1:"))
-			} else {
-				fields[k] = unescapeValue(v)
-			}
-		} else if strings.HasPrefix(v, "esc:") {
-			fields[k] = unescapeValue(strings.TrimPrefix(v, "esc:"))
-		} else if strings.HasPrefix(v, "v1:") {
-			fields[k] = unescapeValue(strings.TrimPrefix(v, "v1:"))
+			fields[k] = unescapeValue(v)
 		} else {
 			fields[k] = v
 		}
