@@ -1550,6 +1550,9 @@ type inboxReading struct {
 	// are still new to the open list (heard is not answered), but they are news the reader
 	// has already taken; `wait --advance` skips them rather than returning on them.
 	HeardNew int
+	// Fresh is the NEW entries themselves -- the whole open list on a full read -- so
+	// `wait --on-note` can wake on a note addressed To: the reader and on nothing else.
+	Fresh []bus.OpenEntry
 	// Changed is how many lane paths the incremental diff named. It is scope.Changed, held
 	// here for a caller that wants to tell a beat/cursor-only change from no change at all.
 	Changed int
@@ -2060,8 +2063,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	}
 	// What this run would show a reader as news; see inboxReading.New.
 	r.New = res.New
+	r.Fresh = res.Fresh
 	if scope.Full {
 		r.New = len(res.Open)
+		r.Fresh = res.Open
 	}
 	for _, e := range res.Fresh {
 		if e.Heard {
@@ -3475,6 +3480,12 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 		// line's presence beat (one a minute, six lines) was a poll with extra steps and cost the
 		// window a turn per beat; --quiet-beats is accepted and changes nothing (Johnny's read).
 		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
+		// --on-note WAKES ON A NOTE ADDRESSED TO: THE CALLER AND ON NOTHING ELSE (#2178,
+		// Stella's hold 6 on #3368). A Cc: note, a receipt or a heard note is data, not a
+		// wake: the tick that brings only those is empty, prints nothing and keeps waiting.
+		if o.onNote {
+			keep = func(r inboxReading) bool { return len(onNoteWakes(r)) > 0 }
+		}
 		// THE BEAT, written before the poll. A waiting line's cursor does not move --
 		// there was nothing to read, so nothing was recorded -- and a line whose cursor
 		// does not move reads asleep to `nova-wake awake`. The BEAT is the file that moves
@@ -3513,6 +3524,14 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, idleExit int, next s
 			continue
 		}
 		if keep(r) {
+			if o.onNote {
+				// The poll already built the --on-note frame: one WAIT OK id= line and the
+				// notes. No listing, no INBOX OPEN frame, no carrying count.
+				fmt.Fprint(stdout, lines)
+				fmt.Fprintf(stdout, "WAIT DONE reason=new rearm=required next=%s\n", next)
+				landBeat()
+				return 0
+			}
 			// Why this wait is not waiting, when the answer is not "a note arrived": the
 			// reader's own switch-day line is drawn after everything this call could see,
 			// so no note written during it would be listed. Telling them costs one line;
@@ -3674,7 +3693,74 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	} else if o.advance && !o.bodies {
 		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, o.noBeat, now, &buf, stderr)
 	}
+	if o.onNote && code == 0 {
+		frame, err := onNoteFrame(o, onNoteWakes(r))
+		if err != nil {
+			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+			return 1, r, "", false
+		}
+		return 0, r, frame, false
+	}
 	return code, r, buf.String(), false
+}
+
+// onNoteWakes is what `wait --on-note` wakes on: the new, unheard notes addressed To: the
+// reader. Cc: notes, receipts, heard notes and unreadable files are on the listing and
+// are not a wake (docs/SPEC-BUS.md: "the wake being To: only").
+func onNoteWakes(r inboxReading) []bus.OpenEntry {
+	var wakes []bus.OpenEntry
+	for _, e := range r.Fresh {
+		if e.Kind == bus.OpenNote && !e.Heard && e.Addr == "to" {
+			wakes = append(wakes, e)
+		}
+	}
+	return wakes
+}
+
+// onNoteFrame is what `wait --on-note` prints when a note arrives, per docs/SPEC-BUS.md:
+// exactly one status line naming the first note -- `WAIT OK id= from= path= bytes=` --
+// and then each note's INBOX NOTE line and body frame, at most --max-notes of them and
+// --max-bytes of body across the return; a body past the budget is left whole for the
+// next wake. Nothing else: no INBOX SCOPE, OPEN or OK frame and no carrying count.
+func onNoteFrame(o inboxOpts, wakes []bus.OpenEntry) (string, error) {
+	var b bytes.Buffer
+	budget := o.maxBytes
+	for i, e := range wakes {
+		if i >= o.maxNotes {
+			break
+		}
+		text, err := os.ReadFile(filepath.Join(o.busDir, filepath.FromSlash(e.Path)))
+		if err != nil {
+			return "", err
+		}
+		n, err := bus.ParseNote(e.Path, string(text))
+		if err != nil {
+			return "", err
+		}
+		body := n.Body
+		if i == 0 {
+			fmt.Fprintf(&b, "WAIT OK id=%s from=%s path=%s bytes=%d\n",
+				oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(e.Path), len(body))
+		}
+		if int64(len(body)) > budget && i > 0 {
+			break
+		}
+		if int64(len(body)) > budget {
+			if _, err := printOpenEntries(&b, []bus.OpenEntry{e}, 1, nil); err != nil {
+				return "", err
+			}
+			fmt.Fprintf(&b, "INBOX BODY OVERSIZE id=%s bytes=%d max-bytes=%d path=%s\n",
+				oneline.Field(dash(e.ID)), len(body), o.maxBytes, oneline.Field(e.Path))
+			break
+		}
+		budget -= int64(len(body))
+		// The INBOX NOTE line and the body frame through the one audited printer the
+		// --bodies page uses, so the verbatim body has one writer in this file.
+		if err := printBodyItem(&b, bus.BodyItem{Path: e.Path, Entry: e, Body: []byte(body)}, nil); err != nil {
+			return "", err
+		}
+	}
+	return b.String(), nil
 }
 
 // hiddenWholeWait reports whether a switch-day line is drawn after every moment this call
