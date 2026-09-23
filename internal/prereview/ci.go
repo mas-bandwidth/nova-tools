@@ -13,8 +13,11 @@ import (
 const ciOK = "ci-ok"
 
 // CheckRun is one check run from the commit's rollup. HeadSHA is the commit
-// the run judged; a run for any other sha is not this head's evidence.
+// the run judged; a run for any other sha is not this head's evidence. ID is
+// the attempt order GitHub assigns: a queued rerun has a higher id and empty
+// timestamps.
 type CheckRun struct {
+	ID          int64
 	Name        string
 	Status      string
 	Conclusion  string
@@ -45,6 +48,7 @@ func ParseCheckRollup(raw []byte) (runs []CheckRun, total int, err error) {
 	var wire struct {
 		TotalCount int `json:"total_count"`
 		CheckRuns  []struct {
+			ID          int64   `json:"id"`
 			Name        string  `json:"name"`
 			Status      string  `json:"status"`
 			Conclusion  *string `json:"conclusion"`
@@ -58,7 +62,7 @@ func ParseCheckRollup(raw []byte) (runs []CheckRun, total int, err error) {
 	}
 	runs = make([]CheckRun, 0, len(wire.CheckRuns))
 	for _, w := range wire.CheckRuns {
-		r := CheckRun{Name: w.Name, Status: w.Status, HeadSHA: w.HeadSHA}
+		r := CheckRun{ID: w.ID, Name: w.Name, Status: w.Status, HeadSHA: w.HeadSHA}
 		if w.Conclusion != nil {
 			r.Conclusion = *w.Conclusion
 		}
@@ -142,7 +146,14 @@ func latestAtHead(runs []CheckRun, head string) map[string]CheckRun {
 	return out
 }
 
+// runAfter reports whether a is a newer attempt than b. The check-run id is
+// the attempt order. A queued rerun has empty started_at and completed_at, so
+// ordering by those timestamps would keep the older success. A fixture that
+// recorded no id still orders by timestamp.
 func runAfter(a, b CheckRun) bool {
+	if a.ID != b.ID {
+		return a.ID > b.ID
+	}
 	return runWhen(a) > runWhen(b)
 }
 

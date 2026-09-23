@@ -1,6 +1,7 @@
 package prereview
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +134,35 @@ func TestLaterCIAttemptIsTheOneThatCounts(t *testing.T) {
 	got := ciCheck(PR{Head: head, Checks: runs})
 	if got.Result != No || !strings.Contains(got.Reason, "BOUNCE") || !strings.Contains(got.Reason, "ci-ok") {
 		t.Fatalf("later failure = %s (%s), want BOUNCE naming ci-ok", got.Result, got.Reason)
+	}
+}
+
+// TestQueuedRerunWithNoTimestampsDoesNotPass. A new attempt can be queued with
+// an empty started_at and completed_at. Its id is the newer attempt. Ranking
+// by timestamp would keep the older success, and a score above pass_above
+// would PASS while that attempt is still pending. Both list orders count.
+func TestQueuedRerunWithNoTimestampsDoesNotPass(t *testing.T) {
+	head := strings.Repeat("e", 40)
+	success := fmt.Sprintf(`{"id":10,"name":%q,"status":"completed","conclusion":"success","head_sha":%q,"started_at":"2026-09-22T00:00:00Z","completed_at":"2026-09-22T00:05:00Z"}`, ciOK, head)
+	queued := fmt.Sprintf(`{"id":11,"name":%q,"status":"queued","conclusion":null,"head_sha":%q,"started_at":null,"completed_at":null}`, ciOK, head)
+	for _, raw := range []string{
+		`{"total_count":2,"check_runs":[` + success + `,` + queued + `]}`,
+		`{"total_count":2,"check_runs":[` + queued + `,` + success + `]}`,
+	} {
+		runs, total, err := ParseCheckRollup([]byte(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if total != 2 || len(runs) != 2 || runs[0].ID == 0 || runs[1].ID == 0 {
+			t.Fatalf("parsed total=%d runs=%+v, want both ids", total, runs)
+		}
+		got := ciCheck(PR{Head: head, Checks: runs})
+		if got.Result != No || !strings.Contains(got.Reason, "still queued") || !strings.Contains(got.Reason, "BOUNCE") {
+			t.Fatalf("queued rerun = %s (%s), want BOUNCE still queued", got.Result, got.Reason)
+		}
+		if v, why := tuningWithCI().Decide(checksClearExceptCI(got), 8, true); v != Bounce {
+			t.Fatalf("queued rerun at score 8: verdict=%s (%s), want BOUNCE", v, why)
+		}
 	}
 }
 
