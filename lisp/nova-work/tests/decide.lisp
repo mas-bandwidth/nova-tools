@@ -209,4 +209,20 @@
     ;; \\.\pipe\ (:186-190).
     (ok (null (session-endpoint-lock-path pipe))
         "a named-pipe endpoint has no <session>.lock file: ~S"
-        (session-endpoint-lock-path pipe))))
+        (session-endpoint-lock-path pipe)))
+  ;; An existing socket reached through a symlinked --session is the SAME
+  ;; endpoint: both spellings key one <session>.lock, in the real socket's own
+  ;; directory, never a second lock beside the alias (:184-185).
+  (let* ((real-dir (namestring (truename (test-temp-dir "e08f02-real"))))
+         (alias-dir (namestring (truename (test-temp-dir "e08f02-alias"))))
+         (real (format nil "~Awork.sock" real-dir))
+         (alias (format nil "~Aalias.sock" alias-dir)))
+    (with-open-file (out real :direction :output :if-exists :supersede
+                              :if-does-not-exist :create))
+    (sb-posix:symlink real alias)
+    (check-string= (concatenate 'string real ".lock")
+                   (session-endpoint-lock-path alias)
+                   "a symlinked --session keys the real socket's .lock")
+    (check-string= (session-endpoint-lock-path real)
+                   (session-endpoint-lock-path alias)
+                   "an alias and its socket share one endpoint lock")))

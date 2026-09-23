@@ -685,10 +685,15 @@ socket exists this is its truename; otherwise the truename of its directory plus
 the file name, so a symlink and a relative spelling resolve to the same endpoint
 (SPEC-WORK.md:184-185)."
   (let* ((merged (merge-pathnames socket-path))
-         (dir (directory-namestring merged))
-         (real-dir (or (ignore-errors (namestring (truename (pathname dir))))
-                       dir)))
-    (concatenate 'string real-dir (file-namestring merged))))
+         (existing (ignore-errors (probe-file merged))))
+    (if existing
+        ;; The socket (or a symlink to it) exists: its truename, so every
+        ;; alias of one live socket keys the same <session>.lock.
+        (namestring existing)
+        (let* ((dir (directory-namestring merged))
+               (real-dir (or (ignore-errors (namestring (truename (pathname dir))))
+                             dir)))
+          (concatenate 'string real-dir (file-namestring merged))))))
 
 (defun session-endpoint-lock-path (session-path)
   "The endpoint's own lock, reconciled before it is taken. Where SESSION-PATH is
