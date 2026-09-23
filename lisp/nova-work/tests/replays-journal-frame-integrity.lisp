@@ -86,13 +86,18 @@ that opens over an altered frame has accepted a record nobody wrote."
                      (ok at "the frame does not carry the author to alter")
                      (concatenate 'string (subseq line 0 at) "\"rowaX\""
                                   (subseq line (+ at 7))))))
-           (let ((bytes (file-byte-count path))
-                 (reason (%reopen-must-refuse path digest "altered record")))
+           ;; Snapshot size AND content before the refusal: an equal-length
+           ;; rewrite would keep the byte count and still destroy the evidence.
+           (let* ((bytes (file-byte-count path))
+                  (sha (file-sha256-hex path))
+                  (reason (%reopen-must-refuse path digest "altered record")))
              (ok (search "checksum" reason)
                  "the refusal is not the checksum's: ~A" reason)
              ;; The file is evidence and is never repaired by being read.
              (check-equal bytes (file-byte-count path)
-                          "the refused journal was truncated or rewritten")))
+                          "the refused journal was truncated")
+             (check-string= sha (file-sha256-hex path)
+                            "the refused journal was rewritten")))
       (ignore-errors (delete-file path))))
   ;; 2. THE LENGTH, declared in the frame header and not in the record, so the
   ;; record itself is untouched and only `:len` disagrees with it.
