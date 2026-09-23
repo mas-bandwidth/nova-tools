@@ -146,7 +146,9 @@ reclaimed; a needed member that is not pinned is a named recovery gap. Returns
   "Verify and materialise one isolated snapshot. Returns (values snapshot line)
 or (values nil refusal); no path text is read, no resolver runs and nothing is
 written outside INTO.
-MAX-BYTES, MAX-DEPTH and MAX-NODES are enforced on the reconstructed state."
+MAX-BYTES bounds the member total; MAX-BYTES, MAX-DEPTH and MAX-NODES bound the
+snapshot text, checked before it is read (REFUSE-OVER-BOUNDS), so an
+over-deep or over-wide snapshot is refused without being parsed."
   (unless (eql 1 (getf manifest :version))
     (return-from load-state (values nil "LOAD FAIL: unsupported manifest version")))
   (when (getf manifest :observations-gone)
@@ -171,6 +173,12 @@ MAX-BYTES, MAX-DEPTH and MAX-NODES are enforced on the reconstructed state."
       (return-from load-state (values nil "LOAD FAIL: missing mandatory member snapshot")))
     (unless (string= (sha256-hex bytes) (getf manifest :digest))
       (return-from load-state (values nil "LOAD FAIL: changed digest")))
+    (handler-case (refuse-over-bounds bytes :max-bytes max-bytes
+                                            :max-depth max-depth :max-nodes max-nodes)
+      (restricted-data-violation (c)
+        (return-from load-state
+          (values nil (format nil "LOAD FAIL: bound exceeded: ~A"
+                              (restricted-data-violation-value c))))))
     (handler-case
         (let ((state (reconstruct-state bytes)))
           (when into (isolation-write into))
