@@ -8,9 +8,9 @@ import (
 )
 
 // RELEASE PROOF: the binary built WITHOUT the swarmtest tag must ignore every one of the
-// five NOVA_SWARM_* injection variables. In the tagged build each of these values would
-// kill or pause a process; in the release build the injection functions are no-ops that
-// never read the environment, so a pool run with all five set to lethal values completes
+// six NOVA_SWARM_* injection variables. In the tagged build each of these values would
+// kill, pause or fake a process; in the release build the injection functions are no-ops that
+// never read the environment, so a pool run with all six set to lethal values completes
 // normally and records no kill and no pause.
 func TestTheReleaseBuildIgnoresTheInjectionVariables(t *testing.T) {
 	if testing.Short() {
@@ -28,6 +28,7 @@ func TestTheReleaseBuildIgnoresTheInjectionVariables(t *testing.T) {
 		"NOVA_SWARM_PAUSEPOINT=before-identify",
 		"NOVA_SWARM_PAUSE_AFTER_ORPHAN=1",
 		"NOVA_SWARM_PAUSE_MARK=" + mark,
+		"NOVA_SWARM_FAKE_SUPERVISOR=never-identifies",
 	}
 	id := b.add("a job the injection variables must not touch\nFAKE-FINDINGS 1\n")
 

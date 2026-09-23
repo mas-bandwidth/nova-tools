@@ -28,3 +28,4 @@ read	read and report
 probe	read and report
 text	read and report
 tone	read and report
+report	read and report

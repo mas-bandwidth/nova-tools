@@ -783,7 +783,9 @@ are not new card admissions.
     before identify, before `aborted.json` and before `exit.json` — a job that
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
-    at its budget, at the runner's group kill, or by `stop`.
+    at its budget, at the runner's group kill, by `stop`, on SIGTERM (which
+    reaps the harness group; default death of the supervisor alone would leave
+    it), or when the pool root disappears.
 19. **The caches are shared per bench, and a finished slot's working bytes are
     reaped.** A native job's toolchain and modules are the same for every card
     under one root, so `native` and the supervisor point the harness child at
@@ -1360,6 +1362,13 @@ replaced), and its `permission.external_directory` allows:
   spellings — the harness's own matcher turns `*` into `.*`, which crosses `/`,
   so `<job>/*` already admits `<job>/scratch/*`; `/**` is written beside it
   because that is the spelling a person reads as "everything under here"; and
+- **every `read_roots` entry of the worker description**, walled or not, with
+  both wildcard spellings and the parent the fence asks about — the same roots
+  the wall's own `--read` list carries. `read_roots` is what a person at the
+  desk declared every job of this worker may read: a bench-local mirror, a
+  corpus, a toolchain under a user directory. The wall is still the real
+  boundary; a SECOND fence that denies what the first one grants can only cost
+  cards, and it cost one whole card and 148 seconds on 2026-09-18 (#1463); and
 - **on a `--no-wall` run only**, every absolute path the card named on a
   `READ:` line, and that path's parent with a `/*` on it, which is what the
   fence asks about for a file. A walled run takes none of them: the WALL owns
@@ -1397,6 +1406,49 @@ Everything else is still `ask`, which in a `run` is a rejection — and a
 rejection is now REPORTED: `native` reads its own capture and carries
 `fence=rejected path=<p>` on its `NATIVE OK` line, which the batch reads and
 scores `ABSTAIN reason=fence`, never `no-result`.
+
+**An unread denial cannot return OK, and it is not a diagnosis either** (issue
+#1465; Stella's HOLD on PR #1478). A `native` run reads its own capture for the
+words a SHELL uses when it is denied a path — `/usr/bin/bash: line 1: <path>:
+Permission denied`, and the dash, zsh and Go `fork/exec` spellings — and a run
+that holds one is **refused**. There is no `NATIVE OK` line at all.
+
+**The path is the whole segment between the shell's own `: ` delimiters**,
+spaces and parentheses included, because those are ordinary pathname
+characters. A grammar that required a token with no spaces in it reopened this
+whole class through `/opt/sdk tool/bin/go`, an everyday absolute path, and a
+path truncated at its first space is one a coordinator cannot act on. What
+keeps the reader off prose is the SHELL at the head of the line, never the
+shape of the path.
+
+**The refusal asserts no cause.** The shell's line names a path and a refusal
+and *not an operation*: a denied exec, a redirection to a path the card may not
+write, and a `cd` into a directory it may not read all print these words, and a
+card can carry on from any of them — an owned `bash` running `: > "$1"` against
+a non-writable directory printed exactly this shape, attempted no program, and
+exited 0. So the line carries what was measured — `step=`, `rc=`, `wall=`,
+`denied_path=`, `job=` and the shell's own line quoted — plus
+`operation=unverified`, and its remedy is a **measurement**: re-run the card's
+own gate against the commit and read its stderr. On a *walled* run the read set
+is offered beside it as **one candidate among the others**, said to be a
+candidate, with a symlinked path resolved to BOTH the launcher's directory and
+the tree it points into, because the kernel checks the grant against the
+resolved target. A run typed `--no-wall` had no sandbox and is told so:
+nothing is attributed to a wall that was not there.
+
+**What this still cannot do.** It cannot bind the verdict to the card's own
+declared gate, because `native` is handed a card as free text and no
+machine-readable declaration of what the gate is or what it returned. Until a
+card declares its gate in a form the tool can read, the honest signal is this
+one: a denial was seen, its operation is unknown, and the disposition is refused
+rather than OK.
+
+This is the ONE refusal that lands after the spend, and it is a refusal rather
+than another token on the OK line because the run it closes carried `rc=0
+sandbox=landlock harness=ok` over a Go card whose `go test` never compiled: the
+card's own `RESULT.md` said so in prose, and a coordinator reading dispositions
+shipped it. Unlike a wall death, it fires **with a published result beside it**
+— the published report is what made the denial invisible.
 
 **A local model is one slot, and it stays off the critical path.** The fault
 behind the silent-harness rule below (issue #591, landed in #604) was a local
@@ -1462,6 +1514,50 @@ gather's own and never a shallower one. The fault that wrote the rule was a loca
 model whose tool calls the harness never parsed (issue #591): no tool ran, nothing
 was written, the child exited 0 and the line said OK. `gather` scores such a card
 `ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
+
+**A card that ended by asking says so in a report, and `RESULT: ASKED` is that
+report's line 1** (issue #2548). A model whose final turn is a question to the
+operator — `Would you like me to proceed with moving RESULT.md into the nested
+repo and finalize the commit?`, canary run 3, 2026-09-22 — publishes nothing and
+is waiting for an answer nobody will type, because the card is unattended. **It
+does not hold its slot**: `opencode run` is non-interactive, it finishes the turn
+and exits 0, and the runtime dogfood of 2026-09-22 measured the whole run at
+5.22 s on hulk and 5.49 s on the Studio. What it leaves behind is a plain
+`no-result` — the token for a model that CHOSE to publish nothing — so a card
+that asked and a card that crashed into silence are one row to every reader.
+So `native` writes the report the card never wrote, at the job root:
+
+```
+RESULT: ASKED <the question, one line, bounded and escaped>
+asked: <label> ended its last turn with a question, published no report and committed nothing; ...
+written-by: nova-swarm native (the card published no report of its own)
+```
+
+**Four conditions, all of them necessary**, each one a different card this must
+not claim: the last line the CHILD wrote in `<job>/harness-output.log` ends with
+`?` once its decoration is trimmed, or opens `(?i)^(would you like|should i|do
+you want|shall i|can you confirm)` — the wall's own `SANDBOX ` lines are skipped
+there exactly as `harness=silent` skips them; the child **exited 0**, because a
+non-zero exit is already `rc=<n>` and a model that asked and then fell over is
+not waiting; **no `RESULT.md`** was found anywhere `gather` looks, because a card
+that published owns its report and a question in its last turn is then prose; and
+**`./repo` holds no commit past its base**, because a model that asked
+rhetorically and went on and committed the work answered its own question. The
+machinery's own ends come first: a card the idle watch ended, a manager
+terminated, or the wall or the harness's own fence stopped is THAT end, whatever
+its last line was.
+
+**The report is evidence of an absence, and never counted as work.** It carries
+no findings head, so it classes `plan-only` and never `ok` or `clean`; it never
+overwrites a report a card published; and the `NATIVE` line is **unchanged** by
+its existence — a card that did nothing but ask still reads `INCOMPLETE
+why=no-result`, because counting a report the machinery wrote would hand the word
+`OK` to a run that produced nothing, which is the fault that made the word earn
+itself (issue #1844). What the report buys is the two readings the absence could
+not carry: a requeue may treat `ASKED` like an idle kill and retry the card once
+on another route, and the ledger can count the questions per model. A bounded
+wait for an ANSWER — the question posted to the bus, one typed reply fed back as
+the next turn — is a separate card and is deliberately not this.
 
 **The wall's `SANDBOX OK` line is a producer's one-line record and `native` reads
 it as one** (issue #572). The wall renders `cwd=<dir>` through the same
@@ -2561,7 +2657,7 @@ takes a lease per card before it runs and releases it after. The seven rules:
 
    ```
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--kind <kind>]
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
    nova-swarm slots list --store <dir>
    ```
@@ -2577,6 +2673,10 @@ takes a lease per card before it runs and releases it after. The seven rules:
    `take` grants by the owner's share from the registry file `<store>/shares.tsv`
    (columns bench, owner, share). It refuses with the holder list when the share is spent,
    and never grants past capacity minus reserve (rows `capacity` and `reserve` in shares.tsv).
+   Card kinds carry a weight charged at take, before any child starts: a schema or
+   fix-red card weighs 4 because it spawns make/cargo/dotnet; a read card weighs 1.
+   A schema card is refused at take when the remaining share fits only a read. A
+   load reading after launch is not the ceiling (#2033).
 4. `nova-swarm slots list --store <dir>` prints who holds what, one line per lease.
 5. Reaping: a lease past until= whose pid is gone is reaped by the next take;
    drift: a pid alive past until= is DRIFT, printed by name, never reaped and never regranted.
@@ -2588,9 +2688,11 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - two owners at their shares cannot exceed capacity;
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
-- a launch without a lease is refused by the launcher.
+- a launch without a lease is refused by the launcher;
+- a schema card is refused at take when the remaining share fits only a read;
+- a live-until lease whose pid is gone is stranded with its label.
 
-A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+demand stays within its share and the total held+demand stays within `capacity` minus `reserve`, demand being `k` times the card kind's admission weight, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease, with `stranded=1` and the label when a live-until lease whose pid is gone is stranded with its label.
 
 **The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
@@ -2598,17 +2700,19 @@ A bench holds **slot leases**: the store is `<store>/slots` with one directory p
 `nova-swarm native --slots-store <dir> --owner <name>` are REQUIRED flags: the run takes
 exactly one lease before any job directory is made, holds it for the run's deadline plus
 two minutes of grace, and releases it on every exit path including a run that failed. A
-take that grants nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=…
-holders=…` line and exits 2, having started nothing.
+take that grants nothing prints one `SLOTS REFUSED owner=… want=<weight> held=… share=… free=…
+holders=…` line and exits 2, having started nothing. The weight is the card kind's admission
+weight, so a schema card on a share that fits only a read is refused before any job directory
+is made.
 
 **A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
 ids it granted — not a count — and a holder hands exactly those back to
 `ReleaseSlotLeasesByID(store, ids, pid)`, which re-reads each lease and leaves it alone
 unless the pid is still the holder's. An owner is a bench and a label is a card's name, and
-two runs that share both — two slots, two benches, a retry — would otherwise each give away
-the other's live seat; a run that refused before it started, on a missing harness say, would
-delete a lease it never took. An id that is already gone is not an error: a release is
-allowed to be late.
+two runs that share both — two slots, two benches, a retry, two dispatchers sharing an
+owner and a task id — would otherwise each give away the other's live seat; a run that
+refused before it started, on a missing harness say, would delete a lease it never took.
+An id that is already gone is not an error: a release is allowed to be late.
 
 `slots release --store <dir> --owner <o> (--label <text> | --all) [--force]` still SELECTS
 by owner and label, because that is what a PERSON at a prompt means by it and a person can
@@ -4088,7 +4192,8 @@ verb, and tests that pin all three by executing them.
    and renamed **before** exit 2, `survivors` counted rather than assumed,
    spawn the harness in its group, hold the
    deadline
-   and the budget sampling (rule 13), write `<job>/exit.json` as the
+   and the budget sampling (rule 13), end on SIGTERM and when the pool root
+   is gone (reaping the harness group), write `<job>/exit.json` as the
    completion evidence, refuse a hand-typed invocation. Tests: the identity
    in the files is the supervisor's own; an identify against a changed slot
    never spawns the harness and leaves `aborted.json` on disk before its

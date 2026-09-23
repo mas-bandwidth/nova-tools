@@ -1311,6 +1311,27 @@ is not the author for the current head; a scoped record is a release of the hold
 nothing more, and the member waits for the unscoped one. `--scope` and `--releases` are grammar
 this reading adds to `nova-merge read` (SPEC-MERGE.md:449), rewritten by #1572 with the code.
 
+**A hold at a head the branch has moved past is released by its holder's later typed verdict at
+the current head** (#2550). Everything above is about a hold that binds to the **current** head,
+and there it stands: a comment releases nothing, only the holder's record does. A hold whose
+`held_at` is a **superseded** head is a different object — it is the last word its author left
+about a commit that is gone — and it is released by a later **typed** verdict from the **same**
+`who` at the current head, in any source. An APPROVE releases it. A new HOLD at the current head
+**replaces** it: the member is still dropped, but by the hold at head, so `held_at` names a commit
+a reader can go and look at instead of a `carried=yes` pointing at nothing. A hold stays carried
+exactly while its author has said nothing at the current head. Four rows fix it: HOLD at A and an
+APPROVE at the current head B — **taken**; HOLD at A and nothing at B — **dropped**, `carried=yes`;
+HOLD at A and a HOLD at B — **dropped** at B, `carried=no`; HOLD at A and an APPROVE at A only
+with the head now B — **dropped**, `carried=yes`, because release keys on the head and never on
+"somebody approved at some point". The `head=` on a typed APPROVE is matched by the same prefix
+rule a typed HOLD's `head=` gets, so an abbreviation releases; and a releasing APPROVE must be the
+**whole line** — a `DISPOSITION` smuggled into a sentence inside a long body is not a verdict —
+while a HOLD keeps the lenient parse, because a rule about smuggling must not fail open on the
+side that stops a merge. An untyped hold-shaped line binds to the current head and has no author
+to match, so it is never carried and this releases none of them. The hurt: on 2026-09-22, 57
+consecutive ticks took the same 16 approved cell pull requests and dropped every one of them on a
+`held_at` the branch had moved past, `members=none`, for 11.5 h with read debt at 0.
+
 **No flag ignores a hold.** There is no `--ignore-hold`, for one hold or for one comment: a hold
 is a no, and stepping over one named member while the gate still claims to read holds is the
 02:43Z hole with a flag. The one waiver is `--no-require-holds --reason <text>`, and it waives the
@@ -1584,7 +1605,7 @@ H3. SPEC-AHEAD: #1624
    monotonic clock around the call alone, and `wall_ms`, from the verb's start to its line. Each
    is absent, never zero, where there was no call or no measurement, by the per-counter presence
    rule. The `ROUTE` and `CLASSIFY` lines carry `ms=<n|->`. `log --summary` prints the median and
-   the 95th percentile per question and per decider. The hurt: the adoption's claim is wall clock
+    the 95th percentile (p95) per question and per decider. The hurt: the adoption's claim is wall clock
    as much as tokens, the spec quotes "about 400 ms" from a trial with "no retained file" (:38-40), and 553
    rows later the log cannot say whether that is true.
 

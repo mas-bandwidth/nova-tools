@@ -22,6 +22,10 @@ window reads one line per cycle.
   cuts a read card per PR, and pulses again — queue first.
 - `nova-pulse width` is the drift alarm: one line, and a non-zero exit when there is pool
   and there are free slots and nothing was launched.
+- `nova-pulse sprint` is the bounded set of work around all of it -- friends and swarm in one
+  `x/y z% -> ~Nh` -- with its own normative text in [SPEC-SPRINT.md](SPEC-SPRINT.md)
+  (nova-tools #2593). It adds no queue, no lease and no heartbeat of its own: a friend is a
+  consumer like a bench, and the refill is the dealer's rule that `fill` calls.
 
 SPEC.md's **Conventions** govern — exit codes, the one-line grammar, the field law,
 `internal/oneline`, `internal/bounded`, no guessed paths — and this file says only what is
@@ -104,7 +108,7 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    directory, never `../scratch`. `cut` refuses a template whose rendered card violates any
    of these — `CUT REFUSED template=<name>: <which>` — because a card that drifts here is a
    card that stalls.
-6. **Text-only templates forbid the build.** `read`, `text` and `tone` carry the line `Do not
+6. **Text-only templates forbid the build.** `read`, `text`, `tone` and `report` carry the line `Do not
    run go build, go test or any toolchain; read and write only`, and `cut` refuses a text
    template that lacks it; `fix`, `replay` and `drift` carry rule 4 of WORKER-CARDS: red
    line then green line, one row per item.
@@ -113,8 +117,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
    beside it is read the same way): one column per model, three rows — a `model` row naming
    each model, then `cost`, a class `zero|flat|metered` with a `usd per Mtok`, and
    `capability`, `read|text|code|replay`. Per
-   card class a model is capable when its capability covers the kind's (`read`, `text` and
-   `tone` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
+   card class a model is capable when its capability covers the kind's (`read`, `text`,
+   `tone` and `report` need `read|text|replay`; `fix` and `drift` need `code`; `replay` needs `replay`),
    and `cut` picks the capable model with the lowest average cost per token — `zero` beats
    `flat` beats `metered`, ties broken by `usd per Mtok` — so routing is mechanical: local is
    zero, Go is flat, Zen is metered. It prints `route=<model> reason=<class>` on its
@@ -879,6 +883,7 @@ closed, remaining by depth, completion by epic) once the tree is the pool (#500)
 ```
 STATUS WIDTH <bench> running=<n> slots=<n> load=<n> headroom=<n>
 STATUS QUEUE pending=<n> gated=<n> launched=<n> done=<n> failed=<n>
+STATUS FAILURES card_fail=<n> gateway=<n>
 STATUS RATE cards_per_hour=<n|-> p50_s=<n|-> p90_s=<n|-> usd_per_card=<x.xxxx|-> parallelism=<n.n|->
 STATUS REMAINING queue=<n> unread_prs=<n> dirty_prs=<n> uncarded_issues=<n> hours=<n>
 STATUS CONTRACTION hour cards=<cut/done> prs=<opened/merged> issues=<filed/closed> verdict=<CONVERGING|EXPANDING> window=<n>h above=1
@@ -932,7 +937,13 @@ files a job writes as it finishes — `usage.tsv`, its harness store
 indexed job and re-reads only the jobs one of them moved for, so a finished job whose
 harness log or store wal keeps moving is never re-opened for it, and a warm tick opens no
 job file and starts no `sqlite3` at all. The class is `RESULT.md`'s verdict (done, abstain,
-blocked), falling back to the usage row's return code when the job wrote none. `run` and
+blocked). An attempt with no model turn that died on a gateway 5xx, or that failed
+with no tokens and no recorded error, is `gateway` — a route death, not a card
+failure. Anything else with no verdict falls back to the usage row's return code
+(done or failed). `status` prints the split as `STATUS FAILURES card_fail=<n>
+gateway=<n>` (and the same two fields on `--oneline`): `card_fail` is abstain,
+blocked and every other failed attempt, and a gateway death increments only
+`gateway`. `QUEUE failed=` stays the count of cards in the failed directory. `run` and
 `harvest` append a finished job to its root's index as they
 fold it, so a job is indexed before the next tick needs it; a root with no index is walked
 once and the index written, and a root that sat still is answered from the index alone. The
@@ -1230,13 +1241,22 @@ one remedy in parentheses.
 ## The card, as `cut` writes it
 
 ```
-RESULT <label> sha=<sha12>
+RESULT: <label> sha=<sha12>
 You are a worker. Job directory only; the TMPDIR the runner already exported, never one of your own; never /tmp, ~ or ..; no stdlib or toolchain source; the deadline is the machinery's: <s> s.
 STEP 1. mkdir -p scratch && git clone -q https://github.com/<owner>/<name>.git . && git checkout -b <branch>
    check: git rev-parse HEAD prints <head>. Else write RESULT.md with line 2 BLOCKED head=<yours> and stop.
 STEP 2..n. <the template's numbered steps, one command per line, one check each>
 STEP last. Write RESULT.md: line 1 exactly the line 1 of this card; line 2 one of DONE, ABSTAIN <why>, BLOCKED <why>; then BRANCH <branch>; REPO <owner>/<name>; then the RESULT template's sections.
 ```
+
+Line 1 carries the colon: `RESULT: ` is SPEC-SWARM's form (SPEC-SWARM.md:969,976) and the one
+form every writer and reader converges on (SPEC-TOOLWORK §5 rule 7; the plain `cut` template
+path, `internal/pulse/cut.go:472`, is the renderer that still follows, by that rule's card).
+**A card of a kind in SPEC-TOOLWORK §5's table carries five typed header lines between the role
+line and `STEP 1`** — `KIND:`, `PATHS:`, `TEST:`, `LEGS:`, `SOURCE:`, and `MODE: explore` with
+`TURNS: <n>` when the card has more than three model steps — so for those kinds `STEP 1` is line
+8 (or 10), inside the fifteen the admission check reads (SPEC-TOOLWORK §5 rule 1). The templates
+of this document that are not kinds in that table keep the shape above: `STEP 1` on line 3.
 
 `<sha12>` is the first twelve hex of the SHA-256 of everything below line 1, so the contract
 line binds the card it heads; the swarm records the same hash at admission and refuses a
@@ -1360,7 +1380,7 @@ of thought no read needs.
 The rules:
 
 1. **`cut-steps-are-the-turn-budget`.** `cut` emits cards whose numbered step count is the
-   turn budget: a read-family card (`read`, `text`, `tone`) takes at most 8 turns, a
+   turn budget: a read-family card (`read`, `text`, `tone`, `report`) takes at most 8 turns, a
    writing-family card (`fix`, `replay`, `drift`) at most 20 turns. A template whose
    rendered card exceeds its budget is `CUT REFUSED template=<name>: <which>` naming the
    rule, and no card is written. The hurt that made it: the 1,434.6M cache-read tokens
@@ -2871,3 +2891,60 @@ connection. Each is seen red first against the mutation its rule names.
     honest (rule 18).
 20. `TestSprintFunnelReadsUnmeasuredSpendAsUnknown` — a wave with no usage rows prints
     `usd_per_useful=-`, never 0.0000 (rule 19).
+
+## Launch: one card, one bench
+
+This verb retires the thirty-three shell scripts of the `rr-*.sh`, `nova-*-runner.sh` and `studiolaunch-*.sh` families, which launch one card on one bench. On 2026-09-20, these scripts comprised three parallel, diverging code paths for Linux, darwin and the studio, where every fix was applied three times and at least one wrongly, causing an outage. `nova-pulse launch` replaces them with one Go code path, one contract, and one test suite.
+
+The verb has two operational forms, discriminated by the singular/plural flag:
+- **Single-card launcher:** `nova-pulse launch --bench <name> --card <file> [--provider <route>]` executes one card on one bench. It is the atomic launch primitive called by the fill loop and by hand (rule 64, `hand-launch-is-launch-card-n`).
+- **Batch admission runner:** `nova-pulse launch --cards <cards.tsv> --root <dir> ...` (the gather mode described under "The verbs", above) enqueues cards across the pool.
+
+Passing both `--card` and `--cards`, or omitting both, is refused: `PULSE REFUSED: specify either --card <file> or --cards <tsv>` (exit 2).
+
+The 9 rules of the single-card launch contract, and the 11 tests it demands:
+
+```
+nova-pulse launch --bench <name> --card <file> [--provider <route>]
+```
+
+1.  **The verb requires a bench, a card, and an optional provider route.** `launch` reads the card file and the bench record named by `--bench`; a missing `--card` or `--bench` is a refusal. A `--provider` route on the command line overrides any route discovered from the bench record. If `--provider` is omitted, `launch` reads the provider route from the bench's own record. This retires the twelve provider-specific launcher scripts (`flash-native-bench.sh`, `dspro-native-bench.sh` and so on), each of which hardcoded one provider route. `TestLaunchRequiresBenchAndCard`, `TestLaunchReadsProviderOverride`.
+
+2.  **The repository is staged from the bench's mirror.** The card's `base-repo` and `base-sha` headers are required. The verb stages the repository from the mirror path declared in the bench's own record, and includes the fixed-path self-heal behaviour of the scripts it replaces. A card that tries to clone a repository from a URL is a lint error and is never launched. This retires the defect from #2383 where cards cloned from GitHub inside the firewall. `TestLaunchStagesRepoFromBenchMirror`, `TestLaunchRefusesCardWithNoBaseRepo`.
+
+3.  **A ten-second preflight runs before the slot lease is taken.** Before starting the native process, `launch` verifies that the harness binary starts and answers a no-op, the staged repo is at `base-sha`, the card's `LEG` toolchain resolves, and the chosen provider answers a one-token ping. Any failure is a refusal, printed with a named cause (`why=preflight` or `why=unreachable`). This retires the failure from #2384 where a broken environment was discovered only after the native process began, wasting a slot. `TestLaunchPreflightRefusesOnFailure`.
+
+4.  **A slot is taken by atomic lease.** `launch` takes one lease from the bench's slot store. If the bench reports no capacity, the launch is refused (`why=capacity`). The lease is held until the native process exits. This retires the hand-rolled capacity probes of `rr-native-bench.sh` and its copies. `TestLaunchTakesAtomicSlotLease`.
+
+5.  **The harness environment is sanitized and bounded.** `OPENCODE_*` variables are forwarded from the environment. `GOMAXPROCS` is set to `2` and the `go test` arguments on the card are amended with `-p 2` to bound parallelism. This retires the defects from #2328 and #2401 where a card's environment was either too sparse (requiring manual grants on darwin) or too wide (consuming a whole bench). `TestLaunchSetsHarnessEnvironment`.
+
+6.  **Per-OS differences are behind a launcher interface.** The concrete launcher implementation is chosen based on the bench record's `OS` field. The interface abstracts the differences between Linux (`/proc`), darwin (`sysctl`) and the studio's local path layout, so the core launch logic is shared. This retires the three parallel, diverging code paths that made fixes so costly. `TestLaunchAbidesPerOSDifferences`.
+
+7.  **A successful start exits 0 with the job id.** On a successful launch, where the native process has started and the harness has acknowledged it, `launch` prints one `LAUNCH STARTED` line with the job id and exits 0. `TestLaunchSuccessPrintsStarted`.
+
+8.  **A pre-launch refusal exits 2 or 3 and hands the card back.** If the launch is refused for any reason before the native process starts — capacity, disk space, a bad name, an unreachable provider, or a failed preflight check — the verb prints one `LAUNCH REFUSED` line with the cause and exits 2 (or 3 for `unreachable`, per #2381). The card is considered "handed back" to the caller, untouched. This retires the ambiguous exit codes of `rr-run.sh` that led to failed jobs being retried as `UNKNOWN`. `TestLaunchRefusesWithTypedExitCode`.
+
+9.  **An ambiguous exit after the start is UNKNOWN.** If the native process starts but fails in a way that the launcher cannot definitively diagnose (e.g., the harness becomes unresponsive after acknowledging the start), the state is considered `UNKNOWN`. The launcher does not raise this; it is the responsibility of the calling machinery to observe this state and act. This clarifies the boundary from #2381. `TestLaunchAmbiguousExitIsHandledByCaller`.
+
+```
+LAUNCH STARTED job=<id> bench=<name> slot=<n> pid=<pid>
+LAUNCH REFUSED why=<capacity|disk|name|unreachable|preflight> reason=<text>
+```
+
+A successful launch exits 0. A pre-launch refusal exits 2 (or 3 for `unreachable`).
+
+### Tests this spec demands
+
+The tests for this verb live in the `internal/pulse` package. They use a fake bench record store, a fake slot lease store, a fake harness and a fake git on PATH. No test opens a real network connection or touches a real forge. Each test is seen red first.
+
+1.  `TestLaunchRequiresBenchAndCard` — refuses to run if `--bench` or `--card` is missing (rule 1).
+2.  `TestLaunchReadsProviderOverride` — a `--provider` flag overrides the bench record's default (rule 1).
+3.  `TestLaunchStagesRepoFromBenchMirror` — stages the repository from the path in the fake bench record, using the card's `base-repo` and `base-sha` (rule 2).
+4.  `TestLaunchRefusesCardWithNoBaseRepo` — refuses a card that is missing the `base-repo` or `base-sha` header (rule 2).
+5.  `TestLaunchPreflightRefusesOnFailure` — injects failures for each preflight step (harness, repo, toolchain, provider) and asserts a refusal with the correct cause (rule 3).
+6.  `TestLaunchTakesAtomicSlotLease` — proves a lease is taken from the fake slot store; asserts refusal when the store reports no capacity (rule 4).
+7.  `TestLaunchSetsHarnessEnvironment` — inspects the environment passed to the fake harness, asserting `OPENCODE_*` variables are forwarded and `GOMAXPROCS` is set (rule 5).
+8.  `TestLaunchAbidesPerOSDifferences` — runs the same launch against three fake benches (Linux, darwin, studio) and confirms the correct OS-specific fakes are called (rule 6).
+9.  `TestLaunchSuccessPrintsStarted` — on a clean run with all fakes succeeding, asserts the `LAUNCH STARTED` line and exit code 0 (rule 7).
+10. `TestLaunchRefusesWithTypedExitCode` — asserts that pre-launch refusals for capacity, disk, etc., produce a `LAUNCH REFUSED` line and the correct exit code (2 or 3) (rule 8).
+11. `TestLaunchAmbiguousExitIsHandledByCaller` — asserts that a process that dies ambiguously after start acknowledges is classified as UNKNOWN without the launcher raising a false refusal (rule 9).

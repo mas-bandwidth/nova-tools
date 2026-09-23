@@ -42,11 +42,14 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
-// It counts the twelve shape rules of docs/WORKER-CARDS.md:23-36 and the four typed-header
+// It counts the twelve shape rules of docs/WORKER-CARDS.md:23-36, the four typed-header
 // tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
-// gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc).
-const cardLintChecks = 16
+// gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
+// and `depends-on` (#2636), which fires only under `--typed`, and the four base checks of
+// internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
+// `deadline-p95` (#2636) -- which fire only under `--base-check`.
+const cardLintChecks = 21
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -83,6 +86,7 @@ var cardLintRemedies = map[string]string{
 	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
 	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
 	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
+	"depends-on":       swarm.CardDependsRemedy,
 }
 
 // THE TYPED HEADER'S FOUR TOKENS JOIN THE SAME TABLE (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -91,11 +95,13 @@ var cardLintRemedies = map[string]string{
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
 func init() {
-	for name, remedy := range swarm.CardHeaderRemedies {
-		if _, clash := cardLintRemedies[name]; clash {
-			panic("nova-swarm lint: two remedies for the rule " + name)
+	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies} {
+		for name, remedy := range table {
+			if _, clash := cardLintRemedies[name]; clash {
+				panic("nova-swarm lint: two remedies for the rule " + name)
+			}
+			cardLintRemedies[name] = remedy
 		}
-		cardLintRemedies[name] = remedy
 	}
 }
 
@@ -360,6 +366,20 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
 	// checked rather than guessed at.
 	trustPath := f.fs.String("trust", "", "")
+	// `--lineup <file>` IS THE SPRINT LINEUP, AND ONLY FOR `--typed` (#2636). The lint has
+	// no lineup of its own. The file is ORDER.tsv's shape — id in the first column, or the
+	// column named id/card/card-id/label, a header that names depends-on skipped — or one
+	// card id per line. With no file an id is not called unknown.
+	lineupPath := f.fs.String("lineup", "", "")
+	// `--base-check` IS THE ASK FOR THE FOUR BASE CHECKS OF A CODING CARD (#2636):
+	// PATHS resolve at base-sha in `--repo` (default the working directory), no STEP
+	// runs `git push` or `gh`, LEG is in the `--legs` fleet table, and DEADLINE is at
+	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
+	// pass: its check draws a finding that says MISSING and names the flag.
+	baseCheck := f.fs.Bool("base-check", false, "")
+	repoDir := f.fs.String("repo", ".", "")
+	legsPath := f.fs.String("legs", "", "")
+	p95Path := f.fs.String("p95", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -407,9 +427,48 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 		trust = t
 	}
+	var lineup swarm.Lineup
+	if *lineupPath != "" {
+		l, err := swarm.ReadLineup(*lineupPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --lineup wants a readable lineup file, one card id per line or a TSV whose id column is the card id (a header row that names depends-on is skipped): %s\n", oneline.Err(err))
+			return 2
+		}
+		lineup = l
+	}
+	bc := swarm.BaseCheck{Repo: *repoDir}
+	if *baseCheck && *legsPath != "" {
+		l, err := swarm.ReadFleetLegs(*legsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --legs wants a readable fleet leg table, one leg per line or a TSV whose first column is the leg: %s\n", oneline.Err(err))
+			return 2
+		}
+		bc.Legs = l
+	}
+	if *baseCheck && *p95Path != "" {
+		p, err := swarm.ReadKindP95(*p95Path)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --p95 wants a readable table of `<kind> <seconds>` rows, the p95 wall of each kind's DONE cards (`*` answers for any kind): %s\n", oneline.Err(err))
+			return 2
+		}
+		bc.P95 = p
+	}
 	findings := lintCard(raw)
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+	}
+	// DEPENDS-ON IS REQUIRED ONLY WHEN THE CARD WAS ASKED TO BE TYPED (#2636). A card
+	// that already carries KIND: is still linted without this key, which is every card
+	// cut before the key existed. `--typed` is the ask.
+	if *typed {
+		for _, hf := range swarm.LintCardDepends(raw, lineup) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
+	}
+	if *baseCheck {
+		for _, hf := range swarm.LintCardBase(raw, bc) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
 	}
 	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
 	// a defect and exits 2, which a caller refuses on; a note is advice and changes no

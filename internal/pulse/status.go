@@ -34,6 +34,7 @@ import (
 type StatusInput struct {
 	Queue          string // the queue directory: pending, launched, done, failed and the state files
 	Roots          string // comma-separated bench roots, the benches in scope
+	ResultsRoot    string // when set, usage.tsv is read from here instead of from Roots (issue #2632)
 	SlotsStores    string // comma-separated bench slot-lease stores to report utilisation for
 	Batches        string // the directory holding the swarm's batch-*.out outputs; empty claims nothing
 	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
@@ -102,7 +103,8 @@ func Status(in StatusInput) int {
 	hourStart := now.Add(-time.Hour)
 
 	roots := splitList(in.Roots)
-	rows := collectUsage(roots)
+	files := loadUsageFiles(statusUsageRoots(in))
+	rows := usageRows(files)
 	queue := readQueue(in.Queue)
 	repo := firstLine(filepath.Join(in.Queue, "REPO"))
 	prs, issues := readGh(repo, in.Timeout) // cached per tick
@@ -118,6 +120,12 @@ func Status(in StatusInput) int {
 
 	fmt.Fprintf(out, "STATUS QUEUE pending=%d gated=%d launched=%d done=%d failed=%d\n",
 		queue.pending, queue.gated, queue.launched, queue.done, queue.failed)
+
+	// Gateway deaths are route failures, not card failures (#2634). QUEUE failed=
+	// stays the count of cards sitting in the failed directory; these two columns
+	// are attempt results.
+	cardFail, gateway := failureColumns(files)
+	fmt.Fprintf(out, "STATUS FAILURES card_fail=%d gateway=%d\n", cardFail, gateway)
 
 	rate := rateOf(rows, dayStart, now)
 	if rate.known {
@@ -323,12 +331,26 @@ func countGated(dir, sub string) int {
 
 func countUngated(dir, sub string) int { return countCards(dir, sub) - countGated(dir, sub) }
 
+// statusUsageRoots is where usage.tsv is read. --results-root, when set, is that
+// place: the job directory is disposable and the rows that survive a sweep live
+// under the results root (issue #2632). Otherwise the benches named by --roots.
+func statusUsageRoots(in StatusInput) []string {
+	if r := strings.TrimSpace(in.ResultsRoot); r != "" {
+		return splitList(r)
+	}
+	return splitList(in.Roots)
+}
+
 // collectUsage reads every bench's usage.tsv rows through the per-root status index
 // (statusindex.go): the first measured row of each file, which is what the rate arithmetic
 // folds. A root is refreshed only for the jobs whose directory mtime moved (#1088).
 func collectUsage(roots []string) []usageRow {
+	return usageRows(loadUsageFiles(roots))
+}
+
+func usageRows(files []usageFile) []usageRow {
 	var rows []usageRow
-	for _, f := range loadUsageFiles(roots) {
+	for _, f := range files {
 		if row, ok := f.first(); ok {
 			rows = append(rows, row)
 		}

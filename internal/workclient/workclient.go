@@ -17,6 +17,11 @@
 // session that writes without ever writing a newline is refused as ErrTooLong
 // at the cap, where before its bytes were buffered whole and the cap was
 // checked against a line that had already been paid for.
+//
+// frame.go carries the spec's v1 framed wire beside this one -- the only wire
+// a listing verb's many ROW/NOTE/MORE answer lines can come home on
+// (nova-tools#1696) -- and its ExchangeWireWithin runs one exchange on
+// whichever of the two wires the session answers.
 package workclient
 
 import (
@@ -130,7 +135,13 @@ func dial(socket string, deadline time.Time) (net.Conn, error) {
 // reply exactly at the cap (the last byte admitted) from the first byte past
 // it.
 func readReply(conn net.Conn, within time.Duration) (string, error) {
-	r := bufio.NewReader(io.LimitReader(conn, replyCap+1))
+	return readLine(bufio.NewReader(io.LimitReader(conn, replyCap+1)), within)
+}
+
+// readLine reads the one reply line from an already-bounded reader, so the
+// wire-sniffing exchange of frame.go can look at the reply's first byte
+// before deciding this is the wire the session answers.
+func readLine(r *bufio.Reader, within time.Duration) (string, error) {
 	line, err := r.ReadString('\n')
 	switch {
 	case err == nil:
