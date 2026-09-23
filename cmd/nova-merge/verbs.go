@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -405,6 +406,9 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	note := f.fs.String("note", "", "")
 	scope := f.fs.String("scope", "", "")
 	releases := f.fs.String("releases", "", "")
+	// --redis names the store the typed line becomes one kind=read event in (#2683).
+	// Without it the lane-branch record is the only truth and nothing else is written.
+	redisAddr := f.fs.String("redis", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -464,6 +468,26 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file),
 			oneline.Escape(oneline.Cap(pushErr.Error(), oneline.TailBytes)))
 		return 1
+	}
+	if *redisAddr != "" {
+		// #2683: the typed line becomes one kind=read event on cards:done, so the 1 s
+		// table's done column is a store read and not a per-tick GitHub call. The
+		// record is pushed -- that is the truth -- so a store that cannot be reached
+		// is a NOTE, never a lost record, and the verb's exit stands.
+		silenceRedis()
+		rdb := deps.Dial(*redisAddr)
+		eventPR := ""
+		if *pr > 0 {
+			eventPR = id
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), f.dur())
+		_, eventErr := emitReadEvent(ctx, rdb, *who, *verdict, *head, eventPR, sub.At)
+		cancel()
+		_ = rdb.Close()
+		if eventErr != nil {
+			fmt.Fprintf(stderr, "READ NOTE the record is pushed and the read event could not be written to the store: %s; the 1 s table's done count reads cards:done, so re-run the same verb with --redis to post it\n",
+				oneline.Err(eventErr))
+		}
 	}
 	if _, _, err := foldInto(*f.lane, st, recs, f.dur()); err != nil {
 		// The record is at the remote tip -- that is what pushed=true means -- so this
