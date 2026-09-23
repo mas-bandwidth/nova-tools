@@ -73,7 +73,8 @@ func cmdVisualize(args []string, stdout, stderr io.Writer) int {
 	if err := json.Unmarshal(raw, &p); err != nil {
 		return refuse(stderr, " visualize", oneline.Err(err))
 	}
-	if err := p.check(); err != nil {
+	idx, err := p.check()
+	if err != nil {
 		return refuse(stderr, " visualize", oneline.Err(err))
 	}
 
@@ -81,14 +82,14 @@ func cmdVisualize(args []string, stdout, stderr io.Writer) int {
 	// is empty when nothing is selected, and then every item shows.
 	marks := map[string]string{}
 	if *selectUID != "" {
-		if !p.holds(*selectUID) {
+		if _, ok := idx.held[*selectUID]; !ok {
 			return refuse(stderr, " visualize", fmt.Sprintf("the selection %s names no item the record holds; a selection is a uid of the pipeline, not a free label", oneline.Field(*selectUID)))
 		}
 		marks[*selectUID] = "self"
-		for uid := range p.reach(*selectUID, false) {
+		for uid := range idx.reach(*selectUID, false) {
 			marks[uid] = "ancestor"
 		}
-		for uid := range p.reach(*selectUID, true) {
+		for uid := range idx.reach(*selectUID, true) {
 			if marks[uid] == "" {
 				marks[uid] = "descendant"
 			}
@@ -141,88 +142,78 @@ func itemLine(stage string, it pipelineItem, mark string) string {
 	return b.String()
 }
 
+// pipelineIndex is the record's one join, built once by check: which stage holds
+// each uid, and the links as edges both ways, so a --select walks ancestors and
+// descendants from the same index instead of rescanning the record per direction.
+type pipelineIndex struct {
+	held map[string]string
+	down map[string]map[string]bool // uid -> where it goes
+	up   map[string]map[string]bool // uid -> where it came from
+}
+
 // check refuses the breaks in the one join before anything is shown: a stage with
 // no name, an item with no uid, a uid two items share, and a link naming an item no
 // stage holds. A view that rendered a dangling label would be the 2026-09-20
-// failure the issue names, so the record joins or the verb refuses.
-func (p pipelineFile) check() error {
-	held := map[string]string{}
+// failure the issue names, so the record joins or the verb refuses. On success it
+// returns the index the view reads: an edge is an item's own To and every From that
+// names it, so a record may spell an edge once and the walk still sees it both ways.
+func (p pipelineFile) check() (pipelineIndex, error) {
+	idx := pipelineIndex{held: map[string]string{}, down: map[string]map[string]bool{}, up: map[string]map[string]bool{}}
 	for _, s := range p.Stages {
 		if s.Stage == "" {
-			return fmt.Errorf("a stage of the record has no name; a column of the view is named or it is not a column")
+			return idx, fmt.Errorf("a stage of the record has no name; a column of the view is named or it is not a column")
 		}
 		for _, it := range s.Items {
 			if it.UID == "" {
-				return fmt.Errorf("an item of stage %s has no uid; the uid is the one key every stage joins on", oneline.Quote(s.Stage))
+				return idx, fmt.Errorf("an item of stage %s has no uid; the uid is the one key every stage joins on", oneline.Quote(s.Stage))
 			}
-			if other, ok := held[it.UID]; ok {
-				return fmt.Errorf("the uid %s is held by stage %s and stage %s alike; two items with one key is a broken join",
+			if other, ok := idx.held[it.UID]; ok {
+				return idx, fmt.Errorf("the uid %s is held by stage %s and stage %s alike; two items with one key is a broken join",
 					oneline.Field(it.UID), oneline.Field(other), oneline.Field(s.Stage))
 			}
-			held[it.UID] = s.Stage
+			idx.held[it.UID] = s.Stage
 		}
 	}
 	for _, s := range p.Stages {
 		for _, it := range s.Items {
 			for _, ref := range it.To {
-				if _, ok := held[ref]; !ok {
-					return fmt.Errorf("the item %s goes to %s, which no stage holds; a link is a join, and a label where a join belongs is the failure the issue names",
+				if _, ok := idx.held[ref]; !ok {
+					return idx, fmt.Errorf("the item %s goes to %s, which no stage holds; a link is a join, and a label where a join belongs is the failure the issue names",
 						oneline.Field(it.UID), oneline.Field(ref))
 				}
+				idx.link(it.UID, ref)
 			}
 			for _, ref := range it.From {
-				if _, ok := held[ref]; !ok {
-					return fmt.Errorf("the item %s came from %s, which no stage holds; a link is a join, and a label where a join belongs is the failure the issue names",
+				if _, ok := idx.held[ref]; !ok {
+					return idx, fmt.Errorf("the item %s came from %s, which no stage holds; a link is a join, and a label where a join belongs is the failure the issue names",
 						oneline.Field(it.UID), oneline.Field(ref))
 				}
+				idx.link(ref, it.UID)
 			}
 		}
 	}
-	return nil
+	return idx, nil
 }
 
-// holds reports whether the record holds the uid.
-func (p pipelineFile) holds(uid string) bool {
-	for _, s := range p.Stages {
-		for _, it := range s.Items {
-			if it.UID == uid {
-				return true
-			}
-		}
+// link records one edge, from -> to, in both directions of the index.
+func (idx pipelineIndex) link(from, to string) {
+	if idx.down[from] == nil {
+		idx.down[from] = map[string]bool{}
 	}
-	return false
+	idx.down[from][to] = true
+	if idx.up[to] == nil {
+		idx.up[to] = map[string]bool{}
+	}
+	idx.up[to][from] = true
 }
 
 // reach walks the links away from the uid, transitively, and returns the uids on the
-// other side: where the item came from, or where it goes. An edge is an item's own
-// To and every From that names it, so a record may spell an edge once and the walk
-// still sees it both ways. The result is a set: the view prints in the record's
-// order, so nothing here needs an order of its own.
-func (p pipelineFile) reach(uid string, forward bool) map[string]bool {
-	edges := map[string]map[string]bool{}
-	link := func(from, to string) {
-		if edges[from] == nil {
-			edges[from] = map[string]bool{}
-		}
-		edges[from][to] = true
-	}
-	for _, s := range p.Stages {
-		for _, it := range s.Items {
-			for _, to := range it.To {
-				if forward {
-					link(it.UID, to)
-				} else {
-					link(to, it.UID)
-				}
-			}
-			for _, from := range it.From {
-				if forward {
-					link(from, it.UID)
-				} else {
-					link(it.UID, from)
-				}
-			}
-		}
+// other side: where the item goes (forward) or where it came from. The result is a
+// set: the view prints in the record's order, so nothing here needs an order of its own.
+func (idx pipelineIndex) reach(uid string, forward bool) map[string]bool {
+	edges := idx.up
+	if forward {
+		edges = idx.down
 	}
 	seen := map[string]bool{uid: true}
 	queue := []string{uid}
