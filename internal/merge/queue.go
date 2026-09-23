@@ -256,7 +256,16 @@ func PutParkWithEvents(lane string, p Park, now time.Time, ev *Events) error {
 	if err != nil {
 		return err
 	}
+	// The age is measured from the PR's standing park record when there is
+	// one (a re-park: how long it has stood set aside), else from p's own
+	// instant. queue.json records no enqueue instant, so a first park reads 0s.
+	since := p
 	_, err = UpdateQueue(lane, s, LockWait, func(q *Queue) error {
+		for _, old := range q.Parked {
+			if old.PR == p.PR && strings.TrimSpace(old.At) != "" {
+				since = old
+			}
+		}
 		q.DropPark(p.PR)
 		q.Parked = append(q.Parked, p)
 		q.Skipped = append(q.Skipped, p.PR)
@@ -266,7 +275,7 @@ func PutParkWithEvents(lane string, p Park, now time.Time, ev *Events) error {
 	if err != nil {
 		return err
 	}
-	ev.Park(ParkReason(p), parkAge(p, now))
+	ev.Park(ParkReason(p), parkAge(since, now))
 	return nil
 }
 
@@ -284,8 +293,9 @@ func ParkReason(p Park) string {
 	return fmt.Sprintf("poison %s in %s failed %d runs", test, pkg, p.Runs)
 }
 
-// parkAge is how long the park record had stood when it was set aside: now
-// minus the record's own instant, or "-" when the record names none.
+// parkAge is how long the park record has stood: now minus the record's own
+// instant, or "-" when the record names none. PutParkWithEvents hands it the
+// PR's standing park record on a re-park, so the age is the time set aside.
 func parkAge(p Park, now time.Time) string {
 	at := strings.TrimSpace(p.At)
 	if at == "" {

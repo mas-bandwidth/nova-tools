@@ -174,3 +174,33 @@ func mergeEnqueueAndGroupEvents(t *testing.T) {
 		t.Fatalf("queue.json park record is not the verdict's: %+v", q.Parked)
 	}
 }
+
+// TestIssue2185ParkAgeFromStandingRecord: a re-park reports the age from the
+// PR's standing park record (how long it has stood set aside), not 0s from
+// the new record's own instant.
+func TestIssue2185ParkAgeFromStandingRecord(t *testing.T) {
+	lane := t.TempDir()
+	if err := Init(lane, LaneConfig{
+		Repo:       "example.invalid/oak/repo",
+		Base:       "dev",
+		LaneBranch: "refs/heads/nova-merge/lane",
+	}); err != nil {
+		t.Fatalf("Init(lane): %v", err)
+	}
+	first := time.Date(2026, 9, 22, 21, 0, 0, 0, time.UTC)
+	if err := PutPark(lane, Park{PR: 77, Test: "TestRefillCounts", Package: "internal/pulse", Runs: 2, At: first.Format(Stamp)}); err != nil {
+		t.Fatalf("PutPark: %v", err)
+	}
+	var buf bytes.Buffer
+	now := first.Add(2 * time.Hour)
+	if err := PutParkWithEvents(lane, Park{PR: 77, Test: "TestRefillCounts", Package: "internal/pulse", Runs: 3, At: now.Format(Stamp)}, now, &Events{Sink: &buf}); err != nil {
+		t.Fatalf("PutParkWithEvents: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(buf.Bytes()), &m); err != nil {
+		t.Fatalf("park line is not one JSON object: %v\n%s", err, buf.String())
+	}
+	if m["event"] != "park" || m["age"] != "2h0m0s" {
+		t.Fatalf("re-park line = %v, want event=park age=2h0m0s", m)
+	}
+}
