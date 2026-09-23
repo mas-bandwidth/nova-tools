@@ -185,7 +185,6 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 // remote command: the TCP connect, the banner or the key exchange failed.
 var preExecRefused = []string{
 	"connection refused",
-	"connection closed by",
 	"connection reset by",
 	"kex_exchange_identification",
 	"no route to host",
@@ -195,8 +194,23 @@ var preExecRefused = []string{
 
 var preExecTimeout = []string{
 	"connection timed out",
-	"operation timed out",
 	"timed out during banner exchange",
+}
+
+// connectPhaseOnly are OpenSSH diagnostics that identify the connect phase
+// (and so mean the remote command never started) only when they carry the
+// client's own "ssh: connect to host ..." prefix. Bare, either message can
+// also be printed once the remote command is already running: a mid-command
+// network drop prints "Connection closed by <host> port 22" with no
+// kex_exchange_identification prefix, and some platforms print "Operation
+// timed out" for a lost keepalive as well as for a failed connect. Treating
+// those bare messages as pre-exec would return the reservations to the pool
+// while the launch may already be under way, dealing the same cards twice
+// (#3061 hold 7); they classify as SSHError instead, so the reconciler's
+// start-ack rule (3.2) keeps the batch dealt.
+var connectPhaseOnly = map[string]string{
+	"connection closed by": SSHRefused,
+	"operation timed out":  SSHTimeout,
 }
 
 // Classify reads an ssh exit and its stderr. Exit 255 with a pre-exec message
@@ -218,6 +232,13 @@ func Classify(exit int, stderr string) string {
 	for _, m := range preExecRefused {
 		if strings.Contains(low, m) {
 			return SSHRefused
+		}
+	}
+	if strings.Contains(low, "connect to host") {
+		for m, state := range connectPhaseOnly {
+			if strings.Contains(low, m) {
+				return state
+			}
 		}
 	}
 	return SSHError
