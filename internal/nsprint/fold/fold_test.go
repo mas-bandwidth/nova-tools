@@ -201,7 +201,9 @@ func TestFoldCostPerLandedPerRoute(t *testing.T) {
 		"FOLD ROUTE sprint=" + s + " route=kimi cards=2 done=1 useful=0 landed=0 usd=0.05 usd_per_useful=- usd_per_landed=- unpriced=1\n",
 		"FOLD ROUTE sprint=" + s + " route=sonnet cards=3 done=3 useful=1 landed=1 usd=0.6 usd_per_useful=0.6 usd_per_landed=0.6 unpriced=0\n",
 		"FOLD CI sprint=" + s + " cards=1 done=1\n",
-		"FOLD SPRINT sprint=" + s + " cards=9 done=7 useful=4 landed=3 usd=2.45 usd_per_useful=0.6125 usd_per_landed=0.816667 unpriced=1 tasks=5 tasks_done=4 receipts=42 useful_min=8\n",
+		// The sprint's spend is unknown while kimi's c8 is unpriced, even
+		// though c8 is neither useful nor landed, so its per-card figures are -.
+		"FOLD SPRINT sprint=" + s + " cards=9 done=7 useful=4 landed=3 usd=2.45 usd_per_useful=- usd_per_landed=- unpriced=1 tasks=5 tasks_done=4 receipts=42 useful_min=8\n",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("missing line %q in\n%s", want, out.String())
@@ -309,6 +311,56 @@ func TestFoldSuppressesPerCardWhenUnpricedCardCounts(t *testing.T) {
 	want := `(route "kimi" :cards 3 :done 2 :useful 1 :landed 1 :usd "0.05" :usd-per-useful "-" :usd-per-landed "-" :unpriced 2)`
 	if !bytes.Contains(body, []byte(want)) {
 		t.Errorf("fold file lacks %q:\n%s", want, body)
+	}
+	if msg := git(t, work, "log", "-1", "--format=%s"); !strings.HasSuffix(msg, "usd per landed -") {
+		t.Errorf("commit subject %q does not suppress usd per landed", msg)
+	}
+}
+
+// An unpriced card that is neither useful nor landed still leaves the line's
+// total spend (the numerator of both ratios) unknown, so a route with a priced
+// useful, landed card and an unpriced failed card prints - for both, on the
+// route line, the sprint line, the fold sexp and the commit subject.
+func TestFoldSuppressesPerCardWhenUnpricedCardIsOutsideTheDenominator(t *testing.T) {
+	_, client, fx := seed(t)
+	ctx := context.Background()
+	s := "s:" + fx.Sprint
+	// c11: a priced, landed kimi card; kimi's c8 stays unpriced and FAILED.
+	if err := client.HSet(ctx, s+":card:c11", map[string]string{
+		"kind": "model", "route": "kimi", "state": "landed", "outcome": "DONE",
+		"repo": "nova-tools", "pr": "111", "head": "cccc1111", "usd": "0.05",
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SAdd(ctx, s+":idx:card:landed", "c11").Err(); err != nil {
+		t.Fatal(err)
+	}
+	work := workRepo(t)
+	var out bytes.Buffer
+	if _, err := fold.Run(ctx, client, opts(fx, work), &out); err != nil {
+		t.Fatalf("fold: %v\n%s", err, out.String())
+	}
+	sp := fx.Sprint
+	for _, want := range []string{
+		"FOLD ROUTE sprint=" + sp + " route=kimi cards=3 done=2 useful=1 landed=1 usd=0.1 usd_per_useful=- usd_per_landed=- unpriced=1\n",
+		"FOLD ROUTE sprint=" + sp + " route=fable cards=4 done=3 useful=3 landed=2 usd=1.8 usd_per_useful=0.6 usd_per_landed=0.9 unpriced=0\n",
+		"FOLD SPRINT sprint=" + sp + " cards=10 done=8 useful=5 landed=4 usd=2.5 usd_per_useful=- usd_per_landed=- unpriced=1 ",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing line %q in\n%s", want, out.String())
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(work, "docs", "roadmaps", "folds", sp+".sexp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`(route "kimi" :cards 3 :done 2 :useful 1 :landed 1 :usd "0.1" :usd-per-useful "-" :usd-per-landed "-" :unpriced 1)`,
+		`(all :cards 10 :done 8 :useful 5 :landed 4 :usd "2.5" :usd-per-useful "-" :usd-per-landed "-" :unpriced 1)`,
+	} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Errorf("fold file lacks %q:\n%s", want, body)
+		}
 	}
 	if msg := git(t, work, "log", "-1", "--format=%s"); !strings.HasSuffix(msg, "usd per landed -") {
 		t.Errorf("commit subject %q does not suppress usd per landed", msg)
