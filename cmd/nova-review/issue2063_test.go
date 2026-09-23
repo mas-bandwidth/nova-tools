@@ -16,7 +16,7 @@ import (
 // which PR at which exact head, and what each reader has said at THAT head, is
 // a record; before this it lived in bus prose and the coordinator's memory.
 // The lab is offline: a bare repository stands in for github.com/test/repo
-// through git's url.insteadOf, the GitHub reviews arrive as --reviews snapshot
+// through the prRemoteURL seam, the GitHub reviews arrive as --reviews snapshot
 // files, and the bus is a directory of notes carrying typed READ/ASK lines.
 func TestIssue2063(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
@@ -83,7 +83,11 @@ func TestIssue2063(t *testing.T) {
 	lane := filepath.Join(dir, "lane")
 	repo := filepath.Join(lane, merge.RepoDir)
 	gitAt(dir, "clone", "-q", gh, repo)
-	gitAt(repo, "config", "url."+gh+".insteadOf", "https://github.com/test/repo.git")
+	// The lane's forge remote is the local bare repository: the endpoint mocked
+	// with a local fake, so no real host stands on the CI path (#2863).
+	prevRemote := prRemoteURL
+	prRemoteURL = func(string) string { return gh }
+	t.Cleanup(func() { prRemoteURL = prevRemote })
 	st := &merge.State{
 		Version: merge.Version, Repo: "test/repo", Base: base, LaneBranch: "lane",
 		PRs: []*merge.Entry{{PR: 1945, NeedsRead: "yes"}, {PR: 1901, NeedsRead: "yes"}},
@@ -99,6 +103,12 @@ func TestIssue2063(t *testing.T) {
 	note("01-ask.md", "Rowan", "Wed Sep 23 00:59:00 UTC 2026", "ASK #1901 security Stella")
 	note("02-stella.md", "Stella", "Wed Sep 23 01:02:03 UTC 2026", "READ #1945 "+head1+" APPROVE scope=security")
 	note("03-rowan.md", "rowan", "Wed Sep 23 01:04:05 UTC 2026", "READ #1945 "+head1+" APPROVE")
+	// The bus is shared: prose that starts with "Read", a malformed line naming
+	// no pull request, and typed lines about a PR this lane does not hold are
+	// stepped over, never a refusal of this lane's ledger (Emma's HOLD, #2863).
+	// The stranger's note has no Date line, which only a line that is ours needs.
+	must(os.WriteFile(filepath.Join(bus, "00-stranger.md"), []byte("From: Pax\nTo: Rowan\nSubject: s\n\n"+
+		"Read the spec first, then the diff.\nREAD #9999 deadbeef APPROVE\nASK #9999 vibes Pax\nREAD it later\n"), 0o644))
 
 	snapshot := func(name string, v any) string {
 		t.Helper()
@@ -231,5 +241,14 @@ func TestIssue2063(t *testing.T) {
 	waiting = runReads("--waiting-on", "rowan")
 	if !strings.Contains(waiting, "READS WAITING who=rowan none") || strings.Contains(waiting, "id=1945") {
 		t.Errorf("the author's own read never enters the author's queue:\n%s", waiting)
+	}
+
+	// A mistyped line about a PR the lane holds is still a refusal: silently
+	// dropping a friend's verdict on this lane is what the ledger closes.
+	note("04-typo.md", "Stella", "Wed Sep 23 01:06:00 UTC 2026", "READ #1945 "+short1+" APPROVE")
+	out.Reset()
+	errb.Reset()
+	if code := run(readArgs(), &out, &errb); code != 2 || !strings.Contains(errb.String(), "READS REFUSED") || !strings.Contains(errb.String(), "04-typo.md body line 1") {
+		t.Errorf("a mistyped READ on held PR 1945 must refuse naming the note and line: exit %d stderr %s", code, errb.String())
 	}
 }

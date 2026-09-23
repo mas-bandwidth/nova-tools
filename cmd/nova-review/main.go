@@ -461,6 +461,14 @@ func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
 	return string(b), nil
 }
 
+// prRemoteURL is the forge remote a PR's head and base are fetched from, derived from
+// the lane's --repo. It is a variable only so a unit test can point it at a local bare
+// repository -- the endpoint mocked with a local fake, never a real host on the CI path
+// (TestNoRealNetworkHostsOnTheCIPath, nova-tools #2863).
+var prRemoteURL = func(hostRepo string) string {
+	return fmt.Sprintf("https://github.com/%s.git", hostRepo)
+}
+
 // fetchEntryHead fetches the entry's current head into the lane's clone: the pull request's
 // `pull/<n>/head` for a PR, the branch itself for a branch, then reads the fetched commit
 // back out of FETCH_HEAD. The fetch is the verb's one way to learn a head the remote moved
@@ -475,7 +483,7 @@ func fetchEntryHead(ctx context.Context, repo string, pr int, branch, hostRepo s
 	remote := "origin"
 	if pr > 0 {
 		refspec = fmt.Sprintf("pull/%d/head", pr)
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = prRemoteURL(hostRepo)
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, refspec); err != nil {
 		return "", fmt.Errorf("fetching %q from %q: %w", refspec, remote, err)
@@ -491,7 +499,7 @@ func fetchBase(ctx context.Context, repo string, pr int, base, hostRepo string) 
 	remote := "origin"
 	refOut := "refs/remotes/origin/" + base + "^{commit}"
 	if pr > 0 {
-		remote = fmt.Sprintf("https://github.com/%s.git", hostRepo)
+		remote = prRemoteURL(hostRepo)
 		refOut = "FETCH_HEAD"
 	}
 	if _, err := gitOut(ctx, repo, "fetch", remote, base); err != nil {

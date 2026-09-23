@@ -234,9 +234,13 @@ func validRole(r string) bool {
 // and ASK line. A note that does not parse is skipped — naming those is
 // nova-bus's job — but a typed line that is ours and mistyped is a refusal,
 // because silently dropping a friend's verdict is the failure this ledger
-// exists to close. Reads and asks naming pull requests the lane does not hold
-// are stepped over: the bus is shared and not every note is about this lane.
-func scanBusTypedLines(dir string) (map[int][]ledgerRead, map[int][]ledgerAsk, error) {
+// exists to close. A line is ours only when its second field is #<pr> and the
+// lane holds that pull request (held). Every other line that merely starts
+// with READ or ASK — prose ("Read the spec first"), a line about another
+// lane's PR, a malformed line naming no PR — is stepped over: the bus is
+// shared, and one stranger's typo must not refuse this lane's whole ledger
+// (Emma's HOLD on #2863).
+func scanBusTypedLines(dir string, held map[int]bool) (map[int][]ledgerRead, map[int][]ledgerAsk, error) {
 	des, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, nil, err
@@ -276,9 +280,19 @@ func scanBusTypedLines(dir string) (map[int][]ledgerRead, map[int][]ledgerAsk, e
 			if len(f) == 0 {
 				continue
 			}
+			isRead, isAsk := strings.EqualFold(f[0], "READ"), strings.EqualFold(f[0], "ASK")
+			if !isRead && !isAsk {
+				continue
+			}
+			if len(f) < 2 {
+				continue
+			}
+			if pr, perr := typedPR(f[1]); perr != nil || !held[pr] {
+				continue
+			}
 			where := fmt.Sprintf("%s body line %d", de.Name(), i+1)
 			switch {
-			case strings.EqualFold(f[0], "READ"):
+			case isRead:
 				if strings.TrimSpace(note.Header.From) == "" {
 					return nil, nil, fmt.Errorf("%s: a typed READ line in a note with no From line names no reader", where)
 				}
@@ -291,7 +305,7 @@ func scanBusTypedLines(dir string) (map[int][]ledgerRead, map[int][]ledgerAsk, e
 					return nil, nil, fmt.Errorf("%s: %w; got %q", where, perr, oneline.Cap(trimmed, 120))
 				}
 				reads[pr] = append(reads[pr], ledgerRead{Who: note.Header.From, Verdict: verdict, Scope: scope, Head: sha, At: at, Source: "bus"})
-			case strings.EqualFold(f[0], "ASK"):
+			case isAsk:
 				at, err := noteAt()
 				if err != nil {
 					return nil, nil, err
@@ -686,7 +700,13 @@ func reads(args []string, out, errOut io.Writer) int {
 	var busReads map[int][]ledgerRead
 	var busAsks map[int][]ledgerAsk
 	if *busDir != "" {
-		busReads, busAsks, err = scanBusTypedLines(*busDir)
+		held := map[int]bool{}
+		for _, e := range st.Entries() {
+			if e.IsPR() {
+				held[e.PR] = true
+			}
+		}
+		busReads, busAsks, err = scanBusTypedLines(*busDir, held)
 		if err != nil {
 			return readsRefuse(errOut, err.Error())
 		}
