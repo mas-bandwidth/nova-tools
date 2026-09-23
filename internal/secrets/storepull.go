@@ -289,6 +289,11 @@ func keyV1PublicBlob(b []byte) ([]byte, error) {
 		if priv.err != nil || !ok || "ecdsa-sha2-"+curveName != typ {
 			return nil, fmt.Errorf("its ECDSA private half is malformed")
 		}
+		// The scalar is an unbounded mpint in the file; FillBytes panics when it does not fit, so a
+		// corrupt or hostile key is refused here rather than crashing the caller.
+		if size := ecdhScalarSize[curveName]; d.Sign() <= 0 || d.BitLen() > 8*size {
+			return nil, fmt.Errorf("its ECDSA private half is malformed: the scalar does not fit %s", curveName)
+		}
 		sk, err := curve.NewPrivateKey(d.FillBytes(make([]byte, ecdhScalarSize[curveName])))
 		if err != nil {
 			return nil, fmt.Errorf("its ECDSA private half is malformed: %w", err)

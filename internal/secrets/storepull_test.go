@@ -286,3 +286,69 @@ func containsLine(lines []string, want string) bool {
 	}
 	return false
 }
+
+// TestStorePullKeyRefusesAMalformedKeyWithoutPanicking is Stella's hold on #3240 at 31113798:
+// the OpenSSH ECDSA parser took the private scalar as an unbounded mpint and FillBytes panics
+// when it does not fit the curve's scalar width, so a corrupt or hostile key file crashed the
+// caller instead of being refused. Every case here is an openssh-key-v1 file whose private
+// section is malformed; each must come back as an error, never a panic.
+func TestStorePullKeyRefusesAMalformedKeyWithoutPanicking(t *testing.T) {
+	wide := func(n int) []byte {
+		b := make([]byte, n)
+		for i := range b {
+			b[i] = 0x7f
+		}
+		return b
+	}
+	// A syntactically valid uncompressed point is not needed: the scalar is refused first.
+	point := append([]byte{0x04}, make([]byte, 64)...)
+	cases := []struct {
+		name    string
+		typ     string
+		private [][]byte
+	}{
+		{"nistp256 scalar of 33 bytes", "ecdsa-sha2-nistp256", [][]byte{[]byte("nistp256"), point, wide(33)}},
+		{"nistp256 scalar of 4096 bytes", "ecdsa-sha2-nistp256", [][]byte{[]byte("nistp256"), point, wide(4096)}},
+		{"nistp384 scalar of 49 bytes", "ecdsa-sha2-nistp384", [][]byte{[]byte("nistp384"), point, wide(49)}},
+		{"nistp521 scalar of 67 bytes", "ecdsa-sha2-nistp521", [][]byte{[]byte("nistp521"), point, wide(67)}},
+		{"nistp256 empty scalar", "ecdsa-sha2-nistp256", [][]byte{[]byte("nistp256"), point, nil}},
+		{"rsa with every integer zero", "ssh-rsa", [][]byte{nil, nil, nil, nil, nil, nil}},
+		{"rsa with an oversized exponent", "ssh-rsa", [][]byte{wide(256), wide(9), wide(256), nil, wide(128), wide(128)}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "id_malformed")
+			writeOpenSSHKeyFile(t, path, c.typ, c.private...)
+			var err error
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Fatalf("a malformed %s key panicked the parser instead of being refused: %v", c.typ, r)
+					}
+				}()
+				_, err = privateKeyPublicBlob(path)
+			}()
+			if err == nil {
+				t.Fatalf("a malformed %s key was accepted", c.typ)
+			}
+		})
+	}
+}
+
+// writeOpenSSHKeyFile writes an unencrypted openssh-key-v1 file whose private section carries typ
+// and then the given fields, verbatim, so a test can build a key ssh-keygen would never write.
+func writeOpenSSHKeyFile(t *testing.T, path, typ string, fields ...[]byte) {
+	t.Helper()
+	section := []byte{1, 2, 3, 4, 1, 2, 3, 4}
+	section = append(section, testWire(append([][]byte{[]byte(typ)}, append(fields, []byte("x@y"))...)...)...)
+	for i := byte(1); len(section)%8 != 0; i++ {
+		section = append(section, i)
+	}
+	body := []byte("openssh-key-v1\x00")
+	body = append(body, testWire([]byte("none"), []byte("none"), nil)...)
+	body = binary.BigEndian.AppendUint32(body, 1)
+	body = append(body, testWire(testWire([]byte(typ)), section)...)
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "OPENSSH PRIVATE KEY", Bytes: body}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
