@@ -80,6 +80,36 @@ func TestTheGateTakesAMemberWhoseCarriedHoldTheSameFriendApprovedAtHead(t *testi
 	contains(t, stdout, "dropped=none")
 }
 
+// nova-tools #2615 follow-up: the same-friend match is case-insensitive end to end
+// through `nova-merge batch`, not only in the fold. Measured 2026-09-22 20:14Z, lane
+// land-1615: BATCH DROP #2587 held who=johnny though the pull request carried a typed
+// `who=johnny` APPROVE at head, because the HOLD comment had been typed `who=Johnny`.
+func TestTheGateTakesAMemberWhoseCarriedHoldWasReleasedByADifferentlyCasedApprove(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	revFile := testReviewerFile(t, l.dir, carriedHoldReviewers2550)
+	head := l.heads[1]
+
+	comments := commentJSON2550(t, []struct{ Body, At string }{
+		{Body: "DISPOSITION who=Emma head=" + supersededHead2550 + " verdict=HOLD score=4/10\nsome finding.",
+			At: "2026-09-21T21:35:02Z"},
+		{Body: "DISPOSITION who=emma head=" + head + " verdict=APPROVE score=10/10", At: "2026-09-22T01:48:00Z"},
+	})
+	l.host.SetRawVerdicts(1, comments, "[]")
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-2615case", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "b2615case"), "--base", "dev", "--timeout", "5m",
+		"--reviewers", revFile)
+
+	if exit != 0 {
+		t.Fatalf("the gate went red over a case-mismatched HOLD/APPROVE from the same friend: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	absent(t, stderr, "BATCH DROP #1 ")
+	absent(t, stderr, "carried=yes")
+	contains(t, stdout, "members=1")
+	contains(t, stdout, "dropped=none")
+}
+
 // The same fixture with the APPROVE taken away: the hold is still the last word its
 // author left, and the gate must still drop the member and still say carried=yes. The
 // fix releases a hold a friend answered, never a hold nobody answered.

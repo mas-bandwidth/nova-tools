@@ -88,6 +88,8 @@ func TestNativeStillAcceptsAnOrdinaryLabel(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	var errOut bytes.Buffer
 	_, code := nativeRun(nativeRunConfig{
 		binary: bin, model: "fake/fake-model", label: "card-1.a_b",
