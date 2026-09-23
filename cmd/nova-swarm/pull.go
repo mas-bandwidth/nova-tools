@@ -44,9 +44,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,7 +89,8 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	lastSteal := f.fs.String("last-steal", "", "")
 	// Section 7 (backpressure and idle): the four probe numbers, read, never probed.
 	cores := f.fs.Int("cores", -1, "")
-	load1 := f.fs.Int("load1", -1, "")
+	// load1 is a load average, read as the float nova-wake probe --here prints.
+	load1 := f.fs.Float64("load1", -1, "")
 	freeGB := f.fs.Int("free-gb", -1, "")
 	memFreeGB := f.fs.Int("memfree-gb", -1, "")
 	running := f.fs.Int("running", 0, "")
@@ -108,9 +111,16 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	model := f.fs.String("model", "", "")
 	container := f.fs.String("container", "", "")
 	once := f.fs.Bool("once", false, "")
+	// SPEC-FLEET-KUBE Part 2: the per-bench puller that takes one card and creates its Job.
+	submit := f.fs.Bool("submit", false, "")
+	jobs := f.fs.String("jobs", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	// The Kubernetes puller (SPEC-FLEET-KUBE Part 2) is the shape whenever --submit is named.
+	if *submit {
+		return pullSubmit(f, *bench, *worker, *cores, *load1, *image, *runner, *jobs, stdout, stderr)
 	}
 	// Batching (section 6) is the shape whenever any of its own flags is present; it is
 	// asked first because it shares --queue with the affinity pull of section 4.
@@ -185,7 +195,7 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// Backpressure (section 7) is the shape whenever any probe number is present; without
 	// one, --bench and --worker are section 2's per-bench queue pull.
 	if *cores >= 0 || *load1 >= 0 || *freeGB >= 0 || *memFreeGB >= 0 || *running != 0 {
-		return pullBackpressure(f, *bench, *worker, *cores, *load1, *freeGB, *memFreeGB, *running, stdout, stderr)
+		return pullBackpressure(f, *bench, *worker, *cores, loadWhole(*load1), *freeGB, *memFreeGB, *running, stdout, stderr)
 	}
 	return pullBench(f, *bench, *worker, *steal, *capacity, *lastSteal, stdout, stderr, now)
 }
@@ -607,4 +617,69 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// loadWhole rounds a load average up to the whole number section 7's integer line reads.
+func loadWhole(load1 float64) int {
+	if load1 < 0 {
+		return -1
+	}
+	return int(math.Ceil(load1))
+}
+
+// pullSubmit is SPEC-FLEET-KUBE Part 2's puller: load1 is read from the flag (nova-wake
+// probe --here prints it); the one card taken has its Job written to --jobs, the k3s
+// auto-deploy manifests directory.
+func pullSubmit(f *flags, bench, worker string, cores int, load1 float64, image, runner, jobs string, stdout, stderr io.Writer) int {
+	f.want(bench, "bench", "the bench root holding queue/lanes/ and taken/")
+	f.want(worker, "worker", "this puller's name, written on every card it takes")
+	f.want(image, "image", "the container image every card's Job runs")
+	f.want(runner, "runner", "the command the Job runs on the taken card, handed PULL_CARD")
+	f.want(jobs, "jobs", "the directory the Job manifest is written to, the k3s manifests directory on a bench")
+	if cores <= 0 {
+		f.add(fmt.Sprintf("--cores is required and is 1 or more, got %d; the load line reads it, refusing to guess", cores))
+	}
+	if load1 < 0 {
+		f.add(fmt.Sprintf("--load1 is required and is 0 or more, got %g; read it from nova-wake probe --here, refusing to guess", load1))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	res, err := swarm.PullSubmit(swarm.PullSubmitInput{
+		Bench:  bench,
+		Worker: worker,
+		Cores:  cores,
+		Load1:  load1,
+		Image:  image,
+		Runner: runner,
+		Submit: func(name string, job swarm.KubeJob) error { return writeJobManifest(jobs, name, job) },
+	})
+	if err != nil {
+		return refuse(stderr, " pull", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	card, job := res.Card, res.Job
+	if card == "" {
+		card, job = "-", "-"
+	}
+	fmt.Fprintf(stdout, "PULL SUBMIT bench=%s worker=%s declined=%t card=%s job=%s headroom=%g\n",
+		oneline.Field(filepath.Base(bench)), oneline.Field(worker), res.Declined,
+		oneline.Field(card), oneline.Field(job), res.Headroom)
+	return 0
+}
+
+// writeJobManifest writes the Job as <jobs>/<name>.yaml (JSON is YAML) by a temp file and a
+// rename, so k3s never applies a half-written manifest.
+func writeJobManifest(dir, name string, job swarm.KubeJob) error {
+	raw, err := json.MarshalIndent(job, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, "."+name+".tmp")
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, name+".yaml"))
 }

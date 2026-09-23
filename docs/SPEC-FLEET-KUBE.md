@@ -240,6 +240,12 @@ Each test is red before the work and names what it proves.
 - `a-card-admitted-twice-is-refused-by-its-guid` — after a puller fails between the decrement and
   the Job, the retry charges one slot and not two, and a second take of the same `guid` already
   held is refused before a Job is created.
+- `a-puller-takes-one-card-by-atomic-rename-and-enforces-the-capacity-line` — `nova-swarm
+  pull --submit` (one replica) takes one card by atomic rename (`rename(<name>.card,
+  taken/<worker>-<name>.card)`), so two pullers cannot take one card because the rename decides;
+  each Job requests `cpu: 1`, `memory: 2Gi`, `ephemeral-storage: 2Gi` with `limits.memory: 2Gi`
+  against the 25 GiB reserved floor, and the puller declines to submit while
+  `cores*1.5 - load1 <= 0` (`nova-wake probe --here`); the test runs against a fake queue directory.
 
 ## Tests this spec demands
 
