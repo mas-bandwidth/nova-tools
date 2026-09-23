@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -500,6 +501,114 @@ func TestCleanupAtCompletionPreservesSourceWhenMoveFails(t *testing.T) {
 		}
 		if string(got) != wantContent {
 			t.Fatalf("source file %s content changed: got %q, want %q", relPath, string(got), wantContent)
+		}
+	}
+}
+
+// TestCleanJobStorageRefusesOutsideSlotPathBeforeAnyRename proves CleanJobStorage validates
+// containment under slotDir BEFORE it mutates anything. Stella's HOLD 6 at 57a9211a: the old
+// code renamed jobDir to a ".deleting-*" sibling first and only asked safepath.RemoveUnder
+// whether that staged path was under slotDir afterward, so an out-of-slot directory could be
+// renamed (mutated) in its real parent before the refusal was ever raised. jobDir here is a
+// normal directory, outside slotDir, that AssertNotProtectedStoragePath does not catch (it is
+// not a cache or a mirror) -- only the new pre-rename containment check can refuse it.
+func TestCleanJobStorageRefusesOutsideSlotPathBeforeAnyRename(t *testing.T) {
+	root := t.TempDir()
+	slotDir := filepath.Join(root, "001")
+	outsideDir := filepath.Join(root, "002", "jobs", "card-1")
+	if err := os.MkdirAll(slotDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(outsideDir, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("do not touch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := swarm.CleanJobStorage(outsideDir, filepath.Join(slotDir, "tmp", "x"), slotDir, root, "")
+	if err == nil {
+		t.Fatalf("CleanJobStorage succeeded on a jobDir outside slotDir; expected refusal")
+	}
+	var refused *safepath.Refused
+	if !errors.As(err, &refused) {
+		t.Fatalf("expected a *safepath.Refused containment refusal, got %v", err)
+	}
+
+	// The directory must still exist under its ORIGINAL name: a validate-before-mutate
+	// refusal never renames anything, so there must be no ".deleting-*" sibling either.
+	if _, err := os.Stat(outsideDir); err != nil {
+		t.Fatalf("outsideDir %s was renamed or removed despite refusal: %v", outsideDir, err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel in outsideDir was destroyed by refused clean: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Dir(outsideDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".deleting-") {
+			t.Fatalf("found staged %q next to outsideDir; a rename happened before the containment refusal", e.Name())
+		}
+	}
+}
+
+// TestCleanJobStorageRefusesSymlinkedParentBeforeAnyRename proves the same validate-before-
+// mutate ordering when it is not jobDir itself that is a symlink (the existing Lstat check
+// already covers that) but an ANCESTOR of jobDir: slotDir/jobs/linked is a symlink to a
+// directory outside slotDir, so jobDir = slotDir/jobs/linked/card-2 is syntactically under
+// slotDir but resolves, once the symlinked ancestor is followed, to somewhere else entirely.
+// Stella's HOLD 6 named exactly this: "a path reached through a symlinked parent" must be
+// refused before any rename, not discovered afterward.
+func TestCleanJobStorageRefusesSymlinkedParentBeforeAnyRename(t *testing.T) {
+	root := t.TempDir()
+	slotDir := filepath.Join(root, "001")
+	elsewhere := filepath.Join(root, "elsewhere")
+	realOutsideDir := filepath.Join(elsewhere, "card-2")
+	if err := os.MkdirAll(filepath.Join(slotDir, "jobs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(realOutsideDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(realOutsideDir, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("do not touch"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	linkedAncestor := filepath.Join(slotDir, "jobs", "linked")
+	if err := os.Symlink(elsewhere, linkedAncestor); err != nil {
+		t.Fatal(err)
+	}
+
+	// jobDir is syntactically under slotDir/jobs/linked/card-2, and card-2 itself is an
+	// ordinary directory (not a symlink) -- only its ancestor "linked" is.
+	jobDir := filepath.Join(linkedAncestor, "card-2")
+
+	err := swarm.CleanJobStorage(jobDir, filepath.Join(slotDir, "tmp", "x"), slotDir, root, "")
+	if err == nil {
+		t.Fatalf("CleanJobStorage succeeded on a jobDir reached through a symlinked ancestor; expected refusal")
+	}
+	var refused *safepath.Refused
+	if !errors.As(err, &refused) {
+		t.Fatalf("expected a *safepath.Refused containment refusal, got %v", err)
+	}
+
+	if _, err := os.Stat(realOutsideDir); err != nil {
+		t.Fatalf("realOutsideDir %s was renamed or removed despite refusal: %v", realOutsideDir, err)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("sentinel behind symlinked ancestor was destroyed by refused clean: %v", err)
+	}
+	entries, err := os.ReadDir(elsewhere)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".deleting-") {
+			t.Fatalf("found staged %q under the symlink target; a rename happened before the containment refusal", e.Name())
 		}
 	}
 }

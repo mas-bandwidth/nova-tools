@@ -334,13 +334,22 @@ func CleanJobStorage(jobDir, tmpDir, slotDir, root, benchHome string) error {
 			if fi.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("%w: jobDir is a symlink: %s", safepath.ErrUnsafe, jobDir)
 			}
-			// Atomic rename to staging under the same directory
-			parent := filepath.Dir(jobDir)
-			base := filepath.Base(jobDir)
+			// Resolve and validate containment BEFORE any mutation. A path reached
+			// only through a symlinked ancestor resolves outside slotDir here and is
+			// refused before a single byte moves; the old code renamed first and let
+			// RemoveUnder discover the escape afterward, by which point the rename had
+			// already moved the real (possibly out-of-slot) directory.
+			resolved, err := safepath.ResolvedUnder(jobDir, slotDir)
+			if err != nil {
+				return fmt.Errorf("jobDir %s: %w", jobDir, err)
+			}
+			// Atomic rename to staging under the same, now-validated, directory
+			parent := filepath.Dir(resolved)
+			base := filepath.Base(resolved)
 			staged := filepath.Join(parent, fmt.Sprintf(".deleting-%s-%d", base, time.Now().UnixNano()))
-			if err := os.Rename(jobDir, staged); err != nil {
+			if err := os.Rename(resolved, staged); err != nil {
 				// Fallback to direct safepath removal if rename fails
-				if err := safepath.RemoveUnder(slotDir, jobDir); err != nil {
+				if err := safepath.RemoveUnder(slotDir, resolved); err != nil {
 					return fmt.Errorf("removing jobDir %s: %w", jobDir, err)
 				}
 			} else {
@@ -357,11 +366,16 @@ func CleanJobStorage(jobDir, tmpDir, slotDir, root, benchHome string) error {
 			if fi.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("%w: tmpDir is a symlink: %s", safepath.ErrUnsafe, tmpDir)
 			}
-			parent := filepath.Dir(tmpDir)
-			base := filepath.Base(tmpDir)
+			// Same validate-before-mutate ordering as jobDir above.
+			resolved, err := safepath.ResolvedUnder(tmpDir, slotDir)
+			if err != nil {
+				return fmt.Errorf("tmpDir %s: %w", tmpDir, err)
+			}
+			parent := filepath.Dir(resolved)
+			base := filepath.Base(resolved)
 			staged := filepath.Join(parent, fmt.Sprintf(".deleting-%s-%d", base, time.Now().UnixNano()))
-			if err := os.Rename(tmpDir, staged); err != nil {
-				if err := safepath.RemoveUnder(slotDir, tmpDir); err != nil {
+			if err := os.Rename(resolved, staged); err != nil {
+				if err := safepath.RemoveUnder(slotDir, resolved); err != nil {
 					return fmt.Errorf("removing tmpDir %s: %w", tmpDir, err)
 				}
 			} else {
