@@ -133,3 +133,64 @@
           "the capacity refusal did not name the bound: ~A" line))
     (check-equal 1 (nova-work::capture-input-count stage)
                  "the refused new identity was staged anyway")))
+
+(deftest "e09-f01-01-capture-repeat-intake-at-byte-bound" "docs/SPEC-WORK.md:7569"
+    "expected=repeat-intake-of-a-staged-identity-succeeds-when-staged-bytes-are-at-the-bound;a-genuinely-new-identity-over-the-byte-bound-still-refuses"
+  ;; Input count stays well below its limit; only the staged-byte bound is full.
+  (let ((stage (nova-work::make-capture-stage
+                :limits '(:staged-inputs 8 :staged-bytes 256 :retained-results 4))))
+    ;; Fill the byte bound exactly with one input.
+    (multiple-value-bind (ok line)
+        (nova-work::capture-stage-input stage :id "issue-7" :kind :issue
+                                        :expected-revision 7 :bytes 256
+                                        :provider "github"
+                                        :repository "acme/widget"
+                                        :issue "7"
+                                        :url "https://github.com/acme/widget/issues/7"
+                                        :remote-revision "rev-1")
+      (ok ok "the first issue did not stage: ~A" line))
+    (check-equal 1 (nova-work::capture-input-count stage)
+                 "the input count is not 1 after the first intake")
+    (check-equal 256 (nova-work::capture-stage-bytes stage)
+                 "the staged bytes are not at the declared bound of 256")
+    ;; Re-intake of the same identity at a full byte bound stages no new
+    ;; bytes, so it must succeed and update in place.
+    (multiple-value-bind (ok line)
+        (nova-work::capture-stage-input stage :id "issue-7" :kind :issue
+                                        :expected-revision 8 :bytes 256
+                                        :provider "github"
+                                        :repository "acme/widget"
+                                        :issue "7"
+                                        :url "https://github.com/acme/widget/issues/7#comment-3"
+                                        :remote-revision "rev-2")
+      (ok ok "repeat intake at the byte bound was refused: ~A" line)
+      (ok (search "github/acme/widget#7" line)
+          "the repeat intake at the byte bound does not carry the stable identity: ~A" line))
+    (check-equal 1 (nova-work::capture-input-count stage)
+                 "repeat intake at the byte bound grew the staged input count")
+    (check-equal 256 (nova-work::capture-stage-bytes stage)
+                 "repeat intake at the byte bound changed the staged-byte sum")
+    (let ((staged (find "issue-7" (nova-work::capture-stage-inputs stage)
+                        :key #'nova-work::capture-input-id :test #'equal)))
+      (check-string= "https://github.com/acme/widget/issues/7#comment-3"
+                     (nova-work::capture-input-url staged)
+                     "repeat intake at the byte bound did not update the URL")
+      (check-string= "rev-2" (nova-work::capture-input-remote-revision staged)
+                     "repeat intake at the byte bound did not update the remote revision"))
+    ;; Control: a genuinely new identity over the byte bound still refuses,
+    ;; although the input count is below its limit.
+    (multiple-value-bind (ok line)
+        (nova-work::capture-stage-input stage :id "issue-9" :kind :issue
+                                        :expected-revision 1 :bytes 1
+                                        :provider "github"
+                                        :repository "acme/widget"
+                                        :issue "9"
+                                        :url "https://github.com/acme/widget/issues/9"
+                                        :remote-revision "rev-1")
+      (ok (not ok) "a genuinely new identity was staged past the byte bound")
+      (ok (search "STAGE FAIL: staged bytes over the bound" line)
+          "the byte refusal did not name the bound: ~A" line))
+    (check-equal 1 (nova-work::capture-input-count stage)
+                 "the refused new identity was staged anyway")
+    (check-equal 256 (nova-work::capture-stage-bytes stage)
+                 "the refused new identity changed the staged-byte sum")))
