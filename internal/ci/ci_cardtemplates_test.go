@@ -114,6 +114,41 @@ func TestCardTemplateAcceptsThePortableSpellings(t *testing.T) {
 	}
 }
 
+// 2b. The `readlink -f` exception is a fallback attached to THAT invocation.
+// Hiding stderr is not a fallback (stock macOS readlink still fails and the
+// result is empty), and a `||` after the substitution closes, after a `;`, or
+// after a later command belongs to something else. Each of these is refused;
+// the attached forms after them are not.
+func TestCardTemplateReadlinkFallbackMustBeAttached(t *testing.T) {
+	refused := []string{
+		"p=$(readlink -f \"$f\" 2>/dev/null)",
+		"p=$(readlink -f \"$f\" 2>/dev/null); [ -n \"$p\" ] || exit 1",
+		"p=$(readlink -f \"$f\") && echo \"$p\" || echo none",
+		"readlink -f \"$f\" | head -1 || true",
+		"test -e \"$f\" || true; readlink -f \"$f\"",
+		"a=$(readlink -f x || echo x); b=$(readlink -f y)",
+	}
+	for _, line := range refused {
+		root := cardTree(t, "templates", "rl.md", "STEP 1. "+line+"\n")
+		res := checkTree(t, root, "templates")
+		if got := spells(res); strings.Join(got, ",") != "readlink_f" {
+			t.Errorf("%q: spells = %v, want [readlink_f]", line, got)
+		}
+	}
+	accepted := []string{
+		"p=$(readlink -f \"$f\" || printf '%s' \"$f\")",
+		"p=$(readlink -f \"$f\" 2>/dev/null || printf '%s' \"$f\")",
+		"p=$(readlink -f \"$(command -v go)\" 2>&1 || command -v go)",
+	}
+	for _, line := range accepted {
+		root := cardTree(t, "templates", "rl.md", "STEP 1. "+line+"\n")
+		res := checkTree(t, root, "templates")
+		if res.Refused() != 0 {
+			t.Errorf("%q: refused %v, want none", line, spells(res))
+		}
+	}
+}
+
 // 3. A darwin-only command is refused the same way a linux-only one is: the
 // rule is "one of the estate's platforms", not "not linux". A card dealt to
 // hulk has no diskutil.

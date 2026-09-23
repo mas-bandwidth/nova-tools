@@ -105,8 +105,21 @@ type cardTemplateRule struct {
 	only    string
 	pattern *regexp.Regexp
 	unless  *regexp.Regexp
-	remedy  string
+	// fallback, when it is set, is checked per invocation instead of per
+	// line: the text right after EACH pattern match must match it (it is
+	// anchored at the match's end), so a fallback must belong to the command
+	// it rescues. A `||` after an unrelated `;`, `)`, pipe or `&&` does not
+	// count, and neither does `2>/dev/null`, which hides the failure but does
+	// not replace the empty result.
+	fallback *regexp.Regexp
+	remedy   string
 }
+
+// attachedOrFallback is what a `|| <fallback>` looks like when it belongs to
+// the command just matched: anything but a command separator, a pipe, `&`
+// or a closing paren (a whole `$(...)` argument and a `2>&1` are allowed),
+// then `||`.
+var attachedOrFallback = regexp.MustCompile(`^(?:[^;|&()\n]|\$\([^()]*\)|[0-9]?>&[0-9])*\|\|`)
 
 // cardTemplateRules is the list, and it GROWS: every card that dies on a bench
 // for a spelling reason adds a row here, so the next card cannot. (The
@@ -148,9 +161,9 @@ var cardTemplateRules = []cardTemplateRule{
 	},
 	{
 		name: "readlink_f", only: "linux",
-		pattern: regexp.MustCompile(`\breadlink\s+-f\b`),
-		unless:  regexp.MustCompile(`\|\||2>/dev/null`),
-		remedy:  "readlink -f is GNU; use `cd \"$(dirname \"$p\")\" && pwd -P`, or give it a `|| ` fallback",
+		pattern:  regexp.MustCompile(`\breadlink\s+-f\b`),
+		fallback: attachedOrFallback,
+		remedy:   "readlink -f is GNU; use `cd \"$(dirname \"$p\")\" && pwd -P`, or give this readlink its own `|| ` fallback (2>/dev/null only hides the failure)",
 	},
 	{
 		name: "stat_c", only: "linux",
@@ -306,6 +319,9 @@ func scanCardTemplate(rel, src string) []CardTemplateFinding {
 			if rule.unless != nil && rule.unless.MatchString(text) {
 				continue
 			}
+			if rule.fallback != nil && everyMatchHasFallback(rule, text) {
+				continue
+			}
 			out = append(out, CardTemplateFinding{
 				File:   rel,
 				Line:   i + 1,
@@ -317,6 +333,18 @@ func scanCardTemplate(rel, src string) []CardTemplateFinding {
 		}
 	}
 	return out
+}
+
+// everyMatchHasFallback reports whether every invocation the rule's pattern
+// finds on the line is followed by its own fallback. One bare invocation on a
+// line that also carries a rescued one is still refused.
+func everyMatchHasFallback(rule cardTemplateRule, text string) bool {
+	for _, m := range rule.pattern.FindAllStringIndex(text, -1) {
+		if !rule.fallback.MatchString(text[m[1]:]) {
+			return false
+		}
+	}
+	return true
 }
 
 // boundCardTemplateLine caps the text a finding carries.

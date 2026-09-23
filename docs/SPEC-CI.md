@@ -1466,8 +1466,11 @@ card`` for `gnu_time`.
 it knows the spellings that have hurt us, not every difference between GNU and
 BSD userland. It is line-oriented and literal — a command assembled from
 variables, or spelt across two lines, is not seen — and a rule whose line also
-names its portable other half (`nproc` beside `hw.ncpu`, `readlink -f` beside a
-`||` fallback) is not refused, because that IS the portable spelling. A `.tsv`
+names its portable other half (`nproc` beside `hw.ncpu`, `readlink -f` with its
+own `||` fallback) is not refused, because that IS the portable spelling. The
+`readlink -f` fallback is checked per invocation: the `||` must follow that
+`readlink -f` before any `;`, `)`, pipe or `&&`, and `2>/dev/null` alone is
+refused, since it hides the failure but leaves the result empty. A `.tsv`
 beside the templates is a table and is not read. Prose that merely discusses a
 spelling is refused like any other line: a template is not the place to write
 about commands it does not run.
