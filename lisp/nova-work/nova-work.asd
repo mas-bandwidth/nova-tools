@@ -107,4 +107,5 @@
                  (:file "tests/issue-2338")
                  (:file "tests/issue-1695")
                 (:file "tests/replays-e02-operations")
-                (:file "tests/criterion-e02-f04-01")))
+                (:file "tests/criterion-e02-f04-01")
+                (:file "tests/issue-2358")))
