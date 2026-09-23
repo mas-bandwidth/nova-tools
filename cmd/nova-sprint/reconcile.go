@@ -16,17 +16,19 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 func init() {
 	register(Verb{
 		Name:    "reconcile",
-		Summary: "run the reconciler: hold lease:reconciler, one pass per second (exit 2 held, 3 fenced, 6 no Redis)",
+		Summary: "run the reconciler: hold lease:reconciler, one pass per second (exit 1 --once duty error, 2 held, 3 fenced, 6 no Redis)",
 		Run:     runReconcile,
 	})
 }
@@ -85,7 +87,8 @@ func productionDuties(st *store.Store) ([]reconcile.Duty, []string, error) {
 
 // runReconcile takes the lease or refuses, then passes until SIGTERM/SIGINT
 // (release, exit 0) or until another instance fences it (exit 3, no release:
-// the lease is no longer ours). --once runs one pass and releases.
+// the lease is no longer ours). --once runs one pass and releases, then exits
+// 1 when any duty errored. Every duty error is printed with the duty's name.
 func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("reconcile")
 	redisAddr := fs.String("redis", "", "")
@@ -133,9 +136,10 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 
 	fmt.Fprintf(out, "DUTIES %s\n", strings.Join(names, ","))
 
+	named := &namedDuties{errOut: errOut}
 	loop := &reconcile.Loop{
 		Lease:   lease,
-		Duties:  duties,
+		Duties:  named.wrap(duties, names),
 		OnError: func(err error) { fmt.Fprintf(errOut, "nova-sprint reconcile: pass: %v\n", err) },
 	}
 	if *once {
@@ -158,5 +162,64 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 		return refuse(errOut, "reconcile", "release: "+err.Error())
 	}
 	fmt.Fprintf(out, "RELEASED reconcile instance=%s\n", lease.Instance())
+	if *once && named.failed() {
+		// --once is a probe: a duty error is its answer, not a pass note
+		// (#3321: the deal pass failed every card and --once exited 0).
+		return 1
+	}
 	return 0
+}
+
+// namedDuties wraps each duty so its error reaches stderr under the duty's
+// name, not only proc:reconciler err (nova-tools #3321: Loop.OnError sees pass
+// errors, never duty errors). A duty's error is printed when it first appears
+// or changes, so a long-running loop does not repeat it every second. A fence
+// passes through untouched: the loop stops on it.
+type namedDuties struct {
+	errOut io.Writer
+	mu     sync.Mutex
+	last   map[string]string // duty name -> its last error text ("" when clean)
+	any    bool              // any duty errored in any pass
+}
+
+func (n *namedDuties) wrap(duties []reconcile.Duty, names []string) []reconcile.Duty {
+	n.last = map[string]string{}
+	out := make([]reconcile.Duty, len(duties))
+	for i, d := range duties {
+		d, name := d, names[i]
+		out[i] = func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+			c, err := d(ctx, l)
+			n.note(name, err)
+			return c, err
+		}
+	}
+	return out
+}
+
+func (n *namedDuties) note(name string, err error) {
+	if errors.Is(err, reconcile.ErrFenced) {
+		return
+	}
+	text := ""
+	if err != nil {
+		text = oneline.Escape(err.Error())
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if err != nil {
+		n.any = true
+	}
+	if n.last[name] == text {
+		return
+	}
+	n.last[name] = text
+	if err != nil {
+		fmt.Fprintf(n.errOut, "nova-sprint reconcile: duty %s: %s\n", name, text)
+	}
+}
+
+func (n *namedDuties) failed() bool {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.any
 }
