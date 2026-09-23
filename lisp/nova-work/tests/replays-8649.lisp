@@ -269,3 +269,122 @@
               "savepoint list prints the attempt verdict=failed")
           (ok (search (format nil "stage=~(~A~)" stage) (savepoint-list s))
               "savepoint list names the failed stage"))))))
+
+;;; ------------------------------------------------------------------
+;;; E10-F04-03                                  SPEC-WORK.md:7228-7229
+;;; Stage (3): an authorised real repository for read-only capture,
+;;; reconciled against the captured records. Stage (4): an import into a
+;;; disposable destination with the originals untouched, exported, loaded
+;;; in a fresh engine, independently compared, repeated and resumed, with
+;;; every gap inspected. The pilot ran for real against the private
+;;; sandbox mas-bandwidth/nova-pilot (coordinator ruling 2026-09-23
+;;; 1:35 PM ET) via tests/pilots/E10-F04-03-run.sh; this test verifies
+;;; the receipt it recorded. (Renamed from #2390's duplicate
+;;; TestE10F04RunTheAuthorizedReadOnly, which lives in replays-8643.)
+;;; ------------------------------------------------------------------
+
+(defparameter *e10-f04-03-receipt*
+  "tests/pilots/E10-F04-03-nova-pilot.sexp")
+
+(defun %read-pilot-receipt ()
+  (let ((path (asdf:system-relative-pathname :nova-work/tests *e10-f04-03-receipt*)))
+    (when (probe-file path)
+      (with-open-file (in path :direction :input :external-format :utf-8)
+        (let ((*read-eval* nil)) (read in))))))
+
+(defun %pilot-inventory (records)
+  (mapcar (lambda (r) (inventory-record (getf r :id) (getf r :kind)
+                                        :original (getf r :original)
+                                        :mapping (getf r :mapping)))
+          records))
+
+(defun %pilot-receipt-verdict (receipt)
+  "Verify a pilot receipt: authorised repository, GET-only, originals
+untouched, disposable import reconciled, repeated and resumed identically,
+no gap. Returns (values okp line)."
+  (flet ((no (why) (return-from %pilot-receipt-verdict
+                     (values nil (format nil "PILOT FAIL: ~A" why)))))
+    (unless receipt (no "no receipt recorded"))
+    (let ((dest (getf receipt :destination))
+          (calls (getf receipt :calls)))
+      (unless (equal "mas-bandwidth/nova-pilot" (getf receipt :repository))
+        (no (format nil "unauthorised repository ~S" (getf receipt :repository))))
+      (unless calls (no "no reads recorded"))
+      (let ((bad (find-if-not (lambda (c) (equal "GET" (first c))) calls)))
+        (when bad (no (format nil "mutation call ~A ~A" (first bad) (second bad)))))
+      (unless (eql 0 (getf receipt :mutations)) (no "mutation count is not zero"))
+      (unless (and (stringp (getf receipt :source-before))
+                   (= 64 (length (getf receipt :source-before)))
+                   (string= (getf receipt :source-before) (getf receipt :source-after)))
+        (no "source changed across the pilot"))
+      (unless (getf receipt :refs) (no "no refs captured"))
+      (unless (eq :temp-dir (getf dest :kind)) (no "destination is not disposable"))
+      (unless (and (getf dest :tree)
+                   (equal (getf dest :tree) (getf dest :repeat-tree))
+                   (equal (getf dest :tree) (getf dest :resume-tree)))
+        (no "repeat or resume differs from the first import"))
+      (when (getf dest :gaps) (no (format nil "gaps ~S" (getf dest :gaps))))
+      (multiple-value-bind (okp line)
+          (reconcile-inventory (%pilot-inventory (getf receipt :captured))
+                               (%pilot-inventory (getf dest :records)))
+        (unless okp (no line))
+        (unless (equal line (getf receipt :disposition))
+          (no (format nil "recorded disposition ~S is not ~S"
+                      (getf receipt :disposition) line)))
+        (values t line)))))
+
+(deftest "TestE10F04PilotReceiptOnNovaPilot" "docs/SPEC-WORK.md:7228-7229"
+    "expected=real-pilot-receipt-recorded;get-only;originals-untouched;disposable-import-reconciled;repeat-and-resume-identical;no-gaps;tampering-refused"
+  (let* ((receipt (%read-pilot-receipt))
+         (captured (getf receipt :captured))
+         (records (getf (getf receipt :destination) :records)))
+    (ok receipt "the E10-F04-03 pilot receipt is recorded at ~A" *e10-f04-03-receipt*)
+    (multiple-value-bind (okp line) (%pilot-receipt-verdict receipt)
+      (ok okp "the recorded pilot verifies: ~A" line)
+      (ok (search "INVENTORY OK" line) "the reconciliation disposition is published: ~A" line))
+    (ok (find :issues captured :key (lambda (r) (getf r :kind)))
+        "the pilot captured real issues")
+    ;; independent comparison in this engine: the destination's records hash
+    ;; to the same canonical bytes as the capture.
+    (flet ((by-id (rs) (sort (copy-list (%pilot-inventory rs)) #'string<
+                             :key (lambda (r) (getf r :id)))))
+      (check-string= (sha256-hex (canonical-string (by-id captured)))
+                     (sha256-hex (canonical-string (by-id records)))
+                     "the loaded destination compares equal to the capture"))
+    ;; the captured counts drive the read-only intake: no source mutation, and
+    ;; the disposable destination receives every captured issue.
+    (let* ((n-issues (count :issues captured :key (lambda (r) (getf r :kind))))
+           (n-comments (count :comments captured :key (lambda (r) (getf r :kind))))
+           (source (make-recording-adapter
+                    :inventory (list :issues n-issues :comments n-comments)))
+           (destination (list :applied 0)))
+      (apply-plan source destination (dry-run-capture source))
+      (check-equal 0 (length (adapter-mutation-calls source))
+                   "the replayed intake called no source mutation")
+      (check-equal (count :issues records :key (lambda (r) (getf r :kind)))
+                   (getf destination :applied)
+                   "the replayed import applies every issue the destination holds"))
+    ;; tampering with the receipt is refused by name.
+    (flet ((tampered (key value)
+             (let ((r (copy-tree receipt))) (setf (getf r key) value) r)))
+      (dolist (case (list (list (tampered :calls (cons '("POST" "repos/x/issues")
+                                                       (getf receipt :calls)))
+                                "mutation call POST")
+                          (list (tampered :source-after (make-string 64 :initial-element #\0))
+                                "source changed")
+                          (list (tampered :repository "mas-bandwidth/nova-tools")
+                                "unauthorised repository")
+                          (list (tampered :destination
+                                          (let ((d (copy-tree (getf receipt :destination))))
+                                            (setf (getf d :records) (rest (getf d :records)))
+                                            d))
+                                "count mismatch")
+                          (list (tampered :destination
+                                          (let ((d (copy-tree (getf receipt :destination))))
+                                            (setf (getf d :resume-tree) "0")
+                                            d))
+                                "repeat or resume differs")
+                          (list nil "no receipt recorded")))
+        (multiple-value-bind (okp line) (%pilot-receipt-verdict (first case))
+          (ok (not okp) "a tampered receipt is refused: ~A" (second case))
+          (ok (search (second case) line) "the refusal names ~A: ~A" (second case) line))))))
