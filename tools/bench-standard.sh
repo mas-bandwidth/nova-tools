@@ -291,6 +291,29 @@ if [ -d "$seatdir" ]; then
     seatkey="$k"
   done
 fi
+# Exactly one seat key per owner prefix (SPEC-SECRETS.md dogfooding item 6):
+# the owner is the key name before its first "-" (rowan-claude and
+# rowan-codex are both owner rowan). Two keys for one owner is a lost key
+# still trusted or an undeclared grant, named by owner. Portable to bash 3.2
+# (no associative arrays).
+if [ "$nkeys" -gt 1 ]; then
+  owners=""
+  for k in "$seatdir"/*.key; do
+    [ -e "$k" ] || continue
+    kn="$(basename "$k" .key)"
+    owners="$owners${kn%%-*}
+"
+  done
+  # Heredoc, not a pipe, so drift() counts in this shell.
+  while read -r n owner; do
+    [ -n "$owner" ] || continue
+    if [ "$n" -gt 1 ]; then
+      drift "seat owner=$owner keys=$n want=1 in $seatdir"
+    fi
+  done <<OWNERS
+$(printf '%s' "$owners" | sort | uniq -c)
+OWNERS
+fi
 if [ "$nkeys" != "1" ]; then
   drift "seat keys=$nkeys want=1 in $seatdir"
 else
