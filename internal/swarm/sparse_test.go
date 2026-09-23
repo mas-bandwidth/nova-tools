@@ -133,7 +133,8 @@ func TestPrepareStagesASparseJobClone(t *testing.T) {
 }
 
 // A missing in-module import is not an empty dependency set. Staging must
-// refuse rather than check out PATHS with that dependency omitted.
+// refuse rather than check out PATHS with that dependency omitted, and the
+// destination directory itself must not exist afterward.
 func TestSparseCheckoutRefusesAMissingInModuleImport(t *testing.T) {
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
@@ -154,6 +155,9 @@ func TestSparseCheckoutRefusesAMissingInModuleImport(t *testing.T) {
 	err := StageJobTree(src, dest, card)
 	if err == nil || !strings.Contains(err.Error(), "example.com/s10absent/pkg/absent") {
 		t.Fatalf("StageJobTree err = %v, want the missing in-module import refused", err)
+	}
+	if _, statErr := os.Stat(dest); !os.IsNotExist(statErr) {
+		t.Fatalf("staging refused (%v) but destination %s exists (stat %v)", err, dest, statErr)
 	}
 	named := filepath.Join(dest, "pkg", "named", "named.go")
 	if _, statErr := os.Stat(named); !os.IsNotExist(statErr) {
