@@ -40,17 +40,65 @@ limits; a queue that would grow past one refuses rather than growing
   (inputs '())
   (results '())
   (limits *capture-stage-limits*)
-  (absorb-allowed nil))
+  (absorb-allowed nil)
+  (intake-mode :link)
+  (absorb-repositories '())
+  (absorb-authors '())
+  (absorb-authority nil))
+
+(defun %non-empty-string-list-p (x)
+  (and (consp x)
+       (every (lambda (s) (and (stringp s) (plusp (length s)))) x)))
+
+(defun validate-absorb-selection (absorb-allowed intake-mode repositories
+                                  authors authority)
+  "Signal an error unless the intake selection is one SPEC-WORK.md:7586-7617
+permits. The intake mode is :LINK (the default) or :ABSORB. Absorb is separate
+from link: :ABSORB-ALLOWED T needs the explicit :ABSORB intake mode, a non-empty
+scope of applicable repositories and participating authors, and a named grant
+AUTHORITY (its source reference, recorded as provenance). The :ABSORB mode
+without :ABSORB-ALLOWED T is refused, as is a scope given to a link stage.
+Author identity alone never selects absorption."
+  (unless (member intake-mode '(:link :absorb))
+    (error "capture intake mode ~S is not :link or :absorb" intake-mode))
+  (cond
+    (absorb-allowed
+     (unless (eq intake-mode :absorb)
+       (error "absorb allowed but intake mode is ~S; absorb needs explicit :absorb"
+              intake-mode))
+     (unless (%non-empty-string-list-p repositories)
+       (error "absorb needs a selected scope: :absorb-repositories is ~S"
+              repositories))
+     (unless (%non-empty-string-list-p authors)
+       (error "absorb needs a selected scope: :absorb-authors is ~S" authors))
+     (unless (and (stringp authority) (plusp (length authority)))
+       (error "absorb needs a selected authority: :absorb-authority is ~S"
+              authority)))
+    ((eq intake-mode :absorb)
+     (error "intake mode :absorb requires :absorb-allowed t"))
+    ((or repositories authors authority)
+     (error "absorb scope/authority given to a link stage (absorb not allowed)")))
+  t)
 
 (defun make-capture-stage (&key registry (limits *capture-stage-limits*)
-                              (absorb-allowed nil))
+                              (absorb-allowed nil) (intake-mode :link)
+                              absorb-repositories absorb-authors
+                              absorb-authority)
   "The in-process staging area over the operation registry. When no registry is
 given the scheduler's in-process durable-accept journal is used.
 By default, absorb is disabled and link is the default mode (SPEC-WORK.md:7614).
-To enable absorb, explicit scope and authority must be provided."
+Absorb is enabled only with :ABSORB-ALLOWED T, :INTAKE-MODE :ABSORB and a
+selected scope (:ABSORB-REPOSITORIES, :ABSORB-AUTHORS) and authority
+(:ABSORB-AUTHORITY); see VALIDATE-ABSORB-SELECTION."
+  (validate-absorb-selection absorb-allowed intake-mode absorb-repositories
+                             absorb-authors absorb-authority)
   (%make-capture-stage :registry (or registry (make-operation-registry))
                        :inputs '() :results '() :limits limits
-                       :absorb-allowed absorb-allowed))
+                       :absorb-allowed (and absorb-allowed t)
+                       :intake-mode intake-mode
+                       :absorb-repositories (copy-list absorb-repositories)
+                       :absorb-authors (copy-list absorb-authors)
+                       :absorb-authority absorb-authority))
 
 (defun capture-wire-op (kind)
   "The wire operation name a long source operation reports
@@ -152,10 +200,17 @@ writer. Retained results are bounded (SPEC-WORK.md:2748-2750, :2753)."
 
 (defun capture-absorb-allowed-p (stage)
   "Absorb is disabled by default; link is the default mode. Absorb requires
-explicit scope and authority selection (SPEC-WORK.md:7586-7617, E09-F04-01)."
-  (capture-stage-absorb-allowed stage))
+explicit scope and authority selection (SPEC-WORK.md:7586-7617, E09-F04-01):
+true only for a stage whose absorb intake mode, repositories, authors and
+authority were all selected."
+  (and (capture-stage-absorb-allowed stage)
+       (eq (capture-stage-intake-mode stage) :absorb)
+       (consp (capture-stage-absorb-repositories stage))
+       (consp (capture-stage-absorb-authors stage))
+       (stringp (capture-stage-absorb-authority stage))
+       t))
 
 (defun capture-result-of (stage id)
   "The retained result for ID, or NIL."
   (find id (capture-stage-results stage)
-         :key (lambda (row) (getf row :id)) :test #'equal))
+        :key (lambda (row) (getf row :id)) :test #'equal))
