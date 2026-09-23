@@ -128,16 +128,17 @@ func TestACarriedHoldIsReleasedByTheSameFriendsVerdictAtHead(t *testing.T) {
 			want: want{held: true, holdID: "comment:302", heldAt: headB2550, carried: false},
 		},
 		{
-			// Row 4, the negative control the fix must not trample: the APPROVE is at
-			// the SUPERSEDED head too. There is no read at the current head, so the
-			// hold stands and stays carried. Release keys on the head, never on
-			// "somebody approved at some point".
-			name: "hold at A, APPROVE at A only, head moved to B: dropped, no read at head",
+			// Row 4, flipped by Glenn's lander-keys-reads-by-who ruling (2026-09-23):
+			// the APPROVE is at the SUPERSEDED head too, but it is the holder's own
+			// last typed word after the hold, and that releases it at ANY head (the
+			// #2879 shape, holdanyhead_test.go). Release keys on the holder's own
+			// later word, never on "somebody approved" (row "emma/johnny" below).
+			name: "hold at A, APPROVE at A only, head moved to B: taken, holder's last word is APPROVE",
 			comments: []fixtureComment{
 				{ID: 401, Login: "emma-claude", Body: hold2550(headA2550), At: "2026-09-21T21:35:02Z"},
 				{ID: 402, Login: "emma-claude", Body: approve2550(headA2550), At: "2026-09-22T01:48:00Z"},
 			},
-			want: want{held: true, holdID: "comment:401", heldAt: headA2550, carried: true},
+			want: want{held: false},
 		},
 		{
 			// The live #1551 shape, comment ids and stamps as the log and the issue
