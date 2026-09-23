@@ -252,6 +252,78 @@ and only once per collection; a roadmap is refused, naming its one creator."
                       id (or repo "-"))
               0))))
 
+(defun %bug-child-id-p (id)
+  "True when ID names a bug child: starts with \"bug:\"."
+  (and (stringp id) (>= (length id) 4) (string= "bug:" (subseq id 0 4))))
+
+(defun decompose-node (kernel node &key into children acceptance found-during reason request stamp)
+  "Split NODE into INTO children. Each entry in CHILDREN is a plist with :id,
+:type, and optionally :acceptance. When a child id starts with `bug:`, it is a
+bug child and requires :found-during; a bug is not required so the parent's
+required set is unchanged; the scope revision advances by one. The same call
+without :found-during for a bug child is refused whole."
+  (declare (ignore stamp))
+  (let ((state (kernel-state kernel)))
+    (flet ((refuse (what &optional (code 2))
+             (return-from decompose-node
+               (values nil (format nil "DECOMPOSE FAIL node=~A: ~A" node what) code))))
+      (unless (and (stringp node) (plusp (length node)))
+        (refuse "bad node"))
+      (let ((parent-node (%node-or-nil state node)))
+        (unless parent-node
+          (refuse (format nil "no such node ~A" node) 1)))
+      (unless children
+        (refuse "no children"))
+      (let* ((rev (kernel-next-rev kernel))
+             (kids (copy-list (wnode-children (%node-quiet state node))))
+             (request (or request (format nil "decompose-~D" rev))))
+        (dolist (child children)
+          (let ((child-id (getf child :id))
+                (child-type (getf child :type))
+                (child-acceptance (getf child :acceptance))
+                (child-found-during (getf child :found-during)))
+            (unless (and (stringp child-id) (plusp (length child-id)))
+              (refuse "bad child id"))
+            (unless (member child-type '(:task :bug))
+              (refuse (format nil "bad child type ~A for ~A"
+                              (string-downcase (princ-to-string child-type)) child-id)))
+            (when (eq child-type :bug)
+              (unless (and (stringp child-found-during) (plusp (length child-found-during)))
+                (refuse (format nil "bug ~A is missing :found-during" child-id))))
+            (when (%node-quiet state child-id)
+              (refuse (format nil "rule 1: duplicate id ~A" child-id) 1))
+            (when (member child-id kids :test #'string=)
+              (refuse (format nil "child ~A already listed" child-id)))
+            (push child-id kids)))
+        (setf kids (nreverse kids))
+        (dolist (child children)
+          (let* ((child-id (getf child :id))
+                 (child-type (getf child :type))
+                 (child-required (not (eq child-type :bug)))
+                 (child-node (make-wnode :id child-id :type child-type
+                                         :parent node :children '()
+                                         :required child-required
+                                         :required-count 0 :required-open 0
+                                         :state :unknown :branch :o :open-count 0
+                                         :links nil :title +absent+
+                                         :category nil :private nil :version nil
+                                         :repo nil :view nil :meta-log '()
+                                         :settles 0 :revived "-")))
+            (%install-open-node state child-node)
+            ;; If a bug, set the found-during evidence on the meta-log
+            (when (eq child-type :bug)
+              (let ((fd (getf child :found-during)))
+                (push (list :op :structure :kind :bug-found-during
+                            :node child-id :found-during fd)
+                      (wnode-meta-log child-node))))))
+        (setf (wnode-children (%node-quiet state node)) kids)
+        (setf (wstate-revision state) (max (wstate-revision state) rev))
+        (setf (kernel-next-rev kernel) (1+ rev))
+        (values t
+                (format nil "DECOMPOSE OK node=~A request=~A change=decompose changed=~D rev=~D"
+                        node request (length children) rev)
+                0)))))
+
 ;;; ------------------------------------------------------------------
 ;;; `roadmap create`, the one creator of node and view (:3070-3082, :5344).
 ;;; ------------------------------------------------------------------
