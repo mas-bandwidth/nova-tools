@@ -261,7 +261,7 @@ func refuseGitHub(t *testing.T, script, sha string) {
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
-		"MIRROR=https://github.com/mas-bandwidth/nova-tools.git",
+		"MIRROR=https://github.com.invalid/mas-bandwidth/nova-tools.git",
 		"SHA=" + sha,
 		"WORK=" + work,
 		"RESULT=" + result,
