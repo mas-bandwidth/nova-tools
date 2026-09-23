@@ -156,7 +156,7 @@ func TestFillAdmitsInTopologicalAndPriorityOrder(t *testing.T) {
 	// We use a custom launcher that records launch sequence
 	var launchSeq []string
 	recordSeqLauncher := recordLauncherWithSeq{
-		onLaunch: func(bench, card string) {
+		onLaunch: func(bench, seat, card string) {
 			launchSeq = append(launchSeq, filepath.Base(card))
 		},
 	}
@@ -194,12 +194,12 @@ func TestFillAdmitsInTopologicalAndPriorityOrder(t *testing.T) {
 }
 
 type recordLauncherWithSeq struct {
-	onLaunch func(bench, card string)
+	onLaunch func(bench, seat, card string)
 }
 
-func (r recordLauncherWithSeq) Launch(bench, card string) error {
+func (r recordLauncherWithSeq) Launch(bench, seat, card string) error {
 	if r.onLaunch != nil {
-		r.onLaunch(bench, card)
+		r.onLaunch(bench, seat, card)
 	}
 	return nil
 }
