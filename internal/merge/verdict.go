@@ -386,6 +386,22 @@ func approveVerdict(id int64, login string, lines []string, at string, rs *Revie
 }
 
 // ParseReview converts a GitHub pull request review into a Verdict.
+//
+// ignoreUntyped is the same --untyped-comments=ignore switch ParseComment honours: a
+// prose COMMENTED review from a login that may hold is dropped instead of becoming a
+// pending verdict (before this, reviews always passed false, so the switch never reached
+// them and the only release was a lane-record APPROVE naming the review).
+//
+// A typed `DISPOSITION who=<name> head=<sha> verdict=APPROVE` whole line in a COMMENTED
+// or APPROVED review is read exactly as the same line in a comment: a typed approve
+// (Source "comment-rule") that counts as that friend's read for their own holds. A forge
+// APPROVED click with no typed line still releases and holds nothing.
+//
+// Every verdict read off a review carries the id review:<id>, never comment:<id>; a lane
+// record's --releases may name it either way (releasesContains accepts the older
+// comment:<id> form for a review hold). Holds are keyed by who=, not by the surface the
+// line arrived on (owner ruling 2026-09-23 7:05 PM ET; #3278): the holder's own typed
+// release clears the hold whether it came as a comment or a review.
 func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, rs *ReviewerSet, author, currentHead string, ignoreUntyped bool) (Verdict, bool) {
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
@@ -433,19 +449,34 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 		}
 		return v, true
 	case "APPROVED":
-		// Forge approved reviews release nothing and hold nothing
+		// A forge approved click releases nothing and holds nothing; a typed APPROVE line
+		// in its body is a typed read, the same as in a COMMENTED review.
+		head := strings.ToLower(strings.TrimSpace(commitID))
+		if head == "" {
+			head = currentHead
+		}
+		if v, ok := approveVerdict(id, login, lines, submittedAt, rs, head); ok {
+			return asReviewVerdict(v, id), true
+		}
 		return Verdict{}, false
 	default:
-		// COMMENTED review: inspect body like comment
+		// COMMENTED review: inspect body like comment, honouring --untyped-comments.
 		v, ok := ParseComment(id, login, rawBody, submittedAt, rs, author, currentHead, ignoreUntyped)
-		if ok {
-			v.ID = fmt.Sprintf("review:%d", id)
-			if v.Word == "hold" && v.Source == "comment-rule" {
-				v.Source = "review"
-			}
+		if !ok {
+			return v, ok
 		}
-		return v, ok
+		v = asReviewVerdict(v, id)
+		if v.Word == "hold" && v.Source == "comment-rule" {
+			v.Source = "review"
+		}
+		return v, true
 	}
+}
+
+// asReviewVerdict re-keys a verdict read off a review's body to review:<id>.
+func asReviewVerdict(v Verdict, id int64) Verdict {
+	v.ID = fmt.Sprintf("review:%d", id)
+	return v
 }
 
 // UnliftedHolds is the canonical Reading 3 fold over all input verdicts.
@@ -713,10 +744,18 @@ func headMatch(candidate, target string) bool {
 	return false
 }
 
+// releasesContains reports whether a --releases list names the hold id. A hold read off
+// a review (review:<id>) is also named by the older comment:<id> form, which nova-merge
+// minted for reviews before they carried their own prefix.
 func releasesContains(releases []string, id string) bool {
 	id = strings.TrimSpace(id)
+	legacy := ""
+	if len(id) > len("review:") && strings.EqualFold(id[:len("review:")], "review:") {
+		legacy = "comment:" + id[len("review:"):]
+	}
 	for _, r := range releases {
-		if strings.EqualFold(strings.TrimSpace(r), id) {
+		r = strings.TrimSpace(r)
+		if strings.EqualFold(r, id) || (legacy != "" && strings.EqualFold(r, legacy)) {
 			return true
 		}
 	}

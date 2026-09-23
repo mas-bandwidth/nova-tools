@@ -147,7 +147,11 @@ func TestUntypedCommentsIgnoredWithFlag(t *testing.T) {
 	}
 }
 
-// 5. Distinct namespaces for finding IDs (comment vs review vs bare) are strictly partitioned.
+// 5. Releases are partitioned by who=, not by the surface a line arrived on (owner ruling
+// 2026-09-23 7:05 PM ET; Glenn 12:55 AM and #3278: a hold is released by the HOLDER's later
+// typed line). A bare number and a review:<id> still name nothing but themselves, but the
+// holder's typed comment:<id> release clears the same holder's review:<id> hold (#3226). A
+// different who= releases nothing, whichever surface the id names.
 func TestDistinctNamespacesStrictlyPartitioned(t *testing.T) {
 	t.Parallel()
 	rs := sampleReviewers()
@@ -207,7 +211,8 @@ func TestDistinctNamespacesStrictlyPartitioned(t *testing.T) {
 	}
 
 	// Case B: Colliding numbers: comment:123 and review:123 both active from stella.
-	// A release naming only comment:123 releases comment:123, but review:123 MUST REMAIN ACTIVE.
+	// Stella's own typed release naming comment:123 clears both: the hold is keyed by
+	// who=stella, and the surface her release arrived on does not partition it (#3226).
 	holdReview := Verdict{
 		ID:     "review:123",
 		Who:    "stella",
@@ -217,8 +222,25 @@ func TestDistinctNamespacesStrictlyPartitioned(t *testing.T) {
 		Source: "review",
 	}
 	colliding := UnreleasedHolds([]Verdict{holdComment, holdReview}, []Read{readExact}, head, author, rs)
-	if len(colliding) != 1 || colliding[0].ID != "review:123" {
-		t.Fatalf("colliding numeric ID review:123 must not be released by comment:123; got: %v", colliding)
+	if len(colliding) != 0 {
+		t.Fatalf("stella's typed comment:123 release must clear stella's own review:123 hold too; got: %v", colliding)
+	}
+
+	// Case C: the partition is by who=. Johnny's typed release naming comment:123 (or
+	// review:123) releases neither of stella's holds.
+	for _, rel := range []string{"comment:123", "review:123"} {
+		readOther := Read{
+			Who:      "johnny",
+			Verdict:  "approve",
+			Head:     head,
+			At:       "2026-09-19T11:00:00Z",
+			Scope:    "parser",
+			Releases: []string{rel},
+		}
+		other := UnreleasedHolds([]Verdict{holdComment, holdReview}, []Read{readOther}, head, author, rs)
+		if len(other) != 2 {
+			t.Fatalf("johnny's release %s must not clear stella's holds; remaining: %v", rel, other)
+		}
 	}
 }
 
