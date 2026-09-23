@@ -161,13 +161,7 @@ build argument.** A Job whose card names a secret path (`.key`, the store path, 
 `secretRef` mounted as a file) is refused by the puller, because the exec-env rule of
 SPEC-SECRETS is the only delivery a process may have.
 
-**Logs, the timeline, and the clip.** The pod's stdout is the harness log and goes to the
-node's log store; the Job's start, end, exit and cost are appended to the **same `usage.tsv`**
-that `nova-swarm` already writes, on the shared volume, so `nova-pulse status` and `progress`
-read one schema and one file whether the card ran under the launcher or a pod. After each card
-the pod's last step is the clip — commit the card's branch, harvest its `RESULT.md`, reset the
-kept worktree to base — exactly SPEC-JOBS §6, so the next Job sees warmth and never another
-card's uncommitted diff.
+**Logs, the timeline, and the clip.** The pod's stdout is the harness log, raw, appended to the same usage.tsv the launcher created. The row holds the pod's own start time, end time, exit code, and cost. After each card the pod's last step is the clip. This is on the shared volume, so `nova-pulse status` and `progress` read one schema and one file whether the card ran under the launcher or a pod. The clip commits the card's branch, harvests its `RESULT.md`, and resets the kept worktree to base (SPEC-JOBS §6), so the next Job sees warmth and never another card's uncommitted diff.
 
 ## Part 3 — What nova-sandbox still adds, and what the Studio keeps
 
