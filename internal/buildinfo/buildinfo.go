@@ -261,6 +261,9 @@ func LineWithSource(tool, stamped string, src Source, extras ...string) string {
 	return Line(tool, stamped, all...)
 }
 
+// sourceKeys is the set of keys FindSource reads from Extras.
+var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, "build_host": true}
+
 // FindSource returns the Source the fields carry, or false. The four source keys are
 // the only ones FindSource reads: anything else in the extras -- nova-merge's
 // `build=<hex>`, nova-sandbox's `backend=` -- is ignored. A version line that carries
@@ -269,7 +272,23 @@ func LineWithSource(tool, stamped string, src Source, extras ...string) string {
 // line that carries SOME but not ALL of the four is ALSO reported with ok=false: a
 // partial source is a source the reader cannot verify, and the gate must refuse it
 // rather than guess at the missing field (#2291, SPEC-VERSION item 6).
+//
+// A malformed dirty token (anything other than "true" or "false") is refused: a value
+// like `dirty=maybe` is not a clean source and must not be silently accepted as
+// dirty=false. Duplicate source keys are also refused: two `repo=` entries in the
+// same line are a contradiction the reader cannot resolve.
 func (f Fields) FindSource() (Source, bool) {
+	// Count source keys to detect duplicates.
+	counts := map[string]int{}
+	for _, e := range f.Extras {
+		if k, _, found := strings.Cut(e, "="); found && sourceKeys[k] {
+			counts[k]++
+			if counts[k] > 1 {
+				return Source{}, false
+			}
+		}
+	}
+
 	repo, hasRepo := f.Extra("repo")
 	rev, hasRev := f.Extra("revision")
 	dirty, hasDirty := f.Extra("dirty")
@@ -278,6 +297,9 @@ func (f Fields) FindSource() (Source, bool) {
 		return Source{}, false
 	}
 	if !hasRepo || !hasRev || !hasDirty || !hasHost {
+		return Source{}, false
+	}
+	if dirty != "true" && dirty != "false" {
 		return Source{}, false
 	}
 	return Source{

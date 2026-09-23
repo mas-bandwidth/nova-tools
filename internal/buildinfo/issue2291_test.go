@@ -140,4 +140,68 @@ func TestIssue2291(t *testing.T) {
 			t.Fatalf("FindSource accepted the disagreeing line as the wanted source: got=%+v want=%+v", got, want)
 		}
 	})
+
+	// A malformed dirty token -- anything other than "true" or "false" -- is
+	// refused: `dirty=maybe` was silently accepted as dirty=false, which is a
+	// clean source when it is not. The fix validates the dirty token and
+	// returns ok=false for any value that is not the literal "true" or "false".
+	t.Run("a malformed dirty token is refused", func(t *testing.T) {
+		for _, bad := range []string{"maybe", "1", "0", "yes", "no", "TRUE", "FALSE"} {
+			// Construct extras directly (bypassing Line, which panics on
+			// empty values) and parse the line to get Fields, then test
+			// FindSource.
+			extras := []string{
+				"repo=github.com/mas-bandwidth/nova-tools",
+				"revision=0123456789abcdef0123456789abcdef01234567",
+				"dirty=" + bad,
+				"build_host=studio",
+			}
+			line := buildinfo.Line("nova-bus", stamp, extras...)
+			fields, ok := buildinfo.Parse(line)
+			if !ok {
+				t.Fatalf("Parse refused a well-formed line with dirty=%q: %s", bad, line)
+			}
+			if _, ok := fields.FindSource(); ok {
+				t.Errorf("FindSource accepted dirty=%q as a valid source", bad)
+			}
+		}
+		// The empty-value case cannot be produced by Line (it panics), but
+		// FindSource must still refuse it. Test Fields directly.
+		fields := buildinfo.Fields{
+			Tool:     "nova-bus",
+			Version:  stamp,
+			Platform: "linux/amd64",
+			Extras: []string{
+				"repo=github.com/mas-bandwidth/nova-tools",
+				"revision=0123456789abcdef0123456789abcdef01234567",
+				"dirty=",
+				"build_host=studio",
+			},
+		}
+		if _, ok := fields.FindSource(); ok {
+			t.Errorf("FindSource accepted dirty= (empty value) as a valid source")
+		}
+	})
+
+	// Duplicate source keys are refused: two `repo=` entries in the same line
+	// are a contradiction the reader cannot resolve. Fields.Extra returns the
+	// first match, so without an explicit duplicate check a contradictory
+	// `repo=foo repo=bar` would silently accept `repo=foo`.
+	t.Run("duplicate source keys are refused", func(t *testing.T) {
+		for _, dups := range [][]string{
+			{"repo=github.com/mas-bandwidth/nova-tools", "repo=github.com/other/repo", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio"},
+			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "revision=fedcba9876543210fedcba9876543210fedcba98", "dirty=false", "build_host=studio"},
+			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=true", "dirty=false", "build_host=studio"},
+			{"repo=github.com/mas-bandwidth/nova-tools", "revision=0123456789abcdef0123456789abcdef01234567", "dirty=false", "build_host=studio", "build_host=ci-runner"},
+		} {
+			line := buildinfo.Line("nova-bus", stamp, dups...)
+			fields, ok := buildinfo.Parse(line)
+			if !ok {
+				t.Fatalf("Parse refused a well-formed line with duplicate keys: %v\n%s", dups, line)
+			}
+			if _, ok := fields.FindSource(); ok {
+				t.Errorf("FindSource accepted duplicate source keys: %v\n%s", dups, line)
+			}
+		}
+	})
 }
