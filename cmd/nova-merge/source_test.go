@@ -97,6 +97,20 @@ func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 		"verbs.go": {{`os.WriteFile(filepath.Join(lane, ".gitignore")`, "the lane branch's .gitignore, which init writes, under --lane"}},
 		"pass.go":  {{`os.WriteFile(path, []byte(deps.Now()`, "the lane's stop file, which the stop verb writes, under --lane"}},
 		"batch.go": {{`os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)`, "the test step's go test -json stream, created exclusively as test-<round>.jsonl under --root, beside the clone and not inside it (#2626)"}},
+		// The fold (#1142) resolves a conflict in a TEST file keep-both and one in a
+		// SOURCE file to the incoming side, and that resolved byte has to land in the
+		// fold's OWN scratch clone under --lane before it is tested. The lane proper
+		// still never edits an entry's content; this is the one write the spec names,
+		// and it writes only both sides of a conflict git itself produced. Since the
+		// keep-both became a hunk union (git merge-file --union) it takes two sites: an
+		// empty ancestor for an add/add conflict, a temp file in the scratch clone that
+		// is removed after the merge, and the resolved bytes, written by foldWriteUnder
+		// only after safepath.ResolvedUnder and a regular-file check, by an exclusive
+		// create that refuses a link planted after the check.
+		"fold.go": {
+			{`os.CreateTemp(g.Dir, ".fold-base-")`, "the keep-both's empty ancestor for an add/add conflict, a temp file in the fold's own scratch clone under --lane, removed after git merge-file (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
+			{`os.OpenFile(resolved, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())`, "the fold's keep-both resolution in its own scratch clone under --lane, created exclusively at a path safepath.ResolvedUnder resolved (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
+		},
 	}
 	used := map[string]int{}
 	for name, src := range mainPackageSource(t) {

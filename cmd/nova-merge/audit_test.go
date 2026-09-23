@@ -123,8 +123,10 @@ var mergeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
 		// regexp holds no writer of its own: batch.go uses it to read a go.mod's `go`
 		// directive, the version `go version` printed, and the `go: downloading ...`
-		// notices it drops off the front of a failing step's output. Match and
-		// FindStringSubmatch are pure reads that return strings, and every one of them
+		// notices it drops off the front of a failing step's output; fold.go's one use
+		// matches the `supersedes #<n>` lines a fold body carries so --close-folded knows
+		// which pull requests the squash replaced. Match, FindStringSubmatch and
+		// FindAllStringSubmatch are pure reads that return strings, and every one of them
 		// reaches a line through oneline.Escape or oneline.Field.
 		// sync holds no writer of its own: react.go's one use is a sync.Once that installs
 		// go-redis's logger once for the process (#1609), and quietRedis drops every line
@@ -135,6 +137,10 @@ var mergeAudit = audit.Config{
 		// skipped set in one deterministic order, so two reads of one file print the
 		// same lines. It returns nothing and prints nothing.
 		`"sort"`,
+		// os/exec is already named above (simulate's child process); the fold verb reuses
+		// it the same way, to run the package test and the layout test of #560 in the
+		// fold's own scratch clone (docs/SPEC-MERGE.md "The fold (#1142)"), captured and
+		// reduced to one line through oneline.Cap at the error site.
 	},
 	MinClassified: 60,
 }

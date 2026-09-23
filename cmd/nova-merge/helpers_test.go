@@ -135,6 +135,11 @@ type lab struct {
 	now      time.Time
 	build    string
 	runner   merge.Runner
+	// testTree and testLayout are the fold verb's fake test runners (docs/SPEC-MERGE.md
+	// "The fold (#1142)"): the package test the repository names for the tree, and the
+	// layout test of #560. A nil one is the production subprocess.
+	testTree   func(dir string) error
+	testLayout func(dir string) error
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
@@ -397,6 +402,8 @@ func (l *lab) deps() Deps {
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
 		Launcher:      l.launcher,
 		BuildID:       func() string { return l.build },
+		TestTree:      l.testTree,
+		TestLayout:    l.testLayout,
 		// react's two edges. Dial is the caller's own address -- every react test
 		// hands it a miniredis of its own -- and the forge is the fake.
 		BatchGate: labBatchGate(),
