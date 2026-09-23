@@ -412,6 +412,48 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 		}
 	})
 
+	t.Run("a malformed card_token or card_token_sha leaves the card queued", func(t *testing.T) {
+		// ns_card_deal checks the shape ns_task_take checks: <attempt>.<32
+		// hex> and a 12 hex sha, not just the <attempt>. prefix (stella's
+		// hold 2 on #3075: "1." and "1.not-hex" used to pass and persist).
+		seedFleet(t, c, sprint, 1, map[string]int{"ctl-a": 64})
+		seedLease(t, c, "live-token")
+		validSha := tokenSHA("1." + strings.Repeat("a", 32))
+		cases := []struct {
+			name  string
+			token string
+			sha   string
+		}{
+			{"token has no hex after the dot", "1.", validSha},
+			{"token's tail is not hex", "1.not-hex-not-hex-not-hex-not-hex", validSha},
+			{"token hex is short", "1." + strings.Repeat("a", 31), validSha},
+			{"token hex is long", "1." + strings.Repeat("a", 33), validSha},
+			{"token_sha is not hex", "1." + strings.Repeat("a", 32), "not-hex-1234"},
+			{"token_sha is the wrong length", "1." + strings.Repeat("a", 32), "abcdef"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				reply, err := c.FCall(ctx, "ns_card_deal", nil,
+					"ctl-a", "live-token", "reconciler", "",
+					sprint, "card-00", "1", tc.token, tc.sha).StringSlice()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(reply) != 1 || reply[0] != "DEALT" {
+					t.Fatalf("ns_card_deal(%q, %q) = %v, want DEALT with no cards dealt", tc.token, tc.sha, reply)
+				}
+				if h := card(t, c, sprint, "card-00"); h["state"] != "queued" || h["token"] != "" {
+					t.Fatalf("card-00 after malformed deal: state=%q token=%q, want queued and no token", h["state"], h["token"])
+				}
+			})
+		}
+		// The same card, same attempt, with a well-formed token deals normally.
+		res, err := newFnStore(c).Reserve(ctx, "live-token", "ctl-a", poolCards(sprint, 1))
+		if err != nil || len(res) != 1 {
+			t.Fatalf("a well-formed deal after the malformed ones: %d reservations, err %v", len(res), err)
+		}
+	})
+
 	t.Run("dealt then undealt: queued again, reason ssh-refused, exactly one log entry", func(t *testing.T) {
 		seedFleet(t, c, sprint, 3, map[string]int{"ctl-a": 64, "ctl-b": 64})
 		seedLease(t, c, "live-token")

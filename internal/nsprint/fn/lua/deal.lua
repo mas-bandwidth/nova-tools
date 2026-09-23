@@ -69,9 +69,13 @@ end
 -- Moves up to free cards queued -> dealt on bench in one call (#2756 3.2 row
 -- 3). attempt is the caller's attempt+1 read before the call and card_token
 -- is <attempt>.<128 random bits hex> from the Go RNG (spec 2.1 rule 8, as
--- ns_task_take); a card whose attempt moved, that is no longer queued and
+-- ns_task_take); card_token and card_token_sha are checked against that full
+-- shape (32 lowercase hex after the attempt, a 12 lowercase hex sha), the
+-- same match ns_task_take runs on its token before any write, not just the
+-- <attempt>. prefix. A card whose attempt moved, that is no longer queued and
 -- pooled, whose sprint is not open, that is pinned to another bench, whose
--- leg the bench does not run, or whose tier backpressure holds, is skipped.
+-- leg the bench does not run, whose tier backpressure holds, or whose token
+-- or token_sha does not match that shape, is skipped.
 -- The bench guard (registered, UP, not paused, free > 0) is checked once;
 -- free caps the batch. Returns FENCED, NONE <why>, or DEALT followed by
 -- S, label, attempt, token for each dealt card.
@@ -120,6 +124,8 @@ local function card_deal(keys, args)
     if open[S] and c[1] == 'queued' and score and attempt and
         attempt == (tonumber(c[2]) or 0) + 1 and
         string.sub(ctoken, 1, #tostring(attempt) + 1) == tostring(attempt) .. '.' and
+        string.match(ctoken, '^%d+%.[0-9a-f]+$') and #ctoken == #tostring(attempt) + 33 and
+        string.match(csha, '^[0-9a-f]+$') and #csha == 12 and
         (pin == '' or pin == bench) and deal_runs(desired[3], c[4]) and
         (not bp[S] or c[5] == 'priority') then
       local identity = S .. '/' .. label .. '/' .. string.sub(c[6] or '', 1, 8) .. '/' .. bench .. '/' .. attempt
