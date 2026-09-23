@@ -40,7 +40,9 @@ func useSink(t *testing.T, o *openedSink) {
 }
 
 // A route told --log postgres writes its decision to the table and is accounted
-// for: the accounting rule is satisfied by a sink, not by a file.
+// for: the accounting rule is satisfied by a sink, not by a file. The kind is a
+// judgement kind: a mechanical kind with no confirmed failure never calls the
+// provider (#1513), so it would have no spend to record.
 func TestRouteLogsToTheTable(t *testing.T) {
 	useFake(t, &fake{conf: 0.97, usage: decide.Usage{InputTokens: 937, HasInput: true, OutputTokens: 12, HasOutput: true}})
 	sink := decide.NewFakeLogSink()
@@ -49,7 +51,7 @@ func TestRouteLogsToTheTable(t *testing.T) {
 	usage := filepath.Join(t.TempDir(), "usage.tsv")
 
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"route", "--unit-id", "u", "--kind", "rebase", "--files", "2", "--packages", "1",
+	code := run([]string{"route", "--unit-id", "u", "--kind", "new-verb", "--files", "2", "--packages", "1",
 		"--usage", usage, "--log", "postgres"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("exit = %d (stderr=%q)", code, stderr.String())
@@ -64,7 +66,7 @@ func TestRouteLogsToTheTable(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("one decision is one row, got %d", len(rows))
 	}
-	if rows[0].Unit != "u" || rows[0].Kind != "rebase" {
+	if rows[0].Unit != "u" || rows[0].Kind != "new-verb" {
 		t.Errorf("the row is not the decision: %+v", rows[0])
 	}
 	if rows[0].TokensIn == nil || *rows[0].TokensIn != 937 {
