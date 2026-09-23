@@ -38,7 +38,7 @@ end
 local function friend_hello(keys, args)
   local friend, slots = args[1], tonumber(args[2])
   local harness, host, session = args[3], args[4], args[5]
-  local actor, idem = args[6], args[7]
+  local machine_hint, actor, idem = args[6], args[7], args[8]
   if not friend or friend == '' or not slots or slots < -1 or
       not host or host == '' or not session or session == '' then
     return { 'INVALID' }
@@ -49,8 +49,10 @@ local function friend_hello(keys, args)
     return { 'BUSY' }
   end
   local desired_key = 'friend:' .. friend .. ':desired'
-  local machine = redis.call('HGET', desired_key, 'machine') or host
-  if machine ~= host then
+  local machine = redis.call('HGET', desired_key, 'machine')
+  if not machine or machine == '' then
+    machine = machine_hint ~= '' and machine_hint or host
+  elseif machine_hint ~= '' and machine ~= machine_hint then
     return { 'MACHINE' }
   end
   local current_slots = tonumber(redis.call('HGET', desired_key, 'slots') or '0')

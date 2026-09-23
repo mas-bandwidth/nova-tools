@@ -47,6 +47,7 @@ type HelloRequest struct {
 	Slots   int
 	Harness string
 	Host    string
+	Machine string
 	Session string
 	Actor   string
 	Idem    string
@@ -75,7 +76,7 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 	}
 	reply, err := st.Client().FCall(ctx, FunctionHello, nil,
 		req.As, req.Slots, req.Harness, req.Host, req.Session,
-		req.Actor, req.Idem).Result()
+		req.Machine, req.Actor, req.Idem).Result()
 	if err != nil {
 		return HelloResult{}, fmt.Errorf("friend hello %s: %w", req.As, err)
 	}

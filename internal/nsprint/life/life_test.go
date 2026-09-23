@@ -291,9 +291,21 @@ func TestFriendHelloRefusesMachineCeilingWithoutChangingDesired(t *testing.T) {
 		}
 	}
 	res, err := life.Hello(ctx, st, life.HelloRequest{
-		As: "a", Slots: -1, Host: "studio", Session: "a-preserve",
+		As: "a", Slots: -1, Host: "studio.local", Machine: "studio", Session: "a-preserve",
 	})
 	if err != nil || res.Slots != 32 {
 		t.Fatalf("hello without --slots must preserve configured 32 slots: %+v, %v", res, err)
+	}
+	client.HSet(ctx, "machine:bench:ceiling", "slots", 1)
+	if _, err := life.Hello(ctx, st, life.HelloRequest{
+		As: "new", Slots: 1, Host: "bench.local", Machine: "bench", Session: "new-1",
+	}); err != nil {
+		t.Fatalf("first hello with configured machine distinct from beat host: %v", err)
+	}
+	if got := client.HGet(ctx, "friend:new:desired", "machine").Val(); got != "bench" {
+		t.Fatalf("desired machine = %q, want bench", got)
+	}
+	if got := client.HGet(ctx, "friend:new:beat", "host").Val(); got != "bench.local" {
+		t.Fatalf("actual beat host = %q, want bench.local", got)
 	}
 }

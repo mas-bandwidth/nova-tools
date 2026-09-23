@@ -99,6 +99,7 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	sprint := fs.String("sprint", "", "sprint to take returned work from")
 	harness := fs.String("harness", "", "harness identity")
 	host := fs.String("host", "", "host the friend runs on")
+	machine := fs.String("machine", "", "configured capacity machine, if different from host")
 	session := fs.String("session", "", "presence session identity")
 	once := fs.Bool("once", false, "register once and return without the 1 s loop")
 	if err := fs.Parse(args); err != nil {
@@ -132,7 +133,7 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 
 	res, err := life.Hello(ctx, st, life.HelloRequest{
 		Sprint: *sprint, As: *as, Slots: *slots, Harness: *harness,
-		Host: *host, Session: *session, Actor: "friend", Idem: "",
+		Host: *host, Machine: *machine, Session: *session, Actor: "friend", Idem: "",
 	})
 	if err != nil {
 		return refuse(errOut, "friend hello", err.Error())
