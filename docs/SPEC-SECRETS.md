@@ -1035,9 +1035,11 @@ red test that carries it. They extend **The model** and **Rotation**; they do no
 6. The bench standard checks **exactly one seat key per owner prefix** and that check passes,
    because two keys for one owner is either a lost key still trusted or a grant nobody declared.
    Red test demanded: `TestBenchStandardChecksOneSeatKeyPerOwnerPrefix`.
-7. The store is pulled on a bench over a **bench-owned read-only deploy key, never a person's credential**,
-   because a person's key in a bench's clone is that person on that bench. Red test
-   demanded: `TestStorePullUsesBenchDeployKey`.
+7. The store is pulled on a bench over **the bench's own SSH key, generated on that bench**, its
+   public half authorized on the GitHub account the bench acts as; **never a person's credential**,
+   because a person's key in a bench's clone is that person on that bench; and **never present
+   inside the card wall**, because a card that can read the key can pull or push as the bench.
+   Red test demanded: `TestStorePullUsesBenchOwnedKey`.
 8. A key is **generated off-bench for recovery only**; the **private half lives in the owner's password manager**,
    because recovery that sits beside the ciphertext is not recovery. Red test
    demanded: `TestRecoveryKeyLivesOnlyInThePasswordManager`.
