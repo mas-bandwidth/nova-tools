@@ -32,6 +32,7 @@ internal/chat/state.go SPEC-CHAT's plan, item 3: session ids, cursors, the turn 
 internal/chat/transport.go SPEC-CHAT's plan, item 4: the six-capability adapter interface
 internal/chat/ws SPEC-CHAT's plan, item 11: the gateway, explicitly not v1
 internal/ci/testdata/unexecuted_examples.txt SPEC-TOOLWORK §7's planned fixture of the executed-example list, not yet written
+internal/control the fleet control store; internal/harvest/fake.go's FakeControl says "until internal/control lands" and internal/harvest/owner.go's Control interface says "this is not internal/control: that store is a different slice" -- neither names a written package
 internal/local/box.go SPEC-LOCAL's plan: the box
 internal/local/ds4.go SPEC-LOCAL's plan: the ds4 leg
 internal/local/engine.go SPEC-LOCAL's plan: the engine
