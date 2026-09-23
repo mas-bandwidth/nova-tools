@@ -209,13 +209,20 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 		return refuse(WrapperExitNotDealt, "card identity "+strconv.Quote(c.Identity)+" is not this attempt")
 	}
 
-	// 2. The job directory, then launched.
+	// 2. The job directory, then launched. Mkdir on the leaf itself is the
+	// atomic claim: with two wrappers racing for the same dealt attempt,
+	// exactly one Mkdir succeeds, so only that invocation ever owns the
+	// directory. cleanup is defined only once we know we created it, so a
+	// loser never removes the winner's live harness output.
 	job := WrapperJobDir(cfg.JobsRoot, cfg.Sprint, cfg.Label, cfg.Attempt)
 	results := filepath.Join(cfg.ResultsRoot, filepath.FromSlash(id.String()))
-	if _, err := os.Lstat(job); err == nil {
-		return refuse(WrapperExitCouldNot, "job dir already exists: an attempt is launched once")
+	if err := os.MkdirAll(filepath.Dir(job), 0o700); err != nil {
+		return refuse(WrapperExitCouldNot, "job dir: "+err.Error())
 	}
-	if err := os.MkdirAll(filepath.Join(job, "out"), 0o700); err != nil {
+	if err := os.Mkdir(job, 0o700); err != nil {
+		if os.IsExist(err) {
+			return refuse(WrapperExitCouldNot, "job dir already exists: an attempt is launched once")
+		}
 		return refuse(WrapperExitCouldNot, "job dir: "+err.Error())
 	}
 	cleanup := func() {
@@ -231,6 +238,10 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 				break
 			}
 		}
+	}
+	if err := os.Mkdir(filepath.Join(job, "out"), 0o700); err != nil {
+		cleanup()
+		return refuse(WrapperExitCouldNot, "job dir: "+err.Error())
 	}
 	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job)
 	if err != nil || code != 0 {
