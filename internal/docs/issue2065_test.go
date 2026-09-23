@@ -67,7 +67,7 @@ func TestIssue2065(t *testing.T) {
 	// command or decision wanted, why, what it blocks and state.
 	for _, want := range []string{
 		"| ID | Date | Verbatim words | Scope | Who may apply | Superseded-by |",
-		"| ID | Wanted | Why | Blocks | State |",
+		"| ID | Wanted | Exact command or decision | Why | Blocks | State |",
 		"the exact command or decision wanted",
 		"verified names who verified it and how",
 		"leaves the queue only on verified",
@@ -118,5 +118,49 @@ func TestIssue2065(t *testing.T) {
 		if !strings.Contains(flat, want) {
 			t.Errorf("the Glenn's-hands queue is missing %q (nova-tools #2065)", want)
 		}
+	}
+
+	// Stella's hold at 8a099710: a Wanted label ("the bench user ruling") is an
+	// index entry, not the exact command or decision #2065 asks every hands
+	// row to carry. Each row either carries the words from its source or says
+	// the words are unavailable and is marked incomplete -- and an incomplete
+	// row is never done or verified, because nothing exact was there to act on
+	// or to verify.
+	for _, want := range []string{
+		"An incomplete row is an index entry, not a request a handover can act on or verify",
+		"cannot move to done or verified until that field is filled",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("the Glenn's-hands queue does not define the incomplete row: missing %q (nova-tools #2065)", want)
+		}
+	}
+	rows := 0
+	for _, line := range strings.Split(section, "\n") {
+		if !strings.HasPrefix(line, "| H-") {
+			continue
+		}
+		rows++
+		cells := strings.Split(strings.Trim(line, "| "), " | ")
+		if len(cells) != 6 {
+			t.Errorf("hands row %q has %d cells, want 6 (ID, Wanted, Exact command or decision, Why, Blocks, State) (nova-tools #2065)", line, len(cells))
+			continue
+		}
+		id, exact, state := cells[0], cells[2], cells[5]
+		unavailable := strings.HasPrefix(exact, "unavailable:")
+		incomplete := strings.Contains(state, "**incomplete**")
+		switch {
+		case unavailable && !incomplete:
+			t.Errorf("hands row %s has no exact command or decision (%q) but its state %q is not marked **incomplete** (nova-tools #2065)", id, exact, state)
+		case !unavailable && incomplete:
+			t.Errorf("hands row %s is marked incomplete but carries an exact command or decision %q; fill one or the other (nova-tools #2065)", id, exact)
+		case !unavailable && !strings.ContainsAny(exact, "`\""):
+			t.Errorf("hands row %s: the exact command or decision %q is neither quoted from its source nor marked unavailable (nova-tools #2065)", id, exact)
+		}
+		if incomplete && (strings.Contains(state, "; done") || strings.Contains(state, "verified by")) {
+			t.Errorf("hands row %s is incomplete and cannot be done or verified: %q (nova-tools #2065)", id, state)
+		}
+	}
+	if rows != 6 {
+		t.Errorf("the Glenn's-hands queue has %d rows, want the six of 2026-09-20 (nova-tools #2065)", rows)
 	}
 }

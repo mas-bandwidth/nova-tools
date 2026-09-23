@@ -101,16 +101,16 @@ A ruling is applied as written until its superseded-by names a successor. A date
 
 ### The Glenn's-hands queue
 
-A row is a request waiting on an act only Glenn can do, with the exact command or decision wanted, why it is wanted, what it blocks, and its state. State is asked, done, or verified; verified names who verified it and how, and a row leaves the queue only on verified. The 2026-09-20 set as #2065 carried it (why and blocks are the coordinator's reading of the ask; Glenn's answer replaces them):
+A row is a request waiting on an act only Glenn can do, with the exact command or decision wanted, why it is wanted, what it blocks, and its state. State is asked, done, or verified; verified names who verified it and how, and a row leaves the queue only on verified. The exact-command-or-decision field carries the command or decision word for word from its source, or says `unavailable` with where the words were and marks the row **incomplete**. An incomplete row is an index entry, not a request a handover can act on or verify: the only act on it is to re-ask Glenn for the exact wording and record it here, and it cannot move to done or verified until that field is filled. The 2026-09-20 set as #2065 carried it (why and blocks are the coordinator's reading of the ask; Glenn's answer replaces them). #2065 and the repo hold only these labels, not the words, so every row below is incomplete:
 
-| ID | Wanted | Why | Blocks | State |
-|---|---|---|---|---|
-| H-01 | the sshd limits commands run on the two Macs (handed over in chat; one failed silently, re-asked) | the two Macs take bench work under sshd limits | the two Macs as benches | asked 2026-09-20; re-asked (one command failed silently); not verified |
-| H-02 | the bench user ruling | the user a bench acts as is ruled once for the fleet | bench setup past R-04's zero manual steps | asked 2026-09-20; not verified |
-| H-03 | the one Go version | every bench runs any card, so the fleet runs one Go version | a go.mod bump gating on every bench (#1500) | asked 2026-09-20; not verified |
-| H-04 | scoped provider keys with caps for hetzner | paid routes run under caps, not open keys | hetzner as a provider under spend control | asked 2026-09-20; not verified |
-| H-05 | a darwin-x64 harness download | a darwin-x64 bench runs the harness like any bench | darwin-x64 in the bench fleet | asked 2026-09-20; not verified |
-| H-06 | spend limits | paid routes need a ceiling only Glenn can set | the spend cap holding on paid routes (#1545) | asked 2026-09-20; not verified |
+| ID | Wanted | Exact command or decision | Why | Blocks | State |
+|---|---|---|---|---|---|
+| H-01 | the sshd limits commands run on the two Macs (handed over in chat; one failed silently, re-asked) | unavailable: the commands were handed over in chat on 2026-09-20 and are in no repo record; which one failed silently is not recorded either | the two Macs take bench work under sshd limits | the two Macs as benches | asked 2026-09-20; re-asked (one command failed silently); not verified; **incomplete** |
+| H-02 | the bench user ruling | unavailable: the decision asked for was a chat message on 2026-09-20 and is in no repo record | the user a bench acts as is ruled once for the fleet | bench setup past R-04's zero manual steps | asked 2026-09-20; not verified; **incomplete** |
+| H-03 | the one Go version | unavailable: which Go version was asked about was a chat message on 2026-09-20 and is in no repo record | every bench runs any card, so the fleet runs one Go version | a go.mod bump gating on every bench (#1500) | asked 2026-09-20; not verified; **incomplete** |
+| H-04 | scoped provider keys with caps for hetzner | unavailable: the key scopes and caps asked for were a chat message on 2026-09-20 and are in no repo record | paid routes run under caps, not open keys | hetzner as a provider under spend control | asked 2026-09-20; not verified; **incomplete** |
+| H-05 | a darwin-x64 harness download | unavailable: the download (harness, version, URL) asked for was a chat message on 2026-09-20 and is in no repo record | a darwin-x64 bench runs the harness like any bench | darwin-x64 in the bench fleet | asked 2026-09-20; not verified; **incomplete** |
+| H-06 | spend limits | unavailable: the limits and the routes they cover were a chat message on 2026-09-20 and are in no repo record | paid routes need a ceiling only Glenn can set | the spend cap holding on paid routes (#1545) | asked 2026-09-20; not verified; **incomplete** |
 
 
 ## nova-work
