@@ -202,3 +202,101 @@ func validJobName(s string) bool {
 	}
 	return true
 }
+
+// Stella's hold on #3247: Worker is one safe filename component. A worker carrying path
+// components (or empty, dot, dot-dot, absolute) is refused before any card is scanned or
+// moved: the queued card stays in its lane, no Job is created, and nothing appears outside
+// <bench>/taken.
+func TestPullSubmitRefusesAWorkerThatIsNotOneSafeComponent(t *testing.T) {
+	for _, worker := range []string{
+		"../../outside", "../outside", "a/b", "x/../../y", "/abs", "..", ".", "a\\b",
+		"w1\x00", "-w1", ".hidden", "w 1", "",
+	} {
+		t.Run(worker, func(t *testing.T) {
+			root := t.TempDir()
+			bench := filepath.Join(root, "bench")
+			if err := os.MkdirAll(filepath.Join(bench, "queue", lanes.LanesDir, lanes.Next), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			card := filepath.Join(bench, "queue", lanes.LanesDir, lanes.Next, "c1"+CardExt)
+			if err := os.WriteFile(card, []byte("card c1\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			sub := &fakeSubmitter{}
+			res, err := PullSubmit(submitInput(bench, worker, 8, 0, sub))
+			if err == nil {
+				t.Fatalf("worker %q: want a refusal, got %+v", worker, res)
+			}
+			if res.Card != "" || res.Taken != "" || len(sub.jobs) != 0 {
+				t.Fatalf("worker %q: took %q into %q with %d jobs", worker, res.Card, res.Taken, len(sub.jobs))
+			}
+			if b, rerr := os.ReadFile(card); rerr != nil || string(b) != "card c1\n" {
+				t.Fatalf("worker %q: queued card moved or changed: %v", worker, rerr)
+			}
+			if _, serr := os.Stat(filepath.Join(bench, "taken")); !os.IsNotExist(serr) {
+				t.Fatalf("worker %q: taken/ was created before the refusal: %v", worker, serr)
+			}
+			// Nothing may land beside the bench: root holds only bench/.
+			entries, _ := os.ReadDir(root)
+			if len(entries) != 1 || entries[0].Name() != "bench" {
+				t.Fatalf("worker %q: files outside the bench: %v", worker, entries)
+			}
+			// Nothing may land anywhere under the bench other than the queued card.
+			var files []string
+			filepath.Walk(bench, func(p string, info os.FileInfo, _ error) error {
+				if info != nil && !info.IsDir() {
+					files = append(files, p)
+				}
+				return nil
+			})
+			if len(files) != 1 || files[0] != card {
+				t.Fatalf("worker %q: files under the bench: %v", worker, files)
+			}
+		})
+	}
+}
+
+// Stella's hold on #3247: rename replaces an existing destination, so a take must never
+// land on a file already in taken/. The existing taken card keeps its bytes, the queued card
+// stays in its lane, and no Job is created.
+func TestPullSubmitNeverOverwritesAnExistingTakenCard(t *testing.T) {
+	bench := fakeQueue(t, map[string][]string{lanes.Next: {"c1"}})
+	taken := filepath.Join(bench, "taken")
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	existing := filepath.Join(taken, "w1-c1"+CardExt)
+	if err := os.WriteFile(existing, []byte("already taken\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := &fakeSubmitter{}
+	res, err := PullSubmit(submitInput(bench, "w1", 8, 0, sub))
+	if err == nil {
+		t.Fatalf("want a refusal on an existing taken card, got %+v", res)
+	}
+	if len(sub.jobs) != 0 || res.Card != "" {
+		t.Fatalf("took %q with %d jobs", res.Card, len(sub.jobs))
+	}
+	if b, _ := os.ReadFile(existing); string(b) != "already taken\n" {
+		t.Fatalf("existing taken card overwritten: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(bench, "queue", lanes.LanesDir, lanes.Next, "c1"+CardExt)); err != nil {
+		t.Fatalf("queued card left its lane: %v", err)
+	}
+}
+
+// A worker name in the expected format still takes a card, and the taken path is directly
+// inside <bench>/taken.
+func TestPullSubmitAcceptsAWorkerNameInTheExpectedFormat(t *testing.T) {
+	for _, worker := range []string{"w1", "studio-3", "hulk_2.a", "  w1  "} {
+		bench := fakeQueue(t, map[string][]string{lanes.Next: {"c1"}})
+		sub := &fakeSubmitter{}
+		res, err := PullSubmit(submitInput(bench, worker, 8, 0, sub))
+		if err != nil || res.Card != "c1" {
+			t.Fatalf("worker %q: want c1 taken, got %+v err=%v", worker, res, err)
+		}
+		if filepath.Dir(res.Taken) != filepath.Join(bench, "taken") {
+			t.Fatalf("worker %q: taken path %q is not directly inside taken/", worker, res.Taken)
+		}
+	}
+}

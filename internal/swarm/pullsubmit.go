@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -60,6 +61,32 @@ func LoadHeadroom(cores int, load1 float64) float64 {
 // auto-deploy manifests directory applies it as written.
 type KubeJob map[string]any
 
+// workerName is the expected worker-name format: one filename component of at most 63
+// characters, [A-Za-z0-9._-], starting with a letter or digit. No separator, no dot or
+// dot-dot, nothing that can leave <bench>/taken when it is joined into a path.
+var workerName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$`)
+
+// ValidWorker reports why worker cannot name a taken card, or nil when it is exactly one
+// safe filename component in the expected worker-name format.
+func ValidWorker(worker string) error {
+	if worker == "" {
+		return fmt.Errorf("worker name is empty")
+	}
+	if !workerName.MatchString(worker) || filepath.Base(worker) != worker {
+		return fmt.Errorf("worker name %q is not one safe filename component ([A-Za-z0-9][A-Za-z0-9._-]{0,62})", worker)
+	}
+	return nil
+}
+
+// takenPath is <taken>/<worker>-<name>.card, refused unless it lies directly inside taken.
+func takenPath(taken, worker, name string) (string, error) {
+	to := filepath.Join(taken, worker+"-"+name+CardExt)
+	if filepath.Dir(to) != filepath.Clean(taken) {
+		return "", fmt.Errorf("taken path %q is not directly inside %s", to, taken)
+	}
+	return to, nil
+}
+
 // PullSubmitInput is one puller turn. Submit creates the Job; the verb writes it where
 // k3s applies it, a test records it.
 type PullSubmitInput struct {
@@ -90,8 +117,10 @@ type PullSubmitResult struct {
 func PullSubmit(in PullSubmitInput) (PullSubmitResult, error) {
 	worker := strings.TrimSpace(in.Worker)
 	res := PullSubmitResult{Worker: worker, Headroom: LoadHeadroom(in.Cores, in.Load1)}
-	if worker == "" {
-		return res, fmt.Errorf("worker name is empty")
+	// The worker is checked before any card is scanned or moved: it becomes part of the
+	// taken path, so a separator or dot-dot would carry the card outside <bench>/taken.
+	if err := ValidWorker(worker); err != nil {
+		return res, err
 	}
 	if in.Submit == nil {
 		return res, fmt.Errorf("no Job submitter")
@@ -113,7 +142,16 @@ func PullSubmit(in PullSubmitInput) (PullSubmitResult, error) {
 				return res, err
 			}
 			name := strings.TrimSuffix(filepath.Base(from), CardExt)
-			to := filepath.Join(taken, worker+"-"+name+CardExt)
+			to, err := takenPath(taken, worker, name)
+			if err != nil {
+				return res, err
+			}
+			// rename replaces an existing destination: never land on a card already taken.
+			if _, err := os.Lstat(to); err == nil {
+				return res, fmt.Errorf("take %s: %s already exists; refusing to overwrite a taken card", name, to)
+			} else if !errors.Is(err, os.ErrNotExist) {
+				return res, err
+			}
 			if err := os.Rename(from, to); err != nil {
 				if errors.Is(err, os.ErrNotExist) {
 					continue // another puller took this card first: the rename decided
@@ -122,6 +160,9 @@ func PullSubmit(in PullSubmitInput) (PullSubmitResult, error) {
 			}
 			jobName := JobName(worker, name)
 			if err := in.Submit(jobName, CardJob(jobName, in.Bench, name, to, in.Image, in.Runner)); err != nil {
+				if _, statErr := os.Lstat(from); statErr == nil {
+					return res, fmt.Errorf("submit %s: %v; %s is occupied, card left at %s", name, err, from, to)
+				}
 				if back := os.Rename(to, from); back != nil {
 					return res, fmt.Errorf("submit %s: %v; return to %s: %v", name, err, lane, back)
 				}
