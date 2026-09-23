@@ -16,3 +16,9 @@ The `OWNER` lock and the `HANDOFF` record live under `<root>/queue/` as files, b
 tab-separated. `OWNER` is `name`, `host`, `pid`, `since`. `HANDOFF` is `to`, `from`,
 `width` (the last `PULSE WIDTH` line), `in-flight` (cards by bench), `pending`, `escalations`,
 `benches` and `state`.
+
+The verbs are shipped (#509): `handoff` checks the successor awake by `nova-wake
+awake --bus <clone>` and posts the record with one `nova-bus send`; the loop's state is
+`<queue>/LOOP`, `stopped` by handoff and `running` by takeover; `--work <dir>` moves the
+tree's ownership record beside the queue's, bumping its generation with a fresh token and
+appending the `:handoff` event. Replays 26-31 walk every refusal and every count.

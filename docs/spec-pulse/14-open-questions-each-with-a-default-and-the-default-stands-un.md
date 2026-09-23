@@ -17,10 +17,11 @@
 5. **What the shipped tool is behind on, named rather than assumed.** This is a draft, and
    `## Tests this spec demands` says so: the replays are demanded of the implementation, not
    read off it. Three deltas are open against `internal/pulse` at this draft's head, each one
-   card's work: `pulseVerbs` lacks `--work` on `pool`, the `handoff`, `takeover` and `status`
-   lines, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
-   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`; and
-   `TestCutModelByKind` pins the routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
+   card's work: `pulseVerbs` lacks `--work` on `pool`, the `status`
+   line, and this draft's `--benches` and `--timeout`; `cut.go` prints `flash=<n> pro=<n>` on
+   `CUT OK` where rule 7's cost table gives `zero=<n> flat=<n> metered=<n>`, and writes
+   `cards.tsv` with four fields where rule 7 gives five; and `TestCutModelByKind` pins the
+   routing replay 8 replaces. A fourth is rule 9's: `internal/pulse/launch.go` still writes
    `zero=<n> flat=<n> metered=<n>` on `CUT OK` (rule 7's cost table) and `TestCutModelByKind`
    asserts the table's routes, while `cards.tsv` still carries four fields where rule 7 gives
    five; and rule 9's: `internal/pulse/launch.go` still writes
