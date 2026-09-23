@@ -90,7 +90,35 @@ Linux bench runs its own k3s and schedules only its own cards. The Studio is not
 `RESULT.md`, one `usage.tsv` row, one deadline, one clip — so one card gets one pod. The Job
 gives the card its own cgroup, its own env, its own log stream, its own `activeDeadlineSeconds`,
 and a failure whose effect is defined by the platform. It also makes the capacity line a
-*scheduler* fact rather than a number a person counts. **The pull is not replaced.** A per-bench
+*scheduler* fact rather than a number a person counts.
+
+```go
+// === internal/fleetkube: reference types for per-bench k3s and Job-per-card template ===
+
+// BenchNode declares one single-node k3s per bench. There is
+// no fleet-level cluster reference; the scheduler must never
+// move a card across benches, and the Studio is not a node.
+type BenchNode struct {
+	BenchName    string // nova.mas-bandwidth.com/bench=<name>
+	Kind         string // kind label(s): go, lisp, docs, schema-leg
+	K3sInstalled bool   // node runs its own single-node k3s, not a fleet cluster join
+}
+
+// CardJob is the template for one card: one Job, one pod,
+// never replicated or split across pods. The Job gives the
+// card its own cgroup, env, log stream, and
+// activeDeadlineSeconds.
+type CardJob struct {
+	CardName              string
+	Image                 string
+	CPU                   string
+	Memory                string
+	EphemeralStorage      string
+	ActiveDeadlineSeconds int
+}
+```
+
+**The pull is not replaced.** A per-bench
 puller (`nova-swarm pull --submit`, one replica) lists `queue/lanes/`, takes one card by
 `rename(<name>.card, taken/<worker>-<name>.card)` — atomic within the directory, as SPEC-JOBS
 rule 2 already says — and creates the Job for that card. The puller does not choose a worker or
