@@ -60,8 +60,9 @@ type FakeHost struct {
 	Issues    map[int]string
 	// Reads is the verdicts the forge carries for a pull request (#1572): the HOLDs and
 	// APPROVEs its readers posted as comments or reviews. VerdictErr is the read failing.
-	Reads      map[int][]Verdict
-	VerdictErr error
+	Reads       map[int][]Verdict
+	VerdictErr  error
+	VerdictErrs map[int]error
 	// OnVerdicts and VerdictCalls are the per-call seam: see Verdicts.
 	OnVerdicts       func(n, call int) ([]Verdict, bool)
 	VerdictCalls     map[int]int
@@ -90,7 +91,7 @@ func (f *FakeHost) IssueFor(pr int) string { return f.Issues[pr] }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
-	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}}
+	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}, VerdictErrs: map[int]error{}}
 }
 
 func (f *FakeHost) PR(n int) (PR, error) {
@@ -261,6 +262,9 @@ func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
 // Verdicts is the reads a test says this pull request carries (#1572). A host with no
 // entry for a pull request carries none, which is the ordinary case.
 func (f *FakeHost) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	if f.VerdictErrs != nil && f.VerdictErrs[n] != nil {
+		return nil, f.VerdictErrs[n]
+	}
 	if f.VerdictErr != nil {
 		return nil, f.VerdictErr
 	}
@@ -324,4 +328,12 @@ func (f *FakeHost) SetVerdicts(n int, vs ...Verdict) {
 		f.Reads = map[int][]Verdict{}
 	}
 	f.Reads[n] = append(f.Reads[n], vs...)
+}
+
+// SetVerdictErr records an error returning verdicts for pull request n.
+func (f *FakeHost) SetVerdictErr(n int, err error) {
+	if f.VerdictErrs == nil {
+		f.VerdictErrs = map[int]error{}
+	}
+	f.VerdictErrs[n] = err
 }
