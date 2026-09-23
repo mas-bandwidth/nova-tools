@@ -366,7 +366,8 @@ func isCICard(label string, card map[string]string) bool {
 }
 
 // onEnded: ended DONE creates the harvest task; a ci card, a card that did
-// not end DONE, or a stale attempt is acked with no transition.
+// not end DONE, a card that committed nothing (report-to-read's), or a stale
+// attempt is acked with no transition.
 func (o *OkFriend) onEnded(ctx context.Context, e *okEvent) error {
 	c := e.card
 	switch {
@@ -378,6 +379,10 @@ func (o *OkFriend) onEnded(ctx context.Context, e *okEvent) error {
 		return o.skip(ctx, e, "not-done", "")
 	case isCICard(e.label, c):
 		return o.skip(ctx, e, "ci-card", "")
+	case NoCommit(c):
+		// Nothing to harvest: the report-to-read rule (report.go) gives it
+		// its one report read (#3036).
+		return o.skip(ctx, e, "no-commit", "")
 	}
 	priority, _ := strconv.Atoi(c["priority"])
 	req := task.PushRequest{
