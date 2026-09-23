@@ -122,14 +122,14 @@ func rdFixture(t *testing.T, st *store.Store, client *redis.Client, f string) ma
 	}
 	// f's typed HOLD on 103 at the earlier head c; 103 is now at head d.
 	must(client.HSet(ctx, "s:"+rdSprint+":disp:"+rdRepo+":103",
-		f+"@"+rdHead('c'), "HOLD 4 https://github.com/mas-bandwidth/nova-tools/pull/103#hold").Err())
+		f+"@"+rdHead('c'), "HOLD 4 https://example.test/mas-bandwidth/nova-tools/pull/103#hold").Err())
 
 	push := func(id string, kind task.Kind, pr int) {
 		t.Helper()
 		req := task.PushRequest{Sprint: rdSprint, ID: id, Kind: kind, Title: id + " title", To: f, Actor: "test"}
 		if pr != 0 {
 			req.Repo, req.PR, req.Head = rdRepo, pr, prs[pr].head
-			req.Ref = "https://github.com/mas-bandwidth/nova-tools/pull/" + strconv.Itoa(pr)
+			req.Ref = "https://example.test/mas-bandwidth/nova-tools/pull/" + strconv.Itoa(pr)
 		}
 		status, err := task.Push(ctx, st, req)
 		must(err)
