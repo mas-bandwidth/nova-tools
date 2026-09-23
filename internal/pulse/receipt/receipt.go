@@ -68,8 +68,10 @@ const (
 	ResultFail Result = "fail"
 )
 
-// SixFiles are the files that used to be the bench receipts and are now forbidden: a receipt
-// is an event, not a file, and the fold is its record. Exposed so a caller and a test can
+// SixFiles are the fixed names of the files that used to be the bench receipts and are now
+// forbidden: a receipt is an event, not a file, and the fold is its record. The sixth file,
+// ADOPT-<sha>.txt, is named per sha, so it is a pattern (AdoptPrefix + sha + AdoptSuffix)
+// rather than an entry here; Forbidden checks all six. Exposed so a caller and a test can
 // assert that none of them was written.
 var SixFiles = []string{
 	"CANARY-RECEIPT.txt",
@@ -77,6 +79,24 @@ var SixFiles = []string{
 	"ESCALATE",
 	"SPRINT-OK-HISTORY.tsv",
 	"SPRINT-MODELS.txt",
+}
+
+// AdoptPrefix and AdoptSuffix bound the sixth forbidden file, ADOPT-<sha>.txt.
+const (
+	AdoptPrefix = "ADOPT-"
+	AdoptSuffix = ".txt"
+)
+
+// Forbidden reports whether a base file name is one of the six receipt files: one of the
+// five fixed SixFiles, or ADOPT-<sha>.txt for any non-empty sha.
+func Forbidden(name string) bool {
+	for _, w := range SixFiles {
+		if name == w {
+			return true
+		}
+	}
+	return len(name) > len(AdoptPrefix)+len(AdoptSuffix) &&
+		strings.HasPrefix(name, AdoptPrefix) && strings.HasSuffix(name, AdoptSuffix)
 }
 
 // Entry is one stream entry: the id the store minted and the fields the writer set. It mirrors
