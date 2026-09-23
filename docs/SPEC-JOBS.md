@@ -328,3 +328,52 @@ number is read from `usage.tsv` and the queue — never from a report body.
    **minutes per card**, **tokens per landed card** — against step 2, and keep the pull only
    where the three move together; a lane that raises cards per hour while lowering landed quality
    is a regression and the measurement says so.
+
+## Tests this spec demands
+
+The spec names its red tests explicitly, one per behaviour, so the enumeration below is the spec's own (44 lines). The present ones run against temp dirs (`t.TempDir`), fake clocks, fake runners and fake forges; the ci events tests run against miniredis plus a fake forge; the jobs admission tests are in-memory and deterministic. Nothing reaches a network or a real secret, and each test is written to be seen red before green.
+
+1. `TestLaunchReadsTheReadySetNotTheQueue` — launch reads the ready set and nothing else; a card whose need is an open PR is never on a slot.
+2. `TestANeedsCycleRefusesAtSeed` — a `:deps` cycle is refused at seed (validator rule 3), so the graph can never deadlock.
+3. `TestTwoWorkersCannotTakeOneCard` — the rename is the ownership record; two workers racing one card cannot both take it, exactly one wins.
+4. `TestAStealNeverStarvesTheVictim` — a steal leaves the victim at or above its own capacity line; a victim at the line is left alone.
+5. `TestSlotExpiredDeadPidReaped` — an expired lease with a dead pid is reaped by the next take and the slot is freed.
+6. `a-launch-without-a-lease-is-refused-by-the-puller` — no launch without a lease (rule 2 of **Bench slot leases**).
+7. `TestPullPrefersTheBenchThatHoldsTheRepo` — pull prefers the bench that already holds the card's repo in a kept worktree, else fetches from the mirror.
+8. `TestAClipResetsTheWorktreeToBase` — clip commits the card's branch, harvests its result, and resets the worktree to base.
+9. `TestRedLaneDrainsBeforeGreen` — pull drains red, then green, then small, then next; source order inside a lane.
+10. `TestAScorerRefusalKeepsSourceOrder` — a tie the rule cannot break is asked of a typed score behind the 0.9 floor; a refusal keeps source order.
+11. `TestABatchClipsBetweenCards` — a batch clips between cards, so card n+1 never sees card n's uncommitted diff and each card keeps its own RESULT.md.
+12. `TestACardOverEffortReturnsTheRemainder` — a card past its `:effort` stops the batch and the remainder returns to `queue/`.
+13. `TestPullNeverExceedsTheCapacityLine` — pulls never exceed the capacity line; a full bench admits nothing.
+14. `TestAnIdleSlotAsksOnAnEventNotAPoll` — an idle slot asks the coordinator for work on an event, never by polling its empty queue.
+15. `TestWatchReturnsOncePerChange` — a watch returns once per change, one line per event, and does not replay on quiet polls.
+16. `TestQuietTimeMakesNoModelCall` — quiet time makes no model call and no subprocess poll.
+17. `TestProducerPublishesCardDoneFromTheStream` — the producer republishes each `cards:done` stream entry as `card-done`.
+18. `TestProducerPublishesPRChecksDoneOnlyOnChange` — the producer publishes `pr-checks-done` only on change.
+19. `TestProducerPublishesDevMovedOnlyOnChange` — the producer publishes `dev-moved {sha}` only on change.
+20. `TestReactorEnqueuesGreenPR` — the reactor enqueues a PR once on a successful `pr-checks-done`.
+21. `TestReactorSkipsTheQueuesSkipSet` — the reactor skips the `enqueue:skip` set.
+22. `TestReactorHoldsOnTheLanesHold` — the reactor holds on the `enqueue:hold` key.
+23. `TestReactorPublishesRebaseWantedForDirtyPRs` — on `dev-moved` the reactor publishes `rebase-wanted` for each PR the move made DIRTY.
+24. `TestReactorCardDonePublishesNothing` — on `card-done` the reactor publishes nothing.
+25. `TestJobsAdmission/jobs-admission-is-atomic-no-partial-grant` — admission takes the whole vector or none of it, never a partial grant.
+26. `TestJobsAdmission/jobs-a-nested-grant-draws-from-its-parent` — a nested grant draws from its parent's reservation, not from the machine.
+27. `TestJobsAdmission/jobs-double-reservation-is-a-refusal-not-a-wait` — a second reservation for one capacity is a refusal, not a wait.
+28. `TestJobsAdmission/jobs-a-download-asks-for-network-and-no-cpu` — a download asks for network and no cpu, which a slot count cannot see.
+29. `TestJobsAdmission/jobs-one-live-unit-per-lane` — a lane admits one live unit at a time.
+30. `TestJobsAdmission/jobs-unrelated-lanes-scatter` — unrelated lanes scatter and gather.
+31. `TestJobsAdmission/jobs-intersecting-writes-serialize-across-lanes` — two units whose `:writes` intersect serialize even when their lanes differ.
+32. `jobs-uncertain-keeps-its-resources` — an `uncertain` unit keeps its reservation until termination is proved or a fence is written.
+33. `jobs-an-uncertain-attempt-is-never-re-granted-on-expiry` — a lease past expiry with a live/uncertain outcome is never re-granted.
+34. `TestJobsAdmission/jobs-a-ready-unit-goes-with-no-global-barrier` — a ready unit goes with no phase, wave or round; a refusal ahead of it does not hold it.
+35. `jobs-done-when-is-a-report-not-a-gate` — a work set's `:done-when` is a report of its finish line, never a gate on its members.
+36. `jobs-retained-warm-state-is-not-charged-as-active` — retained warm state is accounted apart from active resources, never charged as running capacity.
+37. `jobs-a-collection-binds-its-members-at-harvest` — a `:collects` collection is named before the run and its members bound to the unit's revision at harvest.
+38. `jobs-a-tool-key-move-invalidates-the-unit` — a tool's semantic key moving invalidates the unit's outputs.
+39. `jobs-a-unit-refuses-on-a-tool-below-its-version` — a unit refuses on a tool below its version.
+40. `jobs-a-unit-without-acceptance-is-refused-at-load` — a unit without `:acceptance` is refused at load.
+41. `work-ask-reads-the-same-set-as-the-pull-worker` — `nova-work ask` and the pull worker read the one `:owner` form.
+42. `jobs-an-executor-draws-its-budget-from-the-parent-grant` — an external executor draws its sub-budget from the parent's grant.
+43. `jobs-an-executor-result-binds-to-the-units-revision` — an executor's result arrives bound to the unit's revision and `:acceptance`.
+44. `jobs-a-disconnected-executor-is-uncertain-not-stopped` — a disconnected executor is `uncertain`, never assumed stopped.

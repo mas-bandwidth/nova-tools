@@ -325,7 +325,7 @@ job.
 
 ## 22. A card's line-1 contract never carries the answer
 
-Line 1 is identity and nothing else — `RESULT <label> sha=<sha12>`, the label and the hash of
+Line 1 is identity and nothing else — `RESULT: <label> sha=<sha12>`, the label and the hash of
 the text below it; the verdict is line 2 and the findings come after. Since `gather` scores a
 `RESULT.md` **done on line 1 alone, whatever the harness exit code** (SPEC-SWARM, **gather**,
 landed in #577, pinned by `done-whatever-the-exit-code`; the rc is recorded on the line), a line 1 that stated the expected verdict, the expected count or the fix
@@ -397,6 +397,20 @@ now touch different files and merge clean.
 parallel amendment PRs that merge without conflict are its evidence.
 **Expires** when the layout changes. **Rollback:** the single-file specs.
 **Held by:** Rowan.
+
+## The depends-on token (#2636)
+
+`depends-on` is not one of the four §5 tokens above, and it is not one of the twelve
+shape rules. It fires only when `lint --card --typed` is asked, so a card written before
+the key existed is not refused for lacking it unless `--typed` is passed. It wants
+`DEPENDS-ON: <card-id>[, ...]` or `DEPENDS-ON: -` in the header block directly under the
+contract line. `-` passes: the card depends on nothing. The card's own id is the first
+word of its contract line, and a `DEPENDS-ON` that names that word is refused. An id is
+unknown only when `--lineup <file>` is handed over and the id is not in it; with no
+lineup the lint does not guess which ids exist. An `owner/repo#n` reference — one
+slash, then `#` and digits, as in `mas-bandwidth/nova-tools#2550` — is checked for
+shape only and is not looked up in the lineup. A space (`nova-tools #2550`) or
+anything else (`dogfood`) is refused by name.
 
 ## Open
 

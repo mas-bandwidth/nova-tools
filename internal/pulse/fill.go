@@ -33,10 +33,12 @@ package pulse
 // (internal/fleet), and a bench whose roles lack `bench` is refused BY NAME before any ssh
 // is opened -- exit 2, nothing launched. That is Glenn's lock of 2026-09-18: runner hosts
 // are CI-only, and a card on a machine serving the merge group's shards makes the shard
-// slow, the gate red and the queue stop. The guard is in three places on purpose: the whole
-// bench list is checked before the first tick, and then EVERY capacity read and EVERY launch
-// goes through a wrapper that asks the registry again -- so a bench name that arrives by
-// some other road later still cannot reach a runner host.
+// slow, the gate red and the queue stop. A row that is both runner and bench without the
+// dated allow-shared note is different (#2031): that bench is DISABLED with a named line
+// each tick, and every other bench deals. The guard is in three places on purpose: the
+// whole bench list is checked before the first tick, and then EVERY capacity read and EVERY
+// launch goes through a wrapper that asks the registry again -- so a bench name that arrives
+// by some other road later still cannot reach a runner host.
 //
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
@@ -82,17 +84,49 @@ type Capacity interface {
 // refuseNonBenches holds every named bench against the registry BEFORE the first tick, so
 // a fill naming a runner host launches nothing at all rather than launching what it can and
 // refusing the rest. Every refused name gets its own line: a person who typed two wrong
-// names learns both at once.
+// names learns both at once. A shared-without-note row is not this: fill disables that
+// bench per tick and keeps dealing to its neighbours (#2031).
 func refuseNonBenches(stderr io.Writer, reg *fleet.Registry, benches []string) int {
 	code := 0
 	for _, bench := range benches {
 		var r *fleet.Refusal
 		if err := reg.RequireBench(bench); errors.As(err, &r) {
+			if r.Reason == fleet.ReasonSharedWithoutNote {
+				continue
+			}
 			fmt.Fprintln(stderr, r.Line("FILL"))
 			code = 2
 		}
 	}
 	return code
+}
+
+// dropLockFailed takes the poisoned shared rows out of the deal list so they do not appear
+// as a filling bench. The DISABLED line is how they are named.
+func dropLockFailed(reg *fleet.Registry, benches []string) []string {
+	if len(reg.LockFailed()) == 0 {
+		return benches
+	}
+	failed := make(map[string]bool, len(reg.LockFailed()))
+	for _, m := range reg.LockFailed() {
+		failed[m.Name] = true
+	}
+	var keep []string
+	for _, b := range benches {
+		if !failed[b] {
+			keep = append(keep, b)
+		}
+	}
+	return keep
+}
+
+// printDisabledLock names every row that failed the runner/bench lock, once per tick.
+func printDisabledLock(stderr io.Writer, reg *fleet.Registry) {
+	for _, m := range reg.LockFailed() {
+		r := reg.SharedLockRefusal(m)
+		fmt.Fprintf(stderr, "FILL DISABLED bench=%s reason=%s remedy=%s\n",
+			oneline.Field(r.Name), oneline.Field(r.Reason), oneline.Quote(r.Remedy))
+	}
 }
 
 // guardedCapacity is the capacity seam with the registry in front of it: a capacity probe
@@ -126,23 +160,31 @@ func (g guardedLauncher) Launch(bench, card string) error {
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
 // directories and stub seams.
 type FillInput struct {
-	Ready    string        // the queue/ready directory the card-<n>.md are popped from
-	Launched string        // the queue/launched directory they are moved into; its cards are live
-	Markers  string        // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
-	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
-	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
-	Session  string        // the session id stamped into every launched card's marker
-	Benches  []string      // the benches to fill, in order
-	Only     []string      // glob patterns over a card's filename; empty takes every ready card
-	Once     bool          // true runs exactly one tick and returns
-	Interval time.Duration // how long between ticks; 0 takes FillInterval
-	Stop     string        // touch this file to stop the loop; empty names no stop file
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Now      func() time.Time
-	Sleep    func(time.Duration)
-	Launcher CardLauncher
-	Capacity Capacity
+	Ready      string            // the queue/ready directory the card-<n>.md are popped from
+	Launched   string            // the queue/launched directory they are moved into; its cards are live
+	Markers    string            // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
+	Lanes      string            // the lanes file: <name>\t<path prefixes> per line; empty names no lane
+	Machines   string            // the machines registry; a bench whose roles lack `bench` is refused
+	Queue      string            // the queue directory whose .lock this fill takes; empty is --launched's parent
+	Repo       string            // repo root for git commands (default: ".")
+	Base       string            // base branch to check dependencies against (default: "dev")
+	ResultsDir string            // results store root (default: ~/nova-bench/results)
+	Checker    DependencyChecker // optional dependency checker seam for testing
+	Session    string            // the session id stamped into every launched card's marker
+	Benches    []string          // the benches to fill, in order
+	Only       []string          // glob patterns over a card's filename; empty takes every ready card
+	Once       bool              // true runs exactly one tick and returns
+	Interval   time.Duration     // how long between ticks; 0 takes FillInterval
+	Stop       string            // touch this file to stop the loop; empty names no stop file
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Now        func() time.Time
+	Sleep      func(time.Duration)
+	Launcher   CardLauncher
+	Capacity   Capacity
+	// Locked says this fill runs inside a caller that already holds the queue's lock (the
+	// `loop` verb), so it takes none of its own.
+	Locked bool
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -192,16 +234,23 @@ func Fill(in FillInput) int {
 	// registry carries. The pool was a Go literal -- `hulk, vision, space` -- so a bench
 	// certified last night was not filled until someone edited a tool and cut a release.
 	// Now the row IS the enrolment, and the tool holds no fleet name at all.
-	if len(in.Benches) == 0 {
+	named := len(in.Benches) > 0
+	if !named {
 		in.Benches = reg.CertifiedBenchNames()
-		if len(in.Benches) == 0 {
-			return refusal(in.Stderr, "FILL", fmt.Errorf(
-				"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
-				in.Machines))
-		}
 	}
+	in.Benches = dropLockFailed(reg, in.Benches)
 	if code := refuseNonBenches(in.Stderr, reg, in.Benches); code != 0 {
 		return code
+	}
+	if len(in.Benches) == 0 {
+		printDisabledLock(in.Stderr, reg)
+		if named {
+			return refusal(in.Stderr, "FILL", fmt.Errorf(
+				"every named bench is disabled by the runner/bench lock; add `allow-shared=<YYYY-MM-DD> <why>` to the shared row's notes, or name a bench that may take a card"))
+		}
+		return refusal(in.Stderr, "FILL", fmt.Errorf(
+			"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
+			in.Machines))
 	}
 	// Belt and braces: even a bench that passed the list check is asked again at the
 	// moment the card, or the capacity probe, would reach the machine.
@@ -211,6 +260,15 @@ func Fill(in FillInput) int {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return refusal(in.Stderr, "FILL", fmt.Errorf("cannot open %s: %s (name a writable directory)", oneline.Field(dir), oneline.Err(err)))
 		}
+	}
+	// ONE WRITER PER QUEUE (queuelock.go). A fill moves cards and writes the markers that
+	// hold a lane, so a second one on the same queue is a race over both.
+	if !in.Locked {
+		lock, err := LockQueue(fillQueue(in), "fill")
+		if err != nil {
+			return refusal(in.Stderr, "FILL", err)
+		}
+		defer lock.Release()
 	}
 
 	for tick := 1; ; tick++ {
@@ -224,6 +282,7 @@ func Fill(in FillInput) int {
 				"no new launches; the live cards are untouched and nothing was killed")
 			return 0
 		}
+		printDisabledLock(in.Stderr, reg)
 		lines, res := fillTick(in, tick)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
@@ -267,12 +326,17 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // line when the tick took stale markers away.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
-	cards := selectedCards(readyCards(in.Ready), in.Only)
+	cards := SortQueueCards(selectedCards(readyCards(in.Ready), in.Only))
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
+
+	checker := in.Checker
+	if checker == nil {
+		checker = NewGitAndResultsChecker(in.Repo, in.Base, in.ResultsDir)
+	}
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
 		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
@@ -323,6 +387,14 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			progressed = true
 			card := cards[idx]
 			idx++
+
+			// Check dependencies before admitting/launching (Essential 3 from Issue #2437)
+			if unmetDep, reason, ok := CheckCardDependencies(card, checker); !ok {
+				held = append(held, fmt.Sprintf("FILL HELD card=%s depends-on=%s reason=%s",
+					oneline.Field(filepath.Base(card)), oneline.Field(unmetDep), oneline.Field(reason)))
+				continue
+			}
+
 			lane := cardLane(card)
 			if lane != "" {
 				if _, known := lanes[lane]; !known {
@@ -640,6 +712,9 @@ func writeLaunchedMarker(in FillInput, moved, base, lane, bench string) {
 	body := fmt.Sprintf("lane=%s\nbench=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
 		lane, bench, strings.TrimSuffix(base, ".md"), in.Session, base,
 		now().UTC().Format(time.RFC3339))
+	if deps := CardDependencies(moved); len(deps) > 0 {
+		body += fmt.Sprintf("depends-on=%s\n", strings.Join(deps, ","))
+	}
 	_ = os.WriteFile(launchedMarker(in.Launched, base), []byte(body), 0o644)
 }
 
@@ -672,6 +747,17 @@ func stopped(path string) bool {
 	}
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// fillQueue is the directory whose lock this fill takes: --queue when it is named, else the
+// parent of --launched, which is the queue's own layout (queue/launched, queue/ready). It is
+// the layout and not a guess about meaning: a fill that moves queue/ready/card-9.md into
+// queue/launched/ is writing that queue, whatever the caller calls it.
+func fillQueue(in FillInput) string {
+	if q := strings.TrimSpace(in.Queue); q != "" {
+		return q
+	}
+	return filepath.Dir(strings.TrimRight(in.Launched, string(os.PathSeparator)))
 }
 
 // isDir says whether a path is a directory that is there.

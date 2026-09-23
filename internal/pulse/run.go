@@ -110,6 +110,9 @@ type RunInput struct {
 	Max    int
 	Bus    string // a nova-bus clone; empty sends notes to <queue>/ESCALATE
 	As     string // the name notes are sent to
+	// Locked says this shift runs inside a caller that already holds the queue's lock (the
+	// `loop` verb), so it takes none of its own.
+	Locked bool
 	Stdout io.Writer
 	Stderr io.Writer
 
@@ -195,6 +198,15 @@ func Run(in RunInput) int {
 	state, err := LoadState(in.Queue)
 	if err != nil {
 		return refusal(in.Stderr, "RUN", err)
+	}
+	// ONE WRITER PER QUEUE (queuelock.go). A shift moves cards, writes the state file and
+	// cuts cards under <queue>/NEXT; two shifts on one queue race all three.
+	if !in.Locked {
+		lock, err := LockQueue(in.Queue, "run")
+		if err != nil {
+			return refusal(in.Stderr, "RUN", err)
+		}
+		defer lock.Release()
 	}
 
 	r := &runner{

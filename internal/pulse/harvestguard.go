@@ -123,8 +123,10 @@ func cardRepo(cardPath string) string {
 	return ""
 }
 
-// cloneOrigin is the origin remote git records in a clone. The directory itself is tried
-// first, then its `repo` subdirectory, which is where the native runner puts a job's clone.
+// cloneOrigin is the origin remote git records in a clone, read from the raw
+// `remote.origin.url` so a test's insteadOf cannot rewrite it. The directory itself is
+// tried first, then its `repo` subdirectory, which is where the native runner puts a
+// job's clone.
 //
 // IT IS NOT A DESTINATION. On a JOB's clone it is a worker's claim -- the worker owns that
 // directory and `git remote set-url origin <elsewhere>` costs it one line (SPEC-SANDBOX
@@ -139,7 +141,9 @@ func cloneOrigin(jobDir string) string {
 	}
 	for _, dir := range []string{filepath.Join(jobDir, "repo"), jobDir} {
 		ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
-		cmd := exec.CommandContext(ctx, "git", "-C", dir, "remote", "get-url", "origin")
+		// Raw config, not `git remote get-url`: insteadOf would rewrite a forge
+		// URL onto a local path and hide the comparison destBench exists for.
+		cmd := exec.CommandContext(ctx, "git", "-C", dir, "config", "--get", "remote.origin.url")
 		out, err := cmd.Output()
 		cancel()
 		if err != nil {
