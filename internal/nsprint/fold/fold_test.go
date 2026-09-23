@@ -267,3 +267,50 @@ func TestMainFlagsAndExitCodes(t *testing.T) {
 		t.Fatalf("no sprint name: exit %d stderr %q", code, stderr.String())
 	}
 }
+
+// An unpriced card that is useful or landed puts an unknown cost in the
+// denominator of $ per useful and $ per landed, so those figures are
+// suppressed (-) on its route and on the sprint line, never printed as if
+// exact; usd itself stays the priced sum with unpriced counting the gap.
+func TestFoldSuppressesPerCardWhenUnpricedCardCounts(t *testing.T) {
+	_, client, fx := seed(t)
+	ctx := context.Background()
+	s := "s:" + fx.Sprint
+	// c10: a landed kimi card with no usd field.
+	if err := client.HSet(ctx, s+":card:c10", map[string]string{
+		"kind": "model", "route": "kimi", "state": "landed", "outcome": "DONE",
+		"repo": "nova-tools", "pr": "110", "head": "cccc1010",
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SAdd(ctx, s+":idx:card:landed", "c10").Err(); err != nil {
+		t.Fatal(err)
+	}
+	work := workRepo(t)
+	var out bytes.Buffer
+	if _, err := fold.Run(ctx, client, opts(fx, work), &out); err != nil {
+		t.Fatalf("fold: %v\n%s", err, out.String())
+	}
+	sp := fx.Sprint
+	for _, want := range []string{
+		"FOLD ROUTE sprint=" + sp + " route=kimi cards=3 done=2 useful=1 landed=1 usd=0.05 usd_per_useful=- usd_per_landed=- unpriced=2\n",
+		// Routes with every useful and landed card priced keep their figures.
+		"FOLD ROUTE sprint=" + sp + " route=fable cards=4 done=3 useful=3 landed=2 usd=1.8 usd_per_useful=0.6 usd_per_landed=0.9 unpriced=0\n",
+		"FOLD SPRINT sprint=" + sp + " cards=10 done=8 useful=5 landed=4 usd=2.45 usd_per_useful=- usd_per_landed=- unpriced=2 ",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing line %q in\n%s", want, out.String())
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(work, "docs", "roadmaps", "folds", sp+".sexp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `(route "kimi" :cards 3 :done 2 :useful 1 :landed 1 :usd "0.05" :usd-per-useful "-" :usd-per-landed "-" :unpriced 2)`
+	if !bytes.Contains(body, []byte(want)) {
+		t.Errorf("fold file lacks %q:\n%s", want, body)
+	}
+	if msg := git(t, work, "log", "-1", "--format=%s"); !strings.HasSuffix(msg, "usd per landed -") {
+		t.Errorf("commit subject %q does not suppress usd per landed", msg)
+	}
+}

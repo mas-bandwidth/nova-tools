@@ -74,6 +74,13 @@ type Route struct {
 	Landed   int
 	Priced   int
 	USDMicro int64
+	// UsefulUnpriced and LandedUnpriced count the useful and the landed cards
+	// with no measured cost. When either is not 0 the matching $ per card is
+	// suppressed (printed as -): the numerator would omit those cards' cost
+	// while the denominator counts them, so the figure would look exact but
+	// be a lower bound.
+	UsefulUnpriced int
+	LandedUnpriced int
 }
 
 // Unpriced counts the cards whose cost was never measured; their cost is an
@@ -345,9 +352,15 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 			}
 			if useful {
 				line.Useful++
+				if !priced {
+					line.UsefulUnpriced++
+				}
 			}
 			if landed {
 				line.Landed++
+				if !priced {
+					line.LandedUnpriced++
+				}
 			}
 			if priced {
 				line.Priced++
@@ -410,8 +423,10 @@ func sameSHA(a, b string) bool {
 	return len(a) >= 7 && strings.HasPrefix(b, a)
 }
 
-func per(micro int64, n, priced int) string {
-	if n == 0 || priced == 0 {
+// per is $ per card over n cards, or - when n is 0 or when any of the n cards
+// is unpriced (its cost is unknown, so the quotient would understate it).
+func per(micro int64, n, unpricedInN int) string {
+	if n == 0 || unpricedInN > 0 {
 		return tokens.Dash
 	}
 	return tokens.Usd((micro + int64(n)/2) / int64(n))
@@ -429,13 +444,13 @@ func PrintLines(out io.Writer, s Summary) {
 	for _, r := range s.Routes {
 		fmt.Fprintf(out, "FOLD ROUTE sprint=%s route=%s cards=%d done=%d useful=%d landed=%d usd=%s usd_per_useful=%s usd_per_landed=%s unpriced=%d\n",
 			s.Sprint, oneline.Field(r.Name), r.Cards, r.Done, r.Useful, r.Landed, usd(r),
-			per(r.USDMicro, r.Useful, r.Priced), per(r.USDMicro, r.Landed, r.Priced), r.Unpriced())
+			per(r.USDMicro, r.Useful, r.UsefulUnpriced), per(r.USDMicro, r.Landed, r.LandedUnpriced), r.Unpriced())
 	}
 	fmt.Fprintf(out, "FOLD CI sprint=%s cards=%d done=%d\n", s.Sprint, s.CICards, s.CIDone)
 	t := s.Total
 	fmt.Fprintf(out, "FOLD SPRINT sprint=%s cards=%d done=%d useful=%d landed=%d usd=%s usd_per_useful=%s usd_per_landed=%s unpriced=%d tasks=%d tasks_done=%d receipts=%d useful_min=%d\n",
 		s.Sprint, t.Cards, t.Done, t.Useful, t.Landed, usd(t),
-		per(t.USDMicro, t.Useful, t.Priced), per(t.USDMicro, t.Landed, t.Priced), t.Unpriced(),
+		per(t.USDMicro, t.Useful, t.UsefulUnpriced), per(t.USDMicro, t.Landed, t.LandedUnpriced), t.Unpriced(),
 		s.Tasks, s.TasksDone, s.Receipts, s.UsefulMin)
 }
 
@@ -446,7 +461,7 @@ func q(s string) string {
 func routeSexp(head string, r Route) string {
 	return fmt.Sprintf("(%s :cards %d :done %d :useful %d :landed %d :usd %s :usd-per-useful %s :usd-per-landed %s :unpriced %d)",
 		head, r.Cards, r.Done, r.Useful, r.Landed, q(usd(r)),
-		q(per(r.USDMicro, r.Useful, r.Priced)), q(per(r.USDMicro, r.Landed, r.Priced)), r.Unpriced())
+		q(per(r.USDMicro, r.Useful, r.UsefulUnpriced)), q(per(r.USDMicro, r.Landed, r.LandedUnpriced)), r.Unpriced())
 }
 
 // Sexp is the fold record committed into nova-work. It holds no clock, so a
@@ -532,7 +547,7 @@ func commit(ctx context.Context, work, rel string, s Summary, hook func(string) 
 	}
 	t := s.Total
 	msg := fmt.Sprintf("fold %s: landed %d, done %d, useful %d of %d cards, usd per landed %s\n\n%s%s\n",
-		s.Sprint, t.Landed, t.Done, t.Useful, t.Cards, per(t.USDMicro, t.Landed, t.Priced), trailer, s.Sprint)
+		s.Sprint, t.Landed, t.Done, t.Useful, t.Cards, per(t.USDMicro, t.Landed, t.LandedUnpriced), trailer, s.Sprint)
 	if _, err := gitCmd(ctx, work, "commit", "-q", "--only", "-m", msg, "--", rel); err != nil {
 		return "", err
 	}
