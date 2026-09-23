@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+{# fleet/loops.yml renders this template for every loop unit. #}
+{% if loop_needs_become %}
+<!-- /Library/LaunchDaemons/com.nova.loop.{{ l.name }}.plist -- managed by Ansible (fleet/loops.yml).
+     This bench's ssh seat has no active console/GUI session (host_vars: node_exporter_needs_become),
+     so `launchctl bootstrap gui/<uid>` refuses ("Domain does not support specified action") and the
+     per-user "user/<uid>" domain refuses too ("5: Input/output error"). A system LaunchDaemon has no
+     session dependency; UserName drops it to the seat user, not root. Measured 2026-09-21 for
+     node_exporter (group_vars/all.yml has the story); the same fact governs every loop. -->
+{% else %}
+<!-- ~/Library/LaunchAgents/com.nova.loop.{{ l.name }}.plist -- managed by Ansible (fleet/loops.yml).
+     This host's ssh seat IS the active console/GUI session, so `launchctl bootstrap gui/<uid>`
+     works with no sudo. -->
+{% endif %}
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+<key>Label</key>
+<string>com.nova.loop.{{ l.name }}</string>
+{% if loop_needs_become %}
+<key>UserName</key>
+<string>{{ ansible_user_id }}</string>
+{% endif %}
+<!-- nova-loop is the single-instance wrapper: launchd guarantees one copy per LABEL, it
+     guarantees one copy per LOOP (a hand-started second copy exits 3). It execs the command,
+     so the pid launchd watches is the loop's own. -->
+<key>ProgramArguments</key>
+<array>
+<string>{{ ansible_env.HOME }}/.local/bin/nova-loop</string>
+<string>{{ l.name }}</string>
+<string>--</string>
+{% for w in loop_argv %}
+<string>{{ w }}</string>
+{% endfor %}
+</array>
+<key>EnvironmentVariables</key>
+<dict>
+<key>HOME</key>
+<string>{{ ansible_env.HOME }}</string>
+<key>PATH</key>
+<string>{{ loop_path }}</string>
+<key>NOVA_LOOP_TEXTFILE_DIR</key>
+<string>{{ loop_textfile_dir }}</string>
+</dict>
+<key>WorkingDirectory</key>
+<string>{{ ansible_env.HOME }}/rowan-working</string>
+<key>RunAtLoad</key>
+<true/>
+<key>KeepAlive</key>
+<true/>
+<!-- Measured 2026-09-22: `launchctl kickstart -k` of a loop unit (an edit reload, or a KeepAlive
+     respawn) SIGTERMs the unit's WHOLE PROCESS GROUP by default, not just the pid launchd
+     watches. That killed in-flight lander lanes mid-gate (ABORT exit=0) and the sprint table's
+     background refresh (the friend rows went empty). AbandonProcessGroup detaches the job from
+     launchd's tracked process group at exec time, so a kickstart/KeepAlive signal reaches only
+     the loop's own pid. The refresh also calls setsid, so it is not in that group either. -->
+<key>AbandonProcessGroup</key>
+<true/>
+<!-- at most one start per 10 s: the DONE-WHEN is "healed within 10 s", and a loop that cannot
+     start (a hand-run copy holding the lock) then flaps visibly instead of spinning. -->
+<key>ThrottleInterval</key>
+<integer>10</integer>
+<key>StandardOutPath</key>
+<string>{{ ansible_env.HOME }}/nova-bench/logs/{{ l.name }}.log</string>
+<key>StandardErrorPath</key>
+<string>{{ ansible_env.HOME }}/nova-bench/logs/{{ l.name }}.log</string>
+</dict>
+</plist>

@@ -325,7 +325,7 @@ job.
 
 ## 22. A card's line-1 contract never carries the answer
 
-Line 1 is identity and nothing else — `RESULT <label> sha=<sha12>`, the label and the hash of
+Line 1 is identity and nothing else — `RESULT: <label> sha=<sha12>`, the label and the hash of
 the text below it; the verdict is line 2 and the findings come after. Since `gather` scores a
 `RESULT.md` **done on line 1 alone, whatever the harness exit code** (SPEC-SWARM, **gather**,
 landed in #577, pinned by `done-whatever-the-exit-code`; the rc is recorded on the line), a line 1 that stated the expected verdict, the expected count or the fix

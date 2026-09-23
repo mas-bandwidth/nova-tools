@@ -160,25 +160,28 @@ func (g guardedLauncher) Launch(bench, card string) error {
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
 // directories and stub seams.
 type FillInput struct {
-	Ready    string        // the queue/ready directory the card-<n>.md are popped from
-	Launched string        // the queue/launched directory they are moved into; its cards are live
-	Markers  string        // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
-	Lanes    string        // the lanes file: <name>\t<path prefixes> per line; empty names no lane
-	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
-	Queue    string        // the queue directory whose .lock this fill takes; empty is --launched's parent
-	Repo     string        // owner/name the `AFTER: PR<n> merged` gate is asked about
-	Session  string        // the session id stamped into every launched card's marker
-	Benches  []string      // the benches to fill, in order
-	Only     []string      // glob patterns over a card's filename; empty takes every ready card
-	Once     bool          // true runs exactly one tick and returns
-	Interval time.Duration // how long between ticks; 0 takes FillInterval
-	Stop     string        // touch this file to stop the loop; empty names no stop file
-	Stdout   io.Writer
-	Stderr   io.Writer
-	Now      func() time.Time
-	Sleep    func(time.Duration)
-	Launcher CardLauncher
-	Capacity Capacity
+	Ready      string            // the queue/ready directory the card-<n>.md are popped from
+	Launched   string            // the queue/launched directory they are moved into; its cards are live
+	Markers    string            // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
+	Lanes      string            // the lanes file: <name>\t<path prefixes> per line; empty names no lane
+	Machines   string            // the machines registry; a bench whose roles lack `bench` is refused
+	Queue      string            // the queue directory whose .lock this fill takes; empty is --launched's parent
+	Repo       string            // repo root for git commands (default: ".")
+	Base       string            // base branch to check dependencies against (default: "dev")
+	ResultsDir string            // results store root (default: ~/nova-bench/results)
+	Checker    DependencyChecker // optional dependency checker seam for testing
+	Session    string            // the session id stamped into every launched card's marker
+	Benches    []string          // the benches to fill, in order
+	Only       []string          // glob patterns over a card's filename; empty takes every ready card
+	Once       bool              // true runs exactly one tick and returns
+	Interval   time.Duration     // how long between ticks; 0 takes FillInterval
+	Stop       string            // touch this file to stop the loop; empty names no stop file
+	Stdout     io.Writer
+	Stderr     io.Writer
+	Now        func() time.Time
+	Sleep      func(time.Duration)
+	Launcher   CardLauncher
+	Capacity   Capacity
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
 	// `loop` verb), so it takes none of its own.
 	Locked bool
@@ -323,12 +326,17 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // line when the tick took stale markers away.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
-	cards := selectedCards(readyCards(in.Ready), in.Only)
+	cards := SortQueueCards(selectedCards(readyCards(in.Ready), in.Only))
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
+
+	checker := in.Checker
+	if checker == nil {
+		checker = NewGitAndResultsChecker(in.Repo, in.Base, in.ResultsDir)
+	}
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
 		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
@@ -379,6 +387,14 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			progressed = true
 			card := cards[idx]
 			idx++
+
+			// Check dependencies before admitting/launching (Essential 3 from Issue #2437)
+			if unmetDep, reason, ok := CheckCardDependencies(card, checker); !ok {
+				held = append(held, fmt.Sprintf("FILL HELD card=%s depends-on=%s reason=%s",
+					oneline.Field(filepath.Base(card)), oneline.Field(unmetDep), oneline.Field(reason)))
+				continue
+			}
+
 			lane := cardLane(card)
 			if lane != "" {
 				if _, known := lanes[lane]; !known {
@@ -696,6 +712,9 @@ func writeLaunchedMarker(in FillInput, moved, base, lane, bench string) {
 	body := fmt.Sprintf("lane=%s\nbench=%s\nlabel=%s\nsession=%s\ncard=%s\nat=%s\n",
 		lane, bench, strings.TrimSuffix(base, ".md"), in.Session, base,
 		now().UTC().Format(time.RFC3339))
+	if deps := CardDependencies(moved); len(deps) > 0 {
+		body += fmt.Sprintf("depends-on=%s\n", strings.Join(deps, ","))
+	}
 	_ = os.WriteFile(launchedMarker(in.Launched, base), []byte(body), 0o644)
 }
 
