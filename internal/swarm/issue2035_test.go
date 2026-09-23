@@ -380,7 +380,7 @@ func TestIssue2035Repro(t *testing.T) {
 	why := admitWhyOf(t, t.TempDir(), "e1", "opencode/deepseek-v4-flash",
 		"MODE: explore\nRESULT: find the bug\nSTEP 1 grep\n")
 	if why == "" {
-		t.Fatal("card-shape: `MODE: explore` requires `TURNS: <n>`; an explore card without a turn budget is refused (SPEC-SWARM issue #2035)")
+		t.Fatal("card-shape: `MODE: explore` requires `TURNS: <n>`; an explore card without a declared turn budget is refused at admission (SPEC-SWARM issue #2035)")
 	}
 	if !strings.Contains(why, "TURNS:") {
 		t.Fatalf("the refusal names the required field %q", why)
@@ -391,6 +391,19 @@ func TestIssue2035Repro(t *testing.T) {
 		"MODE: explore\nTURNS: 5\nRESULT: find the bug\nSTEP 1 grep\n")
 	if why != "" {
 		t.Fatalf("an explore card with TURNS: is admitted, got %q", why)
+	}
+
+	// The rule is universal admission, not a DeepSeek practice-17 check: a non-DeepSeek
+	// model's explore card without TURNS: is refused too, and admitted once it has one.
+	why = admitWhyOf(t, t.TempDir(), "e3", "anthropic/claude-sonnet-4",
+		"MODE: explore\nRESULT: find the bug\nSTEP 1 grep\n")
+	if !strings.Contains(why, "TURNS:") {
+		t.Fatalf("a non-DeepSeek explore card without TURNS: is refused naming the field, got %q", why)
+	}
+	why = admitWhyOf(t, t.TempDir(), "e4", "anthropic/claude-sonnet-4",
+		"MODE: explore\nTURNS: 5\nRESULT: find the bug\nSTEP 1 grep\n")
+	if why != "" {
+		t.Fatalf("a non-DeepSeek explore card with TURNS: is admitted, got %q", why)
 	}
 
 	// A non-explore pipeline card still needs no TURNS:.
