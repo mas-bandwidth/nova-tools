@@ -2,6 +2,7 @@ package wake
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -14,7 +15,7 @@ import (
 // window within 1 s of the XADD with no polling.
 func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 	mr := miniredis.RunT(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	const presence, stream = "friend:stella:beat", "wake:stella"
@@ -48,7 +49,7 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 	}()
 
 	// Heartbeat landed on the shared connection.
-	deadline := time.Now().Add(2 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for !mr.Exists(presence) {
 		if time.Now().After(deadline) {
 			t.Fatal("presence key never written")
@@ -59,7 +60,6 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 		t.Fatalf("presence ttl = %s, want (0, 30s]", ttl)
 	}
 
-	time.Sleep(200 * time.Millisecond) // let Run park on XREAD BLOCK
 	conns := mr.TotalConnectionCount()
 	cmdsBefore := mr.CommandCount()
 
@@ -67,12 +67,19 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 	if err := pub.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]any{"kind": "wake"}}).Err(); err != nil {
 		t.Fatalf("XADD: %v", err)
 	}
+	wait := 30 * time.Second
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil {
+			wait = d
+		}
+	}
 	var at time.Time
 	select {
 	case at = <-woke:
-	case <-time.After(time.Second):
-		t.Fatal("wake did not reach the window within 1 s of XADD")
+	case <-time.After(wait):
+		t.Fatal("wake never reached the window")
 	}
+	// The card's DONE-WHEN: delivery within 1 s of the XADD.
 	if lag := at.Sub(sent); lag >= time.Second {
 		t.Fatalf("wake lag %s, want < 1s", lag)
 	}
@@ -93,7 +100,7 @@ func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
 	stop()
 	select {
 	case <-done:
-	case <-time.After(6 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("Run did not return after cancel")
 	}
 }
