@@ -48,6 +48,12 @@ func TestReaderRuleIsPersonAndModelNotLogin(t *testing.T) {
 				Body: "RESULT: CARD-0977 fix nova-tools 2454 OK\n\nSwarm card fix-nova-tools-2454 on hulk via nova-swarm native."},
 			{Number: 3, Author: "rowan-claude", HeadRef: "rowan/card-0413",
 				Body: "From nova-swarm card 413. RESULT.md:\n\n```\nRESULT: CARD-0413 OK\n```"},
+			// every swarm branch shape, keyed on the branch and never the login (Glenn 4:50 PM)
+			{Number: 6, Author: "rowan-claude", HeadRef: "rowan/fix3-land-7", Body: "harvest card"},
+			{Number: 7, Author: "rowan-claude", HeadRef: "rowan/nx-0412"},
+			{Number: 8, Author: "rowan-claude", HeadRef: "rowan/e0412-sweep"},
+			{Number: 9, Author: "rowan-claude", HeadRef: "rowan/probe-rt268"},
+			{Number: 10, Author: "gafferongames", HeadRef: "fix3-top-level"},
 		} {
 			a, st := stand(pr, read("rowan", "2026-09-23T20:00:00Z"))
 			if a != "swarm" {
@@ -82,23 +88,38 @@ func TestReaderRuleIsPersonAndModelNotLogin(t *testing.T) {
 	})
 
 	t.Run("stella PR: stella's read refused, rowan's lands it", func(t *testing.T) {
-		pr := PR{Number: 5, Author: "gafferongames", HeadRef: "stella/some-fix", Body: "DONE-WHEN: TestY passes."}
-		a, st := stand(pr, read("stella", "2026-09-23T20:00:00Z"))
-		if a != "stella" {
-			t.Fatalf("ReaderAuthor = %q, want stella (the shared login is deanonymised by the branch)", a)
-		}
-		if st.Satisfied {
-			t.Fatalf("stella's own APPROVE must not satisfy her PR: %+v", st)
-		}
-		if unknownHoldReleasedBy(pr, "stella") {
-			t.Fatal("stella is the author of her PR and must not take over an unknown hold on it")
-		}
-		_, st = stand(pr, read("stella", "2026-09-23T20:00:00Z"), read("rowan", "2026-09-23T20:05:00Z"))
-		if !st.Satisfied || strings.Join(st.Approvers, ",") != "rowan" {
-			t.Fatalf("rowan's APPROVE at head must satisfy a Stella PR: %+v", st)
-		}
-		if !unknownHoldReleasedBy(pr, "rowan") {
-			t.Fatal("rowan is a non-author reader on a Stella PR")
+		// Stella has no GitHub id (Glenn 4:50 PM): her PR is the stella/* branch, under
+		// either login it comes through.
+		for _, pr := range []PR{
+			{Number: 5, Author: "gafferongames", HeadRef: "stella/some-fix", Body: "DONE-WHEN: TestY passes."},
+			{Number: 11, Author: "rowan-claude", HeadRef: "stella/some-fix", Body: "DONE-WHEN: TestY passes."},
+		} {
+			stellaPR(t, pr, stand, unknownHoldReleasedBy)
 		}
 	})
+}
+
+func stellaPR(t *testing.T, pr PR, stand func(PR, ...Read) (string, Standing), unknownHoldReleasedBy func(PR, string) bool) {
+	t.Helper()
+	head := strings.Repeat("a", 40)
+	read := func(who, at string) Read {
+		return Read{Who: who, Verdict: "approve", Head: head, At: at}
+	}
+	a, st := stand(pr, read("stella", "2026-09-23T20:00:00Z"))
+	if a != "stella" {
+		t.Fatalf("#%d under %s: ReaderAuthor = %q, want stella (the branch names the person, never the login)", pr.Number, pr.Author, a)
+	}
+	if st.Satisfied {
+		t.Fatalf("stella's own APPROVE must not satisfy her PR: %+v", st)
+	}
+	if unknownHoldReleasedBy(pr, "stella") {
+		t.Fatal("stella is the author of her PR and must not take over an unknown hold on it")
+	}
+	_, st = stand(pr, read("stella", "2026-09-23T20:00:00Z"), read("rowan", "2026-09-23T20:05:00Z"))
+	if !st.Satisfied || strings.Join(st.Approvers, ",") != "rowan" {
+		t.Fatalf("rowan's APPROVE at head must satisfy a Stella PR: %+v", st)
+	}
+	if !unknownHoldReleasedBy(pr, "rowan") {
+		t.Fatal("rowan is a non-author reader on a Stella PR")
+	}
 }
