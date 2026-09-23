@@ -451,3 +451,65 @@ func noCodeStagedRootAndBase(t *testing.T) {
 		t.Fatalf("this sha256 repository names the sha1 empty tree %q", et)
 	}
 }
+
+// TestFriendSequenceStagedAdvisoryCommit is the sequence a friend runs the
+// --staged verb inside (WORKER-CARDS.md practice 21): stage, advisory, act on
+// what the advisory named, advisory again, commit, and the audit over what was
+// committed. A verb's own tests see what the verb prints; only the sequence
+// sees the state it leaves -- here, that an advisory that said clean leaves an
+// index whose commit the audit over the same repository also calls clean, which
+// is the composition this verb exists for. CI's e2e job selects this test by
+// name (`-run TestFriendSequence`), so the round trip runs on every pull
+// request once it lands here.
+func TestFriendSequenceStagedAdvisoryCommit(t *testing.T) {
+	dir := stLab(t)
+
+	// The friend stages a script beside the prose -- the pre-commit moment
+	// this verb is for.
+	mustWrite(t, dir, "runner", "#!/bin/sh\necho hi\n")
+	stGit(t, dir, "add", "runner")
+
+	// The advisory names the staged shebang: exit 1, one FAIL line on stderr,
+	// and no OK line anywhere.
+	exit, stdout, stderr := runCheck(t, "nocode", "--staged", "--dir", dir)
+	if exit != 1 {
+		t.Fatalf("the advisory over the staged script exited %d, want 1; stdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "NOCODE FAIL runner: executable script (shebang)") {
+		t.Fatalf("the advisory did not name the staged script:\n%s", stderr)
+	}
+	// The advisory leaves the index exactly as it found it: the script is
+	// still staged, which is the state the friend acts on next. An advisory
+	// that mutated the index would decide the commit, not the friend.
+	if got := strings.TrimSpace(stGit(t, dir, "diff", "--cached", "--name-only")); got != "runner" {
+		t.Fatalf("the index the advisory left holds %q, want the staged runner untouched", got)
+	}
+
+	// The friend acts on the finding: the script is unstaged and removed, and
+	// the prose this commit exists for is staged in its place.
+	stGit(t, dir, "rm", "-q", "--cached", "runner")
+	if err := os.Remove(filepath.Join(dir, "runner")); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, dir, "g.md", "the prose this commit exists for\n")
+	stGit(t, dir, "add", "g.md")
+
+	// The advisory again, over the index the friend left: clean, with the one
+	// prose record classified.
+	exit, stdout, stderr = runCheck(t, "nocode", "--staged", "--dir", dir)
+	if exit != 0 {
+		t.Fatalf("the advisory over the corrected index exited %d, want 0; stderr:\n%s", exit, stderr)
+	}
+	if got, want := stLine(t, stdout, "NOCODE OK"), "NOCODE OK staged=1 clean deny-list=floor\\x20list"; got != want {
+		t.Errorf("OK line = %q, want %q", got, want)
+	}
+
+	// The commit itself, then the audit over what was committed: the two
+	// modes agree on one repository -- a commit the advisory let through is a
+	// tree the audit calls clean.
+	stGit(t, dir, "commit", "-q", "-m", "prose only")
+	aexit, astdout, _ := runCheck(t, "nocode", "--dir", dir)
+	if aexit != 0 || !strings.Contains(astdout, "NOCODE OK") {
+		t.Errorf("the audit over the committed tree exited %d:\n%s", aexit, astdout)
+	}
+}
