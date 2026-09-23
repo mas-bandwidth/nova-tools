@@ -205,8 +205,14 @@ func (r *resolver) entryWhy(ctx context.Context, in Input, c Card, entry string)
 		if repo == "" {
 			return fmt.Sprintf("%s unknown: PR #%d has no repo", entry, d.PR)
 		}
+		name := fmt.Sprintf("%s (%s#%d)", entry, repo, d.PR)
 		ref, err := r.ref(ctx, repo, d.PR)
-		return landedPR(ref, err, fmt.Sprintf("%s (%s#%d)", entry, repo, d.PR), c.Base)
+		if err == nil && !ref.IsPR {
+			// The card names a PR, so only a PR answer can release it: a 404 on
+			// pulls/<n> that fell back to a closed issue is not a merge.
+			return name + " unknown: not a PR (issue " + ref.State + ")"
+		}
+		return landedPR(ref, err, name, c.Base)
 	case d.State == "ended" && d.Outcome == "DONE" && d.PushedSHA == "":
 		// Closed with no PR and no commit: there is nothing to land.
 		return ""

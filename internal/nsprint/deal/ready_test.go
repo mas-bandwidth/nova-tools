@@ -188,6 +188,7 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 			card("cancelled", "dep-cancelled"),
 			card("missing", "dep-gone"),
 			card("dep-pr-open", "dep-open"),
+			card("dep-pr-is-issue", "dep-issue"),
 			card("two", "o/r#1", "o/r#6"),
 		}, Waiting: []Card{
 			{Sprint: "s", Label: "was-waiting", Repo: "o/r", Base: "dev", DependsOn: []string{"o/r#1"}, WaitWhy: "o/r#1 open"},
@@ -197,6 +198,9 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 			"s/dep-no-pr":     {Found: true, State: "ended", Outcome: "DONE"},
 			"s/dep-cancelled": {Found: true, State: "cancelled"},
 			"s/dep-open":      {Found: true, State: "review-ready", PR: 6},
+			// A card whose PR number answers as a closed issue (pulls/<n> 404
+			// fell back to issues/<n>): not landed (Stella's hold 7 on #3080).
+			"s/dep-issue": {Found: true, State: "review-ready", PR: 4},
 		},
 	}
 	out, moves, blocked := Ready(ctx, in, prs)
@@ -222,13 +226,14 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 		"two":              "o/r#6 open",
 		"pr-base-unknown":  "o/r#7 unknown: base-unresolved",
 		"dep-base-unknown": "o/r#1 unknown: base-unresolved",
+		"dep-pr-is-issue":  "dep-issue (o/r#4) unknown: not a PR (issue closed)",
 	} {
 		if why[label] != want {
 			t.Errorf("%s: why %q, want %q", label, why[label], want)
 		}
 	}
-	if len(blocked) != 10 {
-		t.Errorf("%d blocked, want 10: %+v", len(blocked), blocked)
+	if len(blocked) != 11 {
+		t.Errorf("%d blocked, want 11: %+v", len(blocked), blocked)
 	}
 	var released int
 	for _, m := range moves["s"] {
