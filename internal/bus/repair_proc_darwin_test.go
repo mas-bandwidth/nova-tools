@@ -94,3 +94,34 @@ func TestDarwinLsofNoMatchIsAnEmptyScan(t *testing.T) {
 		t.Fatalf("lsof parse: %v %v", got, err)
 	}
 }
+
+// #3029, the second darwin window: a git ps listed has exited by the time lsof looks, but
+// its parent has not reaped it yet. lsof has no cwd for a zombie, and `ps -p` still finds
+// the pid, so the scan called it a live git with an unreadable cwd and refused the wait
+// (seen 1 in 50 under -race on the Studio). A zombie is dead, as procStatDead already says
+// on Linux. A live state is still alive, and a vanished pid is still gone.
+func TestDarwinZombieGitIsNotALiveGit(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		out   string
+		alive bool
+	}{
+		{"Z\n", false},
+		{"Z+\n", false},
+		{" Zs \n", false},
+		{"S\n", true},
+		{"R+\n", true},
+		{"U\n", true},
+		{"", false},
+	} {
+		if got := darwinStatAlive(c.out); got != c.alive {
+			t.Fatalf("ps stat %q: alive=%v, want %v", c.out, got, c.alive)
+		}
+	}
+	procs, err := gitProcsFromPS("77 git index-pack --stdin --fix-thin\n", map[string]string{}, nil, func(string) (bool, error) {
+		return darwinStatAlive("Z+\n"), nil
+	})
+	if err != nil || len(procs) != 0 {
+		t.Fatalf("a zombie git with no cwd: procs=%+v err=%v, want none and no error", procs, err)
+	}
+}
