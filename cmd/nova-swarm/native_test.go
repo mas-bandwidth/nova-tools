@@ -2352,3 +2352,62 @@ func TestNativeHoldsAJobLease(t *testing.T) {
 		t.Errorf("the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
 	}
 }
+
+// codex-review's hold on #2806: the card owns the data home while it runs, so it can chmod
+// dataHome and dataHome/opencode 0555 and an unlink there fails. The cleanup takes the write
+// bit back and removes both copies; a copy it still cannot remove is returned, and the run
+// fails on it rather than printing a NOTE.
+func TestRemoveAuthCopySurvivesAReadOnlyDataHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory mode bits do not gate unlink on windows")
+	}
+	dataHome := t.TempDir()
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if reason := copyAuth(auth, "fake", dataHome); reason != "" {
+		t.Fatalf("copyAuth refused: %s", reason)
+	}
+	oc := filepath.Join(dataHome, "opencode")
+	for _, d := range []string{oc, dataHome} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataHome, 0o755); _ = os.Chmod(oc, 0o755) })
+	var errOut bytes.Buffer
+	if left := removeAuthCopy(dataHome, &errOut); len(left) != 0 {
+		t.Fatalf("a read-only data home kept the auth copy %v:\n%s", left, errOut.String())
+	}
+	for _, p := range []string{filepath.Join(dataHome, "auth.json"), filepath.Join(oc, "auth.json")} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived the cleanup of a read-only data home", p)
+		}
+	}
+}
+
+// A copy the cleanup cannot remove at all is named, never swallowed: here the card replaced
+// opencode/auth.json with a non-empty directory, which an unlink cannot take.
+func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
+	dataHome := t.TempDir()
+	stuck := filepath.Join(dataHome, "opencode", "auth.json")
+	if err := os.MkdirAll(stuck, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "key"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataHome, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	left := removeAuthCopy(dataHome, &errOut)
+	if len(left) != 1 || left[0] != stuck {
+		t.Fatalf("the cleanup should name exactly %s as left, got %v", stuck, left)
+	}
+	if _, err := os.Lstat(filepath.Join(dataHome, "auth.json")); !os.IsNotExist(err) {
+		t.Errorf("the removable copy was left beside the stuck one")
+	}
+	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")
+}
