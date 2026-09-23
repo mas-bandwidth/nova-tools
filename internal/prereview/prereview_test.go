@@ -314,7 +314,7 @@ func TestVerdictRule(t *testing.T) {
 			t.Errorf("%s: verdict=%s (%q), want %s", tc.name, got, why, tc.want)
 		}
 	}
-	if f := off.ChecksField(dirty, 10, true); f != "donewhen:ok,selfcheck:off-fail,paths:ok,claims:ok,ci:ok,score:10" {
+	if f := off.ChecksField(dirty, 10, true); f != "donewhen:ok,selfcheck:off-fail,paths:ok,claims:ok,ci:off-ok,score:10" {
 		t.Errorf("checks field = %q", f)
 	}
 }

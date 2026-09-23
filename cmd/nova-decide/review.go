@@ -50,7 +50,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	def := prereview.DefaultTuning()
 	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS")
 	bounceBelow := fs.Int("bounce-below", def.BounceBelow, "a score strictly below this BOUNCEs")
-	checksList := fs.String("checks", strings.Join(prereview.CheckNames, ","), "the checks that may decide (checks_enabled): donewhen,selfcheck,paths,claims,ci,score")
+	checksList := fs.String("checks", strings.Join(prereview.DefaultChecks, ","), "the checks that may decide (checks_enabled): donewhen,selfcheck,paths,claims,score; name ci to require ci-ok at the exact head")
 	inRate := fs.Float64("usd-per-mtok-in", 0, "the provider's input rate, US dollars per million tokens; 0 is unknown and prints cost=$-")
 	outRate := fs.Float64("usd-per-mtok-out", 0, "the provider's output rate, US dollars per million tokens; 0 is unknown")
 	skipHeads := fs.String("skip-heads", "", "a file of head shas already posted on; a pull request at one of them is skipped before any call")

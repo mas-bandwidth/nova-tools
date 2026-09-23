@@ -16,9 +16,11 @@
 //   - paths:  every changed file is inside the card's PATHS globs.
 //   - done:   line 2 of the RESULT is the bare word DONE.
 //   - claims: every file the RESULT's `files:` line names is in the diff.
-//   - ci:     ci-ok at the exact head is success. Red or missing is a fail that
-//     names the failing jobs (nova-tools #2704). A missing answer is neutral
-//     under pass_above, so an absent ci-ok is a fail, not a missing.
+//   - ci:     ci-ok at the exact head is success, when checks_enabled names ci.
+//     Red or missing is a fail that names the failing jobs (nova-tools #2704).
+//     A missing answer is neutral under pass_above, so an absent ci-ok is a
+//     fail, not a missing. The check is off by default: a repository with no
+//     ci-ok job must not bounce on a default run (nova-tools #2712).
 //
 // A check with nothing to decide on answers MISSING, never `no`: an absent card
 // is not a failed card, and a row that prints `no` for a check it could not run

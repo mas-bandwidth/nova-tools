@@ -50,15 +50,21 @@ type Tuning struct {
 	USDPerMTokIn, USDPerMTokOut float64
 }
 
-// CheckNames are the checks in print order. This is checks_enabled: ci reads
-// the rollup at the exact head (nova-tools #2704) and is on unless a tuning
-// leaves it out.
+// CheckNames are the checks in print order. ci reads the rollup at the exact
+// head (nova-tools #2704). It is a known name, so checks_enabled can turn it
+// on; a default run does not.
 var CheckNames = []string{"donewhen", "selfcheck", "paths", "claims", "ci", "score"}
+
+// DefaultChecks are the checks a default run enables. ci is left out: schema
+// has no ci-ok job, and enabling ci by default bounced every schema pull
+// request (nova-tools #2712). The loop turns ci on by naming it in
+// checks_enabled.
+var DefaultChecks = []string{"donewhen", "selfcheck", "paths", "claims", "score"}
 
 // DefaultTuning is the setting the first posted run used.
 func DefaultTuning() Tuning {
 	en := map[string]bool{}
-	for _, n := range CheckNames {
+	for _, n := range DefaultChecks {
 		en[n] = true
 	}
 	return Tuning{PassAbove: 7, BounceBelow: 4, Enabled: en, Model: "jev-latest"}

@@ -34,14 +34,27 @@ func checksClearExceptCI(ci Check) Checks {
 	return Checks{Symbol: yes, Paths: yes, Done: yes, Claims: yes, CI: ci}
 }
 
-// TestRecordedRollupsAreThe2704Controls replays the two heads the scorecard
-// named. #2519 at 907546af had ci-ok and the 1/4 and 2/4 shards red, and a
-// score of 8 would have PASSed with ci off. #2522 at 8359db4f is green.
-func TestRecordedRollupsAreThe2704Controls(t *testing.T) {
-	tune := DefaultTuning()
-	if !tune.Enabled["ci"] {
-		t.Fatal("ci is not in the default checks_enabled set")
+// tuningWithCI is the loop's checks_enabled once it names ci. The default
+// tuning leaves ci off.
+func tuningWithCI() Tuning {
+	base := DefaultTuning()
+	en := map[string]bool{"ci": true}
+	for k, v := range base.Enabled {
+		en[k] = v
 	}
+	base.Enabled = en
+	return base
+}
+
+// TestRecordedRollupsAreThe2704Controls replays the two heads the scorecard
+// named. #2519 at 907546af had ci-ok and the 1/4 and 2/4 shards red. With ci
+// off, a score of 8 PASSes; with ci named in checks_enabled, it BOUNCEs.
+// #2522 at 8359db4f is green.
+func TestRecordedRollupsAreThe2704Controls(t *testing.T) {
+	if DefaultTuning().Enabled["ci"] {
+		t.Fatal("ci is in the default checks_enabled set")
+	}
+	tune := tuningWithCI()
 
 	head, runs := loadRollup(t, "2519-907546af.json")
 	ci := ciCheck(PR{Head: head, Checks: runs})
@@ -57,8 +70,11 @@ func TestRecordedRollupsAreThe2704Controls(t *testing.T) {
 			t.Errorf("#2519 reason names %q, which did not fail: %s", quiet, ci.Reason)
 		}
 	}
+	if v, why := DefaultTuning().Decide(checksClearExceptCI(ci), 8, true); v != Pass {
+		t.Fatalf("#2519 with ci off at score 8: verdict=%s (%s), want PASS", v, why)
+	}
 	if v, why := tune.Decide(checksClearExceptCI(ci), 8, true); v != Bounce {
-		t.Fatalf("#2519 at score 8: verdict=%s (%s), want BOUNCE", v, why)
+		t.Fatalf("#2519 at score 8 with ci enabled: verdict=%s (%s), want BOUNCE", v, why)
 	}
 
 	head, runs = loadRollup(t, "2522-8359db4f.json")
@@ -131,14 +147,17 @@ func TestInProgressCIOKDoesNotPass(t *testing.T) {
 	if got.Result != No || !strings.Contains(got.Reason, "still in_progress") || !strings.Contains(got.Reason, "BOUNCE") {
 		t.Fatalf("in-progress = %s (%s), want BOUNCE", got.Result, got.Reason)
 	}
-	if v, why := DefaultTuning().Decide(checksClearExceptCI(got), 8, true); v != Bounce {
+	if v, why := tuningWithCI().Decide(checksClearExceptCI(got), 8, true); v != Bounce {
 		t.Fatalf("in-progress at score 8: verdict=%s (%s), want BOUNCE", v, why)
+	}
+	if v, why := DefaultTuning().Decide(checksClearExceptCI(got), 8, true); v != Pass {
+		t.Fatalf("in-progress with ci off at score 8: verdict=%s (%s), want PASS", v, why)
 	}
 }
 
-// TestCIIsEnabledWithTheOtherChecks. checks_enabled is CheckNames; ci decides
-// by default and prints before the score.
-func TestCIIsEnabledWithTheOtherChecks(t *testing.T) {
+// TestCIIsKnownAndOffByDefault. checks_enabled can name ci, and a default run
+// does not enable it: schema has no ci-ok job. ci still prints before the score.
+func TestCIIsKnownAndOffByDefault(t *testing.T) {
 	saw := false
 	for _, n := range CheckNames {
 		if n == "ci" {
@@ -146,7 +165,26 @@ func TestCIIsEnabledWithTheOtherChecks(t *testing.T) {
 		}
 	}
 	if !saw {
-		t.Fatal("ci is not in CheckNames (checks_enabled)")
+		t.Fatal("ci is not in CheckNames, so checks_enabled cannot name it")
+	}
+	for _, n := range DefaultChecks {
+		if n == "ci" {
+			t.Fatal("ci is in the default checks_enabled list")
+		}
+	}
+	if DefaultTuning().Enabled["ci"] {
+		t.Fatal("default tuning enables ci")
+	}
+	en, err := ParseEnabled(strings.Join(DefaultChecks, ","))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if en["ci"] {
+		t.Fatal("parsing the default list enables ci")
+	}
+	on, err := ParseEnabled("donewhen,selfcheck,paths,claims,ci,score")
+	if err != nil || !on["ci"] {
+		t.Fatalf("ParseEnabled with ci = %v %v, want ci on", on, err)
 	}
 	ciAt, scoreAt := -1, -1
 	for i, n := range CheckNames {

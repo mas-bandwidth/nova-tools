@@ -76,11 +76,12 @@ usage:
                      [--no-jev] [--table] [--record <dir>] [--replay <dir>]
   nova-decide review --repo <owner/name> --batch <file of pull request numbers>
                     (the Jev FIRST PASS, nova-tools #2565: mechanical checks in
-                     Go with no model -- donewhen, selfcheck, paths, claims, ci --
+                     Go with no model -- donewhen, selfcheck, paths, claims --
                      then ONE typed Jev question for a 1-10 score. The line starts
-                     JEV and its verdict is PASS, BOUNCE or UNSURE. ci reads the
-                     check rollup at the exact head: a red or missing ci-ok
-                     BOUNCEs and names the failing jobs (#2704). It NEVER lands anything.
+                     JEV and its verdict is PASS, BOUNCE or UNSURE. ci is off
+                     unless --checks names it; when it is on, a red or missing
+                     ci-ok at the exact head BOUNCEs and names the failing jobs
+                     (#2704). It NEVER lands anything.
                      --dry-run is the default; --post is the only write.)
 
   nova-decide classify --question <q> --evidence <file|-> --pointer <id>
