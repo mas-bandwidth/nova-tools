@@ -267,6 +267,18 @@ and only once per collection; a roadmap is refused, naming its one creator."
 
 (defun node-type (state id) (wnode-type (%node-or-nil state id)))
 
+(defun node-kind (state id)
+  "The node's kind as one of the spec's distinct units (SPEC-WORK.md:888,
+:945-947). A :task (or :bug) with no children is a leaf subtask, a kind of its
+own; one with children is the parent task, counted by its leaves, never itself.
+An attempt is an event's field and never a node kind, so this answers no
+:attempt. Every other node answers its own :type."
+  (let ((n (%node-or-nil state id)))
+    (unless n (error 'unsupported-input :what (format nil "no such node ~A" id)))
+    (if (member (wnode-type n) '(:task :bug))
+        (if (wnode-children n) :task :leaf-task)
+        (wnode-type n))))
+
 (defun node-view (state id) (wnode-view (%node-or-nil state id)))
 
 (defun %roadmap-axis-ids-p (axes)
