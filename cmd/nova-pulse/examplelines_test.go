@@ -116,6 +116,15 @@ var leftOwedExampleLines = map[string]string{
 	// why: survey runs tools/bench-standard.sh over ssh on every bench in
 	// ./fleet.tsv; the file does not exist and no test may reach a machine.
 	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
+	// why: --from <table> reads a kind-specific TSV the fixture does not lay down
+	// (the example-pulse fixture the launch and pool blocks use has a pool.tsv and a
+	// templates dir, not a fix.tsv/read.tsv/guard.tsv), and a stand-alone fixture
+	// would be more files than this card's paths allow. The unit test in
+	// cmd/nova-pulse/issue2021_test.go drives --from against t.TempDir() and proves
+	// the verb; the help example is owed the example-pulse fixture for end-to-end.
+	"nova-pulse cut --kind fix --from ./fix.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools":     "the --from fixture is the kind-specific TSV the example-pulse does not lay down; the unit test in issue2021_test.go covers this verb, the help example is owed a fixture in testdata/",
+	"nova-pulse cut --kind read --from ./read.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools":   "the --from fixture is the kind-specific TSV the example-pulse does not lay down; the unit test in issue2021_test.go covers this verb, the help example is owed a fixture in testdata/",
+	"nova-pulse cut --kind guard --from ./guard.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools": "the --from fixture is the kind-specific TSV the example-pulse does not lay down; the unit test in issue2021_test.go covers this verb, the help example is owed a fixture in testdata/",
 }
 
 // exampleBlockLines returns every command under an `example:` heading in a

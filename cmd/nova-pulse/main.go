@@ -25,7 +25,7 @@ const usage = `nova-pulse: bounded open work, cut into cards and folded back, no
 nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <s>] [--max <n>]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>]
+nova-pulse cut     --kind read|fix|replay|spec|guard --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--from <tsv>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
@@ -236,6 +236,25 @@ share one and there is no --number flag to pass. cut without --kind is unchanged
 
 example:
   nova-pulse cut --kind read --repo mas-bandwidth/nova-tools --pr 812 --head 5f544272a1b0 --out ./queue/pending --queue ./queue
+
+cut --kind X --from <table> is the typed cut's small loop (#2021): one row per line of a
+kind-specific TSV, deduped against cards already in <queue>/{pending,launched,done,failed}.
+The row shape per kind is the row of fields that kind's typed cut takes, and line-1
+coverage is the dedupe marker. Three kinds, three shapes:
+
+  fix   <repo><tab><issue><tab><title>[<tab><body-file><tab><prior>]
+  read  <repo><tab><pr><tab><head><tab><title>
+  guard <repo><tab><head>
+
+Every other kind refuses, because their row shape is not one-record-per-row. The summary
+line on stdout is CUT FROM kind=<kind> rows=<n> cut=<k> skipped=<m>; rows whose marker
+is already in the queue print CUT FROM SKIPPED kind=<kind> mark=<marker> and the run
+exits 1 when at least one row was skipped (the validated cut's own pattern).
+
+example:
+  nova-pulse cut --kind fix  --from ./fix.tsv  --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools
+  nova-pulse cut --kind read --from ./read.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools
+  nova-pulse cut --kind guard --from ./guard.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools
 
 sweep walks the approvals ledger: every read verdict is a row in <queue>/ledger.tsv,
 and each sweep enqueues the approved, green, undrafted, unheld ones exactly once,

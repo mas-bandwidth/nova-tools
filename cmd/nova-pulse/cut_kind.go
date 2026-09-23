@@ -7,6 +7,7 @@ package main
 // only from the queue's state file, under the queue's lock (issue #828, class B).
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -42,8 +43,20 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	specLines := f.fs.String("spec-lines", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
+	from := f.fs.String("from", "", "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	// --from <table> is the typed cut's small loop (#2021): one row per line of a
+	// kind-specific table, deduped against cards already in <queue>/{pending,launched,
+	// done,failed}, cutted one at a time. A row's words are the same word the kind's own
+	// single-row cut takes; nothing here invents a new shape.
+	if strings.TrimSpace(*from) != "" {
+		if strings.TrimSpace(*kind) == "" {
+			fmt.Fprintf(stderr, "CUT FROM REFUSED: --from wants --kind (the kind fixes the row shape: fix|read|guard)\n")
+			return 2
+		}
+		return cutKindFrom(*kind, *from, *out, *queue, stdout, stderr)
 	}
 	return pulse.CutKind(pulse.CutKindInput{
 		Kind: *kind, Repo: *repo, PR: *pr, Head: *head, Issue: *issue, Title: *title,
