@@ -1030,23 +1030,58 @@ redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
 
+
 ## nova-sprint
 
-The S0 scaffold exposes the command registry and Redis client used by later
-verbs. The help and version commands need no Redis connection.
+Fixture: `cmd/nova-sprint/testdata/table.txt`, copied to `table.txt` in an empty
+directory by `cmd/nova-sprint/firstrun_test.go` before the lines below run. The
+published table is `sprint-table.txt` in that same directory. Nothing here is a
+Redis read and nothing loops: a second start with the refresh still pending
+prints the previous table and leaves the file byte-for-byte.
 
 ### First run
 
 ```text
-$ nova-sprint help
-nova-sprint: Redis sprint coordination
-usage: nova-sprint <verb> [args]
-verbs:
-example:
-nova-sprint help
-nova-sprint version
+$ nova-sprint table --once --fixture table.txt
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+
+$ nova-sprint table --once --fixture table.txt --out sprint-table.txt
+TABLE PUBLISHED out=sprint-table.txt bytes=675
+
+$ nova-sprint table --once --refresh pending --out sprint-table.txt
+TABLE KEPT out=sprint-table.txt bytes=675 reason=refresh-not-ready
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
 ```
 
-The Redis integration controls in `internal/nsprint/store` start a throwaway
-`redis-server` when it is installed. They load the embedded `nova_sprint`
-function library and verify one pipelined exchange for 1,000 hash reads.
+The first command is the fixture control: standard output is the fixture file,
+byte for byte. The second publishes that render. The third is a restart whose
+refresh is not ready: `TABLE KEPT` and the same table again, and `sprint-table.txt`
+is not opened for write. An empty render is refused rather than published.
