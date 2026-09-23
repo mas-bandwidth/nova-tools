@@ -38,9 +38,14 @@ func nativeVerdict(t *testing.T, label, card string) string {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
+	// THE BUDGET WORD IS REQUIRED (SPEC-SWARM rule 13d, issue #1545): `native` without
+	// --tokens is exit 2 before it makes a directory, so this argv names one. `unmetered`
+	// is this file's behaviour byte for byte -- no cap, no sampler, no stop -- so the three
+	// verdicts below are the ones #1844 wrote here, unweakened.
 	run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
+		"--tokens", "unmetered",
 		"--deadline", "30s", "--no-wall"},
 		strings.NewReader(""), &stdout, &stderr, time.Now())
 	return stdout.String()
