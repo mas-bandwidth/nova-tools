@@ -29,7 +29,7 @@
 -- friend:outbox is the zero-token outbox a bus relay reads; no model is called.
 --
 -- friend:<f>:wakepath (hash; kind unit|human, unit, host, notify,
--- declared_at) is written by ns_friend_wakepath from `capacity friend <f>
+-- declared_at) is written by ns_friend_wakepath from `capacity friend <f> --as <actor>
 -- --wake` (config, etc/friends.conf).
 
 local FS_OUT = 'out-of-credits'

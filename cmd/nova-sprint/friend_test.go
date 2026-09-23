@@ -51,6 +51,15 @@ func TestFriendVerbs(t *testing.T) {
 	if got := runOK("capacity", "friend", "--redis", addr, "--wake", "unit:com.nova.loop.wake-serve-johnny@studio", "--as", "config", "johnny"); !strings.Contains(got, "wake=unit:com.nova.loop.wake-serve-johnny@studio") {
 		t.Fatalf("wake unit: %q", got)
 	}
+	// Hold 7 on #3135: the published name-first order, --as included.
+	if got := runOK("capacity", "friend", "emma", "--as", "config", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn"); got != "SET friend emma wake=human:bus:To:Glenn\n" {
+		t.Fatalf("wake name-first: %q", got)
+	}
+	if got := runOK("capacity", "friend", "--redis", addr, "--as", "config", "johnny", "--wake", "unit:com.nova.loop.wake-serve-johnny@studio"); !strings.Contains(got, "SET friend johnny wake=unit:com.nova.loop.wake-serve-johnny@studio") {
+		t.Fatalf("wake name-between: %q", got)
+	}
+	refused("capacity", "friend", "emma", "--redis", addr, "--wake", "human", "--notify", "bus:To:Glenn")
+	refused("capacity", "friend", "emma", "johnny", "--redis", addr, "--as", "config", "--wake", "human", "--notify", "bus:To:Glenn")
 	refused("capacity", "friend", "--redis", addr, "--wake", "human", "--as", "config", "emma")
 	refused("capacity", "friend", "--redis", addr, "--wake", "unit:no-host", "--as", "config", "emma")
 

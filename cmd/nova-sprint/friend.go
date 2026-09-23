@@ -7,13 +7,14 @@
 //	friend report --as <f> --clear
 //	friend show [<f>]
 //	friend sweep --as <actor> [--may-hold a,b] [--builders a,b] [--coordinator c]
-//	capacity friend <f> --wake unit:<label>@<host> | --wake human --notify <channel>
+//	capacity friend <f> --as <actor> --wake unit:<label>@<host> | --wake human --notify <channel>
 //
 // <t> is RFC 3339 or a duration from now (for example 3h).
 package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"strings"
@@ -219,8 +220,31 @@ func hasWakeFlag(args []string) bool {
 	return false
 }
 
-// runCapacityWake is `capacity friend <f> --wake unit:<label>@<host>` or
-// `--wake human --notify <channel>`: it declares friend:<f>:wakepath.
+// parseInterspersed parses fs over args, allowing positionals before, between
+// or after the flags (Go's FlagSet alone stops at the first positional, so the
+// published name-first order `capacity friend <f> --as <a> --wake ...` would
+// leave every flag unparsed). A bare "--" ends flag parsing as usual.
+func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
+	var pos []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		rest := fs.Args()
+		if len(rest) == 0 {
+			return pos, nil
+		}
+		if len(args) > len(rest) && args[len(args)-len(rest)-1] == "--" {
+			return append(pos, rest...), nil
+		}
+		pos = append(pos, rest[0])
+		args = rest[1:]
+	}
+}
+
+// runCapacityWake is `capacity friend <f> --as <actor> --wake unit:<label>@<host>`
+// or `... --wake human --notify <channel>`: it declares friend:<f>:wakepath.
+// The name may come first (the published order) or after the flags.
 func runCapacityWake(ctx context.Context, args []string, out, errOut io.Writer) int {
 	const verb = "capacity friend --wake"
 	fs := capacityFlags(verb)
@@ -231,16 +255,17 @@ func runCapacityWake(ctx context.Context, args []string, out, errOut io.Writer) 
 	fs.StringVar(actor, "as", "", "")
 	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
-	if err := fs.Parse(args); err != nil {
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	if *actor == "" {
 		return refuse(errOut, verb, "--as actor is required")
 	}
-	if len(fs.Args()) != 1 {
-		return refuse(errOut, verb, "want capacity friend --wake <path> [--notify <channel>] --as <actor> <name>; flags precede the name")
+	if len(pos) != 1 {
+		return refuse(errOut, verb, "want capacity friend <name> --as <actor> --wake <path> [--notify <channel>]")
 	}
-	name := fs.Args()[0]
+	name := pos[0]
 	wp, err := friend.ParseWakePath(*wake, *notify)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
