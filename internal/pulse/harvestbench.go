@@ -107,6 +107,8 @@ type benchJob struct {
 	Mtime     int64
 	Harvested bool
 	Result    []string
+	Report    []string
+	Usage     []string
 }
 
 // harvestBench is `harvest --bench`: list the bench's jobs once, fold every finished job
@@ -269,7 +271,12 @@ func harvestBench(in HarvestInput) int {
 		// read from the fetched ref in the local clone, which is exactly what the push
 		// would carry. A hit refuses, quarantines the job ON THE BENCH over the same shell
 		// seam, writes the HUMAN line, and never marks the job harvested.
-		findings, scanErr := secretFindings(j.Dir, clone, "origin/"+base+".."+ref, j.Result)
+		prov := extractJobProvenance(j.Dir, in.Bench, j.Result, strings.Join(j.Usage, "\n"))
+		report := strings.Join(j.Report, "\n")
+		fullBody := constructPRBody(j.Result, report, prov)
+		bodyLines := strings.Split(fullBody, "\n")
+
+		findings, scanErr := secretFindings(j.Dir, clone, "origin/"+base+".."+ref, bodyLines)
 		if scanErr != nil {
 			failed++
 			fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest-bench", label, scanErr))
@@ -341,7 +348,7 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		if pr == 0 {
-			pr, err = forge.CreatePR(dest.repo, base, branch, prTitle(line1, label, in.Bench), benchPRBody(in.Bench, j, in.MaxBodyBytes))
+			pr, err = forge.CreatePR(dest.repo, base, branch, prTitle(line1, label, in.Bench), boundPRBody(fullBody, in.MaxBodyBytes))
 			if err != nil {
 				failed++
 				lines.Line(fmt.Sprintf("HARVEST PR-FAIL bench=%s label=%s branch=%s: %s",
@@ -415,9 +422,11 @@ func benchListScript(roots []string) string {
 	return checks.String() +
 		"for j in " + strings.Join(globs, " ") + "; do j=${j%/}; [ -d \"$j\" ] || continue; " +
 		"printf 'JOB\\t%s\\n' \"$j\"; r=\"$j/RESULT.md\"; " +
-		"if [ -f \"$r\" ]; then printf 'MTIME\\t%s\\n' \"$(stat -c %Y \"$r\" 2>/dev/null || echo 0)\"; " +
-		"if [ -f \"$j/.harvested\" ]; then printf 'HARVESTED\\n'; fi; sed 's/^/R\\t/' \"$r\"; fi; " +
-		"printf 'END\\n'; done"
+		"if [ -f \"$r\" ]; then printf 'MTIME\t%s\n' \"$(stat -c %Y \"$r\" 2>/dev/null || echo 0)\"; " +
+		"if [ -f \"$j/.harvested\" ]; then printf 'HARVESTED\n'; fi; sed 's/^/R\t/' \"$r\"; " +
+		"rep=\"$j/REPORT.md\"; if [ ! -f \"$rep\" ]; then rep=\"$j/REPORT\"; fi; if [ -f \"$rep\" ]; then sed 's/^/REP\t/' \"$rep\"; fi; " +
+		"u=\"$j/usage.tsv\"; if [ -f \"$u\" ]; then sed 's/^/U\t/' \"$u\"; fi; fi; " +
+		"printf 'END\n'; done"
 }
 
 // probeLabelMax caps one probe script: a shared launched directory holds a few hundred
@@ -514,6 +523,10 @@ func parseBenchJobs(out string) (jobs []benchJob, missing, incomplete []string) 
 			cur.Harvested = true
 		case strings.HasPrefix(line, "R\t"):
 			cur.Result = append(cur.Result, strings.TrimPrefix(line, "R\t"))
+		case strings.HasPrefix(line, "REP\t"):
+			cur.Report = append(cur.Report, strings.TrimPrefix(line, "REP\t"))
+		case strings.HasPrefix(line, "U\t"):
+			cur.Usage = append(cur.Usage, strings.TrimPrefix(line, "U\t"))
 		case line == "END":
 			jobs = append(jobs, *cur)
 			cur = nil
@@ -574,17 +587,11 @@ func prTitle(result, label, bench string) string {
 	return cut + ellipsis + suffix
 }
 
-// benchPRBody is the PR body: the RESULT.md as the worker wrote it, bounded, then the line
-// that says where it came from.
+// benchPRBody is the PR body: RESULT.md + REPORT + provenance metadata table,
+// bounded at max bytes.
 func benchPRBody(bench string, j benchJob, max int) string {
-	if max <= 0 {
-		max = 4096
-	}
-	body := strings.Join(j.Result, "\n")
-	if len(body) > max {
-		body = body[:max]
-	}
-	return body + fmt.Sprintf("\n\nHarvested from %s job %s by `nova-pulse harvest --bench`. The branch was pushed from the coordinator, not from the bench.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n", bench, j.Dir)
+	prov := extractJobProvenance(j.Dir, bench, j.Result, strings.Join(j.Usage, "\n"))
+	return buildPRBody(j.Result, strings.Join(j.Report, "\n"), prov, max)
 }
 
 // benchRepoURL is the job clone's git URL on the bench. A job directory is absolute, so the
@@ -997,9 +1004,12 @@ func localProbe(root string, labels []string) map[string]string {
 	return out
 }
 
-// sshShell is the shipped BenchShell: one bounded ssh per call, the script as an argument
-// and never on stdin (`ssh -n host bash -s < script` runs nothing at all -- the edge of
-// 2026-09-17).
+// sshShell is the shipped BenchShell: one bounded ssh per call, `ssh host bash -s` with the
+// script on the child's stdin, the same door fleetSSH uses. The remote command is exactly
+// `bash -s`, so the bench's login shell never reads the script: on the Macs that shell is
+// zsh, and zsh took `$3:refs/harvest/$4` in the stage script as the `:r` modifier and ate
+// every refspec (#3291; never zsh, Glenn 2026-09-21). No `-n`: it points ssh's stdin at
+// /dev/null and `bash -s` then runs nothing at all (the edge of 2026-09-17).
 type sshShell struct{ Program string }
 
 func (s sshShell) Run(bench, script string) (string, error) {
@@ -1009,8 +1019,9 @@ func (s sshShell) Run(bench, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	testguard.RefuseHosts(prog, "-n", "-o", "BatchMode=yes", bench, script)
-	cmd := exec.CommandContext(ctx, prog, "-n", "-o", "BatchMode=yes", bench, script)
+	testguard.RefuseHosts(prog, "-o", "BatchMode=yes", bench, "bash", "-s")
+	cmd := exec.CommandContext(ctx, prog, "-o", "BatchMode=yes", bench, "bash", "-s")
+	cmd.Stdin = strings.NewReader(script)
 	var out bytes.Buffer
 	said := &benchTail{}
 	cmd.Stdout, cmd.Stderr = &out, said

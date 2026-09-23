@@ -82,7 +82,16 @@ const (
 	PushConflict PushStatus = "CONFLICT"
 	// PushInvalid is a review task without a repo, PR and head.
 	PushInvalid PushStatus = "INVALID"
+	// PushOverlap is a build task whose PATHS intersect a live build task's
+	// PATHS outside a DEPENDS-ON chain; nothing was written (#3067, exit 5).
+	PushOverlap PushStatus = "OVERLAP"
 )
+
+// PushResult is a push outcome with the colliding task when it is OVERLAP.
+type PushResult struct {
+	Status  PushStatus
+	Overlap *Overlap
+}
 
 // ExitCode maps a push outcome to its CLI exit code (spec 4.2).
 func (s PushStatus) ExitCode() int {
@@ -91,6 +100,9 @@ func (s PushStatus) ExitCode() int {
 	}
 	if s == PushInvalid {
 		return 2
+	}
+	if s == PushOverlap {
+		return 5
 	}
 	return 0
 }
@@ -122,14 +134,22 @@ func ReviewID(repo string, pr int, head, friend string) string {
 // Push issues one create-only push. The guard, the task hash, the queue move
 // and the single receipt are one atomic Redis Function call.
 func Push(ctx context.Context, st *store.Store, req PushRequest) (PushStatus, error) {
+	res, err := PushChecked(ctx, st, req)
+	return res.Status, err
+}
+
+// PushChecked is Push with the build-task path lint (#3067) reported: a build
+// task whose PATHS intersect a live build task's PATHS outside a DEPENDS-ON
+// chain returns OVERLAP naming the other task, and nothing is written.
+func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushResult, error) {
 	if st == nil {
-		return "", fmt.Errorf("task push: nil store")
+		return PushResult{}, fmt.Errorf("task push: nil store")
 	}
 	if req.Sprint == "" || req.ID == "" {
-		return "", fmt.Errorf("task push: sprint and id are required")
+		return PushResult{}, fmt.Errorf("task push: sprint and id are required")
 	}
 	if !sprintNameRx.MatchString(req.Sprint) {
-		return "", fmt.Errorf("task push: sprint must match [a-z0-9-]{1,40}")
+		return PushResult{}, fmt.Errorf("task push: sprint must match [a-z0-9-]{1,40}")
 	}
 	if req.Kind == "" {
 		req.Kind = KindWork
@@ -137,7 +157,7 @@ func Push(ctx context.Context, st *store.Store, req PushRequest) (PushStatus, er
 	switch req.Kind {
 	case KindRead, KindReview, KindHarvest, KindFix, KindWork:
 	default:
-		return "", fmt.Errorf("task push: invalid kind %q", req.Kind)
+		return PushResult{}, fmt.Errorf("task push: invalid kind %q", req.Kind)
 	}
 	if req.Effects == "" {
 		req.Effects = EffectsNone
@@ -145,10 +165,17 @@ func Push(ctx context.Context, st *store.Store, req PushRequest) (PushStatus, er
 	switch req.Effects {
 	case EffectsNone, EffectsIdempotent, EffectsExternal:
 	default:
-		return "", fmt.Errorf("task push: invalid effects %q", req.Effects)
+		return PushResult{}, fmt.Errorf("task push: invalid effects %q", req.Effects)
 	}
 	if req.PayloadSHA == "" {
 		req.PayloadSHA = PayloadSHA(req)
+	}
+	overlap, err := lintPaths(ctx, st, req)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if overlap != nil {
+		return PushResult{Status: PushOverlap, Overlap: overlap}, nil
 	}
 	front := "0"
 	if req.Front {
@@ -159,17 +186,17 @@ func Push(ctx context.Context, st *store.Store, req PushRequest) (PushStatus, er
 		req.Repo, strconv.Itoa(req.PR), req.Head, req.Ref, req.To, front,
 		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem).Result()
 	if err != nil {
-		return "", fmt.Errorf("task push %s: %w", req.ID, err)
+		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}
 	status, err := firstString(reply)
 	if err != nil {
-		return "", fmt.Errorf("task push %s: %w", req.ID, err)
+		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}
 	switch PushStatus(status) {
 	case PushCreated, PushExists, PushClosed, PushConflict, PushInvalid:
-		return PushStatus(status), nil
+		return PushResult{Status: PushStatus(status)}, nil
 	default:
-		return "", fmt.Errorf("task push %s: unexpected status %q", req.ID, status)
+		return PushResult{}, fmt.Errorf("task push %s: unexpected status %q", req.ID, status)
 	}
 }
 

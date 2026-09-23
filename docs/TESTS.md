@@ -709,6 +709,27 @@ fake harness: cat /…/key: open /…/key: operation not permitted
 ```
 
 
+### The budget word on the native route
+
+Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
+(SPEC-SWARM rule 13d, issue #1545). Recorded against the same fake harness, with the paths
+abridged:
+
+```
+$ nova-swarm native --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess
+
+$ nova-swarm native --tokens 0 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is a budget and is at least 1, got 0; `unmetered` is how a caller says there is no accounting
+
+$ nova-swarm native --tokens unmetered --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE NOTE: no harness store: looked at ./root/slot-1/data/opencode/opencode.db and ./root/slot-1/data/.local/share/opencode/opencode.db
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0 wall=0.18s sandbox=none-by-flag card_sha256=ab6468b200da0b3d5a0175e863d1b1cf772f010abdf4fe70b3ea39926f3fc826 binary_sha256=13c788f4813d7d81152460f6a16d45123314342ce0269f3fb43e6c8438192852 config=68719609 harness=ok budget=unmetered usage=none reason=no-store path=./root/slot-1/data/opencode/opencode.db
+```
+
+Both refusals exit 2 and make no directory: `<slot>/jobs`, `<slot>/data` and `<slot>/tmp`
+do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
+
 ### First run
 
 ```
@@ -811,6 +832,21 @@ $ nova-version report --file cmd/nova-version/testdata/example.tsv
 REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
 REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
 REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
+```
+
+
+## nova-card
+
+The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
+by hand, and its real run needs the sprint Redis and a dealt card; that run is
+`TestWrapperOwnsOneCardEndToEnd` in `internal/nsprint/card/wrapper_test.go`.
+The first run a stranger can type reads nothing and writes nothing.
+
+### First run
+
+```text
+$ nova-card version
+nova-card v0.16.0-dev darwin/arm64 go1.26.6
 ```
 
 
