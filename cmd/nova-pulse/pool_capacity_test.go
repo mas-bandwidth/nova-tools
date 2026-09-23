@@ -171,3 +171,22 @@ func TestPoolCapacityCLIRefusals(t *testing.T) {
 		t.Errorf("stderr missing POOL-CAPACITY REFUSED: %q", stderr)
 	}
 }
+
+// TestPoolCapacityCLIBenchesOnlyAndTimeout verifies that --benches alone is refused (no
+// zero-capacity success) and that --timeout, which bounded no probe, is no longer accepted.
+func TestPoolCapacityCLIBenchesOnlyAndTimeout(t *testing.T) {
+	dir := t.TempDir()
+	benchesFile := filepath.Join(dir, "benches.tsv")
+	if err := os.WriteFile(benchesFile, []byte("alpha\tglenn@alpha\t/home/glenn\t-\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := invokePulse(t, "pool-capacity", "--benches", benchesFile, "--out", filepath.Join(dir, "metrics.tsv"))
+	if exit != 2 || !strings.Contains(stderr, "no capacity source for alpha") || strings.Contains(stdout, "PULSE POOL-CAPACITY") {
+		t.Errorf("benches-only: exit=%d stdout=%q stderr=%q; want exit 2 refusing alpha", exit, stdout, stderr)
+	}
+
+	root := t.TempDir()
+	if exit, _, _ := invokePulse(t, "pool-capacity", "--roots", root, "--timeout", "5", "--out", filepath.Join(dir, "m2.tsv")); exit != 2 {
+		t.Errorf("--timeout exit = %d, want 2 (flag removed: no probe to bound)", exit)
+	}
+}

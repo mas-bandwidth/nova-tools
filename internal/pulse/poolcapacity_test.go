@@ -388,3 +388,100 @@ func TestPoolCapacityWithProvidersFile(t *testing.T) {
 		t.Errorf("expected headroom=50 in stdout, got %q", stdout.String())
 	}
 }
+
+// TestPoolCapacityBenchesOnlyRefused verifies that a benches file alone (names, ssh, home,
+// mac: no measured metrics, no probe) is refused rather than reported as zero capacity,
+// and that nothing is written to metrics.tsv.
+func TestPoolCapacityBenchesOnlyRefused(t *testing.T) {
+	dir := t.TempDir()
+	benchesFile := filepath.Join(dir, "benches.tsv")
+	if err := os.WriteFile(benchesFile, []byte("alpha\tglenn@alpha\t/home/glenn\t-\nbeta\tglenn@beta\t/home/glenn\t-\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	metricsOut := filepath.Join(dir, "metrics.tsv")
+	var stdout, stderr bytes.Buffer
+	code := PoolCapacity(PoolCapacityInput{
+		BenchesPath: benchesFile,
+		Headroom:    -1,
+		MetricsPath: metricsOut,
+		Stdout:      &stdout,
+		Stderr:      &stderr,
+	})
+	if code != 2 {
+		t.Fatalf("benches-only exit = %d, want 2; stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "POOL-CAPACITY REFUSED benches=") || !strings.Contains(stderr.String(), "no capacity source for alpha,beta") {
+		t.Errorf("stderr does not name the unmeasured benches: %q", stderr.String())
+	}
+	if strings.Contains(stdout.String(), "PULSE POOL-CAPACITY") {
+		t.Errorf("benches-only reported a capacity line: %q", stdout.String())
+	}
+	if _, err := os.Stat(metricsOut); !os.IsNotExist(err) {
+		t.Errorf("benches-only wrote %s (err=%v); want no metrics row", metricsOut, err)
+	}
+}
+
+// TestPoolCapacityBenchesCoveredByRoots verifies that a benches file whose every bench has a
+// measured source from --roots is accepted and the roots' measurements are reported.
+func TestPoolCapacityBenchesCoveredByRoots(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "alpha")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "capacity"), []byte("slots=3 mem_gb=8 load1=0.50"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	benchesFile := filepath.Join(dir, "benches.tsv")
+	if err := os.WriteFile(benchesFile, []byte("alpha\tglenn@alpha\t/home/glenn\t-\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := PoolCapacity(PoolCapacityInput{
+		Roots:       root,
+		BenchesPath: benchesFile,
+		Headroom:    -1,
+		MetricsPath: filepath.Join(dir, "metrics.tsv"),
+		Stdout:      &stdout,
+		Stderr:      &stderr,
+	})
+	if code != 0 {
+		t.Fatalf("covered benches exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	for _, want := range []string{"benches=1", "slots=3", "memory=8", "load=0.50"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout missing %q: %q", want, stdout.String())
+		}
+	}
+}
+
+// TestPoolCapacityHeadroomZeroOverridesProviders verifies that an explicit headroom of 0 is
+// an override that wins over the providers file (-1 is auto), and that below -1 is refused.
+func TestPoolCapacityHeadroomZeroOverridesProviders(t *testing.T) {
+	dir := t.TempDir()
+	provFile := filepath.Join(dir, "providers.tsv")
+	if err := os.WriteFile(provFile, []byte("deepseek-direct\tdeepseek\tdeepseek-v4-flash\tflash\t25\t0.14\t0.20\tprimary\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(headroom int) (int, string, string) {
+		var stdout, stderr bytes.Buffer
+		code := PoolCapacity(PoolCapacityInput{
+			Benches:       []BenchCapacity{{Name: "b1", Slots: 2}},
+			ProvidersPath: provFile,
+			Headroom:      headroom,
+			MetricsPath:   filepath.Join(dir, "metrics.tsv"),
+			Stdout:        &stdout,
+			Stderr:        &stderr,
+		})
+		return code, stdout.String(), stderr.String()
+	}
+	if code, out, errOut := run(0); code != 0 || !strings.Contains(out, "headroom=0 ") {
+		t.Errorf("headroom 0 with providers file: exit=%d stdout=%q stderr=%q; want exit 0 and headroom=0", code, out, errOut)
+	}
+	if code, out, errOut := run(-1); code != 0 || !strings.Contains(out, "headroom=25 ") {
+		t.Errorf("headroom -1 (auto) with providers file: exit=%d stdout=%q stderr=%q; want headroom=25", code, out, errOut)
+	}
+	if code, _, errOut := run(-2); code != 2 || !strings.Contains(errOut, "POOL-CAPACITY REFUSED headroom=-2") {
+		t.Errorf("headroom -2: exit=%d stderr=%q; want exit 2 and a refusal", code, errOut)
+	}
+}

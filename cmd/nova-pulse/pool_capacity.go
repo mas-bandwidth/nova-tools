@@ -18,11 +18,10 @@ func cmdPoolCapacity(args []string, stdout, stderr io.Writer) int {
 	roots := f.fs.String("roots", "", "comma-separated bench roots")
 	queue := f.fs.String("queue", "", "queue directory")
 	providers := f.fs.String("providers", "", "path to providers registry")
-	headroom := f.fs.Int("headroom", -1, "explicit provider rate-limit headroom override")
+	headroom := f.fs.Int("headroom", -1, "explicit provider rate-limit headroom override; -1 = auto (providers file, else 0), 0 is a real override")
 	out := f.fs.String("out", "", "path to metrics.tsv")
 	metrics := f.fs.String("metrics", "", "alias for --out")
 	overwrite := f.fs.Bool("overwrite", false, "overwrite metrics.tsv instead of appending")
-	timeout := f.fs.Int("timeout", 120, "bound on remote probe in seconds")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -36,8 +35,6 @@ func cmdPoolCapacity(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
-
-	_ = timeout
 
 	return pulse.PoolCapacity(pulse.PoolCapacityInput{
 		MachinesPath:  strings.TrimSpace(*machines),

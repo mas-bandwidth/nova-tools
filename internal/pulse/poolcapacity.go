@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -369,18 +370,24 @@ func ReadMachinesCapacity(machinesPath string) ([]BenchCapacity, error) {
 	return benches, nil
 }
 
-// ReadBenchesCapacity reads bench entries from a legacy benches.tsv file.
+// ReadBenchesCapacity reads bench names from a legacy benches.tsv file. The benches file
+// carries only name, ssh target, home and mac: no slots, memory, load or in-flight count,
+// and pool-capacity runs no remote probe. A bench named only here therefore has no
+// capacity source, and PoolCapacity refuses it rather than report it as zero capacity.
 func ReadBenchesCapacity(benchesPath string) ([]BenchCapacity, error) {
 	benchesMap, err := ReadFleetBenches(benchesPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading benches file %s: %w", benchesPath, err)
 	}
 
-	var benches []BenchCapacity
+	names := make([]string, 0, len(benchesMap))
 	for name := range benchesMap {
-		benches = append(benches, BenchCapacity{
-			Name: name,
-		})
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	benches := make([]BenchCapacity, 0, len(names))
+	for _, name := range names {
+		benches = append(benches, BenchCapacity{Name: name})
 	}
 	return benches, nil
 }
@@ -397,6 +404,11 @@ func PoolCapacity(in PoolCapacityInput) int {
 	}
 	if in.Stderr == nil {
 		in.Stderr = io.Discard
+	}
+
+	if in.Headroom < -1 {
+		fmt.Fprintf(in.Stderr, "POOL-CAPACITY REFUSED headroom=%d: want -1 (auto) or a count >= 0\n", in.Headroom)
+		return 2
 	}
 
 	var benches []BenchCapacity
@@ -438,15 +450,23 @@ func PoolCapacity(in PoolCapacityInput) int {
 				fmt.Fprintf(in.Stderr, "POOL-CAPACITY REFUSED benches=%s: %s\n", oneline.Field(in.BenchesPath), oneline.Err(err))
 				return 2
 			}
+			// A benches-file line names a bench but measures nothing (no probe runs), so
+			// every bench it names must already have a measured source from --roots or
+			// --machines; an unmeasured bench is a refusal, never a zero-capacity row.
 			existing := make(map[string]bool)
 			for _, b := range benches {
 				existing[b.Name] = true
 			}
+			var unmeasured []string
 			for _, b := range bb {
 				if !existing[b.Name] {
-					benches = append(benches, b)
-					existing[b.Name] = true
+					unmeasured = append(unmeasured, b.Name)
 				}
+			}
+			if len(unmeasured) > 0 {
+				fmt.Fprintf(in.Stderr, "POOL-CAPACITY REFUSED benches=%s: no capacity source for %s (the benches file has no slots/memory/load and pool-capacity runs no remote probe; pass --roots or --machines covering them)\n",
+					oneline.Field(in.BenchesPath), oneline.Field(strings.Join(unmeasured, ",")))
+				return 2
 			}
 		}
 	}
@@ -477,9 +497,9 @@ func PoolCapacity(in PoolCapacityInput) int {
 		}
 		providerHeadroom = ph
 	}
-	if in.Headroom > 0 {
-		providerHeadroom = in.Headroom
-	} else if in.ProvidersPath == "" && in.Headroom >= 0 {
+	// Headroom -1 is auto (the providers sum, else 0); any value >= 0 is an explicit
+	// override, including 0, and wins over the providers file.
+	if in.Headroom >= 0 {
 		providerHeadroom = in.Headroom
 	}
 
