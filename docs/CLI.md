@@ -4681,3 +4681,73 @@ cover the tool's own shape only; a bench record's entries are its sections, and
 the coverage ledger counts the file. An append addressing a session neither
 shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 --store <dir> --session <id> --publish <policy>`.
+
+
+## nova-sprint
+
+Renders a sprint table and keeps the last published one across a unit restart.
+It does not read the fleet Redis and it does not loop once a second; those
+cuts are the rest of the table. `table --fixture` prints a finished render
+byte for byte. `table --refresh pending` leaves `--out` untouched and prints
+it again, which is what a start does while the refresh is still running.
+`refresh -- <command>` runs that command in its own session (POSIX setsid) and
+returns without waiting, so `launchctl kickstart -k` of the loop unit does not
+kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
+`fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
+itself signals only the unit's pid.
+
+### First run
+
+Copy `cmd/nova-sprint/testdata/table.txt` to `table.txt` in an empty directory
+and run the three lines. The first is the byte-identical fixture. The third
+is a second start: the published file stays, and the screen is the previous
+table rather than an empty one.
+
+```text
+$ nova-sprint table --once --fixture table.txt
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+
+$ nova-sprint table --once --fixture table.txt --out sprint-table.txt
+TABLE PUBLISHED out=sprint-table.txt bytes=675
+
+$ nova-sprint table --once --refresh pending --out sprint-table.txt
+TABLE KEPT out=sprint-table.txt bytes=675 reason=refresh-not-ready
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+```
+
+What a first run gets wrong, and what each one wants:
+
+- **`nova-sprint table` with no flags.** It wants `--once`, and either `--fixture <file>` or `--refresh pending` with `--out <file>`. One run names every missing piece. There is no default path and no default loop.
+- **An empty `--fixture`.** An empty file would blank the screen. The command refuses and does not create `--out`.
+- **`--refresh pending` without `--out`.** Pending means "keep the published table". It wants the path of that table.
+- **`--refresh ready`, or a one-second loop.** This cut does not read the store. `--refresh` wants `pending`.
+
+There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
