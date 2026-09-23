@@ -9,14 +9,18 @@ package swarm
 // a concurrent take scanning the store can never meet a half-written take and
 // reap it (nova-tools#1868). A lease is never inferred from a count but from
 // the directories on disk. Each lease directory holds a file `lease`
-// with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`. Shares live in
+// with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>` and optional
+// `weight=` / `kind=`. Shares live in
 // <store>/shares.tsv with rows `capacity\t<n>`, `reserve\t<n>` and
 // `<owner>\t<n>`.
 //
 // Expiry is fenced by liveness: before granting, take reaps every lease whose
 // until= is past AND whose pid is not alive (Alive, signal 0). A lease past
 // until= with a live pid is DRIFT: it stays and counts as held, because the
-// process it names is still running and its slot is not free.
+// process it names is still running and its slot is not free. A lease whose
+// until= is still ahead and whose pid is gone is stranded: it stays, still
+// counts as held, and list prints stranded=1 with the label so a manager can
+// re-queue it (nova-tools#2033).
 
 import (
 	"crypto/rand"
@@ -35,15 +39,33 @@ import (
 
 // SlotLease is one bench slot lease: the directory name is the id.
 type SlotLease struct {
-	ID    string
-	Owner string
-	Pid   int
-	Label string
-	Until time.Time
+	ID     string
+	Owner  string
+	Pid    int
+	Label  string
+	Until  time.Time
+	Weight int    // 0 means 1: a lease written before weights
+	Kind   string // optional card kind charged at admission
+}
+
+// Units is how many share units this lease occupies. Missing or zero weight is 1.
+func (l SlotLease) Units() int {
+	if l.Weight < 1 {
+		return 1
+	}
+	return l.Weight
+}
+
+// Stranded reports a live-until lease whose holder is gone: the seat is still
+// held, and list prints stranded=1 with the label so a manager can re-queue it.
+func (l SlotLease) Stranded(now time.Time) bool {
+	return l.Until.After(now) && !Alive(l.Pid, "")
 }
 
 // State reports live, expired or DRIFT at now: past until= with a live pid is
 // DRIFT, past until= with a dead pid is expired, anything else is live.
+// Stranded leases stay `live` on this field so a listing fill already knows
+// (live, DRIFT, expired) still counts them as held.
 func (l SlotLease) State(now time.Time) string {
 	if l.Until.After(now) {
 		return "live"
@@ -60,10 +82,20 @@ func (l SlotLease) Line(now time.Time) string {
 	if strings.TrimSpace(label) == "" {
 		label = "-"
 	}
-	return fmt.Sprintf("SLOT %s owner=%s pid=%d label=%s until=%s state=%s",
+	s := fmt.Sprintf("SLOT %s owner=%s pid=%d label=%s until=%s state=%s",
 		oneline.Field(l.ID), oneline.Field(l.Owner), l.Pid,
 		oneline.Field(label), oneline.Field(l.Until.UTC().Format(time.RFC3339)),
 		oneline.Field(l.State(now)))
+	if l.Kind != "" {
+		s += " kind=" + oneline.Field(l.Kind)
+	}
+	if l.Units() != 1 {
+		s += " weight=" + strconv.Itoa(l.Units())
+	}
+	if l.Stranded(now) {
+		s += " stranded=1"
+	}
+	return s
 }
 
 func slotStoreDir(store string) string { return filepath.Join(store, "slots") }
@@ -140,6 +172,14 @@ func parseSlotLease(id string, raw []byte) (SlotLease, error) {
 				return l, fmt.Errorf("lease %s: until is not RFC3339", id)
 			}
 			l.Until, seen["until"] = stamp, true
+		case "weight":
+			n, err := strconv.Atoi(strings.TrimSpace(value))
+			if err != nil || n < 1 {
+				return l, fmt.Errorf("lease %s: weight is not a count of 1 or more", id)
+			}
+			l.Weight = n
+		case "kind":
+			l.Kind = value
 		}
 	}
 	for _, k := range []string{"owner", "pid", "label", "until"} {
@@ -200,7 +240,7 @@ func SlotHoldings(store, owner string, now time.Time) (held, share int, err erro
 	}
 	for _, l := range leases {
 		if l.Owner == owner {
-			held++
+			held += l.Units()
 		}
 	}
 	return held, shares[owner], nil
@@ -309,18 +349,24 @@ func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free
 		if !l.Until.After(now) && !Alive(l.Pid, "") {
 			continue
 		}
-		heldBy[l.Owner]++
-		held++
+		u := l.Units()
+		heldBy[l.Owner] += u
+		held += u
 	}
 	free = capacity - reserve - held
 	return capacity, reserve, held, free, heldBy, shares, nil
 }
 
-// TakeSlotLeases grants k leases to owner when both caps hold after reaping:
-// the owner's held+k stays within its share, and the total held+k stays
-// within capacity-reserve. Expired leases with a dead pid are reaped first;
-// expired leases with a live pid are DRIFT and stay held. New leases carry
-// the caller's pid and until=now+dur.
+// TakeSlotLeases grants k unweighted (weight 1) leases. See takeSlotLeases.
+func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
+	return takeSlotLeases(store, owner, k, 1, "", dur, label, now, pid)
+}
+
+// takeSlotLeases grants k leases to owner when both caps hold after reaping:
+// the owner's held+demand stays within its share, and the total held+demand
+// stays within capacity-reserve, where demand is k times weight (nova-tools#2033).
+// Expired leases with a dead pid are reaped first; expired leases with a live
+// pid are DRIFT and stay held. New leases carry the caller's pid and until=now+dur.
 //
 // IT RETURNS THE IDS IT GRANTED, not a count, and that is deliberate: the
 // count was what let a holder release by owner and label instead of by
@@ -328,12 +374,15 @@ func SlotUtilisation(store string, now time.Time) (capacity, reserve, held, free
 // Stella's hold on PR #1562). len(ids) is the count for anyone who only
 // wanted that; taking a lease without learning which one is now impossible.
 // Hand the ids back to ReleaseSlotLeasesByID.
-func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
+func takeSlotLeases(store, owner string, k, weight int, kind string, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	if strings.TrimSpace(owner) == "" {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("owner is required")
 	}
 	if k < 1 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("n is at least 1, got %d", k)
+	}
+	if weight < 1 {
+		weight = 1
 	}
 	if dur <= 0 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("for is a positive duration")
@@ -341,7 +390,7 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 	if pid <= 0 {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("pid is required")
 	}
-	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") {
+	if strings.ContainsAny(owner, "\r\n") || strings.ContainsAny(label, "\r\n") || strings.ContainsAny(kind, "\r\n") {
 		return nil, 0, 0, 0, "", false, fmt.Errorf("owner and label are one line")
 	}
 	// The store is read once here so that a store that was never `slots init`ed says so
@@ -368,7 +417,7 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 		return nil, 0, 0, 0, "", false, err
 	}
 	counts := map[string]int{}
-	total := 0
+	totalUnits := 0
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
@@ -383,16 +432,23 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 			continue
 		}
 		if !l.Until.After(now) && !Alive(l.Pid, "") {
+			// SPEC-JOBS section 3: the next take reaps the dead worker's lease
+			// and its card returns to queue/ before the slot is granted.
+			_ = returnCardForLease(store, l)
 			_ = safepath.RemoveUnder(slotStoreDir(store), filepath.Join(slotStoreDir(store), e.Name()))
 			continue
 		}
 		counts[l.Owner]++
-		total++
+		u := l.Units()
+		totalUnits += u
+		if l.Owner == owner {
+			held += u
+		}
 	}
-	held = counts[owner]
-	free = capacity - reserve - total
+	free = capacity - reserve - totalUnits
 	holders = slotHolders(counts)
-	if held+k > share || total+k > capacity-reserve {
+	demand := k * weight
+	if held+demand > share || totalUnits+demand > capacity-reserve {
 		return nil, held, share, free, holders, false, nil
 	}
 	if err := os.MkdirAll(slotStoreDir(store), 0o755); err != nil {
@@ -403,6 +459,12 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 		for tries := 0; ; tries++ {
 			id := slotLeaseID(owner, now)
 			body := fmt.Sprintf("owner=%s\npid=%d\nlabel=%s\nuntil=%s\n", owner, pid, label, until)
+			if weight > 1 {
+				body += fmt.Sprintf("weight=%d\n", weight)
+			}
+			if kind != "" {
+				body += fmt.Sprintf("kind=%s\n", kind)
+			}
 			if err := publishSlotLease(store, id, body); err != nil {
 				if os.IsExist(err) && tries < 20 {
 					continue
@@ -413,10 +475,10 @@ func TakeSlotLeases(store, owner string, k int, dur time.Duration, label string,
 			break
 		}
 	}
-	held += k
-	total += k
-	free = capacity - reserve - total
-	counts[owner] = held
+	held += demand
+	totalUnits += demand
+	free = capacity - reserve - totalUnits
+	counts[owner] += k
 	holders = slotHolders(counts)
 	return ids, held, share, free, holders, true, nil
 }

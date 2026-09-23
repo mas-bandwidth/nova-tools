@@ -10,10 +10,9 @@
 # NEVER printed: a finding that quotes the key has copied the key into every log that
 # carries the finding.
 #
-# This list is kept byte-identical with internal/hygiene/keyshapes.txt where the two
-# overlap (the hygiene gate, nova-tools T02, scans a card's added diff lines with the same
-# shapes); when that gate lands, one of the two loads the other and neither is copied
-# again. The two rows below it does not yet carry are marked.
+# This list's shape rows are kept identical with internal/hygiene/keyshapes.txt
+# (the hygiene gate scans a card's added diff lines with the same shapes). A class
+# test fails when they differ.
 #
 # Format: <name><TAB><Go regular expression>
 
@@ -27,10 +26,10 @@ age-secret-key	AGE-SECRET-KEY-1[0-9A-Za-z]{10,}
 forge-token	gh[pousr]_[A-Za-z0-9]{20,}
 forge-fine-grained-token	github_pat_[A-Za-z0-9_]{20,}
 
-# Provider API keys, by their published prefixes. The bare `sk-` shape is {20,} rather
-# than hygiene's {32,}: the key this fleet's seats actually hold is `sk-` and 32 more
-# (measured length 35, issue #1814), and a shorter bound catches a truncated copy of it
-# without reaching prose, which does not carry twenty unbroken alphanumerics after `sk-`.
+# Provider API keys, by their published prefixes. The bare `sk-` shape is {20,}: the
+# key this fleet's seats actually hold is `sk-` and 32 more (measured length 35,
+# issue #1814), and a shorter bound catches a truncated copy of it without reaching
+# prose, which does not carry twenty unbroken alphanumerics after `sk-`.
 anthropic-api-key	sk-ant-[A-Za-z0-9_-]{20,}
 openai-api-key	sk-[A-Za-z0-9]{20,}
 xai-api-key	xai-[A-Za-z0-9-]{20,}

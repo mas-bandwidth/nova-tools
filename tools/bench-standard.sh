@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
-# tools/bench-standard.sh — the one admin entry for a Linux bench.
+# tools/bench-standard.sh — the acceptance WITNESS for a Linux bench
+# (SPEC-FLEET-KUBE.md, "What bench-standard.sh stops doing"): it checks a
+# bench against the standard and prints one DRIFT line per finding.
 #
-# Checks a bench against the standard and prints one DRIFT line per finding:
+# THIS SCRIPT IS A WITNESS, NOT A PROVISIONER. It does not install packages,
+# does not create users, does not write unit files, does not arm timers, does
+# not install k3s, does not mount volumes, and does not authorize seat keys --
+# all of that is Terraform's job (SPEC-FLEET-KUBE.md "A new bench is one apply")
+# and a `DRIFT` line this script prints is the witness that the declaration and
+# the host disagreed, not a ticket for this script to repair.
+#
+# Usage:
 #
 #   tools/bench-standard.sh
-#   NOVA_GO=go1.26.5 NOVA_WANT=v1.2.3 tools/bench-standard.sh
+#   NOVA_GO=go1.26.5 NOVA_WANT=v1.2.3 tools/bench-standard.sh  # NOVA_GO overrides go.mod
 #   tools/bench-standard.sh --apply   # kills stray runner listeners, nothing else
+#
+# The ONE AND ONLY mutation this script performs is `--apply` killing stray
+# runner listeners: a process holding the runner's listener port that is not
+# under the runner's systemd unit. No other action is taken on any path, with
+# or without `--apply`. A script that wants to repair or provision is a
+# different script.
 #
 # Exit 0 prints "STANDARD OK ..."; exit 1 prints "STANDARD DRIFT (see lines
 # above)" after the DRIFT lines. Runner checks (1)-(2) run only on Linux.
@@ -15,12 +30,29 @@ APPLY=0
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
-    -h|--help) echo "usage: bench-standard.sh [--apply]"; exit 0 ;;
+    -h|--help) echo "usage: bench-standard.sh [--apply]"
+    echo "  --apply   kills stray runner listeners (the script's only mutation); nothing more"
+    exit 0 ;;
     *) echo "DRIFT unknown argument $arg" ; echo "STANDARD DRIFT (see lines above)"; exit 1 ;;
   esac
 done
 
-NOVA_GO="${NOVA_GO:-go1.26.5}"
+# The wanted Go is the tree's go.mod `go` line, not a patch copied here.
+# $NOVA_GO stays an explicit override (a person gating an older tree on purpose).
+if [ -z "${NOVA_GO:-}" ]; then
+  _dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd) || _dir=""
+  _mod=""
+  if [ -n "$_dir" ] && [ -f "$_dir/../go.mod" ]; then
+    _mod="$_dir/../go.mod"
+  fi
+  if [ -n "$_mod" ]; then
+    _ver=$(awk '/^go / { print $2; exit }' "$_mod")
+    if [ -n "$_ver" ]; then
+      NOVA_GO="go${_ver}"
+    fi
+  fi
+fi
+NOVA_GO="${NOVA_GO:-}"
 NOVA_WANT="${NOVA_WANT:-}"
 NOVA_HARNESS="${NOVA_HARNESS:-}"
 HOME_DIR="${HOME:-}"
@@ -141,7 +173,9 @@ for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
 done
 
 # (3) go version, sbcl, harness.
-if command -v go >/dev/null 2>&1; then
+if [ -z "$NOVA_GO" ]; then
+  drift "go.mod go directive unread; set NOVA_GO or run from a nova-tools checkout"
+elif command -v go >/dev/null 2>&1; then
   goout="$(go version 2>&1 || true)"
   case "$goout" in
     *"$NOVA_GO"*) ;;

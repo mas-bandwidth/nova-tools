@@ -65,7 +65,7 @@ field written (:absent), and :node written (:absent) (SPEC-WORK.md:1014-1058)."
     (unless (new-verb-p verb)
       (error 'unsupported-input
              :what (format nil "unsupported: verb ~A is not one of the six new verbs"
-+                           (if verb (string-downcase (princ-to-string verb)) "-"))))
+                           (if verb (string-downcase (princ-to-string verb)) "-"))))
     (make-work-event
      :kind (new-verb-kind verb)
      :node +absent+
@@ -100,7 +100,25 @@ field written (:absent), and :node written (:absent) (SPEC-WORK.md:1014-1058)."
 The journal is asked first, so a retry of one request id is answered with the
 original OK line and applies nothing, while the same id with a changed payload
 is refused `reused with a different payload` (SPEC-WORK.md:5319, replay
-new-verbs-retry-to-one-event)."
+new-verbs-retry-to-one-event).
+
+THIS ENQUEUES ONTO THE SINGLE COMMAND THREAD, like every other mutation. It
+used to call `%submit-new-verb` directly, which read `(kernel-state kernel)`,
+built a candidate and installed it with `(setf (kernel-state kernel) ...)` --
+all on the CALLER's thread, beside a writer doing the same thing. That is the
+read-modify-write rule 6 exists to forbid (SPEC-WORK.md:2603-2616: \"a mutation
+outside the command loop is a defect\"), and two of them interleaved lose an
+event whichever wins. The body is unchanged; only the thread it runs on is."
+  (if (member (getf request :verb) '(:undo :redo))
+      ;; The two whose keyword collides with `submit`'s own undo machinery: see
+      ;; the note at the dispatch in src/kernel.lisp. They keep the old direct
+      ;; path -- off the writer -- until the spec says which verb owns the word.
+      (%submit-new-verb-guarded kernel request)
+      (submit kernel request)))
+
+(defun %submit-new-verb-guarded (kernel request)
+  "The new-verb body as `%submit` dispatches it, with the exit-2 refusal shape
+the verb's own word carries. This is what runs ON the command thread."
   (handler-case (%submit-new-verb kernel request)
     (unsupported-input (c)
       (values nil (format nil "~A FAIL: ~A"

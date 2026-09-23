@@ -134,7 +134,7 @@ func TestEveryPublishSiteIsBehindTheSecretScan(t *testing.T) {
 	}{
 		{"push", "Harvest", false},
 		{"openPR", "Harvest", false},
-		{"CreatePR", "harvestBench", true},
+		{"CreatePR", "harvestBench harvestBenchBatch", true}, // the bench fold and its batched pass (#2756); each is held guarded below
 	} {
 		if len(byName[l.leaf]) == 0 {
 			t.Errorf("the leaf %s named here is not in this package any more; re-read the list", l.leaf)
@@ -161,7 +161,7 @@ func TestEveryPublishSiteIsBehindTheSecretScan(t *testing.T) {
 			got = append(got, c.name)
 		}
 		sort.Strings(got)
-		if len(got) != 1 || got[0] != l.wantCaller {
+		if strings.Join(got, " ") != l.wantCaller {
 			t.Errorf("the leaf %s is called by %v; the guard is asserted in %s alone, so a new caller must carry it too",
 				l.leaf, got, l.wantCaller)
 			continue
