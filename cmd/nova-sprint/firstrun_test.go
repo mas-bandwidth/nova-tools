@@ -87,50 +87,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	runTranscript(t, string(raw), "docs/TESTS.md")
 }
 
-func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	runTranscript(t, string(raw), "docs/CLI.md")
-}
-
-func runTranscript(t *testing.T, doc, name string) {
-	t.Helper()
-	lines, err := onboarding.FirstRun(doc, "nova-sprint")
-	if err != nil {
-		t.Fatal(err)
-	}
-	steps, err := onboarding.Steps("nova-sprint", lines)
-	if err != nil {
-		t.Fatalf("%s: %v", name, err)
-	}
-	if len(steps) != 3 {
-		t.Fatalf("%s runs %d commands, want 3", name, len(steps))
-	}
-	fixture, err := os.ReadFile(filepath.Join("testdata", "table.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "table.txt"), fixture, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Chdir(dir)
-	for _, p := range onboarding.Execute(steps, runDocumented) {
-		t.Errorf("%s: %s", name, p)
-	}
-	got, err := os.ReadFile("sprint-table.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(got, fixture) || len(got) == 0 {
-		t.Fatalf("%s: second start left %d bytes, want the fixture (%d)", name, len(got), len(fixture))
-	}
-}
-
-func runDocumented(s onboarding.Step) (onboarding.Result, error) {
-	var stdout, stderr bytes.Buffer
-	code := run(s.Args, &stdout, &stderr)
-	return onboarding.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}, nil
-}
+// TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints and its two helpers
+// live in table_test.go now: docs/CLI.md's `### First run` transcript for
+// `nova-sprint table` is the comparator test SPEC-TOOLWORK §7 rule 7 asks for
+// (#2218), and it earns a file named for the verb it pins down.

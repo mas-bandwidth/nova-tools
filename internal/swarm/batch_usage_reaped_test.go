@@ -52,8 +52,13 @@ func TestBatchReadsAReapedCardsSpendFromItsHarnessStore(t *testing.T) {
 		runnerStep{Op: "sleep", Ms: 30000},
 	)
 	clk := newManualClock()
+	// THE BUDGET WORD IS REQUIRED (SPEC-SWARM rule 13d, issue #1545): a BatchInput without
+	// Tokens is refused before any card starts, so every literal in this file names one.
+	// `unmetered` is this file's behaviour byte for byte -- no cap is sampled and no card is
+	// stopped -- so every assertion below is the one this file already made, unweakened.
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "reaped-started"))
 		clk.waitTick()
@@ -101,7 +106,8 @@ func TestAFinishedCardsUsageRowIsNotRecountedFromTheStore(t *testing.T) {
 	)
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {})
 	if code != 0 {
 		t.Fatalf("a finished card exits 0, got %d:\n%s", code, out)
@@ -158,7 +164,8 @@ func TestAReapedCardsUnreadableStoreIsNoted(t *testing.T) {
 	)
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "unreadable-started"))
 		clk.waitTick()
@@ -207,7 +214,8 @@ func TestReapedSpendIsALowerBound(t *testing.T) {
 	)
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "lb-started"))
 		clk.waitTick()
@@ -264,7 +272,8 @@ func TestAStaleSlotUsageRowIsNotThisCardsRow(t *testing.T) {
 	)
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "stale-started"))
 		clk.waitTick()
@@ -317,7 +326,8 @@ func TestAnEmptyStoreIsNotUnread(t *testing.T) {
 	)
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "empty-started"))
 		clk.waitTick()
