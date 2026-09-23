@@ -126,7 +126,7 @@ func TestIssue1728ACardCutRendersIsAdmitted(t *testing.T) {
 // and is refused at admission, so dev cut them and the swarm abstained them at in=0.
 func TestIssue1728CutRefusesACardAdmissionWouldRefuse(t *testing.T) {
 	head := "RESULT: <label> sha=<sha12>\nYou are a worker. The deadline is the machinery's.\n"
-	step1 := "STEP 1. mkdir -p scratch && git clone -q https://github.com/<source>.git . && git checkout -b <branch>\n"
+	step1 := "STEP 1. mkdir -p scratch && git clone -q https://example.com/<source>.git . && git checkout -b <branch>\n"
 	tail := "STEP 2. Fix it: report the red line, then the green line.\nSTEP 3. Write RESULT.md with line 1 equal to this card's line 1.\n"
 	eight := "STEP 2. Read.\nSTEP 3. Red test: the red line.\nSTEP 4. Fix: the green line.\nSTEP 5. Revert.\nSTEP 6. Gates.\nSTEP 7. Commit.\nSTEP 8. Write RESULT.md.\n"
 	cases := []struct{ name, tmpl, want string }{

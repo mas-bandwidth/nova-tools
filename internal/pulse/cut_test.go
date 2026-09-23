@@ -332,6 +332,10 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	card := func(kind string, steps int) string {
 		var b strings.Builder
 		b.WriteString("RESULT <label> sha=<sha12>\nYou are a worker. The deadline is the machinery's.\n")
+		// More than three model steps is the explore loop: admission refuses it without
+		// MODE: explore, and cut now runs admission's shape check (#1728), so the fixture
+		// carries the mode and its budget as SPEC-TOOLWORK section 5 rule 1 writes them.
+		b.WriteString(fmt.Sprintf("MODE: explore\nTURNS: %d\n", steps))
 		if kind == "read" {
 			b.WriteString("Do not run go build, go test or any toolchain; read and write only.\n")
 		}
