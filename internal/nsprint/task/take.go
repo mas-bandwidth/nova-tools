@@ -190,6 +190,9 @@ type DoneRequest struct {
 	Head     string
 	Actor    string
 	Idem     string
+	// Cost, when set, is appended to Evidence as its cost clause (#3105).
+	// A read done without one is unmetered in the fold, never $0.
+	Cost *Cost
 }
 
 // DoneStatus is the outcome of one done.
@@ -232,6 +235,12 @@ func Done(ctx context.Context, st *store.Store, req DoneRequest) (DoneStatus, er
 	}
 	if req.Sprint == "" || req.ID == "" {
 		return "", fmt.Errorf("task done: sprint and id are required")
+	}
+	if req.Cost != nil {
+		req.Evidence = WithCost(req.Evidence, *req.Cost)
+	}
+	if _, _, err := ParseCost(req.Evidence); err != nil {
+		return "", fmt.Errorf("task done %s: evidence cost: %w", req.ID, err)
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDone, nil,
 		req.Sprint, req.ID, req.Token, req.Evidence, req.Verdict, req.Score,
