@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -91,5 +94,91 @@ func TestTestFilesAreNeverFlagged(t *testing.T) {
 	fset, f := parse(t, "verb_test.go", helpRefusedCase)
 	if got := checkHelpRefused(fset, f); len(got) != 0 {
 		t.Fatalf("want no diagnostic in a _test.go file, got %q", got)
+	}
+}
+
+// refused runs vet and requires the #2724 HOLD 6 shape: exit 2, nothing on
+// stdout, exactly one stderr line carrying every want fragment.
+func refused(t *testing.T, args []string, want ...string) {
+	t.Helper()
+	var out, errb bytes.Buffer
+	if code := vet(args, &out, &errb); code != 2 {
+		t.Fatalf("vet(%q) = %d, want 2; stderr %q", args, code, errb.String())
+	}
+	if out.Len() != 0 {
+		t.Errorf("stdout = %q, want empty", out.String())
+	}
+	lines := strings.Split(strings.TrimRight(errb.String(), "\n"), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("stderr has %d lines, want 1: %q", len(lines), errb.String())
+	}
+	for _, w := range want {
+		if !strings.Contains(lines[0], w) {
+			t.Errorf("stderr %q does not name %q", lines[0], w)
+		}
+	}
+}
+
+func TestConfigAbsentRefuses(t *testing.T) {
+	refused(t, nil, "vet config", "absent")
+	missing := filepath.Join(t.TempDir(), "no-such.cfg")
+	refused(t, []string{missing}, missing, "unreadable")
+}
+
+func TestConfigUnreadableRefuses(t *testing.T) {
+	dir := t.TempDir() // a directory: ReadFile fails for every user, root included
+	refused(t, []string{dir}, dir, "unreadable")
+}
+
+func TestConfigInvalidJSONRefuses(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "vet.cfg")
+	if err := os.WriteFile(cfg, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refused(t, []string{cfg}, cfg, "invalid JSON")
+}
+
+func TestGoFileParseErrorRefuses(t *testing.T) {
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "bad.go")
+	if err := os.WriteFile(bad, []byte("package p\nfunc {"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, "vet.cfg")
+	if err := os.WriteFile(cfg, []byte(`{"GoFiles":["`+bad+`"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refused(t, []string{cfg}, bad, "does not parse")
+}
+
+func TestVetxOutputUnwritableRefuses(t *testing.T) {
+	dir := t.TempDir()
+	vetx := filepath.Join(dir, "missing-dir", "vet.out")
+	cfg := filepath.Join(dir, "vet.cfg")
+	if err := os.WriteFile(cfg, []byte(`{"VetxOnly":true,"VetxOutput":"`+vetx+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	refused(t, []string{cfg}, vetx, "unwritable")
+}
+
+// The good path still answers 0 with a clean file and 1 on the fixture.
+func TestValidConfigRuns(t *testing.T) {
+	dir := t.TempDir()
+	clean := filepath.Join(dir, "clean.go")
+	if err := os.WriteFile(clean, []byte("package p\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		file string
+		code int
+	}{{clean, 0}, {"../../fixtures/fixtures.go", 1}} {
+		cfg := filepath.Join(dir, "vet.cfg")
+		if err := os.WriteFile(cfg, []byte(`{"GoFiles":["`+c.file+`"]}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var out, errb bytes.Buffer
+		if got := vet([]string{cfg}, &out, &errb); got != c.code {
+			t.Errorf("%s: vet = %d, want %d; stderr %q", c.file, got, c.code, errb.String())
+		}
 	}
 }

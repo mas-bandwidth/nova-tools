@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -17,16 +19,23 @@ type vcfg struct {
 }
 
 func main() {
-	args := os.Args[1:]
+	os.Exit(vet(os.Args[1:], os.Stdout, os.Stderr))
+}
 
+// vet is the vettool protocol: -flags and -V= answer the go command; any
+// other call names one vet config file. A config that is absent, unreadable
+// or not JSON, a Go file that does not parse, and a VetxOutput that cannot
+// be written each refuse with one stderr line naming the path and exit 2, so
+// a required vet-laws gate never reports success on analysis it skipped.
+func vet(args []string, stdout, stderr io.Writer) int {
 	for _, a := range args {
 		if a == "-flags" {
-			os.Stdout.WriteString("[]\n")
-			return
+			fmt.Fprint(stdout, "[]\n")
+			return 0
 		}
 		if strings.HasPrefix(a, "-V=") {
-			os.Stdout.WriteString("vet version go1.26.6\n")
-			return
+			fmt.Fprint(stdout, "vet version go1.26.6\n")
+			return 0
 		}
 	}
 
@@ -39,28 +48,30 @@ func main() {
 		break
 	}
 	if cfgFile == "" {
-		return
+		fmt.Fprintln(stderr, "vetlaw: vet config: absent: no config path given (run under go vet -vettool)")
+		return 2
 	}
 
 	data, err := os.ReadFile(cfgFile)
 	if err != nil {
-		return
+		fmt.Fprintf(stderr, "vetlaw: vet config %s: unreadable: %v\n", cfgFile, err)
+		return 2
 	}
 
 	var cfg vcfg
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return
+		fmt.Fprintf(stderr, "vetlaw: vet config %s: invalid JSON: %v\n", cfgFile, err)
+		return 2
 	}
 
 	if cfg.VetxOnly {
 		if cfg.VetxOutput != "" {
-			os.WriteFile(cfg.VetxOutput, nil, 0644)
+			if err := os.WriteFile(cfg.VetxOutput, nil, 0644); err != nil {
+				fmt.Fprintf(stderr, "vetlaw: vetx output %s: unwritable: %v\n", cfg.VetxOutput, err)
+				return 2
+			}
 		}
-		return
-	}
-
-	if len(cfg.GoFiles) == 0 {
-		return
+		return 0
 	}
 
 	fset := token.NewFileSet()
@@ -68,24 +79,17 @@ func main() {
 	for _, f := range cfg.GoFiles {
 		node, err := parser.ParseFile(fset, f, nil, parser.ParseComments)
 		if err != nil {
-			continue
+			fmt.Fprintf(stderr, "vetlaw: go file %s: does not parse: %v\n", f, err)
+			return 2
 		}
-		for _, diag := range checkZeroByte(fset, node) {
-			code = 1
-			os.Stderr.WriteString(diag + "\n")
-		}
-		for _, diag := range checkHelpRefused(fset, node) {
-			code = 1
-			os.Stderr.WriteString(diag + "\n")
-		}
-		for _, diag := range checkArgvText(fset, node) {
-			code = 1
-			os.Stderr.WriteString(diag + "\n")
+		for _, check := range []func(*token.FileSet, *ast.File) []string{checkZeroByte, checkHelpRefused, checkArgvText} {
+			for _, diag := range check(fset, node) {
+				code = 1
+				fmt.Fprintln(stderr, diag)
+			}
 		}
 	}
-	if code != 0 {
-		os.Exit(code)
-	}
+	return code
 }
 
 func checkZeroByte(fset *token.FileSet, file *ast.File) []string {
