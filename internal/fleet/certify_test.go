@@ -881,6 +881,21 @@ func TestBuildVersionRejectsErrorAndBannerText(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "two field diagnostic with hex token rejected (no nova-merge tool field)",
+			out:  "fatal deadbeef1234\n",
+			want: "",
+		},
+		{
+			name: "three field diagnostic with malformed platform rejected (empty goarch)",
+			out:  "nova-merge deadbeef1234 bad/\n",
+			want: "",
+		},
+		{
+			name: "four token buildinfo line from a different tool rejected",
+			out:  "nova-sandbox v0.17.0 linux/amd64 go1.26.5\n",
+			want: "",
+		},
+		{
 			name: "empty output",
 			out:  "",
 			want: "",

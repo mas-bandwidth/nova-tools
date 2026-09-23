@@ -818,6 +818,15 @@ func machineBuild(in CertifyInput, m Machine) (string, error) {
 // two spellings of it would be two answers.
 const BuildScript = "# nova-certify workload build\nnova-merge version 2>&1 || true\n"
 
+// buildTool is the tool name BuildScript asks for and the only tool name BuildVersion
+// accepts a build identity from. A diagnostic line names no tool of its own -- or names
+// the wrong one, when a workload also prints a version line on the way to a failure --
+// and requiring the field one identity here is what keeps "field two happens to be a
+// hex-shaped word" from being mistaken for "nova-merge said this is its build" (Stella's
+// HOLD 6 on #2478: a two-field diagnostic like `fatal deadbeef1234` has no tool field
+// matching this at all).
+const buildTool = "nova-merge"
+
 // IsValidBuildVersion reports whether tok is a recognized build version format
 // (a semantic version tag like v0.17.0, a vcs timestamp-revision like
 // 20260921145725-c1670c8884cd[-dirty], a 12-to-40 character hex revision, or devel).
@@ -871,8 +880,18 @@ func isHex(s string) bool {
 	return true
 }
 
+// validPlatform reports whether s is a <goos>/<goarch> pair: two non-empty tokens either
+// side of exactly one slash, the same shape buildinfo.Parse requires of a version line's
+// third field. "Contains a slash" alone accepted diagnostics like a path fragment; this
+// requires both sides to actually be present the way a real platform token always is.
+func validPlatform(s string) bool {
+	goos, goarch, found := strings.Cut(s, "/")
+	return found && goos != "" && goarch != ""
+}
+
 // BuildVersion reads the version token out of a `nova-merge version` output. It
-// extracts ONLY from a recognized version-line shape: the full buildinfo.Parse line
+// extracts ONLY from a recognized version-line shape, and ONLY when that shape's tool
+// field names buildTool ("nova-merge"): the full buildinfo.Parse line
 // (`<tool> <version> <goos>/<goarch> <go version> [key=value ...]`), or one of the two
 // shorter standalone forms nova-merge falls back to when it has no platform line to
 // give (`<tool> <version>` or `<tool> <version> <goos>/<goarch>`). It never scans an
@@ -881,9 +900,14 @@ func isHex(s string) bool {
 // names no build (`fatal: bad object deadbeef1234` is not a build, it is a git error
 // that happens to contain a hex-shaped word, and it is four fields, not two or three,
 // so none of the recognized shapes match it), so a line that is not one of the three
-// recognized shapes is rejected outright, regardless of what its words spell. SSH
-// banners, diagnostic messages, and error text are rejected the same way. If no line
-// matches a recognized shape, it returns "".
+// recognized shapes is rejected outright, regardless of what its words spell. Requiring
+// the tool field closes the shorter shapes too: a two-field diagnostic like
+// `fatal deadbeef1234` has no tool field naming nova-merge at all, and a three-field one
+// like `fatal deadbeef1234 x` was previously accepted on nothing more than "the third
+// field contains a slash" -- `x` has none, but a diagnostic that happened to print
+// `error: bad/ref` would have (Stella's HOLD 6 on #2478). SSH banners, diagnostic
+// messages, and error text are rejected the same way. If no line matches a recognized
+// shape naming buildTool, it returns "".
 func BuildVersion(out string) string {
 	for _, line := range strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n") {
 		line = strings.TrimSpace(line)
@@ -891,21 +915,21 @@ func BuildVersion(out string) string {
 			continue
 		}
 		// The full buildinfo shape: <tool> <version> <goos>/<goarch> <go version> [k=v...]
-		if f, ok := buildinfo.Parse(line); ok && IsValidBuildVersion(f.Version) {
+		if f, ok := buildinfo.Parse(line); ok && f.Tool == buildTool && IsValidBuildVersion(f.Version) {
 			return f.Version
 		}
 		// The shorter standalone forms nova-merge falls back to when it has no
 		// platform line to give: `<tool> <version>` or `<tool> <version> <goos>/<goarch>`.
 		// The identity is always the SECOND field of a line matching one of these two
-		// exact shapes -- never a token found anywhere else on the line -- because a
-		// diagnostic sentence's second word essentially never happens to be a whole
-		// valid version, unlike some hex-shaped word buried further into it (a git
-		// error naming a truncated object id, say: "fatal: bad object deadbeef1234"
-		// is four fields, not two, and its third field is not a goos/goarch pair, so
-		// it is rejected here rather than accepted by scanning every field for one
-		// that happens to parse).
+		// exact shapes, with the FIRST field naming buildTool and (in the three-field
+		// case) the THIRD field an actual goos/goarch pair -- never a token found
+		// anywhere else on the line, and never accepted from a line some other tool or
+		// a bare diagnostic sentence happened to produce.
 		fields := strings.Fields(line)
-		if len(fields) == 2 || (len(fields) == 3 && strings.Contains(fields[2], "/")) {
+		if fields[0] != buildTool {
+			continue
+		}
+		if len(fields) == 2 || (len(fields) == 3 && validPlatform(fields[2])) {
 			clean := strings.Trim(fields[1], "(),\"'")
 			if IsValidBuildVersion(clean) {
 				return clean
