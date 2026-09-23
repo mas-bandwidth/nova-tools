@@ -241,7 +241,7 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 			vs = append(vs, forgeVs...)
 		}
 
-		holds := merge.UnliftedHolds(vs, mPR.HeadOID, mPR.Author, rs)
+		holds := merge.UnliftedHolds(vs, mPR.HeadOID, merge.ReaderAuthor(mPR, rs), rs)
 		if len(holds) > 0 {
 			h := holds[0]
 			if h.Source == "comment-pending" {
