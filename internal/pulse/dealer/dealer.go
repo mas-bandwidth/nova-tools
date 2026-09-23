@@ -141,16 +141,23 @@ func (d *Dealer) DealRoundRobin() ([]Deal, error) {
 	}
 	var deals []Deal
 	idx := 0
+	benchIdx := 0
+	var firstErr error
 	for {
 		progressed := false
-		for _, bench := range d.benches {
+		for range d.benches {
 			if idx >= len(ready) {
 				break
 			}
+			bench := d.benches[benchIdx]
+			benchIdx = (benchIdx + 1) % len(d.benches)
 			label := ready[idx]
 			idx++
 			deal, err := d.DealOne(bench, label)
 			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
 				continue
 			}
 			progressed = true
@@ -172,5 +179,5 @@ func (d *Dealer) DealRoundRobin() ([]Deal, error) {
 			idx = 0
 		}
 	}
-	return deals, nil
+	return deals, firstErr
 }

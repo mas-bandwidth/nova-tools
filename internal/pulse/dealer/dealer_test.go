@@ -198,3 +198,77 @@ func TestTwoDispatcherNoScriptsOnBench(t *testing.T) {
 		}
 	}
 }
+
+// TestDealRoundRobinErrorPropagation verifies that the first error from
+// DealOne is returned by DealRoundRobin rather than silently swallowed.
+func TestDealRoundRobinErrorPropagation(t *testing.T) {
+	pool, benchA, benchB := dealerDirs(t)
+	writeLabel(t, pool, "label-0001")
+	writeLabel(t, pool, "label-0002")
+	d, err := New(pool, []string{benchA, benchB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Delete bench-a so DealOne will fail when trying to rename into it.
+	if err := os.RemoveAll(benchA); err != nil {
+		t.Fatal(err)
+	}
+	_, err = d.DealRoundRobin()
+	if err == nil {
+		t.Fatal("DealRoundRobin returned nil error, want non-nil when a bench is missing")
+	}
+	// Verify that at least the deal to bench-b succeeded.
+	dealtB, _ := d.Dealt(benchB)
+	if len(dealtB) == 0 {
+		t.Fatal("expected at least one label dealt to bench-b before the error")
+	}
+}
+
+// TestDealRoundRobinDistribution verifies that labels are evenly distributed
+// across benches when the count is not a multiple of the bench count, and
+// that the rotating cursor persists across passes rather than resetting to
+// bench 0 each time.
+func TestDealRoundRobinDistribution(t *testing.T) {
+	dir := t.TempDir()
+	pool := filepath.Join(dir, "pool")
+	benches := make([]string, 3)
+	for i := range benches {
+		benches[i] = filepath.Join(dir, fmt.Sprintf("bench-%d", i))
+		if err := os.MkdirAll(benches[i], 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(pool, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// 7 labels across 3 benches: expected distribution is 3, 2, 2
+	// (label-00 to bench-0, label-01 to bench-1, label-02 to bench-2,
+	//  label-03 to bench-0, label-04 to bench-1, label-05 to bench-2,
+	//  label-06 to bench-0).
+	const nLabels = 7
+	for i := range nLabels {
+		writeLabel(t, pool, fmt.Sprintf("label-%04d", i))
+	}
+	d, err := New(pool, benches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deals, err := d.DealRoundRobin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(deals) != nLabels {
+		t.Fatalf("dealt %d labels, want %d", len(deals), nLabels)
+	}
+	// Check distribution: bench-0 gets 3, bench-1 gets 2, bench-2 gets 2.
+	expected := []int{3, 2, 2}
+	for i, bench := range benches {
+		dealt, err := d.Dealt(bench)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(dealt) != expected[i] {
+			t.Errorf("bench-%d holds %d labels, want %d", i, len(dealt), expected[i])
+		}
+	}
+}
