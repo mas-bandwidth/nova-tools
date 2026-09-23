@@ -12,8 +12,8 @@ import (
 )
 
 // orderTheTestRequires is the funnel #2687 names. Landed stays zero through
-// cut and ok; useful stays zero until #2680's rule is met, which cannot be
-// before the landed event.
+// cut and ok. A pullreq that carries a verified defect or a receipted issue
+// is already useful; the later landed event does not count that card again.
 const orderTheTestRequires = "cut, then ok, then landed"
 
 func TestTheOrderIsCutThenOKThenLanded(t *testing.T) {
@@ -54,8 +54,8 @@ func TestTheOrderIsCutThenOKThenLanded(t *testing.T) {
 			extra: map[string]string{
 				"defect": "verified", "issue": "2687", "receipt": "receipted", "pr": "2700",
 			},
-			want:   benchcount.Counts{Cut: 1, OK: 1, USD: 1.5},
-			landed: "0", useful: "0", cost: "-",
+			want:   benchcount.Counts{Cut: 1, OK: 1, Useful: 1, USD: 1.5},
+			landed: "0", useful: "1", cost: "1.500000",
 		},
 		{
 			// The lander does not name the bench. The card stays on hulk.
@@ -94,51 +94,67 @@ func TestTheOrderIsCutThenOKThenLanded(t *testing.T) {
 	}
 }
 
-func TestUsefulIsLandedPlusVerifiedDefectPlusReceiptedIssue(t *testing.T) {
+func TestUsefulIsLandedOrVerifiedDefectOrReceiptedIssue(t *testing.T) {
 	cases := []struct {
 		name   string
 		events []benchcount.Entry
 		want   benchcount.Counts
 	}{
 		{
-			name:   "landed alone is not useful",
+			name:   "landed alone is useful",
 			events: []benchcount.Entry{ev("1-0", "card", "landed", nil)},
-			want:   benchcount.Counts{Landed: 1},
+			want:   benchcount.Counts{Landed: 1, Useful: 1},
 		},
 		{
-			name: "verified defect without a receipted issue",
-			events: []benchcount.Entry{ev("1-0", "card", "landed", map[string]string{
+			name: "a verified defect alone is useful",
+			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
 				"defect": "verified",
 			})},
-			want: benchcount.Counts{Landed: 1},
+			want: benchcount.Counts{Useful: 1},
 		},
 		{
-			name: "receipted issue without a verified defect",
-			events: []benchcount.Entry{ev("1-0", "card", "landed", map[string]string{
+			name: "a receipted issue alone is useful",
+			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
 				"issue": "2687", "receipt": "receipted",
 			})},
-			want: benchcount.Counts{Landed: 1},
+			want: benchcount.Counts{Useful: 1},
 		},
 		{
-			name: "an issue that was not receipted",
-			events: []benchcount.Entry{ev("1-0", "card", "landed", map[string]string{
-				"defect": "verified", "issue": "2687",
+			name: "an open pull request is not useful",
+			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
+				"pr": "2700",
 			})},
-			want: benchcount.Counts{Landed: 1},
+			want: benchcount.Counts{},
 		},
 		{
-			name: "a receipt with no issue id",
-			events: []benchcount.Entry{ev("1-0", "card", "landed", map[string]string{
-				"defect": "verified", "receipt": "receipted",
+			name: "an issue that was not receipted is not useful",
+			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
+				"issue": "2687",
 			})},
-			want: benchcount.Counts{Landed: 1},
+			want: benchcount.Counts{},
 		},
 		{
-			name: "an unverified defect",
-			events: []benchcount.Entry{ev("1-0", "card", "landed", map[string]string{
-				"defect": "unverified", "issue": "2687", "receipt": "receipted",
+			name: "a receipt with no issue id is not useful",
+			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
+				"receipt": "receipted",
 			})},
-			want: benchcount.Counts{Landed: 1},
+			want: benchcount.Counts{},
+		},
+		{
+			name: "an unverified defect is not useful",
+			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
+				"defect": "unverified",
+			})},
+			want: benchcount.Counts{},
+		},
+		{
+			name: "the three together are still one useful card",
+			events: []benchcount.Entry{
+				ev("1-0", "card", "pullreq", map[string]string{"defect": "verified"}),
+				ev("2-0", "card", "pr", map[string]string{"issue": "2687", "receipt": "receipted"}),
+				ev("3-0", "card", "landed", nil),
+			},
+			want: benchcount.Counts{Landed: 1, Useful: 1},
 		},
 		{
 			name: "the rule on the landed entry",
@@ -156,41 +172,32 @@ func TestUsefulIsLandedPlusVerifiedDefectPlusReceiptedIssue(t *testing.T) {
 			want: benchcount.Counts{Landed: 1, Useful: 1},
 		},
 		{
-			name: "the rule before the landed event is not useful yet",
+			name: "a verified defect or a receipted issue is useful before landed",
 			events: []benchcount.Entry{ev("1-0", "card", "pullreq", map[string]string{
+				"defect": "verified", "issue": "2687", "receipt": "receipted",
+			})},
+			want: benchcount.Counts{Useful: 1},
+		},
+		{
+			name: "ok cannot carry the rule",
+			events: []benchcount.Entry{ev("1-0", "card", "ok", map[string]string{
+				"defect": "verified", "issue": "2687", "receipt": "receipted",
+			})},
+			want: benchcount.Counts{OK: 1},
+		},
+		{
+			name: "harvested cannot carry the rule",
+			events: []benchcount.Entry{ev("1-0", "card", "harvested", map[string]string{
 				"defect": "verified", "issue": "2687", "receipt": "receipted",
 			})},
 			want: benchcount.Counts{},
 		},
 		{
-			name: "ok cannot carry the rule",
-			events: []benchcount.Entry{
-				ev("1-0", "card", "ok", map[string]string{
-					"defect": "verified", "issue": "2687", "receipt": "receipted",
-				}),
-				ev("2-0", "card", "landed", nil),
-			},
-			want: benchcount.Counts{OK: 1, Landed: 1},
-		},
-		{
-			name: "harvested cannot carry the rule",
-			events: []benchcount.Entry{
-				ev("1-0", "card", "harvested", map[string]string{
-					"defect": "verified", "issue": "2687", "receipt": "receipted",
-				}),
-				ev("2-0", "card", "landed", nil),
-			},
-			want: benchcount.Counts{Landed: 1},
-		},
-		{
 			name: "pr is the pullreq kind the writers emit",
-			events: []benchcount.Entry{
-				ev("1-0", "card", "pr", map[string]string{
-					"defect": "verified", "issue": "2687", "receipt": "receipted",
-				}),
-				ev("2-0", "card", "landed", nil),
-			},
-			want: benchcount.Counts{Landed: 1, Useful: 1},
+			events: []benchcount.Entry{ev("1-0", "card", "pr", map[string]string{
+				"defect": "verified",
+			})},
+			want: benchcount.Counts{Useful: 1},
 		},
 	}
 	for _, tc := range cases {
@@ -226,7 +233,7 @@ func TestLandedWithNoEarlierBenchUsesTheLandedEntry(t *testing.T) {
 	f.Apply(benchcount.Entry{ID: "1-0", Fields: map[string]string{
 		"label": "card", "event": "landed", "bench": "Space",
 	}})
-	if got := f.Bench("space"); got.Landed != 1 || got.Useful != 0 {
+	if got := f.Bench("space"); got.Landed != 1 || got.Useful != 1 {
 		t.Fatalf("space = %+v", got)
 	}
 	if got := f.Bench("hulk"); got.Landed != 0 {
@@ -280,8 +287,8 @@ func TestFixtureStreamIsOneHGETPerBench(t *testing.T) {
 	if err := benchcount.Write(ctx, rdb, fold.Counts()); err != nil {
 		t.Fatal(err)
 	}
-	assertHash(t, ctx, rdb, "hulk", "2", "1", "2.000000")
-	assertHash(t, ctx, rdb, "space", "1", "0", "-")
+	assertHash(t, ctx, rdb, "hulk", "2", "2", "1.000000")
+	assertHash(t, ctx, rdb, "space", "1", "1", "4.000000")
 
 	again, err := benchcount.FoldStream(ctx, rdb, benchcount.Stream)
 	if err != nil {
@@ -298,8 +305,8 @@ func TestFixtureStreamIsOneHGETPerBench(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cost != "2.000000" {
-		t.Fatalf("cost = %q, want 2.000000", cost)
+	if cost != "1.000000" {
+		t.Fatalf("cost = %q, want 1.000000", cost)
 	}
 	if hook.n != 1 {
 		t.Fatalf("cost per useful card took %d HGETs, want 1", hook.n)

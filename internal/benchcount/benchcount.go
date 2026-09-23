@@ -11,11 +11,13 @@
 // A card counts as landed only after an entry whose event is landed. A pull
 // request (event pullreq, or pr as the #2619 writers spell it) is not a landing.
 //
-// A card counts as useful only under #2680: it has landed, and a pullreq or
-// landed entry has shown both a verified defect (defect=verified) and a
-// receipted issue (issue set and receipt=receipted). Those two facts are read
-// only off pullreq and landed entries. Cut, then ok, then landed is the order
-// the funnel walks; finishing that walk does not by itself make a card useful.
+// A card counts as useful under #2680, once: it has landed, or a pullreq or
+// landed entry has shown a verified defect (defect=verified), or a receipted
+// issue (issue set and receipt=receipted). A card that has more than one of
+// those is still one useful card. The defect and the receipt are read only
+// off pullreq and landed entries (pr is the pullreq kind #2619 writes). Cut,
+// then ok, then landed is the order the funnel walks; cut and ok do not by
+// themselves make a card useful.
 //
 // usd_per_useful is the bench's card spend divided by its useful cards, so the
 // cost per useful card is one HGET. With no useful card the field is a dash.
@@ -192,7 +194,8 @@ func (f *Fold) Counts() map[string]Counts {
 		if c.landed {
 			row.Landed++
 		}
-		if c.landed && c.verified && c.receipted {
+		// Once per card. Landed, a verified defect, or a receipted issue.
+		if c.landed || c.verified || c.receipted {
 			row.Useful++
 		}
 		row.USD += c.usd
