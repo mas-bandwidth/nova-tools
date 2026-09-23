@@ -524,16 +524,22 @@ rule could decide. Every judgment it cannot make becomes an escalation."
 ;;; ------------------------------------------------------------------
 
 (defstruct (escalation-row
-             (:constructor make-escalation-row (&key rule default age)))
+             (:constructor make-escalation-row (&key rule default age reread)))
   "An escalation row carries the policy rule that could not decide it, the
-default that fires on silence, and its age (docs/SPEC-WORK.md:2579-2586)."
-  rule default age)
+default that fires on silence, its age, and how many times it has been re-read
+(docs/SPEC-WORK.md:2579-2586, 5605-5608)."
+  rule default age (reread 0))
 
 (defun stale-pass (rows)
-  "The coordinator's stale pass reads the three and reassigns nothing: answer the
-same rows and a receipt of what it read."
-  (values rows
-          (format nil "STALE OK rows=~D reassigned=0" (length rows))))
+  "The coordinator's stale pass reads the escalation and reassigns nothing: answer
+the same rows and a receipt surfacing `escalated-age=` and `reread=` as strictly
+informational fields (docs/SPEC-WORK.md:4654, 5605-5608)."
+  (let ((row (first rows)))
+    (values rows
+            (format nil "STALE OK rows=~D escalated-age=~D reread=~D reassigned=0"
+                    (length rows)
+                    (if row (or (escalation-row-age row) 0) 0)
+                    (if row (or (escalation-row-reread row) 0) 0)))))
 
 ;;; ------------------------------------------------------------------
 ;;; wait-table-four-presence-columns          SPEC-WORK.md:6074-6076

@@ -4399,6 +4399,7 @@ usage:
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
+                      [--evaluate] [--base <branch>] [--cache <dir>] [--write-status]
                       [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
@@ -4479,13 +4480,32 @@ Exit 1 is findings: it was read whole and its content is wrong -- a duplicate id
 :lane no --lanes file names, a :deadline that is not an instant. Every rule runs over
 every unit in ONE pass, one SET line per finding, because a checker that stopped at the
 first would cost one round trip per defect. The SET OK line prints either way, and
-units = ready + blocked + done closes its arithmetic.
+units = ready + blocked + done closes its arithmetic; one SET DONE done=<n> percent=<p>
+line follows it, percent rounded down, so x/y z% comes from the tool and not from awk.
 
 --ready is the mechanical ready set, derived from the language rather than maintained by
 hand: a unit is done when it says so (:done, or a :status of closed, done, landed or
 merged) or when --done names it, and ready when it is not done and every need is done.
 Without --minds and without --lanes those two rules are OFF rather than run against a
 guessed file: there is no default registry and no discovery.
+
+--evaluate derives done from each unit's :acceptance instead of its :status, through gh
+(nova-tools #2664). Two criteria are evaluable: (:kind :landed :subject "pr:<o/r>#<n>"
+:predicate :merged-or-closed-in-base) holds when the PR is merged, OR closed with its
+content in the base by the lander's rule -- git merge-tree --write-tree <base> <head>
+yields the base's own tree, so merging it changes nothing, which holds for a PR the lander
+combined with another -- and :subject "commit:<sha>" holds when the commit is reachable
+from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
+A subject pinned as pr:<o/r>#<n>@<sha> asks about that head only: a pin the PR's last
+head does not match was superseded and is not landed. The merge runs in one blobless
+bare repository per repo under --cache. The base is
+--base, else the set's :base, and one is required. Each evaluable criterion prints one
+SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
+answer is unknown and counts as not done. A unit is decided by its criteria when every
+one is evaluable or one fails; a unit naming only :test, :job or :attested criteria keeps
+its :status. Each question is asked once per run.
+--write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
+whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
 events publishes the family's three event channels from two sources: the cards:done
 stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
@@ -4528,6 +4548,12 @@ flags:
   --ready         set check: also print one SET READY line per unit of the ready set,
                   each carrying its admission verdict (admit=go, or admit=held with the
                   dimension or path that held it and the unit holding it).
+  --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
+  --base <branch> set check: the branch :landed means; default the set's :base.
+  --cache <dir>   set check: where --evaluate keeps one blobless bare repository per
+                  repo for the merge; default <user cache dir>/nova-work/landed.
+  --write-status  set check: rewrite :status "open" to "landed" where every criterion
+                  holds, in place, one line per unit; implies --evaluate.
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -4655,3 +4681,73 @@ cover the tool's own shape only; a bench record's entries are its sections, and
 the coverage ledger counts the file. An append addressing a session neither
 shape holds refuses with the whole remedy verb: `open first: nova-cairn open
 --store <dir> --session <id> --publish <policy>`.
+
+
+## nova-sprint
+
+Renders a sprint table and keeps the last published one across a unit restart.
+It does not read the fleet Redis and it does not loop once a second; those
+cuts are the rest of the table. `table --fixture` prints a finished render
+byte for byte. `table --refresh pending` leaves `--out` untouched and prints
+it again, which is what a start does while the refresh is still running.
+`refresh -- <command>` runs that command in its own session (POSIX setsid) and
+returns without waiting, so `launchctl kickstart -k` of the loop unit does not
+kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
+`fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
+itself signals only the unit's pid.
+
+### First run
+
+Copy `cmd/nova-sprint/testdata/table.txt` to `table.txt` in an empty directory
+and run the three lines. The first is the byte-identical fixture. The third
+is a second start: the published file stays, and the screen is the previous
+table rather than an empty one.
+
+```text
+$ nova-sprint table --once --fixture table.txt
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+
+$ nova-sprint table --once --fixture table.txt --out sprint-table.txt
+TABLE PUBLISHED out=sprint-table.txt bytes=675
+
+$ nova-sprint table --once --refresh pending --out sprint-table.txt
+TABLE KEPT out=sprint-table.txt bytes=675 reason=refresh-not-ready
+SPRINT TABLE
+
+host       | queue | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+alpha      |     1 |       2 |     3 |     2 |     1 |  66% |   0.50
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     1 |       2 |     3 |     2 |     1 |  66% |
+
+friend     | queue | working |  done |    ok |  fail | status
+-----------+-------+---------+-------+-------+-------+--------
+ada        |     4 |       1 |     2 |     2 |     0 |     up
+-----------+-------+---------+-------+-------+-------+--------
+total      |     4 |       1 |     2 |     2 |     0 |
+
+1/2 50% -> ~10m
+```
+
+What a first run gets wrong, and what each one wants:
+
+- **`nova-sprint table` with no flags.** It wants `--once`, and either `--fixture <file>` or `--refresh pending` with `--out <file>`. One run names every missing piece. There is no default path and no default loop.
+- **An empty `--fixture`.** An empty file would blank the screen. The command refuses and does not create `--out`.
+- **`--refresh pending` without `--out`.** Pending means "keep the published table". It wants the path of that table.
+- **`--refresh ready`, or a one-second loop.** This cut does not read the store. `--refresh` wants `pending`.
+
+There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
