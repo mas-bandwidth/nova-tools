@@ -255,7 +255,7 @@ cleanup, in case the run dies before its own."
   (let ((clean (remove-if-not #'alphanumericp prefix)))
     (when (plusp (length clean))
       (test-temp-register
-       (concatenate 'string (namestring (uiop:temporary-directory)) clean)))
+       (namestring (merge-pathnames clean (test-run-root)))))
     clean))
 
 (defun install-run-local-paths ()
