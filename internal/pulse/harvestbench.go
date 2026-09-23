@@ -230,7 +230,11 @@ func harvestBench(in HarvestInput) int {
 		// refused out loud with its kind named -- a report card that reached only the
 		// branch-prefix filter produced neither a JOB line nor a REFUSED line, and a
 		// coordinator cannot tell "not harvestable" from "not looked at" (#2537).
-		if strings.HasPrefix(label, "report-") {
+		// The kind is the card's own KIND field (SPEC-CARD v2), never the label's shape:
+		// a report-kind job under any label is refused as a report, and a job whose label
+		// merely begins `report-` but whose KIND is something else takes the ordinary path
+		// (Stella's hold on #2647).
+		if kind := strings.ToLower(resultField(j.Result, "KIND")); kind == "report" {
 			skipped++
 			lines.Line(fmt.Sprintf("HARVEST REFUSED kind=report bench=%s label=%s reason=report-no-pr (a report card's deliverable is its RESULT.md; nothing is pushed and no PR is opened)",
 				field(in.Bench), field(label)))
