@@ -68,7 +68,6 @@ sbcl --non-interactive \
   --eval "(push #p\"${here}/\" asdf:*central-registry*)" \
   --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work/tests))" \
   --eval "${lane_filter}" \
-  --eval "(dolist (p (sort (directory (merge-pathnames \"tests/criterion-*.lisp\" #p\"${here}/\")) (function string<) :key (function namestring))) (load p))" \
   --eval "(nova-work/tests:main)" || status=$?
 end=$(date +%s)
 elapsed=$((end - start))
