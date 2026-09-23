@@ -99,15 +99,50 @@ type Request struct {
 	// A nested scheduler -- a CI runner set, an external engine -- holds its
 	// sub-budget as a grant and admits its own units under it (A8).
 	Parent string
+	// Revision is the unit's revision for outcomes to bind to. An executor
+	// result carried back must name this revision or it is refused.
+	Revision string
+	// Acceptance is the :acceptance criteria the unit's outcome must satisfy.
+	Acceptance []string
 }
 
 // Grant is a live reservation. It is returned to the caller by value: the
 // writer's copy is the only one that counts, and a caller cannot edit it.
 type Grant struct {
+	ID         string
+	Vector     Vector
+	Writes     []string
+	Parent     string
+	Revision   string
+	Acceptance []string
+}
+
+// Executor is a proposal for an external execution engine. It names a parent
+// unit grant and the sub-budget it draws from it; no concrete engine is grown
+// here, only the typed seam (docs/SPEC-JOBS.md section 9).
+type Executor struct {
 	ID     string
-	Vector Vector
-	Writes []string
 	Parent string
+	Vector Vector
+}
+
+// ExecutorGrant is the live reservation handed to an executor seam.
+type ExecutorGrant struct {
+	ID     string
+	Parent string
+	Vector Vector
+}
+
+// Outcome is what arrives back across the executor seam: either a bound result
+// with the unit's revision and :acceptance criteria, or uncertain when
+// termination is not proved.
+type Outcome struct {
+	UnitID     string
+	ExecutorID string
+	Revision   string
+	Acceptance []string
+	Result     string
+	Uncertain  bool
 }
 
 // Refusal is why a request was not granted. It is an error rather than a wait,
@@ -167,6 +202,10 @@ type state struct {
 	order    []string
 	children map[string][]string
 	writers  map[string]string
+	// uncertain holds executor grants that reported uncertain: their engine
+	// disconnected without termination proof, so they keep their reservation
+	// until termination is proved or they are explicitly released.
+	uncertain map[string]bool
 }
 
 // New starts an Admission over a capacity. Lanes are NOT declared: a lane is
@@ -238,9 +277,44 @@ func (a *Admission) Held(id string) (Grant, bool) {
 			g, ok = *held, true
 			g.Vector = held.Vector.Clone()
 			g.Writes = append([]string(nil), held.Writes...)
+			g.Acceptance = append([]string(nil), held.Acceptance...)
 		}
 	})
 	return g, ok
+}
+
+// AdmitExecutor creates an executor seam: a delegated sub-budget drawn from the
+// parent unit's reservation. The executor's budget returns to the parent on
+// ReleaseExecutor, never to the machine directly.
+func (a *Admission) AdmitExecutor(e Executor) (ExecutorGrant, error) {
+	var out ExecutorGrant
+	var err error
+	a.do(func(st *state) { out, err = st.admitExecutor(e) })
+	return out, err
+}
+
+// ReleaseExecutor returns an executor's sub-budget to its parent reservation.
+func (a *Admission) ReleaseExecutor(id string) error {
+	var err error
+	a.do(func(st *state) { err = st.releaseExecutor(id) })
+	return err
+}
+
+// Report accepts an outcome from an executor. A result must bind to the unit's
+// revision and :acceptance criteria; an uncertain outcome keeps the executor's
+// reservation because termination is not proved.
+func (a *Admission) Report(o Outcome) error {
+	var err error
+	a.do(func(st *state) { err = st.report(o) })
+	return err
+}
+
+// IsUncertain reports whether an executor grant reported uncertain and still
+// holds its reservation.
+func (a *Admission) IsUncertain(id string) bool {
+	var ok bool
+	a.do(func(st *state) { _, ok = st.uncertain[id] })
+	return ok
 }
 
 func (st *state) grant(req Request) (Grant, error) {
@@ -316,6 +390,7 @@ func (st *state) grant(req Request) (Grant, error) {
 	}
 
 	g := &Grant{ID: id, Vector: req.Vector.Clone(), Parent: req.Parent,
+		Revision: req.Revision, Acceptance: append([]string(nil), req.Acceptance...),
 		Writes: append([]string(nil), req.Writes...)}
 	st.grants[id] = g
 	st.order = append(st.order, id)
@@ -330,7 +405,65 @@ func (st *state) grant(req Request) (Grant, error) {
 	out := *g
 	out.Vector = g.Vector.Clone()
 	out.Writes = append([]string(nil), g.Writes...)
+	out.Acceptance = append([]string(nil), g.Acceptance...)
 	return out, nil
+}
+
+func (st *state) admitExecutor(e Executor) (ExecutorGrant, error) {
+	g, err := st.grant(Request{ID: e.ID, Parent: e.Parent, Vector: e.Vector})
+	if err != nil {
+		return ExecutorGrant{}, err
+	}
+	return ExecutorGrant{ID: g.ID, Parent: g.Parent, Vector: g.Vector.Clone()}, nil
+}
+
+func (st *state) releaseExecutor(id string) error {
+	return st.release(id)
+}
+
+func (st *state) report(o Outcome) error {
+	unit, liveUnit := st.grants[o.UnitID]
+	if !liveUnit {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("no live grant %q to report against", o.UnitID)}
+	}
+	exec, liveExec := st.grants[o.ExecutorID]
+	if !liveExec {
+		return &Refusal{ID: o.ExecutorID, Reason: fmt.Sprintf("no live executor grant %q to report against", o.ExecutorID)}
+	}
+	if exec.Parent != o.UnitID {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("executor %q is not bound to unit %q", o.ExecutorID, o.UnitID)}
+	}
+	if o.Uncertain {
+		if st.uncertain == nil {
+			st.uncertain = map[string]bool{}
+		}
+		st.uncertain[o.ExecutorID] = true
+		return nil
+	}
+	if o.Revision != unit.Revision {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("outcome revision %q does not match unit revision %q", o.Revision, unit.Revision)}
+	}
+	if !acceptanceMatch(o.Acceptance, unit.Acceptance) {
+		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("outcome acceptance %v does not match unit acceptance %v", o.Acceptance, unit.Acceptance)}
+	}
+	delete(st.uncertain, o.ExecutorID)
+	return nil
+}
+
+func acceptanceMatch(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aa := append([]string(nil), a...)
+	bb := append([]string(nil), b...)
+	sort.Strings(aa)
+	sort.Strings(bb)
+	for i := range aa {
+		if aa[i] != bb[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // total is the capacity of one dimension under one authority. A lane is 1
@@ -434,6 +567,7 @@ func (st *state) release(id string) error {
 			delete(st.writers, path)
 		}
 	}
+	delete(st.uncertain, id)
 	return nil
 }
 
