@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # bench-standard_test.sh: the class test for tools/bench-standard.sh,
 # nova-tools #2230 (SPEC-FLEET-KUBE.md "Make a new bench one apply, and narrow
-# bench-standard.sh to witness").
+# bench-standard.sh to witness") and nova-tools #2053 (bench-standard.sh's
+# manifest misses the ways the benches actually differ: sshd limits, rungs,
+# sbcl version, extra toolchains, sqlite3 layout, bench user, slot share,
+# coordinator).
 #
 # No bats, no harness: plain bash, run directly, the same shape as
 # tools/asdf-carry-verify_test.sh and tools/roadmap-parity_test.sh beside it.
@@ -28,8 +31,17 @@
 #   (3) verifies `--apply`'s only mutation is killing strays: a fake `kill`
 #       and a planted STRAY_PIDS path prove the script kills the strays and
 #       does nothing else.
-set -u
+#
+#   (4) TestManifestCoversHowBenchesDiffer (#2053) — a source-level check
+#       that bench-standard.sh carries a manifest row (a drift check) for
+#       every way the benches actually differ: sbcl version, sshd
+#       MaxSessions/MaxStartups, pro rung, the check itself installed on the
+#       bench, extra Go toolchains beside the pin, sqlite3 layout, bench
+#       user, slot share, and the coordinator. On a base that lacks a row
+#       this case fails; once bench-standard.sh carries it, it passes.
+set -uo pipefail
 SCRIPT=$(cd "$(dirname "$0")" && pwd)/bench-standard.sh
+
 fails=0
 n=0
 ok()  { n=$((n+1)); printf 'ok %s - %s\n' "$n" "$1"; }
@@ -271,6 +283,59 @@ else
 fi
 rm -rf "$TMP_GM"
 
+
+# ---------------------------------------------------------------------------
+# (4) TestManifestCoversHowBenchesDiffer (#2053)
+# ---------------------------------------------------------------------------
+have() {
+  local label="$1" pattern="$2"
+  if grep -q "$pattern" "$SCRIPT"; then
+    ok "$label"
+  else
+    bad "$label"
+  fi
+}
+
+# sbcl version (not just presence) — space ran 2.6.0.debian while the fleet
+# pins 2.5.8; the matrix printed PINNED for space.
+have "sbcl version checked" 'NOVA_SBCL'
+
+# sshd MaxSessions / MaxStartups — four linux benches 200/300:30:600; superman
+# and batman at macOS defaults 10/10:30:100 (#2018).
+have "sshd MaxSessions checked" 'MaxSessions'
+have "sshd MaxStartups checked" 'MaxStartups'
+
+# rungs — pro loops existed on five linux benches only; superman, batman, the
+# Air and the Studio were flash-only (528 of 998 slots idle in a pro wave).
+have "pro rung checked" 'pro.*rung\|rung.*pro\|NOVA_PRO_RUNG'
+
+# the check itself installed — bench-standard.sh was on 1 of 6 benches, and
+# hetzner's copy was stale against the PR.
+have "bench-standard.sh installed on bench" 'nova-bench/tools/bench-standard'
+
+# extra toolchains beside the pin — go1.26.5 also on hulk and vision;
+# go1.27.1 also on both Macs; needs a ruling on the one Go version.
+have "extra Go toolchains checked" 'extra.*toolchain\|extra.*go\|NOVA_EXTRA_TOOLCHAIN'
+
+# layout — space resolves sqlite3 from /usr/bin (no ~/sdk/sqlite3-*).
+have "sqlite3 layout checked" 'sqlite3'
+
+# bench user — glenn (hulk, vision), ubuntu (space), nova (hetzner, superman,
+# batman), so every path in every script differs by bench.
+have "bench user checked" 'NOVA_BENCH_USER\|BENCH_USER'
+
+# slot share — hulk 110/125, vision 104/121, space 192/125, hetzner 64/61,
+# superman 54/64, batman 24/32, Studio 450/512: no formula recorded.
+have "slot share checked" 'NOVA_SLOT_SHARE\|SLOT_SHARE'
+
+# coordinator — the Studio is a 450-slot card bench and no standard run
+# covers it.
+have "coordinator checked" 'NOVA_COORDINATOR\|coordinator'
+
+
 printf '1..%s\n' "$n"
-[ "$fails" = 0 ] || { printf 'FAILED\n'; exit 1; }
-printf 'PASSED\n'
+if [ "$fails" = 0 ]; then
+  printf 'PASSED\n'
+  exit 0
+fi
+printf 'FAILED\n'
