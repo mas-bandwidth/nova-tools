@@ -452,3 +452,54 @@ func TestRedistributeFromDownFriendClosesLeases(t *testing.T) {
 		t.Fatalf("title %q", title)
 	}
 }
+
+// TestRedistributeFromExpiredOutOfCreditsKeepsLease: the hand verb mirrors
+// the tick's expired-window rule. An up friend whose out-of-credits until has
+// passed keeps its live lease unfenced (state cleared, open tasks still move);
+// an active out-of-credits window and a down friend still close it.
+func TestRedistributeFromExpiredOutOfCreditsKeepsLease(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		until  time.Duration
+		down   bool
+		leases int
+		state  string
+	}{
+		{name: "expired window, up", until: -time.Minute, leases: 0, state: ""},
+		{name: "active window, up", until: 3 * time.Hour, leases: 1, state: life.StateOutOfCredits},
+		{name: "expired window, down", until: -time.Minute, down: true, leases: 1, state: life.StateOutOfCredits},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			st, client := asRedis(t)
+			asFixture(t, st, client, 2)
+			asPush(t, st, "build-1", task.KindWork, 0, "emma")
+			if _, ok, err := task.Take(ctx, st, task.TakeRequest{Sprint: asSprint, ID: "build-1", As: "emma", Actor: "emma"}); err != nil || !ok {
+				t.Fatalf("take build-1: %v %v", ok, err)
+			}
+			must(t, life.SetState(ctx, st, "emma", life.StateOutOfCredits, time.Now().Add(tc.until), "usage limit", "keeper", ""))
+			if tc.down {
+				must(t, client.Del(ctx, "friend:emma:beat").Err())
+			}
+			res, err := assign.From(ctx, st, assign.FromRequest{From: "emma", Reason: "hand", Roster: asRoster, Actor: "rowan", Idem: "oc-" + strconv.Itoa(int(tc.until))})
+			must(t, err)
+			key := "s:" + asSprint + ":task:build-1"
+			fenced := client.HGet(ctx, key, "token").Val() == "fenced"
+			owner := client.HGet(ctx, key, "owner").Val()
+			if res.Leases != tc.leases || res.State != tc.state || fenced != (tc.leases == 1) {
+				t.Fatalf("%s: %s fenced=%v owner=%s", tc.name, res.Line(), fenced, owner)
+			}
+			if tc.leases == 0 {
+				if s := client.HGet(ctx, key, "state").Val(); s != "claimed" && s != "working" || owner != "emma" {
+					t.Fatalf("%s: live lease moved: state=%s owner=%s", tc.name, s, owner)
+				}
+				if client.Exists(ctx, "friend:emma:state").Val() != 0 {
+					t.Fatalf("%s: expired out-of-credits state not cleared", tc.name)
+				}
+			}
+			if res.Moved < 2 {
+				t.Fatalf("%s: open reads not moved: %s", tc.name, res.Line())
+			}
+		})
+	}
+}
