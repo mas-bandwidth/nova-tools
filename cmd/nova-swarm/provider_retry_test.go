@@ -300,7 +300,7 @@ func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
+	code := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--no-wall"},

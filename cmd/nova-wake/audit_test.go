@@ -27,6 +27,14 @@ var wakeAudit = audit.Config{
 		// is nothing here for an escape to do that the line's own construction
 		// has not already done.
 		`main.go|cmdProbe|wake.HereLine(clock.Now(), wake.ReadBench(), *quietLoad)`: "the line is composed through oneline.Field inside internal/wake and carries only numbers the kernel gave",
+		// Line composes the whole friends: line inside internal/presence from
+		// three kinds of field and no other: a friend's name normalized to
+		// lower case, a duration this tool formatted itself, and a UTC clock
+		// time it formatted itself. Nothing a store holds reaches the line --
+		// a value that is not the stamp this tool wrote is not printed at all,
+		// it only makes the friend read as `up` with no age -- so there is
+		// nothing here for an escape to do.
+		`presence.go|cmdPresence|presence.Line(sts, now)`: "the line is composed inside internal/presence from a normalized name, a duration and a clock time, none of them a store's text",
 	},
 	Imports: []string{
 		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
@@ -67,6 +75,12 @@ var wakeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/dispatch"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
+		// internal/presence is the friend heartbeat of #2610: two Redis keys
+		// per friend and the line read back from them. It writes to the store,
+		// never to a writer, and every field of the line it composes is a
+		// normalized name, a duration or a clock time -- see the exemption
+		// above for presence.Line.
+		`"github.com/mas-bandwidth/nova-tools/internal/presence"`,
 	},
 	MinClassified: 40,
 }
