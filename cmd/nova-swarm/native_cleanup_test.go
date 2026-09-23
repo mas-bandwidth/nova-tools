@@ -172,6 +172,10 @@ func TestNativeRunNeverRemovesSharedCachesOrMirrors(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The pool root names who launches (identity.tsv), as aSlot does; dev refuses a
+	// launch under nobody's name.
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 
 	mirrorSentinel := filepath.Join(mirrorDir, "HEAD")
 	if err := os.WriteFile(mirrorSentinel, []byte("ref: refs/heads/main\n"), 0o644); err != nil {
