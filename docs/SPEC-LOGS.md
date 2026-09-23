@@ -194,6 +194,10 @@ new second copy. Old readers (`ssh` and `grep`) still work, so the slice is addi
 benches, and a `grep` of several scratch dirs; the target is the Part 3 query, one pane, under
 five seconds. The slice is done when that number is printed, not when Loki is installed.
 
+**The build order.** Slice, dashboard, measure, red tests — the measure cannot print before the
+slice answers, the dashboard is the one pane the measure reads, and a red test that cannot run
+yet is a promise, not a proof.
+
 **The red tests** (one per promise, seen red first):
 
 - `a-slog-line-from-a-verb-appears-in-loki-within-five-seconds-with-its-labels` — run a verb
@@ -203,6 +207,26 @@ five seconds. The slice is done when that number is printed, not when Loki is in
   The hook lives beside the handler, so the refusal is a test of the emitter and not of review.
 - `the-hung-card-query-returns-the-card-s-last-event` — a card that `start`s and never `done`s;
   the Part 3 hung query returns that card's last event and its age.
+
+**The slice's checks of record** (nova-tools #2190; the demanded tests 31 to 34 below):
+
+- `TestSliceRunsLokiAlloyGrafanaOnSpace` — on `space`: Loki with local disk, one Alloy reading
+  the systemd journal plus the two timer logs and the fill loop's log.
+- `TestGrafanaHasTheOneDashboard` — Grafana pointed at Loki with one dashboard: fleet width,
+  queue depth, cards per hour, minutes per card, free disk per bench.
+- `TestSliceIsAdditive` — nothing else changes: the files stay the record, Postgres stays the
+  durable record, old readers (`ssh` and `grep`) still work.
+- `TestScopeAndMeasureUnderFiveSeconds` — the slice is done when "seconds to answer why is
+  card X hung" prints, one pane, under five seconds.
+
+**Where the slice's tests run.** On the bench (`space`), never on the CI path — the class rules
+refuse the live shape: `net` refuses a test that names a real host, `waits` refuses a fixed
+wall-clock wait, and `wall clock` refuses a bound under ten seconds. The within-five-seconds
+red test therefore polls for the line up to `NOVA_TEST_WAIT`, and the five seconds itself is
+the measure of record the bench prints, never a CI assertion — a bound under ten seconds
+asserts the machine's load, not the code. Each of the slice's tests is run against the bench
+before the slice exists, so each is seen red first; the demanded list below keeps its (ABSENT)
+markers until a test in this tree can carry each promise.
 
 ## Tests this spec demands
 
