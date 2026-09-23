@@ -1643,7 +1643,7 @@ skip and every parked poison**.
 ### batch
 
 ```
-nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>]
+nova-merge batch --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
 ```
 
 `batch` is the landing gate and **it pushes nothing**. It clones `--repo` under
@@ -1670,6 +1670,7 @@ BATCH SKIP <step> reason="<why it could not run>"
 BATCH STEP <step> command="<what it runs>"
 BATCH NOTE checks=waived reason="<what the caller took on>"
 BATCH NOTE #<n> checks=<batch-branch|receipt> reason="<the gate's own evidence for this member>"
+BATCH SIBLING name=<name> ref=<ref>
 BATCH REFUSED: <reason>
 ```
 
@@ -1716,6 +1717,17 @@ member of the next one. `--no-require-checks` waives the whole check and says so
 build-level half of the same class on the bench, in seconds, with no second machine; it
 does not catch a windows-only **test** failure, which is what the forge's own windows
 leg is for.
+
+**`--sibling <name>=<url>@<ref>` (repeatable) stages a checkout beside `repo/`.**
+`--root/<name>` is rebuilt on every run, so a neighbour the tree's tests resolve
+as `../serialize.go` is gone unless this flag clones it again (nova-tools #2499
+item 2: schema's serialize runtimes). `name` is one path element — dots allowed,
+so `serialize.go` is a legal dest — and `repo` and `tmp` are reserved for the
+batch's own checkout and temp dir. `url` is a git URL; `ref` is a branch or tag.
+The last `@` splits url from ref, so an ssh URL is
+`git@host:path.git@v1.16.2`. A sibling that cannot be cloned is `BATCH REFUSED`,
+not a red test. Tests stage a `file://` fixture; they do not clone the real
+serialize runtimes.
 
 ### land
 
