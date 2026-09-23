@@ -939,7 +939,45 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	if verb == "session start" {
+		if journal := *strs["journal"]; journal != "" {
+			if msg, held := checkJournalHeld(journal); held {
+				fmt.Fprintf(stderr, "SESSION REFUSED session=%s: journal held by %s\n", oneline.Field(socket), msg)
+				return 1
+			}
+		}
+		if msg, held := checkSocketLocked(socket); held {
+			fmt.Fprintf(stderr, "SESSION FAIL session=%s: socket held by %s\n", oneline.Field(socket), msg)
+			return 1
+		}
+	}
 	return ask(socket, b.String(), frameFor(verb, specs, strs, bools, mults), within, stdout, stderr)
+}
+
+func checkJournalHeld(journal string) (msg string, held bool) {
+	data, err := os.ReadFile(journal + ".lock")
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if pid, ok := strings.CutPrefix(strings.TrimSpace(line), "pid="); ok {
+			return fmt.Sprintf("pid %s on %s", pid, journal), true
+		}
+	}
+	return "", false
+}
+
+func checkSocketLocked(socket string) (msg string, held bool) {
+	data, err := os.ReadFile(socket + ".lock")
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if pid, ok := strings.CutPrefix(strings.TrimSpace(line), "pid="); ok {
+			return fmt.Sprintf("pid %s", pid), true
+		}
+	}
+	return "", false
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable
