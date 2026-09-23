@@ -80,6 +80,11 @@ func TestDispatcherReleasesSlotLeasesByIdentityNotOwnerAndLabel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			p, w := recoveryPool(t, dir)
+			// A launch now refuses a pool with no identity.tsv before it measures
+			// the prompt, so without one every case stops at preparation and the
+			// max_input case never reaches its refusal. Each case must reach the
+			// exit it names.
+			writePoolIdentity(t, p.Dir, "rowan", "Rowan Friend", "rowan@example.com")
 			store := writeSlotStore(t, "capacity\t4\nreserve\t0\nbench\t4\n")
 			id := "shared-task"
 			plantDispatcherBystanders(t, store, id)
