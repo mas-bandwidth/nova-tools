@@ -127,7 +127,9 @@ func parseStamp(s string) (time.Time, bool) {
 	return stamp(v), true
 }
 
-func wholeSecs(d time.Duration) string { return fmt.Sprintf("%ds", int64(d.Round(time.Second)/time.Second)) }
+func wholeSecs(d time.Duration) string {
+	return fmt.Sprintf("%ds", int64(d.Round(time.Second)/time.Second))
+}
 
 // 7.1: reachable, standalone, AOF on, nova_sprint loaded at the binary's
 // version. The ACL half of 7.1 is the deployment test of #2937.
