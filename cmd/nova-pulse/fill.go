@@ -6,20 +6,24 @@ package main
 // written down here. A --bench whose roles lack `bench` is refused before any ssh:
 // runner hosts are CI-only (Glenn 2026-09-18), and the fill is the path a CARD takes. It reads the
 // bench's capacity over ssh, pops that many ready cards, moves them to launched and hands
-// each to flash-native-bench.sh. A card's `LANE: <name>` line serializes its area: at most
-// one live card per lane, the rest held in order, named by --lanes (default
-// queue/control/lanes.tsv). One FILL line per tick.
+// each to flash-native-bench.sh with the route the dealer wrote on it. It launches every
+// ready card in order and decides nothing about them (#3251): dependencies, legs, lanes and
+// the route are the dealer's (internal/pulse/dealer), before a card enters a ready queue. A
+// card the dealer did not mark with ROUTE: and MODEL: is refused. One FILL line per tick.
+//
+// --lanes is still accepted, because fillloop passes it, and it is read by nothing here.
 //
 // Two flags make the tick runnable without a bench: --capacity <n> is a fixed capacity and
 // no ssh at all, and --launcher <path> is the program each card is handed to. Together they
-// are a dry run over a directory of cards -- the way the lane logic (FILL HELD) is
-// exercised by a hand, not only by a test's injected seam.
+// are a dry run over a directory of cards, exercised by a hand, not only by a test's
+// injected seam.
 
 import (
 	"bytes"
 	"fmt"
 	"io"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -54,7 +58,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("fill")
 	ready := f.fs.String("ready", "", "")
 	launched := f.fs.String("launched", "", "")
-	lanes := f.fs.String("lanes", "queue/control/lanes.tsv", "")
+	_ = f.fs.String("lanes", "", "") // accepted and unread since #3251: lanes are the dealer's
 	machines := f.fs.String("machines", "queue/control/machines.tsv", "")
 	session := f.fs.String("session", "", "")
 	once := f.fs.Bool("once", false, "")
@@ -69,9 +73,6 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	slotsOwner := f.fs.String("slots-owner", "", "")
 	slotsBin := f.fs.String("slots-bin", defaultSlotsBin, "")
 	maxLoad := f.fs.Float64("max-load-per-core", defaultMaxLoadPerCore, "")
-	resultsDir := f.fs.String("results", "", "")
-	repo := f.fs.String("repo", ".", "")
-	base := f.fs.String("base", "dev", "")
 	var benches benchFlag
 	var only benchFlag
 	var localBenches benchFlag
@@ -136,24 +137,22 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		})
 	}
 	return pulse.Fill(pulse.FillInput{
-		Ready:      *ready,
-		Launched:   *launched,
-		Lanes:      *lanes,
-		Machines:   *machines,
-		Session:    *session,
-		Benches:    []string(benches),
-		Only:       []string(only),
-		Once:       *once,
-		Interval:   tick,
-		Stop:       *stop,
-		ResultsDir: *resultsDir,
-		Repo:       *repo,
-		Base:       *base,
-		Stdout:     stdout,
-		Stderr:     stderr,
-		Now:        func() time.Time { return now },
-		Capacity:   reader,
-		Launcher:   flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Ready:    *ready,
+		Launched: *launched,
+		Machines: *machines,
+		Session:  *session,
+		Benches:  []string(benches),
+		Only:     []string(only),
+		Once:     *once,
+		Interval: tick,
+		Stop:     *stop,
+		// The dealer's pick must be on the card: the launcher runs it on nothing else.
+		RequireRoute: true,
+		Stdout:       stdout,
+		Stderr:       stderr,
+		Now:          func() time.Time { return now },
+		Capacity:     reader,
+		Launcher:     flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
 	})
 }
 
@@ -325,6 +324,7 @@ func (l flashLauncher) Launch(bench, card string) error {
 	}
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
 	cmd := exec.Command(bin, bench, "swarm-"+bench, card, label, strconv.Itoa(deadline))
+	cmd.Env = append(os.Environ(), routeEnv(card)...)
 	said := &tail{}
 	cmd.Stdout, cmd.Stderr = io.Discard, said
 	if err := cmd.Start(); err != nil {
@@ -348,6 +348,20 @@ func (l flashLauncher) Launch(bench, card string) error {
 		return nil
 	case <-timer.C:
 		return nil
+	}
+}
+
+// routeEnv hands the launcher the route the dealer picked and wrote on the card (#3251): the
+// launcher runs the card on NOVA_CARD_ROUTE and NOVA_CARD_MODEL, and never picks one.
+func routeEnv(card string) []string {
+	raw, err := os.ReadFile(card)
+	if err != nil {
+		return nil
+	}
+	text := string(raw)
+	return []string{
+		"NOVA_CARD_ROUTE=" + pulse.CardField(text, "ROUTE"),
+		"NOVA_CARD_MODEL=" + pulse.CardField(text, "MODEL"),
 	}
 }
 

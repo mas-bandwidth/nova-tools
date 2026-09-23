@@ -19,10 +19,9 @@ func TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession(t *testing.T) {
 	dir := t.TempDir()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
 	writeCard(t, ready, "card-001.md", "RESULT: CARD-1\nLANE: pulse\n")
-	lanes := laneFile(t, dir, "pulse\tinternal/pulse/")
 	var out, errb bytes.Buffer
 	code := Fill(FillInput{
-		Ready: ready, Launched: launched, Lanes: lanes,
+		Ready: ready, Launched: launched,
 		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"}, Once: true, Session: "s-42",
 		Stdout: &out, Stderr: &errb,
@@ -42,53 +41,15 @@ func TestFillWritesTheLaunchedMarkerCarryingTheLaneAndSession(t *testing.T) {
 	}
 }
 
-// The marker is what holds the lane. A live card whose own text no longer names the lane
-// still holds it, so the release is by lane name and never by re-reading the card.
-func TestFillReadsTheLiveLaneFromTheMarkerNotTheCard(t *testing.T) {
-	dir := t.TempDir()
-	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	if err := os.MkdirAll(launched, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// A live card under --launched whose text names no lane, and a marker that does.
-	if err := os.WriteFile(filepath.Join(launched, "card-001.md"), []byte("RESULT: CARD-1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(launched, "card-001.md.launched"), []byte("lane=pulse\nbench=bench-a\nlabel=card-001\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	writeCard(t, ready, "card-002.md", "RESULT: CARD-2\nLANE: pulse\n")
-	lanes := laneFile(t, dir, "pulse\tinternal/pulse/")
-	l := &laneLauncher{}
-	var out, errb bytes.Buffer
-	code := Fill(FillInput{
-		Ready: ready, Launched: launched, Lanes: lanes,
-		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
-		Benches:  []string{"bench-a"}, Once: true,
-		Stdout: &out, Stderr: &errb,
-		Capacity: laneCap{"bench-a": 10}, Launcher: l,
-	})
-	if code != 0 {
-		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
-	}
-	if len(l.calls) != 0 {
-		t.Fatalf("launcher calls = %d, want 0: the lane is held by the marker, not by the card's text", len(l.calls))
-	}
-	if !strings.Contains(out.String(), "FILL HELD card=card-002.md lane=pulse live=card-001.md") {
-		t.Fatalf("the ready card was not held behind the marker's lane: %q", out.String())
-	}
-}
-
 // A launcher that fails releases the lane, and the marker goes with the card: a marker left
 // beside a card that went back to --ready holds a lane nobody is running.
 func TestFillRemovesTheLaunchedMarkerWhenTheLauncherFails(t *testing.T) {
 	dir := t.TempDir()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
 	writeCard(t, ready, "card-001.md", "RESULT: CARD-1\nLANE: pulse\n")
-	lanes := laneFile(t, dir, "pulse\tinternal/pulse/")
 	var out, errb bytes.Buffer
 	Fill(FillInput{
-		Ready: ready, Launched: launched, Lanes: lanes,
+		Ready: ready, Launched: launched,
 		Machines: machinesFile(t, dir, []string{"bench-a"}, nil),
 		Benches:  []string{"bench-a"}, Once: true,
 		Stdout: &out, Stderr: &errb,

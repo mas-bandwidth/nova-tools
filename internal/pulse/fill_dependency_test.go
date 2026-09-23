@@ -1,207 +1,112 @@
 package pulse
 
+// THE FILL TAKES WHAT IS READY (#3251). A card in a bench's ready queue was dealt there by
+// the dealer after it decided the card is ready; the fill launches it, whatever its
+// DEPENDS-ON, LEG or LANE says. The measured defect: 15 real cards HELD for 50 minutes on
+// three benches, 321 `FILL HELD ... depends-on=- reason=dependency - not merged into dev`
+// lines, because the fill re-decided readiness from its own partial view.
+
 import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
-	"time"
 )
 
-// Essential 3 from nova-tools #2437:
-// - Support `depends-on: <id1>, <id2>` in card headers and `:depends-on` in s-expressions.
-// - `nova-pulse fill` respects dependencies: cards with unmerged dependencies in `dev`
-//   (checked via git merge-base / git branch / results store) are HELD in `queue/ready/`
-//   and not launched until all prerequisite dependencies are merged.
-// - Cards without dependencies or whose dependencies have landed are admitted in topological / priority order.
+// routed is the dealer's mark every dealt card carries.
+const routed = "ROUTE: test-route\nMODEL: test-model\n"
 
-func TestFillHoldsCardsWithUnmergedDependency(t *testing.T) {
+// TestFillTakesEveryReadyCard: a queue holding a card with DEPENDS-ON: -, one whose parent
+// never landed, one whose leg no bench here was ever said to carry, and two on one lane
+// launches every one of them, in order, and holds none.
+func TestFillTakesEveryReadyCard(t *testing.T) {
 	dir := t.TempDir()
-	ready := filepath.Join(dir, "ready")
-	launched := filepath.Join(dir, "launched")
-	resultsDir := filepath.Join(dir, "results")
-	machines := machinesFile(t, dir, []string{"bench-a"}, nil)
-	_ = os.MkdirAll(ready, 0o755)
-	_ = os.MkdirAll(launched, 0o755)
-	_ = os.MkdirAll(resultsDir, 0o755)
-
-	// card-001: independent (no deps)
-	writeCard(t, ready, "card-001.md", "RESULT card-001\n")
-	// card-002: depends on card-001
-	writeCard(t, ready, "card-002.md", "RESULT card-002\ndepends-on: card-001\n")
-
-	mockChecker := MapDependencyChecker{
-		"card-001": false, // card-001 is NOT merged yet
-	}
-
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "KIND: fix\nDEPENDS-ON: -\n"+routed)
+	writeCard(t, ready, "card-002.md", "KIND: fix\nDEPENDS-ON: card-999-never-landed\n"+routed)
+	writeCard(t, ready, "card-003.md", "KIND: fix\nLEG: squirrel\n"+routed)
+	writeCard(t, ready, "card-004.md", "LANE: pulse\n"+routed)
+	writeCard(t, ready, "card-005.md", "LANE: pulse\n"+routed)
 	l := &laneLauncher{}
 	var out, errb bytes.Buffer
-	in := FillInput{
-		Ready:      ready,
-		Launched:   launched,
-		Machines:   machines,
-		Benches:    []string{"bench-a"},
-		Capacity:   laneCap{"bench-a": 2},
-		Launcher:   l,
-		Once:       true,
-		Stdout:     &out,
-		Stderr:     &errb,
-		ResultsDir: resultsDir,
-		Checker:    mockChecker,
-		Now:        func() time.Time { return time.Unix(0, 0).UTC() },
-	}
-
-	code := Fill(in)
+	code := Fill(FillInput{
+		Ready: ready, Launched: launched,
+		Machines:     machinesFile(t, dir, []string{"bench-a"}, nil),
+		Benches:      []string{"bench-a"},
+		Once:         true,
+		Stdout:       &out,
+		Stderr:       &errb,
+		Capacity:     laneCap{"bench-a": 10},
+		Launcher:     l,
+		RequireRoute: true,
+	})
 	if code != 0 {
-		t.Fatalf("Fill exit = %d, want 0; stderr=%s", code, errb.String())
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
 	}
-
-	// Verify card-001 was launched
-	if _, err := os.Stat(filepath.Join(launched, "card-001.md")); err != nil {
-		t.Fatalf("card-001.md should have been launched: %v", err)
+	if len(l.calls) != 5 {
+		t.Fatalf("launched %d cards, want all 5 ready cards: %q\nstdout=%q", len(l.calls), l.calls, out.String())
 	}
-
-	// Verify card-002 was HELD and stayed in ready
-	if _, err := os.Stat(filepath.Join(ready, "card-002.md")); err != nil {
-		t.Fatalf("card-002.md should have been held in ready: %v", err)
+	for i, call := range l.calls {
+		if want := "card-00" + string(rune('1'+i)) + ".md"; !strings.HasSuffix(call, want) {
+			t.Fatalf("launch %d = %q, want %s (ready order)", i, call, want)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(launched, "card-002.md")); !os.IsNotExist(err) {
-		t.Fatalf("card-002.md should NOT have launched while dependency is unmerged!")
+	if strings.Contains(out.String(), "HELD") || strings.Contains(errb.String(), "REFUSED") {
+		t.Fatalf("the fill held or refused a ready card: out=%q err=%q", out.String(), errb.String())
 	}
-
-	// Verify stdout contains FILL HELD line for card-002.md
-	if !strings.Contains(out.String(), "FILL HELD card=card-002.md depends-on=card-001") {
-		t.Fatalf("expected FILL HELD line in output, got:\n%s", out.String())
+	if got := len(readyCards(ready)); got != 0 {
+		t.Fatalf("ready still holds %d cards, want 0", got)
+	}
+	// The marker still RECORDS the lane and the dependency, as data for the dealer.
+	m := readLaunchedMarker(launched, "card-004.md")
+	if m["lane"] != "pulse" {
+		t.Fatalf("launched marker lane = %q, want pulse", m["lane"])
+	}
+	if m := readLaunchedMarker(launched, "card-002.md"); m["depends-on"] != "card-999-never-landed" {
+		t.Fatalf("launched marker depends-on = %q", m["depends-on"])
 	}
 }
 
-func TestFillAdmitsDependentCardWhenDependencyLands(t *testing.T) {
+// TestFillRefusesACardWithNoRoute: the one check the fill makes on a card is an execution
+// guard -- the dealer's ROUTE: and MODEL: must be on it. A card without them is refused
+// once, stays in ready, takes no slot, and the fill never picks a route for it.
+func TestFillRefusesACardWithNoRoute(t *testing.T) {
 	dir := t.TempDir()
-	ready := filepath.Join(dir, "ready")
-	launched := filepath.Join(dir, "launched")
-	resultsDir := filepath.Join(dir, "results")
-	machines := machinesFile(t, dir, []string{"bench-a"}, nil)
-	_ = os.MkdirAll(ready, 0o755)
-	_ = os.MkdirAll(launched, 0o755)
-	_ = os.MkdirAll(resultsDir, 0o755)
-
-	// card-002 depends on card-001
-	writeCard(t, ready, "card-002.md", "RESULT card-002\ndepends-on: card-001\n")
-
-	// Mark card-001 as landed in results store
-	store001 := filepath.Join(resultsDir, "card-001")
-	_ = os.MkdirAll(store001, 0o755)
-	_ = os.WriteFile(filepath.Join(store001, "RESULT.md"), []byte("RESULT card-001\nDONE\n"), 0o644)
-
-	l := &laneLauncher{}
-	var out, errb bytes.Buffer
-	in := FillInput{
-		Ready:      ready,
-		Launched:   launched,
-		Machines:   machines,
-		Benches:    []string{"bench-a"},
-		Capacity:   laneCap{"bench-a": 1},
-		Launcher:   l,
-		Once:       true,
-		Stdout:     &out,
-		Stderr:     &errb,
-		ResultsDir: resultsDir,
-		Now:        func() time.Time { return time.Unix(0, 0).UTC() },
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeCard(t, ready, "card-001.md", "KIND: fix\nROUTE: test-route\n")
+	writeCard(t, ready, "card-002.md", "KIND: fix\n"+routed)
+	tick := func() (string, *laneLauncher) {
+		l := &laneLauncher{}
+		var out, errb bytes.Buffer
+		if code := Fill(FillInput{
+			Ready: ready, Launched: launched,
+			Machines:     machinesFile(t, dir, []string{"bench-a"}, nil),
+			Benches:      []string{"bench-a"},
+			Once:         true,
+			Stdout:       &out,
+			Stderr:       &errb,
+			Capacity:     laneCap{"bench-a": 1},
+			Launcher:     l,
+			RequireRoute: true,
+		}); code != 0 {
+			t.Fatalf("fill exit = %d; stderr=%q", code, errb.String())
+		}
+		return errb.String(), l
 	}
-
-	code := Fill(in)
-	if code != 0 {
-		t.Fatalf("Fill exit = %d, want 0; stderr=%s", code, errb.String())
+	errs, l := tick()
+	if len(l.calls) != 1 || !strings.HasSuffix(l.calls[0], "card-002.md") {
+		t.Fatalf("launches = %q, want only card-002.md (the refused card takes no slot)", l.calls)
 	}
-
-	// Verify card-002 was admitted and launched!
-	if _, err := os.Stat(filepath.Join(launched, "card-002.md")); err != nil {
-		t.Fatalf("card-002.md should have launched now that dependency landed: %v", err)
+	if !strings.Contains(errs, "FILL REFUSED card=card-001.md missing=MODEL") {
+		t.Fatalf("no refusal naming the missing MODEL: %q", errs)
 	}
-
-	// Verify launched marker preserved depends-on
-	markerPath := filepath.Join(launched, "card-002.md.launched")
-	markerData, err := os.ReadFile(markerPath)
-	if err != nil {
-		t.Fatalf("missing launched marker: %v", err)
+	if _, err := os.Stat(filepath.Join(ready, "card-001.md")); err != nil {
+		t.Fatalf("the refused card left ready: %v", err)
 	}
-	if !strings.Contains(string(markerData), "depends-on=card-001") {
-		t.Errorf("launched marker %s missing depends-on: %q", markerPath, string(markerData))
+	if errs, _ = tick(); strings.Contains(errs, "FILL REFUSED card=card-001.md") {
+		t.Fatalf("the refusal reprinted on the next tick: %q", errs)
 	}
-}
-
-func TestFillAdmitsInTopologicalAndPriorityOrder(t *testing.T) {
-	dir := t.TempDir()
-	ready := filepath.Join(dir, "ready")
-	launched := filepath.Join(dir, "launched")
-	machines := machinesFile(t, dir, []string{"bench-a"}, nil)
-	_ = os.MkdirAll(ready, 0o755)
-	_ = os.MkdirAll(launched, 0o755)
-
-	// card-001: priority 1 (prerequisite)
-	writeCard(t, ready, "card-001.md", "RESULT card-001\nPRIORITY: 1\n")
-	// card-002: priority 10 (depends on card-001)
-	writeCard(t, ready, "card-002.md", "RESULT card-002\nPRIORITY: 10\ndepends-on: card-001\n")
-	// card-003: priority 5 (independent)
-	writeCard(t, ready, "card-003.md", "RESULT card-003\nPRIORITY: 5\n")
-
-	// Both card-001 and card-003 have their dependencies satisfied (0 deps).
-	// card-002 has dependency card-001.
-	mockChecker := MapDependencyChecker{
-		"card-001": true, // card-001 has landed
-	}
-
-	// We use a custom launcher that records launch sequence
-	var launchSeq []string
-	recordSeqLauncher := recordLauncherWithSeq{
-		onLaunch: func(bench, card string) {
-			launchSeq = append(launchSeq, filepath.Base(card))
-		},
-	}
-
-	var out, errb bytes.Buffer
-	in := FillInput{
-		Ready:    ready,
-		Launched: launched,
-		Machines: machines,
-		Benches:  []string{"bench-a"},
-		Capacity: laneCap{"bench-a": 3},
-		Launcher: recordSeqLauncher,
-		Once:     true,
-		Stdout:   &out,
-		Stderr:   &errb,
-		Checker:  mockChecker,
-		Now:      func() time.Time { return time.Unix(0, 0).UTC() },
-	}
-
-	code := Fill(in)
-	if code != 0 {
-		t.Fatalf("Fill exit = %d, want 0; stderr=%s", code, errb.String())
-	}
-
-	// card-003 has priority 5, no deps.
-	// card-001 has priority 1, no deps.
-	// card-002 has priority 10, but depends on card-001!
-	// In topological order: card-001 must precede card-002.
-	// Among ready candidates at start: card-003 (5) vs card-001 (1) -> card-003 first, then card-001 unblocks card-002.
-	// Sequence should be: card-003.md -> card-001.md -> card-002.md.
-	wantSeq := []string{"card-003.md", "card-001.md", "card-002.md"}
-	if !reflect.DeepEqual(launchSeq, wantSeq) {
-		t.Errorf("launch sequence = %v, want %v", launchSeq, wantSeq)
-	}
-}
-
-type recordLauncherWithSeq struct {
-	onLaunch func(bench, card string)
-}
-
-func (r recordLauncherWithSeq) Launch(bench, card string) error {
-	if r.onLaunch != nil {
-		r.onLaunch(bench, card)
-	}
-	return nil
 }
 
 // TestFillDependencyMutationProtectionWithTeeth verifies that bypassing dependency checks fails tests loudly

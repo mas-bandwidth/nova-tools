@@ -5,14 +5,19 @@ package pulse
 // move each to --launched and hand it to the launcher. One FILL line per tick, no model
 // call.
 //
-// A card may name a LANE (`LANE: <name>`), and a lane is a serial queue over one area of
-// the codebase: at most one live card per lane at a time. A ready card whose lane already
-// has a live card -- one under --launched, or one launched earlier in this tick -- is held
-// in order with a FILL HELD line and stays ready. A LANE the lanes file does not name is
-// refused with the remedy, once per card per lanes-file mtime: the refusal leaves a marker
-// in the markers directory, so a lane nobody has added does not reprint its refusal every
-// five minutes, and editing the lanes file makes every refusal speak again. A card with no
-// LANE is launched exactly as before.
+// THE FILL DECIDES NOTHING (#3251, Glenn 2026-09-23: "If they have ready tasks in their
+// queue, they should work on them, period."). A card in a bench's ready queue was put there
+// by the dealer (internal/pulse/dealer), coordinator-side, AFTER it decided the card is
+// ready: its DEPENDS-ON parents landed, its LEG is on the bench, its LANE is free, the
+// bench has room under its slots and its load, the sprint's reading debt lets bulk flow,
+// and its ROUTE: and MODEL: are picked and written on the card. The fill re-decides none of
+// that. It launches every ready card in order up to the bench's free slots, and the one
+// thing it checks on a card is that the dealer's pick is ON it: a card with no ROUTE: or
+// no MODEL: line is refused (an execution guard -- the launcher has nothing to run it on),
+// once per card, and stays in ready for a hand to see. What went: the dependency HELD
+// (321 lines on 2026-09-23, 15 real cards held 50 minutes on a mis-parsed `DEPENDS-ON: -`),
+// the lane HELD and the unknown-lane refusal. The launched marker still RECORDS the card's
+// lane and depends-on, as data for the dealer.
 //
 // A launcher that fails is not a card that ran. The card goes back to --ready with a
 // `.failed-<n>` marker naming the attempt and the reason, its lane is released, and the
@@ -160,31 +165,30 @@ func (g guardedLauncher) Launch(bench, card string) error {
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
 // directories and stub seams.
 type FillInput struct {
-	Ready      string            // the queue/ready directory the card-<n>.md are popped from
-	Launched   string            // the queue/launched directory they are moved into; its cards are live
-	Markers    string            // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
-	Lanes      string            // the lanes file: <name>\t<path prefixes> per line; empty names no lane
-	Machines   string            // the machines registry; a bench whose roles lack `bench` is refused
-	Queue      string            // the queue directory whose .lock this fill takes; empty is --launched's parent
-	Repo       string            // repo root for git commands (default: ".")
-	Base       string            // base branch to check dependencies against (default: "dev")
-	ResultsDir string            // results store root (default: ~/nova-bench/results)
-	Checker    DependencyChecker // optional dependency checker seam for testing
-	Session    string            // the session id stamped into every launched card's marker
-	Benches    []string          // the benches to fill, in order
-	Only       []string          // glob patterns over a card's filename; empty takes every ready card
-	Once       bool              // true runs exactly one tick and returns
-	Interval   time.Duration     // how long between ticks; 0 takes FillInterval
-	Stop       string            // touch this file to stop the loop; empty names no stop file
-	Stdout     io.Writer
-	Stderr     io.Writer
-	Now        func() time.Time
-	Sleep      func(time.Duration)
-	Launcher   CardLauncher
-	Capacity   Capacity
+	Ready    string        // the queue/ready directory the card-<n>.md are popped from
+	Launched string        // the queue/launched directory they are moved into; its cards are live
+	Markers  string        // where .failed-<n>/.refused-<k> markers live; "" is <ready>-markers, never inside --ready
+	Machines string        // the machines registry; a bench whose roles lack `bench` is refused
+	Queue    string        // the queue directory whose .lock this fill takes; empty is --launched's parent
+	Session  string        // the session id stamped into every launched card's marker
+	Benches  []string      // the benches to fill, in order
+	Only     []string      // glob patterns over a card's filename; empty takes every ready card
+	Once     bool          // true runs exactly one tick and returns
+	Interval time.Duration // how long between ticks; 0 takes FillInterval
+	Stop     string        // touch this file to stop the loop; empty names no stop file
+	Stdout   io.Writer
+	Stderr   io.Writer
+	Now      func() time.Time
+	Sleep    func(time.Duration)
+	Launcher CardLauncher
+	Capacity Capacity
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
 	// `loop` verb), so it takes none of its own.
 	Locked bool
+	// RequireRoute refuses a card the dealer did not mark with a ROUTE: and a MODEL: line
+	// (#3251). The verb always sets it; it is a field so the tick's own tests can drive a
+	// bare card through the launch path.
+	RequireRoute bool
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -316,27 +320,17 @@ type tickResult struct {
 func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed == r.benches }
 
 // fillTick is one turn: reap the markers nobody is waiting on, list ready once in filename
-// order, read each bench's capacity once, then deal one card per bench in turn until every
-// bench is at its cap or the pool is empty. A LANE card is launched only when its lane has
-// no live card; otherwise it is held, and the live card it is held behind is named. A
-// LANE the lanes file does not name is refused, once per card per lanes-file mtime. The
-// move out of ready is the claim, so a card another hand already took is skipped and never
-// launched twice; a launcher that fails moves its card back and releases its lane. It
-// returns the FILL line first, then one FILL HELD line per held card, then the FILL REAPED
-// line when the tick took stale markers away.
+// order, read each bench's capacity once, then launch one card per bench in turn until every
+// bench is at its cap or the pool is empty. Every ready card is launched in order (#3251):
+// the dealer decided it was ready before it put it here, and the tick re-decides nothing.
+// The move out of ready is the claim, so a card another hand already took is skipped and
+// never launched twice; a launcher that fails moves its card back. It returns the FILL line
+// first, then the FILL REAPED line when the tick took stale markers away.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
 	cards := SortQueueCards(selectedCards(readyCards(in.Ready), in.Only))
-	lanes := laneTable(in.Lanes)
-	live := liveLanes(in.Launched)
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
-	var held []string
-
-	checker := in.Checker
-	if checker == nil {
-		checker = NewGitAndResultsChecker(in.Repo, in.Base, in.ResultsDir)
-	}
 
 	if strays := strayCards(in.Ready); len(strays) > 0 {
 		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
@@ -373,9 +367,8 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	}
 
 	// Round-robin: one card per bench in turn, passes repeat until every bench is at its
-	// capacity or the pool is empty. A card skipped as unknown or held consumes the card
-	// but not the bench's want, so the bench is offered the next pass rather than dropped
-	// -- a run of held cards does not end the tick for a bench.
+	// capacity or the pool is empty. A card refused for a missing route consumes the card
+	// but not the bench's want.
 	launched := make([]int, len(in.Benches))
 	failed := make([]int, len(in.Benches))
 	for {
@@ -388,22 +381,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 			card := cards[idx]
 			idx++
 
-			// Check dependencies before admitting/launching (Essential 3 from Issue #2437)
-			if unmetDep, reason, ok := CheckCardDependencies(card, checker); !ok {
-				held = append(held, fmt.Sprintf("FILL HELD card=%s depends-on=%s reason=%s",
-					oneline.Field(filepath.Base(card)), oneline.Field(unmetDep), oneline.Field(reason)))
-				continue
-			}
-
-			lane := cardLane(card)
-			if lane != "" {
-				if _, known := lanes[lane]; !known {
-					refuseLane(in, card, lane)
-					continue
-				}
-				if holder, isLive := live[lane]; isLive {
-					held = append(held, fmt.Sprintf("FILL HELD card=%s lane=%s live=%s",
-						oneline.Field(filepath.Base(card)), oneline.Field(lane), oneline.Field(holder)))
+			// THE ONE CHECK ON A CARD, AND IT IS NOT A DECISION: the dealer's route pick
+			// must be written on it, because the launcher runs the card on that route
+			// and on nothing else. A card without it is refused, never re-routed here.
+			if in.RequireRoute {
+				if missing := MissingRoute(card); missing != "" {
+					refuseRoute(in, card, missing)
 					continue
 				}
 			}
@@ -414,14 +397,11 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				// one place at every moment, and a card is never launched twice.
 				continue
 			}
-			writeLaunchedMarker(in, moved, base, lane, bench)
-			if lane != "" {
-				live[lane] = base
-			}
+			writeLaunchedMarker(in, moved, base, cardLane(moved), bench)
 			want[i]--
 			if err := in.Launcher.Launch(bench, moved); err != nil {
 				failed[i]++
-				failLaunch(in, moved, base, lane, live, err)
+				failLaunch(in, moved, base, err)
 				if res.err == nil {
 					res.err = fmt.Errorf("launch %s on %s: %w", field(base), field(bench), err)
 				}
@@ -456,7 +436,7 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	// somewhere else, so the depth a reader acts on is the depth of the queue (#2013).
 	b.WriteString(" ready=")
 	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
-	lines := append([]string{b.String()}, held...)
+	lines := []string{b.String()}
 	if reaped > 0 {
 		lines = append(lines, fmt.Sprintf("FILL REAPED tick=%d markers=%d dir=%s note=%q",
 			tick, reaped, oneline.Field(markersDir(in)),
@@ -465,16 +445,13 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	return lines, res
 }
 
-// failLaunch is what a launcher's failure costs: the card goes back to --ready, its lane is
-// released so the lane is not held by a card that never ran, and a `.failed-<n>` marker in
-// the markers directory carries the attempt number and the reason. The card is ready again
-// on the next tick, and the markers are the count of how often it has failed.
-func failLaunch(in FillInput, moved, base, lane string, live map[string]string, cause error) {
-	if lane != "" && live[lane] == base {
-		delete(live, lane)
-	}
-	// The marker is what holds the lane, so it goes with the card: a marker left beside a
-	// card that went back to --ready holds a lane nobody is running.
+// failLaunch is what a launcher's failure costs: the card goes back to --ready and a
+// `.failed-<n>` marker in the markers directory carries the attempt number and the reason.
+// The card is ready again on the next tick, and the markers are the count of how often it
+// has failed.
+func failLaunch(in FillInput, moved, base string, cause error) {
+	// The launched marker goes with the card: a marker left beside a card that went back
+	// to --ready records a live card nobody is running.
 	_ = os.Remove(launchedMarker(in.Launched, base))
 	back := filepath.Join(in.Ready, base)
 	if err := os.Rename(moved, back); err != nil {
@@ -492,31 +469,54 @@ func failLaunch(in FillInput, moved, base, lane string, live map[string]string, 
 	_ = os.WriteFile(marker(dir, base, "failed", strconv.Itoa(n)), []byte(line), 0o644)
 }
 
-// refuseLane prints one FILL REFUSED line for a lane the lanes file does not name -- once
-// per card per lanes-file mtime. The marker in the markers directory is the memory: a
-// second tick over the same unchanged lanes file says nothing, and a lanes file that was
-// edited (a new mtime, so a new marker name) speaks again, because the answer may have
-// changed.
-func refuseLane(in FillInput, card, lane string) {
+// MissingRoute names the dealer's mark a card lacks -- "ROUTE" or "MODEL" -- or "" when the
+// card carries both. The dealer writes them (internal/pulse/dealer) before the card enters a
+// bench's ready queue; an unreadable card lacks both.
+func MissingRoute(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "ROUTE"
+	}
+	route, model := CardField(string(raw), "ROUTE"), CardField(string(raw), "MODEL")
+	switch {
+	case route == "":
+		return "ROUTE"
+	case model == "":
+		return "MODEL"
+	}
+	return ""
+}
+
+// CardField reads a card's `<KEY>: <value>` line, or "" when it names none. Only the exact
+// field prefix counts: `ROUTES:` is not `ROUTE:`.
+func CardField(text, key string) string {
+	for _, line := range strings.Split(text, "\n") {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), key+":"); ok {
+			if v = strings.TrimSpace(v); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// refuseRoute prints one FILL REFUSED line for a card the dealer did not mark, once per card:
+// the refusal leaves a marker, so the card sitting in ready does not reprint every tick. The
+// card stays in ready; the fill never picks a route for it.
+func refuseRoute(in FillInput, card, missing string) {
 	base := filepath.Base(card)
 	dir := markersDir(in)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return
 	}
-	key := strconv.FormatInt(lanesStamp(in.Lanes), 10)
-	path := marker(dir, base, "refused", key)
+	path := marker(dir, base, "refused", "route")
 	if _, err := os.Stat(path); err == nil {
 		return
 	}
-	for _, stale := range refusedMarkers(dir, base) {
-		if stale != path {
-			_ = os.Remove(stale)
-		}
-	}
-	_ = os.WriteFile(path, []byte(lane+"\n"), 0o644)
-	fmt.Fprintf(in.Stderr, "FILL REFUSED card=%s lane=%s remedy=%q\n",
-		oneline.Field(base), oneline.Field(lane),
-		fmt.Sprintf("add the lane to %s or drop the LANE line", in.Lanes))
+	_ = os.WriteFile(path, []byte(missing+"\n"), 0o644)
+	fmt.Fprintf(in.Stderr, "FILL REFUSED card=%s missing=%s remedy=%q\n",
+		oneline.Field(base), oneline.Field(missing),
+		"the dealer writes ROUTE: and MODEL: on a card before it enters a ready queue; deal it again, never hand-place it")
 }
 
 // marker is the path of one marker: <card>.<kind>-<key>. It is never a card-<n>.md, so a
@@ -530,12 +530,7 @@ func failedMarkers(dir, base string) []string {
 	return m
 }
 
-func refusedMarkers(dir, base string) []string {
-	m, _ := filepath.Glob(filepath.Join(dir, base+".refused-*"))
-	return m
-}
-
-// markerKinds is every marker fill writes for a card: an attempt that failed, and a lane
+// markerKinds is every marker fill writes for a card: an attempt that failed, and a route
 // refusal it has already printed once.
 var markerKinds = []string{"failed", "refused"}
 
@@ -619,37 +614,19 @@ func reapMarkers(in FillInput) int {
 	return n
 }
 
-// lanesStamp is the lanes file's modification time in whole seconds, or 0 when there is no
-// lanes file: the key a refusal is remembered under, so an edited table is a new answer.
-func lanesStamp(path string) int64 {
-	if strings.TrimSpace(path) == "" {
-		return 0
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return 0
-	}
-	return info.ModTime().Unix()
-}
-
 // cardLane reads a card's `LANE: <name>` line, or "" when it names none. Only the exact
-// field prefix counts: a `LANES:` line is prose, not a lane.
+// field prefix counts: a `LANES:` line is prose, not a lane. The fill only RECORDS it on the
+// launched marker; holding a lane is the dealer's.
 func cardLane(path string) string {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "LANE:"); ok {
-			if lane := strings.TrimSpace(v); lane != "" {
-				return lane
-			}
-		}
-	}
-	return ""
+	return CardField(string(raw), "LANE")
 }
 
-// laneTable reads a lanes file: `<name>\t<path prefixes>` per line, `#` a comment and a
+// laneTable reads a lanes file (the `run` road's placement guard, placement.go; the fill
+// no longer holds lanes -- #3251): `<name>\t<path prefixes>` per line, `#` a comment and a
 // blank line skipped. Only the name is needed here; the prefixes are the area the lane
 // serializes. A missing file is an empty table, so a card naming a lane is then refused.
 func laneTable(path string) map[string]bool {

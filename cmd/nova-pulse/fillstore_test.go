@@ -131,7 +131,7 @@ func TestFillStopFlagStopsTheTickWithoutKillingAnything(t *testing.T) {
 	dir := t.TempDir()
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Exit: 0}})
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	writeMainFile(t, ready, "card-001.md", "a card\n")
+	writeMainFile(t, ready, "card-001.md", dealtCard)
 	stop := writeMainFile(t, dir, "STOP", "")
 	var out, errb bytes.Buffer
 	code := run([]string{"fill", "--ready", ready, "--launched", launched,

@@ -51,7 +51,7 @@ func fillReady(t *testing.T, dir string, n int) {
 		t.Fatal(err)
 	}
 	for i := 1; i <= n; i++ {
-		writeMainFile(t, dir, fmt.Sprintf("card-%03d.md", i), "a card\n")
+		writeMainFile(t, dir, fmt.Sprintf("card-%03d.md", i), dealtCard)
 	}
 }
 
@@ -209,40 +209,82 @@ func TestTailKeepsTheLastLineBounded(t *testing.T) {
 	}
 }
 
-// TestFillDryRunHoldsALaneWithoutABench: --capacity and --launcher run the whole tick, lane
-// logic included, with no ssh and no bench. Two cards in one lane: one launched, one held.
-func TestFillDryRunHoldsALaneWithoutABench(t *testing.T) {
+// dealtCard is a card as the dealer leaves it in a ready queue: its route picked and on it.
+const dealtCard = "a card\nROUTE: test-route\nMODEL: test-model\n"
+
+// TestFillNeverHoldsOnDependsOn (#3251): the verb, as the bench loops run it (--capacity,
+// --launcher, --lanes), launches every ready card -- `DEPENDS-ON: -`, a DEPENDS-ON parent
+// that never landed, a LEG no bench was said to carry, two cards on one lane -- and prints
+// no HELD line. Readiness was the dealer's, before the cards entered ready. On dev at
+// fdffd7968 the unlanded parent is `FILL HELD ... reason=dependency ... not merged into dev`
+// and the second lane card is `FILL HELD ... lane=pulse`.
+func TestFillNeverHoldsOnDependsOn(t *testing.T) {
 	specs := fakePATH(t)
 	dir := t.TempDir()
 	log := filepath.Join(dir, "launcher.log")
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: log, Default: fakeRule{Exit: 0}})
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	writeMainFile(t, ready, "card-001.md", "LANE: pulse\n")
-	writeMainFile(t, ready, "card-002.md", "LANE: pulse\n")
+	writeMainFile(t, ready, "card-001.md", "DEPENDS-ON: -\n"+dealtCard)
+	writeMainFile(t, ready, "card-002.md", "DEPENDS-ON: card-999-never-landed\n"+dealtCard)
+	writeMainFile(t, ready, "card-003.md", "LEG: squirrel\n"+dealtCard)
+	writeMainFile(t, ready, "card-004.md", "LANE: pulse\n"+dealtCard)
+	writeMainFile(t, ready, "card-005.md", "LANE: pulse\n"+dealtCard)
 	lanes := writeMainFile(t, dir, "lanes.tsv", "pulse\tinternal/pulse/\n")
 
 	var out, errb bytes.Buffer
 	code := run([]string{"fill",
 		"--ready", ready, "--launched", launched, "--lanes", lanes,
 		"--machines", fillMachines(t, dir, "bench-a"),
-		"--bench", "bench-a", "--capacity", "10", "--once",
+		"--bench", "bench-a", "--capacity", "10", "--once", "--launch-grace", "0",
 		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
 	}, &out, &errb, time.Now().UTC())
 	if code != 0 {
-		t.Fatalf("fill --capacity exit = %d, want 0; stderr=%q", code, errb.String())
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "FILL HELD card=card-002.md lane=pulse live=card-001.md") {
-		t.Fatalf("the dry run did not exercise the lane: stdout=%q stderr=%q", out.String(), errb.String())
+	if strings.Contains(out.String(), "HELD") || strings.Contains(errb.String(), "REFUSED") {
+		t.Fatalf("the fill held or refused a ready card: stdout=%q stderr=%q", out.String(), errb.String())
 	}
-	raw, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatalf("the launcher named by --launcher was never run: %v", err)
+	if !strings.Contains(out.String(), "bench-a:launched=5,failed=0 ready=0") {
+		t.Fatalf("want all five launched and ready=0: stdout=%q", out.String())
 	}
-	if n := len(strings.Fields(strings.TrimSpace(string(raw)))); n == 0 {
-		t.Fatalf("the launcher log is empty: %q", raw)
+	if fillCount(t, launched) != 5 || fillCount(t, ready) != 0 {
+		t.Fatalf("launched=%d ready=%d, want 5 and 0", fillCount(t, launched), fillCount(t, ready))
 	}
-	if fillCount(t, launched) != 1 {
-		t.Fatalf("launched holds %d cards, want 1", fillCount(t, launched))
+}
+
+// TestFillVerbRefusesACardTheDealerDidNotRoute: the verb always guards the route. A card
+// with no ROUTE: stays in ready, refused by name; the fill never picks one for it.
+func TestFillVerbRefusesACardTheDealerDidNotRoute(t *testing.T) {
+	specs := fakePATH(t)
+	dir := t.TempDir()
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Exit: 0}})
+	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
+	writeMainFile(t, ready, "card-001.md", "MODEL: test-model\n")
+	var out, errb bytes.Buffer
+	code := run([]string{"fill",
+		"--ready", ready, "--launched", launched,
+		"--machines", fillMachines(t, dir, "bench-a"),
+		"--bench", "bench-a", "--capacity", "10", "--once", "--launch-grace", "0",
+		"--launcher", filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
+	}, &out, &errb, time.Now().UTC())
+	if code != 0 {
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
+	}
+	if !strings.Contains(errb.String(), "FILL REFUSED card=card-001.md missing=ROUTE") {
+		t.Fatalf("no refusal naming the missing ROUTE: %q", errb.String())
+	}
+	if fillCount(t, ready) != 1 || fillCount(t, launched) != 0 {
+		t.Fatalf("ready=%d launched=%d, want the card left in ready", fillCount(t, ready), fillCount(t, launched))
+	}
+}
+
+// TestRouteEnvCarriesTheDealtRoute: the launcher is handed the dealer's pick, never a pick
+// of its own.
+func TestRouteEnvCarriesTheDealtRoute(t *testing.T) {
+	card := writeMainFile(t, t.TempDir(), "card-001.md", "KIND: fix\nROUTE: pro\nMODEL: opus\n")
+	got := strings.Join(routeEnv(card), " ")
+	if got != "NOVA_CARD_ROUTE=pro NOVA_CARD_MODEL=opus" {
+		t.Fatalf("routeEnv = %q", got)
 	}
 }
 
@@ -306,7 +348,7 @@ func TestLaunchPassesTheDeadlineFlag(t *testing.T) {
 	log := filepath.Join(dir, "argv.log")
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Log: log, Default: fakeRule{Exit: 0}})
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	writeMainFile(t, ready, "card-001.md", "a card\n")
+	writeMainFile(t, ready, "card-001.md", dealtCard)
 	var out, errb bytes.Buffer
 	code := run([]string{"fill", "--ready", ready, "--launched", launched,
 		"--machines", fillMachines(t, dir, "bench-a"),
