@@ -11,6 +11,12 @@ package dealer
 // read (docs/SPEC-CARD.md clause 8 reader 5): `base-sha: <40 hex>`, lowercase,
 // at column 0, inside the first 40 lines. Re-pinning an already-pinned card
 // writes nothing, so the pin is idempotent.
+//
+// A pin stamps `pinned-at-deal: <sha> <UTC instant>` on the line after
+// base-sha (replacing an earlier stamp), so the card says when and to what it
+// was pinned. A card carrying `pin: cut` at column 0 in the same window opts
+// out: its cut base is kept (a bisect, a reproduction) and only checked
+// against the mirror.
 
 import (
 	"fmt"
@@ -18,6 +24,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -30,6 +37,11 @@ const readerWindow = 40
 var (
 	baseSHALine = regexp.MustCompile(`^base-sha: (\S+)\s*$`)
 	hex40       = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	pinCutLine  = regexp.MustCompile(`^pin:\s*cut\s*$`)
+	stampLine   = regexp.MustCompile(`^pinned-at-deal:`)
+
+	// now is the deal clock the pinned-at-deal stamp reads; tests fix it.
+	now = time.Now
 )
 
 // DealResult is what pinning one card at deal time did: the base the card
@@ -37,6 +49,9 @@ var (
 type DealResult struct {
 	Base   string
 	Pinned bool
+	// KeptCut is true when the card opted out with `pin: cut`: its cut
+	// base was kept (and checked on the mirror), not re-pinned.
+	KeptCut bool
 }
 
 // Deal pins one card at deal time: the card's base-sha becomes landingTip,
@@ -48,12 +63,15 @@ func Deal(cardPath, mirrorDir, landingTip string) (DealResult, error) {
 		return DealResult{}, fmt.Errorf("DEAL REFUSED card=%s: landing tip %s is not a 40-character hex sha (name the tip the branch lands on)",
 			oneline.Field(cardPath), oneline.Field(landingTip))
 	}
-	base, _, err := baseOf(cardPath)
+	base, lines, err := baseOf(cardPath)
 	if err != nil {
 		return DealResult{}, err
 	}
 	if err := BaseOnMirror(mirrorDir, base); err != nil {
 		return DealResult{}, err
+	}
+	if optsOutWithPinCut(lines) {
+		return DealResult{Base: base, KeptCut: true}, nil
 	}
 	if err := BaseOnMirror(mirrorDir, strings.TrimSpace(landingTip)); err != nil {
 		return DealResult{}, err
@@ -63,6 +81,20 @@ func Deal(cardPath, mirrorDir, landingTip string) (DealResult, error) {
 		return DealResult{}, err
 	}
 	return DealResult{Base: strings.TrimSpace(landingTip), Pinned: pinned}, nil
+}
+
+// optsOutWithPinCut answers whether the card carries `pin: cut` at column 0
+// inside the reader window.
+func optsOutWithPinCut(lines []string) bool {
+	for i, ln := range lines {
+		if i >= readerWindow {
+			break
+		}
+		if pinCutLine.MatchString(ln) {
+			return true
+		}
+	}
+	return false
 }
 
 // BaseOf reads the base-sha the card carries now, or an error refusing the
@@ -120,8 +152,8 @@ func baseOf(cardPath string) (string, []string, error) {
 		oneline.Field(cardPath), readerWindow)
 }
 
-// pinBaseAtDeal rewrites the card's base-sha line to the landing tip and
-// answers whether the card changed: an already-pinned card is left
+// pinBaseAtDeal rewrites the card's base-sha line to the landing tip, stamps
+// pinned-at-deal on the next line, and answers whether the card changed: an already-pinned card is left
 // byte-identical, so dealing it twice pins it once.
 func pinBaseAtDeal(cardPath, tip string) (bool, error) {
 	raw, err := os.ReadFile(cardPath)
@@ -142,6 +174,12 @@ func pinBaseAtDeal(cardPath, tip string) (bool, error) {
 			return false, nil
 		}
 		lines[i] = "base-sha: " + tip
+		stamp := "pinned-at-deal: " + tip + " " + now().UTC().Format(time.RFC3339)
+		if i+1 < len(lines) && stampLine.MatchString(lines[i+1]) {
+			lines[i+1] = stamp
+		} else {
+			lines = append(lines[:i+1], append([]string{stamp}, lines[i+1:]...)...)
+		}
 		info, err := os.Stat(cardPath)
 		if err != nil {
 			return false, fmt.Errorf("DEAL REFUSED card=%s: %s (name a readable card file)",
