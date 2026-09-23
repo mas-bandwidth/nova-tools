@@ -19,6 +19,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
@@ -90,6 +91,9 @@ func cmdFleetCertify(args []string, stdout, stderr io.Writer) int {
 	}
 	if *status && (*machine != "" || *all || *ifStale) {
 		f.add("--status reads the record and reaches no machine; pass it alone")
+	}
+	if *build != "" && !fleet.IsValidBuildVersion(*build) {
+		f.add(fmt.Sprintf("--build wants a valid version token such as v0.17.0, got %q", *build))
 	}
 	if f.refused(stderr) {
 		return 2
@@ -195,5 +199,9 @@ func (r certifyBuildReader) Build(machine string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fleet.BuildVersion(out), nil
+	v := fleet.BuildVersion(out)
+	if v == "" {
+		return "", fmt.Errorf("could not determine build version from %s output: %q", machine, strings.TrimSpace(out))
+	}
+	return v, nil
 }

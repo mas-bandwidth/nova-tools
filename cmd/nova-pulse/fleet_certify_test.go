@@ -386,3 +386,14 @@ func repoRootFromCmd(t *testing.T) string {
 	t.Fatal("no go.mod above the working directory")
 	return ""
 }
+
+func TestFleetCertifyRefusesInvalidBuildFlag(t *testing.T) {
+	machines, certs, standard := certifyFiles(t)
+	_, errs, code := runCertifyVerb(t, "--machines", machines, "--machine", "space", "--certs", certs, "--standard", standard, "--build", "invalid-build-token")
+	if code != 2 {
+		t.Fatalf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(errs, "--build wants a valid version token") {
+		t.Errorf("refusal did not name --build validity: %s", errs)
+	}
+}
