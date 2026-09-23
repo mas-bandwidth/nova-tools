@@ -132,3 +132,37 @@
     (check-string= "private=1" rendered "a private node's drill-down prints the marker only")
     (ok (null (search "secret body" rendered)) "the private body is not disclosed: ~A" rendered)
     (ok (null (search "acct-token-123" rendered)) "no link/token value is disclosed: ~A" rendered)))
+
+;;; ------------------------------------------------------------------
+;;; E04-F01-03 "Label features, leaves and member grains with revision"
+;;; (ROADMAP.md:460).
+;;;
+;;; docs/SPEC-WORK.md:1989 -- "Units are labelled on every line: unit=features
+;;;   or unit=leaves; a comparison never changes unit silently"; unit= names the
+;;;   grain of the line's state counts, and never a spelling the spec nowhere
+;;;   names.
+;;; docs/SPEC-WORK.md:2104 -- the `size` ask answers "total required leaves",
+;;;   so its count is at the leaves grain.
+;;; docs/SPEC-WORK.md:2044-2046 -- the count's unit and revision are printed
+;;;   with it on one line: `open=<n>`, `unit=<unit>` and `scope=<rev>`.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE04F01LabelFeaturesLeavesAndMember"
+    "docs/SPEC-WORK.md:1989;2104;2044-2046"
+    "expected=size-ask-labels-its-count-with-the-leaves-grain;never-a-unit-the-spec-names-nowhere;revision-printed-beside-the-count"
+  (let ((kernel (make-kernel :state (make-seed-state *seed*) :rev-base 1)))
+    (multiple-value-bind (open unit scope line) (ask-size kernel)
+      (declare (ignore open))
+      ;; The size ask counts leaves (SPEC-WORK.md:2104), so its unit= must name
+      ;; the leaves grain, not a unit the spec nowhere names.
+      (check-equal "leaves" unit
+                   "the size ask labels its count with the leaves grain, not a unit the spec never names")
+      (ok (search "unit=leaves" line)
+          "the QUERY OK line carries unit=leaves: ~A" line)
+      (ok (not (search "unit=items" line))
+          "the QUERY OK line never spells unit=items, a unit the spec does not name: ~A" line)
+      ;; The count's revision is printed with it, on the same named line.
+      (check-equal (state-revision (kernel-state kernel)) scope
+                   "the size ask returns the state's revision as scope=")
+      (ok (search (format nil "scope=~D" scope) line)
+          "the revision is printed beside the count on the one QUERY OK line: ~A" line))))
