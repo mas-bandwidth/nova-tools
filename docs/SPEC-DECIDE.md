@@ -913,10 +913,30 @@ S7. SPEC-AHEAD: #1616
    `.public` marker, `private` otherwise. Private evidence offered to a `sees=public` decider is
    refused **before** any call, the line says `why=private-evidence`, and the question falls to
    the next decider in the chain (D2). So a private bus is triaged by the rule table or by a
-   loopback model, and by nothing else. (`docs/CLI.md:479` documents an `--allow-private` flag on
-   `nova-bus inbox --decide`; rule 4 has no such door, this amendment adopts none, and the
-   disagreement between that line and rule 4 is filed as #1644 for a ruling rather than settled
-   here by accident.) Secrets are redacted before framing. The redaction is new text in this
+   loopback model, and by nothing else.
+
+   **#1644 IS SETTLED, in favour of rule 4.** `docs/CLI.md` documented an `--allow-private` flag on
+   `nova-bus inbox --decide` and rule 4 had no such door. Stella's ruling of 2026-09-19T23:13Z
+   (`stella-17a099112fb1`) settles the disagreement: "A bus without `.public` is private. Explicit
+   `inbox --decide` may use rules or a mechanically admitted local/private decider with no network
+   or provider-key access; it should not blanket-refuse when that safe path exists. If the
+   requested route cannot be satisfied privately, refuse before client, key or network, and never
+   fall back to a public route. A `local` label or redaction alone does not prove the boundary.
+   `wait` remains rules/local passive and does not instantiate a deciding poller; it has no
+   `--allow-private` override. Do not add `ALLOW-PRIVATE=true` absent a separately authorized real
+   override: under this ruling private evidence is not allowed out, so that marker would
+   misdescribe the action. Report the actual privacy/source/refusal through existing typed
+   receipts." The flag is **removed** from the tool, no marker replaces it, and the blanket
+   refusal it pointed at is replaced by the rule table: `inbox --decide` on a private bus answers
+   every note the table has a row for and refuses the rest with `privacy=private decider=rules
+   why=private-evidence` before any client, key read or call, on the run's existing `INBOX
+   REFUSED` and `INBOX DECIDED` receipts (`cmd/nova-bus/private.go`, whose type has no endpoint,
+   no key-env and no client field: that absence is what admits it, not a flag or a label).
+   `local` is **not yet admitted here**, because nothing in `internal/decide` yet carries the
+   mechanical `sees=private` capability D1/D2 describe; until it does, a `local` route on a
+   private bus takes the same refusal, and a loopback URL is a label rather than an admission. An
+   explicit remote-private inbox exception remains outside this: it needs separate live scoped
+   authorization and is not in the tool. Secrets are redacted before framing. The redaction is new text in this
    rule, not an existing one: every `sk-` token (the pattern `nova-bus` already redacts,
    `docs/CLI.md:479`) and every `<NAME>_KEY=`, `<NAME>_TOKEN=` and `<NAME>_SECRET=` assignment is
    replaced with a placeholder, and an evidence text that still matches any of those patterns
