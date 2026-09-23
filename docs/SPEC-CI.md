@@ -1794,6 +1794,50 @@ injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb
 its neighbor in the same file) and it does not check that the shipped file uses
 only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
 
+### Tests this spec demands
+
+This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
+
+Every class test reads this repository's own text — `.go` files, `.github/workflows/*.yml`, the `Makefile`, `docs/` — through the shared `repoTree(t)` (one `filepath.WalkDir` and one `go/parser` pass per test process); each rule carries `t.Parallel()`, filters the tree itself, and writes only to its own `t.TempDir()`, with allowlists under `internal/ci/testdata/` checked in both directions so they only shrink. Nothing reaches the network (forges and endpoints are fakes; real logs are fixtures), and each rule is proven able to fail by a planted offender before it is trusted.
+
+1. `TestNoFixedWaitsOnTheCIPath` — no `_test.go` on the CL path carries a fixed `time.Sleep` over 100 ms, a context/timer bound under ten seconds, or an elapsed-time assertion; the allowlist only shrinks.
+2. `TestNoUnquotedPathsInTemplateLiterals` — a filesystem path in a JSON or `text/template` literal is wrapped in `strconv.Quote` (or `oneline.Quote`); a raw `filepath.Join` or `C:\…` literal there is refused.
+3. `TestSlowTestsUnderBudgetIsOK` / `TestSlowTestsOverBudgetNamesThePackageAndSlowestTests` — a package whose summed `go test -json` elapsed time exceeds `--budget` (default 60 s) is a refusal that names the package and its slowest tests, worst first, capped at three.
+4. `TestAPlainGoTestLogNamesEveryFailingTestWithItsFileAndLine` (and its `failed` siblings) — a red run is read as the failing tests it holds (job, package, test, `file:line`, the test's own words), never as a raw log; a cancelled step, a timeout, a `NOTEST` and an unreadable (`NOLOG`) log each get a line, and a cancelled-only run stays exit 1.
+5. `TestNoRealNetworkHostsOnTheCIPath` — no `_test.go` on the CL path names a real host in a URL or bare `host:port`; endpoints are `httptest` or a local fake, and only `//go:build nightly`/`soak` files may reach the network.
+6. `TestGoEnvClassRuleHoldsOverTheRepository` — every `exec.Command("go", …)` in `cmd/` and `internal/` sets `cmd.Env` from `goenv.Clean(...)`, so a child `go` never inherits the caller's `GOFLAGS`/credentials.
+7. `TestRemoveAllOnlyOnTempOrThroughSafepath` — outside `internal/safepath`, `os.RemoveAll` may only take a variable returned by `os.MkdirTemp` in the same function; every other removal goes through `safepath.RemoveUnder`.
+8. `TestNoTestReachesAHostThroughAnUnfakedSeam` — every host seam calls `testguard.RefuseHosts` before starting the child, so a test holding production code refuses under `NOVA_TEST_NO_HOST` rather than reaching a bench.
+9. `TestNoTestComparesAPathAgainstASlashLiteral` — a path is never compared against a `/`-containing literal; compare `filepath.ToSlash(got)` or build the want side with `filepath.Join`.
+10. `TestToolRunsInTestsWriteIntoATempDir` — a test that runs a tool names every output path inside `t.TempDir()`, never a relative literal that lands in the tree.
+11. `TestNoTestGlobsTheSharedTempDir` — no `_test.go` lists (`Glob`/`ReadDir`) a directory built from `os.TempDir()`; it reads only its own `t.TempDir()`.
+12. `TestEveryNovaBusConsumerDropsProgressLines` — every package that starts `nova-bus` and reads its output routes lines through `bus.IsProgress(`/`Classify(` so progress never enters a parsed protocol stream.
+13. `TestNoMultiLineValueIsWrittenToAStepOutput` — a variable assigned from a one-item-per-line producer without a single-line guard may not be written to `$GITHUB_OUTPUT`/`$GITHUB_ENV`.
+14. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
+15. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
+16. `TestMakefileIsTheOneEntry` — the Makefile declares `build`, `test`, `test-full`, `lint`, `check`, `clean`, `help` as phony targets, with `check` the union of CI's gates.
+17. `TestDarwinMergeShardPlanIsDerivedFromMeasurements` — the darwin sizes, 40 s shard budget and `DARWIN_TIMEOUT` stay in one place, measured on a quiet host with a stated margin of two.
+18. `TestMergeGateDarwinLegDealsFromTheDarwinTable` — the merge gate's darwin leg reads the full darwin sizes column, takes its ceiling from `make -s darwin-timeout`, and deals unmeasured packages across every slot.
+19. `TestNoCacheStepRunsOnASelfHostedRunner` — every `actions/cache` step in `ci.yml` is `github-hosted`-only and every `setup-go` says `cache: false`.
+20. `TestEveryActionIsPinnedBySHA` — every `uses:` in `ci.yml` and `certification.yml` is `owner/action@<40-hex-sha>`.
+21. `TestEveryTriggeringEventReachesACIOKVerdict` — `ci-ok` has a verdict step gated for every triggering event (`pull_request`, `merge_group`, `push`, `workflow_dispatch`).
+22. `TestEveryCommandMeetsTheOnboardingStandard` — every `cmd/` tool's help ends in an `example:` block, a bare command refuses in one line, and `docs/TESTS.md` carries its `### First run` transcript.
+23. `TestEveryKernelSourceIsACompiledComponent` — every `.lisp` file under the `nova-work` kernel is named by a `:components` list or the shrink-only `notCompiled` ledger.
+24. `TestNoToolIsWrittenTwiceInTheTranscripts` — no two `## ` headings in `docs/TESTS.md` carry the same tool name.
+25. `TestEveryToolPrintsTheOneVersionLine` — every `cmd/nova-*` binary answers `version` with one line in the `internal/buildinfo` grammar.
+26. `TestTheVersionGrammarIsSpelledOutOnceInTheSpec` — `docs/SPEC.md` states that grammar once.
+27. `TestEveryBenchNameIsResolvedThroughTheRegistry` — a `bench string` in `internal/pulse`/`cmd/nova-pulse` is resolved through the `internal/fleet` registry before it reaches a machine.
+28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — no `gh pr merge` (or `--auto`) spelling reaches the dev queue but a batch; enqueue is `internal/merge.Enqueuer.Enqueue`.
+29. `TestEveryTestBuildTagIsRunBySomeScheduledJob` — every opt-in build tag a `_test.go` carries is named by a scheduled workflow's `go test -tags`.
+30. `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` — the net checker's `nightly`/`soak` exempt tags have a scheduled leg.
+31. `TestSomeScheduledJobRunsTheRaceDetector` — some scheduled job actually passes `-race`.
+32. `TestSelectPackagesAlwaysAddsInternalCI` / `TestMergeGateAlwaysAppendsInternalCI` — `./internal/ci` is added to the package set on every selection, not only as a fallback.
+33. `TestBenchStandardAndTheWallNameTheSameToolchainRoots` — the bench standard and the wall name one toolchain-root list per OS, each root with its kind, checked in both directions.
+34. `TestWorkspaceCleanupDoesNotFailBeforeCheckout` — the workspace-cleanup step refuses an empty `GITHUB_WORKSPACE`, continues over an absent directory and over a workspace with no `.git` (the belt), so it never fails a job before checkout.
+35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
+36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
+37. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
+
 ## Parked class tests
 
 A parked rule is one this repository decided to stop enforcing, kept here with
