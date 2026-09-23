@@ -318,6 +318,15 @@
     #:dep-edit
     #:%dep-submit
     #:node-structure-log
+    ;; the scope and ordering verbs (E03-F03, SPEC-WORK.md:2929)
+    #:node-require
+    #:baseline
+    #:discovery
+    #:prioritise
+    #:%scope-submit
+    #:node-required-p
+    #:node-baseline
+    #:node-priority
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note
