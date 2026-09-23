@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -338,25 +339,37 @@ func (c Classification) LiftsHold() bool { return false }
 func (c Classification) SkipsRead() bool { return false }
 
 // missingExecutablePatterns is the closed table the supervisor's harness-error
-// line is matched against: each names an executable the bench did not have. It
-// is data, not judgment, and it is matched against the supervisor's own line
-// only -- never against anything a card wrote.
-var missingExecutablePatterns = []string{
-	"command not found",
-	"executable file not found",
-	"no such file or directory",
+// line is matched against. Each row names an executable the bench did not
+// have, and captures that name: a line that says only "no such file or
+// directory" names a missing FILE, not a missing executable, so it matches no
+// row. "no such file or directory" counts only where the line says what was
+// being executed (fork/exec <path>, or exec: "<name>"). It is data, not
+// judgment, and it is matched against the supervisor's own line only -- never
+// against anything a card wrote.
+var missingExecutablePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`exec: "([^"]+)": (?:executable file not found|command not found|no such file or directory)`),
+	regexp.MustCompile(`fork/exec ([^\s:]+): no such file or directory`),
+	regexp.MustCompile(`(?:^|[\s:])([^\s:"]+): command not found`),
+}
+
+// missingExecutable returns the executable the supervisor's harness-error line
+// names as missing, or "" where it names none. The fact is the NAME: a line
+// that matches a phrase but names no executable is not the fact.
+func missingExecutable(line string) string {
+	for _, re := range missingExecutablePatterns {
+		if m := re.FindStringSubmatch(line); m != nil {
+			if name := strings.TrimSpace(m[1]); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // namesMissingExecutable reports whether the supervisor's harness-error line
 // names a missing executable.
 func namesMissingExecutable(line string) bool {
-	text := strings.ToLower(line)
-	for _, p := range missingExecutablePatterns {
-		if strings.Contains(text, p) {
-			return true
-		}
-	}
-	return false
+	return missingExecutable(line) != ""
 }
 
 // ChangesBench reports whether this classification moves the unit to another
@@ -373,6 +386,12 @@ func namesMissingExecutable(line string) bool {
 // the bench did not cause is not the bench's.
 func (c Classification) ChangesBench() bool {
 	if c.Class != ClassBlockedToolchain || c.Decider != DeciderRules {
+		return false
+	}
+	// The rules' toolchain row is the row keyed on the toolchain-missing
+	// reason token: a rules-decided blocked-toolchain paired with any other
+	// reason is not that row, and moves no bench.
+	if strings.ToLower(strings.TrimSpace(c.Evidence.Reason)) != "toolchain-missing" {
 		return false
 	}
 	if c.Evidence.BenchMoved {

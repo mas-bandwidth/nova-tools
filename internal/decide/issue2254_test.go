@@ -71,6 +71,47 @@ func TestIssue2254(t *testing.T) {
 			t.Error("the table's toolchain row with a harness-error line naming a missing executable must license the bench move")
 		}
 
+		// The fact is the NAME of a missing executable. A bare "no such file
+		// or directory" names a missing file, not an executable, and licenses
+		// nothing; the same phrase with the exec it came from does.
+		for _, line := range []string{
+			`harness: open /tmp/job/REPORT: no such file or directory`,
+			`no such file or directory`,
+		} {
+			ev = benchRedEvidence()
+			ev.ExitStatus = 1
+			ev.HarnessError = line
+			if rulesToolchainClass(t, ev).ChangesBench() {
+				t.Errorf("harness-error line %q names no executable yet licensed a bench move", line)
+			}
+		}
+		for line, want := range map[string]string{
+			`harness: fork/exec /usr/local/bin/gcc: no such file or directory`: "/usr/local/bin/gcc",
+			`harness: exec: "sqlite3": executable file not found in $PATH`:     "sqlite3",
+			`bash: line 1: cargo: command not found`:                           "cargo",
+		} {
+			if got := missingExecutable(line); got != want {
+				t.Errorf("missingExecutable(%q) = %q, want %q", line, got, want)
+			}
+			ev = benchRedEvidence()
+			ev.ExitStatus = 1
+			ev.HarnessError = line
+			if !rulesToolchainClass(t, ev).ChangesBench() {
+				t.Errorf("harness-error line %q names a missing executable and must license the bench move", line)
+			}
+		}
+
+		// The rules' toolchain row is keyed on the toolchain-missing token: a
+		// rules-decided blocked-toolchain with another reason is not that row.
+		for _, reason := range []string{"precondition", "-"} {
+			ev = benchRedEvidence()
+			ev.Reason = reason
+			ev.ExitStatus = 126
+			if rulesToolchainClass(t, ev).ChangesBench() {
+				t.Errorf("reason %q paired with a rules blocked-toolchain licensed a bench move; only the toolchain-missing row may", reason)
+			}
+		}
+
 		// S4's harvest fixture (:1687): blocked-toolchain/bench with exit
 		// status 1 and no harness-error line is a label only -- the failure
 		// IS counted, exactly as today.
