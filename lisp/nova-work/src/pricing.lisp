@@ -360,6 +360,107 @@ never written."
 
 
 ;;; ------------------------------------------------------------------
+;;; Correspondence actions (SPEC-WORK.md:7576-7581)
+;;; ------------------------------------------------------------------
+
+(defstruct (outbound-action
+             (:constructor %make-outbound-action (&key request issue kind payload)))
+  request                                  ; the stable request identity
+  issue                                    ; the public provider/repository/issue
+  kind                                     ; :close, :report-fix, :reconcile
+  payload                                  ; what the action sends (nil when none)
+  (state :pending)                         ; :pending, :confirmed, :failed
+  receipt)                                 ; nil while pending; the receipt after
+
+(defstruct (correspondence-ledger
+             (:constructor %make-correspondence-ledger (&key (actions '()))))
+  "The outbound correspondence actions of a public issue, newest first."
+  actions)
+
+(defun make-correspondence-ledger ()
+  "An empty outbound correspondence ledger."
+  (%make-correspondence-ledger))
+
+(defun ledger-outbound-action (ledger request)
+  "The action recorded under REQUEST, or NIL."
+  (find request (correspondence-ledger-actions ledger)
+        :key #'outbound-action-request :test #'equal))
+
+(define-condition outbound-request-conflict (nova-work-error)
+  ((request :initarg :request :reader outbound-request-conflict-request)
+   (reason :initarg :reason :reader outbound-request-conflict-reason))
+  (:report (lambda (c s)
+             (format s "outbound request ~S refused: ~A"
+                     (outbound-request-conflict-request c)
+                     (outbound-request-conflict-reason c))))
+  (:documentation "A request id reused for a different action, or a terminal
+outcome asked to change. The ledger is left untouched."))
+
+(defun start-outbound (ledger &key request issue kind payload)
+  "Record a new outbound action as :pending. Retrying the same REQUEST with the
+same ISSUE, KIND and PAYLOAD is idempotent: the existing action is returned and
+never duplicated. Reusing REQUEST for a different issue, kind or payload signals
+OUTBOUND-REQUEST-CONFLICT and records nothing."
+  (let ((a (ledger-outbound-action ledger request)))
+    (cond
+      ((null a)
+       (let ((new (%make-outbound-action :request request :issue issue
+                                         :kind kind :payload payload)))
+         (push new (correspondence-ledger-actions ledger))
+         new))
+      ((and (equal issue (outbound-action-issue a))
+            (equal kind (outbound-action-kind a))
+            (equal payload (outbound-action-payload a)))
+       a)
+      (t (error 'outbound-request-conflict
+                :request request
+                :reason "request id already names a different issue, kind or payload")))))
+
+(defun %settle-outbound (ledger request state receipt)
+  "Move the pending action REQUEST to STATE with RECEIPT. A terminal outcome is
+immutable: repeating the same outcome and receipt is idempotent, any other change
+signals OUTBOUND-REQUEST-CONFLICT so earlier completion evidence is never replaced."
+  (let ((a (ledger-outbound-action ledger request)))
+    (cond
+      ((null a) nil)
+      ((eq (outbound-action-state a) :pending)
+       (setf (outbound-action-state a) state
+             (outbound-action-receipt a) receipt)
+       a)
+      ((and (eq (outbound-action-state a) state)
+            (equal (outbound-action-receipt a) receipt))
+       a)
+      (t (error 'outbound-request-conflict
+                :request request
+                :reason (format nil "already ~(~A~) with a receipt; a terminal outcome is never replaced"
+                                (outbound-action-state a)))))))
+
+(defun confirm-outbound (ledger request receipt)
+  "Record the confirmed outcome of the pending outbound action REQUEST with its receipt."
+  (%settle-outbound ledger request :confirmed receipt))
+
+(defun fail-outbound (ledger request receipt)
+  "Record the failed outcome of the pending outbound action REQUEST with its failure receipt."
+  (%settle-outbound ledger request :failed receipt))
+
+(defun outbound-state (ledger request)
+  "The :pending/:confirmed/:failed state of the action REQUEST, or NIL."
+  (let ((a (ledger-outbound-action ledger request)))
+    (and a (outbound-action-state a))))
+
+(defun outbound-receipt (ledger request)
+  "The receipt of the action REQUEST, or NIL."
+  (let ((a (ledger-outbound-action ledger request)))
+    (and a (outbound-action-receipt a))))
+
+(defun reopen-ledger (ledger &key issue request)
+  "A reopened issue produces a reconciliation signal: a fresh :pending
+:reconcile action under REQUEST, while any earlier confirmed close and its
+receipt are left untouched, never erased."
+  (start-outbound ledger :request request :issue issue :kind :reconcile))
+
+
+;;; ------------------------------------------------------------------
 ;;; Regression and recovery (SPEC-WORK.md:4787)
 ;;; ------------------------------------------------------------------
 
