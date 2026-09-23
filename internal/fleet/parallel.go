@@ -2,6 +2,7 @@ package fleet
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -32,5 +33,6 @@ func RunBenchesConcurrently(names []string, fn func(name string) error) error {
 	if len(errs) == 0 {
 		return nil
 	}
+	sort.Strings(errs)
 	return fmt.Errorf("failed benches: %s", strings.Join(errs, "; "))
 }
