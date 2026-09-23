@@ -101,4 +101,5 @@
                 (:file "tests/replays-lease-durability")
                 (:file "tests/replays-e08-render-file")
                 (:file "tests/replays-new-verb-door")
-                (:file "tests/replays-execution-reconcile")))
+                (:file "tests/replays-execution-reconcile")
+                (:file "tests/issue-2333")))
