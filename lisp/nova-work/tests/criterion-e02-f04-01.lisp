@@ -30,7 +30,7 @@
 
 (deftest "e02-f04-01-check-base-tip-owner"
     "docs/SPEC-WORK.md:200-210,223-226"
-    "expected=reconfirm-accepts-matching-base-and-owner;reconfirm-rejects-expired-session;reconfirm-rejects-base-divergence;reconfirm-rejects-generation-change;reconfirm-rejects-token-change"
+    "expected=reconfirm-accepts-matching-base-and-owner;reconfirm-rejects-expired-session;reconfirm-rejects-exact-expiry-boundary;reconfirm-rejects-base-divergence;reconfirm-rejects-generation-change;reconfirm-rejects-token-change"
   ;; 1. Matching base, owner, and a time before until: accepted, until advanced.
   (let ((sess (e02-f04-01-session)))
     (multiple-value-bind (okp line code)
@@ -53,6 +53,19 @@
       (check-equal :fenced (session-state sess) "session state after expiry")
       (check-string= "2026-10-01T00:00:00Z" (session-until sess)
                      "until unchanged on expiry")))
+  ;; 2b. Completion exactly at until: fenced at the boundary, even with a
+  ;; matching base and owner. SPEC-WORK requires the owner be able to
+  ;; reconfirm before until, so now == until must already refuse.
+  (let ((sess (e02-f04-01-session)))
+    (multiple-value-bind (okp line code)
+        (session-reconfirm sess "abc123" :now "2026-10-01T00:00:00Z"
+                                         :owner-record (e02-f04-01-owner))
+      (ok (not okp) "reconfirm fails exactly at until: ~A" line)
+      (check-equal 1 code "exit code at exact expiry boundary")
+      (ok (search "after expiry" line) "boundary line names expiry: ~A" line)
+      (check-equal :fenced (session-state sess) "session state at exact expiry boundary")
+      (check-string= "2026-10-01T00:00:00Z" (session-until sess)
+                     "until unchanged at exact expiry boundary")))
   ;; 3. Tip diverged from base: SESSION RACED.
   (let ((sess (e02-f04-01-session)))
     (multiple-value-bind (okp line code)
