@@ -672,3 +672,113 @@ func TestIdleDeficitAdvancesDespitePartialWorking(t *testing.T) {
 		t.Fatalf("fully busy friend triggered actions: %v", w2.calls)
 	}
 }
+
+// idleEpisodeFromIdem extracts the Since component from a Nudge/Wake idem
+// key of the form "<friend>:idle:<since>:<rung>".
+func idleEpisodeFromIdem(t *testing.T, idem string) int64 {
+	t.Helper()
+	parts := strings.Split(idem, ":")
+	if len(parts) != 4 || parts[1] != "idle" {
+		t.Fatalf("idem %q is not a friend:idle:<since>:<rung> key", idem)
+	}
+	since, err := parseIdleTestInt64(parts[2])
+	if err != nil {
+		t.Fatalf("idem %q: bad since component: %v", idem, err)
+	}
+	return since
+}
+
+func parseIdleTestInt64(s string) (int64, error) {
+	var n int64
+	_, err := fmt.Sscanf(s, "%d", &n)
+	return n, err
+}
+
+// TestIdleEpisodeSurvivesReconcilerRestart regresses stella's HOLD 7 (score
+// 7, review 5291626447): IdleLadder used to keep its tick counter in a
+// process-local field, starting over at 0 on every restart. If an episode
+// began at tick 1, cleared, and a later, unrelated episode began after the
+// reconciler restarted, the restarted process's first tick was also 1, so
+// the new episode's Since collided with the old one's -- an idem-deduping
+// adapter could then suppress the new episode's legitimate action.
+//
+// The tick and the episode id (IdleMark.Since) must instead be recovered
+// from what is already persisted in the friend's idle hash (via
+// IdleLedger.Load), so a restarted ladder (a fresh IdleLadder value, same
+// backing store) continues counting where the last process left off.
+func TestIdleEpisodeSurvivesReconcilerRestart(t *testing.T) {
+	ctx := context.Background()
+	w := newIdleWorld()
+	w.addFriend("johnny", 3)
+	ledger, mr := redisIdleLedger(t)
+
+	// Process 1: ladderA. Ladder tick 1 (sprint tick 1) is the first tick
+	// this ledger has ever seen, so the episode begins at tick 1, exactly
+	// the scenario stella named.
+	ladderA := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: ledger, Actions: w}
+	if _, err := ladderA.Tick(ctx, w.observe()); err != nil { // within idle_ticks: Since := 1
+		t.Fatalf("tick 1: %v", err)
+	}
+	if got := mr.HGet(IdleKey("johnny"), "since"); got != "1" {
+		t.Fatalf("episode 1 since = %q, want \"1\" (began at the first tick)", got)
+	}
+
+	// The episode clears: johnny drains to open 0 before ever escalating.
+	w.queues["johnny"] = nil
+	if _, err := ladderA.Tick(ctx, w.observe()); err != nil { // open 0: mark resets, since -> 0
+		t.Fatalf("tick 2 (drain): %v", err)
+	}
+	if got := mr.HGet(IdleKey("johnny"), "since"); got != "0" {
+		t.Fatalf("episode 1 since after drain = %q, want \"0\" (cleared)", got)
+	}
+	if w.count("nudge johnny") != 0 {
+		t.Fatalf("episode 1 escalated before it cleared: %v", w.calls)
+	}
+
+	// Restart: a brand new IdleLadder value (fresh process memory), the
+	// same ledger (same Redis). New open work starts a second, unrelated
+	// episode.
+	ladderB := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: ledger, Actions: w}
+	w.addFriend("johnny", 3)
+
+	if _, err := ladderB.Tick(ctx, w.observe()); err != nil { // within idle_ticks again
+		t.Fatalf("tick 3 (post-restart, episode 2 begins): %v", err)
+	}
+	rows, err := ladderB.Tick(ctx, w.observe()) // ladder tick 1: nudge
+	if err != nil {
+		t.Fatalf("tick 4 (post-restart nudge): %v", err)
+	}
+	if r := rowFor(t, rows, "johnny"); r.Action != IdleActionNudge || r.Step != 1 {
+		t.Fatalf("post-restart episode 2 should nudge once: %+v", r)
+	}
+	nudgeIdem := w.lastIdem["nudge johnny"]
+	episode2 := idleEpisodeFromIdem(t, nudgeIdem)
+	if episode2 == 1 {
+		t.Fatalf("episode 2's key %q reused episode 1's since=1 after the restart; a deduping adapter would suppress the new episode's nudge", nudgeIdem)
+	}
+	if w.count("nudge johnny") != 1 {
+		t.Fatalf("nudge fired %d times across the restart, want exactly 1 for episode 2: %v", w.count("nudge johnny"), w.calls)
+	}
+
+	// The next rung (wake) must still fire, exactly once, keyed to the
+	// SAME episode 2 -- the restart must not suppress it (a stale local
+	// tick reset could also make the ladder think Step should start over)
+	// nor duplicate it.
+	rows, err = ladderB.Tick(ctx, w.observe()) // ladder tick 2: wake
+	if err != nil {
+		t.Fatalf("tick 5 (post-restart wake): %v", err)
+	}
+	if r := rowFor(t, rows, "johnny"); r.Action != IdleActionWake || r.Step != 2 {
+		t.Fatalf("post-restart episode 2 should advance to wake: %+v", r)
+	}
+	wakeIdem := w.lastIdem["wake johnny"]
+	if got := idleEpisodeFromIdem(t, wakeIdem); got != episode2 {
+		t.Fatalf("wake episode key %d != nudge episode key %d; the next rung must reuse the same episode id", got, episode2)
+	}
+	if w.count("wake johnny") != 1 {
+		t.Fatalf("wake fired %d times, want exactly 1: %v", w.count("wake johnny"), w.calls)
+	}
+	if w.count("nudge johnny") != 1 || w.count("redistribute johnny") != 0 {
+		t.Fatalf("unexpected extra actions across the restart: %v", w.calls)
+	}
+}

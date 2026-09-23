@@ -185,11 +185,22 @@ type IdleLedger interface {
 }
 
 // IdleLadder runs the escalation for every friend once per sprint tick.
+//
+// The tick counter lives in Redis, not in this struct: a zero-value
+// IdleLadder is stateless between calls to Tick, and the tick number for
+// each call is derived from the marks IdleLedger.Load returns (the
+// friend's idle hash), never from a process-local field. A ladder that
+// restarts (new process, fresh memory, same Redis) picks up counting
+// exactly where the last process left off, so an episode identifier
+// (IdleMark.Since, itself persisted) that was assigned before the restart
+// is never reused by an unrelated episode that begins after it — stella's
+// HOLD 7 (score 7, review 5291626447): a process-local tick that resets to
+// 0 on restart could make a new episode's Since collide with an old one's,
+// letting an idem-deduplicating adapter suppress a legitimate action.
 type IdleLadder struct {
 	Policy  IdlePolicy
 	Ledger  IdleLedger
 	Actions IdleActions
-	tick    int64
 }
 
 // Tick applies one sprint tick to the observations and returns the rows in
@@ -202,7 +213,6 @@ func (l *IdleLadder) Tick(ctx context.Context, obs []IdleObservation) ([]IdleRow
 	if l.Policy.IdleTicks < 1 {
 		return nil, fmt.Errorf("idle tick: policy idle_ticks must be >= 1 (measure it with IdleTicksFromTakeLatency)")
 	}
-	l.tick++
 	sorted := append([]IdleObservation(nil), obs...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Friend < sorted[j].Friend })
 	names := make([]string, len(sorted))
@@ -213,6 +223,21 @@ func (l *IdleLadder) Tick(ctx context.Context, obs []IdleObservation) ([]IdleRow
 	if err != nil {
 		return nil, fmt.Errorf("idle tick: load ledger: %w", err)
 	}
+	// The tick number is the highest Tick any loaded mark already carries,
+	// plus one. Every mark this ladder ever saves gets the same call's
+	// tick number (below), so on a warm ledger this recovers exactly the
+	// count a same-process counter would have reached; on an empty ledger
+	// it starts at 1, the same cold-start value the old process-local
+	// counter produced. Because it is read back from the ledger every
+	// call, a restart (new IdleLadder value, same backing store) cannot
+	// make it regress to 0.
+	var tick int64
+	for _, m := range prev {
+		if m.Tick > tick {
+			tick = m.Tick
+		}
+	}
+	tick++
 	next := make(map[string]IdleMark, len(sorted))
 	rows := make([]IdleRow, 0, len(sorted))
 	var actErr error
@@ -220,8 +245,8 @@ func (l *IdleLadder) Tick(ctx context.Context, obs []IdleObservation) ([]IdleRow
 		if actErr != nil {
 			break
 		}
-		mark, row, err := l.step(ctx, o, prev[o.Friend])
-		mark.Tick = l.tick
+		mark, row, err := l.step(ctx, tick, o, prev[o.Friend])
+		mark.Tick = tick
 		next[o.Friend] = mark
 		rows = append(rows, row)
 		actErr = err
@@ -232,7 +257,7 @@ func (l *IdleLadder) Tick(ctx context.Context, obs []IdleObservation) ([]IdleRow
 	return rows, actErr
 }
 
-func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (IdleMark, IdleRow, error) {
+func (l *IdleLadder) step(ctx context.Context, tick int64, o IdleObservation, m IdleMark) (IdleMark, IdleRow, error) {
 	row := IdleRow{Friend: o.Friend}
 	switch {
 	case o.KeeperState == IdleStateOutOfCredits:
@@ -261,7 +286,7 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 		m.DownTicks++
 		if m.DownTicks == 1 {
 			row.Action = IdleActionRepairWake
-			downIdem := fmt.Sprintf("%s:down:%d", o.Friend, l.tick)
+			downIdem := fmt.Sprintf("%s:down:%d", o.Friend, tick)
 			if _, err := l.Actions.RepairWake(ctx, o.Friend); err != nil {
 				return m, row, fmt.Errorf("repair wake %s: %w", o.Friend, err)
 			}
@@ -297,7 +322,7 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 	// and open > 0.
 	m.DownTicks = 0
 	if m.Since == 0 {
-		m.Since = l.tick
+		m.Since = tick
 	}
 	m.Count++
 	if m.Count <= l.Policy.IdleTicks {
