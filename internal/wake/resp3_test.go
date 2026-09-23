@@ -1,37 +1,99 @@
 package wake
 
 import (
+	"context"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 )
 
 // TestWakeReachesTheWindowWithoutPolling checks that a friend window's
 // heartbeat and its wake ride one RESP3 connection, and a wake reaches the
 // window within 1 s of the XADD with no polling.
-//
-// This ensures that wake events published to a stream are delivered to listening
-// windows via a shared RESP3 connection without requiring polling.
 func TestWakeReachesTheWindowWithoutPolling(t *testing.T) {
-	// Verify that a shared RESP3 connection pool can be created
-	pool := NewResp3ConnPool()
-	if pool == nil {
-		t.Fatal("NewResp3ConnPool returned nil")
+	mr := miniredis.RunT(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	const presence, stream = "friend:stella:beat", "wake:stella"
+	pool, err := NewResp3ConnPool(ctx, mr.Addr(), presence, stream, 30*time.Second)
+	if err != nil {
+		t.Fatalf("NewResp3ConnPool: %v", err)
+	}
+	defer pool.Close()
+
+	// An entry already on the stream before Subscribe must not wake the window.
+	pub := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer pub.Close()
+	if err := pub.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]any{"kind": "stale"}}).Err(); err != nil {
+		t.Fatalf("seed XADD: %v", err)
+	}
+	if err := pool.Subscribe(ctx); err != nil {
+		t.Fatalf("Subscribe: %v", err)
 	}
 
-	// Verify heartbeat can be registered on the shared connection
-	if err := pool.Heartbeat(); err != nil {
-		t.Errorf("Heartbeat() failed: %v", err)
+	woke := make(chan time.Time, 4)
+	got := make(chan redis.XMessage, 4)
+	runCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() {
+		// Beat interval far above the wake window: a wake inside 1 s can only
+		// come from the blocking read, not from a timed re-check.
+		done <- pool.Run(runCtx, 5*time.Second, func(m redis.XMessage) {
+			woke <- time.Now()
+			got <- m
+		})
+	}()
+
+	// Heartbeat landed on the shared connection.
+	deadline := time.Now().Add(2 * time.Second)
+	for !mr.Exists(presence) {
+		if time.Now().After(deadline) {
+			t.Fatal("presence key never written")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if ttl := mr.TTL(presence); ttl <= 0 || ttl > 30*time.Second {
+		t.Fatalf("presence ttl = %s, want (0, 30s]", ttl)
 	}
 
-	// Verify subscribe for wake events works on the shared connection
-	if err := pool.Subscribe(); err != nil {
-		t.Errorf("Subscribe() failed: %v", err)
+	time.Sleep(200 * time.Millisecond) // let Run park on XREAD BLOCK
+	conns := mr.TotalConnectionCount()
+	cmdsBefore := mr.CommandCount()
+
+	sent := time.Now()
+	if err := pub.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]any{"kind": "wake"}}).Err(); err != nil {
+		t.Fatalf("XADD: %v", err)
+	}
+	var at time.Time
+	select {
+	case at = <-woke:
+	case <-time.After(time.Second):
+		t.Fatal("wake did not reach the window within 1 s of XADD")
+	}
+	if lag := at.Sub(sent); lag >= time.Second {
+		t.Fatalf("wake lag %s, want < 1s", lag)
+	}
+	if m := <-got; m.Values["kind"] != "wake" {
+		t.Fatalf("delivered %v, want the post-Subscribe wake (stale entry leaked)", m.Values)
 	}
 
-	// Verify the connection can be closed cleanly
-	if err := pool.Close(); err != nil {
-		t.Errorf("Close() failed: %v", err)
+	// No polling: between park and delivery the window issued at most its
+	// one blocking XREAD plus the next beat and re-park (publisher XADD aside).
+	if n := mr.CommandCount() - cmdsBefore - 1; n > 3 {
+		t.Fatalf("window issued %d commands around one wake; a poller is running", n)
+	}
+	// One connection: the pool opened no new connection to deliver the wake.
+	if extra := mr.TotalConnectionCount() - conns; extra > 1 { // publisher may dial once
+		t.Fatalf("%d new connections during the wake; heartbeat and wake must share one", extra)
 	}
 
-	// The pool supports both heartbeat and wake on one RESP3 connection,
-	// allowing wakes to reach the window within 1 second of XADD without polling.
+	stop()
+	select {
+	case <-done:
+	case <-time.After(6 * time.Second):
+		t.Fatal("Run did not return after cancel")
+	}
 }
