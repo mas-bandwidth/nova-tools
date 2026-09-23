@@ -50,7 +50,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	def := prereview.DefaultTuning()
 	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS")
 	bounceBelow := fs.Int("bounce-below", def.BounceBelow, "a score strictly below this BOUNCEs")
-	checksList := fs.String("checks", strings.Join(prereview.CheckNames, ","), "the checks that may decide: donewhen,selfcheck,paths,claims,score")
+	checksList := fs.String("checks", strings.Join(prereview.DefaultChecks, ","), "the checks that may decide (checks_enabled): donewhen,selfcheck,paths,claims,score; name ci to require ci-ok at the exact head")
 	inRate := fs.Float64("usd-per-mtok-in", 0, "the provider's input rate, US dollars per million tokens; 0 is unknown and prints cost=$-")
 	outRate := fs.Float64("usd-per-mtok-out", 0, "the provider's output rate, US dollars per million tokens; 0 is unknown")
 	skipHeads := fs.String("skip-heads", "", "a file of head shas already posted on; a pull request at one of them is skipped before any call")
@@ -316,7 +316,36 @@ func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
 	if len(pr.Files) == 0 {
 		pr.Files = prereview.DiffFiles(pr.Diff)
 	}
+	if err := g.attachChecks(&pr); err != nil {
+		return prereview.PR{}, err
+	}
 	return pr, nil
+}
+
+// attachChecks reads the commit's check rollup onto pr. A page is 100 runs;
+// the head's own runs are what ci decides on, never another sha's.
+func (g ghRunner) attachChecks(pr *prereview.PR) error {
+	sha := strings.TrimSpace(pr.Head)
+	if !prereview.ValidHeadSHA(sha) {
+		return fmt.Errorf("head %q is not a commit sha, so the check rollup cannot be read at the exact head", oneline.Field(sha))
+	}
+	var all []prereview.CheckRun
+	for page := 1; page <= 20; page++ {
+		raw, err := g.run("api", fmt.Sprintf("repos/%s/commits/%s/check-runs?per_page=100&page=%d", pr.Repo, sha, page))
+		if err != nil {
+			return fmt.Errorf("gh check-runs %s: %w", sha, err)
+		}
+		runs, total, err := prereview.ParseCheckRollup(raw)
+		if err != nil {
+			return fmt.Errorf("gh check-runs %s: %w", sha, err)
+		}
+		all = append(all, runs...)
+		if len(runs) == 0 || len(all) >= total || len(runs) < 100 {
+			break
+		}
+	}
+	pr.Checks = all
+	return nil
 }
 
 // comment posts the one line. It is the ONLY write this verb makes, and it is
