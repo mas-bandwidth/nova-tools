@@ -195,6 +195,41 @@ func TestIssue2315(t *testing.T) {
 		}
 	}
 
+	// mode=resume requires session-idle, session-max and wrap-file (SPEC-CHAT.md,
+	// the allow-list). Each fixture is a full, otherwise valid file that drops
+	// exactly one of the three, so the only reason it can be refused is that
+	// field, and the error must name it. The valid entry parses on the same
+	// ladder, so a refusal is never a fixture defect.
+	validResume := "conversation 1600000000000000010 class=own name=table mode=resume session-idle=7d session-max=30d wrap-file=./wrap-table.md reply-max=1600 min-gap=0s replies-per-hour=60 context=40"
+	validResumeDM := "dm * class=dm mode=resume session-idle=4h session-max=48h wrap-file=./wrap-dm.md reply-max=1200 min-gap=1m replies-per-hour=20 history-budget=8000"
+	for _, entry := range []string{validResume, validResumeDM} {
+		path := filepath.Join(dir, "resume-valid")
+		if err := os.WriteFile(path, []byte(fullFile(entry)), 0o644); err != nil {
+			t.Fatalf("seed resume-valid: %v", err)
+		}
+		if _, err := ParseAllow(path); err != nil {
+			t.Errorf("ParseAllow refused a complete mode=resume entry %q: %v", entry, err)
+		}
+		for _, drop := range []string{"session-idle", "session-max", "wrap-file"} {
+			var kept []string
+			for _, field := range strings.Fields(entry) {
+				if !strings.HasPrefix(field, drop+"=") {
+					kept = append(kept, field)
+				}
+			}
+			path := filepath.Join(dir, "resume-no-"+drop)
+			if err := os.WriteFile(path, []byte(fullFile(strings.Join(kept, " "))), 0o644); err != nil {
+				t.Fatalf("seed resume-no-%s: %v", drop, err)
+			}
+			_, err := ParseAllow(path)
+			if err == nil {
+				t.Errorf("%s: ParseAllow accepted a mode=resume entry with no %s=; it is required on resume", kept[0], drop)
+			} else if !strings.Contains(err.Error(), drop) {
+				t.Errorf("%s: mode=resume without %s= refused for another reason: %v", kept[0], drop, err)
+			}
+		}
+	}
+
 	// The spec's own example, verbatim from SPEC-CHAT.md (the allow-list
 	// section): trailing `#` comments on member lines, and history-budget on
 	// the mode=fresh `general` conversation. Both must parse.
