@@ -77,11 +77,14 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 	}
 	res.Took = time.Since(start)
 	res.Err = strings.Join(errs, "; ")
+	sent := lp.Lease.now()
 	reply, err := lp.Lease.call(ctx, fnPass, lp.Lease.token, lp.Lease.ttl.Milliseconds(),
 		res.Took.Milliseconds(), res.Counts.Dealt, res.Counts.Routed, res.Counts.Expired, res.Err)
 	if err != nil {
 		return PassResult{}, err
 	}
+	// ns_reconciler_pass renewed the lease to its TTL.
+	lp.Lease.renewedAt(sent)
 	if len(reply) < 2 {
 		return PassResult{}, fmt.Errorf("reconcile pass: unexpected reply %q", reply)
 	}
