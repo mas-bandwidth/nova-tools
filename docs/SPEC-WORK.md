@@ -8580,10 +8580,20 @@ full rebuild from the canonical state must equal the maintained value, or the re
 **Today's `ready-nodes` walks every node** (`lisp/nova-work/src/state.lisp`), a linear scan; READY
 retires it, and `query --ask ready` reads the maintained set.
 
-**Secondary indexes in Redis; SQLite only if a measured need forces it.** The set, range and text
-queries of the issue verbs are answered from Redis — already deployed, already the sprint store, and
-already what the table reads, so one store is fewer than two — as a **derived, disposable projection
-written only by the engine** and rebuilt from the sexp on demand, never a source:
+**Secondary indexes in Redis only; no SQLite sidecar (measured).** The set, range and text queries of
+the issue verbs are answered from Redis — already deployed, already the sprint store, and already what
+the table reads, so one store is fewer than two — as a **derived, disposable projection written only
+by the engine** and rebuilt from the sexp on demand, never a source. **The measurement decided it**
+(bench-work-index-3174 on hulk: generated forests of 10k, 100k and 1M units in 80 Zipf-sized
+repositories, Redis 7.0 over loopback and pure-Go SQLite in WAL mode, every operation 1,000 times,
+median / p99; the full table is `rowan-new/reports/work-index-design-2026-09-23.md` §11, posted on
+#3174 as comment 5797278408 and summarised on this PR as comment 5797289214). **SQLite is dropped, not
+held in reserve**, for two measured reasons: its "no parse" cold start is **slower than parsing the
+sexp** (107 ms / 1.0 s / 10.4 s against a Go parse of 56 ms / 413 ms / 4.2 s at 10k / 100k / 1M), so
+the premise of a sidecar that saves a parse does not hold; and its state changes **stall 12–21 ms at
+p99** (WAL commits and checkpoints) against the < 1 ms target, where a Redis `MULTI`/`EXEC` stays under
+0.71 ms p99 at every size. Its FTS5 index (`repo UNINDEXED`) also searches org-wide posting lists
+(p99 306 ms at 1M).
 
 | key | structure | holds |
 |---|---|---|
@@ -8591,8 +8601,10 @@ written only by the engine** and rebuilt from the sexp on demand, never a source
 | `w:repo` | HASH | repository → work set id (R's projection) |
 | `w:ext` | HASH | external ref → unit id (X's projection) |
 | `w:i:<repo>:state:<state>` | ZSET, score = updated-at | the per-repository, per-state list, newest first |
+| `w:i:<repo>:s:<state>:label:<l>`, `...:s:<state>:assignee:<a>`, `...:s:<state>:kind:<k>` | ZSET, score = updated-at | **the composite listing sets**, one per (repository, state, label \| assignee \| kind), **maintained on every write** that changes the unit's state or the keyed field, in the same `MULTI`/`EXEC` |
 | `w:i:<repo>:created`, `...:closed` | ZSET, score = the stamp | the `--since` and `--closed-since` ranges |
-| `w:i:<repo>:label:<l>`, `...:author:<a>`, `...:assignee:<a>`, `...:milestone:<m>`, `...:under:<id>`, `...:category:<c>` | SET | the filters |
+| `w:i:<repo>:label:<l>`, `...:author:<a>`, `...:milestone:<m>`, `...:under:<id>`, `...:category:<c>` | SET | membership for the bounded post-filter below; never intersected at query time |
+| `w:t:<repo>:<word>` | ZSET, score = updated-at | the title-word sets: one per normalised title word per repository |
 | `w:i:<repo>:prio` | ZSET, score = rank then filed-at | `--order priority` |
 | `w:i:<repo>:landed:<branch>` | SET, for `dev` and `main` | `issue fixed-on`, written by the fold of section 7 |
 | `w:d:<id>`, `w:r:<id>` | SET | deps and reverse deps, for readers without the engine |
@@ -8601,26 +8613,61 @@ written only by the engine** and rebuilt from the sexp on demand, never a source
 | `w:verify` | HASH | the last verify summary per repository (section 4) |
 | `w:digest` | STRING | the manifest digest the projection was built from |
 
-A listing is one pipeline round trip (*Redis in batches*): an intersection of two or three small keys
-(`ZINTERSTORE` into a temporary key, smallest first, or `ZDIFFSTORE` for `--not-label`) and one page
-by score — **O(smallest set + log n + k) in that repository's keys, never the org's**. A write is one
-`MULTI`/`EXEC` pipeline in the same envelope as the journal append. **Text search** uses RediSearch
-where the Redis host has the module; without it, titles are indexed as trigram SETs per repository,
-and **body search is out of scope until a measurement shows it is needed** — `issue search --in body`
-refuses `not indexed` until then — and only that measured need admits SQLite (FTS5) as a second
-engine. **The engine-to-index interface is one small module**, so the choice is reversed by a
-measurement and not a rewrite.
+**A listing costs its own answer, by one fixed access path per supported combination** (Stella, SPEC 7
+on #3141: make the filtered-list plan meet its advertised worst-case bound, or narrow the supported
+combinations). The measurement is why `ZINTERSTORE` at query time is gone: an intersection grows with
+the repository, not with the answer (p99 0.7 ms → 4.2 ms → 41.7 ms at 10k / 100k / 1M; the SQL label
+join 2.0 ms → 14.4 ms → 217 ms), while a maintained composite set holds 221 / 313 / 383 µs median and
+438 / 376 / 581 µs p99, two round trips, proportional to the page. The supported combinations, within
+one repository, and their plans are exactly these:
 
-**Cold start without a parse.** On load the engine reads the manifest's `:digest`; when it equals
-`w:digest`, it rebuilds its resident hashes from the `w:n:*` hashes in pipelined batches and parses no
-repository file; otherwise it parses each repository's O and C files once (the only O(n) pass there
-is), rebuilds both, including every closed-side key (`...:closed`, `...:state:<state>`, `w:ready:<repo>`,
-the `w:n:*` state and closed-at fields), and writes `w:digest`. **The skip is sound only because the
-root digest covers both files of every repository** (the digest rule of the manifest row above): a
-C-only settle or revive changes `:closed-digest`, hence the repository and root digests, hence
-`w:digest` no longer matches and the projection is rebuilt; a digest over O alone would leave a stale
-closed index looking current, and `c-only-change-invalidates-projection` in section 11 is the replay
-that fails if it does. A crash between the journal append and the pipeline is repaired by the
+| combination | access path | bound |
+|---|---|---|
+| `--state` alone (and `issue triage`, `issue stale`) | one page by score on `w:i:<repo>:state:<s>` | O(log n + 50) |
+| `--state` with one `--label`, one `--assignee` or one `--kind` | one page by score on that composite set | O(log n + 50) |
+| a time flag (`--since`, `--updated-since`, `--closed-since`) on either row above | a score range on the same set | O(log n + 50) |
+| any further filter (a second label, `--author`, `--milestone`, `--under`, `--category`, `--not-label`) | the composite set (or the state set) walked newest first in pages of 50, each page tested by one pipelined `SISMEMBER`/`HGET` batch, **stopping at 50 matches or 1,000 units examined** | O(log n + 1,000), fixed; past the cap the verb prints `ISSUE MORE examined=1000 cursor=<score>` and the caller pages on |
+| no `--repo` | the row above per repository, merged by score over R | O(repositories × (log n + 50)) |
+
+Any other combination is refused (`ISSUE REFUSED: no access path for <flags>`), never scanned. A new
+composite field is a declared line with its memory measured, never a query-time intersection. The
+memory is the trade, measured: ~2 KB per unit, most of it the composite and title-word sets (190 MB
+and 349,858 keys at 100k, 1.98 GB at 1M; tens of MB at today's thousands of units).
+
+**Hot lookups stay resident; every Redis call is pipelined.** A single lookup by id, repository or
+external ref is answered from the engine's own N, R and X (0.2–9 µs at 1M, flat). Redis sits on its
+round-trip floor (`PING` 44–53 µs on loopback, ~300 µs per hop on the tailnet), so the server work is
+noise and the hop is the cost: Redis serves the readers without the engine (the table, other benches),
+and **every Redis call is pipelined** (*Redis in batches*): a listing is one or two round trips, a
+page's fields one `HGET` batch, a write one `MULTI`/`EXEC` in the same envelope as the journal append.
+
+**Title search by word sets; body search out of scope until measured.** Titles are indexed per
+repository as `w:t:<repo>:<word>` (normalised lower-case words); a search intersects its word sets
+smallest first and pages newest first, O(smallest word set): measured for two words at 75 / 114 /
+186 µs median, 0.29 / 3.9 / 29.1 ms p99 at 10k / 100k / 1M, so within 20 ms at 100k (the 1M p99 is
+the commonest words in a 201k-unit repository). Neither RediSearch nor FTS5 is needed for titles.
+**Body search is out of scope until a measurement shows it is needed** — `issue search --in body`
+refuses `not indexed` until then — and that measurement names its engine. **The engine-to-index
+interface is one small module**, so the choice is reversed by a measurement and not a rewrite.
+
+**Cold start: Redis has none; the engine restarts from a snapshot.** Redis is a resident server: the
+projection outlives an engine restart and needs no cold start (measured 0). The engine's own resident
+structures are the one measured miss: rebuilding them by parsing the sexp costs 56 ms / **413 ms** /
+4.2 s at 10k / 100k / 1M (the Go parser; the Lisp reader is measured by part (x)), over the 300 ms
+target at 100k. So the engine writes a **snapshot** of N, R, X, C, D, READY, CNT, HOLD and REV keyed by
+the manifest's root `:digest` (bench-local, gitignored, never a source). On load, when the snapshot's
+digest equals the manifest's, it loads the snapshot and parses no repository file; otherwise it parses
+each repository's O and C files once (the only O(n) pass there is), rebuilds the resident structures
+and, when `w:digest` differs too, the projection, including every closed-side key (`...:closed`,
+`...:state:<state>`, the composites, `w:ready:<repo>`, the `w:n:*` state and closed-at fields), and
+writes both digests. **The snapshot has its own DONE-WHEN**: engine restart from a current snapshot
+< 300 ms at 100k units (reported at 1M), with the 413 ms parse as the control it must beat; a faster
+parse that meets 300 ms without a snapshot satisfies the same line. **The skip is sound only because
+the root digest covers both files of every repository** (the digest rule of the manifest row above): a
+C-only settle or revive changes `:closed-digest`, hence the repository and root digests, hence neither
+the snapshot's digest nor `w:digest` matches and both are rebuilt; a digest over O alone would leave a
+stale closed index looking current, and `c-only-change-invalidates-projection` in section 11 is the
+replay that fails if it does. A crash between the journal append and the pipeline is repaired by the
 same check on the next load: the journal commits first, so the projection can be behind and never
 ahead.
 
@@ -8630,27 +8677,31 @@ wire; **no second implementation of the indexes in Go**. The table and nova-spri
 which the engine **publishes to on every accepted event** — the counts, the ready width and the
 changed ids — so the table never asks the engine or the sexp (*Table at one second, zero tokens*).
 
-**The complexity table is the DONE-WHEN**, measured on generated forests of 10k, 100k and 1M units
-before this section is scored 10 (*do not guess, measure*); the targets are at 100k and each line is
-a benchmark that fails:
+**The complexity table is the DONE-WHEN.** The targets are at 100k units; the measured column is
+bench-work-index-3174 (a shared, loaded bench, a single client, the Go parser rather than the Lisp
+reader, so the absolute µs are pessimistic), and part (ix) re-runs every line against the built
+engine as a benchmark that fails:
 
-| operation | bound | target at 100k units |
-|---|---|---|
-| unit by id; repository by name; unit by external ref | O(1) | < 50 µs |
-| issues in a repository by state, label or assignee, newest first, a page of 50 | O(log n + 50) | < 2 ms |
-| text search in titles, within a repository | index | < 20 ms |
-| the ready set of a repository | O(1) read of a maintained set | < 100 µs |
-| a state change (close, reopen, label) | O(depth + dependents + indexes) | < 1 ms |
-| changed-since for the table | O(k) | < 100 µs |
-| cold start with the projection current | no parse | < 300 ms |
-| full rebuild from the sexp | O(n) | < 5 s |
+| operation | bound | target at 100k | measured at 100k, median / p99 | measured at 1M | verdict |
+|---|---|---|---|---|---|
+| unit by id; repository by name; unit by external ref | O(1) | < 50 µs | resident: 9 / 15 µs, 0.2 / 2 µs, 4 / 7 µs (at 1M, flat); Redis: 73 / 96, 52 / 65, 53 / 80 µs, its round-trip floor | Redis 69, 48, 60 µs | met by the resident engine; Redis pays one pipelined hop |
+| a page of 50 by state and one label, assignee or kind, newest first | O(log n + 50) | < 2 ms | composite set 313 µs / 376 µs (`ZINTERSTORE` 526 µs / 4.2 ms, rejected) | 383 µs / 581 µs (`ZINTERSTORE` 2.5 / 41.7 ms) | met |
+| the same with a further filter (post-filter, cap 1,000 examined) | O(log n + 1,000) | < 2 ms | not yet measured | — | part (ix) measures it |
+| title search within a repository, two words | O(smallest word set) | < 20 ms | 114 µs / 3.9 ms (SQLite FTS5 823 µs / 32.2 ms) | 186 µs / 29.1 ms | met at 100k |
+| the ready set of a repository | O(1) read of a maintained set | < 100 µs | resident 3 / 6 µs (at 1M); Redis 101 / 873 µs, all hop | Redis 83 / 323 µs | met by the resident engine |
+| a state change (close, reopen, label), every index, ready and REV | O(depth + dependents + indexes) | < 1 ms | 218 µs / 618 µs (SQLite 239 µs / 16.8 ms) | 304 µs / 708 µs | met |
+| changed-since for the table, k = 10 | O(k) | < 100 µs | resident 0.07 µs; Redis 93 / 151 µs | Redis 98 / 124 µs | met |
+| cold start of the projection | none (Redis resident) | < 300 ms | 0 (SQLite sidecar 999 ms) | 0 (SQLite 10.4 s) | met |
+| **engine restart from a current snapshot** | O(n) sequential load, no parse | < 300 ms | **open**: the sexp parse it replaces is 413 ms | parse 4.2 s | **its own DONE-WHEN**, part (x) |
+| full rebuild from the sexp | O(n) | < 5 s | 4.5 s (SQLite 5.7 s) | 47.3 s | met; digest mismatch only |
+| CONTROL: one repository's open issues by a walk; `ready-nodes` as a walk | O(n) | worse than every indexed line | 1.3 / 4.1 ms; 1.3 / 3.0 ms | 15.5 / 36.2 ms; 10.8 / 16.2 ms | the controls fail as they should |
 
 **Is the sexp still the right shape? Yes as the canonical store; no as the query shape — and this
 design is why that is not a contradiction.** The sexp is never queried, so it only has to serve
 canonical form, diff, review, digest and load, which a tree of text files in git does well and a
 database file does badly (binary diffs, no review by PR, no hash chain). **What would be
 reimplementing SQL — sorted sets, B-trees, range scans, full text, a filter language, a planner — is
-not ours**: those are Redis's (or, if measured, SQLite's) as a rebuildable projection. **What is
+not ours**: those are Redis's, as a rebuildable projection. **What is
 ours, and stays in the engine, is what a database would hide**: the recursive counters that must equal
 a reconstruction, the ready antichain under dependency edges, the journal and digest chain, request-id
 dedup and leases. **The line is visible**: the day an issue verb grows an `AND`/`OR`/`sort-by`
@@ -8693,10 +8744,10 @@ the replacement table only to say so.
 
 | verb | usage | TSV columns (header first) | access path (section 9) |
 |---|---|---|---|
-| `issue list` | `nova-work issue list [--repo <r>]... [--state open\|closed\|all] [--label <l>]... [--not-label <l>]... [--author <a>] [--assignee <a>] [--milestone <m>] [--under <id>] [--category <c>] [--since <t>] [--updated-since <t>] [--closed-since <t>] [--order updated\|age\|priority] [--limit <n>] [--format tsv\|sexp\|json]` | `ref state title labels author created updated unit` | R for each `--repo`; the `state` ZSET intersected with each filter's SET, smallest first, `--not-label` by difference; a time flag is a score range; one page. With no `--repo`, per-repository pages merged by score over R: O(repositories + k) |
+| `issue list` | `nova-work issue list [--repo <r>]... [--state open\|closed\|all] [--label <l>]... [--not-label <l>]... [--author <a>] [--assignee <a>] [--kind <k>] [--milestone <m>] [--under <id>] [--category <c>] [--since <t>] [--updated-since <t>] [--closed-since <t>] [--order updated\|age\|priority] [--limit <n>] [--format tsv\|sexp\|json]` | `ref state title labels author created updated unit` | R for each `--repo`; the combination's fixed plan in section 9: a page on the `state` set or on one composite (state, label \| assignee \| kind) set, a time flag as a score range, any further filter (including `--not-label`) as the bounded post-filter (1,000 examined, then `ISSUE MORE`); no query-time intersection; an unsupported combination refused. With no `--repo`, per-repository pages merged by score over R |
 | `issue show` | `nova-work issue show <unit> [--format ...]` | a header row `ref state title labels milestone assignees author created updated closed unit under required disposition`, then `ISSUE BODY bytes=<n>` and the body verbatim, then one `ISSUE LINK` row per link and one `ISSUE EVENT` row per state event | X, then N; the body from its blob; the events from the unit's own log |
-| `issue search` | `nova-work issue search <text> --repo <r> [--in title] [--state ...] [--limit <n>]` | as `issue list`, plus `field` | the repository's title index (RediSearch, or trigram SETs); `--in body` refuses `not indexed` until section 9's measurement admits it; `--repo` required |
-| `issue count` | `nova-work issue count [--by repo\|state\|label\|category\|under\|author] [the filters of list]` | `key count`, then `ISSUE COUNT total=<n>` | `ZCARD`/`SCARD` of the keys; `--by repo` over R; `--by label` one `SCARD` per label key of the repository; an intersection is counted, never listed |
+| `issue search` | `nova-work issue search <text> --repo <r> [--in title] [--state ...] [--limit <n>]` | as `issue list`, plus `field` | the repository's title-word sets `w:t:<repo>:<word>`, intersected smallest first; `--in body` refuses `not indexed` until section 9's measurement admits it; `--repo` required |
+| `issue count` | `nova-work issue count [--by repo\|state\|label\|category\|under\|author] [the filters of list]` | `key count`, then `ISSUE COUNT total=<n>` | `ZCARD` of the state or composite set, `ZCOUNT` for a time flag; `--by repo` over R; `--by label` one `ZCARD` per composite label key of the repository; a combination beyond one composite has no bounded count and is refused |
 | `issue create` | `nova-work issue create --repo <r> --title <t> --body-file <f> [--label <l>]... [--under <id>] [--mirror-github] --reason <text>` | `ISSUE OK unit=<id> under=<id> mirror=<pending\|none>` | a write: `node add` under the map's placement, id `<owner>/<repo>/<uuidv7>` (no natural key exists, so a guid, by the natural-keys-first rule), the body a blob |
 | `issue edit` | `nova-work issue edit <unit> [--title <t>] [--body-file <f>] [--add-label <l>]... [--remove-label <l>]... [--milestone <m>\|--no-milestone] --reason <text>` | `ISSUE OK unit=<id> changed=<fields> mirror=<pending\|none>` | a write; **refused on an `:external` unit's title or body** (`ISSUE REFUSED unit=<id>: an external reporter's text is theirs (write a note)`) |
 | `issue close` | `nova-work issue close <unit> --commit <sha> [--pr <o/r#n>] [--note <text>] --reason <text>` | `ISSUE OK unit=<id> disposition=done evidence=<pointer> outbound=<pending\|none>` | a write; the lander's close step calls it, and section 8b does the GitHub half on `main` |
@@ -8844,4 +8895,4 @@ verbs are part (vi) of the index issue, so there is one issue per owner-sized pi
 | (e) | fold write-back: landed PRs and verified criteria settle units | 7 | stella | johnny, rowan |
 | (g) | `nova-work ingest verify`: complete capture, the sample read, the weekly run | 4 | johnny | stella, rowan |
 | (h) | primary-source cutover: preflight, mirror, the close on `main`, the deletions | 1, 8, 8b, 12 | rowan | stella, johnny |
-| (index) | the index and the parity verbs, in nine parts: (i) the storage split; (ii) the node fields parity needs; (iii) resident R, X, READY and REV with reconstruction proofs; (iv) the Redis projection and its rebuild; (v) title search, and the body-search measurement; (vi) the parity verbs as fixed named queries; (vii) `nova-work serve` and the Go client; (viii) Redis publication per event; (ix) the 10k/100k/1M benchmark with section 9's table as pass/fail | 9, 10 | rowan (tracking; parts proposed: stella (i)-(iii) and (vi), johnny (iv), (v), (vii), (viii), rowan (ix)) | stella, johnny |
+| (index) | the index and the parity verbs, in ten parts: (i) the storage split; (ii) the node fields parity needs; (iii) resident R, X, READY and REV with reconstruction proofs; (iv) the Redis projection and its rebuild; (v) title search, and the body-search measurement; (vi) the parity verbs as fixed named queries; (vii) `nova-work serve` and the Go client; (viii) Redis publication per event; (ix) the 10k/100k/1M benchmark with section 9's table as pass/fail, including the post-filter row; (x) the engine snapshot, whose DONE-WHEN is restart < 300 ms at 100k units against the 413 ms parse | 9, 10 | rowan (tracking; parts proposed: stella (i)-(iii) and (vi), johnny (iv), (v), (vii), (viii), rowan (ix), (x)) | stella, johnny |
