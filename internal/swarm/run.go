@@ -765,6 +765,37 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
 	_ = p.WriteSidecar(Running, sc)
 
+	usageEveryNS := in.UsageInterval
+	if usageEveryNS <= 0 {
+		usageEveryNS = 5 * time.Second
+	}
+	evidenceRoot := filepath.Join(p.Dir, "evidence")
+	r := LaunchRecord{
+		Schema:           LaunchSchema,
+		Context:          LaunchRecordContext{Kind: "pool", Root: p.Dir},
+		EvidenceRoot:     evidenceRoot,
+		JobID:            sc.ID,
+		Slot:             strconv.Itoa(slot),
+		ReservationNonce: nonce,
+		ManifestHash:     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		Control: LaunchRecordControl{
+			ManifestHash:  "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			Root:          evidenceRoot,
+			SandboxSource: in.Sandbox,
+			Launcher: LaunchRecordLauncher{
+				Path:   in.Supervisor,
+				SHA256: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+				Source: in.Supervisor,
+			},
+		},
+		Realization: LaunchRecordRealization{
+			EnvHash: "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+		},
+		Sandbox:      in.Sandbox,
+		UsageEveryNS: strconv.FormatInt(usageEveryNS.Nanoseconds(), 10),
+	}
+	_ = PublishLaunchRecord(evidenceRoot, sc.ID, nonce, r)
+
 	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:
 	// before this, `--usage-interval` was decoded, carried into RunInput and dropped at the
 	// fork, and every job sampled at the supervisor's own default.
