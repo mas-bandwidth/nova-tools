@@ -66,6 +66,11 @@ usage:
                    [--self-inflicted n] [--class-recurring] [--landing-moved]
                    [--uncertainty 0..1] [--asked-all-friends]
 
+  nova-decide migrate [--dsn <dsn>]
+                    (install the decisions table's owned, versioned schema;
+                     idempotent, and the prerequisite every
+                     decisions-schema-unmigrated refusal names)
+
   nova-decide log --log <path|postgres> --summary [--dsn-env <NAME>] [--registry <path>]
   nova-decide log migrate [--dsn-env <NAME>]
                     (install decide_log beside the card results; idempotent)
@@ -275,6 +280,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runReview(args[1:], stdout, stderr)
 		case "outcome":
 			return runOutcome(args[1:], stdout, stderr)
+		case "migrate":
+			return runMigrate(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("nova-decide", flag.ContinueOnError)
@@ -388,8 +395,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 					Floor:        *floor,
 					Source:       decide.SourceMachinery,
 				}); err != nil {
-					return refuse(stderr, *prefix, "decisions-write-failed",
-						fmt.Sprintf("the decision was settled and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+					return refuseWrite(stderr, *prefix, "the decision was settled", err)
 				}
 				receipt = decide.ReceiptRecorded
 			}
@@ -431,8 +437,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	// caller told the decision succeeded while nothing was written has no
 	// receipt at all.
 	if err := client.RecordErr(); err != nil {
-		return refuse(stderr, *prefix, "decisions-write-failed",
-			fmt.Sprintf("the answer stands and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+		return refuseWrite(stderr, *prefix, "the answer stands", err)
 	}
 	if whoReads {
 		hasConfidence := readDecision.Source == decide.SourceProvider
@@ -453,6 +458,49 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 3
 		}
 	}
+	return 0
+}
+
+// runMigrate installs the decisions table's owned, versioned schema. It is
+// idempotent in both directions -- a fresh database gets the whole table, a
+// database carrying the hand-made six-column shape is upgraded in place -- so
+// it is safe to run on every start, and it is the exact prerequisite every
+// unmigrated-schema refusal names.
+func runMigrate(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("nova-decide migrate", flag.ContinueOnError)
+	dsn := fs.String("dsn", os.Getenv(decide.DecisionsEnv), "decisions table DSN; default $NOVA_DSN")
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, "MIGRATE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if fs.NArg() > 0 {
+		return refuse(stderr, "MIGRATE", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	}
+	if strings.TrimSpace(*dsn) == "" {
+		return refuse(stderr, "MIGRATE", "bad-arguments",
+			fmt.Sprintf("--dsn is required (or set %s); refusing to guess which database to migrate", decide.DecisionsEnv))
+	}
+	store, err := decisionsOpener(*dsn)
+	if err != nil {
+		return refuse(stderr, "MIGRATE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	defer store.Close()
+	migrator, ok := store.(decide.Migrator)
+	if !ok {
+		// The TSV fallback needs no migration: it writes its own header, and
+		// a six-column file written before `source` existed is still read.
+		fmt.Fprintf(stdout, "MIGRATE OK store=file version=%d note=%s\n", decide.DecisionsSchemaVersion,
+			oneline.Quote("a TSV decisions table carries its own header and needs no migration"))
+		return 0
+	}
+	if err := migrator.Migrate(); err != nil {
+		if errors.Is(err, decide.ErrDecisionsSchemaTooNew) {
+			return refuse(stderr, "MIGRATE", "decisions-schema-too-new", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		return refuse(stderr, "MIGRATE", "migrate-failed", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	fmt.Fprintf(stdout, "MIGRATE OK store=postgres version=%d\n", decide.DecisionsSchemaVersion)
 	return 0
 }
 
@@ -751,6 +799,28 @@ func parseFloors(list string) ([]float64, error) {
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// refuseWrite is the refusal a configured decisions table earns by not taking
+// the row. Nothing is printed on stdout: a decision whose row was refused has
+// no receipt, and a line followed by a warning is not compatibility.
+//
+// An UNMIGRATED schema gets a reason of its own and names the exact
+// prerequisite, because it is not a broken table -- it is a table that has
+// never been told what shape this writer needs, and one command fixes it.
+func refuseWrite(stderr io.Writer, prefix, what string, err error) int {
+	if errors.Is(err, decide.ErrDecisionsSchemaUnmigrated) {
+		return refuse(stderr, prefix, "decisions-schema-unmigrated",
+			fmt.Sprintf("%s and its configured decisions table cannot hold the row's source or its absent provider confidence, so there is no receipt and nothing was written: %s; run: %s",
+				what, oneline.Err(err), decide.MigrateVerb))
+	}
+	if errors.Is(err, decide.ErrDecisionsSchemaTooNew) {
+		return refuse(stderr, prefix, "decisions-schema-too-new",
+			fmt.Sprintf("%s and its configured decisions table is at a schema version newer than this writer declares compatibility with, so there is no receipt and nothing was written: %s",
+				what, oneline.Err(err)))
+	}
+	return refuse(stderr, prefix, "decisions-write-failed",
+		fmt.Sprintf("%s and its configured decisions table refused the row, so there is no receipt: %s", what, oneline.Err(err)))
 }
 
 // refuse prints the one refusal line: the prefix, REFUSED, a one-word reason
