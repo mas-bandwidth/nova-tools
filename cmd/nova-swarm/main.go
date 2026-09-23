@@ -73,7 +73,7 @@ usage:
    nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
    nova-swarm pull      --slot <dir> --queue <dir> --mirror <path>
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
                        (a lease whose holder is still RUNNING is KEPT: SLOTS KEPT, live=<n>, exit 2.
                         --force frees it anyway and can oversubscribe the bench: an operator's act,
@@ -1823,8 +1823,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	// THE BENCH SLOT LEASE (nova-tools#1546). native takes ONE lease before the run
 	// starts and holds it for the run's deadline plus two minutes of grace, the same
-	// shape the dispatcher uses (internal/swarm/run.go). A take that grants nothing is a
-	// refusal, not a run, and no worker starts. The lease is released on every exit path,
+	// shape the dispatcher uses (internal/swarm/run.go). The lease is charged at the
+	// card kind's admission weight (#2033): a schema card that would overflow the
+	// remaining share is refused here, before any job directory is made. A take that
+	// grants nothing is a refusal, not a run, and no worker starts. The lease is released on every exit path,
 	// including a run that fails: the release is DEFERRED here, above every remaining
 	// return, so there is no exit from this function that leaves a seat held.
 	//
@@ -1836,7 +1838,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// `leaseIDs` is exactly what this invocation was granted and exactly what it hands back.
 	leasePID := os.Getpid()
 	dur := d + 2*time.Minute
-	leaseIDs, held, share, free, holders, granted, lerr := swarm.TakeSlotLeases(*slotsStore, *slotOwner, 1, dur, lbl, time.Now().UTC(), leasePID)
+	kind := swarm.CardKindFromText(string(cardRaw))
+	weight := swarm.SlotAdmissionWeight(kind)
+	leaseIDs, held, share, free, holders, granted, lerr := swarm.TakeSlotLeasesKind(*slotsStore, *slotOwner, 1, kind, dur, lbl, time.Now().UTC(), leasePID)
 	if lerr != nil {
 		fmt.Fprintf(stderr, "nova-swarm native: the slot store could not be read: %s\n", oneline.Err(lerr))
 		return 2
@@ -1846,7 +1850,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			holders = "-"
 		}
 		fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s\n",
-			oneline.Field(*slotOwner), 1, held, share, free, oneline.Escape(holders))
+			oneline.Field(*slotOwner), weight, held, share, free, oneline.Escape(holders))
 		return 2
 	}
 	defer func() {

@@ -361,9 +361,11 @@ func Run(in RunInput) int {
 
 	// THE BENCH SLOT LEASE, FROM THE DISPATCHER'S SIDE. A store wider than this pool
 	// answers to a share: one lease per task, labelled with the task id and held for the
-	// task's deadline plus two minutes, released the moment the task ends. A refused take
-	// is a WAIT -- one `RUN WAIT slots owner= holders=` line, a poll every slotPoll, and
-	// no launch past the share -- until the task's own deadline says it can no longer run.
+	// task's deadline plus two minutes, released the moment the task ends. The lease is
+	// charged at the card kind's admission weight (#2033), so a schema card that would
+	// overflow the remaining share waits rather than launching. A refused take is a WAIT
+	// -- one `RUN WAIT slots owner= holders=` line, a poll every slotPoll, and no launch
+	// past the share -- until the task's own deadline says it can no longer run.
 	slotPoll := in.SlotPoll
 	if slotPoll <= 0 {
 		slotPoll = 10 * time.Second
@@ -438,7 +440,8 @@ func Run(in RunInput) int {
 			leased := false
 			if in.SlotsStore != "" {
 				dur := taskDeadline(sc, in.Worker) + 2*time.Minute
-				_, _, _, _, holders, granted, lerr := TakeSlotLeases(in.SlotsStore, in.SlotOwner, 1, dur, sc.ID, now(), slotPID)
+				kind := CardKindFromText(string(text))
+				_, _, _, _, holders, granted, lerr := TakeSlotLeasesKind(in.SlotsStore, in.SlotOwner, 1, kind, dur, sc.ID, now(), slotPID)
 				if lerr != nil {
 					said = true
 					haltAdmissions = true
