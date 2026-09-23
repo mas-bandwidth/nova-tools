@@ -56,6 +56,14 @@ const (
 // sources are named, because either one answers and neither is ever guessed.
 const sourceRemedy = "name a verb list: --cli <docs/CLI.md>, or --tools <dir of built nova-* binaries>, or both; refusing to guess"
 
+// Seams for tests. On a real run these stay nil/default and the production
+// clock and runners are used.
+var (
+	dogfoodClock      = time.Now
+	dogfoodGitRunner  dogfood.Runner
+	dogfoodHelpRunner dogfood.HelpRunner
+)
+
 func cmdDogfood(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, " dogfood", "no sub-verb given; ledger reads it, record writes one receipt, gate is the one with an exit code")
@@ -101,6 +109,9 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 	}
 	var fromTools []dogfood.Verb
 	if s.tools != "" {
+		if s.timeout <= 0 {
+			return nil, refuse(stderr, " dogfood "+verb, "--tools-timeout must be positive; a read with no time budget will hang forever")
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeout)*time.Second)
 		defer cancel()
 		// A program says what it is doing when what it is doing takes long
@@ -109,7 +120,7 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE asking the binaries for their verbs: %d/%d\n", done, total)
 		})
-		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, nil, progress)
+		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, dogfoodHelpRunner, progress)
 		if err != nil {
 			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -172,12 +183,16 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 	authors := dogfood.Authors{}
 	if repo != "" {
+		if gitTimeout <= 0 {
+			return read, refuse(stderr, " dogfood "+verb, "--git-timeout must be positive; a read with no time budget will hang forever")
+		}
+		fmt.Fprintf(stderr, "DOGFOOD NOTE reading authorship from git over %d verbs; this can take seconds\n", len(verbs))
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(gitTimeout)*time.Second)
 		defer cancel()
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE reading authorship from git: %d/%d verbs\n", done, total)
 		})
-		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, nil, progress)
+		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, dogfoodGitRunner, progress)
 		if err != nil {
 			return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -356,7 +371,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		Tool:   *tool,
 		Verb:   *verb,
 		By:     *by,
-		At:     time.Now().UTC().Format(time.RFC3339),
+		At:     dogfoodClock().UTC().Format(time.RFC3339),
 		OK:     *ok,
 		Notes:  *notes,
 		Issue:  *issue,
