@@ -13,3 +13,4 @@ internal/pulse/statushtml.go:readFleetOverSSH  # fans out to readOneBench, which
 internal/pulse/statushtmlrows.go:publishOverSSH  # builds the script and hands it to the guarded fleetSSH
 internal/release/edges.go:ExecSSH.sshArgs  # builds the option list and starts nothing; Run, Send and Fetch each guard the child they start
 internal/swarm/benchpull.go:sshError.Error  # an error type's message, named for the ssh exit code it carries; no child process
+internal/nsprint/reconcile/refill.go:DealFunctions.SSH  # deal.Row's method: writes the ssh cell bench:<b>:ssh in Redis via ns_bench_ssh; starts no child and reaches no host (the session is deal.Remote's, guarded)
