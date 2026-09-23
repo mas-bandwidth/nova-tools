@@ -480,3 +480,63 @@ they can settle and revive a roadmap.")
       (check-equal 0 code "the undo exit code")
       (ok (search "UNDO OK" line) "the undo line is not UNDO OK: ~A" line))
     (check-equal '("p1") (rm-projection-ids k) "the undo moved the projections")))
+
+;;; ------------------------------------------------------------------
+;;; The retry guard reads the whole intent, and the no-op receipt carries
+;;; the payload in the shape redo consumes (Stella's hold 6 at 4cd8b3fb).
+;;; ------------------------------------------------------------------
+
+(deftest "a-remove-then-add-under-the-same-request-id-refuses-and-moves-nothing"
+    "docs/SPEC-WORK.md:370-377"
+    "expected=an-add-reusing-a-remove's-request-id-refuses-exit-1;view-and-receipt-unchanged"
+  (let ((k (roadmap-rows-kernel)))
+    (rr-add-projection k "p1" "q1")
+    (rr-remove-projection k "p1" "q-same")
+    (let ((revision (roadmap-view-revision (kernel-state k) "rm"))
+          (stored (copy-tree (gethash "q-same" (nova-work::kernel-applied k)))))
+      (multiple-value-bind (okp line code)
+          (roadmap-projection k :roadmap "rm" :op :add :id "p1" :root "root"
+                                :repo "acme/work" :path "docs/p1.md"
+                                :start "<!-- S -->" :end "<!-- E -->"
+                                :policy :markdown-table :reason "proj" :request "q-same")
+        (ok (not okp) "an add reusing the remove's request id was accepted: ~A" line)
+        (ok (not (search "changed=1" line))
+            "the add replayed the remove's changed=1 receipt: ~A" line)
+        (ok (search "reused with a different payload" line)
+            "the refusal does not name the conflict: ~A" line)
+        (check-equal 1 code "the conflict exit code"))
+      (check-equal '() (rm-projection-ids k) "the refused add moved the projections")
+      (check-equal revision (roadmap-view-revision (kernel-state k) "rm")
+                   "the refused add moved the revision")
+      (check-equal stored (gethash "q-same" (nova-work::kernel-applied k))
+                   "the refused add rewrote the remove's receipt"))))
+
+(deftest "redo-after-undoing-an-accepted-no-op-projection-reapplies-it"
+    "docs/SPEC-WORK.md:2873"
+    "expected=the-no-op-receipt-carries-its-payload;undo-then-redo-is-REDO-OK;view-unchanged"
+  (let ((k (roadmap-rows-kernel)))
+    (rr-add-projection k "p1" "q1")
+    (rr-add-projection k "p1" "q-noop")
+    (let ((revision (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (submit k (list :verb :undo :of "q-noop" :by "rowan"
+                          :request "u-noop" :stamp "2026-09-19T01:01:00Z"
+                          :clock :tool :generation-owner "gen-4"))
+        (ok okp "the undo of the accepted no-op was refused: ~A" line)
+        (check-equal 0 code "the undo exit code"))
+      (multiple-value-bind (okp line code)
+          (submit k (list :verb :redo-plan :of "u-noop" :by "rowan"
+                          :request "rp-noop" :stamp "2026-09-19T01:02:00Z"
+                          :clock :tool :generation-owner "gen-4"))
+        (ok okp "the redo-plan after the no-op undo was refused: ~A" line)
+        (check-equal 0 code "the redo-plan exit code"))
+      (multiple-value-bind (okp line code)
+          (submit k (list :verb :redo :of "u-noop" :by "rowan"
+                          :request "redo-noop" :stamp "2026-09-19T01:03:00Z"
+                          :clock :tool :generation-owner "gen-4"))
+        (ok okp "the redo after the no-op undo was refused: ~A" line)
+        (check-equal 0 code "the redo exit code")
+        (ok (search "REDO OK" line) "the redo line is not REDO OK: ~A" line))
+      (check-equal '("p1") (rm-projection-ids k) "the redo moved the projections")
+      (check-equal revision (roadmap-view-revision (kernel-state k) "rm")
+                   "the no-op undo/redo moved the revision"))))

@@ -1085,15 +1085,21 @@ a bad selection refuses `bad selection`. Answers (values OK-P LINE EXIT-CODE)."
                                     :fixed (or fx '())))
                   (payload (%roadmap-projection-payload projection)))
              ;; A lost reply's retry replays its original receipt via the
-             ;; request id; a changed payload under the id is a conflict.
+             ;; request id only when the id's prior entry is this same whole
+             ;; intent: the verb, the roadmap, an `--add`, the projection id,
+             ;; the full payload and the reason. Anything else under the id --
+             ;; a `--remove`, whose `:before :projection` holds the removed
+             ;; plist, another roadmap, another verb -- is a conflict that
+             ;; refuses and moves nothing.
              (when request
                (let ((prior (gethash request (kernel-applied kernel))))
                  (when prior
                    (if (and (eq (getf prior :verb) :roadmap-projection)
+                            (equal (getf prior :roadmap) roadmap)
+                            (eq (getf prior :op) :add)
                             (equal (getf prior :projection) id)
-                            (equal (or (getf prior :payload)
-                                       (getf (getf prior :before) :projection))
-                                   payload))
+                            (equal (getf (getf prior :before) :projection) payload)
+                            (equal (getf prior :reason) (or reason +absent+)))
                        (return-from roadmap-projection
                          (values t (getf prior :line) 0))
                        (return-from roadmap-projection
@@ -1105,13 +1111,22 @@ a bad selection refuses `bad selection`. Answers (values OK-P LINE EXIT-CODE)."
                (if (equal payload (%roadmap-projection-payload existing))
                    (let ((line (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=0 rev=~D"
                                        roadmap request (getf view :revision))))
+                     ;; The receipt's `:before` carries the payload and index
+                     ;; in the shape a changed=1 add records, so the retry
+                     ;; guard above and `%roadmap-projection-redo` read one
+                     ;; shape; its `:projections`/`:revision` equal `:after`.
                      (when request
                        (let ((snap (list :projections (copy-tree (getf view :projections))
                                          :revision (getf view :revision))))
                          (setf (gethash request (kernel-applied kernel))
                                (list :verb :roadmap-projection :roadmap roadmap :projection id
                                      :op :add :reason (or reason +absent+) :line line
-                                     :payload payload :before snap :after snap :changed 0))))
+                                     :before (append (copy-tree snap)
+                                                     (list :projection payload
+                                                           :index (position id (getf view :projections)
+                                                                            :key (lambda (p) (getf p :id))
+                                                                            :test #'string=)))
+                                     :after snap :changed 0))))
                      (return-from roadmap-projection (values t line 0)))
                    (return-from roadmap-projection
                      (values nil (format nil "ROADMAP FAIL node=~A: duplicate projection ~A" roadmap id) 2))))
