@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
 // ErrNoRecord is returned when s:<S>:pr:<repo>:<n> does not exist.
@@ -70,7 +72,7 @@ func LoadPR(ctx context.Context, c *redis.Client, sprint string, id ID) (*PR, er
 	pipe = c.Pipeline()
 	var ciCmd, parentCmd *redis.MapStringStringCmd
 	if head := fields["head"]; head != "" {
-		ciCmd = pipe.HGetAll(ctx, "ci:"+id.Repo+":"+head)
+		ciCmd = pipe.HGetAll(ctx, civerdict.Key(id.Repo, head))
 	}
 	if p.Parent != nil {
 		parentCmd = pipe.HGetAll(ctx, p.Parent.Key(sprint))
