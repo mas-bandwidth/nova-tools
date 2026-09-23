@@ -31,7 +31,7 @@ func TestMain(m *testing.M) {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(2)
 		}
-		if res.Refused > 0 {
+		if res.Refused > 0 || res.Overran {
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -210,9 +210,18 @@ func TestLaunchReturnsBeforeTheCardEnds(t *testing.T) {
 	}
 	wall := time.Now().Sub(began)
 	// EXIT 0 is every line started inside the verb's own 5 s budget
-	// (DefaultBudget): a line past it is REFUSED timeout and exits 1.
-	if exitLine != "EXIT 0" || !strings.HasPrefix(summary, "LAUNCH started=50 refused=0 ") {
+	// (DefaultBudget): a line past it is REFUSED timeout and exits 1, and
+	// TestMain above also exits 1 on Overran, so EXIT 0 here is itself an
+	// assertion that the batch's own measured wall time did not overrun.
+	if exitLine != "EXIT 0" || !strings.HasPrefix(summary, "LAUNCH started=50 refused=0 ") || !strings.Contains(summary, "over=false") {
 		t.Fatalf("card launch %s %q; stderr %q", exitLine, summary, stderr.String())
+	}
+	// The DONE-WHEN bound itself, asserted rather than only logged: the
+	// harness's EXIT 0 already means the launcher's own budget check
+	// passed, but that check happens before this test process ever saw
+	// the exit; this pins the real wall clock too.
+	if wall > DefaultBudget {
+		t.Fatalf("card launch took %s wall, want at most the %s budget", wall, DefaultBudget)
 	}
 	if len(pids) != 50 || canary == 0 {
 		t.Fatalf("card launch reported %d LAUNCHED lines (want 50), canary %d", len(pids), canary)
@@ -366,13 +375,66 @@ func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 			pids[f[1]], _ = strconv.Atoi(strings.TrimPrefix(f[2], "pid="))
 		}
 	}
-	if err != nil || res.Started != 5 || res.Refused != 3 || len(pids) != 5 {
+	if err != nil || res.Started != 5 || res.Refused != 3 || !res.Overran || len(pids) != 5 {
 		t.Fatalf("Launch = %+v, %v; output %q", res, err, out.String())
 	}
 	waitReady(t, dir, fixtureLines(5))
-	for _, w := range []string{"REFUSED line=6 timeout s-launch/card-06/", "REFUSED line=8 timeout ", "LAUNCH started=5 refused=3 ms=9000"} {
+	for _, w := range []string{"REFUSED line=6 timeout s-launch/card-06/", "REFUSED line=8 timeout ", "LAUNCH started=5 refused=3 ms=9000 over=true"} {
 		if !strings.Contains(out.String(), w) {
 			t.Errorf("output %q lacks %q", out.String(), w)
 		}
+	}
+}
+
+// TestLaunchOverrunsWithNothingRefused is #2931 HOLD 7 (stella): the
+// per-line budget check only bounds the time reached BEFORE that line's own
+// start, so a slow final start can push the whole batch's wall time past
+// budget without ever refusing a line. Every line here is on time by the
+// per-line check (a fake clock that has barely moved when each is reached),
+// but the clock jumps once more, past budget, for the elapsed time measured
+// after the loop -- modeling a last startDetached that itself ran long.
+// Refused must stay 0 (nothing was actually late by the per-line rule) and
+// Overran must be true: a caller (cmd/nova-sprint's runCardLaunch) reading
+// Refused==0 alone would wrongly call this batch a success.
+func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Setenv("NOVA_LAUNCH_TEST_DIR", dir)
+	lines := fixtureLines(3)
+	var in strings.Builder
+	for _, l := range lines {
+		in.WriteString(l.String() + "\n")
+	}
+	clock := time.Unix(1_800_000_000, 0)
+	// calls: began (+0), then one pre-start check per line (+1s each, well
+	// inside the 5s budget), then the post-loop elapsed check (+3s more,
+	// total 6s: past budget though no per-line check ever saw it).
+	increments := []time.Duration{0, time.Second, time.Second, time.Second, 3 * time.Second}
+	i := 0
+	tick := func() time.Time {
+		clock = clock.Add(increments[i])
+		if i < len(increments)-1 {
+			i++
+		}
+		return clock
+	}
+	var out strings.Builder
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick})
+	pids := map[string]int{}
+	t.Cleanup(func() { killAll(pids) })
+	for _, s := range strings.Split(out.String(), "\n") {
+		if f := strings.Fields(s); len(f) == 3 && f[0] == "LAUNCHED" {
+			pids[f[1]], _ = strconv.Atoi(strings.TrimPrefix(f[2], "pid="))
+		}
+	}
+	if err != nil || res.Started != 3 || res.Refused != 0 || !res.Overran || len(pids) != 3 {
+		t.Fatalf("Launch = %+v, %v; output %q", res, err, out.String())
+	}
+	waitReady(t, dir, lines)
+	if !strings.Contains(out.String(), "LAUNCH started=3 refused=0 ms=6000 over=true") {
+		t.Errorf("output %q lacks the overrun summary", out.String())
 	}
 }

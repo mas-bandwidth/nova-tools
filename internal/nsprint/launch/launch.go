@@ -112,6 +112,13 @@ type Config struct {
 type Result struct {
 	Started int
 	Refused int
+	// Overran is true when the batch's total wall time, measured after the
+	// last line's startDetached returned, is past Budget. The per-line
+	// check only bounds the time reached BEFORE a given line's start; a
+	// slow final start can still push the whole batch past the budget
+	// without refusing anything. A caller must not treat Overran as
+	// success even when Refused is 0 (#2931 HOLD 7).
+	Overran bool
 }
 
 // Launch reads the batch from in and starts one detached wrapper per line
@@ -120,11 +127,15 @@ type Result struct {
 //	LAUNCHED <sprint>/<label>/<attempt> pid=<pid>
 //	REFUSED line=<n> <why>
 //
-// and then LAUNCH started=<n> refused=<m> ms=<batch time>. A malformed line,
-// a second line for an attempt already in this batch, a wrapper that would
-// not start, or a line reached after the budget is refused; the rest of the
-// batch still launches. The error is for a
-// batch that could not run at all: no wrapper, or stdin failed.
+// and then LAUNCH started=<n> refused=<m> ms=<batch time> over=<bool>. A
+// malformed line, a second line for an attempt already in this batch, a
+// wrapper that would not start, or a line reached after the budget is
+// refused; the rest of the batch still launches. over=true means the
+// measured wall time, taken after the last line's own start returned, is
+// past the budget even though every line that reached it was individually
+// on time (Result.Overran); a caller must not read Refused==0 as success
+// when over=true. The error is for a batch that could not run at all: no
+// wrapper, or stdin failed.
 func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 	var res Result
 	if err := checkWrapper(cfg.Wrapper); err != nil {
@@ -176,7 +187,12 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 		res.Started++
 		fmt.Fprintf(out, "LAUNCHED %s pid=%d\n", l.Card(), pid)
 	}
-	fmt.Fprintf(out, "LAUNCH started=%d refused=%d ms=%d\n", res.Started, res.Refused, now().Sub(began).Milliseconds())
+	// Measured after the loop, so it includes the last line's own
+	// startDetached: a per-line check alone cannot catch a slow final
+	// start that pushes the whole batch past budget.
+	spent := now().Sub(began)
+	res.Overran = spent > budget
+	fmt.Fprintf(out, "LAUNCH started=%d refused=%d ms=%d over=%t\n", res.Started, res.Refused, spent.Milliseconds(), res.Overran)
 	if err := sc.Err(); err != nil {
 		return res, fmt.Errorf("card launch: stdin after line %d: %w", n, err)
 	}

@@ -49,8 +49,10 @@ func init() {
 	})
 }
 
-// runCardLaunch exits 0 when every line started, 1 when a line was refused
-// (the others still started), 2 when the batch could not run.
+// runCardLaunch exits 0 when every line started inside the launch budget, 1
+// when a line was refused or the batch's own wall time overran the budget
+// (launch.Result.Overran; the others still started), 2 when the batch could
+// not run.
 func runCardLaunch(_ context.Context, args []string, in io.Reader, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("card launch", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -75,7 +77,7 @@ func runCardLaunch(_ context.Context, args []string, in io.Reader, out, errOut i
 		fmt.Fprintf(errOut, "nova-sprint %s\n", oneline.Err(err))
 		return 2
 	}
-	if res.Refused > 0 {
+	if res.Refused > 0 || res.Overran {
 		return 1
 	}
 	return 0
