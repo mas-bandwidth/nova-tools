@@ -181,7 +181,7 @@ type ResolveRequest struct {
 // attempt's token exits 3.
 func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 	const verb = "card end"
-	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || req.Outcome == "" || req.Reason == "" || !absResults(req.ResultsDir) {
+	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || req.Outcome == "" || req.Reason == "" || !AbsResults(req.ResultsDir) {
 		return usage(verb, req.Label), nil
 	}
 	return callEnd(ctx, st, verb, "token", req.Sprint, req.Label, req.Token, req.ResultsDir, req.Outcome, req.Reason)
@@ -193,7 +193,7 @@ func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 // the indexes, and the log stay as they were.
 func Resolve(ctx context.Context, st *store.Store, req ResolveRequest) (Result, error) {
 	const verb = "card resolve"
-	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || !absResults(req.ResultsDir) {
+	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || !AbsResults(req.ResultsDir) {
 		return usage(verb, req.Label), nil
 	}
 	return callEnd(ctx, st, verb, "record", req.Sprint, req.Label, "", req.ResultsDir, "", "")
@@ -247,11 +247,23 @@ func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, to
 	return resultFrom(verb, label, reply), nil
 }
 
-// absResults reports whether dir can be the card hash field results: it is
+// AbsResults reports whether dir can be the card hash field results: it is
 // written once by ns_card_end and read by harvest with no root to join it to
-// (#3329), so a relative dir is a usage error before anything is written.
-func absResults(dir string) bool {
-	return strings.TrimSpace(dir) != "" && filepath.IsAbs(dir)
+// (#3329), so it is a Unix absolute path on the bench (#3336): a leading '/',
+// not '//' (a network share), no backslash, no CR/LF, and no '..' segment. A
+// drive root (`C:\x`, `C:/x`) or a scheme (`file:///x`) has no leading '/' and is
+// refused. ns_card_end (fn/lua/card_run.lua results_absolute) applies the same
+// rule, so the Go and Redis gates agree.
+func AbsResults(dir string) bool {
+	if !strings.HasPrefix(dir, "/") || strings.HasPrefix(dir, "//") || strings.ContainsAny(dir, "\\\r\n") {
+		return false
+	}
+	for _, seg := range strings.Split(dir, "/") {
+		if seg == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 func cleanResultsDir(dir string) (string, error) {

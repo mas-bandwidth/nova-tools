@@ -5015,9 +5015,11 @@ There is **no `quickstart` verb**. A one-word first run would have to invent a f
 
 `nova-sprint card end --results <dir>` writes `<dir>` once into the card hash
 `s:<S>:card:<label>` field `results` (single writer `ns_card_end`, stamped
-`ended_at` from Redis TIME). The dir is always absolute: `card end` exits 1
-(USAGE) on a relative one before it opens Redis, and `ns_card_end` refuses it
-too, so nothing is written. `nova-sprint card harvest` pushes from
+`ended_at` from Redis TIME). The dir is always a Unix absolute path on the
+bench: a leading `/`, not `//` (a network share), no backslash, no `..`
+segment; a drive root (`C:\x`, `C:/x`) or a scheme is refused. `card end`
+exits 1 (USAGE) on anything else before it opens Redis, `ns_card_end` applies
+the same rule (so nothing is written), and harvest refuses it before ssh. `nova-sprint card harvest` pushes from
 `<results>/repo` on the bench as read from that field; there is no
 `--results-root` (it is refused as an unknown flag that names the field),
 because no worker needs to know a bench's layout (#3329).

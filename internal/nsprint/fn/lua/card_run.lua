@@ -55,10 +55,18 @@ local function card_keys_ok(keys, sprint, label)
     and keys[3] == 's:' .. sprint .. ':idem'
 end
 
--- results is absolute (#3329): '/...' or a drive root 'C:/...' / 'C:\...'.
--- The card hash field is read by harvest with no root to join it to.
+-- results is a Unix absolute path on the bench (#3329, #3336): a leading '/',
+-- not '//' (a network share), no backslash, no CR/LF, no '..' segment. A drive
+-- root ('C:\x', 'C:/x') or a scheme ('file:///x') has no leading '/' and is refused.
+-- card.AbsResults is the same rule on the Go side. The card hash field is read
+-- by harvest with no root to join it to.
 local function results_absolute(results)
-  return string.sub(results, 1, 1) == '/' or string.match(results, '^%a:[/\\]') ~= nil
+  if string.sub(results, 1, 1) ~= '/' or string.sub(results, 2, 2) == '/' then return false end
+  if string.find(results, '[\\\r\n]') then return false end
+  for seg in string.gmatch(results, '[^/]+') do
+    if seg == '..' then return false end
+  end
+  return true
 end
 
 -- results is the canonical attempt directory under an absolute root.

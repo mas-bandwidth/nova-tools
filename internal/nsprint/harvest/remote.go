@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -147,8 +148,8 @@ func (p SSHPusher) repoDir(c Card) (string, error) {
 	if c.Results == "" {
 		return "", fmt.Errorf("%s: no results dir", c.Label)
 	}
-	if !path.IsAbs(c.Results) {
-		return "", fmt.Errorf("%s: results %s is relative; the card hash field results must be absolute (card end refuses a relative dir)", c.Label, c.Results)
+	if !card.AbsResults(c.Results) {
+		return "", fmt.Errorf("%s: results %q is not a Unix absolute path; the card hash field results must be absolute (leading /, no //, no backslash, no ..; card end refuses anything else)", c.Label, c.Results)
 	}
 	return path.Join(c.Results, sub), nil
 }

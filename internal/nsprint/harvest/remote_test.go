@@ -147,3 +147,27 @@ func TestHarvestHasNoResultsRoot(t *testing.T) {
 		t.Fatalf("a relative results dir started ssh: %q", again)
 	}
 }
+
+// TestPusherRefusesNonUnixResults is the pusher half of the #3336 repair: the
+// pusher applies the same Unix absolute rule as card end and ns_card_end, so a
+// drive root, a network share or a dot-dot path never reaches ssh.
+func TestPusherRefusesNonUnixResults(t *testing.T) {
+	dir := t.TempDir()
+	log := filepath.Join(dir, "ssh.log")
+	ssh := filepath.Join(dir, "ssh")
+	script := "#!/bin/bash\nprintf '%s\\n' \"$@\" >> " + strconv.Quote(log) + "\ncat >/dev/null\n"
+	if err := os.WriteFile(ssh, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := SSHPusher{SSH: ssh}
+	bench := BenchInfo{Name: "b", Host: "h", User: "u"}
+	for _, results := range []string{`C:\x`, `C:/x`, `//host/share`, `/a/../b`, `/srv/results\s\l`} {
+		err := p.Push(context.Background(), bench, Card{Label: "l", Results: results, PushedSHA: "abc", Branch: "nova/s/l-a1"})
+		if err == nil || !strings.Contains(err.Error(), "absolute") {
+			t.Fatalf("results %q = %v, want a refusal naming the absolute rule", results, err)
+		}
+	}
+	if calls, err := os.ReadFile(log); err == nil {
+		t.Fatalf("a non-Unix results dir started ssh: %q", calls)
+	}
+}
