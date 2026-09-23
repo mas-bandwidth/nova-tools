@@ -127,6 +127,25 @@ func (s *fnStore) SSH(ctx context.Context, fence, bench, state, why string) erro
 	return nil
 }
 
+// Gate writes one sprint's DEPENDS-ON moves in one ns_card_gate call (#3066).
+func (s *fnStore) Gate(ctx context.Context, fence, sprint string, moves []GateMove) error {
+	args := []any{fence, sprint, s.actor, ""}
+	for _, m := range moves {
+		args = append(args, m.Label, m.Verb, m.Why)
+	}
+	reply, err := s.c.FCall(ctx, "ns_card_gate", nil, args...).StringSlice()
+	if err != nil {
+		return err
+	}
+	if len(reply) > 0 && reply[0] == "FENCED" {
+		return ErrFenced
+	}
+	if len(reply) == 0 || (reply[0] != "GATED" && reply[0] != "NONE") {
+		return fmt.Errorf("ns_card_gate: %v", reply)
+	}
+	return nil
+}
+
 // dealRedis is a throwaway redis-server with the nova_sprint library loaded.
 func dealRedis(t *testing.T) *redis.Client {
 	t.Helper()
