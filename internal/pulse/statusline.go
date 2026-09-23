@@ -71,7 +71,7 @@ func statusOneLine(in StatusInput, day string) string {
 		pitstop = oneline.Field(s)
 	}
 
-	cardFail, gateway := failureColumns(loadUsageFiles(roots))
+	cardFail, gateway := failureColumns(loadUsageFiles(statusUsageRoots(in)))
 	head := fmt.Sprintf("STATUS %s stop=%s pool=%d cards=%d/%d card_fail=%d gateway=%d reds=%d merges=%d spend=%s",
 		day, stop,
 		countCards(in.Queue, "pending"),
@@ -79,7 +79,7 @@ func statusOneLine(in StatusInput, day string) string {
 		cardFail, gateway,
 		countDay(in.Queue, "REDS", day, "MAIN-RED"),
 		countDay(in.Queue, "MERGED", day, ""),
-		usd(spendOfDay(roots, day)))
+		usd(spendOfDay(statusUsageRoots(in), day)))
 
 	// The benches, widest information first: a bench that does not fit is counted, never
 	// silently dropped -- the same law as every listing here (internal/bounded).

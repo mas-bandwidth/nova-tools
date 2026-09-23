@@ -9,7 +9,7 @@ package pulse
 // number comes only from the state file under the lock (number.go), and there is no
 // `--number` flag to pass one in.
 //
-// Six kinds, six line-1 shapes, and line 1 is the contract the harvest matches:
+// Seven kinds, seven line-1 shapes, and line 1 is the contract the harvest matches:
 //
 //	read    RESULT: CARD-<n> read of <repo> PR<pr> at <head> (<title>)
 //	fix     RESULT: CARD-<n> sha=<sha12> <repo> #<issue> fixed with its red test first: <title>
@@ -17,13 +17,17 @@ package pulse
 //	spec    RESULT: CARD-<n> <repo> spec: <title>
 //	rebase  RESULT: CARD-<n> <repo> PR #<pr> rebased onto <base> with its conflicts resolved and its tests green: <title>
 //	guard   RESULT: CARD-<n> guard of <repo> at <head>
+//	report  RESULT: CARD-<n> report of <repo>
 //
 // `cut` without `--kind` is the pool-driven cutter in cut.go and is untouched by any of this.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -32,26 +36,49 @@ import (
 )
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
-var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard"}
+var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "recut", "port", "docs-guard", "report"}
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
 	Kind      string
 	Repo      string // owner/name; line 1 names the repo for every kind
 	PR        int    // read, rebase
-	Head      string // read
+	Head      string // read, recut
 	Issue     int    // fix
 	Title     string // fix, spec, rebase, and the parenthesised title of a read
 	Branch    string // rebase: the branch rebased onto the base
-	Base      string // rebase: the branch it is rebased onto
+	Base      string // rebase: the branch it is rebased onto; recut: BASE header
+	BaseSHA   string // recut: base-sha header
 	BodyFile  string // fix, spec: the numbered steps this card carries
+	DiffFile  string // recut: path to previous card diff for mechanical 3-way rebase
+	Dir       string // recut: directory of the git repo/clone to attempt apply in
+	HoldFile  string // recut: a typed DISPOSITION HOLD plus named remains
+	Applied   string // recut: mechanical apply outcome ("clean" or "conflict")
 	Prior     string // fix: what a prior attempt did, so the worker never repeats it
 	Names     string // replay: the replay names, comma separated
 	SpecLines string // replay: the spec lines the replays are named at
+	Paths     string // recut: PATHS copied from the HOLD or passed directly
+	TestName  string // recut: the failing test copied from the HOLD or passed directly
+	HoldLine  string // recut: the HOLD DISPOSITION line, carried as evidence
+	Remains   string // recut: REMAINS: brief from the HOLD when present
 	Out       string // the directory the card is written into
 	Queue     string // the queue directory holding the state file and its lock
 	Stdout    io.Writer
 	Stderr    io.Writer
+
+	// V2 card template fields (Card Template v2, Items A1-A7)
+	V2            bool   // use Card Template v2
+	Location      string // file:line or spec location (A2)
+	TestPackage   string // test package (A2)
+	TestFunction  string // test function (A2)
+	TestCommand   string // one test command (A2)
+	ReviewerLine  string // inlined reviewer disposition line (A1)
+	PriorDiff     string // inlined prior diff (A1)
+	FailingOutput string // inlined failing test output (A1)
+	PreflightCmd  string // preflight command line (A3)
+	Attempt       int    // attempt number (default: 1)
+	Symbol        string // runtime entrypoint, type, or function symbol exercised (A10)
+	RedWhen       string // falsifiable condition / failure mode that makes test red (A10)
 }
 
 // CutKind writes one card of one kind under the next number and prints one line. It returns
@@ -70,12 +97,73 @@ func CutKind(in CutKindInput) int {
 		}
 		body = strings.TrimRight(string(raw), "\n")
 	}
+	if in.Kind == "recut" {
+		if in.HoldFile != "" {
+			raw, err := os.ReadFile(in.HoldFile)
+			if err != nil {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED: --hold-file %s: %s (pass a readable file of the typed HOLD)\n", oneline.Field(in.HoldFile), oneline.Err(err))
+				return 2
+			}
+			hold, problem := parseHoldFile(string(raw))
+			if problem != "" {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
+				return 2
+			}
+			in = applyHold(in, hold)
+		}
+	}
+	var chosenDiff string
+	if in.DiffFile != "" {
+		rawDiff, err := os.ReadFile(in.DiffFile)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --diff-file %s: %s (pass a readable unified diff file)\n", oneline.Field(in.DiffFile), oneline.Err(err))
+			return 2
+		}
+		chosenDiff = string(rawDiff)
+		if in.Kind == "recut" {
+			repoDir := resolveRepoDir(in)
+			in.Applied = Attempt3WayApply(repoDir, in.DiffFile)
+		}
+	} else if in.PriorDiff != "" {
+		if raw, err := os.ReadFile(in.PriorDiff); err == nil {
+			chosenDiff = string(raw)
+		} else {
+			chosenDiff = in.PriorDiff
+		}
+	}
 	n, err := NextCardNumber(in.Queue)
 	if err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s (the number comes only from the state file under %s)\n", oneline.Err(err), oneline.Field(in.Queue))
 		return 2
 	}
-	card := contractSHA12(renderKindCard(in, n, body))
+
+	// Retain immutable diff artifact under the owned card lifecycle
+	diffArtifact := ""
+	if chosenDiff != "" {
+		sum := sha256.Sum256([]byte(chosenDiff))
+		digest := "sha256:" + hex.EncodeToString(sum[:])
+		if in.Out == "" {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --out is required to retain diff artifact\n")
+			return 2
+		}
+		if err := os.MkdirAll(in.Out, 0o755); err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
+			return 2
+		}
+		diffPath := filepath.Join(in.Out, fmt.Sprintf("card-%d.diff", n))
+		if err := os.WriteFile(diffPath, []byte(chosenDiff), 0o644); err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: retained diff %s: %s (pass a writable --out directory)\n", oneline.Field(diffPath), oneline.Err(err))
+			return 2
+		}
+		diffArtifact = fmt.Sprintf("%s (%s)", diffPath, digest)
+	}
+
+	rendered, err := renderKindCard(in, n, body, chosenDiff, diffArtifact)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	card := contractSHA12(rendered)
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
 		return 2
@@ -101,9 +189,9 @@ func CutKind(in CutKindInput) int {
 func cutKindLane(kind string, n int, body string) lanes.Card {
 	c := lanes.Card{ID: fmt.Sprintf("card-%d", n), Kind: kind, Steps: cutKindSteps(kind), Body: body}
 	switch kind {
-	case "fix":
+	case "fix", "recut":
 		c.Red = true
-	case "read":
+	case "read", "docs-guard":
 		c.Approved = true
 	}
 	return c
@@ -112,10 +200,7 @@ func cutKindLane(kind string, n int, body string) lanes.Card {
 // cutKindSteps is the step budget each kind may spend, the number the lane
 // ordering compares.
 func cutKindSteps(kind string) int {
-	if kind == "read" {
-		return 8
-	}
-	return 20
+	return TurnBudgetV2(kind)
 }
 
 // cutKindProblem is every refusal this cutter has, each naming its remedy.
@@ -129,6 +214,16 @@ func cutKindProblem(in CutKindInput) string {
 		return "--queue is required; the card number comes only from its state file (pass --queue <dir>)"
 	case strings.TrimSpace(in.Out) == "":
 		return "--out is required (pass the directory the card is written into, usually <queue>/pending)"
+	case strings.TrimSpace(in.DiffFile) != "" && strings.TrimSpace(in.PriorDiff) != "":
+		return "conflicting diff inputs: --diff-file and --prior-diff cannot both be specified"
+	}
+	if isV2Cut(in) {
+		if strings.TrimSpace(in.Symbol) == "" {
+			return "--symbol is required for a v2 card; every card must declare the runtime symbol or entrypoint (pass --symbol <name>)"
+		}
+		if strings.TrimSpace(in.RedWhen) == "" {
+			return "--red-when is required for a v2 card; every card must declare the falsifiable condition that makes the test red (pass --red-when <condition>)"
+		}
 	}
 	switch in.Kind {
 	case "read":
@@ -171,8 +266,53 @@ func cutKindProblem(in CutKindInput) string {
 		if strings.TrimSpace(in.Head) == "" {
 			return "--head is required for a guard card; the control is asked of one sha (pass --head <sha>)"
 		}
+	case "recut":
+		if strings.TrimSpace(in.DiffFile) == "" && strings.TrimSpace(in.HoldFile) == "" {
+			if strings.TrimSpace(in.Title) == "" && strings.TrimSpace(in.ReviewerLine) == "" {
+				return "--diff-file or --hold-file is required for a recut card; a recut is cut from a prior diff or a typed HOLD (pass --diff-file <path> of the prior diff or --hold-file <path> of the typed HOLD)"
+			}
+		}
+		if in.DiffFile != "" {
+			if _, err := os.Stat(in.DiffFile); err != nil {
+				return fmt.Sprintf("--diff-file %s: %s (pass a readable unified diff file)", oneline.Field(in.DiffFile), oneline.Err(err))
+			}
+			repoDir := resolveRepoDir(in)
+			if repoDir == "" {
+				return "--dir is required when --diff-file is passed (pass a git repository directory where git apply --3way can be tested)"
+			}
+			if st, err := os.Stat(repoDir); err != nil || !st.IsDir() {
+				return fmt.Sprintf("--dir %s is not a directory (pass a git repository directory where git apply --3way can be tested)", oneline.Field(repoDir))
+			}
+			cmd := exec.Command("git", "-C", repoDir, "rev-parse", "--git-dir")
+			if err := cmd.Run(); err != nil {
+				return fmt.Sprintf("--dir %s is not a git repository (pass a git repository directory where git apply --3way can be tested)", oneline.Field(repoDir))
+			}
+		}
+	case "port":
+		if strings.TrimSpace(in.Title) == "" {
+			return "--title is required for a port card (pass the port contract)"
+		}
+	case "docs-guard":
+		// repo is checked above
+	case "report":
+		if isV2Cut(in) && strings.TrimSpace(in.Title) == "" {
+			return "--title is required for a v2 report card (pass the measurement objective)"
+		}
 	}
 	return ""
+}
+
+func resolveRepoDir(in CutKindInput) string {
+	if in.Dir != "" {
+		return in.Dir
+	}
+	if st, err := os.Stat(in.Repo); err == nil && st.IsDir() {
+		return in.Repo
+	}
+	if _, err := os.Stat(".git"); err == nil {
+		return "."
+	}
+	return in.Dir
 }
 
 func cutKindKnown(kind string) bool {
@@ -184,9 +324,71 @@ func cutKindKnown(kind string) bool {
 	return false
 }
 
+// isV2Cut returns true if the input demands a Card Template v2 format,
+// either via explicit --v2 or through auto-selection (port, docs-guard,
+// reviewer line, or test command). A bare --kind report is the text-only report
+// card already on dev; it is a v2 report only when one of the v2 signals above
+// asks for it.
+func isV2Cut(in CutKindInput) bool {
+	return in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard"
+}
+
 // renderKindCard writes line 1, the source line, the prior attempt if there is one, the
 // kind's own instruction and the body.
-func renderKindCard(in CutKindInput, n int, body string) string {
+func renderKindCard(in CutKindInput, n int, body string, chosenDiff string, diffArtifact ...string) (string, error) {
+	if isV2Cut(in) {
+		failingOut := in.FailingOutput
+		if failingOut != "" {
+			if raw, err := os.ReadFile(failingOut); err == nil {
+				failingOut = string(raw)
+			}
+		}
+		testPkg := in.TestPackage
+		testFunc := in.TestFunction
+		if testPkg == "" && in.TestName != "" {
+			testPkg = in.TestName
+		}
+
+		artifactLocator := ""
+		if len(diffArtifact) > 0 && strings.TrimSpace(diffArtifact[0]) != "" {
+			artifactLocator = strings.TrimSpace(diffArtifact[0])
+		}
+
+		card, err := RenderCardV2(CardV2Input{
+			Kind:          in.Kind,
+			Number:        n,
+			Repo:          in.Repo,
+			Title:         in.Title,
+			Branch:        in.Branch,
+			Base:          in.Base,
+			BaseSHA:       in.BaseSHA,
+			Location:      in.Location,
+			TestPackage:   testPkg,
+			TestFunction:  testFunc,
+			TestCommand:   in.TestCommand,
+			Paths:         in.Paths,
+			ReviewerLine:  in.ReviewerLine,
+			PriorDiff:     chosenDiff,
+			DiffArtifact:  artifactLocator,
+			FailingOutput: failingOut,
+			PreflightCmd:  in.PreflightCmd,
+			PR:            in.PR,
+			Issue:         in.Issue,
+			Head:          in.Head,
+			Body:          body,
+			HoldLine:      in.HoldLine,
+			HoldFile:      in.HoldFile,
+			Remains:       in.Remains,
+			Applied:       in.Applied,
+			Attempt:       in.Attempt,
+			Symbol:        in.Symbol,
+			RedWhen:       in.RedWhen,
+		})
+		if err != nil {
+			return "", fmt.Errorf("render card v2: %w", err)
+		}
+		return card, nil
+	}
 	repo := repoShort(in.Repo)
 	var b strings.Builder
 	switch in.Kind {
@@ -209,21 +411,66 @@ func renderKindCard(in CutKindInput, n int, body string) string {
 	case "guard":
 		fmt.Fprintf(&b, "RESULT: CARD-%d guard of %s at %s\n", n, repo, oneline.Field(in.Head))
 		fmt.Fprintf(&b, "SOURCE: %s@%s\n", in.Repo, oneline.Field(in.Head))
+	case "report":
+		fmt.Fprintf(&b, "RESULT: CARD-%d report of %s\n", n, repo)
+		fmt.Fprintf(&b, "SOURCE: %s\n", in.Repo)
+	case "recut":
+		headStr := in.Head
+		if len(headStr) > 12 {
+			headStr = headStr[:12]
+		}
+		line1 := fmt.Sprintf("RESULT: CARD-%d sha=<sha12> recut of %s", n, repo)
+		if headStr != "" {
+			line1 += fmt.Sprintf(" at %s", headStr)
+		}
+		if in.HoldLine != "" {
+			line1 += " from HOLD"
+		} else if in.Title != "" {
+			line1 += fmt.Sprintf(": %s", oneline.Escape(in.Title))
+		}
+		fmt.Fprintf(&b, "%s\n", line1)
+		fmt.Fprintf(&b, "KIND: recut\n")
+		if strings.TrimSpace(in.Base) != "" {
+			fmt.Fprintf(&b, "BASE: %s\n", oneline.Field(in.Base))
+		}
+		if strings.TrimSpace(in.BaseSHA) != "" {
+			fmt.Fprintf(&b, "base-sha: %s\n", oneline.Field(in.BaseSHA))
+		}
+		if p := strings.TrimSpace(in.Paths); p != "" {
+			fmt.Fprintf(&b, "PATHS: %s\n", p)
+		}
+		if t := strings.TrimSpace(in.TestName); t != "" {
+			fmt.Fprintf(&b, "TEST: %s\n", t)
+		}
+		if in.HoldLine != "" {
+			fmt.Fprintf(&b, "HOLD: %s\n", in.HoldLine)
+		}
+		if in.Applied != "" {
+			fmt.Fprintf(&b, "applied: %s\n", in.Applied)
+		}
+		if in.HoldLine != "" {
+			fmt.Fprintf(&b, "SOURCE: %s HOLD %s\n", in.Repo, oneline.Field(in.Head))
+		} else {
+			fmt.Fprintf(&b, "SOURCE: %s\n", in.Repo)
+		}
+		if r := strings.TrimSpace(in.Remains); r != "" {
+			fmt.Fprintf(&b, "REMAINS: %s\n", r)
+		}
 	}
 	if p := strings.TrimSpace(in.Prior); p != "" {
 		fmt.Fprintf(&b, "Prior attempts: %s\n", oneline.Escape(p))
 	}
-	b.WriteString(kindInstruction(in, body))
+	b.WriteString(kindInstruction(in, body, chosenDiff))
 	if body != "" {
 		b.WriteString(body + "\n")
 	}
-	return b.String()
+	return b.String(), nil
 }
 
 // kindInstruction is the one paragraph a kind always carries, whatever its body says. A fix
 // card cut without --body-file carries the practice-17 STEP skeleton instead of the one
 // paragraph, because a bodyless card has to number its own steps.
-func kindInstruction(in CutKindInput, body string) string {
+func kindInstruction(in CutKindInput, body string, diffContent string) string {
 	switch in.Kind {
 	case "read":
 		return fmt.Sprintf(`Read pull request %d of %s at head %s. Quote the rule beside every line you hold.
@@ -248,6 +495,10 @@ Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN 
 		return fmt.Sprintf(rebaseSteps,
 			rebasePreamble, in.Base, in.Branch, in.Branch, in.Branch, in.Base,
 			in.Base, in.Base, in.Base, in.Base, in.Branch, in.Base)
+	case "report":
+		return fmt.Sprintf(`Read and report on %s. Do not run go build, go test or any toolchain; read and write only.
+Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE, then the report.
+`, in.Repo)
 	case "guard":
 		return fmt.Sprintf(`The guard verdict is COMPUTED, never judged. Do not write GUARDED or UNGUARDED from reading the code.
 The model only picks which packages to run. Then:
@@ -257,6 +508,8 @@ The model only picks which packages to run. Then:
 Copy the GUARD line's status= field onto RESULT.md line 2 (GUARDED, UNGUARDED, COMPILER-HELD, NOT-APPLICABLE, or ABSTAIN — never the reason= tail). A verdict the command did not print is a lie.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 the status= value, then REPO %s.
 `, oneline.Field(in.Head), in.Repo)
+	case "recut":
+		return recutInstruction(in, diffContent)
 	default:
 		return fmt.Sprintf(`Amend the spec: numbered rules, each with the test that makes it red, and no rule softened to match code.
 Write RESULT.md: line 1 exactly the line 1 of this card, line 2 DONE or ABSTAIN <why>, then BRANCH <name> and REPO %s.
