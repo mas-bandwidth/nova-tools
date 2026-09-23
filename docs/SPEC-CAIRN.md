@@ -93,37 +93,32 @@ Every test runs against a throwaway `t.TempDir()` store named on the command lin
 `cairn` package's `Open`/`Append` calls) and a `--now` RFC 3339 UTC replay stamp — no network,
 no Redis, no real clock, no secret; each test writes entries, reads them back, and is proven
 able to fail by being red first.
+One numbered line per test: where one test holds several behaviours, they share its line, so
+the 33 behaviours below are carried by 26 tests.
 
-1. `TestOpenAppendIndexReceiptRoundTrip` — `open` starts one session record under a caller-named store; the record is written to and read back.
+1. `TestOpenAppendIndexReceiptRoundTrip` — `open` starts one session record under a caller-named store; the record is written to and read back; `index` builds the bounded section/entry index and coverage ledger mechanically.
 2. `TestMissingFlagsAreRefusedNeverGuessed` — there is no default store, no environment variable and no discovery; a missing `--store` is a refusal.
-3. `TestDuplicateAppendIsIdempotentAndConflictingEntryRefused` — the session identifier is stable: retries and recoveries address the same record by this name.
+3. `TestDuplicateAppendIsIdempotentAndConflictingEntryRefused` — the session identifier is stable: retries and recoveries address the same record by this name; a retry of the same request succeeds with `duplicate=true` and no second entry; the same entry id carrying different prose is exit 1, a conflict, never an overwrite.
 4. `TestConcurrentRecordsAndAlternateHeaders` — concurrent records coexist untouched by each other.
 5. `TestReOpenOfANestedSessionIsANoOp` — re-opening an open session is a no-op.
 6. `TestOpenConcurrentRecordsAndAlternateHeaders` — the session file's header is convention only and is never parsed; alternate header conventions survive.
-7. `TestAppendLandsInTheBenchFileStore` — a store may keep one markdown file per session directly under it (`<store>/<session>.md`), and both verbs read it.
+7. `TestAppendLandsInTheBenchFileStore` — a store may keep one markdown file per session directly under it (`<store>/<session>.md`), and both verbs read it; bench `append` lands a dated `## <stamp> — <entry>` section at the end, one blank line between sections, words byte-for-byte; nothing appears beside the bench file: no `entries/`, no `log.jsonl`, no index.
 8. `TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord` — `open` on a bench record is a no-op.
-9. `TestAppendLandsInTheBenchFileStore` — bench `append` lands a dated `## <stamp> — <entry>` section at the end, one blank line between sections, words byte-for-byte.
-10. `TestAppendLandsInTheBenchFileStore` — nothing appears beside the bench file: no `entries/`, no `log.jsonl`, no index.
-11. `TestAppendToTheBenchFileRetriesAsADuplicate` / `TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID` — the duplicate and conflict rules read the bench section instead of an entry file.
-12. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
-13. `TestIndexAndReceiptCoverTheFirstShapeOnly` — `index`/`receipt`, which report on stored entries, cover the first shape only.
-14. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
-15. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`).
-16. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` / `TestAppendViaFileAndStdinKeepsExactBytes` — `append` files the friend's chosen words byte-for-byte.
-17. `TestBadClockIsRefused` — the stamp is a real clock in UTC; `--now` names an RFC 3339 UTC replay and a non-RFC 3339 value is exit 2.
-18. `TestSourcePointerIsRecordedNeverOpened` — the source pointers are recorded and never opened.
-19. `TestBothTextAndFileAreRefused` — exactly one of `--text` or `--file` names the words; giving both is refused.
-20. `TestDuplicateAppendIsIdempotentAndConflictingEntryRefused` — a retry of the same request succeeds with `duplicate=true` and no second entry.
-21. `TestDuplicateAppendIsIdempotentAndConflictingEntryRefused` — the same entry id carrying different prose is exit 1, a conflict, never an overwrite.
-22. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — each entry lands atomically (fixed temp name, fsync, rename, dir fsync); a stale `*.tmp` is never indexed and the retry overwrites the partial.
-23. `TestRetryHealsTheMissingPointerLine` — the retry heals the missing pointer line.
-24. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — the retry preserves other writers' entries.
-25. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` — success reports local persistence and remote publication separately (`persisted=true published=false`).
-26. `TestInvalidPublishPolicyIsRefused` — the caller-chosen `--publish` policy (`never|manual|deferred|immediate`, required) travels with the entry; an invalid value is refused.
-27. `TestOpenAppendIndexReceiptRoundTrip` — `index` builds the bounded section/entry index and coverage ledger mechanically.
-28. `TestIndexRowCarriesStampSourceAndSize` — index rows are derived from the stored entries: session/entry pointers, stamps, sources, sizes — never recopied narratives.
-29. `TestIndexMaxDefaultTwentyAndZeroPrintsAll` — every listing takes `--max` (default 20, 0 prints all).
-30. `TestIndexPrintsMORELineWithRemedy` — index prints one `MORE` line with its remedy.
-31. `TestCoverageCarriesTheTotalWhenCapped` — the count is never capped and the `INDEX COVERAGE` line carries the total whether the run passed or failed.
-32. `TestReceiptReportsStampSourceSizeAndPublish` — `receipt` names stamp, source pointers, size and the `persisted=true published=false publish=<policy>` split.
-33. `TestLifecycleVerbsStayRefused` — there is deliberately no seal/consume/delete/grade/consolidate/wake/rollup/retention verb; naming one on the command line is exit 2, unknown subcommand.
+9. `TestAppendToTheBenchFileRetriesAsADuplicate` / `TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID` — the duplicate and conflict rules read the bench section instead of an entry file.
+10. `TestCoverageCountsTheBenchSessionFiles` — the coverage ledger counts the bench file.
+11. `TestIndexAndReceiptCoverTheFirstShapeOnly` — `index`/`receipt`, which report on stored entries, cover the first shape only.
+12. `TestNestedRecordWinsWhenStoreHoldsBoth` — the nested record wins when a store somehow holds both shapes.
+13. `TestAppendWithNoRecordAnywhereNamesTheOpenVerb` — a refusal names the remedy verb whole (`nova-cairn open --store … --session … --publish …`).
+14. `TestAppendKeepsExactProseAndReportsPersistenceSeparately` / `TestAppendViaFileAndStdinKeepsExactBytes` — `append` files the friend's chosen words byte-for-byte; success reports local persistence and remote publication separately (`persisted=true published=false`).
+15. `TestBadClockIsRefused` — the stamp is a real clock in UTC; `--now` names an RFC 3339 UTC replay and a non-RFC 3339 value is exit 2.
+16. `TestSourcePointerIsRecordedNeverOpened` — the source pointers are recorded and never opened.
+17. `TestBothTextAndFileAreRefused` — exactly one of `--text` or `--file` names the words; giving both is refused.
+18. `TestInterruptedAppendRecoversAndPreservesOtherWriters` — each entry lands atomically (fixed temp name, fsync, rename, dir fsync); a stale `*.tmp` is never indexed and the retry overwrites the partial; the retry preserves other writers' entries.
+19. `TestRetryHealsTheMissingPointerLine` — the retry heals the missing pointer line.
+20. `TestInvalidPublishPolicyIsRefused` — the caller-chosen `--publish` policy (`never|manual|deferred|immediate`, required) travels with the entry; an invalid value is refused.
+21. `TestIndexRowCarriesStampSourceAndSize` — index rows are derived from the stored entries: session/entry pointers, stamps, sources, sizes — never recopied narratives.
+22. `TestIndexMaxDefaultTwentyAndZeroPrintsAll` — every listing takes `--max` (default 20, 0 prints all).
+23. `TestIndexPrintsMORELineWithRemedy` — index prints one `MORE` line with its remedy.
+24. `TestCoverageCarriesTheTotalWhenCapped` — the count is never capped and the `INDEX COVERAGE` line carries the total whether the run passed or failed.
+25. `TestReceiptReportsStampSourceSizeAndPublish` — `receipt` names stamp, source pointers, size and the `persisted=true published=false publish=<policy>` split.
+26. `TestLifecycleVerbsStayRefused` — there is deliberately no seal/consume/delete/grade/consolidate/wake/rollup/retention verb; naming one on the command line is exit 2, unknown subcommand.
