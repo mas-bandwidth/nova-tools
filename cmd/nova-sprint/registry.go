@@ -6,6 +6,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 )
 
 // Verb files register themselves in init. Adding a verb never edits main.go.
@@ -28,7 +30,15 @@ func register(v Verb) {
 }
 
 func run(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) == 0 || args[0] == "help" {
+	if len(args) == 0 {
+		fmt.Fprintln(errOut, "nova-sprint: a verb is required; run: nova-sprint help")
+		return 2
+	}
+	if args[0] == "version" || args[0] == "--version" {
+		fmt.Fprintln(out, buildinfo.Line("nova-sprint", version))
+		return 0
+	}
+	if args[0] == "help" {
 		fmt.Fprintln(out, "nova-sprint: Redis sprint coordination")
 		fmt.Fprintln(out, "usage: nova-sprint <verb> [args]")
 		fmt.Fprintln(out, "verbs:")
@@ -40,7 +50,9 @@ func run(ctx context.Context, args []string, out, errOut io.Writer) int {
 		for _, name := range names {
 			fmt.Fprintf(out, "  %s  %s\n", name, verbs[name].Summary)
 		}
-		fmt.Fprintln(out, "example: nova-sprint help")
+		fmt.Fprintln(out, "example:")
+		fmt.Fprintln(out, "nova-sprint help")
+		fmt.Fprintln(out, "nova-sprint version")
 		return 0
 	}
 	v, ok := verbs[args[0]]

@@ -13,5 +13,5 @@ read seam for census and other non-snapshot bulk reads. A table snapshot must
 use a single read-only Redis Function to retain one consistent instant.
 
 The tests start a throwaway Redis server bound to loopback, with its working
-directory beneath the test's temporary directory. They require `redis-server`
-on `PATH`.
+directory beneath the test's temporary directory. When `redis-server` is absent
+from a CI runner, the integration controls skip there; they run on a Redis bench.
