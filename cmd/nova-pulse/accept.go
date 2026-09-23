@@ -25,8 +25,11 @@ package main
 // Each command runs once; a red is a finding, never a rerun (rule 5). No model, no
 // forge, no network: GOPROXY is off (rule 10).
 //
-// --cert must be a live CERTIFY OK record (§2 rule 4) for --bench with the go leg
-// passed and until= still ahead; anything else is ABSTAIN bench-uncertified (rule 3).
+// --cert must be a live CERTIFY OK record (§2 rule 4) for --bench: the go leg passed,
+// until= ahead and at most 24 hours after at=, build= this tool's build, go= the host's
+// go version, wall= not none for a code card, and not voided on file by an earlier
+// toolchain abstain on this bench (§2 rules 6-7); anything else is ABSTAIN
+// bench-uncertified (§1 rule 3) with the first failed check on stderr.
 //
 // Not yet here, and said so rather than faked: the selftest's twelve seeds and the
 // control-on-file refusal of rule 8 (recut-2222 part 2), and running the commands
@@ -366,12 +369,34 @@ func acceptOverlayBaseTests(ctx context.Context, wt, base, head string, files, e
 	return v, false, nil
 }
 
+// acceptCertMaxLife is §2 rule 6's lifetime: a record whose until= is more than this
+// after its at= is not a certification, however far ahead until= reads.
+const acceptCertMaxLife = 24 * time.Hour
+
+// acceptCertWant is what a live certification must match on this run: the bench the
+// gate runs on, this tool's build identity, the host's go version as the gate's own go
+// reports it, whether the card changes code (§2 rule 7), and the ids voided on file.
+type acceptCertWant struct {
+	Bench, Build, Go string
+	Code             bool
+	Void             map[string]bool
+}
+
 // acceptCertLive reads a bench certification record (SPEC-TOOLWORK §2 rule 4): the
-// first CERTIFY OK line, with go among legs= and not among failed=, a parseable at= and
-// an until= after now (rule 6: 24 hours, then re-run, never edited). It returns the
-// record's bench= for the caller to hold against --bench; ok false is not a live
-// certification and the gate abstains (§1 rule 3).
-func acceptCertLive(raw string, now time.Time) (certBench string, ok bool) {
+// first CERTIFY OK line. It is live only when every one of these holds, and the first
+// that does not is returned as why (empty when live), for the gate to print beside its
+// ABSTAIN bench-uncertified (§1 rule 3):
+//
+//	bench      bench= and cert= present and bench= is --bench
+//	go-leg     go among legs= and not among failed=
+//	stale      at= and until= parse, at= is not in the future and until= is after now
+//	over-24h   until= is at most 24 hours after at= (rule 6)
+//	build      build= is this tool's build identity (rule 6: nova-update adopt voids it)
+//	go-version go= is the host's go version (rule 6: a changed go version voids it)
+//	wall-none  wall= is present, and is not none when the card changes code (rule 7)
+//	void       the record's content id is not voided on file (rule 6: an accept on this
+//	           bench that abstained with reason=toolchain; see acceptCertVoid)
+func acceptCertLive(raw string, now time.Time, want acceptCertWant) (why string) {
 	for _, line := range strings.Split(raw, "\n") {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "CERTIFY OK ")
 		if !ok {
@@ -395,10 +420,84 @@ func acceptCertLive(raw string, now time.Time) (certBench string, ok bool) {
 		}
 		at, aerr := time.Parse(time.RFC3339, kv["at"])
 		until, uerr := time.Parse(time.RFC3339, kv["until"])
-		return kv["bench"], kv["bench"] != "" && kv["cert"] != "" && has(kv["legs"], "go") && !has(kv["failed"], "go") &&
-			aerr == nil && uerr == nil && !at.After(now) && now.Before(until)
+		switch {
+		case kv["bench"] == "" || kv["cert"] == "" || kv["bench"] != want.Bench:
+			return "bench"
+		case !has(kv["legs"], "go") || has(kv["failed"], "go"):
+			return "go-leg"
+		case aerr != nil || uerr != nil || at.After(now) || !now.Before(until):
+			return "stale"
+		case until.Sub(at) > acceptCertMaxLife:
+			return "over-24h"
+		case kv["build"] == "" || kv["build"] != want.Build:
+			return "build"
+		case kv["go"] == "" || kv["go"] != want.Go:
+			return "go-version"
+		case kv["wall"] == "" || (want.Code && kv["wall"] == "none"):
+			return "wall-none"
+		case want.Void[acceptCertID(raw)]:
+			return "void"
+		}
+		return ""
 	}
-	return "", false
+	return "not-a-record"
+}
+
+// acceptCertID is a record's content id: the first twelve hex of its SHA-256 (§2 rule
+// 4's cert=<id>, computed rather than trusted).
+func acceptCertID(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// acceptCertVoidPath is where the voids of the record at cert are kept: beside it, so
+// the record itself is never edited (§2 rule 6: a void record is re-run, never edited).
+func acceptCertVoidPath(cert string) string { return cert + ".void" }
+
+// acceptCertVoids reads the ids voided beside the record at cert: every `CERT VOID
+// cert=<id>` line. A re-run certify writes a record with a new id, which no line names.
+func acceptCertVoids(cert string) map[string]bool {
+	out := map[string]bool{}
+	raw, err := os.ReadFile(acceptCertVoidPath(cert))
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "CERT VOID ")
+		if !ok {
+			continue
+		}
+		for _, field := range strings.Fields(rest) {
+			if id, ok := strings.CutPrefix(field, "cert="); ok && id != "" {
+				out[id] = true
+			}
+		}
+	}
+	return out
+}
+
+// acceptCertVoid voids the record with id on file: one appended `CERT VOID` line. It is
+// called when an accept on this bench abstains with reason=toolchain (§2 rule 6).
+func acceptCertVoid(cert, id, label string, now time.Time) error {
+	f, err := os.OpenFile(acceptCertVoidPath(cert), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := fmt.Fprintf(f, "CERT VOID cert=%s reason=toolchain label=%s at=%s\n", id, oneline.Field(label), now.UTC().Format(time.RFC3339))
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	return werr
+}
+
+// acceptHostGo is the go version the gate's own go commands run with, asked of `go env
+// GOVERSION` outside any module so no go.mod's toolchain line can answer instead.
+func acceptHostGo(ctx context.Context) string {
+	out, err := acceptGo(ctx, os.TempDir(), "env", "GOVERSION")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // acceptRed is a REJECT on a command's output, or the bench's ABSTAIN when the first
@@ -594,7 +693,14 @@ func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	certRaw, err := os.ReadFile(*cert)
-	if certBench, live := acceptCertLive(string(certRaw), now); err != nil || !live || certBench != *bench {
+	if err != nil {
+		fmt.Fprintf(stderr, "ACCEPT CERT void=unreadable (%s)\n", oneline.Err(err))
+		return abstain("bench-uncertified")
+	}
+	want := acceptCertWant{Bench: *bench, Build: buildVersion(), Go: acceptHostGo(context.Background()),
+		Code: acceptGatedKinds[card.Kind], Void: acceptCertVoids(*cert)}
+	if why := acceptCertLive(string(certRaw), now, want); why != "" {
+		fmt.Fprintf(stderr, "ACCEPT CERT void=%s (re-run nova-pulse certify for this bench; a record is never edited)\n", why)
 		return abstain("bench-uncertified")
 	}
 	if !acceptGatedKinds[card.Kind] {
@@ -604,8 +710,7 @@ func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintln(stderr, "ACCEPT REFUSED: the card names no TEST: (a gated kind's card names its test)")
 		return 2
 	}
-	certSum := sha256.Sum256(certRaw)
-	certID := hex.EncodeToString(certSum[:])[:12]
+	certID := acceptCertID(string(certRaw))
 	control := acceptControlID(buildVersion(), acceptFixtureDigest(), certID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
@@ -626,6 +731,11 @@ func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 			control, oneline.Field(*bench), certID, took)
 		return 0
 	case "ABSTAIN":
+		if v.Reason == "toolchain" {
+			if err := acceptCertVoid(*cert, certID, card.Label, now); err != nil {
+				fmt.Fprintf(stderr, "ACCEPT CERT void-not-written: %s (the record stays live; re-run certify by hand)\n", oneline.Err(err))
+			}
+		}
 		return abstain(v.Reason)
 	}
 	fmt.Fprintf(stdout, "ACCEPT REJECT label=%s kind=%s head=%s reason=%s at=%s control=%s bench=%s cert=%s took=%s\n",

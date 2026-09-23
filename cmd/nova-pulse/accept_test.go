@@ -30,12 +30,23 @@ func acceptTestJob(t *testing.T) (job, cert string) {
 }
 
 // acceptTestCert writes a certify record (SPEC-TOOLWORK §2 rule 4's CERTIFY OK line)
-// for bench whose until= is until, and returns its path.
+// for bench whose until= is until and at= 24 hours before it, carrying this build and
+// the host's go version (rule 6), and returns its path.
 func acceptTestCert(t *testing.T, bench string, until time.Time) string {
 	t.Helper()
+	return acceptTestCertAt(t, bench, until.Add(-24*time.Hour), until)
+}
+
+// acceptTestCertAt is acceptTestCert with at= given.
+func acceptTestCertAt(t *testing.T, bench string, at, until time.Time) string {
+	t.Helper()
+	goVersion := acceptHostGo(context.Background())
+	if goVersion == "" {
+		t.Fatal("go env GOVERSION answered nothing")
+	}
 	cert := filepath.Join(t.TempDir(), "cert")
-	line := "CERTIFY OK   bench=" + bench + " cert=0123456789ab legs=go failed=none absent=none wall=seatbelt build=test at=" +
-		until.Add(-24*time.Hour).UTC().Format(time.RFC3339) + " until=" + until.UTC().Format(time.RFC3339) + "\n"
+	line := "CERTIFY OK   bench=" + bench + " cert=0123456789ab legs=go failed=none absent=none wall=seatbelt build=" + buildVersion() +
+		" go=" + goVersion + " at=" + at.UTC().Format(time.RFC3339) + " until=" + until.UTC().Format(time.RFC3339) + "\n"
 	if err := os.WriteFile(cert, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +184,10 @@ func TestAcceptRejectsWithTheFirstFailingToken(t *testing.T) {
 // TestAcceptAbstainsOnAnUncertifiedBench: a certification record that is missing,
 // stale, for another bench, failing the go leg or not a CERTIFY OK record at all is the
 // bench's fault, not the card's: ABSTAIN, exit 2, and no verdict about the card
-// (SPEC-TOOLWORK §1 rule 3, §2 rules 4-6).
+// (SPEC-TOOLWORK §1 rule 3, §2 rules 4-6). Rule 6's voids are named cases: an until= more
+// than 24 hours after at= (a-cert-past-until-is-void's lifetime half),
+// cert-voids-on-build-change, a-changed-go-version-voids-the-cert; and rule 7's
+// wall-none-is-uncertified-for-a-code-card. Each names the check that fired on stderr.
 func TestAcceptAbstainsOnAnUncertifiedBench(t *testing.T) {
 	t.Parallel()
 	later := time.Now().Add(24 * time.Hour)
@@ -189,21 +203,36 @@ func TestAcceptAbstainsOnAnUncertifiedBench(t *testing.T) {
 		return p
 	}
 	cases := []struct {
-		name string
-		cert func(t *testing.T) string
+		name, why string
+		cert      func(t *testing.T) string
 	}{
-		{"missing", func(t *testing.T) string { return filepath.Join(t.TempDir(), "no-such-cert") }},
-		{"not a record", func(t *testing.T) string {
+		{"missing", "unreadable", func(t *testing.T) string { return filepath.Join(t.TempDir(), "no-such-cert") }},
+		{"not a record", "not-a-record", func(t *testing.T) string {
 			p := filepath.Join(t.TempDir(), "cert")
 			if err := os.WriteFile(p, []byte("bench=test certified\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			return p
 		}},
-		{"stale", func(t *testing.T) string { return acceptTestCert(t, "test", time.Now().Add(-time.Hour)) }},
-		{"another bench", func(t *testing.T) string { return acceptTestCert(t, "other", later) }},
-		{"go leg failed", func(t *testing.T) string { return rewrite(t, "legs=go failed=none", "legs=lisp failed=go") }},
-		{"no go leg", func(t *testing.T) string { return rewrite(t, "legs=go ", "legs=lisp ") }},
+		{"stale", "stale", func(t *testing.T) string { return acceptTestCert(t, "test", time.Now().Add(-time.Hour)) }},
+		{"another bench", "bench", func(t *testing.T) string { return acceptTestCert(t, "other", later) }},
+		{"go leg failed", "go-leg", func(t *testing.T) string { return rewrite(t, "legs=go failed=none", "legs=lisp failed=go") }},
+		{"no go leg", "go-leg", func(t *testing.T) string { return rewrite(t, "legs=go ", "legs=lisp ") }},
+		{"a-cert-past-until-is-void: until more than 24h after at", "over-24h", func(t *testing.T) string {
+			return acceptTestCertAt(t, "test", time.Now().Add(-time.Hour), time.Now().Add(10*365*24*time.Hour))
+		}},
+		{"cert-voids-on-build-change", "build", func(t *testing.T) string {
+			return rewrite(t, " build="+buildVersion()+" ", " build=000000000000-another-build ")
+		}},
+		{"cert with no build", "build", func(t *testing.T) string { return rewrite(t, " build="+buildVersion()+" ", " ") }},
+		{"a-changed-go-version-voids-the-cert", "go-version", func(t *testing.T) string {
+			return rewrite(t, " go="+acceptHostGo(context.Background())+" ", " go=go1.0 ")
+		}},
+		{"cert with no go version", "go-version", func(t *testing.T) string {
+			return rewrite(t, " go="+acceptHostGo(context.Background())+" ", " ")
+		}},
+		{"wall-none-is-uncertified-for-a-code-card", "wall-none", func(t *testing.T) string { return rewrite(t, " wall=seatbelt ", " wall=none ") }},
+		{"cert with no wall", "wall-none", func(t *testing.T) string { return rewrite(t, " wall=seatbelt ", " ") }},
 	}
 	for _, c := range cases {
 		c := c
@@ -211,10 +240,51 @@ func TestAcceptAbstainsOnAnUncertifiedBench(t *testing.T) {
 			t.Parallel()
 			job, _ := acceptTestJob(t)
 			code, line := acceptTestRun(t, job, c.cert(t), acceptTestCard(t))
-			if code != 2 || !strings.HasPrefix(line, "ACCEPT ABSTAIN ") || !strings.Contains(line, "reason=bench-uncertified ") {
-				t.Fatalf("%s: exit=%d line=%q, want ACCEPT ABSTAIN reason=bench-uncertified exit 2", c.name, code, line)
+			if code != 2 || !strings.HasPrefix(line, "ACCEPT ABSTAIN ") || !strings.Contains(line, "reason=bench-uncertified ") ||
+				!strings.Contains(line, "ACCEPT CERT void="+c.why+" ") {
+				t.Fatalf("%s: exit=%d line=%q, want ACCEPT ABSTAIN reason=bench-uncertified exit 2 and void=%s", c.name, code, line, c.why)
 			}
 		})
+	}
+}
+
+// TestAcceptAToolchainAbstainVoidsTheCert is §2 rule 6's a-toolchain-abstain-voids-the-cert:
+// a card whose gate cannot fetch a module (GOPROXY=off, rule 10) is ABSTAIN
+// reason=toolchain, and from then on the same record is void for every card on that
+// bench, the known-good fix included, while the record file itself is left as it was.
+func TestAcceptAToolchainAbstainVoidsTheCert(t *testing.T) {
+	t.Parallel()
+	job, cert := acceptTestJob(t)
+	before, _ := os.ReadFile(cert)
+	for file, text := range map[string]string{
+		"go.mod": "module example.invalid/sign\n\ngo 1.21\n\nrequire example.invalid/absent v1.0.0\n",
+		"go.sum": "example.invalid/absent v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n" +
+			"example.invalid/absent v1.0.0/go.mod h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n",
+		"absent.go": "package sign\n\nimport _ \"example.invalid/absent\"\n",
+	} {
+		if err := os.WriteFile(filepath.Join(job, file), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := acceptFixtureCommit(context.Background(), job, "need a module the bench does not hold"); err != nil {
+		t.Fatal(err)
+	}
+	card := strings.Replace(acceptTestCard(t), "PATHS: sign.go, sign_test.go", "PATHS: sign.go, sign_test.go, go.mod, go.sum, absent.go", 1)
+	code, line := acceptTestRun(t, job, cert, card)
+	if code != 2 || !strings.Contains(line, "reason=toolchain ") {
+		t.Fatalf("module the bench does not hold: exit=%d line=%q, want ACCEPT ABSTAIN reason=toolchain exit 2", code, line)
+	}
+	good, _ := acceptTestJob(t)
+	code, line = acceptTestRun(t, good, cert, acceptTestCard(t))
+	if code != 2 || !strings.Contains(line, "reason=bench-uncertified ") || !strings.Contains(line, "ACCEPT CERT void=void ") {
+		t.Fatalf("known-good fix after a toolchain abstain: exit=%d line=%q, want ABSTAIN bench-uncertified void=void", code, line)
+	}
+	if after, _ := os.ReadFile(cert); string(after) != string(before) {
+		t.Fatalf("the record was edited: before=%q after=%q (a void record is re-run, never edited)", before, after)
+	}
+	fresh := acceptTestCert(t, "test", time.Now().Add(23*time.Hour))
+	if code, line = acceptTestRun(t, good, fresh, acceptTestCard(t)); code != 0 {
+		t.Fatalf("a re-run record: exit=%d line=%q, want ACCEPT OK", code, line)
 	}
 }
 
