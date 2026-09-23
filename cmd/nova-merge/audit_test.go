@@ -51,8 +51,8 @@ var mergeAudit = audit.Config{
 		// The two batch sites are the shape this walk cannot see: a value built above the
 		// print site. Each has a behavioral test of its own in batch_test.go.
 		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
-		"batch.go|runBatch|line":        "the fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine including check= when checks=required; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
-		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
+		"batch.go|runBatch|line":      "the fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine including check= when checks=required; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
+		"batch.go|memberMessage|name": "the batch's own --name (mergeMembers and bisectBuild pass in.name), inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -93,6 +93,11 @@ var mergeAudit = audit.Config{
 		// registry and returns an error whose message is already escaped through
 		// oneline.Field and oneline.Err; it prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/merge/bench"`,
+		// hygiene holds no writer of its own (#1661): Check runs read-only git over a
+		// member's range and RETURNS findings; batch renders the one it names through
+		// oneline.Escape/Cap and %q before printing, and a matched secret's text is never
+		// in a finding at all.
+		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
 		// safepath holds no writer of its own: RemoveUnder only decides whether a path
 		// may be removed and returns an os error, which every caller renders through
 		// oneline.Escape or oneline.Err before printing. It cannot write past the

@@ -129,8 +129,11 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 	absent(t, remoteRefs(l), "rowan/integration-1")
 }
 
-// #2499 item 3 / #2508. A member that does not compile turns the batch red at
-// `go build`, and the verdict must quote the compiler line, not only `# package`.
+// #2499 item 3 / #2508. A member that does not compile turns the build red, and the
+// line that names it must quote the compiler line, not only `# package`. Since #1661 the
+// red member is bisected out and DROPPED out loud (owner ruling 2026-09-23 7:05 PM ET:
+// the stream rule, the drop is on the record, not a failure of the batch), so a batch
+// whose one red member is dropped is exit 0 with the drop line carrying the stderr.
 func TestBatchFailKeepsTheBuildStderr(t *testing.T) {
 	t.Parallel()
 	l := batchRepo(t)
@@ -146,13 +149,14 @@ func TestBatchFailKeepsTheBuildStderr(t *testing.T) {
 
 	exit, stdout, stderr := l.run("batch", "--name", "integration-build-stderr", "--pr", "4",
 		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
-	if exit != 1 {
-		t.Fatalf("a red build is exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("a batch whose red member is dropped is exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
-	contains(t, stdout, "BATCH FAIL")
-	contains(t, stdout, "step=build")
-	contains(t, stdout, "undefined: Foo")
-	absent(t, stdout, "BATCH OK")
+	contains(t, stderr, "BATCH DROP #4")
+	contains(t, stderr, "build red with this member merged")
+	contains(t, stderr, "undefined: Foo")
+	contains(t, stdout, "dropped=4")
+	absent(t, stdout, "BATCH FAIL")
 }
 
 // THE GREEN RUN, and the exact shape of the line a caller parses. #2 still conflicts and
