@@ -563,13 +563,13 @@ func TestFleetKeeperPropagatesFolderAndBaseErrors(t *testing.T) {
 		}
 		foundFoldErr := false
 		for _, d := range receipt.Decisions {
-			if strings.Contains(d, "FOLD ERROR:") {
+			if strings.Contains(d, "FOLD FAILED:") {
 				foundFoldErr = true
 				break
 			}
 		}
 		if !foundFoldErr {
-			t.Errorf("decisions do not contain FOLD ERROR: %v", receipt.Decisions)
+			t.Errorf("decisions do not contain FOLD FAILED: %v", receipt.Decisions)
 		}
 	}
 
@@ -611,13 +611,13 @@ func TestFleetKeeperPropagatesFolderAndBaseErrors(t *testing.T) {
 		}
 		foundBaseErr := false
 		for _, d := range receipt.Decisions {
-			if strings.Contains(d, "BASE ERROR:") {
+			if strings.Contains(d, "BASE FAILED:") {
 				foundBaseErr = true
 				break
 			}
 		}
 		if !foundBaseErr {
-			t.Errorf("decisions do not contain BASE ERROR: %v", receipt.Decisions)
+			t.Errorf("decisions do not contain BASE FAILED: %v", receipt.Decisions)
 		}
 	}
 }

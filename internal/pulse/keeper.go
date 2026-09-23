@@ -144,14 +144,14 @@ func FleetKeeper(in FleetKeeperInput) int {
 	// 4. Formulate decisions.
 	var decisions []string
 	if foldErr != nil {
-		decisions = append(decisions, fmt.Sprintf("FOLD ERROR: %v", foldErr))
+		decisions = append(decisions, fmt.Sprintf("FOLD FAILED: %v", foldErr))
 	} else {
 		decisions = append(decisions, fmt.Sprintf("FOLD: %d results folded (%d clean, %d defect, %d failed, %d skipped)",
 			folds.Total, folds.Clean, folds.Defect, folds.Failed, folds.Skipped))
 	}
 
 	if baseErr != nil {
-		decisions = append(decisions, fmt.Sprintf("BASE ERROR: %v", baseErr))
+		decisions = append(decisions, fmt.Sprintf("BASE FAILED: %v", baseErr))
 		if baseStatus.Status == "" || baseStatus.Status == "unknown" {
 			baseStatus.Status = "error"
 		}
