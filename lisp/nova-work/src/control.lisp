@@ -1688,85 +1688,26 @@ It takes no --expect."
                           (goal-store-scope store))
               2)))
   (let* ((notes (remove-if-not (lambda (n) (note-scope-covers-p n as nil))
-                                (goal-store-notes store)))
+                               (goal-store-notes store)))
          (constraints (remove-if-not (lambda (n) (constraint-p (getf n :constraint)))
-                                      notes))
+                                     notes))
          (rows (loop for n in notes
                      when (constraint-p (getf n :constraint))
                        collect (format nil "constraint ~A deny=~S"
-                                        (getf n :id)
-                                        (constraint-deny (getf n :constraint))))))
+                                       (getf n :id)
+                                       (constraint-deny (getf n :constraint))))))
     (values (list :scope (goal-store-scope store)
-                   :goal (goal-store-goal store)
-                   :rev (goal-store-rev store)
-                   :state (goal-store-node-state store)
-                   :stop (goal-stop-state store)
-                   :constraints (length constraints)
-                   :notes rows)
-             (format nil "GOAL OK scope=~A goal=~A rev=~D state=~A stop=~A constraints=~D notes=~D"
-                     (goal-store-scope store)
-                     (or (goal-store-goal store) "-")
-                     (goal-store-rev store)
-                     (string-downcase (symbol-name (goal-store-node-state store)))
-                     (string-downcase (symbol-name (goal-stop-state store)))
-                     (length constraints) (length notes))
-             0)))
-
-
-;;; ------------------------------------------------------------------
-;;; folded from replays-2331.lisp (nova-tools #2331)
-;;; ------------------------------------------------------------------
-
-;;;; replays-2331.lisp --- the resume predicate and session fencing from
-;;;; docs/SPEC-WORK.md:126-204, :814-822. Each branch of the resume predicate
-;;;; (names-nobody, skew-past, bench-mismatch, token-mismatch) and the fenced
-;;;; write check after handoff admission are pure functions the kernel, the
-;;;; session and the client each call: the Go locked-resource checks, the Lisp
-;;;; session's evaluate-ownership-claim, and the transport's admitted-write
-;;;; guard. Nothing here owns a file, a socket or a clock: the callers supply
-;;;; those from their own seams.
-
-(in-package #:nova-work)
-
-(defun resume-predicate (owner-record my-name my-bench journal-token lock-held)
-  "The resume predicate of SPEC-WORK.md:198-204. The record names me, my journal
-holds its token, my bench wrote that journal, and I hold the journal's lock.
-Returns (values branch reason) where branch is one of :names-nobody, :take
-(which is the expired-lease take), :bench-mismatch, :token-mismatch, :lock-mismatch,
-or :resume. A call site where any of these is the wrong answer for its context
-returns the encoded line its transport or session expects."
-  (cond
-    ((null owner-record)
-     (values :names-nobody "vacant"))
-    ((and (getf owner-record :name) (string/= my-name (getf owner-record :name)))
-     (values :names-nobody (format nil "taken by another owner")))
-    ((and (getf owner-record :until) (getf owner-record :skew)
-          (< (+ (getf owner-record :until) (getf owner-record :skew)) (getf owner-record :now)))
-     (values :take "expired"))
-    ((and (getf owner-record :bench) (string/= my-bench (getf owner-record :bench)))
-     (values :bench-mismatch (format nil "copied journal, not resumed")))
-    ((and journal-token (getf owner-record :token) (string/= journal-token (getf owner-record :token)))
-     (values :token-mismatch "journal lock not held"))
-    ((and (not lock-held) (getf owner-record :token) (not journal-token))
-     (values :lock-mismatch "journal lock not held"))
-    (t
-     (values :resume (format nil "resumed")))))
-
-(defun journal-held-refusal (pid journal socket)
-  "The line for a start that cannot take the journal lock. Format the refusal
-naming the holder's pid and socket from the lock file's contents."
-  (format nil "journal held by pid ~A on ~A" pid journal))
-
-(defun socket-held-refusal (pid journal)
-  "The line for a start whose --session path carries a held lock."
-  (format nil "socket held by pid ~A" pid))
-
-(defun fenced-write-p (session-state)
-  "True from the moment a handoff is admitted: the session refuses every further
-write (SPEC-WORK.md:822)."
-  (eq session-state :fenced))
-
-(defun session-fence-after-handoff (session)
-  "Admit a handoff: fence the session so every further write refuses."
-  (setf (getf session :state) :fenced)
-  (values t (format nil "fenced generation=~D" (getf session :generation)) 0))
+                  :goal (goal-store-goal store)
+                  :rev (goal-store-rev store)
+                  :state (goal-store-node-state store)
+                  :stop (goal-stop-state store)
+                  :constraints (length constraints)
+                  :notes rows)
+            (format nil "GOAL OK scope=~A goal=~A rev=~D state=~A stop=~A constraints=~D notes=~D"
+                    (goal-store-scope store)
+                    (or (goal-store-goal store) "-")
+                    (goal-store-rev store)
+                    (string-downcase (symbol-name (goal-store-node-state store)))
+                    (string-downcase (symbol-name (goal-stop-state store)))
+                    (length constraints) (length notes))
+            0)))
