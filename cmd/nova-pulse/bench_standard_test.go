@@ -54,10 +54,19 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 		"exit 0\n")
 	// Fake curl: the probe reads only the http code it prints.
 	writeBenchExe(t, filepath.Join(bin, "curl"), "#!/bin/sh\necho 200\n")
-	// Fake go printing the wanted version.
-	writeBenchExe(t, filepath.Join(bin, "go"), "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
-	// Fake sbcl: presence on PATH is the check.
-	writeBenchExe(t, filepath.Join(bin, "sbcl"), "#!/bin/sh\nexit 0\n")
+	// Fake go and sbcl live where a standard bench keeps them, under $HOME/sdk/<tool>-<ver>/bin
+	// (the one home toolchain root the wall grants EXECUTE), and the PATH entry is a symlink
+	// to them: check (3c) resolves the real path and drifts on a tool outside a granted root,
+	// so a fake written straight into the PATH dir is a bench the standard rightly refuses.
+	goReal := filepath.Join(home, "sdk", "go-"+goVer, "bin", "go")
+	writeBenchExe(t, goReal, "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
+	sbclReal := filepath.Join(home, "sdk", "sbcl-test", "bin", "sbcl")
+	writeBenchExe(t, sbclReal, "#!/bin/sh\nexit 0\n")
+	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal} {
+		if err := os.Symlink(real, filepath.Join(bin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	// Fake nova-secrets whose check passes for any key.
 	writeBenchExe(t, filepath.Join(bin, "nova-secrets"), "#!/bin/sh\nexit 0\n")
 	// The toolchain roots the sandbox wall grants a card, taken from the ONE list rather
@@ -97,6 +106,10 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		"NOVA_WANT="+want,
 		"NOVA_GO="+goVer,
 		"NOVA_PROBE_URL=https://probe.invalid/api.json",
+		// With a toolchain root removed the script can reach a system go, which
+		// under go.mod's go line would download a toolchain into HOME's read-only
+		// module cache and fail t.TempDir cleanup (hulk runners, stream/nova-decide).
+		"GOTOOLCHAIN=local",
 	)
 	raw, err := cmd.CombinedOutput()
 	code := 0
