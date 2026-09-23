@@ -353,7 +353,7 @@ func TestRelaunchPassesTheWidthAndDeadlineThePulseRanWith(t *testing.T) {
 	if line == "" {
 		t.Fatalf("no relaunch in the argv log:\n%s\n%s", out, errb)
 	}
-	for _, want := range []string{"--slots 6", "--deadline 900", "--queue"} {
+	for _, want := range []string{"--slots 6", "--deadline 900", "--queue", "--slots-store", "--owner"} {
 		if !strings.Contains(line, want) {
 			t.Fatalf("the relaunch argv lacks %q: %s", want, line)
 		}

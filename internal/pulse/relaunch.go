@@ -51,9 +51,9 @@ func relaunch(in HarvestInput) int {
 	// ran `nova-pulse launch` with neither, and launch requires both, so rule 15's
 	// pulse-again could only ever print launch's own refusal of it. It is not guessed:
 	// launch wrote them down beside the pulse.
-	slots, deadline, ok := readPulseShape(in.Root, in.ID)
+	slots, deadline, store, owner, ok := readPulseShape(in.Root, in.ID)
 	if !ok {
-		fmt.Fprintf(in.Stderr, "PULSE NOTE relaunch skipped: %s does not record this pulse's width and deadline, and launch requires --slots and --deadline; run nova-pulse launch yourself for the %d card(s) waiting\n",
+		fmt.Fprintf(in.Stderr, "PULSE NOTE relaunch skipped: %s does not record this pulse's width, deadline and bench slot lease, and launch requires --slots --deadline --slots-store --owner; run nova-pulse launch yourself for the %d card(s) waiting\n",
 			oneline.Field(filepath.Join(in.Root, "pulses", in.ID+".tsv")), len(queued)+len(ordered))
 		return 0
 	}
@@ -90,7 +90,7 @@ func relaunch(in HarvestInput) int {
 		_ = os.Rename(queuePath, queuePath+".taken-"+sanitizeID(in.ID))
 	}
 
-	return runLaunchSubprocess(in, filepath.Join(in.Root, "cards.tsv"), slots, deadline)
+	return runLaunchSubprocess(in, filepath.Join(in.Root, "cards.tsv"), slots, deadline, store, owner)
 }
 
 func dropHeldCards(root string, cards []CardRow, seen map[string]bool) ([]CardRow, error) {
@@ -175,18 +175,20 @@ func readQueuedCards(path string) []CardRow {
 	return out
 }
 
-// readPulseShape reads back the width and deadline `launch` recorded for this pulse:
-// <root>/pulses/<id>.tsv, `pulse-<id><TAB><cards><TAB><slots><TAB><deadline>`. A two-field
-// row -- every row written before issue #1819 -- records neither, and says so by answering
-// false rather than by inventing a number.
-func readPulseShape(root, id string) (slots int, deadline string, ok bool) {
+// readPulseShape reads back the width, deadline and bench slot lease `launch` recorded
+// for this pulse: <root>/pulses/<id>.tsv,
+// `pulse-<id><TAB><cards><TAB><slots><TAB><deadline><TAB><store><TAB><owner>`. A row
+// written before issue #1819 has neither width nor deadline; a row written before
+// #1903 has no lease. Either way the answer is false rather than inventing a number
+// or a store.
+func readPulseShape(root, id string) (slots int, deadline, store, owner string, ok bool) {
 	raw, err := os.ReadFile(filepath.Join(root, "pulses", id+".tsv"))
 	if err != nil {
-		return 0, "", false
+		return 0, "", "", "", false
 	}
 	for _, line := range strings.Split(string(raw), "\n") {
 		p := strings.Split(strings.TrimSpace(line), "\t")
-		if len(p) < 4 {
+		if len(p) < 6 {
 			continue
 		}
 		n, err := strconv.Atoi(strings.TrimSpace(p[2]))
@@ -194,12 +196,14 @@ func readPulseShape(root, id string) (slots int, deadline string, ok bool) {
 			continue
 		}
 		d := strings.TrimSpace(p[3])
-		if d == "" {
+		s := strings.TrimSpace(p[4])
+		o := strings.TrimSpace(p[5])
+		if d == "" || s == "" || o == "" {
 			continue
 		}
-		slots, deadline, ok = n, d, true
+		slots, deadline, store, owner, ok = n, d, s, o, true
 	}
-	return slots, deadline, ok
+	return slots, deadline, store, owner, ok
 }
 
 // readCandidates reads a five-field candidate TSV (source, id, kind, title, template).
@@ -244,11 +248,12 @@ func render(c Candidate, templatesDir string) string {
 
 // runLaunchSubprocess invokes nova-pulse launch --queue as a subprocess and relays its output, so the
 // batch admission goes through the launch verb, never re-implemented here.
-func runLaunchSubprocess(in HarvestInput, cardsTSV string, slots int, deadline string) int {
+func runLaunchSubprocess(in HarvestInput, cardsTSV string, slots int, deadline, store, owner string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "nova-pulse", "launch", "--cards", cardsTSV, "--root", in.Root, "--queue",
-		"--slots", strconv.Itoa(slots), "--deadline", deadline)
+		"--slots", strconv.Itoa(slots), "--deadline", deadline,
+		"--slots-store", store, "--owner", owner)
 	cmd.Stdout = in.Stdout
 	cmd.Stderr = in.Stderr
 	if err := cmd.Run(); err != nil {

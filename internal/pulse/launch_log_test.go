@@ -22,6 +22,7 @@ func TestLaunchWritesTheJSONLineBesideTheStdoutLine(t *testing.T) {
 	var out, stderr, events bytes.Buffer
 	code := Launch(LaunchInput{
 		Cards: cards, Root: root, Slots: 4, Deadline: "120",
+		SlotsStore: aPulseSlotStore(t), SlotOwner: "fake-1",
 		Stdout: &out, Stderr: &stderr, Log: &events,
 		GUID: func() string { return "run-guid" },
 		Now:  func() time.Time { return time.Date(2026, 9, 17, 16, 56, 3, 0, time.UTC) },

@@ -603,13 +603,13 @@ A first sitting is three runs: one refusal (three cards into two slots), one who
 ### First run
 
 ```
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --slots-store ./slots-store --owner pulse
 PULSE REFUSED UNDER-SLOTS cards=3 free=2 (pass --queue, or wait)
 
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120 --slots-store ./slots-store --owner pulse
 PULSE OK id=20260915T161450Z-pulse-e33494 n=3 free-before=3 queued=0 batches=1 deadline=120
 
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
+$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --slots-store ./slots-store --owner pulse --queue
 PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
 ```
 

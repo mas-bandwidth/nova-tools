@@ -51,6 +51,12 @@ type LaunchInput struct {
 	// absolute, which is what lets a deployment whose runner is not on PATH launch without
 	// touching PATH at all (issue #1760).
 	Runner string
+	// SlotsStore and SlotOwner are the bench slot store a card's native run takes its
+	// one lease from, and the owner whose share that lease counts against
+	// (nova-tools#1903). Both are REQUIRED: a launch without a lease is refused by the
+	// launcher (SPEC-SWARM, "Bench slot leases" rule 2). There is no default store.
+	SlotsStore string
+	SlotOwner  string
 	// Swarm is the nova-swarm binary this launch drives. Empty resolves it on PATH -- and
 	// whichever binary answers is asked its version before the batch, so a stale one
 	// shadowing the current one is refused by name rather than by a puzzling flag error
@@ -115,6 +121,16 @@ func Launch(in LaunchInput) int {
 	// rather than handed to nova-swarm batch (issue #1905).
 	if code := requireLaunchBenches(in.Stderr, in.Machines, in.Bench); code != 0 {
 		return code
+	}
+	// A LAUNCH WITHOUT A LEASE IS REFUSED (SPEC-SWARM "Bench slot leases" rule 2;
+	// nova-tools#1903). Pulse always execs `nova-swarm batch --runner`, and batch used
+	// to treat a runner as somebody else's program. This project's runner is native
+	// with extra argv. The two flags are required here, before a slot is taken and
+	// before a card is written, and the refusal is native's one line so a caller who
+	// greps for it finds the same string. No default store, no owner guessed.
+	if strings.TrimSpace(in.SlotsStore) == "" || strings.TrimSpace(in.SlotOwner) == "" {
+		fmt.Fprintln(in.Stderr, swarm.NoSlotsStoreRefusal)
+		return 2
 	}
 	// --max, before anything is paid for: routing a card costs a model call, and a card
 	// over the ceiling is not this invocation's to route, admit or queue (issue #1821).
@@ -194,7 +210,7 @@ func Launch(in LaunchInput) int {
 			return 2
 		}
 		id = ran
-		record(in.Root, id, len(goCards), in.Slots, in.Deadline)
+		record(in.Root, id, len(goCards), in.Slots, in.Deadline, in.SlotsStore, in.SlotOwner)
 		batches = 1
 	}
 
@@ -423,6 +439,8 @@ func runBatch(in LaunchInput, id, cardsPath, runner string, swarmBin resolvedSwa
 		"--root", in.Root,
 		"--files", strconv.Itoa(files),
 		"--tokens", tokens,
+		"--slots-store", in.SlotsStore,
+		"--owner", in.SlotOwner,
 		"--then", then)
 	// One pulse can fill more than one bench: both flags reach `nova-swarm batch`
 	// untouched, and an empty one is not passed at all (issue #637).
@@ -464,13 +482,13 @@ func runBatch(in LaunchInput, id, cardsPath, runner string, swarmBin resolvedSwa
 // launch that could only refuse. It does not have to guess: the pulse being harvested ran
 // with a width and a deadline, and this is where they are written down. The first two fields
 // are unchanged, so a reader of the old two-field row still reads it.
-func record(root, id string, n, slots int, deadline string) {
+func record(root, id string, n, slots int, deadline, slotsStore, slotOwner string) {
 	f, err := os.OpenFile(filepath.Join(root, "pulses", id+".tsv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "pulse-%s\t%d\t%d\t%s\n", id, n, slots, oneline.Field(deadline))
+	fmt.Fprintf(f, "pulse-%s\t%d\t%d\t%s\t%s\t%s\n", id, n, slots, oneline.Field(deadline), oneline.Field(slotsStore), oneline.Field(slotOwner))
 }
 
 // shellToken quotes a string so `sh -c` reads it as exactly one argument, whatever it holds.

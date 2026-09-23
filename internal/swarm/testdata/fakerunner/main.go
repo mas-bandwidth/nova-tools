@@ -381,6 +381,8 @@ func (r *runner) expand(s string) string {
 		"{arg5}", r.root, // what the runner was HANDED as its root, spelled as it was handed
 		"{env:NOVA_SWARM_ROOT}", os.Getenv("NOVA_SWARM_ROOT"),
 		"{env:NOVA_SWARM_JOB}", os.Getenv("NOVA_SWARM_JOB"),
+		"{env:NOVA_SWARM_SLOTS_STORE}", os.Getenv("NOVA_SWARM_SLOTS_STORE"),
+		"{env:NOVA_SWARM_SLOT_OWNER}", os.Getenv("NOVA_SWARM_SLOT_OWNER"),
 	)
 	return rep.Replace(s)
 }

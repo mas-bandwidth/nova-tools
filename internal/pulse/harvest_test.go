@@ -34,7 +34,7 @@ func writePulseTable(t *testing.T, root, id string, cards, slots int, deadline s
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	row := fmt.Sprintf("pulse-%s\t%d\t%d\t%s\n", id, cards, slots, deadline)
+	row := fmt.Sprintf("pulse-%s\t%d\t%d\t%s\t%s\t%s\n", id, cards, slots, deadline, filepath.Join(root, "slots-store"), "fake-1")
 	if err := os.WriteFile(filepath.Join(dir, id+".tsv"), []byte(row), 0o644); err != nil {
 		t.Fatal(err)
 	}

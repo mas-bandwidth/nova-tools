@@ -47,7 +47,7 @@ usage:
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-                       (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
+                       (without --runner, or with this project's nova-native-runner.sh, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
   nova-swarm pull      --queue <dir> --clone <dir> --harvest <dir> --batch <n> --runner <cmd> [--kind <k>] [--repo <r>] [--base <rev>]
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--slots-store <dir> --owner <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
@@ -525,11 +525,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	harness := f.fs.String("harness", "", "")
 	auth := f.fs.String("auth", "", "")
 	slots := f.fs.String("slots", "", "")
-	// THE BENCH SLOT LEASE (nova-tools#1546): the store each card's own `nova-swarm
+	// THE BENCH SLOT LEASE (nova-tools#1546, #1903): the store each card's own `nova-swarm
 	// native` takes its one lease from, and the owner whose share that lease counts
-	// against. REQUIRED of any batch without a --runner of its own, because every such
-	// card launches native, and native refuses without them. The path is resolved on the
-	// machine that runs the card, which for a bench row is the bench.
+	// against. REQUIRED of any batch that launches native — no --runner of its own, or
+	// this project's nova-native-runner.sh — because every such card launches native, and
+	// native refuses without them. The path is resolved on the machine that runs the
+	// card, which for a bench row is the bench.
 	slotsStore := f.fs.String("slots-store", "", "")
 	slotOwner := f.fs.String("owner", "", "")
 	// THE ROUTE (Glenn 2026-09-19). With --route the model a card is dispatched
