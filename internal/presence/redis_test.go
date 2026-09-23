@@ -148,3 +148,61 @@ func TestAddrGrammarRefusesEverythingButHostPortWithoutLeakingASecret(t *testing
 		})
 	}
 }
+
+// TestAgainstRedisAMissingBeatKeyIsAbsentAndALiveKeyIsPresent is the same
+// rule as TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent, against the
+// store's own expiry: a key Redis does not hold is absent, a key it still
+// holds is present, and friend:<name>:last surviving the TTL does not
+// flip that. miniredis moves its clock; the test does not wait.
+func TestAgainstRedisAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
+	mr := miniredis.RunT(t)
+	ctx := context.Background()
+	st, err := Open(ctx, mr.Addr(), DefaultUser)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	now := time.Date(2026, 9, 22, 9, 41, 0, 0, time.UTC)
+	sts, err := Read(ctx, st, []string{"stella"}, now)
+	if err != nil {
+		t.Fatalf("read of a missing key: %v", err)
+	}
+	if sts[0].Present() {
+		t.Fatal("a missing beat key is present; want absent")
+	}
+
+	if err := st.Set(ctx, LastKey("stella"), now.Format(Stamp), 0); err != nil {
+		t.Fatalf("set last: %v", err)
+	}
+	sts, err = Read(ctx, st, []string{"stella"}, now)
+	if err != nil {
+		t.Fatalf("read of :last alone: %v", err)
+	}
+	if sts[0].Present() {
+		t.Fatal("friend:stella:last with no beat key is present; want absent")
+	}
+
+	if err := Beat(ctx, st, "stella", now, DefaultTTL); err != nil {
+		t.Fatalf("beat: %v", err)
+	}
+	sts, err = Read(ctx, st, []string{"stella"}, now)
+	if err != nil {
+		t.Fatalf("read of a live key: %v", err)
+	}
+	if !sts[0].Present() {
+		t.Fatal("a live beat key is absent; want present")
+	}
+
+	mr.FastForward(DefaultTTL + time.Second)
+	sts, err = Read(ctx, st, []string{"stella"}, now.Add(DefaultTTL+time.Second))
+	if err != nil {
+		t.Fatalf("read after the ttl: %v", err)
+	}
+	if sts[0].Present() {
+		t.Fatal("an expired beat key is present; want absent")
+	}
+	if !mr.Exists(LastKey("stella")) {
+		t.Fatal("friend:stella:last did not survive the beat key's expiry")
+	}
+}
