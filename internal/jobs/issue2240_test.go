@@ -86,8 +86,29 @@ func TestIssue2240(t *testing.T) {
 			Revision:   "abc123",
 			Acceptance: []string{"unit-test", "lint"},
 			Result:     "pass",
+			Proof:      "exit 0 reaped",
 		}); err != nil {
 			t.Fatalf("report matching outcome: %v", err)
+		}
+
+		// A completion without termination proof is refused: an empty result
+		// with Uncertain=false is not a finished unit.
+		for _, o := range []jobs.Outcome{
+			{UnitID: "unit:bound", ExecutorID: "exec:bound", Revision: "abc123", Acceptance: []string{"unit-test", "lint"}, Result: "pass"},
+			{UnitID: "unit:bound", ExecutorID: "exec:bound", Revision: "abc123", Acceptance: []string{"unit-test", "lint"}},
+		} {
+			err := a.Report(o)
+			if err == nil {
+				t.Fatalf("accepted completion without termination proof: %+v", o)
+			}
+			if !strings.Contains(err.Error(), "termination proof") {
+				t.Errorf("refusal %q does not name the missing termination proof", err)
+			}
+		}
+		// Proof without a result is not a completion either.
+		if err := a.Report(jobs.Outcome{UnitID: "unit:bound", ExecutorID: "exec:bound", Revision: "abc123",
+			Acceptance: []string{"unit-test", "lint"}, Proof: "exit 0 reaped"}); err == nil {
+			t.Fatal("accepted completion with proof but no result")
 		}
 
 		// A wrong revision is refused.
@@ -97,6 +118,7 @@ func TestIssue2240(t *testing.T) {
 			Revision:   "wrong",
 			Acceptance: []string{"unit-test", "lint"},
 			Result:     "pass",
+			Proof:      "exit 0 reaped",
 		})
 		if err == nil {
 			t.Fatal("accepted outcome with wrong revision")
@@ -112,6 +134,7 @@ func TestIssue2240(t *testing.T) {
 			Revision:   "abc123",
 			Acceptance: []string{"unit-test"},
 			Result:     "pass",
+			Proof:      "exit 0 reaped",
 		})
 		if err == nil {
 			t.Fatal("accepted outcome with wrong acceptance criteria")

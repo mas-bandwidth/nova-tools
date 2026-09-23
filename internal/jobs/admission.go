@@ -133,16 +133,22 @@ type ExecutorGrant struct {
 	Vector Vector
 }
 
-// Outcome is what arrives back across the executor seam: either a bound result
-// with the unit's revision and :acceptance criteria, or uncertain when
-// termination is not proved.
+// Outcome is what arrives back across the executor seam: either a completed
+// result carrying its termination proof and bound to the unit's revision and
+// :acceptance criteria, or uncertain when termination is not proved
+// (docs/SPEC-JOBS.md section 9: "an outcome (with its termination proof, or
+// uncertain)"). A completion without Proof is refused, never read as done.
 type Outcome struct {
 	UnitID     string
 	ExecutorID string
 	Revision   string
 	Acceptance []string
 	Result     string
-	Uncertain  bool
+	// Proof is the engine's termination proof for a completed outcome (an
+	// exit record, a supervisor's reap receipt). Empty means termination is
+	// not proved: report Uncertain instead.
+	Proof     string
+	Uncertain bool
 }
 
 // Refusal is why a request was not granted. It is an error rather than a wait,
@@ -439,6 +445,12 @@ func (st *state) report(o Outcome) error {
 		}
 		st.uncertain[o.ExecutorID] = true
 		return nil
+	}
+	if strings.TrimSpace(o.Proof) == "" {
+		return &Refusal{ID: o.ExecutorID, Reason: fmt.Sprintf("outcome from executor %q carries no termination proof; report it uncertain", o.ExecutorID)}
+	}
+	if strings.TrimSpace(o.Result) == "" {
+		return &Refusal{ID: o.ExecutorID, Reason: fmt.Sprintf("completed outcome from executor %q carries no result", o.ExecutorID)}
 	}
 	if o.Revision != unit.Revision {
 		return &Refusal{ID: o.UnitID, Reason: fmt.Sprintf("outcome revision %q does not match unit revision %q", o.Revision, unit.Revision)}
