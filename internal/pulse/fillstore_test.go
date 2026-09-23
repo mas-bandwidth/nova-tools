@@ -155,22 +155,15 @@ func TestFillTakesUpARaisedShareOnTheNextTick(t *testing.T) {
 	}
 }
 
-// TestFillLoadBrakeDealsNothingAndNeverShrinksBelowTheLiveLeases: the load is a brake, not
-// the size. A bench over the per-core guard is dealt nothing this tick and says so by name,
-// with the free count it did not fill on the line -- and the cards already live on it are
-// not touched, not counted against it and not taken back. A brake that "shrinks" a bench
-// below its live leases would be asking the bench to drop work it is already doing.
-func TestFillLoadBrakeDealsNothingAndNeverShrinksBelowTheLiveLeases(t *testing.T) {
+// TestFillLoadIsNotTheFillsToJudge (#3251): a bench at 3.12 load per core with 54 free
+// slots in its store takes its ready cards. The load is reported on the bench's row and the
+// dealer decides from it before cards enter ready; the fill has no brake to hold them with.
+func TestFillLoadIsNotTheFillsToJudge(t *testing.T) {
 	dir := t.TempDir()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
 	for i := 1; i <= 3; i++ {
 		writeCard(t, ready, fmt.Sprintf("card-%03d.md", i), "a card\n")
 	}
-	// Ten live cards already on the bench: they are what made the load.
-	for i := 1; i <= 10; i++ {
-		writeCard(t, launched, fmt.Sprintf("card-live-%03d.md", i), "a live card\n")
-	}
-	// 64 cores, load1 200 = 3.12 per core, over the 1.5 guard, with 54 free slots.
 	p := &storeProbe{lines: map[string]string{"bench-a": storeLine(64, 10, 64, 200)}}
 	l := &laneLauncher{}
 	var out, errb bytes.Buffer
@@ -181,47 +174,14 @@ func TestFillLoadBrakeDealsNothingAndNeverShrinksBelowTheLiveLeases(t *testing.T
 		Once:     true,
 		Stdout:   &out,
 		Stderr:   &errb,
-		Capacity: StoreCapacity{Probe: p.probe, Owner: testOwner, MaxLoadPerCore: 1.5, Stderr: &errb},
+		Capacity: StoreCapacity{Probe: p.probe, Owner: testOwner, Stderr: &errb},
 		Launcher: l,
 	})
 	if code != 0 {
-		t.Fatalf("fill exit = %d, want 0 (a braked bench is not a failed bench); stderr=%q", code, errb.String())
+		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
 	}
-	if len(l.calls) != 0 {
-		t.Fatalf("launcher calls = %d, want 0 under the brake: %q", len(l.calls), l.calls)
-	}
-	if got := len(readyCards(ready)); got != 3 {
-		t.Fatalf("ready holds %d cards, want 3 (nothing was claimed)", got)
-	}
-	if got := len(readyCards(launched)); got != 10 {
-		t.Fatalf("launched holds %d cards, want the 10 live ones, untouched", got)
-	}
-	said := errb.String()
-	for _, want := range []string{"FILL BRAKE", "bench=bench-a", "per-core=3.12", "max=1.50", "free=54", "held=10"} {
-		if !strings.Contains(said, want) {
-			t.Fatalf("the brake line does not carry %q: %q", want, said)
-		}
-	}
-	if strings.Contains(out.String(), "launched=1") {
-		t.Fatalf("a braked bench launched a card: %q", out.String())
-	}
-}
-
-// TestFillBrakeIsOffWhenTheGuardIsZero: --max-load-per-core 0 is no brake at all, which is
-// what a bench whose load is made by something other than its leases needs (the Studio ran
-// at 3.2 per core with four leases held).
-func TestFillBrakeIsOffWhenTheGuardIsZero(t *testing.T) {
-	p := &storeProbe{lines: map[string]string{"bench-a": storeLine(64, 10, 64, 200)}}
-	var errb bytes.Buffer
-	n, err := StoreCapacity{Probe: p.probe, Owner: testOwner, MaxLoadPerCore: 0, Stderr: &errb}.Capacity("bench-a")
-	if err != nil {
-		t.Fatalf("capacity: %v", err)
-	}
-	if n != 54 {
-		t.Fatalf("capacity = %d, want 54 (the store's free count, no brake)", n)
-	}
-	if strings.Contains(errb.String(), "FILL BRAKE") {
-		t.Fatalf("a zero guard still braked: %q", errb.String())
+	if len(l.calls) != 3 || strings.Contains(errb.String(), "BRAKE") {
+		t.Fatalf("launched %d of 3 ready cards on a hot bench with room; stderr=%q", len(l.calls), errb.String())
 	}
 }
 
@@ -230,7 +190,7 @@ func TestFillBrakeIsOffWhenTheGuardIsZero(t *testing.T) {
 // adopting the store is not a flag day.
 func TestStoreCapacityFallsBackToTheFormulaWhereThereIsNoStore(t *testing.T) {
 	p := &storeProbe{lines: map[string]string{"bench-a": "formula capacity=12 cores=64 load1=76.00"}}
-	n, err := StoreCapacity{Probe: p.probe, Owner: testOwner, MaxLoadPerCore: 1.5}.Capacity("bench-a")
+	n, err := StoreCapacity{Probe: p.probe, Owner: testOwner}.Capacity("bench-a")
 	if err != nil {
 		t.Fatalf("capacity: %v", err)
 	}
@@ -247,7 +207,6 @@ func TestStoreCapacityRefusesAnAnswerItCannotRead(t *testing.T) {
 		"store share=x cores=8 load1=1\nleases\n",
 		"store cores=8 load1=1\nleases\n",
 		"store share=4 cores=8 load1=1",
-		"store share=4 cores=8 load1=NaN\nleases\n",
 		"store share=4 cores=8 load1=1\nleases\nwhat is this row\n",
 		"unreadable reason=slots-list-exit rc=127",
 	} {

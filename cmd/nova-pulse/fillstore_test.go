@@ -149,22 +149,3 @@ func TestFillStopFlagStopsTheTickWithoutKillingAnything(t *testing.T) {
 		t.Fatalf("ready holds %d cards, want 1 (nothing was claimed)", fillCount(t, ready))
 	}
 }
-
-// TestMaxLoadPerCoreFlagRefusesANegativeGuard: the brake is a number of load units per core,
-// 0 for no brake at all. A negative is a typo, and a typo that silently brakes every bench
-// is a fleet that stops.
-func TestMaxLoadPerCoreFlagRefusesANegativeGuard(t *testing.T) {
-	dir := t.TempDir()
-	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	var out, errb bytes.Buffer
-	code := run([]string{"fill", "--ready", ready, "--launched", launched,
-		"--machines", fillMachines(t, dir, "bench-a"),
-		"--bench", "bench-a", "--capacity", "0", "--once", "--max-load-per-core", "-1",
-	}, &out, &errb, time.Now().UTC())
-	if code != 2 {
-		t.Fatalf("fill --max-load-per-core -1 exit = %d, want 2; stderr=%q", code, errb.String())
-	}
-	if !strings.Contains(errb.String(), "--max-load-per-core") {
-		t.Fatalf("the refusal does not name --max-load-per-core: %q", errb.String())
-	}
-}

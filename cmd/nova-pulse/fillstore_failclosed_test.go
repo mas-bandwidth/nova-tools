@@ -43,7 +43,7 @@ func TestEveryUnreadableBenchIsNamedOnItsOwnFillLineWithFreeZero(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "ssh", fakeSpec{Rules: []fakeRule{
 		{Arg: 4, Equals: "bench-a", Stdout: "unreadable reason=slots-list-exit rc=127\n"},
-	}, Default: fakeRule{Stdout: "store share=4 cores=64 load1=x\nleases\n"}})
+	}, Default: fakeRule{Stdout: "store share=4 cores=64 load1=1.0\nleases\nwhat is this row\n"}})
 	fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
 	dir := t.TempDir()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
@@ -218,57 +218,24 @@ func breakTheLoadReaders(t *testing.T) {
 	t.Setenv("PATH", broken+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
-// TestFillRefusesABenchWhoseLoadCannotBeMeasured: a failed measurement is not a zero. The
-// probe substituted `l=0` when both readers failed, so a bench whose load nobody could read
-// compared 0 against the brake, passed it, and was dealt cards -- the configured brake
-// silently not applied. Unreadable is now its own answer, and it holds the bench while the
-// brake is on.
-func TestFillRefusesABenchWhoseLoadCannotBeMeasured(t *testing.T) {
-	t.Run("the default brake holds the bench", func(t *testing.T) {
-		specs := fakePATH(t)
-		fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
-		fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
-		breakTheLoadReaders(t)
-		dir := t.TempDir()
-		fillReady(t, filepath.Join(dir, "ready"), 2)
-		store := fillStore(t, dir, "swarm-bench-a", 2)
+// TestFillFillsABenchWhoseLoadCannotBeMeasured (#3251): the load is not the fill's to read.
+// A bench whose load readers all fail still takes its store's free slots; whether a hot or
+// unmeasured bench is dealt at all is the dealer's call, from the bench's row.
+func TestFillFillsABenchWhoseLoadCannotBeMeasured(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
+	fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
+	breakTheLoadReaders(t)
+	dir := t.TempDir()
+	fillReady(t, filepath.Join(dir, "ready"), 3)
+	store := fillStore(t, dir, "swarm-bench-a", 2)
 
-		code, out, errb, ready, launched := localFill(t, dir, store,
-			filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
-		if code == 0 {
-			t.Fatalf("a bench whose load nobody could read was filled; exit 0, stdout=%q stderr=%q", out, errb)
-		}
-		if fillCount(t, launched) != 0 || fillCount(t, ready) != 2 {
-			t.Fatalf("launched %d / ready %d, want 0 / 2: %q %q",
-				fillCount(t, launched), fillCount(t, ready), out, errb)
-		}
-		if !strings.Contains(errb, "FILL UNREADABLE bench=bench-a free=0 reason=load-unreadable") {
-			t.Fatalf("the unreadable load was not named: %q", errb)
-		}
-	})
-
-	// The documented opt-out still opts out: a caller who said `0` said there is no brake,
-	// and a measurement nothing reads is then nothing to hold the bench with. It is still
-	// printed, because an unread measurement is worth saying either way.
-	t.Run("an explicit zero brake still fills", func(t *testing.T) {
-		specs := fakePATH(t)
-		fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stdout: ""}})
-		fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
-		breakTheLoadReaders(t)
-		dir := t.TempDir()
-		fillReady(t, filepath.Join(dir, "ready"), 3)
-		store := fillStore(t, dir, "swarm-bench-a", 2)
-
-		code, out, errb, _, launched := localFill(t, dir, store,
-			filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), "--max-load-per-core", "0")
-		if code != 0 {
-			t.Fatalf("the zero-brake opt-out refused; exit = %d stdout=%q stderr=%q", code, out, errb)
-		}
-		if got := fillCount(t, launched); got != 2 {
-			t.Fatalf("launched %d cards, want 2 (the whole share): %q %q", got, out, errb)
-		}
-		if !strings.Contains(errb, "load1=unreadable") {
-			t.Fatalf("the unread measurement was not printed at all: %q", errb)
-		}
-	})
+	code, out, errb, _, launched := localFill(t, dir, store,
+		filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
+	if code != 0 {
+		t.Fatalf("exit = %d stdout=%q stderr=%q", code, out, errb)
+	}
+	if got := fillCount(t, launched); got != 2 {
+		t.Fatalf("launched %d cards, want 2 (the whole share): %q %q", got, out, errb)
+	}
 }

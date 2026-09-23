@@ -10,11 +10,9 @@ package main
 // share dealt to a machine that had nothing free. A read that failed must refuse that
 // bench, and a lease list that is legitimately EMPTY must still fill it.
 //
-// P2: malformed readings inflated capacity or quietly turned the brake off. `held=-10`
-// made a share of 64 answer 74; `cores=x` became 0, which is a bench that can never be
-// braked; `load1=NaN` compared false against every threshold; and `--max-load-per-core NaN`
-// passed the flag's only check, which was `< 0`. Every one of those is a refusal now, and
-// the documented `--max-load-per-core 0` opt-out is untouched.
+// P2: malformed readings inflated capacity. `held=-10` made a share of 64 answer 74. Every
+// malformed count is a refusal. The load brake those tests also covered is gone (#3251): the
+// load is the dealer's, read from the bench's row, and the fill has no brake to turn off.
 
 import (
 	"bytes"
@@ -162,8 +160,7 @@ func TestFillFillsABenchWhoseSlotsListIsEmpty(t *testing.T) {
 	// The brake is off: a local bench is this machine, so its load is the machine's own,
 	// and this test is about the empty listing, not the brake. Left on, a busy hosted
 	// darwin shard braked a full bench to zero and failed the test by nothing except load.
-	code, out, errb, ready, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
-		"--max-load-per-core", "0")
+	code, out, errb, ready, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
 	if code != 0 {
 		t.Fatalf("an empty lease list is a free bench; exit = %d, stdout=%q stderr=%q", code, out, errb)
 	}
@@ -193,8 +190,7 @@ func TestFillCountsTheOwnersLiveLeasesAndNobodyElses(t *testing.T) {
 
 	// Brake off, for the same reason as TestFillFillsABenchWhoseSlotsListIsEmpty: this
 	// test counts the owner's own live leases, and the ambient load is not its input.
-	code, out, errb, _, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()),
-		"--max-load-per-core", "0")
+	code, out, errb, _, launched := localFill(t, dir, store, filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()))
 	if code != 0 {
 		t.Fatalf("exit = %d; stdout=%q stderr=%q", code, out, errb)
 	}
@@ -269,11 +265,6 @@ func TestFillRefusesAMalformedCapacityAnswer(t *testing.T) {
 	for name, answer := range map[string]string{
 		"a held= the bench made up":     "store share=64 held=-10 cores=64 load1=1.0\nleases\n",
 		"negative share":                "store share=-4 cores=64 load1=1.0\nleases\n",
-		"cores that is not a number":    "store share=4 cores=x load1=1.0\nleases\n",
-		"load that is not a number":     "store share=4 cores=64 load1=NaN\nleases\n",
-		"infinite load":                 "store share=4 cores=64 load1=+Inf\nleases\n",
-		"missing load":                  "store share=4 cores=64\nleases\n",
-		"missing cores":                 "store share=4 load1=1.0\nleases\n",
 		"duplicate share":               "store share=4 share=400 cores=64 load1=1.0\nleases\n",
 		"negative formula capacity":     "formula capacity=-3 cores=64 load1=1.0\n",
 		"share out of range":            "store share=99999999999999999999 cores=64 load1=1.0\nleases\n",
@@ -298,53 +289,18 @@ func TestFillRefusesAMalformedCapacityAnswer(t *testing.T) {
 	}
 }
 
-// TestFillRefusesToRunUnbrakedWhenTheBenchCannotCountItsCores: with the brake on, a bench
-// answering no cores cannot be braked at all. Running it unbraked is the brake quietly
-// turning itself off, which is the shape of the whole bug.
-func TestFillRefusesToRunUnbrakedWhenTheBenchCannotCountItsCores(t *testing.T) {
-	code, out, errb, _, launched := sshFill(t, "store share=4 cores=0 load1=8.0\nleases\n", "--max-load-per-core", "1.5")
-	if code == 0 {
-		t.Fatalf("a bench that could not be braked ran anyway; stdout=%q stderr=%q", out, errb)
-	}
-	if fillCount(t, launched) != 0 {
-		t.Fatalf("%d cards launched on a bench nobody could brake", fillCount(t, launched))
-	}
-}
-
-// TestTheZeroBrakeOptOutStillFillsABenchWithNoCores: `--max-load-per-core 0` is the
-// documented "no brake" and it must stay exactly that, cores or no cores. The repair may
-// not take the opt-out with it.
-func TestTheZeroBrakeOptOutStillFillsABenchWithNoCores(t *testing.T) {
-	code, out, errb, _, launched := sshFill(t, "store share=2 cores=0 load1=8.0\nleases\n", "--max-load-per-core", "0")
+// TestFillVerbHasNoLoadBrake (#3251, Glenn 2026-09-23: "Load checks. Load decisions can be
+// made centrally."): a bench at 25 load per core with its whole share free takes every card
+// it has room for. On dev the default --max-load-per-core 1.5 braked it to zero with a FILL
+// BRAKE line; now the flag is gone and the dealer (internal/pulse/dealer, MaxLoadPerCore)
+// decides from the bench's row before the cards enter ready.
+func TestFillVerbHasNoLoadBrake(t *testing.T) {
+	code, out, errb, ready, launched := sshFill(t, "store share=4 cores=8 load1=200.0\nleases\n")
 	if code != 0 {
-		t.Fatalf("the zero-brake opt-out refused; exit = %d stdout=%q stderr=%q", code, out, errb)
+		t.Fatalf("exit = %d; stdout=%q stderr=%q", code, out, errb)
 	}
-	if fillCount(t, launched) != 2 {
-		t.Fatalf("launched holds %d cards, want 2: %q %q", fillCount(t, launched), out, errb)
-	}
-}
-
-// TestFillRefusesABrakeThatIsNotAFiniteNumber: the flag's only check was `< 0`, and NaN is
-// not less than zero -- so `--max-load-per-core NaN` parsed, compared false against every
-// bench and silently disabled the brake the caller had asked for. Infinity is the same
-// silence with a different spelling.
-func TestFillRefusesABrakeThatIsNotAFiniteNumber(t *testing.T) {
-	for _, bad := range []string{"NaN", "nan", "+Inf", "-Inf", "-1", "-0.5"} {
-		t.Run(bad, func(t *testing.T) {
-			dir := t.TempDir()
-			var out, errb bytes.Buffer
-			code := run([]string{"fill",
-				"--ready", filepath.Join(dir, "ready"), "--launched", filepath.Join(dir, "launched"),
-				"--machines", fillMachines(t, dir, "bench-a"),
-				"--bench", "bench-a", "--capacity", "0", "--once",
-				"--max-load-per-core", bad,
-			}, &out, &errb, time.Now().UTC())
-			if code != 2 {
-				t.Fatalf("--max-load-per-core %s exit = %d, want 2; stderr=%q", bad, code, errb.String())
-			}
-			if !strings.Contains(errb.String(), "--max-load-per-core") {
-				t.Fatalf("the refusal does not name the flag: %q", errb.String())
-			}
-		})
+	if fillCount(t, launched) != 4 || fillCount(t, ready) != 0 || strings.Contains(errb, "BRAKE") {
+		t.Fatalf("launched %d / ready %d on a hot bench with room, want 4 / 0; stderr=%q",
+			fillCount(t, launched), fillCount(t, ready), errb)
 	}
 }

@@ -1,6 +1,6 @@
 package pulse
 
-// The store leads, the load only brakes (#1914).
+// The store is the capacity (#1914); the load is not the fill's to judge (#3251).
 //
 // `fill`'s capacity used to be a load formula -- `cores*3/2 - load1 - cores/8`, the min of
 // that and two headroom terms -- and a bench earns load precisely by running the cards it
@@ -10,11 +10,12 @@ package pulse
 //
 // The bench's own slot store is its answer to "how many more cards may I take": the owner's
 // row in `<store>/shares.tsv` minus the live leases that owner holds, which is exactly what
-// `nova-swarm native --slots-store --owner` enforces at launch. That number is the capacity.
-// The load is a BRAKE on top of it: a bench over `--max-load-per-core` is dealt nothing this
-// tick and says so by name, with the free count it did not fill on the line. A brake never
-// shrinks a bench below the leases it already holds -- the live cards are running, and the
-// one thing a capacity number may never do is ask for them back.
+// `nova-swarm native --slots-store --owner` enforces at launch. That number is the capacity,
+// and nothing on the bench shrinks it. The load brake that sat on top of it
+// (`--max-load-per-core`) is gone (Glenn 2026-09-23: "Load checks. Load decisions can be made
+// centrally."): the bench reports load1/ncpu on its row (bench-row), and the dealer
+// (internal/pulse/dealer, Policy.MaxLoadPerCore) decides from that row how many cards to
+// deal a bench BEFORE they enter its ready queue.
 //
 // The probe is a seam. The command runs one line of shell on the bench (over ssh, or on this
 // machine for a local bench) and hands back what it printed; a test hands back the same line
@@ -23,7 +24,6 @@ package pulse
 import (
 	"fmt"
 	"io"
-	"math"
 	"strconv"
 	"strings"
 
@@ -35,20 +35,11 @@ import (
 // bench that has no store yet.
 type CapacityAnswer struct {
 	FromStore bool
-	Share     int     // the owner's row in shares.tsv, when FromStore
-	Held      int     // the live leases that owner holds, when FromStore
-	Formula   int     // the legacy load formula's number, when not FromStore
-	Cores     int     // the bench's cores, for the brake; 0 when CoresRead is false
-	CoresRead bool    // whether the bench could measure its cores at all
-	Load1     float64 // the bench's one-minute load, for the brake; 0 when LoadRead is false
-	LoadRead  bool    // whether the bench could measure its load at all
-	Why       string  // why the bench answered the formula rather than its store
+	Share     int    // the owner's row in shares.tsv, when FromStore
+	Held      int    // the live leases that owner holds, when FromStore
+	Formula   int    // the legacy load formula's number, when not FromStore
+	Why       string // why the bench answered the formula rather than its store
 }
-
-// UnreadableMeasurement is what a bench says instead of a number when every reader for that
-// measurement failed. It is never 0: a zero load passes every brake, so a load nobody could
-// read used to turn the configured brake off without saying a word (Stella, R2 of #1945).
-const UnreadableMeasurement = "unreadable"
 
 // Free is the capacity: the store's free count under the owner's share, never below zero.
 // An owner holding more leases than its share -- a share LOWERED under live work -- is a
@@ -64,26 +55,6 @@ func (a CapacityAnswer) Free() int {
 	return n
 }
 
-// PerCore is the load the brake is read against; a bench answering no cores is not braked,
-// because a brake on a number nobody measured is a guess.
-func (a CapacityAnswer) PerCore() float64 {
-	if a.Cores <= 0 || !a.CoresRead || !a.LoadRead {
-		return 0
-	}
-	return a.Load1 / float64(a.Cores)
-}
-
-// Braked says whether the load guard holds this bench for this tick. A guard of zero or less
-// is no guard at all: the Studio runs at 3.2 load per core with four leases held, because
-// something other than its leases makes the load, and a guard there would idle a bench with
-// 190 free slots.
-func (a CapacityAnswer) Braked(maxPerCore float64) bool {
-	if maxPerCore <= 0 || !a.FromStore {
-		return false
-	}
-	return a.PerCore() > maxPerCore
-}
-
 // ParseCapacityAnswer reads the one line a capacity probe prints. Three shapes, and nothing
 // else is guessed:
 //
@@ -94,13 +65,11 @@ func (a CapacityAnswer) Braked(maxPerCore float64) bool {
 // A line in none of those shapes is a refusal naming what the bench said. A guessed free
 // count puts a card on a full machine.
 //
-// EVERY FIELD IS VALIDATED (Stella, #1945). A malformed reading used to be taken as a valid
-// one: `held=-10` made a share of 64 answer 74; a `cores=` that would not parse became 0,
-// which is a bench that can never be braked; and a `load1=NaN` compared false against every
-// threshold, so the brake the caller asked for was silently off. Counts are whole numbers
-// and never negative, the load is finite and never negative, cores and load are REQUIRED
-// rather than optional, and a field said twice is a refusal -- a line nobody can read one
-// way is not a line to act on.
+// EVERY COUNT IS VALIDATED (Stella, #1945). A malformed reading used to be taken as a valid
+// one: `held=-10` made a share of 64 answer 74. Counts are whole numbers and never negative,
+// and a field said twice is a refusal -- a line nobody can read one way is not a line to act
+// on. `cores=` and `load1=` are still allowed on the line (the probe measures them for the
+// legacy formula) and read by nothing here: the load is the dealer's (#3251).
 func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
 	// One header line, then an optional `leases` marker and the listing itself. Anything
 	// between the header and the marker is a probe saying more than its contract allows.
@@ -229,40 +198,6 @@ func ParseCapacityAnswer(out, owner string) (CapacityAnswer, error) {
 			"the capacity probe answered %q; wanted `store share=<n> held=<n> cores=<n> load1=<f>`, `formula capacity=<n> cores=<n> load1=<f>` or `unreadable reason=<why>`",
 			oneLineAnswer(out))
 	}
-	// Cores and load are the brake's readings, and they are required: a bench that cannot
-	// say what its load is cannot be braked, and running it unbraked is the brake turning
-	// itself off. Whether that is fatal is the caller's -- a caller with the brake off
-	// (--max-load-per-core 0) does not need them -- but they must at least be READABLE.
-	if seen["cores"] == UnreadableMeasurement {
-		a.Cores, a.CoresRead = 0, false
-	} else if a.Cores, err = count("cores"); err != nil {
-		return CapacityAnswer{}, err
-	} else {
-		a.CoresRead = true
-	}
-	raw, ok := seen["load1"]
-	if !ok {
-		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered %q, with no load1=", oneLineAnswer(out))
-	}
-	if raw == UnreadableMeasurement {
-		// Kept as itself all the way to the brake. Whether it is fatal is the brake's
-		// to say, and it is the ONE thing this must not decide by substituting a number.
-		a.Load1, a.LoadRead = 0, false
-		return a, nil
-	}
-	a.LoadRead = true
-	load, err := strconv.ParseFloat(raw, 64)
-	if err != nil {
-		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered load1=%q, which is not a number", raw)
-	}
-	if math.IsNaN(load) || math.IsInf(load, 0) {
-		return CapacityAnswer{}, fmt.Errorf(
-			"the capacity probe answered load1=%q, which is not a finite number; a load that compares false against every threshold is a brake that is silently off", raw)
-	}
-	if load < 0 {
-		return CapacityAnswer{}, fmt.Errorf("the capacity probe answered load1=%q, and a load is never negative", raw)
-	}
-	a.Load1 = load
 	return a, nil
 }
 
@@ -316,14 +251,6 @@ func countLeases(listing, owner string) (int, error) {
 	return held, nil
 }
 
-// unreadOr prints a measurement, or the word a bench uses when nobody could take it.
-func unreadOr(read bool, s string) string {
-	if !read {
-		return UnreadableMeasurement
-	}
-	return s
-}
-
 // oneLineAnswer bounds what a refusal quotes back, so a bench that printed a megabyte of
 // shell noise still costs one readable line.
 func oneLineAnswer(s string) string {
@@ -335,14 +262,13 @@ func oneLineAnswer(s string) string {
 }
 
 // StoreCapacity is the pulse.Capacity the fleet runs on: it asks the bench, parses the one
-// line, brakes on load and answers the store's free count. Probe is the seam -- the command
+// line and answers the store's free count. Probe is the seam -- the command
 // gives it an ssh (or this machine's own shell for a local bench) and a test gives it a
 // canned line.
 type StoreCapacity struct {
-	Probe          func(bench string) (string, error)
-	Owner          string // the store's owner row, whose leases are counted
-	MaxLoadPerCore float64
-	Stderr         io.Writer
+	Probe  func(bench string) (string, error)
+	Owner  string // the store's owner row, whose leases are counted
+	Stderr io.Writer
 }
 
 // ownerFor is the store row whose leases are this bench's: the one named, or the seat the
@@ -357,14 +283,6 @@ func (c StoreCapacity) ownerFor(bench string) string {
 func (c StoreCapacity) Capacity(bench string) (int, error) {
 	if c.Probe == nil {
 		return 0, fmt.Errorf("no capacity probe; refusing to guess a free count")
-	}
-	// The threshold is checked here as well as at the flag, because this type is the
-	// library seam and a NaN threshold compares false against every bench: the brake would
-	// be off and nothing would say so.
-	if math.IsNaN(c.MaxLoadPerCore) || math.IsInf(c.MaxLoadPerCore, 0) || c.MaxLoadPerCore < 0 {
-		return 0, fmt.Errorf(
-			"the load brake is %v, which is not a finite number of load units per core, 0 or more; a threshold nothing can exceed is a brake that is silently off",
-			c.MaxLoadPerCore)
 	}
 	out, err := c.Probe(bench)
 	if err != nil {
@@ -385,46 +303,6 @@ func (c StoreCapacity) Capacity(bench string) (int, error) {
 			"FILL FORMULA bench=%s why=%s capacity=%d note=%q\n",
 			field(bench), oneline.Field(why), a.Free(),
 			"this bench has no row of its own in the slot store, so its capacity is the old load formula; give it a share to size it by its store")
-	}
-	// THE BRAKE IS ON AND A MEASUREMENT IT NEEDS WAS NEVER TAKEN. A bench that runs
-	// unbraked because its own reading failed is the brake turning itself off, which is
-	// the silence this guard exists to break. `--max-load-per-core 0` says there is no
-	// brake, and then there is nothing for an unread measurement to hold the bench with --
-	// but it is still said out loud, because an unread measurement is worth saying either
-	// way.
-	if c.MaxLoadPerCore > 0 {
-		if !a.LoadRead {
-			return 0, fmt.Errorf(
-				"load-unreadable: the brake is on (%.2f per core) and no reader on the bench could measure its load; refusing to fill a bench nobody can brake (fix the load reader, or say --max-load-per-core 0 to run it unbraked on purpose)",
-				c.MaxLoadPerCore)
-		}
-		if !a.CoresRead {
-			return 0, fmt.Errorf(
-				"cores-unreadable: the brake is on (%.2f per core) and no reader on the bench could measure its cores; refusing to fill a bench nobody can brake (fix the core reader, or say --max-load-per-core 0 to run it unbraked on purpose)",
-				c.MaxLoadPerCore)
-		}
-		if a.Cores <= 0 {
-			return 0, fmt.Errorf(
-				"cores-unreadable: the load brake is on (%.2f per core) and the bench answered cores=%d; refusing to fill a bench nobody can brake (measure its cores, or say --max-load-per-core 0 to run it unbraked on purpose)",
-				c.MaxLoadPerCore, a.Cores)
-		}
-	} else if (!a.LoadRead || !a.CoresRead) && c.Stderr != nil {
-		fmt.Fprintf(c.Stderr,
-			"FILL UNMEASURED bench=%s cores=%s load1=%s note=%q\n",
-			field(bench), unreadOr(a.CoresRead, strconv.Itoa(a.Cores)), unreadOr(a.LoadRead, "-"),
-			"the brake is off (--max-load-per-core 0), so a measurement nobody took does not hold this bench")
-	}
-	if a.Braked(c.MaxLoadPerCore) {
-		// A braked bench is NOT a failed bench: it answers zero and the tick carries on.
-		// The line is the whole point -- a bench with free slots that took no card has to
-		// say why, or the next hand widens something that was never the size.
-		if c.Stderr != nil {
-			fmt.Fprintf(c.Stderr,
-				"FILL BRAKE bench=%s load1=%.2f cores=%d per-core=%.2f max=%.2f free=%d held=%d remedy=%q\n",
-				field(bench), a.Load1, a.Cores, a.PerCore(), c.MaxLoadPerCore, a.Free(), a.Held,
-				"the load brake holds new launches; the live leases are untouched -- report the load, or raise --max-load-per-core for a bench whose load is not its own leases")
-		}
-		return 0, nil
 	}
 	return a.Free(), nil
 }

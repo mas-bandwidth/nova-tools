@@ -22,7 +22,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,7 +71,6 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	slotsStore := f.fs.String("slots-store", defaultSlotsStore, "")
 	slotsOwner := f.fs.String("slots-owner", "", "")
 	slotsBin := f.fs.String("slots-bin", defaultSlotsBin, "")
-	maxLoad := f.fs.Float64("max-load-per-core", defaultMaxLoadPerCore, "")
 	var benches benchFlag
 	var only benchFlag
 	var localBenches benchFlag
@@ -95,14 +93,6 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err != nil {
 		f.add(err.Error())
 	}
-	// NaN is not less than zero, so `< 0` alone let `--max-load-per-core NaN` through, and a
-	// NaN threshold compares false against every bench: the brake the caller asked for was
-	// off and nothing said so. Infinity is the same silence, spelled differently.
-	if math.IsNaN(*maxLoad) || math.IsInf(*maxLoad, 0) || *maxLoad < 0 {
-		f.add(fmt.Sprintf(
-			"--max-load-per-core is a finite number of load units per core, 0 or more (0 is the documented no-brake opt-out), got %v; a threshold nothing can exceed is a brake that is silently off",
-			*maxLoad))
-	}
 	if *deadline <= 0 {
 		f.add(fmt.Sprintf("--deadline is the card's deadline in whole seconds, 1 or more, got %d", *deadline))
 	}
@@ -115,9 +105,9 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	// THE STORE LEADS, THE LOAD BRAKES (#1914). With a slot store named -- and one is
-	// named by default -- the capacity is the bench's own free count and the load is only a
-	// guard. `--slots-store ""` asks for the old load formula and nothing else; `--capacity`
+	// THE STORE IS THE CAPACITY (#1914). With a slot store named -- and one is named by
+	// default -- the capacity is the bench's own free count; the load is the dealer's
+	// (#3251), not a brake here. `--slots-store ""` asks for the old load formula and nothing else; `--capacity`
 	// is a fixed number for every bench and no probe at all.
 	var reader pulse.Capacity
 	switch {
@@ -132,7 +122,6 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 			SlotsBin: *slotsBin,
 			Root:     *swarmRoot,
 			Local:    local,
-			MaxLoad:  *maxLoad,
 			Stderr:   stderr,
 		})
 	}

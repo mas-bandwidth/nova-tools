@@ -31,11 +31,6 @@ const defaultSlotsStore = "$HOME/nova-bench/slots"
 // number may not make. So the path is named, and it is a flag.
 const defaultSlotsBin = "$HOME/.local/bin/nova-swarm"
 
-// defaultMaxLoadPerCore is the brake: a bench over this many load units per core is dealt
-// nothing this tick. It is the core term of the old formula read as a guard rather than as
-// a size (`cores*3/2` is 1.5 per core), and 0 turns it off.
-const defaultMaxLoadPerCore = 1.5
-
 // storeProbeConfig is everything the probe needs that is not the bench's name.
 type storeProbeConfig struct {
 	SSH      string          // the ssh binary; empty is `ssh`
@@ -44,18 +39,17 @@ type storeProbeConfig struct {
 	SlotsBin string          // the nova-swarm that lists the store's leases
 	Root     string          // the swarm root, for the legacy formula's disk term
 	Local    map[string]bool // benches read by this machine's own shell, never over ssh
-	MaxLoad  float64         // the load brake, per core; 0 is no brake
-	Stderr   io.Writer       // where a braked bench says so
+	Stderr   io.Writer       // where a bench answering the legacy formula says so
 }
 
 // storeProbeCapacity is the pulse.Capacity the verb uses when a slot store is named: one
-// probe per bench per tick, parsed and braked by internal/pulse.
+// probe per bench per tick, parsed by internal/pulse. No load brake: the load is the
+// dealer's (#3251).
 func storeProbeCapacity(c storeProbeConfig) pulse.Capacity {
 	return pulse.StoreCapacity{
-		Probe:          c.probe,
-		Owner:          c.Owner,
-		MaxLoadPerCore: c.MaxLoad,
-		Stderr:         c.Stderr,
+		Probe:  c.probe,
+		Owner:  c.Owner,
+		Stderr: c.Stderr,
 	}
 }
 
