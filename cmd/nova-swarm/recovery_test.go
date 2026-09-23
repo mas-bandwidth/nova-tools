@@ -524,7 +524,13 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		b := newBench(t)
 		b.inject()
 		taskID := b.add("task timeout\n")
-		b.extraEnv = []string{"NOVA_SWARM_PAUSEPOINT=before-identify"}
+		// A SUPERVISOR THAT NEVER IDENTIFIES, BY CONSTRUCTION (#2984). This was staged with
+		// NOVA_SWARM_PAUSEPOINT=before-identify, and a SIGSTOP a Go process sends itself is
+		// not a stop on linux: the thread that sent it can run on through Identify before the
+		// group stops, and space printed `RUN START` here (fakesupervisor_swarmtest.go has the
+		// mechanism and the measurement). The fake below writes nothing and exits never, so
+		// the only way this launch can end is the one under test: the timeout kills it.
+		b.extraEnv = []string{"NOVA_SWARM_FAKE_SUPERVISOR=never-identifies"}
 		exit, stdout, _ := b.swarm(withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.1",
 			"--worker", b.worker, "--launch-timeout", "1"})...)
 		b.extraEnv = nil
@@ -988,10 +994,13 @@ func noteSupervisor(t *testing.T, pid int) {
 	spawnedSups[pid] = true
 	spawnedSupsMu.Unlock()
 	t.Cleanup(func() {
-		// A SIGSTOP'd process cannot die, only be resumed; SIGCONT first, then kill the
-		// group the supervisor leads (ownGroup made it its own process-group leader).
+		// A SIGSTOP'd process cannot die, only be resumed; SIGCONT first, then terminate,
+		// wait, kill, and wait until the pid is gone so a leftover cannot outlive the test.
 		_ = syscall.Kill(pid, syscall.SIGCONT)
-		swarm.KillGroup(pid, "")
+		swarm.Reap(pid, "", swarm.TerminateGrace)
+		for waited := time.Duration(0); waited < testWaitBound() && processIsAlive(pid); waited += 5 * time.Millisecond {
+			time.Sleep(5 * time.Millisecond)
+		}
 	})
 }
 
