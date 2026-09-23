@@ -30,7 +30,10 @@ label=card-raw-defect bench=studio event=defect at=2026-09-22T18:40:00Z
 label=card-raw-issue bench=studio event=issue at=2026-09-22T18:45:00Z
 
 # OK today, merged yesterday. Today's row counts the OK and not the landing.
+# The landing names no bench; it joins yesterday's pullreq of the same pr,
+# not the OK entry.
 label=card-old-land bench=studio event=ok at=2026-09-22T12:00:00Z
+label=card-old-land bench=studio event=pullreq at=2026-09-21T22:00:00Z pr=2699
 label=card-old-land event=landed at=2026-09-21T23:00:00Z pr=2699
 
 # A failure and a queueing are neither OK nor useful.

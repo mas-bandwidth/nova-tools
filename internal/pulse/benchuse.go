@@ -21,13 +21,18 @@ package pulse
 //
 // ONE CARD, ONCE. The stream delivers at least once. A second landed entry for
 // the same label is the same card, and a card that both landed and receipted
-// an issue is still one useful card.
+// an issue is still one useful card. The same label on two benches is still
+// one card: useful is counted on one bench, not once per bench.
 //
-// THE LANDING JOINS THE BENCH. A landed entry often names no bench. An empty
-// bench is filled from that card's pr or pullreq entry, then from any other
-// entry of the same label. The day is the UTC day of at. An entry with no
-// stamp, and a call with no day, count nothing — never every card the stream
-// has ever held.
+// THE LANDING JOINS ITS PULL REQUEST. A landed entry often names no bench.
+// It joins the pr or pullreq entry of the same label that is the same
+// attempt: pr, head and attempt agree wherever both sides name them, and at
+// least one of those is shared. Two benches for that identity, or a landing
+// with no identity while the label opened two pull requests, is not a row.
+// A landing does not take the first bench the label was seen on, and it does
+// not borrow a bench from an ok entry. The day is the UTC day of at. An
+// entry with no stamp, and a call with no day, count nothing — never every
+// card the stream has ever held.
 
 import (
 	"fmt"
@@ -36,13 +41,17 @@ import (
 	"time"
 )
 
-// CardDone is one cards:done entry. pr, head, attempt, model, route and the
-// cost fields may be present on the line; they are not a count.
+// CardDone is one cards:done entry. PR, Head and Attempt are the identity a
+// landing joins on. model, route and the cost fields may be present on the
+// line; they are not a count.
 type CardDone struct {
-	Label string
-	Bench string
-	Event string
-	At    time.Time
+	Label   string
+	Bench   string
+	Event   string
+	At      time.Time
+	PR      string
+	Head    string
+	Attempt string
 }
 
 // BenchUse is one bench's cards for one UTC day.
@@ -83,6 +92,12 @@ func ParseCardsDone(text string) ([]CardDone, error) {
 			case "at":
 				atRaw = val
 				sawAt = true
+			case "pr":
+				e.PR = val
+			case "head":
+				e.Head = val
+			case "attempt":
+				e.Attempt = val
 			}
 		}
 		if e.Label == "" {
@@ -109,15 +124,18 @@ func CountBenchUse(entries []CardDone, day time.Time) []BenchUse {
 	if day.IsZero() {
 		return nil
 	}
-	pullreqBench, namedBench := cardBenches(entries)
+	opened := pullreqsByLabel(entries)
 	type key struct{ bench, label string }
-	type marks struct{ ok, landed, useful bool }
+	type marks struct{ ok, landed bool }
 	got := map[key]marks{}
+	// label → bench → whether that bench's qualification was a landing.
+	// Useful is decided once per label, after the whole day is seen.
+	usefulOn := map[string]map[string]bool{}
 	for _, e := range entries {
 		if e.Label == "" || !sameUTCDay(e.At, day) {
 			continue
 		}
-		bench := joinedBench(e, pullreqBench, namedBench)
+		bench := joinedBench(e, opened)
 		if bench == "" {
 			continue
 		}
@@ -128,15 +146,20 @@ func CountBenchUse(entries []CardDone, day time.Time) []BenchUse {
 			m.ok = true
 		case "landed":
 			m.landed = true
-			m.useful = true
+			noteUseful(usefulOn, e.Label, bench, true)
 		case "verified-defect", "receipted-issue":
-			m.useful = true
+			noteUseful(usefulOn, e.Label, bench, false)
 		}
 		got[k] = m
 	}
+	keep := map[string]string{}
+	for label, benches := range usefulOn {
+		keep[label] = benchThatKeepsUseful(benches)
+	}
 	by := map[string]*BenchUse{}
 	for k, m := range got {
-		if !m.ok && !m.landed && !m.useful {
+		useful := keep[k.label] == k.bench
+		if !m.ok && !m.landed && !useful {
 			continue
 		}
 		row := by[k.bench]
@@ -150,7 +173,7 @@ func CountBenchUse(entries []CardDone, day time.Time) []BenchUse {
 		if m.landed {
 			row.Landed++
 		}
-		if m.useful {
+		if useful {
 			row.Useful++
 		}
 	}
@@ -166,35 +189,135 @@ func CountBenchUse(entries []CardDone, day time.Time) []BenchUse {
 	return out
 }
 
-// cardBenches remembers, per label, the bench a pr/pullreq entry named and the
-// first bench any entry named. A later entry does not move a card.
-func cardBenches(entries []CardDone) (pullreq, named map[string]string) {
-	pullreq = map[string]string{}
-	named = map[string]string{}
+// pullreq is one opened pull request that named a bench. A later open does
+// not erase an earlier one: both stay, and a landing that matches both is
+// ambiguous.
+type pullreq struct {
+	bench   string
+	pr      string
+	head    string
+	attempt string
+}
+
+// pullreqsByLabel collects pr and pullreq entries that named a bench. The
+// day does not matter: a landing joins its pull request even when the open
+// and the merge fall on different days.
+func pullreqsByLabel(entries []CardDone) map[string][]pullreq {
+	out := map[string][]pullreq{}
 	for _, e := range entries {
 		if e.Label == "" || e.Bench == "" {
 			continue
 		}
-		if _, ok := named[e.Label]; !ok {
-			named[e.Label] = e.Bench
+		if e.Event != "pr" && e.Event != "pullreq" {
+			continue
 		}
-		if (e.Event == "pr" || e.Event == "pullreq") && pullreq[e.Label] == "" {
-			pullreq[e.Label] = e.Bench
-		}
+		out[e.Label] = append(out[e.Label], pullreq{
+			bench: e.Bench, pr: e.PR, head: e.Head, attempt: e.Attempt,
+		})
 	}
-	return pullreq, named
+	return out
 }
 
-// joinedBench is the entry's own bench, or the card's pullreq bench, or any
-// bench the card already named. Empty means the card is not on a row.
-func joinedBench(e CardDone, pullreq, named map[string]string) string {
+// joinedBench is the entry's own bench. A landed entry that names none joins
+// the one pull request it belongs to. Empty means the card is not on a row.
+func joinedBench(e CardDone, opened map[string][]pullreq) string {
 	if e.Bench != "" {
 		return e.Bench
 	}
-	if b := pullreq[e.Label]; b != "" {
+	if e.Event != "landed" {
+		return ""
+	}
+	return landingBench(e, opened[e.Label])
+}
+
+// landingBench is the bench of the one pullreq that is this landing's
+// attempt. Identity present on the landing must agree; an identity the
+// pullreq did not record does not disqualify it. A landing that names no
+// pr, head or attempt joins only when the label opened exactly one pull
+// request. Zero matches, or two benches, joins nothing.
+func landingBench(e CardDone, opened []pullreq) string {
+	hasID := e.PR != "" || e.Head != "" || e.Attempt != ""
+	matched := map[string]struct{}{}
+	for _, p := range opened {
+		if hasID {
+			if !sameIdentity(e, p) {
+				continue
+			}
+		}
+		matched[p.bench] = struct{}{}
+	}
+	if len(matched) != 1 {
+		return ""
+	}
+	for b := range matched {
 		return b
 	}
-	return named[e.Label]
+	return ""
+}
+
+// sameIdentity reports whether a landing and an opened pull request are the
+// same attempt. A field named on only one side is not a disagreement. A
+// field named on both is, when the values differ. At least one field has
+// to be shared.
+func sameIdentity(e CardDone, p pullreq) bool {
+	shared := false
+	if e.PR != "" && p.pr != "" {
+		if e.PR != p.pr {
+			return false
+		}
+		shared = true
+	}
+	if e.Head != "" && p.head != "" {
+		if e.Head != p.head {
+			return false
+		}
+		shared = true
+	}
+	if e.Attempt != "" && p.attempt != "" {
+		if e.Attempt != p.attempt {
+			return false
+		}
+		shared = true
+	}
+	return shared
+}
+
+// noteUseful records that label qualified on bench this day. landed sticks:
+// a later defect on the same bench does not erase the landing.
+func noteUseful(on map[string]map[string]bool, label, bench string, landed bool) {
+	benches := on[label]
+	if benches == nil {
+		benches = map[string]bool{}
+		on[label] = benches
+	}
+	if landed {
+		benches[bench] = true
+	} else if _, ok := benches[bench]; !ok {
+		benches[bench] = false
+	}
+}
+
+// benchThatKeepsUseful is the one bench a label's useful count is added to.
+// A landing keeps it, so a defect on another bench cannot move the card or
+// count it twice. Several landings, or no landing, take the lexicographically
+// first qualifying bench, so the count does not follow stream order.
+func benchThatKeepsUseful(benches map[string]bool) string {
+	var landed, any []string
+	for b, wasLanding := range benches {
+		any = append(any, b)
+		if wasLanding {
+			landed = append(landed, b)
+		}
+	}
+	pick := any
+	if len(landed) > 0 {
+		pick = landed
+	}
+	sort.Strings(pick)
+	if len(pick) == 0 {
+		return ""
+	}
+	return pick[0]
 }
 
 func sameUTCDay(at, day time.Time) bool {
