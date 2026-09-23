@@ -48,6 +48,16 @@ func TestIssue2209(t *testing.T) {
 	r.Print()
 	text := out.String()
 
+	// The header is the first line: Failure buffers its items until Print,
+	// so calling Failure before Print cannot put RECEIPT FAIL lines ahead
+	// of RECEIPT identity=... (emma's hold on #2830 at c8ece28a).
+	if lines := strings.Split(strings.TrimSpace(text), "\n"); len(lines) != 3 ||
+		!strings.HasPrefix(lines[0], "RECEIPT identity=") ||
+		!strings.Contains(lines[1], "step=verify") ||
+		!strings.Contains(lines[2], "step=lint") {
+		t.Errorf("receipt order: want header, verify, lint:\n%s", text)
+	}
+
 	for _, want := range []string{
 		"identity=" + identity,
 		"equivalence=",

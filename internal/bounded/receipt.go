@@ -22,6 +22,7 @@ list was filled or never started.
 package bounded
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"time"
@@ -60,6 +61,10 @@ type Receipt struct {
 	latency     time.Duration
 	log         string // path to the log holding the un-bounded list — the remedy
 
+	// items holds the rendered failing-step lines until Print, so the
+	// header is always the first line of the receipt whatever order the
+	// caller offers Failure and Print in.
+	items   bytes.Buffer
 	failing *List
 }
 
@@ -80,16 +85,16 @@ type Receipt struct {
 //
 //	nova-test receipt <identity> --log <log>
 func NewReceipt(w io.Writer, kind, identity, equivalence string, latency time.Duration, log string) *Receipt {
-	return &Receipt{
+	r := &Receipt{
 		w:           w,
 		kind:        kind,
 		identity:    identity,
 		equivalence: equivalence,
 		latency:     latency,
 		log:         log,
-		failing: Capped(w, Default, "RECEIPT", "fail",
-			"see "+log),
 	}
+	r.failing = Capped(&r.items, Default, "RECEIPT", "fail", "see "+log)
+	return r
 }
 
 // Failure offers one failing step and its source-backed excerpt to the
@@ -104,8 +109,9 @@ func (r *Receipt) Failure(step, excerpt string) {
 
 // Print writes the receipt: a single header line carrying the identity,
 // the kind, the equivalence key, and the latency; then the failing
-// steps with their excerpts (each written through r.failing.Line as
-// Failure was called); and at most one MORE line naming the log that
+// steps with their excerpts (buffered through r.failing.Line as Failure
+// was called, and written only now, after the header); and at most one
+// MORE line naming the log that
 // holds the un-bounded list. The MORE line is written only when the
 // call sequence elided at least one failure; an empty receipt prints
 // just the header and nothing else.
@@ -116,6 +122,7 @@ func (r *Receipt) Print() {
 		oneline.Field(r.equivalence),
 		formatLatency(r.latency))
 	r.failing.More()
+	_, _ = r.items.WriteTo(r.w)
 }
 
 // formatLatency prints a duration in a form that survives the line
