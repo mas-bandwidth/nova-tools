@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -100,6 +101,71 @@ func (s *stringSlice) Set(val string) error {
 	return nil
 }
 
+// redisWidthWriteVerbs are the redis-cli spellings that write or remove a
+// string key. redis takes its command names in any case; the width key is a
+// string, so the hash and list writes are not this set.
+var redisWidthWriteVerbs = map[string]bool{
+	"set": true, "setnx": true, "setex": true, "psetex": true, "getset": true,
+	"mset": true, "msetnx": true, "del": true, "unlink": true,
+}
+
+// friendWidthName reports the friend a token names as its working column,
+// friend:<name>:width -- the sprint table's key -- or "" when it is not that
+// key (nova-tools#2676).
+func friendWidthName(tok string) string {
+	if !strings.HasPrefix(tok, "friend:") || !strings.HasSuffix(tok, ":width") {
+		return ""
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(tok, "friend:"), ":width")
+	if !secrets.IsValidAsName(name) {
+		return ""
+	}
+	return name
+}
+
+// refusedWidthHandWrite is the one command exec refuses for a reason that is
+// another tool's law (nova-tools#2676): redis-cli writing
+// friend:<name>:width, the sprint table's working column. That column is the
+// friend's own tool's to write -- nova-wake beat --width (#2673), the
+// coordinator's from the number of its live child agents -- and the hand-write
+// of it reached the store only because the store held REDISCLI_AUTH. Reads of
+// the key still run: the table's working column reads exactly that key.
+func refusedWidthHandWrite(cmdArgs []string) error {
+	base := filepath.Base(cmdArgs[0])
+	if base != "redis-cli" && base != "redis-cli.exe" {
+		return nil
+	}
+	writes, name, width := false, "", "<n>"
+	for i := 1; i < len(cmdArgs); i++ {
+		tok := cmdArgs[i]
+		if redisWidthWriteVerbs[strings.ToLower(tok)] {
+			writes = true
+		}
+		if n := friendWidthName(tok); n != "" {
+			name = n
+			if i+1 < len(cmdArgs) && allDigits(cmdArgs[i+1]) {
+				width = cmdArgs[i+1]
+			}
+		}
+	}
+	if !writes || name == "" {
+		return nil
+	}
+	return fmt.Errorf("redis-cli writing friend:%s:width is the sprint table's working column written by hand through nova-secrets exec; that key is the friend's own tool's to write, never a redis-cli line; run: nova-wake beat --width %s (nova-tools #2673)", name, width)
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: no arguments is not an invocation; run: nova-secrets help\n")
@@ -186,6 +252,14 @@ func runExecCLI(args []string) {
 
 	if len(cmdArgs) == 0 {
 		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL invocation: no command specified after '--'\n")
+		os.Exit(125)
+	}
+
+	// nova-tools#2676: the sprint table's working column is the friend's own
+	// tool's to write, never a redis-cli line through this exec; the
+	// hand-write of it went through because the store held REDISCLI_AUTH.
+	if err := refusedWidthHandWrite(cmdArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL %s\n", oneline.Err(err))
 		os.Exit(125)
 	}
 
