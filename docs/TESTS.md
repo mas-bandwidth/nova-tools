@@ -921,6 +921,21 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-ve
 ```
 
 
+## nova-card
+
+The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
+by hand, and its real run needs the sprint Redis and a dealt card; that run is
+`TestWrapperOwnsOneCardEndToEnd` in `internal/nsprint/card/wrapper_test.go`.
+The first run a stranger can type reads nothing and writes nothing.
+
+### First run
+
+```text
+$ nova-card version
+nova-card v0.16.0-dev darwin/arm64 go1.26.6
+```
+
+
 ## nova-cairn
 
 No fixture: the store is created by the run itself. Every line below is local
