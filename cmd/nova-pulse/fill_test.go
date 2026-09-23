@@ -262,19 +262,22 @@ func TestFillRefusesWithoutReadyAndLaunched(t *testing.T) {
 
 // TestLaunchDoesNotWaitForTheCardToRun: the launcher runs the card, not just the start of
 // it, and one tick blocked nine minutes launching three cards one after another (dogfood,
-// 2026-09-18). The property, asserted without a clock: a child that fails only after the
-// grace is up is already counted as launched, while the same child with no grace is waited
-// for and its failure is seen.
+// 2026-09-18). The property, asserted without a clock: a launcher that has ACCEPTED the card
+// is counted as launched while it still runs, and fails later on the bench's time; the same
+// kind of late failure with no grace is waited for and seen. A launcher that is merely
+// still running at the grace has NOT launched (#2381, #2874):
+// TestLaunchCountsOnlyOnAPositiveRecord holds that side.
 func TestLaunchDoesNotWaitForTheCardToRun(t *testing.T) {
+	card := filepath.Join(t.TempDir(), "card-001.md")
+	bin, release := launchHelper(t, "accept", 7)
+	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", card); err != nil {
+		t.Fatalf("an accepted launcher still running answered an error: %v", err)
+	}
+	release()
+
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{SleepMS: 1500, Stderr: "late failure", Exit: 7}})
-	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
-	card := filepath.Join(t.TempDir(), "card-001.md")
-
-	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", card); err != nil {
-		t.Fatalf("a launcher still running at the grace answered an error: %v", err)
-	}
-	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", card)
+	err := flashLauncher{bin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), grace: 0}.Launch("bench-a", card)
 	if err == nil {
 		t.Fatal("with no grace the launcher is waited for; its failure was not seen")
 	}
