@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The harvest asks its one class question through Decider, the same typed
@@ -133,41 +132,6 @@ type harvestClass struct {
 	conf  float64
 	below string
 	test  string
-}
-
-// decideClass asks the one typed class question about a finished job. A provider
-// error, a missing answer or an option outside the closed set leaves the class
-// unknown: the harvest then runs today's path unchanged.
-func (in HarvestInput) decideClass(jobDir, branch string, resultLines []string) harvestClass {
-	c := harvestClass{kind: "unknown", below: "class"}
-	if in.Decider == nil {
-		return c
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
-	defer cancel()
-	answers, _, err := in.Decider.Decide(ctx, harvestClassState(jobDir, branch, resultLines), harvestClassQuestions())
-	if err != nil {
-		fmt.Fprintf(in.Stderr, "HARVEST NOTE class decision unavailable: %s\n", oneline.Err(err))
-		return c
-	}
-	a, ok := answers["class"]
-	if !ok || a.Type != "choice" {
-		return c
-	}
-	c.conf = a.Confidence
-	if a.Confidence < in.Floor {
-		return c
-	}
-	for _, opt := range harvestClassOptions {
-		if a.Choice == opt {
-			c.kind, c.below = opt, "-"
-			if opt == "already-fixed" {
-				c.test = resultNamedTest(resultLines)
-			}
-			return c
-		}
-	}
-	return c
 }
 
 // classFields is the class= conf= floor= below= tail every HARVEST line carries

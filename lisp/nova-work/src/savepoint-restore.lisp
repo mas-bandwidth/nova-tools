@@ -100,6 +100,16 @@ kind and rolls nothing back (SPEC-WORK.md:7165-7171)."
         (unless (and (probe-file (cdr pair))
                      (%savepoint-reference-holds-p (car pair) (cdr pair)))
           (return-from savepoint-verify-published (%gap id rev "broken hash"))))
+      ;; the dedup root the boundary record names, against the bytes on disk (:7160-7161)
+      (let* ((dedup-root-path (merge-pathnames "dedup-root" dir))
+             (boundary (getf manifest :boundary))
+             (named (and (consp boundary) (consp (cdr boundary))
+                         (getf boundary :dedup-root))))
+        (when named
+          (unless (and (probe-file dedup-root-path)
+                       (dedup-root-holds-p dedup-root-path named))
+            (return-from savepoint-verify-published
+              (%gap id rev (format nil "dedup root ~A is missing or altered" dedup-root-path))))))
       ;; the image is one revision, and it is the manifest's
       (let ((image (handler-case (reconstruct-state (%savepoint-read-object image-path))
                      (error () nil))))
@@ -108,20 +118,38 @@ kind and rolls nothing back (SPEC-WORK.md:7165-7171)."
         (unless (eql rev (state-revision image))
           (return-from savepoint-verify-published
             (%gap id rev "image revision differs from its cut")))
-        ;; the journal id and the exact cut. A copied journal grants nothing.
+        ;; the journal identity and the exact cut. The new shape requires both
+        ;; the stable logical identity and a continuous chain to the cut; a
+        ;; manifest without it is the explicit legacy shape (:7176-7182).
         (when journal-path
           (unless (probe-file journal-path)
             (return-from savepoint-verify-published (%gap id rev "journal mismatch")))
-          (let ((identity (handler-case
-                              (sha256-hex (with-open-file (in journal-path
-                                                              :external-format :utf-8)
-                                            (read-line in nil "")))
-                            (error () nil))))
-            (unless (equal identity (getf manifest :journal))
-              (return-from savepoint-verify-published (%gap id rev "journal mismatch"))))
+          (let ((rotated nil))
+           (let ((logical (getf manifest :journal-logical)))
+            (if logical
+                (progn
+                  (unless (equal logical (journal-logical-identity journal-path))
+                    (return-from savepoint-verify-published
+                      (%gap id rev "journal identity mismatch")))
+                  (multiple-value-bind (found root-sha rotated-p)
+                      (journal-chain-covers-cut-p journal-path cut)
+                    (setf rotated rotated-p)
+                    (when (and rotated-p (not found))
+                      (return-from savepoint-verify-published
+                        (%gap id rev "broken chain: the live journal does not reach the saved cut")))
+                    (unless (equal root-sha (getf manifest :journal))
+                      (return-from savepoint-verify-published (%gap id rev "journal mismatch")))))
+                (let ((identity (handler-case
+                                    (sha256-hex (with-open-file (in journal-path
+                                                                    :external-format :utf-8)
+                                                  (read-line in nil "")))
+                                  (error () nil))))
+                  (unless (equal identity (getf manifest :journal))
+                    (return-from savepoint-verify-published (%gap id rev "journal mismatch"))))))
           (let* ((scan (scan-journal-file journal-path))
                  (records (journal-scan-records scan)))
-            (unless (absentp cut)
+            ;; a rotated segment verifies its cut from the header alone.
+            (unless (or rotated (absentp cut))
               (let ((record (find (getf cut :sequence) records
                                   :key (lambda (r) (getf r :sequence)))))
                 (unless record
@@ -147,7 +175,7 @@ kind and rolls nothing back (SPEC-WORK.md:7165-7171)."
                                     :test #'equal)))
                     (unless (and kept (getf kept :reply))
                       (return-from savepoint-verify-published
-                        (%gap id rev "missing original reply")))))))))
+                        (%gap id rev "missing original reply"))))))))))
         (values t
                 (format nil "SAVEPOINT OK id=~A rev=~D checkpoint=- pushed=- boundary=~A age=~A unshared=0 manifest=~A shown=1"
                         id rev

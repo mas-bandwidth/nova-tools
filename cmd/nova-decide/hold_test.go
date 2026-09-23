@@ -13,8 +13,14 @@ import (
 
 // Stella's four findings on #1327 at 78620ba3, at the verb.
 
-// (2) Security reaches the designated rung through the verb too, whichever way
-// the touch is named and whatever floor is passed.
+// (2) Security reaches the designated mind through the verb too, whichever way
+// the touch is named and whatever floor is passed -- as the READ on the line.
+//
+// This asserted rung=johnny until 2026-09-18, when the day's twenty real units
+// showed what that meant: seven units, six of them owned in the work set by
+// rowan-child, dispatched to a mind that is reserved and takes no work. The
+// line now carries read=johnny beside a rung that can do the work, and a floor
+// nothing can clear (--floor 1) moves that rung and leaves the read alone.
 func TestRouteSecurityNeverFallsThrough(t *testing.T) {
 	for name, args := range map[string][]string{
 		"guard flag":    {"--guard"},
@@ -33,12 +39,18 @@ func TestRouteSecurityNeverFallsThrough(t *testing.T) {
 			base = append(base, "--kind", "fleet-chore")
 		}
 		var stdout, stderr bytes.Buffer
-		if code := run(append(base, args...), &stdout, &stderr); code != 0 {
+		// 0 is the answer and 3 is the answer below the floor -- a suggestion.
+		// Both are decisions; 2 would be a refusal and 1 a wait, and neither
+		// belongs to any of these units.
+		if code := run(append(base, args...), &stdout, &stderr); code != 0 && code != 3 {
 			t.Errorf("%s: exit = %d (stderr=%q)", name, code, stderr.String())
 			continue
 		}
-		if !strings.Contains(stdout.String(), "rung=johnny") {
-			t.Errorf("%s: security is the designated rung's always: %s", name, stdout.String())
+		if !strings.Contains(stdout.String(), "read=johnny") {
+			t.Errorf("%s: security reaches the designated mind always, as the read: %s", name, stdout.String())
+		}
+		if strings.Contains(stdout.String(), "rung=johnny") {
+			t.Errorf("%s: johnny is reserved -- a read and a STOP, never the work: %s", name, stdout.String())
 		}
 	}
 }

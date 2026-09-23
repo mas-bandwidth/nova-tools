@@ -1,22 +1,23 @@
 package pulse
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// textKinds are the three text-only templates: read, text and tone. Their cards carry the
+// textKinds are the text-only templates: read, text, tone and report. Their cards carry the
 // no-build line and are routed to any model that can hold them (SPEC-PULSE rule 6 and 7).
-var textKinds = map[string]bool{"read": true, "text": true, "tone": true}
+var textKinds = map[string]bool{"read": true, "text": true, "tone": true, "report": true}
 
 // SlotDash is the cards.tsv slot every cut card carries until launch allocates one.
 const SlotDash = "-"
@@ -35,6 +36,12 @@ type CutInput struct {
 	Budget    int    // the card's byte budget, when Probe is set; 0 means unbounded
 	Stdout    io.Writer
 	Stderr    io.Writer
+	// ValidateContract preflights every candidate's locator before any card file is
+	// written: a locator that does not resolve (gh repo view non-zero) is refused with
+	// the reason and no card is written, so a dead repo never spends admission plus the
+	// scaffold before an abstain (issue #675).
+	ValidateContract bool
+	DependsOn        []string
 }
 
 // Cut writes one card per pool.tsv candidate from its typed template and returns the exit
@@ -68,6 +75,20 @@ func Cut(in CutInput) int {
 	skipList := bounded.Capped(in.Stderr, in.Max, "CUT", "skipped", "use --max 0 to show all")
 	var cards []CardRow
 
+	if in.ValidateContract {
+		seen := map[string]bool{}
+		for _, row := range pool {
+			if seen[row.Source] {
+				continue
+			}
+			seen[row.Source] = true
+			if reason := locatorUnresolvable(row.Source); reason != "" {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED locator=%s: %s (check gh auth and the repo name)\n", oneline.Field(row.Source), oneline.Escape(reason))
+				return 2
+			}
+		}
+	}
+
 	for _, row := range pool {
 		if in.Max > 0 && len(cards) >= in.Max {
 			break
@@ -79,7 +100,11 @@ func Cut(in CutInput) int {
 			skipList.Line(fmt.Sprintf("CUT SKIPPED source=%s id=%s template=%s: no template", oneline.Field(row.Source), oneline.Field(row.ID), oneline.Field(name)))
 			continue
 		}
-		card, reason := renderCard(string(raw), row)
+		deps := in.DependsOn
+		if len(deps) == 0 && row.DependsOn != "" {
+			deps = ParseDependsOn(row.DependsOn)
+		}
+		card, reason := renderCard(string(raw), row, deps)
 		if reason != "" {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED template=%s: %s\n", oneline.Field(name), oneline.Escape(reason))
 			return 2
@@ -151,7 +176,20 @@ func Cut(in CutInput) int {
 
 func isFlashKind(kind string) bool { return textKinds[kind] }
 
-// modelFor decides the model by kind and nowhere else: read/text/tone -> flash, the rest ->
+// locatorUnresolvable returns a non-empty reason when the candidate's locator (owner/repo)
+// does not resolve through gh repo view, else "". A locator that does not resolve is a card
+// that would clone nothing and abstain after the scaffold, so cut refuses it up front.
+func locatorUnresolvable(locator string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "repo", "view", locator)
+	if _, err := cmd.Output(); err != nil {
+		return "does not resolve"
+	}
+	return ""
+}
+
+// modelFor decides the model by kind and nowhere else: read/text/tone/report -> flash, the rest ->
 // pro, with --local naming an ollama/<tag> override for read and text (SPEC-PULSE rule 7).
 // A models.tsv may name only one of the two ids; the cards that would take the missing model
 // hold to the one the table names, so `flash <id>` alone is the spend rule "flash only".
@@ -195,10 +233,14 @@ func readPool(path string) ([]PoolRow, error) {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) != 5 {
+		if len(parts) != 5 && len(parts) != 6 {
 			return nil, fmt.Errorf("--pool line %d wants source, id, kind, title, template, got %d fields", i+1, len(parts))
 		}
-		rows = append(rows, PoolRow{Source: parts[0], ID: parts[1], Kind: parts[2], Title: parts[3], Template: parts[4]})
+		row := PoolRow{Source: parts[0], ID: parts[1], Kind: parts[2], Title: parts[3], Template: parts[4]}
+		if len(parts) == 6 {
+			row.DependsOn = parts[5]
+		}
+		rows = append(rows, row)
 	}
 	return rows, nil
 }
@@ -245,12 +287,13 @@ var costOrder = map[string]int{"zero": 0, "flat": 1, "metered": 2}
 // ladder (read -> text -> code -> replay).
 var capOrder = map[string]int{"read": 0, "text": 1, "code": 2, "replay": 3}
 
-// requiredCaps is what each card kind needs a route to cover: read, text and tone any
+// requiredCaps is what each card kind needs a route to cover: read, text, tone and report any
 // reading-capable model, fix and drift a code model, replay a replay model.
 var requiredCaps = map[string][]string{
 	"read":   {"read", "text", "replay"},
 	"text":   {"read", "text", "replay"},
 	"tone":   {"read", "text", "replay"},
+	"report": {"read", "text", "replay"},
 	"fix":    {"code"},
 	"drift":  {"code"},
 	"replay": {"replay"},
@@ -419,58 +462,18 @@ func routeFor(kind string, retry bool, table []costModel) costModel {
 // reason to refuse it. The template is the card body with placeholders <label>, <source>,
 // <id>, <kind>, <title> and <branch>. cut computes the sha-12 over the rendered body below
 // line 1 and rewrites line 1, so the contract always binds the card it heads.
-func renderCard(tmpl string, row PoolRow) (string, string) {
-	rendered := strings.NewReplacer(
-		"<label>", row.ID,
-		"<source>", row.Source,
-		"<id>", row.ID,
-		"<kind>", row.Kind,
-		"<title>", row.Title,
-		"<branch>", branchOf(row),
-	).Replace(tmpl)
-	lines := strings.Split(rendered, "\n")
-	line1 := strings.TrimSpace(lines[0])
-	if !strings.HasPrefix(line1, "RESULT ") || !strings.Contains(line1, "sha=") {
-		return "", "rule 5: line 1 is not the RESULT contract (line 1 must be `RESULT <label> sha=<sha12>`)"
+func renderCard(tmpl string, row PoolRow, deps ...[]string) (string, string) {
+	var d []string
+	if len(deps) > 0 {
+		d = deps[0]
+	} else if row.DependsOn != "" {
+		d = ParseDependsOn(row.DependsOn)
 	}
-	if strings.Contains(rendered, "../scratch") {
-		return "", "rule 5: the card mentions ../scratch (scratch notes live in the repo directory as notes.txt)"
-	}
-	step1, ok := stepOne(lines)
-	if !ok {
-		return "", "rule 5: no STEP 1 line (a card wants STEP 1 as the mkdir/clone/checkout)"
-	}
-	for _, want := range []string{"mkdir -p scratch", "checkout -b"} {
-		if !strings.Contains(step1, want) {
-			return "", fmt.Sprintf("rule 5: STEP 1 lacks %q (STEP 1 must carry mkdir -p scratch and checkout -b)", want)
-		}
-	}
-	// STEP 1 sets no TMPDIR of its own (#460): the runner exports TMPDIR=<slot>/tmp/<label> —
-	// the slot directory is never a repo, while admission git-inits the job directory — and a
-	// card that exports its own puts its temp dir inside the job's repo, the red cards 247,
-	// 266 and 353 reported and did not cause.
-	if strings.Contains(step1, "TMPDIR") {
-		return "", "rule 5: STEP 1 sets TMPDIR (the runner exports TMPDIR outside every repo; a card sets none of its own)"
-	}
-	if strings.Contains(step1, "git@") || !strings.Contains(step1, "https://") {
-		return "", "rule 5: STEP 1 does not clone over https (the clone URL is https, never git@)"
-	}
-	if steps := countSteps(lines); steps > turnBudget(row.Kind) {
-		return "", fmt.Sprintf("the card has %d steps, over the %d-turn budget (#855; the step count is the turn budget: name the exact file and line range, one check per step)", steps, turnBudget(row.Kind))
-	}
-	if textKinds[row.Kind] {
-		if !strings.Contains(strings.ToLower(rendered), "do not run go build") {
-			return "", "rule 6: the text template lacks the no-build line (read, text and tone cards must state `Do not run go build, go test or any toolchain`)"
-		}
-	} else {
-		if !strings.Contains(strings.ToLower(rendered), "red line") || !strings.Contains(strings.ToLower(rendered), "green line") {
-			return "", "rule 6: the writing template lacks the red-then-green row rule (fix, replay and drift cards must name the red line and the green line)"
-		}
-	}
-	body := strings.Join(lines[1:], "\n")
-	sum := sha256.Sum256([]byte(body))
-	lines[0] = fmt.Sprintf("RESULT %s sha=%s", row.ID, hex.EncodeToString(sum[:])[:12])
-	return strings.Join(lines, "\n"), ""
+	return RenderTemplate(CutTemplateInput{
+		Template:  tmpl,
+		Row:       row,
+		DependsOn: d,
+	})
 }
 
 // stepOne returns the STEP 1 line, or false when there is none in the first 20 lines.
@@ -496,8 +499,8 @@ func countSteps(lines []string) int {
 	return n
 }
 
-// turnBudget is the step count each kind may spend: the read family (read, text, tone) gets
-// 8 turns, the writing family (fix, replay, drift) 20 (#855).
+// turnBudget is the step count each kind may spend: the read family (read, text, tone,
+// report) gets 8 turns, the writing family (fix, replay, drift) 20 (#855).
 func turnBudget(kind string) int {
 	if textKinds[kind] {
 		return 8
@@ -505,8 +508,12 @@ func turnBudget(kind string) int {
 	return 20
 }
 
+// branchOf is where a card's branch NAME comes from, and DefaultBranchPrefix is the one
+// spelling of the prefix -- the same constant harvest refuses a push outside of (Stella's
+// ruling on #1824) and a bench harvest filters by. It was a second literal "rowan/" here,
+// which is exactly how a generator and its gate drift apart.
 func branchOf(row PoolRow) string {
-	return "rowan/" + strings.ReplaceAll(row.ID, " ", "-")
+	return DefaultBranchPrefix + strings.ReplaceAll(row.ID, " ", "-")
 }
 
 func writeCardsTSV(path string, cards []CardRow) error {

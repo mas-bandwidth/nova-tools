@@ -89,6 +89,9 @@ example:
   nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual
   nova-cairn index --store ./cairns
   nova-cairn receipt --store ./cairns --session s1 --entry e1
+
+Those four are one sitting, in order: the open makes ./cairns, and the append,
+index and receipt read it back. A line run alone names a record it did not make.
 `
 
 // refuse is what an unusable invocation costs: one line naming what was

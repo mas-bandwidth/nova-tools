@@ -302,6 +302,290 @@ func TestFailedIsReachableFromTheDispatch(t *testing.T) {
 	}
 }
 
+// (i) `failed --decide` reads a red into its class and grants at most one licensed rerun.
+// The negative control is first and it is the point: a cancelled leg beside a `--- FAIL`
+// is a named-test, and a named failing test is never licensed however many reruns are
+// left. A rerunnable class is licensed only at zero reruns -- the second red at one sha is
+// a finding -- and a flake row past its expiry matches nothing, so the red falls back to a
+// named-test. These are the mechanical rows of SPEC-DECIDE reading 6, "one licensed rerun,
+// or a finding"; the reading never reruns anything itself.
+func TestFailedDecideClassesTheRedAndLicensesAtMostOneRerun(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	flakes := write("flakes.tsv", "TestFlaky\t#1\t2099-01-01\n")
+	expired := write("expired.tsv", "TestFlaky\t#1\t2026-09-18\n")
+	infra := write("infra.txt", "Set up job\n")
+	flakyLog := "--- FAIL: TestFlaky (0.01s)\n"
+
+	cases := []struct {
+		name  string
+		forge *stubForge
+		args  []string
+		want  string
+	}{
+		{
+			name: "a cancelled leg beside a failing test is a named-test",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{
+					{ID: 2, Name: "test (1/4)", Conclusion: "failure", Attempt: 1, HeadSHA: decideSHA},
+					{ID: 3, Name: "test (2/4)", Conclusion: "cancelled", Attempt: 1, HeadSHA: decideSHA},
+				},
+				logs: map[int64]string{2: forgeFixture(t, "windows-sandbox.log"), 3: "cleanup\n"},
+			},
+			args: []string{"--decide"},
+			want: "red=named-test rerun=no finding=yes reruns=0 attempt=1",
+		},
+		{
+			name: "a cancelled-only run licenses one rerun",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: 1, HeadSHA: decideSHA}},
+				logs: map[int64]string{3: "cleanup\n"},
+			},
+			args: []string{"--decide"},
+			want: "red=cancelled-leg rerun=licensed finding=no reruns=0 attempt=1",
+		},
+		{
+			name: "the second red at one sha is a finding",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: 2, HeadSHA: decideSHA}},
+				logs: map[int64]string{3: "cleanup\n"},
+			},
+			args: []string{"--decide"},
+			want: "red=cancelled-leg rerun=no finding=yes reruns=1 attempt=2",
+		},
+		{
+			name: "an unexpired flake row licenses the rerun",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 4, Name: "test (3/4)", Conclusion: "failure", Attempt: 1, HeadSHA: decideSHA}},
+				logs: map[int64]string{4: flakyLog},
+			},
+			args: []string{"--decide", "--flakes", flakes, "--now", "2026-09-19"},
+			want: "red=known-flake rerun=licensed finding=no reruns=0 attempt=1",
+		},
+		{
+			name: "an expired flake row matches nothing",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 4, Name: "test (3/4)", Conclusion: "failure", Attempt: 1, HeadSHA: decideSHA}},
+				logs: map[int64]string{4: flakyLog},
+			},
+			args: []string{"--decide", "--flakes", expired, "--now", "2026-09-19"},
+			want: "red=named-test rerun=no finding=yes reruns=0 attempt=1",
+		},
+		{
+			name: "an infra step in the table is a rerunnable class",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 5, Name: "test (4/4)", Conclusion: "failure", Attempt: 1, HeadSHA: decideSHA, Steps: []ci.FailedStep{{Name: "Set up job", Conclusion: "failure"}}}},
+				logs: map[int64]string{5: "no test event here\n"},
+			},
+			args: []string{"--decide", "--infra-steps", infra},
+			want: "red=infra rerun=licensed finding=no reruns=0 attempt=1",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			args := append([]string{"--repo", "owner/name", "--run", "1"}, c.args...)
+			code, stdout, stderr := runFailed(t, c.forge, args...)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1; `nova-ci failed --decide` did not classify the red: %s", code, stderr)
+			}
+			if !strings.Contains(lastLine(stdout), c.want) {
+				t.Errorf("closing line = %q, want it to carry %q", lastLine(stdout), c.want)
+			}
+		})
+	}
+}
+
+// (j) THE COUNT IS THE FORGE'S. The one licensed rerun is worth nothing if the caller can
+// say how many reruns have been spent, because the caller is the party that wants the
+// rerun: `--reruns 0` on a second attempt would license a red that has already been rerun
+// once, which is the manufactured green rule 4 forbids. So the count is read from the
+// forge's own attempt number for the red jobs at this sha -- attempt N means N-1 reruns
+// spent -- and the flag is a FLOOR on that count: it can raise the spent count and never
+// lower it. The negative control is the point of this test: attempt 2 of the same job at
+// the same sha is NOT licensed, with the default flags and with `--reruns 0` attempting to
+// reset it.
+func TestFailedDecideCountsRerunsFromTheForgeAttemptAndNotTheCaller(t *testing.T) {
+	cancelledLeg := func(attempt int) *stubForge {
+		return &stubForge{
+			jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: attempt, HeadSHA: decideSHA}},
+			logs: map[int64]string{3: "cleanup\n"},
+		}
+	}
+	noTestRed := func(attempt int) *stubForge {
+		return &stubForge{
+			jobs: []ci.FailedJob{{ID: 5, Name: "test (4/4)", Conclusion: "timed_out", Attempt: attempt, HeadSHA: decideSHA}},
+			logs: map[int64]string{5: "no test event here\n"},
+		}
+	}
+	cases := []struct {
+		name  string
+		forge *stubForge
+		args  []string
+		want  string
+	}{
+		{
+			name:  "attempt 1 and a no-test red is the one licence",
+			forge: noTestRed(1),
+			args:  []string{"--decide"},
+			want:  "red=infra rerun=licensed finding=no reruns=0 attempt=1",
+		},
+		{
+			name:  "attempt 2 of the same job at the same sha is not licensed",
+			forge: noTestRed(2),
+			args:  []string{"--decide"},
+			want:  "red=infra rerun=no finding=yes reruns=1 attempt=2",
+		},
+		{
+			name:  "attempt 2 is not licensed however the caller sets --reruns 0",
+			forge: noTestRed(2),
+			args:  []string{"--decide", "--reruns", "0"},
+			want:  "red=infra rerun=no finding=yes reruns=1 attempt=2",
+		},
+		{
+			name:  "a cancelled leg on attempt 2 is a finding too",
+			forge: cancelledLeg(2),
+			args:  []string{"--decide", "--reruns", "0"},
+			want:  "red=cancelled-leg rerun=no finding=yes reruns=1 attempt=2",
+		},
+		{
+			name:  "the flag is a floor, so it can still withhold a licence at attempt 1",
+			forge: cancelledLeg(1),
+			args:  []string{"--decide", "--reruns", "1"},
+			want:  "red=cancelled-leg rerun=no finding=yes reruns=1 attempt=1",
+		},
+		{
+			name:  "a fifth attempt counts four spent reruns",
+			forge: cancelledLeg(5),
+			args:  []string{"--decide"},
+			want:  "red=cancelled-leg rerun=no finding=yes reruns=4 attempt=5",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			args := append([]string{"--repo", "owner/name", "--run", "1"}, c.args...)
+			code, stdout, stderr := runFailed(t, c.forge, args...)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1; stderr: %s", code, stderr)
+			}
+			if !strings.Contains(lastLine(stdout), c.want) {
+				t.Errorf("closing line = %q, want it to carry %q", lastLine(stdout), c.want)
+			}
+		})
+	}
+}
+
+// (k) NO ATTEMPT, NO LICENCE. The count has to come from somewhere, and when the forge
+// will not say -- no attempt number on a red job, no sha to hold it against, or red jobs
+// that disagree with each other -- the verb refuses at exit 2 rather than reading the
+// absence as a first red. A refusal names what was missing, and prints no licence at all:
+// a `rerun=` on stdout here would be a decision made on a fact nobody had.
+func TestFailedDecideFailsClosedWhenTheForgeWillNotNameTheAttempt(t *testing.T) {
+	other := "1111111111111111111111111111111111111111"
+	cases := []struct {
+		name  string
+		forge *stubForge
+		want  string
+	}{
+		{
+			name: "no attempt number",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled", HeadSHA: decideSHA}},
+				logs: map[int64]string{3: "cleanup\n"},
+			},
+			want: "named no attempt number for the red job \"e2e\"",
+		},
+		{
+			name: "no head sha",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: 1}},
+				logs: map[int64]string{3: "cleanup\n"},
+			},
+			want: "named no head sha for the red job \"e2e\"",
+		},
+		{
+			name: "the red jobs disagree about the attempt",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{
+					{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: 1, HeadSHA: decideSHA},
+					{ID: 4, Name: "e2e (2)", Conclusion: "cancelled", Attempt: 2, HeadSHA: decideSHA},
+				},
+				logs: map[int64]string{3: "cleanup\n", 4: "cleanup\n"},
+			},
+			want: "attempt count disagrees with itself",
+		},
+		{
+			name: "the red jobs disagree about the sha",
+			forge: &stubForge{
+				jobs: []ci.FailedJob{
+					{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: 1, HeadSHA: decideSHA},
+					{ID: 4, Name: "e2e (2)", Conclusion: "cancelled", Attempt: 1, HeadSHA: other},
+				},
+				logs: map[int64]string{3: "cleanup\n", 4: "cleanup\n"},
+			},
+			want: "disagree about the sha",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			code, stdout, stderr := runFailed(t, c.forge, "--repo", "owner/name", "--run", "1", "--decide")
+			if code != 2 {
+				t.Fatalf("exit = %d, want 2; a licence decided without the forge's attempt is the one thing this verb must not do.\nstdout: %s\nstderr: %s", code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, c.want) {
+				t.Errorf("stderr = %q, want it to name %q", stderr, c.want)
+			}
+			if strings.Contains(stdout, "rerun=") {
+				t.Errorf("stdout carries a licence field after a refusal:\n%s", stdout)
+			}
+		})
+	}
+}
+
+// (l) A REREAD OF ONE IMMUTABLE ATTEMPT SAYS THE SAME THING. This verb is a read-only
+// classifier: it consumes nothing and reruns nothing, so reading the same attempt of the
+// same job at the same sha twice is not a second red and must give the same advisory
+// answer both times. The licence is spent by the caller's own rerun command, which the
+// forge then reports as attempt 2 -- and the third read below, at that attempt, is the one
+// that stops licensing.
+func TestFailedDecideRereadingOneAttemptRepeatsTheSameAnswer(t *testing.T) {
+	forge := func(attempt int) *stubForge {
+		return &stubForge{
+			jobs: []ci.FailedJob{{ID: 3, Name: "e2e", Conclusion: "cancelled", Attempt: attempt, HeadSHA: decideSHA}},
+			logs: map[int64]string{3: "cleanup\n"},
+		}
+	}
+	read := func(t *testing.T, attempt int) string {
+		t.Helper()
+		code, stdout, stderr := runFailed(t, forge(attempt), "--repo", "owner/name", "--run", "1", "--decide")
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1; stderr: %s", code, stderr)
+		}
+		return lastLine(stdout)
+	}
+	first, second := read(t, 1), read(t, 1)
+	if first != second {
+		t.Errorf("two reads of attempt 1 answered differently:\n first  = %q\n second = %q", first, second)
+	}
+	if !strings.Contains(first, "rerun=licensed finding=no reruns=0 attempt=1") {
+		t.Errorf("the first read of attempt 1 = %q, want the licence", first)
+	}
+	if third := read(t, 2); !strings.Contains(third, "rerun=no finding=yes reruns=1 attempt=2") {
+		t.Errorf("the read after the rerun = %q, want no second licence", third)
+	}
+}
+
+// decideSHA is the one commit the --decide tests' jobs ran at: the attempt count is only
+// meaningful for one job at one sha, so the fake forge names it everywhere it is not the
+// thing under test.
+const decideSHA = "38a1affdb43d4cae9cb35a83c2cd3bcf3de2713d"
+
 // lastLine is the last non-empty line of some output.
 func lastLine(s string) string {
 	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")

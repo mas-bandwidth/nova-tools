@@ -310,7 +310,7 @@ func TestAnAdvanceWithNoLaneWritesNothing(t *testing.T) {
 	checkout, _ := busDir(t)
 	var out, errOut bytes.Buffer
 	code := advanceCursorTo(checkout, bus.Participant{Name: "Dana"}, nil, "", strings.Repeat("a", 40),
-		"origin", "main", 3, true, now(), &out, &errOut)
+		"origin", "main", 3, true, false, now(), &out, &errOut)
 	if code != 1 {
 		t.Fatalf("an advance with no lane exited %d, want 1\nstdout: %s\nstderr: %s", code, out.String(), errOut.String())
 	}

@@ -61,8 +61,8 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
-  nova-merge land       --repo <owner>/<name> --pr <n> [--receipt <line> | --receipt-file <path>] [--no-jump] [--timeout <seconds>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
+  nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
@@ -78,7 +78,7 @@ batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, 
 each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
 will not merge and says so, and then builds, vets, tests and runs the lisp suite over
 what is left, one progress line per step on stderr with the elapsed time. Green is
-"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list>"
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]"
 at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages and
 the failing tests at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
 never claims a suite it only ran part of; --require-lisp turns a skipped lisp step into a
@@ -86,25 +86,35 @@ FAIL for a caller who needs it run, and a program that is not on PATH is also lo
 under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
 the tree's go.mod BEFORE the first merge, so an old go on PATH is one refusal with the
 remedy rather than a red build step quoting a download notice. checks=required is the
-default: a member whose own head has no green ci-ok is DROPPED BEFORE THE MERGE, because
+default: a member whose own head has no green required check is DROPPED BEFORE THE MERGE, because
 the gate runs on one operating system and CI runs on three and a member nobody has judged
-on its own would turn the whole batch red for its own fault. A member whose head is a
+on its own would turn the whole batch red for its own fault. The check's name is ci-ok
+here, --check-name or .nova-merge required-check= elsewhere, and it is printed as check=
+on BATCH OK and BATCH DROP so a lane script can parse it. A member whose head is a
 batch's own branch (rowan/integration-*) or is named by a BATCH OK line in --receipt-file
 is admitted on the gate's own evidence instead -- the same receipt nova-merge land takes.
 --no-require-checks waives the whole check and says so on the verdict line. Pushing that
 branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
-it a directory of the batch's own.
+it a directory of the batch's own. --sibling <name>=<url>@<ref> (repeatable) clones that
+repository beside the job checkout (repo/) at the named branch or tag, so a tree whose
+tests look next door — schema's serialize.go at ../serialize.go — finds it after the
+rebuild. name is one path element (dots allowed); repo and tmp are reserved. The last @
+splits url from ref.
 
 THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
 runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
 is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
-that goes green here is a batch that ran what CI runs. integration-4 went green under a
-plain "go test ./..." and three CI legs then failed. The one thing not mirrored is CI's
-fair share of the machine, which is the machine's own fact and not a number this tool may
-write down: pass --gomaxprocs <n> on a bench that is also running CI, and the gate takes
-that many cores instead of all of them.
+that goes green here is a batch that ran what CI runs. The test step writes that whole
+stream to <root>/test-<round>.jsonl before it is condensed. Round is 1 the first time
+that root keeps one and the next free integer after that, so a re-run does not erase the
+stream a red left behind; the directory rebuilt each run is <root>/<name>, and the stream
+is not inside it. A red test step's reason begins with stream=<that path>. integration-4
+went green under a plain "go test ./..." and three CI legs then failed. The one thing not
+mirrored is CI's fair share of the machine, which is the machine's own fact and not a
+number this tool may write down: pass --gomaxprocs <n> on a bench that is also running
+CI, and the gate takes that many cores instead of all of them.
 
 land IS THE ONE ENTRANCE TO THE MERGE QUEUE (Glenn, 2026-09-18: nothing reaches the dev
 merge queue but a batch). It reads the pull request back from the forge and enqueues it AT
@@ -113,9 +123,13 @@ auto-merge -- after three refusals: a pull request that is not open, a pull requ
 own checks are not green, and a head that is not a batch's. A head is a batch's when its
 branch is rowan/integration-*, the shape batch builds, or when --receipt carries that
 head's own BATCH OK line; --receipt-file reads it from a file, taking the LAST line, so a
-caller may hand it the gate's whole output. Everything else -- a card's branch, a green
-swarm result, a revert -- is a member of a batch somebody has yet to build, and this verb
-says so and stops.
+caller may hand it the gate's whole output. THE RECEIPT IS WHAT NAMES THE MEMBERS: before
+it enqueues, land folds every members= number again from the wire, so a HOLD posted on a
+member after BATCH OK refuses the whole landing. A head under rowan/integration-* is a
+branch's name and not that list, so a land that carries no members= to fold is refused
+(no-receipt) rather than enqueued with the fold skipped. Everything else -- a card's
+branch, a green swarm result, a revert -- is a member of a batch somebody has yet to
+build, and this verb says so and stops.
 
 queue audit is the other half of that lock: it lists every open pull request carrying
 GitHub's auto-merge and TAKES IT OFF, because auto-merge is not an enqueue -- it is a
@@ -172,9 +186,10 @@ read rather than a failure. The two transcripts are in docs/TESTS.md, and both a
 by this binary's tests.
 
 The repository, the base and the lane branch are properties of the LANE, written
-once by init. No other verb takes --repo, --base or --lane-branch, and the flag
-on gate that names the base SHA is spelled --base-sha so the two are never one
-word.
+once by init. Lane verbs read them from there; simulate, batch and land name
+--repo, and simulate and batch also --base, because they reach the forge without
+a lane. The flag on gate that names the base SHA is spelled --base-sha so the
+two are never one word.
 
 ONE PREDICATE. An entry merges on the NEWEST gate record for (its head, the base
 sha read this pass) being green, that gate's merge being an object in the lane's
