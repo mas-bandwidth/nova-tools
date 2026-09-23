@@ -42,14 +42,30 @@ const (
 	IdleStateOutOfCredits = "out-of-credits"
 )
 
-// IdleStates is the closed set of states the ladder may write. The ledger
-// refuses anything else, so "asleep" (or any hand label) can never land.
+// IdleStates is the closed set of states the ladder may write, kept for
+// enumeration (idleStateNames, printing, callers that want the full list).
+// It is exported and mutable, so it is never the source of truth for what
+// the ledger accepts: checkIdleMarks tests against the private, immutable
+// isIdleState below, and widening this map (deliberately or by accident)
+// cannot widen what gets persisted.
 var IdleStates = map[string]bool{
 	IdleStateWorking:      true,
 	IdleStateUp:           true,
 	IdleStateIdle:         true,
 	IdleStateDown:         true,
 	IdleStateOutOfCredits: true,
+}
+
+// isIdleState is the closed-state guard the ledgers actually trust. It is a
+// switch, not a map read, so no caller (in this package or any other) can
+// widen it by mutating a package variable.
+func isIdleState(s string) bool {
+	switch s {
+	case IdleStateWorking, IdleStateUp, IdleStateIdle, IdleStateDown, IdleStateOutOfCredits:
+		return true
+	default:
+		return false
+	}
 }
 
 // Actions the ladder takes; each row names the one it took this tick.
@@ -272,33 +288,43 @@ func (l *IdleLadder) step(ctx context.Context, o IdleObservation, m IdleMark) (I
 	}
 	switch {
 	case m.Step < 1 && want >= 1:
-		m.Step = 1
+		// m.Step advances only once Nudge actually succeeds: an action
+		// error must leave the persisted mark retryable at this same
+		// step, never skip ahead to wake on the next tick. row.Step still
+		// names the rung attempted this tick, for the table.
 		row.Action = IdleActionNudge
-		row.Step = m.Step
+		row.Step = 1
 		if err := l.Actions.Nudge(ctx, o.Friend, fmt.Sprintf("idle: working 0, open %d", o.Open)); err != nil {
 			return m, row, fmt.Errorf("nudge %s: %w", o.Friend, err)
 		}
+		m.Step = 1
 	case m.Step < 2 && want >= 2:
-		m.Step = 2
+		// Same resume guarantee: RepairWake is idempotent (check-and-repair,
+		// #3048) so retrying it is safe; Wake failing after a successful
+		// RepairWake still leaves Step at 1, so the next tick repeats both
+		// calls rather than jumping to redistribute.
 		row.Action = IdleActionWake
-		row.Step = m.Step
+		row.Step = 2
 		if _, err := l.Actions.RepairWake(ctx, o.Friend); err != nil {
 			return m, row, fmt.Errorf("repair wake %s: %w", o.Friend, err)
 		}
 		if err := l.Actions.Wake(ctx, o.Friend, "idle ladder"); err != nil {
 			return m, row, fmt.Errorf("wake %s: %w", o.Friend, err)
 		}
+		m.Step = 2
 	default:
 		// Step 3 and on: redistribute each tick while open work remains
-		// (a pass may find no reader with free width).
-		m.Step = 3
+		// (a pass may find no reader with free width). Already at 3 (or
+		// beyond the switch's earlier cases), so there is no forward step
+		// to protect; the assignment is a no-op on retry.
 		row.Action = IdleActionRedistribute
-		row.Step = m.Step
+		row.Step = 3
 		moved, err := l.Actions.Redistribute(ctx, o.Friend, IdleReasonIdle)
 		row.Moved = moved
 		if err != nil {
 			return m, row, fmt.Errorf("redistribute %s: %w", o.Friend, err)
 		}
+		m.Step = 3
 	}
 	return m, row, nil
 }
@@ -399,7 +425,7 @@ func (r RedisIdleLedger) Save(ctx context.Context, marks map[string]IdleMark) er
 
 func checkIdleMarks(marks map[string]IdleMark) error {
 	for f, m := range marks {
-		if !IdleStates[m.State] {
+		if !isIdleState(m.State) {
 			return fmt.Errorf("idle ledger: refusing state %q for %s (allowed: %s)", m.State, f, strings.Join(idleStateNames(), ", "))
 		}
 	}

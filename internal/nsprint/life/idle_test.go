@@ -29,6 +29,12 @@ type idleWorld struct {
 	calls        []string
 	coordCalls   int
 	redistTarget []string
+
+	// failNudge/failWake: the next call for that friend returns an
+	// injected error and clears its own flag, so a retry succeeds. Used
+	// to regress the failure-path resume defect (stella's HOLD on #3058).
+	failNudge map[string]bool
+	failWake  map[string]bool
 }
 
 func newIdleWorld() *idleWorld {
@@ -42,6 +48,8 @@ func newIdleWorld() *idleWorld {
 		takeOnNudge: map[string]bool{},
 		takeOnWake:  map[string]bool{},
 		upOnRepair:  map[string]bool{},
+		failNudge:   map[string]bool{},
+		failWake:    map[string]bool{},
 	}
 }
 
@@ -80,6 +88,11 @@ func (w *idleWorld) touch(f string) {
 
 func (w *idleWorld) Nudge(_ context.Context, f, _ string) error {
 	w.touch(f)
+	if w.failNudge[f] {
+		w.failNudge[f] = false
+		w.calls = append(w.calls, "nudge-error "+f)
+		return fmt.Errorf("nudge %s: injected failure", f)
+	}
 	w.calls = append(w.calls, "nudge "+f)
 	if w.takeOnNudge[f] && w.present[f] {
 		w.take(f)
@@ -89,6 +102,11 @@ func (w *idleWorld) Nudge(_ context.Context, f, _ string) error {
 
 func (w *idleWorld) Wake(_ context.Context, f, _ string) error {
 	w.touch(f)
+	if w.failWake[f] {
+		w.failWake[f] = false
+		w.calls = append(w.calls, "wake-error "+f)
+		return fmt.Errorf("wake %s: injected failure", f)
+	}
 	w.calls = append(w.calls, "wake "+f)
 	if w.takeOnWake[f] && w.present[f] {
 		w.take(f)
@@ -420,5 +438,116 @@ func TestAcceptance3033(t *testing.T) {
 	}
 	if r := rowFor(t, rows, "emma"); r.State != IdleStateOutOfCredits || r.Moved != 5 {
 		t.Fatalf("out-of-credits row %+v", r)
+	}
+}
+
+// TestIdleFailedNudgeIsRetriedNotSkipped regresses stella's #3058 HOLD: Step
+// must not advance to 1 when Nudge itself errors, or the next tick skips the
+// nudge and goes straight to wake.
+func TestIdleFailedNudgeIsRetriedNotSkipped(t *testing.T) {
+	ctx := context.Background()
+	w := newIdleWorld()
+	w.addFriend("johnny", 3)
+	w.addFriend("stella", 0)
+	w.redistTarget = []string{"stella"}
+	ledger := &MemoryIdleLedger{}
+	ladder := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: ledger, Actions: w}
+
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil {
+		t.Fatalf("tick 1 (within idle_ticks): %v", err)
+	}
+
+	w.failNudge["johnny"] = true
+	if _, err := ladder.Tick(ctx, w.observe()); err == nil {
+		t.Fatal("tick 2: injected nudge failure was not surfaced")
+	}
+	if mark := ledger.Marks["johnny"]; mark.Step != 0 {
+		t.Fatalf("persisted step after a failed nudge = %d, want 0 (retryable at the same rung)", mark.Step)
+	}
+	if w.count("wake johnny") != 0 {
+		t.Fatalf("wake fired after a failed nudge, ladder skipped ahead: %v", w.calls)
+	}
+
+	rows, err := ladder.Tick(ctx, w.observe())
+	if err != nil {
+		t.Fatalf("tick 3 (retry): %v", err)
+	}
+	if r := rowFor(t, rows, "johnny"); r.Action != IdleActionNudge || r.Step != 1 {
+		t.Fatalf("tick 3 should retry the nudge, not skip to wake: %+v", r)
+	}
+	if w.count("nudge-error johnny") != 1 || w.count("nudge johnny") != 1 || w.count("wake johnny") != 0 {
+		t.Fatalf("ladder calls after the retry: %v", w.calls)
+	}
+	if mark := ledger.Marks["johnny"]; mark.Step != 1 {
+		t.Fatalf("persisted step after the retried nudge succeeded = %d, want 1", mark.Step)
+	}
+}
+
+// TestIdleFailedWakeIsRetriedNotSkipped is the same regression one rung up:
+// a successful nudge (Step 1) followed by a failing wake must leave Step at
+// 1, so the next tick repeats repair-wake + wake instead of jumping to
+// redistribute.
+func TestIdleFailedWakeIsRetriedNotSkipped(t *testing.T) {
+	ctx := context.Background()
+	w := newIdleWorld()
+	w.addFriend("johnny", 3)
+	w.addFriend("stella", 0)
+	w.redistTarget = []string{"stella"}
+	ledger := &MemoryIdleLedger{}
+	ladder := &IdleLadder{Policy: IdlePolicy{IdleTicks: 1}, Ledger: ledger, Actions: w}
+
+	if _, err := ladder.Tick(ctx, w.observe()); err != nil { // within idle_ticks
+		t.Fatalf("tick 1: %v", err)
+	}
+	rows, err := ladder.Tick(ctx, w.observe()) // ladder tick 1: nudge succeeds
+	if err != nil {
+		t.Fatalf("tick 2 (nudge): %v", err)
+	}
+	if r := rowFor(t, rows, "johnny"); r.Action != IdleActionNudge || r.Step != 1 {
+		t.Fatalf("tick 2 should nudge: %+v", r)
+	}
+
+	w.failWake["johnny"] = true
+	if _, err := ladder.Tick(ctx, w.observe()); err == nil { // ladder tick 2: wake errors
+		t.Fatal("tick 3: injected wake failure was not surfaced")
+	}
+	if mark := ledger.Marks["johnny"]; mark.Step != 1 {
+		t.Fatalf("persisted step after a failed wake = %d, want 1 (retryable at the same rung)", mark.Step)
+	}
+	if w.count("redistribute johnny") != 0 {
+		t.Fatalf("redistribute fired after a failed wake, ladder skipped ahead: %v", w.calls)
+	}
+
+	rows, err = ladder.Tick(ctx, w.observe()) // retry: wake succeeds this time
+	if err != nil {
+		t.Fatalf("tick 4 (retry): %v", err)
+	}
+	if r := rowFor(t, rows, "johnny"); r.Action != IdleActionWake || r.Step != 2 {
+		t.Fatalf("tick 4 should retry wake, not skip to redistribute: %+v", r)
+	}
+	if w.count("wake-error johnny") != 1 || w.count("wake johnny") != 1 || w.count("redistribute johnny") != 0 {
+		t.Fatalf("ladder calls after the retry: %v", w.calls)
+	}
+	if mark := ledger.Marks["johnny"]; mark.Step != 2 {
+		t.Fatalf("persisted step after the retried wake succeeded = %d, want 2", mark.Step)
+	}
+}
+
+// TestIdleStatesMutationCannotWidenLedger regresses stella's other #3058
+// HOLD item: IdleStates is exported and mutable, so a caller (or a bug) can
+// write IdleStates["asleep"] = true. checkIdleMarks must not trust that map:
+// the private isIdleState switch is the guard, so widening IdleStates must
+// never let "asleep" (or any other hand label) past either ledger's Save.
+func TestIdleStatesMutationCannotWidenLedger(t *testing.T) {
+	ctx := context.Background()
+	t.Cleanup(func() { delete(IdleStates, "asleep") })
+	IdleStates["asleep"] = true
+
+	if err := (&MemoryIdleLedger{}).Save(ctx, map[string]IdleMark{"johnny": {State: "asleep"}}); err == nil {
+		t.Fatal("memory ledger accepted \"asleep\" after external mutation of IdleStates")
+	}
+	ledger, _ := redisIdleLedger(t)
+	if err := ledger.Save(ctx, map[string]IdleMark{"johnny": {State: "asleep"}}); err == nil {
+		t.Fatal("redis ledger accepted \"asleep\" after external mutation of IdleStates")
 	}
 }
