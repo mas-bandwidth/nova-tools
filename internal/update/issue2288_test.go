@@ -52,7 +52,8 @@ show)
 	if [ -f "$FX/MOVED.txt" ]; then cat "$FX/MOVED.txt"; else exit 1; fi
 	;;
 ls-tree)
-	rev=${2%:cmd}
+	eval "rev=\${$#}"
+	rev=${rev%:cmd}
 	cat "$FX/revs/$rev/tools"
 	;;
 worktree)

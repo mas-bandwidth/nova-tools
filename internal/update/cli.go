@@ -630,7 +630,7 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 		os.Remove(stage)
 	}()
 	inventory := func(rev string) (movedInv, error) {
-		p := runChild([]string{"git", "-C", repo, "ls-tree", "--name-only", rev + ":cmd"})
+		p := runChild([]string{"git", "-C", repo, "ls-tree", "-d", "--name-only", rev + ":cmd"})
 		if p.Reason != "" {
 			return nil, fmt.Errorf("cannot list cmd/* at %s in %s (%s) (supply a --repo whose %s revision holds a cmd directory)", rev, repo, oneline.Escape(p.Reason), rev)
 		}
