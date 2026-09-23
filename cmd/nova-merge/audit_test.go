@@ -116,6 +116,13 @@ var mergeAudit = audit.Config{
 		// react.go publishes and reads through internal/ci, whose values are rendered
 		// through oneline before this package prints them.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// friendread owns the read event's spelling (Stream, EventRead), so the writer
+		// in readevent.go and the fold the 1 s table runs agree on the wire by one
+		// constant. It is a fold over caller-supplied entries and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/friendread"`,
+		// events owns the one stream's write contract; readevent.go takes only MaxLen,
+		// the approximate cap every writer trims the stream to, and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
 		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
 		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
 		// Parse decodes newline-delimited JSON into structs and returns them, and the
