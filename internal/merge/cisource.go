@@ -74,18 +74,7 @@ func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 // used by the lander. REDIS_ADDR remains a compatibility override for local
 // callers. It needs no main.go wiring because NewGH calls it.
 func RedisFromEnv() CISource {
-	addr := strings.TrimSpace(os.Getenv("REDIS_ADDR"))
-	if addr == "" {
-		host := strings.TrimSpace(os.Getenv("NOVA_REDIS_HOST"))
-		if host == "" {
-			host = "localhost"
-		}
-		port := strings.TrimSpace(os.Getenv("NOVA_REDIS_PORT"))
-		if port == "" {
-			port = "6379"
-		}
-		addr = host + ":" + port
-	}
+	addr := redisAddrFromEnv()
 	db := 0
 	if v := strings.TrimSpace(os.Getenv("REDIS_DB")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
@@ -98,6 +87,15 @@ func RedisFromEnv() CISource {
 		Password: envOr("NOVA_REDIS_PASSWORD", os.Getenv("REDIS_PASSWORD")),
 		DB:       db,
 	})}
+}
+
+func redisAddrFromEnv() string {
+	if addr := strings.TrimSpace(os.Getenv("REDIS_ADDR")); addr != "" {
+		return addr
+	}
+	host := envOr("NOVA_REDIS_HOST", "100.115.99.19")
+	port := envOr("NOVA_REDIS_PORT", "6380")
+	return host + ":" + port
 }
 
 func envOr(name, fallback string) string {

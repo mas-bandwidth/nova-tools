@@ -37,6 +37,15 @@ func (s *ciFakeSource) Read(repo, sha string) (string, bool, error) {
 func TestLanderReadsCIFromRedisNeverCheckRuns(t *testing.T) {
 	const repo, sha = "owner/repo", "deadbeef"
 
+	t.Run("production address matches land-lane defaults", func(t *testing.T) {
+		t.Setenv("REDIS_ADDR", "")
+		t.Setenv("NOVA_REDIS_HOST", "")
+		t.Setenv("NOVA_REDIS_PORT", "")
+		if got := redisAddrFromEnv(); got != "100.115.99.19:6380" {
+			t.Fatalf("redisAddrFromEnv() = %q, want land-lane default 100.115.99.19:6380", got)
+		}
+	})
+
 	// A green check-run sits behind the runner, and NOTHING in the injectable
 	// source. The forge would say green; the source says missing. The lander
 	// must report ci: MISSING and never read the check-run.
