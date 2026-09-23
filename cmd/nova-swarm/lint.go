@@ -494,6 +494,21 @@ func fleetLineScan(line string) (bare string, unquoted bool, heredoc string) {
 		case c == '#' && !inSingle && !inDouble && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
 			// a `#` outside quotes at a word start is a comment: prose, not code
 			return string(out), unquoted, heredoc
+		case c == '$' && !inSingle && fleetSubstAt(line, i):
+			// a command substitution is a script of its own with its own quote state:
+			// its quoted words are prose, its bare words and unquoted expansions are
+			// code, whether or not the substitution itself sits in double quotes
+			n, closed := fleetSubstSpan(line, i)
+			end := i + n
+			if closed {
+				end--
+			}
+			innerBare, innerUnquoted, _ := fleetLineScan(line[i+2 : end])
+			out = append(out, "$("...)
+			out = append(out, innerBare...)
+			out = append(out, ')')
+			unquoted = unquoted || innerUnquoted
+			i += n
 		case c == '$' && !inSingle:
 			n, splits := fleetExpansionSpan(line, i)
 			if n == 0 {
@@ -578,6 +593,46 @@ func fleetExpansionSpan(line string, i int) (n int, splits bool) {
 	default:
 		return 0, false
 	}
+}
+
+// fleetSubstAt reports whether line[i] -- a `$` -- opens a command substitution `$( )`.
+// `$(( ))` is arithmetic, which runs no command and is left to fleetExpansionSpan.
+func fleetSubstAt(line string, i int) bool {
+	return strings.HasPrefix(line[i:], "$(") && !strings.HasPrefix(line[i:], "$((")
+}
+
+// fleetSubstSpan returns the byte length of the command substitution at line[i] and
+// whether its closing `)` is on the line. The close is found the way the shell finds
+// it: a `(` or `)` inside quotes, after a backslash, or inside a nested `$( )` does not
+// count, so `"$(printf '%s' ")")"` ends at its last `)`, not its first.
+func fleetSubstSpan(line string, i int) (n int, closed bool) {
+	inSingle, inDouble := false, false
+	depth := 1
+	for j := i + 2; j < len(line); {
+		c := line[j]
+		switch {
+		case c == '\\' && !inSingle:
+			j += 2
+			continue
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == '$' && !inSingle && fleetSubstAt(line, j):
+			m, _ := fleetSubstSpan(line, j)
+			j += m
+			continue
+		case c == '(' && !inSingle && !inDouble:
+			depth++
+		case c == ')' && !inSingle && !inDouble:
+			depth--
+			if depth == 0 {
+				return j - i + 1, true
+			}
+		}
+		j++
+	}
+	return len(line) - i, false // unterminated: the whole tail is the substitution
 }
 
 // fleetHeredocAt reads the heredoc a `<<` at line[i] starts and returns its delimiter

@@ -180,6 +180,19 @@ func TestIssue2012(t *testing.T) {
 		if exit != 2 || !strings.Contains(stdout, "bash4-builtin: 2:") {
 			t.Fatalf("`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
 		}
+		// Held on #2872 at 9a640fbb (stella): a `$( )` is scanned with its own quote
+		// state, so a quoted word inside the substitution is prose too, while a bare
+		// builtin or an unquoted expansion inside it is still code.
+		inner := fleetScript(t, "subst-quoted-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(printf '%s' 'mapfile')\"\ny=$(echo \"readarray\")\nz=\"$(printf '%s' \")\" 'mapfile')\"\n")
+		exit, stdout, stderr = runSwarm(t, "lint", "--fleet", inner)
+		if exit != 0 || !strings.Contains(stdout, "LINT OK script=subst-quoted-mapfile.sh checks=3") {
+			t.Fatalf("`mapfile` quoted inside `$( )` is prose and lints clean at exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		}
+		nested := fleetScript(t, "subst-nested-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(echo \"$(mapfile -t a < f)\")\"\ny=\"$(ls $DIR)\"\n")
+		exit, stdout, _ = runSwarm(t, "lint", "--fleet", nested)
+		if exit != 2 || !strings.Contains(stdout, "bash4-builtin: 2:") || !strings.Contains(stdout, "unquoted-expansion: 3:") {
+			t.Fatalf("a builtin in a nested `$( )` and an unquoted expansion inside `$( )` are code and drift, got %d\n%s", exit, stdout)
+		}
 	})
 
 	t.Run("card-and-fleet-are-two-inputs", func(t *testing.T) {
