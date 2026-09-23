@@ -259,12 +259,19 @@ var doneWhenBodyRE = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?\**DONE-WHEN:?\**
 type doneTest struct {
 	runner string // go, pytest, cargo
 	name   string
+	// scope is the command's own targets, as written: go packages (`./internal/decide`,
+	// `./x/...`, `<module>/x`), pytest files or directories (`tests/test_x.py`, `tests`).
+	// The lookup searches only there, so a same-named test in another package or file
+	// does not count as present. Empty is the whole repository (no target named).
+	scope []string
 }
 
 var (
 	goTestRunRE  = regexp.MustCompile(`\bgo[ \t]+test\b[^` + "`" + `]*?[ \t]-(?:test\.)?run(?:=|[ \t]+)("[^"]*"|'[^']*'|[^ \t` + "`" + `]+)`)
 	goTestRE     = regexp.MustCompile(`\bgo[ \t]+test\b`)
-	pytestNodeRE = regexp.MustCompile(`\bpytest\b[^` + "`" + `]*?::([A-Za-z_][A-Za-z0-9_]*)`)
+	goTestSegRE  = regexp.MustCompile(`\bgo[ \t]+test\b[^` + "`" + `;&\n]*`)
+	pytestSegRE  = regexp.MustCompile(`\bpytest\b[^` + "`" + `;&\n]*`)
+	pytestNodeRE = regexp.MustCompile(`\bpytest\b[^` + "`" + `;&\n]*?[ \t]["']?([^ \t"'` + "`" + `;&:]+)::([A-Za-z_][A-Za-z0-9_]*)`)
 	pytestKRE    = regexp.MustCompile(`\bpytest\b[^` + "`" + `]*?[ \t]-k(?:=|[ \t]+)["']?([A-Za-z_][A-Za-z0-9_]*)["']?(?:[ \t` + "`" + `]|$)`)
 	cargoTestRE  = regexp.MustCompile(`\bcargo[ \t]+test\b((?:[ \t]+-{1,2}[A-Za-z-]+(?:[ \t]+[^-\s` + "`" + `]\S*)?)*)[ \t]+([A-Za-z_][A-Za-z0-9_:]*)`)
 	pyTestNameRE = regexp.MustCompile(`^test[A-Za-z0-9_]*$`)
@@ -276,23 +283,31 @@ var (
 // (`TestDecide.*`) names no test a lookup can find.
 func doneWhenTests(v string) ([]doneTest, string) {
 	var out []doneTest
-	for _, m := range goTestRunRE.FindAllStringSubmatch(v, -1) {
-		pat := strings.Trim(m[1], `"'`)
-		for _, p := range strings.Split(pat, "|") {
-			p = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(p), "^"), "$")
-			if i := strings.Index(p, "/"); i >= 0 {
-				p = p[:i]
+	for _, seg := range goTestSegRE.FindAllString(v, -1) {
+		scope := goTestTargets(seg)
+		for _, m := range goTestRunRE.FindAllStringSubmatch(seg, -1) {
+			pat := strings.Trim(m[1], `"'`)
+			for _, p := range strings.Split(pat, "|") {
+				p = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(p), "^"), "$")
+				if i := strings.Index(p, "/"); i >= 0 {
+					p = p[:i]
+				}
+				if !goTestNameRE.MatchString(p) {
+					return nil, fmt.Sprintf("runs `-run %s`, a pattern that is no literal test name", pat)
+				}
+				out = append(out, doneTest{runner: "go", name: p, scope: scope})
 			}
-			if !goTestNameRE.MatchString(p) {
-				return nil, fmt.Sprintf("runs `-run %s`, a pattern that is no literal test name", pat)
-			}
-			out = append(out, doneTest{runner: "go", name: p})
 		}
 	}
-	for _, re := range []*regexp.Regexp{pytestNodeRE, pytestKRE} {
-		for _, m := range re.FindAllStringSubmatch(v, -1) {
+	for _, seg := range pytestSegRE.FindAllString(v, -1) {
+		for _, m := range pytestNodeRE.FindAllStringSubmatch(seg, -1) {
+			if pyTestNameRE.MatchString(m[2]) {
+				out = append(out, doneTest{runner: "pytest", name: m[2], scope: []string{m[1]}})
+			}
+		}
+		for _, m := range pytestKRE.FindAllStringSubmatch(seg, -1) {
 			if pyTestNameRE.MatchString(m[1]) {
-				out = append(out, doneTest{runner: "pytest", name: m[1]})
+				out = append(out, doneTest{runner: "pytest", name: m[1], scope: pytestTargets(seg)})
 			}
 		}
 	}
@@ -319,16 +334,18 @@ func doneWhenTests(v string) ([]doneTest, string) {
 // `fn name(` in a Rust file. `git grep` exits 1 on no match, which is an answer
 // (absent), not an error.
 func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
-	var pat, glob string
+	var pat string
+	var specs []string
 	switch tn.runner {
 	case "go":
-		pat, glob = `^func[ \t]+`+tn.name+`[ \t]*\(`, "*_test.go"
+		pat, specs = `^func[ \t]+`+tn.name+`[ \t]*\(`, goTestPathspecs(repo, sha, tn.scope)
 	case "pytest":
-		pat, glob = `^[ \t]*(async[ \t]+)?def[ \t]+`+tn.name+`[ \t]*\(`, "*.py"
+		pat, specs = `^[ \t]*(async[ \t]+)?def[ \t]+`+tn.name+`[ \t]*\(`, pytestPathspecs(repo, sha, tn.scope)
 	default:
-		pat, glob = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, "*.rs"
+		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}
-	cmd := exec.Command("git", "-C", repo, "grep", "-q", "-E", "-e", pat, sha, "--", glob)
+	args := append([]string{"-C", repo, "grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
+	cmd := exec.Command("git", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -342,6 +359,119 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 		return false, fmt.Errorf("%v: %s", err, msg)
 	}
 	return false, err
+}
+
+// goTestTargets is the package arguments of one `go test` command: `.`, `./x`,
+// `./x/...`, `../x`, or an import path (`github.com/org/repo/x`). A flag value
+// (`-count 1`, `-timeout 60s`) is no package and is left out.
+func goTestTargets(seg string) []string {
+	var out []string
+	for _, f := range strings.Fields(seg) {
+		f = strings.Trim(f, `"'`)
+		switch {
+		case f == ".", f == "...", strings.HasPrefix(f, "./"), strings.HasPrefix(f, "../"):
+			out = append(out, f)
+		case !strings.HasPrefix(f, "-") && strings.Contains(f, "/") && strings.Contains(strings.SplitN(f, "/", 2)[0], "."):
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// pytestTargets is the file and directory arguments of one pytest command: every
+// word that is no flag, no flag's value (`-k x`, `-m slow`) and no node id.
+func pytestTargets(seg string) []string {
+	var out []string
+	fs := strings.Fields(seg)
+	for i := 1; i < len(fs); i++ {
+		f := strings.Trim(fs[i], `"'`)
+		switch {
+		case strings.HasPrefix(f, "-"):
+			if !strings.Contains(f, "=") && len(f) == 2 && strings.ContainsAny(f[1:], "kmpcor") {
+				i++ // a short flag whose value is the next word
+			}
+		case strings.Contains(f, "::"):
+		case f != "":
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// goTestPathspecs is the `*_test.go` pathspecs of the named packages at sha: a
+// package is its own directory, `/...` adds every directory under it, and an import
+// path is read against the module line of go.mod at sha. No package that resolves
+// in this repository means the whole repository (the command's cwd is unknown).
+func goTestPathspecs(repo, sha string, scope []string) []string {
+	module := ""
+	if len(scope) > 0 {
+		if gm, err := baseGit(repo, "show", sha+":go.mod"); err == nil {
+			for _, l := range strings.Split(gm, "\n") {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok {
+					module = strings.Trim(strings.TrimSpace(v), `"`)
+					break
+				}
+			}
+		}
+	}
+	var specs []string
+	for _, t := range scope {
+		recursive := t == "..." || strings.HasSuffix(t, "/...")
+		t = strings.TrimSuffix(strings.TrimSuffix(t, "..."), "/")
+		switch {
+		case strings.HasPrefix(t, "../"):
+			continue
+		case t == "." || t == "":
+			t = ""
+		case strings.HasPrefix(t, "./"):
+			t = strings.TrimPrefix(t, "./")
+		case module != "" && t == module:
+			t = ""
+		case module != "" && strings.HasPrefix(t, module+"/"):
+			t = strings.TrimPrefix(t, module+"/")
+		default:
+			continue
+		}
+		specs = append(specs, globSpec(t, recursive, "*_test.go"))
+	}
+	if len(specs) == 0 {
+		return []string{"*_test.go"}
+	}
+	return specs
+}
+
+// pytestPathspecs is the pathspecs of the named pytest targets at sha: a node id's
+// or argument's `.py` file as written (absent at base is an answer: no test there),
+// a directory as every `*.py` under it. No target means the whole repository.
+func pytestPathspecs(repo, sha string, scope []string) []string {
+	var specs []string
+	for _, t := range scope {
+		t = strings.TrimSuffix(strings.TrimPrefix(t, "./"), "/")
+		if strings.HasSuffix(t, ".py") {
+			specs = append(specs, ":(literal)"+t)
+			continue
+		}
+		if typ, err := baseGit(repo, "cat-file", "-t", sha+":"+t); err == nil && strings.TrimSpace(typ) == "tree" {
+			specs = append(specs, globSpec(t, true, "*.py"))
+		}
+	}
+	if len(specs) == 0 {
+		return []string{"*.py"}
+	}
+	return specs
+}
+
+// globSpec is a `:(glob)` pathspec for files named like base in dir, and in every
+// directory under it when recursive; dir "" is the repository root.
+func globSpec(dir string, recursive bool, base string) string {
+	p := ":(glob)"
+	if dir != "" {
+		p += dir + "/"
+	}
+	if recursive {
+		p += "**/"
+	}
+	return p + base
 }
 
 // oneLineCap is v with its length capped at n bytes, for an excerpt.

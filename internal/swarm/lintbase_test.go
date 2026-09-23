@@ -388,6 +388,12 @@ func TestLintDoneWhenTestNameAtBase(t *testing.T) {
 	commitFileAt(t, repo, "internal/decide/decide_test.go",
 		"package decide\n\nimport \"testing\"\n\nfunc TestDecideExisting(t *testing.T) {}\n")
 	commitFileAt(t, repo, "tests/test_decide.py", "def test_decide_existing():\n    pass\n")
+	// Same-named tests in another package and another file: a card whose command
+	// targets ./internal/decide or tests/test_decide.py is not refused by them.
+	commitFileAt(t, repo, "internal/other/other_test.go",
+		"package other\n\nimport \"testing\"\n\nfunc TestDecideElsewhere(t *testing.T) {}\n")
+	commitFileAt(t, repo, "tests/test_other.py", "def test_decide_elsewhere():\n    pass\n")
+	commitFileAt(t, repo, "go.mod", "module example.com/fixture\n\ngo 1.22\n")
 	sha := commitFileAt(t, repo, "src/lib.rs", "#[test]\nfn decide_existing() {}\n")
 	bc := fullEvidence(repo)
 	lint := func(done string, bc BaseCheck) []CardHeaderFinding {
@@ -408,6 +414,11 @@ func TestLintDoneWhenTestNameAtBase(t *testing.T) {
 		"`pytest tests/test_decide.py::test_decide_confidence_missing` passes",
 		"`pytest tests -k test_decide_confidence_missing` passes",
 		"`cargo test decide::decide_confidence_missing` passes",
+		// The name exists at base, but only outside the command's own target.
+		"`go test ./internal/decide -run TestDecideElsewhere` passes",
+		"`go test -count=1 -run TestDecideElsewhere example.com/fixture/internal/decide` passes",
+		"`pytest tests/test_decide.py::test_decide_elsewhere` passes",
+		"`pytest tests/test_decide.py -k test_decide_elsewhere` passes",
 	} {
 		if fs := lint(done, bc); len(fs) != 0 {
 			t.Fatalf("DONE-WHEN %q names a test absent at base and lints clean, got %v", done, fs)
@@ -436,6 +447,13 @@ func TestLintDoneWhenTestNameAtBase(t *testing.T) {
 		"`go test ./internal/decide -run TestDecideExisting` passes",
 		"`pytest tests/test_decide.py::test_decide_existing` passes",
 		"`cargo test decide_existing` passes",
+		// The same names, looked up in the target that holds them.
+		"`go test ./internal/other -run TestDecideElsewhere` passes",
+		"`go test ./internal/... -run TestDecideElsewhere` passes",
+		"`go test ./... -run TestDecideElsewhere` passes",
+		"`go test -run TestDecideElsewhere example.com/fixture/internal/other` passes",
+		"`pytest tests/test_other.py::test_decide_elsewhere` passes",
+		"`pytest tests -k test_decide_elsewhere` passes",
 	} {
 		fs := lint(done, bc)
 		if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "exists at base-sha "+sha[:12]) {
