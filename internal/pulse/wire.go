@@ -405,7 +405,7 @@ func (w *Wiring) refillReads(workset map[int]bool, tick int, events io.Writer) i
 		source := fmt.Sprintf("%s#%d", repoShort(w.in.Repo), pr.Number)
 		if w.cardExists(mark, "pending", "launched", "done") {
 			if events != nil {
-				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, fmt.Sprintf("dedup: %s already has a card", mark))
+				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, fmt.Sprintf("dedup: %s already has a card", strings.TrimSpace(mark)))
 			}
 			continue
 		}
@@ -454,7 +454,7 @@ func (w *Wiring) refillFixes(workset map[int]bool, tick int, events io.Writer) i
 		source := fmt.Sprintf("%s#%d", repoShort(w.in.Repo), issue.Number)
 		if w.cardExists(mark, "pending", "launched") {
 			if events != nil {
-				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, fmt.Sprintf("dedup: %s already has a card", mark))
+				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, fmt.Sprintf("dedup: %s already has a card", strings.TrimSpace(mark)))
 			}
 			continue
 		}
