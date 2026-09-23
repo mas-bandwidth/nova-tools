@@ -1707,3 +1707,58 @@ schema, never by inventing abbreviated commit strings.
   reused rather than a new claim.
 - `TestASecondReplyOnOneCheckoutWaitsAndThenRefuses` — the existing checkout
   lock, met from this verb.
+
+## Tests this spec demands
+
+These tests run as ordinary package tests in `cmd/nova-bus` (package `main`) against disposable local bare git remotes and `t.TempDir()` scratch, with no network and no real secret; each observable is a byte-for-byte `expected=` receipt/refusal string, and continuation tokens are asserted by decoding the one schema rather than by guessing abbreviated commit strings. Every demanded behaviour below is already implemented and tested in this tree — the spec's own `Status: proposed, not implemented` line is stale: `draft --reply-to` landed in `01d56ad` and the `--bodies` read half with snapshot continuation in the same line of work.
+
+1. `TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete` — three bodies, one per commit, inside both limits; each `INBOX NOTE` line is followed by its frame with the true byte count and a byte-equal body, and the run ends with one receipt `printed=3 bytes=612 oversize=0 gaps=0 drained=true complete=true next=-`.
+2. `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — over-budget stops at whole notes with `complete=false` and a usable token; zero and over-ceiling values refuse `INBOX REFUSED` at exit 2.
+3. `TestBodiesModeCapsTheNewSummaryLinesToo` — with `--bodies --max-notes 5` at most five NEW summary/gap lines with their frames print and no sixth line of either kind; the same fixture without `--bodies` prints every line and no `INBOX BODIES` line.
+4. `TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody` — the separator `\n` is emitted iff `n` is 0 or the body's last byte is not `\n`, and never counts toward `bytes=`; three shapes asserted byte for byte.
+5. `TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly` — fake `INBOX NOTE`/`BODIES`/`END` lines inside body bytes remain body data; only exact byte count plus separator and closing-line validation establish a frame.
+6. `TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither` — a commit adding two notes is cut between them, never at its edge; continuation names the item, not the commit, and safe frontier is `c1`'s parent when `c1` is cut inside.
+7. `TestContinuationSurvivesOrdinaryCursorAdvance` (**R1/CE1**) — a token stays valid after an ordinary cursor advance; a distinct external cursor change refuses and never rewinds state.
+8. `TestRetryAfterAPartialResumesAtNext` — each accounted item appears once in a chain; commits pushed after H are not in this chain and are first on the fresh chain; a malformed or mismatched token refuses and writes nothing.
+9. `TestBodiesWithoutAdvanceMovesNoCursor` — complete, partial, empty and gapped returns leave every lane's `CURSOR`, `OPEN`, `RECEIPTS` and `INDEX` unchanged, with no commit and no push; read-only resume needs no hidden writable ledger.
+10. `TestASingleOversizeBodyIsANamedGapAndNeverALoop` (**R2**) — a first body over the ceiling opens no frame, prints `INBOX BODY OVERSIZE` and one `INBOX BODIES GAP` remedy, then `printed=0 oversize=1 gaps=1 drained=true complete=false next=-`, with no cursor advance and no drain call to repeat.
+11. `TestEarlierGapSurvivesLaterPages` (**CE2**) — the earliest unresolved gap is retained by every later token even while ordinary bodies print, and `CURSOR` never crosses it; repeated gaps assert constant-size earliest-gap state.
+12. `TestSnapshotTokenValidationAndBound` — unknown version, over-8 KiB, wrong reader/selector, unavailable snapshot, non-ancestor base, invalid path/offset, and frontier past a gap or an unaccounted partial commit all refuse at exit 2 in one `INBOX REFUSED` shape; no token confers new read authority.
+13. `TestBrokenOutputCannotAcknowledgeUnprintedBodies` — stdout failure before or inside a frame never advances the cursor past the last fully emitted safe prefix; retry may re-show a body but cannot skip it.
+14. `TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays` — with the flag absent, stdout, stderr and exit code are byte-identical to today's golden output over both verbs and `--open`/`--open-max`/`--full`, including 600 carried items.
+15. `TestBodiesPreservesReceiptAndHeardAsSummaryOnly` — receipt/heard items consume `--max-notes` budget as summary lines but carry no body frame.
+16. `TestBodiesKeepInboxDisplayGroupsWhenCanonicalOrderStartsReceipt` — the three display groups (`INBOX NOTE`, `INBOX HEARD`, `INBOX RECEIPT`) keep their order even when scan order differs from display order.
+17. `TestBodiesContinuationRefusesOtherReaderAndSelector` — a token named for another reader or selector refuses without handing over a body.
+18. `TestBodiesSameCommitPersistsWholeEmittedPrefix` — the whole-commit safe frontier is the greatest commit whose eligible prefix has been emitted in full across the chain.
+19. `TestDraftWithoutReplyToIsByteIdenticalToTodays` — without `--reply-to`, `draft` is exactly the verb it is today: same stdout, stderr and exit code.
+20. `TestTheReplyFlagsAreRefusedWithoutReplyTo` — `--remote`, `--branch`, `--body-file`, `--draft-dir` and `--git-timeout` given without `--reply-to` each exit 2 with a sentence.
+21. `TestPrepareAndSendAreUnchangedByThisSlice` — the draft the form writes is an ordinary draft and validates under `prepare` with no tolerance applied.
+22. `TestReplyRefreshesBeforeItResolves` — a target that exists only on the remote is found by the fetch, which is load-bearing; a note the reader carries on `OPEN` and already receipted is still a legal target.
+23. `TestRefreshFailureIsARefusalAndNeverAStaleAnswer` — an unreachable remote, a branch nobody has, and a timed-out fetch are exit 1 each, with no draft written.
+24. `TestADivergedCheckoutIsRefusedAndLosesNothing` — local commits and unrelated dirty files survive the refusal byte for byte.
+25. `TestTheRefreshWritesNothingToTheBus` — no commit, no push, and `CURSOR`, `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane, including after a target found only since the cursor.
+26. `TestUnknownReplyTargetIsRefusedAndWritesNoDraft` — an id nobody has, a path that does not exist and a subject that matches nothing: exit 1, `--draft-dir` still empty.
+27. `TestReplySubjectMatchingTwoNotesTakesTheNewestAndSaysSo` — a subject matching two open notes resolves to the newest and one `DRAFT NOTE` says so and how to be exact.
+28. `TestTargetNotOnTheOpenListIsItsOwnRefusal` — a target on the bus but on neither half of the live listing is refused with one of five reasons, each naming its door (`draft --re`, or an `inbox` run for no cursor).
+29. `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered by path, the path lands on the `Re:` line, and the filename is the derived `legacy-<12 hex>` id holding no `/`.
+30. `TestGeneratedReplyHeaderIsByteEqualToTheHandBuiltOne` — the generated draft is byte-equal to a hand-built committed testdata reply; `Date` and `Id` are not written at draft time.
+31. `TestReplyDefaultsToTheSendersCanonicalNameAndNoCc` — `To` is the target's resolved sender; `Cc` is absent and never inherited.
+32. `TestReplySubjectIsPrefixedOnceAndNeverStacked` — `Re: x` and `x` both produce `Re: x`, with one `DRAFT NOTE` saying the subject was unstacked.
+33. `TestReplyToYourOwnNoteNeedsAnExplicitTo` — a reply to your own note is refused without `--to` and written with it.
+34. `TestBodyFileIsPreservedAndItsFakeHeadersDoNotRoute` — a body whose first line reads `To: somebody-else` is addressed as the flags said, that line stays in the body, and the body bytes are otherwise unchanged.
+35. `TestControlCharactersInSubjectAndToAreRefused` — control characters, including U+2028 and a bidi override, are refused in each of the three caller-supplied text flags.
+36. `TestDraftInsideTheProtectedCheckoutIsRefused` — `--draft-dir` at the bus root, under it, and reached through a symlink: exit 2 each, nothing written, refusal names the resolved bus root.
+37. `TestReplyNeverOverwritesAnExistingDraft` — a file at the composed path is a refusal and the existing file is unchanged.
+38. `TestTwoProcessesRacingOneDraftPathLeaveOneWinner` — two `nova-bus` processes on two checkouts sharing one `--draft-dir` leave exactly one winner; the publish itself (not the pre-check) refuses, no `.tmp` remains.
+39. `TestNoPartialDraftOnAnyRefusal` — every row of the refusal table is asserted against an empty `--draft-dir`.
+40. `TestReplyBodyAtTheBudgetAndOneByteOver` — at `--max-body-bytes`, at budget+1, and a single very long line; the over-budget run reads budget+1 bytes and no more.
+41. `TestReplyReceiptIsExactlyOneLineOnStdout` — `DRAFT OK` is exactly one line over every success fixture.
+42. `TestReplyReceiptStaysOneLineAtSixHundredOpenNotes` — the receipt stays one line at the state where an unbounded one would show.
+43. `TestReplyRecipientFieldCapsAtEightNamesAndCounts` — twenty recipients yield eight names, `+12`, and the whole list in the file `path=` names.
+44. `TestAReplyRefusalNamesEveryProblemInOneRun` — three mistakes, three lines, one run.
+45. `TestReplyExitCodesSeparateTheBusFromTheInvocation` — every row of the refusal table is asserted against its stated exit code (1 for the bus saying NO, 2 for an invocation that cannot run).
+46. `TestDraftingAReplyClosesNothing` — the target stays on the open list with the same `carrying=` and `open=` counts after a successful draft.
+47. `TestGeneratedReplySendsAndClosesItsTarget` — the end-to-end path (draft, `prepare`, `send --prepared`) against a disposable local bare remote closes the target; retrying the same artifact retains exactly one note.
+48. `TestASecondReplyOnOneCheckoutWaitsAndThenRefuses` — the checkout lock, met from this verb: a second reply waits and then refuses.
+49. `TestAFilesystemWithNoCreateExclusivePublishIsRefused` — where neither hard-link nor no-replace rename is available, the tool refuses to publish (exit 2) rather than falling back to a replacing rename.
+50. `TestAReplyToANoteWhoseIdTheOpenListCannotCarryIsResolvedByPath` — a target carrying an `Id:` the open list cannot carry is resolved by PATH, and the `Re:` line takes the open entry's target name.

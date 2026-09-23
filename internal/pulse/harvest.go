@@ -12,7 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // HarvestInput is everything the harvest verb needs, held apart from command-line parsing
@@ -56,6 +58,13 @@ type HarvestInput struct {
 	Since        time.Duration
 	Shell        BenchShell
 	Forge        Forge
+	// Batch turns a --bench harvest into the batched pass (harvestbatch.go, #2756): one
+	// ssh to stage every candidate branch, one fetch and one push per repository, PRs
+	// through REST, one ssh to mark. Store is the fleet Redis the pass remembers stale-base
+	// refusals in and writes its row to; Memory is the seam a test fills instead.
+	Batch  bool
+	Store  StoreOptions
+	Memory HarvestMemory
 
 	// Launched is the queue directory `fill` moves live cards into. When it is
 	// named, harvest drains it: a card whose job has finished leaves it for Done
@@ -72,6 +81,60 @@ type HarvestInput struct {
 	Roots      string
 	SinceStamp string
 	Timer      string
+
+	// Commit, when set, runs the mechanical commit step on each job before folding:
+	// commits DONE cards whose work is uncommitted, drops card scratch, sets aside card artifacts,
+	// rebases onto moved target, and updates RESULT.md headers.
+	Commit bool
+
+	// Effect, when set, is the publication gate. RESULT, harvest push and
+	// accept each verify the card fence epoch and a separate RUN action token
+	// at the effect owner's linearization. Nil keeps today's harvest.
+	Effect *HarvestEffect
+}
+
+// HarvestEffect is the harvest-side fence and token check. The owner does not
+// write lifecycle/events.jsonl.
+type HarvestEffect struct {
+	Owner  *harvest.Owner
+	Creds  map[string]harvest.Credential
+	Result map[string]harvest.Token
+	Push   map[string]harvest.Token
+	Accept map[string]harvest.Token
+}
+
+func commitHarvestEffect(in HarvestInput, label string, action harvest.Action, effect func() error) error {
+	if in.Effect == nil {
+		if effect != nil {
+			return effect()
+		}
+		return nil
+	}
+	if in.Effect.Owner == nil {
+		return fmt.Errorf("harvest: effect owner is incomplete")
+	}
+	now := time.Time{}
+	if in.Now != nil {
+		now = in.Now()
+	}
+	cred, ok := in.Effect.Creds[label]
+	if !ok {
+		return fmt.Errorf("missing attempt credentials")
+	}
+	var tok harvest.Token
+	var have bool
+	switch action {
+	case harvest.ActionRESULT:
+		tok, have = in.Effect.Result[label]
+	case harvest.ActionPush:
+		tok, have = in.Effect.Push[label]
+	case harvest.ActionAccept:
+		tok, have = in.Effect.Accept[label]
+	}
+	if !have {
+		return fmt.Errorf("missing RUN action token")
+	}
+	return in.Effect.Owner.Commit(context.Background(), now, cred, action, tok, effect)
 }
 
 func field(s string) string {
@@ -102,6 +165,9 @@ func Harvest(in HarvestInput) int {
 	// A bench harvest is the whole verb: the jobs are on the bench, the cards.tsv
 	// this fold reads is not, and there is nothing here to relaunch.
 	if strings.TrimSpace(in.Bench) != "" {
+		if in.Batch {
+			return harvestBenchBatch(in)
+		}
 		return harvestBench(in)
 	}
 
@@ -117,24 +183,64 @@ func Harvest(in HarvestInput) int {
 	// folds every job dir under it instead: the RESULT.md files are the record, and
 	// their own line 1 is the contract (rule 11). The refusal stands only when
 	// neither the file nor a job dir is there.
-	cardsPath := filepath.Join(in.Root, "cards.tsv")
+	//
+	// THE PULSE TABLE FIRST (issue #1818). `launch` writes the cards it admitted to
+	// <root>/cards/<id>/cards.tsv -- docs/CLI.md and SPEC-PULSE rule 10 both say so, and
+	// the --then launch chains is this exact verb with this exact --id. Harvest read
+	// <root>/cards.tsv and nothing else, so every chained harvest of a successful pulse
+	// refused with "run: nova-pulse cut" -- the wrong door, because launch had already
+	// written the table. The root table stays as the fallback for a root `cut` wrote.
+	cardsPath := pulseCardsPath(in.Root, in.ID)
 	cards, err := readCards(cardsPath)
 	if err != nil {
-		if _, statErr := os.Stat(cardsPath); os.IsNotExist(statErr) {
-			cards = discoverRootCards(in.Root)
-		}
-		if len(cards) == 0 {
-			return refusal(in.Stderr, "HARVEST", err)
+		rootPath := filepath.Join(in.Root, "cards.tsv")
+		if rootCards, rootErr := readCards(rootPath); rootErr == nil {
+			cards, err, cardsPath = rootCards, nil, rootPath
 		}
 	}
+	if err != nil || len(cards) == 0 {
+		if found := discoverRootCards(in.Root); len(found) > 0 {
+			cards, err = found, nil
+		}
+		if len(cards) == 0 {
+			return refusal(in.Stderr, "HARVEST", fmt.Errorf("cannot read %s, %s or any job directory under %s (harvest folds the pulse launch admitted; check the --id, or run: nova-pulse cut)",
+				oneline.Field(pulseCardsPath(in.Root, in.ID)), oneline.Field(filepath.Join(in.Root, "cards.tsv")), oneline.Field(in.Root)))
+		}
+	}
+	_ = cardsPath
 
-	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere int
+	var done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, unread, returned int
+	holdUnrecorded := false
 	lines := make([]string, 0) // HARVEST PR / RETRY / REFUSED per-card lines
 	var indexDirs []string     // finished jobs to append to the root's status index (#1088)
 
 	for _, c := range cards {
-		jobDir := jobDir(in.Root, c.Slot, c.Label)
 		contract := cardContract(c.Card)
+		jobDir, n := resolveJobDir(in.Root, c.Slot, c.Label, contract)
+		if n > 1 {
+			refused++
+			_ = writeSeen(in.Root, c, "refused")
+			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: ambiguous RESULT.md under %s (same contract in more than one job directory; not folding)\n",
+				field(c.Label), field(in.Root))
+			continue
+		}
+		if in.Commit && jobDir != "" {
+			if _, err := CommitJob(CommitJobInput{
+				JobDir:       jobDir,
+				BranchPrefix: in.BranchPrefix,
+				DefaultBase:  in.Base,
+				MaxFileSize:  MaxChangedFileBytes,
+				Clones:       in.Clones,
+				Stdout:       in.Stdout,
+			}); err != nil {
+				if in.Stderr != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST COMMIT ERROR label=%s: %s\n", field(c.Label), oneline.Err(err))
+				}
+				refused++
+				writeSeen(in.Root, c, "refused")
+				continue
+			}
+		}
 		state, branch, repo, resultLines := classify(jobDir, c, contract)
 
 		// The pool layout beside the slot layout (SPEC-PULSE rule 12): launch
@@ -142,7 +248,7 @@ func Harvest(in HarvestInput) int {
 		// to pool/reports/<id>/RESULT.md with the task file in
 		// pool/{done,failed}/<id>.task. A pool card is never under the slot
 		// job directory, so without this it is never harvested.
-		if state != "done" {
+		if state != "done" && state != "unknown" {
 			if ps, pb, pr, pl, pd := classifyPool(in.Root, c, contract); ps != "" {
 				state, branch, repo, resultLines, jobDir = ps, pb, pr, pl, pd
 			} else if state == "abstain" && !isDir(jobDir) {
@@ -161,12 +267,22 @@ func Harvest(in HarvestInput) int {
 		switch state {
 		case "mismatch":
 			mismatch++
-			writeSeen(in.Root, c, "mismatch")
+			_ = writeSeen(in.Root, c, "mismatch")
+		case "unknown":
+			fmt.Fprintf(in.Stderr, "HARVEST HOLD label=%s reason=unknown-acceptance\n", field(c.Label))
+			if err := writeSeen(in.Root, c, "hold"); err != nil {
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: the hold could not be recorded: %s\n", field(c.Label), oneline.Err(err))
+				holdUnrecorded = true
+			}
+		case "returned":
+			returned++
+			_ = writeSeen(in.Root, c, "returned")
+			lines = append(lines, fmt.Sprintf("HARVEST RETURNED label=%s: check failed or not-run; result retained unverified", field(c.Label)))
 		case "abstain":
 			abstain++
 			retried++
 			refusal := lastRefusal(filepath.Join(jobDir, "harness.log"))
-			writeSeen(in.Root, c, "retry")
+			_ = writeSeen(in.Root, c, "retry")
 			lines = append(lines, fmt.Sprintf("HARVEST RETRY label=%s card=%s: %s",
 				field(c.Label), field(c.Card), oneline.Escape(refusal)))
 			appendRetry(in.Root, c, refusal)
@@ -176,9 +292,34 @@ func Harvest(in HarvestInput) int {
 				field(c.Label), field(in.Root))
 		case "refused":
 			refused++
-			writeSeen(in.Root, c, "refused")
+			_ = writeSeen(in.Root, c, "refused")
 			fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: fix card with no red: line and no test file in its diff (add the red test output before the fix)\n", field(c.Label))
 		case "done":
+			// THE KEY-SHAPE SCAN COMES FIRST (#1814), before the typed decision and long
+			// before any push: the two things a harvest publishes are the card's commits
+			// and its RESULT.md, copied into the PR body, and neither leaves this machine
+			// until both have been read for the shape of a key. A hit refuses, quarantines
+			// the job and writes the HUMAN line, and prints nothing it matched
+			// (harvest_secret.go).
+			report := readJobReport(jobDir)
+			prov := extractHarvestProvenance(jobDir, c, in.Bench, resultLines)
+			fullBody := constructPRBody(resultLines, report, prov)
+			bodyLines := strings.Split(fullBody, "\n")
+
+			findings, scanErr := secretScan(jobDir, bodyLines)
+			if scanErr != nil {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintln(in.Stderr, secretScanRefusalLine("harvest", c.Label, scanErr))
+				continue
+			}
+			if len(findings) > 0 {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				secretRefusal{Site: "harvest", Label: c.Label, JobDir: jobDir,
+					QuarantineRoot: in.Root, HumanDir: in.Root, Out: in.Stderr}.refuse(findings)
+				continue
+			}
 			done++
 			// The typed decision is asked after the job is read and before any push:
 			// fixed and failed push as today, no-change and already-fixed push nothing
@@ -186,11 +327,14 @@ func Harvest(in HarvestInput) int {
 			// and anything below the floor leaves today's path exactly as it was.
 			classTail := ""
 			if in.Decide {
-				class := in.decideClass(jobDir, branch, resultLines)
-				classTail = " " + classFields(class, in.Floor)
+				class, res := in.decideHarvest(jobDir, branch, resultLines)
+				classTail = " " + classFields(class, in.Floor) + " " + resultFields(res)
+				if res.result == "unknown" {
+					unread++
+				}
 				switch class.kind {
 				case "no-change", "already-fixed":
-					writeSeen(in.Root, c, "done")
+					_ = writeSeen(in.Root, c, "done")
 					line := fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail)
 					if class.kind == "already-fixed" {
 						line += " test=" + field(class.test)
@@ -202,22 +346,111 @@ func Harvest(in HarvestInput) int {
 						field(c.Label), classTail, "push the commits to the branch named on the RESULT.md BRANCH line, or cut a card for the branch they belong to"))
 					continue
 				}
+				// The result reading advises beside the class: a skip-precondition
+				// never started, so it is marked harvested and re-queued nothing;
+				// a defect is a candidate for a person or a stronger reader, one
+				// line, filed nowhere. Anything else harvests as today.
+				if res.result == "skip-precondition" {
+					_ = writeSeen(in.Root, c, "done")
+					lines = append(lines, fmt.Sprintf("HARVEST SKIP label=%s%s", field(c.Label), classTail))
+					continue
+				}
+				if res.result == "defect" {
+					lines = append(lines, fmt.Sprintf("HARVEST FINDING-CANDIDATE job=%s pointer=%s",
+						field(c.Label), field(jobDir)))
+				}
 			}
-			url := pushURL(repo)
-			if err := push(in, jobDir, url, branch); err != nil {
-				fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+			// A RESULT.md is a report, never an instruction (SPEC-SWARM:40-44). The
+			// REPO and BRANCH lines on it are a worker's claim about where its work
+			// belongs, and harvest used to form https://github.com/<REPO>.git from
+			// that claim and push there -- a RESULT naming a repo nobody in this
+			// pulse has ever heard of opened a draft PR on it (issue #1824).
+			if err := allowedPush(in, jobDir, c, repo, branch); err != nil {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
+			}
+			// WHERE this pushes is resolveDestination's answer, and the answer is the
+			// LAUNCH RECORD -- c.Card, the card file the pulse cut before this worker
+			// existed -- or, for a bare swarm root that has no card, the `--clone` the
+			// operator typed. The RESULT's REPO line and the job clone's own `origin`
+			// are both things the worker writes, and both are only ever compared
+			// against it (Johnny's HOLDs of #1809 at 8bfa4020 and at 7f692ef6).
+			// Resolved here so the refusal is counted and named; push and openPR
+			// resolve it again for themselves, because a leaf handed a URL is a leaf
+			// with no rule.
+			d, derr := managerDispatch(c.Card, in.Clones)
+			if derr != nil {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED repo-unknown card=%s: %s\n", field(c.Label), oneline.Err(derr))
+				continue
+			}
+			dest, err := resolveDestination(c.Label, d, jobDir, repo)
+			if err != nil {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "%s\n", oneline.Err(err))
+				continue
+			}
+			// Two-dot against the fetched authorized target, before any push (issue #2032; HOLD on #2117).
+			globs, declared := harvestDeclaredPaths(c.Card, resultLines)
+			target, terr := harvestTargetBranch(in, resultLines)
+			if terr != nil {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(terr))
+				continue
+			}
+			if err := staleBaseRefusal(cloneDir(jobDir), dest.url, target, branch, globs, declared); err != nil {
+				remedyStaleBase(err, c.Label, []string{cloneDir(jobDir)})
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
+			}
+			if err := commitHarvestEffect(in, c.Label, harvest.ActionRESULT, nil); err != nil {
+				refused++
+				_ = writeSeen(in.Root, c, "refused")
+				fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				continue
+			}
+			if err := commitHarvestEffect(in, c.Label, harvest.ActionPush, func() error {
+				return push(in, jobDir, c.Card, repo, branch, c.Label)
+			}); err != nil {
+				if in.Effect != nil {
+					refused++
+					_ = writeSeen(in.Root, c, "refused")
+					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				} else {
+					fmt.Fprintf(in.Stderr, "HARVEST NOTE push failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+				}
 				continue
 			}
 			pushed++
-			pr, err := openPR(in, jobDir, url, c.Label, branch, resultLines)
-			if err != nil {
-				fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+			var pr int
+			if err := commitHarvestEffect(in, c.Label, harvest.ActionAccept, func() error {
+				var prErr error
+				pr, prErr = openPR(in, jobDir, c.Card, repo, c.Label, branch, bodyLines)
+				return prErr
+			}); err != nil {
+				if in.Effect != nil {
+					refused++
+					_ = writeSeen(in.Root, c, "refused")
+					fmt.Fprintf(in.Stderr, "HARVEST EFFECT REFUSED label=%s: %s\n", field(c.Label), oneline.Err(err))
+				} else {
+					fmt.Fprintf(in.Stderr, "HARVEST NOTE pr failed label=%s: %s\n", field(c.Label), oneline.Err(err))
+				}
 				continue
 			}
 			prs++
+			// The line and the next-card record name the RESOLVED repository, never
+			// the RESULT's claim: an operator reading HARVEST PR is reading where the
+			// branch actually went.
 			lines = append(lines, fmt.Sprintf("HARVEST PR repo=%s pr=%d label=%s branch=%s%s",
-				field(repo), pr, field(c.Label), field(branch), classTail))
-			appendNext(in.Root, repo, pr, c.Label)
+				field(dest.repo), pr, field(c.Label), field(branch), classTail))
+			appendNext(in.Root, dest.repo, pr, c.Label)
 		}
 	}
 
@@ -227,31 +460,56 @@ func Harvest(in HarvestInput) int {
 	appendStatusIndex(in.Root, indexDirs)
 
 	usd := readUSD(filepath.Join(in.Root, "pulses", in.ID+".packet"))
+	// A launched pulse has no saved swarm packet: launch records pulses/<id>.tsv,
+	// never a .packet. The spend the run just wrote into each job's usage.tsv is
+	// already on disk, so sum it rather than printing a dash.
+	if usd == "-" {
+		usd = sumUsageSpend(indexDirs)
+	}
 
 	grouped := bound(in.Stdout, in.Max)
 	for _, l := range lines {
 		grouped.Line(l)
 	}
 	// A local harvest drains --launched too when it is named: the lane of a card whose
-	// job under this root has finished is released here, not only by `manager`.
-	drained := drainLaunched(in, localJobStates(in.Root), grouped)
+	// job under this root has finished is released here, not only by `manager`. The
+	// local root is walked with os.ReadDir, which reports the error a glob swallows, so
+	// a root read whole is a complete traversal and an unreadable one is not (#1950).
+	localState, localComplete := localJobStates(in.Root)
+	drained, leftLaunched, drainFailed := drainLaunched(in, drainFacts{
+		state: localState, complete: localComplete,
+		// The same per-label probe the bench form runs, against this root (Johnny's
+		// HOLD on #1984): a card is dead only when ITS OWN job directory was looked
+		// for by name and was not there.
+		probe: func(labels []string) map[string]string { return localProbe(in.Root, labels) },
+	}, grouped)
 	grouped.More()
 
 	code := 0
 	result := "OK"
-	if mismatch > 0 || abstain > 0 || refused > 0 {
+	if mismatch > 0 || abstain > 0 || refused > 0 || drainFailed > 0 || returned > 0 {
 		code = 1
 	}
 	tail := ""
 	if strings.TrimSpace(in.Launched) != "" {
-		tail = fmt.Sprintf(" drained=%d", drained)
+		tail = fmt.Sprintf(" drained=%d left=%d", drained, leftLaunched)
 	}
 	fmt.Fprintf(in.Stdout, "HARVEST %s id=%s done=%d pushed=%d prs=%d abstain=%d mismatch=%d refused=%d retry=%d elsewhere=%d usd=%s took=%s%s\n",
 		result, field(in.ID), done, pushed, prs, abstain, mismatch, refused, retried, elsewhere, usd,
 		in.Now().Sub(started).Round(time.Millisecond), tail)
 
+	// Below the floor the pair is unknown and today's path ran: the job is
+	// listed once here for whoever ran the verb to read themselves.
+	if in.Decide && unread > 0 {
+		fmt.Fprintf(in.Stdout, "HARVEST UNREAD n=%d escalate=caller\n", unread)
+	}
+
 	// Rule 15: harvest pulses again, queue first. The PULSE line (or PULSE POOL EMPTY) is
 	// harvest's own last line.
+	if holdUnrecorded {
+		fmt.Fprintf(in.Stderr, "HARVEST REFUSED: a hold was not recorded, so nothing is admitted\n")
+		return 1
+	}
 	if rc := relaunch(in); rc != 0 && code == 0 {
 		code = rc
 	}
@@ -298,10 +556,17 @@ func readCards(path string) ([]CardRow, error) {
 			continue
 		}
 		p := strings.Split(line, "\t")
-		if len(p) != 4 {
+		if len(p) < 4 {
 			return nil, fmt.Errorf("%s wants label<TAB>slot<TAB>model<TAB>card-path, got %d fields", path, len(p))
 		}
-		out = append(out, CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]})
+		row := CardRow{Label: p[0], Slot: p[1], Model: p[2], Card: p[3]}
+		if len(p) > 4 {
+			row.Schema = p[4]
+		}
+		if len(p) > 5 {
+			row.Attempt = p[5]
+		}
+		out = append(out, row)
 	}
 	return out, nil
 }
@@ -342,10 +607,70 @@ func discoverRootCards(root string) []CardRow {
 
 // jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.
 func jobDir(root, slot, label string) string {
+	return namedJobDir(root, slot, label)
+}
+
+// resolveJobDir is the --then harvest lookup (issue #1907). A named slot is
+// that path. Slot `-` (what launch writes) has no allocated identity, so a
+// RESULT.md whose line 1 matches the current card contract is used when it is
+// unique. Two matches are ambiguous: mtime is not identity.
+func resolveJobDir(root, slot, label, contract string) (dir string, matches int) {
+	named := namedJobDir(root, slot, label)
+	if slot != "" && slot != "-" {
+		return named, 0
+	}
+	found := matchingJobDirs(root, label, contract)
+	switch len(found) {
+	case 0:
+		return named, 0
+	case 1:
+		return found[0], 1
+	default:
+		return "", len(found)
+	}
+}
+
+// namedJobDir is the path the slot column spells: `-` is the local `0` layout,
+// `bench:<n>` is the pulled <bench>-<n> directory.
+func namedJobDir(root, slot, label string) string {
 	if slot == "" || slot == "-" {
 		slot = "0"
+	} else if bench, n, ok := strings.Cut(slot, ":"); ok && bench != "" && n != "" {
+		slot = bench + "-" + n
 	}
 	return filepath.Join(root, slot, "jobs", label)
+}
+
+func matchingJobDirs(root, label, contract string) []string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		dir := filepath.Join(root, e.Name(), "jobs", label)
+		if contractLineMatch(dir, contract) {
+			out = append(out, dir)
+		}
+	}
+	return out
+}
+
+func contractLineMatch(job, contract string) bool {
+	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
+	if want == "" {
+		return false
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	if err != nil {
+		return false
+	}
+	norm := strings.ReplaceAll(string(raw), "\r\n", "\n")
+	line1 := strings.TrimSpace(firstNonEmpty(strings.Split(norm, "\n")))
+	return strings.HasPrefix(strings.TrimRight(line1, " \t"), want)
 }
 
 // cardContract is line 1 of a card's text file, the contract line its RESULT must equal.
@@ -360,9 +685,68 @@ func cardContract(cardPath string) string {
 	return strings.TrimSpace(firstNonEmpty(strings.Split(string(raw), "\n")))
 }
 
+// kindFromContract extracts the card kind from line 1 of the card contract if recognizable.
+func kindFromContract(contract string) string {
+	parts := strings.Fields(contract)
+	for i, p := range parts {
+		clean := strings.TrimSuffix(p, ":")
+		if IsV2Kind(clean) {
+			return clean
+		}
+		if i > 5 {
+			break
+		}
+	}
+	return ""
+}
+
+// cardExpected binds expected schema version and attempt identity from the trusted card record.
+func cardExpected(c CardRow) (schema, attempt string) {
+	schema = c.Schema
+	attempt = c.Attempt
+	if c.Card != "" {
+		if raw, err := os.ReadFile(c.Card); err == nil {
+			content := string(raw)
+			if schema == "" {
+				if isV2CardContent(content) {
+					schema = "v2"
+				} else {
+					schema = "legacy"
+				}
+			}
+			if attempt == "" {
+				if att := attemptOf(content); att > 0 {
+					attempt = strconv.Itoa(att)
+				} else if schema == "v2" {
+					attempt = "1"
+				}
+			}
+			return schema, attempt
+		}
+	}
+	return schema, attempt
+}
+
+// isV2CardContent reports whether a card declares schema v2 in its headers or template.
+func isV2CardContent(content string) bool {
+	for _, l := range strings.Split(content, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
+			v := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
+			if v == "v2" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // classify reads a card's RESULT.md and returns its disposition and the push details.
 // done -> pushed unless the branch is main or a pro card lacks a red: line (refused).
 func classify(jobDir string, c CardRow, contract string) (state, branch, repo string, resultLines []string) {
+	if swarm.AcceptanceUnknown(jobDir) {
+		return "unknown", "", "", nil
+	}
 	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
 	if err != nil {
 		return "abstain", "", "", nil
@@ -370,18 +754,84 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 	return classifyResult(c, contract, string(raw))
 }
 
-// classifyResult folds one RESULT.md body by the card's own two lines -- line 1
-// the contract, line 2 the verdict -- and by the BRANCH line.
+// classifyResult folds one RESULT.md body by the card's own contract and verdict lines,
+// dispatching via an explicit versioned adapter to either schema v2 or legacy handling.
+// It binds expected schema version and attempt identity from the trusted card/job record
+// and refuses version downgrade attempts.
 func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
 	norm := strings.ReplaceAll(body, "\r\n", "\n")
 	lines := strings.Split(norm, "\n")
+	// PREFIX, not equality (issue #1823). The card generator can truncate the issue
+	// title, so the card's contract line may be a PREFIX of the RESULT.md line 1 rather
+	// than the whole of it -- docs/SPEC-SWARM.md:1482-1491, and `nova-swarm batch`'s own
+	// gather has scored it that way all along. Harvest compared with != and called a card
+	// the batch had already scored `done` a mismatch, so it was never pushed. Trailing
+	// spaces are trimmed on both sides first, exactly as the spec words it.
 	line1 := strings.TrimSpace(firstNonEmpty(lines))
-	if line1 != contract {
+	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
+	if want == "" || !strings.HasPrefix(strings.TrimRight(line1, " \t"), want) {
 		return "mismatch", "", "", lines
 	}
-	line2 := ""
-	if len(lines) > 1 {
-		line2 = strings.TrimSpace(lines[1])
+
+	var rawSchema, rawCheck, rawAttempt string
+	for _, l := range lines {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "## ") {
+			break
+		}
+		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
+			rawSchema = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
+		}
+		if strings.HasPrefix(t, "CHECK:") || strings.HasPrefix(t, "CHECK ") {
+			rawCheck = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "CHECK:"), "CHECK "))
+		}
+		if strings.HasPrefix(t, "ATTEMPT:") || strings.HasPrefix(t, "ATTEMPT ") {
+			rawAttempt = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "ATTEMPT:"), "ATTEMPT "))
+		}
+	}
+
+	// Unknown schema is refused before any dispatch
+	if rawSchema != "" && rawSchema != "v2" {
+		return "mismatch", "", "", lines
+	}
+
+	expectedSchema, expectedAttempt := cardExpected(c)
+	if expectedSchema == "" {
+		if rawSchema == "v2" {
+			expectedSchema = "v2"
+		} else {
+			expectedSchema = "legacy"
+		}
+	}
+
+	if expectedSchema == "v2" {
+		// Version downgrade prevention: a v2 card cannot omit SCHEMA: v2 or CHECK
+		if rawSchema != "v2" || rawCheck == "" {
+			return "mismatch", "", "", lines
+		}
+		if rawAttempt != "" && expectedAttempt != "" && rawAttempt != expectedAttempt {
+			return "mismatch", "", "", lines
+		}
+		return classifyV2Result(c, contract, body, lines, expectedAttempt)
+	}
+
+	// Explicit legacy adapter
+	if rawSchema != "" && rawSchema != "legacy" {
+		return "mismatch", "", "", lines
+	}
+	return classifyLegacyResult(c, contract, body, lines)
+}
+
+// classifyLegacyResult handles cards without v2 schema markers.
+// It extracts BRANCH and REPO strictly from header lines before markdown sections,
+// ensuring evidence body text cannot override envelope fields.
+func classifyLegacyResult(c CardRow, contract, body string, lines []string) (state, branch, repo string, resultLines []string) {
+	if len(lines) < 2 {
+		return "mismatch", "", "", lines
+	}
+	line2 := strings.TrimSpace(lines[1])
+	if line2 == "" {
+		return "mismatch", "", "", lines
 	}
 	if strings.HasPrefix(line2, "ABSTAIN") {
 		return "abstain", "", "", lines
@@ -389,13 +839,29 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 	if strings.HasPrefix(line2, "BLOCKED") {
 		return "mismatch", "", "", lines
 	}
-	for _, l := range lines {
+	if !strings.HasPrefix(line2, "DONE") {
+		return "mismatch", "", "", lines
+	}
+	if len(lines) <= 2 {
+		return "mismatch", "", "", lines
+	}
+
+	// Envelope-only field extraction: scan lines after line 2 and before the first "## " section
+	for _, l := range lines[2:] {
 		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "## ") {
+			break
+		}
 		if strings.HasPrefix(t, "BRANCH ") {
 			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH "))
+		} else if strings.HasPrefix(t, "BRANCH: ") {
+			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH: "))
 		}
 		if strings.HasPrefix(t, "REPO ") {
 			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO "))
+			repo = strings.TrimPrefix(repo, "github.com/")
+		} else if strings.HasPrefix(t, "REPO: ") {
+			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO: "))
 			repo = strings.TrimPrefix(repo, "github.com/")
 		}
 	}
@@ -406,6 +872,64 @@ func classifyResult(c CardRow, contract, body string) (state, branch, repo strin
 		return "refused", branch, repo, lines
 	}
 	return "done", branch, repo, lines
+}
+
+// classifyV2Result handles schema v2 result envelopes.
+// All versioned envelopes (including ABSTAIN and BLOCKED) are strictly validated before state branching.
+// Effective fields are extracted strictly from the parsed envelope, never raw document lines.
+// DONE with a failed check is retained as "returned" (withholding push/landing eligibility).
+func classifyV2Result(c CardRow, contract, body string, lines []string, expectedAttempt string) (state, branch, repo string, resultLines []string) {
+	kind := kindFromContract(contract)
+	if kind == "" {
+		for _, l := range lines {
+			t := strings.TrimSpace(l)
+			if strings.HasPrefix(t, "## ") {
+				break
+			}
+			if strings.HasPrefix(t, "KIND:") || strings.HasPrefix(t, "KIND ") {
+				k := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "KIND:"), "KIND "))
+				if IsV2Kind(k) {
+					kind = k
+					break
+				}
+			}
+		}
+	}
+
+	// Validate envelope first before state branching
+	env, err := ValidateResultV2(body, kind)
+	if err != nil {
+		return "mismatch", "", "", lines
+	}
+
+	repo = strings.TrimPrefix(env.Repo, "github.com/")
+
+	if expectedAttempt != "" && env.Attempt != expectedAttempt {
+		return "mismatch", "", repo, lines
+	}
+
+	switch env.Status {
+	case "ABSTAIN":
+		return "abstain", "", repo, lines
+	case "BLOCKED":
+		return "mismatch", "", repo, lines
+	case "DONE":
+		if env.Check != "pass" {
+			// Returned: attempt finished with failed/not-run check.
+			// Retained unverified with check conclusion; withhold push/landing eligibility and friend authority.
+			return "returned", "", repo, lines
+		}
+		branch = env.Branch
+		if branch == "" || branch == "main" || branch == "master" {
+			return "mismatch", branch, repo, lines
+		}
+		if c.Model == "pro" && !hasRedLine(lines) {
+			return "refused", branch, repo, lines
+		}
+		return "done", branch, repo, lines
+	default:
+		return "mismatch", "", repo, lines
+	}
 }
 
 // classifyPool folds the pool layout beside the slot layout: launch admits cards
@@ -548,22 +1072,31 @@ func lastRefusal(logPath string) string {
 	return oneline.Cap(lines[len(lines)-1], 200)
 }
 
-// pushURL is the https clone url for a repo, used for the explicit refspec push.
-func pushURL(repo string) string {
-	if repo == "" {
-		return ""
+// push runs git push <resolved url> <branch>:<branch> from the job's clone; never a bare
+// git push, and never a URL its caller formed.
+//
+// `record` is the launch record (the card file the pulse cut) and it ANSWERS; `dir` is the
+// job's own clone and `claimed` the RESULT.md's REPO line, and those two are the worker's,
+// so they are compared and never read. The leaf resolves rather than taking a URL, so that
+// the rule holds whichever caller reaches it (Johnny's HOLD of #1809: a rule implemented
+// once per caller is as many rules as there are callers).
+func push(in HarvestInput, dir, record, claimed, branch, label string) error {
+	// The branch rule, at the push itself and not only at the caller that decided to
+	// push (Johnny's hold on #1809). One implementation, every path.
+	if err := mustBranchPrefix(branch); err != nil {
+		return err
 	}
-	return "https://github.com/" + repo + ".git"
-}
-
-// push runs git push <url> <branch>:<branch> from the job's clone; never a bare git push.
-func push(in HarvestInput, dir, url, branch string) error {
-	if url == "" {
-		return fmt.Errorf("no REPO line in RESULT.md")
+	d, derr := managerDispatch(record, in.Clones)
+	if derr != nil {
+		return derr
+	}
+	dest, err := resolveDestination(label, d, dir, claimed)
+	if err != nil {
+		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "push", url, branch+":"+branch)
+	cmd := exec.CommandContext(ctx, "git", "push", dest.url, branch+":"+branch)
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -574,25 +1107,43 @@ func push(in HarvestInput, dir, url, branch string) error {
 
 // openPR opens a draft PR (or updates an existing one) whose body is the RESULT.md lines,
 // capped at MaxBodyBytes. It returns the PR number.
-func openPR(in HarvestInput, dir, url, label, branch string, resultLines []string) (int, error) {
-	body := strings.Join(resultLines, "\n")
-	if len(body) > in.MaxBodyBytes {
-		body = body[:in.MaxBodyBytes]
+func openPR(in HarvestInput, dir, record, claimed, label, branch string, resultLines []string) (int, error) {
+	if err := mustBranchPrefix(branch); err != nil {
+		return 0, err
 	}
+	// The repository the pull request is opened on is the resolver's answer -- the launch
+	// record's, not the job clone's and not the RESULT's -- named explicitly with -R
+	// rather than left to whatever remote gh infers from the working directory, which on
+	// this path IS the worker's clone.
+	d, derr := managerDispatch(record, in.Clones)
+	if derr != nil {
+		return 0, derr
+	}
+	dest, err := resolveDestination(label, d, dir, claimed)
+	if err != nil {
+		return 0, err
+	}
+	body := strings.Join(resultLines, "\n")
+	if !hasProvenanceTable(body) {
+		report := readJobReport(dir)
+		prov := extractProvenanceFromDir(dir, record, in.Bench, resultLines)
+		body = constructPRBody(resultLines, report, prov)
+	}
+	body = boundPRBody(body, in.MaxBodyBytes)
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
 
-	update := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number")
+	update := exec.CommandContext(ctx, "gh", "pr", "view", branch, "-R", dest.repo, "--json", "number")
 	update.Dir = dir
 	if _, err := update.CombinedOutput(); err == nil {
 		// An existing PR is updated in place; the number is re-read from the view output.
-		edit := exec.CommandContext(ctx, "gh", "pr", "edit", branch, "--body-file", "-")
+		edit := exec.CommandContext(ctx, "gh", "pr", "edit", branch, "-R", dest.repo, "--body-file", "-")
 		edit.Dir = dir
 		edit.Stdin = strings.NewReader(body)
 		if _, err := edit.CombinedOutput(); err != nil {
 			return 0, err
 		}
-		view2 := exec.CommandContext(ctx, "gh", "pr", "view", branch, "--json", "number")
+		view2 := exec.CommandContext(ctx, "gh", "pr", "view", branch, "-R", dest.repo, "--json", "number")
 		view2.Dir = dir
 		out, err := view2.CombinedOutput()
 		if err != nil {
@@ -601,7 +1152,7 @@ func openPR(in HarvestInput, dir, url, label, branch string, resultLines []strin
 		return parsePRNumber(string(out)), nil
 	}
 
-	create := exec.CommandContext(ctx, "gh", "pr", "create", "--draft", "--title", label, "--body-file", "-")
+	create := exec.CommandContext(ctx, "gh", "pr", "create", "-R", dest.repo, "--draft", "--head", branch, "--title", label, "--body-file", "-")
 	create.Dir = dir
 	create.Stdin = strings.NewReader(body)
 	out, err := create.CombinedOutput()
@@ -629,6 +1180,69 @@ func parsePRNumber(s string) int {
 	return 0
 }
 
+// sumUsageSpend sums the usd column of the folded jobs' usage.tsv files. Columns
+// are read by header name so column order never matters; a row whose usd cell is
+// a dash or unparseable is not a zero and is skipped. It returns "-" when no
+// measured row is found, so an unmeasured spend stays unknown, never a wrong zero.
+func sumUsageSpend(jobDirs []string) string {
+	seen := map[string]bool{}
+	var total float64
+	var found bool
+	for _, dir := range jobDirs {
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		for _, v := range usageSpendValues(filepath.Join(dir, "usage.tsv")) {
+			total += v
+			found = true
+		}
+	}
+	if !found {
+		return "-"
+	}
+	return strconv.FormatFloat(total, 'f', 4, 64)
+}
+
+// usageSpendValues returns the parseable usd cells of one job's usage.tsv.
+func usageSpendValues(path string) []float64 {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) < 2 {
+		return nil
+	}
+	head := strings.Split(lines[0], "\t")
+	usdIdx := -1
+	for i, name := range head {
+		if strings.TrimSpace(name) == "usd" {
+			usdIdx = i
+			break
+		}
+	}
+	if usdIdx < 0 {
+		return nil
+	}
+	var out []float64
+	for _, line := range lines[1:] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		values := strings.Split(line, "\t")
+		if usdIdx >= len(values) {
+			continue
+		}
+		if v := strings.TrimSpace(values[usdIdx]); v != "" && v != "-" {
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
+}
+
 // readUSD parses the usd token from a saved swarm packet's BATCH line, else "-".
 func readUSD(path string) string {
 	raw, err := os.ReadFile(path)
@@ -645,14 +1259,25 @@ func readUSD(path string) string {
 }
 
 // writeSeen appends or updates a seen.tsv row: source<TAB>id<TAB>state.
-func writeSeen(root string, c CardRow, state string) {
+func writeSeen(root string, c CardRow, state string) error {
 	path := filepath.Join(root, "seen.tsv")
-	line := fmt.Sprintf("%s\t%s\t%s\n", "card", c.Label, state)
-	existing, _ := os.ReadFile(path)
+	kind, id := "card", c.Label
+	if a, ok := cardIdentity(c.Card); ok {
+		kind, id = a.Kind, a.ID
+	} else if k, i, _, ok, err := lookupIdentity(root, c.Label); err != nil {
+		return err
+	} else if ok {
+		kind, id = k, i
+	}
+	line := fmt.Sprintf("%s\t%s\t%s\n", kind, id, state)
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	var b strings.Builder
 	b.Write(existing)
 	b.WriteString(line)
-	_ = os.WriteFile(path, []byte(b.String()), 0o644)
+	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
 // appendRetry appends label<TAB>card<TAB>refusal to retry.tsv.

@@ -22,7 +22,8 @@ import (
 // source as text, which is the same thing a class test over a document does.
 
 const (
-	cutSourcePath     = "../pulse/cut.go"
+	cutSourcePath     = "../pulse/cut_template.go"
+	cutLegacyPath     = "../pulse/cut.go"
 	harvestSourcePath = "../pulse/harvest.go"
 	cardCutDocPath    = "../../docs/spec-pulse/10-the-card-as-cut-writes-it.md"
 )
@@ -55,20 +56,24 @@ func TestTheDocumentsContractLineIsOneTheLintAccepts(t *testing.T) {
 }
 
 // `cut`'s own renderer is on dev, so the test reads it rather than the document alone:
-// internal/pulse/cut.go refuses a card whose line 1 is not the form it names.
+// internal/pulse/cut_template.go refuses a card whose line 1 is not the form it names.
 func TestCutsContractLineIsOneTheLintAccepts(t *testing.T) {
-	src := readOr(t, cutSourcePath)
+	path := cutSourcePath
+	if _, err := os.Stat(path); err != nil {
+		path = cutLegacyPath
+	}
+	src := readOr(t, path)
 	found := false
 	for _, prefix := range CardContractPrefixes {
 		if strings.Contains(src, `HasPrefix(line1, "`+prefix+`")`) {
 			found = true
 			if !IsCardContractLine(prefix + "label sha=0123456789ab") {
-				t.Errorf("%s accepts %q and the lint does not", cutSourcePath, prefix)
+				t.Errorf("%s accepts %q and the lint does not", path, prefix)
 			}
 		}
 	}
 	if !found {
-		t.Fatalf("%s no longer tests line 1 with a prefix the lint knows; the lint accepts %v and the two have drifted apart", cutSourcePath, CardContractPrefixes)
+		t.Fatalf("%s no longer tests line 1 with a prefix the lint knows; the lint accepts %v and the two have drifted apart", path, CardContractPrefixes)
 	}
 }
 
@@ -106,6 +111,37 @@ func TestBothContractFormsAreAcceptedUntilTheIssueSettlesIt(t *testing.T) {
 	} {
 		if IsCardContractLine(line) {
 			t.Errorf("%q is not a contract line and the lint takes it for one", line)
+		}
+	}
+}
+
+// THE RULING IS SAID IN ONE PLACE, AND IT SAYS ONE FORM (SPEC-TOOLWORK.md §5 rule 7).
+//
+// Before the ruling the remedy named the two forms side by side -- "as `cut` writes it, or
+// ... as practice 1 writes it" -- and a card writer reading it could not tell which to
+// type. Five managers on 2026-09-19 each decided for themselves, and three of them decided
+// wrong. The colon form won; the colon-less one is a stopgap the rule-7 class test retires.
+// This test holds the message to that, so the accept-both stopgap can never quietly become
+// a second rule.
+func TestTheContractRemedyNamesOneFormAndCallsTheOtherAStopgap(t *testing.T) {
+	if CardContractPrefixes[0] != "RESULT: " {
+		t.Fatalf("the colon form is the rule, so it is first: %v", CardContractPrefixes)
+	}
+	if !strings.Contains(CardContractWanted, "`RESULT: <label> sha=<sha12>`") {
+		t.Fatalf("the remedy names the colon form as the one to write: %q", CardContractWanted)
+	}
+	if !strings.Contains(CardContractWanted, "stopgap") {
+		t.Fatalf("the remedy calls the colon-less form a stopgap, not a second rule: %q", CardContractWanted)
+	}
+	// A remedy that offers two forms with an `or` between them is the wording the shift
+	// could not act on.
+	if strings.Contains(CardContractWanted, "sha=<sha12>` as `cut` writes it, or ") {
+		t.Fatalf("the remedy no longer offers a choice of two: %q", CardContractWanted)
+	}
+	// Both forms are still READ, because the plain `cut` template still renders one.
+	for _, line := range []string{"RESULT: c-1 sha=0123456789ab", "RESULT c-1 sha=0123456789ab"} {
+		if !IsCardContractLine(line) {
+			t.Fatalf("until rule 7's renderer card lands both forms are read: %q", line)
 		}
 	}
 }

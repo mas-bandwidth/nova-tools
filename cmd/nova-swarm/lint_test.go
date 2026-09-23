@@ -154,16 +154,49 @@ func TestTemplateThenLintPasses(t *testing.T) {
 	}
 }
 
-// A card at or over the ceiling is refused before it spends a token, and the finding says
-// which check and how big.
-func TestLintRefusesAnOversizeCard(t *testing.T) {
+// A card over the ceiling is ADVISED and never refused (issues #1494, #1527). This test
+// wanted exit 2 and a `LINT DRIFT` until 2026-09-19, which is the reading that made two
+// managers trim good cards to reach a number while two others shipped over it on purpose.
+// The ceiling is a reading budget, not an input limit -- a 12422-byte card was measured
+// through the harness untruncated -- so the finding says how big, says `advisory`, and
+// leaves the verdict alone.
+func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	body := lintGoodCard() + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "big.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("an oversize card drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 0 {
+		t.Fatalf("an oversize card is advice, not a defect, so the lint exits 0, got %d\nstdout: %s", exit, stdout)
 	}
-	if !strings.Contains(stdout, "LINT DRIFT card=big.card size:") {
-		t.Fatalf("the size finding names the check: %q", stdout)
+	if !strings.Contains(stdout, "LINT NOTE card=big.card size:") {
+		t.Fatalf("the size finding is a NOTE naming the check: %q", stdout)
+	}
+	if strings.Contains(stdout, "LINT DRIFT card=big.card size:") {
+		t.Fatalf("the size finding is never a DRIFT, which is the line a caller refuses on: %q", stdout)
+	}
+	if !strings.Contains(stdout, "advisory") {
+		t.Fatalf("the word a manager needs is in the line: advisory, not a limit: %q", stdout)
+	}
+	if !strings.Contains(stdout, "bytes=") || !strings.Contains(stdout, "cap=12000") {
+		t.Fatalf("a clean card still carries its size and the cap: %q", stdout)
+	}
+}
+
+// A card that is BOTH over the ceiling and drifting is refused for the drift alone, and the
+// closing size line answers the advisory question in the bytes.
+func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t *testing.T) {
+	body := lintGoodCard() + "STEP 6. cd ../elsewhere\n" + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
+	card := writeLintCard(t, "bigdrift.card", body)
+	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
+	if exit != 2 {
+		t.Fatalf("a card that walks above the job is refused, got %d\nstdout: %s", exit, stdout)
+	}
+	if !strings.Contains(stdout, "LINT DRIFT card=bigdrift.card no-parent-path:") {
+		t.Fatalf("the drift it is refused for is named: %q", stdout)
+	}
+	if strings.Contains(stdout, "LINT DRIFT card=bigdrift.card size:") {
+		t.Fatalf("the size is still never a DRIFT, even on a card that has one: %q", stdout)
+	}
+	if !strings.Contains(stdout, "LINT SIZE card=bigdrift.card bytes=") || !strings.Contains(stdout, "advisory=true") {
+		t.Fatalf("the closing size line says advisory=true: %q", stdout)
 	}
 }

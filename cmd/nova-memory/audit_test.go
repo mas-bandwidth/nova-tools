@@ -37,7 +37,7 @@ var memoryAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"main.go|parse|name":                      "a required flag's name, a literal at every call site in this file",
-		"main.go|channelNames|verb":               "the verb's own name, a literal at every call site in this file; three sites",
+		"main.go|channelNames|verb":               "the verb's own name, a literal at every call site in this file; one direct print site (the other two go through refuse)",
 		"main.go|stepFailed|verb":                 "the name of the quickstart step, a literal at all three call sites in this file",
 		"main.go|scoreFields|chn":                 "the name of the channel that scored the hit, one of the two channel names package memindex defines",
 		"main.go|hitLine|token":                   "the event token, a literal at both call sites in this file",

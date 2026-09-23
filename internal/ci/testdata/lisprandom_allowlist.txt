@@ -1,0 +1,30 @@
+# The calls to RANDOM under lisp/nova-work/tests/ that are not naming a path,
+# one `file:definition` per line with its reason.
+#
+# Why the rule exists (nova-tools#1699): SBCL saves `*random-state*` into its
+# core, so a FRESH IMAGE RETURNS THE SAME SEQUENCE. Measured 2026-09-19, three
+# separate images, three calls each to `(random 1000000)`:
+#
+#     run: 113500 958198 129774
+#     run: 113500 958198 129774
+#     run: 113500 958198 129774
+#
+# The AF_UNIX fixtures in slice-05 and slice-12 named their socket directories
+# from that number, so two concurrent suites agreed on the path exactly -- and
+# `short-socket-base` then deleted that directory tree before binding, taking the
+# other suite's live socket with it. A name from RANDOM in a fresh SBCL image is
+# a constant, not a nonce, and nothing in the code says so. Path names now come
+# from `test-short-tag`.
+#
+# `run-all` reseeds `*random-state*` from this run's entropy before the first
+# case, so a call listed here really is random -- but it is listed anyway,
+# because the reseed is one line somebody could delete and this list is where a
+# reader finds out that it matters.
+#
+# lisp/nova-work/tests/harness.lisp is not listed and is not scanned: it draws
+# the entropy and does the reseeding. See lispHelperHome in
+# lisptemppath_class_test.go.
+#
+# Checked in BOTH directions, so it can only ever shrink.
+
+lisp/nova-work/tests/replays-8642.lisp:async-operations  # names a staged-input id, never a filesystem path: the case needs more ids than the staged-input limit and does not care which

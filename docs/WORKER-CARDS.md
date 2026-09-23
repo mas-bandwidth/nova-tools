@@ -22,7 +22,7 @@ this table, is what a bench with a stale clone reads.
 
 | rule token | practice |
 | --- | --- |
-| `result-first` | 1 — line 1 is the contract line, in either form the tools write today: `RESULT <label> sha=<sha12>` as `cut` writes it, or `RESULT: <CARD-id> <what done looks like>`. The two disagree by one colon and #1741 settles which stands |
+| `result-first` | 1 — line 1 is the contract line, in ONE form: `RESULT: <label> sha=<sha12>`, with the colon (`docs/SPEC-TOOLWORK.md` §5 rule 7, ruled 2026-09-19). The colon-less `RESULT <label> sha=` the plain `cut` template still renders is read as a stopgap until rule 7's renderer card lands, and is not the form to write (#1741) |
 | `result-last` | 1, 25 — the last step writes `RESULT.md`, whose line 1 is that contract line |
 | `no-sandbox` | 2 — a card runs inside the wall and never invokes it |
 | `files-named` | 3 — the work is anchored to a named file or package |
@@ -32,8 +32,8 @@ this table, is what a bench with a stale clone reads.
 | `steps-numbered` | 17 — `STEP <n>.` lines, numbered 1, 2, 3 in order |
 | `deadline` | 17 — a deadline, or `finish within <n> minutes` |
 | `scratch-absolute` | 25 — scratch named against a root, never as a bare relative word |
-| `no-parent-path` | 25 — no `../` anywhere: the wall refuses every path above the job |
-| `size` | — the card is under the 12000-byte ceiling, so it is read in one window. The ceiling is never silent: every lint ends with the card's size and the cap, on the `LINT OK` line or on a `LINT SIZE` line |
+| `no-parent-path` | 25 — the card walks no path above the job, because the wall refuses one. What the card WALKS is the rule — a `cd`, `mkdir`, `cp`, `mv`, `rm`, `git -C`, a redirect, a `--root` — inside a fenced block as much as outside one. A `../` the card merely QUOTES is not this drift: a fenced block, a backtick span, a markdown link target, a `go test` ellipsis (#1494, #1527) |
+| `size` | — ADVICE, not a limit. The 12000-byte ceiling is the budget that keeps a model reading the card in one window; a card over it is not refused, not truncated, and still ships. It draws a `LINT NOTE`, never a `LINT DRIFT`, and changes no verdict. The ceiling is never silent: every lint carries the card's size and the cap, on the `LINT OK` line and on a closing `LINT SIZE … advisory=true` line (#1494, #1527) |
 
 Four more tokens read the **typed header** `cut` writes under the contract line —
 `KIND:`, `PATHS:`, `TEST:`, `LEGS:`, `SOURCE:` (`docs/SPEC-TOOLWORK.md` §5 rule 1). They fire
@@ -325,7 +325,7 @@ job.
 
 ## 22. A card's line-1 contract never carries the answer
 
-Line 1 is identity and nothing else — `RESULT <label> sha=<sha12>`, the label and the hash of
+Line 1 is identity and nothing else — `RESULT: <label> sha=<sha12>`, the label and the hash of
 the text below it; the verdict is line 2 and the findings come after. Since `gather` scores a
 `RESULT.md` **done on line 1 alone, whatever the harness exit code** (SPEC-SWARM, **gather**,
 landed in #577, pinned by `done-whatever-the-exit-code`; the rc is recorded on the line), a line 1 that stated the expected verdict, the expected count or the fix
@@ -397,6 +397,20 @@ now touch different files and merge clean.
 parallel amendment PRs that merge without conflict are its evidence.
 **Expires** when the layout changes. **Rollback:** the single-file specs.
 **Held by:** Rowan.
+
+## The depends-on token (#2636)
+
+`depends-on` is not one of the four §5 tokens above, and it is not one of the twelve
+shape rules. It fires only when `lint --card --typed` is asked, so a card written before
+the key existed is not refused for lacking it unless `--typed` is passed. It wants
+`DEPENDS-ON: <card-id>[, ...]` or `DEPENDS-ON: -` in the header block directly under the
+contract line. `-` passes: the card depends on nothing. The card's own id is the first
+word of its contract line, and a `DEPENDS-ON` that names that word is refused. An id is
+unknown only when `--lineup <file>` is handed over and the id is not in it; with no
+lineup the lint does not guess which ids exist. An `owner/repo#n` reference — one
+slash, then `#` and digits, as in `mas-bandwidth/nova-tools#2550` — is checked for
+shape only and is not looked up in the lineup. A space (`nova-tools #2550`) or
+anything else (`dogfood`) is refused by name.
 
 ## Open
 

@@ -78,6 +78,13 @@ usage:
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
   nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
+  nova-wake beat --as <name> --store <host:port>
+        [--every <duration>] [--ttl <duration>]   default 30s and 90s
+        [--once]            write one beat and return, for a check or a test
+        [--user <name>]     the store's ACL user; default bench
+  nova-wake presence --store <host:port>
+        (--bus <dir> | --participants <file> | --friends <a,b,c>)   the roster
+        [--user <name>]
   nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
@@ -88,6 +95,14 @@ serve is a PROCESS OUTSIDE any session that starts a turn only when a note has
 landed. There is no third shape: a harness /loop, a scheduler prompt or a
 heartbeat that runs a model on an interval is not a wake, and this tool offers
 no verb for it.
+
+beat and presence are the one heartbeat that is NOT a wake and spends nothing:
+beat is a process a friend's window starts once and forgets, writing
+friend:<name> = <utc> with a TTL every --every and reading nothing, and
+presence prints one line saying who is here. No model runs on either side, and
+a window that exits, runs out of credit or is killed simply stops writing until
+the key lapses. The password is never a flag: it reaches beat as
+NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
 
 serve FETCHES every --interval, which is why --remote and --branch are its own
 flags and not --receipt's, and its --on-note command is started as
@@ -113,6 +128,8 @@ work be handed over right now: 0 is PRESENT or ANSWERED, 1 is SILENT, PINGED,
 UNAVAILABLE, UNRECONCILED or RESTING, and only 2 means the call could not run.
 It says NO to an assignment, never to the line, and it never writes a cause:
 it has measured a silence and nothing else.
+
+  cp -R cmd/nova-wake/testdata/example-reports ./reports
 
 example:
   nova-wake quickstart --state ./wake.state --reports ./reports
@@ -218,8 +235,30 @@ func Version() string { return buildVersion() }
 // an answer. A flag given on the command line wins, and nothing here is
 // printed: reading the file is not a change to report.
 type wakeConfig struct {
-	path   string
-	values map[string]string
+	path    string
+	values  map[string]string
+	entries []configEntry
+}
+
+// configEntry is one key= line from the config file with its 1-based line
+// number, so a refusal can name the line a person has to fix.
+type configEntry struct {
+	key  string
+	line int
+}
+
+// wakeConfigKeys is every key either verb reads from the file: the union of
+// awake's bus, window and max and watch's state, on-deadline, bus, as and
+// receipt-max-words. A key outside this set is a typo or another tool's, and
+// a verb that reads the config refuses it instead of running on defaults.
+var wakeConfigKeys = map[string]bool{
+	"bus":               true,
+	"window":            true,
+	"max":               true,
+	"state":             true,
+	"on-deadline":       true,
+	"as":                true,
+	"receipt-max-words": true,
 }
 
 // configPath is the file a caller may set bus=, window=, max=, state= and as= in.
@@ -238,7 +277,7 @@ func loadWakeConfig() *wakeConfig {
 	if err != nil {
 		return cfg
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -247,9 +286,26 @@ func loadWakeConfig() *wakeConfig {
 		if !ok {
 			continue
 		}
-		cfg.values[strings.TrimSpace(k)] = strings.TrimSpace(v)
+		key := strings.TrimSpace(k)
+		cfg.values[key] = strings.TrimSpace(v)
+		cfg.entries = append(cfg.entries, configEntry{key: key, line: i + 1})
 	}
 	return cfg
+}
+
+// refuseUnknownConfigKeys refuses, one line per key in file order, every key
+// the file names that this tool does not read. It is a verb's job and not
+// loadWakeConfig's because help and version read the same file and a person
+// whose config is wrong is exactly the person who needs to read the help.
+func refuseUnknownConfigKeys(cfg *wakeConfig, stderr io.Writer) int {
+	code := 0
+	for _, e := range cfg.entries {
+		if wakeConfigKeys[e.key] {
+			continue
+		}
+		code = refuse(stderr, "", fmt.Sprintf("%s line %d: unknown key %q", oneline.Escape(cfg.path), e.line, e.key))
+	}
+	return code
 }
 
 // get is the value for key, empty when the file did not name it.
@@ -291,6 +347,10 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
 		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
+	case "beat":
+		return cmdBeat(args[1:], stdout, stderr, clock, dialStore)
+	case "presence":
+		return cmdPresence(args[1:], stdout, stderr, clock, dialStore)
 	case "version", "--version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
@@ -348,6 +408,9 @@ func awakeRefused(stderr io.Writer, what string) int {
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
 func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
+		return code
+	}
 	fs := flag.NewFlagSet("awake", flag.ContinueOnError)
 	busDir := fs.String("bus", cfg.get("bus"), "")
 	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
@@ -592,6 +655,9 @@ type polled struct {
 }
 
 func cmdWatch(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, quickstart bool) int {
+	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
+		return code
+	}
 	verb := "watch"
 	if quickstart {
 		verb = "quickstart"

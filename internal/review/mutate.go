@@ -62,14 +62,38 @@ type MutateOptions struct {
 	// a sibling's `nova-review-mutate-*` appearing between a snapshot and its check made
 	// the assertion red four times (#1341 twice, #1345, #1360).
 	TempRoot string
+	// Test selects ONE unit and asks rule 4(d)'s question of it alone: does THAT test
+	// detect the reverted change. Empty is the default and the per-file rule below is
+	// unchanged by this field's existence (#1849, Stella's ruling).
+	//
+	// A name may be qualified `<changed test file>:<name>` where two changed files
+	// declare the same one. It is resolved among the units discovered from the CHANGED
+	// test files and nowhere else, and a name that resolves to none of them, to more
+	// than one, or to a unit that did not actually run is an error: the caller asked a
+	// question about a specific test, and answering about a different one, or inferring
+	// an answer from a test that never ran, is the failure this whole verb exists to
+	// stop.
+	Test string
 }
 
-// GreenTest is a test that stayed green with the change reverted: the one thing that
-// makes a MUTATE verdict FAIL, named so the author can see which test proves nothing.
-type GreenTest struct {
+// ErrTestNotRun is the class of refusal for a `--test` that could not be answered:
+// resolved to nothing, resolved to more than one, or resolved to a unit whose file
+// could not be run. Never a vacuous PASS and never an inferred FAIL.
+var ErrTestNotRun = errors.New("the named test was not run")
+
+// TestUnit is one test named on the report: the function, and the changed test file
+// that declares it.
+type TestUnit struct {
 	Name string
 	File string
 }
+
+// GreenTest is a test that stayed green with the change reverted: the one thing that
+// makes the per-file MUTATE verdict FAIL, named so the author can see which test
+// proves nothing. It is an alias rather than its own type because the selected form
+// (#1849) reports the RED units by exactly the same two fields, and two structs with
+// the same shape and different names would be two things a caller has to learn.
+type GreenTest = TestUnit
 
 // Skip is a changed test file whose suite could not be run, with the reason named. A skip
 // never makes a verdict PASS: a file that was not run has no failing test, so it counts
@@ -94,6 +118,16 @@ type MutateResult struct {
 	Pass     bool
 	Greens   []GreenTest
 	Skips    []Skip
+	// Selected is the unit --test resolved to, empty in the default form. When it is
+	// set, Pass is ITS result and not the per-file rule's: the co-touched units are
+	// still counted and still listed, because the evidence a caller cannot see is
+	// evidence they cannot check, but another test's green no longer answers the
+	// question that was asked (#1849).
+	Selected string
+	// Reds are the units that failed with the change reverted, in file then name
+	// order. The per-file rule only ever needed the COUNT; the selected form needs
+	// to know which.
+	Reds []TestUnit
 }
 
 // Verdict is the word that ends the MUTATE line.
@@ -217,6 +251,7 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 			if failed[one.name] {
 				res.Red++
 				redFiles[one.file] = true
+				res.Reds = append(res.Reds, TestUnit{Name: one.name, File: one.file})
 				continue
 			}
 			// A unit with no FAIL line is green, and so is a unit with no result
@@ -226,12 +261,8 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 			res.Greens = append(res.Greens, GreenTest{Name: one.name, File: one.file})
 		}
 	}
-	sort.Slice(res.Greens, func(i, j int) bool {
-		if res.Greens[i].File != res.Greens[j].File {
-			return res.Greens[i].File < res.Greens[j].File
-		}
-		return res.Greens[i].Name < res.Greens[j].Name
-	})
+	byFileThenName(res.Greens)
+	byFileThenName(res.Reds)
 	// The verdict is per FILE: every changed test file that could be run has at least
 	// one test that fails with the change reverted. A file that could not be run at all
 	// is named on its own SKIP line and judged by nobody here -- the verdict says what
@@ -242,7 +273,81 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 			res.Pass = false
 		}
 	}
+	if opts.Test == "" {
+		return res, nil
+	}
+	// THE SELECTED FORM, and it replaces the verdict rather than adding to it.
+	//
+	// The per-file rule answers "does every changed test file detect this change",
+	// which is a stricter question than §1 rule 4(d)'s and a different one. A card
+	// that touched a second test file whose tests are CORRECTLY insensitive -- one
+	// that compares line prefixes and never prose -- came back FAIL though its named
+	// TEST: was red (the readers' receipt, PR #1828, #1849). So a caller may name the
+	// unit and get that unit's answer.
+	//
+	// It is resolved here, after the run, and only among units that were planned from
+	// the CHANGED test files: the question is about this range, and a test outside it
+	// cannot be asked. Resolution failing is an error and never a verdict -- "do not
+	// guess which test the caller meant" (Stella, stella-e72bbf88a3f7).
+	sel, err := resolve(opts.Test, units, skipped)
+	if err != nil {
+		return res, err
+	}
+	res.Selected = sel.name
+	res.Pass = false
+	for _, r := range res.Reds {
+		if r.Name == sel.name && r.File == sel.file {
+			res.Pass = true
+		}
+	}
 	return res, nil
+}
+
+func byFileThenName(us []TestUnit) {
+	sort.Slice(us, func(i, j int) bool {
+		if us[i].File != us[j].File {
+			return us[i].File < us[j].File
+		}
+		return us[i].Name < us[j].Name
+	})
+}
+
+// resolve turns --test into exactly one planned unit, or says why it cannot.
+//
+// The name is matched against the units discovered from the changed test files. A
+// bare name that two of those files declare is AMBIGUOUS and refused, and the refusal
+// lists the files so the caller can qualify it `<file>:<name>` rather than be told to
+// guess again. A unit whose file was skipped never ran, so it has neither failed nor
+// passed and neither answer may be printed for it.
+func resolve(want string, units []unit, skipped map[string]bool) (unit, error) {
+	file, name := "", want
+	if i := strings.LastIndex(want, ":"); i > 0 {
+		file, name = want[:i], want[i+1:]
+	}
+	var found []unit
+	for _, u := range units {
+		if u.name != name {
+			continue
+		}
+		if file != "" && u.file != file {
+			continue
+		}
+		found = append(found, u)
+	}
+	switch {
+	case len(found) == 0:
+		return unit{}, fmt.Errorf("%w: --test %s names no test declared by a test file this range changed", ErrTestNotRun, want)
+	case len(found) > 1:
+		var where []string
+		for _, u := range found {
+			where = append(where, u.file+":"+u.name)
+		}
+		sort.Strings(where)
+		return unit{}, fmt.Errorf("%w: --test %s is ambiguous, declared by %s; name one of those", ErrTestNotRun, want, strings.Join(where, " and "))
+	case skipped[found[0].file]:
+		return unit{}, fmt.Errorf("%w: --test %s is declared by %s, whose suite could not be run, so it neither failed nor passed", ErrTestNotRun, want, found[0].file)
+	}
+	return found[0], nil
 }
 
 type change struct {
@@ -410,9 +515,10 @@ func groupByPkg(units []unit) [][]unit {
 var goResult = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): ([A-Za-z_0-9]+)`)
 
 // runUnits runs one package's units in the worktree and reports which of them FAILED. A
-// package that does not build is the strongest red there is -- the tests cannot even
-// compile without the change -- so every unit in it counts failed. A named skip reason
-// comes back when the suite could not be run at all, and then nothing is judged.
+// package that does not build is not a kill: a test that merely CALLS the fix's new
+// symbol breaks the build when the symbol goes away while asserting nothing about it
+// (#1807). So the units are judged by nobody and a named skip reason comes back, exactly
+// as when the suite could not be run at all.
 func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]bool, skip string) {
 	failed = map[string]bool{}
 	if units[0].lisp {
@@ -423,6 +529,9 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 		cmd := exec.CommandContext(ctx, "sh", script)
 		cmd.Dir = wt
 		err := cmd.Run()
+		if reason := budgetEnded(ctx.Err()); reason != "" {
+			return nil, reason
+		}
 		var ee *exec.ExitError
 		if err != nil && !errors.As(err, &ee) {
 			return nil, fmt.Sprintf("the lisp suite could not be run: %v", err)
@@ -450,20 +559,35 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	// match below, and the unit that stayed green would be counted red.
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
-	if err != nil {
+	return runVerdict(ctx.Err(), string(out), err, units)
+}
+
+// runVerdict is what ONE FINISHED RUN MEANS, and it is a pure function of the four things
+// a run leaves behind: whether the caller's context was still live, what the run printed,
+// how it ended, and which units it was asked about. It is separated from the running so
+// that the rule can be pinned without a subprocess and without a clock -- the shapes below
+// are the ones that were seen in CI, and each one is an argument here.
+func runVerdict(ctxErr error, text string, ran error, units []unit) (failed map[string]bool, skip string) {
+	// THE BUDGET IS ASKED ABOUT BEFORE THE OUTPUT IS. A run the caller's deadline killed
+	// printed no verdict about anything, and the inference at the bottom -- exited
+	// non-zero, named no failing test, so every unit is red -- would turn that into one.
+	if reason := budgetEnded(ctxErr); reason != "" {
+		return nil, reason
+	}
+	failed = map[string]bool{}
+	if ran != nil {
 		var ee *exec.ExitError
-		if !errors.As(err, &ee) {
-			return nil, fmt.Sprintf("go test could not be run: %v", err)
+		if !errors.As(ran, &ee) {
+			return nil, fmt.Sprintf("go test could not be run: %v", ran)
 		}
 	}
-	text := string(out)
-	// A package that fails to compile prints no per-test result at all. Every unit in
-	// it is red: the test file cannot even build with the change reverted.
+	// A package that fails to compile prints no per-test result at all, and that is not
+	// a kill: a test that merely CALLS the fix's new symbol breaks the build when the
+	// symbol goes away while asserting nothing about it (#1807). Compilation coupling is
+	// not an assertion, so the units are judged by nobody and the file is skipped with
+	// the reason that says why.
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
-		for _, u := range units {
-			failed[u.name] = true
-		}
-		return failed, ""
+		return nil, SkipRevertNoCompile + ": the package did not compile with the change reverted, so the tests in it assert nothing that the revert could disprove"
 	}
 	sc := bufio.NewScanner(strings.NewReader(text))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -478,13 +602,37 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	}
 	// A run that exited non-zero with no FAIL line at all (a panic before any result,
 	// a timeout inside the binary) is evidence the package's tests do not pass, and
-	// every unit it was asked for counts red rather than silently green.
-	if err != nil && len(failed) == 0 {
+	// every unit it was asked for counts red rather than silently green. A run the
+	// CALLER'S budget killed never reaches here -- budgetEnded above returned a skip --
+	// because that one is evidence about the bench and not about the tests.
+	if ran != nil && len(failed) == 0 {
 		for _, u := range units {
 			failed[u.name] = true
 		}
 	}
 	return failed, ""
+}
+
+// budgetEnded names the one thing a finished run can never be asked about: a run the
+// CALLER'S BUDGET ended. The verdict is a property of the range, never of the bench --
+// the same rule goenv.Clean holds for the environment -- and a killed run is evidence
+// about the machine and about nothing else.
+//
+// Measured on hulk, 2026-09-18, against the fixture cmd/nova-review's mutate tests build:
+// the same range answers `MUTATE 06b87135 red=1 green=1 PASS` with the default budget and
+// `MUTATE 06b87135 red=2 green=0 PASS` with a cold GOCACHE and `--timeout 1`, because the
+// inner `go test` was killed mid-compile, printed no `--- PASS:` line, and every unit it
+// was asked for was counted red. That is the same wrong answer GOFLAGS=-json produced on
+// three legs of integration-4, arriving by the other road: a loaded shard's share of the
+// wall clock. A named skip is the honest answer, and a skip never makes a verdict PASS.
+func budgetEnded(ctxErr error) string {
+	switch {
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return "the budget ended the run before it reported a result; nothing it printed is a verdict. Give --timeout more seconds, or run it on a quieter bench"
+	case ctxErr != nil:
+		return fmt.Sprintf("the run was cancelled before it reported a result (%v); nothing it printed is a verdict", ctxErr)
+	}
+	return ""
 }
 
 func revParse(ctx context.Context, repo, ref string) (string, error) {
@@ -496,9 +644,21 @@ func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// gitOut runs git with object replacement switched off. A worker who can write the
+// job clone's `.git` can `git replace <head> <base>` and every later read of the
+// range -- rev-parse, merge-base, the diff this package reverts -- would then be
+// reading the base's objects, not the head's. The ref lives under `refs/replace/`
+// and is never in the diff, so nothing else in the range can see it.
+//
+// The child also drops GIT_DIR / GIT_WORK_TREE / GIT_CONFIG_* and secret-named
+// variables. cmd.Dir is the repo this command is about; a parent GIT_DIR still
+// pointed at the job clone would make every call operate there, run the
+// worker's clean filters, and write the seed into the copy the gate was
+// pointed at (#1897).
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
 	cmd.Dir = dir
+	cmd.Env = dropGitIdentity(goenv.WithoutSecrets(goenv.Clean(os.Environ())))
 	out, err := cmd.Output()
 	if err != nil {
 		var ee *exec.ExitError
@@ -508,6 +668,34 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(out), nil
+}
+
+// dropGitIdentity removes the variables that would make a child git or go test
+// operate on the gate's repository instead of cmd.Dir. The names are the
+// overrides; GIT_EXEC_PATH is not one, and git still has to find its own
+// binaries.
+func dropGitIdentity(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if gitIdentityVar(name) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func gitIdentityVar(name string) bool {
+	up := strings.ToUpper(strings.TrimSpace(name))
+	switch up {
+	case "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR",
+		"GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+		"GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_TEMPLATE_DIR",
+		"GIT_PREFIX", "GIT_ATTR_SOURCE", "GIT_CONFIG":
+		return true
+	}
+	return strings.HasPrefix(up, "GIT_CONFIG_")
 }
 
 // countHunks is how much was put back: the number of `@@` hunks in the base..head diff
@@ -546,3 +734,17 @@ func countHunks(ctx context.Context, repo, base, head string, others []change) (
 	}
 	return n, nil
 }
+
+// SkipRevertNoCompile is the reason token on a Skip whose package would not COMPILE with
+// the change reverted (#1807, the red team of T03 at 98e3f3a9).
+//
+// It used to be the strongest red there was: "the tests cannot even compile without the
+// change". It is not evidence at all. A test that only CALLS the fix's new symbol --
+// `_ = Mul(2, 3)`, asserting nothing -- breaks the build when the symbol goes away, and
+// that build failure was read as the kill the control was looking for, so the most common
+// vacuous shape there is walked straight through the negative control.
+//
+// A build failure on the reverted side is never a kill. It is named here so the caller
+// can say what it means for the card: compilation coupling is not an assertion, and the
+// accept gate rejects such a file as `vacuous-test`.
+const SkipRevertNoCompile = "revert-did-not-compile"

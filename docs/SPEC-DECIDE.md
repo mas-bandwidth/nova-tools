@@ -78,11 +78,22 @@ Every rule here is normative. Each has one line in **red tests** near the end.
    quoted a rule the repo had never held.)
 8. **A decision is logged beside the outcome it predicted.** A decision is
    logged beside the outcome it predicted so the floor is re-tuned from data:
-   the answers, the confidences, the floor, and what happened next, in one
-   row. Floors are re-tuned from those rows, never from a feeling about the
-   model.
+   the answers, the confidences, the floor, where that floor came from, and
+   what happened next, in one row. Floors are re-tuned from those rows, never
+   from a feeling about the model.
+   **The floor is PER KIND.** One floor standing in for every kind is one
+   number answering ten different questions. Each kind's floor is the p25 of
+   the provider answers that STOOD for it, carries the measurement it was read
+   off, and a kind with too few answers keeps the built-in default and says so
+   (`floor_from=built-in`). A floor above the provider's observed maximum for
+   its kind is REFUSED with the remedy: it cannot gate a decision, only delete
+   it. `log --summary` reports, per kind, the confidence histogram, the
+   observed minimum, maximum and p25, how many answers fell below the floor,
+   and `defeated` where the floor is above all of them.
    (The hurt: a floor of 0.9 nobody could defend, because no row joined a
-   confidence to what followed.)
+   confidence to what followed. Then, on 2026-09-18, that same 0.9 against
+   thirteen live answers of 0.70–0.78: a 100% escalation rate, against tune's
+   own 0.7 cap, and the end of "the lowest rung the evidence supports".)
 9. **Tests use an httptest fake, never the network.** Tests use an httptest fake,
    never the network: the fake speaks the Jev body-and-response shape of rule
    2 and asserts the header carries the key the environment gave. No test
@@ -139,13 +150,24 @@ deploy keys, the network — is Johnny's always, and so is a fresh take, where t
 in two lineages or a design has one author. Friends first: the DeepSeek rungs are eligible for
 mechanical kinds only.
 
+**A designation on a RESERVED mind is a READ, never the work.** A reserved mind is off the height
+ladder: it takes a read, and the STOP a read can call, not the work itself. A kind designation that
+names a reserved mind therefore attaches it as the READER, and the work goes to the rung the
+evidence supports — `rung=<that rung> read=<the reserved mind>`, on the line and in the log row,
+with `read=-` where there is none. It holds for both designations: security, and a fresh take whose
+designate is reserved.
+(The hurt, 2026-09-18: the rule answered `rung=johnny`, and routing the day's twenty real units
+sent SEVEN of them — six owned in the work set by `rowan-child` — to a mind that is reserved for
+reads and takes no work at all.)
+
 **Security never falls through.** A unit that touches a guard, secrets, the sandbox, sudo, deploy
-keys or the network resolves to the designated rung on EVERY path: with the provider on or off, at
-any floor, and after any prior attempt, including an attempt by the designated rung itself. It is a
-kind and not a height, so the height rules — sideways, up, the floor, never down — do not apply to
-it at all. Where no mind is designated, or every designated mind is asleep, the work WAITS for one
-of them, and that is a refusal: handing a guard, a secret or a deploy key to another mind because
-the right one is busy is the failure this rule exists to prevent.
+keys or the network reaches the designated mind on EVERY path: with the provider on or off, at any
+floor, and after any prior attempt. It is a kind and not a height, so the height rules — sideways,
+up, the floor, never down — do not touch the read. Where no mind is designated, or every designated
+mind is asleep, the decision is REFUSED: dispatching a guard, a secret or a deploy key with nobody
+reading it because the right mind is busy is the failure this rule exists to prevent. Each touch is
+named ONCE in the reason, in enumeration order — `--secrets` beside `touches: ["secrets"]` is one
+fact, and `"secrets, secrets, network"` read like two findings where the evidence held one.
 
 **A timeout is not a death.** An attempt that timed out with no proof it terminated leaves its
 expiry UNKNOWN (Stella's lease rule), and a rung whose attempt may still be running is not a rung
@@ -164,10 +186,20 @@ YET**. The owner and the wait are two facts and neither hides the other — a se
 designated rung timed out answers with that rung AND the wait.
 
 The evidence is bounded and public (rules 1 and 4): kind — one of `rebase`, `stack`,
-`fixture-retarget`, `fleet-chore`, `dogfood`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
+`fixture-retarget`, `fleet-chore`, `dogfood`, `transcript-test`, `row-test`, `fix-with-red-test`, `new-verb`, `spec`, `design`, `guard`,
 `cause-to-find` — size (files, packages, lanes), lane
 owner, prior attempts, platform need, what security it touches (`guard`, `secrets`, `sandbox`,
 `sudo`, `deploy-keys`, `network`), and the deadline — metadata, never a body, never a secret.
+
+**A second NAME is not a second kind.** `chore` is what the shift lanes typed on 2026-09-19 and
+the ladder refused it — `ROUTE REFUSED reason=no-rung ... has kind "chore", want one of rebase,
+stack, fixture-retarget, fleet-chore, ...` — so the work was dispatched off the ladder and the log
+learned nothing from it. A chore of the fleet IS a `fleet-chore` under a shorter name: the same
+start height, the same mechanical eligibility, the same rung. It is therefore an **alias**, and it
+adds no row to the kind list and no rung to the ladder. The alias is resolved ONCE, where the
+evidence is read, so the kind the ladder decides on and the kind the log records are the same
+name: an alias that reached the log would split every per-kind floor in two. A near miss is still
+a refusal — `choree` is not a kind and the alias table is not a spell-corrector.
 
 **A row test is card work, and its size says so wrongly.** `row-test` is a kind of its own and it
 starts at `pro`, not at the bottom: one row of a table-driven suite, on a leg whose card shape has
@@ -190,6 +222,20 @@ sandbox, sudo, deploy keys and the network. Measured 2026-09-18: 21 Flash cards 
 transcripts found four real drifts for about 20 cents. Naming the work `dogfood` prices it at the
 rung that does it; naming it `guard` was the mistake, and the security rule was doing exactly what
 it says.
+
+**A transcript test is the same comparison, and the ladder had no name for it.** `transcript-test`
+is a kind of its own and starts at the bottom rung, beside `dogfood`: a documented transcript read
+line for line against what the binary prints is a comparison against an exact expected string,
+which is a procedure and not a judgement. It exists because the ladder refused the work outright.
+Measured 2026-09-19 in the shared route log: twelve route calls named `transcript-test` and every
+one of them was REFUSED — `want one of rebase, stack, fixture-retarget, fleet-chore, dogfood,
+row-test, ...` — so twelve units got no answer at all and the managers dispatched them by hand.
+They ran on the bottom rung, direct: tools13's t1 to t6 (#1802, #1789, #1798, #1799, #1795) and
+tools10's c17 and c18. Eleven came back green; the twelfth was an ABSTAIN on the manager's own
+wrong premise (`cmd/nova-play/firstrun_test.go:200` already compared line for line), which is a
+card fault and not the rung's failure. A kind the table does not hold is not a conservative
+answer, it is no answer: the work is dispatched anyway, off the ladder, and the log learns nothing
+from it.
 
 **A mechanical kind that failed on a card rung was not mechanical.** The DeepSeek rungs are
 eligible for mechanical kinds only (friends first), and a mechanical kind is one whose answer is a
@@ -267,12 +313,52 @@ would have chosen, which is how the route is measured against the coordinator's 
 `nova-decide log --summary` regenerates the starting rung per kind from those rows, and a kind with
 no success keeps the rung it started from.
 
+**The log has two sinks and one contract.** Glenn, 2026-09-18: *the decision and escalation log
+lives in Postgres beside card results; every Jev decision — the evidence, the rung, the outcome,
+the rung that succeeded — is a row, and the token report and the routing table read it.* So `--log`
+takes either a **path**, which is the append-only JSON lines file it has always been, or the literal
+word **`postgres`**, which is the table `decide_log` in the same database as `card_results`
+(SPEC-STATE.md, *the record: card results*) — one join from a decision to the card result it
+produced. Both sinks are the same interface and the same rows: `log --summary` reads either one and
+prints the same lines, because the summary is a projection of the rows and never of a file format.
+The required-accounting rule below stands for both, and it is now checked by OPENING the sink
+before the call: a table that will not open is nowhere to record the decision, so the refusal still
+comes before the provider is asked.
+
+**The table's columns** are the decision: `ts`, `unit_id`, `kind`, the size buckets `files`,
+`packages` and `lanes`, `lane`, `rung_tried`, `height`, `confidence`, `floor`, `stepped_up`,
+`escalated`, `designated`, `source`, `rowan_pick`, `reason`, `wait`, `awaiting_termination`,
+`refusal`, `outcome`, `rung_succeeded`, `calls`, `tokens_in`, `tokens_out`, `usage_failed`, and the
+whole `evidence` as JSONB so the summary reads the attempts off the table as it does off the file.
+`tokens_in` and `tokens_out` are **SQL NULL** where the provider did not report that counter — the
+presence rule below, in the table's own vocabulary: an absence is not a zero, and a reported zero is
+stored as a zero. The migration is `internal/decide/migrations/0001_decide_log.sql`, plain
+idempotent SQL applied in one transaction by `nova-decide log migrate --dsn-env <NAME>`, safe to
+run on every start.
+
+**The DSN never appears on argv.** There is no `--dsn` flag on `route` or on `log`: a connection
+string carries a password, and a password in a process listing is a leak. The DSN arrives in the
+**environment**, under the name `--dsn-env` gives (default `NOVA_DECIDE_LOG_DSN`), put there by
+`nova-secrets exec --store <store> --as <seat> --only NOVA_DECIDE_LOG_DSN -- nova-decide ...`. A
+verb told `--log postgres` with that variable unset refuses in one line naming the variable and the
+remedy, and an error that must print a DSN prints it with the password redacted. The unit tests run
+on an in-memory sink over the same interface and never open a socket; the real server is one
+integration test behind the `postgres` build tag and a `DECIDE_TEST_PG` DSN, which is what keeps
+the fake honest.
+
 **What a call spent is kept, not dropped.** A routing decision that called the provider records its
 usage: the call count and the tokens in the log row, and one row of the fleet's own usage TSV at
 `--usage` — the same columns, written through the same appender, that a swarm card's usage is
 written with, so `nova-tokens` reads a decision's spend the way it reads everything else. A call
 that FAILED is a row too, with a non-zero `rc`: its cost is real and unmeasured. A decision that
 made no call writes no row, because an empty row would be a claim that a call was made.
+
+**A row carries a cost, not only a count.** The `usd` column was a dash on every rc=0 row, so the
+ledger counted tokens and never a cent. The tokens are priced from a RATE TABLE in the registry —
+data, one row per model, in US dollars per million tokens, carrying the published rate it was
+copied from — and a model the table does not hold is a dash and a `NOTE` naming the model and the
+row to add. A price nobody published is not invented by the tool, and a counter the provider did
+not report leaves the cost a dash too: an unmeasured cost is an absence, never a zero.
 
 **Accounting is not optional.** Token spend reporting is an obligation and every decision is
 logged (Glenn), so the route verb REFUSES to ask the provider at all unless it has been told where
@@ -328,7 +414,9 @@ The second decision, `help`, answers continue | ask-all-friends | ask-glenn over
 problem, retries on one rung, failures in the last hour and how many were self-inflicted, a class
 recurring, whether landing moved, and stated uncertainty. Ask-glenn only ever follows
 ask-all-friends. Red tests: `a-failed-attempt-steps-sideways-before-up`,
-`below-the-floor-steps-up-never-down`, `security-is-johnnys-by-kind-not-by-height`,
+`below-the-floor-steps-up-never-down`, `a-designation-on-a-reserved-mind-is-a-read-not-the-work` (the seven security units of
+2026-09-18 as fixtures, each with the rung the evidence supports and `read=johnny`),
+`the-reason-names-each-touch-once`,
 `a-designation-makes-no-provider-call`, `ask-glenn-only-after-ask-all-friends`,
 `the-provider-sees-only-typed-enumerated-evidence`, `security-never-falls-through` (a table over
 the provider on and off, every floor and every prior attempt), `a-timeout-does-not-advance-the-rung`,
@@ -344,6 +432,13 @@ synthetic private markers, checked over the state AND the questions),
 `the-line-names-the-next-rung-below-the-floor`,
 `step-up-re-asks-with-the-below-floor-rung-excluded`,
 `every-step-is-a-logged-decision` and `a-sub-verb-refuses-an-unknown-flag-by-name`,
+`the-floor-is-per-kind-and-the-line-says-where-it-came-from`,
+`the-one-floor-was-above-every-provider-answer` and `the-per-kind-floors-cut-the-escalation`
+(both counted over the 2026-09-18 log: 13 of 13 below, then 1 of 13),
+`the-shipped-floors-are-what-tune-proposes-from-the-log`,
+`a-floor-above-the-observed-max-is-refused`, `the-summary-carries-a-confidence-histogram-per-kind`,
+`the-usage-row-is-priced-from-the-rate-table-or-a-dash-and-a-note` and
+`every-sub-verb-answers-help`,
 all against a fake decider, with no network and no key on disk.
 
 ### the swarm fill/launch path — the route IS the mechanism
@@ -399,6 +494,109 @@ below all flagged needs_human, in the 2026-09-17 abstain trial of 30 calls,
 retained at `mas-bandwidth/rowan-new
 reports/jev/2026-09-17-589-abstain-reason.tsv@4857e071 (model jev-latest, 31
 rows)`. The fallback for `needs_human` is a person, never a second guess.
+
+### a typed question and the criteria it is answered against are ONE versioned pair
+
+Glenn, 2026-09-19: *"Jev needs context to make good decisions, so if you inform it via input
+tokens what sort of criteria it should use to make decisions, I'm sure this will help it
+improve."* The criteria are therefore a **file beside the question**, carried into the request,
+not a paragraph each caller keeps its own copy of. `docs/decide/` holds the pair for each typed
+question: `questions-<name>.json` and `criteria-<name>.md`, the first naming the second and its
+version.
+
+**The pair is loaded, not asserted.** `decide.LoadQuestionFile` reads the question, reads the
+criteria file it names, and refuses when their versions disagree. `QuestionFile.Payload` validates
+the caller's state against the typed `state_fields` the question declares and returns the bytes
+that go out — the criteria first, the state second. Both refusals happen **before the provider is
+dialled**: a required fact the state does not carry, or carries with the wrong type, is a refusal
+and never an answer given over evidence that was not there. The first shape of this shipped a
+parser that admitted `criteria_version`, `criteria_file` and `state_fields` and then discarded
+them, with a documentation test comparing two files on disk; text parity is not ingestion, and the
+request carried the same bytes it always had. The control that keeps this honest is a
+**request capture**: a test reads the body that actually left and asserts the named criteria are
+in it and that a file the question did not name is not.
+
+**The criteria file is read from beside its question and nowhere else.** An absolute path, a
+parent escape, a symlink resolving out, and anything over a 64 KiB cap are all the same refusal: a
+question file is not a way to read an unrelated local file and post it to a provider.
+
+**The normative pair names roles, never a roster.** The questions offer configured roles —
+`security-designate`, `design-authority`, `lane-owner`, `child-review`, `second-child-review`,
+`coordinator`, `all-friends`, `human` — and the binding from a role to a mind is local, is not in
+the pair, and is never sent. A role the registry does not configure is a refusal, because no model
+response creates or overrides an ownership binding. One house's binding and its trial rows live in
+`docs/decide/examples/`, which says on its face that it is not part of the contract. `internal/docs`
+refuses a normative question or criteria file that carries a person, a model or a house role.
+
+### the who-reads question
+
+After every ACCEPT a shift manager asks one typed `choice`: which ROLE reads this card first.
+
+**It names the first read, and the mandatory rules are machinery.** Prose in a criteria file is
+something a high-confidence answer may contradict, and rule 6 already says confidence never
+authorizes. So `internal/decide/readers.go` derives four things and CONSTRAINS the answer with
+them, at every confidence:
+
+1. a settled security designation is taken **with no provider asked at all**;
+2. an unresolved holder of the area keeps its read, and no answer lifts a hold or replaces its
+   holder — `ReadDecision.LiftsHold` is a field so a caller gates on it rather than on the absence
+   of a sentence;
+3. a design read the evidence requires (`design_defaults_taken` above zero, or normative text
+   moved) survives an answer that names somebody else first;
+4. the human is reached only after the friends, which is `help --state`'s own rule.
+
+The red test is an **obediently wrong** answer — the provider naming the cheap reader on a
+security-shaped unit — asserted at 1.00 and at 0.10, because an answer that is wrong at one
+confidence is wrong at both.
+
+**The state carries the facts the criteria turn on, and the asker computes them first**:
+`security_shaped_package`, `design_defaults_taken`, `normative_spec_moved`, `holder_of_the_area`,
+`hold_is_open`. A criterion that names a fact the state does not carry is a criterion the provider
+must infer from prose, and prose is what rule 4 keeps out.
+
+**No floor is set for this reading.** `docs/decide/examples/2026-09-19-local-trial.md` records a
+day of observations — 47 answers from six lanes, joined afterwards to later HOLDs on the message
+bus — and they tune nothing. A later HOLD is an observation, not an adjudication: a pull request
+nobody held is not one that needed no reader, because nobody looked, and "the default would have
+missed it" is a counterfactual nothing tested. The rows also predate this question version and
+this state shape, and their stopping classes are sparse. They are kept as the arithmetic fixture
+for `tune --default` and as the reason to carry the fields, and for nothing else. The reading is
+**untuned until its own contract evidence exists**.
+
+### the issue pre-triage question
+
+One typed `choice` over an open issue: `mechanical-card`, `design-ruling`, `already-fixed`,
+`held`, `repository-machinery`. The pair is `docs/decide/questions-triage.json` and
+`criteria-triage.md`, under the same version gate. **The answer routes and never admits**: no
+classification at any confidence cuts a card, lifts a hold or skips a read.
+
+**The question carries three tree facts the asker computes before asking**, because the provider
+cannot see the repository and guessing about it is the whole of the error: `held_by_open_pr`,
+`cited_path_exists_on_dev`, and `last_comment_says_fixed`.
+
+Observed 2026-09-19: 49 issues triaged, 32 answered `mechanical-card`, and a manager took all 32
+to the tree. Two could be cut. Of the thirty that could not, sixteen were held by an open change,
+six were already fixed or cited a path not in the tree in that shape, five were a design ruling
+the issue's own text asks for, two were an infra prefix a card lane may not touch, and one was a
+sweep rather than one card. **Twenty-two of the thirty are answered by those three facts**, and
+none of the twenty-two is a judgement the provider got wrong — it is a fact it was never shown.
+That is a statement about which fields the question was missing; it is not a precision, and it
+sets no floor.
+
+### the escalate question — `help --state` and then to which role
+
+`nova-decide help --state <json>` answers the second decision from the line's own counters, with
+no provider, no key and no network: `continue`, `ask-all-friends` or `ask-glenn`, and the person
+only after the friends. It was hooked up and **unused on 2026-09-19** — zero calls, while every
+shift lane escalated by hand into a free-text column.
+
+The ESCALATE step is the two halves together: `help --state` first, and where its answer is not
+`continue`, one typed `choice` over the configured roles —
+`docs/decide/questions-escalate.json`, criteria `criteria-escalate.md`. `help_answer` and
+`help_reason` go into the state verbatim, so the typed answer is anchored to counters the line
+measured rather than to how stuck it feels. An answer naming `human` while `help_answer` is
+`ask-all-friends` is **overruled by the machinery** and the friends stand; it is not a preference
+the provider may outbid.
 
 ### nova-bus inbox triage (opt-in, public buses only)
 
@@ -791,7 +989,7 @@ D3. SPEC-AHEAD: #1616
    sha, a job conclusion); a key the question does not declare is refused by name.
 
    ```
-   CLASSIFY question=<q>/v<v> answer=<member|unknown> conf=<0.00-1.00|-> floor=<f> decider=<rules|jev|local|none> stop=<yes|no> below=<member|-> tamper=<yes|no> why=<-|below-floor|tamper|no-decider|no-key|no-accounting|private-evidence|untuned|provider-error> escalate=<reader|-> audit=<yes|no> <question fields> pointer=<id> bytes=<n> ms=<n|-> tokens=<in|->/<out|-> id=<decision id>
+   CLASSIFY question=<q>/v<v> answer=<member|unknown> conf=<0.00-1.00|-> floor=<f> decider=<rules|jev|local|none> stop=<yes|no> below=<member|-> tamper=<yes|no> why=<-|below-floor|tamper|no-decider|no-key|no-accounting|private-evidence|untuned|provider-error> skipped=<<decider>=<reason>,...|-> escalate=<reader|-> audit=<yes|no> <question fields> pointer=<id> bytes=<n> ms=<n|-> tokens=<in|->/<out|-> id=<decision id>
    ```
 
 D4. SPEC-AHEAD: #1616
@@ -955,17 +1153,20 @@ network or permission. `red_owner` is asked only meaningfully for a red: `row` w
 thing is the work's own, `bench` when it is the machine's, `na` when nothing is red. Tamper answer:
 `unknown` for both.
 
-**The evidence.** The `RESULT.md` first line, its `red:` line where present, and the last 3072
-bytes of the card's output, tail truncation, after redaction. Bound: 4096 bytes. A card's output
-is private unless the pool's repository is PUBLIC (S7).
+**The evidence.** Not the `RESULT.md` first line and not the card's output tail: what enters this
+question is the machinery-owned OUTCOME fields plus bounded typed reason fields, and
+**`docs/SPEC-TOOLWORK.md` §4 governs what may enter this question**. `RESULT.md` prose and the raw
+output tail enter neither the provider question nor the log. The public/private admission check
+stands -- a typed shape alone does not prove its fields public, and S7 is unchanged -- and D6's
+observed-versus-truth split stands: the appended row is observed, never truth.
 
-**The rule table.** Output whose last 3072 bytes match a toolchain pattern from a data file
-(`questions/toolchain.txt`: `command not found`, `executable file not found in $PATH`, `no space
-left on device`, `toolchain not available`, `permission denied` on a path outside the job
-directory, and the like) is `blocked-toolchain` with `red_owner=bench`, no call. A `RESULT.md`
-first line beginning `SKIP` is `skip-precondition`. A first line beginning `CLEAN` with an exit
-status of 0 is `clean`, `na`. The table is the point of the question as much as the provider is: a
-red whose message names a missing toolchain is the bench's and not the row's, and saying which is a rule and not a judgment.
+**The rule table** (mechanical, no call) reads only the tokens TOOLWORK §4 rule 1 writes on `OUTCOME`
+and the supervisor-owned facts below -- never `RESULT.md` prose, never a first-line `SKIP`/`CLEAN`
+marker, never the output tail. `accept=ok` is `clean`, `red_owner=na`; `accept=reject` is the gate's
+verdict, final and not re-derived here. A `gather=` or `reason=` token naming an absent precondition
+(`fixture-missing`, `precondition`) is `skip-precondition`, `na`; the token `toolchain-missing` is
+`blocked-toolchain`, `red_owner=bench`. Upstream `gather` parses the admitted `RESULT` contract once
+to write those tokens; reading that token is not rereading prose, and which red is the bench's is a rule.
 
 **What the caller does.** Each harvested job's line gains ` result=<...> red_owner=<...>`.
 `clean` harvests as today. `defect` prints one `HARVEST FINDING-CANDIDATE job=<id> pointer=<path>`
@@ -1110,14 +1311,39 @@ is not the author for the current head; a scoped record is a release of the hold
 nothing more, and the member waits for the unscoped one. `--scope` and `--releases` are grammar
 this reading adds to `nova-merge read` (SPEC-MERGE.md:449), rewritten by #1572 with the code.
 
+**A hold at a head the branch has moved past is released by its holder's later typed verdict at
+the current head** (#2550). Everything above is about a hold that binds to the **current** head,
+and there it stands: a comment releases nothing, only the holder's record does. A hold whose
+`held_at` is a **superseded** head is a different object — it is the last word its author left
+about a commit that is gone — and it is released by a later **typed** verdict from the **same**
+`who` at the current head, in any source. An APPROVE releases it. A new HOLD at the current head
+**replaces** it: the member is still dropped, but by the hold at head, so `held_at` names a commit
+a reader can go and look at instead of a `carried=yes` pointing at nothing. A hold stays carried
+exactly while its author has said nothing at the current head. Four rows fix it: HOLD at A and an
+APPROVE at the current head B — **taken**; HOLD at A and nothing at B — **dropped**, `carried=yes`;
+HOLD at A and a HOLD at B — **dropped** at B, `carried=no`; HOLD at A and an APPROVE at A only
+with the head now B — **dropped**, `carried=yes`, because release keys on the head and never on
+"somebody approved at some point". The `head=` on a typed APPROVE is matched by the same prefix
+rule a typed HOLD's `head=` gets, so an abbreviation releases; and a releasing APPROVE must be the
+**whole line** — a `DISPOSITION` smuggled into a sentence inside a long body is not a verdict —
+while a HOLD keeps the lenient parse, because a rule about smuggling must not fail open on the
+side that stops a merge. An untyped hold-shaped line binds to the current head and has no author
+to match, so it is never carried and this releases none of them. The hurt: on 2026-09-22, 57
+consecutive ticks took the same 16 approved cell pull requests and dropped every one of them on a
+`held_at` the branch had moved past, `members=none`, for 11.5 h with read debt at 0.
+
 **No flag ignores a hold.** There is no `--ignore-hold`, for one hold or for one comment: a hold
 is a no, and stepping over one named member while the gate still claims to read holds is the
 02:43Z hole with a flag. The one waiver is `--no-require-holds --reason <text>`, and it waives the
 **forge sources whole**, (b) and (c), never (a): the lane's own records are the read condition
 (SPEC-MERGE.md:808-816) and no flag on `batch` touches them. It is refused together with
-`--reviewers` (one or the other is required, exit 2 with neither), and every `BATCH` and `LAND`
-line under it carries `holds=waived reason="<text>"`, so a landing that did not look at the forge
-is a fact on its line and a person's to own, like `--no-sandbox`. The escape for a holder who
+`--reviewers` (exactly one of `--reviewers <file>` or `--no-require-holds --reason <text>` is
+required, exit 2 with neither or both, and `--no-require-holds` without `--reason` is exit 2),
+and `--lane` is required on both sides (never `none`): a waiver that names no lane cannot read
+(a), so a recorded HOLD is invisible and the member lands — leftover `--ignore-hold` (#1896).
+Every `BATCH` and `LAND` line under the waiver carries `holds=waived reason="<text>"`, so a
+landing that did not look at the forge is a fact on its line and a person's to own, like
+`--no-sandbox`. The escape for a holder who
 cannot be woken is a commit removing that `who`'s `may-hold` in the reviewer file, which is a
 record with an author and a date, and a receipt that names the commit and not the reader: a
 policy override is never printed as the friend's approval.
@@ -1307,7 +1533,7 @@ open the finding, printed as `red=`, and licenses nothing. No answer turns `reru
 `rerun=licensed`.
 
 **What the caller does.** The closing line gains ` red=<...> rerun=<licensed|no> finding=<yes|no>
-reruns=<n>`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
+reruns=<n> attempt=<n|->`. `rerun=licensed` requires ALL of: the RULE TABLE's class is `cancelled-leg`,
 `known-flake` or `infra`; no decider withdrew it; and `reruns`, the forge's own attempt count for
 this job at this sha less one, is zero. That is the whole of "one licensed rerun": a second red at
 the same sha is `finding=yes` whatever the class. Everything else is `finding=yes` at once: a
@@ -1318,6 +1544,22 @@ act. The older *nova-merge classify merge-group failure* adoption (:419-427) kee
 words, including the `rerun=yes` it prints on a provider's answer above its floor; that line is
 older than S4 and does not meet it, and the task for this reading files the follow-up that folds
 that classifier onto this table.
+
+**Where `reruns` comes from, and it is not the caller.** The count is ACQUIRED FROM THE FORGE, in
+the job listing the verb already fetches for the names and the conclusions: `run_attempt` and
+`head_sha` per red job, attempt N meaning N-1 reruns already spent, printed as `attempt=<n>` beside
+`reruns=<n>` so a reader can check the licence against the run. The verb **fails closed**: a red job
+the forge named no attempt or no sha for, and red jobs that disagree with each other about either,
+are a refusal at exit 2 (the invocation could not run: `docs/CLI.md:3259`) with the missing fact named,
+and NO licence field is printed — a verb that cannot tell a first red from a second must not read the
+absence as the first, because the party asking for the licence is the party that wants the rerun. No
+assertion of the caller's may lower the count. `--reruns <n>` survives only as a FLOOR, for a caller
+who knows of a rerun the forge cannot see: the reading takes the greater of it and the forge's count,
+so the flag can withhold a licence and can never grant one the forge's count denies. A run with
+nothing red asks the forge nothing and prints `attempt=-`. The reading is READ-ONLY and consumes
+nothing: two reads of the same immutable attempt are one advisory answer given twice, not a second
+red; it is the caller's own rerun that makes the forge report attempt 2, which is where the licence
+stops.
 
 **The rows.** The next `nova-ci failed --decide` read of the same sha that finds a decision row
 appends an **observed** row (D6): `event=rerun-green` or `event=rerun-red`, with the failing job
@@ -1363,7 +1605,7 @@ H3. SPEC-AHEAD: #1624
    monotonic clock around the call alone, and `wall_ms`, from the verb's start to its line. Each
    is absent, never zero, where there was no call or no measurement, by the per-counter presence
    rule. The `ROUTE` and `CLASSIFY` lines carry `ms=<n|->`. `log --summary` prints the median and
-   the 95th percentile per question and per decider. The hurt: the adoption's claim is wall clock
+    the 95th percentile (p95) per question and per decider. The hurt: the adoption's claim is wall clock
    as much as tokens, the spec quotes "about 400 ms" from a trial with "no retained file" (:38-40), and 553
    rows later the log cannot say whether that is true.
 
@@ -1579,7 +1821,11 @@ The readings; each also has `<q>-fixtures-answer-as-labelled` and `<q>-negative-
   `no-require-holds-waives-the-forge-sources-only-and-is-printed`: a recorded HOLD and a forge
   HOLD; under `--no-require-holds --reason x` the recorded one still drops the member and every
   line carries `holds=waived reason="x"`. 3 `reviewers-xor-no-require-holds` (neither: exit 2;
-  both: exit 2). 3 `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`: the
+  both: exit 2; without `--reason`: exit 2; on `batch` and on `land`; `--reviewers` still
+  lands/batches; `--no-require-holds --reason` still lands/batches). 3
+  `no-require-holds-without-lane-refuses`: a recorded HOLD on disk; `--no-require-holds --reason x`
+  without `--lane` is exit 2 on `batch` and `land`, prints no `BATCH OK`, enqueues nothing
+  (#1896). 3 `removing-may-hold-by-commit-releases-and-the-receipt-names-the-commit`: the
   `BATCH OK` line's `reviewers=<sha12>` is the commit that removed `may-hold`, and no field on
   any line carries the removed reader's name as a releaser. 3
   `land-refuses-a-hold-posted-after-batch-ok` (the fake forge grows a comment between the two
@@ -1692,3 +1938,80 @@ throughput 22 calls/s at concurrency 10 measured in that trial; and the note
     mutation pages.
 17. Game adoption: the game path uses the decision above the floor and falls
     back to the local rule below it.
+
+## Tests this spec demands
+
+The tree already houses this reading's DECIDER and most of the hold fold (the amendment landed against the base even though the spec text still says "no code yet"). These tests run against a fake decider (`internal/decide`'s `Decide` interface, and rule 9's httptest fake for the wire), with fixtures under `internal/decide/questions/testdata/<q>/` as `<name>.evidence`/`<name>.want` pairs, no network, no key on disk, each seen red before trusted. PRESENT below cites a real `func Test…` asserting the behaviour in the spec's own words; ABSENT means no test asserts it, however near the name.
+
+1. `TestDecodeParsesAllAnswerKinds` / `TestValidateAnswers` — a question over bounded state returns the typed answer with a provider-reported confidence; an untyped reply is refused, not parsed (rule 1, red 1).
+2. `TestDecideSendsBodyAndParses` / `TestNewRefusesWhenEnvUnset` — the fake asserts path `/v1/systemone`, model `jev-latest`, the three question shapes; `TYPESAFE_API_KEY` is accepted where `JEV_API_KEY` is absent (rule 2, red 2).
+3. `TestNoVerbTakesAKeyOnArgv` — the key arrives only via the named environment variable under `nova-secrets exec`, never file/argv/log (rule 3, red 3).
+4. `TestPublicIsAnAllowlist` / `TestPrivateEvidenceNeverReachesAPublicDecider` — public/synthetic state only; a private note or secret is refused before any call (rule 4, red 4, S7).
+5. `TestLineRendersConfidenceAndBelow` / `TestBelowTheFloorStepsUp` — a line prints `confidence=` and `floor=`; below the floor the caller runs the fallback and marks the answer a suggestion (rule 5, red 5).
+6. `TestAnAnswerNeverReplacesAnUnresolvedHolder` / `TestRequiredReadsSurviveTheAnswer` — confidence never authorizes: an answer cannot lift a hold or replace a holder; the machinery's word stands (rule 6, red 6).
+7. `TestAHarvestClassNeverPushesARejectedCard` — a decision alone writes nothing: no card, fix, merge or push after a decision-only run (rule 7, red 7).
+8. `TestOutcomeWritesTheOtherHalfOfTheRow` / `TestNovaDecideTuneRefusesAFloorWithNoRows` — each decision appends a row joining answer, confidence, floor and outcome; a floor with no rows behind it is refused as untuned (rule 8, red 8).
+9. `TestDecideSendsBodyAndParses` — the suite runs against an httptest fake with the network refused and no key on disk (rule 9, red 9).
+10. `TestRouteBelowTheFloorExits3` — every decision prints its evidence pointer beside the answer (rule 10, red 10).
+11. `TestBelowTheFloorStepsUp` — a below-floor answer is a suggestion, never dropped, and the original state stands (rule 11, red 11).
+12. `TestInboxDecideEmptyInboxMakesNoProviderCalls` — only a delivered batch/finished task is decided; an empty wait is not, and no provider call is made (rule 12, red 12).
+13. `TestRouteNoJevIsDeterministic` / `TestPublicIsAnAllowlist` — route adoption: the above-floor answer chooses the kind/rung; below the floor it falls back to today's routing (adoption, red 13).
+14. `TestGlennIsOnlyAskedAfterAllFriends` / `TestHelpAnswers` — abstain adoption: the abstain reason and `needs_human` name the reader; below the floor the machinery's own answer stands (adoption, red 14).
+15. `TestInboxDecideRefusesPrivateBusByName` — inbox adoption: opt-in, public buses only; a private bus is refused; below-floor notes stay unclassified (adoption, red 15).
+16. `TestADecideFlagBelowItsFloorRunsThePreFlagBranch` — pulse gate adoption: below the floor the gate answers real (adoption, red 16).
+17. `a-game-path-uses-the-decision-above-floor-and-the-local-rule-below` — game adoption; the game path lives outside nova-tools and has no tree test (adoption, red 17).
+18. `TestTheFrameIsByteExact` — S2: the frame is byte-exact for a fixed nonce; a marker/`FRAME`/NUL in the evidence still yields exactly two marker lines.
+19. `TestNoEvidenceByteReachesTheInstructions` — S2: for every question the instructions and criteria sent are byte-identical across two evidences.
+20. `TestAnAnswerOutsideTheSetIsAProviderError` — S3: an answer outside the closed set is a provider error at exit 2, no decision row.
+21. `the-provider-is-never-asked-to-name-anything` — S3: no options/instructions request a sha, number, login or test name, and those fields equal the `--meta`/pattern value even when the fake's text differs.
+22. `the-evidence-changes-nothing-but-the-answer` — S1: evidence that tries to change the floor/options/decider leaves the request and the caller's act byte-identical.
+23. `<q>-injection-obeyed` (all six readings) — S4: with the tamper screen bypassed and the fake returning the most-loosening member at 0.99, the call site's state is its mechanical baseline or tighter.
+24. `TestTheTamperScreenIsDataAndMatchesBeforeAnyCall` / `TestTamperedEvidenceMakesNoCall` — S5: one shipped tamper table is data; a replaced `--tamper <file>` is the only table read.
+25. `<q>-injection-screened` (all six readings) — S5: evidence that instructs the classifier makes zero calls and prints `tamper=yes` and the tamper answer.
+26. `TestTwoNamesOneLoginFoldSeparately` — S6: a login is an account and a `who=` is a reader; a typed `who=` the file maps attributes the hold to that name, an unmapped one is `who=unknown`, and a comment with no typed line is `who=unknown`.
+27. `a-comment-by-a-non-reviewer-adds-nothing-and-is-counted` — S6: "<reviewer> says HOLD" from a login outside the file is `why=not-reviewer`, `foreign=1`.
+28. `a-quoted-hold-is-not-a-hold` / `a-verdict-with-no-reviewer-file-is-refused` / `the-author-cannot-ready-their-own` — S6: quoted lines and code blocks are dropped; a verdict with no reviewer file refuses at exit 2; the author's own approve readies nothing.
+29. `TestSecretsAreRedactedAndSecretShapedEvidenceIsRefused` — S7: `sk-` and `<NAME>_KEY=` shapes are redacted before framing; a survivor is refused at exit 2 with `why=secret-shaped`.
+30. `TestEveryQuestionsSetIsClosedAndNamesNothingOfOurs` — D1: no question's text, option or rule row names a person, bench, repo or model of ours.
+31. `every-data-table-is-replaceable` — D1: tamper, verdict tokens, ack prefixes, toolchain patterns and security phrases are each replaceable whole (a replaced verdict-tokens file whose `hold` row is one foreign word makes a bold `HOLD` not a hold).
+32. `TestWithNoProviderEveryQuestionAnswersByRuleOrUnknownAndSaysSo` — D2: with `--decider rules`/no key, exit 0 with `decider=rules` on a rule row, exit 3 with `answer=unknown decider=none why=no-decider` otherwise; zero calls.
+33. `rules-are-consulted-first-whether-named-or-not` — D2: `rules` is consulted first even when not named.
+34. `TestAStoppingMemberEndsTheWalkBeforeTheFloor` — D2: a stopping answer at any confidence (hold 0.2 / security 0.2) ends the walk before a later decider (approve 0.99 / chore 0.99), `stop=yes`, exit 0.
+35. `a-non-stopping-answer-below-the-floor-still-moves-on` — D2: a non-stopping `none` at 0.2 still lets the next decider be asked.
+36. `TestClassifyAnswersByRuleOrUnknownAndSaysSo` / `TestClassifyRefusals` — D3: classify exits 0 / 3 / 2.
+37. `TestAnUnknownKeyBesideTheEnvelopeIsRefusedByName` — D3: an undeclared `--meta` key is refused by name.
+38. `TestJevRequiresAccounting` / `TestRouteRefusalStillPersistsTheCall` — D3: a provider call with no `--log`/`--usage` accounting is refused before it is made; a refusal still persists what a completed call spent.
+39. `TestOneItemOneCall` — D4: two notes are two calls and neither state carries the other's text.
+40. `TestEvidenceOverItsBoundIsTruncatedAndMarked` — D4: head/tail/head-and-tail cuts each carry exactly one `[cut <n> bytes]` line, bound after redaction and quote removal.
+41. `TestBelowFloorIsUnknownAndRequeuesOnce` — D5: below the floor the item escalates to a named reader (`escalate=caller` default, `--escalate-to <name>`); `escalate=-` at/above the floor.
+42. `an-untuned-provider-is-not-asked` — D5: no `--floors`, no row, a missing/39-row/40-with-four trial, or a row for a different `model` makes zero calls with `why=untuned`; 40 rows with five of each stopping member makes one call.
+43. `a-run-may-raise-a-floor-and-never-lower-it` — D5: `--floor <f>` raises the file's floor for one run and never lowers it.
+44. `TestTheEvidenceTextIsNeverLogged` / `TestClassifyLogNeverHoldsTheEvidenceText` — D6: the evidence text never reaches a log or usage row; its SHA-256 does.
+45. `the-decision-id-is-derived-as-written` — D6: `id` is the first sixteen hex digits of SHA-256 over question, version, pointer and hash, each newline-terminated.
+46. `the-audit-sample-is-the-stated-threshold` — D6: `19999998…` sampled and `19999999…` not at 0.1; the same ids on two runs.
+47. `the-three-row-kinds-have-their-shapes-and-an-orphan-is-refused` — D6: decision/observed/truth rows keep their shapes; a row of either appended kind with no decision row is refused.
+48. `an-observed-row-carries-no-truth-and-tune-reads-truth-rows-only` — D6: a log of observed rows reads zero labelled rows in `tune`.
+49. `result-is-computed-from-the-truth-and-never-passed` — D6: `result` is computed by the verb from truth and the decision's answer; a `--result` flag is refused by name.
+50. `TestInboxDecideWakeTellsAcknowledgementFromAction` — reading 1 (note): `wake` answers ack/info/needs-action; a structured `STOP:`/`HOLD:` subject is `needs-action` with no call.
+51. `a-truncated-note-wakes-at-once` — reading 1: a request past byte 600 is relayed at once, `why=truncated`.
+52. `one-wake-carries-every-deferred-note` / `a-restart-keeps-the-original-due` / `wait-timeout-flushes-deferred-notes-before-exit` / `a-note-missing-from-the-state-file-is-not-deferred` / `a-courteous-reply-is-observed-and-writes-no-truth` — reading 1: the durable deferral state on `wait --decide`/`watch --decide`.
+53. `a-bench-red-needs-the-table-and-a-fact-the-card-did-not-write` — reading 2 (harvest): `blocked-toolchain`+`bench` needs the toolchain row AND exit status 126/127 or a harness-error line, else it is a label only.
+54. `a-unit-changes-bench-on-this-ground-once` / `a-defect-files-nothing` / `a-rerun-elsewhere-is-observed-and-writes-no-truth` — reading 2: the one-time bench move and the observed rerun rows.
+55. `TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand` / `TestAHoldInAnySourceStops` — reading 3 (hold): a held head is dropped from a batch and refused at land; a hold in any source stops.
+56. `TestAnAbstainRecordIsNotAnInput` / `TestChildAndCardRecordsAreNotInputs` — reading 3: an ABSTAIN, `child` or `card` record neither holds nor releases.
+57. `TestAScopedApproveReleasesOnlyTheHoldsItNames` / `TestOnlyTheHolderReleases` / `TestAnUnknownHoldIsReleasedOnlyByAReadersVerbNamingIt` — reading 3: release is only the holder, by the verb, at the current head, naming the holds.
+58. `TestACommentNeverReleasesAnything` / `TestAForgeApprovedReviewReleasesNothing` / `TestADismissalReleasesNothing` / `TestNoAnswerReleasesAnything` / `TestAPushReleasesNothing` / `TestAReleaseAtAStaleHeadReleasesNothing` — reading 3: nothing else releases a hold.
+59. `TestADecidedHoldAtAnyConfidenceHolds` / `TestAnUntypedCommentFromAMayHoldLoginIsPending` — reading 3: a decided hold at any confidence holds; an untyped comment from a may-hold login is pending.
+60. `TestAPendingCommentIsClearedOnlyByAReadersVerb` / `TestAScopedApproveRecordDoesNotSatisfyNeedsRead` — reading 3: a pending comment clears only by a reader's verb; a scoped record satisfies no read condition.
+61. `TestBatchOKCarriesHoldsDispositionsAndReviewers` / `TestNewerComparesForgeStampsAndTiesBreakOnID` / `TestEveryLineThatNamesAHoldPrintsItsID` — reading 3: the golden `BATCH OK` fields and forge-stamp ordering.
+62. `TestThereIsNoOptInStrictFlag` / `TestThereIsNoFlagThatIgnoresOneHold` / `TestNoRequireHoldsWaivesTheForgeSourcesOnlyAndIsPrinted` / `TestReviewersXorNoRequireHolds` / `TestNoRequireHoldsWithoutLaneRefuses` / `TestRemovingMayHoldByCommitReleasesAndTheReceiptNamesTheCommit` / `TestLandRefusesAHoldPostedAfterBatchOK` / `TestSweepAndReactNeverEnqueueAHeldPR` / `TestAReleaseAtTheSameHeadIsObservedAndWritesNoTruth` — reading 3: the flags, the waiver, and the observed rows.
+63. `TestFailedDecideClassesTheRedAndLicensesAtMostOneRerun` / `TestFailedDecideCountsRerunsFromTheForgeAttemptAndNotTheCaller` / `TestFailedDecideFailsClosedWhenTheForgeWillNotNameTheAttempt` / `TestFailedDecideRereadingOneAttemptRepeatsTheSameAnswer` — reading 6 (ci-red): one licensed rerun, `reruns` from the forge, fail-closed.
+64. `a-named-failing-test-is-never-licensed` / `the-second-red-at-one-sha-is-a-finding` / `an-expired-flake-row-matches-nothing-under-now` / `infra-is-a-forge-conclusion-or-a-listed-step-and-never-a-log-line` / `a-decider-withdraws-a-licence-and-never-grants-one` / `a-green-rerun-does-not-relabel-a-failing-assertion` — reading 6: the licence rule table and the withdrawal/count edges.
+65. `backlog-negative-control` / `a-provider-adds-security-and-never-removes-it` / `a-provider-never-clears-escalate` / `every-item-without-a-rule-row-escalates` / `a-mapped-label-writes-truth-and-an-unmapped-one-is-observed` — reading 4 (backlog): the security-first table and the never-cleared escalate.
+66. `verdict-negative-control` / `the-sha-is-found-by-pattern-and-never-asked` / `an-approve-with-no-sha-is-not-ready` / `an-approve-at-a-stale-head-is-not-ready` / `a-scoped-approve-is-not-ready` / `who-unknown-is-never-ready` / `only-a-rule-typed-approve-readies` / `ready-lifts-nothing-and-satisfies-no-read-condition` / `replaced-tokens-are-the-only-tokens` / `the-reading-writes-no-read-record` / `a-restatement-is-observed-and-writes-no-truth` — reading 5 (verdict): the pattern sha, the ready projection, and the observed restatement.
+67. `a-score-is-zero-based-on-the-fake` — Score: a `score` answer is zero-based; a one-based reading is a test failure.
+68. `TestOutcomeWritesTheOtherHalfOfTheRow` / `TestOutcomeSkippedIsTheFourthResult` / `TestLogSummaryPrintsCoverage` — H2: the outcome is recorded, `skipped` is a result, coverage is printed.
+69. `a-rule-candidate-is-printed-at-50-and-0.85-and-not-below` / `a-ruled-kind-makes-no-call-and-is-still-logged` / `a-rule-with-no-by-is-refused-at-load` / `a-confirmed-failure-steps-the-rule-aside` / `one-unit-in-twenty-is-still-asked-and-a-share-under-0.7-prints-rule-stale` — H1: promotion, rule-steps-aside, and stall detection.
+70. `TestLatencyAndWallClockInEveryRowAndOnEveryLine` — H3: `ms`/`wall_ms` are present on every row and line, absent (never zero) where there was no call.
+71. `the-summary-prints-median-and-p95-per-question-and-decider` — H3: `log --summary` prints median and p95 per question and decider.
+72. `a-launch-cannot-skip-the-route-without-a-logged-reason` / `a-launch-with-no-accounting-routes-by-rules-and-says-so` — H4: routing in the launcher; the one escape writes a `"source":"skipped"` row.

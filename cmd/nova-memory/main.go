@@ -115,6 +115,9 @@ sentences and one run, not two runs.
 
 exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
 
+setup:
+  cp -R cmd/nova-memory/testdata/corpus ./corpus && cp cmd/nova-memory/testdata/corpus/HANDBOOK.md ./draft.md
+
 example:
   nova-memory quickstart --root ./corpus
   nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
@@ -343,7 +346,9 @@ func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 		default:
 			// This hint is on the same line rather than indented below it, so the
 			// suffix is appended in place at the end; inserting the door before
-			// the hint would rewrite the line the caller is told to read.
+			// the hint would rewrite the line the caller is told to read. The
+			// ordering is deliberate, and firstrun_test.go:65 pins this line's
+			// shape.
 			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s; run: nova-memory help\n", verb, n, channelsHint)
 			return nil, false
 		}

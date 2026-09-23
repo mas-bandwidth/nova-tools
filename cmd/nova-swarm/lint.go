@@ -20,19 +20,36 @@ import (
 // file -- and names each defect by check, line and excerpt before any spend. The checks are
 // the shape the card deaths taught (docs/WORKER-CARDS.md practices 17, 18, 23, 25).
 
-// cardMaxBytes is the ceiling a card may not reach: a card past it is not read in one
-// window, and the lint says so before any spend.
+// cardMaxBytes is the ADVISORY ceiling a card is written within: past it a model stops
+// reading the card in one window, so the lint says so before any spend -- and nothing is
+// refused and nothing is cut, so a card over it still ships (issues #1494, #1527).
+//
+// IT WAS READ BOTH WAYS ON THE SAME DAY. On 2026-09-19 two managers trimmed cards to reach
+// it and two others shipped over it on purpose, because the line said `at or over the
+// 12000-byte ceiling` and the verb exited 2, which is the exit code a caller refuses on.
+// The ceiling is a reading budget, not an input limit: a 12422-byte card was measured
+// through the harness untruncated (#1494). So a card over it draws a `LINT NOTE`, never a
+// `LINT DRIFT`; the note never changes the verdict; and the size rides on every lint,
+// clean or not, with `advisory=true` said in the bytes so nobody has to ask again.
 const cardMaxBytes = 12000
+
+// cardLintAdvisory is every check whose finding is advice rather than a defect. An advisory
+// finding is printed on a `LINT NOTE` line and is not in the verdict: a card whose only
+// findings are advisory is a clean card and exits 0.
+var cardLintAdvisory = map[string]bool{"size": true}
 
 // cardLintChecks is how many independent shapes lintCard looks for. It is printed on the
 // LINT OK line so a reader knows how much of the card was actually checked, and it is the
 // size of cardLintRemedies below: a check with no remedy is a red test, never a judgement.
 //
-// It counts the twelve shape rules of docs/WORKER-CARDS.md:23-36 and the four typed-header
+// It counts the twelve shape rules of docs/WORKER-CARDS.md:23-36, the four typed-header
 // tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
-// gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc).
-const cardLintChecks = 16
+// gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
+// and `depends-on` (#2636), which fires only under `--typed`, and the four base checks of
+// internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
+// `deadline-p95` (#2636) -- which fire only under `--base-check`.
+const cardLintChecks = 21
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -61,14 +78,15 @@ var cardLintRemedies = map[string]string{
 	"clone-step":       "STEP 1 enters the repository from the working directory: the whole step, its line and the lines under it, holds a `git clone -q <url> repo && cd repo`, or a `cd ` into a checkout that may already be there. The wording of the STEP line itself is yours; the command is the rule (practices 17, 25)",
 	"steps-numbered":   "each step is its own line beginning `STEP <n>.`, numbered 1, 2, 3 with no gap and no repeat; a card with no STEP lines at all is this drift (practice 17)",
 	"red-test":         "name the reproducing test by its own name -- `TestSomething` -- or, for a card that only reads, say `probe` or `read` in so many words (practice 23)",
-	"test-command":     "write the gate verbatim, exactly as the card is to run it (`go test ./internal/x/ -run TestY -count=1`), or say in words that there are no tests (practice 5)",
+	"test-command":     "write the gate verbatim, exactly as the card is to run it -- the accepted set is `make`/`gmake <target>` (the most common polyglot gate and the one `ci-fast.yml` runs), `go test`, `go vet`, `pytest`, `cargo test`, `npm test`, `dotnet test`, `ctest`, `mvn test`, `gradle test`, `bash <script>` or a bare `./<script>`, or say in words that there are no tests (practice 5; #1994)",
 	"deadline":         "give the card its own bound: a `deadline` line, or `finish within <n> minutes` (practice 17)",
 	"files-named":      "name the file or the package the work lives in, so the change has a home to start from (practice 3)",
 	"scratch-absolute": "the LINE quoted is the one to fix: spell scratch against a named root -- `<job>/scratch`, `$PWD/scratch`, an absolute path -- and never as the bare word. An absolute path on another line does not answer for this one (practice 25)",
-	"no-parent-path":   "the wall refuses every path above the job: put the worktree, the scratch and the notes under the working directory instead of reaching through `../` (practice 25)",
+	"no-parent-path":   swarm.CardParentPathWanted,
 	"no-sandbox":       "a card runs INSIDE the wall and never invokes it; drop the `nova-sandbox` line (practice 2)",
 	"result-last":      "the LAST step writes RESULT.md, and RESULT.md's own line 1 is the contract line from line 1 of this card (practices 1, 25)",
-	"size":             "cut the card under the ceiling so a model reads it in one window: point at a file instead of pasting it, and drop quoted source",
+	"size":             "ADVICE, not a limit: a card over the ceiling is not refused, not truncated and still ships, so nothing here has to be cut. The ceiling is the budget that keeps a model reading the card in one window -- to come under it, point at a file instead of pasting it, and drop quoted source",
+	"depends-on":       swarm.CardDependsRemedy,
 }
 
 // THE TYPED HEADER'S FOUR TOKENS JOIN THE SAME TABLE (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -77,11 +95,13 @@ var cardLintRemedies = map[string]string{
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
 func init() {
-	for name, remedy := range swarm.CardHeaderRemedies {
-		if _, clash := cardLintRemedies[name]; clash {
-			panic("nova-swarm lint: two remedies for the rule " + name)
+	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies} {
+		for name, remedy := range table {
+			if _, clash := cardLintRemedies[name]; clash {
+				panic("nova-swarm lint: two remedies for the rule " + name)
+			}
+			cardLintRemedies[name] = remedy
 		}
-		cardLintRemedies[name] = remedy
 	}
 }
 
@@ -113,11 +133,26 @@ type cardFinding struct {
 }
 
 var (
-	cardStepRE    = regexp.MustCompile(`^STEP[ \t]+([0-9]+)[.)]?`)
-	cardCloneRE   = regexp.MustCompile(`(?i)(clone|(^|[ \t&|(])cd[ \t])`)
-	cardTestRE    = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)
-	cardReadRE    = regexp.MustCompile(`(?i)\b(probe|read)\b`)
-	cardCommandRE = regexp.MustCompile(`(?i)(go[ \t]+test|go[ \t]+vet|pytest|cargo[ \t]+test|npm[ \t]+test|no[ \t]+tests)`)
+	cardStepRE  = regexp.MustCompile(`^STEP[ \t]+([0-9]+)[.)]?`)
+	cardCloneRE = regexp.MustCompile(`(?i)(clone|(^|[ \t&|(])cd[ \t])`)
+	cardTestRE  = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)
+	cardReadRE  = regexp.MustCompile(`(?i)\b(probe|read)\b`)
+	// THE TEST-COMMAND CHECK ACCEPTS MORE THAN ONE VOCABULARY (issue #1994).
+	//
+	// The four-line whitelist (`go test`/`go vet`/`pytest`/`cargo test`/`npm test`) was
+	// written when every gate in ci-fast.yml was `go test ./...`. Then ci-fast.yml moved
+	// to `make <leg>` (the Makefile is the one entry per AGENTS.md rule 6), and 155 of 176
+	// polyglot cards in the `mas-bandwidth/schema` lane tripped on a verbatim `make`
+	// gate that the repository would actually run. The accepted set widens to the verbs a
+	// card writer might honestly name -- the four it already took, the rest of the common
+	// runners, the script-and-runner shapes, and the words `no tests` -- so a card that
+	// names the gate `ci-fast.yml` runs is not refused by the linter.
+	//
+	// The leading context is start-of-string or a non-word character; the trailing context
+	// is end-of-string or a non-word character. Word characters here are `A-Za-z0-9_./-`,
+	// the set a path component can hold. `npmtest` does not match `npm test`, and
+	// `cargo run` does not match `cargo test`.
+	cardCommandRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_./-])(?:go[ \t]+(?:test|vet)|pytest|cargo[ \t]+test|npm[ \t]+test|dotnet[ \t]+test|ctest|mvn[ \t]+test|gradle[ \t]+test|(?:g)?make[ \t]+[A-Za-z0-9_./-]+|bash[ \t]+\S+|\./[A-Za-z0-9_][A-Za-z0-9_./-]*|no[ \t]+tests)(?:[^A-Za-z0-9_./-]|$)`)
 	cardDeadRE    = regexp.MustCompile(`(?i)(deadline|finish within)`)
 	cardFileRE    = regexp.MustCompile(`[A-Za-z0-9_][A-Za-z0-9_.-]*\.(go|py|rs|js|ts|md|lisp|sh|json|toml|txt)\b|\./[A-Za-z0-9_./-]+`)
 	cardScratchRE = regexp.MustCompile(`(/[A-Za-z0-9_./<>$-]*scratch\b)|(\$\{?[A-Za-z_]+\}?/scratch\b)|(<[^>]+>/scratch\b)`)
@@ -233,11 +268,13 @@ func lintCard(raw []byte) []cardFinding {
 		}
 	}
 
-	// 9. no `../` path anywhere: the wall refuses a path above the job.
-	for i, l := range lines {
-		if strings.Contains(l, "../") {
-			add("no-parent-path", i+1, l)
-		}
+	// 9. no path above the job: the wall refuses one, so the card may not walk there. The
+	// rule is what the card WALKS, not every `../` in its text; a `../` the card quotes --
+	// a fenced block, a backtick span, a markdown link target, a `go test` ellipsis -- is
+	// not a path the worker takes. The four shapes, measured on the 2026-09-19 shift's own
+	// cards, and what is given up by exempting them, are in internal/swarm/lintparent.go.
+	for _, n := range swarm.CardParentPaths(lines) {
+		add("no-parent-path", n, lines[n-1])
 	}
 
 	// 10. no nova-sandbox invocation: the card runs inside the wall, never probes it.
@@ -264,9 +301,9 @@ func lintCard(raw []byte) []cardFinding {
 		}
 	}
 
-	// 12. the card is under the ceiling.
+	// 12. the card is under the advisory ceiling. Over it is said and never refused.
 	if len(raw) >= cardMaxBytes {
-		add("size", 1, fmt.Sprintf("card is %d bytes, at or over the %d-byte ceiling", len(raw), cardMaxBytes))
+		add("size", 1, fmt.Sprintf("card is %d bytes, over the %d-byte advisory ceiling; it is not refused and not truncated", len(raw), cardMaxBytes))
 	}
 
 	return out
@@ -329,6 +366,20 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
 	// checked rather than guessed at.
 	trustPath := f.fs.String("trust", "", "")
+	// `--lineup <file>` IS THE SPRINT LINEUP, AND ONLY FOR `--typed` (#2636). The lint has
+	// no lineup of its own. The file is ORDER.tsv's shape — id in the first column, or the
+	// column named id/card/card-id/label, a header that names depends-on skipped — or one
+	// card id per line. With no file an id is not called unknown.
+	lineupPath := f.fs.String("lineup", "", "")
+	// `--base-check` IS THE ASK FOR THE FOUR BASE CHECKS OF A CODING CARD (#2636):
+	// PATHS resolve at base-sha in `--repo` (default the working directory), no STEP
+	// runs `git push` or `gh`, LEG is in the `--legs` fleet table, and DEADLINE is at
+	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
+	// pass: its check draws a finding that says MISSING and names the flag.
+	baseCheck := f.fs.Bool("base-check", false, "")
+	repoDir := f.fs.String("repo", ".", "")
+	legsPath := f.fs.String("legs", "", "")
+	p95Path := f.fs.String("p95", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -376,21 +427,81 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 		trust = t
 	}
+	var lineup swarm.Lineup
+	if *lineupPath != "" {
+		l, err := swarm.ReadLineup(*lineupPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --lineup wants a readable lineup file, one card id per line or a TSV whose id column is the card id (a header row that names depends-on is skipped): %s\n", oneline.Err(err))
+			return 2
+		}
+		lineup = l
+	}
+	bc := swarm.BaseCheck{Repo: *repoDir}
+	if *baseCheck && *legsPath != "" {
+		l, err := swarm.ReadFleetLegs(*legsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --legs wants a readable fleet leg table, one leg per line or a TSV whose first column is the leg: %s\n", oneline.Err(err))
+			return 2
+		}
+		bc.Legs = l
+	}
+	if *baseCheck && *p95Path != "" {
+		p, err := swarm.ReadKindP95(*p95Path)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --p95 wants a readable table of `<kind> <seconds>` rows, the p95 wall of each kind's DONE cards (`*` answers for any kind): %s\n", oneline.Err(err))
+			return 2
+		}
+		bc.P95 = p
+	}
 	findings := lintCard(raw)
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 	}
+	// DEPENDS-ON IS REQUIRED ONLY WHEN THE CARD WAS ASKED TO BE TYPED (#2636). A card
+	// that already carries KIND: is still linted without this key, which is every card
+	// cut before the key existed. `--typed` is the ask.
+	if *typed {
+		for _, hf := range swarm.LintCardDepends(raw, lineup) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
+	}
+	if *baseCheck {
+		for _, hf := range swarm.LintCardBase(raw, bc) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
+	}
+	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
+	// a defect and exits 2, which a caller refuses on; a note is advice and changes no
+	// verdict. The two are told apart here, once, so neither the writer nor the caller has
+	// to read the check's name to know what happened to the card.
+	var drifts, notes []cardFinding
+	for _, fd := range findings {
+		if cardLintAdvisory[fd.check] {
+			notes = append(notes, fd)
+			continue
+		}
+		drifts = append(drifts, fd)
+	}
+	note := func(fd cardFinding) {
+		fmt.Fprintf(stdout, "LINT NOTE card=%s %s: %d: %s remedy=%s\n",
+			oneline.Field(name), oneline.Field(fd.check), fd.line,
+			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+			oneline.Escape(cardLintRemedy(fd.check)))
+	}
 	// THE CEILING IS NEVER A SILENT BOUND. A card writer learned of the 12000-byte cap by
 	// hitting it: a card at 11k looked exactly like a card at 2k. Every lint says how big
 	// this card is and what the cap is, on the OK line and, below, on the drift path.
-	if len(findings) == 0 {
+	if len(drifts) == 0 {
 		fmt.Fprintf(stdout, "LINT OK card=%s checks=%d bytes=%d cap=%d\n", oneline.Field(name), cardLintChecks, len(raw), cardMaxBytes)
+		for _, fd := range notes {
+			note(fd)
+		}
 		return 0
 	}
-	printed := findings
+	printed := drifts
 	more := false
-	if *max > 0 && len(findings) > *max {
-		printed, more = findings[:*max], true
+	if *max > 0 && len(drifts) > *max {
+		printed, more = drifts[:*max], true
 	}
 	for _, fd := range printed {
 		// THE REMEDY RIDES ON THE SAME LINE (issue #1464). `nova-swarm help` promises one
@@ -403,10 +514,14 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	}
 	if more {
 		fmt.Fprintf(stdout, "LINT MORE card=%s findings=%d remedy=nova-swarm lint --card %s --max 0\n",
-			oneline.Field(name), len(findings), oneline.Field(*card))
+			oneline.Field(name), len(drifts), oneline.Field(*card))
+	}
+	for _, fd := range notes {
+		note(fd)
 	}
 	// A drifting card gets the size too: a writer cutting a card down to fix a drift is
-	// exactly the writer who needs to know how close to the ceiling the card already is.
-	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d\n", oneline.Field(name), len(raw), cardMaxBytes)
+	// exactly the writer who needs to know how close to the ceiling the card already is --
+	// and `advisory=true` is the answer to the question two managers asked on one day.
+	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d advisory=true\n", oneline.Field(name), len(raw), cardMaxBytes)
 	return 2
 }

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
 // THE TYPED CARD HEADER, CHECKED BEFORE ANY SPEND (SPEC-TOOLWORK.md §5 rule 1, #1651).
@@ -33,20 +35,30 @@ import (
 //
 //   - the block starts at line 2 and ends at the first non-empty line that is not
 //     `KEY: value`, blank lines skipped, unknown keys read past (cardheader.go:63-76);
-//   - the key is `^[A-Z][A-Z-]*:` at column 0 and nowhere else (cardheader.go:45);
+//   - the key is one word and a colon at column 0 and nowhere else:
+//     `^[A-Za-z][A-Za-z0-9-]*:`, any case (#2605, and see THE BLOCK IS EVERY KEY LINE
+//     below for why the case-sensitive `^[A-Z][A-Z-]*:` this used to be was a defect);
 //   - `PATHS: none` declares no paths; otherwise the value is comma-separated
 //     (cardheader.go:82-88);
 //   - `TEST: none` is a declaration; otherwise the value is exactly two fields, the
 //     second matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
 //   - KIND, PATHS and TEST are the three a gated card must carry (cardheader.go:138-150).
 //
-// THE PARSER IS CITED, NOT VENDORED. This package does not import it: `internal/pulse`
-// does not carry `cardheader.go` on `dev` yet -- #1721 is open -- and neither does
-// `internal/hygiene` carry `ValidatePaths` (T02, also open), which is the one validator
-// the parser calls for PATHS: and for the TEST: package. Until both are on `dev` the
-// path rules here are the spec's, written out; when they land, `validGlob` below should
-// become a call to `hygiene.ValidatePaths` and this comment should go. A class test that
-// the two agree belongs with them, in the lane that owns `internal/pulse`.
+// THE PARSER IS CITED; THE VALIDATOR IS CALLED. `internal/pulse` still does not carry
+// `cardheader.go` on `dev` -- T03/#1721 is open -- so the block's SHAPE above is the
+// parser's rules written out, cited line by line. But `hygiene.ValidatePaths` (T02) HAS
+// landed, and `validGlobs` below is now a call to it rather than a second copy of the
+// PATHS: rule. The copy it replaces had drifted in both directions inside a day (#1853,
+// Emma's item-4 dogfood), which is the whole argument for calling a validator instead of
+// restating one. When `cardheader.go` lands, the shape rules above should go the same
+// way, with the class test that the two agree in the lane that owns `internal/pulse`.
+//
+// KIND: IS THE NAME SET, NOT A SECOND TABLE (#1853). `hygiene.KindDeclared` reads
+// internal/hygiene/kinds.txt, which is the names `cut` and `nova-check hygiene`
+// already refuse. The gate TABLE -- steps, control, reject tokens -- is still
+// internal/pulse/kinds.go (SPEC-TOOLWORK.md §5 rule 3) and is not on `dev`; refusing
+// `TEST: none` on a gated kind needs that table, so that half still waits. Writing
+// a second name list here would be the same mistake `validGlobs` just undid.
 
 // CardHeaderFinding is one typed-header defect: the check's token, the 1-based line it
 // sits on and the line's own text. It is the shape `cmd/nova-swarm/lint.go` prints on a
@@ -81,69 +93,133 @@ func CardHeaderChecks() []string {
 // `paused` (SPEC-TOOLWORK.md eligibility rule 1's TRUST listing).
 type TrustState map[string]string
 
+// headerKeyRE is what makes a line a `KEY: value` line: one word, starting with a
+// letter, then letters, digits and hyphens, then a colon, at column 0. ANY CASE (#2605).
+//
+// THE BLOCK IS EVERY KEY LINE, NOT EVERY UPPER-CASE KEY LINE. This was
+// `^([A-Z][A-Z-]*):`, and the two lines every card the darwin launchers stage MUST carry
+// are lower case: `~/rowan-working/rowan-tools/bin/launchers/*-native-darwin.sh:30-31`
+// read `base-repo:` and `base-sha:` out of the card's first 40 lines with a
+// case-sensitive `sed`, and refuse to launch without both. So on every one of the 59
+// cards of the 2026-09-22 sprint set those two lines ENDED the header block, and
+// `PATHS:`, `FILES:`, `TEST:`, `RUN:`, `SYMBOL:`, `RED-WHEN:`, `DONE-WHEN:`,
+// `NO-SUBAGENTS:` and `SOURCE:` -- every key under them -- were outside the header the
+// gate reads. `bin/sprint-stage:37` refuses the whole stage on one such card, so the set
+// either did not stage or staged with a header the gate could not read.
+//
+// WIDENED, NOT ALLOWLISTED. An allowlist of those two names would have fixed today's two
+// cards and broken on the next launcher key; the rule the card writer can hold in one
+// sentence is "the header is the leading run of `word:` lines". The cost is a prose line
+// that happens to be one word and a colon at column 0 (`Note: ...`) no longer ending the
+// block -- which the negative control in the table test pins, alongside the prose line
+// that does.
+//
+// THE KEY NAMES STAY UPPER CASE. Widening what CONTINUES the block is not the same as
+// widening what a typed key IS: docs/SPEC-TOOLWORK.md:700-713 (§5 rule 1) and
+// docs/WORKER-CARDS.md:38-51 write `KIND:`, `PATHS:`, `TEST:`, `LEGS:` and `SOURCE:` in
+// upper case and say nothing anywhere about case, so `paths:` is not `PATHS:` here and
+// the card that writes it still draws `paths-declared`. cardTypedKeys is the exact
+// names; the day a spec line rules case-insensitive keys, this is the one place to say
+// so.
 var (
-	headerKeyRE   = regexp.MustCompile(`^([A-Z][A-Z-]*):\s*(.*)$`)
-	goTestNameRE  = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
-	globMetaChars = "*?["
+	headerKeyRE  = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
+	goTestNameRE = regexp.MustCompile(`^Test[A-Za-z0-9_]*$`)
 )
 
-// headerField is one `KEY: value` line of the block, with the line it sits on.
+// headerField is one `KEY: value` line of the block, with the line it sits on. `again`
+// is the line of a SECOND line with the same key, 0 when there is none.
 type headerField struct {
 	line  int
 	value string
 	found bool
+	again int
 }
 
-// cardHeaderBlock reads the typed header the way the gate's parser reads it, and stops
-// where it stops (cardheader.go:63-76).
-func cardHeaderBlock(raw []byte) map[string]headerField {
-	out := map[string]headerField{}
+// cardHeaderBlock reads the typed header the way the gate's parser reads it, stops where
+// it stops (cardheader.go:63-76), and returns what it had to ignore.
+//
+// THE BLOCK'S END STAYS THE GATE'S; WHAT IT SWALLOWED DOES NOT (#1854, Emma's item-4
+// dogfood). The block ending at the first line that is not `KEY: value` is the parser's
+// own rule and moving it here would be worse than the defect: a lint that read a header
+// the gate will not read passes a card that dies at `accept`. What was wrong is that a
+// card with one sentence above its `KIND:` line got NO typed checks at all and was
+// called clean. So the keys BELOW the block are collected and handed back, to be named
+// as findings where they sit -- the gate will never read them, and now neither does the
+// card writer have to find that out at the gate.
+//
+// A SECOND LINE WITH THE SAME KEY IS RECORDED, NOT DROPPED. Silently taking the first of
+// two `KIND:` lines is the one answer a writer cannot act on.
+func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[string]int) {
+	block, stranded = map[string]headerField{}, map[string]int{}
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	n := 0
+	n, ended := 0, false
 	for sc.Scan() {
 		n++
 		line := strings.TrimRight(sc.Text(), "\r")
 		if n == 1 {
 			continue // line 1 is the contract line
 		}
+		m := headerKeyRE.FindStringSubmatch(line)
+		if ended {
+			// Past the block, only the five typed keys matter: any other `KEY:` line
+			// is a table row or a heading and is nobody's business here.
+			if m != nil && cardTypedKeys[m[1]] {
+				if _, seen := stranded[m[1]]; !seen {
+					stranded[m[1]] = n
+				}
+			}
+			continue
+		}
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		m := headerKeyRE.FindStringSubmatch(line)
 		if m == nil {
-			break // the prose begins here
+			ended = true // the prose begins here, exactly as the gate has it
+			continue
 		}
 		key := m[1]
-		if _, seen := out[key]; !seen {
-			out[key] = headerField{line: n, value: strings.TrimSpace(m[2]), found: true}
+		if f, seen := block[key]; seen {
+			if f.again == 0 {
+				f.again = n
+				block[key] = f
+			}
+			continue
 		}
+		block[key] = headerField{line: n, value: strings.TrimSpace(m[2]), found: true}
 	}
-	return out
+	return block, stranded
 }
 
-// validGlob says whether one PATHS: glob is one the gate could use: repository-relative,
-// no `..` segment, and at least one literal segment, so the glob names somewhere rather
-// than everywhere. A bare `**` has no literal segment and is refused by that rule.
-func validGlob(g string) (string, bool) {
-	if g == "" {
-		return "an empty glob names nothing", false
-	}
-	if strings.HasPrefix(g, "/") || strings.HasPrefix(g, `\`) {
-		return fmt.Sprintf("%q is not repository-relative", g), false
-	}
-	segs := strings.Split(strings.ReplaceAll(g, `\`, "/"), "/")
-	literal := false
-	for _, s := range segs {
-		if s == ".." {
-			return fmt.Sprintf("%q climbs above the repository with ..", g), false
-		}
-		if s != "" && s != "." && !strings.ContainsAny(s, globMetaChars) {
-			literal = true
-		}
-	}
-	if !literal {
-		return fmt.Sprintf("%q has no literal segment: it names every file, not a place", g), false
+// cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
+var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
+
+// cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
+// token of their own, so a stranded or repeated one answers under `kind-declared`, which
+// is the token for "the typed header is not the header the gate will read".
+var cardKeyCheck = map[string]string{
+	"KIND":   "kind-declared",
+	"PATHS":  "paths-declared",
+	"TEST":   "test-named",
+	"LEGS":   "kind-declared",
+	"SOURCE": "kind-declared",
+}
+
+// validGlobs is the PATHS: rule, and it is `hygiene.ValidatePaths` ITSELF, not a
+// restatement of it (#1853, Emma's item-4 dogfood).
+//
+// This function used to write the rule out a second time, because T02's validator was
+// not on `dev` when the checks were first written, and the comment above said in so many
+// words that it should become a call the day T02 landed. T02 landed, this did not, and
+// the copy drifted in BOTH directions within a day: it let a Windows drive letter
+// (`C:/Windows/system32/evil.go`) through as repo-relative, it had no cap at all where
+// the rule's cap is eight (SPEC-TOOLWORK.md:579-580), and it refused `*.go` and
+// `**/*.go`, which the validator clears. A card writer got a different answer from the
+// lint on the bench and from the gate at `accept`, which is the one thing these checks
+// exist to prevent.
+func validGlobs(globs []string) (string, bool) {
+	if err := hygiene.ValidatePaths(globs); err != nil {
+		return err.Error(), false
 	}
 	return "", true
 }
@@ -155,12 +231,18 @@ func validGlob(g string) (string, bool) {
 // card that carries no typed header at all; without it a card with no header line is
 // left to the twelve older rules, which is what every card written before §5 is.
 func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFinding {
-	h := cardHeaderBlock(raw)
+	h, stranded := cardHeaderBlock(raw)
 	typed := required
-	for _, k := range []string{"KIND", "PATHS", "TEST", "LEGS", "SOURCE"} {
+	for k := range cardTypedKeys {
 		if h[k].found {
 			typed = true
 		}
+	}
+	// A CARD WITH A TYPED LINE THE GATE CANNOT REACH IS A TYPED CARD (#1854). Without
+	// this it was neither: no header line inside the block, so no typed checks ran, and
+	// the card was called clean all the way to `accept`.
+	if len(stranded) > 0 {
+		typed = true
 	}
 	if !typed {
 		return nil
@@ -172,30 +254,67 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		}
 		out = append(out, CardHeaderFinding{Check: check, Line: line, Excerpt: excerpt})
 	}
+	// The stranded lines first, in line order, because they are why the rest of this
+	// card's header reads the way it does.
+	for _, k := range sortedKeys(stranded) {
+		add(cardKeyCheck[k], stranded[k], fmt.Sprintf("%s: on line %d is below the header block and the gate will never read it: the typed header is the unbroken run of `KEY: value` lines directly under the contract line", k, stranded[k]))
+	}
+	// A repeated key next: a card with two of one line has no one value for it.
+	for _, k := range sortedHeaderKeys(h) {
+		if f := h[k]; f.again > 0 {
+			add(cardKeyCheck[k], f.again, fmt.Sprintf("%s: is declared twice, on lines %d and %d; a card with two of this line has no one value for it", k, f.line, f.again))
+		}
+	}
 
-	// 1. KIND: is declared, and not declared empty.
+	// 1. KIND: is declared, not empty, and is a name the toolchain holds.
 	kind := h["KIND"]
 	switch {
+	case !kind.found && stranded["KIND"] > 0:
+		// Named already, where it sits: saying "no KIND: line" of a card whose KIND:
+		// line is three lines down is the confusing half of a true finding.
 	case !kind.found:
 		add("kind-declared", 1, "no KIND: line under the contract line")
 	case kind.value == "":
 		add("kind-declared", kind.line, "KIND: with no kind after it")
+	case !hygiene.KindDeclared(kind.value):
+		// AN UNKNOWN KIND IS NOT A KIND (#1853). The line used to need only a
+		// value, so `KIND: completely-unknown-kind` linted clean and died at
+		// accept. The names are hygiene.Kinds(), the same set `nova-check hygiene
+		// --kind` prints when it refuses.
+		add("kind-declared", kind.line, fmt.Sprintf("KIND: %q is not a kind this toolchain declares; one of: %s", kind.value, strings.Join(hygiene.Kinds(), ", ")))
 	}
 
 	// 2. PATHS: is declared, and every glob is one the gate could use.
 	paths := h["PATHS"]
 	switch {
+	case !paths.found && stranded["PATHS"] > 0:
 	case !paths.found:
 		add("paths-declared", 1, "no PATHS: line under the contract line")
 	case paths.value == "":
 		add("paths-declared", paths.line, "PATHS: with no globs after it; a card that changes nothing says `PATHS: none`")
 	case paths.value != "none":
+		// AN EMPTY ENTRY IS NOT A SKIPPABLE ONE. `PATHS: , , ` used to have each empty
+		// entry `continue`d past and the line called fine, which is the worst of the
+		// three answers a reader could get: the line declares no glob and it is not
+		// `none` (#1853, Emma's item-4 dogfood).
+		var globs []string
+		empty := false
 		for _, g := range strings.Split(paths.value, ",") {
 			g = strings.TrimSpace(g)
 			if g == "" {
+				empty = true
 				continue
 			}
-			if why, ok := validGlob(g); !ok {
+			globs = append(globs, g)
+		}
+		switch {
+		case len(globs) == 0:
+			add("paths-declared", paths.line, fmt.Sprintf("PATHS: %q names no glob and is not `none`", paths.value))
+		case empty:
+			add("paths-declared", paths.line, fmt.Sprintf("PATHS: %q has an empty entry between its commas", paths.value))
+		}
+		if len(globs) > 0 {
+			if why, ok := validGlobs(globs); !ok {
 				add("paths-declared", paths.line, why)
 			}
 		}
@@ -204,6 +323,7 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	// 3. TEST: is declared, and is `<package> <TestName>` or `none`.
 	test := h["TEST"]
 	switch {
+	case !test.found && stranded["TEST"] > 0:
 	case !test.found:
 		add("test-named", 1, "no TEST: line under the contract line")
 	case test.value == "none":
@@ -220,7 +340,9 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 		if pkg == "" {
 			pkg = "."
 		}
-		if why, ok := validGlob(pkg); !ok {
+		// The package runs the same path rule as PATHS:, from the same validator, so a
+		// `TEST: C:/x TestA` cannot walk through a door PATHS: closed.
+		if why, ok := validGlobs([]string{pkg}); !ok {
 			add("test-named", test.line, "TEST: package: "+why)
 		}
 		if !goTestNameRE.MatchString(fields[1]) {
@@ -284,4 +406,27 @@ func ReadTrustFixture(path string) (TrustState, error) {
 		return nil, fmt.Errorf("trust fixture %s: %v", path, err)
 	}
 	return out, nil
+}
+
+// sortedKeys is the keys of a line-number map, in one byte-stable order so two runs of
+// the lint over the same card print the same lines in the same order.
+func sortedKeys(m map[string]int) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedHeaderKeys is the same, for the block itself.
+func sortedHeaderKeys(m map[string]headerField) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		if cardTypedKeys[k] {
+			out = append(out, k)
+		}
+	}
+	sort.Strings(out)
+	return out
 }

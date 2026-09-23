@@ -461,9 +461,13 @@ file may only shrink — it is empty, because every site was fixed when the rule
 landed. Like the fixed-waits and net lists it is matched by **file and kind,
 never by line**.
 
-**What `goenv.Clean` drops.** `GOFLAGS`, every `GOTEST*` variable, and any other
-`GO`-prefixed variable whose value carries a `-json` or `--json` flag.
-`GOTMPDIR` is deliberately kept: it names a location, not an output shape, and a
+**What `goenv.Clean` drops.** `GOFLAGS`, every `GOTEST*` variable, any other
+`GO`-prefixed variable whose value carries a `-json` or `--json` flag, and every
+variable whose NAME carries `KEY`, `TOKEN` or `SECRET` — a forge token
+(`GH_TOKEN`, `GITHUB_TOKEN`), a provider key, a secret — because `simulate`,
+`batch` and `review mutate` run checks whose code came from a pull request in a
+child built from `Clean` (#1836). The credential drop is by NAME and never by
+value. `GOTMPDIR` is deliberately kept: it names a location, not an output shape, and a
 tool that wants its own scratch appends `GOTMPDIR=` after `Clean`, where the
 last value wins.
 
@@ -512,7 +516,9 @@ here that has one points at it.
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
 next card: a rule lands with its sweep of the tree, or it does not land
-(pit-stop ledger item 20, 2026-09-17).
+(pit-stop ledger item 20, 2026-09-17, which lives in the `rowan-new`
+repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
+this one, so the citation is deliberately prose and not a link).
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier
@@ -880,6 +886,63 @@ caller is invisible — following those means becoming a type checker, and the
 shape that hurt is written inline. And only LISTINGS are read: `os.Stat`,
 `os.Open` and `os.RemoveAll` over one named path in the shared directory are
 questions about that path, which no sibling job can answer wrongly.
+
+### `lisptemppath` — a temp path the Lisp suite builds is this RUN's, never a shared name
+
+**The rule.** Two halves, over every `.lisp` file under `lisp/nova-work/tests/`.
+(a) No file names the SHARED temporary directory —
+`uiop:default-temporary-directory`, `uiop:temporary-directory`,
+`(getenv "TMPDIR")`, a `/tmp` or `/var/tmp` literal — to build a path.
+(b) No file calls `RANDOM`. Both are satisfied by the harness's per-run helpers:
+`test-temp-dir` and `test-temp-file` under `test-run-root`, or, for a path
+`sun_path` keeps out of that root, `test-short-tag`. Uniqueness comes from the
+run's token — a real entropy source plus the pid — never from a counter or a
+clock. It is the Lisp half of what `sharedtemp` and `testoutpath` hold for Go.
+**The hurt.** Every temp path the `lisp/nova-work` acceptance suite made was
+named from `(get-universal-time)` plus a counter that starts at zero in every
+image, under a directory name fixed in the source. Two suites that start inside
+the same second on one host build the SAME path, so one finds the destination
+already there or the journal's lock held by the other: three reds on `#1682`
+(run `35445053795`), a red `ci-ok` on `#1692` on runner `air-nova-2`, and 12–17
+manufactured failures with four suites parallel on `hulk` where the same suites
+one at a time were green (`#1699`). CI runners share hosts — the Air runs two,
+the Studio several, `superman` ten — so it reddened PRs whose changes had nothing
+to do with it and trained reviewers to rerun a red. Half (b) is a second cause
+found while fixing the first: SBCL saves `*random-state*` into its core, so a
+fresh image returns the SAME sequence — three separate images each printed
+`113500 958198 129774` — and the AF_UNIX fixtures named their socket directories
+from it, so two concurrent suites agreed exactly and `short-socket-base` then
+DELETED the other suite's live socket directory before binding. On Linux that is
+`/dev/shm`, shared by every job on the box.
+**The test.** `TestNoLispTestBuildsATempPathWithoutTheHelper` and
+`TestNoLispTestNamesAPathWithRandom`
+(`internal/ci/lisptemppath_class_test.go`), with
+`TestLispTempScannerReadsTheFixtures` over the before/after fixtures in
+`internal/ci/testdata/lisptemppath/` and `TestScrubLispKeepsCodeAndDropsProse`
+over the comment scrubber directly.
+**Its allowlist.** Two, both `file:definition` per row with its reason, both
+shrink-only in both directions.
+`internal/ci/testdata/lisptemppath_allowlist.txt` holds four rows and they are
+all one reason: an AF_UNIX socket path lives in a fixed-size `sun_path` (104
+bytes on darwin) that the run root's name does not fit inside, so those paths
+take their uniqueness from `test-short-tag` and are handed to the harness's exit
+cleanup with `test-temp-register`. `internal/ci/testdata/lisprandom_allowlist.txt`
+holds one: `replays-8642.lisp:async-operations` names a staged-input id, never a
+filesystem path.
+**Its remedy line.** `build the path with test-temp-dir or test-temp-file under
+test-run-root (lisp/nova-work/tests/harness.lisp), or, for a path sun_path keeps
+out of that root, name it with test-short-tag: uniqueness comes from the run's
+token — a real entropy source plus the pid — never from a counter or a clock`.
+**Its narrowings.** Three, named out loud. `lisp/nova-work/tests/harness.lisp`
+is not scanned at all: it DEFINES the helper, so the rule cannot be stated over
+it without forbidding its own implementation. COMMENTS are scrubbed before
+matching, because the paragraphs that say what the old code did quote it exactly
+and a scanner that read prose would need an allowlist row for every sentence
+that told the truth — but STRING LITERALS stay visible, because `#p"/tmp/"` and
+`(getenv "TMPDIR")` are the offence rather than a description of it, so a
+docstring must spell the construct out in words. And attribution is per
+top-level DEFINITION, not per form: a finding names the `defun` or `deftest` it
+sits in, which is the unit an allowlist row can be read against.
 
 ### `busprogress` — progress never enters a protocol stream
 
@@ -1355,6 +1418,15 @@ from those files``.
 reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
+**A leg that needs a service.** `postgres` — `internal/decide`'s decision log
+against a real server, which is what keeps the in-memory fake the unit suite runs
+on honest — is a JOB of its own in `nightly-slow.yml` rather than a row of the
+shared matrix, because it carries a `services:` container and service containers
+run on Linux runners only: a `services:` block on the shared job would be
+inherited by its macOS legs and fail them for a reason that is not the code. It
+is still declared as `tag: postgres` in a matrix, so the class test reads it
+exactly as it reads the others, and it is in the `report` job's `needs:` so a red
+night is still one issue in the morning.
 
 ### `selection` — `internal/ci` is always in the selected packages
 
@@ -1436,10 +1508,20 @@ Cellar prefix is read off the launcher rather than guessed by
 
 **The rule.** Every copy of the `remove stale build dirs from the shared runner`
 step in `.github/workflows/ci.yml` refuses an EMPTY `GITHUB_WORKSPACE`
-(`[ -n … ] || exit 1`) and otherwise CONTINUES when the workspace directory does
-not exist (`[ -d … ] || exit 0`). It may not exit non-zero because `.git` is
-absent: the step runs before `actions/checkout`, so an absent `.git` is the
-normal first-run state and not a fault.
+(`[ -n … ] || exit 1`), CONTINUES when the workspace directory does not exist
+(`[ -d … ] || exit 0`), and CONTINUES when the workspace holds no `.git`
+(`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0`). It may not exit non-zero
+because `.git` is absent: the step runs before `actions/checkout`, so an absent
+`.git` is the normal first-run state and not a fault. The last guard is the
+BELT, and it points the other way from the first two: the step ends in
+`find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +`, so
+the shape has to keep that sweep off any directory that is not a checkout of
+this repository. `GITHUB_WORKSPACE` is whatever the runner was configured with;
+a runner pointed at a home directory, a mount, or a hand-made path by a
+misconfiguration would have had its contents deleted by the repair for #1751 as
+written, which traded a red job for a lost directory. A workspace with no `.git`
+has nothing of ours in it to clean, and `actions/checkout` empties a
+non-repository workspace itself before it clones, so continuing loses nothing.
 **The hurt.** The step's precheck was
 `[ -n "${GITHUB_WORKSPACE}" ] && [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 1`.
 On 2026-09-19 the captainamerica runners came back into service with fresh
@@ -1456,12 +1538,55 @@ the first.
 copy that needs an exception is a copy that should not exist.
 **Its remedy lines.** `the cleanup step still refuses a workspace with no .git;
 it runs before checkout, so a runner whose workspace does not exist yet goes red
-before a line of the repository is read (#1751)`, and its two companions for a
-dropped `[ -n … ] || exit 1` refusal and a missing `[ -d … ] || exit 0` guard.
+before a line of the repository is read (#1751)`; its two companions for a
+dropped `[ -n … ] || exit 1` refusal and a missing `[ -d … ] || exit 0` guard;
+and, for the belt, `the cleanup step runs `find … -exec rm -rf` with no
+`[ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0` belt in front of it; a workspace
+that exists but is not a checkout of this repository must be left alone rather
+than emptied (#1751)`.
 **Its narrowings.** It matches the step by its `- name:` text, so a copy renamed
 or a cleanup inlined into another step would not be counted; and it reads the
 workflow as text, so a value built elsewhere and interpolated in is invisible to
 it.
+
+### `admitkind` — every admitting kind has a negative fixture, so the coverage list cannot shrink
+
+**The rule.** Rule 3 (`docs/SPEC-WORK.md:4878`, nova-work #785): the one
+generated schema file names every verb's event kinds, and its coverage test
+holds a CLOSED list of admitting kinds — `:lease`, `:handoff`, `:reassign`,
+`:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that
+can carry `:to :doing` — and fails any verb able to write one, in its own
+envelope or one it derives, whose entry carries none of the three marks
+(`needs-gate: refuses`, `needs-gate: withholds`, `needs-gate: exempt` with its
+reason). The closed list only holds if every kind on it is actually exercised:
+a kind added to the rule's own map with no fixture behind it is a kind the
+coverage rule could silently stop checking, and nothing would go red.
+**The hurt.** The first cut of `admittingEventKinds` listed only the kinds the
+SHIPPED file happened to use, so a schema carrying an unmarked verb of a kind
+the shipped file does not use — `:reassign`, `:packet` — passed the coverage
+test though rule 3 names them by the spec's own closed list. A closed list
+that is closed on paper and open in practice is worse than an open one,
+because it reads like a guarantee.
+**The test.** `TestEveryCanonicalAdmittingKindIsCovered`
+(`internal/ci/work_schema_test.go`). For every kind in
+`canonicalAdmittingKinds` — the spec's closed list, held apart from the
+coverage map so the two sides can be checked against each other — it builds
+one hypothetical verb of that kind with no `needs_gate`, runs it through
+`checkNeedsGateCoverage`, and requires exactly one finding naming the verb;
+then marks the same verb `needs-gate: refuses` and requires zero findings. A
+kind present in the spec's closed list but absent from `admittingEventKinds`
+fails here before it can hide behind a passing shipped-file check.
+**Its allowlist.** None. `canonicalAdmittingKinds` is the closed list itself;
+every entry on it gets a fixture, so a kind added to the list with no matching
+case is the thing this test exists to catch.
+**Its remedy line.** `` `<verb>` can write the admitting kind `<kind>` and
+carries no needs-gate mark``, from `checkNeedsGateCoverage`
+(`internal/ci/work_schema_test.go`).
+**Its narrowings.** It only checks that the coverage RULE fires for each kind,
+over a one-verb fixture schema; it does not check the SHIPPED file for an
+injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb`,
+its neighbor in the same file) and it does not check that the shipped file uses
+only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
 
 ## Parked class tests
 

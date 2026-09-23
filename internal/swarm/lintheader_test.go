@@ -133,13 +133,22 @@ func TestCardHeaderTestNoneDrawsNothing(t *testing.T) {
 
 func TestCardHeaderBadPathsDrawPathsDeclared(t *testing.T) {
 	for _, bad := range []string{
-		"PATHS: ../other/**",             // above the job
-		"PATHS: internal/../../etc/**",   // above the job, by climbing
-		"PATHS: **",                      // a bare **: every file in the repository
-		"PATHS: **/*.go",                 // a glob with no literal segment
-		"PATHS: */*.go",                  // likewise
-		"PATHS: /etc/passwd",             // not repository-relative
-		"PATHS: internal/swarm/*.go, **", // one good glob does not excuse the other
+		"PATHS: ../other/**",           // above the job
+		"PATHS: internal/../../etc/**", // above the job, by climbing
+		"PATHS: **",                    // a bare **: every file in the repository
+		"PATHS: **/*",                  // likewise, spelled the way that walked past the by-name refusal
+		"PATHS: */**",                  // likewise
+		// `**/*.go` and `*/*.go` WERE on this list, and they are not defects.
+		// `hygiene.ValidatePaths` -- the validator `cut` and the diff judge use, and
+		// which this lint now calls instead of restating -- clears them by name in its
+		// own doc comment: what bounds a glob is a literal character somewhere in it,
+		// and `.go` is one. The copy that used to live here refused them, so a card
+		// writer was stopped on the bench by a glob the gate would have taken (#1853,
+		// Emma's item-4 dogfood). A lint stricter than its gate is as wrong as a lint
+		// looser than it.
+		"PATHS: /etc/passwd",                 // not repository-relative
+		`PATHS: C:/Windows/system32/evil.go`, // absolute on every bench, drive letter and all
+		"PATHS: internal/swarm/*.go, **",     // one good glob does not excuse the other
 	} {
 		h := append([]string{}, fullHeader()...)
 		h[1] = bad
