@@ -85,13 +85,33 @@ func looksLikeGit(cmd string) bool {
 // darwinGitCwd asks lsof for every git process's cwd. Failure is returned. It is not
 // an empty map: an empty map is a successful lsof that saw no git cwd.
 func darwinGitCwd() (map[string]string, error) {
-	out, err := exec.Command("lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn").Output()
-	if err != nil {
+	var stdout, stderr strings.Builder
+	cmd := exec.Command("lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn")
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		code = exit.ExitCode()
+	}
+	return lsofCwds(stdout.String(), stderr.String(), code, err)
+}
+
+// lsofCwds reads one lsof run. lsof exits 1 with nothing on either stream when no process
+// matched -c git: no git was running at the moment it looked (#3029). That is a complete
+// scan with no cwds, and every ps-listed git missing from it is re-checked by pid. Exit 1
+// with anything said, any other failure, or output on a failed run is "lsof failed".
+func lsofCwds(stdout, stderr string, code int, runErr error) (map[string]string, error) {
+	cwds := map[string]string{}
+	if runErr != nil {
+		if code == 1 && stdout == "" && strings.TrimSpace(stderr) == "" {
+			return cwds, nil
+		}
 		return nil, ownershipUnknownErr("lsof failed")
 	}
-	cwds := map[string]string{}
 	var pid string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(stdout, "\n") {
 		if line == "" {
 			continue
 		}

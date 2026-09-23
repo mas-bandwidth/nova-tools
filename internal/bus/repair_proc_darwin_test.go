@@ -4,6 +4,7 @@ package bus
 
 import (
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -45,5 +46,51 @@ func TestDarwinVanishedGitIsNotAnUnreadableCwd(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "\n") || len(err.Error()) > ownershipDiagCap {
 		t.Fatalf("diagnostic is not bounded: %q", err)
+	}
+}
+
+// #3029 on the Studio: lsof -c git exits 1 with no output when no git is running at the
+// moment it looks. A git ps listed a moment earlier and which has since exited is then
+// the only git in the scan, and "lsof found nothing" was read as "lsof failed", which
+// refuses every wait that meets it. No match is a complete, empty answer: each ps-listed
+// git missing from it is re-checked by pid, exactly as a pid lsof did not list. A real
+// lsof failure (a message, any other code) is still a failure.
+func TestDarwinLsofNoMatchIsAnEmptyScan(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	cwds, err := lsofCwds("", "", 1, errors.New("exit status 1"))
+	if err != nil || len(cwds) != 0 {
+		t.Fatalf("lsof with no git to match: cwds=%v err=%v, want an empty map and no error", cwds, err)
+	}
+	procs, err := gitProcsFromPS("77 git rev-list --objects --stdin --not --all\n", cwds, err, func(string) (bool, error) {
+		return false, nil
+	})
+	if err != nil || len(procs) != 0 {
+		t.Fatalf("a git gone between ps and lsof: procs=%+v err=%v, want none and no error", procs, err)
+	}
+	dir, lock := oldIndexLock(t)
+	cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) { return procs, err })
+	if cerr != nil || !cleared {
+		t.Fatalf("stale lock with only a vanished git: cleared=%v err=%v, want removed", cleared, cerr)
+	}
+	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
+		t.Fatalf("stale index.lock still present: %v", statErr)
+	}
+
+	for _, c := range []struct {
+		stdout, stderr string
+		code           int
+	}{
+		{"", "lsof: WARNING: can't stat() nfs file system /Volumes/x\n", 1},
+		{"", "", 2},
+		{"p77\nn/somewhere\n", "", 1},
+	} {
+		if _, err := lsofCwds(c.stdout, c.stderr, c.code, errors.New("exit status")); err == nil {
+			t.Fatalf("lsof stdout=%q stderr=%q code=%d was read as a complete scan", c.stdout, c.stderr, c.code)
+		}
+	}
+	got, err := lsofCwds("p77\nfcwd\nn/bus\np78\nfcwd\nn/other\n", "", 0, nil)
+	if err != nil || got["77"] != "/bus" || got["78"] != "/other" {
+		t.Fatalf("lsof parse: %v %v", got, err)
 	}
 }

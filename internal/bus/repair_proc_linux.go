@@ -52,7 +52,7 @@ func readProcView(pid string) procView {
 	// with an empty cmdline is not: that stays unclassified unless its cwd places it.
 	if len(splitNUL(raw)) == 0 {
 		dead, derr := linuxProcDead(pid)
-		if os.IsNotExist(derr) {
+		if procGone(derr) {
 			v.dead = true
 		} else if derr == nil {
 			v.dead = dead
@@ -67,8 +67,8 @@ func readProcView(pid string) procView {
 	return v
 }
 
-// linuxProcDead reports whether pid is a zombie or already dead. ENOENT means
-// the pid vanished, which the caller treats as dead. Any other error means the
+// linuxProcDead reports whether pid is a zombie or already dead. ENOENT or ESRCH
+// (procGone) means the pid vanished, which the caller treats as dead. Any other error means the
 // state could not be read; the caller must not invent "dead" from that.
 func linuxProcDead(pid string) (bool, error) {
 	raw, err := os.ReadFile("/proc/" + pid + "/stat")
