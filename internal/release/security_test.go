@@ -588,3 +588,134 @@ func TestPullRefusesWhenItCannotNameTheFiles(t *testing.T) {
 		t.Fatalf("it reached a machine anyway: %v", s.runs)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Issue #2285: pull edge-fences the spec names but no test proves.
+//
+// Four fences in the `pull` section of docs/SPEC-RELEASE.md have code paths
+// but no test that asserts the receipt/refusal actually happens. This test
+// adds those assertions as regression guards; each subtest runs against the
+// existing pull.go and pins the behaviour the spec describes.
+// ---------------------------------------------------------------------------
+
+func TestIssue2285(t *testing.T) {
+	// -- fence 1: Locally it goes through safepath.RemoveUnder, only for
+	// regular files. A symlink or a directory in the release dir survives.
+	t.Run("non-regular-file", func(t *testing.T) {
+		out, s, changelog := pulled(t, "v0.16.0")
+		goos, goarch := platformOf(t, "linux-amd64")
+		local := ArtifactDir(out, "v0.16.0", goos, goarch)
+		novaBus := filepath.Join(local, "nova-bus")
+		if err := os.Remove(novaBus); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("/some/nowhere", novaBus); err != nil {
+			t.Fatal(err)
+		}
+		novaUpdate := filepath.Join(local, "nova-update")
+		if err := os.Remove(novaUpdate); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(novaUpdate, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"pull", "--version", "v0.16.0", "--out", out,
+			"--changelog", changelog, "--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+			"--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+		if code != 0 {
+			t.Fatalf("code=%d errs=%s", code, e.String())
+		}
+		if _, err := os.Lstat(novaBus); err != nil {
+			t.Fatalf("symlink was removed: %v", err)
+		}
+		if _, err := os.Stat(novaUpdate); err != nil {
+			t.Fatalf("directory was removed: %v", err)
+		}
+		if !strings.Contains(e.String(), "not a regular file") {
+			t.Fatalf("stderr does not say 'not a regular file': %s", e.String())
+		}
+	})
+
+	// -- fence 2: It does not touch an installed binary. A machine keeps
+	// running what it is running; pull deletes the stamp, not the bin.
+	t.Run("installed-binary", func(t *testing.T) {
+		out, s, changelog := pulled(t, "v0.16.0")
+		goos, goarch := platformOf(t, "linux-amd64")
+		binDir := filepath.Join(t.TempDir(), ".local", "bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		installed := filepath.Join(binDir, "nova-update")
+		installedContent := []byte("this is the installed binary, not the release stamp")
+		if err := os.WriteFile(installed, installedContent, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		local := ArtifactDir(out, "v0.16.0", goos, goarch)
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"pull", "--version", "v0.16.0", "--out", out,
+			"--changelog", changelog, "--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+			"--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+		if code != 0 {
+			t.Fatalf("code=%d errs=%s", code, e.String())
+		}
+		body, err := os.ReadFile(installed)
+		if err != nil {
+			t.Fatalf("installed binary was removed: %v", err)
+		}
+		if string(body) != string(installedContent) {
+			t.Fatalf("installed binary was modified: %q", body)
+		}
+		for _, name := range []string{"nova-bus", "nova-update", SumsFile} {
+			if _, err := os.Stat(filepath.Join(local, name)); !os.IsNotExist(err) {
+				t.Errorf("%s is still here: %v", name, err)
+			}
+		}
+	})
+
+	// -- fence 3: Receipts, one per machine, and a machine that never held
+	// the release says so rather than refusing.
+	t.Run("held-no", func(t *testing.T) {
+		out, s, changelog := pulled(t, "v0.16.0")
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"pull", "--version", "v0.16.0", "--out", out,
+			"--changelog", changelog, "--machines", machinesFile(t, "wanda\n"), "--ssh", "/usr/bin/ssh",
+			"--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+		if code != 0 {
+			t.Fatalf("pull refused a machine that never held it: code=%d errs=%s", code, e.String())
+		}
+		if !strings.Contains(o.String(), "RELEASE PULLED machine=wanda version=v0.16.0 held=no files=0") {
+			t.Fatalf("no held=no receipt for wanda:\n%s", o.String())
+		}
+		if !strings.Contains(o.String(), "RELEASE PULL OK") {
+			t.Fatalf("no OK summary:\n%s", o.String())
+		}
+	})
+
+	// -- fence 4: the receipt says PULL FAIL … the artifacts are deleted;
+	// mark the section by hand.
+	t.Run("changelog-cannot-write", func(t *testing.T) {
+		out, s, changelog := pulled(t, "v0.16.0")
+		goos, goarch := platformOf(t, "linux-amd64")
+		local := ArtifactDir(out, "v0.16.0", goos, goarch)
+		if err := os.Chmod(changelog, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		defer os.Chmod(changelog, 0o644)
+		var o, e bytes.Buffer
+		code := Run("nova-update", []string{"pull", "--version", "v0.16.0", "--out", out,
+			"--changelog", changelog, "--machines", machinesFile(t, "vision\n"), "--ssh", "/usr/bin/ssh",
+			"--dest", "~/build", "--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+		for _, name := range []string{"nova-bus", "nova-update", SumsFile} {
+			if _, err := os.Stat(filepath.Join(local, name)); !os.IsNotExist(err) {
+				t.Errorf("%s is still here: %v", name, err)
+			}
+		}
+		if !strings.Contains(e.String(), "PULL FAIL") || !strings.Contains(e.String(), "the artifacts are deleted; mark the section by hand") {
+			t.Fatalf("stderr does not carry the remedy:\n%s", e.String())
+		}
+		if code != 1 {
+			t.Fatalf("code=%d, want 1 (artifacts gone, changelog unreadable)", code)
+		}
+	})
+}
