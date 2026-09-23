@@ -2,12 +2,15 @@
 // "The engine and its client") and the kernel's side of the work description language
 // (docs/SPEC-WORKLANG.md) and the job graph of docs/SPEC-JOBS.md.
 //
-// The client sends ONE request line over the Unix socket --session names,
-// newline-terminated, and prints the ONE line the session answers, byte for byte: OK, ROW,
-// NOTE and MORE to stdout and exit 0, FAIL, RACED and REFUSED to stderr and exit 1. What
-// cannot run at all -- no verb, no --session, no socket that answers -- is one WORK REFUSED
-// line on stderr, exit 2, ending "run: nova-work help". The values travel as the caller
-// spelled them and the session validates every one.
+// The client sends one request over the Unix socket --session names and prints the
+// session's answer byte for byte: OK, ROW, NOTE and MORE to stdout and exit 0, FAIL,
+// RACED and REFUSED to stderr and exit 1. The wire is the spec's versioned,
+// length-prefixed JSON protocol when the session answers in frames -- the only wire a
+// listing verb's many ROW/NOTE/MORE lines can come home on (nova-tools#1696) -- and the
+// S1 one-line wire when it does not. What cannot run at all -- no verb, no --session, no
+// socket that answers -- is one WORK REFUSED line on stderr, exit 2, ending "run:
+// nova-work help". The values travel as the caller spelled them and the session
+// validates every one.
 //
 // The bounded reader: `plan check` reads one plan under --max-bytes, --max-depth and
 // --max-nodes, refuses a `#.` dispatch macro at the byte offset that owes it, refuses any
@@ -74,12 +77,84 @@ usage:
                            --savepoint-every <duration> --savepoint-after <n> --max-frame-bytes <n> --silence-ping <duration>
                            --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>] [--render-root <root-id>=<owner/name>:<directory> ...]
                            [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
+  nova-work session export (--session <path> | --journal <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --into <path>
+  nova-work session export (--session <path> | --snapshot <path> --cache <path>) --state --at <revision> --closed-history <none|all|range> [--from <stamp> --to <stamp>] --into <new-directory> --max-bytes <n> --max-depth <n> --max-nodes <n> --max-output-bytes <n>   (a long operation under --session; one finite process under --snapshot)
+  nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
   nova-work session status --session <path>
   nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+  nova-work session handoff --session <path> --to <name> --git-timeout <seconds> [--attempts <n>]
+  nova-work operation status  --session <path> --id <id>
+  nova-work operation list    --session <path> [--max <n>]
+  nova-work operation wait    --session <path> --id <id> --timeout <duration> [--after <cursor>]
+  nova-work operation cancel  --session <path> <write flags> --id <id> --reason <text>
+  nova-work savepoint list     --session <path> [--max <n>]
+  nova-work savepoint create   --session <path> --as <name> --reason <text>
+  nova-work savepoint verify   --session <path> --id <id>
+  nova-work savepoint compare  --savepoint <path> --against (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) [--max <n>]
+  nova-work undo-plan      --session <path> --request <id> [--max <n>]
+  nova-work undo           --session <path> <write flags> --request-of <id> --reason <text>
+  nova-work redo-plan      --session <path> --request <id> [--max <n>]
+  nova-work redo           --session <path> <write flags> --request-of <id> --reason <text>
+  nova-work friend         --session <path> <write flags> (--register <name> | --retire <name> | --role <name>=<role>[:<scope>] | --participation <name>=<yes|no|withdrawn> | --capability <name>=<capability-id> --group <child|swarm|local|one-shot> --limit <n> | --limit <name>=<n>) --reason <text>
+  nova-work config         --session <path> (--request <name> --base <hash|-> | --export <name> --into <path> | --intake --from <path> <write flags>) [--max <n>]
+  nova-work model          --session <path> <write flags> (--register <id> --provider <name> --route <text> --billing <metered|subscription|local|unknown> | --rate <id>=<pricing-id> --effective <stamp> --source <pointer> | --evidence <id> --task-class <label> --result <pointer> --samples <n>) --reason <text>
+  nova-work observe        --session <path> <write flags> --friend <name> (--state <awake|resting|unavailable|unconfirmed> --source <pointer> | --attempt <id> --observed-model <id> --bench <name> --usage <pointer>) --reason <text>
+  nova-work goal set       --session <path> <write flags> --expect <rev> [--scope <scope>] (--goal <node-id> | --clear) --reason <text>   (--expect required here; --scope defaults to the caller's --as)
+  nova-work goal show      (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --as <name> [--scope <scope>] --max <n>
+  nova-work goal update    --session <path> <write flags> --expect <rev> [--scope <scope>] (--progress <text> [--evidence <pointer> --criterion <id> --against <sha>] | --blocked-by <node-id> --reason <text> | --stop --reason <text>)   (writes on the current goal node of the scope and on no other node)
+  nova-work machine        --session <path> <write flags> (--register <id> --name <text> --owner <name> --connect <ref> --role <build|test|profile> ... | --retire <id> | --permit <id>=<kind> | --exclude <id>=<kind> | --limit <id> <key>=<n|n,n,...> | --fact <id> <key>=<value> --declared-by <name>) --reason <text>
+  nova-work route          --session <path> <write flags> (--register <id> --provider <name> --endpoint <url> --key-location (:path "<path>"|:env "<name>") --plan <flat|metered|free|local> [--cost-per-mtok <n>] --capabilities <text=yes|no,code=yes|no,tool-calls=yes|no> --owner <name> | --retire <id> | --probe <id> --card <pointer> --pass <true|false|absent> [--wall <duration> --usd <amount>] --source <pointer>) --reason <text>
+  nova-work offer          --session <path> <write flags> --node <id> --offer <offer-id> --to <name> --profile <capability-id>@<config-revision> --attempt <attempt-id> --generation <n> --request-ref <opaque-id> --payload <pointer> --payload-sha256 <hex> --reserve <slots> --until <stamp> [--requested-model <model-id>] [--predecessor-offer <offer-id> --predecessor-attempt <attempt-id>] [--reason <text>]
+  nova-work profile        --session <path> <write flags> (--write <name> --model <id> --harness <id> --work-type <label> --pointer <path> --policy <revision> [--evidence <pointer>] [--expiry <stamp>] [--owner <name>] | --edit <name> (--pointer <path> | --policy <revision> | --evidence <pointer> | --expiry <stamp> | --owner <name>)) --reason <text>   (an edit re-pins the digest when it changes --pointer; a manager session selects one by name at start and never swaps it mid-session)
+  nova-work acknowledge    --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --stage <received|accepted> --provenance <pointer> --provenance-sha256 <hex> [--by <duration|stamp> --default <release|extend-once|escalate:<name>>] [--observed-model <model-id>] [--bench <name>] [--execution <handle>] [--reason <text>]   (--stage accepted: --by and --default, required, create-if-needed; --stage received: both exit 2)
+  nova-work decline        --session <path> <write flags> --offer <offer-id> --reply <receipt-id> --provenance <pointer> --provenance-sha256 <hex> [--reason <text>]
+  nova-work execution pause     --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
+  nova-work execution stop      --session <path> <write flags> (--node <id> | --repo <owner/name> | --all) --reason <text>
+  nova-work execution resume    --session <path> <write flags> --control <id> --action <release-hold|resume-workers> --reason <text>
+  nova-work execution correct   --session <path> <write flags> --node <id> --instructions <pointer> --sha256 <hex> --reason <text>
+  nova-work execution reconcile --session <path> <write flags> --control <id> --from <manifest-id> --reason <text>   (a content identity, never a local path)
+  nova-work execution status    --session <path> --control <id> [--max <n>]
+  nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
+  nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
   nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
-                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet)
-                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>]
+                           (--ask is one of: done, remaining, who, percent, size, stream, under, stale, handoffs, roadmap, friends, models, ready, fleet, routes, reports)
+                           [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>] [--for <workload-kind>] [--class <card-class>]
                            [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--page-budget <n>] [--max <n>] [--order <discovery|priority>]
+                           (who and stale: --window <duration>, required; percent: --axis <member>, required on a matrix and refused on a zero- or one-axis roadmap;
+                            ready: --order, optional, discovery by default; --order priority on any other ask is exit 2;
+                            --branch closed and --branch root: --from and --to, required, and refused under --branch open;
+                            who, stale, handoffs and reports: --branch open only, the other two exit 2; reports: --since <revision>, required (SPEC-AHEAD: #854);
+                            fleet: --for optional, --node names a machine id, and --for with --node on a member that excludes the kind is refused;
+                             routes: --class optional, the card class whose ordered route list the projection emits, cheapest first; without it the whole registry is listed)
+  nova-work render         --session <path> --view <roadmap-id> (--chat [--projection <id> | --row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --projection <id> (--file | --check)) [--at <revision>]
+  nova-work node add       --session <path> <write flags> --id <id> --type <work-set|epic|feature|task> (--under <parent-id> | --under-root open --repo <owner/name>) [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] [--link <text> ... | --links-empty | --clear-links] [--private <true|false>] [--version <text>] --reason <text>   (--type roadmap is exit 2 naming 'roadmap create')
+  nova-work node edit      --session <path> <write flags> --node <id> (--title <text> | --clear-title | --category <label> | --clear-category | --link <text> ... | --links-empty | --clear-links | --private <true|false> | --clear-private | --version <text> | --clear-version) ... --reason <text>
+  nova-work node move      --session <path> <write flags> --node <id> --from <parent-id> --under <parent-id> --reason <text>
+  nova-work node remove    --session <path> <write flags> --node <id> --reason <text>
+  nova-work node require   --session <path> <write flags> --node <id> --to <true|false> --reason <text>
+  nova-work decompose      --session <path> <write flags> --node <id> --into <id,...> --acceptance <child-id:id:kind:subject:predicate> ... --reason <text>
+  nova-work accept         --session <path> <write flags> --node <id> (--add <id:kind:subject:predicate> | --remove <id>) --reason <text>
+  nova-work source         --session <path> <write flags> --node <id> --to <sha> --reason <text>
+  nova-work dep            --session <path> <write flags> --node <id> (--add <id> | --remove <id>) --reason <text>
+  nova-work axis           --session <path> <write flags> --roadmap <id> --axis <id> (--add <member> | --remove <member>) --reason <text>
+  nova-work roadmap create --session <path> <write flags> --id <id> --under <parent-id> [--title <text>] --row-kind <feature|epic|work-set> --aggregation <required-members|all-members|leaves> --completion-policy all-required-features (--axes-none | --axis-id <id> ...) [--permit-root <root-id> ...] --reason <text>
+  nova-work roadmap configure --session <path> <write flags> --roadmap <id> [--row-kind <kind>] [--aggregation <policy>] [--completion-policy all-required-features] [--axes-none | --axis-id <id> ...] [--permit-root <root-id> ... | --roots-empty] --reason <text>
+  nova-work roadmap row    --session <path> <write flags> --roadmap <id> (--add <member> | --remove <member>) --reason <text>   (axisless roadmaps only)
+  nova-work roadmap projection --session <path> <write flags> --roadmap <id> (--add <id> --root <root-id> --repo <owner/name> --path <relative-path> --start <marker> --end <marker> --policy markdown-table [--row-axis <id> --column-axis <id> --fixed <axis-id>=<member-id> ...] | --remove <id>) --reason <text>
+  nova-work prioritise     --session <path> <write flags> --node <id> (--set <rank> | --clear) [--context <self|subtree>] --reason <text>
+  nova-work cell           --session <path> <write flags> --roadmap <id> --coord <member,member> (--ref <id|-> | --out-of-scope | --in-scope) --reason <text>   (--ref - clears the mapping)
+  nova-work responsible    --session <path> <write flags> --node <id> --to <name> --reason <text>
+  nova-work take           --session <path> <write flags> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
+  nova-work heartbeat      --session <path> <write flags> --node <id> --evidence <pointer>
+  nova-work release        --session <path> <write flags> --node <id> [--handed <name> --by <duration|stamp> --default <release|extend-once|escalate:<name>>]
+  nova-work heartbeat      --session <path> <write flags> --allocation <id> --generation <n>   (allocation heartbeat: --allocation names the allocation id returned by take, --generation is the machine generation)
+  nova-work release        --session <path> <write flags> --allocation <id> --generation <n> [--handed <name>]   (allocation release: --allocation names exactly one allocation, --generation is the machine generation; frees that allocation's slot only)
+  nova-work attest         --session <path> <write flags> --node <id> --criterion <id> --result <pointer> --against <sha>
+  nova-work attempt        --session <path> <write flags> --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
+  nova-work evidence       --session <path> <write flags> --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
+  nova-work state          --session <path> <write flags> --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
+  nova-work correct        --session <path> <write flags> --node <id> --reason <text>
+  nova-work event          --session <path> <write flags> --kind <baseline|discovery|defer|cancel|reopen|supersede> --node <id> --reason <text> [--member <id,...>] [--superseded-by <id>] [--evidence <pointer>] (baseline and discovery: --member, required, and --kind discovery on a :roadmap is exit 2 naming 'axis --add'; supersede: --superseded-by, required; cancel: --evidence <pointer>, required, and a note: pointer IS admitted here, because it evidences a stopped worker and never a done; --member on any other kind is exit 2)
   nova-work version        print this build identity (--version also accepted)
   nova-work help
   nova-work dependencies --graph <file> [--node <id> --needs <id>[,<id>...]]
@@ -88,6 +163,7 @@ usage:
   nova-work plan check --file <path.work> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work plan expand --file <path.work> --out <dir> [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
+                      [--evaluate] [--base <branch>] [--cache <dir>] [--write-status]
                       [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
@@ -106,7 +182,10 @@ wire:
   for byte: OK, ROW, NOTE and MORE to stdout, exit 0; FAIL, RACED and REFUSED
   to stderr, exit 1. What cannot run at all is one WORK REFUSED line on
   stderr, exit 2, ending "run: nova-work help". Values travel as given: the
-  session validates every one and refuses with its own naming.
+  session validates every one and refuses with its own naming. An exchange is
+  bounded by a 30-second default; a declared wait keeps a bounded 30-second
+  transport allowance, an explicit --deadline caps the bound, and a deadline
+  already past refuses before anything is dialled.
 
 verbs:
   nova-work dependencies   owns the graph (:deps, refused acyclic at seed by validator rule 3)
@@ -148,7 +227,10 @@ position is refused at exit 2 naming its byte offset, string and comment text is
 and an unknown :kind is refused naming the field. :needs is the reference edge and
 :blocks its inverse, so the kernel derives whichever a node did not give; an absent
 need is refused naming the field and the id, and a :needs cycle is refused by validator
-rule 3, both at load before the graph is published.
+rule 3, both at load before the graph is published. A hand-written :node owes :kind,
+:output and :budget before it can expand: :output must name a :branch, and :budget must
+name :minutes, :tokens and :model-floor; a node owing several is refused naming every
+field it owes in one run, never one round trip per field.
 
 set check reads the OTHER top form of the same language: not ` + "`(:plan ...)`" + `, the
 expander's, but ` + "`(work-set \"id\" ... :units ((unit ...)))`" + `, the one a coordinator
@@ -162,13 +244,32 @@ Exit 1 is findings: it was read whole and its content is wrong -- a duplicate id
 :lane no --lanes file names, a :deadline that is not an instant. Every rule runs over
 every unit in ONE pass, one SET line per finding, because a checker that stopped at the
 first would cost one round trip per defect. The SET OK line prints either way, and
-units = ready + blocked + done closes its arithmetic.
+units = ready + blocked + done closes its arithmetic; one SET DONE done=<n> percent=<p>
+line follows it, percent rounded down, so x/y z% comes from the tool and not from awk.
 
 --ready is the mechanical ready set, derived from the language rather than maintained by
 hand: a unit is done when it says so (:done, or a :status of closed, done, landed or
 merged) or when --done names it, and ready when it is not done and every need is done.
 Without --minds and without --lanes those two rules are OFF rather than run against a
 guessed file: there is no default registry and no discovery.
+
+--evaluate derives done from each unit's :acceptance instead of its :status, through gh
+(nova-tools #2664). Two criteria are evaluable: (:kind :landed :subject "pr:<o/r>#<n>"
+:predicate :merged-or-closed-in-base) holds when the PR is merged, OR closed with its
+content in the base by the lander's rule -- git merge-tree --write-tree <base> <head>
+yields the base's own tree, so merging it changes nothing, which holds for a PR the lander
+combined with another -- and :subject "commit:<sha>" holds when the commit is reachable
+from the base; (:kind :merged ... :predicate :merged-at) holds only when the PR is merged.
+A subject pinned as pr:<o/r>#<n>@<sha> asks about that head only: a pin the PR's last
+head does not match was superseded and is not landed. The merge runs in one blobless
+bare repository per repo under --cache. The base is
+--base, else the set's :base, and one is required. Each evaluable criterion prints one
+SET EVAL line with holds=yes|no|unknown and a why=; a criterion gh or git could not
+answer is unknown and counts as not done. A unit is decided by its criteria when every
+one is evaluable or one fails; a unit naming only :test, :job or :attested criteria keeps
+its :status. Each question is asked once per run.
+--write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
+whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
 events publishes the family's three event channels from two sources: the cards:done
 stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
@@ -211,6 +312,12 @@ flags:
   --ready         set check: also print one SET READY line per unit of the ready set,
                   each carrying its admission verdict (admit=go, or admit=held with the
                   dimension or path that held it and the unit holding it).
+  --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
+  --base <branch> set check: the branch :landed means; default the set's :base.
+  --cache <dir>   set check: where --evaluate keeps one blobless bare repository per
+                  repo for the merge; default <user cache dir>/nova-work/landed.
+  --write-status  set check: rewrite :status "open" to "landed" where every criterion
+                  holds, in place, one line per unit; implies --evaluate.
   --out <dir>     plan expand: the directory to write one card per node into. Required;
                   a card already there is left byte-identical, so a re-expansion appends
                   only the new card and mints no id.
@@ -343,6 +450,11 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 			deps = d
 		}
 	}
+	// The framed wire's hello names the build identity it is; the empty stamp
+	// of a test run leaves the package's own floor.
+	if stamp != "" {
+		workclient.ClientIdentity = stamp
+	}
 	if len(args) == 0 {
 		return refused(stderr, "a verb is required")
 	}
@@ -375,21 +487,43 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		}
 		fmt.Fprintln(stdout, oneline.Escape(buildinfo.Line("nova-work", stamp)))
 		return 0
-	case "session":
-		if len(rest) == 0 {
-			return refused(stderr, "session needs one of start, status or stop")
-		}
-		sub, rest := rest[0], rest[1:]
-		switch sub {
-		case "start", "status", "stop":
-			return sessionVerb("session "+sub, rest, stdout, stderr)
-		default:
-			return refused(stderr, fmt.Sprintf("unknown session verb %q", sub))
-		}
 	case "query":
 		return queryVerb(rest, stdout, stderr)
+	}
+	// Every other verb the spec addresses to a session is a row of verbFlags
+	// and no case of its own: see socketverbs.go. The block's lines this
+	// client does not send are named BEFORE the resolver, because `state
+	// load` would otherwise resolve as the `state` mutation verb carrying a
+	// stray positional and be refused for the wrong reason.
+	if len(rest) > 0 {
+		if why, ok := notCarried[verb+" "+rest[0]]; ok {
+			return refused(stderr, why)
+		}
+	}
+	if why, ok := notCarried[verb]; ok {
+		return refused(stderr, why)
+	}
+	if v, args, ok := resolveSocketVerb(verb, rest); ok {
+		return sessionVerb(v, args, stdout, stderr)
+	}
+	if subs, ok := verbFamilies[verb]; ok {
+		if len(rest) == 0 {
+			return refused(stderr, verb+" needs one of "+orList(subs))
+		}
+		return refused(stderr, fmt.Sprintf("unknown %s verb %q; it is one of %s", oneline.Field(verb), rest[0], oneline.Escape(orList(subs))))
+	}
+	return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
+}
+
+// orList spells a closed list the way a refusal reads it aloud: "a, b or c".
+func orList(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
 	default:
-		return refused(stderr, fmt.Sprintf("unknown verb %q", verb))
+		return strings.Join(items[:len(items)-1], ", ") + " or " + items[len(items)-1]
 	}
 }
 
@@ -732,6 +866,61 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 	if socket == "" {
 		return refused(stderr, "--session is required; refusing to guess (the socket has no default path)")
 	}
+	deadline, timeout, gitTimeout := "", "", ""
+	if p, ok := strs["deadline"]; ok {
+		deadline = *p
+	}
+	if p, ok := strs["timeout"]; ok {
+		timeout = *p
+	}
+	if p, ok := strs["git-timeout"]; ok {
+		gitTimeout = *p
+	}
+	// Presence is separate from the value, and it comes from the FlagSet and
+	// from nothing else: `--deadline=`, `-deadline=` and `--deadline ""` all
+	// leave the string "", and a scan of args for the literal "--deadline"
+	// would disagree with the parser on at least one of them. Visit walks only
+	// the flags the caller actually set, where VisitAll walks every defined
+	// flag. The two empty states need opposite answers -- a supplied empty cap
+	// is invalid RFC3339 and refuses below, while a true omission keeps the
+	// ordinary finite default -- so presence is handed to deadlineParse rather
+	// than folded back into the empty string.
+	deadlineGiven := false
+	f.Visit(func(fl *flag.Flag) {
+		if fl.Name == "deadline" {
+			deadlineGiven = true
+		}
+	})
+	// A supplied-but-empty --deadline is PRESENT and invalid RFC3339, not an
+	// omitted flag: it must not silently fall back to the ordinary default. It
+	// is refused here, before guard (a) and before anything is dialled. A true
+	// omission is deadlineAbsent and keeps the ordinary default below. The
+	// client sizes its own socket bound from --deadline, so this is the one
+	// flag it PARSES AND USES rather than merely forwards; it must not act on a
+	// value it could not read, and an unreadable value is not an absent one.
+	_, state := deadlineParse(deadline, deadlineGiven)
+	if state == deadlineEmptyPresent {
+		return refused(stderr, "--deadline was given with no value; an explicit cap is invalid RFC3339, not an omitted flag")
+	}
+	if state == deadlineMalformed {
+		return refused(stderr, fmt.Sprintf("the deadline %s is not an instant; the client sizes its own bound from --deadline and will not send a request it cannot bound",
+			oneline.Field(deadline)))
+	}
+	// Guard (a): a deadline already past is refused before anything is dialled.
+	// The measuring instant is the real clock, never --now, which is the
+	// engine's instant for fencing and receipts. A malformed explicit deadline
+	// was already refused above; here only a well-formed past one refuses.
+	if at, ok := deadlineStamp(deadline); ok && !at.After(time.Now()) {
+		return refused(stderr, fmt.Sprintf("the deadline %s is not after %s; an ask that is late before it is sent is not an ask",
+			oneline.Field(at.UTC().Format(time.RFC3339)), oneline.Field(time.Now().UTC().Format(time.RFC3339))))
+	}
+	// Guard (b): the belt. The derivation can go non-positive on a pathological
+	// declared wait, and workclient's budget() reads a non-positive bound as NO
+	// DEADLINE AT ALL, so it never reaches the wire.
+	within := derivedBound(deadline, timeout, gitTimeout)
+	if within <= 0 {
+		within = askTimeout
+	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s", oneline.Escape(verb))
 	for _, s := range specs {
@@ -750,7 +939,7 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
-	return ask(socket, b.String(), stdout, stderr)
+	return ask(socket, b.String(), frameFor(verb, specs, strs, bools, mults), within, stdout, stderr)
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable
@@ -758,9 +947,70 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 // by design and a test suite cannot afford one per case.
 var askTimeout = workclient.DefaultTimeout
 
-// ask is the whole wire: one line in, one line out, newline-terminated both
-// ways. The dial and the read live in internal/workclient so that this package
-// keeps a single print path; here only the reply is classified.
+// frameFor spells the same request the v1 framed wire carries, built from the
+// same parsed flags the request line is spelled from, so the two wires can
+// never disagree about what was asked. The verb is the op; the envelope fields
+// the spec names -- request, as, expect, now, max, deadline -- are hoisted out
+// of the flags that spell them; --session is the endpoint the frame travels
+// over and never an argument of it; and every other set flag travels in args
+// as the caller spelled it: a string, an array for a repeated flag, true for a
+// switch, and never a JSON number, which the protocol forbids.
+func frameFor(verb string, specs []flagSpec, strs map[string]*string, bools map[string]*bool, mults map[string]*repeatFlag) workclient.Frame {
+	frame := workclient.Frame{Op: verb, Args: map[string]any{}}
+	for _, s := range specs {
+		switch {
+		case s.bool:
+			if *bools[s.name] {
+				frame.Args[s.name] = true
+			}
+		case s.multi:
+			if vs := *mults[s.name]; len(vs) > 0 {
+				arr := make([]any, len(vs))
+				for i, v := range vs {
+					arr[i] = v
+				}
+				frame.Args[s.name] = arr
+			}
+		default:
+			v := *strs[s.name]
+			if v == "" {
+				continue
+			}
+			switch s.name {
+			case "session":
+				// the endpoint the frame travels over, not an argument of it
+			case "request":
+				frame.Request = v
+			case "as":
+				frame.As = v
+			case "expect":
+				frame.Expect = v
+			case "now":
+				frame.Now = v
+			case "max":
+				frame.Max = v
+			case "deadline":
+				frame.Deadline = v
+			default:
+				frame.Args[s.name] = v
+			}
+		}
+	}
+	if frame.Request == "" {
+		// The v1 wire correlates every response by its request id, so a verb
+		// whose flags draw none has this run draw one.
+		frame.Request = fmt.Sprintf("nova-work-%d-%d", os.Getpid(), time.Now().UnixNano())
+	}
+	return frame
+}
+
+// ask is the whole wire: the request line out on the S1 wire, and -- when the
+// session proves it speaks v1 frames by answering the line's bytes with the
+// framed refusal the spec pins for them -- the same request again as one v1
+// frame, so a listing verb's many answer lines reach the caller
+// (nova-tools#1696). The dial and the reads live in internal/workclient so
+// that this package keeps a single print path; here only the reply is
+// classified.
 //
 // Three ways there is no reply line, and they are three different refusals,
 // because they send a person to three different places. A socket nothing is
@@ -770,15 +1020,20 @@ var askTimeout = workclient.DefaultTimeout
 // client that stopped waiting is no more a rollback than a disconnect is
 // (docs/SPEC-WORK.md, "The engine and its client"). A reply past the wire's cap
 // is a session speaking a shape this wire does not carry.
-func ask(socket, request string, stdout, stderr io.Writer) int {
-	line, err := workclient.ExchangeWithin(socket, request, askTimeout)
+func ask(socket, request string, frame workclient.Frame, within time.Duration, stdout, stderr io.Writer) int {
+	answer, err := workclient.ExchangeWireWithin(socket, request, frame, within)
 	switch {
+	case err == nil && answer.Framed:
+		return printReplyLines(answer.Reply, stdout, stderr)
 	case err == nil:
-		return printReply(line, stdout, stderr)
+		return printReply(answer.Line, stdout, stderr)
 	case errors.Is(err, workclient.ErrSilent):
 		return refused(stderr, "the session at "+socket+" accepted the request and did not answer: "+err.Error()+"; a mutation may still have been accepted -- ask the session rather than retrying blind")
 	case errors.Is(err, workclient.ErrTooLong):
 		return refused(stderr, "the session at "+socket+" answered past the wire's bound: "+err.Error())
+	case errors.Is(err, workclient.ErrFrameVersion), errors.Is(err, workclient.ErrFrameMalformed),
+		errors.Is(err, workclient.ErrFrameCorrelation), errors.Is(err, workclient.ErrFrameTooLong):
+		return refused(stderr, "the session at "+socket+" answered in v1 frames and the framed exchange failed: "+err.Error())
 	default:
 		return refused(stderr, "no such session: cannot reach "+socket+": "+err.Error())
 	}
@@ -806,6 +1061,39 @@ func printReply(line string, stdout, stderr io.Writer) int {
 	default:
 		return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
 	}
+}
+
+// printReplyLines is printReply for the v1 wire's ordered answer: the spec's
+// one client rule -- "the client splits them by the second token and by
+// nothing else" -- applied to every line of the response's array, and the
+// response's own exit as the run's verdict, the field the one-line wire has
+// no place for (nova-tools#1696). OK, ROW, NOTE and MORE go to stdout, FAIL,
+// RACED and REFUSED to stderr, each rendered through oneline.Escape, the
+// identity on a well-formed grammar line, so the byte-for-byte promise holds
+// per line. decodeReply has already read the exit as one of the three codes.
+func printReplyLines(reply workclient.Reply, stdout, stderr io.Writer) int {
+	code := 2
+	switch reply.Exit {
+	case "0":
+		code = 0
+	case "1":
+		code = 1
+	}
+	for _, line := range reply.Lines {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			return refused(stderr, "the session's reply is not an answer line: "+line)
+		}
+		switch fields[1] {
+		case "OK", "ROW", "NOTE", "MORE":
+			fmt.Fprintln(stdout, oneline.Escape(line))
+		case "FAIL", "RACED", "REFUSED":
+			fmt.Fprintln(stderr, oneline.Escape(line))
+		default:
+			return refused(stderr, "the session's reply carries no verdict the grammar spells: "+line)
+		}
+	}
+	return code
 }
 
 // cmdEvents is the events verb. Its flags are parsed with flag's usage dump discarded, so

@@ -25,7 +25,7 @@ import (
 // hangs up.
 //
 // So the supervisor ignores it. Nothing in SPEC-SWARM ends a job by hangup: a job ends at
-// its deadline, at its budget, at the runner's group kill, or by `stop`. The SIGCONT that
-// follows still arrives and still resumes it, which is exactly what is wanted -- the
-// transaction finishes and writes the evidence it owes.
+// its deadline, at its budget, at the runner's group kill, by `stop`, on SIGTERM, or when
+// the pool root disappears. The SIGCONT that follows still arrives and still resumes it,
+// which is exactly what is wanted -- the transaction finishes and writes the evidence it owes.
 func ignoreHangup() { signal.Ignore(syscall.SIGHUP) }

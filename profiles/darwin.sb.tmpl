@@ -100,6 +100,17 @@
 ;; "Error opening /private/var/select/sh".
 (allow file-read* (literal "/") (literal "/etc") (literal "/tmp") (literal "/var"))
 
+;; /usr/bin/c++ and /usr/bin/cc (and /usr/bin/git) are Xcode shims that resolve
+;; the active developer directory through this link. /var is a literal on the
+;; symlink only, not a subpath, so without these literals every C/C++ compile
+;; inside the wall dies with xcode-select's "unable to read data link" (#1557).
+;; The grant is the link, not a subpath on /private/var/db. The directory the
+;; link points at is an optional root when it is not already under a fixed one
+;; (CommandLineTools sits under /Library; Xcode.app/Contents does not —
+;; Contents, not Contents/Developer: the shims also read Info.plist and
+;; SharedFrameworks next to Developer).
+(allow file-read* (literal "/var/db/xcode_select_link") (literal "/private/var/db/xcode_select_link"))
+
 (allow file-read* (subpath "/System"))
 (allow file-read* (subpath "/usr"))
 (allow file-read* (subpath "/bin"))

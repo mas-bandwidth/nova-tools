@@ -386,10 +386,12 @@ func TestSignBig(t *testing.T) {
 	}
 }
 
-// A package that cannot even compile with the change reverted is the strongest red there
-// is, and the parse of `go test` output must read it that way: there are no per-test
-// result lines to count, and counting none would report the tests as green.
-func TestMutateCountsABuildFailureAsRed(t *testing.T) {
+// A build failure on the reverted side is NOT a kill (#1807). This shape -- a new symbol
+// with a test that genuinely asserts on it -- is the honest cost of that rule: mutate
+// cannot tell it apart from a call-only test that asserts nothing, so it is skipped with
+// the reason that says why. The remedy for a new-API card is mutation-kill's seed form
+// (T13), not a control that cannot see.
+func TestMutateDoesNotCountABuildFailureAsAKill(t *testing.T) {
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "newapi")
 	write(t, dir, "sign/sign.go", `package sign
@@ -431,14 +433,18 @@ func TestAbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Pass || res.Green != 0 || res.Red != 2 {
-		t.Fatalf("build failure not counted red: pass=%v red=%d green=%d greens=%v", res.Pass, res.Red, res.Green, res.Greens)
+	if res.Pass || res.Red != 0 {
+		t.Fatalf("a build failure on the reverted side was scored as a kill: pass=%v red=%d green=%d greens=%v", res.Pass, res.Red, res.Green, res.Greens)
+	}
+	if len(res.Skips) != 1 || !strings.HasPrefix(res.Skips[0].Reason, SkipRevertNoCompile) {
+		t.Fatalf("the skip does not say the revert would not compile: %+v", res.Skips)
 	}
 }
 
 // The revert is by file STATUS, not by patch: a file the head ADDED has no base version to
 // check out, and `git checkout <base> -- <path>` on it fails. It is removed instead, and
-// the test that needed it goes red for the right reason.
+// the test that needed it then fails to COMPILE -- which since #1807 is a skip and not a
+// kill, so the skip is the observable that proves the file was removed.
 func TestMutateRemovesAFileTheHeadAdded(t *testing.T) {
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "addfile")
@@ -473,7 +479,11 @@ func TestAbs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Pass {
+	// The proof that the added file was REMOVED rather than checked out is that the
+	// revert got as far as a compile that then failed for want of it: `git checkout
+	// <base> -- sign/abs.go` would have made Mutate return an error instead. Since #1807
+	// that compile failure is a skip and not a kill, so the skip is the observable.
+	if len(res.Skips) != 1 || !strings.HasPrefix(res.Skips[0].Reason, SkipRevertNoCompile) {
 		t.Fatalf("an added file was not reverted: red=%d green=%d greens=%v skips=%v", res.Red, res.Green, res.Greens, res.Skips)
 	}
 }
@@ -525,6 +535,58 @@ func TestMutateRunsALispSuiteAndCountsItRed(t *testing.T) {
 	}
 	if !res.Pass || res.Red != 1 {
 		t.Fatalf("lisp suite not red without the change: pass=%v red=%d green=%d skips=%+v", res.Pass, res.Red, res.Green, res.Skips)
+	}
+}
+
+// THE BUDGET IS NOT A VERDICT. A run the caller's deadline killed printed no result for
+// any unit, and the rule underneath it -- exited non-zero, named no failing test, so every
+// unit it was asked for is red -- turned that into one. The answer then belonged to the
+// bench: the same range said `red=1 green=1` on an idle machine and `red=2 green=0` on a
+// loaded one, which is the same wrong pair of counts three legs of integration-4 got from
+// GOFLAGS=-json, arriving by the other road.
+//
+// Reproduced by hand on hulk, 2026-09-18, with cmd/nova-review built from this tree and
+// the fixture its own mutate tests build:
+//
+//	nova-review mutate --repo $LAB --base main --head HEAD
+//	  -> MUTATE 06b87135 red=1 green=1 PASS
+//	GOCACHE=$(mktemp -d) nova-review mutate --repo $LAB --base main --head HEAD --timeout 1
+//	  -> MUTATE 06b87135 red=2 green=0 PASS
+//
+// There is no clock and no subprocess in this test: runVerdict is handed the four things a
+// finished run leaves behind, so what it pins is the rule.
+func TestARunTheBudgetEndedIsASkipAndNeverARedUnit(t *testing.T) {
+	units := []unit{
+		{name: "TestSignPositive", file: "sign/sign_test.go", pkg: "sign"},
+		{name: "TestSignZero", file: "sign/sign_test.go", pkg: "sign"},
+	}
+	// The end a run has when the deadline killed it, and the end it has when a test
+	// failed: os/exec gives the caller the same TYPE for both, which is the whole reason
+	// the counts below cannot be read off it.
+	killed := error(&exec.ExitError{})
+	// What a killed run leaves behind: a context that is done, whatever it managed to
+	// print, and a non-zero end. Not one unit of it may be counted.
+	for _, ctxErr := range []error{context.DeadlineExceeded, context.Canceled} {
+		failed, skip := runVerdict(ctxErr, "=== RUN   TestSignPositive\n", killed, units)
+		if skip == "" {
+			t.Fatalf("%v: a run the budget ended reported a verdict: %v", ctxErr, failed)
+		}
+		if len(failed) != 0 {
+			t.Fatalf("%v: a run the budget ended counted units red: %v", ctxErr, failed)
+		}
+	}
+	if reason := budgetEnded(context.DeadlineExceeded); !strings.Contains(reason, "budget") {
+		t.Fatalf("the skip must name the budget, got %q", reason)
+	}
+
+	// And the run that really did report keeps answering exactly as before: the live
+	// context is not an excuse to stop reading the output.
+	failed, skip := runVerdict(nil, "--- PASS: TestSignPositive (0.00s)\n--- FAIL: TestSignZero (0.00s)\n", killed, units)
+	if skip != "" {
+		t.Fatalf("a run that reported was skipped: %s", skip)
+	}
+	if !failed["TestSignZero"] || failed["TestSignPositive"] {
+		t.Fatalf("the FAIL lines were not read: %v", failed)
 	}
 }
 

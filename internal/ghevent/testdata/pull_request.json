@@ -1,0 +1,19 @@
+{
+  "action": "synchronize",
+  "number": 42,
+  "pull_request": {
+    "number": 42,
+    "created_at": "2026-09-22T16:00:00Z",
+    "updated_at": "2026-09-22T16:45:01Z",
+    "head": {
+      "ref": "johnny/ev-github-2685",
+      "sha": "1111111111111111111111111111111111111111"
+    }
+  },
+  "repository": {
+    "full_name": "mas-bandwidth/nova-tools"
+  },
+  "sender": {
+    "login": "octocat"
+  }
+}
