@@ -414,3 +414,38 @@ number of parent hops (SPEC-WORK.md:1564-1566)."
                    "the 25-level nested chain was not admitted")
       (check-equal :task (%e01-f03-grouping-layer state "deep/24")
                    "the deep chain's task is a task at depth 25, not refused"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE11F06EscalationIsAPacketA                   SPEC-WORK.md:4654
+;;; ------------------------------------------------------------------
+;;; E11-F06-04 (ROADMAP.md:1149) — escalation-is-a-packet.
+;;; docs/SPEC-WORK.md:4654: "A hold, question or exception the child cannot
+;;; decide rises as a packet with its reason and revision; the stale pass prints
+;;; `escalated-age=` and `reread=` as information and reassigns nothing; an
+;;; `:effort` widening or an expensive-route exception carries the coordinator's
+;;; recorded reason."
+;;;
+;;; This replay asserts the second clause: the coordinator's stale pass reads a
+;;; persisted escalation and reassigns nothing, surfacing the escalation's age
+;;; and reread count as strictly informational fields on its receipt line.
+
+(deftest "TestE11F06EscalationIsAPacketA" "docs/SPEC-WORK.md:4654"
+    "expected=stale-pass-prints-escalated-age-and-reread-as-information-and-reassigns-nothing"
+  (let* ((row (make-escalation-row :rule "r7" :default :close-on-silence
+                                   :age 3600 :reread 2))
+         (rows (list row)))
+    (multiple-value-bind (read line) (stale-pass rows)
+      (ok (eq read rows)
+          "the stale pass reassigns nothing; it answers the same rows")
+      (ok (search "escalated-age=3600" line)
+          "the stale pass does not print escalated-age= with the persisted age: ~A" line)
+      (ok (search "reread=2" line)
+          "the stale pass does not print reread= with the persisted reread count: ~A" line)
+      (ok (search "reassigned=0" line)
+          "the stale pass did not say it reassigned nothing: ~A" line)
+      (check-equal "r7" (escalation-row-rule (first read))
+                   "the read changed the rule")
+      (check-equal :close-on-silence (escalation-row-default (first read))
+                   "the read changed the default")
+      (check-equal 3600 (escalation-row-age (first read))
+                   "the read changed the age"))))

@@ -40,9 +40,12 @@ type ManagerInput struct {
 	// is set.
 	SSH string
 	// Shell is the BenchShell seam harvest --bench already uses; nil means local-only.
-	Shell  BenchShell
-	Hours  float64
-	Max    int
+	Shell BenchShell
+	Hours float64
+	Max   int
+	// Locked says this shift runs inside a caller that already holds the queue's lock (the
+	// `loop` verb), so it takes none of its own.
+	Locked bool
 	Stdout io.Writer
 	Stderr io.Writer
 	Now    func() time.Time
@@ -192,6 +195,16 @@ func Manager(in ManagerInput) int {
 		if err := os.MkdirAll(filepath.Join(in.Queue, d), 0o755); err != nil {
 			return refusal(in.Stderr, "MANAGER", fmt.Errorf("cannot make %s: %s", filepath.Join(in.Queue, d), oneline.Err(err)))
 		}
+	}
+	// ONE WRITER PER QUEUE (queuelock.go). The shift hands out card numbers from
+	// <queue>/NEXT with a read-modify-write and moves cards between the directories; two
+	// shifts on one queue hand the same number to two cards.
+	if !in.Locked {
+		lock, err := LockQueue(in.Queue, "manager")
+		if err != nil {
+			return refusal(in.Stderr, "MANAGER", err)
+		}
+		defer lock.Release()
 	}
 	return m.shift()
 }

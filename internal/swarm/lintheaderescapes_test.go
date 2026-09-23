@@ -98,6 +98,24 @@ func TestACommaOnlyPathsLineDeclaresNothing(t *testing.T) {
 	}
 }
 
+// #1853.4 AN UNKNOWN KIND IS NOT A KIND. The typed header asked only that KIND: have
+// a value, so `KIND: completely-unknown-kind` linted clean. The name set is
+// internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 3: there is no default kind).
+func TestAnUnknownKindDrawsKindDeclared(t *testing.T) {
+	fs := findingsOn(headerCard(t, "KIND: completely-unknown-kind", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA"))
+	if !hasCheck(fs, "kind-declared") {
+		t.Fatalf("an unknown kind is not a kind this toolchain declares\n%s", dumpFindings(fs))
+	}
+	for _, f := range fs {
+		if f.Check == "kind-declared" && !strings.Contains(f.Excerpt, "completely-unknown-kind") {
+			t.Fatalf("the finding names the kind\n%s", dumpFindings(fs))
+		}
+	}
+	if fs := findingsOn(headerCard(t, "KIND: fix-red", "PATHS: internal/x/a.go", "TEST: ./internal/x TestA")); len(fs) != 0 {
+		t.Fatalf("a declared kind is clean\n%s", dumpFindings(fs))
+	}
+}
+
 // #1854.1 A TYPED HEADER LINE THE GATE WILL NEVER READ IS A DEFECT, NOT A SILENCE. The
 // block ends at the first line that is not `KEY: value`, which is the gate parser's own
 // rule and stays. What was wrong is what happened next: a card with a sentence above its

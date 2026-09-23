@@ -29,12 +29,14 @@ references."
 chains is still a referrer."
   (and (member row-id (scope-roadmap-rows scope) :test #'string=) t))
 
-(defun scopes-on-move (scopes row-id &key (accept t))
+(defun scopes-on-move (scopes row-id &key (accept t) (by +absent+) (reason +absent+))
   "The scopes a `node move` of ROW-ID updates, in one envelope. When ACCEPT is
 true every scope referencing ROW-ID has its revision advanced by one and the
-returned events name each; an unrelated scope is returned unchanged. When
-ACCEPT is nil -- a refused move -- the original scopes are returned with an
-empty envelope: nothing moves. Returns (values SCOPES EVENTS ACCEPTED)."
+returned events name each -- its author (BY), its reason, the scope revision it
+incremented and the exact member delta (:references, the moved row) -- and an
+unrelated scope is returned unchanged. When ACCEPT is nil -- a refused move --
+the original scopes are returned with an empty envelope: nothing moves. Returns
+(values SCOPES EVENTS ACCEPTED)."
   (if (not accept)
       (values scopes '() nil)
       (let ((events '()) (updated '()))
@@ -44,7 +46,8 @@ empty envelope: nothing moves. Returns (values SCOPES EVENTS ACCEPTED)."
                 (incf (scope-roadmap-revision next))
                 (push (list :kind :scope :roadmap (scope-roadmap-id next)
                             :scope-revision (scope-roadmap-revision next)
-                            :references row-id)
+                            :references row-id
+                            :by by :reason reason)
                       events)
                 (push next updated))
               (push scope updated)))

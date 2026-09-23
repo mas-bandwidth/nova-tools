@@ -57,7 +57,7 @@ func TestCardBudgetCacheReadEndsWithPromptDefect(t *testing.T) {
 		runnerStep{Op: "write", Path: "{job}/harness.log", Body: "assistant turn one\nassistant turn two\n"},
 		runnerStep{Op: "write", Path: "{job}/RESULT.md", Body: "# t\n"},
 	)
-	cmd := exec.Command(runner, label, slot, "m", card, root)
+	cmd := exec.Command(runner, label, slot, "m", card, root, "unmetered")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("the fake runner writes the fake harness log: %v\n%s", err, out)
 	}
