@@ -1,0 +1,198 @@
+// Package launch is the bench side of a deal pass: `nova-sprint card launch
+// --stdin` (#2756 4.3, #2931).
+//
+// The dealer opens one ssh session per bench and writes that bench's whole
+// batch on its stdin, one line per card: <sprint> <label> <attempt> <token>.
+// For each line the launcher starts the card wrapper detached, in its own
+// session (POSIX setsid), with the command identity
+// `nova-card <sprint>/<label>/<attempt>`, and then exits. It never holds the
+// ssh session for a card's run: the wrapper's stdout and stderr are
+// /dev/null, so the session closes as soon as the launcher returns, and a
+// hang-up or kill of the session's process group does not reach a wrapper.
+//
+// The token is the wrapper's first line on stdin, never an argument: argv is
+// what `ps` shows to every user on the bench, and receipts carry only the
+// token's sha. The wrapper reads the line, checks it names its own identity,
+// and calls `card launched` itself.
+package launch
+
+import (
+	"bufio"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"regexp"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
+// WrapperName is argv[0] of every card wrapper: the name `pgrep -f nova-card`
+// and the reconciler's live-identity census match.
+const WrapperName = "nova-card"
+
+// DefaultBudget is how long one batch may take to start: the verb returns
+// within it (#2931). A line reached after the budget is REFUSED timeout and
+// its card is not started; the reconciler requeues a dealt card that never
+// acked launched (#2756 3.2).
+const DefaultBudget = 5 * time.Second
+
+// maxLine bounds one stdin line; a canonical line is under 170 bytes.
+const maxLine = 4096
+
+var (
+	sprintRE = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+	labelRE  = regexp.MustCompile(`^[a-z0-9-]{1,80}$`)
+	tokenRE  = regexp.MustCompile(`^([1-9][0-9]*)\.[0-9a-f]{32}$`)
+)
+
+// Line is one card of the batch: which attempt to start and its fenced token.
+type Line struct {
+	Sprint  string
+	Label   string
+	Attempt int
+	Token   string
+}
+
+// Card is <sprint>/<label>/<attempt>, the card part of the command identity.
+func (l Line) Card() string { return fmt.Sprintf("%s/%s/%d", l.Sprint, l.Label, l.Attempt) }
+
+// CommandIdentity is what `ps -o command=` shows for this card's wrapper.
+func (l Line) CommandIdentity() string { return WrapperName + " " + l.Card() }
+
+// String is the canonical stdin line, token included; never print it.
+func (l Line) String() string {
+	return fmt.Sprintf("%s %s %d %s", l.Sprint, l.Label, l.Attempt, l.Token)
+}
+
+// ParseLine accepts only the canonical form String produces: sprint and
+// label as the card identity has them, an attempt of 1 or more, and a token
+// <attempt>.<128 bits hex> whose attempt is the line's.
+func ParseLine(s string) (Line, error) {
+	f := strings.Split(s, " ")
+	if len(f) != 4 {
+		return Line{}, errors.New("want <sprint> <label> <attempt> <token>")
+	}
+	if !sprintRE.MatchString(f[0]) {
+		return Line{}, errors.New("sprint is not [a-z0-9-]{1,40}")
+	}
+	if !labelRE.MatchString(f[1]) {
+		return Line{}, errors.New("label is not [a-z0-9-]{1,80}")
+	}
+	attempt, err := strconv.Atoi(f[2])
+	if err != nil || attempt < 1 || strconv.Itoa(attempt) != f[2] {
+		return Line{}, errors.New("attempt is not a number from 1")
+	}
+	m := tokenRE.FindStringSubmatch(f[3])
+	if m == nil {
+		return Line{}, errors.New("token is not <attempt>.<32 hex>")
+	}
+	if m[1] != f[2] {
+		return Line{}, errors.New("token is for another attempt")
+	}
+	return Line{Sprint: f[0], Label: f[1], Attempt: attempt, Token: f[3]}, nil
+}
+
+// Config is the bench's launcher configuration.
+type Config struct {
+	// Wrapper is the absolute path of the card wrapper program. It is
+	// started with argv[0] WrapperName, so its command identity is the
+	// card's whatever the file is called.
+	Wrapper string
+	// Budget bounds the batch; zero means DefaultBudget.
+	Budget time.Duration
+	// Now is the clock the budget is read on; nil means time.Now.
+	Now func() time.Time
+}
+
+// Result counts the batch: wrappers started and lines refused.
+type Result struct {
+	Started int
+	Refused int
+}
+
+// Launch reads the batch from in and starts one detached wrapper per line
+// as the line arrives. It writes one line per card to out:
+//
+//	LAUNCHED <sprint>/<label>/<attempt> pid=<pid>
+//	REFUSED line=<n> <why>
+//
+// and then LAUNCH started=<n> refused=<m> ms=<batch time>. A malformed line,
+// a second line for an attempt already in this batch, a wrapper that would
+// not start, or a line reached after the budget is refused; the rest of the
+// batch still launches. The error is for a
+// batch that could not run at all: no wrapper, or stdin failed.
+func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
+	var res Result
+	if err := checkWrapper(cfg.Wrapper); err != nil {
+		return res, err
+	}
+	now, budget := cfg.Now, cfg.Budget
+	if now == nil {
+		now = time.Now
+	}
+	if budget <= 0 {
+		budget = DefaultBudget
+	}
+	began := now()
+	seen := map[string]bool{}
+	sc := bufio.NewScanner(in)
+	sc.Buffer(make([]byte, 0, 512), maxLine)
+	n := 0
+	for sc.Scan() {
+		n++
+		text := sc.Text()
+		if strings.TrimSpace(text) == "" {
+			continue
+		}
+		l, err := ParseLine(text)
+		if err != nil {
+			// The line may hold a token; its content is never echoed.
+			res.Refused++
+			fmt.Fprintf(out, "REFUSED line=%d malformed: %s\n", n, err)
+			continue
+		}
+		if seen[l.Card()] {
+			res.Refused++
+			fmt.Fprintf(out, "REFUSED line=%d duplicate %s: one attempt is launched once\n", n, l.Card())
+			continue
+		}
+		seen[l.Card()] = true
+		if spent := now().Sub(began); spent > budget {
+			res.Refused++
+			fmt.Fprintf(out, "REFUSED line=%d timeout %s: batch at %dms is past the %dms launch budget\n",
+				n, l.Card(), spent.Milliseconds(), budget.Milliseconds())
+			continue
+		}
+		pid, err := startDetached(cfg.Wrapper, l)
+		if err != nil {
+			res.Refused++
+			fmt.Fprintf(out, "REFUSED line=%d start %s: %s\n", n, l.Card(), oneline.Err(err))
+			continue
+		}
+		res.Started++
+		fmt.Fprintf(out, "LAUNCHED %s pid=%d\n", l.Card(), pid)
+	}
+	fmt.Fprintf(out, "LAUNCH started=%d refused=%d ms=%d\n", res.Started, res.Refused, now().Sub(began).Milliseconds())
+	if err := sc.Err(); err != nil {
+		return res, fmt.Errorf("card launch: stdin after line %d: %w", n, err)
+	}
+	return res, nil
+}
+
+func checkWrapper(path string) error {
+	if path == "" {
+		return errors.New("card launch: wrapper MISSING: no path configured")
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("card launch: wrapper %s MISSING: %s", oneline.Escape(path), oneline.Err(err))
+	}
+	if !fi.Mode().IsRegular() || fi.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("card launch: wrapper %s is not an executable file", oneline.Escape(path))
+	}
+	return nil
+}
