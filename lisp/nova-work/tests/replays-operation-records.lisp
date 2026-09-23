@@ -184,6 +184,74 @@
           "an operation with no external effect is not none: ~A" (first rows)))))
 
 ;;; ------------------------------------------------------------------
+;;; No unbounded scan: --max bounds the work, not only the rows.
+;;; SPEC-WORK.md:2735-2737, :2761.
+;;; ------------------------------------------------------------------
+
+(defclass counting-journal (ordering-journal)
+  ((lookups :initform 0 :accessor counting-journal-lookups))
+  (:documentation "An ordering journal that counts every record it is asked
+for, so a test can say how much of the journal a verb read."))
+
+(defmethod journal-lookup :around ((journal counting-journal) request)
+  (declare (ignore request))
+  (incf (counting-journal-lookups journal))
+  (call-next-method))
+
+(defun %lookups-during (journal thunk)
+  "The journal records THUNK read, and THUNK's values as a list."
+  (setf (counting-journal-lookups journal) 0)
+  (let ((values (multiple-value-list (funcall thunk))))
+    (values (counting-journal-lookups journal) values)))
+
+(deftest "operation-list-reads-only-its-page-of-a-large-history" "docs/SPEC-WORK.md:2761"
+    "expected=list-max-3-over-500-operations-reads-<=3-records;status-and-cancel-read-O(1);same-cost-at-50-and-500"
+  (let* ((journal (make-instance 'counting-journal :capacity 2048))
+         (k (fresh :journal journal))
+         (cost-at-50 nil))
+    (loop for n from 1 to 500
+          do (kernel-operation-accept k :id (format nil "op-~D" n) :kind :capture
+                                        :request (format nil "req-big-~D" n)
+                                        :author "rowan" :stamp "2026-09-19T12:00:00Z")
+             ;; Mutations and completions interleave with the accepts, as they
+             ;; do in a real journal.
+             (when (zerop (mod n 7))
+               (kernel-operation-complete k :id (format nil "op-~D" n) :result (list :n n)))
+             (when (= n 50)
+               (setf cost-at-50
+                     (%lookups-during journal (lambda () (kernel-operation-list k :max 3))))))
+    (multiple-value-bind (cost values)
+        (%lookups-during journal (lambda () (kernel-operation-list k :max 3)))
+      (destructuring-bind (okp line code rows) values
+        (ok okp "list refused: ~A" line)
+        (check-equal 0 code "list exit code")
+        (ok (search "shown=3" line) "the listing is not capped: ~A" line)
+        (check-equal 3 (length rows) "--max did not bound the rows")
+        (ok (search "OPERATION ROW id=op-1 op=capture state=queued" (first rows))
+            "the first row: ~A" (first rows)))
+      ;; The bound: one record per shown row, whatever the history.
+      (ok (<= cost 3) "list --max 3 over 500 operations read ~D journal records" cost)
+      (check-equal cost-at-50 cost "the list's cost grew with the history"))
+    ;; The latest record of one id is one read, not a scan.
+    (multiple-value-bind (cost values)
+        (%lookups-during journal (lambda () (kernel-operation-status k :id "op-497")))
+      (ok (first values) "status refused: ~A" (second values))
+      (ok (search "state=done" (second values)) "status missed the completion: ~A" (second values))
+      (ok (<= cost 1) "status over 500 operations read ~D journal records" cost))
+    (multiple-value-bind (cost values)
+        (%lookups-during journal (lambda () (kernel-operation-cancel k :id "op-250"
+                                                                      :request "req-big-cancel")))
+      (ok (first values) "cancel refused: ~A" (second values))
+      ;; the record, the dedup lookup, the index folding the one new record,
+      ;; and the answer's record.
+      (ok (<= cost 4) "cancel over 500 operations read ~D journal records" cost))
+    ;; A brand-new kernel over the same journal answers the same page.
+    (let ((k2 (fresh :journal journal)))
+      (check-equal (nth-value 3 (kernel-operation-list k :max 3))
+                   (nth-value 3 (kernel-operation-list k2 :max 3))
+                   "a restart answered a different page"))))
+
+;;; ------------------------------------------------------------------
 ;;; The real-file-journal twin: close, reopen, replay.
 ;;; ------------------------------------------------------------------
 

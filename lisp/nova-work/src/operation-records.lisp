@@ -100,29 +100,113 @@ reader src/control.lisp:115 uses."
                   :reconciled (equal "yes" (%field head "reconciled"))
                   :result (if (equal "-" body) nil (read-restricted body)))))))))
 
+;;; ------------------------------------------------------------------
+;;; The journal-backed index. SPEC-WORK.md:2735-2737, :2761.
+;;; ------------------------------------------------------------------
+;;;
+;;; "No unbounded scan ... may hold the mutation loop: it is paginated"
+;;; (:2761), and `operation list` is "bounded and capped like every other
+;;; listing" (:2735-2737). A status, a list page or a cancel therefore never
+;;; walks the journal: they read an index of the journal's own records.
+;;;
+;;; The index holds no record. It holds, per operation id, the journal request
+;;; keys of that id's records, and the ids in the order they were accepted; every
+;;; answer is still read from the journal by `journal-lookup` on one of those
+;;; keys, so an id the journal no longer holds answers `no such operation` as
+;;; before. The index is the journal's, not the image's: it is keyed by the
+;;; journal handle, built from that journal's own accepted order, and folded
+;;; forward one entry per new journal record (each record is visited once, ever).
+;;; A brand-new handle over the same file builds it from the file's order, which
+;;; `open-file-journal` has already read frame by frame. It is bounded by what the
+;;; journal holds, which is bounded by the journal's capacity.
+
+(defstruct (operation-index (:constructor %make-operation-index))
+  (head nil)
+  (ids (make-array 16 :adjustable t :fill-pointer 0))
+  (keys (make-hash-table :test #'equal)))
+
+(defvar *operation-indexes*
+  (make-hash-table :test #'eq #+sbcl :weakness #+sbcl :key
+                              #+sbcl :synchronized #+sbcl t)
+  "Journal handle -> its `operation-index`. Weak on the handle: the index lives
+exactly as long as the journal it indexes.")
+
+(defun %lookup-operation-record (journal key)
+  "The operation record the journal holds under request KEY, or NIL."
+  (multiple-value-bind (found digest line) (journal-lookup journal key)
+    (declare (ignore digest))
+    (and (eq found t) (%parse-operation-line line))))
+
+(defun %operation-index (kernel)
+  "The kernel journal's operation index, folded forward over every record the
+journal accepted since the last fold -- those records alone. When the journal's
+accepted order no longer contains the last folded entry (the bounded fake
+evicted and rewrote its order), the index is rebuilt from the order it holds.
+An entry the journal cannot read right now commits nothing: the next call folds
+it again."
+  (let* ((journal (kernel-journal kernel))
+         (index (or (gethash journal *operation-indexes*)
+                    (setf (gethash journal *operation-indexes*) (%make-operation-index))))
+         (order (journal-order-slot journal))
+         (mark (operation-index-head index)))
+    (when (eq order mark)
+      (return-from %operation-index index))
+    ;; The order is newest first: walk it back to the last folded entry.
+    (let ((new '()) (tail order))
+      (loop until (or (null tail) (eq tail mark))
+            do (push (car tail) new)
+               (setf tail (cdr tail)))
+      (when (and mark (null tail))
+        ;; The mark is gone: NEW is the journal's whole order. Rebuild.
+        (setf index (%make-operation-index)))
+      (let ((folded '()))
+        (dolist (key new)
+          (multiple-value-bind (found digest line) (journal-lookup journal key)
+            (declare (ignore digest))
+            (unless (eq found t)
+              (return-from %operation-index
+                (or (gethash journal *operation-indexes*) index)))
+            (let ((record (%parse-operation-line line)))
+              (when record (push (cons (getf record :id) key) folded)))))
+        (dolist (entry (nreverse folded))
+          (destructuring-bind (id . key) entry
+            (unless (nth-value 1 (gethash id (operation-index-keys index)))
+              (vector-push-extend id (operation-index-ids index)))
+            (push key (gethash id (operation-index-keys index)))))
+        (setf (operation-index-head index) order
+              (gethash journal *operation-indexes*) index)
+        index))))
+
 (defun kernel-operation-records (kernel &optional id)
   "Every operation record the kernel's journal holds, oldest first; those of ID
 alone when ID is given. This is the whole store: nothing about an operation
-lives in the image (SPEC-WORK.md:2728-2733)."
-  (let ((out '()))
-    (dolist (request (journal-order (kernel-journal kernel)))
-      (multiple-value-bind (found digest line) (journal-lookup (kernel-journal kernel) request)
-        (declare (ignore digest))
-        (when (eq found t)
-          (let ((record (%parse-operation-line line)))
-            (when (and record (or (null id) (equal id (getf record :id))))
-              (push record out))))))
-    (nreverse out)))
+lives in the image (SPEC-WORK.md:2728-2733). With ID it reads that id's records
+only, through the index; without ID it is the whole-journal audit walk, which no
+verb calls."
+  (if id
+      (let ((journal (kernel-journal kernel))
+            (out '()))
+        (dolist (key (gethash id (operation-index-keys (%operation-index kernel))) out)
+          (let ((record (%lookup-operation-record journal key)))
+            (when (and record (equal id (getf record :id)))
+              (push record out)))))
+      (let ((out '()))
+        (dolist (request (journal-order (kernel-journal kernel)))
+          (let ((record (%lookup-operation-record (kernel-journal kernel) request)))
+            (when record (push record out))))
+        (nreverse out))))
 
 (defun kernel-operation-record (kernel id)
-  "The latest record for ID, or NIL when the journal holds no id like it."
-  (car (last (kernel-operation-records kernel id))))
+  "The latest record for ID, or NIL when the journal holds no id like it. One
+journal lookup: the index names the key of ID's latest record."
+  (let ((key (first (gethash id (operation-index-keys (%operation-index kernel))))))
+    (and key
+         (let ((record (%lookup-operation-record (kernel-journal kernel) key)))
+           (and record (equal id (getf record :id)) record)))))
 
 (defun kernel-operation-ids (kernel)
   "Every operation id the journal holds, in the order they were accepted."
-  (let ((seen '()))
-    (dolist (record (kernel-operation-records kernel) (nreverse seen))
-      (pushnew (getf record :id) seen :test #'equal))))
+  (coerce (operation-index-ids (%operation-index kernel)) 'list))
 
 (defun kernel-operation-result (kernel id)
   "The result a completed operation retained, retrievable by its id afterwards
@@ -225,21 +309,24 @@ line of SPEC-WORK.md:2734 at exit 2, never an invented state."
 
 (defun kernel-operation-list (kernel &key (max 20))
   "`operation list`, bounded and capped like every other listing
-(SPEC-WORK.md:2735-2737). One `OPERATION ROW` per id (grammar :5979)."
-  (let* ((ids (kernel-operation-ids kernel))
-         (shown (min max (length ids))))
+(SPEC-WORK.md:2735-2737). One `OPERATION ROW` per id (grammar :5979). It visits
+the first MAX ids of the index and reads one journal record for each: the work
+is bounded by --max, never by the journal's length (:2761)."
+  (let* ((ids (operation-index-ids (%operation-index kernel)))
+         (rows (loop for i below (min (max 0 max) (length ids))
+                     for id = (aref ids i)
+                     for record = (kernel-operation-record kernel id)
+                     when record
+                       collect (format nil "OPERATION ROW id=~A op=~A state=~A started=~A external=~A"
+                                       id
+                                       (string-downcase (symbol-name (getf record :kind)))
+                                       (string-downcase (symbol-name (getf record :state)))
+                                       (getf record :stamp)
+                                       (string-downcase (symbol-name (getf record :external)))))))
     (values t
-            (format nil "OPERATION OK op=- state=- shown=~D" shown)
+            (format nil "OPERATION OK op=- state=- shown=~D" (length rows))
             0
-            (loop for id in ids
-                  repeat shown
-                  for record = (kernel-operation-record kernel id)
-                  collect (format nil "OPERATION ROW id=~A op=~A state=~A started=~A external=~A"
-                                  id
-                                  (string-downcase (symbol-name (getf record :kind)))
-                                  (string-downcase (symbol-name (getf record :state)))
-                                  (getf record :stamp)
-                                  (string-downcase (symbol-name (getf record :external))))))))
+            rows)))
 
 (defun kernel-operation-complete (kernel &key id result (external :known))
   "The owning engine admits a validated result for ID. The record is durable;
