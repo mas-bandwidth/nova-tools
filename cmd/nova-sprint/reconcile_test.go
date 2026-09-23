@@ -119,6 +119,10 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 	seams := reconcileSeams
 	reconcileSeams = func() (deal.Dialer, deal.PRs) { return ssh, verbForge{} }
 	registered := reconcileDuties
+	// This control is the refill and the registration seam, so it runs with
+	// only its own two duties; the consumer duties (#3323) have their own
+	// control, TestConsumerVerbsRunOnce.
+	reconcileDuties = nil
 	extra := &countingDuty{}
 	registerReconcileDuty("ctl-extra", func(*store.Store) (reconcileDuty, error) { return extra, nil })
 	registerReconcileDuty("ctl-off", func(*store.Store) (reconcileDuty, error) { return nil, nil })
