@@ -1952,7 +1952,7 @@ func TestAdoptDoesNotTrustAPartialReleaseDir(t *testing.T) {
 			code := Run("nova-update", []string{"adopt", "--version", "v0.16.0",
 				"--machines", machinesFile(t, "hulk\n"), "--ssh", "/usr/bin/ssh",
 				"--from", from, "--bin", "~/.local/bin", "--dest", "~/build",
-				"--platform", "linux-amd64"}, &o, &e, Deps{SSH: s})
+				"--platform", "linux-amd64", "--no-certify"}, &o, &e, Deps{SSH: s})
 			if code != 0 {
 				t.Fatalf("code=%d errs=%s", code, e.String())
 			}

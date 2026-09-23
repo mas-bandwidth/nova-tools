@@ -22,10 +22,9 @@ import (
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-// sshRemote adapts this package's argv-shaped SSH edge to the script-shaped remote the
+// scriptRemote adapts this package's argv-shaped SSH edge to the script-shaped remote the
 // certification engine wants.
 //
 // The script is carried BASE64 ENCODED and decoded on the far side. That is not decoration:
@@ -33,14 +32,14 @@ import (
 // them with spaces, so a workload body -- which is heredocs, quoting and newlines -- cannot
 // survive as argv. Base64 is one word of [A-Za-z0-9+/=], which survives any reassembly, and
 // `openssl base64` decodes it on both a Linux bench and a Mac one.
-type sshRemote struct {
+type scriptRemote struct {
 	ssh SSH
 	// parent is the whole run's deadline. The engine bounds each workload on its own, and
 	// the two are ANDed here, so `--timeout` on the release still ends the release.
 	parent context.Context
 }
 
-func (r sshRemote) Run(ctx context.Context, target, script string) (string, error) {
+func (r scriptRemote) Run(ctx context.Context, target, script string) (string, error) {
 	bounded, cancel := r.parent, context.CancelFunc(func() {})
 	if deadline, ok := ctx.Deadline(); ok {
 		bounded, cancel = context.WithDeadline(r.parent, deadline)
@@ -50,10 +49,10 @@ func (r sshRemote) Run(ctx context.Context, target, script string) (string, erro
 	argv := []string{
 		"printf", "%s", encoded, "|", "openssl", "base64", "-d", "-A", "|", "sh",
 	}
-	// This function is the seam a caller reaches for even though the actual child is
-	// started one call deeper, inside r.ssh's own implementation (which guards itself
-	// too); r.ssh is SSH, always ssh here, so the guard is checked at both edges.
-	testguard.RefuseHosts("ssh", append([]string{target}, argv...)...)
+	// No host guard here, on purpose: this adapter starts no child. r.ssh is the injected
+	// SSH seam, and the concrete one (ExecSSH in edges.go) calls testguard.RefuseHosts at
+	// the edge where the process is started. Guarding here as well refused every test that
+	// injects a fake SSH under NOVA_TEST_NO_HOST=1, before the fake could answer.
 	return r.ssh.Run(bounded, target, argv)
 }
 
@@ -79,7 +78,7 @@ func certifyAdopted(ctx context.Context, o options, ssh SSH, machine, version st
 		// receipt it read back is what says so.
 		Build:   version,
 		Timeout: o.timeout,
-		Remote:  sshRemote{ssh: ssh, parent: ctx},
+		Remote:  scriptRemote{ssh: ssh, parent: ctx},
 		Stdout:  out, Stderr: errs,
 	})
 	if code == 0 {

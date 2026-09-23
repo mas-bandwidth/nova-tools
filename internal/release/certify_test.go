@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // certifySSH is fakeSSH plus the one thing certification needs: it reads the script back out
@@ -274,4 +275,45 @@ func mustCerts(t *testing.T, path string) []fleet.Certificate {
 		t.Fatal(err)
 	}
 	return certs
+}
+
+// armHostGuard turns NOVA_TEST_NO_HOST on for one test, as the Makefile does for the whole
+// run. The Reload cleanup is registered BEFORE t.Setenv, so it runs AFTER t.Setenv restores
+// the environment and the cached value always matches what the environment says.
+func armHostGuard(t *testing.T) {
+	t.Helper()
+	t.Cleanup(testguard.Reload)
+	t.Setenv(testguard.EnvNoHost, "1")
+	testguard.Reload()
+}
+
+// The adapter starts no child, so an injected fake SSH must answer under the host guard:
+// guarding the adapter as well refused every certify test before its fake could speak.
+func TestScriptRemoteWithAFakeSSHRunsUnderTheHostGuard(t *testing.T) {
+	armHostGuard(t)
+	s := &certifySSH{perClass: map[string]string{"go": "ok\n"}}
+	r := scriptRemote{ssh: s, parent: context.Background()}
+	out, err := r.Run(context.Background(), "hulk", "# nova-certify workload go\ntrue\n")
+	if err != nil || out != "ok\n" {
+		t.Fatalf("Run = %q, %v; want the fake's answer", out, err)
+	}
+	if len(s.scripts) != 1 {
+		t.Fatalf("fake saw %d scripts, want 1", len(s.scripts))
+	}
+}
+
+// The real seam stays refused: the same adapter over ExecSSH panics at the edge that
+// starts ssh, naming it, before any host is reached.
+func TestScriptRemoteOverTheRealSSHIsStillRefusedUnderTheHostGuard(t *testing.T) {
+	armHostGuard(t)
+	r := scriptRemote{ssh: ExecSSH{Path: "ssh"}, parent: context.Background()}
+	defer func() {
+		v := recover()
+		msg, _ := v.(string)
+		if !strings.Contains(msg, testguard.EnvNoHost) || !strings.Contains(msg, "hulk") {
+			t.Fatalf("recover() = %v; want the host guard's refusal naming the machine", v)
+		}
+	}()
+	_, _ = r.Run(context.Background(), "hulk", "true\n")
+	t.Fatal("Run over the real ssh returned under the host guard")
 }
