@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -28,8 +29,9 @@ import (
 // benchStandardWithTool runs the standard with `tool` installed at `at` (relative to the
 // fake HOME) and first on PATH, and returns the script's combined output. Everything else
 // about the bench is missing, so the script prints other DRIFT lines too and exits 1; only
-// the wall-toolchain lines are read here.
-func benchStandardWithTool(t *testing.T, tool, at string) (string, string) {
+// the wall-toolchain lines are read here. setup, when not nil, runs with the fake HOME after
+// the tool is in place and returns extra environment for the run.
+func benchStandardWithTool(t *testing.T, tool, at string, setup ...func(home string) []string) (string, string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("the bench standard is a bash script for a Linux bench")
@@ -49,6 +51,9 @@ func benchStandardWithTool(t *testing.T, tool, at string) (string, string) {
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"HOME="+home,
 	)
+	for _, f := range setup {
+		cmd.Env = append(cmd.Env, f(home)...)
+	}
 	out, _ := cmd.CombinedOutput() // a bench missing everything exits 1; the lines are the answer
 	return string(out), full
 }
@@ -112,5 +117,98 @@ func TestBenchStandardAcceptsAToolUnderAGrantedRoot(t *testing.T) {
 	outGo, pathGo := benchStandardWithTool(t, "go", "sdk/go1.26.6/bin/go")
 	if lines := driftLinesFor(outGo, "go"); len(lines) != 0 {
 		t.Errorf("a go at %s is under the granted $HOME/sdk and still drifted:\n%s", pathGo, strings.Join(lines, "\n"))
+	}
+}
+
+// wallReadRootsBegin/End bracket the standard's copy of the wall's linux read-root table, as
+// the NOVA_TOOLCHAIN_ROOTS markers bracket its copy of the toolchain roots.
+const (
+	wallReadRootsBegin = "# NOVA_WALL_READ_ROOTS BEGIN"
+	wallReadRootsEnd   = "# NOVA_WALL_READ_ROOTS END"
+)
+
+// TestBenchStandardAndTheWallNameTheSameReadRoots is Stella's hold on #1870 made a class
+// test: (3b) first shipped with a HAND-PICKED SUBSET of the wall's roots (no /etc, no
+// /run/systemd/resolve, no /dev, no /proc), so a toolchain the wall executes under one of
+// those was reported "under NO read root" and a conforming bench was rejected. The two
+// lists are ONE list, read here from both places -- linuxReadRoots in
+// internal/sandbox/wrap_linux.go (a linux-tagged unexported var, so read as source, which
+// also keeps this test running on the darwin benches) and the marker block in the script --
+// and must match in both directions and in order.
+func TestBenchStandardAndTheWallNameTheSameReadRoots(t *testing.T) {
+	root := repoRoot(t)
+	wallSrc, err := os.ReadFile(filepath.Join(root, "internal", "sandbox", "wrap_linux.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`(?m)^var linuxReadRoots = \[\]string\{([^}]*)\}`).FindSubmatch(wallSrc)
+	if m == nil {
+		t.Fatal("internal/sandbox/wrap_linux.go no longer declares `var linuxReadRoots = []string{...}` on one line; update this test's reader with it")
+	}
+	var fromWall []string
+	for _, q := range regexp.MustCompile(`"([^"]*)"`).FindAllSubmatch(m[1], -1) {
+		fromWall = append(fromWall, string(q[1]))
+	}
+	if len(fromWall) == 0 {
+		t.Fatal("the wall's linux read-root table parsed empty")
+	}
+
+	script, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(benchStandardScript)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(script)
+	b, e := strings.Index(body, wallReadRootsBegin), strings.Index(body, wallReadRootsEnd)
+	if b < 0 || e < b {
+		t.Fatalf("%s carries no %q ... %q block: check (3b)'s roots must be the wall's table, bracketed", benchStandardScript, wallReadRootsBegin, wallReadRootsEnd)
+	}
+	sm := regexp.MustCompile(`NOVA_WALL_READ_ROOTS="([^"]*)"`).FindStringSubmatch(body[b:e])
+	if sm == nil {
+		t.Fatalf("the %s block in %s sets no NOVA_WALL_READ_ROOTS=\"...\"", wallReadRootsBegin, benchStandardScript)
+	}
+	fromStandard := strings.Fields(sm[1])
+	if strings.Join(fromStandard, " ") != strings.Join(fromWall, " ") {
+		t.Errorf("check (3b) and the wall name different linux read roots:\n  %s: %v\n  internal/sandbox/wrap_linux.go linuxReadRoots: %v\nThey are ONE list: a root the wall grants and (3b) omits rejects a conforming bench. Edit both sides together.",
+			benchStandardScript, fromStandard, fromWall)
+	}
+	// The block is only half the rule: the loop must actually read it (and the per-machine
+	// resolver directory), or the block is decoration.
+	if !strings.Contains(body, `for root in $NOVA_WALL_READ_ROOTS $wall_resolv_dir "$HOME_DIR/sdk"; do`) {
+		t.Errorf("check (3b)'s root loop does not read $NOVA_WALL_READ_ROOTS, the resolver directory and $HOME/sdk")
+	}
+}
+
+// TestBenchStandardGrantsTheResolverDirectoryTheWallGrants is the dynamic half of the same
+// hold: linuxRoots() adds the directory /etc/resolv.conf RESOLVES to (#1737; /mnt/wsl on
+// WSL2), so a tool under that directory is wall-executable and (3b) must accept it. The
+// fixture stands a symlinked resolv.conf in the fake HOME through NOVA_RESOLV_CONF, the
+// script's seam for the wall's resolvConfPath. The control is the same layout WITHOUT the
+// resolver pointing there, which must drift -- so the acceptance is the resolver grant and
+// not an accident of where the fixture lives.
+func TestBenchStandardGrantsTheResolverDirectoryTheWallGrants(t *testing.T) {
+	t.Parallel()
+
+	resolver := func(home string) []string {
+		wsl := filepath.Join(home, "mnt", "wsl")
+		if err := os.WriteFile(filepath.Join(wsl, "resolv.conf"), []byte("nameserver 10.255.255.254\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(home, "etc-resolv.conf")
+		if err := os.Symlink(filepath.Join(wsl, "resolv.conf"), link); err != nil {
+			t.Fatal(err)
+		}
+		return []string{"NOVA_RESOLV_CONF=" + link}
+	}
+	out, path := benchStandardWithTool(t, "sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl", resolver)
+	if lines := driftLinesFor(out, "sbcl"); len(lines) != 0 {
+		t.Errorf("an sbcl at %s is under the resolver directory the wall grants and still drifted:\n%s", path, strings.Join(lines, "\n"))
+	}
+
+	missing := func(home string) []string {
+		return []string{"NOVA_RESOLV_CONF=" + filepath.Join(home, "no-resolv.conf")}
+	}
+	outCtl, pathCtl := benchStandardWithTool(t, "sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl", missing)
+	if got := driftLinesFor(outCtl, "sbcl"); len(got) != 1 {
+		t.Errorf("control: an sbcl at %s with no resolver pointing there drew %d wall-toolchain DRIFT lines, want 1:\n%s", pathCtl, len(got), outCtl)
 	}
 }
