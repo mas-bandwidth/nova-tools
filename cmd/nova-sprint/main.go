@@ -1,6 +1,5 @@
-// nova-sprint table keeps the last published sprint table across a unit
-// restart. It does not read Redis and it does not loop: the one-second
-// store is a later cut. This cut is the restart.
+// nova-sprint table reads a consistent Redis snapshot or keeps the last
+// published table across a unit restart when the next render is pending.
 //
 // A launchd kickstart -k SIGTERMs the unit's process group. The refresh
 // the unit starts is put in its own session (POSIX setsid) so that signal
@@ -11,13 +10,10 @@
 package main
 
 import (
-	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -32,12 +28,17 @@ usage:
   nova-sprint version
   nova-sprint help
   nova-sprint table --once (--fixture <file> [--out <file>] | --refresh pending --out <file>)
+  nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop] [--out <file>]
+  nova-sprint table --check --redis <addr>
   nova-sprint refresh -- <command> [arg...]
 
 table --fixture prints that file byte for byte, and with --out publishes it.
 table --refresh pending does not open --out: the previous table stays, and
-the command prints it again. An empty render is not published. There is no
-loop and no store read here.
+the command prints it again. An empty render is not published.
+The Redis form reads one consistent FCALL_RO snapshot per render; --loop
+renders once per second. The function library must already be loaded.
+Control sprints are hidden unless named with --sprint.
+--check reads an existing throwaway fixture store and compares exact output.
 
 refresh runs the command after -- in its own session (POSIX setsid) and
 returns without waiting, so a unit restart does not kill it. The loop
@@ -64,7 +65,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if len(args) > 1 {
 			return refuse(stderr, "help", "help takes no arguments")
 		}
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, usageWithRegisteredVerbs())
 		return 0
 	case "version", "--version":
 		if len(args) > 1 {
@@ -77,6 +78,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "refresh":
 		return cmdRefresh(args[1:], stdout, stderr)
 	default:
+		if code, ok := runRegistered(args[0], args[1:], stdout, stderr); ok {
+			return code
+		}
 		return refuse(stderr, "", fmt.Sprintf("unknown verb %s; table renders, refresh detaches", args[0]))
 	}
 }
@@ -88,82 +92,6 @@ func refuse(stderr io.Writer, verb, what string) int {
 	}
 	fmt.Fprintf(stderr, "nova-sprint%s: %s; run: nova-sprint help\n", where, oneline.Escape(what))
 	return 2
-}
-
-func cmdTable(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("table", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	once := fs.Bool("once", false, "")
-	fixture := fs.String("fixture", "", "")
-	out := fs.String("out", "", "")
-	refresh := fs.String("refresh", "", "")
-	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "table", err.Error()+"; it wants --once and either --fixture <file> or --refresh pending --out <file>")
-	}
-	var problems []string
-	if !*once {
-		problems = append(problems, "--once is required; the one-second loop is not this cut")
-	}
-	if fs.NArg() > 0 {
-		problems = append(problems, "takes flags, not positional arguments")
-	}
-	switch *refresh {
-	case "", "pending":
-	default:
-		problems = append(problems, "--refresh wants pending, which keeps the last table until the next render is ready")
-	}
-	if *fixture != "" && *refresh == "pending" {
-		problems = append(problems, "--fixture and --refresh pending disagree; one is a ready render and the other is not")
-	}
-	if *fixture == "" && *refresh != "pending" {
-		problems = append(problems, "pass --fixture <file> to render a ready table, or --refresh pending with --out to keep the last one")
-	}
-	if *refresh == "pending" && *out == "" {
-		problems = append(problems, "--refresh pending needs --out, the published table to keep")
-	}
-	if len(problems) > 0 {
-		return refuse(stderr, "table", strings.Join(problems, "; "))
-	}
-
-	var next []byte
-	ready := false
-	if *fixture != "" {
-		body, err := os.ReadFile(*fixture)
-		if err != nil {
-			return refuse(stderr, "table", "cannot read --fixture "+*fixture+": "+err.Error())
-		}
-		if len(bytes.TrimSpace(body)) == 0 {
-			return refuse(stderr, "table", "--fixture is empty; refusing to blank the table")
-		}
-		next = body
-		ready = true
-	}
-	res, err := sprinttable.Publish(*out, next, ready)
-	if err != nil {
-		return refuse(stderr, "table", err.Error())
-	}
-	if *out == "" {
-		if _, err := stdout.Write(res.Body); err != nil {
-			return refuse(stderr, "table", err.Error())
-		}
-		return 0
-	}
-	if res.Wrote {
-		fmt.Fprintf(stdout, "TABLE PUBLISHED out=%s bytes=%d\n", oneline.Field(*out), len(res.Body))
-		return 0
-	}
-	fmt.Fprintf(stdout, "TABLE KEPT out=%s bytes=%d reason=%s\n", oneline.Field(*out), len(res.Body), oneline.Field(res.Reason))
-	if len(res.Body) == 0 {
-		return 0
-	}
-	if _, err := stdout.Write(res.Body); err != nil {
-		return refuse(stderr, "table", err.Error())
-	}
-	if !bytes.HasSuffix(res.Body, []byte("\n")) {
-		fmt.Fprintln(stdout)
-	}
-	return 0
 }
 
 func cmdRefresh(args []string, stdout, stderr io.Writer) int {
