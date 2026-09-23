@@ -234,3 +234,34 @@ func TestDeniedPathRootsNameBothEntries(t *testing.T) {
 		}
 	}
 }
+
+// TestShellDenialReaderAnswersAsShellDenied: the streaming reader the run now asks (Johnny's
+// hold on #1478) gives exactly ShellDenied's answer on the same bytes, however the child's
+// writes happen to be split, including a last line with no newline.
+func TestShellDenialReaderAnswersAsShellDenied(t *testing.T) {
+	captures := []string{
+		"STEP 1 plan\nSTEP 3 run the gate\n/usr/bin/bash: line 1: /opt/sdk/go1.26.5/bin/go: Permission denied\nSTEP 4 report\n",
+		"STEP 2 x\nzsh: permission denied: /opt/sdk tool/bin/go",
+		"STEP 2 x\ncat: /etc/shadow: Permission denied\nall fine\n",
+		"",
+	}
+	for _, c := range captures {
+		want, wantOK := ShellDenied([]byte(c))
+		for _, chunk := range []int{1, 3, 7, len(c) + 1} {
+			r := NewShellDenialReader()
+			for i := 0; i < len(c); i += chunk {
+				end := i + chunk
+				if end > len(c) {
+					end = len(c)
+				}
+				if n, err := r.Write([]byte(c[i:end])); err != nil || n != end-i {
+					t.Fatalf("Write(%q) = %d, %v", c[i:end], n, err)
+				}
+			}
+			got, ok := r.Denied()
+			if ok != wantOK || got != want {
+				t.Errorf("capture %q in chunks of %d: reader said %+v %v, ShellDenied said %+v %v", c, chunk, got, ok, want, wantOK)
+			}
+		}
+	}
+}

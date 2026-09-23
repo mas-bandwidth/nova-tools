@@ -133,3 +133,38 @@ func TestWalledRefusalOffersTheReadRootsAsOnePossibility(t *testing.T) {
 		t.Errorf("a walled run's refusal is still an unverified cause; it reads:\n%s", line)
 	}
 }
+
+// TestADenialTheCardRewroteStillRefuses is Johnny's hold on #1478 at 29047871, the #1892
+// class: the shell-denial verdict was read from `<job>/harness-output.log` by path after the
+// child exited, and that name is in the card's own --write directory and is its cwd. A card
+// that printed the denial and then replaced the file (or removed it, so the read failed) got
+// NATIVE OK. The verdict is now taken from the bytes the parent received; what the card does
+// to the file afterwards cannot reach it.
+func TestADenialTheCardRewroteStillRefuses(t *testing.T) {
+	windowsIsNotABench(t)
+	bin := nativeHarness(t)
+	const refused = "/opt/sdk/go1.26.5/bin/go"
+	for name, card := range map[string]string{
+		"replaced after the denial": "FAKE-EXEC-REFUSED " + refused + "\nFAKE-REWRITE-CAPTURE\n",
+		"removed so the read fails": "FAKE-DROP-CAPTURE\nFAKE-EXEC-REFUSED " + refused + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, slot := aSlot(t)
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+				"--label", "rewrite-card", "--card", cardPath, "--slot", slot, "--root", root,
+				"--deadline", "30s", "--no-wall"}
+			var stdout, stderr bytes.Buffer
+			rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+			if strings.Contains(stdout.String(), "NATIVE OK") || rc == 0 {
+				t.Fatalf("a denial the card hid from its own capture file still returned OK (rc=%d):\n%s%s", rc, stdout.String(), stderr.String())
+			}
+			if line := stderr.String(); !strings.Contains(line, "NATIVE REFUSED") || !strings.Contains(line, refused) || !strings.Contains(line, "step=3") {
+				t.Errorf("the refusal names the denied path and the step from the parent's copy; it reads:\n%s", line)
+			}
+		})
+	}
+}

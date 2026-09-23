@@ -613,7 +613,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	capture := io.MultiWriter(log, harnessOut, timeline, reader)
+	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY (Johnny's hold on #1478,
+	// the #1892 class). `<job>/harness-output.log` is in the card's --write directory and is
+	// its cwd: a card can replace that name after it prints the denial, and a file read after
+	// Wait would then find nothing. This reader sees the bytes as they arrive, so no later
+	// rewrite, unlink or read error of that file can turn a denial into an OK.
+	denials := swarm.NewShellDenialReader()
+	capture := io.MultiWriter(log, harnessOut, timeline, reader, denials)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -853,10 +859,11 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	//
 	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
 	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
-	if raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log")); err == nil {
-		if sd, ok := swarm.ShellDenied(raw); ok {
-			res.shellDenial = sd
-		}
+	//
+	// AND IT IS ASKED OF THE BYTES THE PARENT RECEIVED, never of the job's file by path: the
+	// card owns that directory and can rewrite the name after the parent closes its fd.
+	if sd, ok := denials.Denied(); ok {
+		res.shellDenial = sd
 	}
 	if res.lost {
 		res.end = swarm.EndUnknown

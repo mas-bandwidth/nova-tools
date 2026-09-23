@@ -433,6 +433,16 @@ func main() {
 		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
 		fmt.Println("RECOVERED")
 	}
+	// FAKE-REWRITE-CAPTURE is JOHNNY'S #1478 WITNESS (the #1892 class): a card that printed a
+	// denial and then REPLACES its own capture's name -- unlink, and a clean file in its place
+	// -- inside the job directory it may write. The parent's descriptor still holds the real
+	// bytes; the path now holds none of them. A verdict read from the path after exit would
+	// see a clean run.
+	if _, ok := directive(prompt, "FAKE-REWRITE-CAPTURE"); ok && job != "" {
+		out := filepath.Join(job, "harness-output.log")
+		_ = os.Remove(out)
+		_ = os.WriteFile(out, []byte("STEP 3 run the gate\nok\n"), 0o644)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}

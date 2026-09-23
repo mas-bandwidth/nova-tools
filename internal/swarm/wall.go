@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -395,6 +396,94 @@ func ShellDenied(log []byte) (ShellDenial, bool) {
 		}
 	}
 	return ShellDenial{}, false
+}
+
+// ShellDenialReader is ShellDenied asked of the bytes AS THE PARENT RECEIVES THEM (Johnny's
+// hold on #1478 at 29047871, the #1892 class). The run used to ask ShellDenied of
+// `<job>/harness-output.log` by path after the child was gone -- a file inside the card's
+// own --write directory, and the card's cwd. A card could replace that name after printing
+// the denial (unlink and write a clean file), and a read error left the denial empty: either
+// way the run said NATIVE OK. This writer sits in the capture chain beside the logs, so the
+// verdict is taken from the parent's own copy of the child's output, and nothing the card
+// does to a file afterwards reaches it.
+//
+// It answers exactly what ShellDenied answers of the same bytes: the FIRST denial, with the
+// LAST `STEP <n>` in the whole capture. It is safe for the child's concurrent stdout and
+// stderr copies and never fails a write, so it can never take the card's own log down with it.
+type ShellDenialReader struct {
+	mu     sync.Mutex
+	buf    []byte
+	denial ShellDenial
+	denied bool
+	step   string
+}
+
+// NewShellDenialReader returns an empty reader for one run's capture.
+func NewShellDenialReader() *ShellDenialReader {
+	return &ShellDenialReader{}
+}
+
+// Write consumes the child's output line by line.
+func (r *ShellDenialReader) Write(p []byte) (int, error) {
+	if r == nil {
+		return len(p), nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.buf = append(r.buf, p...)
+	for {
+		i := strings.IndexByte(string(r.buf), '\n')
+		if i < 0 {
+			break
+		}
+		r.line(string(r.buf[:i]))
+		r.buf = r.buf[i+1:]
+	}
+	return len(p), nil
+}
+
+// line reads one complete line: a STEP mark moves the step, and the first denial is kept.
+func (r *ShellDenialReader) line(raw string) {
+	line := strings.TrimSpace(stripPaint(raw))
+	if line == "" {
+		return
+	}
+	if step := WallStep([]byte(line)); step != "" {
+		r.step = step
+	}
+	if r.denied {
+		return
+	}
+	if p, ok := deniedPath(line); ok {
+		r.denied, r.denial = true, ShellDenial{Path: p, Line: line}
+	}
+}
+
+// Denied is the first denial the capture held and whether it held one. A last line the child
+// left without a newline is read too, as ShellDenied reads the end of a file, without being
+// consumed, so a later Write still completes it.
+func (r *ShellDenialReader) Denied() (ShellDenial, bool) {
+	if r == nil {
+		return ShellDenial{}, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	denial, denied, step := r.denial, r.denied, r.step
+	if tail := strings.TrimSpace(stripPaint(string(r.buf))); tail != "" {
+		if s := WallStep([]byte(tail)); s != "" {
+			step = s
+		}
+		if !denied {
+			if p, ok := deniedPath(tail); ok {
+				denial, denied = ShellDenial{Path: p, Line: tail}, true
+			}
+		}
+	}
+	if !denied {
+		return ShellDenial{}, false
+	}
+	denial.Step = step
+	return denial, true
 }
 
 // deniedPath is the grammar, and nothing outside it is this class. Five spellings are read,
