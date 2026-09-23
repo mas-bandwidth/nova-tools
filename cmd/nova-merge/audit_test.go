@@ -27,6 +27,8 @@ var mergeAudit = audit.Config{
 		"main.go|require|name":                                          "a required flag's name, a literal at every call site in this file",
 		"main.go|require|wants":                                         "the sentence saying what that flag WANTS, a literal at every call site in this file",
 		"pass.go|cmdRun|*loop":                                          "a time.Duration this binary's own flag package parsed; its String() is digits and unit letters and holds no separator",
+		"land.go|cmdLand|*loop":                                         "a time.Duration this binary's own flag package parsed; its String() is digits and unit letters and holds no separator",
+		"land.go|runLandVerb|int(in.loop.Seconds())":                    "a positive integer rendered as loop seconds; its Itoa is digits and holds no separator",
 		"verbs.go|cmdGate|s.name":                                       "a required flag's name, one of the three literals in the table declared above the site",
 		"verbs.go|cmdGate|s.wants":                                      "the sentence saying what that flag WANTS, one of the three literals in the same table",
 		"verbs.go|cmdGate|benchErr":                                     "an error already escaped through oneline.Field and oneline.Err inside gateBenchValidate in gatebench.go",
