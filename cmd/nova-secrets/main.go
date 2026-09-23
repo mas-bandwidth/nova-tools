@@ -392,7 +392,11 @@ func runGateCLI(args []string) {
 		Head:         *headFlag,
 		MachinesPath: *machinesFlag,
 	})
-	fmt.Println(line)
+	if code != 0 {
+		fmt.Fprintln(os.Stderr, line)
+	} else {
+		fmt.Println(line)
+	}
 	os.Exit(code)
 }
 
