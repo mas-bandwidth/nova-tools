@@ -46,8 +46,10 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // tokens SPEC-TOOLWORK.md §5 rule 1 adds -- `kind-declared`, `paths-declared`, `test-named`
 // and `paused` -- whose rules live in internal/swarm/lintheader.go, beside a note on the
 // gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
-// and `depends-on` (#2636), which fires only under `--typed`.
-const cardLintChecks = 17
+// and `depends-on` (#2636), which fires only under `--typed`, and the four base checks of
+// internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
+// `deadline-p95` (#2636) -- which fire only under `--base-check`.
+const cardLintChecks = 21
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -93,11 +95,13 @@ var cardLintRemedies = map[string]string{
 // one listing and cardLintChecks counts one set. A token defined in both places is a
 // collision this init refuses to paper over.
 func init() {
-	for name, remedy := range swarm.CardHeaderRemedies {
-		if _, clash := cardLintRemedies[name]; clash {
-			panic("nova-swarm lint: two remedies for the rule " + name)
+	for _, table := range []map[string]string{swarm.CardHeaderRemedies, swarm.CardBaseRemedies} {
+		for name, remedy := range table {
+			if _, clash := cardLintRemedies[name]; clash {
+				panic("nova-swarm lint: two remedies for the rule " + name)
+			}
+			cardLintRemedies[name] = remedy
 		}
-		cardLintRemedies[name] = remedy
 	}
 }
 
@@ -367,6 +371,15 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// column named id/card/card-id/label, a header that names depends-on skipped — or one
 	// card id per line. With no file an id is not called unknown.
 	lineupPath := f.fs.String("lineup", "", "")
+	// `--base-check` IS THE ASK FOR THE FOUR BASE CHECKS OF A CODING CARD (#2636):
+	// PATHS resolve at base-sha in `--repo` (default the working directory), no STEP
+	// runs `git push` or `gh`, LEG is in the `--legs` fleet table, and DEADLINE is at
+	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
+	// pass: its check draws a finding that says MISSING and names the flag.
+	baseCheck := f.fs.Bool("base-check", false, "")
+	repoDir := f.fs.String("repo", ".", "")
+	legsPath := f.fs.String("legs", "", "")
+	p95Path := f.fs.String("p95", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -423,6 +436,23 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 		lineup = l
 	}
+	bc := swarm.BaseCheck{Repo: *repoDir}
+	if *baseCheck && *legsPath != "" {
+		l, err := swarm.ReadFleetLegs(*legsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --legs wants a readable fleet leg table, one leg per line or a TSV whose first column is the leg: %s\n", oneline.Err(err))
+			return 2
+		}
+		bc.Legs = l
+	}
+	if *baseCheck && *p95Path != "" {
+		p, err := swarm.ReadKindP95(*p95Path)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --p95 wants a readable table of `<kind> <seconds>` rows, the p95 wall of each kind's DONE cards (`*` answers for any kind): %s\n", oneline.Err(err))
+			return 2
+		}
+		bc.P95 = p
+	}
 	findings := lintCard(raw)
 	for _, hf := range swarm.LintCardHeader(raw, trust, *typed) {
 		findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
@@ -432,6 +462,11 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// cut before the key existed. `--typed` is the ask.
 	if *typed {
 		for _, hf := range swarm.LintCardDepends(raw, lineup) {
+			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
+		}
+	}
+	if *baseCheck {
+		for _, hf := range swarm.LintCardBase(raw, bc) {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
 	}

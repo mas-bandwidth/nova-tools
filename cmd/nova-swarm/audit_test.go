@@ -78,6 +78,13 @@ var swarmAudit = audit.Config{
 		// author writes -- and the worker name from the description, so nothing
 		// but Field-escaped fields can come back.
 		"swarm.PublicRefusalLine",
+		// l.Line (nova-tools#2033) is SlotLease.Line: every field of the SLOT list
+		// row -- id, owner, label, until, state, kind, weight, stranded -- goes
+		// through oneline.Field (or a numeric verb) inside internal/swarm before
+		// the string returns, so cmdSlotsList printing it whole cannot write past
+		// the escape. TestSlotsListMarksADeadHolderStrandedWithItsLabel is the
+		// behavioural test for this site.
+		"l.Line",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -146,6 +153,10 @@ var swarmAudit = audit.Config{
 		// column it occupies: Itoa of an int cannot hold a control character, and it
 		// holds no writer of its own.
 		`"strconv"`,
+		// sync/atomic (native.go, issue #2632) only increments the counter that
+		// distinguishes two results publishes in one process. AddUint64 returns a
+		// number; the package holds no writer and prints nothing.
+		`"sync/atomic"`,
 		// runtime (authmode.go, issue #915) reads GOOS and nothing else. It holds no
 		// writer, and the one value selects which permission-bit rule the auth copy asks:
 		// NTFS reports 0666 for every readable file, so the unix looseness check refused
