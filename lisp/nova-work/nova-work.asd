@@ -106,4 +106,5 @@
                 (:file "tests/replays-execution-reconcile")
                  (:file "tests/issue-2338")
                  (:file "tests/issue-1695")
-                (:file "tests/replays-e02-operations")))
+                (:file "tests/replays-e02-operations")
+                (:file "tests/criterion-e02-f04-02")))
