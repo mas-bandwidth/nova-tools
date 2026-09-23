@@ -680,23 +680,27 @@ func dsnEnvName(dsnEnv string) string {
 	return decide.LogDSNEnv
 }
 
-// excludeVoidedOutcomes drops from a list of entries every OUTCOME row whose
-// Time stamp a later void record retracts, and drops the void records
-// themselves. The summary then never sees a mistake: every stage's count
-// reflects only the rows still standing (SPEC-PULSE rule 18, #2034).
+// excludeVoidedOutcomes drops from a list of entries the one OUTCOME row each
+// void record retracts, and drops the void records themselves. The summary
+// then never sees a mistake: every stage's count reflects only the rows still
+// standing (SPEC-PULSE rule 18, #2034).
 //
-// Void records are gathered in a pre-pass because their position in the log
-// is below the row they void: a manager appends the correction after the
-// wrong row was written, and an outcome that comes earlier in the file
-// would be processed before its retraction was seen.
+// A void is keyed by unit AND Time stamp, and each distinct key removes at
+// most one outcome row (the earliest match): the stamp has second precision,
+// so another unit's outcome in the same second, or a later row of the same
+// unit, is never swept up with the one the manager retracted (Stella's hold
+// on #2850). Void records are gathered in a pre-pass so a void's position in
+// the log relative to its target does not matter.
 func excludeVoidedOutcomes(entries []decide.Entry) []decide.Entry {
-	voidedTimes := map[string]bool{}
+	type voidKey struct{ unit, time string }
+	pending := map[voidKey]bool{}
 	for _, e := range entries {
 		if strings.TrimSpace(e.Source) != sourceVoid {
 			continue
 		}
-		if key := voidTargetFromReason(e.Reason); key != "" {
-			voidedTimes[key] = true
+		key := voidKey{unit: outcomeUnit(e), time: voidTargetFromReason(e.Reason)}
+		if key.unit != "" && key.time != "" {
+			pending[key] = true
 		}
 	}
 	kept := make([]decide.Entry, 0, len(entries))
@@ -704,8 +708,12 @@ func excludeVoidedOutcomes(entries []decide.Entry) []decide.Entry {
 		if strings.TrimSpace(e.Source) == sourceVoid {
 			continue
 		}
-		if strings.TrimSpace(e.Source) == decide.SourceOutcome && voidedTimes[strings.TrimSpace(e.Time)] {
-			continue
+		if strings.TrimSpace(e.Source) == decide.SourceOutcome {
+			key := voidKey{unit: outcomeUnit(e), time: strings.TrimSpace(e.Time)}
+			if pending[key] {
+				delete(pending, key) // one void key retracts one row
+				continue
+			}
 		}
 		kept = append(kept, e)
 	}

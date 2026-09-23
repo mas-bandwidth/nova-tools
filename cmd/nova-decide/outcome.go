@@ -27,7 +27,7 @@ const (
 	resultSkipped = "skipped"
 	// resultVoid retracts an earlier outcome row -- the manager's correction
 	// of a row that was not true. A void APPENDS its own row keyed to the
-	// target's Time stamp; both stand, and the summary excludes the voided
+	// target's unit and Time stamp (exactly one row); both stand, and the summary excludes the voided
 	// row from every count (SPEC-PULSE rule 18, nova-tools #2034).
 	resultVoid = "void"
 )
@@ -73,8 +73,8 @@ func outcomeFor(result string) (string, bool) {
 // unit no decision routed is a refusal rather than a row.
 //
 // --result void is the fifth word (nova-tools #2034, SPEC-PULSE rule 18):
-// it appends a SourceVoid row keyed by --of-time to the original outcome's
-// Time stamp. Both rows stand and the summary excludes the voided row from
+// it appends a SourceVoid row keyed by --unit-id and --of-time to exactly one
+// original outcome row (an ambiguous pair is refused). Both rows stand and the summary excludes the voided row from
 // every count, so a tuning table the manager could not take back is the
 // one the receipt no longer costs a route its floor.
 func runOutcome(args []string, stdout, stderr io.Writer) int {
@@ -82,7 +82,7 @@ func runOutcome(args []string, stdout, stderr io.Writer) int {
 	logPath := fs.String("log", "", "the escalation log the decision was written to (JSON lines)")
 	unitID := fs.String("unit-id", "", "the unit's id, exactly as the decision carried it")
 	result := fs.String("result", "", "what happened: "+strings.Join(results, " | "))
-	ofTime := fs.String("of-time", "", "with --result void: the RFC3339 Time of the outcome row to retract; refuse to guess one")
+	ofTime := fs.String("of-time", "", "with --result void: the RFC3339 Time of the --unit-id outcome row to retract; refuse to guess one")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -132,11 +132,16 @@ func runOutcome(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "OUTCOME", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	target := strings.TrimSpace(*ofTime)
-	targetUnit, targetKind := findVoidTarget(entries, target)
-	if targetUnit == "" {
+	targetUnit, targetKind, matches := findVoidTarget(entries, strings.TrimSpace(*unitID), target)
+	if matches == 0 {
 		return refuse(stderr, "OUTCOME", "no-target", fmt.Sprintf(
-			"--of-time %s does not key an outcome row in this log; a void is the key of one outcome row, not an id the call may invent",
-			oneline.Field(target)))
+			"--unit-id %s --of-time %s does not key an outcome row in this log; a void is the key of one outcome row, not an id the call may invent",
+			oneline.Field(*unitID), oneline.Field(target)))
+	}
+	if matches > 1 {
+		return refuse(stderr, "OUTCOME", "ambiguous-target", fmt.Sprintf(
+			"--unit-id %s --of-time %s keys %d outcome rows (the stamp has second precision); a void retracts exactly one row and will not guess which",
+			oneline.Field(*unitID), oneline.Field(target), matches))
 	}
 	row := voidEntry(targetUnit, targetKind, target, now())
 	if err := decide.AppendEntry(*logPath, row); err != nil {
@@ -162,31 +167,47 @@ func voidEntry(unit, kind, targetTime string, now_ time.Time) decide.Entry {
 	}
 }
 
-// findVoidTarget looks up the outcome row whose Time stamp the caller named,
-// returning its unit and kind so the void record can carry the same facts the
-// retracted row did. A target that does not key a row is a refusal: a void
-// without a target would be a row the summary cannot join to its mistake.
-func findVoidTarget(entries []decide.Entry, target string) (string, string) {
+// findVoidTarget looks up the outcome row the caller named by unit AND Time
+// stamp, returning its unit and kind so the void record can carry the same
+// facts the retracted row did, plus how many rows matched. The stamp alone is
+// not a key: OutcomeEntry writes RFC3339 at second precision, so two units'
+// outcomes can share one (Stella's hold on #2850). Zero matches is no target
+// and more than one is ambiguous; the caller refuses both, so a void written
+// to the log always names exactly one outcome row.
+func findVoidTarget(entries []decide.Entry, unit, target string) (string, string, int) {
+	unit = strings.TrimSpace(unit)
 	target = strings.TrimSpace(target)
-	if target == "" {
-		return "", ""
+	if unit == "" || target == "" {
+		return "", "", 0
 	}
+	var gotKind string
+	matches := 0
 	for _, e := range entries {
 		if e.Source != decide.SourceOutcome {
 			continue
 		}
-		if strings.TrimSpace(e.Time) != target {
+		if strings.TrimSpace(e.Time) != target || outcomeUnit(e) != unit {
 			continue
 		}
-		unit := e.Unit
-		if unit == "" {
-			unit = strings.TrimSpace(e.Evidence.ID)
+		matches++
+		if matches == 1 {
+			gotKind = e.Kind
+			if gotKind == "" {
+				gotKind = strings.TrimSpace(e.Evidence.Kind)
+			}
 		}
-		kind := e.Kind
-		if kind == "" {
-			kind = strings.TrimSpace(e.Evidence.Kind)
-		}
-		return unit, kind
 	}
-	return "", ""
+	if matches == 0 {
+		return "", "", 0
+	}
+	return unit, gotKind, matches
+}
+
+// outcomeUnit is the unit an outcome row belongs to: Unit, or the evidence id
+// on a row written before Unit was carried.
+func outcomeUnit(e decide.Entry) string {
+	if u := strings.TrimSpace(e.Unit); u != "" {
+		return u
+	}
+	return strings.TrimSpace(e.Evidence.ID)
 }

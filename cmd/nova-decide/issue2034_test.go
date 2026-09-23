@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 )
@@ -94,5 +95,77 @@ func TestIssue2034VoidRefusesWithoutTarget(t *testing.T) {
 	}
 	if !strings.HasPrefix(stderr.String(), "OUTCOME REFUSED reason=") {
 		t.Errorf("the refusal names its reason, got %q", stderr.String())
+	}
+}
+
+// Stella's hold on #2850: an outcome's Time is RFC3339 at second precision, so
+// two units' outcomes can share one stamp. A void names --unit-id AND
+// --of-time and retracts exactly that one row; the other unit's outcome in the
+// same second stands and still counts (nova-tools #2034).
+func TestIssue2034VoidTiesToOneRowInTheSameSecond(t *testing.T) {
+	saved := now
+	defer func() { now = saved }()
+	fixed := time.Date(2026, 9, 23, 20, 0, 0, 0, time.UTC)
+	now = func() time.Time { return fixed }
+
+	log := routeThen(t, "same-a", "row-test")
+	stdout, stderr := &bytes.Buffer{}, &bytes.Buffer{}
+	if code := run([]string{"route", "--unit-id", "same-b", "--kind", "row-test", "--files", "1", "--packages", "1", "--no-jev", "--log", log}, stdout, stderr); code != 0 {
+		t.Fatalf("route same-b exit = %d (stderr=%q)", code, stderr.String())
+	}
+	outcomeRun(t, log, "same-a", "green")
+	outcomeRun(t, log, "same-b", "green")
+	stamp := fixed.Format(time.RFC3339)
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"outcome", "--log", log, "--unit-id", "same-b", "--result", "void", "--of-time", stamp}, stdout, stderr); code != 0 {
+		t.Fatalf("void same-b exit = %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "unit=same-b") {
+		t.Errorf("the void names the unit it was asked to retract, got: %s", stdout.String())
+	}
+	rows := readRows(t, log)
+	var voidRow decide.Entry
+	if err := json.Unmarshal([]byte(rows[len(rows)-1]), &voidRow); err != nil {
+		t.Fatalf("the void row is not one JSON object: %v", err)
+	}
+	if voidRow.Unit != "same-b" {
+		t.Errorf("the void keyed the wrong unit's row: %+v", voidRow)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"log", "--log", log, "--summary"}, stdout, stderr); code != 0 {
+		t.Fatalf("log --summary exit = %d (stderr=%q)", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "successes=1") {
+		t.Errorf("same-a's green in the same second must still count, want successes=1: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "coverage=1/2") {
+		t.Errorf("only same-b's row is voided, want coverage=1/2: %s", stdout.String())
+	}
+
+	// A unit with no outcome at that stamp is no target, even though another
+	// unit's row carries the same Time.
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"outcome", "--log", log, "--unit-id", "nobody", "--result", "void", "--of-time", stamp}, stdout, stderr); code != 2 {
+		t.Fatalf("void of a unit with no row at the stamp: exit = %d, want 2 (stdout=%q)", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "reason=no-target") {
+		t.Errorf("want reason=no-target, got %q", stderr.String())
+	}
+
+	// Two rows of the SAME unit in the same second cannot be told apart by
+	// unit plus stamp: the verb refuses rather than retract a guess.
+	outcomeRun(t, log, "same-a", "red")
+	stdout.Reset()
+	stderr.Reset()
+	if code := run([]string{"outcome", "--log", log, "--unit-id", "same-a", "--result", "void", "--of-time", stamp}, stdout, stderr); code != 2 {
+		t.Fatalf("void of an ambiguous unit+stamp: exit = %d, want 2 (stdout=%q)", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "reason=ambiguous-target") {
+		t.Errorf("want reason=ambiguous-target, got %q", stderr.String())
 	}
 }
