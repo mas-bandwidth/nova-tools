@@ -148,7 +148,7 @@ func Guard(ctx context.Context, opts GuardOptions) (*GuardResult, error) {
 	sort.Strings(pkgs)
 	res.Packages = pkgs
 	for _, pkg := range pkgs {
-		if err := listPackage(ctx, wt, pkg); err != nil {
+		if err := listPackage(ctx, nil, wt, pkg); err != nil {
 			return res, err
 		}
 	}

@@ -389,8 +389,8 @@ func TestSignBig(t *testing.T) {
 // A build failure on the reverted side is NOT a kill (#1807). This shape -- a new symbol
 // with a test that genuinely asserts on it -- is the honest cost of that rule: mutate
 // cannot tell it apart from a call-only test that asserts nothing, so it is skipped with
-// the reason that says why. The remedy for a new-API card is mutation-kill's seed form
-// (T13), not a control that cannot see.
+// the reason that says why and the accept gate rejects it as vacuous-test. The remedy for
+// a new-API card is mutation-kill's seed form (T13), not a control that cannot see.
 func TestMutateDoesNotCountABuildFailureAsAKill(t *testing.T) {
 	dir := newRepo(t)
 	run(t, dir, "git", "checkout", "-q", "-b", "newapi")

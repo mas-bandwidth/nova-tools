@@ -74,6 +74,12 @@ type MutateOptions struct {
 	// an answer from a test that never ran, is the failure this whole verb exists to
 	// stop.
 	Test string
+	// Exec builds the command for every test run mutate makes, or is nil for
+	// exec.CommandContext. The accept gate (SPEC-TOOLWORK §1 rule 3) hands one that
+	// wraps the argv in nova-sandbox, so the suites it judges run inside the wall; the
+	// dir is the worktree the tests run in, and the wrapper names it as the cwd. Nothing
+	// else about the run changes: mutate still sets Dir and Env on what comes back.
+	Exec func(ctx context.Context, dir string, name string, args ...string) *exec.Cmd
 }
 
 // ErrTestNotRun is the class of refusal for a `--test` that could not be answered:
@@ -126,7 +132,9 @@ type MutateResult struct {
 	Selected string
 	// Reds are the units that failed with the change reverted, in file then name
 	// order. The per-file rule only ever needed the COUNT; the selected form needs
-	// to know which.
+	// to know which -- and so does the accept gate (SPEC-TOOLWORK §1), which asks
+	// whether the card's named TEST: is among them (named-test-not-red), a question
+	// a count alone cannot answer.
 	Reds []TestUnit
 }
 
@@ -237,7 +245,7 @@ func Mutate(ctx context.Context, opts MutateOptions) (*MutateResult, error) {
 		skipped[s.File] = true
 	}
 	for _, u := range groupByPkg(units) {
-		failed, reason := runUnits(ctx, wt, u)
+		failed, reason := runUnits(ctx, opts.Exec, wt, u)
 		if reason != "" {
 			for _, one := range u {
 				if !skipped[one.file] {
@@ -519,14 +527,19 @@ var goResult = regexp.MustCompile(`^\s*--- (PASS|FAIL|SKIP): ([A-Za-z_0-9]+)`)
 // symbol breaks the build when the symbol goes away while asserting nothing about it
 // (#1807). So the units are judged by nobody and a named skip reason comes back, exactly
 // as when the suite could not be run at all.
-func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]bool, skip string) {
+func runUnits(ctx context.Context, execFn func(context.Context, string, string, ...string) *exec.Cmd, wt string, units []unit) (failed map[string]bool, skip string) {
 	failed = map[string]bool{}
+	if execFn == nil {
+		execFn = func(ctx context.Context, _ string, name string, args ...string) *exec.Cmd {
+			return exec.CommandContext(ctx, name, args...)
+		}
+	}
 	if units[0].lisp {
 		script := units[0].name
 		if _, err := os.Stat(filepath.Join(wt, filepath.FromSlash(script))); err != nil {
 			return nil, "the lisp project has no run-tests.sh in the worktree"
 		}
-		cmd := exec.CommandContext(ctx, "sh", script)
+		cmd := execFn(ctx, wt, "sh", script)
 		cmd.Dir = wt
 		err := cmd.Run()
 		if reason := budgetEnded(ctx.Err()); reason != "" {
@@ -551,13 +564,18 @@ func runUnits(ctx context.Context, wt string, units []unit) (failed map[string]b
 	if units[0].pkg == "." {
 		args[len(args)-1] = "./"
 	}
-	cmd := exec.CommandContext(ctx, "go", args...)
+	cmd := execFn(ctx, wt, "go", args...)
 	cmd.Dir = wt
 	// The verdict is a property of the range, never of the environment mutate was
 	// started in. A caller's GOFLAGS=-json -- which is what CI's `make test`
 	// exports -- would make this run answer in JSON, no `--- PASS:` line would
-	// match below, and the unit that stayed green would be counted red.
-	cmd.Env = goenv.Clean(os.Environ())
+	// match below, and the unit that stayed green would be counted red. But an Env
+	// the seam SET is the seam's -- the accept gate's HOME and GOCACHE inside its wall
+	// -- and is kept: replacing it ran the card's tests with the operator's HOME, which
+	// the real wall refused (cold read 2 of #1721, CRITICAL).
+	if cmd.Env == nil {
+		cmd.Env = goenv.Clean(os.Environ())
+	}
 	out, err := cmd.CombinedOutput()
 	return runVerdict(ctx.Err(), string(out), err, units)
 }
@@ -580,6 +598,12 @@ func runVerdict(ctxErr error, text string, ran error, units []unit) (failed map[
 		if !errors.As(ran, &ee) {
 			return nil, fmt.Sprintf("go test could not be run: %v", ran)
 		}
+		switch ee.ExitCode() {
+		case 125, 126, 127:
+			// nova-sandbox's own exits: refused, not executed, not found. The suite
+			// never ran; nothing here is a verdict on the range.
+			return nil, fmt.Sprintf("the suite could not be run: the wall answered exit %d: %s", ee.ExitCode(), firstLine(text))
+		}
 	}
 	// A package that fails to compile prints no per-test result at all, and that is not
 	// a kill: a test that merely CALLS the fix's new symbol breaks the build when the
@@ -589,6 +613,7 @@ func runVerdict(ctxErr error, text string, ran error, units []unit) (failed map[
 	if strings.Contains(text, "[build failed]") || strings.Contains(text, "[setup failed]") {
 		return nil, SkipRevertNoCompile + ": the package did not compile with the change reverted, so the tests in it assert nothing that the revert could disprove"
 	}
+	results := 0
 	sc := bufio.NewScanner(strings.NewReader(text))
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -596,19 +621,29 @@ func runVerdict(ctxErr error, text string, ran error, units []unit) (failed map[
 		if m == nil {
 			continue
 		}
+		results++
 		if m[1] == "FAIL" {
 			failed[m[2]] = true
 		}
 	}
-	// A run that exited non-zero with no FAIL line at all (a panic before any result,
-	// a timeout inside the binary) is evidence the package's tests do not pass, and
-	// every unit it was asked for counts red rather than silently green. A run the
-	// CALLER'S budget killed never reaches here -- budgetEnded above returned a skip --
-	// because that one is evidence about the bench and not about the tests.
+	// HOLD on #1721 (johnny-357c06749499): a kill is never read off free text a
+	// card's own TestMain or init can print -- "panic:" and a bare "FAIL\t" line
+	// are exactly that. Only a --- FAIL: line (scored above) says which unit died;
+	// a non-zero exit with none named is "could not be run", whatever the process
+	// printed alongside it.
 	if ran != nil && len(failed) == 0 {
-		for _, u := range units {
-			failed[u.name] = true
+		if results == 0 {
+			return nil, "the suite could not be run: the run exited non-zero with no test result: " + firstLine(text)
 		}
+		return nil, "the suite could not be run: the run exited non-zero with no --- FAIL: line naming a unit: " + firstLine(text)
+	}
+	// And the other half of the same HOLD: a "--- FAIL:" line is still a line the card
+	// prints, and this repo's own suites build fake go-test transcripts for a living.
+	// The exit status is the one channel the card does not write, and a go test with a
+	// failed unit never exits 0. A FAIL line beside a zero exit is a claim the status
+	// contradicts, so it names no kill: both must agree before a unit is scored red.
+	if ran == nil && len(failed) > 0 {
+		return nil, "the suite could not be run: the run printed a --- FAIL: line but exited 0, so its output and its status disagree: " + firstLine(text)
 	}
 	return failed, ""
 }
@@ -656,7 +691,10 @@ func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 // worker's clean filters, and write the seed into the copy the gate was
 // pointed at (#1897).
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", append([]string{"--no-replace-objects"}, args...)...)
+	// No hook and no filesystem monitor, whatever the repository's own config says: a
+	// hook is a program the repository chose, and a gate runs none of them.
+	argv := append([]string{"--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false"}, args...)
+	cmd := exec.CommandContext(ctx, "git", argv...)
 	cmd.Dir = dir
 	cmd.Env = dropGitIdentity(goenv.WithoutSecrets(goenv.Clean(os.Environ())))
 	out, err := cmd.Output()

@@ -35,6 +35,12 @@ type fakeRule struct {
 	StdoutFile string `json:"stdoutFile,omitempty"`
 	Stderr     string `json:"stderr,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
+	// Exec runs the command after `--` (testdata/fakebin): the fake nova-sandbox the
+	// accept gate's tests put in front of PATH, so the real go build, vet and test run
+	// while the argv is still logged.
+	// CwdContains matches on the fake's working directory (testdata/fakebin).
+	CwdContains string `json:"cwdContains,omitempty"`
+	Exec        bool   `json:"exec,omitempty"`
 }
 
 // fakeSpec is one fake program: where it records its argv, the arms it answers, and the
@@ -48,7 +54,7 @@ type fakeSpec struct {
 // fakeTools are the names the shared bin directory answers to: every program nova-pulse
 // starts. A name with no spec in the test's directory exits 97 and says so, which is how a
 // test proves the fake ran and the real tool did not.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge", "systemctl"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "nova-merge", "nova-sandbox", "systemctl"}
 
 var (
 	fakeRoot    string // the one directory outside t.TempDir(), owned by TestMain

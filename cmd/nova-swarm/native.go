@@ -17,6 +17,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -1391,17 +1392,11 @@ func writeNativeArgvLog(slotDir, runPath string, runArgv, env []string) {
 	fmt.Fprintf(f, "argv: %s\n", oneline.Escape(strings.Join(append([]string{runPath}, runArgv...), " ")))
 	for _, kv := range env {
 		name, val, _ := strings.Cut(kv, "=")
-		if keepNativeSecretName(name) {
+		if goenv.IsSecretName(name) {
 			val = "<redacted>"
 		}
 		fmt.Fprintf(f, "env: %s=%s\n", oneline.Escape(name), oneline.Escape(val))
 	}
-}
-
-// keepNativeSecretName says whether a name carries a secret, which the argv log redacts.
-func keepNativeSecretName(name string) bool {
-	up := strings.ToUpper(name)
-	return strings.Contains(up, "KEY") || strings.Contains(up, "TOKEN") || strings.Contains(up, "SECRET")
 }
 
 // wallNamed reads the SANDBOX OK line out of the wall's captured stderr and returns the
