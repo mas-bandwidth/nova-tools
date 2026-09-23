@@ -1605,7 +1605,7 @@ H3. SPEC-AHEAD: #1624
    monotonic clock around the call alone, and `wall_ms`, from the verb's start to its line. Each
    is absent, never zero, where there was no call or no measurement, by the per-counter presence
    rule. The `ROUTE` and `CLASSIFY` lines carry `ms=<n|->`. `log --summary` prints the median and
-   the 95th percentile per question and per decider. The hurt: the adoption's claim is wall clock
+    the 95th percentile (p95) per question and per decider. The hurt: the adoption's claim is wall clock
    as much as tokens, the spec quotes "about 400 ms" from a trial with "no retained file" (:38-40), and 553
    rows later the log cannot say whether that is true.
 

@@ -311,6 +311,7 @@
     #:node-repo
     #:repo-holder
     #:node-type
+    #:node-kind
     #:node-view
     #:node-parent
     #:node-children
@@ -757,6 +758,13 @@
    #:accept-record-of
    #:accept-journal-count
    #:recover-operation
+   ;; the local recovery journal and the restart reconciliation
+   ;; (SPEC-WORK.md:2728-2733, :2759-2760)
+   #:*operation-journal-initial-state*
+   #:operation-journal-ids
+   #:reconcile-operation-registry
+   #:open-durable-operation-registry
+   #:close-durable-operation-registry
    #:session-operation-list
    #:registry-operation-list
    #:work-session-cancellations
@@ -2031,6 +2039,13 @@
     #:session-cache
     #:session-verification
     #:verification-session-cache-path
+    #:command-resolver
+    #:make-command-resolver
+    #:command-resolver-p
+    #:command-resolver-max-bytes
+    #:command-resolver-timeout
+    #:parse-resolver-output
+    #:run-resolver-command
     ;; the needs-met predicate and its five reason tokens (nova-tools #785,
     ;; SPEC-WORK.md:4740-4866)
     #:needs-view
@@ -2147,6 +2162,27 @@
     #:notes-supersede
     #:check-not-weaker-kind
     #:make-replacement-note
+    ;; correspondence actions: pending/confirmed/failed outbound actions with
+     ;; request ids and receipts (SPEC-WORK.md:7576-7581; E09-F02-03)
+     #:outbound-action
+     #:outbound-action-p
+     #:outbound-action-request
+     #:outbound-action-issue
+     #:outbound-action-kind
+     #:outbound-action-state
+     #:outbound-action-receipt
+     #:outbound-action-payload
+     #:outbound-request-conflict
+     #:outbound-request-conflict-request
+     #:outbound-request-conflict-reason
+     #:make-correspondence-ledger
+     #:correspondence-ledger-actions
+     #:start-outbound
+     #:confirm-outbound
+     #:fail-outbound
+     #:outbound-state
+     #:outbound-receipt
+     #:reopen-ledger
     ;; `execution reconcile` and `execution status` over the kernel's own
     ;; controls (SPEC-WORK.md:3997-4019); see src/execution-reconcile.lisp
     #:observation-manifest-id

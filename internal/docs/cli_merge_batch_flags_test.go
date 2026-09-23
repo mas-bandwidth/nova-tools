@@ -23,19 +23,26 @@ func TestTheCLIReferenceNamesEveryNovaMergeBatchFlag(t *testing.T) {
 		t.Fatalf("cmd/nova-merge/batch.go: %v; the batch verb's flag registrations are read from there", err)
 	}
 	flagRe := regexp.MustCompile(`f\.fs\.(?:String|Bool|Int|Duration)\("([^"]+)"`)
+	varRe := regexp.MustCompile(`f\.fs\.Var\([^,]+,\s*"([^"]+)"`)
 	type flag struct {
 		name string
 		line int
 	}
 	var flags []flag
 	seen := map[string]bool{}
+	add := func(name string, line int) {
+		if seen[name] {
+			return
+		}
+		seen[name] = true
+		flags = append(flags, flag{name: name, line: line})
+	}
 	for i, line := range strings.Split(string(source), "\n") {
 		for _, m := range flagRe.FindAllStringSubmatch(line, -1) {
-			if seen[m[1]] {
-				continue
-			}
-			seen[m[1]] = true
-			flags = append(flags, flag{name: m[1], line: i + 1})
+			add(m[1], i+1)
+		}
+		for _, m := range varRe.FindAllStringSubmatch(line, -1) {
+			add(m[1], i+1)
 		}
 	}
 	if len(flags) < 10 {

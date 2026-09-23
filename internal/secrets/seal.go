@@ -84,7 +84,7 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
-func RunSeal(opts SealOptions) (string, error) {
+func RunSeal(opts SealOptions) (line string, err error) {
 	if opts.StoreDir == "" {
 		return "", fmt.Errorf("missing --store <dir>")
 	}
@@ -156,13 +156,52 @@ func RunSeal(opts SealOptions) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
+
+	home, err := sealGitOutput(run, opts.StoreDir, opts.GitPath, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
 		return "", err
+	}
+	if home == "" || home == "HEAD" {
+		return "", fmt.Errorf("store %s is not on a branch; seal needs a named branch to return to", opts.StoreDir)
+	}
+	// checkout -f of home would discard these. Refuse before checkout -b.
+	status, err := sealGitOutput(run, opts.StoreDir, opts.GitPath, "status", "--porcelain", "-uno")
+	if err != nil {
+		return "", err
+	}
+	if status != "" {
+		return "", fmt.Errorf("store %s is not clean; commit, stash, or restore tracked changes before seal (git status). seal will not discard them", opts.StoreDir)
 	}
 
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, opts.Name, opts.Now().UTC().Format("20060102-150405"))
 	opts.say("committing on branch %s", branch)
 	if err := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-b", branch); err != nil {
+		return "", err
+	}
+	// #2016: restore the starting branch on every path; the seal commit stays on `branch`.
+	restored := false
+	restore := func() error {
+		if restored {
+			return nil
+		}
+		if rerr := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-f", home); rerr != nil {
+			return rerr
+		}
+		restored = true
+		return nil
+	}
+	defer func() {
+		if rerr := restore(); rerr != nil {
+			if err != nil {
+				err = fmt.Errorf("%s; also failed to return the store to %s: %s", oneline.Err(err), oneline.Field(home), oneline.Err(rerr))
+			} else {
+				err = rerr
+				line = ""
+			}
+		}
+	}()
+
+	if err := atomicWriteFile(targetFile, ciphertext, 0600); err != nil {
 		return "", err
 	}
 	if err := sealGit(run, opts.StoreDir, opts.GitPath, "add", seatFile); err != nil {
@@ -174,8 +213,12 @@ func RunSeal(opts SealOptions) (string, error) {
 	}
 
 	if opts.NoPR {
-		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed",
-			oneline.Field(opts.Name), oneline.Field(opts.AsName)), nil
+		opts.say("returning the store to its branch")
+		if err := restore(); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("SECRETS SEAL OK name=%s seat=%s committed branch=%s",
+			oneline.Field(opts.Name), oneline.Field(opts.AsName), oneline.Field(branch)), nil
 	}
 
 	opts.say("pushing the branch")
@@ -232,7 +275,7 @@ func RunSeal(opts SealOptions) (string, error) {
 	// Back to the branch the store was on: the squash leaves the seal branch stale, and a
 	// store parked on it would serve the next exec from a branch nobody merges again.
 	opts.say("returning the store to its branch and pulling")
-	if err := sealGit(run, opts.StoreDir, opts.GitPath, "checkout", "-"); err != nil {
+	if err := restore(); err != nil {
 		return "", err
 	}
 	if err := sealGit(run, opts.StoreDir, opts.GitPath, "pull"); err != nil {
@@ -427,11 +470,16 @@ func sealSopsEnv(keyPath, tmpDir string) []string {
 }
 
 func sealGit(run execCommand, dir, gitPath string, args ...string) error {
-	_, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
+	_, err := sealGitOutput(run, dir, gitPath, args...)
+	return err
+}
+
+func sealGitOutput(run execCommand, dir, gitPath string, args ...string) (string, error) {
+	out, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
 	if err != nil {
-		return fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
+		return "", fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
 	}
-	return nil
+	return strings.TrimSpace(string(out)), nil
 }
 
 func sealGH(run execCommand, ghPath, dir string, args ...string) (string, error) {
