@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -145,7 +146,7 @@ func TestGoFileParseErrorRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := filepath.Join(dir, "vet.cfg")
-	if err := os.WriteFile(cfg, []byte(`{"GoFiles":["`+bad+`"]}`), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"GoFiles":[`+strconv.Quote(bad)+`]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	refused(t, []string{cfg}, bad, "does not parse")
@@ -155,7 +156,7 @@ func TestVetxOutputUnwritableRefuses(t *testing.T) {
 	dir := t.TempDir()
 	vetx := filepath.Join(dir, "missing-dir", "vet.out")
 	cfg := filepath.Join(dir, "vet.cfg")
-	if err := os.WriteFile(cfg, []byte(`{"VetxOnly":true,"VetxOutput":"`+vetx+`"}`), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"VetxOnly":true,"VetxOutput":`+strconv.Quote(vetx)+`}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	refused(t, []string{cfg}, vetx, "unwritable")
