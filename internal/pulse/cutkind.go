@@ -295,8 +295,8 @@ func cutKindProblem(in CutKindInput) string {
 	case "docs-guard":
 		// repo is checked above
 	case "report":
-		if strings.TrimSpace(in.Title) == "" {
-			return "--title is required for a report card (pass the measurement objective)"
+		if isV2Cut(in) && strings.TrimSpace(in.Title) == "" {
+			return "--title is required for a v2 report card (pass the measurement objective)"
 		}
 	}
 	return ""
@@ -325,10 +325,12 @@ func cutKindKnown(kind string) bool {
 }
 
 // isV2Cut returns true if the input demands a Card Template v2 format,
-// either via explicit --v2 or through auto-selection (port, docs-guard, report,
-// reviewer line, or test command).
+// either via explicit --v2 or through auto-selection (port, docs-guard,
+// reviewer line, or test command). A bare --kind report is the text-only report
+// card already on dev; it is a v2 report only when one of the v2 signals above
+// asks for it.
 func isV2Cut(in CutKindInput) bool {
-	return in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard" || in.Kind == "report"
+	return in.V2 || in.ReviewerLine != "" || in.TestCommand != "" || in.Kind == "port" || in.Kind == "docs-guard"
 }
 
 // renderKindCard writes line 1, the source line, the prior attempt if there is one, the
