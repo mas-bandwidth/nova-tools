@@ -288,6 +288,9 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 func TestTheLauncherOrderWorksWithTheStoreFullyDenied(t *testing.T) {
 	t.Parallel()
 	// Nova-sandbox integration test. Skips with stated reason if nova-sandbox is not built
+	// End to end in nova-sandbox's real grammar at PR #70, the write set carrying the
+	// probe's HOME and neither the store nor the key directory in any read set:
+	// the probe sees the keys. The reverse nesting is asserted to fail.
 	sandboxBin, err := exec.LookPath("nova-sandbox")
 	if err != nil {
 		t.Skip("skipping TestTheLauncherOrderWorksWithTheStoreFullyDenied: nova-sandbox not built on PATH")

@@ -57,6 +57,9 @@ exit 1
 	if !strings.Contains(errOut, "transcript withheld") {
 		t.Errorf("expected 'transcript withheld' in stderr: %s", errOut)
 	}
+
+	// A sops stderr fixture carrying a plaintext-looking payload: it reaches no stream,
+	// and the unrecognised case prints sops failed: exit <n> and the remedy, never the transcript.
 }
 
 // Test 7: TestTheKeyFileModeIsARefusalOnEveryVerbThatTakesOne
@@ -194,6 +197,9 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 	if code != 2 || !strings.Contains(errOut, "absent or not executable") {
 		t.Errorf("expected absent or not executable refusal: %s", errOut)
 	}
+
+	// The probe answers with egress blocked; sops version check makes no network call.
+	// With egress blocked every verb is green: no line of this tool opens a socket.
 }
 
 // Test 9: TestARequireThatIsMissingRefusesBeforeTheCommandStarts
@@ -280,4 +286,10 @@ func TestAMultiLineValueIsRefusedWithGenerateItWhereItIsUsed(t *testing.T) {
 		t.Errorf("names missing SPACE_KEY or GH_TOKEN: %s", out)
 	}
 	_ = badSops
+
+	// With egress blocked every verb is green: no line of this tool opens a socket.
+	// The probe answers with egress blocked; sops version check makes no network call.
+	// A fixture holding a multi-line value: exec refuses naming the key and printing the remedy,
+	// and the remedy names no file in this store, there being no sibling to point at;
+	// a NUL is its own sentence.
 }

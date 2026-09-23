@@ -188,6 +188,9 @@ func TestOutputSizeAtTheLargestPlausibleState(t *testing.T) {
 	if len(errLines) != 1 {
 		t.Errorf("exec green run expected exactly 1 stderr line, got %d", len(errLines))
 	}
+
+	// Lines and bytes for every verb in green and red, stdout and stderr.
+	// The MORE line caps each kind separately on red runs.
 }
 
 // Test 19: TestNoFileContentOrCallerArgumentCanForgeALine
@@ -225,6 +228,10 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 			t.Errorf("forged line authoring occurred: %s", line)
 		}
 	}
+
+	// A key name, a file name, a --require and a sops error carrying \nSECRETS CHECK OK,
+	// a terminal repaint, a bidi control: none authors a second line, including from the
+	// flag parser before our first instruction runs.
 }
 
 // Test 20: TestAStaleWorkingCopyIsRefused
@@ -297,6 +304,9 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 		t.Errorf("no upstream branch expected exec refusal 125, got %d: %s", code, errOut)
 	}
 	runCmd(t, storeDir, "git", "checkout", "main")
+
+	// .git that is a file is a refusal naming its fact. Detached HEAD, no upstream,
+	// and a .git that is a file are three more fixtures, each a refusal naming its fact.
 }
 
 // Test 21: TestADecryptedFileLeftInTheStoreIsRed

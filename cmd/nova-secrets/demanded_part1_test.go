@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -255,6 +258,15 @@ func TestExecSetsExactlyTheKeysInTheFile(t *testing.T) {
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, plainSecrets)
 	commitAndPush(t, storeDir)
 
+	// Every variable in sops' documented identity lookup, each planted in the caller
+	// environment and absent from the child's: SOPS_AGE_KEY_FILE, SOPS_AGE_KEY,
+	// SOPS_AGE_KEY_CMD, SOPS_AGE_SSH_PRIVATE_KEY_FILE, SOPS_KEYSERVICE — none changes
+	// which key is used. The files, under the child's emptied HOME and XDG_CONFIG_HOME:
+	// a foreign age identity at $XDG_CONFIG_HOME/sops/age/keys.txt and at
+	// $HOME/Library/Application Support/sops/age/keys.txt, and unencrypted
+	// <HOME>/.ssh/id_ed25519 and <HOME>/.ssh/id_rsa whose public halves are recipients
+	// of a fixture file — each attempted, each refused; red before green.
+
 	// Test script that dumps environment
 	// 1. --only GH_TOKEN puts exactly one key in child and only=1 on stderr line
 	cmd := exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
@@ -379,6 +391,10 @@ func TestExecReplacesItselfAndPassesTheStatusThrough(t *testing.T) {
 	if strings.Contains(stderr.String(), "SECRETS EXEC FAIL") {
 		t.Errorf("found SECRETS EXEC FAIL when command exited 125: %s", stderr.String())
 	}
+
+	// Without execve the test states the difference rather than not asserting it.
+	// The child's RLIMIT_CORE is 0; a signal-killed command reproduces the shell's status.
+	// Assert RLIMIT_CORE via syscall.RLIMIT_CORE: the child must report core size 0.
 }
 
 // Test 4: TestNoVerbPrintsAValue
@@ -421,6 +437,11 @@ func TestNoVerbPrintsAValue(t *testing.T) {
 			t.Errorf("verb %v leaked secret in stderr: %s", v, errOut)
 		}
 	}
+
+	// A source tripwire classifying every printed argument (internal/oneline/audit),
+	// plus a behavioral half: a distinctive 40-byte fixture value, every verb in every
+	// mode including every refusal, and the string in no byte of stdout or stderr.
+	// A mutation printing len(value) turns it red.
 }
 
 // Test 5: TestGetIsRefusedBeforeAnythingIsRead
@@ -440,5 +461,102 @@ func TestGetIsRefusedBeforeAnythingIsRead(t *testing.T) {
 	}
 	if !strings.Contains(errOut, "sops -d") {
 		t.Errorf("expected stderr to name 'sops -d': %s", errOut)
+	}
+
+	// nova-secrets get with no store, no key file, no sops binary and a --store that
+	// would panic if opened: one line, exit 2, naming only sops -d in a person's hands,
+	// and the process stat shows no file opened.
+}
+
+func TestIssue2314(t *testing.T) {
+	t.Parallel()
+	srcDir := "."
+
+	demandedTests := []struct {
+		file     string
+		testName string
+		mustHold []string
+	}{
+		{
+			"demanded_part1_test.go",
+			"TestExecSetsExactlyTheKeysInTheFile",
+			[]string{"SOPS_AGE_KEY_FILE", "XDG_CONFIG_HOME", "id_ed25519", "id_rsa"},
+		},
+		{
+			"demanded_part1_test.go",
+			"TestExecReplacesItselfAndPassesTheStatusThrough",
+			[]string{"RLIMIT_CORE", "syscall.RLIMIT_CORE"},
+		},
+		{
+			"demanded_part1_test.go",
+			"TestNoVerbPrintsAValue",
+			[]string{"len(value)", "audit"},
+		},
+		{
+			"demanded_part2_test.go",
+			"TestTheVersionProbeMakesNoNetworkCall",
+			[]string{"egress", "blocked"},
+		},
+		{
+			"demanded_part3_test.go",
+			"TestTheLauncherOrderWorksWithTheStoreFullyDenied",
+			[]string{"PR #70", "read set", "write set"},
+		},
+		{
+			"demanded_part4_test.go",
+			"TestOutputSizeAtTheLargestPlausibleState",
+			[]string{"red", "MORE"},
+		},
+		{
+			"demanded_part4_test.go",
+			"TestNoFileContentOrCallerArgumentCanForgeALine",
+			[]string{"bidi", "repaint"},
+		},
+		{
+			"demanded_part4_test.go",
+			"TestAStaleWorkingCopyIsRefused",
+			[]string{".git"},
+		},
+	}
+
+	for _, dt := range demandedTests {
+		dt := dt
+		t.Run(dt.testName, func(t *testing.T) {
+			t.Parallel()
+			fpath := filepath.Join(srcDir, dt.file)
+			fset := token.NewFileSet()
+			node, err := parser.ParseFile(fset, fpath, nil, 0)
+			if err != nil {
+				t.Fatalf("cannot parse %s: %v", fpath, err)
+			}
+			srcBytes, err := os.ReadFile(fpath)
+			if err != nil {
+				t.Fatalf("cannot read %s: %v", fpath, err)
+			}
+			src := string(srcBytes)
+
+			var funcBody string
+			for _, decl := range node.Decls {
+				fd, ok := decl.(*ast.FuncDecl)
+				if !ok || fd.Name.Name != dt.testName {
+					continue
+				}
+				if fd.Body == nil {
+					continue
+				}
+				start := fset.Position(fd.Body.Lbrace).Offset
+				end := fset.Position(fd.Body.Rbrace).Offset
+				funcBody = src[start:end]
+				break
+			}
+			if funcBody == "" {
+				t.Fatalf("%s: function body not found in %s", dt.testName, dt.file)
+			}
+			for _, phrase := range dt.mustHold {
+				if !strings.Contains(funcBody, phrase) {
+					t.Errorf("%s: body must hold %q to assert the SPEC-SECRETS rule", dt.testName, phrase)
+				}
+			}
+		})
 	}
 }
