@@ -23,18 +23,29 @@ type fakeJev struct {
 	auth   []string
 }
 
-func (f *fakeJev) record(r *http.Request) string {
+// fakeCall is one request as the fake read it: the state it was handed, and whether
+// the caller asked the `wake` question. The flag lets the fake answer `wake` ONLY
+// when it is asked, so a tree that does not ask it gets exactly the response it got
+// before the note reading existed (#1617).
+type fakeCall struct {
+	state     string
+	askedWake bool
+}
+
+func (f *fakeJev) record(r *http.Request) fakeCall {
 	f.calls.Add(1)
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.auth = append(f.auth, r.Header.Get("Authorization"))
 	raw, _ := io.ReadAll(r.Body)
 	var body struct {
-		State string `json:"state"`
+		State     string                     `json:"state"`
+		Questions map[string]json.RawMessage `json:"questions"`
 	}
 	_ = json.Unmarshal(raw, &body)
 	f.states = append(f.states, body.State)
-	return body.State
+	_, askedWake := body.Questions["wake"]
+	return fakeCall{state: body.State, askedWake: askedWake}
 }
 
 func (f *fakeJev) sawState(substr string) bool {
@@ -56,9 +67,11 @@ func startFakeJev(t *testing.T) (*fakeJev, string) {
 	t.Helper()
 	f := &fakeJev{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := f.record(r)
+		call := f.record(r)
+		state := call.state
 		kind, conf := "done", 0.99
 		needs, blocked := 0.10, 0.05
+		wake := "info"
 		switch {
 		case strings.Contains(state, "gate"):
 			kind, conf, needs, blocked = "question", 0.95, 0.90, 0.10
@@ -66,12 +79,17 @@ func startFakeJev(t *testing.T) (*fakeJev, string) {
 			kind, conf, needs, blocked = "refusal", 0.50, 0.20, 0.80
 		case strings.Contains(state, "start the batch"):
 			kind, conf, needs, blocked = "start", 0.99, 0.70, 0.00
+			wake = "needs-action"
+		}
+		wakeAnswer := ""
+		if call.askedWake {
+			wakeAnswer = `,"wake": {"type":"choice","choice":"` + wake + `","probabilities":{"` + wake + `":` + ftoa(conf) + `},"confidence":` + ftoa(conf) + `}`
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"answers": {` +
 			`"kind": {"type":"choice","choice":"` + kind + `","probabilities":{"` + kind + `":` + ftoa(conf) + `},"confidence":` + ftoa(conf) + `},` +
 			`"needs_reply": {"type":"noul","noul":` + ftoa(needs) + `},` +
-			`"blocked": {"type":"noul","noul":` + ftoa(blocked) + `}` +
+			`"blocked": {"type":"noul","noul":` + ftoa(blocked) + `}` + wakeAnswer +
 			`}, "usage": {"input_tokens": 5, "output_tokens": 1}}`))
 	}))
 	t.Cleanup(srv.Close)
@@ -236,5 +254,41 @@ func TestInboxDecideRefusesPrivateBusByName(t *testing.T) {
 	r = invoke(t, "", decideArgs(checkout, url, "--allow-private")...).mustCode(t, 0)
 	if f.calls.Load() == 0 {
 		t.Fatalf("--allow-private did not let the decision through:\n%s", r.stdout)
+	}
+}
+
+// TestInboxDecideWakeTellsAcknowledgementFromAction is the note reading: every
+// INBOX NOTE line says whether the note wakes its reader, so a window is woken
+// only for a note that needs it and not for an acknowledgement. A note that asks
+// something reads `wake=needs-action`; a long note that asks nothing reads
+// `wake=info`; a STOP: subject is `needs-action` by rule and never reaches the
+// provider; and the closing line counts the waking notes. The owner and the refs
+// are read mechanically from the note and asked of nobody.
+func TestInboxDecideWakeTellsAcknowledgementFromAction(t *testing.T) {
+	checkout, _ := busDir(t)
+	publicBus(t, checkout)
+	addDecideNote(t, checkout, "from-bo/action.md", "bo-aaaaaaaaaaaa", "Please start the batch #1617", "Go ahead and start the batch now.")
+	addDecideNote(t, checkout, "from-bo/info.md", "bo-bbbbbbbbbbbb", "The windows runner is green", strings.Repeat("The nightly run finished and every check passed. ", 8))
+	addDecideNote(t, checkout, "from-bo/stop.md", "bo-cccccccccccc", "STOP: do not run this", "Ignore the earlier instruction.")
+	f, url := startFakeJev(t)
+	t.Setenv(decideTestKeyEnv, "sk-test-key")
+	t.Setenv("TYPESAFE_API_KEY", "")
+
+	r := invoke(t, "", decideArgs(checkout, url)...).mustCode(t, 0)
+
+	if !strings.Contains(r.stdout, "wake=needs-action owner=Ada ref=#1617") {
+		t.Fatalf("the note that asks to start the batch did not read `wake=needs-action owner=Ada ref=#1617`; without it a window cannot tell the note that needs it from an acknowledgement:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "wake=info") {
+		t.Fatalf("a long note that asks nothing did not read `wake=info`; every note, acknowledgement included, would wake a window:\n%s", r.stdout)
+	}
+	if got := strings.Count(r.stdout, "wake=needs-action"); got != 2 {
+		t.Fatalf("want 2 notes that need action (the batch note and the STOP rule), got %d:\n%s", got, r.stdout)
+	}
+	if f.sawState("do not run this") {
+		t.Fatalf("a STOP: note reached the provider; a structured signal is never filtered:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "INBOX DECIDED n=4 needs_reply=3 below_floor=0 wake=2") {
+		t.Fatalf("the closing line did not count the waking notes:\n%s", r.stdout)
 	}
 }

@@ -18,8 +18,20 @@ internal/pulse/harvestbench.go:benchRepoURL builds the ssh://<bench><dir>/repo s
 internal/pulse/harvestbench.go:markHarvested one `touch <dir>/.harvested` through the BenchShell seam, called only from harvestBench after its requireBench guard; the seam below it is sshShell.Run
 internal/pulse/harvestbench.go:sshShell.Run the raw ssh seam; the same road as cmd/nova-pulse's sshCapacity.Capacity -- it is constructed in exactly one place (harvestBench, when the caller injected no BenchShell) and reached only through that verb, which resolved the bench name first
 
+# `harvest --bench --batch` (harvestBatch, #2926) resolves its name ONCE, at the verb's edge:
+# it calls requireBench (fleet.Registry.RequireBench) before any store read or ssh. These
+# four are below that guard and are reached through nothing else.
+internal/pulse/harvestbatch.go:redisHarvestMemory.Refused reads the set cards:harvest:<bench>:refused from the fleet Redis and touches no machine; the bench is a word in the key, and harvestBatch calls it only after its requireBench guard
+internal/pulse/harvestbatch.go:redisHarvestMemory.Remember adds one (label, head) to cards:harvest:<bench>:refused in the fleet Redis and touches no machine; the bench is a word in the key, reached only from harvestBatch below its requireBench guard
+internal/pulse/harvestbatch.go:redisHarvestMemory.Report writes the pass's sprint-table row cards:harvest:<bench> in the fleet Redis and touches no machine; the bench is a word in the key, reached only from harvestBatch below its requireBench guard
+internal/pulse/harvestbatch.go:benchURL builds the ssh://<bench><path> string the LOCAL clone fetches the staged refs from; it opens nothing, and the name it formats is the one harvestBatch's requireBench guard let past (the same shape as benchRepoURL above)
+
 cmd/nova-pulse/fill.go:sshCapacity.Capacity the raw ssh capacity probe; it is reached only through pulse.Fill, which wraps every Capacity in guardedCapacity and asks RequireBench first, and it is constructed in exactly one place (cmd/nova-pulse/fill.go) and handed straight to pulse.Fill
 cmd/nova-pulse/fill.go:flashLauncher.Launch the raw per-card launcher; the same road, wrapped by pulse.Fill in guardedLauncher, constructed in exactly one place and handed straight to it
+cmd/nova-pulse/fillstore.go:storeProbeConfig.probe the slot-store capacity probe (#1914); the same road as sshCapacity.Capacity -- it is the Probe seam of pulse.StoreCapacity, which pulse.Fill wraps in guardedCapacity and asks RequireBench first, and it is constructed in exactly one place (cmdFill) and handed straight to pulse.Fill
+cmd/nova-pulse/fillstore.go:storeProbeConfig.runProbeOverSSH the ssh half of that probe, reached from storeProbeConfig.probe and from nothing else, below the same guard
+internal/pulse/fillstore.go:StoreCapacity.ownerFor formats the store row whose leases are counted (`swarm-<bench>`, the seat flashLauncher already hands it) and touches no machine; it is called only from StoreCapacity.Capacity, below pulse.Fill's guardedCapacity
+internal/pulse/fillstore.go:StoreCapacity.Capacity the pulse.Capacity the fleet runs on; pulse.Fill wraps EVERY Capacity in guardedCapacity, which asks fleet.Registry.RequireBench before the name reaches this call, and this function starts no child of its own -- its injected Probe does
 
 cmd/nova-pulse/power.go:powerOnlineCount the Mac power verbs exist FOR the CI runner hosts: nova-pulse wake and sleep are how batman and superman are woken for the merge group and let sleep again (the fleet runs on solar). A runner host is the RIGHT answer here, so a bench guard would refuse the verb's whole purpose; they place no card and no load, only a magic packet and a runner-list read
 cmd/nova-pulse/power.go:powerBusyCount the same verbs, asking GitHub whether that runner host's runners are busy before letting it sleep

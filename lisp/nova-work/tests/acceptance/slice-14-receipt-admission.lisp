@@ -17,14 +17,11 @@
 
 (in-package #:nova-work/tests)
 
-(defvar *provenance-test-counter* 0)
-
 (defun test-provenance-path (name)
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames "nova-work-test-provenance/" base)))
-    (ensure-directories-exist dir)
-    (format nil "~A~A-~D-~D.body" (namestring dir) name (get-universal-time)
-            (incf *provenance-test-counter*))))
+  "A provenance body path under this run's own root. The old fixed directory,
+`<tmpdir>/nova-work-test-provenance/`, was shared by every suite on the host
+and the file name inside it keyed on the clock (nova-tools#1699)."
+  (test-temp-file name "body"))
 
 (defun write-provenance-file (path text)
   "Write the provenance body PATH names, with no trailing newline: the digest

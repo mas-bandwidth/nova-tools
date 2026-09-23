@@ -139,7 +139,7 @@ func lessVersion(a, b []int) bool {
 // Section renders one changelog section. It is exported and pure so that the
 // shape of what a release says about itself is asserted by a test rather than
 // by reading a file somebody wrote by hand afterwards.
-func Section(version, sha, previous, sumsDigest string, when time.Time, prs []PR) string {
+func Section(version, sha, previous, sumsDigest, dogfoodWaiver string, when time.Time, prs []PR) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s — %s\n\n", version, when.UTC().Format("2006-01-02"))
 	since := "this repository's first commit"
@@ -156,6 +156,14 @@ func Section(version, sha, previous, sumsDigest string, when time.Time, prs []PR
 	// nobody has to transcribe it.
 	if sumsDigest != "" {
 		fmt.Fprintf(&b, "%s%s\n\nAdopt this release with `--expect-sums %s`.\n\n", SumsDigestPrefix, sumsDigest, sumsDigest)
+	}
+	// AND THE WAIVER, WHEN THERE WAS ONE. The dogfood gate is the definition
+	// of done in front of the tag, and a release that went round it says so
+	// HERE, in the file that travels by git, rather than only in the terminal
+	// that cut it. A person asking in six months why v0.17.0 shipped with an
+	// open edge reads the answer in the same place they read what shipped.
+	if dogfoodWaiver != "" {
+		fmt.Fprintf(&b, "%s%s\n\n", DogfoodWaiverPrefix, dogfoodWaiver)
 	}
 	for _, pr := range prs {
 		fmt.Fprintf(&b, "- #%d %s\n", pr.Number, pr.Title)
@@ -409,6 +417,20 @@ func prependSection(path, section string) error {
 }
 
 func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
+	// THE DEFINITION OF DONE, FIRST. Before the forge is asked anything: a
+	// release with an open edge will not be cut whatever the forge says, and
+	// finding that out after three network reads is three reads spent to
+	// arrive at the same no. internal/release/dogfoodgate.go says why the gate
+	// is in front of a tag at all.
+	gate, err := dogfoodCheck("CUT", o, deps, filepath.Join(filepath.Dir(o.changelog), "docs", "CLI.md"), out, errs)
+	if err != nil {
+		// The field-line refusal has already been printed, in the shape the
+		// remedy needs.
+		if errors.Is(err, errDogfood) {
+			return 2
+		}
+		return refusal(errs, "CUT", err)
+	}
 	forge := deps.Forge
 	if forge == nil {
 		forge = NewGH(o.timeout)
@@ -471,10 +493,10 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			return refusal(errs, "CUT", fmt.Errorf("cannot read %s: %w (name the SHA256SUMS that `release build` wrote, or leave --sums out)", o.sums, err))
 		}
 	}
-	section := Section(o.version, sha, previous, sumsDigest, deps.Now(), prs)
+	section := Section(o.version, sha, previous, sumsDigest, dogfoodWaiver(gate, o.reason), deps.Now(), prs)
 	if o.dryRun {
-		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dry-run=yes\n",
-			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest))
+		fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s dry-run=yes\n",
+			field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate)
 		fmt.Fprint(errs, section)
 		return 0
 	}
@@ -489,7 +511,7 @@ func cut(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			field(o.version), field(sha), oneline.Err(err), field(o.changelog))
 		return 1
 	}
-	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dry-run=no\n",
-		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest))
+	fmt.Fprintf(out, "RELEASE CUT version=%s sha=%s prs=%d previous=%s changelog=%s sums=%s dogfood=%s dry-run=no\n",
+		field(o.version), field(sha), len(prs), field(previous), field(o.changelog), field(sumsDigest), gate)
 	return 0
 }

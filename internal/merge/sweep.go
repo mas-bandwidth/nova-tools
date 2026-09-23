@@ -18,8 +18,9 @@ import "strings"
 //   - a pull request already in the merge queue is skipped entirely: it is neither
 //     enqueued again nor rerun;
 //   - a completed success off the queue is OFFERED to the one door, which admits it only
-//     if its head is a batch's (Glenn, 2026-09-18: nothing reaches the dev merge queue but
-//     a batch); a refusal is counted as refused and the pass carries on;
+//     with that head's BATCH OK receipt (Glenn, 2026-09-18: nothing reaches the dev merge
+//     queue but a batch; #1898: the rowan/integration-* prefix is not that receipt); a
+//     refusal is counted as refused and the pass carries on;
 //   - a completed failure or cancellation is rerun only while the queue is at most
 //     RerunQueueDepth deep (the loop held `[ "$qn" -le 5 ]`);
 //   - an UNMERGEABLE queue entry is dequeued, and is otherwise untouched.
@@ -150,9 +151,9 @@ type SweepHost interface {
 	// HeadRun reads the newest run of the branch's CI workflow.
 	HeadRun(branch string) (SweepRun, error)
 	// Enqueue admits a pull request to the merge queue, through the ONE DOOR
-	// (Enqueuer.Enqueue): a batch's own head, or a head with that head's BATCH OK
-	// receipt, and nothing else. It takes the whole pull request because the rule is
-	// about the head branch.
+	// (Enqueuer.Enqueue): a head with that head's BATCH OK receipt, and nothing
+	// else. A batch prefix without a receipt is not a key (#1898). It takes the
+	// whole pull request because the rule is about the head branch.
 	Enqueue(pr SweepPR) error
 	// Rerun reruns one completed run.
 	Rerun(run int64) error

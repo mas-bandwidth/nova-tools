@@ -158,7 +158,9 @@ func ExpandPlan(plan *Plan) ([]Card, error) {
 }
 
 // expandNode reads one hand-written :node into a Card and validates its output
-// contract, budget and affinity by field name.
+// contract, budget and affinity by field name. Every required field the node
+// still owes is collected and named in one refusal, so a defective node costs
+// one run rather than one round trip per defect.
 func expandNode(file string, n Node) (Card, error) {
 	id := n.ID()
 	if id == "" {
@@ -169,31 +171,39 @@ func expandNode(file string, n Node) (Card, error) {
 	c.Needs = parseStringList(n.Fields["needs"])
 	c.Blocks = parseStringList(n.Fields["blocks"])
 
+	var missing []string
 	if c.Kind == "" {
-		return Card{}, refuse(file, fmt.Sprintf(":node %s has no :kind; refusing to guess", id))
+		missing = append(missing, fmt.Sprintf(":node %s has no :kind; refusing to guess", id))
 	}
 
+	var result, branch string
+	var green []string
+	var b Budget
 	out, ok := n.Fields["output"]
 	if !ok || out.Kind != List {
-		return Card{}, refuse(file, fmt.Sprintf(":node %s has no :output; refusing to guess", id))
+		missing = append(missing, fmt.Sprintf(":node %s has no :output; refusing to guess", id))
+	} else {
+		var findings []string
+		result, branch, green, findings = parseOutput(id, out)
+		missing = append(missing, findings...)
 	}
-	result, branch, green, err := parseOutput(file, id, out)
-	if err != nil {
-		return Card{}, err
+
+	budget, ok := n.Fields["budget"]
+	if !ok || budget.Kind != List {
+		missing = append(missing, fmt.Sprintf(":node %s has no :budget; a budget-less plan refuses", id))
+	} else {
+		var findings []string
+		b, findings = parseBudget(id, budget)
+		missing = append(missing, findings...)
 	}
+	if len(missing) > 0 {
+		return Card{}, refuse(file, strings.Join(missing, "; "))
+	}
+
 	if err := checkBranch(file, id, branch); err != nil {
 		return Card{}, err
 	}
 	c.Result, c.Branch, c.Green = result, branch, green
-
-	budget, ok := n.Fields["budget"]
-	if !ok || budget.Kind != List {
-		return Card{}, refuse(file, fmt.Sprintf(":node %s has no :budget; a budget-less plan refuses", id))
-	}
-	b, err := parseBudget(file, id, budget)
-	if err != nil {
-		return Card{}, err
-	}
 	c.Budget = b
 
 	if aff, ok := n.Fields["affinity"]; ok && aff.Kind == List {
@@ -222,42 +232,50 @@ func expandNode(file string, n Node) (Card, error) {
 
 // parseOutput reads `(:result ... :branch ... :green (...))`. :branch is
 // required; :result defaults to the spec's RESULT line, with {node} substituted
-// and {verdict} left for the worker.
-func parseOutput(file, id string, out Form) (result, branch string, green []string, err error) {
+// and {verdict} left for the worker. Every finding is collected, so one run
+// names every required :output field a node owes rather than stopping at the
+// first.
+func parseOutput(id string, out Form) (result, branch string, green []string, findings []string) {
 	result = "RESULT: " + id + " {verdict} <evidence>"
+	seenBranch := false
 	for i := 0; i < len(out.List); i += 2 {
 		key := out.List[i]
 		if key.Kind != Keyword {
-			return "", "", nil, refuse(file, fmt.Sprintf(
+			findings = append(findings, fmt.Sprintf(
 				":output of %s expects a keyword at byte=%d", id, key.Offset))
+			continue
 		}
 		if i+1 >= len(out.List) {
-			return "", "", nil, refuse(file, fmt.Sprintf(
+			findings = append(findings, fmt.Sprintf(
 				":output :%s of %s has no value; refusing to guess", key.Value, id))
+			continue
 		}
 		val := out.List[i+1]
 		switch key.Value {
 		case "result":
 			if val.Kind != String || val.Value == "" {
-				return "", "", nil, refuse(file, fmt.Sprintf(
+				findings = append(findings, fmt.Sprintf(
 					":output :result of %s must be a string; refusing to guess", id))
+				continue
 			}
 			result = strings.ReplaceAll(val.Value, "{node}", id)
 		case "branch":
+			seenBranch = true
 			if val.Kind != String || val.Value == "" {
-				return "", "", nil, refuse(file, fmt.Sprintf(
+				findings = append(findings, fmt.Sprintf(
 					":output :branch of %s must be a string; refusing to guess", id))
+				continue
 			}
 			branch = val.Value
 		case "green":
 			green = parseStringList(val)
 		}
 	}
-	if branch == "" {
-		return "", "", nil, refuse(file, fmt.Sprintf(
+	if !seenBranch && branch == "" {
+		findings = append(findings, fmt.Sprintf(
 			":output of %s has no :branch; refusing to guess", id))
 	}
-	return result, branch, green, nil
+	return result, branch, green, findings
 }
 
 // checkBranch holds a branch name to the spec's lower-case rule. The name is
@@ -275,53 +293,64 @@ func checkBranch(file, id, branch string) error {
 
 // parseBudget reads `(:minutes n :tokens n :model-floor <class>)`. A missing or
 // non-positive wall is a refusal, and an unknown floor class is refused, never
-// guessed.
-func parseBudget(file, id string, form Form) (Budget, error) {
+// guessed. Every finding is collected, so one run names every required :budget
+// field a node owes rather than stopping at the first.
+func parseBudget(id string, form Form) (Budget, []string) {
 	var b Budget
+	var findings []string
+	seen := map[string]bool{}
 	for i := 0; i < len(form.List); i += 2 {
 		key := form.List[i]
 		if key.Kind != Keyword || i+1 >= len(form.List) {
-			return b, refuse(file, fmt.Sprintf(
+			findings = append(findings, fmt.Sprintf(
 				":budget of %s expects keyword/value pairs; refusing to guess", id))
+			continue
 		}
 		val := form.List[i+1]
 		switch key.Value {
 		case "minutes":
+			seen["minutes"] = true
 			if val.Kind != Integer || val.Int <= 0 {
-				return b, refuse(file, fmt.Sprintf(
+				findings = append(findings, fmt.Sprintf(
 					":node %s :budget :minutes must be a positive integer; refusing to guess", id))
+				continue
 			}
 			b.Minutes = val.Int
 		case "tokens":
+			seen["tokens"] = true
 			if val.Kind != Integer || val.Int <= 0 {
-				return b, refuse(file, fmt.Sprintf(
+				findings = append(findings, fmt.Sprintf(
 					":node %s :budget :tokens must be a positive integer; zero is refused", id))
+				continue
 			}
 			b.Tokens = val.Int
 		case "model-floor":
+			seen["model-floor"] = true
 			name := val.Value
 			if val.Kind != Keyword && val.Kind != Symbol {
-				return b, refuse(file, fmt.Sprintf(
+				findings = append(findings, fmt.Sprintf(
 					":node %s :budget :model-floor must be a class; refusing to guess", id))
+				continue
 			}
 			if _, known := modelRank(name); !known {
-				return b, refuse(file, fmt.Sprintf(
+				findings = append(findings, fmt.Sprintf(
 					":node %s :budget :model-floor %s is not one of %s; refusing to guess",
 					id, name, strings.Join(modelClasses, ", ")))
+				continue
 			}
 			b.Floor = name
 		}
 	}
-	if b.Minutes == 0 {
-		return b, refuse(file, fmt.Sprintf(":node %s :budget has no :minutes; refusing to guess", id))
+	if !seen["minutes"] && b.Minutes == 0 {
+		findings = append(findings, fmt.Sprintf(":node %s :budget has no :minutes; refusing to guess", id))
 	}
-	if b.Tokens == 0 {
-		return b, refuse(file, fmt.Sprintf(":node %s :budget has no :tokens; refusing to guess", id))
+	if !seen["tokens"] && b.Tokens == 0 {
+		findings = append(findings, fmt.Sprintf(":node %s :budget has no :tokens; refusing to guess", id))
 	}
-	if b.Floor == "" {
-		return b, refuse(file, fmt.Sprintf(":node %s :budget has no :model-floor; refusing to guess", id))
+	if !seen["model-floor"] && b.Floor == "" {
+		findings = append(findings, fmt.Sprintf(":node %s :budget has no :model-floor; refusing to guess", id))
 	}
-	return b, nil
+	return b, findings
 }
 
 // parseAffinity reads `(:bench <kind> :route <id>)` and the optional :model
