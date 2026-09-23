@@ -178,7 +178,17 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -308,7 +318,17 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -604,8 +624,18 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
         if: matrix.entry.packages != ''
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: matrix.entry.packages != '' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         if: matrix.entry.packages != ''
@@ -724,7 +754,17 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -797,7 +837,17 @@ jobs:
       shards: ${{ steps.plan.outputs.shards }}
       slots: ${{ steps.plan.outputs.slots }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: plan the shard slots
         id: plan
         shell: bash
@@ -900,7 +950,17 @@ jobs:
     # 2026-09-18: twelve minutes for the windows leg, which is gone with the leg.
     timeout-minutes: ${{ matrix.leg.timeout }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -1150,7 +1210,17 @@ jobs:
     # (cmd/nova-bus measured 439 s there). The legs run -short (#682).
     timeout-minutes: 6
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: filter the PR diff for this platform's paths
         # No path filter exists elsewhere in this file to reuse, so
@@ -1255,7 +1325,17 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: use the installed Go toolchain
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -1340,7 +1420,17 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
         id: filter
@@ -1426,7 +1516,17 @@ jobs:
           }
           seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
 
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: install sbcl if missing
         # The self-hosted runners need no sudo; install directly when sbcl is absent.
@@ -1473,8 +1573,18 @@ jobs:
         id: want
         run: |
           [ "${{ matrix.slot }}" -le "${{ inputs.slots }}" ] && echo "run=yes" >> "$GITHUB_OUTPUT" || echo "run=no" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
+      # not redden a job. Attempt one tolerates its own failure ONLY so the
+      # retry below runs; the retry itself is not tolerated, so a checkout
+      # that fails twice still fails the job: fail-closed, not fail-open.
+      - name: checkout
+        id: checkout
         if: steps.want.outputs.run == 'yes'
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: checkout retry
+        if: steps.want.outputs.run == 'yes' && steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: toolchains the way ci.yml finds them
         if: steps.want.outputs.run == 'yes'
         run: |
