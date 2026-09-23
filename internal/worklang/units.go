@@ -120,6 +120,16 @@ type Collection struct {
 	Name           string
 	Under          string
 	MembersUnknown bool
+	Revision       string
+	Members        []string
+}
+
+// BindMembers records the unit's revision and the member paths at harvest time,
+// clearing the unknown-before-run flag.
+func (c *Collection) BindMembers(revision string, members []string) {
+	c.Revision = revision
+	c.Members = append([]string(nil), members...)
+	c.MembersUnknown = false
 }
 
 // WarmState is the retained/active split. Retained entries are held between
@@ -250,6 +260,21 @@ func (w *WorkSet) WithoutAcceptance() []string {
 		}
 	}
 	return out
+}
+
+// LoadCheck refuses the work set at load time when any unit carries no
+// :acceptance. This is the kernel's door (behaviour 40): a unit naming no
+// evidence names no finish line, so whether it is done is a judgement
+// rather than evidence. The caller uses the file and limits that produced
+// this set so the refusal carries the right name.
+func (w *WorkSet) LoadCheck() error {
+	missing := w.WithoutAcceptance()
+	if len(missing) > 0 {
+		return refuse(w.File, fmt.Sprintf(
+			"unit(s) %s carry no :acceptance; a unit naming no evidence names no finish line",
+			strings.Join(missing, ", ")))
+	}
+	return nil
 }
 
 func parseUnit(file string, form Form, strict bool) (Unit, error) {
