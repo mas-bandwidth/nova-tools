@@ -7,7 +7,9 @@
 // LOADED or UNCHANGED and the library sha, so a converge may run it every pass.
 // fn check --redis <addr> changes nothing: it prints OK, MISSING or STALE and
 // exits 1 unless the loaded library is the embedded one and FCALL ns_ping 0
-// answers PONG, which is the bench-conform line.
+// answers PONG, which is the bench-conform line. On MISSING or STALE it does
+// not call ns_ping at all (ping=skipped): the server's ns_ping is then not the
+// embedded one and could write.
 package main
 
 import (

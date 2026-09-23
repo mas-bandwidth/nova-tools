@@ -116,8 +116,16 @@ type State struct {
 // OK is true when the loaded library is the embedded one and ns_ping answers PONG.
 func (s State) OK() bool { return !s.Missing && s.Loaded == s.Want && s.Ping == "PONG" }
 
-// Check reads the loaded library and calls FCALL ns_ping 0 (ns_ping carries
-// no no-writes flag, so FCALL_RO would refuse it); it changes nothing.
+// PingSkipped is State.Ping when Check did not call ns_ping because the
+// server does not hold the embedded source.
+const PingSkipped = "skipped"
+
+// Check reads the loaded library and, only when the server holds exactly the
+// embedded source, calls FCALL ns_ping 0 (ns_ping carries no no-writes flag,
+// so FCALL_RO would refuse it). When the library is missing or stale, the
+// ns_ping the server would run is not ours (another library, or an older
+// body, may write), so Check skips the call and reports Ping=PingSkipped; it
+// changes nothing.
 func Check(ctx context.Context, client *redis.Client) (State, error) {
 	source, err := Source()
 	if err != nil {
@@ -132,6 +140,10 @@ func Check(ctx context.Context, client *redis.Client) (State, error) {
 		st.Missing = true
 	} else {
 		st.Loaded = Sum(code)
+	}
+	if !found || code != source {
+		st.Ping = PingSkipped
+		return st, nil
 	}
 	reply, err := client.FCall(ctx, "ns_ping", nil).Result()
 	if err != nil {

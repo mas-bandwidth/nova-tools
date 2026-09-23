@@ -55,13 +55,39 @@ func TestFnLoadThenPing(t *testing.T) {
 		t.Fatalf("check after load: code=%d out=%q err=%q", code, out, errOut)
 	}
 
-	stale := "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() return 'PONG' end)\n"
+	// A stale ns_ping that writes: fn check must report STALE without calling
+	// it, so the marker key stays absent.
+	const marker = "fn-check-test:stale-ping-ran"
+	stale := "#!lua name=nova_sprint\nredis.register_function('ns_ping', function() redis.call('SET', '" + marker + "', '1'); return 'PONG' end)\n"
 	if err := client.FunctionLoadReplace(ctx, stale).Err(); err != nil {
 		t.Fatal(err)
 	}
 	code, out, _ = runSprint("fn", "check", "--redis", addr)
-	if code != 1 || !strings.HasPrefix(out, "STALE nova_sprint loaded="+fn.Sum(stale)+" want="+sha) {
-		t.Fatalf("check on a stale library: code=%d out=%q, want 1 STALE", code, out)
+	if code != 1 || out != "STALE nova_sprint loaded="+fn.Sum(stale)+" want="+sha+" ping=skipped\n" {
+		t.Fatalf("check on a stale library: code=%d out=%q, want 1 STALE ping=skipped", code, out)
+	}
+	if n, err := client.Exists(ctx, marker).Result(); err != nil || n != 0 {
+		t.Fatalf("fn check ran the stale ns_ping: EXISTS %s = %d err=%v, want 0", marker, n, err)
+	}
+
+	// A different library that registers ns_ping (nova_sprint missing): fn
+	// check must report MISSING without calling it.
+	if err := client.FunctionDelete(ctx, fn.Library).Err(); err != nil {
+		t.Fatal(err)
+	}
+	other := "#!lua name=other_lib\nredis.register_function('ns_ping', function() redis.call('SET', '" + marker + "', '1'); return 'PONG' end)\n"
+	if err := client.FunctionLoadReplace(ctx, other).Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, _ = runSprint("fn", "check", "--redis", addr)
+	if code != 1 || out != "MISSING nova_sprint want="+sha+" ping=skipped\n" {
+		t.Fatalf("check with nova_sprint missing: code=%d out=%q, want 1 MISSING ping=skipped", code, out)
+	}
+	if n, err := client.Exists(ctx, marker).Result(); err != nil || n != 0 {
+		t.Fatalf("fn check ran another library's ns_ping: EXISTS %s = %d err=%v, want 0", marker, n, err)
+	}
+	if err := client.FunctionDelete(ctx, "other_lib").Err(); err != nil {
+		t.Fatal(err)
 	}
 	code, out, errOut = runSprint("fn", "load", "--redis", addr)
 	if code != 0 || out != "LOADED nova_sprint sha="+sha+"\n" {
