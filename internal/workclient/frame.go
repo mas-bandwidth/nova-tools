@@ -115,7 +115,14 @@ func ExchangeFramed(socket string, frame Frame) (Reply, error) {
 // wire is a separate, explicitly selected wire and this function never silently
 // downgrades to it.
 func ExchangeFramedWithin(socket string, frame Frame, within time.Duration) (Reply, error) {
-	deadline := budget(within)
+	return exchangeFramedDeadline(socket, frame, budget(within), within)
+}
+
+// exchangeFramedDeadline is ExchangeFramedWithin against an already-drawn
+// budget instant, so a caller whose one exchange spans two connections -- the
+// wire sniff of ExchangeWireWithin -- spends ONE budget across both and the
+// second dial never gains a fresh one.
+func exchangeFramedDeadline(socket string, frame Frame, deadline time.Time, within time.Duration) (Reply, error) {
 	conn, err := dial(socket, deadline)
 	if err != nil {
 		return Reply{}, classify(err, within)
@@ -142,6 +149,71 @@ func ExchangeFramedWithin(socket string, frame Frame, within time.Duration) (Rep
 		return Reply{}, classify(err, within)
 	}
 	return decodeReply(respBody, frame.Request)
+}
+
+// WireAnswer is one exchange's answer on the wire the session actually
+// answered: the S1 line, or the v1 framed response.
+type WireAnswer struct {
+	// Line is the one reply line, when the session answered the S1 line wire.
+	Line string
+	// Reply is the decoded v1 response, when the session answered in frames.
+	Reply Reply
+	// Framed names which of the two wires the session answered.
+	Framed bool
+}
+
+// ExchangeWireWithin runs one exchange on whichever wire the session answers,
+// under ONE wall-clock budget spent across both connections. The request line
+// is offered on the S1 wire first, the wire every session since S1 answers;
+// FRAME is the same request spelled the v1 way, and it is sent only when the
+// session proves it speaks frames.
+//
+// The proof is the peer's first reply byte. A session of the framed v1 wire
+// reads the request line's first four bytes as a frame length -- four ASCII
+// bytes, always far past --max-frame-bytes -- and answers with the one framed
+// refusal the spec pins for that case ("request": null, never partially
+// applied), whose own leading length byte is always 0x00 because a frame is
+// bounded far under 16 MiB, and then closes. A session of the line wire
+// answers one line, and a grammar line's first byte is always a letter, so
+// the two wires can never be mistaken for each other. Because the spec's
+// refusal lands before dispatch, nothing was applied and the framed retry on
+// a fresh connection is safe -- and it runs against the SAME budget instant,
+// so the fallback never doubles the wait.
+func ExchangeWireWithin(socket, request string, frame Frame, within time.Duration) (WireAnswer, error) {
+	deadline := budget(within)
+	conn, err := dial(socket, deadline)
+	if err != nil {
+		return WireAnswer{}, classify(err, within)
+	}
+	defer conn.Close()
+	if !deadline.IsZero() {
+		if err := conn.SetDeadline(deadline); err != nil {
+			return WireAnswer{}, err
+		}
+	}
+	if _, err := conn.Write([]byte(request + "\n")); err != nil {
+		return WireAnswer{}, classify(err, within)
+	}
+	r := bufio.NewReader(io.LimitReader(conn, replyCap+1))
+	first, err := r.Peek(1)
+	if err != nil {
+		return WireAnswer{}, classify(err, within)
+	}
+	if len(first) == 1 && first[0] == 0x00 {
+		// The session answered in frames: close the probed connection and ask
+		// again the v1 way, against the same budget instant.
+		conn.Close()
+		reply, err := exchangeFramedDeadline(socket, frame, deadline, within)
+		if err != nil {
+			return WireAnswer{}, err
+		}
+		return WireAnswer{Reply: reply, Framed: true}, nil
+	}
+	line, err := readLine(r, within)
+	if err != nil {
+		return WireAnswer{}, err
+	}
+	return WireAnswer{Line: line}, nil
 }
 
 // helloOffer is the first client frame: the versions this client speaks and the
