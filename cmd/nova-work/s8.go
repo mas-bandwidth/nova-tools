@@ -247,20 +247,20 @@ func querySnapshot(snapshot string, strs map[string]*string, askKind, branch str
 
 	// BYTES first, on both files, before a byte of either is parsed: a file
 	// past the bound is refused whole, never truncated to fit.
-	data, err := os.ReadFile(snapshot)
+	data, over, err := readBounded(snapshot, limits.MaxBytes)
 	if err != nil {
 		return refused(stderr, "query --snapshot: could not read the snapshot at "+snapshot+": "+err.Error())
 	}
-	if len(data) > limits.MaxBytes {
-		return refused(stderr, "query --snapshot: the snapshot at "+snapshot+fmt.Sprintf(" is past --max-bytes=%d (file is %d bytes); refused whole, never truncated", limits.MaxBytes, len(data)))
+	if over {
+		return refused(stderr, "query --snapshot: the snapshot at "+snapshot+fmt.Sprintf(" is past --max-bytes=%d (more than %d bytes read); refused whole, never truncated", limits.MaxBytes, limits.MaxBytes))
 	}
 	cachePath := *strs["cache"]
-	cacheData, err := os.ReadFile(cachePath)
+	cacheData, over, err := readBounded(cachePath, limits.MaxBytes)
 	if err != nil {
 		return refused(stderr, "query --snapshot: could not read the cache at "+cachePath+": "+err.Error())
 	}
-	if len(cacheData) > limits.MaxBytes {
-		return refused(stderr, "query --snapshot: the cache at "+cachePath+fmt.Sprintf(" is past --max-bytes=%d (file is %d bytes); refused whole, never truncated", limits.MaxBytes, len(cacheData)))
+	if over {
+		return refused(stderr, "query --snapshot: the cache at "+cachePath+fmt.Sprintf(" is past --max-bytes=%d (more than %d bytes read); refused whole, never truncated", limits.MaxBytes, limits.MaxBytes))
 	}
 
 	// The cache identifies the snapshot: its :state-sha256 names the bytes
@@ -289,6 +289,32 @@ func querySnapshot(snapshot string, strs map[string]*string, askKind, branch str
 	// revision is read from the history the clip pinned, never recounted.
 	fmt.Fprintf(stdout, "QUERY OK ask=done scope=%d branch=open rows=0 shown=0 parses=2 replays=0\n", rev)
 	return 0
+}
+
+// readBounded opens path and reads at most maxBytes+1 bytes of it, so the
+// caller's --max-bytes bounds the allocation itself, not just the check made
+// after it: a file (or a stream such as /dev/zero) past the bound is reported
+// over=true having consumed only maxBytes+1 bytes, and is refused whole.
+func readBounded(path string, maxBytes int) (data []byte, over bool, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	return readBoundedFrom(f, maxBytes)
+}
+
+// readBoundedFrom is readBounded's reader half: it never reads more than
+// maxBytes+1 bytes from r.
+func readBoundedFrom(r io.Reader, maxBytes int) (data []byte, over bool, err error) {
+	data, err = io.ReadAll(io.LimitReader(r, int64(maxBytes)+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) > maxBytes {
+		return nil, true, nil
+	}
+	return data, false, nil
 }
 
 // snapshotBound reads one of --snapshot's three bounds. queryVerb required the
