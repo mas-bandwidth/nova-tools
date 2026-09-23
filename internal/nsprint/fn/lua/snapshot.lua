@@ -1,0 +1,178 @@
+-- snapshot.lua: ns_snapshot, the single consistent read behind one rendered
+-- tick. Section 6 of #2756.
+--
+-- The function runs atomically and reads the server clock itself, so the
+-- table is one instant: a pipeline of reads is not one consistent instant.
+-- It is read-only (no-writes) and bounded: it uses no SCAN, KEYS or XLEN and
+-- refuses a registry larger than its bound with `snapshot: bound exceeded`.
+--
+-- Rows are returned as a flat tagged list so the Go side decodes with no
+-- nested map ambiguity. Every value is a string.
+--
+--   time     <unix seconds>
+--   error    <message>
+--   bench    name up desired missing starting living stale leased queue done why
+--   friend   name up desired missing starting living stale leased queue done why
+--   pipeline sprint queued dealt running ended harvested review-ready
+--            land-ready landed pool waiting backpressure orphan reconcile
+--   proc     name up age why
+
+local MAX_SPRINTS = 4
+local MAX_BENCHES = 64
+local MAX_FRIENDS = 16
+local LIVING_FRESH_MS = 120000
+
+local function zcard(k) return tonumber(redis.call('ZCARD', k)) end
+local function scard(k) return tonumber(redis.call('SCARD', k)) end
+local function exists(k) return redis.call('EXISTS', k) end
+
+local function desired_of(prefix)
+  local v = redis.call('HGET', prefix .. ':desired', 'slots')
+  if not v then return 0, 1 end
+  return tonumber(v) or 0, 0
+end
+
+-- A bench and a friend row are one shape (6.4): width is derived from
+-- starting + living, never stored.
+local function count_row(bucket, name, sprints, now_ms)
+  local up = exists(bucket .. ':' .. name .. ':beat')
+  local desired, missing = desired_of(bucket .. ':' .. name)
+  local starting = zcard(bucket .. ':' .. name .. ':starting')
+  local living = redis.call('ZCOUNT', bucket .. ':' .. name .. ':living', now_ms - LIVING_FRESH_MS, '+inf')
+  local total = zcard(bucket .. ':' .. name .. ':living')
+  local leased = starting + total
+  local queue, done = 0, 0
+  for _, sp in ipairs(sprints) do
+    if bucket == 'bench' then
+      queue = queue + zcard('s:' .. sp .. ':bench:' .. name .. ':queue')
+      done = done + scard('s:' .. sp .. ':bench:' .. name .. ':ended')
+    else
+      queue = queue + zcard('s:' .. sp .. ':open:' .. name)
+      done = done + scard('s:' .. sp .. ':done:' .. name)
+    end
+  end
+  return up, desired, missing, starting, tonumber(living), total - tonumber(living),
+    leased, queue, done
+end
+
+local function append_row(out, bucket, name, sprints, now_ms)
+  local up, desired, missing, starting, living, stale, leased, queue, done =
+    count_row(bucket, name, sprints, now_ms)
+  local why = {}
+  if missing == 1 then why[#why + 1] = 'missing: desired' end
+  if up == 0 then why[#why + 1] = 'down: beat' end
+  if stale > 0 then why[#why + 1] = 'stale: living >120s' end
+  out[#out + 1] = bucket
+  out[#out + 1] = name
+  out[#out + 1] = tostring(up)
+  out[#out + 1] = tostring(desired)
+  out[#out + 1] = tostring(missing)
+  out[#out + 1] = tostring(starting)
+  out[#out + 1] = tostring(living)
+  out[#out + 1] = tostring(stale)
+  out[#out + 1] = tostring(leased)
+  out[#out + 1] = tostring(queue)
+  out[#out + 1] = tostring(done)
+  out[#out + 1] = table.concat(why, '; ')
+end
+
+local function append_pipeline(out, sprint)
+  local prefix = 's:' .. sprint .. ':'
+  local states = {
+    'queued', 'dealt', 'running', 'ended',
+    'harvested', 'review-ready', 'land-ready', 'landed',
+  }
+  local rec = { 'pipeline', sprint }
+  for _, state in ipairs(states) do
+    rec[#rec + 1] = tostring(scard(prefix .. 'idx:card:' .. state))
+  end
+  rec[#rec + 1] = tostring(zcard(prefix .. 'pool'))
+  rec[#rec + 1] = tostring(scard(prefix .. 'waiting'))
+  local bp = redis.call('HGET', prefix .. 'backpressure', 'state')
+  rec[#rec + 1] = bp == 'ON' and '1' or '0'
+  rec[#rec + 1] = tostring(scard(prefix .. 'idx:card:orphan-effect'))
+  rec[#rec + 1] = tostring(scard(prefix .. 'idx:card:reconcile-required'))
+  for _, v in ipairs(rec) do out[#out + 1] = v end
+end
+
+local function append_procs(out, now)
+  if scard('procs') > 128 then
+    return false
+  end
+  local procs = redis.call('SMEMBERS', 'procs')
+  table.sort(procs)
+  for _, p in ipairs(procs) do
+    local at = tonumber(redis.call('HGET', 'proc:' .. p, 'pass_at'))
+    local up = at and 1 or 0
+    local age = -1
+    if at then age = math.max(0, now - math.floor(at / 1000)) end
+    out[#out + 1] = 'proc'
+    out[#out + 1] = p
+    out[#out + 1] = tostring(up)
+    out[#out + 1] = tostring(age)
+    out[#out + 1] = ''
+  end
+  return true
+end
+
+redis.register_function{
+  function_name = 'ns_snapshot',
+  flags = { 'no-writes' },
+  callback = function(keys, args)
+    local t = redis.call('TIME')
+    local now = tonumber(t[1])
+    local now_ms = now * 1000 + math.floor(tonumber(t[2]) / 1000)
+    local out = { 'time', tostring(now) }
+
+    -- Bounds first: a registry larger than its bound is an error, and the
+    -- bound is checked before any member is read (6.3).
+    if scard('sprints') > MAX_SPRINTS or scard('benches') > MAX_BENCHES
+      or scard('friends') > MAX_FRIENDS or scard('procs') > 128 then
+      return { 'time', tostring(now), 'error', 'snapshot: bound exceeded' }
+    end
+
+    local sprints = redis.call('SMEMBERS', 'sprints')
+    local benches = redis.call('SMEMBERS', 'benches')
+    local friends = redis.call('SMEMBERS', 'friends')
+    table.sort(sprints)
+    table.sort(benches)
+    table.sort(friends)
+
+    -- Width, queue and done for a bench or friend have exactly one writer,
+    -- ns_snapshot, derived from the index sets. A stored sidecar key is a
+    -- second writer and the snapshot reports it (6.5). Rows are still
+    -- rendered so the defect is visible beside the table, and the command
+    -- exits non-zero for `--check`.
+    local writers = {}
+    for _, name in ipairs(benches) do
+      for _, field in ipairs({ 'width', 'queue', 'done' }) do
+        local k = 'bench:' .. name .. ':' .. field
+        if exists(k) == 1 then writers[#writers + 1] = k end
+      end
+    end
+    for _, name in ipairs(friends) do
+      for _, field in ipairs({ 'width', 'queue', 'done' }) do
+        local k = 'friend:' .. name .. ':' .. field
+        if exists(k) == 1 then writers[#writers + 1] = k end
+      end
+      local old_slots = 'friend:' .. name .. ':slots'
+      if exists(old_slots) == 1 then writers[#writers + 1] = old_slots end
+    end
+
+    for _, name in ipairs(benches) do
+      append_row(out, 'bench', name, sprints, now_ms)
+    end
+    for _, name in ipairs(friends) do
+      append_row(out, 'friend', name, sprints, now_ms)
+    end
+    for _, sp in ipairs(sprints) do
+      append_pipeline(out, sp)
+    end
+    append_procs(out, now)
+    for _, k in ipairs(writers) do
+      out[#out + 1] = 'error'
+      out[#out + 1] = 'two writers: ' .. k
+    end
+    return out
+  end,
+}
