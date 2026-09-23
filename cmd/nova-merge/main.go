@@ -63,6 +63,7 @@ usage:
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>]
   nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
+  nova-merge receipt    --repo <owner>/<name> --pr <n> [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
@@ -126,6 +127,19 @@ branch's name and not that list, so a land that carries no members= to fold is r
 (no-receipt) rather than enqueued with the fold skipped. Everything else -- a card's
 branch, a green swarm result, a revert -- is a member of a batch somebody has yet to
 build, and this verb says so and stops.
+
+receipt IS THE READ SIDE OF #2693. A gate receipt -- the BATCH OK line batch
+prints -- is what proves an integration batch ran the gate, on which bench, on
+which tree; quoting it in the pull request body is not enough on its own, because
+a reader on another machine cannot check that the line is what the gate said
+without seeing the gate's own output. nova-merge receipt --repo <owner>/<name>
+--pr <n> reads the pull request, finds the BATCH OK line its body quotes, and
+prints it on stdout -- the same line a caller hands to nova-merge land --receipt.
+A PR whose body quotes no BATCH OK line is refused with the reason named on
+stderr (exit 1), so a reader who names a PR the gate never built for is not
+handed a green receipt over nothing. The verb never writes a receipt and never
+pushes one: the lander quotes the gate's own line into the PR body when they
+open it, and the body is the only place any reader can fetch it from.
 
 queue audit is the other half of that lock: it lists every open pull request carrying
 GitHub's auto-merge and TAKES IT OFF, because auto-merge is not an enqueue -- it is a
@@ -390,6 +404,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdBatch(rest, stdout, stderr, deps)
 	case "land":
 		return cmdLand(rest, stdout, stderr, deps)
+	case "receipt":
+		return cmdReceipt(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -411,8 +427,9 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	// `batch` names the one it clones, and `rebase` is not a lane verb at all -- it reads
 	// the open list from a repository and cuts cards into a directory -- so all five name
 	// the repository outright rather than reading it from the lane's state, like `init`
-	// does; every other verb reads the lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue"
+	// does; every other verb reads the lane's. `receipt` is the same shape: a reader on
+	// another machine who can name the pull request is not the lane's owner (#2693).
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue" || verb == "receipt"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
