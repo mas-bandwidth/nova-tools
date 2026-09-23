@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/keyshape"
 )
 
 // The key file, read as DATA.
@@ -126,4 +128,16 @@ func redactedReason(err error) string {
 		return pe.Err.Error()
 	}
 	return err.Error()
+}
+
+// MatchKeyShape reports whether a line of text carries the SHAPE of a key, and
+// returns the shape name (never the matched text). The requirement from #1647:
+// a secret finding prints only the shape name, path and line -- the value of a
+// key never appears in any output.
+func MatchKeyShape(line string) (string, bool) {
+	fs, err := keyshape.ScanText("", line, nil)
+	if err != nil || len(fs) == 0 {
+		return "", false
+	}
+	return fs[0].Shape, true
 }
