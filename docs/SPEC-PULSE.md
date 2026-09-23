@@ -212,7 +212,8 @@ The loop ends only when the pool and the queue are both empty, and then it says 
     on `RESULT.md` are a worker's claim about where its work belongs, not an instruction:
     the actual push destination is the dispatch record — the repository the card's launch
     record declares or the coordinator's `--clone` names — and the `REPO` line from
-    `RESULT.md` is checked against the card's declared repository; a mismatch is refused
+    `RESULT.md` is checked against the manager's recorded dispatch destination (the launch
+    record, or the coordinator's `--clone` when there is no launch record); a mismatch is refused
     (`repo-mismatch`) and nothing is pushed (nova-tools #1824). `harvest` reads the
     pool layout beside the slot layout: a card `launch` admitted into `<root>/pool` is folded
     from `pool/reports/<id>/RESULT.md`, with the task id mapped back to its card label through

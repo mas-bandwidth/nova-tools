@@ -9,8 +9,8 @@ import (
 
 // TestIssue1824 verifies that SPEC-PULSE.md rule 12 says the REPO and BRANCH
 // lines on a RESULT.md are the worker's claim, not an instruction: the actual
-// push destination is what the manager recorded (the card's declared repository
-// or the coordinator's --clone), and a RESULT claiming a different repository is
+// push destination is what the manager recorded (the launch record, or the
+// coordinator's --clone when there is no launch record), and a RESULT claiming a different repository is
 // refused. Before nova-tools #1824, harvest formed https://github.com/<REPO>.git
 // from the worker's own line and pushed there with no check.
 func TestIssue1824(t *testing.T) {
@@ -27,7 +27,7 @@ func TestIssue1824(t *testing.T) {
 	for _, want := range []string{
 		"The `REPO` and `BRANCH` lines on `RESULT.md` are a worker's claim",
 		"the actual push destination is the dispatch record",
-		"the `REPO` line from `RESULT.md` is checked against the card",
+		"the `REPO` line from `RESULT.md` is checked against the manager's recorded dispatch destination (the launch record, or the coordinator's `--clone` when there is no launch record)",
 	} {
 		if !strings.Contains(content, want) {
 			t.Errorf("docs/SPEC-PULSE.md rule 12 missing %q (nova-tools #1824)", want)
