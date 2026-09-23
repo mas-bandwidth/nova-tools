@@ -142,26 +142,53 @@ func TestStateToDone(t *testing.T) {
 // flag surface spells session, write flags, --kind, --node, --reason,
 // then the three optional ones the spec names for some kinds: --member
 // (required on baseline and discovery), --superseded-by (required on
-// supersede) and --evidence (required on cancel). The test exercises
-// --kind baseline with its required --member so every flag the spec
-// pins moves through the serializer. A break that drops "event" from
-// the socket table fails with "unknown verb"; a break that reorders
-// anything in moreVerbFlags["event"] fails the line; a break that
-// omits the spec's three optional flags from the table fails the line.
+// supersede) and --evidence (required on cancel). One subtest per kind
+// that carries an optional flag -- baseline with --member, supersede
+// with --superseded-by, cancel with --evidence -- so each of the three
+// optional flags moves through the serializer in its own request line.
+// A break that drops "event" from the socket table fails with "unknown
+// verb"; a break that removes or reorders any of the three optional
+// flags in moreVerbFlags["event"] fails the subtest that carries it.
 func TestEvent(t *testing.T) {
-	socket, requests := fakeSession(t, "EVENT OK kind=baseline node=R rev=4 member=m1,m2")
-	var stdout, stderr bytes.Buffer
-	code := run([]string{
-		"event", "--session", socket,
-		"--as", "Rowan", "--kind", "baseline", "--node", "R",
-		"--member", "m1,m2", "--reason", "the row is sealed",
-	}, &stdout, &stderr, "")
-	if code != 0 {
-		t.Fatalf("event --kind baseline exit = %d, stderr = %s", code, stderr.String())
+	cases := []struct {
+		name  string
+		reply string
+		args  []string
+		tail  string
+	}{
+		{
+			name:  "baseline-member",
+			reply: "EVENT OK kind=baseline node=R rev=4 member=m1,m2",
+			args:  []string{"--kind", "baseline", "--node", "R", "--member", "m1,m2", "--reason", "the row is sealed"},
+			tail:  " --kind baseline --node R --reason the\\x20row\\x20is\\x20sealed --member m1,m2",
+		},
+		{
+			name:  "supersede-superseded-by",
+			reply: "EVENT OK kind=supersede node=n42 rev=5 superseded-by=n43",
+			args:  []string{"--kind", "supersede", "--node", "n42", "--superseded-by", "n43", "--reason", "recut"},
+			tail:  " --kind supersede --node n42 --reason recut --superseded-by n43",
+		},
+		{
+			name:  "cancel-evidence",
+			reply: "EVENT OK kind=cancel node=n42 rev=6 evidence=note:worker-stopped",
+			args:  []string{"--kind", "cancel", "--node", "n42", "--evidence", "note:worker-stopped", "--reason", "stopped"},
+			tail:  " --kind cancel --node n42 --reason stopped --evidence note:worker-stopped",
+		},
 	}
-	want := "event --session " + socket + " --as Rowan --kind baseline --node R --reason the\\x20row\\x20is\\x20sealed --member m1,m2"
-	if got := awaitRequest(t, requests); got != want {
-		t.Fatalf("event request line = %q\nwant %q", got, want)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			socket, requests := fakeSession(t, tc.reply)
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"event", "--session", socket, "--as", "Rowan"}, tc.args...)
+			code := run(args, &stdout, &stderr, "")
+			if code != 0 {
+				t.Fatalf("event %s exit = %d, stderr = %s", tc.name, code, stderr.String())
+			}
+			want := "event --session " + socket + " --as Rowan" + tc.tail
+			if got := awaitRequest(t, requests); got != want {
+				t.Fatalf("event %s request line = %q\nwant %q", tc.name, got, want)
+			}
+		})
 	}
 }
 
@@ -236,17 +263,40 @@ func TestRemainingOutputsFields(t *testing.T) {
 	if got := awaitRequest(t, requests); got != want {
 		t.Fatalf("query remaining request line = %q\nwant %q", got, want)
 	}
+
+	// (a) the refusal: --axis on --ask remaining is exit 2 with one
+	// WORK REFUSED line naming --axis, and nothing reaches the session.
+	stdout.Reset()
+	stderr.Reset()
+	code = run([]string{
+		"query", "--session", socket, "--ask", "remaining",
+		"--branch", "open", "--axis", "feature-row",
+	}, &stdout, &stderr, "")
+	if code != 2 {
+		t.Fatalf("query remaining --axis exit = %d, want 2; stdout = %q, stderr = %q", code, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("query remaining --axis wrote stdout: %q", stdout.String())
+	}
+	if e := stderr.String(); !strings.HasPrefix(e, "WORK REFUSED: ") || !strings.Contains(e, "--axis") || !strings.Contains(e, "remaining") {
+		t.Fatalf("query remaining --axis stderr = %q, want one WORK REFUSED line naming --axis and remaining", e)
+	}
+	select {
+	case r := <-requests:
+		t.Fatalf("query remaining --axis reached the session with %q, want a refusal before dialling", r)
+	default:
+	}
 }
 
-// TestPercentNoDivision: the rule of docs/SPEC-WORK.md:1945 -- a
-// `percent` over zero applicable rows prints `green=0 applicable=0`
-// and NO percentage, and exits 0. The session emits the no-percentage
-// line; the client must print it byte-for-byte and exit 0, and must
-// not interpolate a default percentage between `green=0` and
-// `applicable=0`. A break that adds a `percent=` (or any `percent=`
-// field) anywhere on the path fails the byte-for-byte check; a break
-// that classifies a QUERY OK lacking the expected fields as REFUSED
-// exits 1.
+// TestPercentNoDivision: client pass-through of the zero-applicable
+// percent line of docs/SPEC-WORK.md:1945 (`green=0 applicable=0` and NO
+// percentage, exit 0). The arithmetic and the no-percentage rule are the
+// session's; this test does not and cannot exercise them -- it feeds a
+// canned session reply and proves only that the client prints it byte
+// for byte, exits 0, and adds no `percent=` field of its own. A client
+// break that injects a `percent=` field or rewrites the line fails the
+// byte-for-byte check; a client break that classifies this QUERY OK as
+// REFUSED exits 1.
 func TestPercentNoDivision(t *testing.T) {
 	socket, requests := fakeSession(t, queryPercentZeroOK)
 	var stdout, stderr bytes.Buffer
