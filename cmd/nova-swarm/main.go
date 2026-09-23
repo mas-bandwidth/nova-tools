@@ -1938,10 +1938,6 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
 		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
 	}
-	// THE JOB DIRECTORY GOES WITH THE CARD (nova-tools #2379). The wall line above
-	// has already read the clone. What remains is stored under <root>/results/<label>
-	// and checked, and only then is the directory removed. A check that fails keeps it.
-	stored := releaseNativeJob(cfg, res, stderr)
 	// THE END THE WATCH GAVE THE CARD, in the words of what it actually saw. A card the
 	// wall stopped says so; a card that simply went still says THAT, on a line that is
 	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
@@ -1953,22 +1949,21 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
 		}
 		if res.blockedPath != "" {
-			path := res.blockedPath
-			if stored != "" {
-				path = filepath.Join(stored, "RESULT.md")
-			}
-			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(path))
+			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
 	// publish that did not land leaves the job, which is then the only copy.
+	// The removal is releaseNativeJob (nova-tools #2379): the job's other files
+	// join the published ones, a commit the clone holds that is not in its base is
+	// bundled and checked, and only then are the job and its sandbox tmp removed.
 	if *sweepNow {
 		if res.resultsDir == "" {
 			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
-		} else if err := sweepNativeJob(res.root, res.job); err != nil {
-			fmt.Fprintf(stderr, "NATIVE NOTE: the job directory %s could not be removed: %s\n", oneline.Field(res.job), oneline.Escape(err.Error()))
+		} else {
+			releaseNativeJob(cfg, res, stderr)
 		}
 	}
 	if code != 0 {

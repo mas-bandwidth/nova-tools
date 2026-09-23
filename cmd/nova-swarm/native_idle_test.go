@@ -178,7 +178,7 @@ func TestNativeIdleIsDecidedByTheWatchsEventNotByAClock(t *testing.T) {
 			t.Fatalf("a card the watch ended still prints its summary line, carrying %q:\n%s", want, stdout.String())
 		}
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "results", "stillcard", "RESULT.md"))
+	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		t.Fatalf("a card the machinery ended is given a report naming the block: %v\n%s", err, stdout.String())
 	}
@@ -245,7 +245,7 @@ func TestNativeIdleSaysACardThatSimplyWentStillWentStill(t *testing.T) {
 	if strings.Contains(stdout.String(), "why=unknown-acceptance") {
 		t.Fatalf("a card that went still is not an unknown provider acceptance:\n%s", stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(root, "results", "quietcard", "provider-acceptance")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(job, "provider-acceptance")); !os.IsNotExist(err) {
 		t.Fatalf("a quiet card wrote an acceptance mark: %v", err)
 	}
 }
@@ -283,7 +283,7 @@ func TestNativeIdleReapsTheCardInsteadOfShootingIt(t *testing.T) {
 	if !strings.Contains(stdout.String(), "NATIVE NOTE: the card published no report of its own") {
 		t.Fatalf("the idle watch is what ended this card:\n%s\n%s", stdout.String(), stderr.String())
 	}
-	if _, err := os.Stat(filepath.Join(root, "results", "politecard", "termed")); err != nil {
+	if _, err := os.Stat(filepath.Join(job, "termed")); err != nil {
 		t.Fatalf("a card the watch ended is terminated before it is killed, so its harness can flush: %v\n%s", err, stdout.String())
 	}
 }
@@ -306,7 +306,7 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 	if strings.Contains(stdout.String(), "CARD IDLE") {
 		t.Fatalf("a run with no idle window ends nothing for idleness:\n%s", stdout.String())
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "results", "unwatched", "RESULT.md"))
+	raw, err := os.ReadFile(filepath.Join(slot, "jobs", "unwatched", "RESULT.md"))
 	if err == nil && strings.Contains(string(raw), "RESULT: BLOCKED") {
 		t.Fatalf("a run that was never ended by the watch writes no blocked report:\n%s", raw)
 	}

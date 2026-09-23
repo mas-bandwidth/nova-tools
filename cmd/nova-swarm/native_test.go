@@ -1867,7 +1867,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			// The capture is the file the token is asked of, so the case that says the
 			// harness spoke proves the bytes are in it.
 			if tc.wantCapture > 0 {
-				raw, err := os.ReadFile(filepath.Join(root, "results", label, "harness-output.log"))
+				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 				if err != nil {
 					t.Fatalf("the capture the token reads is missing: %v", err)
 				}
@@ -1876,10 +1876,9 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 				}
 			}
 			// A silent run's capture holds no word of the child's: either nothing at all, or
-			// the wall's own header lines. The capture is read from the results store: the
-			// job directory is removed when the card ends (#2379).
+			// the wall's own header lines.
 			if tc.want == " harness=silent" {
-				raw, err := os.ReadFile(filepath.Join(root, "results", label, "harness-output.log"))
+				raw, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 				if err != nil {
 					t.Fatalf("the capture is written even for a silent run: %v", err)
 				}
@@ -1993,9 +1992,9 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	if rc != 0 {
 		t.Fatalf("a secret worker runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}
+	jobDir := filepath.Join(slot, "jobs", "card")
 	// THE HARNESS SAW THE NAME: the key reached it by environment, proven by length.
-	// The capture is in the results store; the job directory is gone (#2379).
-	capture, err := os.ReadFile(filepath.Join(root, "results", "card", "harness-output.log"))
+	capture, err := os.ReadFile(filepath.Join(jobDir, "harness-output.log"))
 	if err != nil {
 		t.Fatalf("the run captured no harness output under the job: %v", err)
 	}
@@ -2268,8 +2267,8 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	if !strings.Contains(stdout.String(), "NATIVE OK ") {
 		t.Fatalf("the NATIVE OK line is printed for a root with a space:\n%s", stdout.String())
 	}
-	if _, err := os.Stat(filepath.Join(root, "results", "space-label", "RESULT.md")); err != nil {
-		t.Fatalf("RESULT.md is stored for a job path with a space: %v\n%s", err, stderr.String())
+	if _, err := os.Stat(filepath.Join(slot, "jobs", "space-label", "RESULT.md")); err != nil {
+		t.Fatalf("RESULT.md is written under a job path with a space: %v", err)
 	}
 }
 

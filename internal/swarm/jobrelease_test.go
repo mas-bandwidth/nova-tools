@@ -510,3 +510,56 @@ func gitCommitOnBranch(t *testing.T, repo, branch, baseMsg, workMsg string) stri
 	}
 	return strings.TrimSpace(string(out))
 }
+
+// A results directory under a results root the caller names, outside the swarm
+// root, is where nova-swarm native's --results-root publish landed (#2632). The
+// release writes beside that publish and keeps what it already holds: the
+// attempt's own usage.tsv is not replaced by the job's copy of every attempt.
+func TestReleaseJobDirKeepsPublishedFilesUnderANamedResultsRoot(t *testing.T) {
+	root, slot, job, tmp, _ := releaseLayout(t)
+	resultsRoot := filepath.Join(t.TempDir(), "results")
+	results := filepath.Join(resultsRoot, "card", "run1", "2")
+	if err := os.MkdirAll(results, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(results, "usage.tsv"), []byte("attempt=2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "usage.tsv"), []byte("attempt=1\nattempt=2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(job, "note"), []byte("a note\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in := releaseInput(root, slot, job, tmp, results, t.TempDir())
+	in.ResultsRoot = resultsRoot
+	out, err := ReleaseJobDir(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !out.Removed {
+		t.Fatal("the job was kept")
+	}
+	if raw, err := os.ReadFile(filepath.Join(results, "usage.tsv")); err != nil || string(raw) != "attempt=2\n" {
+		t.Fatalf("the published usage.tsv was replaced: %q, %v", raw, err)
+	}
+	if raw, err := os.ReadFile(filepath.Join(results, "note")); err != nil || string(raw) != "a note\n" {
+		t.Fatalf("note = %q, %v", raw, err)
+	}
+	if _, err := os.Stat(job); !os.IsNotExist(err) {
+		t.Fatalf("job directory still present: %v", err)
+	}
+
+	// The same results directory without the named root is not under the swarm
+	// root, and is refused before anything is written or removed.
+	_, _, job2, tmp2, _ := releaseLayout(t)
+	if err := os.WriteFile(filepath.Join(job2, "note"), []byte("kept\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReleaseJobDir(releaseInput(filepath.Dir(filepath.Dir(filepath.Dir(job2))), filepath.Dir(filepath.Dir(job2)), job2, tmp2, results, t.TempDir())); err == nil {
+		t.Fatal("a results directory outside the swarm root with no named results root was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(job2, "note")); err != nil {
+		t.Fatalf("a refused release removed the job: %v", err)
+	}
+}

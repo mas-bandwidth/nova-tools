@@ -3669,13 +3669,15 @@ must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
 
-When the card ends, `nova-swarm native` copies `RESULT.md`, `usage.tsv`, the
-harness log and `native.log` to `<root>/results/<label>/`, bundles any commit
-the clone holds that is not already in its remote-tracking base (and any
-`BRANCH` named in `RESULT.md` that is not already there), and only after that
-bundle verifies removes the job directory and `<slot>/tmp/<label>`. The shared
-cache and `~/nova-bench/mirror` are not removed. A result whose branch is not
-in the bundle and not in the clone is left in place.
+With `--sweep-now`, once `nova-swarm native` has published the card's results
+to `<results-root>/<label>/<runID>/<attempt>/`, it copies the job's other
+regular files and `native.log` beside them (a file already published there is
+kept, not replaced), bundles any commit the clone holds that is not already in
+its remote-tracking base (and any `BRANCH` named in `RESULT.md` that is not
+already there), and only after that bundle verifies removes the job directory
+and `<slot>/tmp/<label>`. The shared cache and `~/nova-bench/mirror` are not
+removed. A result whose branch is not in the bundle and not in the clone is
+left in place. Without `--sweep-now` the job directory stays for the bench sweep.
 
 ### The bench toolchain inside the wall
 

@@ -2760,21 +2760,23 @@ pids it started, and it never matches a process by its command line: that is how
 the worker starts, it is named in the prompt, and everything the worker clones,
 scratches or reports goes under it.
 
-**And it is removed by the tool that ends the card** (nova-tools #2379). When
-`nova-swarm native` has finished the child and printed its verdict, it copies
-the job's regular files — `RESULT.md` (including one published under `repo/`),
-`usage.tsv`, the harness log, notes — and the slot's `native.log` into
-`<root>/results/<label>/`, which is under the `--root` the caller already
-named. A commit the clone holds that is not already in its remote-tracking
-base, and a `BRANCH` line whose ref is not already in that base, are written
-to `branch.bundle` in that same directory. The bundle is verified, and its
-listed tips have to be those commits. Only then are `<slot>/jobs/<label>` and
-`<slot>/tmp/<label>` removed. The shared cache under `<root>/cache` and the
-bench mirror `~/nova-bench/mirror` are never in that removal. A copy that does
-not hash back, a bundle that does not list the commit, or a `BRANCH` that is
-not a ref in the clone keeps the directory: a branch that resolves nowhere
-else is not deleted. A harness-written result with no such commit, and a run
-that exits with no `RESULT.md`, are removed at once after the logs are stored.
+**And it is removed by the tool that ends the card** (nova-tools #2379), when
+`nova-swarm native` runs with `--sweep-now` and only after #2632's publish has
+landed in `<results-root>/<label>/<runID>/<attempt>/`. It copies the job's
+regular files — `RESULT.md` (including one published under `repo/`), the
+harness log, notes — and the slot's `native.log` into that attempt directory;
+a file the publish already wrote there (`RESULT.md`, `usage.tsv`) is kept, not
+replaced, because the job's `usage.tsv` carries every attempt. A commit the
+clone holds that is not already in its remote-tracking base, and a `BRANCH`
+line whose ref is not already in that base, are written to `branch.bundle` in
+that same directory. The bundle is verified, and its listed tips have to be
+those commits. Only then are `<slot>/jobs/<label>` and `<slot>/tmp/<label>`
+removed. The shared cache under `<root>/cache` and the bench mirror
+`~/nova-bench/mirror` are never in that removal. A publish that did not land, a
+copy that does not hash back, a bundle that does not list the commit, or a
+`BRANCH` that is not a ref in the clone keeps the directory: a branch that
+resolves nowhere else is not deleted. Without `--sweep-now` the job directory
+stays for the bench sweep (`nova-pulse hygiene delete-job`).
 
 **And the operating system now holds that sentence, not only the prompt.** Every
 job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md, "the two callers": this

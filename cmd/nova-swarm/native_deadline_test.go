@@ -54,7 +54,7 @@ func TestNativeDeadlineKillsTheWholeTree(t *testing.T) {
 		t.Fatalf("a run that produced nothing must not say OK:\n%s", stdout.String())
 	}
 	// no live child after: the grandchild the harness left behind is gone too.
-	bgRaw, err := os.ReadFile(filepath.Join(root, "results", "deadline", "background.pid"))
+	bgRaw, err := os.ReadFile(filepath.Join(slot, "jobs", "deadline", "background.pid"))
 	if err != nil {
 		t.Fatalf("the harness recorded no background pid: %v", err)
 	}

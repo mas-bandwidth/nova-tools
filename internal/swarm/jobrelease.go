@@ -50,10 +50,14 @@ type ReleaseJobInput struct {
 	SlotDir    string // the removal root; job and tmp must sit strictly below it
 	Root       string // the swarm root; results and the job must sit inside it
 	ResultsDir string // where the durable record is written, outside the job
-	Label      string // the card; a name, not a path
-	NativeLog  string // the slot's native.log, copied when it is a regular file
-	BenchHome  string // home used only to recognise ~/nova-bench/mirror; empty asks the OS
-	git        releaseGit
+	// ResultsRoot is the boundary ResultsDir has to resolve inside. Empty means
+	// <Root>/results. nova-swarm native passes its --results-root here, which need
+	// not sit under the swarm root (#2632).
+	ResultsRoot string
+	Label       string // the card; a name, not a path
+	NativeLog   string // the slot's native.log, copied when it is a regular file
+	BenchHome   string // home used only to recognise ~/nova-bench/mirror; empty asks the OS
+	git         releaseGit
 }
 
 // ReleaseJobResult is what the release stored. Removed is false when there was
@@ -109,6 +113,13 @@ func ReleaseJobDir(in ReleaseJobInput) (ReleaseJobResult, error) {
 			return ReleaseJobResult{}, fmt.Errorf("the results directory could not be resolved: %w", err)
 		}
 	}
+	resultsRoot := ""
+	if strings.TrimSpace(in.ResultsRoot) != "" {
+		resultsRoot, err = filepath.Abs(in.ResultsRoot)
+		if err != nil {
+			return ReleaseJobResult{}, fmt.Errorf("the results root could not be resolved: %w", err)
+		}
+	}
 	tmp := ""
 	if strings.TrimSpace(in.TmpDir) != "" {
 		tmp, err = filepath.Abs(in.TmpDir)
@@ -141,7 +152,11 @@ func ReleaseJobDir(in ReleaseJobInput) (ReleaseJobResult, error) {
 	if results == "" {
 		return ReleaseJobResult{}, fmt.Errorf("the results directory is empty")
 	}
-	if root != "" && !releaseStrictlyWithin(root, results) {
+	if resultsRoot != "" {
+		if !releaseStrictlyWithin(resultsRoot, results) {
+			return ReleaseJobResult{}, fmt.Errorf("the results directory %s is not under the results root %s", results, resultsRoot)
+		}
+	} else if root != "" && !releaseStrictlyWithin(root, results) {
 		return ReleaseJobResult{}, fmt.Errorf("the results directory %s is not under the swarm root %s", results, root)
 	}
 	if releasePathWithin(job, results) {
@@ -159,7 +174,7 @@ func ReleaseJobDir(in ReleaseJobInput) (ReleaseJobResult, error) {
 	if tmp != "" && !releaseStrictlyWithin(slot, tmp) {
 		return ReleaseJobResult{}, fmt.Errorf("the temp directory %s is not under the slot %s", tmp, slot)
 	}
-	if err := refuseResultsAlias(results, root, job, tmp); err != nil {
+	if err := refuseResultsAlias(results, root, resultsRoot, job, tmp); err != nil {
 		return ReleaseJobResult{}, err
 	}
 
@@ -168,7 +183,7 @@ func ReleaseJobDir(in ReleaseJobInput) (ReleaseJobResult, error) {
 	}
 	// MkdirAll follows a directory symlink. Re-resolve after it exists so a
 	// destination created through an alias is still refused before the copy.
-	if err := refuseResultsAlias(results, root, job, tmp); err != nil {
+	if err := refuseResultsAlias(results, root, resultsRoot, job, tmp); err != nil {
 		return ReleaseJobResult{}, err
 	}
 	sums, err := copyJobEvidence(job, results, in.NativeLog)
@@ -280,7 +295,7 @@ func releaseStrictlyWithin(root, path string) bool {
 // copy itself destroys a durable record. Every component at and below the
 // results root is resolved before writing, and the resolved path has to be
 // the one that was asked for.
-func refuseResultsAlias(results, root, job, tmp string) error {
+func refuseResultsAlias(results, root, resultsRootIn, job, tmp string) error {
 	resolvedJob, err := AbsResolved(job)
 	if err != nil {
 		return fmt.Errorf("the job directory could not be resolved: %w", err)
@@ -292,7 +307,7 @@ func refuseResultsAlias(results, root, job, tmp string) error {
 			return fmt.Errorf("the temp directory could not be resolved: %w", err)
 		}
 	}
-	start, rel, resultsRoot, err := resultsAliasWalk(results, root)
+	start, rel, resultsRoot, err := resultsAliasWalk(results, root, resultsRootIn)
 	if err != nil {
 		return err
 	}
@@ -311,8 +326,21 @@ func refuseResultsAlias(results, root, job, tmp string) error {
 // components of the destination. The results root is <root>/results when a
 // swarm root was named, and the parent of ResultsDir otherwise. The root of
 // that walk is resolved; the results directory itself is not, so a symlink
-// there cannot move the boundary onto its target.
-func resultsAliasWalk(results, root string) (start, rel, resultsRoot string, err error) {
+// there cannot move the boundary onto its target. A results root named by the
+// caller is that boundary and the start of the walk.
+func resultsAliasWalk(results, root, resultsRootIn string) (start, rel, resultsRoot string, err error) {
+	if strings.TrimSpace(resultsRootIn) != "" {
+		var resolved string
+		resolved, err = AbsResolved(resultsRootIn)
+		if err != nil {
+			return "", "", "", fmt.Errorf("the results root could not be resolved: %w", err)
+		}
+		rel, err = filepath.Rel(filepath.Clean(resultsRootIn), filepath.Clean(results))
+		if err != nil {
+			return "", "", "", fmt.Errorf("the results directory %s is not under the results root: %w", results, err)
+		}
+		return resolved, rel, resolved, nil
+	}
 	if strings.TrimSpace(root) != "" {
 		var resolvedRoot string
 		resolvedRoot, err = AbsResolved(root)
@@ -458,9 +486,16 @@ func releaseLocated(root, path string, strict bool) (bool, error) {
 // are the notes, the usage row and the harness log; RESULT.md may instead sit in
 // the clone, and the slot's native.log sits beside the job, not in it. Symlinks
 // are skipped: a link is not the file, and following one is how a copy leaves the
-// directory it was meant to stay in.
+// directory it was meant to stay in. A file already in the results directory is
+// kept, not replaced: nova-swarm native has already published that attempt's
+// RESULT.md and usage.tsv there (#2632), and a job's usage.tsv carries every
+// attempt, so replacing the attempt's own rows would count the earlier ones twice.
 func copyJobEvidence(job, results, nativeLog string) (map[string]string, error) {
 	sums := map[string]string{}
+	present := func(name string) bool {
+		_, err := os.Lstat(filepath.Join(results, name))
+		return err == nil
+	}
 	entries, err := os.ReadDir(job)
 	if err != nil {
 		return nil, fmt.Errorf("the job directory could not be listed: %w", err)
@@ -474,7 +509,7 @@ func copyJobEvidence(job, results, nativeLog string) (map[string]string, error) 
 		if err != nil {
 			return nil, err
 		}
-		if info.Mode()&os.ModeSymlink != 0 {
+		if info.Mode()&os.ModeSymlink != 0 || present(name) {
 			continue
 		}
 		sum, err := copyVerified(filepath.Join(job, name), filepath.Join(results, name))
@@ -491,7 +526,7 @@ func copyJobEvidence(job, results, nativeLog string) (map[string]string, error) 
 		if fi.Mode()&os.ModeSymlink != 0 {
 			return nil, fmt.Errorf("RESULT.md is a symlink")
 		}
-		if _, copied := sums["RESULT.md"]; !copied {
+		if _, copied := sums["RESULT.md"]; !copied && !present("RESULT.md") {
 			sum, err := copyVerified(res, filepath.Join(results, "RESULT.md"))
 			if err != nil {
 				return nil, fmt.Errorf("copying RESULT.md: %w", err)
@@ -501,7 +536,7 @@ func copyJobEvidence(job, results, nativeLog string) (map[string]string, error) 
 	}
 	if strings.TrimSpace(nativeLog) != "" {
 		fi, err := os.Lstat(nativeLog)
-		if err == nil && fi.Mode().IsRegular() {
+		if err == nil && fi.Mode().IsRegular() && !present("native.log") {
 			sum, err := copyVerified(nativeLog, filepath.Join(results, "native.log"))
 			if err != nil {
 				return nil, fmt.Errorf("copying native.log: %w", err)
