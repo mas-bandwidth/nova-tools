@@ -19,7 +19,7 @@ func keyIdx(sprint, state string) string  { return "s:" + sprint + ":idx:card:" 
 // Push lints the card, then writes it into the pool or the waiting set.
 // Exit 2: a missing required line, a private repository, or Redis did not
 // accept the write. A dependency that is not landed goes to waiting, not the pool.
-func Push(ctx context.Context, client *redis.Client, sprint string, body []byte) Result {
+func Push(ctx context.Context, client *redis.Client, sprint string, body []byte) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
 	}
@@ -48,15 +48,15 @@ func Push(ctx context.Context, client *redis.Client, sprint string, body []byte)
 	}
 	switch reply {
 	case "EXISTS":
-		return Result{Code: exitOK, Stdout: pushLine(sprint, doc.Label, "exists")}
+		return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, "exists")}
 	case "CONFLICT":
-		return Result{Code: exitConflict, Stderr: oneline.Escape("label conflict") + "\n"}
+		return VerbResult{Code: exitConflict, Stderr: oneline.Escape("label conflict") + "\n"}
 	}
 	place, ok := strings.CutPrefix(reply, "OK place=")
 	if !ok || (place != "pool" && place != "waiting") {
 		return refused(fmt.Sprintf("card push reply %q", reply))
 	}
-	return Result{Code: exitOK, Stdout: pushLine(sprint, doc.Label, place)}
+	return VerbResult{Code: exitOK, Stdout: pushLine(sprint, doc.Label, place)}
 }
 
 func pushLine(sprint, label, place string) string {

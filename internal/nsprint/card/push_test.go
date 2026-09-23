@@ -348,13 +348,13 @@ func repoServer(t *testing.T) *httptest.Server {
 
 func newRedis(t *testing.T) *redis.Client {
 	t.Helper()
-	addr := startRedis(t)
+	addr := startPushRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 
-func startRedis(t *testing.T) string {
+func startPushRedis(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("redis-server"); err != nil {
 		t.Skipf("redis-server unavailable; run this integration control on a Redis bench: %v", err)
