@@ -1508,6 +1508,10 @@ type inboxOpts struct {
 	// the line's own harness keeps its BEAT to itself and the two writers never collide
 	// on from-<name>/BEAT (#1517). `inbox` leaves it false.
 	noBeat bool
+	// onNote is `wait --on-note`: on a note arrival exit 0 with the note, on an empty
+	// tick print WAIT TIMEOUT and the rearm line so the harness can re-arm. Prints no
+	// INBOX OPEN frame. `inbox` leaves it false.
+	onNote bool
 }
 
 // inboxReading is what one listing found, for the caller that has to act on it: `inbox`
@@ -2947,6 +2951,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
 	quietBeats := f.fs.Bool("quiet-beats", false, "accepted for callers that pass it; since #328 (2026-09-17) a change that is only beats and cursors never wakes a wait, with or without this flag; it is not news")
+	onNote := f.fs.Bool("on-note", false, "wait only for a note addressed to the caller: on arrival exit 0 with the note, and on an empty tick exit 0 with WAIT TIMEOUT and the rearm line; requires --timeout, --bus, --as, --remote and --branch; incompatible with --open and --full")
 	// --max-commits IS HERE BECAUSE THE REMEDY HAS TO BE TYPEABLE AT THE VERB THAT NEEDS IT
 	// (#1518). The since-walk is bounded in inboxListing, which `wait` polls through, so a
 	// wait has always been bounded -- it simply had no way to say a bigger number. Johnny's
@@ -2959,6 +2964,37 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// notes, and this tool does not guess a remote.
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
 		return 2
+	}
+	// --on-note REFUSES WHEN ITS REQUIRED FLAGS ARE MISSING (#2178). Each missing flag
+	// gets its own remedy line, because a unit restarted after a harness cap needs to know
+	// exactly which flag to add. The spec says: `--on-note needs <flag>; give it, refusing
+	// to guess`.
+	if *onNote {
+		var missing []string
+		if *timeout <= 0 {
+			missing = append(missing, "--timeout")
+		}
+		if strings.TrimSpace(*busDir) == "" {
+			missing = append(missing, "--bus")
+		}
+		if strings.TrimSpace(*as) == "" {
+			missing = append(missing, "--as")
+		}
+		if strings.TrimSpace(*remote) == "" {
+			missing = append(missing, "--remote")
+		}
+		if strings.TrimSpace(*branch) == "" {
+			missing = append(missing, "--branch")
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(stderr, "nova-bus wait: --on-note needs %s; give it, refusing to guess\n", oneline.Field(missing[0]))
+			return 2
+		}
+		// --on-note WITH --open IS REFUSED (#2178). --on-note prints no open frame.
+		if *openList {
+			fmt.Fprint(stderr, "nova-bus wait: --on-note prints no open frame; drop --open\n")
+			return 2
+		}
 	}
 	// --no-beat AND --beat ARE ONE DECISION EACH AND THEY DISAGREE (#1517). --no-beat
 	// says this wait writes no BEAT and --beat/--beat-lease say when and how far to write
@@ -3106,6 +3142,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		diagnostics: *diagnostics,
 		quietBeats:  *quietBeats,
 		maxCommits:  *maxCommits,
+		onNote:      *onNote,
 	}
 	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
 	// not read is not refused here: the first poll's listing refuses it, in the sentence
