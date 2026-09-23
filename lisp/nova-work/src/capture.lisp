@@ -39,13 +39,18 @@ limits; a queue that would grow past one refuses rather than growing
   registry
   (inputs '())
   (results '())
-  (limits *capture-stage-limits*))
+  (limits *capture-stage-limits*)
+  (absorb-allowed nil))
 
-(defun make-capture-stage (&key registry (limits *capture-stage-limits*))
+(defun make-capture-stage (&key registry (limits *capture-stage-limits*)
+                              (absorb-allowed nil))
   "The in-process staging area over the operation registry. When no registry is
-given the scheduler's in-process durable-accept journal is used."
+given the scheduler's in-process durable-accept journal is used.
+By default, absorb is disabled and link is the default mode (SPEC-WORK.md:7614).
+To enable absorb, explicit scope and authority must be provided."
   (%make-capture-stage :registry (or registry (make-operation-registry))
-                       :inputs '() :results '() :limits limits))
+                       :inputs '() :results '() :limits limits
+                       :absorb-allowed absorb-allowed))
 
 (defun capture-wire-op (kind)
   "The wire operation name a long source operation reports
@@ -145,7 +150,12 @@ writer. Retained results are bounded (SPEC-WORK.md:2748-2750, :2753)."
              (capture-stage-results stage))
        (values t (format nil "ADMIT OK id=~A revision=~D" id current-revision))))))
 
+(defun capture-absorb-allowed-p (stage)
+  "Absorb is disabled by default; link is the default mode. Absorb requires
+explicit scope and authority selection (SPEC-WORK.md:7586-7617, E09-F04-01)."
+  (capture-stage-absorb-allowed stage))
+
 (defun capture-result-of (stage id)
   "The retained result for ID, or NIL."
   (find id (capture-stage-results stage)
-        :key (lambda (row) (getf row :id)) :test #'equal))
+         :key (lambda (row) (getf row :id)) :test #'equal))
