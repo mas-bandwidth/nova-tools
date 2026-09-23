@@ -40,6 +40,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 )
 
 // SSH states on the bench row (#2756 2.2 `bench:<b>:beat` ssh: ok, refused,
@@ -316,6 +318,9 @@ type Pass struct {
 	Launcher Launcher // nil: BatchLauncher
 	Dialer   Dialer   // how a session to a bench is opened
 	Hold     time.Duration
+	// Metrics receives the pool left, the leases held and one session
+	// latency per bench after every pass (nx-g61); nil exports nothing.
+	Metrics *metrics.Set
 }
 
 // BenchResult is what happened on one bench in one pass.
@@ -421,7 +426,22 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 			break
 		}
 	}
+	p.export(in)
 	return res, nil
+}
+
+// export sets the dealer's gauges from the input as the pass left it: the
+// cards still pooled over every sprint and the slots leased over every bench.
+func (p *Pass) export(in Input) {
+	pooled, leased := 0, 0
+	for _, s := range in.Sprints {
+		pooled += len(s.Pool)
+	}
+	for _, b := range in.Benches {
+		leased += b.Leased
+	}
+	p.Metrics.QueueDepth(metrics.Dealer, pooled)
+	p.Metrics.LeasesHeld(metrics.Dealer, leased)
 }
 
 // launch opens the bench's one session through the launcher and classifies it.
@@ -432,7 +452,9 @@ func (p *Pass) launch(ctx context.Context, l Launcher, b Batch, res []Reservatio
 		return br
 	}
 	open := &oneSession{dialer: p.Dialer, bench: b.Bench}
+	start := time.Now()
 	err := l.Launch(ctx, open.Open, b.Bench, res)
+	p.Metrics.ProviderLatency(metrics.Dealer, b.Bench.Name, time.Since(start))
 	br.Sessions = open.count()
 	switch {
 	case err == nil:

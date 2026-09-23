@@ -14,18 +14,23 @@ package main
 // no ssh at all, and --launcher <path> is the program each card is handed to. Together they
 // are a dry run over a directory of cards -- the way the lane logic (FILL HELD) is
 // exercised by a hand, not only by a test's injected seam.
+//
+// --metrics-addr <host:port> serves /metrics (internal/metrics: queue depth, launched cards,
+// launcher latency per bench) for as long as the fill runs; empty, the default, serves nothing.
 
 import (
 	"bytes"
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -71,6 +76,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	maxLoad := f.fs.Float64("max-load-per-core", defaultMaxLoadPerCore, "")
 	resultsDir := f.fs.String("results", "", "")
 	repo := f.fs.String("repo", ".", "")
+	metricsAddr := f.fs.String("metrics-addr", "", "")
 	base := f.fs.String("base", "dev", "")
 	var benches benchFlag
 	var only benchFlag
@@ -114,6 +120,16 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	if strings.TrimSpace(*metricsAddr) != "" {
+		ln, err := net.Listen("tcp", *metricsAddr)
+		if err != nil {
+			fmt.Fprintf(stderr, "FILL REFUSED --metrics-addr %s: %s (name a free host:port, or leave it out)\n",
+				oneline.Field(*metricsAddr), oneline.Err(err))
+			return 2
+		}
+		srv := metrics.Default.Serve(ln)
+		defer srv.Close()
+	}
 	// THE STORE LEADS, THE LOAD BRAKES (#1914). With a slot store named -- and one is
 	// named by default -- the capacity is the bench's own free count and the load is only a
 	// guard. `--slots-store ""` asks for the old load formula and nothing else; `--capacity`
@@ -151,6 +167,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Base:       *base,
 		Stdout:     stdout,
 		Stderr:     stderr,
+		Metrics:    metrics.Default,
 		Now:        func() time.Time { return now },
 		Capacity:   reader,
 		Launcher:   flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
