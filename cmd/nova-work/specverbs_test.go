@@ -53,7 +53,6 @@ var notInTheBlock = map[string]string{
 	"help":              "answered in the process, never over a socket",
 	"state load":        "a read-only local process: no --session, no daemon, no ownership",
 	"savepoint restore": "a read-only local process: no --session, no daemon, no ownership",
-	"report":            "SPEC-AHEAD (nova-tools#854): no kernel symbol answers it",
 	"clip":              "the name collides with this binary's local git clip; see socketverbs.go",
 }
 
