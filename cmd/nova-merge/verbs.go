@@ -481,7 +481,7 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 			eventPR = id
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), f.dur())
-		_, eventErr := emitReadEvent(ctx, rdb, *who, *verdict, *head, eventPR, sub.At)
+		_, _, eventErr := emitReadEvent(ctx, rdb, id, *who, *verdict, *head, eventPR, sub.At)
 		cancel()
 		_ = rdb.Close()
 		if eventErr != nil {

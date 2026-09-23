@@ -38,7 +38,23 @@ func TestIssue2683(t *testing.T) {
 		t.Fatalf("with no --redis the stream holds %d entries (%v), want 0: no store was named", n, err)
 	}
 
-	// The same typed line with --redis becomes one kind=read event on cards:done.
+	// The store cannot be reached: the record is pushed, the event is not, and the verb
+	// says so and tells the caller to re-run it. Nothing reaches the stream.
+	dead := miniredis.RunT(t)
+	deadAddr := dead.Addr()
+	dead.Close()
+	exit, stdout, stderr = l.run("read", "--lane", l.lane, "--pr", "951", "--who", "emma",
+		"--head", oid, "--verdict", "approve", "--redis", deadAddr)
+	if exit != 0 {
+		t.Fatalf("read --redis <unreachable>: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "READ NOTE")
+	if n, err := rdb.XLen(ctx, friendread.Stream).Result(); err != nil || n != 0 {
+		t.Fatalf("after a failed store write the stream holds %d entries (%v), want 0", n, err)
+	}
+
+	// The re-run the NOTE asks for: the same typed line with --redis becomes one
+	// kind=read event on cards:done.
 	exit, stdout, stderr = l.run("read", "--lane", l.lane, "--pr", "951", "--who", "emma",
 		"--head", oid, "--verdict", "approve", "--redis", mr.Addr())
 	if exit != 0 {
@@ -73,9 +89,37 @@ func TestIssue2683(t *testing.T) {
 		}
 	}
 
-	// The fold the 1 s table runs counts this friend done=1 for the day -- from the
-	// store, with no GitHub scan.
-	res, err := friendread.Count([]friendread.Entry{{ID: msgs[0].ID, Fields: got}}, "2026-09-11", []string{"emma"})
+	if got["read"] == "" {
+		t.Errorf("the event carries no read identity; a retry could not be told from a second read")
+	}
+
+	// A retry of the same read (the verb re-run once more after its event was posted)
+	// appends nothing: the event's identity is the read, not the stream id XADD mints.
+	exit, stdout, stderr = l.run("read", "--lane", l.lane, "--pr", "951", "--who", "emma",
+		"--head", oid, "--verdict", "approve", "--redis", mr.Addr())
+	if exit != 0 {
+		t.Fatalf("read --redis retry: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	msgs, err = rdb.XRangeN(ctx, friendread.Stream, "-", "+", 10).Result()
+	if err != nil {
+		t.Fatalf("reading the stream back after the retry: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("after a retry the stream holds %d entries, want still the one read event", len(msgs))
+	}
+
+	// The fold the 1 s table runs, over everything on the stream, counts this friend
+	// done=1 for the day -- from the store, with no GitHub scan, and once despite the
+	// failed write and the retry.
+	var entries []friendread.Entry
+	for _, m := range msgs {
+		fields := map[string]string{}
+		for k, v := range m.Values {
+			fields[k], _ = v.(string)
+		}
+		entries = append(entries, friendread.Entry{ID: m.ID, Fields: fields})
+	}
+	res, err := friendread.Count(entries, "2026-09-11", []string{"emma"})
 	if err != nil {
 		t.Fatal(err)
 	}
