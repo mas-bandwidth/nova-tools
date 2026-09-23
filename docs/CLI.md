@@ -1881,7 +1881,7 @@ the third call too.
 ### cut
 
 ```
-nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--max <n>]
+nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--depends-on <cards>] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
 nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
 ```
@@ -2394,7 +2394,7 @@ refusal, because it is far more likely a typo than a fleet fact. The example reg
 
 ```
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--commit]
-nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>] [--commit]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>] [--commit] [--batch [--store <host:port>] [--store-user <name>] [--password-env <NAME>]]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--clone <o/n>=<dir>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>] [--commit]
 ```
 
@@ -2975,6 +2975,17 @@ ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
 `by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
 cost per USEFUL card, so a dearer model that lands beats a cheap one that does
 not.
+
+### sprint funnel
+
+```
+nova-pulse sprint funnel --queue <dir> [--oneline] [--json] [--record --event <e> --card <c>] [--void --card <c>]
+```
+
+`sprint funnel` maintains an append-only accounting log under `<queue>/funnel/events.tsv` tracking card lifecycle events: `ADMIT`, `LAUNCH`, `HARVEST`, `GATE`, `LAND`, `VOID` (Essential 9, #2380).
+- `VOID` records mark abandoned or retried attempts without rewriting history.
+- Unmeasured spend is recorded strictly as `-`, never manufactured zeros.
+- Calculates conversion rates across stages, measured spend, and cost per landed card.
 
 ## nova-review
 
