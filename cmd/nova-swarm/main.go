@@ -369,7 +369,11 @@ func (f *flags) tokens(value string) (int, bool) {
 	case value == "unmetered":
 		return 0, true
 	}
-	n, err := parseInt(value)
+	// THE WHOLE WORD. fmt.Sscanf("%d") accepts a numeric prefix, so --tokens 50oops
+	// used to launch as 50 (Stella HOLD on PR #2131). strconv.Atoi reads the full
+	// string and refuses overflow, so a trailing junk, a decimal, and a number that
+	// does not fit in int are all the same refusal.
+	n, err := strconv.Atoi(strings.TrimSpace(value))
 	switch {
 	case err != nil:
 		f.add(fmt.Sprintf("--tokens wants a number of tokens or the word `unmetered`, got %q", value))
