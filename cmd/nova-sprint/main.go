@@ -64,7 +64,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if len(args) > 1 {
 			return refuse(stderr, "help", "help takes no arguments")
 		}
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, usageWithRegisteredVerbs())
 		return 0
 	case "version", "--version":
 		if len(args) > 1 {
@@ -77,6 +77,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "refresh":
 		return cmdRefresh(args[1:], stdout, stderr)
 	default:
+		if code, ok := runRegistered(args[0], args[1:], stdout, stderr); ok {
+			return code
+		}
 		return refuse(stderr, "", fmt.Sprintf("unknown verb %s; table renders, refresh detaches", args[0]))
 	}
 }
