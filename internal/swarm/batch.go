@@ -2139,7 +2139,7 @@ func cardShapeFailure(model, raw string) string {
 		return "capitalised contract block (" + step + ")"
 	}
 	if !hasStep1(lines) {
-		return "no 'STEP 1' line in the first 15 lines (" + step + ")"
+		return "no 'STEP 1' line in the first 40 lines (" + step + ")"
 	}
 	if mentionsLauncher(lines) {
 		return "'launcher' in the contract lines (lines 1-3) (" + step + ")"
@@ -2185,11 +2185,16 @@ func lineIsCapitalsOnly(s string) bool {
 	return hasLetter
 }
 
-// hasStep1 reports whether any of the first 15 lines begins "STEP 1".
+// hasStep1 reports whether any of the first 40 lines begins "STEP 1".
+// The window was 15 lines until issue #1728: SPEC-TOOLWORK §5's typed header
+// block (KIND, PATHS, TEST, LEGS, SOURCE, BASE, SPEC, ROUTE, ACCEPT, CERT, LANE
+// and a RULES prose block) pushes STEP 1 past line 15. Forty lines matches the
+// launcher window for base-repo:/base-sha: and still keeps STEP 1 inside the
+// contract's header region.
 func hasStep1(lines []string) bool {
 	n := len(lines)
-	if n > 15 {
-		n = 15
+	if n > 40 {
+		n = 40
 	}
 	for i := 0; i < n; i++ {
 		if strings.HasPrefix(strings.TrimSpace(lines[i]), "STEP 1") {
