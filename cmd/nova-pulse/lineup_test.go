@@ -207,7 +207,11 @@ func TestLineupProbeScriptReadsAFixtureHome(t *testing.T) {
 	if err := os.WriteFile(benches, []byte("fixture\tfixture.invalid\t"+home+"\t-\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errs := runLineup(t, "--profile", "coding", "--want", lineupWant, "--benches", benches, "--ssh", fakeSSH, "--timeout", "30s")
+	launcher := filepath.Join(dir, "launcher.sh")
+	if err := os.WriteFile(launcher, []byte(lineupGreenLauncher), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs := runLineup(t, "--profile", "coding", "--want", lineupWant, "--benches", benches, "--ssh", fakeSSH, "--timeout", "30s", "--launcher", launcher)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1 (the finished job)\nstdout:\n%s\nstderr:\n%s", code, out, errs)
 	}
@@ -225,5 +229,74 @@ func TestLineupProbeScriptReadsAFixtureHome(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in:\n%s", want, out)
 		}
+	}
+}
+
+// A lineup given no --launcher still lints the per-card launcher: the one fill hands every
+// card to by default (flash-native-bench.sh on PATH), and with none there the row is RED
+// MISSING. A bench with every fact green never exits 0 on a launcher nobody read (#2963).
+func TestLineupCodingWithoutLauncherFlagStillChecksTheLauncher(t *testing.T) {
+	t.Run("no launcher on PATH", func(t *testing.T) {
+		dir := t.TempDir()
+		t.Setenv("PATH", filepath.Join(dir, "empty-bin"))
+		green := writeLineupFacts(t, dir, "hulk", lineupGreenFacts)
+		code, out, errs := runLineup(t, "--profile", "coding", "--want", lineupWant, "--facts", "hulk="+green)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1\nstdout:\n%s\nstderr:\n%s", code, out, errs)
+		}
+		reds := redLines(out)
+		if len(reds) != 1 || strings.Fields(reds[0])[2] != "launcher" || !strings.Contains(reds[0], "got=MISSING") {
+			t.Fatalf("want exactly one RED, the launcher MISSING:\n%s", out)
+		}
+	})
+	t.Run("the default launcher opens a session per card", func(t *testing.T) {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "#!/usr/bin/env bash\nset -euo pipefail\nssh -o BatchMode=yes \"$1\" bash -s < \"$3\"\n"
+		if err := os.WriteFile(filepath.Join(bin, "flash-native-bench.sh"), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin)
+		green := writeLineupFacts(t, dir, "hulk", lineupGreenFacts)
+		code, out, errs := runLineup(t, "--profile", "coding", "--want", lineupWant, "--facts", "hulk="+green)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1\nstdout:\n%s\nstderr:\n%s", code, out, errs)
+		}
+		reds := redLines(out)
+		if len(reds) != 1 || strings.Fields(reds[0])[2] != "launcher" || !strings.Contains(reds[0], "flash-native-bench.sh") {
+			t.Fatalf("want exactly one RED, the default launcher's ssh line:\n%s", out)
+		}
+	})
+	t.Run("the default launcher is clean", func(t *testing.T) {
+		dir := t.TempDir()
+		bin := filepath.Join(dir, "bin")
+		if err := os.MkdirAll(bin, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(bin, "flash-native-bench.sh"), []byte(lineupGreenLauncher), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin)
+		green := writeLineupFacts(t, dir, "hulk", lineupGreenFacts)
+		code, out, errs := runLineup(t, "--profile", "coding", "--want", lineupWant, "--facts", "hulk="+green)
+		if code != 0 || !strings.Contains(out, "LINEUP fleet launcher GREEN") {
+			t.Fatalf("exit %d, want 0 with the default launcher GREEN\nstdout:\n%s\nstderr:\n%s", code, out, errs)
+		}
+	})
+}
+
+// A benches file that names no bench is a refusal, never `GREEN rows=0` (emma's probe at
+// 478fa182).
+func TestLineupRefusesAnEmptyBenchesFile(t *testing.T) {
+	dir := t.TempDir()
+	benches := filepath.Join(dir, "benches.tsv")
+	if err := os.WriteFile(benches, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errs := runLineup(t, "--profile", "coding", "--want", lineupWant, "--benches", benches); code != 2 {
+		t.Fatalf("exit %d, want 2\nstdout:%s\nstderr:%s", code, out, errs)
 	}
 }

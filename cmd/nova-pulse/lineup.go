@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -85,6 +86,10 @@ func cmdLineup(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
+	if len(sources) == 0 {
+		fmt.Fprintf(stderr, "nova-pulse lineup: %s names no bench; a lineup of no bench is not a GREEN one\n", oneline.Field(*benchesPath))
+		return 2
+	}
 	var rows []lineup.Row
 	for _, got := range lineupFetch(sources, probe, *sshProg, *timeout) {
 		if got.err != "" {
@@ -93,7 +98,9 @@ func cmdLineup(args []string, stdout, stderr io.Writer) int {
 		}
 		rows = append(rows, lineup.Coding(got.bench, got.facts, policy)...)
 	}
-	for _, path := range launchers {
+	launcherRows, paths := lineupDefaultLauncher(launchers)
+	rows = append(rows, launcherRows...)
+	for _, path := range paths {
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			rows = append(rows, lineup.Row{Bench: "fleet", Check: "launcher", Status: lineup.Red,
@@ -108,6 +115,24 @@ func cmdLineup(args []string, stdout, stderr io.Writer) int {
 	line, exit := lineup.Verdict(*profile, rows)
 	fmt.Fprintln(stdout, line)
 	return exit
+}
+
+// lineupDefaultLauncher is the launcher lint's input when no --launcher is given: the
+// per-card launcher `nova-pulse fill` hands every card to by default (flashLauncher's
+// flash-native-bench.sh, found on PATH). The launcher row is one of the coding profile's
+// fixed checks, so it is never skipped: with no --launcher and none on PATH the row is RED
+// MISSING, never absent (#2963: a bench with green facts exited 0 with no launcher read).
+func lineupDefaultLauncher(given []string) ([]lineup.Row, []string) {
+	if len(given) > 0 {
+		return nil, given
+	}
+	const name = "flash-native-bench.sh"
+	path, err := exec.LookPath(name)
+	if err != nil {
+		return []lineup.Row{{Bench: "fleet", Check: "launcher", Status: lineup.Red,
+			Detail: "got=MISSING file=" + name + " why=" + oneline.Field("no --launcher given and no "+name+" on PATH: the per-card launcher fill uses is unread")}}, nil
+	}
+	return nil, []string{path}
 }
 
 // splitList reads a comma-separated flag, dropping empties.
