@@ -1323,8 +1323,12 @@ a reader can go and look at instead of a `carried=yes` pointing at nothing. A ho
 exactly while its author has said nothing at the current head. Four rows fix it: HOLD at A and an
 APPROVE at the current head B — **taken**; HOLD at A and nothing at B — **dropped**, `carried=yes`;
 HOLD at A and a HOLD at B — **dropped** at B, `carried=no`; HOLD at A and an APPROVE at A only
-with the head now B — **dropped**, `carried=yes`, because release keys on the head and never on
-"somebody approved at some point". The `head=` on a typed APPROVE is matched by the same prefix
+with the head now B — **taken** (amended 2026-09-23, Glenn's lander-keys-reads-by-who ruling,
+after #2619 #2628 #2707 #2879 #3080 pinned on it): a hold by `who` X is released when X's last
+typed verdict written after the hold is APPROVE, at **any** head, because it is the holder's own
+last word and never "somebody approved at some point"; another friend's APPROVE at any head
+releases nothing, a scoped APPROVE releases only what it names, and an unstamped verdict is no
+evidence of order. The `head=` on a typed APPROVE is matched by the same prefix
 rule a typed HOLD's `head=` gets, so an abbreviation releases; and a releasing APPROVE must be the
 **whole line** — a `DISPOSITION` smuggled into a sentence inside a long body is not a verdict —
 while a HOLD keeps the lenient parse, because a rule about smuggling must not fail open on the
@@ -2001,7 +2005,7 @@ The tree already houses this reading's DECIDER and most of the hold fold (the am
 55. `TestAHeldHeadIsDroppedFromABatchAndRefusedAtLand` / `TestAHoldInAnySourceStops` — reading 3 (hold): a held head is dropped from a batch and refused at land; a hold in any source stops.
 56. `TestAnAbstainRecordIsNotAnInput` / `TestChildAndCardRecordsAreNotInputs` — reading 3: an ABSTAIN, `child` or `card` record neither holds nor releases.
 57. `TestAScopedApproveReleasesOnlyTheHoldsItNames` / `TestOnlyTheHolderReleases` / `TestAnUnknownHoldIsReleasedOnlyByAReadersVerbNamingIt` — reading 3: release is only the holder, by the verb, at the current head, naming the holds.
-58. `TestACommentNeverReleasesAnything` / `TestAForgeApprovedReviewReleasesNothing` / `TestADismissalReleasesNothing` / `TestNoAnswerReleasesAnything` / `TestAPushReleasesNothing` / `TestAReleaseAtAStaleHeadReleasesNothing` — reading 3: nothing else releases a hold.
+58. `TestACommentNeverReleasesAnything` / `TestAForgeApprovedReviewReleasesNothing` / `TestADismissalReleasesNothing` / `TestNoAnswerReleasesAnything` / `TestAPushReleasesNothing` — reading 3: nothing else releases a hold. `TestAReleaseAtAStaleHeadReleasesTheHoldersOwnHold` — amended 2026-09-23 (lander-keys-reads-by-who): the holder's own last typed verdict after the hold, if APPROVE, releases it at ANY head; another friend's does not.
 59. `TestADecidedHoldAtAnyConfidenceHolds` / `TestAnUntypedCommentFromAMayHoldLoginIsPending` — reading 3: a decided hold at any confidence holds; an untyped comment from a may-hold login is pending.
 60. `TestAPendingCommentIsClearedOnlyByAReadersVerb` / `TestAScopedApproveRecordDoesNotSatisfyNeedsRead` — reading 3: a pending comment clears only by a reader's verb; a scoped record satisfies no read condition.
 61. `TestBatchOKCarriesHoldsDispositionsAndReviewers` / `TestNewerComparesForgeStampsAndTiesBreakOnID` / `TestEveryLineThatNamesAHoldPrintsItsID` — reading 3: the golden `BATCH OK` fields and forge-stamp ordering.
