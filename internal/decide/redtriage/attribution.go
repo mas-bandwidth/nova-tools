@@ -12,9 +12,10 @@ package redtriage
 //
 //  2. The flake verdict reads first, because it is mechanical and the
 //     verifier never re-runs the flake parse to know whether the test was
-//     in it. everyFlaking is the same predicate internal/ci/cired.go
-//     runs for reading 6, and a failure with no At file:line still gets a
-//     flake verdict against the test name alone.
+//     in it. flakeMatches reads each failing test against the table on
+//     its own (one flake beside one real red is one `flaky` row and one
+//     `real` row), and a failure with no At file:line still gets a flake
+//     verdict against the test name alone.
 //
 //  3. The mechanical ownership picks candidates by file overlap: each
 //     in-flight member PR is in or out, and the count decides.
@@ -41,7 +42,7 @@ import (
 // a Jev answer that returns `flaky` is one the rule table already knew,
 // so ClassFor is the source of truth.
 //
-// flake is the truth: everyFlaking(Test) over the table as of `now`. It
+// flake is the truth: flakeMatches(Test) over the table as of `now`. It
 // is read by the caller, because the rule and the verifier share the
 // table rather than holding two copies (the table is the file the
 // `--flakes` flag points at; both readers parse it).
@@ -52,30 +53,12 @@ func ClassFor(testName string, flake bool) string {
 	return ClassRed
 }
 
-// everyFlaking is true when a row in flakes names the test and the row's
-// expiry is on or after today (UTC). It is the same predicate
-// internal/ci/cired.go uses for ci-red reading 6; redeclared here so
-// redtriage does not import cired.go's helpers and so a held-out table is
-// owned by redtriage's own caller.
-//
-// now is the date the table is read against; `nil` reads today, UTC.
-// returns false on any malformed expiry; an expired row matches nothing.
-func everyFlaking(names []string, flakes []ci.FlakeRow, now *time.Time) bool {
-	if len(names) == 0 {
-		return false
-	}
-	today := todayUTC(now)
-	for _, n := range names {
-		if !flakeMatches(n, flakes, today) {
-			return false
-		}
-	}
-	return true
-}
-
 // flakeMatches is true iff flakes has a row for `name` whose expiry is on
-// or after today. A row whose `Expiry` is zero (a row written before the
-// column existed) matches nothing; a row whose expiry parses as a date in
+// or after today (UTC), the per-test form of the predicate
+// internal/ci/cired.go uses for ci-red reading 6. Triage calls it once per
+// failing test; it never asks whether EVERY red is a flake. A row whose
+// `Expiry` is zero (a row written before the column existed) matches
+// nothing; a row whose expiry parses as a date in
 // the past matches nothing; the row's expiry is a YYYY-MM-DD string the
 // caller already parsed into time.Time.
 func flakeMatches(name string, flakes []ci.FlakeRow, today string) bool {

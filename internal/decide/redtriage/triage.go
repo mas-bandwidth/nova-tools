@@ -43,13 +43,15 @@ func Triage(r ci.FailedReport, roster Roster, opt TriageOptions, jev JevCaller) 
 	roster.sortMembers()
 	touchedBy := roster.indexMembers()
 
+	// Each failing test is read against the flake table on its own: one
+	// known flake beside one real red is one `flaky` row and one `real`
+	// row. (ci-red reading 6 asks "is EVERY red a flake"; a triage row
+	// does not.)
 	now := parseNow(opt.Now)
-	names := testNames(r)
+	today := todayUTC(&now)
 	flakeTests := map[string]bool{}
-	if everyFlaking(names, opt.Flakes, &now) {
-		for _, n := range names {
-			flakeTests[n] = true
-		}
+	for _, n := range testNames(r) {
+		flakeTests[n] = flakeMatches(n, opt.Flakes, today)
 	}
 
 	for _, f := range r.Failures {

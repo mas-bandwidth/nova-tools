@@ -69,7 +69,7 @@ const DefaultFloor = 0.65
 const ClassRed = "real"
 
 // ClassFlaky is the verdict member for a known-flake red: the failing test
-// is in the flake table (everyFlaking), so the gate is real enough that
+// is in the flake table (flakeMatches, read per test), so the gate is real enough that
 // Jev still names an owner PR but the call carries `flaky=yes` so the
 // caller does not re-queue the runner. The decision is `flaky`, not
 // `real`, because the red is not a defect of any single PR.
