@@ -61,7 +61,9 @@
 
   ;; ---- extend-once-extends-then-expires (covers behaviour 12) ----
   ;; On the first expiry a :extend-once lease reads as extended by the same
-  ;; length and :stale says so; on the second it reads :expired.
+  ;; length and :stale says so; on the second it reads :expired. The lease runs
+  ;; 11:00 -> 12:00 (one hour), so the one extension moves :deadline to 13:00:
+  ;; 13:00:00 itself still reads :stale, 13:00:01 reads :expired.
   (let* ((book (make-leasebook :nodes '(("n2" . :doing))))
          (obook (nth-value 3 (leasebook-offer book :offer "off-2" :node "n2"
                                  :generation "gen-4" :attempt "att-2"
@@ -74,25 +76,48 @@
          (abook (nth-value 3 (leasebook-accepted rbook :offer "off-2" :node "n2"
                                     :generation "gen-4" :attempt "att-2"
                                     :by "alice" :default "release"
+                                    :stamp "2026-09-14T11:00:00Z"
                                     :deadline "2026-09-14T12:00:00Z"
                                     :extend-once t))))
-    ;; First expiry (after deadline): reads :stale, extended once.
+    ;; An :extend-once lease with no :stamp has no length to extend by: refused.
+    (multiple-value-bind (okp line)
+        (leasebook-accepted rbook :offer "off-2" :node "n2" :generation "gen-4"
+                            :attempt "att-2" :by "alice" :default "release"
+                            :deadline "2026-09-14T12:00:00Z" :extend-once t)
+      (ok (null okp) "an :extend-once lease with no :stamp was accepted, not refused: ~A" line))
+    ;; First expiry (after deadline): reads :stale, deadline revised by the same length.
     (multiple-value-bind (okp line effect e1book)
-        (leasebook-expire abook :node "n2" :now "2026-09-14T13:00:00Z")
+        (leasebook-expire abook :node "n2" :now "2026-09-14T12:30:00Z")
       (ok okp "first extend-once expiry refused: ~A" line)
       (check-equal :stale effect "first expiry of extend-once is :stale, not :expired")
+      (check-equal 1 (length (leasebook-w e1book))
+                   "an extended lease stays in W")
       (let ((lease (alist-get "n2" (leasebook-leases e1book))))
         (ok lease "the lease is retained on extend-once")
-        (ok (getf lease :extended-once-p) "the lease carries :extended-once-p")))
-    ;; Second expiry (after first was extended): reads :expired now.
-    (let* ((abook2 (nth-value 3 (leasebook-expire abook :node "n2" :now "2026-09-14T13:00:00Z")))
-           (abook3 (nth-value 3 (leasebook-expire abook2 :node "n2" :now "2026-09-14T14:00:00Z"))))
-      (multiple-value-bind (okp line effect fbook)
-          (leasebook-expire abook3 :node "n2" :now "2026-09-14T15:00:00Z")
-        (ok okp "second extend-once expiry refused: ~A" line)
-        (ok (member effect '(:expired)) "second expiry of extend-once is :expired")
-        (check-equal 0 (length (leasebook-w fbook))
-                     "second expiry takes the task out of W"))))
+        (ok (getf lease :extended-once-p) "the lease carries :extended-once-p")
+        (check-string= "2026-09-14T13:00:00Z" (getf lease :deadline)
+                       "the first extension moves :deadline by the lease's own length"))
+      ;; The new boundary: at the revised deadline it still reads :stale ...
+      (multiple-value-bind (okp2 line2 effect2 b2)
+          (leasebook-expire e1book :node "n2" :now "2026-09-14T13:00:00Z")
+        (ok okp2 "read at the revised deadline refused: ~A" line2)
+        (check-equal :stale effect2 "at the revised deadline the lease still reads :stale")
+        (check-equal 1 (length (leasebook-w b2))
+                     "at the revised deadline the lease is still in W"))
+      ;; ... and one second past it, it reads :expired and leaves W.
+      (multiple-value-bind (okp3 line3 effect3 b3)
+          (leasebook-expire e1book :node "n2" :now "2026-09-14T13:00:01Z")
+        (ok okp3 "second extend-once expiry refused: ~A" line3)
+        (check-equal :expired effect3 "past the revised deadline the lease reads :expired")
+        (check-equal 0 (length (leasebook-w b3))
+                     "second expiry takes the task out of W")))
+    ;; A first read already past the revised deadline reads :expired at once.
+    (multiple-value-bind (okp line effect fbook)
+        (leasebook-expire abook :node "n2" :now "2026-09-14T15:00:00Z")
+      (ok okp "late first read refused: ~A" line)
+      (check-equal :expired effect "a first read past the revised deadline is :expired")
+      (check-equal 0 (length (leasebook-w fbook))
+                   "a first read past the revised deadline takes the task out of W")))
 
   ;; ---- escalate-reads-escalated-to (covers behaviour 13) ----
   ;; At expiry a (:escalate "<name>") lease reads expired with the node

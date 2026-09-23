@@ -160,11 +160,13 @@ exact offer. Consents to nothing: no lease, no W, no conversion, no release."
 
 (defun leasebook-accepted (book &key offer node generation attempt by default deadline
                                         observed-model receipt-digest receipt-id request
-                                        extend-once escalate)
+                                        extend-once escalate stamp)
   "Accept ownership. With no live lease the one accepted envelope creates one
 canonical :lease and one W entry and converts the reservation to committed; with
 the holder's own live lease it binds the assignment and changes neither deadline
-nor default. A cross-holder acceptance or a late one creates no lease."
+nor default. A cross-holder acceptance or a late one creates no lease.
+:stamp is the lease's start; an :extend-once lease needs it, because its one
+extension is the same length, :deadline minus :stamp."
   (let ((entry (%lget offer (leasebook-pending book))))
     (cond
       ((null entry) (%refuse "ACKNOWLEDGE" "no such offer ~A" offer))
@@ -173,6 +175,8 @@ nor default. A cross-holder acceptance or a late one creates no lease."
        (%refuse "ACKNOWLEDGE" "no :deadline on ~A" offer))
       ((or (null default) (and (stringp default) (string= default "")))
        (%refuse "ACKNOWLEDGE" "no :default on ~A" offer))
+      ((and extend-once (or (null stamp) (and (stringp stamp) (string= stamp ""))))
+       (%refuse "ACKNOWLEDGE" "no :stamp on ~A: an :extend-once lease has no length to extend by" offer))
       ((not (equal (getf entry :generation) generation))
        (%late-receipt book offer attempt receipt-digest receipt-id request
                       :lineage (list :offer offer :attempt attempt
@@ -199,6 +203,7 @@ nor default. A cross-holder acceptance or a late one creates no lease."
                   (progn
                     (setf (leasebook-leases nbk)
                           (%lput node (append (list :holder by :deadline deadline :default default)
+                                              (when stamp (list :stamp stamp))
                                               (when extend-once (list :extend-once t))
                                               (when escalate (list :escalate escalate)))
                                  (leasebook-leases book)))
@@ -285,16 +290,22 @@ automatic launch is admitted for it and the reservation stands."
 and any uncertain execution retained; it claims no stop and no completion.
 Expiry is derived by comparing the lease's :deadline against :now; a lease whose
 deadline is behind the read's clock reads as expired. A lease with :extend-once
-extends by the same length once (:stale); at the second expiry it reads
-:expired. A lease with :escalate reads :expired and writes :escalated-to=<name>
-on the lease record until a new lease or a release."
+extends by the same length once: at the first expiry its :deadline moves to
+:deadline + (:deadline - :stamp) and it reads :stale until that revised deadline
+is behind the clock; then it reads :expired. A read already past the revised
+deadline at the first expiry reads :expired at once. A lease with :escalate
+reads :expired and writes :escalated-to=<name> on the lease record until a new
+lease or a release."
   (let ((lease (%lget node (leasebook-leases book))))
     (cond
       ((null lease) (%refuse "LEASE" "no live lease on ~A" node))
       (t
        (let ((deadline (getf lease :deadline)))
          (if (or (null deadline) (null now) (not (string< deadline now)))
-             (values t (format nil "LEASE OK node=~A active" node) :active book)
+             (if (getf lease :extended-once-p)
+                 (values t (format nil "LEASE OK node=~A stale extended-once deadline=~A" node deadline)
+                         :stale book)
+                 (values t (format nil "LEASE OK node=~A active" node) :active book))
              (let* ((nbk (copy-leasebook book))
                     (extend-once (getf lease :extend-once))
                     (escalate (getf lease :escalate))
@@ -318,13 +329,22 @@ on the lease record until a new lease or a release."
                                     (leasebook-leases book)))
                        (return-from leasebook-expire
                          (values t (format nil "LEASE OK node=~A expired" node) :expired expired-book)))
-                     (let* ((extended-lease (append (copy-list lease) (list :extended-once-p t)))
-                            (extended-book (copy-leasebook book)))
-                       (setf (leasebook-leases extended-book)
-                             (%lput node extended-lease (leasebook-leases book)))
-                       (return-from leasebook-expire
-                         (values t (format nil "LEASE OK node=~A stale extended-once" node)
-                                 :stale extended-book)))))
+                     (let* ((start (getf lease :stamp))
+                            (revised (and start
+                                          (format-rfc3339
+                                           (+ (parse-rfc3339 deadline)
+                                              (- (parse-rfc3339 deadline) (parse-rfc3339 start)))))))
+                       (when (and revised (not (string< revised now)))
+                         (let ((extended-lease (copy-list lease))
+                               (extended-book (copy-leasebook book)))
+                           (setf (getf extended-lease :deadline) revised)
+                           (setf extended-lease (append extended-lease (list :extended-once-p t)))
+                           (setf (leasebook-leases extended-book)
+                                 (%lput node extended-lease (leasebook-leases book)))
+                           (return-from leasebook-expire
+                             (values t (format nil "LEASE OK node=~A stale extended-once deadline=~A"
+                                               node revised)
+                                     :stale extended-book)))))))
                (setf (leasebook-leases expired-book)
                      (%lput node (append (copy-list lease) (list :expired t))
                             (leasebook-leases book)))
