@@ -231,6 +231,15 @@ $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-se
 fake-gh
 ```
 
+**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
+bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
+`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
+store file omits the `swarm-` prefix, and the darwin launcher used to ask for
+the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
+nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
+Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
+empty wave.
+
 ## nova-check
 
 Fixture: `cmd/nova-check/testdata/example-self`.
