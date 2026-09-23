@@ -255,6 +255,103 @@
                  "a complete capture is absorbable")))
 
 ;;; ------------------------------------------------------------------
+;;; TestE09F04LeaveDeletionPendingOnMissing      docs/SPEC-WORK.md:7598
+;;;   acceptance criterion E09-F04-03 (docs/roadmaps/nova-work.sexp):
+;;;   "Leave deletion pending on missing content, source change or
+;;;   uncertain network result".
+;;; ------------------------------------------------------------------
+;;; Three prongs, each driven through archive-deletion-gate, the absorb
+;;; deletion gate beside archive-absorbable-p:
+;;;   - missing content (:7598): "Unavailable or unpreserved content is
+;;;     reported and leaves deletion pending, not silently skipped." Each
+;;;     of the six gap kinds leaves deletion :pending :missing-content.
+;;;   - source change (:7602-7608): capture at a named remote revision,
+;;;     recheck for source changes before deleting; "If the source changed,
+;;;     reconcile and checkpoint the added content first." A source revision
+;;;     differing from the capture revision (or an unnamed one) leaves
+;;;     deletion pending.
+;;;   - uncertain network result (:7610-7611): "A network failure or
+;;;     uncertain delete result preserves the archive and a pending
+;;;     reconciliation state." A :failed or :uncertain delete result (or any
+;;;     result the gate does not know) is :pending :reconcile with the
+;;;     archive preserved, never :deleted.
+;;; Split from nova-tools#2098 (which pinned the missing-content prong only).
+
+(deftest "TestE09F04LeaveDeletionPendingOnMissing" "docs/SPEC-WORK.md:7598"
+    "expected=missing-content-source-change-uncertain-delete-leave-deletion-pending;clean-capture-deletes"
+  (let ((clean (make-archive-capture :source-issue "acme/widget#7"
+                                     :author :known :gaps '())))
+    ;; Missing content: each of the six gap kinds is reported as an explicit
+    ;; gap and leaves deletion pending, even at an unchanged source revision
+    ;; with a confirmed delete result offered.
+    (dolist (kind *archive-gap-kinds*)
+      (let ((capture (make-archive-capture
+                      :source-issue "acme/widget#7"
+                      :author :known
+                      :gaps (list (make-archive-gap
+                                   :kind kind
+                                   :detail (format nil "missing ~(~A~)" kind)
+                                   :source-issue "acme/widget#7")))))
+        (check-equal t (archive-gaps-explicit-p capture)
+                     "missing content is reported as an explicit gap, not skipped")
+        (check-equal nil (archive-absorbable-p capture)
+                     "missing content leaves the capture unabsorbable")
+        (multiple-value-bind (state reason archive)
+            (archive-deletion-gate capture :capture-revision "r1"
+                                           :source-revision "r1")
+          (check-equal :pending state
+                       (format nil "missing ~(~A~) leaves deletion pending" kind))
+          (check-equal :missing-content reason "the pending reason names the missing content")
+          (check-equal t (eq capture archive) "the archive is preserved"))
+        (check-equal :pending
+                     (archive-deletion-gate capture :capture-revision "r1"
+                                                    :source-revision "r1"
+                                                    :delete-result :deleted)
+                     "a delete result never overrides missing content")))
+    ;; Source change: the recheck finds the source at a revision other than
+    ;; the captured one, so deletion stays pending until the added content is
+    ;; reconciled and checkpointed; an unnamed revision is no recheck at all.
+    (multiple-value-bind (state reason archive)
+        (archive-deletion-gate clean :capture-revision "r1" :source-revision "r2")
+      (check-equal :pending state "a changed source leaves deletion pending")
+      (check-equal :source-changed reason "the pending reason names the source change")
+      (check-equal t (eq clean archive) "the archive is preserved on a source change"))
+    (dolist (revs '((nil "r1") ("r1" nil) (nil nil)))
+      (check-equal :pending
+                   (archive-deletion-gate clean :capture-revision (first revs)
+                                                :source-revision (second revs))
+                   (format nil "an unnamed revision ~S leaves deletion pending" revs)))
+    (check-equal :pending
+                 (archive-deletion-gate clean :capture-revision "r1"
+                                              :source-revision "r2"
+                                              :delete-result :deleted)
+                 "a delete result never overrides a source change")
+    ;; Uncertain network result: a failed or uncertain delete (or an unknown
+    ;; result) preserves the archive and leaves a pending reconciliation.
+    (dolist (result '(:failed :uncertain :timeout))
+      (multiple-value-bind (state reason archive)
+          (archive-deletion-gate clean :capture-revision "r1" :source-revision "r1"
+                                       :delete-result result)
+        (check-equal :pending state
+                     (format nil "a ~(~A~) delete result leaves deletion pending" result))
+        (check-equal :reconcile reason
+                     (format nil "a ~(~A~) delete result leaves a pending reconciliation" result))
+        (check-equal t (eq clean archive)
+                     (format nil "a ~(~A~) delete result preserves the archive" result))))
+    ;; Only a gap-free capture rechecked at its captured revision may be
+    ;; deleted, and only a confirmed result settles it as deleted.
+    (check-equal t (archive-absorbable-p clean) "a gap-free capture is absorbable")
+    (check-equal :allowed
+                 (archive-deletion-gate clean :capture-revision "r1" :source-revision "r1")
+                 "a clean capture at an unchanged source may be deleted")
+    (multiple-value-bind (state reason archive)
+        (archive-deletion-gate clean :capture-revision "r1" :source-revision "r1"
+                                     :delete-result :deleted)
+      (check-equal :deleted state "a confirmed delete settles the deletion")
+      (check-equal nil reason "a confirmed delete has no pending reason")
+      (check-equal t (eq clean archive) "the archive outlives the deletion"))))
+
+;;; ------------------------------------------------------------------
 ;;; E01-F04-02 (docs/SPEC-WORK.md:888, :945-947) --- represent leaf
 ;;; tasks separately from parent tasks and attempts.
 ;;; ------------------------------------------------------------------

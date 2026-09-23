@@ -1344,6 +1344,7 @@
     #:archive-capture-gaps
     #:archive-gaps-explicit-p
     #:archive-absorbable-p
+    #:archive-deletion-gate
     #:author-retains-source-p
     ;; replays-8642: bounds-are-not-prompts
     #:launcher #:make-launcher
