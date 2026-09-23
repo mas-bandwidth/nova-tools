@@ -156,6 +156,11 @@ type nativeRunResult struct {
 	idleEnd     swarm.IdleEnd // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled       bool          // the idle watch ended the run, not the deadline and not the child
 	blockedPath string        // the report the run wrote FOR a card that published none, "" when it wrote none
+	// usage is the LAST attempt's usage row, exactly as it was appended to usage.tsv. It
+	// is carried out of the run so the card-end event carries the numbers the row carries
+	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
+	// the provider store that could disagree with the file (nova-tools #2563 item 1).
+	usage swarm.UsageRow
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -873,7 +878,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
 		var launchUsage swarm.ProviderUsage
 		launchEnd := time.Now()
-		launchUsage, res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
+		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
 		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
 		// so that adding a job's rows counts each launch once (rule 13d).
 		previousLaunchEnd = launchEnd
@@ -1654,7 +1659,7 @@ func sameDir(a, b string) bool {
 // launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
 // launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
 // prints 110. The caller folds; this function never sees the job's running sum.
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string) {
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
 	// notBefore is the EARLIER launch's end, and it is the floor that keeps this row
 	// disjoint from that one: without it the window's five-second widening reaches back over
 	// the previous launch's rows and counts them twice (usagecard.go says what that cost).
@@ -1694,12 +1699,12 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
 	if rr == "" {
-		return usage, "", ""
+		return usage, "", "", row
 	}
 	if storePath == "" {
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
-	return usage, rr, storePath
+	return usage, rr, storePath, row
 }
 
 // nativeRunSeq distinguishes invocations that share a process, which is what a
