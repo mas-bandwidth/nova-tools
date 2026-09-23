@@ -110,6 +110,7 @@ type Summary struct {
 	TasksDone   int
 	Receipts    int64
 	Jev         *Calibration // nil when the fold ran no Jev calibration
+	Apart       Apart        // code and read cards apart, the unknown gate, approved-not-landed (#3107, split.go)
 }
 
 var sprintName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -189,6 +190,10 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 		if k := sum.Jev.Candidate; k != nil && !k.Adopted {
 			refused = k.Reason
 		}
+	}
+	PrintApart(out, opt.Sprint, sum.Apart)
+	if err := unknownGate(opt.Sprint, sum.Apart); err != nil {
+		return Result{}, err
 	}
 
 	sha, err := findCommit(ctx, opt.Work, opt.Sprint)
@@ -423,7 +428,15 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 	sort.Slice(sum.Routes, func(i, j int) bool { return sum.Routes[i].Name < sum.Routes[j].Name })
 	ci, err := readCI(ctx, client, sprint, labels, cards)
 	sum.CI = ci
-	return sum, err
+	if err != nil {
+		return sum, err
+	}
+	apart, err := readApart(ctx, client, key, sum.UsefulMin)
+	if err != nil {
+		return sum, err
+	}
+	sum.Apart = apart
+	return sum, nil
 }
 
 func scanKeys(ctx context.Context, client *redis.Client, match string) ([]string, error) {
@@ -536,6 +549,7 @@ func Sexp(s Summary) []byte {
 		b.WriteString(routeSexp("route "+q(r.Name), r))
 	}
 	b.WriteString(")")
+	b.WriteString(apartSexp(s.Apart))
 	if s.Jev != nil {
 		b.WriteString("\n" + strings.TrimSuffix(jevSexp(s.Jev), "\n"))
 	}

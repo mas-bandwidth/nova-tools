@@ -24,6 +24,7 @@ type fixture struct {
 	Policy map[string]string            `json:"policy"`
 	Cards  map[string]map[string]string `json:"cards"`
 	Disp   map[string]map[string]string `json:"disp"`
+	PRs    map[string]map[string]string `json:"prs"`
 	Tasks  map[string][]string          `json:"tasks"`
 	Log    int                          `json:"log"`
 }
@@ -60,6 +61,9 @@ func seed(t *testing.T) (*miniredis.Miniredis, *redis.Client, fixture) {
 	}
 	for key, fields := range fx.Disp {
 		must(client.HSet(ctx, s+":disp:"+key, fields).Err())
+	}
+	for key, fields := range fx.PRs {
+		must(client.HSet(ctx, s+":pr:"+key, fields).Err())
 	}
 	for state, ids := range fx.Tasks {
 		for _, id := range ids {
@@ -288,6 +292,10 @@ func TestFoldSuppressesPerCardWhenUnpricedCardCounts(t *testing.T) {
 	if err := client.SAdd(ctx, s+":idx:card:landed", "c10").Err(); err != nil {
 		t.Fatal(err)
 	}
+	// Its PR has a state record, or the unknown gate (#3107) holds the fold.
+	if err := client.HSet(ctx, s+":pr:nova-tools:110", "state", "landed", "merge_sha", "dddd0110").Err(); err != nil {
+		t.Fatal(err)
+	}
 	work := workRepo(t)
 	var out bytes.Buffer
 	if _, err := fold.Run(ctx, client, opts(fx, work), &out); err != nil {
@@ -333,6 +341,10 @@ func TestFoldSuppressesPerCardWhenUnpricedCardIsOutsideTheDenominator(t *testing
 		t.Fatal(err)
 	}
 	if err := client.SAdd(ctx, s+":idx:card:landed", "c11").Err(); err != nil {
+		t.Fatal(err)
+	}
+	// Its PR has a state record, or the unknown gate (#3107) holds the fold.
+	if err := client.HSet(ctx, s+":pr:nova-tools:111", "state", "landed", "merge_sha", "dddd0111").Err(); err != nil {
 		t.Fatal(err)
 	}
 	work := workRepo(t)

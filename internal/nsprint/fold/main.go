@@ -2,6 +2,7 @@ package fold
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -16,8 +17,9 @@ import (
 const VerbSummary = "fold <S> --store <host:port> --work <nova-work checkout> [--path <rel>] [--as <actor>] [--calib <set.jsonl> --prompt-sha <sha> --jev-eval <cmd> [--candidate <sha>]]: landed, done, useful, $ per useful and per landed per route, Jev calibration per work type, one nova-work commit"
 
 // Main is `nova-sprint fold <S> --store <host:port> --work <dir>`. Exit 0 the
-// sprint is folded (now or before), 2 refused or could not run, 3 folded but
-// the --candidate Jev prompt was refused (the current prompt stays).
+// sprint is folded (now or before), 1 an outcome is unknown (a card with no end
+// record or a PR with no state; nothing committed), 2 refused or could not run,
+// 3 folded but the --candidate Jev prompt was refused (the current prompt stays).
 func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	var sprint string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -76,6 +78,11 @@ func Main(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer st.Close()
 	res, err := Run(ctx, st.Client(), Options{Sprint: sprint, Work: *work, Path: *path, Actor: *actor, Jev: jc}, stdout)
 	if err != nil {
+		var unknown *UnknownError
+		if errors.As(err, &unknown) {
+			fmt.Fprintf(stderr, "nova-sprint fold: %s\n", oneline.Escape(err.Error()))
+			return 1
+		}
 		return refuse(stderr, err.Error())
 	}
 	if res.PromptRefused != "" {
