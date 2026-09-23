@@ -1674,7 +1674,7 @@ hold*; nova-tools #1748).
 
 ```
 BATCH OK   name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]
-BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<condensed failure; a red test step starts stream=<root>/test-<round>.jsonl>"
+BATCH FAIL <the same fields> step=<name> packages=<list> tests=<list> reason="<condensed failure capped at oneline.TailBytes (500); a red build quotes the compiler lines; a red test step starts stream=<root>/test-<round>.jsonl>"
 BATCH DROP #<n> reason="the merge conflicts with the members ahead"
 BATCH DROP #<n> reason="head <sha> has no green <check> (state=<pending|failure|none>)" check=<name>
 BATCH SKIP <step> reason="<why it could not run>"
@@ -1706,6 +1706,13 @@ the first time that root keeps a stream and the next free integer after that, so
 run in the same root does not replace the file. The working directory `<root>/<name>`
 is removed at the start of the next run; the stream is not inside it. On `step=test` the `reason=`
 begins with `stream=<path>`.
+
+**A red build keeps the compiler lines.** `go build` prints `# package` then the
+diagnostics; `reason=` used to quote only that header, so a failure in
+`bench/tools/realpacket-gen` named the package and not `undefined: Foo`
+(nova-tools #2499 item 3 / #2508). The reason is now the captured stderr with
+those notices stripped, capped at `oneline.TailBytes` (500 bytes); the mark
+`...+<n>B` says when more was dropped.
 
 **`checks=required` is the default (edge 25).** A member whose own head has no green
 required check is **dropped before the merge**, by name and with the state it was in.

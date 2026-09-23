@@ -82,8 +82,8 @@ each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a 
 will not merge and says so, and then builds, vets, tests and runs the lisp suite over
 what is left, one progress line per step on stderr with the elapsed time. Green is
 "BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]"
-at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages and
-the failing tests at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
+at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages,
+the failing tests and the step's captured stderr (capped at oneline.TailBytes) at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
 never claims a suite it only ran part of; --require-lisp turns a skipped lisp step into a
 FAIL for a caller who needs it run, and a program that is not on PATH is also looked for
 under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
