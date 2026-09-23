@@ -39,7 +39,12 @@ this section supersedes them.
   required coverage; matching SHA alone is insufficient.
 - `status` surveys recent runs (`status --since`): queue, cancellation drain,
   execution and end-to-end latency per run, with attempt identities and
-  prior failures preserved.
+  prior failures preserved. The survey is built over the run store seeded
+  with several runs at varied states and lists only runs since the boundary
+  of the `--since` window; per-run field rendering reports queue and
+  cancellation drain, execution and end-to-end latency, attempt identities
+  and prior failures. Build order: add the `status` verb over the run store,
+  then the `--since` window, then the per-run field rendering.
 - `failures` lists the bounded failing steps of a run with source-backed
   excerpts; full logs remain retrievable. Successful checks are
   distinguished from unexecuted, skipped or missing ones.
