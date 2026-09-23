@@ -1,12 +1,15 @@
 package swarm
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"os/exec"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -272,7 +275,7 @@ func TestTwoPhaseReapLifecycle(t *testing.T) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start test process: %v", err)
 	}
-	go func() { _ = cmd.Wait() }()
+	exited := waitSignal(cmd)
 	pid := cmd.Process.Pid
 	started := StartStamp(pid)
 
@@ -280,20 +283,37 @@ func TestTwoPhaseReapLifecycle(t *testing.T) {
 		t.Fatalf("process %d was not alive after start", pid)
 	}
 
-	start := time.Now()
 	survived := TwoPhaseReap(pid, started)
-	elapsed := time.Since(start)
 
 	if survived {
 		t.Fatalf("process %d survived TwoPhaseReap", pid)
 	}
-	// The process exits immediately on SIGTERM, so elapsed time should be well below TerminateGrace
-	if elapsed > TerminateGrace+time.Second {
-		t.Errorf("TwoPhaseReap took %v, want < %v", elapsed, TerminateGrace+time.Second)
+	// The event, not the clock: a cooperative child dies of Phase 1's SIGTERM,
+	// so Phase 2's SIGKILL is never needed.
+	if sig := <-exited; sig != syscall.SIGTERM {
+		t.Errorf("cooperative child ended by %v, want SIGTERM (Phase 1)", sig)
 	}
 	if Alive(pid, started) {
 		t.Fatalf("process %d is still reported alive after reap", pid)
 	}
+}
+
+// waitSignal reaps cmd in the background and reports the signal that ended
+// it (0 if it exited without one), so a reap test asserts which phase killed
+// the child instead of timing the reap.
+func waitSignal(cmd *exec.Cmd) <-chan syscall.Signal {
+	out := make(chan syscall.Signal, 1)
+	go func() {
+		_ = cmd.Wait()
+		var sig syscall.Signal
+		if ps := cmd.ProcessState; ps != nil {
+			if ws, ok := ps.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+				sig = ws.Signal()
+			}
+		}
+		out <- sig
+	}()
+	return out
 }
 
 // TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL tests that a process ignoring SIGTERM
@@ -303,33 +323,48 @@ func TestTwoPhaseReapUnresponsiveChildKilledBySIGKILL(t *testing.T) {
 		t.Skip("Unix process group tests run under POSIX")
 	}
 
-	cmd := exec.Command("python3", "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)")
+	// The child prints "ready" only after SIG_IGN is installed. A fixed sleep
+	// raced interpreter startup on a loaded bench: SIGTERM arrived before the
+	// handler, the child died in Phase 1, and the reap finished under grace.
+	cmd := exec.Command("python3", "-c", "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); print('ready', flush=True); time.sleep(30)")
 	ownGroup(cmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("failed to start uncooperative process: %v", err)
 	}
-	go func() { _ = cmd.Wait() }()
-	// Give Python 100ms to install the signal handler and enter sleep
-	time.Sleep(100 * time.Millisecond)
+	defer func() { _ = cmd.Process.Kill() }()
+	ready := make(chan error, 1)
+	go func() {
+		line, err := bufio.NewReader(stdout).ReadString('\n')
+		if err == nil && strings.TrimSpace(line) != "ready" {
+			err = fmt.Errorf("unexpected readiness line %q", line)
+		}
+		ready <- err
+	}()
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatalf("uncooperative process never became ready: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("uncooperative process not ready after 10s")
+	}
+	exited := waitSignal(cmd)
 	pid := cmd.Process.Pid
 	started := StartStamp(pid)
 
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
-
-	grace := 150 * time.Millisecond
-	start := time.Now()
-	survived := TwoPhaseReapWithGrace(pid, started, grace)
-	elapsed := time.Since(start)
+	survived := TwoPhaseReapWithGrace(pid, started, 150*time.Millisecond)
 
 	if survived {
 		t.Fatalf("uncooperative process %d survived two-phase reap", pid)
 	}
-	// Should have taken at least grace (Phase 1 wait) before SIGKILL reaped it
-	if elapsed < grace {
-		t.Errorf("TwoPhaseReap finished in %v, expected at least grace period %v", elapsed, grace)
+	// The event, not the clock: the child ignored SIGTERM, so only Phase 2's
+	// SIGKILL can have ended it.
+	if sig := <-exited; sig != syscall.SIGKILL {
+		t.Errorf("uncooperative child ended by %v, want SIGKILL (Phase 2)", sig)
 	}
 	if Alive(pid, started) {
 		t.Fatalf("process %d still alive after two-phase SIGKILL reap", pid)
