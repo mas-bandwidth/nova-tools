@@ -17,6 +17,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,7 @@ const (
 	beatAsHint = `--as <name> is the friend whose window this is, spelled as the bus roster spells it; the key it writes is friend:<name> and there is no flag that beats for somebody else`
 	rosterHint = `name the friends: --friends <a,b,c>, --participants <file> (the bus participants.json) or --bus <dir> (its checkout, whose participants.json is read). The roster is the bus's, so a friend who joins is on the line without an edit here`
 	ttlHint    = `--ttl <duration> is how long one beat keeps the friend up, and it must be longer than --every or the key lapses between beats and a friend who is here reads as AWAY; the default is three beats, 90s for a 30s cadence`
+	widthHint  = `--width <n> is how many children are in use now, a whole number written to friend:<name>:width; zero is a real count, and leaving --width off writes no key and is not a failure`
 )
 
 // storeOpener is the seam the tests enter through: the live verbs dial Redis,
@@ -54,12 +56,14 @@ func dialStore(ctx context.Context, addr, user string) (presence.Store, func() e
 func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
 	fs := flag.NewFlagSet("beat", flag.ContinueOnError)
 	var (
-		as    = fs.String("as", "", "")
-		store = fs.String("store", "", "")
-		user  = fs.String("user", presence.DefaultUser, "")
-		every = fs.String("every", "", "")
-		ttl   = fs.String("ttl", "", "")
-		once  = fs.Bool("once", false, "")
+		as     = fs.String("as", "", "")
+		store  = fs.String("store", "", "")
+		user   = fs.String("user", presence.DefaultUser, "")
+		every  = fs.String("every", "", "")
+		ttl    = fs.String("ttl", "", "")
+		window = fs.String("window", "", "")
+		width  = fs.String("width", "", "")
+		once   = fs.Bool("once", false, "")
 	)
 	if !parseFlags(fs, args, stderr) {
 		return 2
@@ -83,6 +87,20 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 	if !p.any() && lifetime <= period {
 		p.add(fmt.Sprintf("--ttl %s is not longer than --every %s", oneline.Field(lifetime.String()), oneline.Field(period.String())), "  "+ttlHint+"\n")
 	}
+	// Window is the cap's reset time as the caller spelled it. This verb
+	// does not read a clock to invent one. Empty, including a flag of only
+	// spaces, is the flag not passed: no key, and not a failure.
+	var widthN int64
+	side := presence.Side{Window: strings.TrimSpace(*window)}
+	if raw := strings.TrimSpace(*width); raw != "" {
+		n, err := strconv.ParseUint(raw, 10, 63)
+		if err != nil {
+			p.add("--width "+*width+" is not a count of children", "  "+widthHint+"\n")
+		} else {
+			widthN = int64(n)
+			side.Width = &widthN
+		}
+	}
 	if !p.any() {
 		if _, err := presence.Addr(*store); err != nil {
 			p.add(err.Error(), "  "+storeHint+"\n")
@@ -101,18 +119,25 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 
 	name := presence.Normalize(*as)
 	addr, _ := presence.Addr(*store)
-	fmt.Fprintf(stdout, "beat %s key=%s every=%s ttl=%s store=%s\n",
+	fmt.Fprintf(stdout, "beat %s key=%s every=%s ttl=%s store=%s",
 		oneline.Field(name), oneline.Field(presence.Key(name)),
 		oneline.Field(period.String()), oneline.Field(lifetime.String()), oneline.Field(addr))
+	if side.Window != "" {
+		fmt.Fprintf(stdout, " window=%s", oneline.Field(side.Window))
+	}
+	if side.Width != nil {
+		fmt.Fprintf(stdout, " width=%s", oneline.Field(strconv.FormatInt(*side.Width, 10)))
+	}
+	fmt.Fprintln(stdout)
 
 	if *once {
-		if err := presence.Beat(ctx, st, name, clock.Now(), lifetime); err != nil {
+		if err := presence.BeatSide(ctx, st, name, clock.Now(), lifetime, side); err != nil {
 			return refuse(stderr, " beat", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
 		return 0
 	}
 
-	beatLoop(ctx, st, name, period, lifetime, clock, stderr, 0)
+	beatLoop(ctx, st, name, period, lifetime, clock, stderr, side, 0)
 	return 0
 }
 
@@ -124,10 +149,10 @@ func cmdBeat(args []string, stdout, stderr io.Writer, clock wake.Clock, open sto
 // friend's window would be the next thing anybody turned off.
 //
 // rounds is the tests' door and no flag's: a caller's "stop after n" is --once.
-func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, rounds int) {
+func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl time.Duration, clock wake.Clock, stderr io.Writer, side presence.Side, rounds int) {
 	var failing string
 	for i := 0; rounds <= 0 || i < rounds; i++ {
-		err := presence.Beat(ctx, st, name, clock.Now(), ttl)
+		err := presence.BeatSide(ctx, st, name, clock.Now(), ttl, side)
 		switch {
 		case err != nil && err.Error() != failing:
 			failing = err.Error()
