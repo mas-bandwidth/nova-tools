@@ -65,7 +65,7 @@ func TestIdleWatchCountsHarnessStoreProgress(t *testing.T) {
 	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) { return 50_000_000, true }
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner, Tokens: "unmetered",
 		snapshot: func() activitySnapshot { return sampler },
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "explore-started"))
@@ -112,7 +112,7 @@ func TestAStoreThatStoppedGrowingIsStillIdle(t *testing.T) {
 	)
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner, Tokens: "unmetered",
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "still-started"))
 		clk.waitTick()
@@ -224,7 +224,7 @@ func TestIdleWatchCountsWALCommitAtConstantSize(t *testing.T) {
 	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) { return 50_000_000, true }
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner, Tokens: "unmetered",
 		snapshot: func() activitySnapshot { return sampler },
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "at-rest"))

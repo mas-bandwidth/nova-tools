@@ -39,7 +39,7 @@ func controlCardSurvivesSweep(t *testing.T, sweepNow bool) {
 	if err := os.WriteFile(cardPath, []byte("FAKE-SAY control-report-line\nRESULT: control\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
+	args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--idle", "0", "--no-wall",
@@ -145,7 +145,7 @@ func TestTwoInvocationsPreserveResults(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", store, "--owner", "fake-1",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", store, "--owner", "fake-1",
 			"--harness", bin, "--model", "fake/fake-model", "--label", label,
 			"--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "30s", "--idle", "0", "--no-wall",
@@ -229,7 +229,7 @@ func TestPublicationFailureKeepsTheJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
+	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--idle", "0", "--no-wall",

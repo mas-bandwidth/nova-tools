@@ -12,7 +12,7 @@ import (
 // on is landed. A parent that is still queued, or landed with no merge commit,
 // keeps the dependent waiting. Cards whose parents are not landed stay in the
 // waiting set; the set is not copied into the pool.
-func Release(ctx context.Context, client *redis.Client, sprint string) Result {
+func Release(ctx context.Context, client *redis.Client, sprint string) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
 	}
@@ -29,13 +29,13 @@ func Release(ctx context.Context, client *redis.Client, sprint string) Result {
 	if _, err := fmt.Sscanf(reply, "moved=%d waiting=%d", &moved, &waiting); err != nil {
 		return refused(fmt.Sprintf("card release reply %q", reply))
 	}
-	return Result{Code: exitOK, Stdout: fmt.Sprintf("CARD RELEASE sprint=%s moved=%d waiting=%d\n",
+	return VerbResult{Code: exitOK, Stdout: fmt.Sprintf("CARD RELEASE sprint=%s moved=%d waiting=%d\n",
 		oneline.Field(sprint), moved, waiting)}
 }
 
 // Land records that the card's work is merged. mergeSHA is the merge commit
 // on the card's base. Dependents stay in waiting until Release.
-func Land(ctx context.Context, client *redis.Client, sprint, label, mergeSHA string) Result {
+func Land(ctx context.Context, client *redis.Client, sprint, label, mergeSHA string) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
 	}
@@ -61,14 +61,14 @@ func Land(ctx context.Context, client *redis.Client, sprint, label, mergeSHA str
 	}
 	switch reply {
 	case "OK":
-		return Result{Code: exitOK, Stdout: fmt.Sprintf("CARD LAND sprint=%s label=%s merge=%s\n",
+		return VerbResult{Code: exitOK, Stdout: fmt.Sprintf("CARD LAND sprint=%s label=%s merge=%s\n",
 			oneline.Field(sprint), oneline.Field(label), oneline.Field(mergeSHA))}
 	case "ABSENT":
 		return refused("no such card")
 	case "REFUSED":
 		return refused("merge sha is not 40 lowercase hex")
 	case "CONFLICT":
-		return Result{Code: exitConflict, Stderr: oneline.Escape("label conflict") + "\n"}
+		return VerbResult{Code: exitConflict, Stderr: oneline.Escape("label conflict") + "\n"}
 	default:
 		return refused(fmt.Sprintf("card land reply %q", reply))
 	}

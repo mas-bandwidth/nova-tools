@@ -1,6 +1,6 @@
-// Package prereview is the mechanical first pass over one pull request: four
+// Package prereview is the mechanical first pass over one pull request: five
 // yes/no checks that need NO model and no judgement, decided from the card, the
-// pull request's RESULT text and the diff alone.
+// pull request's RESULT text, the diff, and the check rollup at the exact head.
 //
 // It exists because the expensive part of a read is a friend's attention, and
 // four of the things a friend keeps catching are things a regular expression can
@@ -9,13 +9,18 @@
 // unchanged -- one typed NON-author friend line at 8+ at head -- and the account
 // this pass writes under is not a friend.
 //
-// The four checks:
+// The checks:
 //
 //   - symbol: the added test exercises generated code, and carries none of the
 //     self-check tells the friend-classified corpus names (checks_symbol.go).
 //   - paths:  every changed file is inside the card's PATHS globs.
 //   - done:   line 2 of the RESULT is the bare word DONE.
 //   - claims: every file the RESULT's `files:` line names is in the diff.
+//   - ci:     ci-ok at the exact head is success, when checks_enabled names ci.
+//     Red or missing is a fail that names the failing jobs (nova-tools #2704).
+//     A missing answer is neutral under pass_above, so an absent ci-ok is a
+//     fail, not a missing. The check is off by default: a repository with no
+//     ci-ok job must not bounce on a default run (nova-tools #2712).
 //
 // A check with nothing to decide on answers MISSING, never `no`: an absent card
 // is not a failed card, and a row that prints `no` for a check it could not run
@@ -51,16 +56,17 @@ type Check struct {
 	Reason string
 }
 
-// Checks are the four, in the fixed order the line prints them.
+// Checks are the mechanical checks, in the fixed order the line prints them.
 type Checks struct {
 	Symbol Check
 	Paths  Check
 	Done   Check
 	Claims Check
+	CI     Check
 }
 
-// all is the four in print order, so the renderer and the verdict read the same
-// list and cannot drift apart.
+// all is the mechanical checks in print order, so the renderer and the verdict
+// read the same list and cannot drift apart.
 func (c Checks) all() []struct {
 	name string
 	c    Check
@@ -73,12 +79,13 @@ func (c Checks) all() []struct {
 		{"paths", c.Paths},
 		{"done", c.Done},
 		{"claims", c.Claims},
+		{"ci", c.CI},
 	}
 }
 
-// named is the four under the names the JEV line prints them by, in its
-// order: donewhen (the RESULT's DONE line), selfcheck (the symbol check),
-// paths, claims.
+// named is the mechanical checks under the names the JEV line prints them by:
+// donewhen (the RESULT's DONE line), selfcheck (the symbol check), paths,
+// claims, ci (the rollup at the exact head).
 func (c Checks) named() []struct {
 	name string
 	c    Check
@@ -91,13 +98,14 @@ func (c Checks) named() []struct {
 		{"selfcheck", c.Symbol},
 		{"paths", c.Paths},
 		{"claims", c.Claims},
+		{"ci", c.CI},
 	}
 }
 
 // Evidence is one line per check, in the JEV line's order: the name, the
 // answer and the reason the answer rests on.
 func (c Checks) Evidence() []string {
-	out := make([]string, 0, 4)
+	out := make([]string, 0, 5)
 	for _, e := range c.named() {
 		r := e.c.Result
 		if r == "" {
@@ -140,7 +148,7 @@ func (c Checks) Why() string {
 			return e.name + ": " + e.c.Reason
 		}
 	}
-	return "four mechanical checks pass"
+	return "five mechanical checks pass"
 }
 
 // PR is the public evidence one pass reads. Diff is the unified diff, Files the
@@ -154,6 +162,9 @@ type PR struct {
 	Body   string
 	Files  []string
 	Diff   string
+	// Checks is the rollup read at Head. A run whose HeadSHA is not Head is
+	// not this head's evidence.
+	Checks []CheckRun
 }
 
 // Card is the bound the pass judges against: the PATHS globs the card declared
@@ -258,13 +269,15 @@ func resultText(pr PR, card Card) string {
 	return pr.Body
 }
 
-// Mechanical runs the four checks. It makes no network call and asks no model.
+// Mechanical runs the checks. It makes no network call and asks no model: the
+// caller has already read the rollup onto pr.Checks.
 func Mechanical(pr PR, card Card) Checks {
 	return Checks{
 		Symbol: symbolCheck(pr, card),
 		Paths:  pathsCheck(pr, card),
 		Done:   doneCheck(pr, card),
 		Claims: claimsCheck(pr, card),
+		CI:     ciCheck(pr),
 	}
 }
 
