@@ -184,16 +184,78 @@ func TestWebhookToEvGithub(t *testing.T) {
 		})
 	}
 
-	t.Run("signed ping answers 200 and writes nothing", func(t *testing.T) {
+	t.Run("signed ping is one kind=ping entry", func(t *testing.T) {
 		t.Parallel()
 		h, rdb := newReceiver(t)
-		body := `{"zen":"z","hook_id":1}`
+		body := `{"zen":"z","hook_id":1,"hook":{"updated_at":"2026-09-23T19:00:01Z"},
+			"organization":{"login":"mas-bandwidth"},"sender":{"login":"rowan"}}`
 		w := deliver(h, "ping", sign(testSecret, body), body)
-		if w.Code != http.StatusOK {
-			t.Fatalf("status %d, want 200: %s", w.Code, w.Body.String())
+		if w.Code != http.StatusOK || !strings.HasPrefix(w.Body.String(), "HOOK PONG id=") {
+			t.Fatalf("status %d, want 200 HOOK PONG: %s", w.Code, w.Body.String())
 		}
-		if got := entries(t, rdb); len(got) != 0 {
-			t.Fatalf("ev:github has %d entries after ping, want 0", len(got))
+		got := entries(t, rdb)
+		if len(got) != 1 {
+			t.Fatalf("ev:github has %d entries after ping, want 1", len(got))
+		}
+		want := map[string]string{"repo": "mas-bandwidth", "kind": "ping", "number": "", "head": "",
+			"action": "ping", "at": "2026-09-23T19:00:01Z", "sender": "rowan", "comment_id": ""}
+		if len(got[0]) != len(want) {
+			t.Fatalf("ping entry %#v, want %#v", got[0], want)
+		}
+		for k, v := range want {
+			if got[0][k] != v {
+				t.Errorf("ping %s = %q, want %q", k, got[0][k], v)
+			}
+		}
+	})
+
+	// #3177 gap 3: the signature check is on every delivery, the ping and the
+	// two new kinds included, not only on the kinds that existed before.
+	for _, tc := range []struct{ event, body string }{
+		{"ping", `{"zen":"z","hook_id":1,"organization":{"login":"mas-bandwidth"}}`},
+		{"issues", `{"action":"opened","issue":{"number":9,"state":"open","labels":[]},"repository":{"full_name":"mas-bandwidth/nova-tools"}}`},
+		{"workflow_run", `{"action":"completed","workflow_run":{"id":5,"head_sha":"8888888888888888888888888888888888888888"},"repository":{"full_name":"mas-bandwidth/nova-tools"}}`},
+	} {
+		for _, sig := range []struct{ name, header string }{
+			{"unsigned", ""},
+			{"wrong secret", sign("not-the-secret", tc.body)},
+		} {
+			t.Run(tc.event+" "+sig.name+" refused 401", func(t *testing.T) {
+				t.Parallel()
+				h, rdb := newReceiver(t)
+				w := deliver(h, tc.event, sig.header, tc.body)
+				if w.Code != http.StatusUnauthorized {
+					t.Fatalf("status %d, want 401: %s", w.Code, w.Body.String())
+				}
+				if got := entries(t, rdb); len(got) != 0 {
+					t.Fatalf("ev:github has %d entries after a refused %s, want 0", len(got), tc.event)
+				}
+			})
+		}
+	}
+
+	t.Run("signed issues and workflow_run are one entry each", func(t *testing.T) {
+		t.Parallel()
+		h, rdb := newReceiver(t)
+		issue := `{"action":"labeled","issue":{"number":3177,"state":"open","state_reason":null,"body":"b",
+			"labels":[{"name":"swarm"}]},"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`
+		run := `{"action":"completed","workflow_run":{"id":5,"name":"ci","status":"completed","conclusion":"success",
+			"head_sha":"8888888888888888888888888888888888888888","pull_requests":[{"number":3034}]},
+			"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"rowan"}}`
+		for _, d := range []struct{ event, body string }{{"issues", issue}, {"workflow_run", run}} {
+			if w := deliver(h, d.event, sign(testSecret, d.body), d.body); w.Code != http.StatusOK {
+				t.Fatalf("%s: status %d, want 200: %s", d.event, w.Code, w.Body.String())
+			}
+		}
+		got := entries(t, rdb)
+		if len(got) != 2 {
+			t.Fatalf("ev:github has %d entries, want 2", len(got))
+		}
+		if got[0]["kind"] != "issues" || got[0]["number"] != "3177" || got[0]["labels"] != `["swarm"]` || got[0]["state"] != "open" {
+			t.Errorf("issues entry %#v", got[0])
+		}
+		if got[1]["kind"] != "workflow_run" || got[1]["number"] != "3034" || got[1]["conclusion"] != "success" || got[1]["run_id"] != "5" {
+			t.Errorf("workflow_run entry %#v", got[1])
 		}
 	})
 

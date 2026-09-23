@@ -12,7 +12,12 @@
 // handler cannot be built without a secret, so an unauthenticated receiver is
 // not a configuration this package can express.
 //
-// Answers: 200 on an entry written and on ping; 202 on a signed event the
+// A ping is signature-checked like every other delivery and, once verified, is
+// one kind=ping entry (#3177): the ping is how a new hook proves it reaches
+// ev:github, so it is never dropped. The issues and workflow_run kinds the org
+// hook subscribes to are carried as ghevent decodes them.
+//
+// Answers: 200 on an entry written (a ping included); 202 on a signed event the
 // stream does not carry (GitHub marks the delivery good; nothing is written);
 // 400 on a carried event whose payload does not decode; 401 on a bad
 // signature; 405 on anything but POST; 413 over GitHub's 25 MB payload cap;
@@ -103,10 +108,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
 	delivery := field(r.Header.Get("X-GitHub-Delivery"))
-	if event == "ping" {
-		answer(w, http.StatusOK, "HOOK PONG delivery="+delivery)
-		return
-	}
 	e, err := ghevent.Decode(event, body)
 	if errors.Is(err, ghevent.ErrNotCarried) {
 		answer(w, http.StatusAccepted, "HOOK SKIP kind="+field(event)+" delivery="+delivery)
@@ -119,6 +120,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	id, err := ghevent.Publish(r.Context(), h.rdb, e)
 	if err != nil {
 		answer(w, http.StatusServiceUnavailable, "HOOK FAILED reason=redis delivery="+delivery)
+		return
+	}
+	if e.Kind == "ping" {
+		answer(w, http.StatusOK, fmt.Sprintf("HOOK PONG id=%s repo=%s delivery=%s", id, field(e.Repo), delivery))
 		return
 	}
 	answer(w, http.StatusOK, fmt.Sprintf("HOOK OK id=%s kind=%s repo=%s number=%s action=%s delivery=%s",
