@@ -9,9 +9,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
 
-func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
+func cmdSprintVerbs(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(args) == 0 {
-		fmt.Fprintf(stderr, "nova-pulse sprint: subverb required (start, status, set, table, funnel, stop); run: nova-pulse help\n")
+		fmt.Fprintf(stderr, "nova-pulse sprint: a sub-verb is required (start, status, set, table, funnel, stop); run: nova-pulse help\n")
 		return 2
 	}
 
@@ -133,29 +133,8 @@ func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
 		})
 
 	case "funnel":
-		f := newFlags("sprint funnel")
-		plan := f.fs.String("plan", "", "")
-		queue := f.fs.String("queue", "", "")
-		wave := f.fs.String("wave", "", "")
-		max := f.fs.Int("max", 0, "")
-		if !f.parse(rest, stderr) {
-			return 2
-		}
-		f.want(*queue, "queue", "the queue directory")
-		if *max < 0 {
-			f.problems = append(f.problems, fmt.Sprintf("--max wants a non-negative number, got %d", *max))
-		}
-		if f.refused(stderr) {
-			return 2
-		}
-		return pulse.SprintFunnel(pulse.SprintFunnelInput{
-			PlanPath: *plan,
-			Queue:    *queue,
-			Wave:     *wave,
-			Max:      *max,
-			Stdout:   stdout,
-			Stderr:   stderr,
-		})
+		// The funnel is the landed `sprint funnel` (cmd/nova-pulse/funnel.go); this dispatcher only routes to it.
+		return cmdSprintFunnel(rest, stdout, stderr, now)
 
 	case "stop":
 		f := newFlags("sprint stop")

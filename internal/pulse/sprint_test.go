@@ -808,110 +808,6 @@ func TestSprintModelRowsComeFromTheProviderTable(t *testing.T) {
 	}
 }
 
-// 18. TestSprintFunnelFoldsTheRecordPerWaveKindModelAndBench (rule 17)
-func TestSprintFunnelFoldsTheRecordPerWaveKindModelAndBench(t *testing.T) {
-	queueDir := t.TempDir()
-	eventsPath := filepath.Join(queueDir, "events.tsv")
-
-	// 1,801 launched, 1,293 OK, 437 fail
-	var b strings.Builder
-	for i := 0; i < 1801; i++ {
-		fmt.Fprintf(&b, "2026-09-21T10:00:00Z\tLAUNCH\tcard-%04d\t1\tflash\thulk\t-\t-\n", i)
-	}
-	for i := 0; i < 1293; i++ {
-		fmt.Fprintf(&b, "2026-09-21T10:05:00Z\tHARVEST\tcard-%04d\t1\tflash\thulk\tOK\t0.0100\n", i)
-		fmt.Fprintf(&b, "2026-09-21T10:10:00Z\tGATE\tcard-%04d\t1\tflash\thulk\tPASS\t-\n", i)
-		fmt.Fprintf(&b, "2026-09-21T10:15:00Z\tREVIEW\tcard-%04d\t1\tflash\thulk\tAPPROVE\t-\n", i)
-		fmt.Fprintf(&b, "2026-09-21T10:20:00Z\tLAND\tcard-%04d\t1\tflash\thulk\tMERGED\t-\n", i)
-	}
-	_ = os.WriteFile(eventsPath, []byte(b.String()), 0o644)
-
-	var out, errb bytes.Buffer
-	code := SprintFunnel(SprintFunnelInput{
-		Queue:  queueDir,
-		Wave:   "w1",
-		Stdout: &out,
-		Stderr: &errb,
-	})
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0", code)
-	}
-
-	line := out.String()
-	if !strings.Contains(line, "launched=1801") || !strings.Contains(line, "ok=1293") || !strings.Contains(line, "useful=1293") {
-		t.Errorf("funnel counts mismatch: %s", line)
-	}
-}
-
-// 19. TestSprintFunnelExcludesAVoidedRow (rule 18)
-func TestSprintFunnelExcludesAVoidedRow(t *testing.T) {
-	queueDir := t.TempDir()
-	eventsPath := filepath.Join(queueDir, "events.tsv")
-	voidsPath := filepath.Join(queueDir, "voids.tsv")
-
-	// Ten green outcomes recorded
-	var eb strings.Builder
-	var vb strings.Builder
-	for i := 0; i < 10; i++ {
-		card := fmt.Sprintf("card-%02d", i)
-		fmt.Fprintf(&eb, "2026-09-21T10:00:00Z\tLAUNCH\t%s\t1\tflash\thulk\t-\t-\n", card)
-		fmt.Fprintf(&eb, "2026-09-21T10:05:00Z\tHARVEST\t%s\t1\tflash\thulk\tOK\t-\n", card)
-		fmt.Fprintf(&eb, "2026-09-21T10:10:00Z\tGATE\t%s\t1\tflash\thulk\tPASS\t-\n", card)
-
-		// Void record for each
-		fmt.Fprintf(&vb, "%s\tvoided\n", card)
-	}
-	_ = os.WriteFile(eventsPath, []byte(eb.String()), 0o644)
-	_ = os.WriteFile(voidsPath, []byte(vb.String()), 0o644)
-
-	var out bytes.Buffer
-	SprintFunnel(SprintFunnelInput{
-		Queue:  queueDir,
-		Wave:   "w1",
-		Stdout: &out,
-		Stderr: io.Discard,
-	})
-
-	line := out.String()
-	// All voided: counts must be 0
-	if !strings.Contains(line, "launched=0 ok=0 green=0") {
-		t.Errorf("voided rows were not excluded from funnel counts: %s", line)
-	}
-	// Verify raw events file was not deleted or rewritten
-	raw, _ := os.ReadFile(eventsPath)
-	if len(strings.Split(strings.TrimSpace(string(raw)), "\n")) != 30 {
-		t.Errorf("events log was improperly rewritten")
-	}
-}
-
-// 20. TestSprintFunnelReadsUnmeasuredSpendAsUnknown (rule 19)
-func TestSprintFunnelReadsUnmeasuredSpendAsUnknown(t *testing.T) {
-	queueDir := t.TempDir()
-	eventsPath := filepath.Join(queueDir, "events.tsv")
-
-	// Wave with no usage/spend measured (spend is -)
-	content := "2026-09-21T10:00:00Z\tLAUNCH\tc1\t1\tflash\thulk\t-\t-\n" +
-		"2026-09-21T10:05:00Z\tHARVEST\tc1\t1\tflash\thulk\tOK\t-\n" +
-		"2026-09-21T10:10:00Z\tLAND\tc1\t1\tflash\thulk\tMERGED\t-\n"
-	_ = os.WriteFile(eventsPath, []byte(content), 0o644)
-
-	var out bytes.Buffer
-	SprintFunnel(SprintFunnelInput{
-		Queue:  queueDir,
-		Wave:   "w1",
-		Stdout: &out,
-		Stderr: io.Discard,
-	})
-
-	line := out.String()
-	if !strings.Contains(line, "usd_per_useful=-") {
-		t.Fatalf("unmeasured spend must be dash, got: %s", line)
-	}
-	if strings.Contains(line, "usd_per_useful=0") || strings.Contains(line, "0.0000") {
-		t.Fatalf("funnel manufactured a zero cost: %s", line)
-	}
-}
-
 // 21. TestSprintPriorityCardVisibility (Issue #2417)
 func TestSprintPriorityCardVisibility(t *testing.T) {
 	queueDir := t.TempDir()
@@ -945,24 +841,6 @@ func TestSprintPriorityCardVisibility(t *testing.T) {
 
 // 22. TestSprintMutationTeeth (hard assertions verifying mutation failure)
 func TestSprintMutationTeeth(t *testing.T) {
-	t.Run("mutant_zero_spend_teeth", func(t *testing.T) {
-		// Verify that a mutant zero cost would trigger hard assertion
-		queueDir := t.TempDir()
-		eventsPath := filepath.Join(queueDir, "events.tsv")
-		_ = os.WriteFile(eventsPath, []byte("2026-09-21T10:00:00Z\tLAND\tc1\t1\tflash\thulk\tMERGED\t-\n"), 0o644)
-
-		var out bytes.Buffer
-		SprintFunnel(SprintFunnelInput{
-			Queue:  queueDir,
-			Wave:   "mutant",
-			Stdout: &out,
-			Stderr: io.Discard,
-		})
-		if strings.Contains(out.String(), "usd_per_useful=0") {
-			t.Fatalf("TEETH: manufactured zero cost detected!")
-		}
-	})
-
 	t.Run("mutant_stamp_before_drain_teeth", func(t *testing.T) {
 		// Stop with live workers MUST NOT stamp SPRINT-END
 		queueDir := t.TempDir()

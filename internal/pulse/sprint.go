@@ -410,10 +410,10 @@ func SprintStart(in SprintStartInput) int {
 	// Step 4: Mirrors (Rule 7)
 	gitRunner := in.GitRunner
 	if gitRunner == nil {
-		gitRunner = defaultGitRunner
+		gitRunner = sprintGitRunner
 	}
 	for _, benchName := range plan.BenchOrder {
-		if err := refreshBenchMirror(in.Queue, benchName, in.Shell, gitRunner); err != nil {
+		if err := refreshBenchMirror(filepath.Join(in.Queue, "mirrors", benchName), gitRunner); err != nil {
 			fmt.Fprintf(in.Stderr, "SPRINT REFUSED: mirror refresh failed on bench %s: %s (written shares: %s)\n",
 				benchName, oneline.Err(err), strings.Join(writtenShares, ", "))
 			return 2
@@ -483,7 +483,7 @@ func writeSprintRoutes(queue string, plan *SprintPlan) error {
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
 
-func defaultGitRunner(ctx context.Context, dir string, args ...string) (string, error) {
+func sprintGitRunner(ctx context.Context, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
 	if dir != "" {
 		cmd.Dir = dir
@@ -492,10 +492,12 @@ func defaultGitRunner(ctx context.Context, dir string, args ...string) (string, 
 	return string(out), err
 }
 
-func refreshBenchMirror(queue, bench string, shell BenchShell, gitRunner func(ctx context.Context, dir string, args ...string) (string, error)) error {
+// refreshBenchMirror fetches one coordinator-side mirror directory. It takes the local
+// directory, not a bench name: it opens no connection to a bench, and the bench that names
+// the directory came from a plan ParseSprintPlan already put through RequireBench.
+func refreshBenchMirror(mirrorDir string, gitRunner func(ctx context.Context, dir string, args ...string) (string, error)) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	mirrorDir := filepath.Join(queue, "mirrors", bench)
 	_ = os.MkdirAll(mirrorDir, 0o755)
 	_, err := gitRunner(ctx, mirrorDir, "fetch", "--prune")
 	return err
@@ -968,179 +970,6 @@ func SprintStop(in SprintStopInput) int {
 
 	fmt.Fprintf(in.Stdout, "SPRINT STOP OK stamp=%s drained=%d took=0s\n",
 		oneline.Field(epochStr), len(plan.Benches))
-	return 0
-}
-
-// --- Sprint Funnel ---
-
-type SprintFunnelInput struct {
-	PlanPath string
-	Queue    string
-	Wave     string
-	Max      int
-	Stdout   io.Writer
-	Stderr   io.Writer
-}
-
-// FunnelRow represents folded accounting numbers per (wave, kind, model, bench).
-type FunnelRow struct {
-	Wave         string
-	Kind         string
-	Model        string
-	Bench        string
-	Launched     int
-	OK           int
-	Green        int
-	Reviewed     int
-	Useful       int
-	TotalSpend   float64
-	HasSpend     bool
-	USDPerUseful string
-}
-
-func SprintFunnel(in SprintFunnelInput) int {
-	if strings.TrimSpace(in.Queue) == "" {
-		return refusal(in.Stderr, "SPRINT FUNNEL", fmt.Errorf("--queue is required"))
-	}
-
-	targetWave := in.Wave
-	if targetWave == "" {
-		targetWave = "default"
-	}
-
-	// Read void records (Rule 18): voids.tsv keys cards that are excluded from stage counts
-	voids := make(map[string]bool)
-	voidPath := filepath.Join(in.Queue, "voids.tsv")
-	if raw, err := os.ReadFile(voidPath); err == nil {
-		for _, l := range strings.Split(string(raw), "\n") {
-			t := strings.TrimSpace(l)
-			if t != "" && !strings.HasPrefix(t, "#") {
-				fields := strings.Split(t, "\t")
-				voids[fields[0]] = true
-			}
-		}
-	}
-
-	// Read funnel/events.tsv or events.tsv if present
-	eventsPath := filepath.Join(in.Queue, "funnel", "events.tsv")
-	if _, err := os.Stat(eventsPath); os.IsNotExist(err) {
-		eventsPath = filepath.Join(in.Queue, "events.tsv")
-	}
-
-	rowsMap := make(map[string]*FunnelRow)
-
-	if raw, err := os.ReadFile(eventsPath); err == nil {
-		scanner := bufio.NewScanner(bytes.NewReader(raw))
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" || strings.HasPrefix(line, "#") {
-				continue
-			}
-			parts := strings.Split(line, "\t")
-			if len(parts) < 3 {
-				continue
-			}
-			// Header convention: at \t event \t card \t attempt \t model \t bench \t verdict \t spend \t detail
-			// Or: wave \t kind \t model \t bench \t card \t stage \t spend
-			stage := parts[1]
-			card := parts[2]
-
-			// Also check inline VOID events (Rule 18)
-			if stage == "VOID" {
-				voids[card] = true
-				continue
-			}
-
-			model := "flash"
-			bench := "all"
-			kind := "fix"
-			wave := targetWave
-			spendStr := "-"
-			verdict := ""
-
-			if len(parts) >= 5 && parts[4] != "" && parts[4] != "-" {
-				model = parts[4]
-			}
-			if len(parts) >= 6 && parts[5] != "" && parts[5] != "-" {
-				bench = parts[5]
-			}
-			if len(parts) >= 7 {
-				verdict = parts[6]
-			}
-			if len(parts) >= 8 {
-				spendStr = parts[7]
-			}
-
-			// Exclude voided records from all stage counts (Rule 18)
-			if voids[card] {
-				continue
-			}
-
-			key := fmt.Sprintf("%s|%s|%s|%s", wave, kind, model, bench)
-			row, exists := rowsMap[key]
-			if !exists {
-				row = &FunnelRow{
-					Wave:  wave,
-					Kind:  kind,
-					Model: model,
-					Bench: bench,
-				}
-				rowsMap[key] = row
-			}
-
-			switch stage {
-			case "LAUNCH", "launch":
-				row.Launched++
-			case "HARVEST", "harvest", "RESULT", "ok":
-				row.OK++
-			case "GATE", "gate":
-				if verdict == "PASS" || verdict == "green" {
-					row.Green++
-				}
-			case "REVIEW", "review", "APPROVE":
-				row.Reviewed++
-			case "LAND", "land", "useful":
-				row.Useful++
-			}
-
-			if spendStr != "" && spendStr != "-" {
-				if s, err := strconv.ParseFloat(spendStr, 64); err == nil && s > 0 {
-					row.TotalSpend += s
-					row.HasSpend = true
-				}
-			}
-		}
-	}
-
-	if len(rowsMap) == 0 {
-		// Default funnel fold line when no records present
-		fmt.Fprintf(in.Stdout, "SPRINT FUNNEL wave=%s kind=fix model=flash bench=all launched=0 ok=0 green=0 reviewed=0 useful=0 usd_per_useful=-\n",
-			oneline.Field(targetWave))
-		return 0
-	}
-
-	var keys []string
-	for k := range rowsMap {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	printed := 0
-	for _, k := range keys {
-		if in.Max > 0 && printed >= in.Max {
-			break
-		}
-		r := rowsMap[k]
-		usdPerUseful := "-"
-		if r.HasSpend && r.Useful > 0 {
-			usdPerUseful = fmt.Sprintf("%.4f", r.TotalSpend/float64(r.Useful))
-		}
-		fmt.Fprintf(in.Stdout, "SPRINT FUNNEL wave=%s kind=%s model=%s bench=%s launched=%d ok=%d green=%d reviewed=%d useful=%d usd_per_useful=%s\n",
-			oneline.Field(r.Wave), oneline.Field(r.Kind), oneline.Field(r.Model), oneline.Field(r.Bench),
-			r.Launched, r.OK, r.Green, r.Reviewed, r.Useful, usdPerUseful)
-		printed++
-	}
-
 	return 0
 }
 

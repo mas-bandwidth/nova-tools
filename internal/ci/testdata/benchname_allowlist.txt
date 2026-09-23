@@ -8,6 +8,7 @@
 
 internal/pulse/manager.go:reissue formats the requeued card's text and touches no machine; the bench it names is written into a card that pulse.Fill resolves before launching it
 internal/pulse/fill.go:writeLaunchedMarker writes the launched card's marker on the coordinator's own disk and touches no machine; the bench it records is the one pulse.Fill already put through refuseNonBenches and guardedLauncher before the card was launched at all
+internal/pulse/sprint.go:defaultShareWriter writes <queue>/shares/<bench>/shares.tsv on the coordinator's own disk and touches no machine; SprintStart calls it only for plan benches ParseSprintPlan put through RequireBench (the verb requires --machines), and SprintSet only for a bench already in that plan's sprint.tsv record
 
 # `harvest --bench` resolves its name ONCE, at the verb's edge: harvestBench calls
 # requireBench (fleet.Registry.RequireBench) before the first ssh. These four are below

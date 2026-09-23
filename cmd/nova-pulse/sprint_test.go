@@ -48,8 +48,8 @@ func TestSprintCLIRequiresSubverb(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2", code)
 	}
-	if !strings.Contains(errb.String(), "subverb required") {
-		t.Fatalf("stderr missing subverb required: %s", errb.String())
+	if !strings.Contains(errb.String(), "a sub-verb is required") {
+		t.Fatalf("stderr missing a sub-verb is required: %s", errb.String())
 	}
 }
 
@@ -210,13 +210,13 @@ func TestSprintCLISubcommandsEndToEnd(t *testing.T) {
 	code = run([]string{
 		"sprint", "funnel",
 		"--queue", queueDir,
-		"--wave", "test-wave",
+		"--oneline",
 	}, &out, &errb, time.Now().UTC())
 	if code != 0 {
 		t.Fatalf("sprint funnel exit = %d, want 0; err=%s", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "SPRINT FUNNEL wave=test-wave") {
-		t.Errorf("sprint funnel missing wave=test-wave: %s", out.String())
+	if !strings.Contains(out.String(), "FUNNEL admit=") {
+		t.Errorf("sprint funnel did not route to the landed funnel: %s", out.String())
 	}
 
 	// 9. sprint stop
