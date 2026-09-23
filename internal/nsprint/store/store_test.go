@@ -177,6 +177,9 @@ func TestOpenAuthenticatesFromEnv(t *testing.T) {
 	addr := startRedis(t, "--user", "default", "off", "--user", "bench", "on", ">bench-secret", "~*", "&*", "+@all")
 	ctx := context.Background()
 
+	// An inherited NOVA_SPRINT_REDIS_PASSWORD_ENV would redirect the default path
+	// below to another seat's variable; clear it so the test is deterministic.
+	t.Setenv(store.PasswordEnvEnv, "")
 	t.Setenv(store.UserEnv, "")
 	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
 	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOAUTH") {
