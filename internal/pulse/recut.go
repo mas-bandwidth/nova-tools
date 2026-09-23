@@ -13,6 +13,36 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// recutPinProblem binds the checkout that `git apply --3way` will mutate to
+// the tip the card claims (#2513). The pin is the card's base-sha when one is
+// named (the card says "onto base-sha X"), else its --head. It fails closed:
+// no pin, a pin the checkout cannot resolve, or a checkout whose HEAD is a
+// different commit is refused before anything in repoDir is touched.
+func recutPinProblem(repoDir, head, baseSHA string) string {
+	pin, flag := strings.TrimSpace(baseSHA), "base-sha"
+	if pin == "" {
+		pin, flag = strings.TrimSpace(head), "--head"
+	}
+	if pin == "" {
+		return "--head (or a base-sha) is required when --diff-file is passed; the checkout the diff is applied in must be pinned to the card's tip (pass --head <sha> of the commit checked out in --dir)"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	headOut, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}").Output()
+	if err != nil {
+		return fmt.Sprintf("--dir %s has no HEAD commit; nothing was applied (check out the card's tip %s there first)", oneline.Field(repoDir), oneline.Field(pin))
+	}
+	pinOut, err := exec.CommandContext(ctx, "git", "-C", repoDir, "rev-parse", "--verify", "--quiet", "--end-of-options", pin+"^{commit}").Output()
+	if err != nil {
+		return fmt.Sprintf("%s %s is not a commit in --dir %s; nothing was applied (fetch it and check it out there first)", flag, oneline.Field(pin), oneline.Field(repoDir))
+	}
+	got, want := strings.TrimSpace(string(headOut)), strings.TrimSpace(string(pinOut))
+	if got != want {
+		return fmt.Sprintf("--dir %s is checked out at %s, not the card's %s %s; nothing was applied (check out %s there, or pass the %s the checkout is at)", oneline.Field(repoDir), oneline.Field(got), flag, oneline.Field(want), oneline.Field(want), flag)
+	}
+	return ""
+}
+
 // Attempt3WayApply attempts `git apply --3way` of diffPath in repoDir,
 // applying the patch to repoDir so the job starts from an applied tree.
 // It checks output and repo state for conflict markers/messages rather than relying

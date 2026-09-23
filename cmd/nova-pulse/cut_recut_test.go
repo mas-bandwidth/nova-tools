@@ -53,10 +53,12 @@ func TestCmdCutKindRecutAppliesClean(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(repo, "other.txt"), []byte("unrelated\n"), 0o644)
 	exec.Command("git", "-C", repo, "add", "other.txt").Run()
 	exec.Command("git", "-C", repo, "commit", "-m", "unrelated commit").Run()
+	tip, _ := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
 
 	code, stdout, stderr := runCut(t,
 		"--kind", "recut",
 		"--repo", "mas-bandwidth/nova-tools",
+		"--head", strings.TrimSpace(string(tip)),
 		"--diff-file", diffFile,
 		"--dir", repo,
 		"--title", "clean mechanical recut",

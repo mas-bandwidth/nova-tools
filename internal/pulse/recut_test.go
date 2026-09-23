@@ -308,12 +308,16 @@ func TestCutKindRecutWithHoldAndDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// The checkout the diff is applied in sits at the HOLD's base-sha (#2513).
+	runGit(t, repo, "checkout", "-q", "main")
+	baseSHA := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
 	holdFile := filepath.Join(dir, "hold.md")
 	holdContent := "DISPOSITION who=Johnny head=d080cec1d2a5afcaef2b696840389e91e769a1d1 verdict=HOLD score=4/10\n" +
 		"PATHS: alpha.txt\n" +
 		"TEST: ./internal/pulse TestSample\n" +
 		"BASE: dev\n" +
-		"base-sha: c7104413f20c2897e6a9c4c19cc7158b0f4ea15c\n" +
+		"base-sha: " + baseSHA + "\n" +
 		"REMAINS: repair line 2 cleanly\n"
 	if err := os.WriteFile(holdFile, []byte(holdContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -350,7 +354,7 @@ func TestCutKindRecutWithHoldAndDiff(t *testing.T) {
 	if !strings.Contains(card, "REMAINS: repair line 2 cleanly\n") {
 		t.Errorf("card missing REMAINS header:\n%s", card)
 	}
-	if !strings.Contains(card, "Recut the remaining work named in the HOLD onto BASE dev at base-sha c7104413f20c2897e6a9c4c19cc7158b0f4ea15c.") {
+	if !strings.Contains(card, "Recut the remaining work named in the HOLD onto BASE dev at base-sha "+baseSHA+".") {
 		t.Errorf("card missing HOLD instruction paragraph:\n%s", card)
 	}
 	if !strings.Contains(card, "Remains: repair line 2 cleanly\n") {
@@ -414,5 +418,89 @@ func TestAttempt3WayApplyDirect(t *testing.T) {
 	alphaConf, _ := os.ReadFile(filepath.Join(repo, "alpha.txt"))
 	if !strings.Contains(string(alphaConf), "<<<<<<<") {
 		t.Errorf("alpha.txt missing conflict markers; got %q", string(alphaConf))
+	}
+}
+
+// cut-kind-recut-pin-refused (#2513): `cut --kind recut --diff-file` mutates
+// --dir with `git apply --3way`, so a checkout whose HEAD is not the card's
+// pinned tip (--head, or the HOLD's base-sha) is refused before the apply,
+// and the checkout is left exactly as it was.
+func TestCutKindRecutRefusesCheckoutNotAtPinnedHead(t *testing.T) {
+	repo := setupGitRepo(t)
+	dir := t.TempDir()
+	out, queue := filepath.Join(dir, "pending"), filepath.Join(dir, "queue")
+	if err := os.MkdirAll(queue, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pinned := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+
+	runGit(t, repo, "checkout", "-q", "-b", "feat")
+	if err := os.WriteFile(filepath.Join(repo, "alpha.txt"), []byte("line 1\nline 2 feat\nline 3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "commit", "-qam", "feat change")
+	diffFile := filepath.Join(dir, "prior.diff")
+	if err := os.WriteFile(diffFile, []byte(runGit(t, repo, "diff", "HEAD~1")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// The checkout drifts to a different tip than the card pins.
+	runGit(t, repo, "checkout", "-q", "main")
+	if err := os.WriteFile(filepath.Join(repo, "beta.txt"), []byte("beta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, repo, "add", "beta.txt")
+	runGit(t, repo, "commit", "-qm", "drift")
+	drifted := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD"))
+	if drifted == pinned {
+		t.Fatal("setup: drifted tip equals pinned head")
+	}
+
+	holdFile := filepath.Join(dir, "hold.md")
+	if err := os.WriteFile(holdFile, []byte("DISPOSITION who=stella head=d080cec1d2a5afcaef2b696840389e91e769a1d1 verdict=HOLD score=5\n"+
+		"PATHS: alpha.txt\nTEST: ./internal/pulse TestSample\nBASE: dev\nbase-sha: "+pinned+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name string
+		in   CutKindInput
+		want string
+	}{
+		{"head differs", CutKindInput{Head: pinned}, "not the card's --head " + pinned},
+		{"base-sha differs", CutKindInput{HoldFile: holdFile}, "not the card's base-sha " + pinned},
+		{"head unknown", CutKindInput{Head: "0000000000000000000000000000000000000001"}, "is not a commit in --dir"},
+		{"no pin", CutKindInput{Title: "unpinned recut"}, "--head (or a base-sha) is required"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			in := c.in
+			in.Kind, in.Repo, in.DiffFile, in.Dir = "recut", "mas-bandwidth/nova-tools", diffFile, repo
+			in.Out, in.Queue = out, queue
+			var bufOut, bufErr bytes.Buffer
+			in.Stdout, in.Stderr = &bufOut, &bufErr
+			if code := CutKind(in); code != 2 {
+				t.Fatalf("exit = %d, want 2; stdout=%s stderr=%s", code, bufOut.String(), bufErr.String())
+			}
+			if !strings.Contains(bufErr.String(), "CUT REFUSED") || !strings.Contains(bufErr.String(), c.want) {
+				t.Errorf("stderr = %q, want CUT REFUSED containing %q", bufErr.String(), c.want)
+			}
+			if st := runGit(t, repo, "status", "--porcelain"); st != "" {
+				t.Errorf("checkout was modified by a refused cut:\n%s", st)
+			}
+			if got := strings.TrimSpace(runGit(t, repo, "rev-parse", "HEAD")); got != drifted {
+				t.Errorf("HEAD moved to %s, want %s", got, drifted)
+			}
+			alpha, err := os.ReadFile(filepath.Join(repo, "alpha.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(alpha) != "line 1\nline 2\nline 3\n" {
+				t.Errorf("alpha.txt changed by a refused cut: %q", alpha)
+			}
+			if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
+				t.Errorf("a refused cut wrote a card")
+			}
+		})
 	}
 }

@@ -121,6 +121,10 @@ func CutKind(in CutKindInput) int {
 		}
 		chosenDiff = string(rawDiff)
 		if in.Kind == "recut" {
+			if problem := recutPinProblem(in.Dir, in.Head, in.BaseSHA); problem != "" {
+				fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", problem)
+				return 2
+			}
 			in.Applied = Attempt3WayApply(in.Dir, in.DiffFile)
 		}
 	} else if in.PriorDiff != "" {
