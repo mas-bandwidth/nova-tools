@@ -780,3 +780,38 @@ func TestIssue2305(t *testing.T) {
 		t.Errorf(".git class appeared in ByClass -- git content reached the index")
 	}
 }
+
+// TestBuildSkipsNestedGitDirectory pins issue #2305's second half: the
+// .git skip is by basename at any depth, not only at the corpus root.
+// A root-only check (p == ".git") passes TestIssue2305 but fails here.
+func TestBuildSkipsNestedGitDirectory(t *testing.T) {
+	fsys := fstest.MapFS{
+		"sub/.git/file.md":       {Data: []byte("a markdown file inside a nested git directory\n")},
+		"sub/.git/objects/md.md": {Data: []byte("a nested markdown inside nested git objects\n")},
+		"a/b/.git/HEAD.md":       {Data: []byte("ref: refs/heads/main\n")},
+		"sub/real.md":            {Data: []byte("---\nname: nested-real\n---\n\nA real document beside the nested git directory that should reach the index.\n")},
+	}
+
+	c, err := Build(fsys, nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	for _, ch := range c.Chunks {
+		if strings.Contains("/"+ch.File, "/.git/") {
+			t.Errorf("chunk from a nested .git/ reached the index: %s", ch.File)
+		}
+	}
+	sawReal := false
+	for _, f := range c.Files {
+		if strings.Contains("/"+f, "/.git/") {
+			t.Errorf("nested .git/ file listed in Files: %s", f)
+		}
+		if f == "sub/real.md" {
+			sawReal = true
+		}
+	}
+	if !sawReal {
+		t.Errorf("sub/real.md missing from Files %v: the skip must drop only .git, not its parent", c.Files)
+	}
+}
