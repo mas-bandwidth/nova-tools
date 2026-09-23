@@ -4172,7 +4172,16 @@ not name is not materialized. The named package's tests still run. `PATHS:
 none`, or no `PATHS:` line, stays a full checkout. `prepare` does this into
 `<job>/repo` when it is given the reference checkout.
 
+A lookup that finds no in-module directories is a valid empty set: the PATHS
+and TEST cones are still checked out. An import that cannot be resolved is
+not empty. Staging refuses, and does not hand the worker a sparse tree that
+omits that dependency.
+
 **Red tests.** `TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage`: a
 fixture PATHS list does not materialize an unrelated package; the named
 package's tests still run. `TestPrepareStagesASparseJobClone`: prepare with
 `CloneFrom` stages that sparse tree under the job root.
+`TestSparseCheckoutRefusesAMissingInModuleImport`: a named package that
+imports an in-module package that is not there makes staging refuse.
+`TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS`: a PATHS list that
+names no Go package still checks out that path.

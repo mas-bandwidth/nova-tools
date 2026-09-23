@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,9 +22,13 @@ const JobRepo = "repo"
 // StageJobTree clones source into dest as the job clone. When the card declares
 // PATHS:, the working tree is a sparse checkout of those packages and their
 // in-module dependencies only — an unrelated package is not materialized, and
-// the named package's tests still run (#2498 S10). PATHS: none, or no PATHS:
-// line, is a full checkout so a card that declared no bound keeps the whole
-// tree. dest is typically filepath.Join(jobDir, JobRepo).
+// the named package's tests still run (#2498 S10). An import that cannot be
+// resolved is not an empty dependency set: staging refuses before the clone,
+// so the worker is not handed a tree with that dependency omitted. A resolved
+// set with no in-module directories is empty and still checks out the PATHS
+// and TEST cones. PATHS: none, or no PATHS: line, is a full checkout so a card
+// that declared no bound keeps the whole tree. dest is typically
+// filepath.Join(jobDir, JobRepo).
 func StageJobTree(source, dest string, card []byte) error {
 	source = strings.TrimSpace(source)
 	dest = strings.TrimSpace(dest)
@@ -52,22 +57,26 @@ func StageJobTree(source, dest string, card []byte) error {
 		}
 	}
 
+	// Resolve the cone before cloning. A dependency-resolution error then
+	// refuses the stage with no job tree created, instead of a sparse checkout
+	// that quietly dropped the import.
+	sparse := declared && len(globs) > 0
+	var cones []string
+	if sparse {
+		var err error
+		cones, err = sparseCones(source, globs, cardTestPackage(string(card)))
+		if err != nil {
+			return err
+		}
+	}
+
 	// --shared borrows the reference checkout's objects (SPEC-SANDBOX tree: yes);
 	// --no-checkout leaves the working tree empty so sparse-checkout can fill it.
 	if _, err := sparseGit("", "clone", "--quiet", "--shared", "--no-checkout", source, dest); err != nil {
 		return err
 	}
 
-	if !declared || len(globs) == 0 {
-		_, err := sparseGit(dest, "checkout", "--quiet")
-		return err
-	}
-
-	cones, err := sparseCones(source, globs, cardTestPackage(string(card)))
-	if err != nil {
-		return err
-	}
-	if len(cones) == 0 {
+	if !sparse || len(cones) == 0 {
 		_, err := sparseGit(dest, "checkout", "--quiet")
 		return err
 	}
@@ -78,7 +87,7 @@ func StageJobTree(source, dest string, card []byte) error {
 	if _, err := sparseGit(dest, args...); err != nil {
 		return err
 	}
-	_, err = sparseGit(dest, "checkout", "--quiet")
+	_, err := sparseGit(dest, "checkout", "--quiet")
 	return err
 }
 
@@ -155,7 +164,11 @@ func sparseCones(src string, globs []string, testPkg string) ([]string, error) {
 	}
 	dirs, err := listDepDirs(src, patterns)
 	if err != nil {
-		dirs = nil
+		// A failed lookup is not an empty dependency set. Falling through would
+		// check out only the PATHS and TEST directories and omit the import.
+		// (nil, nil) — no module, no Go packages, or no in-module directories —
+		// is empty and still adds those cones below.
+		return nil, err
 	}
 	seen := map[string]bool{}
 	var out []string
@@ -211,14 +224,48 @@ func literalPrefix(g string) string {
 	return strings.Join(segs, "/")
 }
 
+// listDepFmt prints one JSON object per non-standard package or package error.
+// -e keeps a pattern that is not a Go package from aborting the listing of the
+// packages that are, so their directories are not dropped with the error.
+const listDepFmt = `{{if .Error}}{"err":{{printf "%q" .Error.Err}},"import":{{printf "%q" .ImportPath}}}{{else if not .Standard}}{"dir":{{printf "%q" .Dir}}}{{end}}`
+
+type listDepRec struct {
+	Err    string `json:"err"`
+	Import string `json:"import"`
+	Dir    string `json:"dir"`
+}
+
+// emptyDepPattern is a go list result that names no dependency. The PATHS or
+// TEST pattern is not a Go package; that is a valid empty set. An unresolved
+// import does not match.
+func emptyDepPattern(msg string) bool {
+	msg = strings.TrimSpace(msg)
+	switch {
+	case strings.HasPrefix(msg, "no Go files in "):
+		return true
+	case strings.HasPrefix(msg, "build constraints exclude all Go files"):
+		return true
+	case strings.Contains(msg, "matched no packages"):
+		return true
+	case strings.HasSuffix(msg, "directory not found"):
+		return true
+	default:
+		return false
+	}
+}
+
 func listDepDirs(src string, patterns []string) ([]string, error) {
 	if len(patterns) == 0 {
 		return nil, nil
 	}
 	if _, err := os.Stat(filepath.Join(src, "go.mod")); err != nil {
+		if os.IsNotExist(err) {
+			// Not a module: there is no in-module dependency to resolve.
+			return nil, nil
+		}
 		return nil, err
 	}
-	args := []string{"list", "-deps", "-test", "-f", "{{if not .Standard}}{{.Dir}}{{end}}"}
+	args := []string{"list", "-e", "-deps", "-test", "-f", listDepFmt}
 	args = append(args, patterns...)
 	cmd := exec.Command("go", args...)
 	cmd.Dir = src
@@ -245,7 +292,23 @@ func listDepDirs(src string, patterns []string) ([]string, error) {
 		if line == "" {
 			continue
 		}
-		abs, err := filepath.Abs(line)
+		var rec listDepRec
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			return nil, fmt.Errorf("go list: %w", err)
+		}
+		if rec.Err != "" {
+			if emptyDepPattern(rec.Err) {
+				continue
+			}
+			if rec.Import != "" {
+				return nil, fmt.Errorf("go list: %s: %s", rec.Import, rec.Err)
+			}
+			return nil, fmt.Errorf("go list: %s", rec.Err)
+		}
+		if rec.Dir == "" {
+			continue
+		}
+		abs, err := filepath.Abs(rec.Dir)
 		if err != nil {
 			continue
 		}

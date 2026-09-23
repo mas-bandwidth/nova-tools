@@ -24,6 +24,10 @@ func TestSpecNamesSparseCheckoutOfPATHSPackages(t *testing.T) {
 		"The named package's tests still run",
 		"TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage",
 		"TestPrepareStagesASparseJobClone",
+		"valid empty set",
+		"An import that cannot be resolved is not empty",
+		"TestSparseCheckoutRefusesAMissingInModuleImport",
+		"TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS",
 	} {
 		if !strings.Contains(doc, phrase) {
 			t.Errorf("SPEC-SWARM.md does not name the sparse-checkout rule keyed by %q", phrase)
@@ -125,5 +129,62 @@ func TestPrepareStagesASparseJobClone(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "pkg", "unrelated", "unrelated.go")); !os.IsNotExist(err) {
 		t.Fatalf("prepare materialized an unrelated package at %s (err=%v)", filepath.Join(repo, "pkg", "unrelated", "unrelated.go"), err)
+	}
+}
+
+// A missing in-module import is not an empty dependency set. Staging must
+// refuse rather than check out PATHS with that dependency omitted.
+func TestSparseCheckoutRefusesAMissingInModuleImport(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	mustWrite(t, filepath.Join(src, "go.mod"), "module example.com/s10absent\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(src, "pkg", "named", "named.go"), ""+
+		"package named\n\n"+
+		"import \"example.com/s10absent/pkg/absent\"\n\n"+
+		"func Hello() string { return absent.Word() }\n")
+	mustWrite(t, filepath.Join(src, "pkg", "unrelated", "unrelated.go"), ""+
+		"package unrelated\n\n"+
+		"func Noise() string { return \"no\" }\n")
+	gitT(t, "", "init", "-q", "-b", "main", src)
+	gitT(t, src, "add", "-A")
+	gitT(t, src, "commit", "-q", "-m", "fixture")
+
+	dest := filepath.Join(root, "job", "repo")
+	card := []byte("PATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
+	err := StageJobTree(src, dest, card)
+	if err == nil || !strings.Contains(err.Error(), "example.com/s10absent/pkg/absent") {
+		t.Fatalf("StageJobTree err = %v, want the missing in-module import refused", err)
+	}
+	named := filepath.Join(dest, "pkg", "named", "named.go")
+	if _, statErr := os.Stat(named); !os.IsNotExist(statErr) {
+		t.Fatalf("staging refused (%v) but still materialized %s (stat %v)", err, named, statErr)
+	}
+}
+
+// No Go packages under PATHS is a valid empty dependency set: staging still
+// checks out that path, and does not treat the empty lookup as a failure.
+func TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	mustWrite(t, filepath.Join(src, "go.mod"), "module example.com/s10empty\n\ngo 1.22\n")
+	mustWrite(t, filepath.Join(src, "docs", "readme.md"), "# notes\n")
+	mustWrite(t, filepath.Join(src, "pkg", "unrelated", "unrelated.go"), ""+
+		"package unrelated\n\n"+
+		"func Noise() string { return \"no\" }\n")
+	gitT(t, "", "init", "-q", "-b", "main", src)
+	gitT(t, src, "add", "-A")
+	gitT(t, src, "commit", "-q", "-m", "fixture")
+
+	dest := filepath.Join(root, "job", "repo")
+	card := []byte("PATHS: docs/readme.md\n")
+	if err := StageJobTree(src, dest, card); err != nil {
+		t.Fatalf("a PATHS list with no Go packages is a valid empty dependency set, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "docs", "readme.md")); err != nil {
+		t.Fatalf("the named non-Go path was not checked out: %v", err)
+	}
+	unrelated := filepath.Join(dest, "pkg", "unrelated", "unrelated.go")
+	if _, err := os.Stat(unrelated); !os.IsNotExist(err) {
+		t.Fatalf("empty dependency set materialized an unrelated package at %s (err=%v)", unrelated, err)
 	}
 }
