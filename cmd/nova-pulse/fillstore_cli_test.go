@@ -27,14 +27,21 @@ import (
 	"time"
 )
 
-// fillStore writes a slot store with one owner row, the shape the probe reads.
+// fillStore makes an empty slot store and CONFIGURES the owner's share: capacity is config
+// (nx-e06), so the share is bench-a's `share=` field in the machines registry, which
+// localFill reads. An owner other than swarm-bench-a is a bench with no share configured.
+// No shares.tsv is written: the fill must not need one.
 func fillStore(t *testing.T, dir, owner string, share int) string {
 	t.Helper()
 	store := filepath.Join(dir, "slots")
 	if err := os.MkdirAll(store, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeMainFile(t, store, "shares.tsv", owner+"\t"+strconv.Itoa(share)+"\n")
+	notes := "-"
+	if owner == "swarm-bench-a" {
+		notes = "share=" + strconv.Itoa(share)
+	}
+	writeMainFile(t, dir, "machines.tsv", "bench-a\tbench-a\tlinux/x64\tbench\tswarm-bench-a\t64\t"+notes+"\n")
 	return store
 }
 
@@ -45,7 +52,7 @@ func localFill(t *testing.T, dir, store, slotsBin string, extra ...string) (int,
 	t.Helper()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
 	args := []string{"fill", "--ready", ready, "--launched", launched,
-		"--machines", fillMachines(t, dir, "bench-a"),
+		"--machines", localFillMachines(t, dir),
 		"--bench", "bench-a", "--local-bench", "bench-a",
 		"--slots-store", store, "--slots-owner", "swarm-bench-a",
 		"--slots-bin", slotsBin,
@@ -56,6 +63,20 @@ func localFill(t *testing.T, dir, store, slotsBin string, extra ...string) (int,
 	var out, errb bytes.Buffer
 	code := run(args, &out, &errb, time.Now().UTC())
 	return code, out.String(), errb.String(), ready, launched
+}
+
+// localFillMachines is the registry fillStore configured, or a plain one naming bench-a.
+func localFillMachines(t *testing.T, dir string) string {
+	t.Helper()
+	if path := filepath.Join(dir, "machines.tsv"); fileExists(path) {
+		return path
+	}
+	return fillMachines(t, dir, "bench-a")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // TestFillRefusesABenchWhoseSlotsBinaryIsMissing is P1 itself: `slots list` cannot run, the
@@ -204,8 +225,8 @@ func TestFillCountsTheOwnersLiveLeasesAndNobodyElses(t *testing.T) {
 }
 
 // TestFillStillFallsBackToTheFormulaWithNoRowForTheOwner keeps the ONE documented
-// fallthrough documented: a store that holds no row for this owner is the no-store case,
-// and the bench answers the load formula exactly as it always did. Everything else refuses.
+// fallthrough documented: a bench with no share= configured in the registry is the no-share
+// case, and it answers the load formula exactly as it always did. Everything else refuses.
 func TestFillStillFallsBackToTheFormulaWithNoRowForTheOwner(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-bus", fakeSpec{Default: fakeRule{Exit: 0}})
@@ -236,7 +257,7 @@ func TestFillStillFallsBackToTheFormulaWithNoRowForTheOwner(t *testing.T) {
 		}
 		return
 	}
-	if !strings.Contains(errb, "FILL FORMULA bench=bench-a why=no-row-for-owner") {
+	if !strings.Contains(errb, "FILL FORMULA bench=bench-a why=no-share-in-config") {
 		t.Fatalf("the fallback was silent or unnamed: %q", errb)
 	}
 }
