@@ -468,12 +468,19 @@ func runCheck(dir, check string, timeout time.Duration, env []string) (string, e
 // carrying KEY, TOKEN or SECRET; this also drops PASSWORD and WEBHOOK, which are
 // credentials this tree holds (SMTP_PASSWORD, BSKY_APP_PASSWORD, DISCORD_*_WEBHOOK)
 // and which Clean still keeps. The drop is by NAME, never by value (#1836).
+//
+// SHLVL=1: a child bash -u that inherits SHLVL=0 is a top-level shell
+// (shell_level < 2). Under SSH_CLIENT, Debian/Ubuntu bash sources
+// /etc/bash.bashrc, which expands $PS1 under `set -u` and dies
+// (`PS1: unbound variable`). The coordinator exports SHLVL=1 before exec;
+// the tests this verb runs get the same floor. SSH_CLIENT is not stripped
+// (#2499 item 4).
 func checkChildEnv(env []string) []string {
 	if env == nil {
 		env = os.Environ()
 	}
 	cleaned := goenv.Clean(env)
-	out := make([]string, 0, len(cleaned))
+	out := make([]string, 0, len(cleaned)+1)
 	for _, entry := range cleaned {
 		name, _, ok := strings.Cut(entry, "=")
 		if ok && extraCheckSecret(name) {
@@ -481,7 +488,22 @@ func checkChildEnv(env []string) []string {
 		}
 		out = append(out, entry)
 	}
-	return out
+	return withSaneSHLVL(out)
+}
+
+// withSaneSHLVL returns env with exactly one SHLVL=1. A missing or zero SHLVL
+// makes a child bash -u a top-level shell; the coordinator's adopted fix is
+// SHLVL=1, not dropping SSH_CLIENT (#2499 item 4).
+func withSaneSHLVL(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, "SHLVL") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, "SHLVL=1")
 }
 
 func extraCheckSecret(name string) bool {

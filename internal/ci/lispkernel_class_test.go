@@ -173,17 +173,100 @@ func TestNoAsdComponentSharesTheClosingLine(t *testing.T) {
 	root := repoRoot(t)
 	asd := readFile(t, filepath.Join(root, "lisp", "nova-work", "nova-work.asd"))
 
+	for _, s := range asdSharedClosingLines(asd) {
+		t.Errorf("lisp/nova-work/nova-work.asd has a shared last line: %s shares its (:file ...) component with the :components/system closing parens, so every pair of nova-work branches that append a component rewrites the same line and conflicts forever; put each component on its own line and the closing parens on lines of their own", s)
+	}
+}
+
+// asdSharedClosingLines returns every line of an .asd source whose CODE (the
+// line with `;` comments, `#|...|#` block comments and string contents taken
+// out) opens a `(:file` component and closes more parens than it opens, so
+// it carries the enclosing list/system closers. Reading the code rather than
+// the raw text is the point: a trailing `; note` after the closers, or a
+// commented-out `;; (:file "x")))`, must neither hide nor fake a shared line.
+func asdSharedClosingLines(asd string) []string {
 	var shared []string
+	inBlock := 0 // #| |# nesting depth, carried across lines
 	for i, line := range strings.Split(asd, "\n") {
-		if !strings.Contains(line, "(:file") {
+		code, depth := asdCode(line, inBlock)
+		inBlock = depth
+		if !strings.Contains(code, "(:file") {
 			continue
 		}
-		if strings.HasSuffix(strings.TrimSpace(line), "))") {
+		if strings.Count(code, ")") > strings.Count(code, "(") {
 			shared = append(shared, fmt.Sprintf("line %d: %s", i+1, strings.TrimSpace(line)))
 		}
 	}
 	sort.Strings(shared)
-	for _, s := range shared {
-		t.Errorf("lisp/nova-work/nova-work.asd has a shared last line: %s shares its (:file ...) component with the :components/system closing parens, so every pair of nova-work branches that append a component rewrites the same line and conflicts forever; put each component on its own line and the closing parens on lines of their own", s)
+	return shared
+}
+
+// asdCode strips one line down to the code the reader sees: string literals
+// keep their quotes but lose their contents, `;` ends the line, and `#|...|#`
+// (which nests, and may span lines: block is the depth on entry) is dropped.
+func asdCode(line string, block int) (string, int) {
+	var b strings.Builder
+	inString := false
+	for j := 0; j < len(line); j++ {
+		c := line[j]
+		switch {
+		case block > 0:
+			if c == '|' && j+1 < len(line) && line[j+1] == '#' {
+				block--
+				j++
+			} else if c == '#' && j+1 < len(line) && line[j+1] == '|' {
+				block++
+				j++
+			}
+		case inString:
+			if c == '\\' {
+				j++
+			} else if c == '"' {
+				inString = false
+				b.WriteByte(c)
+			}
+		case c == '"':
+			inString = true
+			b.WriteByte(c)
+		case c == ';':
+			return b.String(), block
+		case c == '#' && j+1 < len(line) && line[j+1] == '|':
+			block++
+			j++
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String(), block
+}
+
+// TestAsdSharedClosingLinesReadsCodeNotComments pins the guard's reading of
+// comments and strings (stella's hold at 1c1eac9e: a component line followed by
+// a `;` comment carried the closers and passed a suffix check).
+func TestAsdSharedClosingLinesReadsCodeNotComments(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"closers on the component line", `  (:file "src/a")))`, 1},
+		{"closers then a trailing comment", `  (:file "src/a"))) ; the last one`, 1},
+		{"closers then a comment with no space", `  (:file "src/a")));last`, 1},
+		{"closers then a block comment", `  (:file "src/a"))) #| old |#`, 1},
+		{"one closer past :depends-on", `  (:file "src/a" :depends-on ("src/b")))`, 1},
+		{"component alone", `  (:file "src/a")`, 0},
+		{"component with a trailing comment", `  (:file "src/a") ; note ))`, 0},
+		{"component with :depends-on", `  (:file "src/a" :depends-on ("src/b"))`, 0},
+		{"commented-out shared line", `  ;; (:file "src/old")))`, 0},
+		{"parens inside a string", `  (:file "src/a))")`, 0},
+		{"inside a multi-line block comment", "#|\n  (:file \"src/old\")))\n|#\n  (:file \"src/a\")", 0},
+		{"closers on their own line", "  (:file \"src/a\")\n  ))", 0},
+	}
+	for _, tc := range cases {
+		if got := asdSharedClosingLines(tc.src); len(got) != tc.want {
+			t.Errorf("%s: %q flagged %d lines %v, want %d", tc.name, tc.src, len(got), got, tc.want)
+		}
 	}
 }

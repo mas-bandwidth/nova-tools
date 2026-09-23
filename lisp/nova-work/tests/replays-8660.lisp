@@ -245,3 +245,44 @@
       (check-equal 1 code "at exit 1")
       (ok (search "rule 18" line) "and the line names rule 18")
       (ok (search id line) "and the id in both branches"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE11F05NoReceiptOfReceiptA        E11-F05-03  SPEC-WORK.md:4650
+;;; ------------------------------------------------------------------
+;;;
+;;; The criterion: a worker returns one structured result; a receipt of a
+;;; receipt is refused as a duplicate. One reply id names one receipt, so the
+;;; second admission of the same reply over the same bytes is a receipt of a
+;;; receipt and is refused as a duplicate rather than writing a second row.
+
+(deftest "TestE11F05NoReceiptOfReceiptA" "docs/SPEC-WORK.md:4650"
+    "expected=worker-returns-one-structured-result;receipt-of-a-receipt-refused-as-a-duplicate"
+  (let* ((body "receipt for o-1 accepted by glenn")
+         (digest (sha256-hex body))
+         (path (write-provenance-file (test-provenance-path "no-rr") body))
+         (pointer (format nil "file:~A" path))
+         (k (receipt-kernel)))
+    (configure-verifier k :recipient "glenn"
+                        :command (operator-verifier-command "glenn" "receipt-1"))
+    ;; The worker's one structured result is admitted as one receipt.
+    (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
+      (ok (staged-input-valid-p staged) "the worker's result stages")
+      (multiple-value-bind (okp line code)
+          (submit k (ack-request :provenance pointer :provenance-sha256 digest
+                                 :staged staged :reply "receipt-1"
+                                 :request "ack-no-rr-1"))
+        (ok okp "the one structured result is admitted: ~A" line)
+        (check-equal 0 code "the admission exits 0")))
+    ;; A receipt OF that receipt -- the same reply id over the same bytes -- is
+    ;; refused as a duplicate and writes nothing (SPEC-WORK.md:4650).
+    (let ((staged (stage-receipt k :provenance pointer :recipient "glenn")))
+      (multiple-value-bind (okp line code)
+          (submit k (ack-request :provenance pointer :provenance-sha256 digest
+                                 :staged staged :reply "receipt-1"
+                                 :request "ack-no-rr-2"))
+        (check-equal nil okp "a receipt of a receipt was admitted, not refused")
+        (check-equal 1 code "the duplicate refusal is exit 1")
+        (ok (search "duplicate" line)
+            "the refusal does not name it as a duplicate: ~A" line)))
+    (check-equal 1 (length (admitted-receipts (kernel-state k)))
+                 "a receipt of a receipt wrote a second receipt")))

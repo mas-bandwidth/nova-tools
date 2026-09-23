@@ -27,6 +27,7 @@
                (:file "src/state-export")
                (:file "src/verifier")
                (:file "src/verification-cache-file")
+               (:file "src/verify-resolver")
                (:file "src/receipt-admission")
                (:file "src/needs")
                (:file "src/fleet")
@@ -43,6 +44,7 @@
                (:file "src/operations")
                (:file "src/transport")
                (:file "src/scheduler")
+               (:file "src/operation-recovery")
                (:file "src/receipts")
                (:file "src/capture")
                (:file "src/assignment")
@@ -59,6 +61,7 @@
                (:file "src/replays-verdict-state")
                (:file "src/replays-notes")
                (:file "src/dedup-root")
+               (:file "src/execution-reconcile")
                ))
 
 (defsystem "nova-work/tests"
@@ -101,4 +104,8 @@
                 (:file "tests/replays-lease-durability")
                 (:file "tests/replays-e08-render-file")
                 (:file "tests/replays-new-verb-door")
+                (:file "tests/replays-execution-reconcile")
+                (:file "tests/issue-2338")
+                (:file "tests/issue-1695")
+                (:file "tests/replays-e02-operations")
                 ))

@@ -1280,7 +1280,14 @@ cannot know that, so every pair conflicts forever at quadratic cost.
 **The test.** `TestNoAsdComponentSharesTheClosingLine`
 (`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
 on purpose: the shape is what makes concurrent branches merge, and the lisp job
-cannot see a merge conflict.
+cannot see a merge conflict. It reads each line's code, not its text: `;`
+comments, `#|...|#` block comments and string contents are removed first, and a
+component line is shared when its code closes more parens than it opens, so a
+trailing `; note` after the closers cannot hide one and a commented-out line
+cannot fake one. `TestAsdSharedClosingLinesReadsCodeNotComments` pins that
+reading with negative and positive fixtures (a closer line followed by a
+comment, closers after `:depends-on`, parens inside a string, a shared line
+inside a block comment).
 **Its allowlist.** None. A shared closing line has no good case: the closers fit
 on a line of their own in every system.
 **Its remedy line.** The finding names the line and says it shares its component
@@ -1444,6 +1451,15 @@ from those files``.
 reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
+**A leg that needs a service.** `postgres` — `internal/decide`'s decision log
+against a real server, which is what keeps the in-memory fake the unit suite runs
+on honest — is a JOB of its own in `nightly-slow.yml` rather than a row of the
+shared matrix, because it carries a `services:` container and service containers
+run on Linux runners only: a `services:` block on the shared job would be
+inherited by its macOS legs and fail them for a reason that is not the code. It
+is still declared as `tag: postgres` in a matrix, so the class test reads it
+exactly as it reads the others, and it is in the `report` job's `needs:` so a red
+night is still one issue in the morning.
 
 ### `selection` — `internal/ci` is always in the selected packages
 
@@ -1565,6 +1581,45 @@ than emptied (#1751)`.
 or a cleanup inlined into another step would not be counted; and it reads the
 workflow as text, so a value built elsewhere and interpolated in is invisible to
 it.
+
+### `admitkind` — every admitting kind has a negative fixture, so the coverage list cannot shrink
+
+**The rule.** Rule 3 (`docs/SPEC-WORK.md:4878`, nova-work #785): the one
+generated schema file names every verb's event kinds, and its coverage test
+holds a CLOSED list of admitting kinds — `:lease`, `:handoff`, `:reassign`,
+`:offer`, `:acknowledge`, the allocation, `:packet`, and a `:transition` that
+can carry `:to :doing` — and fails any verb able to write one, in its own
+envelope or one it derives, whose entry carries none of the three marks
+(`needs-gate: refuses`, `needs-gate: withholds`, `needs-gate: exempt` with its
+reason). The closed list only holds if every kind on it is actually exercised:
+a kind added to the rule's own map with no fixture behind it is a kind the
+coverage rule could silently stop checking, and nothing would go red.
+**The hurt.** The first cut of `admittingEventKinds` listed only the kinds the
+SHIPPED file happened to use, so a schema carrying an unmarked verb of a kind
+the shipped file does not use — `:reassign`, `:packet` — passed the coverage
+test though rule 3 names them by the spec's own closed list. A closed list
+that is closed on paper and open in practice is worse than an open one,
+because it reads like a guarantee.
+**The test.** `TestEveryCanonicalAdmittingKindIsCovered`
+(`internal/ci/work_schema_test.go`). For every kind in
+`canonicalAdmittingKinds` — the spec's closed list, held apart from the
+coverage map so the two sides can be checked against each other — it builds
+one hypothetical verb of that kind with no `needs_gate`, runs it through
+`checkNeedsGateCoverage`, and requires exactly one finding naming the verb;
+then marks the same verb `needs-gate: refuses` and requires zero findings. A
+kind present in the spec's closed list but absent from `admittingEventKinds`
+fails here before it can hide behind a passing shipped-file check.
+**Its allowlist.** None. `canonicalAdmittingKinds` is the closed list itself;
+every entry on it gets a fixture, so a kind added to the list with no matching
+case is the thing this test exists to catch.
+**Its remedy line.** `` `<verb>` can write the admitting kind `<kind>` and
+carries no needs-gate mark``, from `checkNeedsGateCoverage`
+(`internal/ci/work_schema_test.go`).
+**Its narrowings.** It only checks that the coverage RULE fires for each kind,
+over a one-verb fixture schema; it does not check the SHIPPED file for an
+injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb`,
+its neighbor in the same file) and it does not check that the shipped file uses
+only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
 
 ## Parked class tests
 
