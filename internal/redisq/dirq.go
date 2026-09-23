@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -182,6 +183,67 @@ func (q *Queue) PullLanes(ctx context.Context, kind, bench string, block time.Du
 		}
 	}
 	return nil, nil
+}
+
+// LiveCards is every card from this directory store that is live: waiting in a
+// stream directory, or taken by a worker and never acked -- the old store's
+// queue and pending list. It is what a restart in the other mode drains before
+// the switch, one "<stream>/<id>" per card, sorted.
+func (d *DirQueue) LiveCards() ([]string, error) {
+	entries, err := os.ReadDir(d.Root)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var live []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		stream := e.Name()
+		for _, where := range []string{stream, filepath.Join(stream, "taken")} {
+			cards, err := os.ReadDir(filepath.Join(d.Root, where))
+			if err != nil {
+				if errors.Is(err, os.ErrNotExist) {
+					continue
+				}
+				return nil, err
+			}
+			for _, c := range cards {
+				if c.IsDir() || !strings.HasSuffix(c.Name(), ".card") {
+					continue
+				}
+				live = append(live, stream+"/"+strings.TrimSuffix(c.Name(), ".card"))
+			}
+		}
+	}
+	sort.Strings(live)
+	return live, nil
+}
+
+// ModeRestart is the drain gate of SPEC-STATE's "One mode per bench": a bench
+// switching mode refuses to start the new mode while any card from this, the
+// old mode's store is still live (LiveCards above). The bench drains its cards
+// -- reclaiming each back to a queue that will run it, or completing one whose
+// result landed -- and asks again; only when the store holds no live card does
+// the gate start the new mode, and the drain is written to log as
+// `mode restart: directory drained (<n> reclaimed, <m> completed) -> <new>`,
+// so a mode switch is never a silent drop of the work the old mode held. The
+// refused call writes nothing: a restart that did not start has no drain to
+// record.
+func (d *DirQueue) ModeRestart(log io.Writer, reclaimed, completed int, newMode Mode) (bool, error) {
+	live, err := d.LiveCards()
+	if err != nil {
+		return false, err
+	}
+	if len(live) > 0 {
+		return false, nil
+	}
+	fmt.Fprintf(log, "mode restart: %s drained (%d reclaimed, %d completed) -> %s\n",
+		ModeDirectory, reclaimed, completed, newMode)
+	return true, nil
 }
 
 func parseCardFile(path string) (map[string]string, error) {
