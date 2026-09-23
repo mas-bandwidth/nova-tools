@@ -744,7 +744,8 @@ func cmdLog(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if f.refused(stderr) {
 		return 2
 	}
-	raw, err := os.ReadFile(filepath.Join(*queue, "pulse.log"))
+	path := filepath.Join(*queue, "pulse.log")
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0
@@ -752,29 +753,88 @@ func cmdLog(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-pulse log: %s\n", oneline.Err(err))
 		return 2
 	}
-	nowUTC := now.UTC()
-	cutoff := nowUTC.Add(-since)
-	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
-		if since > 0 {
-			if t, ok := parseLogTime(line, nowUTC); ok && t.Before(cutoff) {
-				continue
-			}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if since <= 0 {
+		for _, line := range lines {
+			fmt.Fprintln(stdout, line)
+		}
+		return 0
+	}
+	// The last append is the file's mtime; fall back to now when stat fails.
+	anchor := now.UTC()
+	if st, err := os.Stat(path); err == nil {
+		anchor = st.ModTime().UTC()
+	}
+	stamps := logTimes(lines, anchor)
+	cutoff := now.UTC().Add(-since)
+	for i, line := range lines {
+		if t, ok := stamps[i]; ok && t.Before(cutoff) {
+			continue
 		}
 		fmt.Fprintln(stdout, line)
 	}
 	return 0
 }
 
-func parseLogTime(line string, now time.Time) (time.Time, bool) {
-	if len(line) < 10 {
-		return time.Time{}, false
+// logTimes gives each pulse.log record a full UTC time. Records written as
+// 2006-01-02T15:04:05Z carry their own date. Time-only records (15:04:05Z,
+// what internal/pulse writes today) have no date, so it is rebuilt: the log is
+// append-only, so the last time-only record is dated on the day of anchor (the
+// file's mtime, i.e. the last append), or the day before when its time of day
+// is later than anchor's; walking backward, each record whose time of day is
+// later than the record after it crossed a midnight, one day earlier. A gap of
+// more than 24h between two consecutive records cannot be seen from time-only
+// rows and dates the older record too late by whole days; writing the date is
+// the fix for that and lives in internal/pulse. Lines with no time are absent
+// from the map and always print.
+func logTimes(lines []string, anchor time.Time) map[int]time.Time {
+	out := make(map[int]time.Time, len(lines))
+	anchor = anchor.UTC()
+	day := time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 0, 0, 0, 0, time.UTC)
+	var next time.Duration = -1 // time of day of the record after this one
+	first := true
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := lines[i]
+		if t, err := time.Parse("2006-01-02T15:04:05Z", firstField(line)); err == nil {
+			t = t.UTC()
+			out[i] = t
+			day = time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+			next = t.Sub(day)
+			first = false
+			continue
+		}
+		tod, ok := timeOfDay(line)
+		if !ok {
+			continue
+		}
+		if first {
+			if tod > anchor.Sub(day) {
+				day = day.AddDate(0, 0, -1)
+			}
+			first = false
+		} else if tod > next {
+			day = day.AddDate(0, 0, -1)
+		}
+		out[i] = day.Add(tod)
+		next = tod
 	}
-	ts := line[:9]
-	t, err := time.Parse("15:04:05Z", ts)
+	return out
+}
+
+func firstField(line string) string {
+	if i := strings.IndexByte(line, ' '); i >= 0 {
+		return line[:i]
+	}
+	return line
+}
+
+// timeOfDay reads a leading HH:MM:SSZ stamp as a duration since midnight.
+func timeOfDay(line string) (time.Duration, bool) {
+	t, err := time.Parse("15:04:05Z", firstField(line))
 	if err != nil {
-		return time.Time{}, false
+		return 0, false
 	}
-	return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), 0, time.UTC), true
+	return time.Duration(t.Hour())*time.Hour + time.Duration(t.Minute())*time.Minute + time.Duration(t.Second())*time.Second, true
 }
 
 func cmdManager(args []string, stdout, stderr io.Writer) int {
