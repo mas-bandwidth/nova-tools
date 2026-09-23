@@ -61,7 +61,7 @@ usage:
   nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
   nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
@@ -97,7 +97,11 @@ is admitted on the gate's own evidence instead -- the same receipt nova-merge la
 branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
-it a directory of the batch's own.
+it a directory of the batch's own. --sibling <name>=<url>@<ref> (repeatable) clones that
+repository beside the job checkout (repo/) at the named branch or tag, so a tree whose
+tests look next door — schema's serialize.go at ../serialize.go — finds it after the
+rebuild. name is one path element (dots allowed); repo and tmp are reserved. The last @
+splits url from ref.
 
 THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
 runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
