@@ -139,8 +139,7 @@ cache and the same mirror, so setup is paid once, as SPEC-JOBS §4 requires.
 **The work queue.** A directory on a shared volume with the atomic take above —
 `queue/lanes/{red,green,small,next}/` and `taken/`, the exact layout `nova-pulse cut` writes.
 The kernel's ready set is not a thing Kubernetes exposes and is not invented here; the directory
-*is* the ready set, and the take is its lock. A card whose Job dies is returned by the puller to
-the lane it came from; `taken/` is the only place a card waits on a lease.
+*is* the ready set, and the take is its lock. A card whose Job dies is returned by the puller to the lane it came from; `taken/` is the only place a card waits on a lease.
 
 **Secrets: sealed, decrypted at apply, named key by key.** The store stays sops. At apply, the
 plaintext is produced from the store and immediately sealed into a SealedSecret, so state and git
