@@ -16,10 +16,15 @@
 package fold
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,12 +62,17 @@ type Options struct {
 	// Hook runs at each step boundary; an error stops the fold there, as a
 	// kill would, with nothing undone. Tests use it for control 20.
 	Hook func(step string) error
+	// Jev, when set, calibrates the Jev grader at this fold (#3081).
+	Jev *JevCalib
 }
 
 // Result is what the fold did.
 type Result struct {
 	FoldSHA string
 	Made    bool // false when the commit was found or the sprint was already folded
+	// PromptRefused is why a candidate Jev prompt was not adopted, or "".
+	// The fold is recorded either way; Main exits 3 on a refusal.
+	PromptRefused string
 }
 
 // Route is one route's line: the model cards dealt on it this sprint.
@@ -93,6 +103,7 @@ type Summary struct {
 	Tasks       int
 	TasksDone   int
 	Receipts    int64
+	Jev         *Calibration // nil when the fold ran no Jev calibration
 }
 
 var sprintName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -145,7 +156,31 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 	if err != nil {
 		return Result{}, err
 	}
+	adopt := ""
+	if jc := opt.Jev; jc != nil {
+		if jc.Scorer == nil {
+			return Result{}, errors.New("the Jev calibration names no scorer (--jev-eval)")
+		}
+		if cur, err := client.HGet(ctx, jevPromptKey, "sha").Result(); err != nil && !errors.Is(err, redis.Nil) {
+			return Result{}, fmt.Errorf("read %s: %w", jevPromptKey, err)
+		} else if cur != "" && cur != jc.PromptSHA {
+			return Result{}, fmt.Errorf("Jev runs prompt %s (%s sha), not --prompt-sha %s; calibrate the prompt in use", cur, jevPromptKey, jc.PromptSHA)
+		}
+		if sum.Jev, err = Calibrate(ctx, jc, sum.UsefulMin); err != nil {
+			return Result{}, fmt.Errorf("Jev calibration: %w", err)
+		}
+		if k := sum.Jev.Candidate; k != nil && k.Adopted {
+			adopt = k.SHA
+		}
+	}
 	PrintLines(out, sum)
+	refused := ""
+	if sum.Jev != nil {
+		PrintJev(out, opt.Sprint, sum.Jev)
+		if k := sum.Jev.Candidate; k != nil && !k.Adopted {
+			refused = k.Reason
+		}
+	}
 
 	sha, err := findCommit(ctx, opt.Work, opt.Sprint)
 	if err != nil {
@@ -167,8 +202,12 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 		return Result{FoldSHA: sha, Made: made}, err
 	}
 
-	res, err := record.Run(ctx, client, []string{key, key + ":log"},
-		sha, opt.Sprint, opt.Actor, opt.Now().UTC().Format(time.RFC3339)).StringSlice()
+	current := ""
+	if opt.Jev != nil {
+		current = opt.Jev.PromptSHA
+	}
+	res, err := record.Run(ctx, client, []string{key, key + ":log", jevPromptKey},
+		sha, opt.Sprint, opt.Actor, opt.Now().UTC().Format(time.RFC3339), adopt, current).StringSlice()
 	if err != nil {
 		return Result{FoldSHA: sha, Made: made}, fmt.Errorf("record the fold on %s: %w", key, err)
 	}
@@ -179,11 +218,17 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 		return Result{FoldSHA: res[1]}, fmt.Errorf("sprint %s was folded at %s by another run while this one found %s", opt.Sprint, res[1], sha)
 	}
 	fmt.Fprintf(out, "FOLD RECORDED sprint=%s fold_sha=%s status=folded\n", opt.Sprint, sha)
-	return Result{FoldSHA: sha, Made: made}, nil
+	if adopt != "" && res[0] == "RECORDED" {
+		fmt.Fprintf(out, "FOLD JEV ADOPTED sprint=%s prompt_sha=%s was=%s\n", opt.Sprint, oneline.Field(adopt), oneline.Field(current))
+	}
+	return Result{FoldSHA: sha, Made: made, PromptRefused: refused}, nil
 }
 
 // record moves the sprint closed -> folded with its fold_sha and appends the
 // one receipt, in one call. A sprint already folded returns its sha unchanged.
+// ARGV[5], when not empty, is a Jev prompt the calibration adopted: it moves
+// jev:prompt (KEYS[3]) from ARGV[6] in the same call, and refuses if another
+// run moved it first.
 var record = redis.NewScript(`
 local st = redis.call('HGET', KEYS[1], 'status')
 if st == 'folded' then
@@ -191,6 +236,13 @@ if st == 'folded' then
 end
 if st ~= 'closed' then
   return redis.error_reply('NOTCLOSED sprint ' .. ARGV[2] .. ' is ' .. tostring(st))
+end
+if ARGV[5] ~= '' then
+  local cur = redis.call('HGET', KEYS[3], 'sha')
+  if cur and cur ~= ARGV[6] then
+    return redis.error_reply('PROMPTMOVED jev:prompt is ' .. cur .. ', not ' .. ARGV[6])
+  end
+  redis.call('HSET', KEYS[3], 'sha', ARGV[5], 'prev', ARGV[6], 'fold', ARGV[2], 'at', ARGV[4])
 end
 redis.call('HSET', KEYS[1], 'status', 'folded', 'fold_sha', ARGV[1])
 redis.call('XADD', KEYS[2], '*', 'kind', 'sprint', 'id', ARGV[2], 'from', 'closed', 'to', 'folded',
@@ -466,7 +518,11 @@ func Sexp(s Summary) []byte {
 		}
 		b.WriteString(routeSexp("route "+q(r.Name), r))
 	}
-	b.WriteString("))\n")
+	b.WriteString(")")
+	if s.Jev != nil {
+		b.WriteString("\n" + strings.TrimSuffix(jevSexp(s.Jev), "\n"))
+	}
+	b.WriteString(")\n")
 	return []byte(b.String())
 }
 
@@ -541,4 +597,547 @@ func commit(ctx context.Context, work, rel string, s Summary, hook func(string) 
 		return "", err
 	}
 	return strings.TrimSpace(out), nil
+}
+
+// The Jev calibration at the fold (nova-tools #3081, continual-refinement-loop
+// steps 3 and 4). Given the resolved PRs of the sprint (a friend's typed line at
+// an exact head, the card's work type) the fold re-scores every one with the
+// current Jev prompt, writes agreement, MAE, false-pass and false-bounce per
+// work type into the fold record, and, when a candidate prompt is named,
+// scores the date-split held-out third with it and refuses to adopt it if its
+// false passes or false bounces are worse than the current prompt's on any
+// type. The fold is recorded either way; adoption is the jev:prompt hash,
+// moved in the same script call that records the fold.
+
+// The promotion bar (Stella 2026-09-23; Johnny's separation): a type may be
+// promoted only with at least PromoteMinHeads calibrated heads, a Wilson 95%
+// lower bound on the verdict's precision of at least PromotePrecisionLB, and
+// Jev's mean score on the friend-approved PRs above its mean on the held ones.
+const (
+	PromoteMinHeads    = 100
+	PromotePrecisionLB = 0.98
+	jevPromptKey       = "jev:prompt"
+)
+
+// CalibRow is one resolved PR: the friend's typed verdict and score at Head
+// (Score 0 when the ruling carried none), the card's work type, the time it
+// was resolved (the date split orders by it) and an optional tag naming the
+// failure shape the row seeds (false-confidence, coverage, few-shot).
+type CalibRow struct {
+	Repo       string `json:"repo"`
+	PR         int    `json:"pr"`
+	Head       string `json:"head"`
+	WorkType   string `json:"work_type"`
+	Who        string `json:"who"`
+	Verdict    string `json:"verdict"`
+	Score      int    `json:"score"`
+	ResolvedAt string `json:"resolved_at"`
+	Tag        string `json:"tag,omitempty"`
+	Note       string `json:"note,omitempty"`
+}
+
+func (r CalibRow) ref() string { return shortRepo(r.Repo) + "#" + strconv.Itoa(r.PR) }
+
+// CalibSet is the calibration set as read, with the sha256 of its bytes.
+type CalibSet struct {
+	Rows []CalibRow
+	SHA  string
+}
+
+// ReadCalibSet reads JSONL calibration rows. A row with no head, no PR, a
+// verdict other than APPROVE or HOLD, or a score outside 0-10 is refused: a
+// guessed label would train the grader on noise.
+func ReadCalibSet(r io.Reader) (CalibSet, error) {
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return CalibSet{}, err
+	}
+	var set CalibSet
+	for i, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		var row CalibRow
+		if err := json.Unmarshal([]byte(line), &row); err != nil {
+			return CalibSet{}, fmt.Errorf("calibration row %d: %w", i+1, err)
+		}
+		switch {
+		case row.Repo == "" || row.PR <= 0 || len(row.Head) < 7:
+			return CalibSet{}, fmt.Errorf("calibration row %d names no repo, PR or head (7+ hex)", i+1)
+		case row.Verdict != "APPROVE" && row.Verdict != "HOLD":
+			return CalibSet{}, fmt.Errorf("calibration row %d (%s): verdict %q is not APPROVE or HOLD", i+1, row.ref(), row.Verdict)
+		case row.Score < 0 || row.Score > 10:
+			return CalibSet{}, fmt.Errorf("calibration row %d (%s): score %d is not 0-10", i+1, row.ref(), row.Score)
+		}
+		if _, err := time.Parse(time.RFC3339, row.ResolvedAt); err != nil {
+			return CalibSet{}, fmt.Errorf("calibration row %d (%s): resolved_at %q is not RFC 3339", i+1, row.ref(), row.ResolvedAt)
+		}
+		set.Rows = append(set.Rows, row)
+	}
+	if len(set.Rows) == 0 {
+		return CalibSet{}, errors.New("the calibration set has no rows")
+	}
+	sum := sha256.Sum256(raw)
+	set.SHA = hex.EncodeToString(sum[:])
+	return set, nil
+}
+
+// JevLine is Jev's answer on one row under one prompt: PASS, BOUNCE or UNSURE
+// and a 1-10 score, 0 when it gave none. It has the Jev ledger's shape.
+type JevLine struct {
+	Repo    string
+	PR      int
+	Head    string
+	Verdict string
+	Score   int
+}
+
+// Scorer re-scores calibration rows with one prompt.
+type Scorer interface {
+	Score(ctx context.Context, promptSHA string, rows []CalibRow) ([]JevLine, error)
+}
+
+// ExecScorer runs jev-eval (rowan-tools, REST only) as Argv plus
+// --prompt-sha <sha>: the rows go in on stdin as JSONL and one ledger-shaped
+// JSON line per row comes back on stdout ({"repo","pr","head","verdict","score"};
+// verdict PASS|BOUNCE|UNSURE, APPROVE and HOLD read as PASS and BOUNCE; score a
+// number, null or "-").
+type ExecScorer struct{ Argv []string }
+
+// Score runs the command once for all rows.
+func (e ExecScorer) Score(ctx context.Context, promptSHA string, rows []CalibRow) ([]JevLine, error) {
+	if len(e.Argv) == 0 {
+		return nil, errors.New("--jev-eval names no command")
+	}
+	var in bytes.Buffer
+	enc := json.NewEncoder(&in)
+	for _, r := range rows {
+		if err := enc.Encode(r); err != nil {
+			return nil, err
+		}
+	}
+	cmd := exec.CommandContext(ctx, e.Argv[0], append(append([]string{}, e.Argv[1:]...), "--prompt-sha", promptSHA)...)
+	cmd.Stdin = &in
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("jev-eval --prompt-sha %s: %v: %s", promptSHA, err, oneline.Escape(strings.TrimSpace(stderr.String())))
+	}
+	var lines []JevLine
+	for i, s := range strings.Split(string(out), "\n") {
+		if strings.TrimSpace(s) == "" {
+			continue
+		}
+		var raw struct {
+			Repo    string          `json:"repo"`
+			PR      int             `json:"pr"`
+			Head    string          `json:"head"`
+			Verdict string          `json:"verdict"`
+			Score   json.RawMessage `json:"score"`
+		}
+		if err := json.Unmarshal([]byte(s), &raw); err != nil {
+			return nil, fmt.Errorf("jev-eval line %d: %w", i+1, err)
+		}
+		score := 0
+		switch v := strings.Trim(string(raw.Score), `"`); v {
+		case "", "null", "-":
+		default:
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil || f < 0 || f > 10 {
+				return nil, fmt.Errorf("jev-eval line %d: score %s is not 0-10", i+1, raw.Score)
+			}
+			score = int(math.Round(f))
+		}
+		lines = append(lines, JevLine{Repo: raw.Repo, PR: raw.PR, Head: raw.Head, Verdict: raw.Verdict, Score: score})
+	}
+	return lines, nil
+}
+
+// JevCalib asks the fold to calibrate Jev: the set, the prompt Jev runs now,
+// an optional candidate, and the scorer (ExecScorer from --jev-eval).
+type JevCalib struct {
+	Set       CalibSet
+	PromptSHA string
+	Candidate string
+	Scorer    Scorer
+}
+
+// JevStats is one work type's numbers under one prompt. A friend "pass" is a
+// typed APPROVE scoring at least useful_min (or carrying no score); anything
+// else is a hold. UNSURE is never an agreement and never an error here: the
+// tag lines count it as a miss.
+type JevStats struct {
+	Type                                   string
+	Heads, Decided, Agree                  int
+	FalsePass, FalseBounce, Unsure         int
+	Pass, PassRight, Bounce, BounceRight   int
+	absSum, absN                           int
+	approvedSum, approvedN, heldSum, heldN int
+}
+
+func (s JevStats) mae() string {
+	if s.absN == 0 {
+		return tokens.Dash
+	}
+	return strconv.FormatFloat(float64(s.absSum)/float64(s.absN), 'f', 2, 64)
+}
+
+// sep is Jev's mean score on friend-approved PRs minus its mean on held ones:
+// the score gate needs it above zero (on 2026-09-22 it was below).
+func (s JevStats) sep() (float64, bool) {
+	if s.approvedN == 0 || s.heldN == 0 {
+		return 0, false
+	}
+	return float64(s.approvedSum)/float64(s.approvedN) - float64(s.heldSum)/float64(s.heldN), true
+}
+
+func (s JevStats) sepText() string {
+	v, ok := s.sep()
+	if !ok {
+		return tokens.Dash
+	}
+	return fmt.Sprintf("%+.2f", v)
+}
+
+// wilsonLB is the Wilson 95% lower bound of k right out of n.
+func wilsonLB(k, n int) (float64, bool) {
+	if n == 0 {
+		return 0, false
+	}
+	const z = 1.96
+	p, nf := float64(k)/float64(n), float64(n)
+	lb := (p + z*z/(2*nf) - z*math.Sqrt(p*(1-p)/nf+z*z/(4*nf*nf))) / (1 + z*z/nf)
+	return math.Max(0, lb), true
+}
+
+func lbText(k, n int) string {
+	v, ok := wilsonLB(k, n)
+	if !ok {
+		return tokens.Dash
+	}
+	return strconv.FormatFloat(v, 'f', 3, 64)
+}
+
+// promote names the verdicts this type clears the bar for, or "none".
+func (s JevStats) promote() string {
+	sep, ok := s.sep()
+	if s.Heads < PromoteMinHeads || !ok || sep <= 0 {
+		return "none"
+	}
+	var p []string
+	if lb, ok := wilsonLB(s.PassRight, s.Pass); ok && lb >= PromotePrecisionLB {
+		p = append(p, "pass")
+	}
+	if lb, ok := wilsonLB(s.BounceRight, s.Bounce); ok && lb >= PromotePrecisionLB {
+		p = append(p, "bounce")
+	}
+	if len(p) == 0 {
+		return "none"
+	}
+	return strings.Join(p, "+")
+}
+
+// JevTag is a tagged failure shape and how many of its rows Jev missed (did
+// not answer the friend's decision; UNSURE on a HOLD is a miss).
+type JevTag struct {
+	Tag    string
+	Heads  int
+	Missed []string
+}
+
+// JevCandidate is the adoption decision on the held-out third.
+type JevCandidate struct {
+	SHA                string
+	Holdout            int
+	Current, Candidate JevStats // totals on the held-out rows
+	Adopted            bool
+	Reason             string
+}
+
+// Calibration is the fold's Jev record.
+type Calibration struct {
+	PromptSHA string
+	SetSHA    string
+	Heads     int
+	Holdout   int
+	Types     []JevStats
+	Tags      []JevTag
+	Candidate *JevCandidate
+}
+
+func friendPass(r CalibRow, usefulMin int) bool {
+	return r.Verdict == "APPROVE" && (r.Score == 0 || r.Score >= usefulMin)
+}
+
+func jevVerdict(v string) (string, error) {
+	switch v {
+	case "PASS", "APPROVE":
+		return "PASS", nil
+	case "BOUNCE", "HOLD":
+		return "BOUNCE", nil
+	case "UNSURE":
+		return "UNSURE", nil
+	}
+	return "", fmt.Errorf("verdict %q is not PASS, BOUNCE or UNSURE", v)
+}
+
+func shortRepo(repo string) string { return repo[strings.LastIndexByte(repo, '/')+1:] }
+
+// scoreRows runs the scorer and returns one line per row, in row order. A row
+// with no answer, or an answer at another head, is refused: no evidence is not
+// a verdict.
+func scoreRows(ctx context.Context, sc Scorer, prompt string, rows []CalibRow) ([]JevLine, error) {
+	lines, err := sc.Score(ctx, prompt, rows)
+	if err != nil {
+		return nil, err
+	}
+	byRef := map[string]JevLine{}
+	for _, l := range lines {
+		byRef[shortRepo(l.Repo)+"#"+strconv.Itoa(l.PR)] = l
+	}
+	out := make([]JevLine, len(rows))
+	for i, r := range rows {
+		l, ok := byRef[r.ref()]
+		if !ok {
+			return nil, fmt.Errorf("jev-eval --prompt-sha %s answered no line for %s at %s", prompt, r.ref(), r.Head)
+		}
+		if !sameSHA(l.Head, r.Head) {
+			return nil, fmt.Errorf("jev-eval --prompt-sha %s answered %s at %s, not the friend's head %s", prompt, r.ref(), l.Head, r.Head)
+		}
+		if l.Verdict, err = jevVerdict(l.Verdict); err != nil {
+			return nil, fmt.Errorf("jev-eval --prompt-sha %s on %s: %w", prompt, r.ref(), err)
+		}
+		out[i] = l
+	}
+	return out, nil
+}
+
+// tally folds rows and Jev's lines into per-type stats (name order) and a total.
+func tally(rows []CalibRow, lines []JevLine, usefulMin int) ([]JevStats, JevStats) {
+	types := map[string]*JevStats{}
+	total := JevStats{Type: "all"}
+	for i, r := range rows {
+		name := r.WorkType
+		if name == "" {
+			name = tokens.Dash
+		}
+		s := types[name]
+		if s == nil {
+			s = &JevStats{Type: name}
+			types[name] = s
+		}
+		fp, l := friendPass(r, usefulMin), lines[i]
+		for _, s := range []*JevStats{s, &total} {
+			s.Heads++
+			switch l.Verdict {
+			case "PASS":
+				s.Decided++
+				s.Pass++
+				if fp {
+					s.Agree++
+					s.PassRight++
+				} else {
+					s.FalsePass++
+				}
+			case "BOUNCE":
+				s.Decided++
+				s.Bounce++
+				if fp {
+					s.FalseBounce++
+				} else {
+					s.Agree++
+					s.BounceRight++
+				}
+			default:
+				s.Unsure++
+			}
+			if l.Score > 0 {
+				if r.Score > 0 {
+					d := l.Score - r.Score
+					if d < 0 {
+						d = -d
+					}
+					s.absSum += d
+					s.absN++
+				}
+				if fp {
+					s.approvedSum += l.Score
+					s.approvedN++
+				} else {
+					s.heldSum += l.Score
+					s.heldN++
+				}
+			}
+		}
+	}
+	out := make([]JevStats, 0, len(types))
+	for _, s := range types {
+		out = append(out, *s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	return out, total
+}
+
+// holdout returns the indexes of the newest third of rows by resolved time
+// (#2536's date split), oldest first.
+func holdout(rows []CalibRow) []int {
+	idx := make([]int, len(rows))
+	for i := range idx {
+		idx[i] = i
+	}
+	at := func(i int) time.Time { t, _ := time.Parse(time.RFC3339, rows[i].ResolvedAt); return t }
+	sort.SliceStable(idx, func(a, b int) bool {
+		ta, tb := at(idx[a]), at(idx[b])
+		if !ta.Equal(tb) {
+			return ta.Before(tb)
+		}
+		return rows[idx[a]].ref() < rows[idx[b]].ref()
+	})
+	n := (len(rows) + 2) / 3
+	return idx[len(idx)-n:]
+}
+
+// Calibrate runs the calibration: every row under the current prompt, and the
+// held-out third under the candidate when one is named.
+func Calibrate(ctx context.Context, jc *JevCalib, usefulMin int) (*Calibration, error) {
+	if jc.PromptSHA == "" {
+		return nil, errors.New("--prompt-sha names the prompt Jev runs now (etc/jev.conf prompt_sha=)")
+	}
+	if jc.Candidate == jc.PromptSHA {
+		return nil, fmt.Errorf("--candidate %s is the current prompt", jc.Candidate)
+	}
+	rows := jc.Set.Rows
+	lines, err := scoreRows(ctx, jc.Scorer, jc.PromptSHA, rows)
+	if err != nil {
+		return nil, err
+	}
+	c := &Calibration{PromptSHA: jc.PromptSHA, SetSHA: jc.Set.SHA, Heads: len(rows)}
+	c.Types, _ = tally(rows, lines, usefulMin)
+	hold := holdout(rows)
+	c.Holdout = len(hold)
+
+	tags := map[string]*JevTag{}
+	for i, r := range rows {
+		if r.Tag == "" {
+			continue
+		}
+		t := tags[r.Tag]
+		if t == nil {
+			t = &JevTag{Tag: r.Tag}
+			tags[r.Tag] = t
+		}
+		t.Heads++
+		want := "BOUNCE"
+		if friendPass(r, usefulMin) {
+			want = "PASS"
+		}
+		if lines[i].Verdict != want {
+			t.Missed = append(t.Missed, r.ref())
+		}
+	}
+	for _, t := range tags {
+		sort.Strings(t.Missed)
+		c.Tags = append(c.Tags, *t)
+	}
+	sort.Slice(c.Tags, func(i, j int) bool { return c.Tags[i].Tag < c.Tags[j].Tag })
+
+	if jc.Candidate == "" {
+		return c, nil
+	}
+	hRows := make([]CalibRow, len(hold))
+	hCur := make([]JevLine, len(hold))
+	for i, k := range hold {
+		hRows[i], hCur[i] = rows[k], lines[k]
+	}
+	hCand, err := scoreRows(ctx, jc.Scorer, jc.Candidate, hRows)
+	if err != nil {
+		return nil, err
+	}
+	curTypes, curTotal := tally(hRows, hCur, usefulMin)
+	candTypes, candTotal := tally(hRows, hCand, usefulMin)
+	cand := &JevCandidate{SHA: jc.Candidate, Holdout: len(hold), Current: curTotal, Candidate: candTotal, Adopted: true}
+	var worse []string
+	for i, cur := range curTypes { // same rows, so the same types in the same order
+		nw := candTypes[i]
+		if nw.FalsePass > cur.FalsePass {
+			worse = append(worse, fmt.Sprintf("false_pass %d>%d on %s", cur.FalsePass, nw.FalsePass, cur.Type))
+		}
+		if nw.FalseBounce > cur.FalseBounce {
+			worse = append(worse, fmt.Sprintf("false_bounce %d>%d on %s", cur.FalseBounce, nw.FalseBounce, cur.Type))
+		}
+	}
+	if len(worse) > 0 {
+		cand.Adopted, cand.Reason = false, strings.Join(worse, "; ")
+	}
+	c.Candidate = cand
+	return c, nil
+}
+
+// PrintJev prints the set line, a line per work type and per tag, and the
+// candidate line.
+func PrintJev(out io.Writer, sprint string, c *Calibration) {
+	fmt.Fprintf(out, "FOLD JEV SET sprint=%s prompt_sha=%s heads=%d holdout=%d set_sha=%s\n",
+		sprint, oneline.Field(c.PromptSHA), c.Heads, c.Holdout, c.SetSHA[:12])
+	for _, s := range c.Types {
+		fmt.Fprintf(out, "FOLD JEV TYPE sprint=%s prompt_sha=%s type=%s heads=%d decided=%d agree=%d/%d false_pass=%d false_bounce=%d unsure=%d mae=%s sep=%s pass_prec_lb=%s bounce_prec_lb=%s promote=%s\n",
+			sprint, oneline.Field(c.PromptSHA), oneline.Field(s.Type), s.Heads, s.Decided, s.Agree, s.Decided,
+			s.FalsePass, s.FalseBounce, s.Unsure, s.mae(), s.sepText(),
+			lbText(s.PassRight, s.Pass), lbText(s.BounceRight, s.Bounce), s.promote())
+	}
+	for _, t := range c.Tags {
+		prs := strings.Join(t.Missed, ",")
+		if prs == "" {
+			prs = tokens.Dash
+		}
+		fmt.Fprintf(out, "FOLD JEV TAG sprint=%s prompt_sha=%s tag=%s heads=%d missed=%d prs=%s\n",
+			sprint, oneline.Field(c.PromptSHA), oneline.Field(t.Tag), t.Heads, len(t.Missed), prs)
+	}
+	if k := c.Candidate; k != nil {
+		adopted := "yes"
+		if !k.Adopted {
+			adopted = "no reason=" + oneline.Field(k.Reason)
+		}
+		fmt.Fprintf(out, "FOLD JEV CANDIDATE sprint=%s candidate=%s current=%s holdout=%d false_pass=%d>%d false_bounce=%d>%d agree=%d>%d adopted=%s\n",
+			sprint, oneline.Field(k.SHA), oneline.Field(c.PromptSHA), k.Holdout,
+			k.Current.FalsePass, k.Candidate.FalsePass, k.Current.FalseBounce, k.Candidate.FalseBounce,
+			k.Current.Agree, k.Candidate.Agree, adopted)
+	}
+}
+
+func jevSexp(c *Calibration) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "  :jev (:prompt-sha %s :set-sha %s :heads %d :holdout %d\n", q(c.PromptSHA), q(c.SetSHA), c.Heads, c.Holdout)
+	b.WriteString("        :types (")
+	for i, s := range c.Types {
+		if i > 0 {
+			b.WriteString("\n                ")
+		}
+		fmt.Fprintf(&b, "(type %s :heads %d :decided %d :agree %d :false-pass %d :false-bounce %d :unsure %d :mae %s :sep %s :pass-prec-lb %s :bounce-prec-lb %s :promote %s)",
+			q(s.Type), s.Heads, s.Decided, s.Agree, s.FalsePass, s.FalseBounce, s.Unsure, q(s.mae()), q(s.sepText()),
+			q(lbText(s.PassRight, s.Pass)), q(lbText(s.BounceRight, s.Bounce)), q(s.promote()))
+	}
+	b.WriteString(")\n        :tags (")
+	for i, t := range c.Tags {
+		if i > 0 {
+			b.WriteString("\n               ")
+		}
+		prs := make([]string, len(t.Missed))
+		for j, p := range t.Missed {
+			prs[j] = q(p)
+		}
+		fmt.Fprintf(&b, "(tag %s :heads %d :missed %d :prs (%s))", q(t.Tag), t.Heads, len(t.Missed), strings.Join(prs, " "))
+	}
+	b.WriteString(")")
+	if k := c.Candidate; k != nil {
+		adopted := "yes"
+		if !k.Adopted {
+			adopted = "no"
+		}
+		fmt.Fprintf(&b, "\n        :candidate (:sha %s :holdout %d :current (:false-pass %d :false-bounce %d :agree %d) :candidate (:false-pass %d :false-bounce %d :agree %d) :adopted %s :reason %s)",
+			q(k.SHA), k.Holdout, k.Current.FalsePass, k.Current.FalseBounce, k.Current.Agree,
+			k.Candidate.FalsePass, k.Candidate.FalseBounce, k.Candidate.Agree, q(adopted), q(k.Reason))
+	}
+	b.WriteString(")\n")
+	return b.String()
 }
