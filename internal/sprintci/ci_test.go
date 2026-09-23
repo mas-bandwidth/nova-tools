@@ -2,6 +2,7 @@ package sprintci
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +32,7 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := fmt.Sprintf("ci-%d-%s", c.PR, c.SHA[:8]); id != want {
+		if want := "ci:" + c.Repo + ":" + c.SHA; id != want {
 			t.Fatalf("card id = %s, want %s", id, want)
 		}
 		ran, reason := d.RunCI(c)
@@ -179,6 +180,48 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 }
 
 func shaN(n int) string {
-	// The varying digits are the first eight, which is the id's sha8.
 	return fmt.Sprintf("%08x%032d", n, 0)
+}
+
+// TestCardsThatShareSha8DoNotShareAnID is the regression for an id of
+// ci-<pr>-<sha8>. That string drops the repository and keeps eight hex
+// digits, so two cards share it. The id is the Redis key, ci:<repo>:<sha>.
+func TestCardsThatShareSha8DoNotShareAnID(t *testing.T) {
+	t.Parallel()
+	const pr = 2842
+	const prefix = "abcdef01"
+	shaA := prefix + strings.Repeat("a", 32)
+	shaB := prefix + strings.Repeat("a", 31) + "b"
+	nova := Card{Repo: "example/nova", PR: pr, SHA: shaA}
+	otherRepo := Card{Repo: "example/other", PR: pr, SHA: shaA}
+	otherHead := Card{Repo: "example/nova", PR: pr, SHA: shaB}
+
+	idNova, err := nova.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idRepo, err := otherRepo.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	idHead, err := otherHead.ID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idNova == idRepo {
+		t.Fatalf("two repositories with the same pr and sha8 share an id %s", idNova)
+	}
+	if idNova == idHead {
+		t.Fatalf("two full shas that share eight hex digits share an id %s", idNova)
+	}
+	key, err := VerdictKey(nova.Repo, nova.SHA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idNova != key {
+		t.Fatalf("card id %s, redis key %s", idNova, key)
+	}
+	if shaA[:8] != shaB[:8] || shaA == shaB {
+		t.Fatalf("fixture shas are not a shared prefix: %s %s", shaA, shaB)
+	}
 }

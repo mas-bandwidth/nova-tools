@@ -94,14 +94,11 @@ func Read(path string) (CutCard, error) {
 	return parseCard(string(raw))
 }
 
-// VerdictKey is the Redis key ci:<repo>:<sha> for this exact head.
+// VerdictKey is the Redis key ci:<repo>:<sha> for this exact head. It is
+// the card id. PR 1 is only so the head can be checked: the pull request
+// number is not part of the key.
 func VerdictKey(repo, sha string) (string, error) {
-	c := Card{Repo: repo, PR: 1, SHA: sha}
-	norm, err := c.norm()
-	if err != nil {
-		return "", err
-	}
-	return "ci:" + c.Repo + ":" + norm, nil
+	return Card{Repo: repo, PR: 1, SHA: sha}.ID()
 }
 
 // Run starts the card's script on this bench only when the dealer has dealt
@@ -136,7 +133,7 @@ func (b *Bench) Run(ctx context.Context, cardPath string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	job := filepath.Join(b.Root, id, strconv.FormatInt(time.Now().UnixNano(), 10))
+	job := filepath.Join(b.Root, jobSegment(id), strconv.FormatInt(time.Now().UnixNano(), 10))
 	if err := os.MkdirAll(filepath.Join(job, "tmp"), 0o755); err != nil {
 		return Result{}, err
 	}
@@ -173,6 +170,10 @@ func render(in CutInput) (body, name string, err error) {
 	if err != nil {
 		return "", "", err
 	}
+	name, err = c.fileName()
+	if err != nil {
+		return "", "", err
+	}
 	paths, err := cleanPaths(in.Paths)
 	if err != nil {
 		return "", "", err
@@ -196,7 +197,14 @@ func render(in CutInput) (body, name string, err error) {
 	b.WriteString("```sh\n")
 	b.WriteString(benchScript)
 	b.WriteString("```\n")
-	return b.String(), id + ".md", nil
+	return b.String(), name, nil
+}
+
+// jobSegment is the card id as one directory under the bench root. The id
+// is ci:<repo>:<sha>, and a repository name contains a slash. That slash is
+// not a path separator here, or the job can leave Root.
+func jobSegment(id string) string {
+	return strings.NewReplacer("/", "_", "\\", "_").Replace(id)
 }
 
 func parseCard(body string) (CutCard, error) {

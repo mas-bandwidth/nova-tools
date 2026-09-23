@@ -1,11 +1,13 @@
 // Package sprintci is a CI pass as a card (nova-tools#2842).
 //
-// A CI pass is one card per PR head, id ci-<pr>-<sha8>. It takes one slot
-// inside the machine width. Half the slots stay for model cards: the CI share
-// is width/2 (the odd slot, if there is one, stays with the model cards), and
-// a pass that would hold more does not run. A pass that is not a card does not
-// run either. A second sha is a second head, never this one. A rerun of the
-// same head is the same card and does not take a second slot.
+// A CI pass is one card per PR head. Its id is ci:<repo>:<sha>, the Redis
+// key for that head, and the sha is the full head rather than eight digits.
+// It takes one slot inside the machine width. Half the slots stay for model
+// cards: the CI share is width/2 (the odd slot, if there is one, stays with
+// the model cards), and a pass that would hold more does not run. A pass
+// that is not a card does not run either. A second sha is a second head,
+// never this one. A rerun of the same head is the same card and does not
+// take a second slot.
 //
 // The dealer deals that one slot to one bench. A bench that has no dealt slot
 // for the card does not start the run. Cut writes ci-<pr>-<sha8>.md into the
@@ -93,14 +95,27 @@ func (d *Dealer) ModelHeld() int {
 	return len(d.model)
 }
 
-// ID is ci-<pr>-<sha8>. The sha is the full head; the id carries its first
-// eight hex digits. A card that is not one head has no id.
+// ID is ci:<repo>:<sha>, the Redis key for this head. The sha is the full
+// 40-digit head. Eight hex digits are not a head, and the repository is part
+// of the card: two repos, or two heads that share only those eight digits,
+// are not one card. The pull request is not in the id. One head has one
+// verdict. A card that is not one head has no id.
 func (c Card) ID() (string, error) {
 	sha, err := c.norm()
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("ci-%d-%s", c.PR, sha[:8]), nil
+	return "ci:" + c.Repo + ":" + sha, nil
+}
+
+// fileName is the front-tier file ci-<pr>-<sha8>.md. It is not the card id.
+// Two cards can share this short name and must not share an id.
+func (c Card) fileName() (string, error) {
+	sha, err := c.norm()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("ci-%d-%s.md", c.PR, sha[:8]), nil
 }
 
 // RunCI runs one CI pass if and only if it is a card and the dealer has a
