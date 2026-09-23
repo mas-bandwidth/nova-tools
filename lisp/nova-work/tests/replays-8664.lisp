@@ -251,13 +251,45 @@ sequence driven is a random sequence of legal verbs."
 ;;; for a fully verified cell, a cross for any other state. The cross is a
 ;;; projection choice, not lost information -- "Partial, missing and
 ;;; unknown stay in S and in `check`'s counts" (:7740). This replay holds a
-;;; road map whose three rows sit in three different states, runs the
+;;; road map whose four rows sit in four different states, runs the
 ;;; roadmap's `check`-counts rollup (query --ask percent), and asserts the
 ;;; partial, missing (done-unverified) and unknown counts stay distinct and
 ;;; the denominator (rows=, applicable=) is unchanged by completion.
+;;;
+;;; Stella's HOLD on #2056 (review 5291971003): the prior cut of this test
+;;; seeded partial and unknown rows but never a real missing/done-unverified
+;;; row, so `done-unverified=0` was never exercised against a positive case.
+;;; `roadmap-cell-verified-p` (src/roadmap.lisp:1082-1091) is a documented
+;;; seam: its default `:method` reads the node's settled branch because "the
+;;; verifier and staged-admission subsystem is outside this epic" -- so a
+;;; settled node is, in this slice, indistinguishable from a verified one
+;;; through the public verb surface alone (no verb settles a container node
+;;; without also cascading from a fully-settled required member: kernel.lisp
+;;; refuses `state --to done` on anything but a :task/:bug, SPEC-WORK.md
+;;; rule at kernel.lisp:194-196). To pin the done-unverified count as
+;;; something real rather than a vacuous zero, this replay adds one more row
+;;; whose member settles the ordinary way (its one required leaf closes and
+;;; cascades) and, via a dynamic test seam bound only for the extent of the
+;;; `query --ask percent` call below, marks that one member's evidence as
+;;; missing -- exactly the case the epic's own docstring says the verifier
+;;; would someday adjudicate. This exercises the real `roadmap-percent`
+;;; aggregation in src/roadmap.lisp, not a stand-in.
+
+(defvar *test-missing-evidence-member-ids* nil
+  "Test seam for TestE07F02KeepPartialMissingAndUnknown: member ids
+ROADMAP-CELL-VERIFIED-P should treat as settled-but-unverified for the
+dynamic extent this is bound, standing in for the staged-admission verifier
+docs/SPEC-WORK.md:1937-1941 documents as outside this epic (src/roadmap.lisp:1082-1091).
+Nil (the default) changes nothing: the :around below always defers to the
+primary method.")
+
+(defmethod roadmap-cell-verified-p :around (kernel node-id)
+  (if (member node-id *test-missing-evidence-member-ids* :test #'string=)
+      nil
+      (call-next-method)))
 
 (deftest "TestE07F02KeepPartialMissingAndUnknown" "docs/SPEC-WORK.md:7740"
-    "expected=green-counts-only-fully-verified;partial-cell-keeps-k-n;unknown-kept-as-its-own-count;done-unverified-missing-kept-distinct;rows-and-applicable-denominator-unchanged"
+    "expected=green-counts-only-fully-verified;partial-cell-keeps-k-n;unknown-kept-as-its-own-count;done-unverified-missing-kept-distinct-and-positive;rows-and-applicable-denominator-unchanged"
   (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
                  (:id "root/f-done" :type :feature :parent "root" :state :unknown)
                  (:id "root/f-done/t" :type :task :parent "root/f-done" :state :doing)
@@ -265,9 +297,11 @@ sequence driven is a random sequence of legal verbs."
                  (:id "root/f-partial/t1" :type :task :parent "root/f-partial" :state :doing)
                  (:id "root/f-partial/t2" :type :task :parent "root/f-partial" :state :unknown)
                  (:id "root/f-unknown" :type :feature :parent "root" :state :unknown)
-                 (:id "root/f-unknown/t" :type :task :parent "root/f-unknown" :state :unknown)))
+                 (:id "root/f-unknown/t" :type :task :parent "root/f-unknown" :state :unknown)
+                 (:id "root/f-missing" :type :feature :parent "root" :state :unknown)
+                 (:id "root/f-missing/t" :type :task :parent "root/f-missing" :state :doing)))
          (k (make-kernel :state (make-seed-state seed))))
-    ;; The axisless roadmap names three feature rows as its required set.
+    ;; The axisless roadmap names four feature rows as its required set.
     (multiple-value-bind (okp line code)
         (roadmap-create k :id "rm" :parent "root" :title "M" :row-kind :feature
                         :aggregation :required-members
@@ -276,33 +310,45 @@ sequence driven is a random sequence of legal verbs."
                         :request "rm-1" :stamp "2026-09-17T00:00:00Z")
       (ok okp "the axisless roadmap was not created: ~A" line)
       (check-equal 0 code "roadmap create exit"))
-    (dolist (m '("root/f-done" "root/f-partial" "root/f-unknown"))
+    (dolist (m '("root/f-done" "root/f-partial" "root/f-unknown" "root/f-missing"))
       (multiple-value-bind (okp line code)
           (roadmap-row k :roadmap "rm" :member m :op :add
                        :reason "seed" :request (format nil "row-~A" m))
         (ok okp "row ~A was not added: ~A" m line)
         (check-equal 0 code "roadmap row add exit")))
     ;; One row is fully verified (its one leaf settles); one is partial (one
-    ;; leaf settles, one stays open); one stays unknown (its leaf is unknown).
+    ;; leaf settles, one stays open); one stays unknown (its leaf is
+    ;; unknown); one settles the ordinary way but is held out as
+    ;; unverified below (missing evidence).
     (ok (submit k (close-request :node "root/f-done/t" :request "d-1"))
         "the done leaf close was refused")
     (ok (submit k (close-request :node "root/f-partial/t1" :request "p-1"))
         "the partial first leaf close was refused")
+    (ok (submit k (close-request :node "root/f-missing/t" :request "m-1"))
+        "the missing-evidence leaf close was refused")
+    ;; root/f-missing settled the same way root/f-done did (its one required
+    ;; leaf closed and cascaded): the gap this pins is not in how the node
+    ;; got to C, it is that settled and verified are not the same claim.
+    (check-equal :c (node-branch (kernel-state k) "root/f-missing")
+                 "the missing-evidence feature did not settle into C the ordinary way")
     ;; A completion-only read is a tick for fully verified, a cross otherwise --
     ;; and the three cross states stay distinct in the check counts rather than
     ;; collapsing into one "not green".
-    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm")
+    (multiple-value-bind (okp line code)
+        (let ((*test-missing-evidence-member-ids* '("root/f-missing")))
+          (roadmap-percent k :node "rm"))
       (ok okp "percent over the axisless roadmap was refused: ~A" line)
       (check-equal 0 code "percent exit")
-      ;; green is the tick: only the fully verified row counts.
+      ;; green is the tick: only the fully verified row counts, not the
+      ;; settled-but-unverified one.
       (ok (search "green=1" line)
           "green did not count only the fully verified row: ~A" line)
-      ;; The denominator is unchanged by completion: all three rows remain
-      ;; rows, and the cross states reduce neither.
-      (ok (search "applicable=3" line)
-          "applicable was not 3 (denominator unchanged): ~A" line)
-      (ok (search "rows=3" line)
-          "rows was not 3 (denominator unchanged): ~A" line)
+      ;; The denominator is unchanged by completion: all four rows remain
+      ;; rows, and the cross states (including missing) reduce neither.
+      (ok (search "applicable=4" line)
+          "applicable was not 4 (denominator unchanged): ~A" line)
+      (ok (search "rows=4" line)
+          "rows was not 4 (denominator unchanged): ~A" line)
       ;; The partial cell keeps its k/n instead of a bare cross.
       (ok (search "k/n=1/2" line)
           "the partial cell lost its 1/2 k/n: ~A" line)
@@ -310,17 +356,31 @@ sequence driven is a random sequence of legal verbs."
       (ok (search "unknown=1" line)
           "the unknown cell did not keep its unknown= count: ~A" line)
       ;; done-unverified (the missing-evidence count) is a count of its own,
-      ;; printed beside done and never folded into green.
+      ;; printed beside done and never folded into green -- and here it is
+      ;; genuinely positive, not a vacuous zero.
+      (ok (search "done-unverified=1" line)
+          "done-unverified did not count the settled-but-unverified row: ~A" line))
+    ;; Outside the dynamic extent above, the seam is inert: the same read
+    ;; with no member marked unverified folds root/f-missing into green,
+    ;; proving the positive count above came from the seam binding and not
+    ;; from some other accounting change.
+    (multiple-value-bind (okp line code) (roadmap-percent k :node "rm")
+      (declare (ignore code))
+      (ok okp "percent over the axisless roadmap was refused: ~A" line)
+      (ok (search "green=2" line)
+          "with the seam unbound, the settled root/f-missing did not count as verified: ~A" line)
       (ok (search "done-unverified=0" line)
-          "done-unverified was not kept distinct: ~A" line))
+          "with the seam unbound, done-unverified was not back to zero: ~A" line))
     ;; In S the states stay distinct too: the projection changed no node state
     ;; and no branch.
     (check-equal :c (node-branch (kernel-state k) "root/f-done")
                  "the fully verified feature did not settle into C")
     (check-equal :o (node-branch (kernel-state k) "root/f-partial")
                  "a completion-only read moved the partial feature out of O")
-     (check-equal :unknown (node-state (kernel-state k) "root/f-unknown/t")
-                  "the unknown leaf lost its :unknown state")))
+    (check-equal :unknown (node-state (kernel-state k) "root/f-unknown/t")
+                 "the unknown leaf lost its :unknown state")
+    (check-equal :c (node-branch (kernel-state k) "root/f-missing")
+                 "a completion-only read moved the missing-evidence feature out of C")))
 
 ;;; ------------------------------------------------------------------
 ;;; TestE09F04LeaveDeletionPendingOnMissing      docs/SPEC-WORK.md:7598
