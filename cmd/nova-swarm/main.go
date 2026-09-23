@@ -246,7 +246,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "worker":
 		return cmdWorker(rest, stdout, stderr)
 	case "launch":
-		return cmdLaunch(rest, stdout, stderr)
+		return cmdLaunch(rest, stdin, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
