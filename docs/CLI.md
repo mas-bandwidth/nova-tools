@@ -2046,10 +2046,40 @@ CUT OK cards=<n> from=<issue|rows|branch-from> skipped=<n> out=<dir>
 Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal, for
 both forms.
 
+### deal
+
+```
+nova-pulse deal --undealt <dir> [--priority <dir>] --ready-root <dir> --bench <name>... --redis <addr> --route-table <file> [--max-load-per-core <f>] [--reading-debt <n>] [--debt-cap <n>] [--launched <dir>]... [--repo <path>] [--base <branch>] [--results <dir>] [--dry-run]
+```
+
+`deal` is the dealer (`internal/pulse/dealer`, #3251) as a command: the one place a
+card is judged ready for a bench, before it enters that bench's ready queue
+(`<ready-root>/<bench>`, which `fill --ready` then launches without re-deciding). One
+pass reads the `--priority` cards then the `--undealt` ones, reads every `--bench`'s
+`bench:<b>` (working, load1, ncpu) and `bench:<b>:desired` (slots, legs) hashes in one
+pipelined round trip (no `bench:<b>` row is a bench that is down), counts what already
+waits in each ready queue, and takes the live lanes from those cards and every
+`--launched` directory. A card is dealt only when its DEPENDS-ON parents landed (asked
+of `--repo`/`--base`/`--results`; with no `--repo` a card with a parent is held), bulk
+is not over the reading-debt cap, its lane is free, the `--route-table` gives it a
+route and model, and a bench that is up, carries its leg and has room is under
+`--max-load-per-core` (`1.5` by default, `0` for none; a bench whose load was not read
+is dealt nothing while a ceiling is set). The dealt card gets its `ROUTE:` and `MODEL:`
+lines and is renamed into the ready queue; every other card stays where it is.
+
+```
+DEALT card=<name> bench=<name> route=<r> model=<m>
+HELD card=<name> reason="<why>"
+DEAL dealt=<n> held=<n> cards=<n> benches=<n> max-load-per-core=<f> dry-run=<bool>
+```
+
+`--dry-run` plans and prints and moves nothing. Exit 0 on a pass, 1 when a directory or
+Redis could not be read, 2 on a refusal.
+
 ### fill
 
 ```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
+nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 ```
 
 `fill` is the tick that keeps the benches fed: it reads each bench's capacity over
@@ -2118,22 +2148,13 @@ by default, the seat the launcher already hands the bench; `--slots-bin <path>` 
 a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
 no `nova-swarm` would read zero leases and call a full bench empty.
 
-**`--max-load-per-core <f>` is the brake, `1.5` by default, `0` for none.** A bench
-whose `load1/cores` is above it is dealt nothing this tick and says so by name, with
-the free count it did not fill and the leases it is holding on the line:
-
-```
-FILL BRAKE bench=<name> load1=<f> cores=<n> per-core=<f> max=<f> free=<n> held=<n> remedy="..."
-```
-
-A braked bench is **not** a failed bench -- the tick carries on and the exit is 0 --
-and the brake never shrinks a bench below the leases it already holds: the live cards
-are running, and the one thing a capacity number may never do is ask for them back.
-A machine whose load is made by something other than its own leases wants `0` here.
-`--max-load-per-core` must be a **finite** number: `NaN` and `Inf` compare false
-against every bench, so a threshold nothing can exceed is a brake that is silently
-off, and both are refusals (exit 2) naming the flag. With the brake on, a bench that
-cannot count its cores is refused rather than filled unbraked.
+**The fill has no load brake (#3251).** A bench with free slots in its store is filled
+up to them, whatever its `load1`; `--max-load-per-core` and the `FILL BRAKE` line are
+gone from `fill`. The load ceiling is the dealer's: `nova-pulse deal` (below) deals a
+card into a bench's ready queue only while that bench's `load1/ncpu` from its Redis row
+is under `--max-load-per-core`, and a card never reaches a ready queue the dealer did
+not put it in. **Run `deal` in front of `fill` before retiring any other load guard**:
+a `fill` fed from a ready queue nothing dealt has no load ceiling at all.
 
 **FAIL CLOSED: every probe or parse failure is `free=0` on that bench, said by name.**
 A bench is the least trusted thing on this wire — it cannot make the coordinator run
@@ -2155,19 +2176,12 @@ Every failing bench gets its own line, not just the first. These are the refusal
 | the owner holds more leases than its share | an owner cannot hold more than its share, so the reading went wrong |
 | the header does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice, or a field this answer has no business carrying | a reading nobody can read one way is not a reading to act on |
 | the bench answered more than 64 KiB | an answer with no end is not an answer |
-| no reader on the bench could measure its **load**, or its **cores**, while the brake is on | a measurement nobody took is not a zero, and `load1=0` passes every brake |
 | a bench with no store row whose disk, memory, load or formula result could not be read | the formula stands on those measurements, and an empty reading is a zero to shell arithmetic |
 
 **A measurement nobody took is not a zero.** The probe reports `cores=unreadable` and
-`load1=unreadable` rather than substituting `0`, and that word travels all the way to
-the brake. With the brake on, an unreadable load or an unreadable core count holds the
-bench at `free=0` — a bench whose load nothing can read is a bench nobody can brake.
-With `--max-load-per-core 0` the caller has said there is no brake, so it does not hold
-the bench, and the unread measurement is still printed:
-
-```
-FILL UNMEASURED bench=<name> cores=<n|unreadable> load1=<unreadable> note="..."
-```
+`load1=unreadable` rather than substituting `0`. The store path reads neither (the
+free count is the store's), so an unreadable load does not hold a bench here; the
+dealer, which does judge load, deals nothing to a bench whose load it could not read.
 
 The load formula's own terms are Linux — `/proc/meminfo` and `df -BG` — so on a bench
 where they cannot be measured, a bench with no store row is a **named refusal** rather
@@ -2318,14 +2332,15 @@ every bench and reads nothing. It is a dry run's flag, not a fleet's — a singl
 number cannot be four benches' free counts.
 
 **The resident form is the whole of it**: one process per launcher, ticking in
-seconds, sized by each bench's own store, braked on load and stopped by a file.
+seconds, sized by each bench's own store and stopped by a file; the load is the
+dealer's (`nova-pulse deal`).
 
 ```
 nova-pulse fill --ready ./queue/pull/ready --launched ./queue/pull/launched \
   --machines ./queue/control/machines.tsv --lanes ./queue/control/lanes.tsv \
   --launcher ~/bin/flash-native-bench.sh --session <id> \
   --interval 10s --launch-grace 3s --deadline 1800 \
-  --slots-store '$HOME/nova-bench/slots' --max-load-per-core 1.5 \
+  --slots-store '$HOME/nova-bench/slots' \
   --stop ./STOP
 ```
 
