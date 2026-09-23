@@ -167,7 +167,8 @@ that `nova-swarm` already writes, on the shared volume, so `nova-pulse status` a
 read one schema and one file whether the card ran under the launcher or a pod. After each card
 the pod's last step is the clip — commit the card's branch, harvest its `RESULT.md`, reset the
 kept worktree to base — exactly SPEC-JOBS §6, so the next Job sees warmth and never another
-card's uncommitted diff.
+card's uncommitted diff. `internal/fleetkube` runs a pod in that order — harness, usage row,
+clip (`PodSteps`) — and a card that exits non-zero is accounted and clipped the same way.
 
 ## Part 3 — What nova-sandbox still adds, and what the Studio keeps
 
