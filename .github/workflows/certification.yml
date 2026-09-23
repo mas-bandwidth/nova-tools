@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   test:
+    if: vars.NOVA_CI_CARDS != 'on'
     # TWO operating systems in this job and the third fanned out below. The platforms
     # genuinely differ -- Windows has no executable bit, so `nocode`'s executable condition
     # cannot fire there and only the extension and shebang conditions carry it, and the
@@ -921,6 +922,7 @@ jobs:
           if-no-files-found: error
 
   perf:
+    if: vars.NOVA_CI_CARDS != 'on'
     # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.
     #
     # cmd/nova-bus/timing_test.go runs every verb over a ten-thousand-note bus and holds
@@ -1005,6 +1007,7 @@ jobs:
         run: |
           set -uo pipefail
           bad=0
+          cards="${{ vars.NOVA_CI_CARDS }}"
           for pair in \
             "test:${{ needs.test.result }}" \
             "smoke:${{ needs.smoke.result }}" \
@@ -1013,6 +1016,8 @@ jobs:
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
+            # NOVA_CI_CARDS=on (#2925): test and perf run as ci cards, not Actions rows.
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|perf) continue ;; esac; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

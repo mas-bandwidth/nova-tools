@@ -58,6 +58,7 @@ concurrency:
 
 jobs:
   test:
+    if: vars.NOVA_CI_CARDS != 'on'
     # ONE LEG PER TAG. The tag, not a package list and not a `-run`, decides what
     # is extra — `./...` decides where it may live, so a tagged test added
     # tomorrow lands in its leg the moment it has a test file.
@@ -88,6 +89,7 @@ jobs:
         run: go test -tags ${{ matrix.tag }} -count=1 ./...
 
   postgres:
+    if: vars.NOVA_CI_CARDS != 'on'
     # THE SAME LEG SHAPE, in its own job because it carries a service container.
     # internal/decide's log has two halves: an in-memory fake the unit suite runs
     # against, and the real-Postgres contract behind `//go:build postgres` that
