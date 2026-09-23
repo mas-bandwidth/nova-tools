@@ -400,21 +400,28 @@ nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keyg
 SECRETS RULE   creation_rules:
 SECRETS RULE     - path_regex: ^rowan\.yaml$
 SECRETS RULE       age: age1…,<recovery key>
-SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled
+SECRETS RULE NOTE  placeholder: no --store, so <recovery key> is filled by `nova-secrets seat add`
 SECRETS RULE NEXT: add these two lines to .sops.yaml (or run `nova-secrets seat add`)
 SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
+Done. Your new key is at <path>. Nothing failed.
+Next: send this public key to whoever seals your seat: age1…
 ```
 
-**The order is the contract, and the OK line is LAST.** Glenn ran this on the Air on
+**The order is the contract, and the run ends on a plain closing line.** Glenn ran this on the Air on
 2026-09-18 and read a successful run as a failure (nova-tools#1393): the verdict was printed
 first and the placeholder note — "`<recovery key>` stands unfilled" — was the last line on the
 screen, and the last line of a command's output is the line a reader takes for the answer.
 Nothing was wrong; the tool had left its verdict at the top and its homework at the bottom. So
-the rule block comes first, the `NEXT:` line after it, and `SECRETS KEYGEN OK` last. The
-`NEXT:` line is phrased as a **next step, not a state of the world** — "add these two lines"
-rather than "stands unfilled" — because only one of those two reads as an instruction at the
-end of a green run. `TestKeygenPrintsTheOKLineLast` and `TestKeygenNextStepSaysItIsANextStep`
-pin the order and the wording; the placeholder note keeps its place above them, because a
+the rule block comes first, the `NEXT:` line after it, then `SECRETS KEYGEN OK` as the last
+machine-readable line (callers that parse the receipt keep it), and the run closes with two
+plain lines a person cannot misread — `Done. Your new key is at <path>. Nothing failed.` and
+`Next: send this public key to whoever seals your seat: <pub>` — so the last line on the screen
+says it worked and what to do next (nova-tools#1560). The `NEXT:` line is phrased as a **next
+step, not a state of the world** — "add these two lines" rather than "stands unfilled" —
+because only one of those two reads as an instruction at the end of a green run.
+`TestKeygenEndsWithThePlainClosingLine`, `TestKeygenPrintsTheOKLineAfterTheRuleBlock` and
+`TestKeygenNextStepSaysItIsANextStep` pin the order and the wording; the placeholder note keeps
+its place in the rule block, worded as what fills it rather than as a refusal, because a
 `--store`-less block that fails invariant 1 until it is filled must still say so.
 
 **What it asserts.** That a new age private key exists at `--key`, created with `O_EXCL` and
@@ -801,10 +808,11 @@ SECRETS SEAT ADD OK as=<seat> from=<seat> keys=<n> file=<path> rule=<n>
 SECRETS SEAT ADD FAIL <why>
 ```
 
-**Where a verb prints more than one line, the `OK` line is LAST.** `keygen` and `seat add`
-both end on their verdict and put what is left to do above it, because the last line on the
-screen is the one a reader takes for the answer (nova-tools#1393). A `NEXT:` line is an
-instruction and is written as one.
+**Where a verb prints more than one line, it ends on its verdict.** `seat add` ends on its
+`OK` line; `keygen` ends on its `OK` line followed by two plain closing lines that say it worked
+and name the next step (nova-tools#1560). Either way what is left to do sits above the verdict,
+because the last line on the screen is the one a reader takes for the answer (nova-tools#1393).
+A `NEXT:` line is an instruction and is written as one.
 
 **No value, no fragment of a value, and no value's length ever appears on any line, in any
 refusal, or in any error passed through from sops** — a length is a value's shape, and the
@@ -1051,11 +1059,14 @@ red test that carries it. They extend **The model** and **Rotation**; they do no
 
 Two rules, both measured the day a new bench was given its first credentials by hand.
 
-11. **A multi-line receipt ends on its verdict.** The `OK` line is the LAST line a verb prints,
-    and whatever is left to do is a `NEXT:` line above it, phrased as an instruction rather than
-    as a state of the world. A green `keygen` whose last line said a placeholder "stands
-    unfilled" was read as an error by the person who ran it (nova-tools#1393). Red tests:
-    `TestKeygenPrintsTheOKLineLast`, `TestKeygenNextStepSaysItIsANextStep`.
+11. **A multi-line receipt ends on its verdict.** The `OK` line is the last machine-readable
+    line a verb prints, and whatever is left to do is a `NEXT:` line above it, phrased as an
+    instruction rather than as a state of the world; `keygen` then closes with two plain lines,
+    `Done. ... Nothing failed.` and `Next: send this public key ...`, so its last line reads as
+    success to a person (nova-tools#1560). A green `keygen` whose last line said a placeholder
+    "stands unfilled" was read as an error by the person who ran it (nova-tools#1393). Red
+    tests: `TestKeygenEndsWithThePlainClosingLine`, `TestKeygenPrintsTheOKLineAfterTheRuleBlock`,
+    `TestKeygenNextStepSaysItIsANextStep`.
 12. **A new seat is given its first values by `seat add`, never by `seal`.** `seal` decrypts
     before it writes, and only the new seat's own key opens the new seat's file, so the first
     value must be re-sealed out of a seat the operator's machine CAN open — with the new seat's
