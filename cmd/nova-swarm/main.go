@@ -195,6 +195,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "run":
 		return cmdRun(rest, stdout, stderr, now)
 	case "supervise":
+		injectedSupervisor() // test-only, swarmtest build: a supervisor that never identifies (#2984)
 		return cmdSupervise(rest, stdout, stderr, now)
 	case "status":
 		return cmdStatus(rest, stdout, stderr, now)
