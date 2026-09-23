@@ -143,6 +143,75 @@ local function rd_author(S, key)
   return redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'author') or ''
 end
 
+-- rd_held lists, once per call and per friend g, the canonical read
+-- identities (repo|pr|full head) g already holds in sprint S: a closed read
+-- (s:S:done:g), a claimed or working one (g's leases) and one open on g's
+-- queue. Spec 5.7 (6): a friend holding any of these never receives the same
+-- identity again.
+local function rd_held(S, g, cache)
+  local ck = S .. '\31' .. g
+  if cache[ck] then
+    return cache[ck]
+  end
+  local held = {}
+  local function note(id, how)
+    local v = redis.call('HMGET', 's:' .. S .. ':task:' .. id, 'kind', 'repo', 'pr', 'head')
+    if (v[1] == 'read' or v[1] == 'review') and v[2] and v[3] and v[4] and v[4] ~= '' then
+      local ident = v[2] .. '|' .. v[3] .. '|' .. v[4]
+      if not held[ident] then
+        held[ident] = { id = id, how = how }
+      end
+    end
+  end
+  for _, id in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':done:' .. g)) do
+    note(id, 'closed')
+  end
+  for _, zkey in ipairs({ 'friend:' .. g .. ':starting', 'friend:' .. g .. ':living' }) do
+    for _, identity in ipairs(redis.call('ZRANGE', zkey, 0, -1)) do
+      local LS, id = string.match(identity, '^([^/]+)/(.+)/%d+$')
+      if LS == S then
+        note(id, 'working')
+      end
+    end
+  end
+  for _, id in ipairs(redis.call('ZRANGE', 's:' .. S .. ':open:' .. g, 0, -1)) do
+    note(id, 'open')
+  end
+  cache[ck] = held
+  return held
+end
+
+-- rd_dedup is the transfer dedup of spec 5.7 (6) on (repo, PR, full head,
+-- friend): the reason g may not receive read id, or nil. A task that is not a
+-- read, or carries no head, is never deduplicated.
+local function rd_dedup(S, g, key, id, cache)
+  local v = redis.call('HMGET', key, 'kind', 'repo', 'pr', 'head')
+  if (v[1] ~= 'read' and v[1] ~= 'review') or not v[2] or not v[3] or not v[4] or v[4] == '' then
+    return nil
+  end
+  if redis.call('HEXISTS', 's:' .. S .. ':disp:' .. v[2] .. ':' .. v[3], g .. '@' .. v[4]) == 1 then
+    return g .. ' posted a typed line at ' .. v[4]
+  end
+  local h = rd_held(S, g, cache)[v[2] .. '|' .. v[3] .. '|' .. v[4]]
+  if h and h.id ~= id then
+    return g .. ' holds ' .. h.how .. ' ' .. h.id .. ' at ' .. v[4]
+  end
+  return nil
+end
+
+-- rd_note_held records that g now holds read id on its open queue, so a
+-- second line for the same identity in the same call is deduplicated too.
+local function rd_note_held(S, g, key, id, cache)
+  local v = redis.call('HMGET', key, 'kind', 'repo', 'pr', 'head')
+  if (v[1] == 'read' or v[1] == 'review') and v[2] and v[3] and v[4] and v[4] ~= '' then
+    local held = rd_held(S, g, cache)
+    local ident = v[2] .. '|' .. v[3] .. '|' .. v[4]
+    if not held[ident] then
+      held[ident] = { id = id, how = 'open' }
+    end
+  end
+end
+
 -- rd_carried_hold: f recorded a typed HOLD on this PR (at any head) and has
 -- no APPROVE at the task's head. Returns the disposition field of the HOLD.
 local function rd_carried_hold(S, f, key)
@@ -230,27 +299,66 @@ local function rd_release(ctx, S, id, score, key, hold)
   ctx.released = ctx.released + 1
 end
 
--- rd_route moves one open task off f by kind.
-local function rd_route(ctx, S, id, score)
+-- rd_event records one line of what a hand redistribute did, for the verb.
+local function rd_event(ctx, what, id, a, b)
+  if ctx.events then
+    local ev = ctx.events
+    ev[#ev + 1] = what
+    ev[#ev + 1] = id
+    ev[#ev + 1] = a or ''
+    ev[#ev + 1] = b or ''
+  end
+end
+
+-- rd_route moves one open task off f by kind. requeue is true for a task
+-- whose lease was just closed: it must be placed, so the kind filter and the
+-- keep-on-f outcome of a hand move never apply to it.
+local function rd_route(ctx, S, id, score, requeue)
   local f = ctx.f
   local key = 's:' .. S .. ':task:' .. id
   local kind = redis.call('HGET', key, 'kind') or 'work'
-  local target
+  if ctx.kinds and not requeue and not ctx.kinds[kind] then
+    return
+  end
+  local exclude = { [f] = true }
+  local cands
   if kind == 'read' or kind == 'review' then
     local hold = rd_carried_hold(S, f, key)
     if hold then
       rd_release(ctx, S, id, score, key, hold)
       return
     end
-    local exclude = { [f] = true }
     local author = rd_author(S, key)
     if author ~= '' then exclude[author] = true end
-    target = rd_pick(ctx.mayhold, exclude, ctx.free)
+    cands = ctx.to_list or ctx.mayhold
+    for _, g in ipairs(cands) do
+      if not exclude[g] then
+        local why = rd_dedup(S, g, key, id, ctx.held)
+        if why then
+          exclude[g] = true
+          rd_event(ctx, 'DEDUP', id, g, why)
+        end
+      end
+    end
   else
-    target = rd_pick(ctx.builders, { [f] = true }, ctx.free)
-    if not target and ctx.coord ~= '' and ctx.coord ~= f and ctx.free[ctx.coord] ~= nil then
+    cands = ctx.to_list or ctx.builders
+  end
+  local target
+  if ctx.to then
+    if not exclude[ctx.to] and ctx.free[ctx.to] ~= nil then
+      target = ctx.to
+    end
+  else
+    target = rd_pick(cands, exclude, ctx.free)
+    if not target and kind ~= 'read' and kind ~= 'review' and ctx.coord ~= '' and
+        ctx.coord ~= f and ctx.free[ctx.coord] ~= nil then
       target = ctx.coord
     end
+  end
+  if not target and ctx.to and not requeue then
+    ctx.kept = ctx.kept + 1
+    rd_event(ctx, 'KEPT', id, f, ctx.to .. ' cannot receive it')
+    return
   end
   redis.call('ZREM', 's:' .. S .. ':open:' .. f, id)
   rd_place(S, id, score, target)
@@ -258,10 +366,12 @@ local function rd_route(ctx, S, id, score)
     'title', rd_mark(redis.call('HGET', key, 'title') or '', ctx.marker))
   rd_log(S, 'task move', id, 'open', 'open', redis.call('HGET', key, 'attempt') or '0', '', ctx.actor,
     ctx.marker, 'to=' .. (target or 'ready'), ctx.idem, ctx.at)
+  rd_event(ctx, 'MOVED', id, target or 'ready', ctx.marker)
   if target then
     ctx.free[target] = ctx.free[target] - 1
     ctx.woken[target] = true
     ctx.moved = ctx.moved + 1
+    rd_note_held(S, target, key, id, ctx.held)
   else
     ctx.unrouted = ctx.unrouted + 1
   end
@@ -296,7 +406,7 @@ local function rd_close_leases(ctx)
           redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
           rd_log(S, 'task lease-close', id, state, 'open', attempt, token_sha, ctx.actor,
             ctx.marker, evidence, ctx.idem, ctx.at)
-          rd_route(ctx, S, id, tonumber(redis.call('HGET', key, 'priority') or '0') or 0)
+          rd_route(ctx, S, id, tonumber(redis.call('HGET', key, 'priority') or '0') or 0, true)
         end
       else
         rd_caplog('lease-dropped', f, evidence, ctx.actor, ctx.idem, ctx.at)
@@ -309,7 +419,7 @@ local function rd_move_open(ctx)
   for _, S in ipairs(ctx.sprints) do
     local items = redis.call('ZRANGE', 's:' .. S .. ':open:' .. ctx.f, 0, -1, 'WITHSCORES')
     for i = 1, #items, 2 do
-      rd_route(ctx, S, items[i], tonumber(items[i + 1]) or 0)
+      rd_route(ctx, S, items[i], tonumber(items[i + 1]) or 0, false)
     end
   end
 end
@@ -367,7 +477,7 @@ local function friend_redistribute(keys, args)
       end
     end
   end
-  local woken = {}
+  local woken, held = {}, {}
   local friends = redis.call('SMEMBERS', 'friends')
   table.sort(friends)
   local out = {}
@@ -403,8 +513,8 @@ local function friend_redistribute(keys, args)
       local ctx = {
         f = f, why = why or 'down', marker = '[moved from ' .. f .. ': ' .. (why or 'down') .. ']',
         mayhold = mayhold, builders = builders, coord = coord, free = free, woken = woken,
-        sprints = sprints, actor = actor, idem = idem, at = at,
-        moved = 0, leases = 0, released = 0, unrouted = 0,
+        sprints = sprints, actor = actor, idem = idem, at = at, held = held,
+        moved = 0, leases = 0, released = 0, unrouted = 0, kept = 0,
       }
       if why then
         rd_close_leases(ctx)
