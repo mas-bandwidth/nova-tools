@@ -142,13 +142,35 @@ reclaimed; a needed member that is not pinned is a named recovery gap. Returns
 (defun isolation-write (path)
   (when *isolation* (push path (getf *isolation* :writes))))
 
+(defun %load-bound-refusal (fn max-bytes max-depth max-nodes)
+  "Nil when MAX-BYTES, MAX-DEPTH and MAX-NODES are all given as non-negative
+integers, else the `LOAD FAIL: refusing to guess` line naming the first one
+missing (E01-F02-01: every file read takes the three bounds, none defaulted)."
+  (loop for (name value) in (list (list "--max-bytes" max-bytes)
+                                  (list "--max-depth" max-depth)
+                                  (list "--max-nodes" max-nodes))
+        unless (and (integerp value) (>= value 0))
+          return (format nil "~A FAIL: refusing to guess: ~:[missing ~A~;~A is not a non-negative integer~]"
+                         fn value name)))
+
+(defun %bounded-member-text (text max-bytes max-depth max-nodes)
+  "Nil when TEXT is within the three bounds, else the refusal text; checked
+lexically before the reader runs (REFUSE-OVER-BOUNDS)."
+  (handler-case (progn (refuse-over-bounds text :max-bytes max-bytes
+                                                :max-depth max-depth :max-nodes max-nodes)
+                       nil)
+    (restricted-data-violation (c) (restricted-data-violation-value c))))
+
 (defun load-state (manifest &key max-bytes max-depth max-nodes into)
   "Verify and materialise one isolated snapshot. Returns (values snapshot line)
 or (values nil refusal); no path text is read, no resolver runs and nothing is
 written outside INTO.
-MAX-BYTES bounds the member total; MAX-BYTES, MAX-DEPTH and MAX-NODES bound the
-snapshot text, checked before it is read (REFUSE-OVER-BOUNDS), so an
-over-deep or over-wide snapshot is refused without being parsed."
+MAX-BYTES, MAX-DEPTH and MAX-NODES are required (a missing one is `refusing to
+guess`). MAX-BYTES bounds the member total; all three bound the snapshot text,
+checked before it is read (REFUSE-OVER-BOUNDS), so an over-deep or over-wide
+snapshot is refused without being parsed."
+  (let ((missing (%load-bound-refusal "LOAD" max-bytes max-depth max-nodes)))
+    (when missing (return-from load-state (values nil missing))))
   (unless (eql 1 (getf manifest :version))
     (return-from load-state (values nil "LOAD FAIL: unsupported manifest version")))
   (when (getf manifest :observations-gone)
@@ -164,7 +186,7 @@ over-deep or over-wide snapshot is refused without being parsed."
         (when (member path (getf manifest :symlinks) :test #'string=)
           (return-from load-state (values nil (format nil "LOAD FAIL: symlink member ~A" path))))
         (incf total (length (cdr member)))))
-    (when (and max-bytes (> total max-bytes))
+    (when (> total max-bytes)
       (return-from load-state
         (values nil (format nil "LOAD FAIL: output overrun ~D bytes exceeds --max-bytes ~D"
                             total max-bytes)))))
@@ -173,12 +195,10 @@ over-deep or over-wide snapshot is refused without being parsed."
       (return-from load-state (values nil "LOAD FAIL: missing mandatory member snapshot")))
     (unless (string= (sha256-hex bytes) (getf manifest :digest))
       (return-from load-state (values nil "LOAD FAIL: changed digest")))
-    (handler-case (refuse-over-bounds bytes :max-bytes max-bytes
-                                            :max-depth max-depth :max-nodes max-nodes)
-      (restricted-data-violation (c)
+    (let ((over (%bounded-member-text bytes max-bytes max-depth max-nodes)))
+      (when over
         (return-from load-state
-          (values nil (format nil "LOAD FAIL: bound exceeded: ~A"
-                              (restricted-data-violation-value c))))))
+          (values nil (format nil "LOAD FAIL: bound exceeded: ~A" over)))))
     (handler-case
         (let ((state (reconstruct-state bytes)))
           (when into (isolation-write into))
@@ -237,6 +257,18 @@ existing destination is never reused (SPEC-WORK.md:3275-3278)."
     (let ((bytes (make-array (file-length in) :element-type '(unsigned-byte 8))))
       (read-sequence bytes in)
       bytes)))
+
+(defun %state-load-read-octets-within (path budget)
+  "The octets of PATH and its size, or (values nil size) when the size exceeds
+BUDGET: the size is taken from the open file before any octet is read, so a
+file past --max-bytes is refused unread (E01-F02-01)."
+  (with-open-file (in path :direction :input :element-type '(unsigned-byte 8))
+    (let ((size (file-length in)))
+      (if (> size budget)
+          (values nil size)
+          (let ((bytes (make-array size :element-type '(unsigned-byte 8))))
+            (read-sequence bytes in)
+            (values bytes size))))))
 
 (defun %state-load-octets-string (bytes)
   #+sbcl (sb-ext:octets-to-string bytes :external-format :utf-8)
@@ -304,7 +336,13 @@ export writer the isolated load reads (seam: write-state-export); the resident
   "The isolated read-only load (SPEC-WORK.md:3283-3299). FROM is the export
 directory, INTO the new snapshot directory. Verifies and materialises one
 exclusively created directory in the snapshot and cache schemas, then answers
-(values snapshot line); every refusal answers (values nil refusal)."
+(values snapshot line); every refusal answers (values nil refusal).
+MAX-BYTES, MAX-DEPTH and MAX-NODES are required, none defaulted (E01-F02-01):
+each file's size is checked against what is left of MAX-BYTES before it is
+read, and the manifest and state-root text against all three before either
+is parsed."
+  (let ((missing (%load-bound-refusal "LOAD" max-bytes max-depth max-nodes)))
+    (when missing (return-from state-load (values nil missing))))
   (macrolet ((refuse (fmt &rest args)
                `(return-from state-load (values nil (format nil "LOAD FAIL: ~?" ,fmt (list ,@args))))))
     (when (and into (probe-file into))
@@ -318,11 +356,20 @@ exclusively created directory in the snapshot and cache schemas, then answers
     (let ((manifest-path (%state-load-join from "MANIFEST.sexp")))
       (unless (probe-file manifest-path)
         (refuse "no MANIFEST.sexp in ~A" from))
-      (let* ((manifest-octets (%state-load-read-octets manifest-path))
+      (let* ((manifest-octets
+               (multiple-value-bind (octets size)
+                   (%state-load-read-octets-within manifest-path max-bytes)
+                 (or octets
+                     (refuse "input overrun MANIFEST.sexp ~D bytes exceeds --max-bytes ~D"
+                             size max-bytes))))
              (manifest-hash (sha256-hex manifest-octets))
-             (manifest (handler-case (read-restricted (%state-load-octets-string manifest-octets))
-                         (restricted-data-violation ()
-                           (refuse "corrupt S-expression")))))
+             (manifest-text (%state-load-octets-string manifest-octets))
+             (manifest (let ((over (%bounded-member-text manifest-text max-bytes
+                                                         max-depth max-nodes)))
+                         (when over (refuse "bound exceeded: MANIFEST.sexp ~A" over))
+                         (handler-case (read-restricted manifest-text)
+                           (restricted-data-violation ()
+                             (refuse "corrupt S-expression"))))))
         (unless (equal (getf manifest :version) *state-export-manifest-version*)
           (refuse "unsupported manifest version ~A" (getf manifest :version)))
         (let ((schema (getf manifest :schema)))
@@ -337,7 +384,7 @@ exclusively created directory in the snapshot and cache schemas, then answers
               (root-ok nil))
           (unless (and (listp members) members)
             (refuse "missing mandatory member the member set"))
-          (when (and max-nodes (> (length members) max-nodes))
+          (when (> (length members) max-nodes)
             (refuse "node bound ~D exceeds --max-nodes" (length members)))
           (unless (integerp rev) (refuse "captured revision"))
           (dolist (m members)
@@ -347,7 +394,7 @@ exclusively created directory in the snapshot and cache schemas, then answers
               (when (member path seen :test #'string=)
                 (refuse "duplicate member ~A" path))
               (push path seen)
-              (when (and max-depth (> (1+ (count #\/ path)) max-depth))
+              (when (> (1+ (count #\/ path)) max-depth)
                 (refuse "depth bound ~A exceeds --max-depth" path))
               (let ((full (%state-load-join from path)))
                 (unless (probe-file full)
@@ -356,7 +403,11 @@ exclusively created directory in the snapshot and cache schemas, then answers
                 (when (sb-posix:s-islnk
                        (sb-posix:stat-mode (sb-posix:lstat (namestring full))))
                   (refuse "symlink member ~A" path))
-                (let ((octets (%state-load-read-octets full)))
+                (let ((octets (multiple-value-bind (octets size)
+                                  (%state-load-read-octets-within full (- max-bytes total))
+                                (or octets
+                                    (refuse "input overrun ~A ~D bytes exceeds --max-bytes ~D"
+                                            path (+ total size) max-bytes)))))
                   (unless (= (length octets) (getf m :bytes))
                     (refuse "member ~A byte count ~D is not ~D"
                             path (length octets) (getf m :bytes)))
@@ -365,13 +416,16 @@ exclusively created directory in the snapshot and cache schemas, then answers
                   (incf total (length octets))
                   (when (equal (getf m :kind) :state-root)
                     (setf root-bytes octets root-ok t))))))
-          (when (and max-bytes (> total max-bytes))
+          (when (> total max-bytes)
             (refuse "output overrun ~D bytes exceeds --max-bytes ~D" total max-bytes))
           (unless root-ok
             (refuse "missing mandatory member state-root"))
           ;; Closure: rebuild the model from the stored bytes. A dangling
           ;; internal reference or a corrupt member refuses; current state is
           ;; never substituted (SPEC-WORK.md:3251-3270).
+          (let* ((root-text (%state-load-octets-string root-bytes))
+                 (over (%bounded-member-text root-text max-bytes max-depth max-nodes)))
+            (when over (refuse "bound exceeded: state-root ~A" over)))
           (let ((state (handler-case
                            (reconstruct-state (%state-load-octets-string root-bytes))
                          (unsupported-input (c)
@@ -397,22 +451,39 @@ exclusively created directory in the snapshot and cache schemas, then answers
                       (format nil "LOAD OK rev=~D manifest=~A snapshot=~A cache=~A"
                               rev manifest-hash snapshot-path cache-path)))))))))
 
-(defun read-loaded-snapshot (directory &key cache)
+(defun read-loaded-snapshot (directory &key cache
+                                             (max-bytes (missing-read-bound "max-bytes"))
+                                             (max-depth (missing-read-bound "max-depth"))
+                                             (max-nodes (missing-read-bound "max-nodes")))
   "Read a snapshot materialised by `state load` through a fresh reader that
 rebuilds the model from the stored bytes and checks the cache identity, rather
-than copying an unchecked archive (SPEC-WORK.md:3291-3293)."
-  (let* ((snapshot-bytes (%state-load-octets-string
-                          (%state-load-read-octets (%state-load-join directory "snapshot.sexp"))))
-         (cache-path (or cache (%state-load-join directory "cache.sexp")))
-         (cache-form (read-restricted
-                      (%state-load-octets-string (%state-load-read-octets cache-path)))))
-    (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
-      (error 'unsupported-input :what "the cache does not match the snapshot"))
-    (let ((state (reconstruct-state snapshot-bytes)))
+than copying an unchecked archive (SPEC-WORK.md:3291-3293). MAX-BYTES,
+MAX-DEPTH and MAX-NODES are required (E01-F02-01): both files' sizes are
+checked against MAX-BYTES before they are read, and their text against all
+three before it is parsed; a breach is a RESTRICTED-DATA-VIOLATION."
+  (check-read-bound "max-bytes" max-bytes)
+  (flet ((octets-within (path budget)
+           (multiple-value-bind (octets size) (%state-load-read-octets-within path budget)
+             (or octets
+                 (error 'restricted-data-violation
+                        :value (format nil "input overrun ~A ~D bytes exceeds max-bytes ~D"
+                                       (namestring path) size max-bytes))))))
+    (let* ((snapshot-octets (octets-within (%state-load-join directory "snapshot.sexp") max-bytes))
+           (snapshot-bytes (refuse-over-bounds (%state-load-octets-string snapshot-octets)
+                                               :max-bytes max-bytes :max-depth max-depth
+                                               :max-nodes max-nodes))
+           (cache-path (or cache (%state-load-join directory "cache.sexp")))
+           (cache-form (read-bounded
+                        (%state-load-octets-string
+                         (octets-within cache-path (- max-bytes (length snapshot-octets))))
+                        :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes)))
+      (unless (equal (getf cache-form :state-sha256) (sha256-hex snapshot-bytes))
+        (error 'unsupported-input :what "the cache does not match the snapshot"))
+      (let ((state (reconstruct-state snapshot-bytes)))
       (make-snapshot :state state :revision (state-revision state)
                      :directory (string-right-trim "/" (namestring directory))
                      :cache cache-path
-                     :manifest-hash nil))))
+                     :manifest-hash nil)))))
 
 (defun snapshot-query (snap)
   "The loaded snapshot answers `query --snapshot`; nothing is reloaded."
