@@ -768,10 +768,13 @@ whole verb down, in a loop nobody is watching, on the one input nobody had.
 `TestFieldsIndexKeyIsFileAndFunction` and
 `TestFieldsIndexAllowlistIsShrinkOnly`.
 **Its allowlist.** `internal/ci/testdata/fieldsindex_allowlist.txt`, one
-`file:function # reason` per row — empty today, because the one offender the rule
-found on its first run was fixed rather than listed (`cmd/nova-wake/serve.go`,
-`server.spawn`, which indexed `strings.Fields(s.onNote)` with no length check of
-its own); shrink-only in both directions, and every row must carry a reason.
+`file:function # reason` per row. The one offender the rule found on its first
+run was fixed rather than listed (`cmd/nova-wake/serve.go`, `server.spawn`, which
+indexed `strings.Fields(s.onNote)` with no length check of its own); two rows
+arrived with the rebase onto dev (`internal/friendread/count.go:Parse`,
+`internal/pulse/cut_template.go:OperativeRegion`), each in range by construction and
+each carrying its reason. Shrink-only in both directions, and every row must carry a
+reason.
 **Its remedy lines.** `<index|slice> expression on <x>, the result of <splitter>,
 with no len(<x>) comparison in <func>; add the length check and a refusal line,
 or an allowlist row in testdata/fieldsindex_allowlist.txt with the reason`; for a
