@@ -59,6 +59,14 @@ HOME_DIR="${HOME:-}"
 DRIFTS=0
 STRAY_PIDS=""
 
+# Build the card environment before any tool resolution so the verdict
+# does not depend on the caller's PATH (nova-tools#2052).
+if [ -f "$HOME_DIR/sdk/env.sh" ]; then
+  set +u
+  . "$HOME_DIR/sdk/env.sh"
+  set -u
+fi
+
 drift() {
   echo "DRIFT $*"
   DRIFTS=$((DRIFTS + 1))
@@ -296,6 +304,9 @@ else
   else
     seat="$(basename "$seatkey" .key)"
     store="${NOVA_SECRETS_STORE:-}"
+    if [ -z "$store" ] && [ -d "$HOME_DIR/nova-bench/secrets" ]; then
+      store="$HOME_DIR/nova-bench/secrets"
+    fi
     if [ -z "$store" ] && [ -d "$HOME_DIR/secrets" ]; then
       store="$HOME_DIR/secrets"
     fi

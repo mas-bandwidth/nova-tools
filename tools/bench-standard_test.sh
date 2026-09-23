@@ -271,6 +271,42 @@ else
 fi
 rm -rf "$TMP_GM"
 
+# (3g) The script builds the card's environment itself: with ~/sdk/env.sh
+# present, a poisoned caller PATH (a shadow go first) must not decide the
+# verdict (nova-tools#2052: three verdicts on one bench in ten minutes).
+# Also: a seat store at ~/nova-bench/secrets is found without
+# NOVA_SECRETS_STORE. One seat key only: the stream's one-key-per-owner
+# design (SPEC-SECRETS.md dogfooding item 6) is not relaxed here.
+TMP_2052=$(mktemp -d 2>/dev/null || mktemp -d -t bench.XXXXXX)
+H2052="$TMP_2052/home"
+mkdir -p "$H2052/sdk/go/bin" "$H2052/shadow/bin" "$H2052/.local/bin" \
+  "$H2052/go/pkg/mod" "$H2052/nova-bench/harness-0" "$H2052/nova-bench/secrets" \
+  "$H2052/.config/nova-secrets"
+printf 'export PATH="$HOME/sdk/go/bin:$HOME/sdk/bin:$HOME/.local/bin:$HOME/go/bin:/usr/local/bin:/usr/bin:/bin"\n' > "$H2052/sdk/env.sh"
+printf '#!/usr/bin/env bash\necho "go version go1.26.6 linux/amd64"\n' > "$H2052/sdk/go/bin/go"
+printf '#!/usr/bin/env bash\necho "go version go1.20.0 linux/amd64"\n' > "$H2052/shadow/bin/go"
+for t in sbcl sops; do printf '#!/usr/bin/env bash\nexit 0\n' > "$H2052/.local/bin/$t"; done
+for b in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge nova-pulse nova-review nova-sandbox nova-secrets nova-self-talk nova-swarm nova-tokens nova-update nova-version nova-wake; do
+  printf '#!/usr/bin/env bash\necho v1.0.0\n' > "$H2052/.local/bin/$b"
+done
+printf '#!/usr/bin/env bash\nexit 0\n' > "$H2052/nova-bench/harness-0/opencode"
+chmod +x "$H2052"/sdk/go/bin/go "$H2052"/shadow/bin/go "$H2052"/.local/bin/* "$H2052/nova-bench/harness-0/opencode"
+echo "bench: test-bench" > "$H2052/nova-bench/secrets/test-bench.yaml"
+: > "$H2052/.config/nova-secrets/test-bench.key"
+out_2052=$(HOME="$H2052" PATH="$H2052/shadow/bin:/usr/bin:/bin" NOVA_WANT=v1.0.0 \
+  bash "$SCRIPT" 2>&1 || true)
+if printf '%s' "$out_2052" | grep -q 'go1\.20\.0'; then
+  bad "the script used the caller's shadow go, not the card environment (#2052):\n$out_2052"
+else
+  ok "the script builds the card environment from ~/sdk/env.sh; a poisoned PATH does not decide the verdict (#2052)"
+fi
+if printf '%s' "$out_2052" | grep -q 'seat keys=\|seat nova-secrets check failed'; then
+  bad "one seat key with a store at ~/nova-bench/secrets drifted (#2052):\n$out_2052"
+else
+  ok "one seat key with the store at ~/nova-bench/secrets passes the seat check (#2052)"
+fi
+rm -rf "$TMP_2052"
+
 printf '1..%s\n' "$n"
 [ "$fails" = 0 ] || { printf 'FAILED\n'; exit 1; }
 printf 'PASSED\n'
