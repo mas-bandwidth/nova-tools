@@ -1713,6 +1713,9 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// non-number and a zero in the same sentence: a card launched by `native` and a job
 	// launched by `run` can spend the same key, so they answer to the same rule.
 	tokensWord := f.fs.String("tokens", "", "")
+	// THE SAMPLE INTERVAL (rule 13d): "a flag `native` takes as `run` does", same name,
+	// same default, same spelling -- a bare number of seconds or a Go duration.
+	usageInterval := newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1800,6 +1803,27 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-swarm native: --deadline wants a positive duration: %s\n", oneline.Err(err))
 		return 2
 	}
+	// A BUDGET NEEDS A SOURCE THE TOOL CAN READ (rule 13d), AND THE INTERVAL HAS A FLOOR
+	// AND A CEILING. Both are checked HERE: after the deadline is parsed, because the
+	// interval's ceiling is the deadline; and above everything below, because 13d refuses
+	// "before any directory is made" and nativeRun's first act is to make the job
+	// directory. Neither check reads a file or starts a process.
+	//
+	// The source is the worker description's `usage`, and `opencode` when there is no
+	// `--worker` -- rule 13d's own sentence, which swarm.NativeUsageSource holds so that
+	// nobody retypes the default.
+	var workerForBudget *swarm.Worker
+	if workerGiven {
+		workerForBudget = &w
+	}
+	if reason := swarm.NativeBudgetSourceRefusal(swarm.NativeUsageSource(workerForBudget), budgetTokens, budgetUnmetered, workerForBudget); reason != "" {
+		refuseNative(stderr, reason)
+		return 2
+	}
+	if reason := swarm.NativeUsageIntervalRefusal(usageInterval.d, d); reason != "" {
+		fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.Escape(reason))
+		return 2
+	}
 	idleDur := swarm.DefaultNativeIdle
 	if *idle != "" {
 		v, ierr := time.ParseDuration(*idle)
@@ -1848,6 +1872,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		resultsRoot:    resultsRootOf(*resultsRootFlag, *root),
 		tokens:         budgetTokens,
 		unmetered:      budgetUnmetered,
+		usageInterval:  usageInterval.d,
 	}
 	if workerGiven {
 		cfg.worker = &w
