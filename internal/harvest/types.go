@@ -80,7 +80,47 @@ var (
 
 	// ErrMissingToken indicates that an action token was not supplied.
 	ErrMissingToken = errors.New("harvest: missing RUN action token")
+
+	// ErrForgedToken indicates that the presented action token was not issued by the authoritative token store
+	// or presented token fields do not match authoritative issuance.
+	ErrForgedToken = errors.New("harvest: unauthenticated or forged action token")
+
+	// ErrReplayedToken indicates that the action token has already been consumed and cannot be reused.
+	ErrReplayedToken = errors.New("harvest: action token already consumed (replay refused)")
+
+	// ErrNoTokenAuthority indicates that no token authority was configured on the EffectOwner.
+	ErrNoTokenAuthority = errors.New("harvest: missing token authority")
 )
+
+// TokenState represents the lifecycle status of an issued RUN action token.
+type TokenState string
+
+const (
+	// TokenIssued indicates the token is active and unconsumed.
+	TokenIssued TokenState = "ISSUED"
+
+	// TokenCompleted indicates the action was successfully committed with this token.
+	TokenCompleted TokenState = "COMPLETED"
+
+	// TokenFailed indicates the action failed when committed with this token.
+	TokenFailed TokenState = "FAILED"
+
+	// TokenUnknown indicates the action outcome is undetermined and pending reconciliation.
+	TokenUnknown TokenState = "UNKNOWN"
+)
+
+// AuthoritativeToken represents an action token as recorded by the token authority.
+type AuthoritativeToken struct {
+	TokenID    string     `json:"token_id"`
+	Card       string     `json:"card"`
+	Attempt    string     `json:"attempt"`
+	Action     ActionType `json:"action"`
+	Generation int        `json:"generation"`
+	Scope      string     `json:"scope"`
+	Expires    time.Time  `json:"expires"`
+	State      TokenState `json:"state"`
+	OutcomeErr string     `json:"outcome_err,omitempty"`
+}
 
 // CardProjection holds the replayed current projection of a card from the lifecycle ledger.
 type CardProjection struct {

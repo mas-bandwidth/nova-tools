@@ -28,7 +28,8 @@ func TestHarvestWithEffectOwner_CurrentWorkerSucceeds(t *testing.T) {
 		FenceEpoch: 1,
 		State:      "STARTED",
 	})
-	owner := harvest.NewEffectOwner(cardStore, ctrl)
+	tokenStore := harvest.NewMemoryTokenAuthority()
+	owner := harvest.NewEffectOwner(cardStore, ctrl, tokenStore)
 
 	contract := "RESULT card-101 owner/repo 101 rowan/br-101"
 	body := contract + "\nVERDICT ok\nBRANCH rowan/br-101\nREPO owner/repo\n"
@@ -63,6 +64,8 @@ func TestHarvestWithEffectOwner_CurrentWorkerSucceeds(t *testing.T) {
 			Expires:    now.Add(time.Hour),
 		},
 	}
+	tokenStore.IssueActionToken(pushTokens["card-101"])
+	tokenStore.IssueActionToken(acceptTokens["card-101"])
 
 	var out, errs bytes.Buffer
 	code := Harvest(HarvestInput{
@@ -114,7 +117,8 @@ func TestHarvestWithEffectOwner_StaleFenceRefused(t *testing.T) {
 		FenceEpoch: 2,
 		State:      "STARTED",
 	})
-	owner := harvest.NewEffectOwner(cardStore, ctrl)
+	tokenStore := harvest.NewMemoryTokenAuthority()
+	owner := harvest.NewEffectOwner(cardStore, ctrl, tokenStore)
 
 	contract := "RESULT card-102 owner/repo 102 rowan/br-102"
 	body := contract + "\nVERDICT ok\nBRANCH rowan/br-102\nREPO owner/repo\n"
@@ -150,6 +154,8 @@ func TestHarvestWithEffectOwner_StaleFenceRefused(t *testing.T) {
 			Expires:    now.Add(time.Hour),
 		},
 	}
+	tokenStore.IssueActionToken(pushTokens["card-102"])
+	tokenStore.IssueActionToken(acceptTokens["card-102"])
 
 	var out, errs bytes.Buffer
 	code := Harvest(HarvestInput{
@@ -200,7 +206,8 @@ func TestHarvestWithEffectOwner_ControlPausedRefused(t *testing.T) {
 		FenceEpoch: 1,
 		State:      "STARTED",
 	})
-	owner := harvest.NewEffectOwner(cardStore, ctrl)
+	tokenStore2 := harvest.NewMemoryTokenAuthority()
+	owner := harvest.NewEffectOwner(cardStore, ctrl, tokenStore2)
 
 	contract := "RESULT card-103 owner/repo 103 rowan/br-103"
 	body := contract + "\nVERDICT ok\nBRANCH rowan/br-103\nREPO owner/repo\n"
@@ -224,6 +231,7 @@ func TestHarvestWithEffectOwner_ControlPausedRefused(t *testing.T) {
 			Expires:    now.Add(time.Hour),
 		},
 	}
+	tokenStore2.IssueActionToken(pushTokens["card-103"])
 
 	var out, errs bytes.Buffer
 	code := Harvest(HarvestInput{
