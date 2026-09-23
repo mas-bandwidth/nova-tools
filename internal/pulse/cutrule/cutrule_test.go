@@ -58,13 +58,14 @@ func TestOneCardPerNumberedRule(t *testing.T) {
 		t.Fatalf("%d card files, want %d (one per numbered rule)", len(matches), grepCount)
 	}
 	for i, e := range []struct {
-		rule int
-		line int
-		pkg  string
+		rule     int
+		line     int
+		pkg      string
+		wantText string
 	}{
-		{1, 5, "internal/bus"},
-		{2, 9, "internal/pulse"},
-		{3, 11, "internal/pulse"},
+		{1, 5, "internal/bus", "The bus refuses a note whose body names internal/bus paths twice, with the file and the line named."},
+		{2, 9, "internal/pulse", "A card cut for internal/pulse numbers from the queue state file, under the queue's lock, never by hand."},
+		{3, 11, "internal/pulse", "The harvest of internal/pulse/wire.go matches line 1 byte for byte, with the reason on its own line and nothing else after it."},
 	} {
 		n := i + 1
 		cardPath := filepath.Join(out, fmt.Sprintf("card-%d.md", n))
@@ -83,6 +84,19 @@ func TestOneCardPerNumberedRule(t *testing.T) {
 		verdict := fmt.Sprintf("rule%d: APPROVE|HOLD line=%d package=%s", e.rule, e.line, e.pkg)
 		if !strings.Contains(body, verdict) {
 			t.Errorf("card-%d carries no verdict line %q:\n%s", n, verdict, body)
+		}
+		// Each card contains only its own rule text, not unrelated prose
+		if strings.Contains(body, "Prose before the rules") {
+			t.Errorf("card-%d contains unrelated prose before rules", n)
+		}
+		if strings.Contains(body, "Prose between the rules") {
+			t.Errorf("card-%d contains unrelated prose between rules", n)
+		}
+		if strings.Contains(body, "Closing prose") {
+			t.Errorf("card-%d contains unrelated closing prose", n)
+		}
+		if !strings.Contains(body, e.wantText) {
+			t.Errorf("card-%d does not contain its own rule text %q", n, e.wantText)
 		}
 	}
 

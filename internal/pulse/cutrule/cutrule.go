@@ -147,18 +147,24 @@ func cutRuleProblem(in CutRuleInput) string {
 // wrapped over several lines is quoted whole and its package read whole.
 func parseSpecRules(text string) []specRule {
 	var rules []specRule
+	inRule := false
 	for i, l := range strings.Split(text, "\n") {
 		if m := ruleLine.FindStringSubmatch(l); m != nil {
 			n, _ := strconv.Atoi(m[1])
 			rules = append(rules, specRule{Number: n, Line: i + 1, Text: l})
+			inRule = true
 			continue
 		}
 		t := strings.TrimSpace(l)
-		if len(rules) == 0 || t == "" || strings.HasPrefix(t, "#") {
+		// Blank lines and headings end the active rule
+		if t == "" || strings.HasPrefix(t, "#") {
+			inRule = false
 			continue
 		}
-		last := &rules[len(rules)-1]
-		last.Text += "\n" + l
+		if inRule {
+			last := &rules[len(rules)-1]
+			last.Text += "\n" + l
+		}
 	}
 	for i := range rules {
 		rules[i].Package = rulePackage(rules[i].Text)
