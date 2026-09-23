@@ -364,6 +364,12 @@ var cardKindPhrases = []struct {
 	{"design", decide.KindDesign},
 	{"read of", decide.KindCauseToFind},
 	{"cause", decide.KindCauseToFind},
+	// LAST, and deliberately. `chore` is an ALIAS for fleet-chore and not a
+	// kind, and it reads only a contract line no other phrase already types:
+	// a chore to move a spec section is a spec card, a chore on the sandbox
+	// guard is a guard card. What comes out of here is canonicalized by
+	// CardUnit, so the alias never reaches validation or a route row.
+	{"chore", "chore"},
 }
 
 // CardUnit reads one card's typed evidence. ok is false where the card names
@@ -376,6 +382,14 @@ func CardUnit(label, contract, text string) (decide.Unit, bool) {
 	if u.Kind == "" {
 		u.Kind = kindFromContract(contract)
 	}
+	// A CARD is not JSON and never went through decide.ParseUnit, so the
+	// alias table the route flags resolve was never reached from here: a card
+	// whose header said `KIND: chore` was untyped, ok was false, and it fell
+	// back to today's model with no rung and no route row (Stella, r2 of the
+	// #1925 hold). The alias is resolved ONCE, here, at the DECIDE read --
+	// before validation and before anything logs a kind, so the route log
+	// keeps the canonical name and no per-kind floor splits in two.
+	u.Kind = decide.CanonicalKind(u.Kind)
 	if !decide.KnownKind(u.Kind) {
 		return decide.Unit{}, false
 	}

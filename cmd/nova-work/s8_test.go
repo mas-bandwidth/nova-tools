@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -29,7 +31,7 @@ func TestQueryFriendsOverSocket(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -46,7 +48,7 @@ func TestQueryFriendsWithOwner(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends --owner wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --owner Rowan\\x20Jr --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open --owner Rowan\\x20Jr"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -63,7 +65,7 @@ func TestQueryFriendsWithRepo(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends --repo wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --repo mas-bandwidth/nova-tools --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open --repo mas-bandwidth/nova-tools"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -80,7 +82,7 @@ func TestQueryFriendsWithMax(t *testing.T) {
 	if stderr.Len() != 0 {
 		t.Fatalf("query friends --max wrote stderr: %q", stderr.String())
 	}
-	if got, want := awaitRequest(t, requests), "query --ask friends --branch open --max 50 --session "+socket; got != want {
+	if got, want := awaitRequest(t, requests), "query --session "+socket+" --ask friends --branch open --max 50"; got != want {
 		t.Fatalf("request line = %q, want %q", got, want)
 	}
 }
@@ -170,6 +172,40 @@ func TestQueryRefusesSnapshotWithoutBounds(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--snapshot requires --max-bytes") {
 		t.Fatalf("refusal = %q, want it naming --snapshot requires --max-bytes", stderr.String())
+	}
+}
+
+// A published snapshot is a FILE the offline reader opens, never a socket to
+// dial. This client does not carry that reader yet, so `query --snapshot` must
+// refuse it by name rather than hand the path to the socket dialler -- which is
+// exactly what it did, reporting `dial unix <file>: ...`, for a snapshot that
+// plainly exists on disk (nova-tools#1787).
+func TestQuerySnapshotRefusesInsteadOfDiallingTheFile(t *testing.T) {
+	dir := t.TempDir()
+	snapshot := filepath.Join(dir, "snap.sexp")
+	if err := os.WriteFile(snapshot, []byte("(:seed () :history ())"), 0o644); err != nil {
+		t.Fatalf("write the snapshot fixture: %v", err)
+	}
+	cache := filepath.Join(dir, "cache.sexp")
+	if err := os.WriteFile(cache, []byte("(:state-sha256 \"-\")"), 0o644); err != nil {
+		t.Fatalf("write the cache fixture: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"query", "--snapshot", snapshot,
+		"--max-bytes", "65536", "--max-depth", "64", "--max-nodes", "4096", "--cache", cache,
+		"--ask", "done", "--branch", "open"}, &stdout, &stderr, "")
+	if code != 2 {
+		t.Fatalf("query --snapshot exit = %d, want 2 (stdout %q stderr %q)", code, stdout.String(), stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("query --snapshot wrote stdout: %q", stdout.String())
+	}
+	if strings.Contains(stderr.String(), "dial unix") {
+		t.Fatalf("query --snapshot dialled the snapshot path as a Unix socket rather than refusing it as a file: %s", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "offline reader") {
+		t.Fatalf("refusal = %q, want it naming the offline reader this client does not carry", stderr.String())
 	}
 }
 

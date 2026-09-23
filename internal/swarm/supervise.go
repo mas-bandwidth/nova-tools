@@ -46,6 +46,10 @@ type SuperviseInput struct {
 	// is a seam beside Now so a test can run the bounded drain and grace waits to their
 	// ends without holding the machine's clock; nil is time.Sleep.
 	Sleep func(time.Duration)
+	// Term fires when this supervisor should end from outside (SIGTERM in the process
+	// that runs `supervise`). Nil never fires. A closed or signalled channel reaps the
+	// harness group and returns; default Go death of this process would leave that group.
+	Term <-chan struct{}
 }
 
 // now is the input's clock, defaulting to the real one.
@@ -198,9 +202,21 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 	failures := 0
 	var seen ProviderUsage
 	spent, partial, observed := 0, false, false
+	poolTick := time.NewTicker(poolRootPoll)
+	defer poolTick.Stop()
 
 	for {
 		select {
+		case <-in.Term:
+			survived := Reap(jobPgid, jobStarted, TerminateGrace)
+			<-done
+			return ExitRecord{RC: -1, Signal: "terminated", End: EndKilled, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial, Reason: "terminated"}
+		case <-poolTick.C:
+			if poolRootGone(in.Pool) {
+				survived := Reap(jobPgid, jobStarted, TerminateGrace)
+				<-done
+				return ExitRecord{RC: -1, End: EndUnknown, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial, Reason: "the pool root is gone"}
+			}
 		case err := <-done:
 			// A WORKER THAT EXITS NON-ZERO IS A FAILED JOB (SPEC-SWARM.md:544), and `end`
 			// is the column the token ledger reads: a job whose provider refused its key
@@ -218,7 +234,10 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			// so it reads its own capture, and only when no result exists: a card that
 			// published despite the line is done, never an abstain. The report line names the
 			// path, the last STEP the card reached and the commits it left behind.
-			if wr, ok := wallRefusedInLog(filepath.Join(jobDir, "harness.log")); ok {
+			// AND IT IS THE REFUSAL THE CARD NEVER MOVED PAST (the wall-hang lane, 2026-09-19):
+			// a refusal with another tool call after it is one the model routed around, and
+			// naming it the death sent a whole shift looking at the wall for a provider stall.
+			if wr, ok := wallStoppedInLog(filepath.Join(jobDir, "harness.log")); ok {
 				if _, published := FindCardResult(jobDir); !published {
 					branch, commits, _ := WallCommits(filepath.Join(jobDir, "repo"))
 					line := WallLine(in.Task, wr, branch, commits)
@@ -430,6 +449,19 @@ func groupStillAlive(jobPgid int, jobStarted string, sleep func(time.Duration)) 
 // the work's, short enough that it is invisible beside a launch.
 const GroupDrainWait = 300 * time.Millisecond
 
+// poolRootPoll is how often a supervisor asks whether its pool directory still exists.
+// A gone pool is a test that finished or a runner that removed the tree; staying alive
+// then is the leak that held CI temp directories for hours (#1598).
+const poolRootPoll = time.Second
+
+func poolRootGone(p *Pool) bool {
+	if p == nil || p.Dir == "" {
+		return false
+	}
+	_, err := os.Stat(p.Dir)
+	return os.IsNotExist(err)
+}
+
 // abort is rule 18's losing path, and its ORDER is the rule: never spawn the harness; count
 // the processes in its own group other than itself; write aborted.json through .tmp, fsync
 // and rename, SO THE DURABLE ACKNOWLEDGEMENT EXISTS BEFORE ITS OWN DEATH CAN BE OBSERVED;
@@ -556,6 +588,43 @@ func childEnv(w Worker, slot int, id, key, root string) []string {
 	}
 	if w.EnvVar != "" && key != "" {
 		env = append(env, w.EnvVar+"="+key)
+	}
+	// The pool's identity row is exported as author and committer, and git config
+	// isolation variables are set so the bench's own config cannot leak into what
+	// the worker commits (SPEC-TOOLWORK §3 rule 1, #1665).
+	if poolID, err := LoadPoolIdentity(root); err == nil {
+		env = append(env, StagingGitEnv(poolID)...)
+	} else {
+		hasGitID := false
+		for _, k := range []string{
+			"GIT_AUTHOR_NAME",
+			"GIT_AUTHOR_EMAIL",
+			"GIT_COMMITTER_NAME",
+			"GIT_COMMITTER_EMAIL",
+		} {
+			if v, ok := os.LookupEnv(k); ok {
+				env = append(env, k+"="+v)
+				hasGitID = true
+			}
+		}
+		if hasGitID {
+			if v, ok := os.LookupEnv("GIT_CONFIG_GLOBAL"); ok {
+				env = append(env, "GIT_CONFIG_GLOBAL="+v)
+			} else {
+				env = append(env, "GIT_CONFIG_GLOBAL=/dev/null")
+			}
+			if v, ok := os.LookupEnv("GIT_CONFIG_NOSYSTEM"); ok {
+				env = append(env, "GIT_CONFIG_NOSYSTEM="+v)
+			} else {
+				env = append(env, "GIT_CONFIG_NOSYSTEM=1")
+			}
+		} else {
+			for _, k := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM"} {
+				if v, ok := os.LookupEnv(k); ok {
+					env = append(env, k+"="+v)
+				}
+			}
+		}
 	}
 	return env
 }

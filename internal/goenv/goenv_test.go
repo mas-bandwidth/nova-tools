@@ -33,6 +33,26 @@ func TestCleanDropsTheWholeDocumentedList(t *testing.T) {
 	}
 }
 
+// ISSUE #1836: a tool that runs a check -- code from the tree under test --
+// through a child hands it the caller's environment after only Clean. A
+// variable the coordinator holds for gh (GH_TOKEN, GITHUB_TOKEN) or any other
+// secret-named variable reached that child, so a member's code could read it.
+// Clean is the one place a go command's environment is built, so it drops a
+// credential by NAME and covers simulate, batch and review mutate at once.
+func TestCleanDropsTheCallersCredentials(t *testing.T) {
+	for _, entry := range []string{
+		"GH_TOKEN=a-forge-token",
+		"GITHUB_TOKEN=a-forge-token",
+		"FAKE_SECRET_FOR_PROBE=a-probe-that-is-not-a-real-credential",
+		"DEEPSEEK_API_KEY=a-provider-key",
+		"aws_secret_access_key=a-lower-case-secret",
+	} {
+		if got := Clean([]string{entry}); len(got) != 0 {
+			t.Errorf("Clean kept the caller's credential %q; a child running a pull request's code can read it", entry)
+		}
+	}
+}
+
 // Everything else survives, in the order it came in. A GOTMPDIR a bench set is
 // a location, not an output shape, and a tool that wants its own appends it
 // after Clean.
@@ -71,7 +91,7 @@ func TestCleanDoesNotModifyItsInput(t *testing.T) {
 // The documented list is what a reader is pointed at when the class test says
 // no, so it names the variables the matcher actually drops.
 func TestRemovedNamesWhatItDrops(t *testing.T) {
-	for _, name := range []string{"GOFLAGS", "GOTEST", "json"} {
+	for _, name := range []string{"GOFLAGS", "GOTEST", "json", "KEY", "TOKEN", "SECRET"} {
 		if !strings.Contains(Removed, name) {
 			t.Errorf("Removed does not name %s", name)
 		}

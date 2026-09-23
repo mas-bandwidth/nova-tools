@@ -439,10 +439,11 @@ func (g GHSource) View(repo string, pr int) (PRView, error) {
 // carrying one, and four of them walked into the dev merge queue on their own. Glenn
 // locked it the same day: nothing reaches the dev merge queue but a batch.
 //
-// So this reads the pull request's head and offers it to the one door, which admits a
-// batch's head -- or a head with that head's BATCH OK receipt -- and refuses everything
-// else. A refusal is an error like any other here, and the sweep leaves the row open. There
-// is no path from this type to a merge of any kind.
+// So this reads the pull request's head and offers it to the one door with no receipt
+// and no hold fold. The door admits only a head whose BATCH OK receipt names that very
+// commit; a rowan/integration-* prefix is not that receipt (#1898). A refusal is an
+// error like any other here, and the sweep leaves the row open. There is no path from
+// this type to a merge of any kind.
 type GHEnqueuer struct{ Timeout time.Duration }
 
 func (g GHEnqueuer) Enqueue(repo string, pr int) error {

@@ -78,6 +78,13 @@ usage:
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
   nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
+  nova-wake beat --as <name> --store <host:port>
+        [--every <duration>] [--ttl <duration>]   default 30s and 90s
+        [--once]            write one beat and return, for a check or a test
+        [--user <name>]     the store's ACL user; default bench
+  nova-wake presence --store <host:port>
+        (--bus <dir> | --participants <file> | --friends <a,b,c>)   the roster
+        [--user <name>]
   nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
@@ -88,6 +95,14 @@ serve is a PROCESS OUTSIDE any session that starts a turn only when a note has
 landed. There is no third shape: a harness /loop, a scheduler prompt or a
 heartbeat that runs a model on an interval is not a wake, and this tool offers
 no verb for it.
+
+beat and presence are the one heartbeat that is NOT a wake and spends nothing:
+beat is a process a friend's window starts once and forgets, writing
+friend:<name> = <utc> with a TTL every --every and reading nothing, and
+presence prints one line saying who is here. No model runs on either side, and
+a window that exits, runs out of credit or is killed simply stops writing until
+the key lapses. The password is never a flag: it reaches beat as
+NOVA_REDIS_BENCH_PASSWORD, through nova-secrets exec --only and no other way.
 
 serve FETCHES every --interval, which is why --remote and --branch are its own
 flags and not --receipt's, and its --on-note command is started as
@@ -113,6 +128,8 @@ work be handed over right now: 0 is PRESENT or ANSWERED, 1 is SILENT, PINGED,
 UNAVAILABLE, UNRECONCILED or RESTING, and only 2 means the call could not run.
 It says NO to an assignment, never to the line, and it never writes a cause:
 it has measured a silence and nothing else.
+
+  cp -R cmd/nova-wake/testdata/example-reports ./reports
 
 example:
   nova-wake quickstart --state ./wake.state --reports ./reports
@@ -330,6 +347,10 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
 		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
+	case "beat":
+		return cmdBeat(args[1:], stdout, stderr, clock, dialStore)
+	case "presence":
+		return cmdPresence(args[1:], stdout, stderr, clock, dialStore)
 	case "version", "--version":
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
