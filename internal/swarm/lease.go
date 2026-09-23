@@ -72,6 +72,11 @@ import (
 // this name and by nothing else.
 const JobLeaseName = ".lease"
 
+// ProviderBeatName is the file the supervisor touches each time it observes provider
+// bytes. The lease heartbeat only renews when this file has moved, so a hung socket
+// lets the lease expire rather than keeping it alive on a timer.
+const ProviderBeatName = ".provider-beat"
+
 // JobLeaseHeartbeat is how often a held lease's mtime is bumped. It is far under the ten
 // minutes the reaper allows a heartbeat to age, so a bench under load that misses a tick
 // or two still reads as live.
@@ -259,6 +264,13 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 	go func() {
 		defer beating.Done()
 		defer stopTicks()
+		// THE PROVIDER-BYTE RULE (feature 87). The lease renews only when the
+		// supervisor has observed provider bytes, signalled by a .provider-beat
+		// file the supervisor touches on each usage sample that shows new output.
+		// A hung socket sends no bytes, the beat file never moves, and the lease
+		// expires rather than being kept alive by a blind timer.
+		lastBeat := time.Time{}
+		beatPath := filepath.Join(jobDir, ProviderBeatName)
 		for {
 			select {
 			case <-done:
@@ -270,8 +282,26 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				if hooks.atBeat != nil {
 					hooks.atBeat <- struct{}{}
 				}
-				if err := os.Chtimes(path, now, now); err == nil {
-					continue
+				// Renew the mtime only when provider bytes have arrived. Before
+				// the first provider-beat file appears, renew on every tick (the
+				// card may still be connecting). Once the beat file exists, renew
+				// only when its mtime advances -- a hung socket means no advance.
+				// THE REPAIR ALWAYS RUNS: if Chtimes fails (file missing), the
+				// lease is re-published regardless of the beat, because a live job
+				// that lost its file must be protected again (#1585).
+				renew := lastBeat.IsZero()
+				if !renew {
+					if st, err := os.Stat(beatPath); err == nil && st.ModTime().After(lastBeat) {
+						renew = true
+						lastBeat = st.ModTime()
+					}
+				}
+				if renew {
+					if err := os.Chtimes(path, now, now); err == nil {
+						continue
+					}
+				} else if _, err := os.Stat(path); err == nil {
+					continue // file is there, just not time to renew
 				}
 				// THE REPAIR. Chtimes on a path that is not there does nothing and says
 				// nothing, which is how a live job lost its protection in #1585. Publish
