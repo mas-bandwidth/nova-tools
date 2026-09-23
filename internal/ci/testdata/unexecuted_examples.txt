@@ -1,0 +1,82 @@
+# The examples a stranger can paste from our docs and from `help` output that are
+# not yet executed by a test through the comparator (SPEC-TOOLWORK §7 rule 7).
+#
+# Every $  line in a fenced block of README.md, docs/USAGE.md, docs/CLI.md and
+# docs/nova-swarm-quickstart.md, and every example: line of every `help`, is
+# either executed by a test through onboarding.CompareTranscript or listed here.
+# The list only shrinks: a new entry fails the class test on the PR.
+# Remove an entry when a test exercising it through the comparator lands.
+#
+# THE LIST ONLY SHRINKS. TestIssue2218 checks it: an entry that does not match
+# any real pasted example is a stale entry and a red run.
+
+$ HOME=/Users/me/pool/jobs/j1/home \
+$ go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>
+$ mkdir -p /Users/me/pool/jobs/j1/home
+$ nova-board quickstart --dir ./board --stale 10m
+$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
+$ nova-bus names --bus ./bus
+$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
+$ nova-check convergence --repo mas-bandwidth/nova-tools \
+$ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
+$ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
+$ nova-check dogfood record --tool nova-check --verb links --by Stella --ok \
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**"
+$ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --paths "sign/**" --max 2
+$ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
+$ nova-check quickstart --dir ./self
+$ nova-decide --questions ./questions.json --state ./state.md --floor 0.9
+$ nova-decide classify --question harvest --evidence ./result.txt --pointer card-9
+$ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
+$ nova-decide help --state ; echo "exit=$?"
+$ nova-decide log --log ./decide.jsonl --summary
+$ nova-decide log --log postgres --summary   # with the DSN in the environment
+$ nova-decide outcome --log ~/rowan-working/queue/decide/route.jsonl --unit-id row-card-9 --result green
+$ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
+$ nova-decide route --unit-id <id> --kind <kind> --files <n> --packages <n> \
+$ nova-decide route --unit-id card-41 --kind fix-with-red-test --files 3 --packages 1 --attempt "opus:failed:missed the cause" --no-jev
+$ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
+$ nova-decide route --unit-id sec --kind fleet-chore --files 1 --secrets --touches secrets --touches network --no-jev
+$ nova-decide route --unit-id t-1 --kind fix-with-red-test --files 3 --packages 1 --attempt opus:timeout --no-jev ; echo "exit=$?"
+$ nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl ; echo "exit=$?"
+$ nova-decide route --unit-id thin --kind new-verb --no-jev ; echo "exit=$?"
+$ nova-decide route --unit-id u --kind rebase --files 2 --packages 1
+$ nova-decide tune --decisions internal/decide/testdata/reader-observations-2026-09-19.jsonl \
+$ nova-decide tune --propose-floors --log ./decide.jsonl --write ./registry.json
+$ nova-fuse check --box ./fuse-box.json a-forum
+$ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+$ nova-fuse lift quarantine --box ./fuse-box.json a-forum
+$ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+$ nova-fuse status --box ./fuse-box.json
+$ nova-memory check --root ./corpus --channels bm25 --k 2 -
+$ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+$ nova-memory quickstart --root ./corpus
+$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
+$ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+$ nova-memory stats --root ./corpus
+$ nova-merge add --lane ./lane --pr 949 --needs-read
+$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
+$ nova-merge status --lane ./lane
+$ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
+$ nova-play read --source story.txt
+$ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+$ nova-sandbox check
+$ nova-sandbox reap
+$ nova-sandbox reap --dry-run
+$ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
+$ nova-sandbox run --name j1 --size 8g --out ./handoff \
+$ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
+$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_DECIDE_LOG_DSN -- \
+$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+$ nova-self-talk ./pages/journal.md
+$ nova-swarm quickstart --pool ./pool
+$ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
+$ nova-swarm status --pool ./pool --max 20
+$ nova-wake awake --bus ./bus
+$ nova-wake probe --here
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+$ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
