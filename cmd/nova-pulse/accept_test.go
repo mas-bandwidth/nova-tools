@@ -25,11 +25,30 @@ func acceptTestJob(t *testing.T) (job, cert string) {
 	if _, _, err := acceptBuildFixture(context.Background(), job); err != nil {
 		t.Fatalf("fixture: %v", err)
 	}
-	cert = filepath.Join(dir, "cert")
-	if err := os.WriteFile(cert, []byte("bench=test certified\n"), 0o644); err != nil {
+	cert = acceptTestCert(t, "test", time.Now().Add(24*time.Hour))
+	return job, cert
+}
+
+// acceptTestCert writes a certify record (SPEC-TOOLWORK §2 rule 4's CERTIFY OK line)
+// for bench whose until= is until, and returns its path.
+func acceptTestCert(t *testing.T, bench string, until time.Time) string {
+	t.Helper()
+	cert := filepath.Join(t.TempDir(), "cert")
+	line := "CERTIFY OK   bench=" + bench + " cert=0123456789ab legs=go failed=none absent=none wall=seatbelt build=test at=" +
+		until.Add(-24*time.Hour).UTC().Format(time.RFC3339) + " until=" + until.UTC().Format(time.RFC3339) + "\n"
+	if err := os.WriteFile(cert, []byte(line), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return job, cert
+	return cert
+}
+
+// acceptTestWeakenPositive changes the fixture's Sign for a positive n and rewrites the
+// pre-existing TestSignPositive to expect the new value: no Skip is added and no base
+// Test disappears, so only the base copy of sign_test.go run over the head can see it.
+func acceptTestWeakenPositive(t *testing.T, job string) {
+	t.Helper()
+	acceptTestEdit(t, job, "sign.go", func(s string) string { return strings.Replace(s, "\t\treturn 1\n", "\t\treturn 2\n", 1) })
+	acceptTestEdit(t, job, "sign_test.go", func(s string) string { return strings.Replace(s, "Sign(5), 1)", "Sign(5), 2)", 1) })
 }
 
 // acceptTestRun runs the gate on job with the given card text and returns the exit
@@ -110,6 +129,7 @@ func TestAcceptRejectsWithTheFirstFailingToken(t *testing.T) {
 				return strings.Replace(s, "func TestSignPositive(t *testing.T) {\n", "func TestSignPositive(t *testing.T) {\n\tt.Skip(\"seeded\")\n", 1)
 			})
 		}},
+		{name: "base test weakened without a skip", want: "reason=test-weakened at=TestSignPositive", edit: acceptTestWeakenPositive},
 		{name: "renamed", want: "reason=named-test-missing at=TestSignZero", edit: func(t *testing.T, job string) {
 			acceptTestEdit(t, job, "sign_test.go", func(s string) string { return strings.Replace(s, "TestSignZero", "TestSignNil", 1) })
 		}},
@@ -150,13 +170,73 @@ func TestAcceptRejectsWithTheFirstFailingToken(t *testing.T) {
 	}
 }
 
-// TestAcceptAbstainsOnAnUncertifiedBench: a cert that cannot be read is the bench's
-// fault, not the card's: ABSTAIN, exit 2, and no verdict about the card.
+// TestAcceptAbstainsOnAnUncertifiedBench: a certification record that is missing,
+// stale, for another bench, failing the go leg or not a CERTIFY OK record at all is the
+// bench's fault, not the card's: ABSTAIN, exit 2, and no verdict about the card
+// (SPEC-TOOLWORK §1 rule 3, §2 rules 4-6).
 func TestAcceptAbstainsOnAnUncertifiedBench(t *testing.T) {
 	t.Parallel()
-	job, _ := acceptTestJob(t)
-	code, line := acceptTestRun(t, job, filepath.Join(t.TempDir(), "no-such-cert"), acceptTestCard(t))
-	if code != 2 || !strings.HasPrefix(line, "ACCEPT ABSTAIN ") || !strings.Contains(line, "reason=bench-uncertified ") {
-		t.Fatalf("uncertified bench: exit=%d line=%q, want ACCEPT ABSTAIN reason=bench-uncertified exit 2", code, line)
+	later := time.Now().Add(24 * time.Hour)
+	rewrite := func(t *testing.T, from, to string) string {
+		p := acceptTestCert(t, "test", later)
+		raw, _ := os.ReadFile(p)
+		if !strings.Contains(string(raw), from) {
+			t.Fatalf("cert has no %q", from)
+		}
+		if err := os.WriteFile(p, []byte(strings.Replace(string(raw), from, to, 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	cases := []struct {
+		name string
+		cert func(t *testing.T) string
+	}{
+		{"missing", func(t *testing.T) string { return filepath.Join(t.TempDir(), "no-such-cert") }},
+		{"not a record", func(t *testing.T) string {
+			p := filepath.Join(t.TempDir(), "cert")
+			if err := os.WriteFile(p, []byte("bench=test certified\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			return p
+		}},
+		{"stale", func(t *testing.T) string { return acceptTestCert(t, "test", time.Now().Add(-time.Hour)) }},
+		{"another bench", func(t *testing.T) string { return acceptTestCert(t, "other", later) }},
+		{"go leg failed", func(t *testing.T) string { return rewrite(t, "legs=go failed=none", "legs=lisp failed=go") }},
+		{"no go leg", func(t *testing.T) string { return rewrite(t, "legs=go ", "legs=lisp ") }},
+	}
+	for _, c := range cases {
+		c := c
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			job, _ := acceptTestJob(t)
+			code, line := acceptTestRun(t, job, c.cert(t), acceptTestCard(t))
+			if code != 2 || !strings.HasPrefix(line, "ACCEPT ABSTAIN ") || !strings.Contains(line, "reason=bench-uncertified ") {
+				t.Fatalf("%s: exit=%d line=%q, want ACCEPT ABSTAIN reason=bench-uncertified exit 2", c.name, code, line)
+			}
+		})
+	}
+}
+
+// TestAcceptTestEditExcusesOnlyTheNamedFile: the weakened-without-a-skip edit is
+// test-weakened (above) unless the card's header names the file under TEST-EDIT:
+// (SPEC-TOOLWORK eligibility rule 11), and naming another file excuses nothing.
+func TestAcceptTestEditExcusesOnlyTheNamedFile(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ edit, wantPrefix, want string }{
+		{"sign_test.go", "ACCEPT OK ", "kind=fix-red "},
+		{"other_test.go", "ACCEPT REJECT ", "reason=test-weakened at=TestSignPositive "},
+	} {
+		c := c
+		t.Run(c.edit, func(t *testing.T) {
+			t.Parallel()
+			job, cert := acceptTestJob(t)
+			acceptTestWeakenPositive(t, job)
+			card := strings.Replace(acceptTestCard(t), "TEST: TestSignZero", "TEST: TestSignZero\nTEST-EDIT: "+c.edit, 1)
+			_, line := acceptTestRun(t, job, cert, card)
+			if !strings.HasPrefix(line, c.wantPrefix) || !strings.Contains(line, c.want) {
+				t.Fatalf("TEST-EDIT: %s: line=%q, want %q with %q", c.edit, line, c.wantPrefix, c.want)
+			}
+		})
 	}
 }

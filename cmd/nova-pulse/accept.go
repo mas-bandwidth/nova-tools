@@ -12,7 +12,9 @@ package main
 //	(b)  shape: the card changed a test file (no-test); its TEST: exists at head
 //	     (named-test-missing)
 //	(b2) the base's tests survive: every Test at the base in a touched package is still
-//	     there and has gained no Skip (test-weakened)
+//	     there and has gained no Skip, and the base's copy of every pre-existing test
+//	     file the card changed, overlaid on the head, passes (test-weakened); a file the
+//	     card names under TEST-EDIT: is excused from the overlay
 //	(c)  build, vet, and the touched packages' tests green at head (build, vet,
 //	     red-at-head; a red the card neither wrote nor named is run once at the base,
 //	     and red there too is ABSTAIN base-red)
@@ -23,9 +25,13 @@ package main
 // Each command runs once; a red is a finding, never a rerun (rule 5). No model, no
 // forge, no network: GOPROXY is off (rule 10).
 //
+// --cert must be a live CERTIFY OK record (§2 rule 4) for --bench with the go leg
+// passed and until= still ahead; anything else is ABSTAIN bench-uncertified (rule 3).
+//
 // Not yet here, and said so rather than faked: the selftest's twelve seeds and the
 // control-on-file refusal of rule 8 (recut-2222 part 2), and running the commands
-// through nova-sandbox (§2). The control id is computed and printed now.
+// through nova-sandbox (§2 rule 2's --toolchain, a sandbox change of its own). The
+// control id is computed and printed now.
 
 import (
 	"context"
@@ -70,6 +76,7 @@ var (
 type acceptCard struct {
 	Label, Kind, Test string
 	Paths             []string
+	TestEdit          []string // TEST-EDIT: the pre-existing test files the card may change
 }
 
 func parseAcceptCard(text, fallback string) (acceptCard, error) {
@@ -92,7 +99,9 @@ func parseAcceptCard(text, fallback string) (acceptCard, error) {
 		case "TEST":
 			c.Test = val
 		case "PATHS":
-			c.Paths = strings.FieldsFunc(val, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
+			c.Paths = acceptFields(val)
+		case "TEST-EDIT":
+			c.TestEdit = acceptFields(val)
 		}
 	}
 	if c.Test != "" && !acceptTestName.MatchString(c.Test) {
@@ -103,7 +112,16 @@ func parseAcceptCard(text, fallback string) (acceptCard, error) {
 			return c, fmt.Errorf("the card's PATHS: %v", err)
 		}
 	}
+	for _, f := range c.TestEdit {
+		if !strings.HasSuffix(f, "_test.go") || hygiene.ValidatePaths([]string{f}) != nil || strings.ContainsAny(f, "*?[") {
+			return c, fmt.Errorf("the card's TEST-EDIT: %q is not a repo-relative test file", f)
+		}
+	}
 	return c, nil
+}
+
+func acceptFields(val string) []string {
+	return strings.FieldsFunc(val, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' })
 }
 
 // acceptVerdict is one gate answer: Word is OK, REJECT or ABSTAIN.
@@ -184,7 +202,7 @@ func acceptGateAt(ctx context.Context, j acceptJob, base, head string) (acceptVe
 		return acceptVerdict{}, err
 	}
 	dirs := map[string]bool{}
-	var testFiles []string
+	var testFiles, changedBaseTests []string
 	for _, line := range strings.Split(changed, "\n") {
 		status, file, ok := strings.Cut(line, "\t")
 		if !ok || !strings.HasSuffix(file, ".go") {
@@ -193,6 +211,9 @@ func acceptGateAt(ctx context.Context, j acceptJob, base, head string) (acceptVe
 		dirs[path.Dir(file)] = true
 		if strings.HasSuffix(file, "_test.go") && status != "D" {
 			testFiles = append(testFiles, file)
+		}
+		if strings.HasSuffix(file, "_test.go") && status == "M" {
+			changedBaseTests = append(changedBaseTests, file)
 		}
 	}
 	if len(testFiles) == 0 {
@@ -219,6 +240,9 @@ func acceptGateAt(ctx context.Context, j acceptJob, base, head string) (acceptVe
 		if !ok || len(acceptSkipCall.FindAllString(now, -1)) > len(acceptSkipCall.FindAllString(baseFuncs[name], -1)) {
 			return acceptReject("test-weakened", name), nil
 		}
+	}
+	if v, done, err := acceptOverlayBaseTests(ctx, wt, base, head, changedBaseTests, j.Card.TestEdit); done || err != nil {
+		return v, err
 	}
 	// The tests the card wrote or changed: new at head, or a different body.
 	cardTests := map[string]bool{}
@@ -279,6 +303,102 @@ func acceptGateAt(ctx context.Context, j acceptJob, base, head string) (acceptVe
 		return acceptReject("named-test-not-red", j.Card.Test), nil
 	}
 	return acceptVerdict{Word: "OK", Tests: res.Red + res.Green, RedWithout: res.Red}, nil
+}
+
+// acceptOverlayBaseTests is rule 4(b2)'s second half: the base's copy of every
+// pre-existing test file the card changed (files, less those TEST-EDIT: excuses) is
+// written over the head and the base's Tests of those files run, once, per package. A
+// red, or a base copy that no longer compiles against the head, is test-weakened: the
+// card changed what a test it did not own asserts. The head's files are restored after.
+// done is true when v is the verdict.
+func acceptOverlayBaseTests(ctx context.Context, wt, base, head string, files, excused []string) (v acceptVerdict, done bool, err error) {
+	skip := map[string]bool{}
+	for _, f := range excused {
+		skip[f] = true
+	}
+	byDir := map[string][]string{}
+	for _, f := range files {
+		if !skip[f] {
+			byDir[path.Dir(f)] = append(byDir[path.Dir(f)], f)
+		}
+	}
+	for _, d := range acceptSorted(byDir) {
+		var names []string
+		for _, f := range byDir[d] {
+			src, err := acceptGit(ctx, wt, "show", base+":"+f)
+			if err != nil {
+				return v, false, err
+			}
+			if parsed, perr := parser.ParseFile(token.NewFileSet(), f, src, 0); perr == nil {
+				for _, decl := range parsed.Decls {
+					if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv == nil && acceptTestName.MatchString(fn.Name.Name) {
+						names = append(names, fn.Name.Name)
+					}
+				}
+			}
+			if err := os.WriteFile(filepath.Join(wt, filepath.FromSlash(f)), []byte(src+"\n"), 0o644); err != nil {
+				return v, false, err
+			}
+		}
+		run := "^$"
+		if len(names) > 0 {
+			run = "^(" + strings.Join(names, "|") + ")$"
+		}
+		// -vet=off: vet is step (c)'s, and its finding is vet, not this one.
+		out, terr := acceptGo(ctx, wt, "test", "-count=1", "-vet=off", "-run", run, "./"+d)
+		if _, err := acceptGit(ctx, wt, append([]string{"checkout", "--quiet", head, "--"}, byDir[d]...)...); err != nil {
+			return v, false, err
+		}
+		if terr == nil {
+			continue
+		}
+		if m := acceptFailLine.FindStringSubmatch(out); m != nil {
+			return acceptRed("test-weakened", m[1], out), true, nil
+		}
+		// No test ran red: a compile error in an overlaid base copy is the card's (it
+		// changed what that copy relies on); any other is step (c)'s build finding.
+		for _, f := range byDir[d] {
+			if strings.Contains(out, path.Base(f)+":") {
+				return acceptRed("test-weakened", f, out), true, nil
+			}
+		}
+	}
+	return v, false, nil
+}
+
+// acceptCertLive reads a bench certification record (SPEC-TOOLWORK §2 rule 4): the
+// first CERTIFY OK line, with go among legs= and not among failed=, a parseable at= and
+// an until= after now (rule 6: 24 hours, then re-run, never edited). It returns the
+// record's bench= for the caller to hold against --bench; ok false is not a live
+// certification and the gate abstains (§1 rule 3).
+func acceptCertLive(raw string, now time.Time) (certBench string, ok bool) {
+	for _, line := range strings.Split(raw, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "CERTIFY OK ")
+		if !ok {
+			continue
+		}
+		kv := map[string]string{}
+		for _, field := range strings.Fields(rest) {
+			if k, v, ok := strings.Cut(field, "="); ok {
+				if _, dup := kv[k]; !dup {
+					kv[k] = v
+				}
+			}
+		}
+		has := func(list, leg string) bool {
+			for _, one := range strings.Split(list, ",") {
+				if one == leg {
+					return true
+				}
+			}
+			return false
+		}
+		at, aerr := time.Parse(time.RFC3339, kv["at"])
+		until, uerr := time.Parse(time.RFC3339, kv["until"])
+		return kv["bench"], kv["bench"] != "" && kv["cert"] != "" && has(kv["legs"], "go") && !has(kv["failed"], "go") &&
+			aerr == nil && uerr == nil && !at.After(now) && now.Before(until)
+	}
+	return "", false
 }
 
 // acceptRed is a REJECT on a command's output, or the bench's ABSTAIN when the first
@@ -420,7 +540,7 @@ func acceptFixtureDigest() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func cmdAccept(args []string, stdout, stderr io.Writer) int {
+func cmdAccept(args []string, stdout, stderr io.Writer, now time.Time) int {
 	start := time.Now()
 	f := newFlags("accept")
 	job := f.fs.String("job", "", "")
@@ -474,7 +594,7 @@ func cmdAccept(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	certRaw, err := os.ReadFile(*cert)
-	if err != nil || strings.TrimSpace(string(certRaw)) == "" {
+	if certBench, live := acceptCertLive(string(certRaw), now); err != nil || !live || certBench != *bench {
 		return abstain("bench-uncertified")
 	}
 	if !acceptGatedKinds[card.Kind] {
