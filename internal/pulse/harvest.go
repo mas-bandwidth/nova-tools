@@ -58,6 +58,13 @@ type HarvestInput struct {
 	Since        time.Duration
 	Shell        BenchShell
 	Forge        Forge
+	// Batch turns a --bench harvest into the batched pass (harvestbatch.go, #2756): one
+	// ssh to stage every candidate branch, one fetch and one push per repository, PRs
+	// through REST, one ssh to mark. Store is the fleet Redis the pass remembers stale-base
+	// refusals in and writes its row to; Memory is the seam a test fills instead.
+	Batch  bool
+	Store  StoreOptions
+	Memory HarvestMemory
 
 	// Launched is the queue directory `fill` moves live cards into. When it is
 	// named, harvest drains it: a card whose job has finished leaves it for Done
@@ -158,6 +165,9 @@ func Harvest(in HarvestInput) int {
 	// A bench harvest is the whole verb: the jobs are on the bench, the cards.tsv
 	// this fold reads is not, and there is nothing here to relaunch.
 	if strings.TrimSpace(in.Bench) != "" {
+		if in.Batch {
+			return harvestBenchBatch(in)
+		}
 		return harvestBench(in)
 	}
 

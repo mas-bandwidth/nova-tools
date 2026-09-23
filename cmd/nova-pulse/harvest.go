@@ -34,6 +34,10 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	launched := f.fs.String("launched", "", "")
 	doneDir := f.fs.String("done", "", "")
 	failedDir := f.fs.String("failed", "", "")
+	batch := f.fs.Bool("batch", false, "")
+	store := f.fs.String("store", "", "")
+	storeUser := f.fs.String("store-user", "", "")
+	passwordEnv := f.fs.String("password-env", pulse.DefaultStorePasswordEnv, "")
 	var clones benchFlag
 	f.fs.Var(&clones, "clone", "")
 	working := f.fs.String("working", "", "")
@@ -143,6 +147,8 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Done:         *doneDir,
 		Failed:       *failedDir,
 		Commit:       commitVal,
+		Batch:        *batch,
+		Store:        pulse.StoreOptions{Addr: *store, User: *storeUser, PasswordEnv: *passwordEnv},
 	}
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)
