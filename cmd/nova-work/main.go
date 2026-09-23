@@ -430,7 +430,7 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	// accept is also a resident-session socket verb (accept --session ...). The
 	// in-process graph form is the one that names --graph, and only that form is
 	// taken here; every other accept line falls through to the socket verb table.
-	if args[0] == "accept" && namesGraphFlag(args[1:]) {
+	if args[0] == "accept" && jobs.NamesGraphFlag(args[1:]) {
 		return cmdAccept(args[1:], stdout, stderr)
 	}
 	if args[0] == "events" {
@@ -648,45 +648,12 @@ func writeRow(stdout io.Writer, n jobs.Node, g *jobs.Graph) {
 	fmt.Fprintln(stdout)
 }
 
-// namesGraphFlag reports whether an accept line carries --graph, the flag only the
-// in-process graph form of accept takes.
-func namesGraphFlag(args []string) bool {
-	for _, a := range args {
-		if a == "--" {
-			return false
-		}
-		name := strings.TrimLeft(a, "-")
-		if name == a {
-			continue
-		}
-		if name == "graph" || strings.HasPrefix(name, "graph=") {
-			return true
-		}
-	}
-	return false
-}
-
+// cmdAccept is the in-process graph form of accept. jobs.AcceptArgs parses the line
+// and accepts the node, so the tested argv boundary is the one this verb ships.
 func cmdAccept(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	graph := fs.String("graph", "", "the :deps graph file (required)")
-	node := fs.String("node", "", "the one node to accept (required)")
-	if err := fs.Parse(args); err != nil {
+	id, err := jobs.AcceptArgs(args)
+	if err != nil {
 		return refuse(stderr, " accept", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, " accept", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-	}
-	if strings.TrimSpace(*graph) == "" {
-		return refuse(stderr, " accept", "--graph is required; refusing to guess")
-	}
-	if strings.TrimSpace(*node) == "" {
-		return refuse(stderr, " accept", "--node is required; refusing to guess")
-	}
-	id := strings.TrimSpace(*node)
-	if err := jobs.AcceptFile(*graph, id); err != nil {
-		return refuse(stderr, " accept", oneline.Err(err))
 	}
 	fmt.Fprintf(stdout, "ACCEPT OK node=%s\n", oneline.Field(id))
 	return 0

@@ -94,3 +94,75 @@ func TestIssue1796AcceptPersists(t *testing.T) {
 		t.Fatalf("a refused accept changed the invalid file:\n%s", got)
 	}
 }
+
+// TestIssue1796AcceptCommandBoundary drives the shipped verb from its argv: nova-work
+// dispatches an accept line to the graph form only when NamesGraphFlag sees --graph,
+// and cmdAccept is jobs.AcceptArgs plus the ACCEPT OK line. Success writes the file and
+// the dependent reads ready from disk; every refusal, of the line or of the node,
+// leaves the file byte-identical.
+func TestIssue1796AcceptCommandBoundary(t *testing.T) {
+	for _, line := range [][]string{
+		{"--graph", "g.json", "--node", "a"},
+		{"--node", "a", "-graph=g.json"},
+	} {
+		if !NamesGraphFlag(line) {
+			t.Fatalf("NamesGraphFlag(%q) = false: the graph form would reach the socket verb", line)
+		}
+	}
+	for _, line := range [][]string{
+		{"--session", "s.sock", "--node", "a", "--add", "x:k:s:p", "--reason", "r"},
+		{"--node", "a", "--", "--graph"},
+		{"graph", "--node", "a"},
+	} {
+		if NamesGraphFlag(line) {
+			t.Fatalf("NamesGraphFlag(%q) = true: a socket accept line would be taken by the graph form", line)
+		}
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deps.json")
+	seed, err := MarshalNodes([]Node{
+		{ID: "issues-sweep", Needs: []string{"cutter-C2"}},
+		{ID: "cutter-C2"},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(path, seed, 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	for _, bad := range [][]string{
+		{"--graph", path, "--node", "no-such-node"},
+		{"--graph", path},
+		{"--node", "cutter-C2"},
+		{"--graph", path, "--node", "cutter-C2", "stray"},
+		{"--graph", path, "--node", "cutter-C2", "--bogus"},
+	} {
+		if id, err := AcceptArgs(bad); err == nil {
+			t.Fatalf("AcceptArgs(%q) accepted %q; want a refusal", bad, id)
+		}
+		if got, _ := os.ReadFile(path); !bytes.Equal(got, seed) {
+			t.Fatalf("AcceptArgs(%q) refused but changed the file:\n%s", bad, got)
+		}
+	}
+
+	id, err := AcceptArgs([]string{"--graph", path, "--node", " cutter-C2 "})
+	if err != nil {
+		t.Fatalf("AcceptArgs(--graph %s --node cutter-C2): %v", path, err)
+	}
+	if id != "cutter-C2" {
+		t.Fatalf("AcceptArgs returned id %q, want cutter-C2", id)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reread: %v", err)
+	}
+	g, err := ParseSeed(raw)
+	if err != nil {
+		t.Fatalf("reseed: %v", err)
+	}
+	if ready, blocker := g.Ready("issues-sweep"); !ready {
+		t.Fatalf("issues-sweep: not ready from the file on disk after the verb, blocker: %v", blocker)
+	}
+}
