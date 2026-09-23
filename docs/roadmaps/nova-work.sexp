@@ -63,8 +63,8 @@
     :suite "cd lisp/nova-work && ./run-tests.sh"
     :suite-result "NOVA-WORK SLICE1 total=336 pass=336 fail=0"
     :rule "a criterion is verified only when a named test in this repository proves it and that test passed at :revision; a feature is verified only when every one of its criteria is"
-    :verified-features 23
-    :verified-acceptance-items 155
+    :verified-features 24
+    :verified-acceptance-items 157
     :by-feature (
       (:feature "E01-F01" :verified 3 :total 3 :tests "tests/acceptance/slice-01-reader.lisp: forbidden-token-boundary-before-interning, line-comments-accepted, comment-inside-form, comment-text-is-text, quote-in-comment-is-text, semicolon-in-string-is-literal, reader-eof-sentinel-is-not-payload, malformed-trailing-unclosed-form, malformed-trailing-unclosed-list, dispatch-byte-offset-utf8, eof-byte-offset-utf8, trailing-byte-offset-utf8, unterminated-string-start-byte, forbidden-after-unicode-comment, utf8-byte-offsets; hostile-data")
       (:feature "E01-F02" :verified 0 :total 3 :tests "")
@@ -111,7 +111,7 @@
       (:feature "E08-F03" :verified 4 :total 7 :tests "fleet-is-static-config; probe-records-observed-active-and-touches-no-config; four-capability-groups-and-three-fields; roles-are-configured-not-inferred; reserved-role-is-not-spent-on-routine-work; bounds-are-not-prompts")
       (:feature "E08-F04" :verified 6 :total 7 :tests "explicit-rest-is-not-pinged; silence-is-a-ping-not-a-verdict; four-facts-four-verbs; dispatch-ack-and-ownership-are-three; return-reconciles-before-dispatch; hold-survives-a-crash; quiet-until-actionable; regression-and-recovery")
       (:feature "E08-F05" :verified 5 :total 5 :tests "unchanged-config-is-one-bounded-answer; an-invalid-delta-leaves-the-old-config; a-partial-manifest-is-refused; route-config-lists-key-by-path-never-value; no-credential-in-a-member; pricing-is-pinned-by-revision; requested-model-is-not-observed-model; policy-round-trip-and-replay; packet-and-route-gates")
-      (:feature "E09-F01" :verified 1 :total 3 :tests "archive-completeness")
+      (:feature "E09-F01" :verified 3 :total 3 :tests "archive-completeness; internal/ghcapture/adapter_test.go: TestStableIdentityRevisionAndURL, TestBodyCommentsLabelsRelationshipsAndPagination")
       (:feature "E09-F02" :verified 1 :total 3 :tests "read-only-intake; hostile-data")
       (:feature "E09-F03" :verified 2 :total 3 :tests "source-inventory; moving-source")
       (:feature "E09-F04" :verified 0 :total 3 :tests "")
