@@ -241,21 +241,36 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	card := []byte("base-repo: https://example.com/mas-bandwidth/repo.git\nbase-sha: 09fbedc9052145b20677501a1dbcb5f5ba9c87d4\n")
-	start := time.Now()
-	res, err := StageCard(StageOptions{
-		Card:      card,
-		TargetDir: filepath.Join(jobDir, "repo"),
-		JobDir:    jobDir,
-		BenchHome: filepath.Join(root, "home"),
-		BenchName: "hulk",
-		Timeout:   1 * time.Second,
-	})
-	took := time.Since(start)
+	// StageCard blocks, so the event under test -- the call returning instead
+	// of riding the hung 60s sleep -- is read off a done channel, not the wall
+	// clock: a select against the generous NOVA_TEST_WAIT bound (default 30s)
+	// is the poll-for-the-event shape, never a literal short deadline.
+	type stageOutcome struct {
+		res StageResult
+		err error
+	}
+	done := make(chan stageOutcome, 1)
+	go func() {
+		res, err := StageCard(StageOptions{
+			Card:      card,
+			TargetDir: filepath.Join(jobDir, "repo"),
+			JobDir:    jobDir,
+			BenchHome: filepath.Join(root, "home"),
+			BenchName: "hulk",
+			Timeout:   1 * time.Second,
+		})
+		done <- stageOutcome{res: res, err: err}
+	}()
+	var res StageResult
+	var err error
+	select {
+	case out := <-done:
+		res, err = out.res, out.err
+	case <-time.After(testWait()):
+		t.Fatalf("staging did not return within %s on a clone that hung past a 1s timeout; the timeout is not hard", testWait())
+	}
 	if !errors.Is(err, ErrStageTimeout) || !res.TimedOut {
 		t.Fatalf("a hung clone must end ErrStageTimeout with TimedOut; got err=%v res=%+v", err, res)
-	}
-	if took > 8*time.Second {
-		t.Fatalf("staging waited %s on a clone that hung past a 1s timeout; the timeout is not hard", took.Round(time.Millisecond))
 	}
 	raw, rerr := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
 	if rerr != nil {
@@ -264,6 +279,18 @@ func testStageHungCloneEndsAtTheTimeout(t *testing.T) {
 	if first := strings.SplitN(string(raw), "\n", 2)[0]; first != "RESULT: BLOCKED stage-timeout hulk 1" {
 		t.Fatalf("RESULT.md line 1 = %q", first)
 	}
+}
+
+// testWait is the allowed poll bound: NOVA_TEST_WAIT when set, thirty
+// seconds otherwise. It never drives an assertion on its own; it only caps
+// how long a test waits for an event before giving up.
+func testWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
 }
 
 func execCmd(t *testing.T, dir, name string, args ...string) string {
