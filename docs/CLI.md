@@ -2026,6 +2026,19 @@ than overwriting it: two cuts into one queue are two batches of cards, and a row
 already in the table is not written twice, so cutting the same source again is the
 same table.
 
+**A template is portable, because `cut` does not choose the bench.** The card text
+is handed to the worker verbatim and the router picks the bench later, out of a
+mixed estate (hulk, vision, space and mini are linux; the Studio and the Air are
+darwin). Spell presence as `command -v <name>`, a version as that toolchain spells
+it (`go version`, `dotnet --version`, `java -version 2>&1`), and a fact only one
+platform reports by choosing with `uname` on the same line — `cores=$(if [
+"$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else nproc; fi)`. Do not measure
+a step with GNU `time(1)`; the harness writes the run's own timing line. The rule
+is SPEC-SWARM, "A template is portable, because the bench is not chosen when it is
+written", and `internal/ci`'s `cardtemplates` class test refuses the shipped
+templates that break it. `cmd/nova-pulse/testdata/templates/{read,fix}.md` are the
+worked examples.
+
 **Five checks run in order before a byte is written**, and the first that fails is
 the whole answer, exit 2, one line:
 
