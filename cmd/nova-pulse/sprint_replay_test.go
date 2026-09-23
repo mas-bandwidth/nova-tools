@@ -162,6 +162,7 @@ func TestSprintReplayPrintsTheDaysNumbers(t *testing.T) {
 		"critical johnny",
 		"splittable tools-2550",
 		"splittable tools-2548",
+		"Open tools-2550 mas-bandwidth/nova-tools#2550 owner=johnny route=- est=~1.5h kind=fix depends=-",
 	} {
 		if !strings.Contains(verbose, want) {
 			t.Fatalf("sprint status --verbose has no %q:\n%s", want, verbose)

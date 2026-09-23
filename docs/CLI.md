@@ -3012,8 +3012,9 @@ verb under `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- …`, the way
 — the fraction, the percent, then the WALL: the longest lane under the
 dependency edges, never the sum of the work. More than one active sprint prints
 a table with the sprint name as the leftmost column. `--verbose` adds the COWS
-counts (`C=14 O=9 W=0`), the open items by owner and route, the critical lane
-and the tasks on it that could move. `--flip` asks the primary records — a pull
+counts (`C=14 O=9 W=0`), the open items by owner and route, each item's `kind=`
+and `depends=` (`depends=-` when it waits on nothing), the critical lane and
+the tasks on it that could move. `--flip` asks the primary records — a pull
 request merged, an issue closed, a friend's typed line at head, a card landed on
 `ev:cards` — and closes what they say is closed, with the record as the
 evidence; nothing else ever closes a task.

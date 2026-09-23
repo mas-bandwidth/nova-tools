@@ -100,6 +100,9 @@ func Table(rows []TableRow) string {
 // Verbose is everything behind the line: the COWS counts, the open and working items by
 // owner and route, the critical lane with its owner, and the splittable tasks on it. It is
 // what the coordinator reads before deciding; the line is what everyone else reads.
+// Each item carries kind= and depends=. The sprint's x/y line charges SUGGEST by kind and
+// waits on depends= even across lanes. depends=- is no edge. Leaving either field off is
+// not that record: a reader then charges the printed estimate and skips the wait.
 func Verbose(tasks []Task) (string, error) {
 	c := Count(tasks)
 	w, err := ComputeWall(tasks)
@@ -125,8 +128,8 @@ func Verbose(tasks []Task) (string, error) {
 		return open[i].ID < open[j].ID
 	})
 	for _, t := range open {
-		fmt.Fprintf(&b, "%s %s %s owner=%s route=%s est=%s\n",
-			strings.ToUpper(t.State[:1])+t.State[1:], t.ID, dashed(t.Ref), dashed(t.Owner), dashed(t.Route), Minutes(t.EstMinutes))
+		fmt.Fprintf(&b, "%s %s %s owner=%s route=%s est=%s kind=%s depends=%s\n",
+			strings.ToUpper(t.State[:1])+t.State[1:], t.ID, dashed(t.Ref), dashed(t.Owner), dashed(t.Route), Minutes(t.EstMinutes), dashed(t.Kind), dependsList(t.DependsOn))
 	}
 	if len(w.Splittable) == 0 {
 		fmt.Fprintf(&b, "splittable none on %s\n", lane(w.Critical))
@@ -150,6 +153,13 @@ func dashed(s string) string {
 		return "-"
 	}
 	return s
+}
+
+func dependsList(ids []string) string {
+	if len(ids) == 0 {
+		return "-"
+	}
+	return strings.Join(ids, ",")
 }
 
 func plural(n int, word string) string {

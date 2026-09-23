@@ -46,8 +46,9 @@ One active sprint prints exactly:
 the fraction, the whole percent, then the **wall**. More than one active sprint
 prints a table with the sprint name as the leftmost column and the same line.
 `Nh left` is appended when the sprint carries `planned_close_at`. `--verbose`
-adds `C=… O=… W=…`, the open items by owner and route, the lanes, the critical
-lane and the splittable tasks on it. Nothing else goes on the line.
+adds `C=… O=… W=…`, the open items by owner and route, each item's `kind=` and
+`depends=` (a comma list of task ids, or `-`), the lanes, the critical lane
+and the splittable tasks on it. Nothing else goes on the line.
 
 Hours read as `~4h`, `~1.5h`, `~45m`. A set whose open tasks carry no estimate
 prints the fraction alone: an estimate nobody made is not an estimate of zero.
