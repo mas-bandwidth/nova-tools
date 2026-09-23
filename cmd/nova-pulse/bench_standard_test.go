@@ -106,6 +106,10 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		"NOVA_WANT="+want,
 		"NOVA_GO="+goVer,
 		"NOVA_PROBE_URL=https://probe.invalid/api.json",
+		// With a toolchain root removed the script can reach a system go, which
+		// under go.mod's go line would download a toolchain into HOME's read-only
+		// module cache and fail t.TempDir cleanup (hulk runners, stream/nova-decide).
+		"GOTOOLCHAIN=local",
 	)
 	raw, err := cmd.CombinedOutput()
 	code := 0

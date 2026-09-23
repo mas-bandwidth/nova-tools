@@ -1,11 +1,17 @@
-# nova-state — live state in Redis, the durable record in Postgres (draft 1, 2026-09-17)
+# nova-state — live state in Redis, the durable record in git, GitHub and `cards:done` (draft 2, 2026-09-22)
+
+**Revised 2026-09-22 (#2597, #2623).** Draft 1 (2026-09-17) put the durable record in Postgres. It
+was adopted, measured for a day, and retired: the record is git, GitHub and the `cards:done`
+stream, and the SQLite fold of that stream (`internal/events`, `nova-pulse fold`) is a view that
+`fold --rebuild` recomputes, never a second source of truth. The one row the stream lacked, the
+decision log, is now a `decide` event on it. Glenn's ruling: try, then remove fully.
 
 Glenn, 2026-09-17: *"What other technology could we adopt that is useful? Redis I think is another
-thing I really love. Postgres is another."* The rule that admits them both: *"If something already
+thing I really love."* The rule that admits it: *"If something already
 exists and is suitable, we use that. We only invent when it is radically new."* Glenn's design law
 for the kernel is Redis's own: **one writer, single thread — or it corrupts** (SPEC-WORK, *The
 single-writer kernel*). This file splits the family's state in two and maps every hand-built piece
-it retires. **Nothing here invents a thing Redis or Postgres already does.** Related:
+it retires. **Nothing here invents a thing Redis, SQLite or git already does.** Related:
 [SPEC-REDIS.md](SPEC-REDIS.md) (the instance, its owner prefix and TTL, its file fallbacks),
 the job spec `docs/SPEC-JOBS.md` (on `rowan/spec-jobs`) and the work-language spec
 `docs/SPEC-WORKLANG.md` (on `rowan/spec-worklang`), [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md)
@@ -21,19 +27,21 @@ that something changed — all of it is a read of the present that the next beat
 it costs one rebuild and never a work item, because the work item is already a file and a card id.
 It goes to **Redis**.
 
-**The durable record: Postgres.** The kernel's index of nodes and receipts, the token ledger, the
-capability inventory, CI and PR outcomes, the per-card timeline, and the hygiene and mirror logs
-are questions asked of the past that must answer the same tomorrow. They go to **Postgres**, one
-writer per table, with the tables' own history of stamps.
+**The durable record: git, GitHub and the `cards:done` stream.** The kernel's index of nodes and
+receipts, the token ledger, the capability inventory, CI and PR outcomes, the per-card timeline,
+the decisions, and the hygiene and mirror logs are questions asked of the past that must answer
+the same tomorrow. The facts live in git (files, notes, the journal, the day TSVs), in GitHub (PRs,
+checks, merges) and as events on `cards:done`; the answers come from the **SQLite fold**, a view
+of the stream with one writer, which a rebuild recomputes.
 
 **What stays in git.** The **bus notes** stay the human-readable record — a note is prose a person
 reads, diffs, addresses and cites, and a receipt is a line appended to it, so a note belongs where
 prose already lives and where `git log` is the index of who said what. The **nova-work journal**
 stays the replayable truth: the single command thread journals every accepted mutation in the same
 order it applies it, and replaying that order rebuilds O node by node (SPEC-WORK, *The
-single-writer kernel*). So the Postgres `nodes` table is a **projection of the journal**, not its
+single-writer kernel*). So a `nodes` view is a **projection of the journal**, not its
 authority: it can be dropped and rebuilt, and a disagreement is a bug in the projection. Git is
-what survives an instance, a bench and a vendor; Redis and Postgres are how the family reads it
+what survives an instance, a bench and a vendor; Redis and the fold are how the family reads it
 without a fetch and a turn.
 
 ## Part 2 — Redis
@@ -121,7 +129,7 @@ guarded write:
   gathered result.
 
 The guarded Lua is one shape. Where the target is Redis the check and the write are the same atomic
-script; where the target is a file or Postgres the fence gates the write, and the write is
+script; where the target is a file or the fold the fence gates the write, and the write is
 idempotent so a fence that passed is safe to repeat:
 
 ```text
@@ -251,66 +259,32 @@ presence keys read from the bus — through the same contract, so an outage is a
 and never a lost card. Slice 1 runs this fallback beside the instance on one bench before any
 other bench depends on it.
 
-## Part 3 — Postgres
+## Part 3 — the fold
 
-One Postgres holds the durable record, on space beside Redis, one writer per table. No bench runs
-SQL by hand: a timer or a verb calls `nova-pulse`, and the tool is the table's writer.
+The durable answers are views of the `cards:done` stream, folded by one consumer into one SQLite
+file on space (`nova-pulse fold`, `internal/events`). Every table's primary key is the stream
+entry id, so a redelivery or a replay is a no-op and `fold --rebuild` into a fresh file produces
+the same rows as the incremental fold. No bench writes the file: a writer XADDs an event, and the
+fold is the table's one writer.
 
-**`nodes` and `receipts` — the kernel's index.** `nodes(node_id, kind, state, owner, repo,
-base_ref, branch, ready, revision, updated_at)`; `node_needs(node_id, need_id)` for the dependency
-edge; `receipts(request_id, node_id, verb, revision, author, stamp, payload_sha)`. This is the
-projection the journal rebuilds, and it is what `nova-pulse status --fleet` and the views read
-instead of opening every job file. **Writer: the kernel's command thread** (the same thread that
-journals the mutation), so index and journal are one order.
+**What it holds today.** `attempts` (a card's own transitions), `reads`, `landings`, and
+`decisions` (the Jev routing decisions, one `decide` event each, under the column names the
+retired `decide_log` table used), with the views `by_model_route`, `by_bench`, `by_day`,
+`by_label`, `totals` and `decisions_by_kind`. An absent cost, count or reason is NULL, never 0 or
+`''`.
 
-**`token_ledger` — per card, model, repo, day.** `token_ledger(day, card, model, repo, provider,
-input_tokens, output_tokens, cache_read, cache_write, reasoning, rough, sources)`, keyed exactly
-`(day, card, model, repo)`, the five token types apart. The monthly report is one `GROUP BY`
-query. **Writer: `nova-tokens`**, which keeps folding the day TSVs in git unchanged and writes
-each day to the table as its index; the red test below proves the two agree to the token.
-
-**`capability_inventory` — tool, verb, revision, machine, state.** `capability_inventory(tool,
-verb, revision, machine, state, checked_at, evidence)`. The spreadsheet becomes a table a verb
-queries. **Writer: the survey** (`nova-pulse fleet`/`nova-version`), which records what it
-observed, never what it hoped.
-
-**`ci_pr_outcomes` — run, group, conclusion, failing test, poison verdicts.**
-`ci_pr_outcomes(run_id, pr, repo, head_sha, group_name, conclusion, failing_test, poison,
-started_at, finished_at)`. GitHub is the record; this is the index that answers "is this branch
-green" without a `gh` call. **Writer: `nova-merge`**, one row per run it observes, including the
-poison verdicts.
-
-**`card_timeline` — from `usage.tsv`.** `card_timeline(card, at, event, actor, detail, slot,
-bench)`, the pool's `usage/*.tsv` rows appended in order. **Writer: `nova-pulse harvest`**, at the
-same moment it gathers the `RESULT.md`.
-
-**`hygiene_log` and `mirror_log`.** `hygiene_log(machine, at, kind, verdict, detail)` and
-`mirror_log(machine, at, repo, verdict, detail)`, the bench timers' outcomes. **Writer:
-`nova-pulse`** on the timer's behalf (`nova-pulse beat`), so a bench writes through the tool's one
-writer and never opens a connection of its own.
+**What draft 1 also listed** — `nodes`/`receipts`, `token_ledger`, `capability_inventory`,
+`ci_pr_outcomes`, `card_timeline`, `hygiene_log`, `mirror_log` — are questions the fold answers
+the same way when their writers put their events on the stream: a new event kind and a view, never
+a second store with a second writer. Until then git (the journal, the day TSVs, the notes) and
+GitHub (checks and merges) answer them.
 
 ## The record: card results
 
 Card results were scraped from job directories on the benches by a harvest loop over ssh; it
-re-harvested old jobs and could force-push stale commits (review #1263 F09, F11). They are now a
-durable table, written from the `cards:done` stream of Part 2 and read by a verb rather than a walk
-over the `job*` directories.
-
-**`card_results` — one row per result.** `card_results(stream_id, label, bench, exit,
-result_line, job_path, commit, branch, pr, pushed_at, done_at, recorded_at)`. `stream_id` is the
-Redis stream entry id and the primary key, so a redelivered or replayed result is an `ON CONFLICT
-(stream_id) DO NOTHING` no-op and never a second row; `pr`, `pushed_at` and `done_at` are the
-"when known" columns and are SQL `NULL` when the result did not carry them. **Writer: `nova-work
-record`.**
-
-`nova-work record --migrate` applies `internal/record/schema.sql` — plain SQL, versioned by a
-`schema_version` table, idempotent — and exits. `nova-work record --redis <addr> --postgres <dsn>
-[--once] [--deadline 1h]` reads `cards:done` with `XREADGROUP` in the `record` group, commits each
-row, and `XACK`s only after the commit, so a crash between the two leaves the entry pending for
-the next start to repair. `nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed]
-[--max 20]` prints one line per row, newest first, with a `MORE` line naming the rest. The store
-is an interface: the unit tests run against a fake over the same contract with miniredis standing
-in for Redis, and the real Postgres path is the soak behind `RECORD_TEST_PG`.
+re-harvested old jobs and could force-push stale commits (review #1263 F09, F11). A card's end is
+now an `ok` or `fail` event on `cards:done`, and the fold's `attempts` table and its views are the
+record read by a verb (`nova-pulse fold --report`) rather than a walk over the `job*` directories.
 
 ## Part 4 — the verbs that change
 
@@ -324,8 +298,9 @@ in for Redis, and the real Postgres path is the soak behind `RECORD_TEST_PG`.
   reservation is the one atomic script and the admission is the counter, not a note.
 - **the pull worker** reads `nova:queue:*` with `XREADGROUP` and `XACK`s on clip, replacing the
   directory scan and the `taken/` rename.
-- **`nova-work record` and `results`** write and read `card_results` from the `cards:done`
-  stream, replacing the harvest loop over `job*` directories and its stale force-pushes.
+- **`nova-pulse fold`** reads the `cards:done` stream into the fold, replacing the harvest loop
+  over `job*` directories and its stale force-pushes; `nova-decide route --store` writes each
+  decision onto the same stream.
 
 ## Part 5 — migration in four slices, and the red tests
 
@@ -336,9 +311,9 @@ Each slice shadows the last and is measured, so the old path is restorable until
    on that bench**, so the bench has exactly one mode and no slot can be granted twice. Drain the
    bench's directory-mode cards before the switch (Part 2, *One mode per bench*), then measure
    **polling turns per hour**, which should fall toward zero on a quiet bench.
-2. **Postgres beside the files, on one bench.** Write the projection, the ledger, the inventory
-   and the outcomes to Postgres while the files in git stay the record. Measure **hand steps
-   removed**: the inventory spreadsheet and the per-question `gh` calls stop being a bench's job.
+2. **The fold beside the files, on one bench.** Fold the stream's events into the SQLite views
+   while the files in git stay the record. Measure **hand steps removed**: the inventory
+   spreadsheet and the per-question `gh` calls stop being a bench's job.
 3. **Redis beside the directory queue, on space.** Run the streams, leases, counters, presence and
    channels beside `queue/` and the slot files; the fallback is the proof. Measure **polling turns
    per hour**, which should fall toward zero on a quiet bench.
@@ -356,8 +331,8 @@ Each slice shadows the last and is measured, so the old path is restorable until
   the unknown-outcome test).
 - `a-watch-subscriber-wakes-on-a-job-done-event-within-a-second` — publish `nova:events:job` after
   a `RESULT.md` lands; the subscriber returns once, inside a second, and re-reads the file.
-- `the-monthly-token-report-from-postgres-equals-the-folded-tsv-to-the-token` — `report` over
-  `token_ledger` equals the folded day TSVs, every type and every `(day, model, repo)`.
+- `the-monthly-token-report-from-the-fold-equals-the-folded-tsv-to-the-token` — `report` over
+  the fold's ledger view equals the folded day TSVs, every type and every `(day, model, repo)`.
 - `one-card-is-delivered-to-exactly-one-consumer` — with the `workers` group shared by two benches,
   `XREADGROUP` hands a card to one bench and not the other; a second group over the same stream
   would hand both a copy, so the test fails unless the group is per stream, never per bench.
@@ -383,7 +358,7 @@ Each slice shadows the last and is measured, so the old path is restorable until
   succeeded, its provider/model/key seats stay held, `nova-pulse status` shows the unknown count,
   and the seats release only when the provider answers or the hard bound passes.
 
-**Invent nothing.** If Redis or Postgres already does it — streams, consumer groups,
+**Invent nothing.** If Redis, SQLite or git already does it — streams, consumer groups,
 `XAUTOCLAIM`, `SET NX`, TTL, `ZREMRANGEBYSCORE`, pub/sub, a `GROUP BY`, a unique key, WAL — the
 design uses it and does not build a second one.
 
