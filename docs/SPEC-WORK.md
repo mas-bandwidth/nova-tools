@@ -7978,7 +7978,7 @@ Red tests, one per rule, each with a fake where the real thing is the network, a
 9. `capability-output-is-bounded`: 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
 10. `capability-is-the-source-the-note-reads`: a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.
 
-## nova-work is the primary source; GitHub is an ingest *(Rowan, on Glenn's word of 2026-09-23; nova-tools #3141; rev 5, a draft for review, and nothing below is built until every present friend has scored it 10)*
+## nova-work is the primary source; GitHub is an ingest *(Rowan, on Glenn's word of 2026-09-23; nova-tools #3141; rev 6, a draft for review, and nothing below is built until every present friend has scored it 10)*
 
 **Revisions of this section** (PR #3162): rev 1 `af157e46`; rev 2 `de351e5e` (the index folded in);
 rev 3 `f360ec8a` (repository digest over O and C, Stella's hold); rev 4 `12d1e535` (the measured
@@ -7992,7 +7992,11 @@ admitted only against a recorded mirror request (2b, 8, 11); (6) an edited mirro
 an access path per value and `--state` has a stated default (9, 10); (8) the per-repository value
 sets `w:i:<repo>:labels` and siblings make `--by label` a bounded count (9, 10); (9) the sample read
 is its own typed line, `SAMPLE`, with a named home (1, 4); (10) the build table carries DEPENDS-ON
-and PATHS per piece.
+and PATHS per piece. **Rev 6** (Stella's hold at `131c68dd`): a pending mirror request is confirmed
+only by its create receipt or, for an uncertain create, by a capture matching the request's
+unguessable token, recorded actor, payload hash and time; a forged marker filed during the pending
+window is minted as its own unit and leaves the unit and request untouched (2b, 8, 11: fixtures
+(5)–(7) of `mirror-marker-not-forgeable`).
 
 **Glenn's words are the requirement, and they are all from one hour of 2026-09-23 (Eastern).** At
 12:25 PM, when one login's REST quota stalled thirty-two children: *"OK we need to switch away from
@@ -8220,14 +8224,30 @@ whether it is ours.
 **The marker is a claim, and the record admits it only against its own request.** Anyone can type
 `nova-work: <unit-id>` into an issue body, so the marker alone proves nothing. A capture carrying a
 marker for unit U is admitted as `:origin :mirror` **only when** U's `:correspondence` already
-records this `(:repo :number)` with `:mode :mirror`, **or** U carries a mirror request for this
-repository that is `pending` (section 8) and has no number yet — in which case the capture's number
-is recorded and the request confirmed. In every other case — U does not exist, U records a
-different number, U's mirror request names another repository or is already confirmed, or U has
-no mirror request — the capture is minted as a new unit by the ordinary rule (`:origin :team` or
-`:external` by its author), U is untouched, and the ingest prints `INGEST MARKER-REFUSED
-repo=<o>/<r> number=<n> unit=<U>: marker not admitted (<reason>)` (exit 0: the issue is still
-ingested, and the line is the finding). Replay `mirror-marker-not-forgeable` (section 11). `:correspondence` keeps what E09-F01 asks and what a
+records this `(:repo :number)` with `:mode :mirror`, **or** the capture **proves it is the create
+that U's pending request made** (section 8) — in which case the capture's number is recorded and
+the request confirmed. **A pending request is never confirmed by a marker alone**, because a third
+party can file `nova-work: <U>` while the real create is in flight. The proof is one of two, and
+nothing else: (i) **the create receipt** — the adapter's own `POST` response for this request id,
+whose number the writer records directly (an ingest capture is then admitted by the recorded-number
+rule above); or (ii) for an uncertain create with no receipt, a capture that matches the request on
+**all four** of: its marker carries the request's **token** (`nova-work: <U> req=<token>`, a
+128-bit value from a CSPRNG minted per request and stored only in the private record); its
+**author** is the request's `:actor` (the login the adapter authenticated as when it sent the
+create, recorded on the request, so a forger would need that account's credential); the SHA-256
+of its title and body bytes equals the request's `:payload-sha256` (the exact bytes the writer
+sent); and it was created at or after the request's `:at`. Exactly one matching capture confirms
+the request; two or more confirm nothing and print `INGEST MARKER-REFUSED ... (ambiguous: <n>
+captures match request <id>)`, leaving the request pending for a person. In every other case — U
+does not exist, U records a different number, U's mirror request names another repository or is
+already confirmed, U has no mirror request, or a capture for a pending request fails the token,
+actor, payload or time test — the capture is minted as a new unit by the ordinary rule (`:origin
+:team` or `:external` by its author), **U and its request are untouched** (state, number, token,
+attempts and receipt byte-identical), and the ingest prints `INGEST MARKER-REFUSED repo=<o>/<r>
+number=<n> unit=<U>: marker not admitted (<reason>)` (exit 0: the issue is still ingested, and the
+line is the finding). The token becomes public once the genuine issue exists, which is why the
+actor and payload tests carry the weight after that moment and the token carries it before.
+Replay `mirror-marker-not-forgeable` (section 11), fixtures (5)–(7) for the pending-request race. `:correspondence` keeps what E09-F01 asks and what a
 reply needs: provider, repository, number, URL, **author, filed-at**, the last remote state and
 update stamp, the body's blob hash and the content hash. Planning, decomposition, ownership, priority and evidence
 live on the node; the public discussion stays on GitHub (*Public issue correspondence survives
@@ -8588,16 +8608,24 @@ revision; the table prints `?` for a hash older than one land cycle (*Table corr
 Glenn: *"commit to using the sexpr as the primary source."* **After the cutover new work is created
 in the sexp** — `nova-work node add` (section 10's `issue create` is its issue-shaped spelling) — and a
 GitHub issue is made only when asked: **`--mirror-github`** makes the writer ask the adapter to open
-the issue, with the unit's title and description and a last line `nova-work: <unit-id>` (the
-**mirror marker**), and records the created number in the unit's `:correspondence` with `:mode
-:mirror`. **The request is recorded before the call**: the unit carries a mirror request `(:mirror
-:repo "<o>/<r>" :request <id> :state :pending)` from the moment the writer asks, and it is that
-record, not the marker, that section 2b's admission rule checks — the marker only says which unit
-the issue claims to be. **Marker and request together make the mirror idempotent both ways**: a
-retry of an uncertain create first searches the repository's newest issues for the marker (one
-conditional call) and records the found number against the pending request rather than opening a
-second issue; and the next ingest admits `:origin :mirror` only against that request or the
-recorded number, and mints nothing. A mirror action is recorded as *Public issue correspondence
+the issue, with the unit's title and description and a last line `nova-work: <unit-id>
+req=<token>` (the **mirror marker**), and records the created number in the unit's
+`:correspondence` with `:mode :mirror`. **The request is recorded before the call**: the unit
+carries a mirror request `(:mirror :repo "<o>/<r>" :request <id> :token <token> :actor <login>
+:payload-sha256 <hash> :at <utc> :state :pending)` from the moment the writer asks — the token a
+fresh 128-bit CSPRNG value per request, the actor the login the adapter's credential authenticates
+as, the hash over the exact title and body bytes about to be sent — and it is that record, not the
+marker, that section 2b's admission rule checks: the marker only says which unit the issue claims
+to be. **The create receipt confirms the request**: the number in the adapter's own `POST`
+response is recorded against the request id, and that is the normal path. **Marker and request
+together make the mirror idempotent both ways**: a retry of an uncertain create (no receipt) first
+searches the repository's newest issues (one conditional call) and records a found number against
+the pending request only for a single issue that passes all four tests of section 2b (token,
+actor, payload hash, created at or after `:at`) — never for an issue that merely carries the
+marker — rather than opening a second issue; and the next ingest admits `:origin :mirror` only
+against the recorded number or that same four-part proof, and mints nothing for the genuine issue.
+A forged marker filed during the pending window is minted as its own unit and leaves the request
+pending, so the retry still finds (or makes) the real create. A mirror action is recorded as *Public issue correspondence
 survives intake* requires — pending, confirmed or failed, with its request id and receipt — and is
 never retried blind.
 
@@ -8928,7 +8956,7 @@ written red first:
 | `sexp-is-primary-source` | a fixture sprint with one GitHub-only ref is refused at `sprint open`; task push, card cut, `set check` x/y, the fold and the table's hash run with the adapter a failing fake and print the same numbers as with it working | a refusal is missing, a number differs, or the adapter is invoked |
 | `fold-settles-a-landed-unit` | a landing receipt naming a unit yields its `:merged` evidence and its settle on the record's `main` within one cycle | the unit stays open, or evidence is written from anything but the receipt |
 | `external-close-exactly-once` | fixture external issue → unit → landing on `main` → one comment and a close; a retry after a timed-out response posts nothing; an external reopen revives the unit on the next ingest | two comments, a close from `dev`, a close before `main`, or no revive |
-| `mirror-never-duplicates` | `issue create --mirror-github` opens one issue; an uncertain create retried finds the marker; the next ingest mints nothing | two issues, or two units |
+| `mirror-never-duplicates` | `issue create --mirror-github` opens one issue and the create receipt confirms the request; an uncertain create retried finds its own issue by token, actor and payload hash; the next ingest mints nothing | two issues, or two units |
 | `issue-verbs-golden-offline` | every verb of section 10 byte-equals its golden with the adapter a failing fake, within its access path's visit count | a byte differs, the fake is invoked, or a verb visits more nodes than its path allows |
 | `index-reconstruction-agrees` | after every legal verb, R, X, READY, REV and every `w:*` key equal a full rebuild from the canonical state | any maintained value differs from the rebuild |
 | `no-verb-scans-o` | with an instrumented node-visit counter, a repository listing visits O(log n + k) nodes and `query --ask ready` visits none | a verb's visits grow with the org's size rather than its answer's |
@@ -8937,7 +8965,7 @@ written red first:
 | `index-benchmark-table` | part (ix): these **nine** rows of section 9's complexity table, by their `operation` text, at 10k, 100k and 1M generated units — *unit by id; repository by name; unit by external ref*; *a page of 50 by state and one label, assignee or kind*; *the same with a further filter (post-filter, cap 1,000 examined)* (unmeasured at rev 5: this replay is its first measurement, and it fails like any other row); *title search within a repository, two words*; *the ready set of a repository*; *a state change*; *changed-since for the table, k = 10*; *cold start of the projection*; *full rebuild from the sexp*. Not in it: *engine restart from a current snapshot*, which is part (x)'s own replay `engine-restart-from-snapshot`, and *CONTROL*, which is checked the other way round | any of the nine over its target at 100k, or growing faster than its bound across the three sizes; or the CONTROL row not slower than every one of the nine at 100k and 1M (a control that does not lose means the harness is not measuring the index) |
 | `record-never-in-nova-tools` | every ingest, verify, sample-record, fold and mirror write lands only on `mas-bandwidth/nova-work`; nova-tools' lander refuses a batch adding a record path; a `render` of a `:private` unit into any output published outside the record refuses | any record byte, private repository name or capture appears under a nova-tools path, or a private unit is rendered into a public output |
 | `engine-restart-from-snapshot` | part (x): restart from a current snapshot at 100k units | over 300 ms at 100k, or not faster than the measured 413 ms parse |
-| `mirror-marker-not-forgeable` | fixtures: (1) an external issue whose body ends `nova-work: <U>` for an existing unit U with no mirror request; (2) the same for a U whose confirmed mirror is a different number; (3) a marker naming a nonexistent unit; (4) the genuine mirror of a pending request | (1)–(3): U's correspondence changes, or the issue is not minted as its own unit, or no `INGEST MARKER-REFUSED` line; (4): a second unit minted, or the request not confirmed |
+| `mirror-marker-not-forgeable` | fixtures: (1) an external issue whose body ends `nova-work: <U>` for an existing unit U with no mirror request; (2) the same for a U whose confirmed mirror is a different number; (3) a marker naming a nonexistent unit; (4) the genuine mirror of a pending request (right token, actor and payload hash); **the pending-request race**, with U's request pending and no receipt yet: (5) a forged issue by another login ending `nova-work: <U>` with no token or a wrong token, arriving before the genuine create; (6) a forged copy of the genuine body, correct token included, filed by another login after the genuine issue is visible; (7) an uncertain-create retry whose search sees the forged issues of (5) and (6) beside the genuine one | (1)–(3), (5), (6): U's correspondence or its request (state, number, token, attempts, receipt) changes, or the issue is not minted as its own unit, or no `INGEST MARKER-REFUSED` line; (4): a second unit minted, or the request not confirmed; (7): the retry records a forged number, opens a second issue, or leaves the request unconfirmed when exactly the genuine issue passes |
 | `mirror-edit-is-repushed` | a title edit made on GitHub to a mirrored issue: the next ingest prints `INGEST DRIFT` and queues one re-push; verify before the push prints `VERIFY REPUSH` and passes; after the confirmed push verify passes with no line for it; a failed push makes verify print `DRIFT` and exit 1 | the unit adopts the GitHub text, two re-pushes are posted, verify fails on a young pending re-push, or passes on a failed one |
 | `map-poll-is-declared` | a map with the top-level `:poll`, a per-repository override, and the admitted key set validates; a map with no `:poll`, `:every-seconds 0`, an unknown unit or any unknown key is refused at exit 2; the fallback poll of the fixture repository with an override runs at its own interval | a valid map refused, an invalid one admitted, or a repository polled at the global interval despite its override |
 | `sample-line-is-its-own-kind` | `ingest sample-record` writes `SAMPLE who= seed= commit= ok=<k>/30` into the manifest's `:verify` entry for that commit and to `w:verify`; it refuses the ingest's owner, an unknown commit and `ok` outside 0–30; the lander's and the table's `SPEC` parsers never see a `SAMPLE` line | the line lands on GitHub, a `SPEC` token appears, or a refusal is missing |
