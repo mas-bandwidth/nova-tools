@@ -1,11 +1,26 @@
 #!/usr/bin/env bash
-# tools/bench-standard.sh — the one admin entry for a Linux bench.
+# tools/bench-standard.sh — the acceptance WITNESS for a Linux bench
+# (SPEC-FLEET-KUBE.md, "What bench-standard.sh stops doing"): it checks a
+# bench against the standard and prints one DRIFT line per finding.
 #
-# Checks a bench against the standard and prints one DRIFT line per finding:
+# THIS SCRIPT IS A WITNESS, NOT A PROVISIONER. It does not install packages,
+# does not create users, does not write unit files, does not arm timers, does
+# not install k3s, does not mount volumes, and does not authorize seat keys --
+# all of that is Terraform's job (SPEC-FLEET-KUBE.md "A new bench is one apply")
+# and a `DRIFT` line this script prints is the witness that the declaration and
+# the host disagreed, not a ticket for this script to repair.
+#
+# Usage:
 #
 #   tools/bench-standard.sh
 #   NOVA_GO=go1.26.5 NOVA_WANT=v1.2.3 tools/bench-standard.sh  # NOVA_GO overrides go.mod
 #   tools/bench-standard.sh --apply   # kills stray runner listeners, nothing else
+#
+# The ONE AND ONLY mutation this script performs is `--apply` killing stray
+# runner listeners: a process holding the runner's listener port that is not
+# under the runner's systemd unit. No other action is taken on any path, with
+# or without `--apply`. A script that wants to repair or provision is a
+# different script.
 #
 # Exit 0 prints "STANDARD OK ..."; exit 1 prints "STANDARD DRIFT (see lines
 # above)" after the DRIFT lines. Runner checks (1)-(2) run only on Linux.
@@ -15,7 +30,9 @@ APPLY=0
 for arg in "$@"; do
   case "$arg" in
     --apply) APPLY=1 ;;
-    -h|--help) echo "usage: bench-standard.sh [--apply]"; exit 0 ;;
+    -h|--help) echo "usage: bench-standard.sh [--apply]"
+    echo "  --apply   kills stray runner listeners (the script's only mutation); nothing more"
+    exit 0 ;;
     *) echo "DRIFT unknown argument $arg" ; echo "STANDARD DRIFT (see lines above)"; exit 1 ;;
   esac
 done
@@ -247,6 +264,29 @@ if [ -d "$seatdir" ]; then
     nkeys=$((nkeys + 1))
     seatkey="$k"
   done
+fi
+# Exactly one seat key per owner prefix (SPEC-SECRETS.md dogfooding item 6):
+# the owner is the key name before its first "-" (rowan-claude and
+# rowan-codex are both owner rowan). Two keys for one owner is a lost key
+# still trusted or an undeclared grant, named by owner. Portable to bash 3.2
+# (no associative arrays).
+if [ "$nkeys" -gt 1 ]; then
+  owners=""
+  for k in "$seatdir"/*.key; do
+    [ -e "$k" ] || continue
+    kn="$(basename "$k" .key)"
+    owners="$owners${kn%%-*}
+"
+  done
+  # Heredoc, not a pipe, so drift() counts in this shell.
+  while read -r n owner; do
+    [ -n "$owner" ] || continue
+    if [ "$n" -gt 1 ]; then
+      drift "seat owner=$owner keys=$n want=1 in $seatdir"
+    fi
+  done <<OWNERS
+$(printf '%s' "$owners" | sort | uniq -c)
+OWNERS
 fi
 if [ "$nkeys" != "1" ]; then
   drift "seat keys=$nkeys want=1 in $seatdir"

@@ -12,6 +12,32 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
+// StaleBaseRefusal is the typed stale-base decision (#2648). Error's sentence is
+// what a person reads in the log. The remedy (unstick) reads the fields. A grep
+// of the sentence is not the decision: the sentence gained `declared=` in #2598
+// and stopped matching the old unstick sed, and the branch the sentence prints
+// is not a second source of truth next to Branch.
+type StaleBaseRefusal struct {
+	Label    string
+	Branch   string
+	Files    []string
+	Declared string
+	Range    string
+	Missing  bool
+	Detail   string
+}
+
+func (e *StaleBaseRefusal) Error() string {
+	if e == nil {
+		return "stale-base"
+	}
+	if e.Missing {
+		return e.Detail
+	}
+	return fmt.Sprintf("stale-base files=%s declared=%s range=%s: %d path(s) in `git diff --name-only %s` match no declared PATHS glob (they are the files= list); rebase onto the current target before harvest",
+		field(joinOffenders(e.Files)), field(e.Declared), field(e.Range), len(e.Files), e.Range)
+}
+
 // staleBaseRefusal is harvest's pre-push check that the two-dot diff against the
 // CURRENT target contains only the card's declared PATHS (issue #2032). A branch
 // cut from an older base shows later landings as extra paths in `git diff
@@ -22,6 +48,9 @@ import (
 // OID before the diff (HOLD on #2117). The worker clone's origin/dev is not the
 // current target: it is a cached remote-tracking ref the worker can leave stale.
 // An empty destURL or target is a refusal, never a walk of local fallbacks.
+//
+// A differ or a MISSING verdict is a *StaleBaseRefusal. Its sentence is the log
+// line. Branch, Range, Files and Declared are the decision.
 func staleBaseRefusal(dir, destURL, target, head string, globs []string, declared bool) error {
 	if strings.TrimSpace(destURL) == "" {
 		return fmt.Errorf("stale-base: no authorized destination to fetch")
@@ -40,13 +69,33 @@ func staleBaseRefusal(dir, destURL, target, head string, globs []string, declare
 	// offender list to carry.
 	oid, err := pinAuthorizedTarget(dir, destURL, target)
 	if err != nil {
-		return fmt.Errorf("stale-base MISSING target=%s: the authorized destination's target could not be fetched or pinned, so no diff was walked: %s",
-			field(target), oneline.Err(err))
+		return &StaleBaseRefusal{
+			Missing: true,
+			Branch:  branchFromHead(head),
+			Detail: fmt.Sprintf("stale-base MISSING target=%s: the authorized destination's target could not be fetched or pinned, so no diff was walked: %s",
+				field(target), oneline.Err(err)),
+		}
+	}
+	return staleBaseVerdict(dir, oid, head, globs, declared)
+}
+
+// staleBaseVerdict is the walk and the verdict against an ALREADY pinned target oid: the
+// second half of staleBaseRefusal, split out so a batch harvest pins each target once per
+// pass and judges every job against that one pin (harvest --batch, #2756) instead of
+// fetching the same target from GitHub once per job.
+func staleBaseVerdict(dir, oid, head string, globs []string, declared bool) error {
+	if strings.TrimSpace(head) == "" {
+		head = "HEAD"
 	}
 	bad, rng, err := staleBaseOffenders(dir, oid, head, globs, declared)
 	if err != nil {
-		return fmt.Errorf("stale-base MISSING range=%s: the diff could not be read, so no verdict was reached: %s",
-			field(rng), oneline.Err(err))
+		return &StaleBaseRefusal{
+			Missing: true,
+			Branch:  branchFromHead(head),
+			Range:   rng,
+			Detail: fmt.Sprintf("stale-base MISSING range=%s: the diff could not be read, so no verdict was reached: %s",
+				field(rng), oneline.Err(err)),
+		}
 	}
 	if len(bad) == 0 {
 		return nil
@@ -57,8 +106,23 @@ func staleBaseRefusal(dir, destURL, target, head string, globs []string, declare
 	// understood the declaration to be. `declared=` is the globs as parsed, so a
 	// PATHS line the parser read as one unsplit glob is visible in the refusal
 	// itself rather than after an hour of detective work.
-	return fmt.Errorf("stale-base files=%s declared=%s range=%s: %d path(s) in `git diff --name-only %s` match no declared PATHS glob (they are the files= list); rebase onto the current target before harvest",
-		field(joinOffenders(bad)), field(declaredSummary(globs, declared)), field(rng), len(bad), rng)
+	// The sentence is that print. Branch is the typed field unstick reads (#2648),
+	// taken from the head ref, not parsed back out of the sentence.
+	return &StaleBaseRefusal{
+		Branch:   branchFromHead(head),
+		Files:    bad,
+		Declared: declaredSummary(globs, declared),
+		Range:    rng,
+	}
+}
+
+func branchFromHead(head string) string {
+	head = strings.TrimSpace(head)
+	const p = "refs/harvest/"
+	if strings.HasPrefix(head, p) {
+		return strings.TrimPrefix(head, p)
+	}
+	return head
 }
 
 // declaredSummary is what the walk judged against, for the refusal line. An

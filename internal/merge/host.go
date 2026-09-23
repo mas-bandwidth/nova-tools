@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Work list 5: the host, and the one sentence that governs everything it returns --
@@ -38,6 +40,12 @@ type Checks struct {
 	RedNames     []string
 	Details      []CheckDetail
 	PendingNames []string
+	// Source is where the evidence came from: CIFromRedis (the verdict
+	// record), CIFromGitHub (check-runs, because the record said nothing), or
+	// "" for a host that does not say. SourceWhy is the record's state when
+	// the forge answered.
+	Source    string
+	SourceWhy string
 }
 
 // Bucket classifies one check's state the way the merge condition counts it.
@@ -94,7 +102,7 @@ func (c *Checks) AddRun(name, state, sha string) {
 // stale sha cannot make a head with a run in progress red (nova-tools #1014).
 func (c Checks) ForSHA(oid string) Checks {
 	oid = strings.TrimSpace(oid)
-	var out Checks
+	out := Checks{Source: c.Source, SourceWhy: c.SourceWhy}
 	for _, d := range c.Details {
 		if d.SHA == "" || oid == "" || d.SHA == oid {
 			out.AddRun(d.Name, d.Conclusion, d.SHA)
@@ -230,14 +238,35 @@ type GH struct {
 	Repo    string
 	Timeout time.Duration
 	Runner  Runner
+	// CI is the injectable CI verdict source GH.Checks reads. NewGH sets it to
+	// RedisFromEnv (ci:<owner/repo>:<sha>); WithCISource overrides it. It is
+	// never GitHub's check-runs.
+	CI CISource
 }
 
-// NewGH returns a host that shells to gh against one repository.
-func NewGH(repo string, timeout time.Duration, runner Runner) *GH {
+// NewGH returns a host that shells to gh against one repository. The trailing
+// GHOption values are optional, so every existing NewGH(repo, timeout, runner)
+// call keeps compiling.
+func NewGH(repo string, timeout time.Duration, runner Runner, opts ...GHOption) *GH {
 	if runner == nil {
 		runner = Exec{}
 	}
-	return &GH{Repo: repo, Timeout: timeout, Runner: runner}
+	h := &GH{Repo: repo, Timeout: timeout, Runner: runner, CI: RedisFromEnv()}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
+}
+
+// GHOption configures a GH after NewGH has built it.
+type GHOption func(*GH)
+
+// WithCISource injects the CI verdict source GH.Checks reads, in place of the
+// Redis source RedisFromEnv builds. It is how a test proves no check-run is read.
+func WithCISource(src CISource) GHOption {
+	return func(h *GH) { h.CI = src }
 }
 
 func (h *GH) gh(args ...string) (string, error) {
@@ -375,8 +404,40 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's check runs and buckets them.
+// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<sha>
+// (the injectable source) answers first; when it says nothing -- absent, no
+// verdict, or unreadable -- the commit's GitHub check-runs answer, and the
+// result's Source is "from-github". A missing record is not a verdict.
+// ErrCIMissing is returned only when both say nothing.
 func (h *GH) Checks(oid string) (Checks, error) {
+	oid = strings.TrimSpace(oid)
+	why := "no ci source"
+	if h.CI != nil {
+		value, ok, err := h.CI.Read(h.Repo, oid)
+		switch {
+		case err != nil:
+			why = CIKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
+		case ok:
+			c := Checks{Source: CIFromRedis}
+			c.AddRun("ci", ciState(value), oid)
+			return c, nil
+		default:
+			why = CIKey(h.Repo, oid) + " absent"
+		}
+	}
+	c, err := h.checkRuns(oid)
+	if err != nil {
+		return Checks{}, fmt.Errorf("ci: %s, and the github check-runs could not be read: %w", why, err)
+	}
+	if c.Total() == 0 {
+		return Checks{}, fmt.Errorf("%w (%s, and github has no check-runs at %s)", ErrCIMissing, why, oid)
+	}
+	c.Source, c.SourceWhy = CIFromGitHub, why
+	return c, nil
+}
+
+// checkRuns reads a commit's GitHub check-runs and buckets them.
+func (h *GH) checkRuns(oid string) (Checks, error) {
 	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
 		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
 	if err != nil {
