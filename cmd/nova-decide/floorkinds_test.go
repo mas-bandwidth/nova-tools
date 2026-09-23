@@ -172,10 +172,10 @@ func TestTuneProposesAndWritesTheFloors(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "decide.jsonl")
 	if err := os.WriteFile(log, []byte(strings.Join([]string{
-		`{"unit":"a","kind":"new-verb","source":"jev","confidence":0.71,"rung_tried":"emma"}`,
-		`{"unit":"b","kind":"new-verb","source":"jev","confidence":0.75,"rung_tried":"emma"}`,
-		`{"unit":"c","kind":"new-verb","source":"jev","confidence":0.80,"rung_tried":"emma"}`,
-		`{"unit":"d","kind":"new-verb","source":"jev","confidence":0.83,"rung_tried":"emma"}`,
+		`{"unit":"a","kind":"new-verb","source":"jev","confidence":0.71,"rung_tried":"emma","outcome":"ok"}`,
+		`{"unit":"b","kind":"new-verb","source":"jev","confidence":0.75,"rung_tried":"emma","outcome":"ok"}`,
+		`{"unit":"c","kind":"new-verb","source":"jev","confidence":0.80,"rung_tried":"emma","outcome":"ok"}`,
+		`{"unit":"d","kind":"new-verb","source":"jev","confidence":0.83,"rung_tried":"emma","outcome":"ok"}`,
 	}, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -219,8 +219,8 @@ func TestTuneRefusesAFloorAboveTheObservedMax(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "decide.jsonl")
 	if err := os.WriteFile(log, []byte(strings.Join([]string{
-		`{"unit":"a","kind":"new-verb","source":"jev","confidence":0.71,"rung_tried":"emma"}`,
-		`{"unit":"b","kind":"new-verb","source":"jev","confidence":0.78,"rung_tried":"emma"}`,
+		`{"unit":"a","kind":"new-verb","source":"jev","confidence":0.71,"rung_tried":"emma","outcome":"ok"}`,
+		`{"unit":"b","kind":"new-verb","source":"jev","confidence":0.78,"rung_tried":"emma","outcome":"ok"}`,
 	}, "\n")+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}

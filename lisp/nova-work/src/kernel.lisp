@@ -21,7 +21,12 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet routes allocations
+  state journal next-rev
+  ;; The CONFIG/ACTIVE registries are NOT kernel slots: they live on the state
+  ;; (src/state.lisp) so a `replay-journal` reconstruction of them is visible
+  ;; through the same readers after a restart (nova-tools#1695), and the
+  ;; kernel reads them through KERNEL-FLEET, KERNEL-ROUTES and
+  ;; KERNEL-ALLOCATIONS below.
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -38,7 +43,26 @@
   ;; The operator-configured verifiers, one per recipient identity. CONFIG the
   ;; session holds beside the fleet and the routes; a receipt is admitted only
   ;; after one of them vouches (SPEC-WORK.md:3859, src/receipt-admission.lisp).
-  verifiers)
+  verifiers
+  ;; The counter that names a CONFIG/ACTIVE request the caller did not name:
+  ;; request ids are the caller's (SPEC-WORK.md:315), and an unnamed one is
+  ;; still unique per run so two of them never collide as a reuse.
+  (config-seq 0))
+
+(defun kernel-fleet (kernel)
+  "The fleet section of CONFIG. It lives on the kernel's state, so the half a
+`replay-journal` reconstruction rebuilt is the half this reads
+(nova-tools#1695)."
+  (wstate-fleet (kernel-state kernel)))
+
+(defun kernel-routes (kernel)
+  "The model routes of CONFIG, held beside the fleet (SPEC-WORK.md:2289)."
+  (wstate-routes (kernel-state kernel)))
+
+(defun kernel-allocations (kernel)
+  "The fleet's ACTIVE half: the one allocator per physical machine and the
+allocations and observations it holds (SPEC-WORK.md:3592-3731)."
+  (wstate-allocations (kernel-state kernel)))
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -62,19 +86,13 @@ below the state's revision is refused rather than silently reissued."
       (error 'unsupported-input
              :what (format nil "rev-base ~D is at or below the state's own revision ~D"
                            rev-base (state-revision state))))
+    ;; The CONFIG/ACTIVE registries come with the state (src/state.lisp); all
+    ;; make-kernel adds is the team's own `friends` list, the one CONFIG the
+    ;; session is opened with (SPEC-WORK.md:3459).
+    (setf (fleet-friends (wstate-fleet state)) (copy-list friends))
     (let ((k (%make-kernel :state state
                            :journal (or journal (make-ordering-journal))
                            :next-rev (or rev-base (1+ (state-revision state)))
-                           ;; The fleet is CONFIG supplied to the session, never a
-                           ;; constant in the tool; see src/fleet.lisp.
-                           :fleet (make-fleet :friends friends)
-                           ;; The model route registry is CONFIG supplied/held by
-                           ;; the session beside the fleet; see src/routes.lisp.
-                           :routes (make-route-registry)
-                           ;; The fleet's ACTIVE half: one authoritative allocator
-                           ;; per physical machine and the allocations it holds,
-                           ;; never CONFIG; see src/fleet.lisp.
-                           :allocations (make-fleet-registry)
                            :controls (make-ctl)
                            ;; The operator-configured verifiers a receipt needs
                            ;; (SPEC-WORK.md:3859); see receipt-admission.lisp.
@@ -368,28 +386,20 @@ command loop is a defect)."
     ;; reference edge. See dep-verb.lisp.
     (:dep (return-from %submit (%dep-submit kernel request))))
   (let ((verb (getf request :verb)))
-    ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
-    ;; not a work-tree transition: it shares `submit`'s answer shape but never
-    ;; touches the root, its counters or its history.
-    (when (eq verb :machine)
-      (return-from %submit (machine-submit kernel request)))
-    ;; The one verb that configures the model routes (SPEC-WORK.md:2289, *Model
-    ;; routes*) is CONFIG too: it writes a `:kind :route` member beside the
-    ;; fleet and never touches the root, its counters or its history.
-    (when (eq verb :route)
-      (return-from %submit (route-submit kernel request)))
-    ;; The fleet's ACTIVE half (SPEC-WORK.md:3592-3731): `take`, `heartbeat`,
-    ;; `release` and `probe` are verbs over the one allocator per machine. They
-    ;; write ACTIVE allocation records and observations, never CONFIG members
-    ;; and never the work tree.
-    (when (eq verb :take)
-      (return-from %submit (fleet-take-submit kernel request)))
-    (when (eq verb :heartbeat)
-      (return-from %submit (fleet-heartbeat-submit kernel request)))
-    (when (eq verb :release)
-      (return-from %submit (fleet-release-submit kernel request)))
-    (when (eq verb :probe)
-      (return-from %submit (fleet-probe-submit kernel request)))
+    ;; THE SIX CONFIG/ACTIVE VERBS (nova-tools#1695): the one verb that
+    ;; configures the fleet (SPEC-WORK.md:3541), the one verb that configures
+    ;; the model routes (SPEC-WORK.md:2289), and the fleet's ACTIVE half,
+    ;; `take`, `heartbeat`, `release` and `probe` (SPEC-WORK.md:3592-3731).
+    ;; They share `submit`'s answer shape, they are CONFIG and ACTIVE and
+    ;; never work -- no root, counter, roadmap or required set moves -- but
+    ;; they are MUTATIONS of the one writer all the same, and they go through
+    ;; the journal's dedup, acceptance and record like every other: on dev
+    ;; they returned here before all three, so nothing they wrote survived a
+    ;; restart and a retry was answered by a mutable precondition (`connect
+    ;; held by m1`) instead of the recorded disposition SPEC-WORK.md:315
+    ;; promises. See %submit-config.
+    (when (member verb '(:machine :route :take :heartbeat :release :probe))
+      (return-from %submit (%submit-config kernel request)))
     ;; The savepoint capture (SPEC-WORK.md:7161): a READ on the command thread.
     ;; It writes no event, appends nothing and moves no revision; it exists so
     ;; the image and the cut are taken at one revision under the single writer.
@@ -496,6 +506,206 @@ command loop is a defect)."
                   (list :verb verb :node (work-event-node requester)
                         :before-state before-state :request request))
             (values t line 0 envelope)))))))
+
+;;; ------------------------------------------------------------------
+;;; The six CONFIG/ACTIVE verbs on the journal (nova-tools#1695)
+;;; ------------------------------------------------------------------
+;;;
+;;; `machine`, `route`, `take`, `heartbeat`, `release` and `probe` used to
+;;; answer from six branches that returned before the dedup lookup, before
+;;; `journal-accept` and before `journal-record`, so nothing they mutated
+;;; reached the journal: nothing survived a restart, and a retry of the same
+;;; request id was answered by a mutable precondition -- `connect held by m1`
+;;; -- instead of the recorded disposition SPEC-WORK.md:315 promises. They run
+;;; through the same three doors as every other mutation now. The dedup is
+;;; asked FIRST, on the stable payload the event carries, before any mutable
+;;; precondition can be reached; acceptance is asked before the verb runs so a
+;;; journal that cannot record refuses before anything mutates; the record is
+;;; written once the verb answered OK, before the OK line leaves the writer.
+;;; The verbs' own bodies (src/fleet.lisp, src/routes.lisp) validate whole
+;;; before their first write, so a refusal mutates nothing and records
+;;; nothing. Their events are of kinds of their own field lists
+;;; (src/state.lisp), and the replay half that rebuilds the CONFIG and
+;;; ACTIVE halves from them lives with `apply-event` there.
+
+(defun %config-verb-word (verb)
+  "The leading word each of the six verbs prints, used by the journal-level
+refusals the verbs share with the work path's shape."
+  (ecase verb
+    (:machine "MACHINE")
+    (:route "ROUTE")
+    ((:take :heartbeat :release) "ALLOC")
+    (:probe "PROBE")))
+
+(defun %config-verb-kind (verb)
+  "The event kind each of the six verbs writes. :machine and :route are
+CONFIG members; :allocation and :probe are the ACTIVE half's records and
+observations."
+  (ecase verb
+    (:machine :machine)
+    (:route :route)
+    ((:take :heartbeat :release) :allocation)
+    (:probe :probe)))
+
+(defun %config-request-field (request field)
+  "The request's value for one event field. A boolean given as T is written
+:TRUE, the restricted-data boolean's own spelling (src/value.lisp), because T
+is not a value the journal's printer can write; every other value passes as
+given, and a field the caller did not give is `(:absent)`."
+  (let ((value (getf request field +absent+)))
+    (if (eq value t) :true value)))
+
+(defun %config-event (kernel request verb)
+  "One event of the verb's own kind, built from the request BEFORE anything is
+asked of the journal or mutated, so the two-part retry of SPEC-WORK.md:315
+reads a stable payload and not a mutable precondition. Its :rev is the state's
+current revision, so neither the live path nor a replay moves the work
+revision a CONFIG or ACTIVE event was never allowed to move. The request id is
+the caller's; an unnamed one is numbered per run so two of them never collide
+as a reuse."
+  (make-work-event
+   :kind (%config-verb-kind verb)
+   :node +absent+
+   :by (or (getf request :by) "rowan")
+   :fields (let ((fields (loop for field in (kind-fields (%config-verb-kind verb))
+                               append (list field
+                                            (%config-request-field request field)))))
+             ;; `take`, `heartbeat` and `release` are three verbs of the one
+             ;; :allocation kind: the change each performed is the verb itself,
+             ;; which no request carries as a field, so the event says it.
+             (when (member verb '(:take :heartbeat :release))
+               (setf (getf fields :change) verb))
+             fields)
+   :stamp (getf request :stamp)
+   :clock (getf request :clock)
+   :request (or (getf request :request)
+                (format nil "~A-~D" (%config-verb-word verb)
+                        (incf (kernel-config-seq kernel))))
+   :generation-owner (getf request :generation-owner)
+   :rev (state-revision (kernel-state kernel))
+   :session-written-p nil))
+
+(defun %submit-config (kernel request)
+  "One of the six CONFIG/ACTIVE verbs through the journal's dedup, acceptance
+and record (nova-tools#1695). Answers the verb's own values on every path, so
+the verb's contract with its callers is unchanged."
+  (let* ((verb (getf request :verb))
+         (word (%config-verb-word verb))
+         (event (%config-event kernel request verb))
+         (rid (work-event-request event))
+         (digest (payload-digest (list event)))
+         (journal (kernel-journal kernel)))
+    ;; The two-part dedup test (SPEC-WORK.md:315), asked of the journal before
+    ;; the verb runs, so no mutable precondition can answer a retry.
+    (multiple-value-bind (found recorded-digest recorded-line)
+        (journal-lookup journal rid)
+      (cond
+        ((eq found :unavailable)
+         (return-from %submit-config
+           (values nil (format nil "~A FAIL request=~A page=~A: dedup unavailable"
+                               word rid recorded-digest)
+                   1 nil)))
+        (found
+         (if (string= digest recorded-digest)
+             (return-from %submit-config
+               (values t recorded-line 0
+                       (list :request rid :digest digest :events '() :replayed t)))
+             (return-from %submit-config
+               (values nil (format nil "~A FAIL request=~A: reused with a different payload"
+                                   word rid)
+                       1 nil))))))
+    ;; Acceptance before anything mutates: a journal that cannot record this
+    ;; envelope refuses here, and the verb is never reached.
+    (multiple-value-bind (accepted refusal)
+        (journal-accept journal
+                         (list :request rid :digest digest :events (list event)))
+      (unless accepted
+        (return-from %submit-config
+          (values nil (format nil "~A FAIL request=~A: journal refused acceptance: ~A"
+                              word rid refusal)
+                  1 nil))))
+    ;; The verb runs on a STAGED copy of the three CONFIG/ACTIVE registries
+    ;; and the staged state is installed only once the record is durable
+    ;; (SPEC-WORK.md:307, the record-then-apply order the work path keeps
+    ;; above). The OK line the journal records is the verb's own answer, so
+    ;; the record cannot precede the verb; staging keeps the live state
+    ;; untouched until it has. A record that fails -- an append or a sync
+    ;; error -- or a verb that refuses or signals unwinds to the live state
+    ;; exactly as it was: no CONFIG member or ACTIVE allocation is ever live
+    ;; without its journaled event (#2880 HOLD).
+    (let ((live (kernel-state kernel))
+          (committed nil))
+      (unwind-protect
+           (progn
+             (setf (kernel-state kernel) (%stage-config-state live))
+             (multiple-value-bind (ok line code verb-event)
+                 (ecase verb
+                   (:machine (machine-submit kernel request))
+                   (:route (route-submit kernel request))
+                   (:take (fleet-take-submit kernel request))
+                   (:heartbeat (fleet-heartbeat-submit kernel request))
+                   (:release (fleet-release-submit kernel request))
+                   (:probe (fleet-probe-submit kernel request)))
+               (cond
+                 (ok
+                  ;; Durable first; only then does the staged state become
+                  ;; the live one and the OK line leave the writer.
+                  (journal-record journal rid digest line (work-event-rev event))
+                  (setf committed t)
+                  (values t line 0 verb-event))
+                 (t
+                  ;; Refused: the staged copy is dropped, the acceptance the
+                  ;; journal holds is dropped rather than recorded, and the
+                  ;; journal stays as it was.
+                  (when (typep journal 'file-journal)
+                    (setf (journal-pending-envelope journal) nil))
+                  (values nil line code nil)))))
+        (unless committed
+          (setf (kernel-state kernel) live))))))
+
+(defun %stage-copy (object seen)
+  "A deep copy of OBJECT for staging a CONFIG/ACTIVE verb: conses, hash tables
+and structure instances are copied, and everything else -- strings, numbers,
+symbols -- is shared, since no verb mutates one in place. SEEN maps each
+already-copied hash table and structure to its copy, so an object reached by
+two paths (an allocation record named from two places) stays one object in
+the copy."
+  (typecase object
+    (cons
+     (cons (%stage-copy (car object) seen)
+           (%stage-copy (cdr object) seen)))
+    (hash-table
+     (or (gethash object seen)
+         (let ((copy (make-hash-table :test (hash-table-test object)
+                                      :size (max 1 (hash-table-count object)))))
+           (setf (gethash object seen) copy)
+           (maphash (lambda (key value)
+                      (setf (gethash key copy) (%stage-copy value seen)))
+                    object)
+           copy)))
+    (structure-object
+     (or (gethash object seen)
+         (let ((copy (copy-structure object)))
+           (setf (gethash object seen) copy)
+           (dolist (slot (sb-mop:class-slots (class-of object)))
+             (let ((name (sb-mop:slot-definition-name slot)))
+               (setf (slot-value copy name)
+                     (%stage-copy (slot-value object name) seen))))
+           copy)))
+    (t object)))
+
+(defun %stage-config-state (state)
+  "A candidate state for one CONFIG/ACTIVE verb (#2880 HOLD): STATE's own
+work tree, carried as it is (no such verb touches it), beside deep copies of
+the fleet, the routes and the allocations, which are all the six verbs write.
+The verb mutates the copies; %submit-config installs the candidate only after
+the verb's record is durable, and otherwise keeps STATE, untouched."
+  (let ((staged (copy-wstate state))
+        (seen (make-hash-table :test #'eq)))
+    (setf (wstate-fleet staged) (%stage-copy (wstate-fleet state) seen)
+          (wstate-routes staged) (%stage-copy (wstate-routes state) seen)
+          (wstate-allocations staged) (%stage-copy (wstate-allocations state) seen))
+    staged))
 
 ;;; The counters, read.
 

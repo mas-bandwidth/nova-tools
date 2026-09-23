@@ -230,6 +230,12 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	reason := f.fs.String("reason", "", "")
 	untypedComments := f.fs.String("untyped-comments", "", "")
 	lane := f.fs.String("lane", "", "")
+	// --sibling <name>=<url>@<ref> is repeatable. Schema's tests resolve
+	// serialize runtimes as siblings of the checkout; this verb rebuilds
+	// --root/<name> every run, so those clones have to be staged again beside
+	// repo/ (nova-tools #2499 item 2).
+	var siblingRaw siblingFlags
+	f.fs.Var(&siblingRaw, "sibling", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -292,6 +298,10 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	} else if err := validCheckName(resolvedCheck); err != nil && resolvedCheck != "" {
 		f.problem(fmt.Sprintf("--check-name: %s", oneline.Escape(err.Error())))
 	}
+	siblings, siblingErrs := parseSiblings(siblingRaw)
+	for _, e := range siblingErrs {
+		f.problem(e)
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -314,6 +324,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		reason:          strings.TrimSpace(*reason),
 		untypedComments: strings.TrimSpace(*untypedComments),
 		lane:            strings.TrimSpace(*lane),
+		siblings:        siblings,
 	}, stdout, stderr, deps)
 }
 
@@ -344,6 +355,92 @@ type batchRun struct {
 	holdsCount      int
 	dispositions    string
 	reviewersSHA    string
+	siblings        []siblingSpec
+}
+
+// siblingFlags is a repeatable --sibling <name>=<url>@<ref>.
+type siblingFlags []string
+
+func (s *siblingFlags) String() string { return strings.Join(*s, ",") }
+
+func (s *siblingFlags) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// siblingSpec is one staged neighbour of the job clone: dest name under
+// --root/<batch>/, the git URL, and the branch or tag to check out.
+type siblingSpec struct {
+	Name string
+	URL  string
+	Ref  string
+}
+
+func parseSiblings(raw siblingFlags) ([]siblingSpec, []string) {
+	var out []siblingSpec
+	var errs []string
+	seen := map[string]bool{}
+	for _, v := range raw {
+		s, err := parseSibling(v)
+		if err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		if seen[s.Name] {
+			errs = append(errs, fmt.Sprintf("--sibling name %q is named more than once", s.Name))
+			continue
+		}
+		seen[s.Name] = true
+		out = append(out, s)
+	}
+	return out, errs
+}
+
+func parseSibling(v string) (siblingSpec, error) {
+	v = strings.TrimSpace(v)
+	name, rest, ok := strings.Cut(v, "=")
+	if !ok || name == "" || rest == "" {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q", v)
+	}
+	if !safepath.NameOK(name) {
+		return siblingSpec{}, fmt.Errorf("--sibling name is one path element of letters, digits, dot, dash and underscore, and never begins with a dash, got %q", name)
+	}
+	if name == "repo" || name == "tmp" {
+		return siblingSpec{}, fmt.Errorf("--sibling name %q is reserved for the batch's own checkout", name)
+	}
+	at := strings.LastIndex(rest, "@")
+	if at <= 0 || at == len(rest)-1 {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q", v)
+	}
+	url, ref := rest[:at], rest[at+1:]
+	// An ssh URL already holds user@host; forgetting @<ref> parses as url=git.
+	if url == "git" && strings.HasPrefix(rest, "git@") {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q (the last @ is the ref; an ssh URL is git@host:path.git@<ref>)", v)
+	}
+	if strings.TrimSpace(url) == "" || strings.TrimSpace(ref) == "" {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q", v)
+	}
+	if err := merge.ValidRefName(ref); err != nil {
+		return siblingSpec{}, fmt.Errorf("--sibling ref: %s", oneline.Escape(err.Error()))
+	}
+	return siblingSpec{Name: name, URL: url, Ref: ref}, nil
+}
+
+func cloneSiblings(work string, siblings []siblingSpec, timeout time.Duration, runner merge.Runner, stderr io.Writer, start time.Time) error {
+	if len(siblings) == 0 {
+		return nil
+	}
+	g := merge.NewGit(work, timeout, runner)
+	for _, s := range siblings {
+		dest := filepath.Join(work, s.Name)
+		fmt.Fprintf(stderr, "BATCH SIBLING name=%s ref=%s t=%.1fs\n",
+			oneline.Field(s.Name), oneline.Field(s.Ref), since(start))
+		args := []string{"clone", "--quiet", "--depth", "1", "--branch", s.Ref, "--", s.URL, dest}
+		if _, err := g.Run(args...); err != nil {
+			return fmt.Errorf("could not clone sibling %s at %s: %w", s.Name, s.Ref, err)
+		}
+	}
+	return nil
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
@@ -377,6 +474,9 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	// `--` before the URL, so a URL beginning with a dash is a URL and not an option.
 	cloneArgs = append(cloneArgs, "--", deps.RepoURL(in.repo), clone)
 	if _, err := merge.NewGit(work, in.timeout, deps.Runner).Run(cloneArgs...); err != nil {
+		return batchRefused(stderr, err)
+	}
+	if err := cloneSiblings(work, in.siblings, in.timeout, deps.Runner, stderr, start); err != nil {
 		return batchRefused(stderr, err)
 	}
 	g := merge.NewGit(clone, in.timeout, deps.Runner)
