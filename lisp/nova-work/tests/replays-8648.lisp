@@ -1,7 +1,7 @@
-;;;; replays-8648.lisp --- six acceptance replays named by docs/SPEC-WORK.md.
+;;;; replays-8648.lisp --- seven acceptance replays named by docs/SPEC-WORK.md.
 ;;;;
 ;;;; Each deftest names the paragraph(s) it comes from and drives the pure
-;;;; model the kernel exposes for it. The six:
+;;;; model the kernel exposes for it. The seven:
 ;;;;
 ;;;;   regression-opens-repair-work                     :4943-4951,5782-5785
 ;;;;   reply-retired-only-under-verified-coverage       :6020-6024,6316-6325
@@ -9,6 +9,7 @@
 ;;;;   reuse-only-valid-review                          :4851
 ;;;;   review-cycles-stay-visible                       :6368-6370
 ;;;;   TestE11F04PartialChildNeverClosesParent          :4655,4312
+;;;;   TestE07F04IncludeOrdinaryDeliveredCapabilitiesBesideReplay :7782
 
 (in-package #:nova-work/tests)
 
@@ -355,7 +356,7 @@
                  "the issue mapping itself survives the child's refusal unchanged")))
 
 ;;; ------------------------------------------------------------------
-;;; ordinary-delivered-capabilities-beside-versioning  SPEC-WORK.md:7782
+;;; ordinary-delivered-capabilities-beside-versioning-replay  SPEC-WORK.md:7782
 ;;; ------------------------------------------------------------------
 ;;;
 ;;; E07-F04-02 (ROADMAP.md:757). docs/SPEC-WORK.md:7782 -- "For Schema,
@@ -365,8 +366,13 @@
 ;;; delivered capability rows; the renderer must keep an ordinary delivered
 ;;; capability row beside a versioning row in the one table, in its declared
 ;;; order, dropping or segregating neither class.
+;;;
+;;; This is a replay witness distinct from the pre-existing acceptance test of
+;;; the same criterion in tests/acceptance/slice-03-containers.lisp:685
+;;; (landed on dev via #2060); the name here carries a Replay suffix so the
+;;; two register and count separately instead of colliding under one name.
 
-(deftest "TestE07F04IncludeOrdinaryDeliveredCapabilitiesBeside" "docs/SPEC-WORK.md:7782"
+(deftest "TestE07F04IncludeOrdinaryDeliveredCapabilitiesBesideReplay" "docs/SPEC-WORK.md:7782"
     "expected=ordinary-capability-rows-rendered-beside-versioning-rows;none-dropped;order-preserved"
   (let* ((rows (list (make-roadmap-row :id "schema/fixed-tables/versioning/cpp"
                                        :axis :versioning :kind :required
