@@ -29,8 +29,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -85,6 +87,21 @@ type PRView struct {
 	// request when its checks go green. It is not an enqueue and it is not ours: the sweep
 	// reads it as a hold, and `nova-merge queue audit` takes it off.
 	AutoMerge bool
+
+	// The bounded, public features the ordering decision reads (#896). A source
+	// that cannot answer one leaves it zero; the question still holds.
+	ChangedFiles int
+	Additions    int
+	Deletions    int
+	Packages     []string
+	RedRuns      int     // red head runs in the last day
+	AgeHours     float64 // how long the PR has been open
+	GroupFailed  bool    // a group this PR joined failed before
+	// HistoryKnown says RedRuns and GroupFailed were observed. GHSource does not
+	// observe them (gh pr view names neither), so it leaves this false and the
+	// ordering question says unknown rather than sending a default zero/false
+	// as if it were history.
+	HistoryKnown bool
 }
 
 // PRSource answers what a pull request looks like right now. The real one runs gh; a test
@@ -104,6 +121,8 @@ type SweepInput struct {
 	Queue    string
 	Source   PRSource
 	Enqueuer Enqueuer
+	Scorer   Scorer  // nil leaves the enqueue order exactly as it was
+	Floor    float64 // the ordering score's floor in [0,1]; 0 is honored (every answer stands); negative or NaN is DefaultOrderFloor
 	Now      func() time.Time
 	Stdout   io.Writer
 	Stderr   io.Writer
@@ -139,6 +158,7 @@ func Sweep(in SweepInput) int {
 
 	var enqueued, stale, closed, held, pending, red, unread int
 	var marks []LedgerRow
+	var batch []orderCandidate
 	open := OpenRows(rows)
 	for _, row := range open {
 		view, err := in.Source.View(in.Repo, row.PR)
@@ -182,13 +202,36 @@ func Sweep(in SweepInput) int {
 			case "red":
 				red++
 			default:
-				if err := in.Enqueuer.Enqueue(in.Repo, row.PR); err != nil {
-					unread++
-					continue
-				}
-				enqueued++
-				marks = append(marks, mark(row, stamp, row.ClosedAt, row.Verdict))
+				batch = append(batch, orderCandidate{row: row, view: view})
 			}
+		}
+	}
+
+	// #896: order the whole batch once, then enqueue. With no Scorer the batch
+	// keeps the sweep's existing order, so the fallback path is untouched.
+	if in.Scorer != nil && len(batch) > 0 {
+		batch = scoreBatch(batch, in.Scorer, orderFloor(in.Floor), in.Stdout)
+	}
+	for i := range batch {
+		c := &batch[i]
+		if err := in.Enqueuer.Enqueue(in.Repo, c.row.PR); err != nil {
+			c.outcome = "enqueue-failed"
+			unread++
+			continue
+		}
+		c.outcome = "enqueued"
+		enqueued++
+		marks = append(marks, mark(c.row, stamp, c.row.ClosedAt, c.row.Verdict))
+	}
+	// Every scored decision is kept with its outcome and the usage the provider
+	// reported: one durable row per attempted call, beside the ledger. Recorded
+	// BEFORE the ledger append, so a provider call already made is never lost if
+	// the ledger write then fails (Stella's second hold on #1150: AppendLedger
+	// used to gate this behind its own early return).
+	if in.Scorer != nil {
+		if err := AppendOrderRecords(in.Queue, stamp, batch); err != nil {
+			fmt.Fprintf(in.Stderr, "SWEEP REFUSED: %s (fix %s under %s, then sweep again)\n", oneline.Err(err), orderFileName, oneline.Field(in.Queue))
+			return 2
 		}
 	}
 
@@ -370,13 +413,23 @@ func orDash(s string) string {
 // sweep makes per open approval.
 type GHSource struct{ Timeout time.Duration }
 
+// ghFile is one changed file gh names, from which the packages touched are folded.
+type ghFile struct {
+	Path string `json:"path"`
+}
+
 // ghPRView is the JSON gh answers; the rollup carries both check runs and status contexts.
 type ghPRView struct {
-	State      string `json:"state"`
-	IsDraft    bool   `json:"isDraft"`
-	HeadRefOid string `json:"headRefOid"`
-	Title      string `json:"title"`
-	Labels     []struct {
+	State        string   `json:"state"`
+	IsDraft      bool     `json:"isDraft"`
+	HeadRefOid   string   `json:"headRefOid"`
+	Title        string   `json:"title"`
+	ChangedFiles int      `json:"changedFiles"`
+	Additions    int      `json:"additions"`
+	Deletions    int      `json:"deletions"`
+	CreatedAt    string   `json:"createdAt"`
+	Files        []ghFile `json:"files"`
+	Labels       []struct {
 		Name string `json:"name"`
 	} `json:"labels"`
 	StatusCheckRollup []struct {
@@ -391,6 +444,28 @@ type ghPRView struct {
 	} `json:"autoMergeRequest"`
 }
 
+// packagesOf folds a PR's changed files into the bounded, sorted set of package
+// directories it touches, so the ordering question names packages, not paths.
+func packagesOf(files []ghFile) []string {
+	seen := map[string]bool{}
+	for _, f := range files {
+		d := path.Dir(strings.TrimSpace(f.Path))
+		if d == "" || d == "/" || d == "." {
+			continue
+		}
+		seen[d] = true
+	}
+	out := make([]string, 0, len(seen))
+	for d := range seen {
+		out = append(out, d)
+	}
+	sort.Strings(out)
+	if len(out) > 10 {
+		out = out[:10]
+	}
+	return out
+}
+
 func (g GHSource) View(repo string, pr int) (PRView, error) {
 	timeout := g.Timeout
 	if timeout <= 0 {
@@ -399,7 +474,7 @@ func (g GHSource) View(repo string, pr int) (PRView, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, "gh", "pr", "view", strconv.Itoa(pr), "-R", repo,
-		"--json", "state,isDraft,headRefOid,labels,title,statusCheckRollup,autoMergeRequest").Output()
+		"--json", "state,isDraft,headRefOid,labels,title,statusCheckRollup,autoMergeRequest,changedFiles,additions,deletions,files,createdAt").Output()
 	if err != nil {
 		return PRView{}, fmt.Errorf("gh pr view %d: %w", pr, err)
 	}
@@ -407,7 +482,12 @@ func (g GHSource) View(repo string, pr int) (PRView, error) {
 	if err := json.Unmarshal(out, &v); err != nil {
 		return PRView{}, fmt.Errorf("gh pr view %d did not answer JSON: %w", pr, err)
 	}
-	view := PRView{Number: pr, State: v.State, IsDraft: v.IsDraft, Head: v.HeadRefOid, Title: v.Title, AutoMerge: v.AutoMergeRequest != nil}
+	view := PRView{Number: pr, State: v.State, IsDraft: v.IsDraft, Head: v.HeadRefOid, Title: v.Title, AutoMerge: v.AutoMergeRequest != nil,
+		ChangedFiles: v.ChangedFiles, Additions: v.Additions, Deletions: v.Deletions,
+		Packages: packagesOf(v.Files)}
+	if at, err := time.Parse(time.RFC3339, v.CreatedAt); err == nil {
+		view.AgeHours = time.Since(at).Hours()
+	}
 	for _, l := range v.Labels {
 		view.Labels = append(view.Labels, l.Name)
 	}
