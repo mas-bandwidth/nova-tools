@@ -87,6 +87,13 @@ func main() {
 	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
+	// FAKE-DROP-CAPTURE unlinks the harness log the parent already opened. The
+	// parent still holds the descriptor, so the child can run, but the path is
+	// gone when the run tries to publish the report. That is a required capture
+	// that cannot be copied.
+	if _, ok := directive(prompt, "FAKE-DROP-CAPTURE"); ok && job != "" {
+		_ = os.Remove(filepath.Join(job, "harness-output.log"))
+	}
 	if _, ok := directive(prompt, "FAKE-LAUNCHES"); ok && job != "" {
 		record(filepath.Join(job, "launches"))
 		if f, err := os.OpenFile(filepath.Join(job, "launches"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
@@ -171,6 +178,35 @@ func main() {
 			}
 		}
 		writeRecorded(filepath.Join(job, "cache-record"), []byte(b.String()), 0o644)
+	}
+	// FAKE-GIT-COMMIT creates a git repository inside the job directory and commits a file,
+	// recording the resulting commit's author and committer into <job>/commit-identity.
+	// This proves that the pool identity reached the harness child and was not displaced
+	// by misleading bench gitconfig or dropped at the supervisor/native boundary.
+	if _, ok := directive(prompt, "FAKE-GIT-COMMIT"); ok && job != "" {
+		repo := filepath.Join(job, "worker-repo")
+		_ = os.MkdirAll(repo, 0o755)
+		runGit := func(args ...string) ([]byte, error) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = repo
+			return cmd.CombinedOutput()
+		}
+		if _, err := runGit("init", "-q"); err != nil {
+			writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git init failed: "+err.Error()+"\n"), 0o644)
+		} else {
+			_ = os.WriteFile(filepath.Join(repo, "work.txt"), []byte("work\n"), 0o644)
+			if out, err := runGit("add", "work.txt"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git add failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else if out, err := runGit("commit", "-q", "-m", "worker commit"); err != nil {
+				writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git commit failed: "+err.Error()+"\n"+string(out)), 0o644)
+			} else {
+				if out, err := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>"); err == nil {
+					writeRecorded(filepath.Join(job, "commit-identity"), out, 0o644)
+				} else {
+					writeRecorded(filepath.Join(job, "commit-identity-err"), []byte("git log failed: "+err.Error()+"\n"+string(out)), 0o644)
+				}
+			}
+		}
 	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
@@ -368,6 +404,44 @@ func main() {
 		fmt.Printf("\x1b[33;1m!\x1b[0m  permission requested: external_directory (%s); auto-rejecting\n", path)
 		fmt.Fprintln(os.Stderr, "Error: The user rejected permission to use this specific tool call.")
 		os.Exit(0)
+	}
+	// FAKE-EXEC-REFUSED is THE GATE THAT NEVER RAN (issue #1465), in the shell's own words.
+	// A Go card inside the wall ran `go test` and the wall refused to execute the toolchain:
+	// the shell printed one line, the card wrote an honest RESULT.md saying the gate could
+	// not be built or run, and the process exited 0. The run then read `NATIVE OK rc=0
+	// harness=ok` and a commit nobody had compiled was green. The directive takes the path
+	// the wall refused, and prints the step the card had reached beside it, so the fixture
+	// writes the real shape and nothing is inferred.
+	if path, ok := directive(prompt, "FAKE-EXEC-REFUSED"); ok {
+		if path == "" {
+			path = "/nowhere/bin/go"
+		}
+		fmt.Println("STEP 3 run the gate")
+		fmt.Printf("/usr/bin/bash: line 1: %s: Permission denied\n", path)
+	}
+	// FAKE-DENY-AND-RECOVER is STELLA'S P2 WITNESS (PR #1478 comment 5737662335): a plain
+	// shell REDIRECTION to a path the card may not write prints the very same words as a
+	// refused exec -- `/bin/bash: <path>: Permission denied` -- and then the card carries on
+	// and exits 0, having attempted no program at all. She measured it with
+	// `: > "$1"; printf "RECOVERED\n"` against a non-writable directory. Nothing in the text
+	// says which operation was denied, which is the whole of P2.
+	if path, ok := directive(prompt, "FAKE-DENY-AND-RECOVER"); ok {
+		if path == "" {
+			path = "/nowhere/out.txt"
+		}
+		fmt.Println("STEP 3 write the report")
+		fmt.Printf("/bin/bash: %s: Permission denied\n", path)
+		fmt.Println("RECOVERED")
+	}
+	// FAKE-REWRITE-CAPTURE is JOHNNY'S #1478 WITNESS (the #1892 class): a card that printed a
+	// denial and then REPLACES its own capture's name -- unlink, and a clean file in its place
+	// -- inside the job directory it may write. The parent's descriptor still holds the real
+	// bytes; the path now holds none of them. A verdict read from the path after exit would
+	// see a clean run.
+	if _, ok := directive(prompt, "FAKE-REWRITE-CAPTURE"); ok && job != "" {
+		out := filepath.Join(job, "harness-output.log")
+		_ = os.Remove(out)
+		_ = os.WriteFile(out, []byte("STEP 3 run the gate\nok\n"), 0o644)
 	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
