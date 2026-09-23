@@ -105,11 +105,22 @@ func TestWiredOnceTickRunsEverySeam(t *testing.T) {
 		t.Fatalf("exit %d:\n%s%s", exit, out.String(), errs.String())
 	}
 
-	// The console is what it was: one WIDTH line and one verdict. The verbs' own lines are
-	// in the queue's log, where the hand loop wrote them.
+	/// The console is what it was: one WIDTH line and one verdict, plus any coordinator
+	// event lines emitted per action. The verbs' own lines are in the queue's log,
+	// where the hand loop wrote them.
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "PULSE WIDTH tick=1 ") {
-		t.Fatalf("stdout is %d lines, want the WIDTH line and RUN OK:\n%s", len(lines), out.String())
+	hasWidth := false
+	hasRunOK := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "PULSE WIDTH tick=1 ") {
+			hasWidth = true
+		}
+		if strings.HasPrefix(line, "RUN OK ticks=") {
+			hasRunOK = true
+		}
+	}
+	if !hasWidth || !hasRunOK {
+		t.Fatalf("stdout missing WIDTH or RUN OK (got %d lines):\n%s", len(lines), out.String())
 	}
 	if strings.Contains(errs.String(), "seam=") {
 		t.Errorf("a seam is still unwired:\n%s", errs.String())
@@ -143,7 +154,14 @@ func TestWiredOnceTickRunsEverySeam(t *testing.T) {
 		t.Errorf("no fix card was cut for issue 601:\n%s", cut)
 	}
 	// 5. launch: the bench's two slots took two cards, and every launched card left pending.
-	if got := field2(lines[0], "launched="); got != "2" {
+	widthLine := ""
+	for _, line := range lines {
+		if strings.HasPrefix(line, "PULSE WIDTH ") {
+			widthLine = line
+			break
+		}
+	}
+	if got := field2(widthLine, "launched="); got != "2" {
 		t.Errorf("WIDTH launched=%s, want 2 (two free slots, two cards)", got)
 	}
 	launched, _ := filepath.Glob(filepath.Join(queue, "launched", "card-*.md"))
