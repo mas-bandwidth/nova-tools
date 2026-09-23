@@ -126,6 +126,7 @@ type nativeRunResult struct {
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
+	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
 	end          string            // the end the usage row records: done, failed, wall, or unknown
 	lost         bool              // the provider read died after the request may have been accepted
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
@@ -637,7 +638,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	capture := io.MultiWriter(log, harnessOut, timeline, reader)
+	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY (Johnny's hold on #1478,
+	// the #1892 class). `<job>/harness-output.log` is in the card's --write directory and is
+	// its cwd: a card can replace that name after it prints the denial, and a file read after
+	// Wait would then find nothing. This reader sees the bytes as they arrive, so no later
+	// rewrite, unlink or read error of that file can turn a denial into an OK.
+	denials := swarm.NewShellDenialReader()
+	capture := io.MultiWriter(log, harnessOut, timeline, reader, denials)
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -650,7 +657,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		tmp:          tmpDir,
 	}
 	if cfg.noWall {
-		res.wall = "none-by-flag"
+		res.wall = swarm.SandboxNoneByFlag
 	}
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
@@ -868,6 +875,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
+	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
+	// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
+	// published despite a refusal routed around it and finished. This one does not, and that
+	// is the whole point: the card of #1465 published an honest RESULT.md saying its
+	// `go test` could not be built or run, the child exited 0, and the run said
+	// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
+	//
+	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
+	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
+	//
+	// AND IT IS ASKED OF THE BYTES THE PARENT RECEIVED, never of the job's file by path: the
+	// card owns that directory and can rewrite the name after the parent closes its fd.
+	if sd, ok := denials.Denied(); ok {
+		res.shellDenial = sd
+	}
 	if res.lost {
 		res.end = swarm.EndUnknown
 	} else {
@@ -876,7 +898,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			res.end = swarm.EndFailed
 		}
 	}
-	if !res.lost && (res.wallRefusal != swarm.WallRefusal{}) {
+	if !res.lost && ((res.wallRefusal != swarm.WallRefusal{}) || (res.shellDenial != swarm.ShellDenial{})) {
 		res.end = swarm.EndWall
 	}
 	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
