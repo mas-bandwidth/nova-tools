@@ -2607,7 +2607,7 @@ takes a lease per card before it runs and releases it after. The seven rules:
 
    ```
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--kind <kind>]
    nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
    nova-swarm slots list --store <dir>
    ```
@@ -2623,6 +2623,10 @@ takes a lease per card before it runs and releases it after. The seven rules:
    `take` grants by the owner's share from the registry file `<store>/shares.tsv`
    (columns bench, owner, share). It refuses with the holder list when the share is spent,
    and never grants past capacity minus reserve (rows `capacity` and `reserve` in shares.tsv).
+   Card kinds carry a weight charged at take, before any child starts: a schema or
+   fix-red card weighs 4 because it spawns make/cargo/dotnet; a read card weighs 1.
+   A schema card is refused at take when the remaining share fits only a read. A
+   load reading after launch is not the ceiling (#2033).
 4. `nova-swarm slots list --store <dir>` prints who holds what, one line per lease.
 5. Reaping: a lease past until= whose pid is gone is reaped by the next take;
    drift: a pid alive past until= is DRIFT, printed by name, never reaped and never regranted.
@@ -2634,9 +2638,11 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - two owners at their shares cannot exceed capacity;
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
-- a launch without a lease is refused by the launcher.
+- a launch without a lease is refused by the launcher;
+- a schema card is refused at take when the remaining share fits only a read;
+- a live-until lease whose pid is gone is stranded with its label.
 
-A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+demand stays within its share and the total held+demand stays within `capacity` minus `reserve`, demand being `k` times the card kind's admission weight, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease, with `stranded=1` and the label when a live-until lease whose pid is gone is stranded with its label.
 
 **The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
@@ -2644,8 +2650,10 @@ A bench holds **slot leases**: the store is `<store>/slots` with one directory p
 `nova-swarm native --slots-store <dir> --owner <name>` are REQUIRED flags: the run takes
 exactly one lease before any job directory is made, holds it for the run's deadline plus
 two minutes of grace, and releases it on every exit path including a run that failed. A
-take that grants nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=…
-holders=…` line and exits 2, having started nothing.
+take that grants nothing prints one `SLOTS REFUSED owner=… want=<weight> held=… share=… free=…
+holders=…` line and exits 2, having started nothing. The weight is the card kind's admission
+weight, so a schema card on a share that fits only a read is refused before any job directory
+is made.
 
 **A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
 ids it granted — not a count — and a holder hands exactly those back to
