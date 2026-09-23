@@ -63,6 +63,16 @@ is compared against; it is never the path `query --ask size` takes."
 
 ;; The slice files, in canonical order. Each is one replay slice; an
 ;; amendment edits one of them (nova-tools #560).
+;;
+;; EACH FILE APPEARS EXACTLY ONCE (nova-tools #1612). This list held
+;; `slice-09-state-export-replays.lisp` THREE times and `slice-10-fleet.lisp`
+;; TWICE, so those files were `load`ed two and three times over, every deftest
+;; in them was REGISTERED that many times, and the suite ran and counted the
+;; same case two and three times: 335 reported runs were 314 distinct cases.
+;; SBCL says so at load -- "Duplicate definition for MACHINE-KERNEL found in
+;; one file", and the same for REGISTER-REQUEST and TEST-STATE-LOAD-DIR -- and
+;; the runner's blanket `(handler-bind ((warning #'muffle-warning)) ...)` is
+;; what swallowed it. No case is removed here: the 314 that ran still run.
 (defparameter *acceptance-slices*
   '("slice-01-reader.lisp"
     "slice-02-close-and-counters.lisp"
@@ -75,14 +85,11 @@ is compared against; it is never the path `query --ask size` takes."
     "slice-09-replays-publication.lisp"
     "slice-09-state-export-replays.lisp"
     "slice-09-replays-8603.lisp"
-    "slice-10-fleet.lisp"
-    "slice-09-state-export-replays.lisp"
     "slice-09-replays-roadmap.lisp"
     "slice-09-fleet-assignment.lisp"
+    "slice-09-replays-holds.lisp"
     "slice-10-fleet.lisp"
     "slice-10-routes.lisp"
-    "slice-09-state-export-replays.lisp"
-    "slice-09-replays-holds.lisp"
     "slice-11-dependencies.lisp"
     "slice-12-session-ownership.lisp"
     "slice-13-verifier.lisp"
