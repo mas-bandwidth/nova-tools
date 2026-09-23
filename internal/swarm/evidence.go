@@ -126,7 +126,7 @@ func writeAtomicNoFollow(path string, data []byte, mode os.FileMode) error {
 	info, err := os.Lstat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil
+			return fmt.Errorf("parent directory %q does not exist", dir)
 		}
 		return err
 	}
