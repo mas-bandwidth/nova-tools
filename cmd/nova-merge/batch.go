@@ -848,7 +848,7 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 			vs = append(vs, forgeVs...)
 		}
 
-		holds := merge.UnliftedHolds(vs, pr.HeadOID, pr.Author, rs)
+		holds := merge.UnliftedHolds(vs, pr.HeadOID, merge.ReaderAuthor(pr, rs), rs)
 		if len(holds) > 0 {
 			dropped = append(dropped, n)
 			in.holdsCount++
