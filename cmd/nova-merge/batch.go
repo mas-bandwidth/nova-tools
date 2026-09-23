@@ -1139,7 +1139,9 @@ func acceptOK(line, head, controlDir string) string {
 	if !acceptControlShape.MatchString(c) {
 		return "its ACCEPT OK carries no control id"
 	}
-	if _, err := os.Stat(filepath.Join(controlDir, c)); err != nil {
+	// One regular FILE per control id is the passing selftest on file; a directory (or a
+	// symlink to one) named with the id is not, so it is refused like an absent one.
+	if fi, err := os.Stat(filepath.Join(controlDir, c)); err != nil || !fi.Mode().IsRegular() {
 		return "control=" + c + " is not on file under " + controlDir
 	}
 	return ""
