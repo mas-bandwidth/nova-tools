@@ -432,7 +432,7 @@ reopened (rule 2, row 2, SPEC-WORK.md:4820)."
                 (wstate-rows state))
        t))
 
-(defparameter *need-container-types* '(:work-set :epic :feature :roadmap :project :stream)
+(defparameter *need-container-types* '(:work-set :epic :feature :roadmap)
   "The container kinds of rule 2's container clause (SPEC-WORK.md:4849). A
 container has no evidence of its own and is met with its direct required
 members.")
