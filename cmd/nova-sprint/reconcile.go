@@ -6,6 +6,11 @@
 // which deals on stream events and on the 10 s sweep, then each duty another
 // package registered through registerReconcileDuty (the width tick of #3071
 // plugs in there without this file importing it).
+//
+// --metrics-addr <host:port> serves /metrics (internal/metrics, nx-g61 #2720)
+// for as long as the verb runs: the deal pass exports the cards still pooled,
+// the slots leased over every bench and one ssh session latency per bench.
+// Empty, the default, serves nothing.
 package main
 
 import (
@@ -15,10 +20,12 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -62,12 +69,13 @@ func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDu
 var reconcileSeams = func() (deal.Dialer, deal.PRs) { return deal.Remote{}, deal.GH{} }
 
 // productionDuties is the loop's duty list: the refill and its deal pass over
-// Redis, then every registered duty. It returns the names in order.
-func productionDuties(st *store.Store) ([]reconcile.Duty, []string, error) {
+// Redis, then every registered duty. It returns the names in order. set
+// receives the deal pass's metrics (nx-g61); nil exports nothing.
+func productionDuties(st *store.Store, set *metrics.Set) ([]reconcile.Duty, []string, error) {
 	dialer, prs := reconcileSeams()
 	refill := &reconcile.Refill{
 		Client: st.Client(),
-		Deal:   &deal.Pass{Dialer: dialer, PRs: prs},
+		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
 	}
 	duties := []reconcile.Duty{refill.Run}
 	names := []string{"refill"}
@@ -94,11 +102,12 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	redisAddr := fs.String("redis", "", "")
 	host := fs.String("host", "", "")
 	once := fs.Bool("once", false, "")
+	metricsAddr := fs.String("metrics-addr", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "reconcile", err.Error())
 	}
 	if fs.NArg() > 0 {
-		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once]")
+		return refuse(errOut, "reconcile", "takes flags, not positional arguments: --redis <addr> [--host <name>] [--once] [--metrics-addr <host:port>]")
 	}
 	if *host == "" {
 		h, err := os.Hostname()
@@ -117,9 +126,17 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	defer st.Close()
 
-	duties, names, err := productionDuties(st)
+	duties, names, err := productionDuties(st, metrics.Default)
 	if err != nil {
 		return refuse(errOut, "reconcile", err.Error())
+	}
+	if strings.TrimSpace(*metricsAddr) != "" {
+		srv, err := metrics.Default.Listen(*metricsAddr)
+		if err != nil {
+			return refuse(errOut, "reconcile", "--metrics-addr "+strconv.Quote(*metricsAddr)+": "+err.Error()+" (name a free host:port, or leave it out)")
+		}
+		defer srv.Close()
+		fmt.Fprintf(out, "METRICS reconcile url=%s\n", srv.URL())
 	}
 
 	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: *host})
