@@ -7977,3 +7977,738 @@ Red tests, one per rule, each with a fake where the real thing is the network, a
 8. `capability-unknown-on-an-unreadable-probe`: a fake probe timing out on a fake clock is `unknown`, with the timeout line in `detail`.
 9. `capability-output-is-bounded`: 200 fake rows print at most `--max` lines plus one `CAPABILITY MORE`, every value one token.
 10. `capability-is-the-source-the-note-reads`: a fake `TOOLS MOVED` note and adoption receipt resolve their rows from the table, and a disagreeing one is refused.
+
+## nova-work is the primary source; GitHub is an ingest *(Rowan, on Glenn's word of 2026-09-23; nova-tools #3141; a draft for review, and nothing below is built until every present friend has scored it 10)*
+
+**Glenn's words are the requirement, and they are all from one hour of 2026-09-23 (Eastern).** At
+12:25 PM, when one login's REST quota stalled thirty-two children: *"OK we need to switch away from
+Github. This is why we have the lisp sexpr. And why we have redis."* At 12:30: *"This is now the
+concrete benefit for us to ingest github issues and work from the nova work sexpr directly."* At
+12:35: *"I would like you to expand this sprint so we have all the tooling we need to ingest all
+issues on github across all repos into the nova work sexpr, and have this file checked in to
+github."* At 12:42: *"validate this imported data structure is a complete capture of the issues on
+github"* and *"commit to using the sexpr as the primary source"*. At 12:48: *"The nova work ingest
+should be fully specced and get 10/10 from all friends before proceeding."* At 12:50: *"We have had
+MANY discussions about this, this should already be well specced so don't duplicate this work, but
+make sure that everything is brought together"*; *"I want an incredible spec for this primary source
+sexpr. We move away from github. Github is now just an ingest into our nova work sexpr."* At 12:58,
+the one exception: *"externally filed issues are linked to from the sexpr and we close them out when
+the fix is committed to main."* At 1:05 PM: *"you need to invent verbs for nova-work that give you
+all the functionality you have right now when you query issues from github."*
+
+**This section adds no node model, no kind and no second store.** Everything an issue becomes is
+already in this document, and each place is cited by its heading rather than restated: the node, its
+kinds, `:links` and *an issue is a link, never a type* (*The data*); the COW root and its settle and
+revive (*The root is COW*); the repository work set as every top-level child of O (the same);
+*Recursive structure within a repository*; *Bugs found while working*; *Counting*; *Queries — the
+contract*; *The validator*; and Stella's four intake sections — *Public issue correspondence
+survives intake*, *Link versus absorb*, *Initial migration: preserve first, reconcile, then choose
+absorption* and *Durable primary state and GitHub intake* — whose sentences govern here wherever this
+section says less. **O is already the primary form** (stella-fe600103fa2e, *"the work set is the
+PRIMARY FORM"*, at the head of this file); what this section adds is the operational completion of
+that sentence for the team's GitHub issues: the verb that ingests, the verb that proves the capture
+complete, the path by which the record reaches `dev`, the path by which it stays current, what
+downstream reads, how new work is created, the one outbound write, the verbs that replace every
+GitHub issue query we run today, the controls, the migration and the questions only Glenn can
+answer. The recorded rulings it rests on are named where they bite: *ideas live as issues* (ideas
+are a pool, never work), *bugs are nodes at any level*, *COW*, *the nova-work lock decisions of
+2026-09-15* (absorb disabled, link the default), *count nova-work from the sexp*, *order and
+dependencies between cards*, *width is independent work*, and *GitHub is a git remote only*
+(2026-09-23).
+
+**Where this section and E09 meet.** Roadmap E09 (*Issue intake, migration and external
+boundaries*) is this section's feature set: E09-F01 (*non-destructive issue inventory and capture*)
+is sections 2 to 4 below, E09-F02 (*link mode and correspondence reconciliation*) is sections 2b,
+6 and 8b, E09-F03 (*lossless resumable initial migration*) is section 11, and E09-F04 (*explicit
+absorb and deletion gate*) **stays out of scope**: nothing here deletes a GitHub issue, and
+`absorb` stays disabled by the lock decisions of 2026-09-15.
+
+### 1. The principle, and the cutover
+
+**After the cutover the sexp is the record of the team's work and GitHub issues are its intake and,
+where chosen, its mirror.** Every verb that decides anything — what is ready, who takes it, what a
+card is cut from, what x/y is, what landed, what the table prints — reads the sexp and never GitHub;
+GitHub is written only by the two outbound paths of section 8 (the optional mirror, and the close of
+an ingested issue when its fix reaches `main`), and read only by the ingest of sections 3 and 6 and
+the verify of section 4. *GitHub is a git remote only* already moved PR state, reads, holds, CI
+verdicts and landing into nova-sprint's Redis store; this section moves the issues into the sexp,
+which is the last GitHub-held record the work reads.
+
+**The cutover is a rule, not a date.** **The sexp is the primary source from the first sprint opened
+after `nova-work ingest verify --org mas-bandwidth` prints `VERIFY PASS` for every repository the map
+declares `:work` or `:pool`, and a friend's 30-unit sample read of section 4 is 30/30.** Before that
+sprint, the scripts that read GitHub keep running and nothing refuses a GitHub ref; from that sprint,
+`sprint open`'s preflight refuses any task or card whose ref is a GitHub issue with no unit (section
+7), and the scripts of section 9's replacement table are deleted in the same sprint. A verify that
+later fails does not undo the cutover: it is a finding filed as a fix, and the weekly verify of
+section 4 is what keeps the mirror honest afterwards.
+
+### 2. What a GitHub issue becomes in the node model
+
+**An ingested issue is a node of the existing kinds, and the issue is its `:links` entry and its
+correspondence, never its type** (*The data*: *"A GitHub issue or PR is a `:links` entry on a node,
+not the node's type"*). Stella's *Public issue correspondence survives intake* fixes the rest of the
+shape and is not restated: the stable provider/repository/issue identity, the URL and the last
+observed remote revision; the explicit mapping (one issue may become many nodes, one node may address
+many issues); remote text as data, separate from the coordinator's accepted plan.
+
+**The node.** One ingested issue is one `:task` under its repository's work set, in the one node
+shape of *The data*, carrying four keys that shape does not name — `:labels`, `:milestone`,
+`:assignees` and `:correspondence` — which *The data* already admits (*"Unknown keys on a node are
+preserved and ignored, so a team may carry its own fields"*) and which the issue verbs of section 9
+read:
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: one ingested issue, values invented.
+(:id "gh/mas-bandwidth/schema/898"            ; the ingest's id: provider, owner, repo, number; never reused
+ :type :task
+ :title "fixed table: newer reads older, older refuses newer"   ; the issue title at the last capture
+ :children ()
+ :deps ()
+ :category "issue"                            ; or the map row's :category ("bug", "idea", ...)
+ :required true                               ; false for a :pool repository (ideas)
+ :acceptance ((:id "intake-close" :kind :attested
+               :subject "mas-bandwidth/schema#898 resolved" :predicate :attested-by))
+ :links ("https://github.com/mas-bandwidth/schema/issues/898")
+ :labels ("fixed-tables" "spec")
+ :milestone (:absent)
+ :assignees ("gafferongames")
+ :correspondence ((:provider "github" :repo "mas-bandwidth/schema" :number 898 :gh-id 3314159265
+                   :mode :link :origin :team :author "gafferongames"
+                   :filed-at "2026-09-10T14:02:11Z"
+                   :remote-state :open :remote-updated-at "2026-09-21T09:40:00Z"
+                   :capture "docs/roadmaps/intake/github/schema/1.sexp"
+                   :capture-sha256 "<64 hex>"))
+ :priority (:self (:absent) :subtree (:absent)))
+```
+
+**The identity is `(:provider :repo :number)`, and the id is spelled from it once.** E09-F01's
+*"stable provider/repository/issue identity"* is the triple; the node id is
+`gh/<owner>/<repo>/<number>`, minted by the ingest at the unit's first capture and never re-pointed
+(the `:was` rule of SPEC-WORKLANG A2). **The `gh/` prefix is the ingest's namespace**: `node add`
+refuses a caller-given id under it (`NODE REFUSED id=<id>: gh/ ids are minted by ingest only`), so a
+hand-made node can never collide with the unit a later ingest would mint. `:gh-id`, GitHub's own
+immutable issue id, is carried beside the triple and used for one thing only, recognising a transfer
+(below). **A renamed repository keeps its ids**: the map records the rename as `:was` on the repo row,
+the ingest keeps minting under the original name, and `:repo` inside `:correspondence` follows the
+live name. **A transferred issue is a supersede**: the old unit is superseded by the unit minted for
+the issue's new home (`event --kind supersede --superseded-by <new id>`), both keep their records,
+and nothing is re-pointed.
+
+**Placement: under the container the map names, at the highest level that holds it.** The unit's
+containment parent is the node the first matching `:labels` row of `docs/roadmaps/ingest-map.sexp`
+names for its repository (section 3), in the map's declared order; with no matching row, the
+repository's `inbox` work set, `<owner>/<repo>/inbox`, `:category "inbox"`, which the ingest creates
+`:required false` exactly as *The validator* creates `<repo>/shared` — so an unmapped issue is never
+counted until a person maps or moves it. Map targets are stream, project and epic containers of
+*Recursive structure within a repository*, declared in the map's own `:containers` list and created
+by the ingest on first use, so **a new epic is one line of the map**. A unit's parent is
+re-evaluated on every ingest only while the unit is still in `inbox`: once placed, a later label edit
+changes `:labels` and never moves the unit, because *structure is changed only by verbs* and a remote
+label is data, not a verb; `node move` moves it, and the next ingest does not move it back.
+
+**Kind: `:task`, with `:category` carrying the label's meaning.** An ingested unit is minted
+`:task` and never `:bug`, **because rule 19 would refuse every closed bug-labelled issue that has no
+reproducing test** and the import would stop at the first one. A `bug` label maps to `:category
+"bug"`; turning a triaged unit into a `:bug` with its `:found-during` and `:test` is the triage act of
+*Bugs found while working*, done by a friend, and until then the unit is a `:task` of category `bug` and
+never counts in `bugs=<open>/<fixed>`.
+
+**Acceptance: one criterion, minted, so rule 15 never fires on an ingested unit.** Rule 15 finds a
+required `:task` with no `:acceptance`; so every ingested unit is minted with exactly one criterion,
+`intake-close`: `(:kind :merged :subject "pr:<owner>/<repo>#<pr>" :predicate :merged-at)` where a
+closing pull request is known at capture, and otherwise `(:kind :attested :subject "<owner>/<repo>#<n>
+resolved" :predicate :attested-by)`. `issue link` (section 9) replaces an `:attested` `intake-close`
+with the `:merged` one the moment a fix PR is linked, by an `accept` structure event, so the evidence
+that closes the unit is the landed PR's. A friend who decomposes a unit (`decompose`) gives its
+children their own acceptance by that verb's own rule.
+
+**Required: true on a work repository, false on the pool.** The map declares each repository's
+disposition (section 3): `:work` units are minted `:required true` and count like any required task;
+**`:pool` units — the ideas repository — are minted `:required false`, `:category "idea"`, and enter
+no required set, no `rows=`, no `required=` and no percentage**, which is *ideas live as issues*
+(*"They shouldn't count as work"*; *"We pull from here when we want to select new projects to do"*)
+kept by the counting rules that already exist and not by an exception. Selecting an idea is
+`node require --to true` on its unit, the recorded act the validator section already names.
+
+**Closed issues settle into C, honestly.** A capture whose remote state is closed yields a unit in C,
+written in one envelope as the import's own transitions, each `:clock :given` with GitHub's stamp and
+`:reason "intake: <what GitHub says>"`, by the transition table of *States and transitions, derived*:
+
+| remote state at capture | envelope | disposition | counts as |
+|---|---|---|---|
+| closed, `completed`, closing PR known | `:to :doing` at `filed-at`; `:evidence pr:<o>/<r>#<pr>@<merge sha>` on `intake-close` (`:merged`); `:to :done` at `closed-at` | `done` | done where `verify` qualifies the PR; `done-unverified` until it has |
+| closed, `completed`, no PR known | `:to :doing`; `:evidence file:<capture path>@<commit>` on `intake-close` (`:attested`); `:to :done` | `done` | **`done-unverified`** — a `file:` pointer qualifies no criterion (*Evidence is a pointer*), so the unit is honestly unverified until a friend attests it or links its fix |
+| closed, `not_planned` | `:to :cancel-requested`; `:cancel` with `:evidence file:<capture>@<commit>` (no attempt was live, so the evidence covers every attempt) | `cancelled` | out of the current denominator, kept in the baseline, by *Counting* |
+| closed, `duplicate`, target known | `:supersede` with `:superseded-by` the target's unit | `superseded` | the same |
+| closed, `duplicate`, target unknown | as `not_planned` | `cancelled` | the same |
+
+So a closed issue is never a done nobody can check: *Counting*'s `done-unverified=` prints the part of
+the history the ingest could not prove, beside `done=`. **The closing commit is found without a REST
+call**: the adapter reads the default branch's history in its own git fetch for the closing keywords
+(`fix`, `fixes`, `close`, `closes`, `resolve`, `resolves`, followed by `#<n>`) and reads the lander's
+landing receipts (#3139) that name the unit; either is recorded in the capture's `:closing` with
+`:found-by`, and a closing commit found by neither is `(:absent)`, never guessed.
+
+**Milestones, assignees and labels are data on the unit.** `:milestone` is the milestone's title,
+`(:absent)` when none; `:assignees` are logins in GitHub's order; `:labels` are the label names in
+GitHub's order. **An assignee is not `:responsible`**, because *The data* makes `:responsible` *"durable
+accountability, set by a person's word (an event records who set it)"* and a remote assignment is
+observed data, not that word; the issue verbs filter on `:assignees` and `who` never reads it
+(open question 4). A map row may route a milestone the way it routes a label (`:milestone
+"<title>" :under "<container>"`), which is the only way a milestone moves structure.
+
+**Links: the issue, and what closed it.** `:links` carries the issue URL first and, when known, the
+closing PR's URL and the closing commit's URL; a unit that later gains a fix PR by `issue link` gains
+that link. A PR is never a node (*The data*); its record is nova-sprint's PR record (#3091).
+
+**Access scope is preserved, so the record has two homes.** *Link versus absorb*: *"The destination
+must preserve the source's access scope; a private issue is not published by becoming part of S."*
+`mas-bandwidth/nova-tools` is public. So **the units, captures and map rows of a private repository
+are written to a private record repository, never to nova-tools**, in the same format, by the same
+verbs, each node `:private true` (*The data*: `render` never writes a private node into an output
+file); nova-tools' public map carries one line for them, `:private-repos (:count 37 :home <repo>)`,
+and names none. The private home is Glenn's to name (open question 1); *Durable primary state and
+GitHub intake* already proposes `mas-bandwidth/work`. **Until it is named, private repositories are
+declared and not ingested**, and verify reports them `VERIFY SKIP repo=<private>: no private home`,
+which is not a PASS and holds the cutover.
+
+**Where it lives.** Public scope, in nova-tools on `dev` (the private home mirrors the same layout):
+
+| path | what | why this shape |
+|---|---|---|
+| `docs/roadmaps/nova-work.sexp` | **O**: gains `:repositories`, one repository work set per declared public repository, holding its **open** units under its containers; its existing keys (`:epics`, `:verification`, `:events`, ...) unchanged | *The root is COW*: every top-level child of O is a repository work set; C is beside the snapshot, never inside it |
+| `docs/roadmaps/closed/<repo>.sexp` | **C** for ingested units: one row per `:settle` and per `:revive`, keyed `<event-rev>:<id>`, the closed-index row shape of *The root is COW*, append-only | the per-repository file is the partition until E07's day partitions exist; a session loads none of it at start |
+| `docs/roadmaps/intake/github/<repo>/<k>.sexp` | the **captures**: one `(:capture ...)` record per issue number, open and closed, `k = number div 500`, each record's newest revision last | *"retain external reports separately from the coordinator's accepted plan"* (Stella); bodies never enter the snapshot, so O's size is its units' and not its prose's |
+| `docs/roadmaps/ingest-map.sexp` | the declared table: providers, repositories and dispositions, containers, label and milestone rows, the team roster | section 3; *capacity is config, not argv* |
+
+**All four are the record, and all four are checked in** by section 5. The shard width (500) is the
+map's `:shard` field, not a constant, and the first dry run prints the bytes of every shard so the
+width is set from a measurement (open question 2).
+
+### 2b. Externally filed issues: linked, and closed when the fix lands on main
+
+**An issue filed on GitHub by someone outside the team is ingested exactly as above, and from then on
+the node is the record.** *Origin* is decided at capture: `:origin :mirror` when the body carries the
+mirror marker line of section 8, `:origin :team` when the author is in the map's `:team` roster, and
+`:origin :external` otherwise — never inferred from `author_association`, which says what GitHub
+thinks of an account and not whether it is ours. `:correspondence` keeps what E09-F01 asks and what a
+reply needs: provider, repository, number, URL, **author, filed-at**, the last remote state and
+update stamp, the capture path and hash. Planning, decomposition, ownership, priority and evidence
+live on the node; the public discussion stays on GitHub (*Public issue correspondence survives
+intake*); comments are not captured (section 4 says so on every report).
+
+**When the unit's fix reaches `main`, the issue is closed, once, with the commit.** Glenn: *"we close
+them out when the fix is committed to main."* The trigger is the landing receipt (#3139) that names
+the unit, **on `main`**: `dev` is promoted to `main` by the mechanical fast-forward of *dev branch;
+main is promoted*, so the close fires on the promotion that makes the landing commit an ancestor of
+`main`, not on the landing into `dev`. Section 8b is the act, its record and its control.
+
+**A reopen on GitHub revives the unit.** When a later capture sees `:remote-state :open` with
+`state_reason "reopened"` on a unit in C, the ingest writes `event --kind reopen` on it, whose
+envelope carries the `:revive` of *The root is COW*: the unit is in O again at `:todo`, C keeps every
+earlier row and every earlier evidence event (*"a reopened issue creates a reconciliation signal; it
+neither disappears nor silently erases previous completion evidence"*), and the ingest prints
+`INGEST REVIVE unit=<id> remote=reopened`. Nothing is re-closed on GitHub by the revive; the next fix
+that lands closes it again, once, by the same rule.
+
+### 3. `nova-work ingest github`: the verb, the map, idempotence, the failures
+
+**The kernel knows no forge; the adapter does.** *Evidence is a pointer the validator can fetch*
+fixes that *"the tool itself knows no forge"*, and the ingest keeps it: the map names a provider's
+**adapter**, a command the ingest executes directly and never through a shell (the resolver rule),
+which prints capture records on stdout; `github` in `nova-work ingest github` is a provider name the
+map resolves, and nova-work parses what the adapter prints under the three bounds and nothing else.
+The adapter for GitHub is a Go verb, `nova-intake github capture` (new, `cmd/nova-intake`,
+`internal/intake/github`), REST only, conditional requests only, and the only process in the system
+that talks to GitHub about issues.
+
+**The usage lines, as `nova-work help` will print them:**
+
+```
+nova-work ingest github (--session <path> <write flags> | --file <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --map <path> --org <owner> [--repo <name> ...] [--from-events ev:github --redis <addr>] [--dry-run] [--max-calls <n>] --reason <text>
+nova-work ingest verify (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --map <path> --org <owner> [--repo <name> ...] [--sample <n> --seed <n>] --max-calls <n>
+nova-work ingest status (--session <path> | --snapshot <path> ...) --map <path> [--repo <name> ...]
+nova-intake github capture --org <owner> --repo <name> --etag-dir <dir> --max-calls <n> [--number <n> ...]
+```
+
+`--file` is the interim until the resident session of E01 exists: the ingest holds the one-writer
+lease of section 5 for its run and writes the files atomically (a temporary file and a rename), byte
+for byte what a clip of the same events would write (`format-determinism`). **Under `--session` the
+ingest is a long operation** — *"a source capture, an import"* are the examples *The engine and its
+client* names — begun by the existing `source.capture` and `import.stage` operations of
+`lisp/nova-work/src/capture.lisp`, admitted at an expected revision by the owning engine only.
+
+**The adapter contract.** `nova-intake github capture` prints one `(:capture ...)` form per issue
+(pull requests, which GitHub's issue list also returns, are dropped by the adapter and never printed),
+then exactly one trailer, `(:capture-end :repo "<o>/<r>" :issues <n> :calls <n> :not-modified <n>
+:complete t)`. The capture record:
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS.
+(:capture :provider "github" :repo "mas-bandwidth/schema" :number 898 :gh-id 3314159265
+ :url "https://github.com/mas-bandwidth/schema/issues/898"
+ :title "..." :body "..."                     ; verbatim UTF-8, a string, never read as a form
+ :labels ("fixed-tables" "spec") :state :closed :state-reason "completed"
+ :milestone (:absent) :assignees ("gafferongames")
+ :author "gafferongames" :created-at "2026-09-10T14:02:11Z" :updated-at "2026-09-21T09:40:00Z"
+ :closed-at "2026-09-21T09:40:00Z" :closed-by "rowan-claude"
+ :closing (:pr "mas-bandwidth/schema#901" :commit "<40 hex>" :found-by :git-log)
+ :transferred-to (:absent)
+ :etag "W/\"...\"" :content-sha256 "<64 hex>")
+```
+
+**`:content-sha256` is the verify hash, defined once**: SHA-256 over the restricted-Lisp printing of
+`(:title T :body B :labels L :state S :state-reason R :milestone M :assignees A :closed-at C)` —
+labels and assignees in GitHub's order, an absent value `(:absent)`, UTF-8, no trailing newline — the
+seven fields of #3141 (g) plus `:state-reason`, which decides the disposition of section 2. Both
+sides of section 4 compute it the same way, so a mismatch is a changed field and never a formatting
+difference. **The fetch is budgeted and cheap when nothing moved**: the list is read with `state=all`,
+`sort=created`, `direction=asc`, `per_page=100`, every page conditional on its stored ETag
+(`If-None-Match`), and **a `304` costs nothing against the primary rate limit** (GitHub's own
+contract, cited as such and not measured here), so a repository whose issues did not change costs one
+request per page and no budget; `--max-calls` is required, a run that would pass it stops at a page
+boundary and prints `:complete nil`, and `--number` captures single issues (the webhook path of
+section 6). Comments, reactions and timelines are never fetched.
+
+**The map, `docs/roadmaps/ingest-map.sexp`, is the declared table and the only input besides the
+captures:**
+
+```lisp
+;; EXAMPLE DATA, NOT PRODUCT CONSTANTS: the shape of the ingest map.
+(:schema "nova-work-ingest-map-1"
+ :providers ((:name "github" :adapter ("nova-intake" "github" "capture") :etag-dir "state/intake-etags"))
+ :org "mas-bandwidth"
+ :shard 500
+ :team ("gafferongames" "rowan-claude" "<each friend's GitHub login>")
+ :private-repos (:count 37 :home (:absent))       ; names live only in the private home's map
+ :repos ((:repo "nova-tools" :disposition :work :work-set "mas-bandwidth/nova-tools")
+         (:repo "schema"     :disposition :work :work-set "mas-bandwidth/schema")
+         (:repo "yojimbo"    :disposition :work :work-set "mas-bandwidth/yojimbo")
+         (:repo "hydrogen"   :disposition :skip :reason "<why, and whose word>")
+         (:repo "netcode.go" :disposition :work :work-set "mas-bandwidth/netcode.go" :was ()))
+ :containers ((:id "mas-bandwidth/nova-tools/nova-work" :type :work-set :category "stream" :title "nova-work")
+              (:id "mas-bandwidth/nova-tools/nova-sprint" :type :work-set :category "stream" :title "nova-sprint")
+              (:id "mas-bandwidth/schema/fixed-tables" :type :epic :title "Fixed tables"))
+ :labels ((:repo "nova-tools" :label "nova-work" :under "mas-bandwidth/nova-tools/nova-work")
+          (:repo "nova-tools" :label "bug" :category "bug")
+          (:repo "schema" :label "fixed-tables" :under "mas-bandwidth/schema/fixed-tables"))
+ :milestones ())
+```
+
+**A repository is one line** (section 11's (f)): `:work` ingests and counts, `:pool` ingests and never
+counts (section 2), `:skip` ingests nothing and carries its `:reason`. **Every repository the org
+holds is declared, and an undeclared one refuses the run** (`INGEST REFUSED repo=<o>/<r>: undeclared
+(add one line to docs/roadmaps/ingest-map.sexp)`), because *O is the team's authorized known work,
+never a scan of every reachable repository* (*The root is COW*) — the map is that authorization, and a
+new repository arriving unannounced is a decision to make, not a scan to extend. The org's repository
+list is read by the adapter's own `orgs/<org>/repos` call on a full run and compared with the map;
+nothing else is inferred from it. A `:labels` row may set `:under` (placement), `:category`, or both;
+the first row in declared order that matches a unit's labels wins, the rest are recorded on the unit
+and change nothing, so the outcome never depends on GitHub's label order.
+
+**What one run does, in order.** (1) Read and validate the map (unknown keys refused at exit 2 — the
+map is config, not a team's free data); (2) run the adapter per repository; (3) for each capture,
+compare `:content-sha256` and `:remote-state` with the unit's `:correspondence`: **equal is no
+change**, a new identity mints a unit (section 2), a changed hash appends a capture revision and
+updates the unit's `:title`, `:labels`, `:milestone`, `:assignees` and `:correspondence`, and a remote
+state change writes the envelope of section 2's table (or the reopen of section 2b); (4) write, in one
+envelope per repository, all-or-none; (5) print the lines below; (6) hand the result to section 5.
+
+**Idempotence is the first control.** A second run over unchanged captures writes nothing: every
+count on the `INGEST OK` line is zero except `unchanged=`, and every file's bytes are identical, by
+SHA-256, to the first run's. That holds because every write is keyed by the identity triple and the
+content hash, and because the ingest never writes a stamp of its own into the record (its run stamp
+is on the output line and in the commit, never in a file).
+
+**Output, one line per repository and one count line** (SPEC.md's conventions, one `internal/oneline`
+token per value):
+
+```
+INGEST REPO repo=<o>/<r> disposition=<work|pool|skip> issues=<n> added=<n> changed=<n> settled=<n> revived=<n> unchanged=<n> superseded=<n> calls=<n> not-modified=<n> complete=<yes|no>
+INGEST REVIVE unit=<id> remote=reopened
+INGEST OK repos=<n> issues=<n> added=<n> changed=<n> settled=<n> revived=<n> unchanged=<n> calls=<n> not-modified=<n> rev=<n> dry-run=<yes|no>
+```
+
+**Failure modes, each with its refusal and what is left behind.** Every refusal writes nothing for the
+repository it names and leaves every other repository's envelope to stand or fall on its own:
+
+| failure | line | exit | left behind |
+|---|---|---|---|
+| a flag missing, a bound missing or zero | `INGEST REFUSED: refusing to guess (<flag> is required)` | 2 | nothing read |
+| the map unreadable or invalid | `INGEST REFUSED map=<path> byte=<n>: <reason>` | 2 | nothing read |
+| a repository in the org the map does not declare | `INGEST REFUSED repo=<o>/<r>: undeclared (add one line to docs/roadmaps/ingest-map.sexp)` | 1 | no repository written this run |
+| a `:labels` row naming a container that is neither in O nor in `:containers` | `INGEST REFUSED map=<path> row=<n> under=<id>: no such container` | 2 | nothing read |
+| the adapter exits non-zero, prints no trailer, or `:complete nil` | `INGEST FAIL repo=<o>/<r> calls=<n>: capture incomplete (<reason>)` | 1 | that repository unchanged; resumable, since every page already fetched is ETag-cached |
+| a capture record past a bound, or not a `(:capture ...)` form | `INGEST FAIL repo=<o>/<r> byte=<n>: <reason>` | 1 | that repository unchanged |
+| two captures with one identity in one run | `INGEST FAIL repo=<o>/<r> number=<n>: duplicate capture` | 1 | that repository unchanged |
+| a capture whose `:gh-id` matches another unit's (a transfer) | `INGEST SUPERSEDE unit=<old> by=<new>` | 0 | the supersede of section 2 |
+| the writer lease held by another | `INGEST REFUSED: writer held by <name> until <stamp>` | 1 | nothing read |
+| the rate budget reached (`--max-calls`) | `INGEST FAIL repo=<o>/<r> calls=<n>: budget reached at page <p>` | 1 | as capture incomplete |
+| a private repository with no private home | `INGEST SKIP repo=<private>: no private home` | 0 | nothing; verify holds the cutover |
+
+**Remote text is data, all of it.** Titles, bodies, labels and logins are strings read by the bounded
+reader and never forms; a body containing `#.(...)`, a verb-shaped line or a node-shaped list is
+stored verbatim and changes nothing (replay `ingest-remote-text-is-data`, beside the existing
+`hostile-data`).
+
+### 4. `nova-work ingest verify`: a complete capture, proved
+
+Glenn: *"validate this imported data structure is a complete capture of the issues on github."*
+**Complete means two equalities per repository, and verify checks both:** the **set** of issue numbers
+on GitHub, open and closed, equals the set of units carrying that repository in `:correspondence`; and
+for every number in both, the unit's `:capture-sha256` equals the hash of the live issue computed by
+section 3's definition. It runs the adapter (one search count per repository, `repo:<o>/<r>
+is:issue`, as a cheap first comparison, then the conditional paged list, ETag-cached, so an unchanged
+repository costs its page count in `304`s), and reads the sexp for the other side.
+
+```
+VERIFY MISSING <o>/<r>#<n>                         ; on GitHub, no unit
+VERIFY EXTRA <unit-id>                             ; a unit whose issue GitHub does not return
+VERIFY DRIFT <o>/<r>#<n> field=<title|body|labels|state|state-reason|milestone|assignees|closed-at>
+VERIFY <o>/<r> issues=<a> units=<b> missing=<m> extra=<e> drift=<d> calls=<n> not-captured=comments,reactions,timeline
+VERIFY PASS repos=<n> issues=<n> units=<n>         ; or VERIFY FAIL repos=<n> failing=<n>
+VERIFY SKIP repo=<private>: no private home
+```
+
+`DRIFT` names each differing field once, from the capture's stored fields against the live ones.
+**Exit 1 on any `MISSING`, `EXTRA` or `DRIFT`**, exit 0 only on `VERIFY PASS`; a `SKIP` is not a
+pass and exits 1 when `--repo` names that repository. **Every report says what is not captured**:
+`not-captured=comments,reactions,timeline` is on every `VERIFY <repo>` line, because link mode leaves
+the discussion on GitHub and absorb, which would need it, stays disabled (*Link versus absorb*).
+
+**The sample read is a friend's, and it is evidence.** `--sample 30 --seed <n>` prints thirty units
+chosen by a seeded draw across repositories, weighted by issue count, each with its unit id, issue URL
+and the capture's fields; a friend who is not the ingest's owner compares each against the live issue
+by eye and posts `SPEC who=<friend> score=<k>: sample <k>/30 at <commit>` on the verification
+report; a `score` below 30/30 names the unit and field and is filed as a fix. The seed is printed, so
+the draw is reproducible and a second friend can re-read the same thirty.
+
+**Verify writes one record into the sexp**: `(:verify :at "<stamp>" :commit "<sha>" :repos ((:repo
+"<o>/<r>" :issues <a> :units <b> :missing <m> :extra <e> :drift <d>) ...))`, appended to
+`docs/roadmaps/nova-work.sexp`'s `:verify` list (bounded: the newest 52 kept, older ones reachable in
+git), so `issue mirror status` of section 9 answers from the sexp with no network. **It runs weekly
+after the cutover** (a scripted card of the sprint machinery, never a model), and a failing weekly
+verify files one fix per `MISSING`/`EXTRA`/`DRIFT` class.
+
+### 5. Check-in: the sexp on `dev` through the lander, one land cycle behind at most
+
+Glenn: *"have this file checked in to github."* **The file on `dev` is the record, and it gets there
+the way every change does: the lander.** Each ingest (and each write of sections 6, 7 and 8) commits
+its files on a branch `nova-work/ingest-<stamp>` — `<stamp>` the run's UTC `YYYYMMDDTHHMMSSZ` —
+from the tip of `dev` it read, and hands the branch to the lander (#3139) as a **`roadmap` batch**:
+a batch kind whose gate is **`nova-work set check` and the reader's bounds over the four paths of
+section 2, and nothing else — no build and no test**, because a data-only change under
+`docs/roadmaps/` is proved by its own lint and a Go build proves nothing about it. The lander refuses a
+`roadmap` batch that touches any other path (`LAND REFUSED batch=roadmap path=<p>: not a roadmap
+path`) and refuses any other batch that touches `docs/roadmaps/` (`LAND REFUSED path=docs/roadmaps/<p>:
+written outside the nova-work writer`), which is *One coordinator, one live reader/writer* applied to
+the file on disk: **one writer of the sexp**, holding `lease:nova-work-writer` in nova-sprint's Redis
+(the resident session holds it for its life once E01 exists; the interim `--file` verbs take it per
+run), and every other hand a requester of that writer.
+
+**Batched, not one commit per event.** Writes accumulate in the writer's working copy and are
+committed once per land cycle, so a burst of webhook deliveries is one commit and one land. **A land
+cycle, `L`, is the lander's own measured cadence**, which the lander prints on every landing receipt
+(`cycle=<duration>`); nothing here fixes a number for it.
+
+**The lag bound is the control.** `nova-work lag` compares, for the newest landing receipt and the
+newest ingest, what `dev`'s sexp carries against what the writer wrote:
+
+```
+nova-work lag --redis <addr> --repo-dir <path> [--at <stamp>]
+LAG OK writer-rev=<n> dev-rev=<n> behind=<duration> cycle=<duration> receipts-missing=<n>
+LAG FAIL writer-rev=<n> dev-rev=<n> behind=<duration> cycle=<duration> receipts-missing=<n>: <what>
+```
+
+**Exit 1 when `behind` exceeds one `cycle`, or when a landing receipt older than one cycle names a unit
+whose evidence the sexp on `dev` does not carry**; exit 2 when the lander prints no cycle
+(`lander=absent`), which is not a pass. Today, before any of this: `docs/roadmaps/nova-work.sexp` was
+last changed at `0878987f` (2026-09-19 18:23:38Z) and `dev` is `7187ceef` (2026-09-23 14:04:06Z) — a
+lag of 3 d 19 h 40 m across 96 commits, 27 of them touching nova-work paths; the bound makes that a
+red line within one cycle instead of a finding a person makes days later.
+
+### 6. Continuous: webhooks, and a conditional poll that costs nothing when nothing moved
+
+**Webhooks are the inbound path.** `ev:github` (#2657, `internal/ghevent`) today carries
+`pull_request`, `issue_comment`, `pull_request_review`, `check_suite`, `check_run` and `merge_group`,
+and its entry keeps a handful of fields. **It gains `issues`** — the actions `opened`, `edited`,
+`closed`, `reopened`, `labeled`, `unlabeled`, `milestoned`, `demilestoned`, `assigned`, `unassigned`,
+`transferred`, `deleted` — **and for `issues` the entry carries the payload's issue object in the
+capture shape of section 3**, so the ingest turns a delivery into a capture **with no REST call**.
+`nova-work ingest github --from-events ev:github --redis <addr>` reads the stream from its consumer
+group's cursor, ingests each delivery as a single-issue capture, and acknowledges it after the write
+is accepted, so a crash between replays the delivery and idempotence (section 3) makes the replay a
+no-op. A `deleted` delivery never deletes a unit: it marks `:remote-state :deleted` and the next verify
+reports it `EXTRA` for a person to settle, because the record outlives its mirror.
+
+**The fallback is a conditional poll, every 10 minutes per repository.** Webhooks can be lost (a
+receiver down, a delivery never retried), so the writer also runs the full-repository capture every
+10 minutes per declared repository, conditional on its ETags: an unchanged repository answers every
+page `304`, which costs nothing against the rate limit, and the run prints `not-modified=<pages>
+calls=<pages>` and writes nothing. The poll is the backstop and never the primary path; the ten
+minutes are the map's `:poll` field.
+
+**The control is a stopwatch.** A webhook-delivered `issues.edited` for a fixture issue appears in
+the writer's record — the unit's `:title` and `:capture-sha256` changed — **within 60 seconds of the
+delivery's entry on `ev:github`, with zero REST calls**, and on `dev` within one land cycle after that
+(section 5).
+
+### 7. Everything downstream reads the sexp
+
+**Tasks and cards are cut from units, and a bare GitHub ref is refused.** `nova-sprint task push
+--ref <unit-id>` and the card cutter take a unit id of the sexp as the ref; a ref shaped like a GitHub
+issue — `<owner>/<repo>#<n>`, `<repo> #<n>`, or an issue URL — is refused at exit 2: `TASK REFUSED
+ref=<ref>: a GitHub issue is not a unit (ingest it, then push gh/<owner>/<repo>/<n>)`. A card carries
+its unit in its header (`TASK: gh/mas-bandwidth/schema/898`), which *Card names its branches* and the
+DEPENDS-ON token of WORKER-CARDS already make the card's own words; **Jev's card lint resolves the
+`TASK:` line against the sexp at the card's base and bounces a card whose unit does not exist or is
+not in O** (`JEV BOUNCE card=<id>: TASK <unit> not open at <base>`).
+
+**The sprint's ready list is one ask.** `nova-work query --ask ready --branch open --order priority
+[--node <id>]` is the ready list the sprint deals from: *Queries — the contract*'s `ready` ask, unchanged,
+**with one new flag, `--order priority`**: prioritised units first by `:priority :self :rank`
+ascending (the `prioritise` verb of the structural verbs section), then unprioritised units by their
+`:correspondence` `:filed-at` ascending (oldest first; a sexp-first unit by its creation stamp), ties by
+id. Its rows are the ready antichain *width is independent work* asks the table to show; a blocked
+row prints its reason and its resolver, as the ask already promises. `order` without a value, or any
+other value, is refused naming the flag.
+
+**x/y is `set check`'s.** A sprint is a work set (SPEC-WORKLANG A1); its units carry `:ref
+"<O node id>"`, and `nova-work set check --file <sprint>.sexp --open docs/roadmaps/nova-work.sexp`
+resolves every ref (refusing a dangling one by name) and derives each unit's done from the O node's
+state and evidence — so **x/y z% is `done/units` from the `SET OK` line and nothing else**, the same
+walk at every level (*sprint is any bounded goal*). `--open` is the one new flag.
+
+**The fold writes back.** When the lander records a landing (#3139), its receipt names the units
+the landed branch served (the card's `TASK:` line); the writer, in the next roadmap batch, appends to
+each unit the `:evidence` event of its `:merged` criterion (`pr:<o>/<r>#<pr>@<merge sha>`) and, where
+the unit's criteria are then covered, the `:to :done` of *States and transitions, derived* — whose
+envelope carries the `:settle` — so **a landed fix is a settled unit in the sexp on `dev` within one land
+cycle**, section 5's bound. A verified criterion of the E01–E11 inventory writes the same way into its
+`:verification :by-feature` row. The fold never writes from a message, a PR comment or a hand line:
+the landing receipt is the only input, which is *GitHub is a git remote only* again.
+
+**The table reads the sexp through Redis.** nova-sprint's table (*Table at one second, zero tokens*)
+reads only Redis, so the writer publishes each accepted revision's counts — per sprint, `units`,
+`done`, `ready`, `blocked`, the `SET OK` numbers — to one Redis hash per sprint, stamped with the
+revision; the table prints `?` for a hash older than one land cycle (*Table correct end-to-end*).
+
+### 8. Creation is sexp-first; the GitHub mirror is optional
+
+Glenn: *"commit to using the sexpr as the primary source."* **After the cutover new work is created
+in the sexp** — `nova-work node add` (section 9's `issue create` is its issue-shaped spelling) — and a
+GitHub issue is made only when asked: **`--mirror-github`** makes the writer ask the adapter to open
+the issue, with the unit's title and description and a last line `nova-work: <unit-id>` (the
+**mirror marker**), and records the created number in the unit's `:correspondence` with `:mode
+:mirror`. **The marker makes the mirror idempotent both ways**: a retry of an uncertain create first
+searches the repository's newest issues for the marker (one conditional call) and records the found
+number rather than opening a second issue; and the next ingest, seeing `:origin :mirror`, updates the
+unit's correspondence and mints nothing. A mirror action is recorded as *Public issue correspondence
+survives intake* requires — pending, confirmed or failed, with its request id and receipt — and is
+never retried blind.
+
+**A mirrored unit's GitHub copy follows the unit, never the other way.** Title and description edits
+made with `issue edit` are pushed to the mirror by the same adapter; an edit made on GitHub to a
+mirrored issue is captured by the next ingest as `DRIFT` and **not adopted** (`INGEST DRIFT unit=<id>
+field=<f>: mirror edited on GitHub; the unit is the record`), because the unit is the record.
+
+### 8b. The one outbound write: closing an ingested issue when its fix lands on `main`
+
+**Besides mirror writes, this is the only thing nova-work ever writes to GitHub.** When a unit with a
+`:link`- or `:mirror`-mode correspondence is settled `done` by a landing receipt whose commit is an
+ancestor of `main` (section 2b), the lander's close step posts **one** comment and closes the issue
+(`state_reason: completed`). The comment is a fixed template of facts and no prose — `Fixed in <sha>
+on main (<repo>@<sha12>), tracked as nova-work <unit-id>.` — so it is an operational record and not a
+publication under SPEC-OUTBOUND (open question 6 asks whether Glenn wants it behind that gate
+anyway).
+
+**Exactly once, and provably.** The close is an outbound action keyed by `(unit, issue, commit)`
+with its request id: `pending` before the call, `confirmed` with the response's comment id and
+close stamp, `failed` with the error. **A retry after an uncertain result reads the issue's newest
+comments first (one conditional call) and does not post when the template line for that commit is
+already there**; a close whose issue is already closed records `confirmed` with `already-closed=yes`
+and posts nothing. **Team-origin ingested issues close by the same rule**, because after the cutover
+an open GitHub copy of a settled unit is a mirror that lies (open question 5 asks Glenn to confirm).
+Nothing here closes an issue for any other reason: a deferral, a cancellation, a supersede or a local
+done that has not reached `main` leaves the GitHub issue exactly as it is (*"a locally completed
+attempt, a deferred work node, or a scope reduction does not by itself close the public issue"*).
+
+### 9. Verbs: issue parity, offline
+
+Glenn, 1:05 PM: *"you need to invent verbs for nova-work that give you all the functionality you have
+right now when you query issues from github."* **Every verb below reads only the sexp** — the snapshot,
+the closed files and the captures of section 2, under the three bounds, through `--session` or
+`--snapshot` — **and makes no network call**; the ones that write go through the writer like every
+mutation. A verb's output is one line per row, **TSV by default** with a header line, `--format
+sexp|json` alike, capped by `--limit` (default 30, gh's default; `0` all; negative refused) with one
+`ISSUE MORE shown=<n> total=<t> --limit <n>` line when cut. Exit 0 ran (zero rows included), 1 a
+finding or refusal of a write, 2 could not run (a flag, a bound, an unreadable file). `<unit>` is a unit
+id or `<owner>/<repo>#<n>`, resolved through `:correspondence` — the one place a GitHub spelling is
+admitted, because it names an existing unit and never stands for one.
+
+**The inventory of what we ask GitHub today**, from the live scripts (`rowan-tools/bin`, 2026-09-23)
+and the coordinator's own calls this week: list open issues by repository with labels and titles
+(`refill.sh`, `progress.sh`, `status.sh`); view one issue's title and body (`refill.sh`); count issues
+created or closed since a date (`status.sh`); count titles matching a pattern (`status.sh`,
+`progress.sh`); count open issues per repository (the 25 search calls of this spec's own inventory);
+create an issue from a body file, patch a body, close with a comment (the coordinator by hand, and
+`rowan-github`); link a PR to an issue by `#n` in a body; *"issues already fixed on dev"* (the eleven
+closed by hand on the morning of 2026-09-23); and the triage table
+(`reports/emma-supply-2026-09-20/C-open-issues-triage.tsv`). Pull-request reads, PR comments and
+reviews (`hold-to-fix`, `jev-eval`, `pr-to-read`, `sprint-landed`, `card-release`, `land-lane`,
+`land-loop-tools`, `jev-loop`, `harvest-priority`, `sprint-canary`) are **not issue queries**: they
+move to nova-sprint's PR, hold and landing records by *GitHub is a git remote only* and are named in
+the replacement table only to say so.
+
+**The verbs:**
+
+| verb | usage | TSV columns (header line first) | replaces |
+|---|---|---|---|
+| `issue list` | `nova-work issue list [--repo <r>]... [--state open\|closed\|all] [--label <l>]... [--not-label <l>]... [--author <a>] [--assignee <a>] [--milestone <m>] [--match <regex>] [--since <t>] [--updated-since <t>] [--closed-since <t>] [--under <id>] [--order priority\|age\|updated] [--limit <n>] [--format tsv\|sexp\|json]` | `ref state title labels author created updated unit` | `gh issue list --json number,labels,title` and every filter the scripts apply after it |
+| `issue show` | `nova-work issue show <unit> [--format ...]` | header row `ref state title labels milestone assignees author created updated closed unit under required disposition`, then `ISSUE BODY bytes=<n>` and the body verbatim, then one `ISSUE LINK` row per link and one `ISSUE EVENT` row per state event | `gh issue view --json title,body,...` |
+| `issue search` | `nova-work issue search <text> [--in title,body,notes] [--repo <r>]... [--state ...] [--limit <n>]` | as `issue list` plus `field` (where it matched) | `gh search issues <text>` over our repos (fixed-string, case-insensitive; not GitHub's query language, and it says so in `--help`) |
+| `issue count` | `nova-work issue count [--by repo\|state\|label\|category\|under\|author] [same filters as list]` | `key count` then `ISSUE COUNT total=<n>` | `--json number --jq length`, and the per-repository search counts |
+| `issue create` | `nova-work issue create --repo <r> --title <t> --body-file <f> [--label <l>]... [--under <id>] [--mirror-github] --reason <text>` | `ISSUE OK unit=<id> under=<id> mirror=<pending\|none>` | `gh issue create -F body=@file` (= `node add` under the map's placement, `:description` from the file) |
+| `issue edit` | `nova-work issue edit <unit> [--title <t>] [--body-file <f>] [--add-label <l>]... [--remove-label <l>]... [--milestone <m>\|--no-milestone] --reason <text>` | `ISSUE OK unit=<id> changed=<fields> mirror=<pending\|none>` | `gh api -X PATCH .../issues/<n>`; **refused on an `:external` unit's title or body** (`ISSUE REFUSED unit=<id>: an external reporter's text is theirs (write a note)`) |
+| `issue close` | `nova-work issue close <unit> --commit <sha> [--pr <o/r#n>] [--note <text>] --reason <text>` | `ISSUE OK unit=<id> disposition=done evidence=<pointer> outbound=<pending\|none>` | `gh issue close --comment`; the lander's close step calls it, and section 8b does the GitHub half on `main` |
+| `issue link` | `nova-work issue link <unit> (<owner/repo#pr>\|<sha>) --reason <text>` | `ISSUE OK unit=<id> link=<url> criterion=<merged\|attested>` | writing `#n` into a PR body; replaces `intake-close` with its `:merged` form for a PR |
+| `issue note` | `nova-work issue note <unit> --source <pointer> <text>` | `ISSUE OK unit=<id> note=<id>` | issue comments; a note is *The coordinator's notes* record (source and date required, `notes-refuse-missing-source-or-date`); **GitHub comments are not ingested** and this is where our own discussion goes |
+| `issue fixed-on` | `nova-work issue fixed-on <branch> --repo-dir <path> [--repo <r>]... [--state open\|all]` | `ref unit state commit on-branch` | the hand search for *"issues already fixed on dev"*: units whose linked commit is an ancestor of `<branch>` (`git merge-base --is-ancestor` in the local clone), open ones first |
+| `issue triage` | `nova-work issue triage --repo <r> [--under <id>] [--limit <n>]` | `ref title labels age-days unit under required criterion fixed-on-dev pr` | the triage TSV of 2026-09-20, as a verb over the record |
+| `issue stale` | `nova-work issue stale --days <n> [--repo <r>]...` | `ref title updated-days last-event unit` | the eye-scan of old issues; open units with no remote update and no local event in `<n>` days |
+| `issue mirror status` | `nova-work issue mirror status [--repo <r>]...` | `repo verified-at commit issues units missing extra drift age` | a live GitHub diff; answered from the last `:verify` record of section 4 |
+
+**The replacement table: every GitHub issue call we make today, and what replaces it.** The migration
+deletes each call in the cutover sprint; `rowan-tools` scripts are deleted outright where the verb
+covers the whole script.
+
+| caller (today) | GitHub call | replaced by |
+|---|---|---|
+| `refill.sh:16` | `gh issue list -R nova-tools --state open --json number,labels,title` + label/title filters | `issue list --repo nova-tools --state open --not-label next-push --match <re>` (the script itself is already replaced by #2564) |
+| `refill.sh:23` | `gh issue view <n> --json title` / `--json body` | `issue show <unit>` |
+| `status.sh:9` | `gh issue list --state all --search created:>=<today>` / `--state closed --search closed:>=<today>` | `issue count --since <today>` / `issue count --state closed --closed-since <today>` |
+| `status.sh:15`, `progress.sh:33` | `gh issue list --state open --json title` then a title regex | `issue count --state open --match Dogfood` |
+| `rowan-github` (issue create) | `gh issue create` as rowan-claude | `issue create [--mirror-github]` |
+| the coordinator, by hand | `gh api -X PATCH repos/.../issues/<n> -F body=@file`; `gh issue close --comment` | `issue edit`; `issue close` |
+| the coordinator, by hand | `gh api search/issues?q=repo:<o>/<r>+is:issue+is:open` per repository | `issue count --by repo --state open` |
+| the coordinator, by hand | *"which open issues are already fixed on dev"* | `issue fixed-on dev` |
+| `C-open-issues-triage.tsv` (Emma, 2026-09-20) | a triage by hand from `gh issue list` | `issue triage --repo <r>` |
+| `hold-to-fix`, `jev-eval`, `pr-to-read`, `sprint-landed:57,267` | `repos/.../issues/<n>/comments` (PR comments through the issues endpoint) | **not an issue query**: typed dispositions in nova-sprint's Redis (#3092) |
+| `sprint-landed:39-56,156,251` | `search/issues?q=...+is:pr` | **not an issue query**: nova-sprint's PR record (#3091) |
+| `card-release`, `harvest-priority`, `jev-loop`, `land-lane`, `land-loop-tools`, `sprint-canary`, `sprint-stage` | `repos/.../pulls`, `branches`, `rate_limit` | **not an issue query**: the lander (#3139), `git ls-remote`, and no rate probe once no loop polls |
+| nova-tools' own Go callers of issue endpoints | (inventoried by (h)'s owner at build time with `git grep` at the build's base; this spec did not search the tree) | the verb of this table that answers the same question |
+
+**Each verb's control is a golden file, with GitHub unreachable.** A fixture record of thirty units —
+`lisp/nova-work/tests/fixtures/ingest-30/` holding a `nova-work.sexp`, its `closed/` and `intake/`
+files and a map, across three repositories, with open, closed-with-PR, closed-without-PR, not-planned,
+duplicate, external, team, mirror, pool, inbox and private units among them — and one golden output per
+verb and flag set under `.../golden/`; the replay runs every verb with the adapter replaced by a fake
+that exits 3 and records any invocation, and asserts **byte equality with the golden and zero adapter
+invocations** (replay `issue-verbs-golden-offline`).
+
+### 10. Invariants and their controls
+
+Each invariant has one named replay that can fail, in the style of *Acceptance replays*, and each is
+written red first:
+
+| replay | the invariant | how it fails |
+|---|---|---|
+| `ingest-is-idempotent` | a second ingest over unchanged captures writes nothing | any count but `unchanged=` non-zero, or any file's SHA-256 differs from the first run's |
+| `ingest-identity-is-stable` | a title, label or repository-rename edit keeps the unit id; a transfer supersedes | a second unit minted for one identity, or an id re-pointed |
+| `ingest-refuses-undeclared-repo` | an org repository absent from the map refuses the run | the run exits 0, or any repository is written |
+| `ingest-remote-text-is-data` | a body holding `#.(...)`, a verb-shaped line and a node-shaped list is stored verbatim | anything is evaluated, or any structure or count moves |
+| `closed-imports-settle-honestly` | the five rows of section 2's table, each with its disposition and count | a closed issue with no PR counts `done=` instead of `done-unverified=`, or a `not_planned` counts done |
+| `ideas-are-a-pool` | ingesting a `:pool` repository moves no `rows=`, `required=` or percentage | any denominator moves |
+| `bug-label-is-a-category` | a closed `bug`-labelled issue with no test imports and settles | the import refuses by rule 19, or `bugs=` counts it |
+| `verify-sets-and-hashes` | a fixture with one missing, one extra and one drifted issue | fewer than three lines, a wrong field named, or exit 0 |
+| `verify-names-what-it-does-not-capture` | every `VERIFY <repo>` line carries `not-captured=comments,reactions,timeline` | the field is absent on any line |
+| `roadmap-batch-gates-on-lint-only` | a `roadmap` batch with a set-check error is refused; a clean one lands without build or test; a roadmap batch with a non-roadmap path is refused; a non-roadmap batch touching `docs/roadmaps/` is refused | any of the four lands the wrong way |
+| `one-writer-of-the-sexp` | a second writer run while `lease:nova-work-writer` is held refuses | two writers each write a commit |
+| `dev-equals-the-writer-within-a-cycle` | after an ingest at T, `dev`'s four paths equal the writer's bytes by T + one cycle, and `nova-work lag` says so | `lag` exits 0 while they differ, or the bytes differ past the bound |
+| `webhook-edit-within-sixty-seconds` | an `issues.edited` delivery changes the unit within 60 s with zero REST calls | a REST call is made, or 60 s pass |
+| `poll-not-modified-is-free` | a conditional poll of an unchanged repository writes nothing and reports `not-modified=` equal to its pages | a write, or a non-conditional request |
+| `push-refuses-a-bare-github-ref` | `task push` and the cutter refuse every GitHub ref shape and accept the unit id | any GitHub shape is admitted |
+| `sexp-is-primary-source` | a fixture sprint with one GitHub-only ref is refused at `sprint open`; task push, card cut, `set check` x/y, the fold and the table's hash run with the adapter a failing fake and print the same numbers as with it working | a refusal is missing, a number differs, or the adapter is invoked |
+| `fold-settles-a-landed-unit` | a landing receipt naming a unit yields its `:merged` evidence and its settle on `dev` within one cycle | the unit stays open, or evidence is written from anything but the receipt |
+| `external-close-exactly-once` | fixture external issue → unit → landing on `main` → one comment and a close; a retry after a timed-out response posts nothing; an external reopen revives the unit on the next ingest | two comments, a close from `dev`, a close before `main`, or no revive |
+| `mirror-never-duplicates` | `issue create --mirror-github` opens one issue; an uncertain create retried finds the marker; the next ingest mints nothing | two issues, or two units |
+| `issue-verbs-golden-offline` | every verb of section 9 byte-equals its golden with the adapter a failing fake | a byte differs, or the fake is invoked |
+| `private-scope-never-published` | a `:private` repository's units, captures and name are written only under the private home; nova-tools' files carry only the count | any private name or capture appears in a nova-tools path |
+
+### 11. Migration: the org's open issues today, the order, and what is deleted
+
+**What there is, measured at 2026-09-23 14:26–14:30Z** (one `search/repositories?q=org:mas-bandwidth`
+call and one `search/issues?q=repo:<o>/<r>+is:issue+is:open` count per repository whose
+`open_issues_count` — which counts pull requests too — was 2 or more): **80 repositories, 43 public
+and 37 private; 1,803 open issues counted — 796 public and 1,007 private — plus at most 9 more in the
+nine repositories whose combined issue-and-PR count is 1 and which were not searched.** The public
+repositories with open issues: nova-tools 672, schema 90, fixed3d 17, yojimbo 5, nova 4, netcode.cs 2,
+and one each in .github, awesome-persistent-ai, netcode.go, netcode.rs, serialize.modern (archived)
+and serialize.rs; at most one each in fixed, netcode, patreon, reliable, reliable.go, reliable.rs and
+serialize.js. Of the private 1,007, the ideas repository — a `:pool` by *ideas live as issues* — holds
+797. Closed issues were not counted; the first dry run counts them, with every shard's bytes, before
+any file is written.
+
+**The order, each step gated on the one before:**
+
+1. **The map** ((f)): every one of the 80 repositories declared, `:work`, `:pool` or `:skip` with a
+   reason; the public map in nova-tools, the private rows in the private home once named.
+2. **A dry run per repository** (`--dry-run`): prints `INGEST REPO` with `issues=`, the calls it
+   would make and each shard's bytes; nothing written. The shard width and the private home's size
+   are decided from these numbers.
+3. **Ingest, work repositories first, largest backlog first** — nova-tools, then schema, then the
+   rest — **and the pool last**, because the pool is the largest and counts for nothing; one
+   `roadmap` batch per repository, so a failure holds one repository and not the org.
+4. **Verify every repository to `VERIFY PASS`**, then the 30-unit sample read to 30/30.
+5. **The cutover sprint**: `sprint open`'s preflight on; `task push` and the cutter refuse GitHub
+   refs; the fold writes back.
+6. **Delete, in the cutover sprint**: `rowan-tools/bin/refill.sh` (already replaced by #2564),
+   `progress.sh` and `status.sh`'s issue lines, `rowan-github`'s issue-create path, and every issue
+   call of section 9's replacement table, each deletion a line of the sprint with its replacing verb
+   named; nothing that reads an issue from GitHub survives except the adapter.
+
+**Nothing on GitHub is deleted or bulk-closed by the migration.** Migration is import without delete
+(*Initial migration*; the lock decisions of 2026-09-15: absorb disabled, link the default). The open
+backlog stays open on GitHub until each unit's fix reaches `main` and section 8b closes it, once.
+
+### 12. Open questions for Glenn
+
+1. **The private home.** Private repositories' units and captures cannot live in public nova-tools
+   (*Link versus absorb*). *Durable primary state and GitHub intake* proposes `mas-bandwidth/work`;
+   creating it is an org act and yours. Until it is named, 37 private repositories — 1,007 open issues,
+   797 of them ideas — are declared and not ingested, and the cutover waits on them.
+2. **One file or four.** Glenn said *"this file"*; this section writes O into `nova-work.sexp` and
+   keeps C and the captures beside it (four paths, one record), because *The root is COW* keeps C out
+   of the snapshot and Stella's intake keeps remote text apart from the plan. The alternative, every
+   capture inside `nova-work.sexp`, is decided by the dry run's bytes against the reader's
+   `--max-bytes`: yes or no to the four-path layout?
+3. **The pool.** Ideas ingested as `:required false` units that never count (section 2), or not
+   ingested at all?
+4. **Assignees.** Kept as data only (never `:responsible`), or should an assignee on a `:work`
+   repository set `:responsible` by a recorded `responsible` event naming you as the word's source?
+5. **Closing team issues.** Section 8b closes team-origin ingested issues on `main` by the same rule as
+   external ones, so no open GitHub copy outlives its settled unit. Confirm, or keep team issues open
+   on GitHub as history?
+6. **The closing comment.** A fixed factual template, outside SPEC-OUTBOUND's approve gate; or behind
+   it?
+7. **The webhook.** `issues` deliveries on the org need an org webhook, which is an admin act and yours
+   (*not org admin by design*).
+
+### The issues that build it
+
+Each is a pointer to a section above, with its own DONE-WHEN; its owner never reads it; **build opens
+on an issue only when every present friend who is not its owner has posted `SPEC who=<friend>
+score=10` on it and on #3141**.
+
+| | issue | section | owner | readers |
+|---|---|---|---|---|
+| (a) | `nova-work ingest github`: capture, identity, placement, map, idempotence | 2, 3 | stella | johnny, rowan |
+| (b) | write-back and check-in: the writer, the `roadmap` batch, `nova-work lag` | 5 | rowan | stella, johnny |
+| (c) | continuous: `issues` on `ev:github`, the conditional poll | 6 | johnny | stella, rowan |
+| (d) | cut from the sexp: `task push` and the cutter take units, `--order priority`, `set check --open` | 7 | johnny | stella, rowan |
+| (e) | fold write-back: landed PRs and verified criteria settle units | 7 | stella | johnny, rowan |
+| (f) | the declared repository list and the private home | 2, 3, 11 | rowan | stella, johnny |
+| (g) | `nova-work ingest verify`: complete capture, the sample read, the weekly run | 4 | johnny | stella, rowan |
+| (h) | primary-source cutover: preflight, mirror, the external close, the deletions | 1, 8, 8b, 11 | rowan | stella, johnny |
+| (i) | the issue-parity verbs, offline | 9 | stella | johnny, rowan |
