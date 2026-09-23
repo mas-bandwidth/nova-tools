@@ -458,3 +458,73 @@ func TestControl16Classification(t *testing.T) {
 		}
 	})
 }
+
+// TestCIClassifiedRetryableOutcomes is the regression for nova-tools #3076: a
+// ci card (10.2) suppresses only the FAILED tests-red fix row. Its retryable
+// outcomes still follow the 3.3 table, so a crash requeues off the failing
+// bench and an env block requeues off the failing bench and writes the bench
+// why record, while its FAILED tests-red verdict stays ended with no fix.
+func TestCIClassifiedRetryableOutcomes(t *testing.T) {
+	client := clsRedis(t)
+
+	t.Run("ci crash requeues off the failing bench", func(t *testing.T) {
+		const S = "control-3076a3076"
+		clsSprint(t, client, S)
+		clsEnd(t, client, S, "ci-crash", 1, "ctl-b1", "FAILED", "crash",
+			"kind", "script", "ci_for", "nova-tools#1 "+clsTip)
+		if n := clsPass(t, client, S); n != 1 {
+			t.Fatalf("pass handled %d events, want 1", n)
+		}
+		c := clsCard(t, client, S, "ci-crash")
+		score, ok := clsInPool(t, client, S, "ci-crash")
+		if c["state"] != "queued" || !ok || score >= 0 || c["bench"] != "" || c["avoid_benches"] != "ctl-b1" {
+			t.Errorf("ci-crash: state=%q pool=%v score=%v bench=%q avoid=%q, want queued at the front avoiding ctl-b1",
+				c["state"], ok, score, c["bench"], c["avoid_benches"])
+		}
+		if c["retry_crash"] != "1" {
+			t.Errorf("ci-crash retry_crash=%q, want 1", c["retry_crash"])
+		}
+	})
+
+	t.Run("ci env block requeues and writes the bench why record", func(t *testing.T) {
+		const S = "control-3076b3076"
+		clsSprint(t, client, S)
+		clsEnd(t, client, S, "ci-env", 1, "ctl-b4", "BLOCKED", "env",
+			"kind", "script", "ci_for", "nova-tools#1 "+clsTip, "leg", "zig")
+		if n := clsPass(t, client, S); n != 1 {
+			t.Fatalf("pass handled %d events, want 1", n)
+		}
+		why, err := client.HGet(context.Background(), "bench:ctl-b4:why", "env zig").Result()
+		clsMust(t, err)
+		if !strings.HasPrefix(why, "why: env zig") || !strings.Contains(why, S+"/ci-env/1") {
+			t.Errorf("bench why line %q", why)
+		}
+		if item := clsUnresolved(t, client, S)["bench:ctl-b4:env:zig"]; item == "" {
+			t.Errorf("no unresolved bench item for ctl-b4 env zig")
+		}
+		c := clsCard(t, client, S, "ci-env")
+		score, ok := clsInPool(t, client, S, "ci-env")
+		if c["state"] != "queued" || !ok || score >= 0 || c["avoid_benches"] != "ctl-b4" {
+			t.Errorf("ci-env: state=%q pool=%v score=%v avoid=%q, want requeued off ctl-b4",
+				c["state"], ok, score, c["avoid_benches"])
+		}
+	})
+
+	t.Run("ci tests-red stays ended with no fix", func(t *testing.T) {
+		const S = "control-3076c3076"
+		clsSprint(t, client, S)
+		clsEnd(t, client, S, "ci-red", 1, "ctl-b1", "FAILED", "tests-red",
+			"kind", "script", "ci_for", "nova-tools#1 "+clsTip)
+		if n := clsPass(t, client, S); n != 1 {
+			t.Fatalf("pass handled %d events, want 1", n)
+		}
+		if st := clsCard(t, client, S, "ci-red")["state"]; st != "ended" {
+			t.Errorf("ci-red moved to %q, want ended", st)
+		}
+		for _, label := range clsCards(t, client, S) {
+			if label == "fix-ci-red" {
+				t.Errorf("a ci card's FAIL cut a tests-red fix card")
+			}
+		}
+	})
+}

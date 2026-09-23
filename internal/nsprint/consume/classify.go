@@ -38,7 +38,7 @@ const (
 
 // The 3.3 actions.
 const (
-	ActionNone       = ""            // not this handler's: DONE, or a ci card (10.5)
+	ActionNone       = ""            // not this handler's: DONE, or a ci card's tests-red verdict (10.5)
 	ActionRequeue    = "requeue"     // front of the pool, the failing bench avoided
 	ActionRequeueEnv = "requeue-env" // as requeue, plus the bench why line and bench item
 	ActionRecut      = "recut"       // a front card at the tip; the old card superseded
@@ -291,7 +291,9 @@ func (c *Classifier) handleBatch(ctx context.Context, msgs []redis.XMessage) (in
 // the card state and the budget and writes the action atomically.
 func (c *Classifier) handle(ctx context.Context, eventID, label, attempt string, card, policy map[string]string) error {
 	rule := ClassifyOutcome(card["outcome"], card["reason"])
-	if len(card) == 0 || isCIClassified(label, card) {
+	// A ci card (10.2) keeps its retryable outcomes: only its FAILED
+	// tests-red verdict is suppressed, so 10.5 never cuts a 3.3 fix card.
+	if len(card) == 0 || (isCIClassified(label, card) && rule.Action == ActionFix) {
 		rule = Rule{Action: ActionNone}
 	}
 	reason := card["reason"]
@@ -326,7 +328,8 @@ func (c *Classifier) handle(ctx context.Context, eventID, label, attempt string,
 }
 
 // isCIClassified: a ci card (10.2) carries ci_for; its FAIL verdict follows
-// the rerun and flaky policy of 10.5, never the tests-red row.
+// the rerun and flaky policy of 10.5, never the tests-red row. It suppresses
+// only that fix row: retryable outcomes still follow the 3.3 table.
 func isCIClassified(label string, card map[string]string) bool {
 	return card["ci_for"] != "" || (card["kind"] == "script" && strings.HasPrefix(label, "ci-"))
 }
