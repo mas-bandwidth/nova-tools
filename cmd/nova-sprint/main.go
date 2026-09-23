@@ -34,7 +34,8 @@ usage:
 table reads one consistent FCALL_RO snapshot per render and prints it to
 stdout; --loop renders once per second. It writes no file: there is no
 --out, --fixture or --refresh pending, and a restart re-renders from Redis.
-The function library must already be loaded.
+Load the function library first with
+nova-sprint fn load --redis <addr> (fn check exits 1 while it is missing or stale).
 Control sprints are hidden unless named with --sprint.
 --check reads an existing throwaway fixture store and compares exact output.
 
