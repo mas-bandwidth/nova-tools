@@ -88,10 +88,7 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	}
 	baseline := xlen(t, ctx, client, sprint)
 
-	results := filepath.Join(t.TempDir(), "results")
-	if err := os.Mkdir(results, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	results := canonicalResults(t, id)
 	refused := func(step string, wantCode int, wantReason string) {
 		t.Helper()
 		if err != nil {
@@ -258,10 +255,7 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 	orphan := card.Identity{Sprint: sprint, Label: "stays-orphan", BaseSHA: base, Bench: bench, Attempt: 1}
 	seedCard(t, ctx, client, orphan, "orphan-effect", attemptToken(1, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 
-	results := filepath.Join(t.TempDir(), "results")
-	if err := os.Mkdir(results, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	results := canonicalResults(t, current)
 	if err := os.WriteFile(filepath.Join(results, "branch.txt"), []byte(branch+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -316,10 +310,7 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 	})
 	nothing("end record token_sha is not this attempt")
 
-	orphanDir := filepath.Join(t.TempDir(), "orphan-results")
-	if err := os.Mkdir(orphanDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	orphanDir := canonicalResults(t, orphan)
 	writeRecord(t, orphanDir, card.EndRecord{
 		Identity: card.Identity{Sprint: sprint, Label: orphan.Label, BaseSHA: base, Bench: bench, Attempt: 2},
 		Outcome:  "DONE", Reason: "done", ExitCode: 0,
@@ -368,8 +359,85 @@ func TestControl26OtherAttemptResolvesNothing(t *testing.T) {
 	}, token)
 }
 
+func TestEndRecordInWrongDirectoryResolvesNothing(t *testing.T) {
+	ctx := context.Background()
+	st, client := newSprint(t)
+	const (
+		sprint = "wrong-dir"
+		label  = "copied-record"
+		base   = "89abcdef"
+		bench  = "ctl-bench"
+	)
+	id := card.Identity{Sprint: sprint, Label: label, BaseSHA: base, Bench: bench, Attempt: 2}
+	token := attemptToken(2, "0123456789abcdef0123456789abcdef")
+	seedCard(t, ctx, client, id, "reconcile-required", token)
+	if err := client.SAdd(ctx, card.IdxKey(sprint, "reconcile-required"), label).Err(); err != nil {
+		t.Fatal(err)
+	}
+	member := fmt.Sprintf("%s/%s/%d", sprint, label, id.Attempt)
+	if err := client.ZAdd(ctx, card.BenchLivingKey(bench), redis.Z{Score: 2, Member: member}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	canonical := canonicalResults(t, id)
+	writeRecord(t, canonical, card.EndRecord{
+		Identity: id, Outcome: "DONE", Reason: "done", ExitCode: 0,
+		TokenSHA: card.TokenSHA(token), PushedSHA: "0123456789abcdef0123456789abcdef01234567", At: "1970-01-01T00:00:00Z",
+	})
+	wrong := filepath.Join(t.TempDir(), "wrong")
+	if err := os.Mkdir(wrong, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(canonical, card.EndRecordName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wrong, card.EndRecordName), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	copied, err := card.ReadEndRecord(wrong)
+	if err != nil || copied.Identity != id || copied.TokenSHA != card.TokenSHA(token) {
+		t.Fatalf("copy is not a valid record for this attempt: %v %+v", err, copied)
+	}
+
+	got, err := card.Resolve(ctx, st, card.ResolveRequest{Sprint: sprint, Label: label, ResultsDir: wrong})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Resolved || got.Code != 0 || got.Reason != "NOTHING" || got.Receipt != "" {
+		t.Fatalf("copied record resolved the attempt: %+v", got)
+	}
+	cardBody := hashOf(t, ctx, client, sprint, label)
+	if cardBody["state"] != "reconcile-required" || cardBody["outcome"] != "" || cardBody["results"] != "" || cardBody["end_receipt"] != "" {
+		t.Fatalf("wrong directory wrote the card: %+v", cardBody)
+	}
+	if !setHas(t, ctx, client, card.IdxKey(sprint, "reconcile-required"), label) || setHas(t, ctx, client, card.IdxKey(sprint, "ended"), label) {
+		t.Fatal("wrong directory moved the index")
+	}
+	if !zHas(t, ctx, client, card.BenchLivingKey(bench), member) {
+		t.Fatal("wrong directory freed the slot")
+	}
+	if xlen(t, ctx, client, sprint) != 0 {
+		t.Fatal("wrong directory wrote a receipt")
+	}
+	if _, err := os.Stat(filepath.Join(wrong, card.EndRecordName)); err != nil {
+		t.Fatal("resolve removed the copied record")
+	}
+	if _, err := os.Stat(filepath.Join(canonical, card.EndRecordName)); err != nil {
+		t.Fatal("resolve removed the canonical record")
+	}
+}
+
 func attemptToken(attempt int, bits string) string {
 	return fmt.Sprintf("%d.%s", attempt, bits)
+}
+
+func canonicalResults(t *testing.T, id card.Identity) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), id.Sprint, id.Label, id.BaseSHA, id.Bench, fmt.Sprintf("%d", id.Attempt))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func writeRecord(t *testing.T, dir string, rec card.EndRecord) {

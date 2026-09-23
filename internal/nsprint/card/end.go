@@ -176,7 +176,9 @@ type ResolveRequest struct {
 }
 
 // End refuses, and does not end the card, when the results directory has no
-// end record. A token that is not the attempt's token exits 3.
+// end record for this attempt. That directory is
+// <sprint>/<label>/<base sha8>/<bench>/<attempt>. A token that is not the
+// attempt's token exits 3.
 func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 	const verb = "card end"
 	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || req.Outcome == "" || req.Reason == "" || strings.TrimSpace(req.ResultsDir) == "" {
@@ -185,9 +187,10 @@ func End(ctx context.Context, st *store.Store, req EndRequest) (Result, error) {
 	return callEnd(ctx, st, verb, "token", req.Sprint, req.Label, req.Token, req.ResultsDir, req.Outcome, req.Reason)
 }
 
-// Resolve ends the attempt only when the end record names this identity and
-// its token_sha. Another attempt of the same label, or another cut sha,
-// resolves nothing: the hash, the indexes, and the log stay as they were.
+// Resolve ends the attempt only when its own directory holds an end record
+// for this identity and its token_sha. A copy in another directory, another
+// attempt of the same label, or another cut sha resolves nothing: the hash,
+// the indexes, and the log stay as they were.
 func Resolve(ctx context.Context, st *store.Store, req ResolveRequest) (Result, error) {
 	const verb = "card resolve"
 	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || strings.TrimSpace(req.ResultsDir) == "" {
@@ -197,9 +200,26 @@ func Resolve(ctx context.Context, st *store.Store, req ResolveRequest) (Result, 
 }
 
 func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, token, results, claimOutcome, claimReason string) (Result, error) {
-	rec, ok, err := loadRecord(results)
+	dir, err := cleanResultsDir(results)
 	if err != nil {
 		return Result{}, err
+	}
+	// Read end.record only from this attempt's directory. A copy elsewhere
+	// is not forwarded, and the function repeats the same bind before it writes.
+	id, found, err := storedIdentity(ctx, st, sprint, label)
+	if err != nil {
+		if res, down := redisDown(verb, label, err); down {
+			return res, nil
+		}
+		return Result{}, err
+	}
+	var rec EndRecord
+	ok := false
+	if found && resultsBound(dir, id) {
+		rec, ok, err = loadRecord(dir)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	ident, outcome, reason, sha, pushed, exitCode := "", "", "", "", "", ""
 	if ok {
@@ -215,7 +235,7 @@ func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, to
 		claimReason = reason
 	}
 	reply, err := fcall(ctx, st, "ns_card_end", cardKeys(sprint, label),
-		mode, sprint, label, token, results,
+		mode, sprint, label, token, dir,
 		ident, outcome, reason, sha, pushed, exitCode,
 		claimOutcome, claimReason)
 	if err != nil {
@@ -225,6 +245,43 @@ func callEnd(ctx context.Context, st *store.Store, verb, mode, sprint, label, to
 		return Result{}, err
 	}
 	return resultFrom(verb, label, reply), nil
+}
+
+func cleanResultsDir(dir string) (string, error) {
+	if strings.TrimSpace(dir) == "" || strings.ContainsAny(dir, "\r\n") {
+		return "", fmt.Errorf("results dir is required")
+	}
+	return filepath.Clean(dir), nil
+}
+
+// storedIdentity is the attempt whose directory may hold end.record.
+func storedIdentity(ctx context.Context, st *store.Store, sprint, label string) (Identity, bool, error) {
+	raw, err := st.Client().HGet(ctx, CardKey(sprint, label), "identity").Result()
+	if errors.Is(err, redis.Nil) {
+		return Identity{}, false, nil
+	}
+	if err != nil {
+		return Identity{}, false, err
+	}
+	id, err := ParseIdentity(raw)
+	if err != nil {
+		return Identity{}, false, nil
+	}
+	return id, true, nil
+}
+
+// resultsBound reports whether dir is the canonical attempt directory
+// <sprint>/<label>/<base sha8>/<bench>/<attempt>, or that path under a root.
+func resultsBound(dir string, id Identity) bool {
+	want := id.String()
+	if want == "" || id.Attempt < 1 {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(dir))
+	if clean == want {
+		return true
+	}
+	return strings.HasSuffix(clean, "/"+want)
 }
 
 func loadRecord(dir string) (EndRecord, bool, error) {

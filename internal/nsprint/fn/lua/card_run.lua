@@ -1,6 +1,8 @@
 -- Card launched, beat, and end. One function per transition.
 -- Token mismatch returns 3 and writes nothing, before the record is considered,
 -- so a fenced caller stops and the record stays for a later ingest.
+-- The results directory is this attempt's <sprint>/<label>/<base sha8>/<bench>/<attempt>.
+-- A copy of the record in any other directory is not an end.
 -- A record whose identity is not this attempt returns NOTHING and writes nothing.
 -- Branch names are not read here.
 
@@ -51,6 +53,17 @@ local function card_keys_ok(keys, sprint, label)
   return keys[1] == 's:' .. sprint .. ':card:' .. label
     and keys[2] == 's:' .. sprint .. ':log'
     and keys[3] == 's:' .. sprint .. ':idem'
+end
+
+-- results is the canonical attempt directory, or that relative path under a root.
+local function results_bound(results, identity)
+  local sprint, label, base, bench, attempt = identity_parts(identity)
+  if not sprint or results == '' then return false end
+  local want = sprint .. '/' .. label .. '/' .. base .. '/' .. bench .. '/' .. attempt
+  if results == want then return true end
+  local suffix = '/' .. want
+  if #results < #suffix then return false end
+  return string.sub(results, -#suffix) == suffix
 end
 
 local function xadd(log_key, id, from, to, attempt, token_sha, actor, reason, evidence, idem, at)
@@ -153,6 +166,11 @@ redis.register_function('ns_card_end', function(keys, args)
     if token == '' or token ~= hget(card_key, 'token') then
       return reply(3, 'FENCED', attempt, '')
     end
+  end
+
+  -- A copy in any other directory is not this attempt's record.
+  if not results_bound(results, identity) then
+    record_identity = ''
   end
 
   if record_identity == '' then
