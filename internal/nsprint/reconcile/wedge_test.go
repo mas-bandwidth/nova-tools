@@ -12,16 +12,35 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/redis/go-redis/v9"
 )
 
 // fakeClock is the lease clock of #3322: it moves only when the test
-// advances it, and fires every timer that falls due.
+// advances it, and fires every timer that falls due. onMove, when set, sees
+// the clock after every Advance and every armed timer, outside the lock; the
+// wedge test uses it to run the throwaway Redis's lease TTL on this clock.
 type fakeClock struct {
 	mu     sync.Mutex
 	now    time.Time
 	timers []fakeTimer
 	asked  []time.Duration
 	armed  chan struct{} // one send per timer, never blocking
+	onMove func(now time.Time)
+}
+
+func (c *fakeClock) setOnMove(f func(time.Time)) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.onMove = f
+}
+
+func (c *fakeClock) moved() {
+	c.mu.Lock()
+	f, now := c.onMove, c.now
+	c.mu.Unlock()
+	if f != nil {
+		f(now)
+	}
 }
 
 type fakeTimer struct {
@@ -40,6 +59,7 @@ func (c *fakeClock) Now() time.Time {
 }
 
 func (c *fakeClock) After(d time.Duration) <-chan time.Time {
+	defer c.moved()
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	ch := make(chan time.Time, 1)
@@ -56,19 +76,30 @@ func (c *fakeClock) After(d time.Duration) <-chan time.Time {
 	return ch
 }
 
+// Advance moves the clock by d. onMove sees the new time before any timer
+// falls due, so whatever the clock drives (the lease TTL) has moved before a
+// bounded session is cut and the pass goes on to write.
 func (c *fakeClock) Advance(d time.Duration) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
+	now, f := c.now, c.onMove
+	var due []chan time.Time
 	keep := c.timers[:0]
 	for _, tm := range c.timers {
-		if !tm.at.After(c.now) {
-			tm.ch <- c.now
+		if !tm.at.After(now) {
+			due = append(due, tm.ch)
 			continue
 		}
 		keep = append(keep, tm)
 	}
 	c.timers = keep
+	c.mu.Unlock()
+	if f != nil {
+		f(now)
+	}
+	for _, ch := range due {
+		ch <- now
+	}
 }
 
 func (c *fakeClock) bounds() []time.Duration {
@@ -159,13 +190,48 @@ func eventWait() time.Duration {
 	return 30 * time.Second
 }
 
+// leaseOnClock runs the throwaway redis-server's lease:reconciler TTL on the
+// lease clock (#3322 review): miniredis has no FUNCTION/FCALL, so the lease
+// and deal functions need the real server, whose TTL runs on the wall clock.
+// Each time the lease clock moves, the key's wall TTL is removed (PERSIST) so
+// the wall clock can never lapse it, and once the lease clock reaches the
+// deadline the lease keeps (the last renewal's send time plus the TTL, the
+// earliest Redis can expire it) the key is deleted, as Redis would expire it.
+// A fenced write the pass presents after that is refused FENCED for real.
+func leaseOnClock(t *testing.T, c *redis.Client, clk *fakeClock, l *reconcile.Lease) (lapsed func() bool) {
+	t.Helper()
+	var mu sync.Mutex
+	var gone bool
+	clk.setOnMove(func(now time.Time) {
+		ctx := context.Background()
+		mu.Lock()
+		defer mu.Unlock()
+		if !now.Before(l.Deadline()) {
+			if err := c.Del(ctx, reconcile.LeaseKey).Err(); err != nil {
+				t.Errorf("expire %s on the lease clock: %v", reconcile.LeaseKey, err)
+			}
+			gone = true
+			return
+		}
+		if err := c.Persist(ctx, reconcile.LeaseKey).Err(); err != nil {
+			t.Errorf("persist %s: %v", reconcile.LeaseKey, err)
+		}
+	})
+	return func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return gone
+	}
+}
+
 // TestDealPassWedgedSshdDoesNotFenceOrStrand (#3322, smoke outcome 3): a
 // bench whose sshd accepts TCP and never sends a banner is bounded by the
-// lease. The pass cuts its session inside the lease deadline (on the injected
-// lease clock), writes its ssh row as timeout with a WEDGED why and an at,
-// returns its reservations to the pool, is not fenced, and the next pass
-// runs and deals. The healthy bench beside it is dealt and its row written in
-// the same pass.
+// lease. The pass cuts its session at the lease deadline less the write
+// margin (on the injected lease clock, which also runs the Redis lease TTL),
+// writes its ssh row as timeout with a WEDGED why and an at and returns its
+// reservations to the pool while the lease still has time left, is not
+// fenced, and the next pass runs and deals. The healthy bench beside it is
+// dealt and its row written in the same pass.
 func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 	st, c := controlRedis(t)
 	ctx := context.Background()
@@ -180,8 +246,22 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lapsed := leaseOnClock(t, c, clk, l)
 	dialer := &bannerDialer{wedged: map[string]string{wedge: addr}}
-	rf := &reconcile.Refill{Client: c, Deal: &deal.Pass{Dialer: dialer}, Now: clk.Now}
+	// When the deal pass has written every row and undealt the wedged batch,
+	// the lease must still have time left on its clock, and Redis must still
+	// hold it under this instance's token.
+	type atWrites struct {
+		left  time.Duration
+		token string
+		err   error
+	}
+	wrote := make(chan atWrites, 4)
+	rf := &reconcile.Refill{Client: c, Deal: &deal.Pass{Dialer: dialer}, Now: clk.Now,
+		AfterDeal: func(reconcile.Wake, deal.Result) {
+			tok, err := c.HGet(ctx, reconcile.LeaseKey, "token").Result()
+			wrote <- atWrites{left: l.Remaining(), token: tok, err: err}
+		}}
 	lp := &reconcile.Loop{Lease: l, Duties: []reconcile.Duty{rf.Run}}
 
 	type passOut struct {
@@ -207,13 +287,17 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 	case <-time.After(eventWait()):
 		t.Fatal("no bench session was bounded by the lease: a wedged sshd holds the pass past the lease TTL")
 	}
+	// The pass renewed at its start and the lease clock has not moved, so
+	// every session's bound is exactly the lease deadline less the margin.
+	bound := reconcile.DefaultTTL - reconcile.DefaultWriteMargin
 	for _, b := range clk.bounds() {
-		if b <= 0 || b > reconcile.DefaultTTL-reconcile.DefaultWriteMargin {
-			t.Fatalf("session bound %s, want inside the lease TTL %s less the write margin %s", b, reconcile.DefaultTTL, reconcile.DefaultWriteMargin)
+		if b != bound {
+			t.Fatalf("session bound %s, want the lease TTL %s less the write margin %s = %s", b, reconcile.DefaultTTL, reconcile.DefaultWriteMargin, bound)
 		}
 	}
-	// The lease clock reaches the lease TTL: every bound is due.
-	clk.Advance(reconcile.DefaultTTL)
+	// The lease clock reaches the bound, and no further: the wedged session
+	// is due to be cut, and the lease (in Redis too) has the margin left.
+	clk.Advance(bound)
 
 	var out passOut
 	select {
@@ -226,6 +310,26 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 	}
 	if out.res.Err != "" {
 		t.Fatalf("pass recorded an error: %s", out.res.Err)
+	}
+	if lapsed() {
+		t.Fatal("the lease lapsed on the lease clock during the pass")
+	}
+	select {
+	case w := <-wrote:
+		if w.err != nil || w.token != l.Token() {
+			t.Fatalf("after the deal pass's writes %s token = %q (%v), want this instance's", reconcile.LeaseKey, w.token, w.err)
+		}
+		if w.left <= 0 || w.left > reconcile.DefaultWriteMargin {
+			t.Fatalf("lease left when the deal pass's writes were done = %s, want inside (0, %s]: the writes ran in the margin, before expiry", w.left, reconcile.DefaultWriteMargin)
+		}
+	default:
+		t.Fatal("the deal pass ran no writes (AfterDeal never called)")
+	}
+	// The pass is timed on the lease clock: it recorded itself at the bound,
+	// under the TTL, on the clock the lease deadline is kept on.
+	took, err := c.HGet(ctx, reconcile.ProcKey, "took_ms").Int64()
+	if err != nil || took != bound.Milliseconds() {
+		t.Fatalf("%s took_ms = %d (%v), want %d: the pass timed on the lease clock", reconcile.ProcKey, took, err, bound.Milliseconds())
 	}
 
 	// The wedged bench's row: timeout, WEDGED, with at.
@@ -276,5 +380,15 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 	}
 	if m := starting(t, c, wedge); len(m) != 0 {
 		t.Fatalf("%s starting = %v after the next pass, want empty", wedge, m)
+	}
+
+	// The fixture is not vacuous: the lease clock reaching the deadline with
+	// no renewal lapses the Redis lease, and the holder is fenced.
+	clk.Advance(l.Remaining())
+	if !lapsed() {
+		t.Fatal("the lease clock reached the deadline and the Redis lease did not lapse")
+	}
+	if err := l.Renew(ctx); !errors.Is(err, reconcile.ErrFenced) {
+		t.Fatalf("renew after the lease lapsed on its clock: %v, want ErrFenced", err)
 	}
 }
