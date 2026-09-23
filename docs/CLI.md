@@ -1884,10 +1884,23 @@ the third call too.
 ```
 nova-pulse cut --templates <dir> --out <dir> --root <dir> --pool <pool.tsv> [--validate-contract] [--depends-on <cards>] [--max <n>]
 nova-pulse cut --templates <dir> --out <dir> --repo <clone> (--issue <owner>/<repo>#<n> | --rows <file.tsv> | --branch-from <owner>/<repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
+nova-pulse cut --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>] [--from <tsv>]
 ```
 
 `cut --kind recut` cuts a recut card from a prior diff (`--diff-file <path>`) or a typed HOLD (`--hold-file <path>`). With `--diff-file`, it performs a mechanical 3-way patch rebase (`git apply --3way`) against the target clone (`--dir <dir>`), recording `applied: clean` or `applied: conflict` in the card header and inlining the prior diff for the worker.
+
+`cut --kind fix|read|guard --from <tsv>` is the typed cut's small loop (#2021): one card per
+row of a kind-specific table, so a spec's machine-readable work table becomes cards without a
+manager in the loop. Row shapes, tab-separated: `fix` is `<repo> <issue> <title> [<body-file>
+<prior>]`, `read` is `<repo> <pr> <head> <title>`, `guard` is `<repo> <head>`; any other kind
+refuses. Two dedupes, reported apart: a row whose line-1 marker is already on a card in
+`<queue>/{pending,launched,done,failed}` prints `CUT FROM SKIPPED ... why=carded`, and with
+`--dir <clone>` a fix row whose issue already has a branch on that clone's origin (one
+`git ls-remote --heads origin` per run; a branch carrying `<repo-short>-<issue>` or
+`issue-<issue>` on word boundaries, i.e. the open PR) prints `CUT FROM SKIPPED ... why=origin
+branch=<name>`. An origin that does not answer is `CUT FROM REFUSED`, never a quiet
+queue-only run. The summary is `CUT FROM kind=<kind> rows=<n> cut=<k> skipped=<m> carded=<a>
+origin=<b>`; exit 1 when any row was skipped, 2 on a refusal.
 
 **A v2 card's operative region, and what the cutter lint actually checks.** Every Card
 Template v2 carries **exactly one** operative region, at a position the template owns and
