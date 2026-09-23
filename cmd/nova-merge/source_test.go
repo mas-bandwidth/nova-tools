@@ -111,6 +111,7 @@ func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 			{`os.CreateTemp(g.Dir, ".fold-base-")`, "the keep-both's empty ancestor for an add/add conflict, a temp file in the fold's own scratch clone under --lane, removed after git merge-file (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
 			{`os.OpenFile(resolved, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())`, "the fold's keep-both resolution in its own scratch clone under --lane, created exclusively at a path safepath.ResolvedUnder resolved (docs/SPEC-MERGE.md \"The fold (#1142)\")"},
 		},
+		"stack.go": {{`os.WriteFile(filepath.Join(g.Dir, file), []byte(resolved)`, "resolved conflict content written into the clone's work tree under --root, the mechanical both-sides-append resolver"}},
 	}
 	used := map[string]int{}
 	for name, src := range mainPackageSource(t) {

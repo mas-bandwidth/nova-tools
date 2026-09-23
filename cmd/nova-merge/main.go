@@ -429,6 +429,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdLand(rest, stdout, stderr, deps)
 	case "integrate":
 		return cmdIntegrate(rest, stdout, stderr, deps)
+	case "stack":
+		return cmdStack(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -451,7 +453,7 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	// the open list from a repository and cuts cards into a directory -- so all five name
 	// the repository outright rather than reading it from the lane's state, like `init`
 	// does; every other verb reads the lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue" || verb == "integrate"
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue" || verb == "integrate" || verb == "stack"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
@@ -464,10 +466,11 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		switch verb {
 		case "gate":
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
-		case "simulate", "batch", "integrate":
+		case "simulate", "batch", "integrate", "stack":
 			// simulate predicts a queue onto a base branch, batch builds an
 			// integration branch on top of one, and integrate is the two of them
-			// with the landing either side; none of the three owns a lane's.
+			// with the landing either side; stack re-lands same-base PRs onto one.
+			// None of the four owns a lane's.
 		case "rebase":
 			// rebase cuts a card per open pull request against a base branch it names
 			// outright; it is not a lane verb, so it does not own a lane's --base either.
