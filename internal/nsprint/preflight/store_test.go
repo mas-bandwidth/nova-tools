@@ -156,6 +156,59 @@ func TestControl18StateFileIsRed(t *testing.T) {
 	})
 }
 
+// Stella's hold 6 on #3005: a relative state filename (bare `BEAT`) was
+// returned as a word before the BEAT, backpressure and control names were
+// checked. Every shape a state file can be named in, and the words that must
+// stay green.
+func TestIsStateFileShapes(t *testing.T) {
+	for _, tc := range []struct {
+		tok  string
+		want bool
+	}{
+		{"BEAT", true},
+		{"BEAT_rowan", true},
+		{"./BEAT", true},
+		{"sprint/BEAT", true},
+		{"/Users/x/rowan-working/sprint/BEAT", true},
+		{"BEAT.rowan", true},
+		{"backpressure", true},
+		{"backpressure.on", true},
+		{"/tmp/sprint/backpressure.on", true},
+		{"control", true},
+		{"control.conf", true},
+		{"etc/control", true},
+		{"cards.tsv", true},
+		{"/tmp/card-dealer.lock", true},
+		{"dealer.pid", true},
+		{"backpressure_missing", false},
+		{"beat", false},
+		{"open", false},
+		{"debt_cap", false},
+		{"control-00000018", false},
+		{"/home/u/results", false},
+	} {
+		if got := isStateFile(tc.tok); got != tc.want {
+			t.Errorf("isStateFile(%q) = %v, want %v", tc.tok, got, tc.want)
+		}
+	}
+}
+
+// A policy file naming a relative BEAT is RED end to end, not only the
+// absolute path.
+func TestStateFileRelativeBEATIsRed(t *testing.T) {
+	ctx := context.Background()
+	policy := filepath.Join(t.TempDir(), "policy.conf")
+	if err := os.WriteFile(policy, []byte("backpressure_missing = open\nbeat = BEAT\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, c := fixture(t)
+	c.HSet(ctx, "s:control-00000018:policy", "backpressure_missing", "open")
+	l := checkStateFiles(ctx, c, Options{Sprint: "control-00000018", PolicyFile: policy})
+	if !l.Red || !strings.Contains(l.Why, "names BEAT") {
+		t.Fatalf("policy file names a relative BEAT: %s", l)
+	}
+}
+
 // Control 1's preflight half (#2756 section 8) and check 7.3 (Johnny 10):
 // eight claims, one child beats.
 func TestPreflightLeasesNotEqualBeats(t *testing.T) {
@@ -294,6 +347,29 @@ func TestPreflightMachineCeiling(t *testing.T) {
 	c.Del(ctx, "bench:ctl-bench:beat", "machine:ctl-hulk:ceiling")
 	if l := checkCeiling(ctx, c); !l.Red || !strings.Contains(l.Why, "ctl-hulk has no ceiling") {
 		t.Fatalf("missing ceiling: %s", l)
+	}
+}
+
+// Stella's hold 6 on #3005: a desired machine with no slots field was summed
+// as zero width, so the machine read green under its ceiling.
+func TestPreflightMachineCeilingMissingSlotsIsRed(t *testing.T) {
+	ctx := context.Background()
+	_, c := fixture(t)
+	c.SAdd(ctx, "friends", "ctl-a", "ctl-b")
+	c.HSet(ctx, "machine:ctl-studio:ceiling", "slots", "32")
+	c.HSet(ctx, "friend:ctl-a:desired", "slots", "32", "machine", "ctl-studio")
+	c.HSet(ctx, "friend:ctl-b:desired", "machine", "ctl-studio")
+	l := checkCeiling(ctx, c)
+	if !l.Red || !strings.Contains(l.Why, "friend ctl-b has no desired slots on ctl-studio") {
+		t.Fatalf("desired machine without slots: %s", l)
+	}
+	c.HSet(ctx, "friend:ctl-b:desired", "slots", "")
+	if l := checkCeiling(ctx, c); !l.Red || !strings.Contains(l.Why, "friend ctl-b has no desired slots") {
+		t.Fatalf("desired slots empty: %s", l)
+	}
+	c.HSet(ctx, "friend:ctl-b:desired", "slots", "x")
+	if l := checkCeiling(ctx, c); !l.Red || !strings.Contains(l.Why, `desired slots "x" is not a number`) {
+		t.Fatalf("desired slots not a number: %s", l)
 	}
 }
 

@@ -290,18 +290,26 @@ func stateFiles(text string) []string {
 	return out
 }
 
+// isStateFile reports whether tok names a state file. The state-file names (a
+// BEAT file, a file named backpressure or control) count bare as well as in a
+// path, since a relative name such as `BEAT` is a file the tool would open in
+// its working directory. Any other word without a `/` or `.` is a word, not a
+// path, so `backpressure_missing` and `beat` stay green.
 func isStateFile(tok string) bool {
 	base := path.Base(tok)
-	if !strings.Contains(tok, "/") && !strings.Contains(base, ".") {
-		return false // a word, not a path
-	}
 	lower := strings.ToLower(base)
 	stem := strings.TrimSuffix(lower, path.Ext(lower))
 	switch path.Ext(lower) {
 	case ".tsv", ".lock", ".pid":
 		return true
 	}
-	return strings.HasPrefix(base, "BEAT") || strings.Contains(lower, "backpressure") || stem == "control"
+	if strings.HasPrefix(base, "BEAT") || stem == "backpressure" || stem == "control" {
+		return true
+	}
+	if !strings.Contains(tok, "/") && !strings.Contains(base, ".") {
+		return false // a word, not a path
+	}
+	return strings.Contains(lower, "backpressure")
 }
 
 type consumer struct{ kind, name string }
@@ -503,7 +511,10 @@ func checkCeiling(ctx context.Context, c *redis.Client) Line {
 			continue
 		}
 		width, err := strconv.Atoi(slots)
-		if err != nil && slots != "" {
+		switch {
+		case slots == "":
+			reds = append(reds, fmt.Sprintf("%s %s has no desired slots on %s", k.kind, k.name, machine))
+		case err != nil:
 			reds = append(reds, fmt.Sprintf("%s %s desired slots %q is not a number", k.kind, k.name, slots))
 		}
 		sum[machine] += width
