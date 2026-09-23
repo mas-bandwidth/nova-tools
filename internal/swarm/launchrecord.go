@@ -313,7 +313,8 @@ func isPositiveDecimal(s string) bool {
 	if err != nil {
 		return false
 	}
-	return n > 0
+	// Canonical means the decimal round trip: no leading plus, no leading zero.
+	return n > 0 && strconv.Itoa(n) == s
 }
 
 func isLowerHex(s string, wantLen int) bool {

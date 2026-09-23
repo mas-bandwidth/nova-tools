@@ -430,6 +430,29 @@ func TestIssue2371(t *testing.T) {
 		refused("empty_object.json", []byte(`{}`), "schema")
 		missingNonce := strings.Replace(string(valid), `"reservation_nonce":"012345abcdef",`, ``, 1)
 		refused("missing_nonce.json", []byte(missingNonce), "reservation_nonce")
+
+		// slot and usage_every_ns are positive canonical decimals: no leading plus, no leading zero.
+		for _, bad := range []string{"+1", "01", "007", "+0", "00"} {
+			r := validLaunchRecord()
+			r.Slot = bad
+			if err := ValidateLaunchRecord(r); err == nil {
+				t.Fatalf("noncanonical slot %q accepted", bad)
+			}
+			r = validLaunchRecord()
+			r.UsageEveryNS = bad
+			if err := ValidateLaunchRecord(r); err == nil {
+				t.Fatalf("noncanonical usage_every_ns %q accepted", bad)
+			}
+		}
+		plusSlot := strings.Replace(string(valid), `"slot":"1"`, `"slot":"+1"`, 1)
+		refused("plus_slot.json", []byte(plusSlot), "slot")
+		for _, good := range []string{"1", "10", "1000000000"} {
+			r := validLaunchRecord()
+			r.Slot, r.UsageEveryNS = good, good
+			if err := ValidateLaunchRecord(r); err != nil {
+				t.Fatalf("canonical %q refused: %v", good, err)
+			}
+		}
 	})
 }
 
