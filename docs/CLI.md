@@ -2063,8 +2063,19 @@ filled tonight without a code change or a release. A registry naming no certifie
 bench is a refusal (exit 2) with the remedy on it rather than a tick that fills
 nothing. `--bench` narrows to the names it carries -- it is resolved through the
 registry's role guard exactly as before, so an uncertified bench can still be named
-by hand while it is being proven. `--once` runs exactly one tick, and without it the
-loop runs until it is killed or `--stop` says so. One line per tick:
+by hand while it is being proven. The per-card launcher's second argument is the
+bench's seat from the machines registry, not `swarm-<bench>` (#2014): the Studio's
+seat is `studio` and the Air's is `air`. A bench whose row names no seat, or a seat
+that is not one plain name, is refused once by name at the loop and dropped from the
+pool; a fill left with no seated bench refuses with exit 2:
+
+```
+FILL REFUSED bench=<name> reason=no-seat remedy="..."
+FILL REFUSED bench=<name> reason=seat-not-a-name seat=<seat> remedy="..."
+```
+
+`--once` runs exactly one tick, and without it the loop runs until it is killed or
+`--stop` says so. One line per tick:
 
 ```
 FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
@@ -2113,7 +2124,7 @@ free = <store>/shares.tsv's <owner> row  -  that owner's held leases (live or DR
 
 `--slots-store <path>` is the store on the bench, `$HOME/nova-bench/slots` by default
 and expanded by the bench's own shell; `--slots-owner <name>` is the row, `swarm-<bench>`
-by default, the seat the launcher already hands the bench; `--slots-bin <path>` is the
+by default; `--slots-bin <path>` is the
 `nova-swarm` that lists the leases, `$HOME/.local/bin/nova-swarm` by default, because
 a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
 no `nova-swarm` would read zero leases and call a full bench empty.
