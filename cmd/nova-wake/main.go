@@ -38,6 +38,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/presence"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -77,7 +78,7 @@ usage:
         [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
-  nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]
+  nova-wake awake --bus <dir> [--window <seconds>] [--max <n>] [--store <host:port> [--user <acl user>]]
   nova-wake beat --as <name> --store <host:port>
         [--every <duration>] [--ttl <duration>]   default 30s and 90s
         [--once]            write one beat and return, for a check or a test
@@ -346,7 +347,7 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
 	case "awake":
-		return cmdAwake(cfg, args[1:], stdout, stderr, clock)
+		return cmdAwake(cfg, args[1:], stdout, stderr, clock, dialStore)
 	case "beat":
 		return cmdBeat(args[1:], stdout, stderr, clock, dialStore)
 	case "presence":
@@ -407,7 +408,15 @@ func awakeRefused(stderr io.Writer, what string) int {
 // cmdAwake is the presence reader over bus cursors: for every lane from-<name>/
 // in the bus clone, the newest commit touching from-<name>/CURSOR is that
 // friend's last beat (docs/SPEC-WORK.md, Presence, source bus-cursor).
-func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock) int {
+//
+// With --store it first reads the live heartbeat `nova-wake beat` writes
+// (#2610's friend:<name>, a TTL'd key renewed every beat and never deleted):
+// a key that is there is "I am here now" and reads awake with source=presence;
+// a key that has aged out says nothing, so the lane falls through to the bus
+// cursor and BEAT exactly as before (#2200: a crashed line ages out with no
+// tombstone, and awake reads the same signal the beat writes). One MGet for
+// the whole roster; the git cursor-commit reading is unchanged.
+func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wake.Clock, open storeOpener) int {
 	if code := refuseUnknownConfigKeys(cfg, stderr); code != 0 {
 		return code
 	}
@@ -415,8 +424,15 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 	busDir := fs.String("bus", cfg.get("bus"), "")
 	window := fs.Int("window", cfg.cfgInt("window", DefaultAwakeWindow), "")
 	maxN := fs.Int("max", cfg.cfgInt("max", DefaultAwakeMax), "")
+	store := fs.String("store", "", "")
+	user := fs.String("user", presence.DefaultUser, "")
 	if !parseFlags(fs, args, stderr) {
 		return 2
+	}
+	if strings.TrimSpace(*store) != "" {
+		if _, err := presence.Addr(*store); err != nil {
+			return awakeRefused(stderr, oneline.Err(err))
+		}
 	}
 	if *busDir == "" {
 		return awakeRefused(stderr, "no --bus named; refusing to guess; set bus= in "+cfg.path+" as a second remedy")
@@ -439,6 +455,23 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		return awakeRefused(stderr, oneline.Err(err))
 	}
 
+	live := map[string]presence.Status{}
+	if strings.TrimSpace(*store) != "" && len(names) > 0 {
+		ctx := context.Background()
+		st, closeStore, err := open(ctx, *store, *user)
+		if err != nil {
+			return awakeRefused(stderr, oneline.Err(err))
+		}
+		sts, err := presence.Read(ctx, st, names, clock.Now())
+		_ = closeStore()
+		if err != nil {
+			return awakeRefused(stderr, oneline.Err(err))
+		}
+		for _, s := range sts {
+			live[s.Name] = s
+		}
+	}
+
 	now := clock.Now().Unix()
 	var awake, asleep, unknown int
 	total := len(names)
@@ -448,7 +481,22 @@ func cmdAwake(cfg *wakeConfig, args []string, stdout, stderr io.Writer, clock wa
 		source := "bus-cursor"
 		ct, haveCursor := cursorTime(*busDir, name)
 		bt, until, haveBeat := beatTime(*busDir, name)
+		ps, havePresence := live[presence.Normalize(name)]
 		switch {
+		case havePresence && ps.State == presence.Up:
+			// The friend's own beat key is there, inside its TTL: the live
+			// "I am here now". An aged-out key is absent, not a tombstone, and
+			// falls through to the bus below.
+			source = "presence"
+			if ps.Dated {
+				age := ps.Age
+				if age < 0 {
+					age = 0
+				}
+				ageText = strconv.FormatInt(int64(age/time.Second), 10)
+			}
+			state = "awake"
+			awake++
 		case haveBeat && until > 0 && until > now:
 			// The beat carries a lease that has not run out: the line is between two waits
 			// (or mid-wait), its cursor and beat stamp may both be old, but its manager
