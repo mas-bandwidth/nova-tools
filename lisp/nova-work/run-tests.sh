@@ -7,4 +7,5 @@ exec sbcl --non-interactive \
   --eval "(require :asdf)" \
   --eval "(push #p\"${here}/\" asdf:*central-registry*)" \
   --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work/tests))" \
+  --eval "(load #p\"${here}/tests/issue-1989.lisp\")" \
   --eval "(nova-work/tests:main)"
