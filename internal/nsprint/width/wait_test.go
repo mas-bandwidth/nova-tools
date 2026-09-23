@@ -341,3 +341,52 @@ func TestWaitReadKeyResolvesAtHead(t *testing.T) {
 		t.Fatal("a sweep with a token that does not hold lease:reconciler must refuse FENCED")
 	}
 }
+
+// TestWaitingBuildHoldsItsPaths is the regression for Stella's hold 7 at
+// b5e54f11: a WORKING build moved to waiting still owns its work, so the
+// cross-sprint PATHS lint (ns_task_live, #3067) must keep it live. An
+// overlapping build push is refused while the first task waits, and is
+// created once the waiting task leaves the live states.
+func TestWaitingBuildHoldsItsPaths(t *testing.T) {
+	st, client := controlRedis(t)
+	ctx := context.Background()
+	seedFriend(t, client, "rowan", 1)
+	pushChecked := func(id, title string) task.PushResult {
+		t.Helper()
+		got, err := task.PushChecked(ctx, st, task.PushRequest{
+			Sprint: sprint, ID: id, Kind: task.KindWork, Title: title,
+			Effects: task.EffectsNone, Repo: "nova-tools", To: "rowan", Ref: "briefs/" + id + ".md",
+		})
+		if err != nil {
+			t.Fatalf("push %s: %v", id, err)
+		}
+		return got
+	}
+	if got := pushChecked("build-w1", "waiter | DONE-WHEN: x | PATHS: internal/nsprint/task/wait.go | DEPENDS-ON: -"); got.Status != task.PushCreated {
+		t.Fatalf("first build push = %s; want CREATED", got.Status)
+	}
+	h := newAck(st)
+	if res := refill(t, st, "rowan", h); len(res.Launched) != 1 {
+		t.Fatalf("refill launched %d; want 1", len(res.Launched))
+	}
+	w1 := h.live["build-w1"]
+	ci := task.WaitOnCI("nova-tools", headA)
+	wait(t, st, "build-w1", w1.Claim.Token, ci)
+	if s := taskHash(t, client, "build-w1")["state"]; s != task.StateWaiting {
+		t.Fatalf("build-w1 state %s; want waiting", s)
+	}
+
+	got := pushChecked("build-w2", "overlap | DONE-WHEN: y | PATHS: internal/nsprint/task/wait.go | DEPENDS-ON: -")
+	if got.Status != task.PushOverlap || got.Overlap == nil || got.Overlap.With != "build-w1" ||
+		got.Overlap.Path != "internal/nsprint/task/wait.go" {
+		t.Fatalf("overlapping push while build-w1 waits = %s (%+v); want OVERLAP with build-w1", got.Status, got.Overlap)
+	}
+
+	// A dead wake takes the task out of the live states; its PATHS are free.
+	if w, err := task.Wake(ctx, st, task.WakeRequest{Sprint: sprint, On: ci, Outcome: task.WakeDead, Reason: "pr-closed", Actor: "ci-end"}); err != nil || w.Dead != 1 {
+		t.Fatalf("dead wake = %+v, %v; want 1 dead", w, err)
+	}
+	if got := pushChecked("build-w3", "after | DONE-WHEN: z | PATHS: internal/nsprint/task/wait.go | DEPENDS-ON: -"); got.Status != task.PushCreated {
+		t.Fatalf("push after the dead wake = %s (%+v); want CREATED", got.Status, got.Overlap)
+	}
+}

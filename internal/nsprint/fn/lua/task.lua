@@ -1,7 +1,7 @@
 -- task_live: the path-lint snapshot for task push (nova-tools #3067). One
 -- read-only call returns whether the pushed id already exists (the push
 -- function then answers EXISTS, CLOSED or CONFLICT, never the lint), then
--- every live (open, claimed or working) task of every sprint in sprint:order
+-- every live (open, claimed, working or waiting) task of every sprint in sprint:order
 -- plus the pushing sprint, as flat rows of sprint, id, kind, repo, title. The
 -- state indexes are only candidates: a row is returned only when its hash
 -- says the task is live. Nothing is written.
@@ -20,10 +20,10 @@ local function task_live(keys, args)
     order[#order + 1] = push_sprint
   end
   local out = { tostring(redis.call('EXISTS', 's:' .. push_sprint .. ':task:' .. push_id)) }
-  local live = { open = true, claimed = true, working = true }
+  local live = { open = true, claimed = true, working = true, waiting = true }
   for _, s in ipairs(order) do
     local done = {}
-    for _, idx in ipairs({ 'open', 'claimed', 'working' }) do
+    for _, idx in ipairs({ 'open', 'claimed', 'working', 'waiting' }) do
       for _, id in ipairs(redis.call('SMEMBERS', 's:' .. s .. ':idx:task:' .. idx)) do
         if not done[id] then
           done[id] = true
