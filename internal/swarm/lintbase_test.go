@@ -419,6 +419,10 @@ func TestLintDoneWhenTestNameAtBase(t *testing.T) {
 		"`go test -count=1 -run TestDecideElsewhere example.com/fixture/internal/decide` passes",
 		"`pytest tests/test_decide.py::test_decide_elsewhere` passes",
 		"`pytest tests/test_decide.py -k test_decide_elsewhere` passes",
+		// A long option's value is no target: `--rootdir tests` must not widen the
+		// lookup to tests/test_other.py (stella's hold at 8f7465f0).
+		"`pytest tests/test_decide.py --rootdir tests -k test_decide_elsewhere` passes",
+		"`pytest --rootdir tests --maxfail 1 tests/test_decide.py -k test_decide_elsewhere` passes",
 	} {
 		if fs := lint(done, bc); len(fs) != 0 {
 			t.Fatalf("DONE-WHEN %q names a test absent at base and lints clean, got %v", done, fs)
@@ -454,6 +458,8 @@ func TestLintDoneWhenTestNameAtBase(t *testing.T) {
 		"`go test -run TestDecideElsewhere example.com/fixture/internal/other` passes",
 		"`pytest tests/test_other.py::test_decide_elsewhere` passes",
 		"`pytest tests -k test_decide_elsewhere` passes",
+		"`pytest tests/test_other.py --rootdir tests -k test_decide_elsewhere` passes",
+		"`pytest --rootdir=. tests -k test_decide_elsewhere` passes",
 	} {
 		fs := lint(done, bc)
 		if len(fs) != 1 || !strings.Contains(fs[0].Excerpt, "exists at base-sha "+sha[:12]) {

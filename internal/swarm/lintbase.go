@@ -378,8 +378,47 @@ func goTestTargets(seg string) []string {
 	return out
 }
 
+// pytestValueOptions is the pytest options (core, pytest-cov, -xdist, -timeout,
+// -html, -randomly, -rerunfailures, -repeat, hypothesis, -asyncio, -django) whose
+// required value is the next word when no `=` joins it (options whose value is
+// optional, like --cov, are left out): `--rootdir tests` names a directory
+// to root at, not a directory of tests to run.
+var pytestValueOptions = map[string]bool{}
+
+func init() {
+	for _, o := range []string{
+		"-k", "-m", "-p", "-c", "-o", "-r", "-W", "-n", "--rootdir", "--confcutdir",
+		"--basetemp", "--config-file", "--inifile", "--ignore", "--ignore-glob", "--deselect",
+		"--override-ini", "--pythonwarnings", "--maxfail", "--tb", "--durations",
+		"--durations-min", "--capture", "--import-mode", "--junitxml", "--junit-xml",
+		"--junit-prefix", "--log-level", "--log-file", "--log-file-level", "--log-format",
+		"--log-date-format", "--log-cli-level", "--log-cli-format", "--log-cli-date-format",
+		"--show-capture", "--doctest-glob", "--color", "--code-highlight", "--pdbcls",
+		"--last-failed-no-failures", "--lfnf", "--cov-report", "--cov-config",
+		"--cov-fail-under", "--numprocesses", "--maxprocesses", "--dist", "--timeout",
+		"--timeout-method", "--html", "--randomly-seed", "--reruns", "--reruns-delay",
+		"--count", "--hypothesis-profile", "--hypothesis-seed", "--asyncio-mode", "--ds",
+	} {
+		pytestValueOptions[o] = true
+	}
+}
+
+// pytestTakesValue says whether a pytest option word is followed by its value: a
+// short value flag (`-k expr`), or a long option from pytestValueOptions written
+// without `=` (`--rootdir tests`). `--opt=value` and attached short values
+// (`-ktest_x`) carry their value in the same word.
+func pytestTakesValue(f string) bool {
+	if strings.Contains(f, "=") {
+		return false
+	}
+	if !strings.HasPrefix(f, "--") && len(f) > 2 {
+		return false
+	}
+	return pytestValueOptions[f]
+}
+
 // pytestTargets is the file and directory arguments of one pytest command: every
-// word that is no flag, no flag's value (`-k x`, `-m slow`) and no node id.
+// word that is no flag, no flag's value (`-k x`, `--rootdir tests`) and no node id.
 func pytestTargets(seg string) []string {
 	var out []string
 	fs := strings.Fields(seg)
@@ -387,8 +426,8 @@ func pytestTargets(seg string) []string {
 		f := strings.Trim(fs[i], `"'`)
 		switch {
 		case strings.HasPrefix(f, "-"):
-			if !strings.Contains(f, "=") && len(f) == 2 && strings.ContainsAny(f[1:], "kmpcor") {
-				i++ // a short flag whose value is the next word
+			if pytestTakesValue(f) {
+				i++ // an option whose value is the next word, never a target
 			}
 		case strings.Contains(f, "::"):
 		case f != "":
