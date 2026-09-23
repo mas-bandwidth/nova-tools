@@ -146,6 +146,9 @@ func Run(ctx context.Context, client *redis.Client, opt Options, out io.Writer) 
 		return Result{}, err
 	}
 	PrintLines(out, sum)
+	if err := foldRote(ctx, client, opt.Sprint, head, out); err != nil {
+		return Result{}, err
+	}
 
 	sha, err := findCommit(ctx, opt.Work, opt.Sprint)
 	if err != nil {
