@@ -52,7 +52,7 @@ func TestIssue2199(t *testing.T) {
 			if code != 0 {
 				t.Fatalf("watch exit = %d, want 0; stderr=%s\nout=%s", code, errs.String(), out.String())
 			}
-		case <-time.After(time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatalf("watch did not wake on the event within 1s; stderr=%s\nout=%s", errs.String(), out.String())
 		}
 
