@@ -2,14 +2,22 @@ package bus
 
 import (
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
 
+// TestClearStaleIndexLockAgeBoundary pins the age rule and nothing else. The clock is
+// the lock's own mtime plus a fixed offset, and the process scan is injected: the real
+// scan reads every git on the host, and on a gate bench another lane's git caught
+// mid-exit (comm git, empty cmdline, not yet a zombie) made the scan unknown and failed
+// this test for a reason that has nothing to do with age (#2958). Ownership has its own
+// tests below; here no git owns the checkout, so age alone decides.
 func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -25,19 +33,32 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cleared, err := ClearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge))
-	if err != nil || cleared {
-		t.Fatalf("a lock aged exactly 60s: cleared=%v err=%v, want left alone", cleared, err)
+	scans := 0
+	noGit := func() ([]gitProc, error) {
+		scans++
+		return nil, nil
 	}
-	if _, err := os.Lstat(lock); err != nil {
-		t.Fatalf("the lock was removed at exactly 60s: %v", err)
+	for _, young := range []time.Duration{0, staleIndexLockAge - time.Nanosecond, staleIndexLockAge} {
+		cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(young), noGit)
+		if err != nil || cleared {
+			t.Fatalf("a lock aged %v: cleared=%v err=%v, want left alone", young, cleared, err)
+		}
+		if _, err := os.Lstat(lock); err != nil {
+			t.Fatalf("the lock was removed at %v, not older than %v: %v", young, staleIndexLockAge, err)
+		}
 	}
-	cleared, err = ClearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge+time.Nanosecond))
+	if scans != 0 {
+		t.Fatalf("a lock not older than %v was put to the process scan %d times; age must decide first", staleIndexLockAge, scans)
+	}
+	cleared, err := clearStaleIndexLock(dir, fi.ModTime().Add(staleIndexLockAge+time.Nanosecond), noGit)
 	if err != nil || !cleared {
 		t.Fatalf("a lock older than 60s: cleared=%v err=%v, want removed", cleared, err)
 	}
 	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
 		t.Fatalf("the stale lock is still there: %v", err)
+	}
+	if scans != 1 {
+		t.Fatalf("a stale lock was removed after %d process scans, want exactly 1", scans)
 	}
 }
 
@@ -76,7 +97,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline := time.Now().Add(testWaitBound())
 	for {
 		owns, oerr := gitOwnsCheckout(dir)
-		if oerr != nil {
+		if oerr != nil && !scanUnknownElsewhere(t, oerr, lock) {
 			t.Fatal(oerr)
 		}
 		if owns {
@@ -84,7 +105,7 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			procs, _ := gitProcesses()
-			t.Fatalf("the live git never showed as owning %s; procs=%+v", dir, procs)
+			t.Fatalf("the live git never showed as owning %s; last err=%v procs=%+v", dir, oerr, procs)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
@@ -104,24 +125,65 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	deadline = time.Now().Add(testWaitBound())
 	for {
 		owns, oerr := gitOwnsCheckout(dir)
-		if oerr != nil {
+		if oerr != nil && !scanUnknownElsewhere(t, oerr, lock) {
 			t.Fatal(oerr)
 		}
-		if !owns {
+		if oerr == nil && !owns {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("git still looked like it owned the checkout after it was killed")
+			t.Fatalf("git still looked like it owned the checkout after it was killed: owns=%v err=%v", owns, oerr)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	cleared, err = ClearStaleIndexLock(dir, time.Now())
-	if err != nil || !cleared {
-		t.Fatalf("stale lock with no git: cleared=%v err=%v", cleared, err)
+	// The first scan answers "cannot tell", as a stranger's exiting git makes the real one
+	// answer on a busy bench; later scans are the real host scan. The lock must survive the
+	// unknown answer and go on the next known one.
+	unknownOnce := true
+	scan := func() ([]gitProc, error) {
+		if unknownOnce {
+			unknownOnce = false
+			return nil, ownershipUnknownErr("cmdline empty")
+		}
+		return gitProcesses()
+	}
+	deadline = time.Now().Add(testWaitBound())
+	for {
+		cleared, err = clearStaleIndexLock(dir, time.Now(), scan)
+		if err != nil && !scanUnknownElsewhere(t, err, lock) {
+			t.Fatalf("stale lock with no git: cleared=%v err=%v", cleared, err)
+		}
+		if err == nil {
+			if !cleared {
+				t.Fatalf("stale lock with no git: cleared=%v err=%v", cleared, err)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stale lock with no git: the scan stayed unknown for %v: %v", testWaitBound(), err)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 	if _, err := os.Lstat(lock); !os.IsNotExist(err) {
 		t.Fatal("the lock is still there after the git exited")
 	}
+}
+
+// scanUnknownElsewhere reports whether err is the host-wide process scan answering
+// "cannot tell" (#2958). The scan reads every git on the machine; on a gate bench another
+// lane's git caught mid-exit (empty cmdline, not yet a zombie) makes it unknown for a
+// moment, and that is not this checkout's answer. An unknown scan must never remove the
+// lock, so it is asserted here, and the caller polls again until testWaitBound instead of
+// failing on a process it does not own. Any other error is the caller's to fail on.
+func scanUnknownElsewhere(t *testing.T, err error, lock string) bool {
+	t.Helper()
+	if err == nil || !strings.HasPrefix(err.Error(), ownershipUnknown) {
+		return false
+	}
+	if _, lerr := os.Lstat(lock); lerr != nil {
+		t.Fatalf("the lock is gone although the scan was unknown (%v): %v", err, lerr)
+	}
+	return true
 }
 
 // oldIndexLock is a checkout whose index.lock is already past the 60s bound.
@@ -397,4 +459,51 @@ func TestRecoverWaitFastForwardLeavesADirtyCursor(t *testing.T) {
 	if after != before {
 		t.Fatalf("HEAD moved over a dirty CURSOR: %s -> %s", before, after)
 	}
+}
+
+// #3029: a gate batch went red on TestWaitRepairStaleLockAndDirtyBeat with
+//
+//	WAIT REFUSED: cannot tell whether a git process owns this checkout: read /proc/637768/comm: no such process
+//
+// while every member passed alone. Linux answers a read of /proc/<pid>/comm, cmdline,
+// stat or cwd with ESRCH, not ENOENT, while a process that has just exited is being torn
+// down. On a gate host running a whole package in parallel some process is always in that
+// window, and it need not even be a git. A pid that is gone is gone, whichever errno says
+// so: it is not an owner, and it is not an unreadable live process. The scan is supplied
+// here, so the answer does not depend on which process happens to be exiting when it runs.
+func TestVanishingProcessESRCHDoesNotBlockLockCleanup(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	esrch := func(file string) error {
+		return &fs.PathError{Op: "read", Path: "/proc/637768/" + file, Err: syscall.ESRCH}
+	}
+	for _, v := range []procView{
+		{commErr: esrch("comm")},
+		{comm: "git\n", cmdErr: esrch("cmdline")},
+		{comm: "git\n", cmdline: []byte("git\x00status"), cwdErr: esrch("cwd")},
+	} {
+		if _, skip, err := gitProcFromView(v); err != nil || !skip {
+			t.Fatalf("a process gone mid-read (%+v): skip=%v err=%v, want skipped and no error", v, skip, err)
+		}
+	}
+
+	dir, lock := oldIndexLock(t)
+	scan := func() ([]gitProc, error) {
+		return classifyViews([]procView{{commErr: esrch("comm")}, {comm: "bash\n"}})
+	}
+	cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
+	if err != nil || !cleared {
+		t.Fatalf("a stale lock with only a vanishing process in the scan: cleared=%v err=%v, want removed", cleared, err)
+	}
+	if _, statErr := os.Lstat(lock); !os.IsNotExist(statErr) {
+		t.Fatalf("stale index.lock still present: %v", statErr)
+	}
+
+	// ESRCH is not a licence for every errno: a live process that denies the read
+	// still keeps the lock.
+	kept, keptLock := oldIndexLock(t)
+	cleared, err = clearStaleIndexLock(kept, time.Now(), func() ([]gitProc, error) {
+		return classifyViews([]procView{{comm: "git\n", cmdErr: &fs.PathError{Op: "read", Path: "/proc/1/cmdline", Err: syscall.EACCES}}})
+	})
+	assertLockKept(t, keptLock, cleared, err)
 }
