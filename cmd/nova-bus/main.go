@@ -86,7 +86,7 @@ usage:
         [--diagnostics]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus close --bus <dir> --as <name> --before <RFC3339> [--dry-run] [--remote <name> --branch <name> [--attempts <n>] [--no-push]]
-  nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
+  nova-bus check --bus <dir> (--full | --as <name> | --since <commit-or-date>) [--max <n>] [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60.
@@ -2216,6 +2216,14 @@ func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, lega
 // and the line under the listing names the flag that widens it.
 const defaultOpenMax = 20
 
+// defaultCheckMax is how many findings `check` prints before one BUS MORE line names the
+// rest. It is the Conventions' cap: a check over a bus adopted onto an old history failed
+// 1,059 times (#2574), most of them one class of finding repeating, and a wall of red that
+// large is a wall nobody reads -- the loud kind eats the quiet one and the one finding that
+// matters is somewhere in it. Twenty findings is a screen; the BUS CHECK line that follows
+// counts every finding by class, so the listing is capped and the counting never is.
+const defaultCheckMax = 20
+
 // defaultOpenWarn is how large a backlog gets before every return says so. Forty is above
 // what a working line carries between reads and below the seventy-four that broke one, so
 // the line fires while a backlog is still answerable and not after it is hopeless.
@@ -3695,14 +3703,18 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	full := f.fs.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
 	as := f.fs.String("as", "", "check what changed since this participant's cursor")
-	since := f.fs.String("since", "", "check what changed since this commit")
+	since := f.fs.String("since", "", "check what changed since this commit: a revision, a UTC date (YYYY-MM-DD, so the last commit written before that day), or an RFC 3339 UTC instant")
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
+	maxFindings := f.fs.Int("max", defaultCheckMax, "findings to print before one BUS MORE line naming the rest (default 20, 0 = all)")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
+		return 2
+	}
+	if !f.atLeastZero("max", *maxFindings, stderr) {
 		return 2
 	}
 	// A check with no baseline is not a check of nothing, it is a caller who has not said
@@ -3750,7 +3762,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	noteName, noteLegacy := "", ""
 	if !*full {
 		if strings.TrimSpace(*since) != "" {
-			from, err = bus.ResolveCommit(*busDir, *since)
+			from, err = bus.ResolveSinceCommit(*busDir, *since)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(err))
 				return 2
@@ -3838,8 +3850,23 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// it wherever it was met. The values `check` was never given are the placeholders they
 	// are; see printSwitchDayNote.
 	printSwitchDayNote(stdout, noteLegacy, *busDir, noteName, "<n>", "", "", now)
-	failed, warned := 0, 0
-	for _, p := range problems {
+	// THE CAP, AND THE COUNT THAT IS NEVER CAPPED. A check that fails 1,059 times (#2574)
+	// printed all 1,059 lines, most of them one class repeating, and a reader holding the
+	// wall could not tell the loud kind from the one finding that mattered. So the report
+	// is capped at --max findings, one BUS MORE line says what the cap held back and names
+	// the flag that lifts it, and one BUS CHECK line counts every finding by class before
+	// the exit -- the listing is capped, the counting never is, and the class the cap ate
+	// is still on the line. The cap governs what is PRINTED and nothing else: the exit
+	// code and the counts come from the whole walk, exactly as an uncapped run said them.
+	counts := bus.CountCheckFindings(problems)
+	shown := len(problems)
+	if *maxFindings > 0 && shown > *maxFindings {
+		shown = *maxFindings
+	}
+	for i, p := range problems {
+		if i == shown {
+			break
+		}
 		// A WARN GOES TO STDOUT, and it went to stderr. The grammar says which stream a
 		// line is on and the rule is one sentence: FAIL lines and refusals to stderr,
 		// everything else to stdout. A WARN is neither -- it is a finding that was
@@ -3848,18 +3875,33 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// apart, which is what CI does. It is an informational line and it is now where the
 		// informational lines are.
 		if p.Warn {
-			warned++
 			fmt.Fprintf(stdout, "BUS WARN %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 			continue
 		}
-		failed++
 		fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 	}
-	if failed > 0 {
+	if shown < len(problems) {
+		fmt.Fprintf(stderr, "BUS MORE shown=%d total=%d remedy=%s\n", shown, len(problems), oneline.Quote("--max 0"))
+	}
+	// THE CAP'S OWN LINES GO WHERE THE FAIL LINES GO, and no further than they do. The
+	// findings report's gate half is the BUS FAIL lines on stderr, and the two lines that
+	// account for it -- what the cap held back, and the count by class -- end that same
+	// report on that same stream: a count a caller could read as a pass never enters
+	// stdout of a failing run, which is the law TestCheckFailsAndNamesEveryFinding keeps,
+	// and a run with NO findings prints neither line, so a clean run's stderr stays empty
+	// and the stream contract is where it was.
+	if len(problems) > 0 {
+		fmt.Fprintf(stderr, "BUS CHECK findings=%d fail=%d warn=%d", counts.Findings, counts.Fail, counts.Warn)
+		for _, cc := range counts.Class {
+			fmt.Fprintf(stderr, " %s=%d", oneline.Escape(cc.Class), cc.Count)
+		}
+		fmt.Fprint(stderr, "\n")
+	}
+	if counts.Fail > 0 {
 		return 1
 	}
 	fmt.Fprintf(stdout, "BUS OK notes=%d lanes=%d receipts=%d participants=%d warn=%d\n",
-		stats.Notes, stats.Lanes, stats.Receipts, len(c.Participants), warned)
+		stats.Notes, stats.Lanes, stats.Receipts, len(c.Participants), counts.Warn)
 	return 0
 }
 
