@@ -67,11 +67,18 @@ func WriteResults(ctx context.Context, resultsDir, outDir string, rdb *redis.Cli
 	return nil
 }
 
+// Scanner is the one Redis call ScanLabels makes. *redis.Client satisfies it;
+// a test supplies a fake that returns unsorted pages with repeated keys, which
+// a real server may do and miniredis never does (it sorts and returns one page).
+type Scanner interface {
+	Scan(ctx context.Context, cursor uint64, match string, count int64) *redis.ScanCmd
+}
+
 // ScanLabels returns every label whose card:<label> hash exists in Redis,
 // sorted and without duplicates (SCAN may return a key more than once across
 // cursor pages). The set is what an HSCAN over card:* keys finds: every key is one
 // card's hash, and reading all of them answers what the set of cards is.
-func ScanLabels(ctx context.Context, rdb *redis.Client) ([]string, error) {
+func ScanLabels(ctx context.Context, rdb Scanner) ([]string, error) {
 	seen := map[string]bool{}
 	labels := []string{}
 	var cursor uint64

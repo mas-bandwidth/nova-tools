@@ -106,3 +106,57 @@ func TestCardStatusHashMatchesBashFixture(t *testing.T) {
 		}
 	}
 }
+
+// pagedScanner is a controlled SCAN source: each call returns the next page
+// as given, unsorted and with keys repeated across pages, the way a real
+// Redis may answer while the keyspace rehashes. miniredis cannot produce this
+// (its SCAN sorts the matches and returns them in one page), so the contract
+// test below does not use it.
+type pagedScanner struct {
+	pages   [][]string
+	calls   int
+	cursors []uint64
+}
+
+func (p *pagedScanner) Scan(_ context.Context, cursor uint64, match string, _ int64) *redis.ScanCmd {
+	p.cursors = append(p.cursors, cursor)
+	if match != cardstatus.CardPrefix+"*" {
+		return redis.NewScanCmdResult(nil, 0, fmt.Errorf("unexpected match %q", match))
+	}
+	i := p.calls
+	p.calls++
+	if i >= len(p.pages) {
+		return redis.NewScanCmdResult(nil, 0, fmt.Errorf("scan called %d times for %d pages", p.calls, len(p.pages)))
+	}
+	next := uint64(0)
+	if i+1 < len(p.pages) {
+		next = uint64(100 + i)
+	}
+	return redis.NewScanCmdResult(p.pages[i], next, nil)
+}
+
+// TestScanLabelsSortsAndDedupsUnsortedDuplicatePages is the regression control
+// for ScanLabels' documented contract: labels come back sorted and unique even
+// when SCAN pages arrive unsorted and repeat keys across cursors. Dropping
+// sort.Strings or the seen-set in ScanLabels fails this test.
+func TestScanLabelsSortsAndDedupsUnsortedDuplicatePages(t *testing.T) {
+	src := &pagedScanner{pages: [][]string{
+		{"card:card-003", "card:card-001"},
+		{"card:card-004", "card:card-003", "card:card-002"},
+		{"card:card-001", "card:card-004"},
+	}}
+	got, err := cardstatus.ScanLabels(context.Background(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"card-001", "card-002", "card-003", "card-004"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("ScanLabels over unsorted duplicate pages = %v, want sorted unique %v", got, want)
+	}
+	if src.calls != 3 {
+		t.Fatalf("ScanLabels made %d SCAN calls, want 3 (one per page until cursor 0)", src.calls)
+	}
+	if src.cursors[0] != 0 || src.cursors[1] != 100 || src.cursors[2] != 101 {
+		t.Fatalf("ScanLabels passed cursors %v, want [0 100 101] (each page's next cursor)", src.cursors)
+	}
+}
