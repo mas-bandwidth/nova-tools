@@ -9,7 +9,9 @@ package card
 //
 //  1. reads the card and refuses (exit 4, nothing written, no directory made)
 //     unless the card is in state dealt, for this bench, at this attempt;
-//  2. makes the job directory and writes `launched` through ns_card_launched;
+//  2. claims the attempt in Redis (Claim: one wrapper per attempt, #3328),
+//     writes `launched` through ns_card_launched, and only then makes the job
+//     directory, clearing a leftover one under the jobs root through safepath;
 //  3. starts the harness in its own process group, stdin /dev/null, output to
 //     <job>/harness.log, with the token nowhere in its argv or environment;
 //  4. beats: once at start (the start acknowledgement that moves launched to
@@ -29,6 +31,8 @@ package card
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +45,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/redis/go-redis/v9"
 )
 
 // Wrapper exit codes. They follow the card verb's codes where one exists.
@@ -77,6 +82,10 @@ type WrapperEnd struct {
 // for a call that could not be made. RedisLedger is the production one.
 type WrapperLedger interface {
 	Card(ctx context.Context) (WrapperCard, error)
+	// Claim is the attempt claim (#3328): the one atomic step that lets
+	// exactly one wrapper invocation own a dealt attempt. nonce is this
+	// invocation's; a retry of the same call with the same nonce is 0 again.
+	Claim(ctx context.Context, nonce string) (int, error)
 	Launched(ctx context.Context, branch, jobDir string) (int, error)
 	Beat(ctx context.Context) (int, error)
 	End(ctx context.Context, end WrapperEnd) (int, error)
@@ -209,21 +218,25 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 		return refuse(WrapperExitNotDealt, "card identity "+strconv.Quote(c.Identity)+" is not this attempt")
 	}
 
-	// 2. The job directory, then launched. Mkdir on the leaf itself is the
-	// atomic claim: with two wrappers racing for the same dealt attempt,
-	// exactly one Mkdir succeeds, so only that invocation ever owns the
-	// directory. cleanup is defined only once we know we created it, so a
-	// loser never removes the winner's live harness output.
+	// 2. The claim and launched in Redis, then the job directory. Redis is the
+	// only claim (#3328): with two wrappers racing for the same dealt attempt,
+	// exactly one Claim returns 0; the other exits with the Redis code and
+	// never touches the disk. The job dir path is deterministic, so launched
+	// records it before it exists. cleanup is defined only once this
+	// invocation has won the claim, so a loser never removes the winner's
+	// live harness output.
 	job := WrapperJobDir(cfg.JobsRoot, cfg.Sprint, cfg.Label, cfg.Attempt)
 	results := filepath.Join(cfg.ResultsRoot, filepath.FromSlash(id.String()))
-	if err := os.MkdirAll(filepath.Dir(job), 0o700); err != nil {
-		return refuse(WrapperExitCouldNot, "job dir: "+err.Error())
+	nonce, err := claimNonce()
+	if err != nil {
+		return refuse(WrapperExitCouldNot, "claim nonce: "+err.Error())
 	}
-	if err := os.Mkdir(job, 0o700); err != nil {
-		if os.IsExist(err) {
-			return refuse(WrapperExitCouldNot, "job dir already exists: an attempt is launched once")
-		}
-		return refuse(WrapperExitCouldNot, "job dir: "+err.Error())
+	if code, err := ledger.Claim(ctx, nonce); err != nil || code != 0 {
+		return refuse(ledgerCode(code, err), fmt.Sprintf("card claim refused code=%d%s", code, errSuffix(err)))
+	}
+	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job)
+	if err != nil || code != 0 {
+		return refuse(ledgerCode(code, err), fmt.Sprintf("card launched refused code=%d%s", code, errSuffix(err)))
 	}
 	cleanup := func() {
 		if err := safepath.RemoveUnder(cfg.JobsRoot, job); err != nil {
@@ -239,18 +252,13 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 			}
 		}
 	}
-	if err := os.Mkdir(filepath.Join(job, "out"), 0o700); err != nil {
-		cleanup()
-		return refuse(WrapperExitCouldNot, "job dir: "+err.Error())
-	}
-	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job)
-	if err != nil || code != 0 {
-		cleanup()
-		return refuse(ledgerCode(code, err), fmt.Sprintf("card launched refused code=%d%s", code, errSuffix(err)))
+	began := now()
+	if err := makeJobDir(cfg.JobsRoot, job); err != nil {
+		// The card is launched and the harness never ran: a crash, recorded.
+		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1}, "job dir: "+err.Error(), cleanup)
 	}
 
 	// 3. The harness, in its own group, token-free.
-	began := now()
 	log, err := os.Create(filepath.Join(job, "harness.log"))
 	if err != nil {
 		cleanup()
@@ -314,6 +322,78 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	// A fenced beat ends here too: the ledger writes end.record before its
 	// end call, which is then fenced, and the record stays for the reconciler.
 	return finish(ctx, cfg, ledger, &rep, job, results, began, now, end, why, cleanup)
+}
+
+// makeJobDir makes <job>/out for a launched attempt. A directory already at
+// the job path is a leftover of an earlier run (the claim, not the disk, says
+// who owns the attempt), so it is removed under the jobs root through
+// safepath first and never copied into this attempt's results.
+func makeJobDir(root, job string) error {
+	if _, err := os.Lstat(job); err == nil {
+		if err := safepath.RemoveUnder(root, job); err != nil {
+			return fmt.Errorf("leftover %s: %w", job, err)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return os.MkdirAll(filepath.Join(job, "out"), 0o700)
+}
+
+// claimNonce names one wrapper invocation in its claim.
+func claimNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// claimScript is the attempt claim on the card hash (#3328). It is fenced on
+// the attempt's token and on state dealt, and writes two fields only this
+// script writes: claim (<token_sha>:<nonce>, never the token) and claim_at
+// (Redis TIME, ms). A claim whose token_sha is not the card's current one
+// belongs to an earlier attempt and is replaced: the attempt's lease is the
+// claim's only lifetime, so it has no TTL of its own. Replies code|STATUS
+// with the card verb codes: 0 claimed (or this nonce's own retry), 2 not
+// dealt, 3 fenced, 4 another wrapper holds the attempt, 5 no card.
+var claimScript = redis.NewScript(`
+local k = KEYS[1]
+local state = redis.call('HGET', k, 'state')
+if not state then return '5|NOTFOUND' end
+local token = redis.call('HGET', k, 'token')
+if ARGV[1] == '' or not token or token ~= ARGV[1] then return '3|FENCED' end
+local tsha = redis.call('HGET', k, 'token_sha') or ''
+local mine = tsha .. ':' .. ARGV[2]
+local held = redis.call('HGET', k, 'claim')
+if held == mine then return '0|OK' end
+if state ~= 'dealt' then return '2|STATE' end
+if held and string.sub(held, 1, #tsha + 1) == tsha .. ':' then return '4|CONFLICT' end
+local t = redis.call('TIME')
+local at = string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
+redis.call('HSET', k, 'claim', mine, 'claim_at', at)
+return '0|OK'
+`)
+
+// Claim is the attempt claim through claimScript: one writer (the attempt's
+// wrapper), Redis TIME for claim_at, no TTL beyond the attempt's lease.
+func (l *RedisLedger) Claim(ctx context.Context, nonce string) (int, error) {
+	const verb = "card claim"
+	if l.Store == nil || l.Store.Client() == nil || !validSprintLabel(l.Sprint, l.Label) || l.Token == "" || nonce == "" {
+		return usage(verb, l.Label).Code, nil
+	}
+	raw, err := claimScript.Run(ctx, l.Store.Client(), []string{CardKey(l.Sprint, l.Label)}, l.Token, nonce).Text()
+	if err != nil {
+		if res, down := redisDown(verb, l.Label, err); down {
+			return res.Code, nil
+		}
+		return 0, err
+	}
+	codeText, _, _ := strings.Cut(raw, "|")
+	code, err := strconv.Atoi(codeText)
+	if err != nil {
+		return 0, fmt.Errorf("card claim reply %q", raw)
+	}
+	return code, nil
 }
 
 // finish is step 6 and 7: copy out, record, end, delete.
