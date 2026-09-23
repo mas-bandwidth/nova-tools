@@ -304,6 +304,8 @@ func aSlot(t *testing.T) (root, slot string) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	return root, slot
 }
 
@@ -494,7 +496,7 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 		}
-		assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+		assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
 		copied := filepath.Join(slot, "data", ".config", "opencode", "opencode.json")
 		st, err := os.Stat(copied)
 		if err != nil {
@@ -512,8 +514,11 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if res.configSHA != wantSHA {
 			t.Errorf("the run records the sha8 of the bytes the child saw: %q, want %q", res.configSHA, wantSHA)
 		}
-		if !strings.Contains(string(body), `"baseURL": "http://localhost:11434/v1"`) {
-			t.Errorf("the carried provider reaches the child:\n%s", body)
+		if !strings.Contains(string(body), `"baseURL": "http://127.0.0.1:`) {
+			t.Errorf("the child dials the read-deadline proxy, not the configured upstream:\n%s", body)
+		}
+		if strings.Contains(string(body), "localhost:11434") {
+			t.Errorf("the child still dials the upstream directly:\n%s", body)
 		}
 		if !strings.Contains(string(body), `"external_directory"`) {
 			t.Errorf("the job's fence rules are in the config the child reads:\n%s", body)
@@ -660,7 +665,10 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	if res.configSHA != wantSHA {
 		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
 	}
-	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+	assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
+	if strings.Contains(string(written), "localhost:11434") {
+		t.Errorf("the child still dials the upstream directly:\n%s", written)
+	}
 }
 
 // TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
@@ -1015,6 +1023,8 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	label := "space-cwd"
 
 	var errOut bytes.Buffer
@@ -1616,6 +1626,8 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -2237,6 +2249,8 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	cardPath := filepath.Join(root, "card.md")
 	if err := os.WriteFile(cardPath, []byte("FAKE-PWD\n"), 0o644); err != nil {
 		t.Fatal(err)

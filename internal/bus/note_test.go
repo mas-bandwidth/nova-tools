@@ -495,7 +495,7 @@ func TestAnUnreadableNoteSaysWhatToDoAboutIt(t *testing.T) {
 		{
 			name: "a key nobody knows",
 			text: "From: Bo\nTo: Ada\nBranch: main\nSubject: s\n\nbody\n",
-			want: []string{"line 3", `unknown header key "Branch"`, "the keys are From, To, Cc, Date, Id, Re, Subject, Kind"},
+			want: []string{"line 3", `unknown header key "Branch"`, "the keys are From, Host, To, Cc, Date, Id, Re, Subject, Kind"},
 		},
 		{
 			name: "a body sentence where the header goes",

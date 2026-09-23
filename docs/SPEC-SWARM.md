@@ -565,6 +565,41 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     never read, and the job's `RUN` line carries `unpublished=true`; the
     published revision is what is counted. (Stella, 2026-09-11: a copy taken
     during an append is a prefix, and two revisions can share an mtime.)
+
+### Mapping durable slots to the card-attempt lifecycle (SPEC-AHEAD: #2045, #2040)
+
+[SPEC-PULSE's durable launch section](SPEC-PULSE.md#durable-launch-attempts-and-fleet-control-spec-ahead-2045-2040-2022)
+is the one authoritative card-attempt lifecycle. Rules 17 and 18 below remain its swarm-side
+ownership mechanism rather than a competing lease authority: the reserved placeholder is
+`CLAIMED`, spawn is `STARTING`, and only the lifecycle's typed, fully bound acknowledgement
+establishes `STARTED`. A pid, pgid or start stamp never establishes STARTED; those identities may
+support `never-admitted` or `terminated` reconciliation. Supervisor completion is executor
+evidence for `RETURNED` and conservative reconciliation. The slot and job ownership records grow
+stable `card`, `attempt`, control `generation` and card-level publication-fence epoch fields;
+their existing nonce, pid, pgid and start-stamp checks remain intact.
+
+For ledger-managed launches, any older text below that returns a task to pending, frees an
+`unknown` slot, retries a provider inside one job, or lets a person remove a slot as proof of
+absence is overridden narrowly: UNKNOWN retains ownership and capacity until the durable
+coordinator-side `nova-swarm launch` validates `never-admitted` only before STARTING, or validates
+executor `terminated|completed` evidence against the launch's `exit_attest` and `nonce` after
+STARTING, and the old card fence epoch is advanced. The shared card ledger reserves each
+executable attempt before dispatch and enforces two total; a launcher and its selected provider
+are one attempt, while a fallback route is another. Existing unledgered verbs keep their current
+behavior until they are wired; once this path is implemented they must delegate or refuse, never
+bypass the ledger.
+
+Resident and native starts use the coordinator-owned admission point. The coordinator validates
+the current fleet-control generation and globally consumes the bounded start token atomically
+with `CLAIMED -> STARTING`; the uniquely identified bench owner then durably records its local
+acknowledgement before invocation. A crash between those steps leaves STARTING outstanding for
+reconciliation and never consumes another token. A bench offline before that transaction, or with a missing,
+stale, expired or PAUSE acknowledgement, refuses. Once the transaction commits, the admitted
+start may execute within its original bounded authority through a partition or later PAUSE and is
+reported as outstanding even if its process had not started when the partition occurred. A
+merely issued, unconsumed token grants nothing. `adopt`, version reporting and read-only status
+are not new card admissions.
+
 17. **A dispatcher that dies leaves durable ownership, and the next one
     recovers it or quarantines it.** A slot is a file, `<pool>/slots/<n>.json`,
     written by the launch transaction of rule 18 and holding, once launched,
@@ -748,7 +783,9 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     before identify, before `aborted.json` and before `exit.json` — a job that
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
-    at its budget, at the runner's group kill, or by `stop`.
+    at its budget, at the runner's group kill, by `stop`, on SIGTERM (which
+    reaps the harness group; default death of the supervisor alone would leave
+    it), or when the pool root disappears.
 19. **The caches are shared per bench, and a finished slot's working bytes are
     reaped.** A native job's toolchain and modules are the same for every card
     under one root, so `native` and the supervisor point the harness child at
@@ -842,6 +879,90 @@ P7. **The fix-card shape is three calls, not thirty turns.** Step 1 (model):
 This is the same shape as the pulse child (created, one job, exit) and the
 meaning of "pull the intelligence up, push down to machinery."
 
+## The harness wall (S7, issue #2498)
+
+Glenn, 2026-09-21: set the model up to succeed once, benefit forever. A card
+that wanders the tree, fetches the web, or spends a turn on a permission
+refusal is paying exploration for work the card already named. Johnny owns
+these terms; Rowan owns the launcher that applies them.
+
+The OS wall still grants the job directory as `--write` (the dispatcher
+caller below). File-level scope is the matcher in `internal/swarm/wallterms.go`,
+not a recursive `--read` of a PATHS parent directory: that grant would admit
+every sibling of a named file. A directory glob (`keep/**`) can be a `--read`
+root today; a file glob cannot.
+
+**TODO launcher: Rowan** — wire these terms into the native/supervise argv and
+the harness permission block. This section is the terms. Do not ship a half
+launcher. The dispatcher of a **model** job still omits `--net-deny` (the
+provider's API is the work). Sparse checkout of the same PATHS is S10.
+
+H1. **Declared writes are PATHS; contextual reads are a separate set.** The
+    files a card may write are its `PATHS:` globs. Specs (`docs/SPEC-*.md`),
+    same-package siblings, and testdata are **defaults rather than an exhaustive set**. The dispatcher
+    may authorize bounded caller/callee, build-input, and reverse-dependent
+    reads outside those defaults without widening PATHS. A denied required read
+    blocks and requests that adjustment instead of guessing. The helpers in
+    this slice list only the defaults; a path matching neither the writes nor
+    those defaults is refused here, and the launcher (Rowan) is the adjustment
+    route. A narrow write does not imply the worker reasons from that file
+    alone. A spec path is a contextual read, not a write. The dispatcher's own
+    reads (the slot, the toolchain, `read_roots`) are unchanged and are not
+    this scope.
+    `PATHS: none` is the empty write set. `ReadRoots` names `--read`
+    directories for a directory-covering PATHS glob only, skip-if-absent; a
+    file glob names none. A root that is unresolved, or that follows a
+    symlink out of the repository, is refused before a policy is produced.
+
+H2. **No web.** `webfetch` is deny. A card does not fetch. The provider API of
+    a model job is not webfetch: it is the harness's own call, outside this
+    fence.
+
+H3. **Harness-prompt allowlist, not the OS wall.** The harness may run without
+    prompting a closed set: `go`, `gofmt`, `git`, `make`, `rg`, `grep`,
+    `cat`, `ls`, `head`, `wc`, `diff`. This is a prompt allowlist, not
+    command confinement and not the OS wall: `git` can still invoke other
+    programs. Compound lines (`;`, `&&`, `||`, `|`, backtick, `$()`, newline)
+    are refused. A first token containing `/` is refused (`/usr/bin/git` is
+    not the allowlist word `git`). Background `&` and process substitutions
+    further show this is not a shell parser; the hint is explicitly non-authoritative. `curl`, `wget`, `ssh`, `nova-sandbox`,
+    `nova-secrets` and a login shell (`bash -l`) are not in the set. No new
+    permissions.
+
+H4. **`MODE: script` is `--net-deny`.** MODE is read from the typed header
+    (`cardHeaderBlock`), not from body text. A quoted or example `MODE: script`
+    in the body of a model card does not select script terms. Duplicate or
+    contradictory MODE fields refuse. A script card does not talk to a
+    provider; its default network is an enforced denial (`net=denied`), not
+    `nopromise`. Native omits `--net-deny` because the provider API is the
+    work; reusing that argv for a script card hands it IP outbound and DNS.
+    A dest grant, if a launcher ever names one, is a loopback
+    `(remote ip "localhost:PORT")` that Apple will load. Do not pin the #599 nested SBPL form
+    `(local ip (host ..) (port ..))` — `sandbox-exec` is exit 65, unbound
+    variable: host.
+
+**Red tests for this section.** One line per rule, seen red first:
+
+- H1: `TestWallTermsRefuseAPathOutsidePATHS` — a path matching neither the
+  declared writes nor the contextual reads is refused. `TestWallTermsSpecIsContextualReadNotWrite`
+  — a spec path and a same-package sibling are contextual reads, not writes.
+  `TestWallTermsAdmitTheTestsOfPATHS` — the `_test.go` sibling, `testdata/`,
+  and the `TEST:` package's tests are admitted. `TestWallTermsReadRootsDoNotAdmitAnOutsider`
+  / `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider` — a directory glob wired as
+  `--read` does not admit a path outside PATHS through `sandbox.Inside`.
+  `TestWallTermsReadRootsRejectEscapingSymlink` — `PATHS: keep/**` with `keep`
+  a symlink to an owned temp dir outside the repo is refused, not an external
+  read grant; an unresolved root is refused the same way.
+- H2: `TestWallTermsRefuseANetworkFetch` — webfetch of `https://example.com/`
+  is not admitted, and the fence's `webfetch` key is deny.
+- H3: `TestWallTermsOnlyPreApprovedCommands` — `go test` is admitted; `curl`,
+  `wget`, `ssh`, `nova-sandbox`, `nova-secrets`, `bash -l`, `git status; curl`
+  and `/usr/bin/git` are not.
+- H4: `TestWallTermsScriptIsNetDeny` — header `MODE: script` sets `NetDeny`; a
+  model card does not. `TestWallTermsBodyOnlyModeDoesNotSelectScript` — body
+  `MODE: script` does not. `TestWallTermsConflictingModeHeadersRefuse` —
+  duplicate or contradictory MODE fields refuse.
+
 ## The verbs
 
 ```
@@ -860,7 +981,7 @@ nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files 
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity>
+nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity|read|fix|text|replay|drift|tone|models.tsv>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -1344,6 +1465,50 @@ model whose tool calls the harness never parsed (issue #591): no tool ran, nothi
 was written, the child exited 0 and the line said OK. `gather` scores such a card
 `ABSTAIN reason=harness-silent`, before `no-result` and before `rc=<n>`.
 
+**A card that ended by asking says so in a report, and `RESULT: ASKED` is that
+report's line 1** (issue #2548). A model whose final turn is a question to the
+operator — `Would you like me to proceed with moving RESULT.md into the nested
+repo and finalize the commit?`, canary run 3, 2026-09-22 — publishes nothing and
+is waiting for an answer nobody will type, because the card is unattended. **It
+does not hold its slot**: `opencode run` is non-interactive, it finishes the turn
+and exits 0, and the runtime dogfood of 2026-09-22 measured the whole run at
+5.22 s on hulk and 5.49 s on the Studio. What it leaves behind is a plain
+`no-result` — the token for a model that CHOSE to publish nothing — so a card
+that asked and a card that crashed into silence are one row to every reader.
+So `native` writes the report the card never wrote, at the job root:
+
+```
+RESULT: ASKED <the question, one line, bounded and escaped>
+asked: <label> ended its last turn with a question, published no report and committed nothing; ...
+written-by: nova-swarm native (the card published no report of its own)
+```
+
+**Four conditions, all of them necessary**, each one a different card this must
+not claim: the last line the CHILD wrote in `<job>/harness-output.log` ends with
+`?` once its decoration is trimmed, or opens `(?i)^(would you like|should i|do
+you want|shall i|can you confirm)` — the wall's own `SANDBOX ` lines are skipped
+there exactly as `harness=silent` skips them; the child **exited 0**, because a
+non-zero exit is already `rc=<n>` and a model that asked and then fell over is
+not waiting; **no `RESULT.md`** was found anywhere `gather` looks, because a card
+that published owns its report and a question in its last turn is then prose; and
+**`./repo` holds no commit past its base**, because a model that asked
+rhetorically and went on and committed the work answered its own question. The
+machinery's own ends come first: a card the idle watch ended, a manager
+terminated, or the wall or the harness's own fence stopped is THAT end, whatever
+its last line was.
+
+**The report is evidence of an absence, and never counted as work.** It carries
+no findings head, so it classes `plan-only` and never `ok` or `clean`; it never
+overwrites a report a card published; and the `NATIVE` line is **unchanged** by
+its existence — a card that did nothing but ask still reads `INCOMPLETE
+why=no-result`, because counting a report the machinery wrote would hand the word
+`OK` to a run that produced nothing, which is the fault that made the word earn
+itself (issue #1844). What the report buys is the two readings the absence could
+not carry: a requeue may treat `ASKED` like an idle kill and retry the card once
+on another route, and the ledger can count the questions per model. A bounded
+wait for an ANSWER — the question posted to the bus, one typed reply fed back as
+the next turn — is a separate card and is deliberately not this.
+
 **The wall's `SANDBOX OK` line is a producer's one-line record and `native` reads
 it as one** (issue #572). The wall renders `cwd=<dir>` through the same
 `internal/oneline` field encoding every path slot uses, so a job directory whose
@@ -1451,19 +1616,46 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   `harness.log` under its job directory, the runner's stdout pinned to a
   regular file — and the batch also reads the **CPU time of the card's whole
   process tree**, the runner's children and their children with it. **Idle
-  means no child activity**: a card is alive while either its log grows or its
-  tree's CPU time advances, and it is killed only when *neither* moved for
-  `idle` seconds. On **2026-09-15** cards 664-670 were killed `idle 300s`
-  inside a `go test` that prints nothing for minutes, and the loop raised
-  `--idle` to 900 s, which only delays the same kill (issue #593): a busy
-  silent harness is working, and a sleeping one is not. Idle is measured
+  means no child activity**: a card is alive while any of its log grows, its
+  harness store moves or its tree's CPU time advances, and it is killed only
+  when *none* of them moved for `idle` seconds. On **2026-09-15** cards
+  664-670 were killed `idle 300s` inside a `go test` that prints nothing for
+  minutes, and the loop raised `--idle` to 900 s, which only delays the same
+  kill (issue #593): a busy silent harness is working, and a sleeping one is
+  not.
+
+  **And the harness's own store is the third signal, because a card waiting on
+  the provider moves neither of the first two.** The harness records each turn
+  into its database under the card's data home — the same store `native`
+  samples its usage from — so the batch also reads **the three files' sizes
+  and the wal-index header**: the `.db`, the sqlite `-wal` and `-shm`
+  sidecars, and the first 48 bytes of the `-shm`. Sizes alone are not enough,
+  and that is measured rather than argued: with stock settings
+  (`journal_size_limit = -1`) SQLite **resets the WAL in place** at its
+  high-water mark after the first autocheckpoint, so two hundred rows and then
+  six commits moved none of the three by a byte of length, while the wal-index
+  header advanced on every one of them. **No modification time is read
+  anywhere here**, in this signal or any other. A store that **moved** since
+  the last poll is an answer that came back. On
+  **2026-09-19 14:58Z** a healthy `MODE: explore` card that had cloned,
+  branched and was walking a source file was killed `ABSTAIN reason=idle=300
+  log=1730` with no `RESULT.md`: an explore card reads for longer than the
+  window between writes by design, and it spends that window blocked on an
+  HTTP response, which is no byte of log and no percent of a core. The store is
+  read for its **movement**, exactly as the log is read for its growth — a
+  database written once at
+  startup certifies nothing and its card is on the clock like any other — and a
+  card with no store at either location keeps the log-and-CPU behaviour it has
+  today.
+
+  Idle is measured
   against that card alone: the batch returns on its **slowest still-working
   card**, not on the deadline, because a dead card is removed from the wait as
   soon as it stops moving. The tree is read once per poll for the whole batch,
   at most once per `idle/4` seconds and never faster than twice a second, by
   the kernel's own process table — never by matching a command line and never
   by running `ps`. A platform whose process table this repo cannot read
-  watches the log alone, as it did before.
+  watches the log and the harness store, as it did before.
 - A card killed for idleness is scored
   `<label> slot=<n>: ABSTAIN reason=idle=<s> log=<n> watched=<path>` on the
   packet — an abstain that names *why* it stopped and the log it watched, never
@@ -2051,6 +2243,7 @@ RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
 RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|provider|wall|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN WAIT slots owner=<owner> holders=<owner:count,...>
+RUN ROUTED-OUT id=<id> dest=<routed-out> rung=<name> why=<rung-is-asked-not-run>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -2188,6 +2381,177 @@ declaration cannot outlive a worker description.
 repository runs over every printed argument (`internal/oneline/audit`) covers it:
 the key is not a printed value, and a new print of one is a test failure.
 
+### The card's shell never sees a secret (issue #1814)
+
+Every rule above is about the key reaching a FILE or a LINE. It said nothing
+about the key reaching the MODEL, and until this rule the model had it. The
+harness needs the key — its `opencode.json` declares the provider as
+`{env:DEEPSEEK_API_KEY}` and it reads the value from its own environment to make
+the API call — and the harness hands its bash tool that same environment. A card
+whose STEP ran a shell could therefore print the key into its tool output, its
+`RESULT.md`, the job's `harness-output.log` and, through the harvest's `openPR`,
+into a pull request body on the forge. **Measured** inside the real wall on
+`space`, seat `swarm-space`, 2026-09-19: a card printing only
+`${#DEEPSEEK_API_KEY}` and a count of secret-carrying names got back
+`envlen=35 envnames=1`. No byte of the value was read or printed, then or since.
+
+**The rule.** *The process that calls the provider keeps the key; every shell
+under it does not.* `native` writes a `bash` and an `sh` wrapper into
+`<slot>/shim`, puts that directory **first** on the child's `PATH` and pins
+`SHELL` at the wrapper. Each wrapper unsets every environment name carrying
+`KEY`, `TOKEN` or `SECRET` — the one predicate the argv log already redacts by —
+and then `exec`s the real shell. The wrappers list NAMES through `awk` and read
+no value; a bench with no `awk` makes the wrapper exit 127 rather than start a
+shell that still carries the key.
+
+**`<slot>/shim` is the only lawful place for them.** It is inside the wall's read
+set and outside its write set (`--read <slot>`, `--write <job>/<data>/<tmp>`), so
+the card can execute a wrapper and cannot replace one. A wrapper under the job
+directory or the data home would be the card's to rewrite.
+
+**A run whose shim cannot be written REFUSES.** A card's shell carrying the
+seat's key is the defect this closes, not a mode to fall back to.
+
+**What it does not close.** A card that spells `/usr/bin/bash` absolutely skips
+the wrapper, and so would a harness that spawned a shell some third way. Closing
+those means handing the key to the harness by **file descriptor** instead of by
+environment, which is a design question, not a fix — it is owed to Stella and
+is deliberately not built here. The harvest's key-shape scan below is the
+backstop behind the wrapper. On **windows** no wrapper is written and the
+child's environment is exactly what it was; the gap is named, not papered over.
+
+**The harvest publishes no key.** Before any push and before any PR,
+`nova-pulse harvest` reads the card's `RESULT.md` — which is what `openPR` copies
+into the PR body — and the diff the push would carry, against a list of key
+SHAPES held as one data file (`internal/keyshape/keyshapes.txt`: PEM armour,
+`AGE-SECRET-KEY-1`, the forge's token prefixes, the provider prefixes, a JWT) and
+against the value of every secret-named variable the harvest process itself
+holds. A hit prints
+`HARVEST REFUSED secret-shape file=<path> line=<n> shape=<name> label=<label>`,
+**never the matched text**, and for the environment half a VARIABLE's name and
+the value's LENGTH. The job directory is then **moved** to
+`<root>/quarantine/<label>` — never deleted, because a key in a worker's output
+is evidence a person has to read — one `HUMAN` line is appended to
+`<root>/HUMAN` naming the shape, the quarantine and the one remedy (rotate the
+seat's key), and the card counts `refused`. This is the same shape
+`SPEC-TOOLWORK` §3 rule 6 names for the hygiene gate's `secret` finding; when
+that gate lands, one of the two lists loads the other and neither is copied
+again.
+
+**EVERY path that publishes passes the same guard, and a class test says so.**
+There are four, and the first cut of this rule guarded one — Johnny's read of
+PR #1838 named the other three: `harvest --bench`, which is how every Space card
+is harvested; `HarvestWorking`; and `manager.openPR`. All four call
+`secretFindings` before their push, and
+`TestEveryPublishSiteIsBehindTheSecretScan` walks `internal/pulse`'s own syntax
+tree, finds every `git push`, `gh pr create`, `gh pr edit` and `Forge.CreatePR`
+call there is, and fails unless the function holding it calls the guard. Two
+package-level leaves (`push`, `openPR`) and one seam leaf (`ghForge.CreatePR`)
+run the command and nothing else; for those the test asserts the guard in each
+of their callers, and that the caller set is exactly the one named. **A fifth
+publish site cannot appear without the guard.** A bench job is quarantined ON
+the bench over the same shell seam the harvest already reaches it through —
+`mkdir -p`, `test ! -e`, `mv`, and never a delete — and its `.harvested` marker
+is never written, so a refused card is not silently skipped next time either.
+
+**AN UNREAD DIFF REFUSES THE PUSH.** The guard reads two things — the card's
+`RESULT.md` and the patch the push would carry — and for a while it failed
+*open*: a `git diff` that could not run returned an empty diff, the `RESULT.md`
+half found nothing, and all four callers pushed a card whose patch nobody had
+read. A check that could not see half of what it was asked to read must not
+report clean. A diff that could not run is now its own error and every caller
+prints
+
+```
+HARVEST REFUSED diff-unread reason=<err> label=<label> site=<site>
+```
+
+and ends the card there. **An empty diff from a base that DID resolve is a real
+answer** — the branch changes nothing against it — and is not an error; the
+guessing form needs one base ref to resolve, not all four. Nothing is
+quarantined on this path: nothing was found, and a bench that dropped an ssh, or
+a clone whose base ref is not fetched yet, is a reason to stop rather than to
+move a card's work out from under it. The card counts failed and the next
+harvest reads it again. `TestTheGuardsErrorPathIsTerminal` reads the syntax tree
+and fails unless every function that calls the guard tests its error and ENDS
+that branch — `return` or `continue`, never a fall-through to the push.
+
+### `/proc/<pid>/environ`: the shim does not close it, and the wall cannot
+
+**Measured on `space`, inside the real wall, from the card's own tool shell**
+(2026-09-19; the probe reported whether a read SUCCEEDS and a count of
+secret-carrying NAMES, never a value):
+
+```
+out: ppidenv_read=yes     <- /proc/<the harness's pid>/environ opens
+out: ppidenv_names=1      <- and carries one secret-named entry: the seat's key
+out: selfenv_read=yes
+out: selfenv_names=0      <- the shell's OWN environment is clean; the shim works
+out: ppidcomm=opencode
+out: yama=1               <- ptrace_scope=1 does not apply to PTRACE_MODE_READ
+out: hidepid=0
+out: procmount=proc /proc proc rw,nosuid,nodev,noexec,relatime 0 0
+```
+
+The harness keeps the key — it is the process that calls the provider — and on
+Linux its child shares its uid, so the shell can read the parent's environment
+through procfs whatever the shell's own environment says. **The shim closes
+`getenv` and does not close this.**
+
+**The wall cannot close it, and this spec has already measured why.**
+`docs/SPEC-SANDBOX.md`'s linux read roots name `/proc`, not `/proc/self`,
+deliberately: "a `/proc/self` opened `O_PATH` resolves at open time to the pid
+that opened it", so a rule written on `/proc/self` grants the WALL its own entry
+and every child it spawns nothing. Landlock's rules are inode-based and are
+resolved when the ruleset is built — before the pids of the harness's
+descendants exist — and it has no "the directory whose name is my own pid". So
+the wall may allow all of `/proc` or none of it, and none of it kills every
+toolchain a card runs. **Landlock cannot path-restrict procfs by pid.**
+
+The closures that do exist, neither of them this tool's to make:
+
+1. **`hidepid=2` on the bench's `/proc`** (measured `hidepid=0` today). It is a
+   mount option, per pid-namespace, set as root, affecting the whole bench: a
+   fleet-standard line, not a code change.
+2. **The key not in the harness's environment at all** — layer 2, the key handed
+   in by file descriptor or a one-read file and scrubbed after the provider
+   client is constructed. **This needs the harness to support it.** Measured at
+   the pinned `opencode v1.18.20`: the provider key is resolved from
+   `process.env` through the config's `{env:NAME}` reference, no `{file:...}`
+   form for a provider `apiKey` was found in the binary, and the bash tool is
+   spawned with `extendEnv: true` over a `shell.env` hook. So at this version
+   layer 2 is **not available to this tool alone**; the shapes are an upstream
+   credential-from-file feature, or a harness plugin on that `shell.env` hook.
+
+**Said plainly: until (1) or (2), a card that wants the seat's key can still
+read it through `/proc`, and the harvest's key-shape scan is what stands between
+that and the forge.** `prctl(PR_SET_DUMPABLE, 0)` is not a third option: `execve`
+resets `dumpable`, so no caller can set it *for* the harness — only the harness
+can set it for itself. A dedicated uid is not one either: the shell is the
+harness's own child and shares whatever uid it runs as.
+
+**Tests this rule demands** (`cmd/nova-swarm`, `internal/keyshape`,
+`internal/pulse`): `TestTheCardsShellNeverSeesASecret`,
+`TestTheShimNeverPrintsAValue`,
+`TestTheShimIsInTheWallsReadSetAndNotItsWriteSet`,
+`TestTheChildEnvPutsTheShimFirstAndPinsShell`,
+`TestTheChildEnvIsUnchangedWithoutAShim`, `TestEachShapeCatchesItsOwnForm`,
+`TestTheScanNeverPrintsWhatItMatched`,
+`TestASecretNamedVariablesValueIsCaughtByLengthAndName`,
+`TestPlainProseIsNoFinding`, `TestHarvestRefusesToPushAKeyShape`,
+`TestASecretQuarantinesAndNeverDeletes`, `TestASecretWritesOneHumanLine`,
+`TestTheSeatsOwnKeyIsCaughtWithoutAShape`,
+`TestHarvestBenchRefusesToPushAKeyShape`,
+`TestHarvestWorkingRefusesToPushAKeyShape`,
+`TestManagerOpenPRRefusesToPushAKeyShape`,
+`TestEveryPublishSiteIsBehindTheSecretScan`, `TestTheWrapperIsTheGuard`,
+`TestTheGuardsErrorPathIsTerminal`, `TestHarvestRefusesAnUnreadDiff`,
+`TestHarvestBenchRefusesAnUnreadDiff`, `TestHarvestWorkingRefusesAnUnreadDiff`,
+`TestManagerRefusesAnUnreadDiff`,
+`TestAnEmptyDiffFromABaseThatResolvedIsNotAnError`,
+`TestAnUnreadDiffIsItsOwnError`,
+`TestThePRBodyIsAPrefixOfWhatTheScanRead`.
+
 ## Slots
 
 A running worker holds a **slot**, `1..n`. A slot is:
@@ -2243,8 +2607,8 @@ takes a lease per card before it runs and releases it after. The seven rules:
 
    ```
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
-   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration>
-   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all)
+   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--kind <kind>]
+   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
    nova-swarm slots list --store <dir>
    ```
 
@@ -2259,6 +2623,10 @@ takes a lease per card before it runs and releases it after. The seven rules:
    `take` grants by the owner's share from the registry file `<store>/shares.tsv`
    (columns bench, owner, share). It refuses with the holder list when the share is spent,
    and never grants past capacity minus reserve (rows `capacity` and `reserve` in shares.tsv).
+   Card kinds carry a weight charged at take, before any child starts: a schema or
+   fix-red card weighs 4 because it spawns make/cargo/dotnet; a read card weighs 1.
+   A schema card is refused at take when the remaining share fits only a read. A
+   load reading after launch is not the ceiling (#2033).
 4. `nova-swarm slots list --store <dir>` prints who holds what, one line per lease.
 5. Reaping: a lease past until= whose pid is gone is reaped by the next take;
    drift: a pid alive past until= is DRIFT, printed by name, never reaped and never regranted.
@@ -2270,9 +2638,11 @@ takes a lease per card before it runs and releases it after. The seven rules:
 - two owners at their shares cannot exceed capacity;
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
-- a launch without a lease is refused by the launcher.
+- a launch without a lease is refused by the launcher;
+- a schema card is refused at take when the remaining share fits only a read;
+- a live-until lease whose pid is gone is stranded with its label.
 
-A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+`k` stays within its share and the total held+`k` stays within `capacity` minus `reserve`, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all]` frees them, and `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease.
+A bench holds **slot leases**: the store is `<store>/slots` with one directory per lease made by `os.Mkdir` (atomic), each holding a file `lease` with lines `owner=`, `pid=`, `label=`, `until=<RFC3339>`, beside `<store>/shares.tsv` rows `capacity\t<n>`, `reserve\t<n>`, `<owner>\t<n>`. `slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>]` first reaps every lease whose `until=` is past AND whose pid is not alive (`Alive`, signal 0) — a lease past `until=` with a live pid is `DRIFT`, stays, and counts as held — then grants `k` leases iff the owner's held+demand stays within its share and the total held+demand stays within `capacity` minus `reserve`, demand being `k` times the card kind's admission weight, printing `SLOTS OK owner=<o> granted=<k> held=<h> share=<s> free=<f>` (exit 0) or `SLOTS REFUSED owner=<o> want=<k> held=<h> share=<s> free=<f> holders=<owner:count,...>` (exit 2); `slots release --store <dir> --owner <o> [--label <text>|--all] [--force]` frees the matching leases EXCEPT a lease whose `pid=` is alive and is not this process: that one is KEPT, counted in the `live=` field of `SLOTS RELEASED owner=<o> released=<r> held=<h> live=<n>`, named on stderr as `SLOTS KEPT owner=<o> live=<n>`, and the verb exits 2 — deleting a lease does not stop the process holding it, it only hands that process's seat to the next taker, so a release that freed it would put two cards on a one-seat bench. Only `--force` frees a live lease, and `--force` oversubscribes the bench on purpose: it is an operator's act at a prompt, for someone who knows what the store cannot (a holder on another host, a pid the kernel has since handed to somebody else), never a card's and never a manager's default. And `slots list --store <dir>` prints one `SLOT <id> owner=<o> pid=<p> label=<l> until=<t> state=live|expired|DRIFT` line per lease, with `stranded=1` and the label when a live-until lease whose pid is gone is stranded with its label.
 
 **The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
@@ -2280,21 +2650,37 @@ A bench holds **slot leases**: the store is `<store>/slots` with one directory p
 `nova-swarm native --slots-store <dir> --owner <name>` are REQUIRED flags: the run takes
 exactly one lease before any job directory is made, holds it for the run's deadline plus
 two minutes of grace, and releases it on every exit path including a run that failed. A
-take that grants nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=…
-holders=…` line and exits 2, having started nothing.
+take that grants nothing prints one `SLOTS REFUSED owner=… want=<weight> held=… share=… free=…
+holders=…` line and exits 2, having started nothing. The weight is the card kind's admission
+weight, so a schema card on a share that fits only a read is refused before any job directory
+is made.
 
 **A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
 ids it granted — not a count — and a holder hands exactly those back to
 `ReleaseSlotLeasesByID(store, ids, pid)`, which re-reads each lease and leaves it alone
 unless the pid is still the holder's. An owner is a bench and a label is a card's name, and
-two runs that share both — two slots, two benches, a retry — would otherwise each give away
-the other's live seat; a run that refused before it started, on a missing harness say, would
-delete a lease it never took. An id that is already gone is not an error: a release is
-allowed to be late.
+two runs that share both — two slots, two benches, a retry, two dispatchers sharing an
+owner and a task id — would otherwise each give away the other's live seat; a run that
+refused before it started, on a missing harness say, would delete a lease it never took.
+An id that is already gone is not an error: a release is allowed to be late.
 
-`slots release --store <dir> --owner <o> (--label <text> | --all)` is unchanged and stays
+`slots release --store <dir> --owner <o> (--label <text> | --all) [--force]` still SELECTS
 by owner and label, because that is what a PERSON at a prompt means by it and a person can
 see the store. A deferred cleanup cannot, so it does not get that verb.
+
+**A release never frees a seat whose holder is still running** (nova-tools#1902, Johnny's
+red team of #1601 / #1562). The selection is by owner and label; the fence is the holder.
+A lease whose `pid=` is alive and is not this process is KEPT: the default `slots release`
+counts it in `live=` on the `SLOTS RELEASED` line, prints `SLOTS KEPT owner=<o> live=<n>`
+on stderr, and exits 2. `--owner` is an unauthenticated string and every owner on a shared
+bench is the same unix user, so who CALLED the release is not a fence; the only fence that
+means anything is whether the holder is still there. Giving back your OWN seat is always
+allowed — that is how `run`'s dispatcher and `native`'s cleanup end — and a lease whose pid
+is gone is freed as before. `--force` is the one way past the fence, and it OVERSUBSCRIBES
+the bench: it frees a seat a live process is still sitting in, so the next take puts a
+second card on it. It is an operator's act at a prompt, typed by a person who knows what
+the store cannot see; no card may pass it, and no manager, launcher or cleanup path passes
+it by default.
 
 Asked without either flag, `native` prints exactly one line and exits 2:
 
@@ -2602,6 +2988,27 @@ file instead — the tool has no list of blessed task shapes.
 **kind** is a template plus a gate and a negative control declared in the tool, chosen by the
 card's `KIND:` line and by nothing a worker writes; and the eligibility rule there says when a
 card of a kind may be handed to a swarm at all: a readiness row in force, and the route's yes.
+
+### The pulse card templates
+
+`nova-pulse cut` reads a templates directory holding `read.md`, `fix.md`,
+`text.md`, `replay.md`, `drift.md`, `tone.md` and `models.tsv` (SPEC-PULSE rule 4).
+The same files are shipped in this binary, so the directory is built from the tool
+rather than copied out of `cmd/nova-pulse/testdata`:
+
+```
+nova-swarm template --name read       > read.md
+nova-swarm template --name fix        > fix.md
+nova-swarm template --name text       > text.md
+nova-swarm template --name replay     > replay.md
+nova-swarm template --name drift      > drift.md
+nova-swarm template --name tone       > tone.md
+nova-swarm template --name models.tsv > models.tsv
+```
+
+`read`, `text` and `tone` are text-only cards and carry rule 6's no-build line;
+`fix`, `replay` and `drift` carry the red-then-green row. These are cards, not task
+templates: `add --template` and `batch --template` refuse them, as they refuse `result`.
 
 ## The `RESULT.md` template
 
@@ -3657,6 +4064,28 @@ be seen red before it is trusted.
     `--read`, the job directory as the FIRST `--write` with the data home
     beside it, the job directory as `--cwd`, no `--net-deny`, and a directory
     planted in the task text that appears in no flag of it.
+20. **The harness wall (S7, issue #2498)**, each seen red first.
+    `TestWallTermsRefuseAPathOutsidePATHS`: a path matching neither the
+    declared writes nor the contextual reads is refused.
+    `TestWallTermsSpecIsContextualReadNotWrite`: a spec path and a same-package
+    sibling are contextual reads, not writes.
+    `TestWallTermsAdmitTheTestsOfPATHS`: the `_test.go` sibling, `testdata/`,
+    and the `TEST:` package's tests are admitted.
+    `TestWallTermsRefuseANetworkFetch`: webfetch is deny; a fetch of
+    `https://example.com/` is not admitted.
+    `TestWallTermsOnlyPreApprovedCommands`: `go test` is admitted; `curl`,
+    `ssh`, `nova-sandbox`, `bash -l`, `git status; curl` and `/usr/bin/git`
+    are not. The list is a harness-prompt allowlist, not the OS wall.
+    `TestWallTermsScriptIsNetDeny`: header `MODE: script` is `--net-deny`; a
+    model card is not. `TestWallTermsBodyOnlyModeDoesNotSelectScript`: body
+    `MODE: script` is not. `TestWallTermsConflictingModeHeadersRefuse`:
+    duplicate or contradictory MODE fields refuse.
+    `TestWallTermsReadRootsDoNotAdmitAnOutsider` and
+    `TestSandboxPATHSReadSetDoesNotAdmitAnOutsider`: a directory glob wired as
+    `--read` does not admit a path outside PATHS through `sandbox.Inside`.
+    `TestWallTermsReadRootsRejectEscapingSymlink`: a PATHS directory that is a
+    symlink out of the repo is refused, not granted.
+    The launcher argv is **TODO launcher: Rowan**; these tests are the terms.
 
 ## The work list
 
@@ -3713,7 +4142,8 @@ verb, and tests that pin all three by executing them.
    and renamed **before** exit 2, `survivors` counted rather than assumed,
    spawn the harness in its group, hold the
    deadline
-   and the budget sampling (rule 13), write `<job>/exit.json` as the
+   and the budget sampling (rule 13), end on SIGTERM and when the pool root
+   is gone (reaping the harness group), write `<job>/exit.json` as the
    completion evidence, refuse a hand-typed invocation. Tests: the identity
    in the files is the supervisor's own; an identify against a changed slot
    never spawns the harness and leaves `aborted.json` on disk before its

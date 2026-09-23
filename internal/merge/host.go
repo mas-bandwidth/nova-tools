@@ -254,9 +254,29 @@ func (h *GH) gh(args ...string) (string, error) {
 	return out, nil
 }
 
-// PR reads the fields the merge condition needs, in one call.
+// ghWhole is gh without execOutputCap on a successful call: for the three captures a
+// parser reads whole rather than a person -- a pull request's own JSON, its comments,
+// its reviews -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
+// JSON it cannot parse at all (nova-tools #2522). See RunUncapped for the mechanism and
+// for what still happens to a FAILING call's captured output.
+func (h *GH) ghWhole(args ...string) (string, error) {
+	if err := guard(args, ""); err != nil {
+		return "", err
+	}
+	ctx, cancel := contextWithTimeout(h.Timeout)
+	defer cancel()
+	out, err := runUncapped(ctx, h.Runner, "", "gh", args...)
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, oneLineOf(out))
+	}
+	return out, nil
+}
+
+// PR reads the fields the merge condition needs, in one call. The answer is read whole
+// (ghWhole): a pull request's body can carry more than 64 KiB of typed history and text,
+// and a truncated PR json is not a shorter pull request, it is one decodePR cannot read.
 func (h *GH) PR(n int) (PR, error) {
-	out, err := h.gh("pr", "view", strconv.Itoa(n), "--repo", h.Repo, "--json",
+	out, err := h.ghWhole("pr", "view", strconv.Itoa(n), "--repo", h.Repo, "--json",
 		"number,author,baseRefName,headRefName,headRepositoryOwner,headRefOid,mergeable,isDraft,url,title,body,state,mergedAt,mergeCommit")
 	if err != nil {
 		return PR{}, err
@@ -392,12 +412,17 @@ func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 
 // Verdicts reads this pull request's comments and its reviews, in two calls, and folds
 // each into the words the gate acts on. It is READ-ONLY and it mutates nothing.
+//
+// Both calls are read whole (ghWhole), not through the ordinary capped gh: a paginated
+// comment or review capture that carries a typed disposition near the end of a long
+// thread is not evidence this tool may read a 64 KiB prefix of and call complete
+// (nova-tools #2522 measured one such capture at 63,499 bytes).
 func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
-	comments, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
 	if err != nil {
 		return nil, err
 	}
-	reviews, err := h.gh("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
 	if err != nil {
 		return nil, err
 	}

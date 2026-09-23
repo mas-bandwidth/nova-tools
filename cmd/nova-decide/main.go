@@ -10,10 +10,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -31,11 +33,19 @@ usage:
   nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
                    [--label <field, default label>] [--choice <field, default decision>]
                    [--conf <field, default confidence>] [--max-escalation 0.7]
+                   [--observations]
 
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
 
-  nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+  nova-decide tune --propose-floors --log <jsonl> [--registry <path>]
+                   [--write <path>] [--floor-for <kind>=<floor>]
+                   (a floor PER KIND, the p25 of the provider answers that
+                    stood; a floor above what the provider has ever answered
+                    for that kind is refused)
+
+  nova-decide route --unit <json file|inline json> --usage <path> --log <path|postgres>
+                    [--dsn-env NOVA_DECIDE_LOG_DSN]
                     [--registry <path>] [--floor 0.9] [--base-url <url>]
                     [--key-env JEV_API_KEY]
                     (--usage and --log are REQUIRED whenever jev is asked)
@@ -47,12 +57,34 @@ usage:
                     (below the floor, re-ask the same question with that rung
                      excluded; every step is a logged decision)
 
+  nova-decide route ... [--paste]
+                    (one more line, for a coordinator to act on:
+                     ROUTE <unit> -> <mind> (<model id>) conf=<x>)
+
   nova-decide help --state <json file|inline json>
   nova-decide help [--hours 2] [--retries-on-rung n] [--failures-last-hour n]
                    [--self-inflicted n] [--class-recurring] [--landing-moved]
                    [--uncertainty 0..1] [--asked-all-friends]
 
-  nova-decide log --log <path> --summary [--registry <path>]
+  nova-decide log --log <path|postgres> --summary [--dsn-env <NAME>] [--registry <path>]
+  nova-decide log migrate [--dsn-env <NAME>]
+                    (install decide_log beside the card results; idempotent)
+
+  nova-decide review --repo <owner/name> --pr <n> [--card <file>]
+                     [--post|--dry-run] [--ledger file|redis] [--ledger-path <jsonl>]
+                     [--no-jev] [--table] [--record <dir>] [--replay <dir>]
+  nova-decide review --repo <owner/name> --batch <file of pull request numbers>
+                    (the Jev FIRST PASS, nova-tools #2565: four mechanical
+                     checks in Go with no model -- symbol, paths, done, claims --
+                     then ONE typed Jev question for a 1-10 score, one typed
+                     DISPOSITION line with who=jev, and the verdict appended to
+                     the ledger. It NEVER lands anything: the lander counts a
+                     typed line only from a friend's own GitHub account.
+                     --dry-run is the default; --post is the only write.)
+
+  nova-decide classify --question <q> --evidence <file|-> --pointer <id>
+                       [--decider rules] [--floor <f>] [--rules <tsv>] [--tamper <file>]
+                       [--escalate-to <name>] [--log <path>] [--private]
 
   nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
                      (what HAPPENED to a unit a decision routed; the kind and
@@ -61,7 +93,12 @@ usage:
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
-                      {"questions": {...}} also accepted)
+                      {"questions": {...}} also accepted). The envelope may also
+                      carry criteria_version, criteria_file, state_fields and
+                      machinery: "machinery": "who-reads" answers the question
+                      under internal/decide/readers.go's rules, where a settled
+                      security designation is taken with NO provider call and
+                      the answer is constrained before it is printed or recorded
   --state <file>      state text the decision is about; stdin when absent or "-" (default stdin)
   --floor <f>         confidence floor; answers below it are a suggestion (default 0.9)
   --base-url <url>    Jev endpoint (default https://api.typesafe.ai/v1/systemone)
@@ -81,6 +118,22 @@ usage:
   --choice <field>    field holding the decision (default decision)
   --conf <field>      field holding the confidence (default confidence)
   --max-escalation <f>  escalation-rate cap for the best floor (default 0.7)
+  --observations      read a log whose rows say "adjudicated": false. Their
+                      labels were joined afterwards and nobody adjudicated
+                      them, so a floor tuned from them is tuned from nothing:
+                      without this flag such a log is REFUSED (reason
+                      not-adjudicated), and with it the arithmetic is printed
+                      in full and the closing line is
+                      TUNE OBSERVATIONS ... best_floor=none. A row carrying
+                      no such field is a log from before the field existed and
+                      is read exactly as it always was
+  --propose-floors    propose a floor PER KIND from an escalation log: for each
+                      kind, the p25 of the provider answers no failure was
+                      recorded against. A kind with fewer than 2 such answers
+                      is not proposed a floor and keeps the built-in default
+  --write <path>      write the proposed floors into a registry at this path,
+                      leaving every other field of the file as it was
+  --floor-for <k>=<f> override one proposal by hand; repeatable
 
 route: which mind does this unit of work, over the ladder of minds a registry
 holds. The answer is the LOWEST rung the evidence supports with confidence that
@@ -105,14 +158,27 @@ opaque ids rather than any mind's name.
   --registry <path>   the registry of minds (name, lineage, height, kinds it is
                       designated for, owned lanes, availability, ask); the
                       embedded ladder when absent
-  --log <path>        append this decision to the escalation log (JSON lines);
-                      REQUIRED when jev is asked
+  --log <path|postgres>
+                      append this decision to the escalation log: a path (JSON
+                      lines) or the word postgres, the decide_log table beside
+                      the card results. REQUIRED when jev is asked, and the sink
+                      is opened BEFORE the call, so a table that will not open is
+                      a refusal rather than a call with nowhere to record it
+  --dsn-env <NAME>    with --log postgres: the environment variable the DSN
+                      arrives in (default NOVA_DECIDE_LOG_DSN), put there by
+                      nova-secrets exec --only <NAME>. There is no --dsn: a
+                      connection string carries a password and never goes on argv
   --usage <path>      append what a provider call spent to this usage TSV, in
                       the fleet's own columns; a failed call is a row too, with
                       its cost unknown (a dash), never a zero. REQUIRED when jev
                       is asked: a call nobody can account for is refused before
-                      it is made, never made and then forgotten
-  --floor <f>         confidence floor; below it the answer steps UP (default 0.9)
+                      it is made, never made and then forgotten. usd is priced
+                      from the registry's rate table; a model with no rate is a
+                      dash and a NOTE naming it, never a guessed price
+  --floor <f>         confidence floor; below it the answer steps UP. Absent,
+                      the registry's floor for this unit's KIND answers, and
+                      the built-in 0.9 only where that kind has no measured
+                      row; every line says which, as floor_from=flag|kind|built-in
   --step-up           below the floor, re-ask the SAME question with that rung
                       excluded from the criteria. Every step is a decision of
                       its own: one log row and one usage row each, and the final
@@ -145,10 +211,12 @@ example:
   nova-decide --questions ./questions.json --state ./state.md --floor 0.9
   nova-decide tune --decisions ./decisions.jsonl
   nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-  nova-decide route --unit ./unit.json --usage ./usage.tsv --log ./decide.jsonl
+  nova-decide route --unit '{"id":"card-41","kind":"rebase","files":2,"packages":1}' --usage ./usage.tsv --log ./decide.jsonl --no-jev
   nova-decide route --unit-id thin --kind new-verb --no-jev --step-up --log ./decide.jsonl
   nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
   nova-decide log --log ./decide.jsonl --summary
+  nova-secrets exec --only NOVA_DECIDE_LOG_DSN -- nova-decide log migrate
+  nova-secrets exec --only NOVA_DECIDE_LOG_DSN -- nova-decide log --log postgres --summary
 `
 
 // version is empty in every ordinary build and is the one override: a release
@@ -199,6 +267,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runRoute(args[1:], stdout, stderr)
 		case "log":
 			return runLog(args[1:], stdout, stderr)
+		case "classify":
+			return runClassify(args[1:], stdout, stderr)
+		case "review":
+			return runReview(args[1:], stdout, stderr)
 		case "outcome":
 			return runOutcome(args[1:], stdout, stderr)
 		}
@@ -231,14 +303,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, *prefix, "bad-floor",
 			fmt.Sprintf("--floor %v is not a confidence; it wants a number between 0 and 1, such as --floor 0.9", *floor))
 	}
-	raw, err := os.ReadFile(*questions)
-	if err != nil {
-		return refuse(stderr, *prefix, "bad-questions", fmt.Sprintf("cannot read questions: %s", oneline.Err(err)))
-	}
-	qs, err := decide.ParseQuestions(raw)
+	// The question and the criteria it is answered against load as ONE
+	// versioned pair, and the pair is what goes out: the criteria are read
+	// from the file the question names, beside it and nowhere else, and the
+	// state is validated against the typed fields the question declares --
+	// all of it BEFORE the provider is dialled, so a missing fact is a
+	// refusal and never an answer given over evidence that was not there.
+	qf, err := decide.LoadQuestionFile(*questions)
 	if err != nil {
 		return refuse(stderr, *prefix, "bad-questions", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	qs := qf.Questions
 	var state string
 	switch {
 	case *stateFile == "" || *stateFile == "-":
@@ -254,22 +329,121 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		state = string(b)
 	}
+	payload, err := qf.Payload(state)
+	if err != nil {
+		return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	// THE MACHINERY, AT THE CALL BOUNDARY.
+	//
+	// Where the loaded pair DECLARES the who-reads machinery, the rules in
+	// internal/decide/readers.go are the decision and the provider is an
+	// advisor constrained by them. A settled security designation is taken
+	// HERE -- before a client is constructed, before a key is even wanted, at
+	// zero calls and against any confidence -- and every other rule is
+	// installed on the client as a constraint that runs over the answer
+	// before it is recorded or printed, never after a caller has read it.
+	var readState decide.ReadState
+	var readDecision decide.ReadDecision
+	whoReads := qf.Machinery == decide.MachineryWhoReads
+	if whoReads {
+		readState, err = decide.ReadStateOf(state)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+	}
+	// THE CONFIGURED TABLE IS OPENED BEFORE ANY DECISION IS MADE.
+	//
+	// It used to be opened after the settled path had already returned, so a
+	// decision that cost no call also left no row: the real CLI with a fresh
+	// TSV --dsn, a settled state, no key and a dead endpoint printed success
+	// and created nothing. A decision the MACHINERY made is the one nobody can
+	// reconstruct from a provider's log, so it is exactly the one that is owed
+	// a durable row.
+	var store decide.DecisionDriver
+	if strings.TrimSpace(*dsn) != "" {
+		store, err = decisionsOpener(*dsn)
+		if err != nil {
+			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		defer store.Close()
+	}
+	if whoReads {
+		if _, _, settled := decide.MandatoryReader(readState); settled {
+			d, err := decide.ConstrainRead("", 0, readState)
+			if err != nil {
+				return refuse(stderr, *prefix, "bad-state", oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+			// The receipt, and NO fabricated confidence: the provider was not
+			// asked, so the row's confidence column is a dash and its source
+			// says the machinery decided.
+			receipt := decide.ReceiptNotConfigured
+			if store != nil {
+				q := qs[decide.ReadQuestion]
+				if err := store.Append(decide.DecisionRow{
+					QuestionHash: decide.QuestionHash(payload, decide.ReadQuestion, q),
+					Kind:         q.Kind(),
+					Answer:       string(d.First),
+					Floor:        *floor,
+					Source:       decide.SourceMachinery,
+				}); err != nil {
+					return refuse(stderr, *prefix, "decisions-write-failed",
+						fmt.Sprintf("the decision was settled and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+				}
+				receipt = decide.ReceiptRecorded
+			}
+			fmt.Fprintln(stdout, decide.ReadLine(*prefix, d, readState, 0, false, *floor, receipt))
+			return 0
+		}
+	}
 	client, err := decide.New(*baseURL, *keyEnv)
 	if err != nil {
 		return refuse(stderr, *prefix, "no-key", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	client.SetFloor(*floor)
-	if strings.TrimSpace(*dsn) != "" {
-		store, err := decisionsOpener(*dsn)
-		if err != nil {
-			return refuse(stderr, *prefix, "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
-		}
-		defer store.Close()
+	if store != nil {
 		client.UseDecisions(store)
 	}
-	answers, _, err := client.Decide(context.Background(), state, qs)
+	if whoReads {
+		client.Constrain(func(answers map[string]decide.Answer) (map[string]decide.Answer, error) {
+			a := answers[decide.ReadQuestion]
+			d, err := decide.ConstrainRead(decide.Role(a.Choice), a.Confidence, readState)
+			if err != nil {
+				return nil, err
+			}
+			readDecision = d
+			a.Choice = string(d.First)
+			answers[decide.ReadQuestion] = a
+			// A rule that overrode the answer settled the decision, so the row
+			// carries the machinery's source and no provider confidence even
+			// though a call was made: the number that came back is not
+			// evidence about the answer that stands.
+			client.SetRowSource(d.Source, d.Source == decide.SourceProvider)
+			return answers, nil
+		})
+	}
+	answers, _, err := client.Decide(context.Background(), payload, qs)
 	if err != nil {
 		return refuse(stderr, *prefix, "provider-error", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	// A configured table that refused the row is reported, never swallowed: a
+	// caller told the decision succeeded while nothing was written has no
+	// receipt at all.
+	if err := client.RecordErr(); err != nil {
+		return refuse(stderr, *prefix, "decisions-write-failed",
+			fmt.Sprintf("the answer stands and its configured decisions table refused the row, so there is no receipt: %s", oneline.Err(err)))
+	}
+	if whoReads {
+		hasConfidence := readDecision.Source == decide.SourceProvider
+		conf := answers[decide.ReadQuestion].Confidence
+		receipt := decide.ReceiptNotConfigured
+		if store != nil {
+			receipt = decide.ReceiptRecorded
+		}
+		fmt.Fprintln(stdout, decide.ReadLine(*prefix, readDecision, readState, conf, hasConfidence, *floor, receipt))
+		if hasConfidence && conf < *floor {
+			return 3
+		}
+		return 0
 	}
 	fmt.Fprintln(stdout, decide.Line(*prefix, answers, *floor))
 	for _, a := range answers {
@@ -293,14 +467,31 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	label := fs.String("label", "label", "field holding the outcome")
 	choice := fs.String("choice", "decision", "field holding the decision")
 	conf := fs.String("conf", "confidence", "field holding the confidence")
+	dflt := fs.String("default", "", "the answer a below-floor row actually gets; with it each floor reports what that default got right and what it MISSED, and the best floor is the one that misses fewest")
+	observations := fs.Bool("observations", false, "read a log whose rows say adjudicated:false: the arithmetic runs and NO floor is recommended from it")
 	maxEscalation := fs.Float64("max-escalation", decide.DefaultMaxEscalation, "escalation-rate cap for the best floor")
+	proposeFloors := fs.Bool("propose-floors", false, "propose a floor PER KIND from an escalation log: the p25 of the provider answers that stood")
+	logPath := fs.String("log", "", "the escalation log --propose-floors reads (JSON lines)")
+	registry := fs.String("registry", "", "the registry the proposal compares against; the embedded ladder when absent")
+	write := fs.String("write", "", "write the proposed floors into a registry at this path, leaving every other field of the file as it was")
+	floorFor := &floorOverrides{}
+	fs.Var(floorFor, "floor-for", "override one proposal as kind=floor, such as new-verb=0.75; repeatable, and refused above what the provider has ever answered for that kind")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "tune") {
+			return 0
+		}
 		return refuse(stderr, "TUNE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "TUNE", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	}
+	if *proposeFloors {
+		return runProposeFloors(*logPath, *registry, *write, floorFor.values, stdout, stderr)
+	}
+	if len(floorFor.values) > 0 {
+		return refuse(stderr, "TUNE", "bad-flags", "--floor-for has nothing to override without --propose-floors; pass --propose-floors --log <path>")
 	}
 	if strings.TrimSpace(*kind) != "" {
 		return runTuneTable(*kind, *dsn, *decisions, stdout, stderr)
@@ -325,9 +516,22 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 		Conf:          *conf,
 		Floors:        parsedFloors,
 		MaxEscalation: *maxEscalation,
+		Default:       *dflt,
+		Observations:  *observations,
 	})
 	if err != nil {
-		return refuse(stderr, "TUNE", "bad-decisions", oneline.Cap(err.Error(), oneline.TailBytes))
+		// A log of observations gets its own one-word reason: it is not a bad
+		// log, it is a log that cannot set a floor.
+		reason := "bad-decisions"
+		switch {
+		case errors.Is(err, decide.ErrAdjudicatedMalformed):
+			// A marker nobody can read is its own fault, and no flag admits
+			// it: --observations takes a log that says it is observations.
+			reason = "adjudicated-malformed"
+		case errors.Is(err, decide.ErrNotAdjudicated):
+			reason = "not-adjudicated"
+		}
+		return refuse(stderr, "TUNE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if res.Labeled < decide.MinLabeled {
 		return refuse(stderr, "TUNE", "too-few-labeled",
@@ -335,6 +539,144 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprint(stdout, res.Render())
 	return 0
+}
+
+// floorOverrides is --floor-for: kind=floor, repeatable, in the order given. A
+// person overriding a proposal is the case the observed-maximum refusal exists
+// for, so the parse is strict and the check comes after.
+type floorOverrides struct {
+	values []decide.KindFloor
+}
+
+func (o *floorOverrides) String() string {
+	parts := make([]string, 0, len(o.values))
+	for _, f := range o.values {
+		parts = append(parts, fmt.Sprintf("%s=%g", f.Kind, f.Floor))
+	}
+	return strings.Join(parts, ",")
+}
+
+func (o *floorOverrides) Set(v string) error {
+	kind, value, ok := strings.Cut(v, "=")
+	kind = strings.TrimSpace(kind)
+	if !ok || kind == "" || strings.TrimSpace(value) == "" {
+		return fmt.Errorf("--floor-for %s wants kind=floor, such as new-verb=0.75", oneline.Field(v))
+	}
+	if !decide.KnownKind(kind) {
+		return fmt.Errorf("--floor-for names kind %s, which is not one of %s", oneline.Field(kind), strings.Join(decide.Kinds, ", "))
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+	if err != nil {
+		return fmt.Errorf("--floor-for %s has a floor that is not a number", oneline.Field(kind))
+	}
+	if err := decide.ValidFloor(f); err != nil {
+		return fmt.Errorf("--floor-for %s wants a number between 0 and 1, such as %s=0.75", oneline.Field(kind), oneline.Field(kind))
+	}
+	for i, have := range o.values {
+		if have.Kind == kind {
+			o.values[i].Floor = f
+			return nil
+		}
+	}
+	o.values = append(o.values, decide.KindFloor{Kind: kind, Floor: f, From: "named by hand with --floor-for"})
+	return nil
+}
+
+// runProposeFloors is the per-kind floor proposal: read the escalation log,
+// group the PROVIDER answers by kind, keep the ones no failure was recorded
+// against, and propose their p25 -- a floor three answers in four would have
+// cleared. A kind with too few answers is not proposed a floor and keeps the
+// built-in default, and the line says so rather than leaving a reader to infer
+// it from a missing row.
+//
+// A floor above the provider's observed maximum for its kind is REFUSED with
+// the remedy, because such a floor cannot gate a decision, only delete it: that
+// is the 0.90-against-0.78 defect of 2026-09-18, and it does not get written
+// back into the file it came from.
+func runProposeFloors(logPath, registryPath, writePath string, overrides []decide.KindFloor, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(logPath) == "" {
+		return refuse(stderr, "TUNE", "bad-arguments",
+			"--propose-floors reads an escalation log; pass --log ./decide.jsonl, because a floor with no rows behind it is untuned")
+	}
+	reg, err := decide.LoadRegistry(registryPath)
+	if err != nil {
+		return refuse(stderr, "TUNE", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	entries, err := decide.ReadEntries(logPath)
+	if err != nil {
+		return refuse(stderr, "TUNE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	proposals, err := decide.ProposeFloors(reg, entries)
+	if err != nil {
+		return refuse(stderr, "TUNE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	floors := merged(proposals.Proposed(proposedFrom(logPath)), overrides)
+	if err := decide.CheckFloors(floors, proposals); err != nil {
+		return refuse(stderr, "TUNE", "floor-above-observed", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	fmt.Fprint(stdout, proposals.Render())
+	written := "-"
+	if strings.TrimSpace(writePath) != "" {
+		if len(floors) == 0 {
+			return refuse(stderr, "TUNE", "no-floors",
+				"no kind has enough provider answers to propose a floor from, so there is nothing to write; route more units, or name one by hand with --floor-for")
+		}
+		source, err := registrySource(registryPath)
+		if err != nil {
+			return refuse(stderr, "TUNE", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		out, err := decide.MergeFloors(source, floors)
+		if err != nil {
+			return refuse(stderr, "TUNE", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		if err := os.WriteFile(writePath, out, 0o644); err != nil {
+			return refuse(stderr, "TUNE", "bad-registry", fmt.Sprintf("cannot write the registry: %s", oneline.Err(err)))
+		}
+		written = writePath
+	}
+	fmt.Fprintf(stdout, "TUNE FLOORS WRITTEN floors=%d path=%s\n", len(floors), oneline.Field(written))
+	return 0
+}
+
+// merged puts the hand-named floors over the proposed ones, keeping kind order
+// stable: a proposal replaced in place, an override for a kind with no proposal
+// appended.
+func merged(proposed, overrides []decide.KindFloor) []decide.KindFloor {
+	out := append([]decide.KindFloor(nil), proposed...)
+	for _, o := range overrides {
+		replaced := false
+		for i := range out {
+			if out[i].Kind == o.Kind {
+				out[i] = o
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
+// proposedFrom names the measurement in the registry row, so a floor can always
+// be traced back to the log it was read off.
+func proposedFrom(logPath string) string {
+	return fmt.Sprintf("%s, %s", filepath.Base(logPath), now().UTC().Format("2006-01-02"))
+}
+
+// registrySource is the bytes the floors are merged into: the file where one
+// was named, and the embedded ladder where none was -- so `--write` works on a
+// bench that has never had a registry file of its own.
+func registrySource(path string) ([]byte, error) {
+	if strings.TrimSpace(path) == "" {
+		return decide.DefaultRegistryJSON(), nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("cannot read the registry %s: %w", path, err)
+	}
+	return raw, nil
 }
 
 // runTuneTable is the decisions-table read: it opens the table, reads the rows
@@ -361,8 +703,15 @@ func runTuneTable(kind, dsn, decisions string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "TUNE kind=%s rows=%d\n", oneline.Field(kind), len(rows))
 	for _, row := range rows {
-		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%.2f floor=%.2f outcome=%s\n",
-			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), row.ProviderConfidence, row.Floor, orDash(row.Outcome))
+		// A row no provider answered carries a DASH, never a number: the
+		// machinery settled it, and a zero printed here would read as a
+		// measured confidence of zero.
+		confidence := "-"
+		if row.HasProviderConfidence {
+			confidence = fmt.Sprintf("%.2f", row.ProviderConfidence)
+		}
+		fmt.Fprintf(stdout, "TUNE ROW question_hash=%s answer=%s provider_confidence=%s floor=%.2f outcome=%s source=%s\n",
+			oneline.Field(row.QuestionHash), oneline.Field(row.Answer), confidence, row.Floor, orDash(row.Outcome), orDash(row.Source))
 	}
 	fmt.Fprintf(stdout, "TUNE OK kind=%s rows=%d\n", oneline.Field(kind), len(rows))
 	return 0

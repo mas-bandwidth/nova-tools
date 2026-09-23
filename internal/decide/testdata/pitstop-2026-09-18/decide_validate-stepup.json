@@ -1,0 +1,15 @@
+{
+  "id": "decide:validate-stepup",
+  "kind": "fix-with-red-test",
+  "files": 3,
+  "packages": 2,
+  "lanes": 1,
+  "lane_owner": "decide",
+  "guard": false,
+  "secrets": false,
+  "touches": [
+    "network"
+  ],
+  "attempts": [],
+  "fresh_take": false
+}

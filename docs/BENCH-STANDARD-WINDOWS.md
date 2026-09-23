@@ -27,7 +27,9 @@
 > have is worth more as 32 Linux cores than as the first native Windows one.
 > Everything below stands as the record of what a native Windows bench would have
 > needed, and is the page to read first if one is ever wanted again. Nothing
-> below is a live requirement.
+> below is a live requirement. The live path is the WSL2 box, and its host half
+> is provisioned in one step by `tools/bench-wsl2.ps1` — see
+> `docs/spec-pulse/03-fleet.md`, "The Windows host bootstraps in one step".
 
 Everything a Windows machine needs before the loop may put work on it: the
 Windows half of `tools/bench-standard.sh` and of the provisioning standard in

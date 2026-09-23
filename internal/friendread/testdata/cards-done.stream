@@ -1,0 +1,44 @@
+# cards:done fixture for nova-tools #2678.
+# The friend-control day (2026-09-22) as stream entries, not GitHub comments.
+# A counted read is event=read, who, verdict APPROVE or HOLD, a 7-40 hex head,
+# and at falling on that UTC day. The first delivery of a stream id wins.
+
+# emma, three typed reads today: HOLD then APPROVE on 9001, APPROVE on 9005.
+# who=Emma is the same friend as who=emma. johnny's APPROVE at score 7 still
+# counts as done; the fold does not split it into ok or fail.
+1-0 event=read who=Emma verdict=HOLD score=6 head=0a0a0a0a pr=9001 at=2026-09-22T08:00:00Z
+2-0 event=read who=emma verdict=APPROVE score=9 head=aaaaaaaa pr=9001 at=2026-09-22T10:00:00Z
+3-0 event=read who=johnny verdict=APPROVE score=7 head=aaaaaaaa pr=9001 at=2026-09-22T11:00:00Z
+4-0 event=read who=emma verdict=APPROVE score=10/10 head=ffffffff pr=9005 at=2026-09-22T12:00:00Z
+
+# a card that ended ok is not a friend's read.
+5-0 event=ok who=emma label=card-x at=2026-09-22T12:01:00Z
+
+# prose that mentions HOLD is not an entry with event=read.
+6-0 text=prose-mentions-HOLD at=2026-09-22T12:05:00Z
+
+# a read from another year.
+7-0 event=read who=emma verdict=APPROVE score=9 head=11111111 pr=9006 at=2025-09-01T00:00:00Z
+
+# redelivery of 1-0. The payload differs on purpose: it must not become
+# stella's read, and it must not count emma a second time.
+1-0 event=read who=stella verdict=APPROVE score=9 head=bbbbbbbb pr=9002 at=2026-09-22T16:00:00Z
+
+# NOTE is a typed line the table's done count never included.
+8-0 event=read who=emma verdict=NOTE head=aaaaaaaa pr=9001 at=2026-09-22T13:00:00Z
+
+# a read with nobody to attribute.
+9-0 event=read verdict=APPROVE head=aaaaaaaa pr=9001 at=2026-09-22T13:01:00Z
+
+# a head too short to be the typed line's head.
+10-0 event=read who=emma verdict=APPROVE head=abc pr=9001 at=2026-09-22T13:02:00Z
+
+# event is the transition. kind=read on a decide entry is the unit's kind.
+11-0 event=decide kind=read who=emma verdict=APPROVE head=aaaaaaaa pr=9001 at=2026-09-22T15:00:00Z
+
+# a landing is an outcome. It is not another done, and not a calibration column.
+12-0 event=landed who=emma pr=9001 head=aaaaaaaa at=2026-09-22T18:00:00Z
+
+# 00:30 at UTC+5 is 19:30 the previous UTC day. The day is the UTC date of at,
+# not the first ten characters of the stamp.
+13-0 event=read who=emma verdict=APPROVE score=9 head=cccccccc pr=9002 at=2026-09-22T00:30:00+05:00
