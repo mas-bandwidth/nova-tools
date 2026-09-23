@@ -81,6 +81,9 @@ func InterimCIPolicy() CIPolicy {
 	return CIPolicy{Share: DefaultCIShare, Procs: DefaultCIProcs, Clock: DefaultCIClock}
 }
 
+// maxClockSeconds is the largest ci_clock_s a time.Duration holds.
+const maxClockSeconds = math.MaxInt64 / int64(time.Second)
+
 // ReadCIPolicy reads the ci lines of an s:<S>:policy hash. A missing line
 // takes the interim value; a line present but unreadable or out of range is
 // refused, never guessed.
@@ -108,9 +111,11 @@ func ReadCIPolicy(policy map[string]string) (CIPolicy, error) {
 		p.Cores = n
 	}
 	if v, ok := policy[PolicyCIClock]; ok {
-		n, err := strconv.Atoi(strings.TrimSpace(v))
-		if err != nil || n < 1 {
-			return CIPolicy{}, fmt.Errorf("policy %s=%q: want a positive number of seconds", PolicyCIClock, v)
+		// Bound before multiplying: past maxClockSeconds the Duration overflows
+		// to a nonpositive clock, which would read as "use the default".
+		n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+		if err != nil || n < 1 || n > maxClockSeconds {
+			return CIPolicy{}, fmt.Errorf("policy %s=%q: want a positive number of seconds up to %d", PolicyCIClock, v, maxClockSeconds)
 		}
 		p.Clock = time.Duration(n) * time.Second
 	}

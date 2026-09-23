@@ -203,10 +203,20 @@ func TestReadCIPolicyRefusesUnreadableLines(t *testing.T) {
 	for _, bad := range []map[string]string{
 		{PolicyCIShare: "half"}, {PolicyCIShare: "1.5"}, {PolicyCIShare: "NaN"},
 		{PolicyCIProcs: "0"}, {PolicyCICores: "-1"}, {PolicyCIClock: "soon"},
+		// one past math.MaxInt64 / int64(time.Second): the Duration would overflow
+		{PolicyCIClock: "9223372037"}, {PolicyCIClock: "99999999999999999999"},
 	} {
 		if _, err := ReadCIPolicy(bad); err == nil {
 			t.Fatalf("ReadCIPolicy(%v) accepted an unreadable line", bad)
 		}
+	}
+	// the largest clock a time.Duration holds in whole seconds is accepted exactly
+	p, err = ReadCIPolicy(map[string]string{PolicyCIClock: "9223372036"})
+	if err != nil {
+		t.Fatalf("ci_clock_s at the Duration bound refused: %v", err)
+	}
+	if want := time.Duration(9223372036) * time.Second; p.Clock != want || p.Clock <= 0 {
+		t.Fatalf("ci_clock_s at the Duration bound = %v, want %v", p.Clock, want)
 	}
 }
 
