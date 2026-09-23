@@ -142,6 +142,23 @@ func (s *liveSampler) StopWord() string {
 	return s.reached
 }
 
+// StopWordAtFinal is the "once more before any relaunch" test of rule 13d asked of the
+// job's FINAL reads as well as the samples: "The stop is rule 13's `spent >= n`, tested at
+// every sample and once more before any relaunch." A launch that dies fast, before any
+// interval has elapsed, leaves no sample behind, so StopWord alone would be "" and a first
+// launch that reached the budget alone would buy a second one (stella's hold 6 on #1635).
+// spent is the job's sum of every launch's final read, and observed says whether any of
+// those reads answered; a word already reached by a sample is kept, so a card budget that
+// fired first still names itself.
+func (s *liveSampler) StopWordAtFinal(spent int, observed bool) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.reached == "" && observed && !s.unmetered && s.tokens > 0 && spent >= s.tokens {
+		s.reached = stoppedTokens
+	}
+	return s.reached
+}
+
 // loop is the sampling itself: one read per tick, and NEVER two at once. The ticker is not
 // used, deliberately -- a ticker would queue a tick behind a slow read and then fire it the
 // instant the read returned, which is two samples back to back and not "every interval". The

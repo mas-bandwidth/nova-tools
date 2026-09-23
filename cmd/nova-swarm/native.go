@@ -920,7 +920,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// launch after it. The two are different facts about different things, which
 			// is the whole of rule 13d's "the row is the launch's and the line is the
 			// job's".
-			if word := sampler.StopWord(); word != "" {
+			// AND THE FINAL READS COUNT (stella's hold 6 on #1635): the job's spend just
+			// folded from this launch's final read is tested too, so a launch that died
+			// before its first sample cannot buy a relaunch past the budget.
+			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
 				res.stopped = word
 				break
 			}

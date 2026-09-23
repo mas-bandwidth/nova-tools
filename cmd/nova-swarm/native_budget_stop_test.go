@@ -330,6 +330,51 @@ func TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain(t *testing.T
 	}
 }
 
+// TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample: the "once more before any
+// relaunch" test reads the job's FINAL usage, not only the last periodic sample (stella's
+// hold 6 on #1635). Under a 60s --usage-interval and a 120s deadline, a first launch that
+// reports 200 against --tokens 100 and dies on a provider 5xx at once is gone before any
+// sample fires; its final read alone reaches the budget, so there is exactly one launch.
+func TestNativeAFastLaunchAtTheBudgetIsNotRelaunchedBeforeAnySample(t *testing.T) {
+	windowsIsNotABench(t)
+	needsSQLite(t)
+	t.Setenv("NOVA_SWARM_PROVIDER_BACKOFF", "1s")
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	card := filepath.Join(root, "card.md")
+	body := "a card\nFAKE-LAUNCHES\nFAKE-USAGE-DB 200 0 0 0 0 0.1\nFAKE-5XX-FIRST\nFAKE-SLEEP 3\n"
+	if err := os.WriteFile(card, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	args := append(budgetNativeArgs(t, bin, card, slot, root, "100"), "--usage-interval", "60s")
+	for i := range args {
+		if args[i] == "--deadline" {
+			args[i+1] = "120s"
+		}
+	}
+	var stdout, stderr strings.Builder
+	rc := run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 1 {
+		t.Fatalf("the card is stopped and exits 1, got %d\nstdout:\n%s\nstderr:\n%s", rc, stdout.String(), stderr.String())
+	}
+	jobDir := filepath.Join(slot, "jobs", "lbl")
+	raw, err := os.ReadFile(filepath.Join(jobDir, "launches"))
+	if err != nil {
+		t.Fatalf("the harness recorded no launches: %v", err)
+	}
+	launches := len(strings.Split(strings.TrimRight(string(raw), "\n"), "\n"))
+	if launches != 1 {
+		t.Fatalf("a first launch whose final read reached the budget is never launched again, even before any sample; the harness ran %d times:\n%s", launches, raw)
+	}
+	line := nativeOKLine(t, stdout.String())
+	if got := fieldOf(line, "stopped"); got != "tokens" {
+		t.Errorf("stopped=tokens, got %q:\n%s", got, line)
+	}
+	if got := fieldOf(line, "budget"); got != "200/100" {
+		t.Errorf("the line prints the final read's budget=200/100, got %q:\n%s", got, line)
+	}
+}
+
 // TestNativeThreeFailedReadsEndTheCardUnverifiable, and two then an answer end nothing.
 //
 // A READ THAT FAILS IS NOT A SOURCE THAT REPORTED NOTHING: the first ends a card, because a
