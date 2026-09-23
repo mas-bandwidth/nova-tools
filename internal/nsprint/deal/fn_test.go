@@ -701,3 +701,62 @@ func TestControl12FiftyCardsOneSessionOnRealFunctions(t *testing.T) {
 }
 
 var regexpToken = regexp.MustCompile(`^\d+\.[0-9a-f]{32}$`)
+
+// TestCardDealBenchWithoutLegsCardWithoutLeg is the DONE-WHEN of nova-tools
+// #3321: HMGET answers a missing field with Lua false, never nil, and the
+// fleet's benches carry no legs field while `card push` stores no leg, so
+// ns_card_deal raised "bad argument #1 to 'gmatch'" and every deal failed.
+// An absent field is the empty set, with the documented semantics: a bench
+// with no legs runs every leg, and a card with no LEG deals to any bench. A
+// bench that declares legs still refuses a card of another leg.
+func TestCardDealBenchWithoutLegsCardWithoutLeg(t *testing.T) {
+	const sprint = "control-00003321"
+	ctx := context.Background()
+	c := dealRedis(t)
+
+	cases := []struct {
+		name      string
+		benchLegs *string // nil: no legs field at all
+		cardLeg   *string // nil: no leg field at all
+		dealt     int
+	}{
+		{"bench no legs field, card no leg field", nil, nil, 4},
+		{"bench no legs field, card leg go", nil, ptr("go"), 4},
+		{"bench legs go,lisp, card no leg field", ptr("go,lisp"), nil, 4},
+		{"bench legs go,lisp, card leg lisp", ptr("go,lisp"), ptr("lisp"), 4},
+		{"bench legs go,lisp, card leg rust", ptr("go,lisp"), ptr("rust"), 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			seedFleet(t, c, sprint, 4, map[string]int{"ctl-a": 8})
+			seedLease(t, c, "live-token")
+			pipe := c.Pipeline()
+			if tc.benchLegs != nil {
+				pipe.HSet(ctx, "bench:ctl-a:desired", "legs", *tc.benchLegs)
+			}
+			for i := 0; i < 4; i++ {
+				ck := fmt.Sprintf("s:%s:card:card-%02d", sprint, i)
+				if tc.cardLeg != nil {
+					pipe.HSet(ctx, ck, "leg", *tc.cardLeg)
+				} else {
+					pipe.HDel(ctx, ck, "leg")
+				}
+			}
+			if _, err := pipe.Exec(ctx); err != nil {
+				t.Fatal(err)
+			}
+			res, err := newFnStore(c).Reserve(ctx, "live-token", "ctl-a", poolCards(sprint, 4))
+			if err != nil {
+				t.Fatalf("ns_card_deal: %v", err)
+			}
+			if len(res) != tc.dealt {
+				t.Fatalf("dealt %d cards, want %d", len(res), tc.dealt)
+			}
+			if n := zcard(t, c, "bench:ctl-a:starting"); n != int64(tc.dealt) {
+				t.Fatalf("bench:ctl-a:starting = %d, want %d", n, tc.dealt)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
