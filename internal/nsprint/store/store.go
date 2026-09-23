@@ -4,6 +4,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"os"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -14,11 +15,45 @@ type Store struct {
 	client *redis.Client
 }
 
+// Fleet authentication. The fleet Redis (space:6380, users.acl) has its
+// default user off, so an unauthenticated verb fails NOAUTH. The password is
+// never a flag: `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD` leaves it
+// in the environment, where a ps cannot read it (the nova-pulse convention).
+// UserEnv names the ACL user and turns authentication on; PasswordEnvEnv names
+// the variable holding that user's password, DefaultPasswordEnv when unset.
+// With UserEnv unset, Open connects as before, so a throwaway test Redis and a
+// bench that exports the bench password for other tools are unaffected.
+const (
+	UserEnv            = "NOVA_SPRINT_REDIS_USER"
+	PasswordEnvEnv     = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
+	DefaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
+)
+
+func authFromEnv() (user, password string, err error) {
+	user = os.Getenv(UserEnv)
+	if user == "" {
+		return "", "", nil
+	}
+	name := os.Getenv(PasswordEnvEnv)
+	if name == "" {
+		name = DefaultPasswordEnv
+	}
+	password = os.Getenv(name)
+	if password == "" {
+		return "", "", fmt.Errorf("%s=%s but %s is empty; run under nova-secrets exec --only %s", UserEnv, user, name, name)
+	}
+	return user, password, nil
+}
+
 func Open(ctx context.Context, addr string) (*Store, error) {
 	if addr == "" {
 		return nil, fmt.Errorf("redis address is required")
 	}
-	client := redis.NewClient(&redis.Options{Addr: addr})
+	user, password, err := authFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password})
 	if err := client.Ping(ctx).Err(); err != nil {
 		_ = client.Close()
 		return nil, fmt.Errorf("redis at %s: %w", addr, err)
