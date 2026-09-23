@@ -1029,3 +1029,24 @@ is whole seconds and defaults to 60. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
+
+## nova-sprint
+
+The S0 scaffold exposes the command registry and Redis client used by later
+verbs. The help and version commands need no Redis connection.
+
+### First run
+
+```text
+$ nova-sprint help
+nova-sprint: Redis sprint coordination
+usage: nova-sprint <verb> [args]
+verbs:
+example:
+nova-sprint help
+nova-sprint version
+```
+
+The Redis integration controls in `internal/nsprint/store` start a throwaway
+`redis-server` when it is installed. They load the embedded `nova_sprint`
+function library and verify one pipelined exchange for 1,000 hash reads.
