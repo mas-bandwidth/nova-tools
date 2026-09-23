@@ -317,3 +317,83 @@ func TestNativeIdleZeroWatchesNothing(t *testing.T) {
 		t.Fatalf("a refusal is announced whether or not anything acts on it:\n%s", stderr.String())
 	}
 }
+
+// TestNativeIdleNoteNamesTheReportThatStillExists is stella's read of #2737 at
+// cffb169d: with --sweep-now the job directory is removed after the publish, so
+// the blocked report's NOTE must name the published RESULT.md, not the job's
+// copy that no longer exists; without --sweep-now the job is kept and the NOTE
+// names the job's own report.
+func TestNativeIdleNoteNamesTheReportThatStillExists(t *testing.T) {
+	windowsIsNotABench(t)
+	for _, sweep := range []bool{true, false} {
+		name := "kept"
+		if sweep {
+			name = "sweep-now"
+		}
+		t.Run(name, func(t *testing.T) {
+			bin := nativeHarness(t)
+			root, slot := aSlot(t)
+			label := "quietsweep"
+			cardPath := filepath.Join(root, "card.md")
+			if err := os.WriteFile(cardPath, []byte("FAKE-SAY thinking\nFAKE-SLEEP 60\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			job := filepath.Join(slot, "jobs", label)
+			newIdleSeam(t, func(swarm.IdleWatch) (swarm.IdleEnd, bool) {
+				waitForFile(t, filepath.Join(job, "said"), "the fixture harness speaking before it goes still")
+				return swarm.IdleEnd{Idle: 300 * time.Second, Step: "3"}, true
+			})
+			args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin,
+				"--model", "fake/fake-model", "--label", label, "--card", cardPath, "--slot", slot,
+				"--root", root, "--deadline", "30s", "--idle", "2s", "--no-wall"}
+			if sweep {
+				args = append(args, "--sweep-now")
+			}
+			var stdout, stderr bytes.Buffer
+			_ = run(args, strings.NewReader(""), &stdout, &stderr, time.Now())
+
+			const prefix = "NATIVE NOTE: the card published no report of its own; one naming the block was written to "
+			var named string
+			for _, line := range strings.Split(stdout.String(), "\n") {
+				if strings.HasPrefix(line, prefix) {
+					named = strings.TrimPrefix(line, prefix)
+				}
+			}
+			if named == "" {
+				t.Fatalf("an idle end prints the blocked report's NOTE:\n%s\n%s", stdout.String(), stderr.String())
+			}
+			raw, err := os.ReadFile(named)
+			if err != nil {
+				t.Fatalf("the NOTE names %s, which does not exist: %v\n%s\n%s", named, err, stdout.String(), stderr.String())
+			}
+			if !strings.Contains(string(raw), "RESULT: BLOCKED "+label) {
+				t.Fatalf("the NOTE names a file that is not the blocked report:\n%s", raw)
+			}
+			_, jobErr := os.Stat(job)
+			if sweep {
+				if !os.IsNotExist(jobErr) {
+					t.Fatalf("--sweep-now kept the job directory: %v\n%s", jobErr, stderr.String())
+				}
+				attempt := oneRunAttempt(t, filepath.Join(root, "results"), label)
+				if want := filepath.Join(attempt, "RESULT.md"); !samePath(named, want) {
+					t.Fatalf("the NOTE names %s, want the published %s", named, want)
+				}
+			} else {
+				if jobErr != nil {
+					t.Fatalf("a run without --sweep-now keeps its job directory: %v", jobErr)
+				}
+				if !samePath(named, filepath.Join(job, "RESULT.md")) {
+					t.Fatalf("the NOTE names %s, want the job's own %s", named, filepath.Join(job, "RESULT.md"))
+				}
+			}
+		})
+	}
+}
+
+// samePath compares two paths after resolving symlinks (macOS's /var is
+// /private/var), so a test does not fail on how the temp root was spelled.
+func samePath(a, b string) bool {
+	ra, errA := filepath.EvalSymlinks(a)
+	rb, errB := filepath.EvalSymlinks(b)
+	return errA == nil && errB == nil && ra == rb
+}

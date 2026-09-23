@@ -1938,6 +1938,26 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
 		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
 	}
+	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
+	// is the control: it deletes the job directory the way the bench sweep does,
+	// and only when publishNativeResults named the directory it landed in. A
+	// publish that did not land leaves the job, which is then the only copy.
+	// The removal is releaseNativeJob (nova-tools #2379): the job's other files
+	// join the published ones, a commit the clone holds that is not in its base is
+	// bundled and checked, and only then are the job and its sandbox tmp removed.
+	//
+	// It runs after the wall line (which reads the clone) and before the idle
+	// lines below, so the blocked report's NOTE names the copy that still exists:
+	// the published RESULT.md when the job was removed, the job's own when it was
+	// kept (nova-tools #2737, stella's read at cffb169d).
+	released := ""
+	if *sweepNow {
+		if res.resultsDir == "" {
+			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
+		} else {
+			released = releaseNativeJob(cfg, res, stderr)
+		}
+	}
 	// THE END THE WATCH GAVE THE CARD, in the words of what it actually saw. A card the
 	// wall stopped says so; a card that simply went still says THAT, on a line that is
 	// deliberately not a WALL line -- `js-under-20-bytes` died in a provider stall and was
@@ -1949,21 +1969,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stdout, swarm.CardIdleLine(cfg.label, res.idleEnd))
 		}
 		if res.blockedPath != "" {
-			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
-		}
-	}
-	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
-	// is the control: it deletes the job directory the way the bench sweep does,
-	// and only when publishNativeResults named the directory it landed in. A
-	// publish that did not land leaves the job, which is then the only copy.
-	// The removal is releaseNativeJob (nova-tools #2379): the job's other files
-	// join the published ones, a commit the clone holds that is not in its base is
-	// bundled and checked, and only then are the job and its sandbox tmp removed.
-	if *sweepNow {
-		if res.resultsDir == "" {
-			fmt.Fprintf(stderr, "NATIVE NOTE: --sweep-now left %s in place: its results were not published\n", oneline.Field(res.job))
-		} else {
-			releaseNativeJob(cfg, res, stderr)
+			report := res.blockedPath
+			if released != "" {
+				report = filepath.Join(released, "RESULT.md")
+			}
+			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(report))
 		}
 	}
 	if code != 0 {
