@@ -314,13 +314,13 @@ func readQueue(dir string) queueCounts {
 }
 
 func countCards(dir, sub string) int {
-	matches, _ := filepath.Glob(filepath.Join(dir, sub, "card-*.md"))
+	matches := queueCards(filepath.Join(dir, sub))
 	return len(matches)
 }
 
 func countGated(dir, sub string) int {
 	n := 0
-	matches, _ := filepath.Glob(filepath.Join(dir, sub, "card-*.md"))
+	matches := queueCards(filepath.Join(dir, sub))
 	for _, m := range matches {
 		if raw, err := os.ReadFile(m); err == nil && gateLine.Match(raw) {
 			n++

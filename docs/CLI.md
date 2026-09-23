@@ -2277,12 +2277,12 @@ speaks again and the stale marker goes. A missing lanes file is an empty table, 
 refused by name — the file saying it has not been written yet, rather than a fill
 that serializes nothing. A card with no `LANE:` line is launched exactly as before.
 
-**`card-<n>.md` is the contract, and a ready directory holding anything else is a
-refusal**, one line per tick naming the first and counting the rest:
-
-```
-FILL REFUSED ready=<dir> file=<name> more=<n> remedy="fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut"
-```
+**Every `.md` in `--ready` is a card, whatever its name** (#3289, under the rule of
+#3251: the fleet executes the ready queue and never decides on it). Fill used to read
+`card-<n>.md` and nothing else and print a refusal for the rest, so five probe cards
+named by their label sat in ready until a hand renamed them. Which files are cards is
+the writer's decision, made once, coordinator-side; the bench launches what it is
+handed. A launched marker (`<card>.launched`) is not `.md` and is never a card.
 
 One bench takes at most 30 cards in a tick, whatever its capacity says, because the
 rest of the machine is not the fill's to spend.

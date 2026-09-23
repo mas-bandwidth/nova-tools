@@ -82,7 +82,7 @@ func TestFillCapacityIsTheStoresFreeCountNotTheLoadFormula(t *testing.T) {
 	if len(l.calls) != 2 {
 		t.Fatalf("launcher calls = %d, want 2 (share 64 - held 62): %q", len(l.calls), l.calls)
 	}
-	if got := len(readyCards(ready)); got != 3 {
+	if got := len(queueCards(ready)); got != 3 {
 		t.Fatalf("ready holds %d cards, want 3", got)
 	}
 	want := "FILL tick=1 bench-a:launched=2,failed=0 ready=3"
@@ -190,10 +190,10 @@ func TestFillLoadBrakeDealsNothingAndNeverShrinksBelowTheLiveLeases(t *testing.T
 	if len(l.calls) != 0 {
 		t.Fatalf("launcher calls = %d, want 0 under the brake: %q", len(l.calls), l.calls)
 	}
-	if got := len(readyCards(ready)); got != 3 {
+	if got := len(queueCards(ready)); got != 3 {
 		t.Fatalf("ready holds %d cards, want 3 (nothing was claimed)", got)
 	}
-	if got := len(readyCards(launched)); got != 10 {
+	if got := len(queueCards(launched)); got != 10 {
 		t.Fatalf("launched holds %d cards, want the 10 live ones, untouched", got)
 	}
 	said := errb.String()

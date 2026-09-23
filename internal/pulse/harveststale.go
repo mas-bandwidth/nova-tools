@@ -258,7 +258,7 @@ func launchedCardFor(launched, label string) string {
 	if strings.TrimSpace(launched) == "" || strings.TrimSpace(label) == "" {
 		return ""
 	}
-	for _, c := range readyCards(launched) {
+	for _, c := range queueCards(launched) {
 		base := filepath.Base(c)
 		m := readLaunchedMarker(launched, base)
 		if m["label"] == label || strings.TrimSuffix(base, ".md") == label {

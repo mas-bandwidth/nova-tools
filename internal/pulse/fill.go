@@ -207,7 +207,7 @@ func Fill(in FillInput) int {
 		in.Interval = FillInterval
 	}
 	for _, r := range []struct{ v, name, wants string }{
-		{in.Ready, "ready", "the directory holding the card-<n>.md ready to launch"},
+		{in.Ready, "ready", "the directory holding the cards (*.md) ready to launch"},
 		{in.Launched, "launched", "the directory the launched cards are moved into"},
 	} {
 		if strings.TrimSpace(r.v) == "" {
@@ -278,7 +278,7 @@ func Fill(in FillInput) int {
 		// --ready and the launcher, leaving a card under --launched that nobody started.
 		if stopped(in.Stop) {
 			fmt.Fprintf(in.Stdout, "FILL STOP tick=%d file=%s live=%d note=%q\n",
-				tick, oneline.Field(in.Stop), len(readyCards(in.Launched)),
+				tick, oneline.Field(in.Stop), len(queueCards(in.Launched)),
 				"no new launches; the live cards are untouched and nothing was killed")
 			return 0
 		}
@@ -326,7 +326,7 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // line when the tick took stale markers away.
 func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
-	cards := SortQueueCards(selectedCards(readyCards(in.Ready), in.Only))
+	cards := SortQueueCards(selectedCards(queueCards(in.Ready), in.Only))
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
 	idx := 0
@@ -336,12 +336,6 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	checker := in.Checker
 	if checker == nil {
 		checker = NewGitAndResultsChecker(in.Repo, in.Base, in.ResultsDir)
-	}
-
-	if strays := strayCards(in.Ready); len(strays) > 0 {
-		fmt.Fprintf(in.Stderr, "FILL REFUSED ready=%s file=%s more=%d remedy=%q\n",
-			oneline.Field(in.Ready), oneline.Field(filepath.Base(strays[0])), len(strays)-1,
-			"fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut")
 	}
 
 	// ONE capacity read per bench per tick, before any card is dealt: the probe is an ssh
@@ -452,10 +446,10 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 		b.WriteByte(' ')
 		b.WriteString(p)
 	}
-	// ready= is CARDS, never files: the directory holds card-<n>.md and the markers live
+	// ready= is CARDS, never files: the directory holds the *.md cards and the markers live
 	// somewhere else, so the depth a reader acts on is the depth of the queue (#2013).
 	b.WriteString(" ready=")
-	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
+	b.WriteString(strconv.Itoa(len(queueCards(in.Ready))))
 	lines := append([]string{b.String()}, held...)
 	if reaped > 0 {
 		lines = append(lines, fmt.Sprintf("FILL REAPED tick=%d markers=%d dir=%s note=%q",
@@ -605,7 +599,7 @@ func reapMarkers(in FillInput) int {
 		}
 	}
 	ready := map[string]bool{}
-	for _, card := range readyCards(in.Ready) {
+	for _, card := range queueCards(in.Ready) {
 		ready[filepath.Base(card)] = true
 	}
 	n := 0
@@ -682,7 +676,7 @@ func laneTable(path string) map[string]bool {
 // or moved in by hand) falls back to its own LANE: line, exactly as before.
 func liveLanes(launched string) map[string]string {
 	out := map[string]string{}
-	for _, card := range readyCards(launched) {
+	for _, card := range queueCards(launched) {
 		base := filepath.Base(card)
 		lane := readLaunchedMarker(launched, base)["lane"]
 		if lane == "" {
@@ -766,14 +760,17 @@ func isDir(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// readyCards lists the ready card files in filename order, which is the order ls handed
-// fill-loop.sh. The move out of ready is the queue's claim; the glob is a snapshot.
+// queueCards lists the cards in one queue directory in filename order, which is the order
+// ls handed fill-loop.sh. The move out of ready is the queue's claim; the glob is a snapshot.
 //
-// card-<n>.md is the one filename contract of the queue directories, and it is what every
-// verb that writes a card writes: `cut` wrote `<label>.md` until 2026-09-18, and a whole
-// directory of cut cards sat in --ready that this glob silently stepped over.
-func readyCards(dir string) []string {
-	cards, _ := filepath.Glob(filepath.Join(dir, "card-*.md"))
+// EVERY .md IN A QUEUE DIRECTORY IS A CARD, WHATEVER ITS NAME (#3289, rule #3251: the fleet
+// executes the ready queue and never decides on it). Fill used to read card-*.md and nothing
+// else and log a STRAY/REFUSED line for the rest: five probe cards named by their label sat
+// in ready until a hand renamed them, then launched in 0-13 s. Which files are cards is the
+// writer's decision, made once, coordinator-side; the bench takes what it is handed. A
+// launched marker is <card>.launched and a claim is *.claim-*, so neither is ever a card.
+func queueCards(dir string) []string {
+	cards, _ := filepath.Glob(filepath.Join(dir, "*.md"))
 	return cards // filepath.Glob returns lexical order
 }
 
@@ -806,23 +803,4 @@ func selectedCards(cards, patterns []string) []string {
 func matched(pattern, s string) bool {
 	ok, err := filepath.Match(pattern, s)
 	return err == nil && ok
-}
-
-// strayCards lists the .md files in a ready directory that readyCards would step over: a
-// card by any other name is not a card, and the tick says so rather than leaving it to sit
-// there unread. Markers are not .md and never count.
-func strayCards(dir string) []string {
-	all, _ := filepath.Glob(filepath.Join(dir, "*.md"))
-	known := map[string]bool{}
-	for _, c := range readyCards(dir) {
-		known[c] = true
-	}
-	var out []string
-	for _, p := range all {
-		if !known[p] {
-			out = append(out, p)
-		}
-	}
-	sort.Strings(out)
-	return out
 }

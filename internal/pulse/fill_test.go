@@ -65,10 +65,10 @@ func TestFillHoldsAllButOneCardPerLane(t *testing.T) {
 	if len(l.calls) != 1 {
 		t.Fatalf("launcher calls = %d, want 1: %q", len(l.calls), l.calls)
 	}
-	if got := len(readyCards(launched)); got != 1 {
+	if got := len(queueCards(launched)); got != 1 {
 		t.Fatalf("launched holds %d cards, want 1", got)
 	}
-	if got := len(readyCards(ready)); got != 1 {
+	if got := len(queueCards(ready)); got != 1 {
 		t.Fatalf("ready holds %d cards, want 1 (the held card)", got)
 	}
 	if !strings.Contains(out.String(), "FILL HELD card=card-002.md lane=pulse live=card-001.md") {
@@ -164,7 +164,7 @@ func TestFillRefusesUnknownLane(t *testing.T) {
 	if len(l.calls) != 0 {
 		t.Fatalf("launcher calls = %d, want 0 (unknown lane): %q", len(l.calls), l.calls)
 	}
-	if got := len(readyCards(ready)); got != 1 {
+	if got := len(queueCards(ready)); got != 1 {
 		t.Fatalf("ready holds %d cards, want 1 (refused card stays)", got)
 	}
 	want := fmt.Sprintf("FILL REFUSED card=card-001.md lane=ghost remedy=%q",
@@ -257,10 +257,10 @@ func TestFillReturnsAFailedLaunchToReady(t *testing.T) {
 	if code != 1 {
 		t.Fatalf("fill exit = %d, want 1 (the one bench filled nothing); stderr=%q", code, errb.String())
 	}
-	if got := len(readyCards(launched)); got != 0 {
+	if got := len(queueCards(launched)); got != 0 {
 		t.Fatalf("launched holds %d cards, want 0: a card that never ran is not live", got)
 	}
-	if got := len(readyCards(ready)); got != 1 {
+	if got := len(queueCards(ready)); got != 1 {
 		t.Fatalf("ready holds %d cards, want 1 (the failed card comes back)", got)
 	}
 	if got := markersIn(t, ready+"-markers", "card-001.md.failed-*"); len(got) != 1 {
@@ -329,12 +329,16 @@ func (l *oneFailingLauncher) Launch(bench, card string) error {
 	return nil
 }
 
-// TestFillRefusesAReadyFileTheGlobWouldSkip: cut wrote 42.md into a ready directory and the
-// tick stepped over it in silence. One refusal names the file and the contract.
-func TestFillRefusesAReadyFileTheGlobWouldSkip(t *testing.T) {
+// TestFillLaunchesAReadyCardWhateverItsName (#3289, rule #3251): five probe cards named
+// probe-<bench>-<hhmm>.md sat in ready for good while every fill loop logged a STRAY line,
+// because the bench decided by filename which ready entries were cards. The fleet executes
+// the ready queue and does not decide: whatever the coordinator put in ready is a card, and
+// it is launched in the same tick as a card-<n>.md, with no refusal line and nothing left
+// behind in ready.
+func TestFillLaunchesAReadyCardWhateverItsName(t *testing.T) {
 	dir := t.TempDir()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	writeCard(t, ready, "42.md", "a card cut under the old name\n")
+	writeCard(t, ready, "probe-x.md", "a probe card named by its label\n")
 	writeCard(t, ready, "card-001.md", "a card\n")
 	l := &laneLauncher{}
 	var out, errb bytes.Buffer
@@ -351,14 +355,23 @@ func TestFillRefusesAReadyFileTheGlobWouldSkip(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
 	}
-	if !strings.Contains(errb.String(), "FILL REFUSED ready=") || !strings.Contains(errb.String(), "file=42.md") {
-		t.Fatalf("stderr does not name the file the glob would skip: %q", errb.String())
+	if strings.Contains(errb.String(), "FILL REFUSED") || strings.Contains(errb.String(), "STRAY") {
+		t.Fatalf("the bench judged a ready card by its name: %q", errb.String())
 	}
-	if !strings.Contains(errb.String(), "card-<n>.md") {
-		t.Fatalf("the refusal does not name the filename contract: %q", errb.String())
+	if len(l.calls) != 2 {
+		t.Fatalf("launcher calls = %d, want 2 (every ready card is a card): %q", len(l.calls), l.calls)
 	}
-	if len(l.calls) != 1 {
-		t.Fatalf("launcher calls = %d, want 1 (only the card-<n>.md is a card): %q", len(l.calls), l.calls)
+	if left, _ := filepath.Glob(filepath.Join(ready, "*.md")); len(left) != 0 {
+		t.Fatalf("cards left in ready after one tick: %q", left)
+	}
+	if _, err := os.Stat(filepath.Join(launched, "probe-x.md")); err != nil {
+		t.Fatalf("probe-x.md was not moved to launched: %v", err)
+	}
+	if got := liveLanes(launched); got == nil {
+		t.Fatal("liveLanes returned nil")
+	}
+	if n := len(queueCards(launched)); n != 2 {
+		t.Fatalf("queueCards(launched) = %d, want 2: the launched side must see what fill put there", n)
 	}
 }
 

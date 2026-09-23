@@ -52,10 +52,10 @@ func TestFillStopFileStopsNewLaunchesAndLeavesLiveCardsAlone(t *testing.T) {
 	if len(l.calls) != 0 {
 		t.Fatalf("launcher calls = %d, want 0 under the stop file: %q", len(l.calls), l.calls)
 	}
-	if got := len(readyCards(ready)); got != 4 {
+	if got := len(queueCards(ready)); got != 4 {
 		t.Fatalf("ready holds %d cards, want 4 (nothing was claimed)", got)
 	}
-	if got := len(readyCards(launched)); got != 3 {
+	if got := len(queueCards(launched)); got != 3 {
 		t.Fatalf("launched holds %d cards, want the 3 live ones, untouched", got)
 	}
 	line := strings.TrimSpace(out.String())
@@ -101,7 +101,7 @@ func TestFillStopFileEndsTheResidentLoopAfterTheTickInFlight(t *testing.T) {
 		t.Fatalf("launcher calls = %d, want 2 (tick 1 finished, tick 2 launched nothing): %q",
 			len(l.calls), l.calls)
 	}
-	if got := len(readyCards(ready)); got != 4 {
+	if got := len(queueCards(ready)); got != 4 {
 		t.Fatalf("ready holds %d cards, want 4", got)
 	}
 	if !strings.Contains(out.String(), "FILL tick=1 bench-a:launched=2,failed=0") {

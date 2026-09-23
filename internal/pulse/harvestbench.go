@@ -722,7 +722,7 @@ func drainLaunched(in HarvestInput, facts drainFacts, lines *boundedList) (drain
 	stamp := now().UTC().Format("20060102T150405Z")
 
 	leftBy := map[string]int{}
-	cards := readyCards(in.Launched)
+	cards := queueCards(in.Launched)
 	sort.Strings(cards)
 	// No --session, no drain (rule (a) below): every card's verdict is `no-session`, so
 	// the answer is the count, and reading a marker per card (16,850 of them, 40 s on a

@@ -196,7 +196,7 @@ func lockPID(path string) int {
 // launch is older than the deadline: requeued once under an attempt file, then failed.
 func reapLaunchedCards(in ReapInput, roots []string, now time.Time) (requeued, failed int) {
 	launched := filepath.Join(in.Queue, "launched")
-	cards, _ := filepath.Glob(filepath.Join(launched, "card-*.md"))
+	cards := queueCards(launched)
 	for _, path := range cards {
 		name := filepath.Base(path)
 		info, err := os.Stat(path)

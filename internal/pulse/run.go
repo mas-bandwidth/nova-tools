@@ -346,7 +346,7 @@ func (r *runner) writeTicks(t tickCounts) {
 // '-' of the first card label found, else `all` on a queue that has cut no cards yet.
 func (r *runner) queueStream() string {
 	for _, sub := range []string{"pending", "launched", "done"} {
-		matches, _ := filepath.Glob(filepath.Join(r.in.Queue, sub, "card-*.md"))
+		matches := queueCards(filepath.Join(r.in.Queue, sub))
 		if len(matches) > 0 {
 			return streamOf(filepath.Base(matches[0]))
 		}

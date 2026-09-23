@@ -674,7 +674,7 @@ func benchOf(root string) string {
 
 // cardsIn lists a queue directory's cards, oldest number first, so the queue is a queue.
 func cardsIn(dir string) []string {
-	cards, _ := filepath.Glob(filepath.Join(dir, "card-*.md"))
+	cards := queueCards(dir)
 	sort.Slice(cards, func(i, j int) bool { return cardNumber(cards[i]) < cardNumber(cards[j]) })
 	return cards
 }

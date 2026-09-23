@@ -68,7 +68,7 @@ func TestFillRefusesARunnerHostAndLaunchesNothing(t *testing.T) {
 	if !strings.Contains(line, "hulk") {
 		t.Errorf("the remedy names no bench to fill instead: %q", line)
 	}
-	if got := len(readyCards(ready)); got != 1 {
+	if got := len(queueCards(ready)); got != 1 {
 		t.Errorf("ready holds %d cards, want the one card untouched", got)
 	}
 }

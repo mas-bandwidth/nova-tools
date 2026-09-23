@@ -939,7 +939,7 @@ func (m *manager) sh(dir string, timeout time.Duration, name string, args ...str
 
 // cardsIn lists the card files in one queue directory, in name order.
 func (m *manager) cardsIn(dir string) []string {
-	matches, _ := filepath.Glob(filepath.Join(m.in.Queue, dir, "card-*.md"))
+	matches := queueCards(filepath.Join(m.in.Queue, dir))
 	for i, p := range matches {
 		matches[i] = filepath.Base(p)
 	}
