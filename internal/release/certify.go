@@ -22,6 +22,7 @@ import (
 	"io"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // sshRemote adapts this package's argv-shaped SSH edge to the script-shaped remote the
@@ -46,9 +47,14 @@ func (r sshRemote) Run(ctx context.Context, target, script string) (string, erro
 	}
 	defer cancel()
 	encoded := base64.StdEncoding.EncodeToString([]byte(script))
-	return r.ssh.Run(bounded, target, []string{
+	argv := []string{
 		"printf", "%s", encoded, "|", "openssl", "base64", "-d", "-A", "|", "sh",
-	})
+	}
+	// This function is the seam a caller reaches for even though the actual child is
+	// started one call deeper, inside r.ssh's own implementation (which guards itself
+	// too); r.ssh is SSH, always ssh here, so the guard is checked at both edges.
+	testguard.RefuseHosts("ssh", append([]string{target}, argv...)...)
+	return r.ssh.Run(bounded, target, argv)
 }
 
 // certifyAdopted runs certification on one machine that has just adopted a version. It
