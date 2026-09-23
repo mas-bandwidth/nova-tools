@@ -248,7 +248,17 @@ machine that did the build:
 
 and `adopt --expect-sums-from <that file>` reads it there. The file is **local by rule**: a
 `--expect-sums-from host:path` is refused by name, and no verb in this package ever asks a machine to
-hash anything — not `sha256sum`, not `shasum`, not `openssl dgst`. `SUMS.digest` is not listed in the
+hash `SHA256SUMS` as evidence about a fetch — not `sha256sum SHA256SUMS`, not `shasum`, not
+`openssl dgst`. That is decision 2: a digest computed where the bits live is the machine vouching
+for itself.
+
+A destination checking a copy this host already verified is a different question (#1981): `adopt`
+runs `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c` on darwin) in the artifact directory on the
+bench, of the artifacts, never as a substitute for `--expect-sums`. "Already holds" is that verified
+count, never an existence check, and the stream lands in `<version>.partial/` until the check
+passes.
+
+`SUMS.digest` is not listed in the
 `SHA256SUMS` it is the digest of, or its own value would depend on the last time the directory was
 built — and `pull` names it alongside the listed artifacts, because the `rmdir` that ends a pull
 refuses a directory that is not empty and one file this tool wrote itself must not be what stops it.
