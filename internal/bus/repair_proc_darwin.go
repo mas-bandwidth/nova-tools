@@ -4,6 +4,7 @@ package bus
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -46,7 +47,7 @@ func gitProcsFromPS(psOut string, cwds map[string]string, cwdErr error, alive fu
 		p := gitProc{command: cmd}
 		if cwdErr != nil {
 			if !commandLocatesAbsolutely(p) {
-				return nil, ownershipUnknownErr("cwd unreadable")
+				return nil, ownershipUnknownErr("cwd unreadable, " + strings.TrimPrefix(cwdErr.Error(), ownershipUnknown+": "))
 			}
 			procs = append(procs, p)
 			continue
@@ -61,7 +62,7 @@ func gitProcsFromPS(psOut string, cwds map[string]string, cwdErr error, alive fu
 				continue
 			}
 			if !commandLocatesAbsolutely(p) {
-				return nil, ownershipUnknownErr("cwd unreadable")
+				return nil, ownershipUnknownErr("cwd unreadable pid=" + pid)
 			}
 			procs = append(procs, p)
 			continue
@@ -85,13 +86,33 @@ func looksLikeGit(cmd string) bool {
 // darwinGitCwd asks lsof for every git process's cwd. Failure is returned. It is not
 // an empty map: an empty map is a successful lsof that saw no git cwd.
 func darwinGitCwd() (map[string]string, error) {
-	out, err := exec.Command("lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn").Output()
-	if err != nil {
-		return nil, ownershipUnknownErr("lsof failed")
+	var stdout, stderr strings.Builder
+	cmd := exec.Command("lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn")
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	code := 0
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		code = exit.ExitCode()
 	}
+	return lsofCwds(stdout.String(), stderr.String(), code, err)
+}
+
+// lsofCwds reads one lsof run. lsof exits 1 with nothing on either stream when no process
+// matched -c git: no git was running at the moment it looked (#3029). That is a complete
+// scan with no cwds, and every ps-listed git missing from it is re-checked by pid. Exit 1
+// with anything said, any other failure, or output on a failed run is "lsof failed".
+func lsofCwds(stdout, stderr string, code int, runErr error) (map[string]string, error) {
 	cwds := map[string]string{}
+	if runErr != nil {
+		if code == 1 && stdout == "" && strings.TrimSpace(stderr) == "" {
+			return cwds, nil
+		}
+		return nil, ownershipUnknownErr(fmt.Sprintf("lsof failed code=%d %s", code, stderr))
+	}
 	var pid string
-	for _, line := range strings.Split(string(out), "\n") {
+	for _, line := range strings.Split(stdout, "\n") {
 		if line == "" {
 			continue
 		}
@@ -107,10 +128,12 @@ func darwinGitCwd() (map[string]string, error) {
 	return cwds, nil
 }
 
-// darwinPIDAlive reports whether pid is still in the process table. ps exiting 1 is
-// the verified-vanished answer. Any other failure is an inspection error.
+// darwinPIDAlive reports whether pid is still a live process. ps exiting 1 is the
+// verified-vanished answer. A zombie is not live: it has exited and only waits for its
+// parent to reap it, and lsof has no cwd for it (#3029). Any other failure is an
+// inspection error.
 func darwinPIDAlive(pid string) (bool, error) {
-	out, err := exec.Command("ps", "-p", pid, "-o", "pid=").Output()
+	out, err := exec.Command("ps", "-p", pid, "-o", "stat=").Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {
@@ -118,5 +141,12 @@ func darwinPIDAlive(pid string) (bool, error) {
 		}
 		return false, err
 	}
-	return strings.TrimSpace(string(out)) != "", nil
+	return darwinStatAlive(string(out)), nil
+}
+
+// darwinStatAlive reads one `ps -o stat=` field. Empty is no process; a state that
+// starts with Z is a zombie, which is dead.
+func darwinStatAlive(stat string) bool {
+	stat = strings.TrimSpace(stat)
+	return stat != "" && stat[0] != 'Z'
 }

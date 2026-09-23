@@ -92,7 +92,8 @@ is compared against; it is never the path `query --ask size` takes."
     "slice-17-savepoint-restore.lisp"
     "slice-19-verification-cache-file.lisp"
     "slice-18-dedup-root.lisp"
-    "slice-19-journal-rotation.lisp"))
+    "slice-19-journal-rotation.lisp"
+    "slice-18-verify-resolver.lisp"))
 
 (dolist (f *acceptance-slices*)
   (load (asdf:system-relative-pathname :nova-work/tests

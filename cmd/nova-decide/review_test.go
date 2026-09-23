@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -40,10 +41,20 @@ func fakeGH(t *testing.T) (path, argvLog string) {
 	path = filepath.Join(dir, "gh")
 	script := fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %q
-case "$1 $2" in
-  "pr view") cat %q/"$3".json ;;
-  "pr diff") cat %q/"$3".diff ;;
-  "pr comment") exit 0 ;;
+case "$1" in
+  pr)
+    case "$2" in
+      view) cat %q/"$3".json ;;
+      diff) cat %q/"$3".diff ;;
+      comment) exit 0 ;;
+      *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
+    esac
+    ;;
+  api)
+    sha=$(printf '%%s\n' "$2" | sed -n 's#.*commits/\([0-9a-fA-F][0-9a-fA-F]*\)/check-runs.*#\1#p')
+    if [ -z "$sha" ]; then echo "fake gh: no sha in $*" >&2; exit 2; fi
+    printf '%%s\n' "{\"total_count\":1,\"check_runs\":[{\"name\":\"ci-ok\",\"status\":\"completed\",\"conclusion\":\"success\",\"head_sha\":\"$sha\",\"started_at\":\"2026-09-22T00:00:00Z\",\"completed_at\":\"2026-09-22T00:00:01Z\"}]}"
+    ;;
   *) echo "fake gh: unexpected $*" >&2; exit 2 ;;
 esac
 `, argvLog, cellData(t, "cells"), cellData(t, "cells"))
@@ -76,14 +87,14 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 	code := run([]string{"review", "--repo", "mas-bandwidth/schema", "--pr", "1488",
 		"--gh", gh, "--replay", cellData(t, "jev-2026-09-22"), "--ledger-path", ledger, "--table"}, &out, &errb)
 	if code != 3 {
-		t.Fatalf("exit=%d stderr=%s stdout=%s (a HOLD exits 3)", code, errb.String(), out.String())
+		t.Fatalf("exit=%d stderr=%s stdout=%s (a BOUNCE exits 3)", code, errb.String(), out.String())
 	}
 	line := out.String()
-	if !strings.Contains(line, "DISPOSITION who=jev head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=HOLD score=6/10") {
+	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6 model=jev-latest cost=$- explain=") {
 		t.Fatalf("stdout = %q", line)
 	}
-	if !strings.Contains(line, "checks=symbol:yes,paths:yes,done:yes,claims:no") {
-		t.Fatalf("the four checks are not on the line: %q", line)
+	if !strings.Contains(line, "checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6") {
+		t.Fatalf("the checks are not on the line: %q", line)
 	}
 	if strings.Contains(argv(t, log), "pr comment") {
 		t.Fatalf("a dry run posted a comment: %s", argv(t, log))
@@ -102,7 +113,7 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.PR != 1488 || d.Verdict != "HOLD" || d.Score != 6 || d.Posted {
+	if d.PR != 1488 || d.Verdict != "BOUNCE" || d.Score != 6 || d.Posted {
 		t.Fatalf("ledger row = %+v", d)
 	}
 	if d.RawScore == 0 {
@@ -122,10 +133,10 @@ func TestReviewPostPostsExactlyOneComment(t *testing.T) {
 	if n := strings.Count(calls, "pr comment"); n != 1 {
 		t.Fatalf("posted %d comments, want exactly 1: %s", n, calls)
 	}
-	if !strings.Contains(calls, "DISPOSITION who=jev") {
+	if !strings.Contains(calls, "--body JEV head=") || strings.Contains(calls, "DISPOSITION") {
 		t.Fatalf("the comment does not carry the typed line: %s", calls)
 	}
-	if !strings.Contains(calls, "LANDS NOTHING") {
+	if !strings.Contains(calls, "lands nothing") {
 		t.Fatalf("the comment does not say it lands nothing: %s", calls)
 	}
 }
@@ -193,10 +204,10 @@ func TestReviewNoJevSpendsNothing(t *testing.T) {
 	if code != 3 {
 		t.Fatalf("exit=%d stderr=%s", code, errb.String())
 	}
-	if !strings.Contains(out.String(), "score=-/10") {
+	if !strings.Contains(out.String(), "score=- ") {
 		t.Fatalf("an unscored pass must not print a number: %q", out.String())
 	}
-	if !strings.Contains(out.String(), "verdict=HOLD") {
+	if !strings.Contains(out.String(), "verdict=UNSURE") {
 		t.Fatalf("an unscored pass holds: %q", out.String())
 	}
 }
@@ -211,5 +222,99 @@ func TestReviewHelpNamesTheVerb(t *testing.T) {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("usage does not name %q", want)
 		}
+	}
+}
+
+// ciFixtureGH serves one recorded rollup for one head and a pull request whose
+// head is that sha. The other checks are off in the caller, so the diff can be
+// empty: only ci decides.
+func ciFixtureGH(t *testing.T, pr int, sha, rollup string) string {
+	t.Helper()
+	dir := t.TempDir()
+	view := filepath.Join(dir, "view.json")
+	body := fmt.Sprintf("{\"number\":%d,\"headRefOid\":%q,\"title\":\"t\",\"body\":\"\",\"files\":[]}\n", pr, sha)
+	if err := os.WriteFile(view, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "gh")
+	script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  pr)
+    case "$2" in
+      view) cat %q ;;
+      diff) printf '' ;;
+      comment) exit 0 ;;
+      *) echo "unexpected pr $*" >&2; exit 2 ;;
+    esac
+    ;;
+  api)
+    case "$2" in
+      *%s*) cat %q ;;
+      *) echo "unexpected api $2" >&2; exit 2 ;;
+    esac
+    ;;
+  *) echo "unexpected $*" >&2; exit 2 ;;
+esac
+`, view, sha, rollup)
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestReviewCIControlsReplayTheRecordedRollup is nova-tools #2704. --checks ci
+// is checks_enabled with only that check on, so the verdict is the rollup's:
+// #2519 at 907546af BOUNCEs and names the red jobs; #2522 at 8359db4f PASSes.
+func TestReviewCIControlsReplayTheRecordedRollup(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
+	for _, tc := range []struct {
+		name string
+		file string
+		sha  string
+		pr   int
+		exit int
+		want []string
+		not  []string
+	}{
+		{
+			name: "2519 bounce",
+			file: "2519-907546af.json",
+			sha:  "907546af45503600783997c21d90d55b489a1703",
+			pr:   2519, exit: 3,
+			want: []string{"verdict=BOUNCE", "ci:fail", "BOUNCE", "907546af",
+				"jobs: ci-ok, test (1/4 space), test (1/4 studio), test (2/4 space), test (2/4 studio)"},
+			not: []string{"verdict=PASS", "test (3/4", "lint"},
+		},
+		{
+			name: "2522 pass",
+			file: "2522-8359db4f.json",
+			sha:  "8359db4fec24521b444d01bf6f90a9f981e9765e",
+			pr:   2522, exit: 0,
+			want: []string{"verdict=PASS", "ci:ok", "8359db4f"},
+			not:  []string{"verdict=BOUNCE", "ci:fail"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gh := ciFixtureGH(t, tc.pr, tc.sha, cellData(t, filepath.Join("ci-rollup", tc.file)))
+			var out, errb bytes.Buffer
+			code := run([]string{"review", "--repo", "mas-bandwidth/nova-tools", "--pr", strconv.Itoa(tc.pr),
+				"--checks", "ci", "--no-jev", "--gh", gh,
+				"--ledger-path", filepath.Join(t.TempDir(), "l.jsonl")}, &out, &errb)
+			if code != tc.exit {
+				t.Fatalf("exit=%d want %d\nstderr=%s\nstdout=%s", code, tc.exit, errb.String(), out.String())
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(out.String(), w) {
+					t.Errorf("stdout missing %q:\n%s", w, out.String())
+				}
+			}
+			for _, w := range tc.not {
+				if strings.Contains(out.String(), w) {
+					t.Errorf("stdout contains %q:\n%s", w, out.String())
+				}
+			}
+		})
 	}
 }
