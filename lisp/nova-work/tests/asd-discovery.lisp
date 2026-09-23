@@ -185,6 +185,23 @@ tests/acceptance.lisp, and compiling them as components too would register every
       (nova-work-asdf:discovery-error (c)
         (ok (plusp (length (princ-to-string c))) "the refusal must say something")))))
 
+(deftest "asd-discovery-refuses-a-non-ascii-name" "nova-tools#1947"
+    "the file-name alphabet is ASCII only: a non-ASCII letter or digit (which ALPHA-CHAR-P / DIGIT-CHAR-P accept) is a DISCOVERY-ERROR"
+  ;; Built with CODE-CHAR so this source file stays ASCII: "cafe" with U+00E9,
+  ;; U+00C5 as a leading capital, and U+0663 (ARABIC-INDIC DIGIT THREE).
+  (dolist (bad (list (format nil "caf~C" (code-char #xE9))
+                     (format nil "~Cngstrom" (code-char #xC5))
+                     (format nil "slice~C" (code-char #x663))))
+    (handler-case
+        (progn (nova-work-asdf::check-file-name bad)
+               (fail "the non-ASCII file name ~S was accepted" bad))
+      (nova-work-asdf:discovery-error (c)
+        (ok (search "ASCII" (princ-to-string c))
+            "the refusal must name the ASCII alphabet: ~A" c))))
+  ;; Positive control: every character of the promised alphabet is accepted.
+  (check-equal "Az09-_.x" (nova-work-asdf::check-file-name "Az09-_.x")
+               "ASCII letters, digits, '-', '_' and '.' are a valid name"))
+
 (deftest "asd-discovery-refuses-a-symlink" "nova-tools#1947"
     "a symbolic link in tests/ is a DISCOVERY-ERROR: ASDF would compile a file from outside the tree and git archive would not carry it"
   (with-fake-tests-tree (root)

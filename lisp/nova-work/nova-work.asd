@@ -84,8 +84,13 @@ or a file from outside the tree."))
 
 (defun name-char-p (c)
   "A test file name holds only characters that mean the same thing to git, to
-ASDF's pathname parsing and to every filesystem in the fleet."
-  (or (alpha-char-p c) (digit-char-p c)
+ASDF's pathname parsing and to every filesystem in the fleet: ASCII letters,
+ASCII digits, '-', '_' and '.'. The ranges are explicit on purpose: ALPHA-CHAR-P
+and DIGIT-CHAR-P accept non-ASCII letters and digits (SBCL takes U+00E9 as
+a letter), and those normalise differently on the darwin runners' filesystem."
+  (or (char<= #\a c #\z)
+      (char<= #\A c #\Z)
+      (char<= #\0 c #\9)
       (member c '(#\- #\_ #\.) :test #'char=)))
 
 (defun check-file-name (name)
