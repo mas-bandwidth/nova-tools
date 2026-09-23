@@ -251,6 +251,65 @@ for, so a test can say how much of the journal a verb read."))
                    (nth-value 3 (kernel-operation-list k2 :max 3))
                    "a restart answered a different page"))))
 
+;;; The cold handle: a file journal reopened over a long history. Its index
+;;; is folded by `open-file-journal`'s own replay, so the first list, status
+;;; or cancel on the new handle reads its page and nothing more (stella's
+;;; hold at 4cabfc8e: a lazily built index walked the whole history first).
+
+(defvar *file-journal-lookups* nil
+  "When a cons, its car counts every `journal-lookup` on a file journal.")
+
+(defmethod journal-lookup :around ((journal file-journal) request)
+  (declare (ignore request))
+  (when *file-journal-lookups*
+    (incf (car *file-journal-lookups*)))
+  (call-next-method))
+
+(defun %file-lookups-during (thunk)
+  "The file-journal records THUNK read, and THUNK's values as a list."
+  (let* ((*file-journal-lookups* (list 0))
+         (values (multiple-value-list (funcall thunk))))
+    (values (car *file-journal-lookups*) values)))
+
+(deftest "operation-list-on-a-cold-file-journal-reads-only-its-page" "docs/SPEC-WORK.md:2761"
+    "expected=reopened-handle-list-max-3-over-150-operations-reads-<=3-records;first-status-<=1;replay-reads-no-extra-record"
+  (let* ((path (test-journal-path "operation-records-cold"))
+         (init (root-digest (make-seed-state *seed*)))
+         (j1 (open-file-journal path :initial-state-hash init :capacity 2048)))
+    (unwind-protect
+         (let ((k (fresh :journal j1)))
+           (loop for n from 1 to 150
+                 do (kernel-operation-accept k :id (format nil "op-~D" n) :kind :capture
+                                               :request (format nil "req-cold-~D" n)
+                                               :author "rowan" :stamp "2026-09-19T12:00:00Z")
+                    (when (zerop (mod n 7))
+                      (kernel-operation-complete k :id (format nil "op-~D" n)
+                                                   :result (list :n n)))))
+      (close-file-journal j1))
+    ;; A brand-new handle: nothing of j1's index can be reused.
+    (multiple-value-bind (open-cost opened)
+        (%file-lookups-during (lambda () (open-file-journal path :initial-state-hash init)))
+      (let ((j2 (first opened)))
+        (unwind-protect
+             (let ((k2 (fresh :journal j2)))
+               (ok (zerop open-cost) "reopening the journal looked records up ~D times" open-cost)
+               (multiple-value-bind (cost values)
+                   (%file-lookups-during (lambda () (kernel-operation-list k2 :max 3)))
+                 (destructuring-bind (okp line code rows) values
+                   (ok okp "cold list refused: ~A" line)
+                   (check-equal 0 code "cold list exit code")
+                   (check-equal 3 (length rows) "--max did not bound the cold rows")
+                   (ok (search "OPERATION ROW id=op-1 op=capture state=queued" (first rows))
+                       "the first cold row: ~A" (first rows)))
+                 (ok (<= cost 3) "cold list --max 3 over 150 operations read ~D journal records" cost))
+               (multiple-value-bind (cost values)
+                   (%file-lookups-during (lambda () (kernel-operation-status k2 :id "op-147")))
+                 (ok (first values) "cold status refused: ~A" (second values))
+                 (ok (search "state=done" (second values))
+                     "cold status missed the completion: ~A" (second values))
+                 (ok (<= cost 1) "cold status read ~D journal records" cost)))
+          (close-file-journal j2))))))
+
 ;;; ------------------------------------------------------------------
 ;;; The real-file-journal twin: close, reopen, replay.
 ;;; ------------------------------------------------------------------

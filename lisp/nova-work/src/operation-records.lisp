@@ -116,8 +116,8 @@ reader src/control.lisp:115 uses."
 ;;; before. The index is the journal's, not the image's: it is keyed by the
 ;;; journal handle, built from that journal's own accepted order, and folded
 ;;; forward one entry per new journal record (each record is visited once, ever).
-;;; A brand-new handle over the same file builds it from the file's order, which
-;;; `open-file-journal` has already read frame by frame. It is bounded by what the
+;;; A brand-new handle over the same file has it built by `open-file-journal`'s
+;;; own frame-by-frame replay (below), never by a later whole-history pass. It is bounded by what the
 ;;; journal holds, which is bounded by the journal's capacity.
 
 (defstruct (operation-index (:constructor %make-operation-index))
@@ -136,6 +136,39 @@ exactly as long as the journal it indexes.")
   (multiple-value-bind (found digest line) (journal-lookup journal key)
     (declare (ignore digest))
     (and (eq found t) (%parse-operation-line line))))
+
+;;; A file journal's own replay feeds the index. `open-file-journal` reads the
+;;; file frame by frame and pushes each request onto the journal's order, and
+;;; `journal-record` does the same for every record written afterwards; both go
+;;; through the generic `(setf journal-order-slot)`. The method below folds that
+;;; one new entry into the handle's index at that moment, from the record the
+;;; replay has just put in hand -- no second pass, no `journal-lookup`. A handle
+;;; opened over a long history therefore has its index complete when
+;;; `open-file-journal` returns, and the first `operation list --max N` on a cold
+;;; handle reads N records, not the history (stella's hold at 4cabfc8e). Any push
+;;; that does not extend the folded mark (an order rewritten some other way)
+;;; folds nothing here; `%operation-index` reconciles it on the next call as
+;;; before.
+
+(defun %operation-index-add (index id key)
+  "Fold one journal record KEY of operation ID into INDEX."
+  (unless (nth-value 1 (gethash id (operation-index-keys index)))
+    (vector-push-extend id (operation-index-ids index)))
+  (push key (gethash id (operation-index-keys index))))
+
+(defmethod (setf journal-order-slot) :after (order (journal file-journal))
+  (when (consp order)
+    (let ((index (or (gethash journal *operation-indexes*)
+                     (setf (gethash journal *operation-indexes*) (%make-operation-index)))))
+      (when (eq (cdr order) (operation-index-head index))
+        (let* ((key (car order))
+               (held (gethash key (journal-records journal))))
+          ;; A request the records do not hold yet is left for the lazy fold.
+          (when held
+            (let ((record (%parse-operation-line (second held))))
+              (when record
+                (%operation-index-add index (getf record :id) key)))
+            (setf (operation-index-head index) order)))))))
 
 (defun %operation-index (kernel)
   "The kernel journal's operation index, folded forward over every record the
@@ -170,9 +203,7 @@ it again."
               (when record (push (cons (getf record :id) key) folded)))))
         (dolist (entry (nreverse folded))
           (destructuring-bind (id . key) entry
-            (unless (nth-value 1 (gethash id (operation-index-keys index)))
-              (vector-push-extend id (operation-index-ids index)))
-            (push key (gethash id (operation-index-keys index)))))
+            (%operation-index-add index id key)))
         (setf (operation-index-head index) order
               (gethash journal *operation-indexes*) index)
         index))))
