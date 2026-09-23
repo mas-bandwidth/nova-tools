@@ -5,20 +5,29 @@ package width
 // itself in that same pass with no manual call.
 //
 // Each pass, after the pass has renewed the lease, the duty
-//  1. reads every open sprint's s:<S>:log from its own cursor (plain XREAD,
-//     no consumer group) and collects the owner of every `task done`,
-//     `task cancel` and `task expire` receipt: a friend whose slot just freed;
+//  1. reads every open sprint's s:<S>:log from its durable cursor
+//     (s:<S>:width:cursor; plain XREAD, no consumer group) and collects the
+//     owner of every `task done`, `task cancel` and `task expire` receipt: a
+//     friend whose slot just freed;
 //  2. runs one width tick with the lease token (desired, deficit, CAP, the
 //     underfull rebalance, READ-BOUND, the coordinator's wake);
-//  3. for each friend with a completion and a fillable slot, reserves the
-//     ready ids it may start now with the lease token; each reservation
-//     appends its spawn line to friend:<f>:wake (kind fill) in the same
-//     Redis call, which is what the friend's harness spawns from.
+//  3. refills every friend with a fillable slot (the deficit the tick just
+//     wrote, not only the friends with a completion), freed friends first,
+//     reserving the ready ids it may start now with the lease token; each
+//     reservation appends its spawn line to friend:<f>:wake (kind fill) in
+//     the same Redis call, which is what the friend's harness spawns from;
+//  4. advances the durable cursors to what it read, fenced (ns_width_cursor).
 //
 // Every write presents the token, so a stale instance writes nothing and the
-// duty returns reconcile.ErrFenced, which stops the pass. A new instance
-// starts its cursors at the log tips (a restart is not a completion); a sprint
-// that opens later is read from its start.
+// duty returns reconcile.ErrFenced, which stops the pass. Stella's hold 3 at
+// 54755384: the cursor is never seeded at the log tip. It lives in Redis per
+// sprint, is written only under the fence after a processed batch, and a new
+// instance resumes from it, so a completion written between one instance's
+// read and its restart or fencing is replayed by the next; no cursor yet reads
+// the sprint's log from its start. The deficit refill in step 3 is the second
+// guard: even a completion that is never read cannot leave a slot idle while
+// ready work exists, because the refill follows the tick's fillable count on
+// every pass, not completion events.
 
 import (
 	"context"
@@ -48,11 +57,19 @@ type Duty struct {
 	// AfterTick, when set, sees every tick the duty ran and the replacements
 	// it dealt in that pass.
 	AfterTick func(Result, []Reserved)
+	// AfterRead, when set, sees the sorted owners of the completions the
+	// pass read from the durable cursors (before the refill).
+	AfterRead func(freed []string)
 
-	mu       sync.Mutex
-	instance string            // the lease instance the cursors belong to
-	cursors  map[string]string // s:<S>:log -> last id read
+	mu sync.Mutex
 }
+
+// FunctionCursor advances the durable completion cursors under the fence.
+const FunctionCursor = "ns_width_cursor"
+
+// CursorKey is sprint S's durable width completion cursor: the last s:<S>:log
+// id a processed width pass read.
+func CursorKey(S string) string { return "s:" + S + ":width:cursor" }
 
 // Run is one width pass: completions, one fenced tick, fenced replacements.
 func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
@@ -65,26 +82,38 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 	if actor == "" {
 		actor = DutyActor
 	}
-	fresh := d.instance != l.Instance()
-	if fresh {
-		d.instance, d.cursors = l.Instance(), map[string]string{}
-	}
-	freed, err := d.completions(ctx, fresh)
+	freed, cursors, err := d.completions(ctx)
 	if err != nil {
 		return reconcile.Counts{}, fmt.Errorf("width duty: %w", err)
+	}
+	if d.AfterRead != nil {
+		d.AfterRead(freed)
 	}
 	res, err := Tick(ctx, d.Store, d.Policy, l.Token(), actor, "")
 	if err != nil {
 		return reconcile.Counts{}, fmt.Errorf("width duty: %w", err)
 	}
+	// Deficit refill: every friend with a fillable slot, freed friends first,
+	// whether or not a completion was read for it.
 	fillable := map[string]int{}
+	var targets []string
 	for _, r := range res.Rows {
 		fillable[r.Friend] = r.Fillable
+	}
+	seen := map[string]bool{}
+	for _, f := range freed {
+		seen[f] = true
+		targets = append(targets, f)
+	}
+	for _, r := range res.Rows {
+		if !seen[r.Friend] {
+			targets = append(targets, r.Friend)
+		}
 	}
 	var c reconcile.Counts
 	var dealt []Reserved
 	var errs []error
-	for _, f := range freed {
+	for _, f := range targets {
 		if fillable[f] <= 0 {
 			continue
 		}
@@ -98,6 +127,12 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 			errs = append(errs, fmt.Errorf("replace %s: %w", f, err))
 		}
 	}
+	if err := advance(ctx, d.Store, l.Token(), cursors); err != nil {
+		if errors.Is(err, reconcile.ErrFenced) {
+			return c, err
+		}
+		errs = append(errs, err)
+	}
 	if d.AfterTick != nil {
 		d.AfterTick(res, dealt)
 	}
@@ -107,71 +142,76 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 	return c, nil
 }
 
-// completions advances the cursors over every open sprint's log and returns
-// the sorted owners of the done, cancel and expire receipts read. On a fresh
-// instance the cursors start at the log tips and nothing is returned.
-func (d *Duty) completions(ctx context.Context, fresh bool) ([]string, error) {
+// advance writes the cursors read this pass, fenced; ids only move forward.
+func advance(ctx context.Context, st *store.Store, fence string, cursors map[string]string) error {
+	if len(cursors) == 0 {
+		return nil
+	}
+	sprints := make([]string, 0, len(cursors))
+	for S := range cursors {
+		sprints = append(sprints, S)
+	}
+	sort.Strings(sprints)
+	args := []any{fence}
+	for _, S := range sprints {
+		args = append(args, S, cursors[S])
+	}
+	reply, err := st.Client().FCall(ctx, FunctionCursor, nil, args...).Result()
+	if err != nil {
+		return fmt.Errorf("width cursor: %w", err)
+	}
+	return fencedReply("width cursor", reply)
+}
+
+// completions reads every open sprint's log from its durable cursor and
+// returns the sorted owners of the done, cancel and expire receipts read,
+// with the last id read per sprint (to advance once the pass is processed).
+// A sprint with no cursor yet is read from its start.
+func (d *Duty) completions(ctx context.Context) ([]string, map[string]string, error) {
 	client := d.Store.Client()
 	order, err := client.ZRange(ctx, "sprint:order", 0, -1).Result()
 	if err != nil {
-		return nil, fmt.Errorf("sprint order: %w", err)
+		return nil, nil, fmt.Errorf("sprint order: %w", err)
 	}
 	pipe := client.Pipeline()
 	status := make([]*redis.StringCmd, len(order))
+	cursor := make([]*redis.StringCmd, len(order))
 	for i, S := range order {
 		status[i] = pipe.HGet(ctx, "s:"+S, "status")
+		cursor[i] = pipe.Get(ctx, CursorKey(S))
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("sprint status: %w", err)
+		return nil, nil, fmt.Errorf("sprint status: %w", err)
 	}
-	var streams []string
+	var streams, from []string
 	for i, S := range order {
-		if status[i].Val() == "open" {
-			streams = append(streams, "s:"+S+":log")
+		if status[i].Val() != "open" {
+			continue
 		}
+		streams = append(streams, "s:"+S+":log")
+		id := cursor[i].Val()
+		if id == "" {
+			id = "0-0" // no processed pass yet: the log from the sprint's open
+		}
+		from = append(from, id)
 	}
 	if len(streams) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
-	if fresh {
-		pipe := client.Pipeline()
-		tips := make([]*redis.XMessageSliceCmd, len(streams))
-		for i, key := range streams {
-			tips[i] = pipe.XRevRangeN(ctx, key, "+", "-", 1)
-		}
-		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-			return nil, fmt.Errorf("log tips: %w", err)
-		}
-		for i, key := range streams {
-			d.cursors[key] = "0-0"
-			if msgs := tips[i].Val(); len(msgs) > 0 {
-				d.cursors[key] = msgs[0].ID
-			}
-		}
-		return nil, nil
-	}
-	args := make([]string, 0, 2*len(streams))
-	args = append(args, streams...)
-	for _, key := range streams {
-		id, ok := d.cursors[key]
-		if !ok {
-			id = "0-0" // a sprint opened since the last pass: all of it is new
-		}
-		args = append(args, id)
-	}
-	read, err := client.XRead(ctx, &redis.XReadArgs{Streams: args, Count: 10000, Block: -1}).Result()
+	read, err := client.XRead(ctx, &redis.XReadArgs{Streams: append(streams, from...), Count: 10000, Block: -1}).Result()
 	if errors.Is(err, redis.Nil) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read logs: %w", err)
+		return nil, nil, fmt.Errorf("read logs: %w", err)
 	}
 	type done struct{ key, id string }
 	var ids []done
+	cursors := map[string]string{}
 	for _, s := range read {
 		sprint := s.Stream[len("s:") : len(s.Stream)-len(":log")]
 		for _, m := range s.Messages {
-			d.cursors[s.Stream] = m.ID
+			cursors[sprint] = m.ID
 			if kind, _ := m.Values["kind"].(string); completionKinds[kind] {
 				if id, _ := m.Values["id"].(string); id != "" {
 					ids = append(ids, done{"s:" + sprint + ":task:" + id, id})
@@ -180,7 +220,7 @@ func (d *Duty) completions(ctx context.Context, fresh bool) ([]string, error) {
 		}
 	}
 	if len(ids) == 0 {
-		return nil, nil
+		return nil, cursors, nil
 	}
 	pipe = client.Pipeline()
 	owners := make([]*redis.StringCmd, len(ids))
@@ -188,7 +228,7 @@ func (d *Duty) completions(ctx context.Context, fresh bool) ([]string, error) {
 		owners[i] = pipe.HGet(ctx, t.key, "owner")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
-		return nil, fmt.Errorf("owners: %w", err)
+		return nil, nil, fmt.Errorf("owners: %w", err)
 	}
 	seen := map[string]bool{}
 	var out []string
@@ -199,5 +239,5 @@ func (d *Duty) completions(ctx context.Context, fresh bool) ([]string, error) {
 		}
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, cursors, nil
 }

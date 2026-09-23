@@ -580,6 +580,41 @@ local function width_reserve(keys, args)
   return { 'CLAIMED', S, id, tostring(attempt), token, next_gen }
 end
 
+-- WD.id_after: stream id a is strictly after b ("ms-seq"; empty is before all).
+function WD.id_after(a, b)
+  if b == nil or b == '' then return a ~= nil and a ~= '' end
+  local ams, aseq = string.match(a or '', '^(%d+)-(%d+)$')
+  local bms, bseq = string.match(b, '^(%d+)-(%d+)$')
+  if not ams then return false end
+  if not bms then return true end
+  ams, aseq, bms, bseq = tonumber(ams), tonumber(aseq), tonumber(bms), tonumber(bseq)
+  return ams > bms or (ams == bms and aseq > bseq)
+end
+
+-- ns_width_cursor: the width duty's durable completion cursor (Stella's hold
+-- 3 at 54755384 on #3086). args = fence, then S, id pairs. It refuses FENCED
+-- unless fence is the lease:reconciler token, before any write; otherwise it
+-- advances s:<S>:width:cursor to id, never backwards. The duty reads it at
+-- the start of every pass, so a new instance resumes where the last one's
+-- processed batch ended (never at the log tip) and a completion written
+-- between a read and a restart is replayed. No cursor yet means the sprint's
+-- log is read from its start (0-0: the log begins at the sprint's open).
+local function width_cursor(keys, args)
+  if not WD.holds(args[1]) then
+    return WD.fenced()
+  end
+  local n = 0
+  for i = 2, #args - 1, 2 do
+    local key = 's:' .. args[i] .. ':width:cursor'
+    if WD.id_after(args[i + 1], redis.call('GET', key) or '') then
+      redis.call('SET', key, args[i + 1])
+      n = n + 1
+    end
+  end
+  return { 'OK', tostring(n) }
+end
+
 redis.register_function('ns_width_tick', width_tick)
 redis.register_function{function_name = 'ns_width_ready', callback = width_ready, flags = {'no-writes'}}
 redis.register_function('ns_width_reserve', width_reserve)
+redis.register_function('ns_width_cursor', width_cursor)
