@@ -217,14 +217,17 @@
 
 (deftest "session-server-daemon-and-session-start" "docs/SPEC-WORK.md:268-310,2256-2267"
     "expected=launcher-returns-session-ok-while-daemon-stays-up;status-served-over-the-local-socket;foreground-is-the-process;stop-shuts-the-listener"
-  (let* ((base (short-socket-base (format nil "nwd-~D" (random 1000000))))
+  ;; Both names are this run's own tag, never `(random ...)`: SBCL saves
+  ;; *RANDOM-STATE* into its core, so two fresh images agreed on the number and
+  ;; two suites on one host named the same socket directory (nova-tools#1699).
+  (let* ((base (short-socket-base (test-short-tag "s12-daemon")))
          (tmp (namestring (uiop:temporary-directory)))
-         (name (format nil "nw-daemon-~D" (random 1000000)))
+         (name (test-short-tag "s12-name"))
          ;; A Unix-domain socket path lives in a fixed-size sun_path (108
          ;; bytes); a temporary directory past that falls back to a relative
          ;; name under this directory, which stays short enough to bind.
          (base (if (< (length tmp) 80)
-                   (concatenate 'string tmp name)
+                   (test-temp-register (concatenate 'string tmp name))
                    name))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w"))

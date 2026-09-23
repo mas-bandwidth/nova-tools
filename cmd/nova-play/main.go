@@ -26,10 +26,14 @@ usage:
   nova-play annotate --source <file> --author <name> --passage <text> --note <text>
   nova-play read --source <file>
   nova-play reply --source <file> --id <note-id> --author <name> --body <text>
+  nova-play view [--exclude <glob>]... [--max <n>] <file>...
 
 Anchor notes to exact passages. Two people can annotate the same text,
 answer each other, and come back later. When the source changes, the tool
 says ANCHOR STALE instead of silently reassigning notes to the wrong place.
+View renders an explicitly selected sample of Markdown records into a static
+timeline, one card per record linked back to its source, without writing
+anything: browsing never edits a record.
 
   --source <file>   the text being annotated (required for every verb)
   --author <name>   who is speaking (required for annotate and reply)
@@ -37,6 +41,8 @@ says ANCHOR STALE instead of silently reassigning notes to the wrong place.
   --note <text>     the annotation text (annotate only)
   --id <note-id>    the note to reply to (reply only)
   --body <text>     the reply text (reply only)
+  --exclude <glob>  a record to leave out of a view, repeatable (view only)
+  --max <n>         cards to print, default 20, 0 prints every card (view only)
 
 Flags come before positional arguments. Exit codes: 0 success, 1 anchor
 conflict, 2 could not run.
@@ -52,6 +58,7 @@ example:
   nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
   nova-play read --source story.txt
   nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+  nova-play view story.txt
 `
 
 func refuse(stderr io.Writer, what string) int {
@@ -82,6 +89,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdRead(args[1:], stdout, stderr)
 	case "reply":
 		return cmdReply(args[1:], stdout, stderr)
+	case "view":
+		return cmdView(args[1:], stdout, stderr)
 	default:
 		return refuse(stderr, fmt.Sprintf("unknown verb: %s", args[0]))
 	}
@@ -176,5 +185,37 @@ func cmdReply(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "REPLY OK id=%s author=%s created=%s\n",
 		r.ID, r.Author, r.CreatedAt.Format("2006-01-02T15:04:05Z"))
+	return 0
+}
+
+// excludeList is a repeatable --exclude flag. Nothing is excluded by default;
+// every exclusion is stated on this run.
+type excludeList []string
+
+func (e *excludeList) String() string     { return strings.Join(*e, ",") }
+func (e *excludeList) Set(s string) error { *e = append(*e, s); return nil }
+
+func cmdView(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("view", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	var excludes excludeList
+	fs.Var(&excludes, "exclude", "a record to leave out of the view, repeatable")
+	max := fs.Int("max", 20, "cards to print, 0 prints every card")
+	if err := fs.Parse(args); err != nil {
+		return refuse(stderr, oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if fs.NArg() == 0 {
+		return refuse(stderr, "view requires at least one file; refusing to guess")
+	}
+	if *max < 0 {
+		return refuse(stderr, fmt.Sprintf("--max must be zero or more, got %d; 0 prints every card", *max))
+	}
+
+	out, err := play.View(fs.Args(), excludes, *max)
+	if err != nil {
+		return refuse(stderr, err.Error())
+	}
+	fmt.Fprint(stdout, out)
 	return 0
 }

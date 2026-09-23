@@ -87,6 +87,38 @@ func TestPoolReadsIssueLabel(t *testing.T) {
 	}
 }
 
+func TestPoolHoldIsNotReadmitted(t *testing.T) {
+	dir := t.TempDir()
+	jsonBody := writeTestFile(t, dir, "issues.json", `[
+  {"number": 1, "title": "one", "labels": [{"name": "card"}], "body": ""},
+  {"number": 2, "title": "two", "labels": [{"name": "card"}], "body": ""}
+]`)
+	ghFixture(t, dir, jsonBody)
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "seen.tsv"), []byte("issues\t1\thold\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sources := writeTestFile(t, dir, "sources.tsv", "issues\towner/repo\tfix\n")
+	var out, errb bytes.Buffer
+	code := Pool(PoolInput{Sources: sources, Root: root, Stdout: &out, Stderr: &errb})
+	if code != 0 {
+		t.Fatalf("Pool exit = %d, stderr=%s", code, errb.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "pool.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\t1\t") {
+		t.Fatalf("a held issue was admitted again:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), "\t2\t") {
+		t.Fatalf("the unheld issue was dropped:\n%s", raw)
+	}
+}
+
 func TestPoolRefusesUnreadableSource(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
