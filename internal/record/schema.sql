@@ -28,3 +28,22 @@ CREATE INDEX IF NOT EXISTS card_results_bench_idx ON card_results (bench);
 CREATE INDEX IF NOT EXISTS card_results_done_at_idx ON card_results (done_at DESC);
 
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT (version) DO NOTHING;
+
+-- token_ledger, the index of nova-tokens' day TSVs, keyed exactly (day, card, model, repo).
+-- A token type no source reported is NULL, never 0. The table is additive and IF NOT EXISTS,
+-- so it rides schema version 1: an existing database gains it on the next --migrate.
+CREATE TABLE IF NOT EXISTS token_ledger (
+    day           DATE   NOT NULL,
+    card          TEXT   NOT NULL,
+    model         TEXT   NOT NULL,
+    repo          TEXT   NOT NULL,
+    provider      TEXT   NOT NULL DEFAULT '',
+    input_tokens  BIGINT,
+    output_tokens BIGINT,
+    cache_read    BIGINT,
+    cache_write   BIGINT,
+    reasoning     BIGINT,
+    rough         INTEGER NOT NULL DEFAULT 0,
+    sources       TEXT   NOT NULL DEFAULT '',
+    PRIMARY KEY (day, card, model, repo)
+);

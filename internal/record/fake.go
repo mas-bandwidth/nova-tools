@@ -16,6 +16,7 @@ type FakeStore struct {
 	rows     map[string]Row
 	order    []string
 	versions map[int]bool
+	ledger   []LedgerEntry
 
 	// Now is the clock Insert stamps a zero RecordedAt with; a test may pin it.
 	Now func() time.Time

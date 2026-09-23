@@ -50,6 +50,8 @@ usage:
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
   nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
+  nova-tokens report  --postgres <dsn> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
+  nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --postgres <dsn>
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
                       --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--max <n>]
@@ -169,6 +171,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdFold(rest, stdout, stderr, now)
 	case "report":
 		return cmdReport(rest, stdout, stderr, now)
+	case "ledger":
+		return cmdLedger(rest, stdout, stderr)
 	case "sum":
 		return cmdSum(rest, stdout, stderr, now)
 	case "check":
@@ -1031,6 +1035,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	ledger := fs.String("ledger", "", "")
 	monthFlag := fs.String("month", "", "")
 	byFlag := fs.String("by", "model", "")
+	postgres := fs.String("postgres", "", "")
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := fs.Parse(args); err != nil {
@@ -1038,6 +1043,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if code, refused := noPositional(fs, stderr, "report"); refused {
 		return code
+	}
+	if *postgres != "" {
+		if *ledger != "" {
+			return (&refusals{token: "REPORT", list: []string{"--postgres and --ledger are two sources for one report; name one"}}).print(stderr)
+		}
+		return cmdReportStore(*postgres, *monthFlag, *byFlag, *max, stdout, stderr)
 	}
 	if *ledger != "" || *monthFlag != "" {
 		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)
