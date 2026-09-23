@@ -175,9 +175,18 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	// worktree's clean filters; a committed `.gitattributes` plus a filter the
 	// parent still names is a program the card chose, run as the gate (#1897).
 	// `--cached` hashes the patch text into the index and does not.
-	if _, err := gitOut(ctx, wt, "apply", "--cached", "--whitespace=nowarn", seedPath); err != nil {
-		return res, fmt.Errorf("could not stage the seeded worktree: %v", err)
-	}
+    if _, err := gitOut(ctx, wt, "apply", "--cached", "--whitespace=nowarn", seedPath); err != nil {
+        return res, fmt.Errorf("could not stage the seeded worktree: %v", err)
+    }
+
+    // Build the seeded worktree before running tests. If the seed does not compile,
+    // refuse the mutate with a clear error and exit code 2.
+    cmd := exec.CommandContext(ctx, "go", "build", "./...")
+    cmd.Dir = wt
+    if out, err := cmd.CombinedOutput(); err != nil {
+        first := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
+        return nil, fmt.Errorf("MUTATE REFUSED: seed does not build: %s", first)
+    }
 	applied, err := gitOut(ctx, wt, "diff", "--cached", "--no-ext-diff", "--no-renames", "--numstat")
 	if err != nil {
 		return res, fmt.Errorf("could not read the applied seed: %v", err)
