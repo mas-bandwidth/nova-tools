@@ -221,6 +221,65 @@ for tool in go sbcl; do
     drift "$tool on PATH is $p -> $rp, under NO read root the sandbox wall grants (the system roots, and \$HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under $HOME_DIR/sdk/$tool-<ver>/ and point the PATH entry there"
   fi
 done
+# (3d) THE SBCL PIN, not only its presence (nova-tools#2053): space ran SBCL 2.6.0.debian
+# from /usr/bin while the fleet pins $NOVA_SBCL under ~/sdk, and a presence check printed
+# PINNED for it. The version is `sbcl --version`'s second word, compared whole (2.5.80 is
+# not 2.5.8); the path is the resolved one, compared against the resolved ~/sdk (macOS
+# temp and home dirs sit behind /var -> /private/var). An absent sbcl is (3)'s DRIFT.
+NOVA_SBCL="${NOVA_SBCL:-2.5.8}"
+sdk_real="$(readlink -f "$HOME_DIR/sdk" 2>/dev/null || echo "$HOME_DIR/sdk")"
+if command -v sbcl >/dev/null 2>&1; then
+  sbcl_out="$(sbcl --version 2>&1 | head -1 || true)"
+  sbcl_ver="$(printf '%s\n' "$sbcl_out" | awk '{print $2}')"
+  if [ "$sbcl_ver" != "$NOVA_SBCL" ]; then
+    drift "sbcl version [$sbcl_out] want $NOVA_SBCL (NOVA_SBCL)"
+  fi
+  sbcl_p="$(command -v sbcl)"
+  sbcl_rp="$(readlink -f "$sbcl_p" 2>/dev/null || echo "$sbcl_p")"
+  case "$sbcl_rp" in
+    "$sdk_real"/*) ;;
+    *) drift "sbcl at $sbcl_p -> $sbcl_rp not under $HOME_DIR/sdk (want $HOME_DIR/sdk/sbcl-$NOVA_SBCL/)" ;;
+  esac
+fi
+
+# (3e) THE PRO RUNG (nova-tools#2053): pro loops existed on five linux benches only; the
+# Macs were flash-only and 528 of 998 slots sat idle in a pro wave. A bench has the rung
+# when NOVA_PRO_RUNG names an executable or ~/nova-bench/rungs/pro or ~/nova-bench/pro exists.
+NOVA_PRO_RUNG="${NOVA_PRO_RUNG:-}"
+pro_rung=0
+if [ -n "$NOVA_PRO_RUNG" ] && [ -x "$NOVA_PRO_RUNG" ]; then
+  pro_rung=1
+else
+  for rp in "$HOME_DIR/nova-bench/rungs/pro" "$HOME_DIR/nova-bench/pro"; do
+    if [ -d "$rp" ]; then pro_rung=1; break; fi
+  done
+fi
+if [ "$pro_rung" = "0" ]; then
+  drift "pro rung missing (no executable NOVA_PRO_RUNG, no $HOME_DIR/nova-bench/rungs/pro, no $HOME_DIR/nova-bench/pro)"
+fi
+
+# (3f) SQLITE3 UNDER ~/sdk (nova-tools#2053): space resolved /usr/bin/sqlite3 while the
+# other benches carry ~/sdk/sqlite3-<ver>, so one card saw two sqlite3s by bench.
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  drift "sqlite3 not on PATH (want $HOME_DIR/sdk/sqlite3-<ver>/bin/sqlite3)"
+else
+  sq_p="$(command -v sqlite3)"
+  sq_rp="$(readlink -f "$sq_p" 2>/dev/null || echo "$sq_p")"
+  case "$sq_rp" in
+    "$sdk_real"/*) ;;
+    *) drift "sqlite3 at $sq_p -> $sq_rp not under $HOME_DIR/sdk (want $HOME_DIR/sdk/sqlite3-<ver>/bin/sqlite3)" ;;
+  esac
+fi
+
+# (3g) THE SLOT SHARE IS DECLARED (nova-tools#2053): hulk 110/125, vision 104/121, space
+# 192/125, hetzner 64/61, superman 54/64, batman 24/32, the Studio 450/512, and no formula
+# recorded anywhere. A bench declares its share as a positive whole number of slots.
+NOVA_SLOT_SHARE="${NOVA_SLOT_SHARE:-}"
+case "$NOVA_SLOT_SHARE" in
+  "") drift "NOVA_SLOT_SHARE unset (declare the bench's slot share, a positive whole number of slots)" ;;
+  *[!0-9]*|0|0*) drift "NOVA_SLOT_SHARE=$NOVA_SLOT_SHARE is not a positive whole number of slots" ;;
+esac
+
 harness_ok=0
 if [ -n "$NOVA_HARNESS" ]; then
   if [ -x "$NOVA_HARNESS" ]; then
