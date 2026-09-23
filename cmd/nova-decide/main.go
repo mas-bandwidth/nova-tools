@@ -76,7 +76,7 @@ usage:
                     (install decide_log beside the card results; idempotent)
 
   nova-decide review --repo <owner/name> --pr <n> [--card <file>]
-                     [--post|--dry-run] [--ledger file|redis] [--ledger-path <jsonl>]
+                     [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>] [--ledger-path <jsonl>]
                      [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                      [--no-jev] [--table] [--record <dir>] [--replay <dir>]
   nova-decide review --repo <owner/name> --batch <file of pull request numbers>
