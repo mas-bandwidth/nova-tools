@@ -8,7 +8,7 @@ listener process descending from `nova-runner-<i>.service` (runner checks run
 only when `uname` is Linux), that each unit file carries `Environment=PATH`
 with `go/bin` and `.local/bin`, `KillMode=control-group` and
 `TimeoutStopSec=30s`, that `go version` equals `$NOVA_GO` (default
-`go1.26.5`) with `sbcl` on `PATH` and the harness at
+the tree's `go.mod` `go` line; `$NOVA_GO` is an explicit override) with `sbcl` on `PATH` and the harness at
 `$HOME/nova-bench/harness-<ver>/opencode`, that the toolchain roots the
 sandbox wall grants a card are all present (`$HOME/sdk` — one list, `internal/swarm/toolchain.go`, checked against
 this script by a test so the standard and the wall cannot drift apart), that the 16 nova bins in
@@ -94,12 +94,12 @@ It prints one `STANDARD <bench> <check> OK got=<v>` or
 then the verdict `FLEET <bench> STANDARD OK checks=<n>` or
 `FLEET <bench> STANDARD DRIFT drift=<k>/<n>`. The checks are DATA, one table per
 operating system, so the standard is read rather than traced through a shell
-script: the Linux list is the Go toolchain at `--go` (default `go1.26.5`),
+script: the Linux list is the Go toolchain at `--go` (default the tree's `go.mod` `go` line),
 `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one seat key that
 opens, and the free-space floor `--min-free` (default 25 GB); the darwin list is
 the Mac bench standard — the Go SDK and `sbcl` under `~/sdk`, real git ahead of
-the Xcode shim (`/usr/bin/git` is the shim, and the sandbox cannot read
-`/var/db/xcode_select_link`), and every runner's `.path` carrying the real git
+the Xcode shim (`/usr/bin/git` is the shim; the wall grants `xcode_select_link`,
+and Homebrew's git remains the usual PATH), and every runner's `.path` carrying the real git
 first — with the stamp, seat and space checks shared. `--os` names the list;
 left out, the bench is asked with `uname -s`. The remote side prints
 `CHECK<TAB>name<TAB>value` and nothing else: the verdict is decided in Go. This

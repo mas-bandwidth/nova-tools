@@ -31,7 +31,7 @@ func TestHarvestIDFoldsThePulseTableLaunchWrote(t *testing.T) {
 	root := t.TempDir()
 	specs := fakePATH(t)
 	arglog := filepath.Join(root, "argv.log")
-	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
+	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{originRule("owner/repo"), pinRule()}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "view", Exit: 1},
 		{Arg: 2, Equals: "create", Stdout: "https://forge.invalid/owner/repo/pull/7"},
@@ -545,6 +545,7 @@ func TestHarvestWorkingRefusesAnOffPrefixBranch(t *testing.T) {
 		{Arg: 1, Equals: "log", Stdout: "aaaa000000000000000000000000000000000000 2026-09-17T10:00:00+00:00"},
 		{Arg: 1, Equals: "ls-remote", Stdout: "bbbb000000000000000000000000000000000000\trefs/heads/stella/z"},
 		originRule("o/r"),
+		pinRule(),
 	}})
 	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{
 		{Arg: 2, Equals: "list", Stdout: `[]`},
