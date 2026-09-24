@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -123,6 +124,32 @@ func TestRouteWithoutPresenceStoreNotesAndLogsUncheckedBusRung(t *testing.T) {
 	}
 	if !busRung {
 		t.Fatalf("rung_tried=%q is not a bus rung; route=%s", entry.RungTried, stdout.String())
+	}
+}
+
+func TestRouteDefaultPresenceStoreFailureIsFailClosed(t *testing.T) {
+	t.Setenv("NOVA_REDIS_ADDR", "presence.invalid:6379")
+	was := downFriendsOpener
+	var gotAddr string
+	downFriendsOpener = func(_ context.Context, addr, _, _ string, _ *decide.Registry) (map[string]bool, []string, error) {
+		gotAddr = addr
+		return nil, nil, errors.New("dial presence store: unavailable")
+	}
+	t.Cleanup(func() { downFriendsOpener = was })
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"route", "--unit-id", "presence-failure", "--kind", "spec", "--no-jev"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit=%d want 2 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
+	}
+	if gotAddr != "presence.invalid:6379" {
+		t.Fatalf("presence opener addr=%q want environment default", gotAddr)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("route answered despite failed presence check: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "ROUTE REFUSED reason=presence-unavailable") {
+		t.Fatalf("stderr=%q want explicit fail-closed presence refusal", stderr.String())
 	}
 }
 

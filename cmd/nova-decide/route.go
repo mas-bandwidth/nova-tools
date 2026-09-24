@@ -304,7 +304,10 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 			if eventSink != nil {
 				eventSink.Close()
 			}
-			return openFailed(err)
+			// Presence is a routing input, not optional telemetry. When a caller
+			// configured it (including through NOVA_REDIS_ADDR), refusing is safer
+			// than selecting a friend whose seat may be marked down.
+			return refuse(stderr, "ROUTE", "presence-unavailable", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
 		downExcluded = down
 		downList = list
