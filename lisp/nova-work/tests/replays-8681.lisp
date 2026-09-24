@@ -25,7 +25,7 @@
   "a needs b and b needs a: SPEC-WORK.md:5041 rule 3, a dependency cycle is a
 deadlock nobody can finish.")
 
-(defun needs-kernel (&optional (seed *needs-seed*))
+(defun make-needs-kernel (&optional (seed *needs-seed*))
   (make-kernel :state (make-seed-state seed)
                :journal (make-ordering-journal) :rev-base 1))
 
@@ -44,7 +44,7 @@ deadlock nobody can finish.")
 
 (deftest "ready-excludes-a-dependent-whose-need-is-open" "docs/SPEC-WORK.md:2110"
     "expected=open-need-not-ready"
-  (let ((k (needs-kernel)))
+  (let ((k (make-needs-kernel)))
     (ok (not (member "acme/work/a" (ready-nodes (kernel-state k)) :test #'string=))
         "a whose need is an open PR is not ready")))
 
@@ -55,7 +55,7 @@ deadlock nobody can finish.")
 (deftest "ready-admits-a-dependent-once-its-need-is-merged-and-green"
     "docs/SPEC-WORK.md:2110"
     "expected=terminal-need-ready"
-  (let ((k (needs-kernel)))
+  (let ((k (make-needs-kernel)))
     (multiple-value-bind (ok line)
         (submit k (need-done-request "acme/work/pr-1" "req-pr-1" "2026-09-16T12:00:00Z"))
       (ok ok "the need closes: ~A" line))
@@ -78,7 +78,7 @@ deadlock nobody can finish.")
 
 (deftest "reverting-a-need-marks-dependents-needs-broken" "docs/SPEC-WORK.md:2110"
     "expected=revert-flags-dependent"
-  (let ((k (needs-kernel)))
+  (let ((k (make-needs-kernel)))
     (multiple-value-bind (ok line)
         (submit k (need-done-request "acme/work/pr-1" "req-pr-1" "2026-09-16T12:00:00Z"))
       (ok ok "the need closes: ~A" line))

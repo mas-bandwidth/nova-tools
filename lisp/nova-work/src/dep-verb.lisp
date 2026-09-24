@@ -64,9 +64,20 @@ any mutation, so a duplicate add cannot bypass them."
       ((not (%dep-text-p rid)) "refusing to guess: --request")
       (t nil))))
 
-(defun %dep-line (rid node change need rev changed)
-  (format nil "DEP OK id=~D request=~A node=~A rev=~D pushed=- change=~(~A~) need=~A changed=~D"
-          rev rid node rev change need changed))
+(defun %dep-line (state node change need rev &key (changed 1) view request)
+  "The `DEP OK` line of SPEC-WORK.md:6056 (SPEC-AHEAD #785, rule 6 at :5004),
+without its trailing `emitted=`, which is the CLI's count of what it printed
+and there is no CLI in this kernel -- the same omission every other OK line
+here makes. `met=` is the named need's; `unmet=` and `needs-broken=` are the
+node's, read AFTER the change, so STATE is the candidate the event produces."
+  (let ((met (need-met-p state need :view view :dependent node))
+        (unmet (node-needs-status state node :view view)))
+    (format nil "DEP OK id=~D request=~A node=~A rev=~D pushed=- change=~(~A~) need=~A met=~A unmet=~D needs-broken=~A changed=~D"
+            rev (or request "-") node rev change need
+            (if met "true" "false")
+            unmet
+            (if (node-needs-broken state node :view view) "true" "false")
+            changed)))
 
 (defun %dep-submit (kernel request)
   "`dep --add` / `dep --remove`, run on the kernel's one command thread.
@@ -92,6 +103,7 @@ durability does not make `dep` an admission verb."
          (rid (getf request :request))
          (by (getf request :by))
          (reason (getf request :reason))
+         (changed 1)
          (n (%node-quiet state node)))
     (flet ((refuse1 (what)
              (return-from %dep-submit
@@ -136,28 +148,47 @@ durability does not make `dep` an admission verb."
            (unless (%node-quiet state need) (refuse1 "rule 2: dangling"))
            (when (%dep-closes-a-cycle-p state node need)
              (refuse1 (format nil "rule 3: :deps edges would contain a cycle through ~A" need)))
-           ;; A FRESH request naming an edge that is already there is a visible,
-           ;; successful NO-EFFECT: no event, changed=0. It is reached only after
-           ;; request-id validation and the dedup answer above.
+           ;; A FRESH request naming an edge that is already there is THE
+           ;; NO-EFFECT RECEIPT (SPEC-WORK.md:2982-2986): an accepted typed
+           ;; `:structure` event with a real id, `changed=0`, the event revision
+           ;; advanced and no edge, count or index moved (the apply is
+           ;; idempotent on a present edge). It is reached only after
+           ;; request-id validation and the dedup answer above, and it takes
+           ;; the one record-then-apply path below like every other edit.
            (when (member need (wnode-deps n) :test #'equal)
-             (return-from %dep-submit
-               (values t (format nil "DEP NOTE node=~A request=~A change=add need=~A changed=0: the edge is already there"
-                                 node rid need)
-                       0 nil))))
+             (setf changed 0)))
           (:remove
            (unless (member need (wnode-deps n) :test #'equal)
              (refuse1 (format nil "no such edge ~A -> ~A" node need)))))
         ;; ONE DURABLE RECORD PER MUTATION, on the one record-then-apply path.
-        (%oneshot-submit kernel rid digest (%dep-line rid node change need
-                                                      (work-event-rev event) 1)
-                         event "DEP"
-                         (list :verb :dep :node node :change change :need need
-                               :request request))))))
+        ;; The line is read AFTER the change, so it is computed from a PRIVATE
+        ;; CANDIDATE -- `apply-envelope` never touches the live state -- and the
+        ;; finished receipt goes into the one record (a second `journal-record`
+        ;; has no pending envelope on a real file journal).
+        (let* ((candidate (apply-envelope state (list :request rid :digest digest
+                                                      :events (list event))))
+               (line (%dep-line candidate node change need (work-event-rev event)
+                                :changed changed :view (kernel-needs-view kernel)
+                                :request rid)))
+          (%oneshot-submit kernel rid digest line event "DEP"
+                           (list :verb :dep :node node :change change :need need
+                                 :request request)))))))
 
-(defun dep-edit (kernel &key node add remove as reason request stamp)
+(defun dep-edit (kernel &key node add remove change need as reason request stamp view)
   "`dep --add <id>` / `dep --remove <id>`: one recorded edit of one reference
 edge, submitted through the kernel's one command thread. A convenience wrapper;
-`%dep-submit` is the verb."
-  (submit kernel (list :verb :dep :node node :add add :remove remove
-                       :by as :reason reason :request request :stamp stamp
-                       :clock :tool)))
+`%dep-submit` is the verb. CHANGE (:add or :remove) with NEED is the same call
+spelled the way rule 6's line spells it. VIEW, when given, is installed as the
+kernel's for this call, because the counts on the line are read after the
+change and a caller that built a view should see its own."
+  (when need
+    (ecase change
+      (:add (setf add need))
+      (:remove (setf remove need))))
+  (let ((previous (kernel-needs-view kernel)))
+    (when view (setf (kernel-needs-view kernel) view))
+    (unwind-protect
+         (submit kernel (list :verb :dep :node node :add add :remove remove
+                              :by as :reason reason :request request :stamp stamp
+                              :clock :tool))
+      (when view (setf (kernel-needs-view kernel) previous)))))
