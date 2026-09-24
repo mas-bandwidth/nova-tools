@@ -12,7 +12,7 @@ import (
 // cmdWait blocks until one pull request is merged, is red, or the timeout runs
 // out. It polls the SAME host reader the lane uses for PR state and checks --
 // deps.NewHost, the gh reader behind internal/merge -- and prints exactly one
-// line on stdout: MERGED (exit 0), RED (exit 2), or TIMEOUT (exit 3).
+// line on stdout: MERGED (exit 0), RED (exit 1), or TIMEOUT (exit 3).
 func cmdWait(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f := newFlags("wait")
 	repo := f.fs.String("repo", "", "")

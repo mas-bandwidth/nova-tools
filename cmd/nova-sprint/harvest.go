@@ -57,6 +57,13 @@ func (l *listFlag) Set(v string) error {
 // Exit 0 every bench finished its pass with every card harvested; 1 a card or
 // a bench did not finish (the others still harvested; the lines say which);
 // 2 usage or Redis; 3 a bench lease is held elsewhere or was lost.
+//
+//	nova-sprint card harvest [--redis <addr>] [--sprint <S>|all] [--bench <b>[,<b>]|all]
+//	    (--once | --loop [--every 10s]) [--clock 5m] [<label>...]
+//
+// --redis defaults to $NOVA_SPRINT_REDIS; the owner comes from each card's
+// full repo field (--owner is gone); GitHub is the caller's own GH_CONFIG_DIR
+// over REST.
 func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("card harvest", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -66,13 +73,15 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 			return refuse(errOut, "card harvest", "unknown flag --results-root: the results dir is the absolute card hash field s:<S>:card:<label> results, written by card end")
 		}
 	}
-	redisAddr := fs.String("redis", "", "")
-	sprint := fs.String("sprint", "", "")
+	redisAddr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	sprint := fs.String("sprint", "all", "")
 	var benches listFlag
 	fs.Var(&benches, "bench", "")
 	clock := fs.Duration("clock", harvest.DefaultClock, "")
 	instance := fs.String("instance", "", "")
-	owner := fs.String("owner", "mas-bandwidth", "")
+	once := fs.Bool("once", false, "")
+	loop := fs.Bool("loop", false, "")
+	every := fs.Duration("every", 10*time.Second, "")
 	orphans := fs.Bool("orphans", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "card harvest", err.Error())
@@ -81,21 +90,50 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 	if *orphans {
 		return refuse(errOut, "card harvest", "--orphans is the C3 build (orphan-effect, #2756 3.2), not this one")
 	}
-	if *sprint == "" || (len(benches) == 0) == (len(labels) == 0) {
-		return refuse(errOut, "card harvest", "wants --sprint and either --bench <b>[,<b>...] or labels")
+	if *once == *loop {
+		// Neither or both: the mode is usage, refused before the store is opened,
+		// so a bare `card harvest` never runs a mutating pass.
+		return refuse(errOut, "card harvest", "wants exactly one of --once or --loop: (--once | --loop [--every 10s])")
+	}
+	if *loop && *every <= 0 {
+		return refuse(errOut, "card harvest", "--every must be positive")
+	}
+	if len(labels) > 0 && (*sprint == "" || *sprint == "all") {
+		return refuse(errOut, "card harvest", "labels want one --sprint <S>")
+	}
+	if len(labels) > 0 && len(benches) > 0 {
+		return refuse(errOut, "card harvest", "wants --bench or labels, not both")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "card harvest", err.Error())
 	}
 	defer st.Close()
+	if *instance == "" {
+		host, _ := os.Hostname()
+		*instance = fmt.Sprintf("%s-%d", host, os.Getpid())
+	}
+	for {
+		code := cardHarvestPass(ctx, st, *sprint, benches, labels, *clock, *instance, out, errOut)
+		if !*loop || code == 2 {
+			return code
+		}
+		select {
+		case <-ctx.Done():
+			return code
+		case <-time.After(*every):
+		}
+	}
+}
 
+func cardHarvestPass(ctx context.Context, st *store.Store, sprint string, benches listFlag, labels []string,
+	clock time.Duration, instance string, out, errOut io.Writer) int {
 	var only map[string]bool
 	if len(labels) > 0 {
 		only = map[string]bool{}
 		reads := make([]store.HashRead, len(labels))
 		for i, l := range labels {
-			reads[i] = store.HashRead{Key: "s:" + *sprint + ":card:" + l, Fields: []string{"bench"}}
+			reads[i] = store.HashRead{Key: "s:" + sprint + ":card:" + l, Fields: []string{"bench"}}
 			only[l] = true
 		}
 		vals, err := st.PipelineHMGet(ctx, reads)
@@ -103,10 +141,11 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 			return refuse(errOut, "card harvest", err.Error())
 		}
 		seen := map[string]bool{}
+		benches = nil
 		for i, v := range vals {
 			b, _ := v[0].(string)
 			if b == "" {
-				return refuse(errOut, "card harvest", "card "+labels[i]+" has no bench in sprint "+*sprint)
+				return refuse(errOut, "card harvest", "card "+labels[i]+" has no bench in sprint "+sprint)
 			}
 			if !seen[b] {
 				seen[b] = true
@@ -114,48 +153,59 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 			}
 		}
 	}
-	if *instance == "" {
-		host, _ := os.Hostname()
-		*instance = fmt.Sprintf("%s-%d", host, os.Getpid())
+	plan, err := harvest.NewPlan(ctx, st, sprint, benches)
+	if err != nil {
+		return refuse(errOut, "card harvest", err.Error())
 	}
-
-	var activeBenches []string
-	if len(benches) > 0 {
-		reads := make([]store.HashRead, len(benches))
-		for i, b := range benches {
+	for _, b := range plan.NoBeat {
+		_, _ = fmt.Fprintf(out, "HARVEST SKIP bench=%s reason=no-beat\n", b)
+	}
+	if len(benches) > 0 && len(plan.Benches) > 0 {
+		reads := make([]store.HashRead, len(plan.Benches))
+		for i, b := range plan.Benches {
 			reads[i] = store.HashRead{Key: "bench:" + b + ":state", Fields: []string{"state"}}
 		}
 		vals, err := st.PipelineHMGet(ctx, reads)
 		if err != nil {
 			return refuse(errOut, "card harvest", err.Error())
 		}
-		for i, b := range benches {
+		var up []string
+		for i, b := range plan.Benches {
 			state, _ := vals[i][0].(string)
 			if state == "" {
 				state = "DOWN"
 			}
 			if state != "UP" {
-				fmt.Fprintf(out, "bench %s skipped: %s\n", b, strings.ToLower(state))
+				_, _ = fmt.Fprintf(out, "bench %s skipped: %s\n", b, strings.ToLower(state))
 				continue
 			}
-			activeBenches = append(activeBenches, b)
+			up = append(up, b)
+		}
+		plan.Benches = up
+	}
+	code := 0
+	for _, s := range plan.Sprints {
+		results := harvest.Run(ctx, st, harvest.Options{
+			Sprint: s, Benches: plan.Benches, Labels: only, Clock: clock, Instance: instance,
+			Forge:  harvest.GitHub{},
+			Pusher: harvest.SSHPusher{},
+		})
+		if c := printHarvest(out, s, results); c > code {
+			code = c
 		}
 	}
-	benches = activeBenches
+	return code
+}
 
-	results := harvest.Run(ctx, st, harvest.Options{
-		Sprint: *sprint, Benches: benches, Labels: only, Clock: *clock, Instance: *instance,
-		Forge:  harvest.GitHub{Owner: *owner},
-		Pusher: harvest.SSHPusher{},
-	})
+func printHarvest(out io.Writer, sprint string, results []harvest.BenchResult) int {
 	code := 0
 	for _, r := range results {
 		for _, c := range r.Cards {
-			fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s bench=%s\n",
-				*sprint, c.Label, c.PR, c.Head, c.Via, r.Bench)
+			_, _ = fmt.Fprintf(out, "HARVESTED %s %s pr=%d head=%s via=%s bench=%s\n",
+				sprint, c.Label, c.PR, c.Head, c.Via, r.Bench)
 		}
 		for _, f := range r.Failed {
-			fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s\n", *sprint, f.Label, r.Bench, oneline.Escape(f.Err.Error()))
+			_, _ = fmt.Fprintf(out, "HARVEST-FAILED %s %s bench=%s err=%s detail=%s\n", sprint, f.Label, r.Bench, f.Code, oneline.Escape(f.Err.Error()))
 			if code == 0 {
 				code = 1
 			}
@@ -177,7 +227,7 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 		if r.Err != nil {
 			line += " err=" + oneline.Escape(r.Err.Error())
 		}
-		fmt.Fprintln(out, line)
+		_, _ = fmt.Fprintln(out, line)
 	}
 	return code
 }
