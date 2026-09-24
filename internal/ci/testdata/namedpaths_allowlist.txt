@@ -15,13 +15,16 @@
 cmd/nova-chat/ SPEC-CHAT's plan; nova-chat is specified and unbuilt
 cmd/nova-chat/main.go SPEC-CHAT's plan, item 10: the verbs and the poll loop
 cmd/nova-chat/testdata/fakeharness SPEC-CHAT's plan: the fake harness onboarding will require the day cmd/nova-chat exists
+cmd/nova-intake SPEC-WORK's plan: the `nova-intake github capture` adapter's command, not yet written
+cmd/nova-intake/ SPEC-WORK's plan table: the same command directory, spelled with its slash
 cmd/nova-local SPEC-LOCAL's plan; nova-local is specified and unbuilt
 cmd/nova-local/main.go SPEC-LOCAL's plan: the command's entry point
 cmd/nova-pulse/testdata/accept/ SPEC-TOOLWORK §1's selftest fixture repository for `accept --selftest`, not yet shipped
+cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 cmd/nova-test SPEC-TEST's proposed binary: `git ls-files` shows no `cmd/nova-test` and no implementation
 cmd/nova-wake/quickstart SPEC-WAKE's plan, item 7: the quickstart verb's own file
 docs/roadmap.sexp SPEC-WORK's plan: the state input the roadmap projection will read
-internal/chat/allow.go SPEC-CHAT's plan, item 1: the allow-file parser
+docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 internal/chat/discord.go SPEC-CHAT's plan, item 5: the Discord adapter
 internal/chat/fuse.go SPEC-CHAT's plan, item 7: the nova-fuse calls before each cycle
 internal/chat/prompt.go SPEC-CHAT's plan, item 8: the open frame and the turn block
@@ -32,7 +35,8 @@ internal/chat/state.go SPEC-CHAT's plan, item 3: session ids, cursors, the turn 
 internal/chat/transport.go SPEC-CHAT's plan, item 4: the six-capability adapter interface
 internal/chat/ws SPEC-CHAT's plan, item 11: the gateway, explicitly not v1
 internal/ci/testdata/unexecuted_examples.txt SPEC-TOOLWORK §7's planned fixture of the executed-example list, not yet written
-internal/control the fleet control store; internal/harvest/fake.go's FakeControl says "until internal/control lands" and internal/harvest/owner.go's Control interface says "this is not internal/control: that store is a different slice" -- neither names a written package
+internal/intake/github SPEC-WORK's plan: the GitHub intake adapter's package, not yet written
+internal/intake/github/ SPEC-WORK's plan table: the same package directory, spelled with its slash
 internal/local/box.go SPEC-LOCAL's plan: the box
 internal/local/ds4.go SPEC-LOCAL's plan: the ds4 leg
 internal/local/engine.go SPEC-LOCAL's plan: the engine
@@ -51,12 +55,13 @@ internal/sandbox/wrap_windows.go SPEC-SANDBOX's plan: the Windows wrapper
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
 internal/tokens/publish.go SPEC-TOKENS' plan: the publish step
 internal/wake/serve.go SPEC-WAKE's plan: the serve verb's own file
+internal/workindex/ SPEC-WORK's plan table: the work index package (#3174), not yet written
 testdata/accept/ SPEC-TOOLWORK §5's relative spelling of the nova-pulse accept fixture directory, not yet shipped
 tools/legs.tsv SPEC-TOOLWORK §2's "the repository declares its legs" manifest, not yet written
+tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
 
-.github/dependabot.yml SPEC.md's example of a name that exact-name matching would and would not reach
 .github/scripts/foo.sh SPEC-CI.md's invented script in `x=$(bash ...)`, shown as something that is not a producer
 .github/seat-rule-gate.sh SPEC-SECRETS.md names the workflow script that is deliberately NOT here: the rule lives in the tool instead
 docs/bus internal/bus/git.go's failure narrative: a bus directory pointed inside a larger repository
@@ -79,10 +84,12 @@ docs/coordination/card-contract-2608-proposal.md SPEC-CARD.md's lineage cites it
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
 docs/spec-pulse/10 SPEC-TOOLWORK.md cites a retired spec-pulse chapter at line 4 as it stood before that draft; the chapter files now carry names
 fleet/authorized_keys the fleet's public keys live in the self repository; there is no fleet/ here
+fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 fleet/macos/provision-mac-bench.sh the Mac provisioning script lives in the self repository; there is no fleet/ here
 internal/decide/questions/security.txt a retired phrase-table file: replaced whole by `--security-phrases <file>`
 internal/decide/questions/tamper.txt a retired phrase-table file: replaced by `--tamper <file>`
+internal/swarm/routehealth PR #2718's package, named by internal/nsprint/route/health.go as where the rules were proved; not on dev
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 scripts/coordination/fleet-wake.sh SPEC-PULSE.md names the retired script the Go power verbs replaced
 testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175

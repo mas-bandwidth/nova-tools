@@ -2105,7 +2105,7 @@ func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
-		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+		"--tokens", "unmetered", "--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
 		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}

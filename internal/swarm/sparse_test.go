@@ -118,6 +118,8 @@ func TestPrepareStagesASparseJobClone(t *testing.T) {
 	pool := filepath.Join(root, "pool")
 	ref := filepath.Join(pool, "ref", "example", "s10@fixture")
 	writeSparseFixture(t, ref)
+	// A launch refuses a pool with no identity row (staging.go LoadPoolIdentity).
+	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
 	jobDir := w.JobDir(1, "s10")
 	run := RunInput{Worker: w, Pool: &Pool{Dir: pool}}
 	card := []byte("SOURCE: example/s10@fixture\nPATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
@@ -129,7 +131,7 @@ func TestPrepareStagesASparseJobClone(t *testing.T) {
 	src := filepath.Join(root, "src")
 	writeSparseFixture(t, src)
 	jobDir2 := w.JobDir(1, "s10b")
-	handed := RunInput{Worker: w, CloneFrom: src}
+	handed := RunInput{Worker: w, CloneFrom: src, Pool: &Pool{Dir: pool}} // dev's prepare stages under the pool identity
 	card2 := []byte("PATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
 	if err := handed.prepare(Sidecar{ID: "s10b"}, card2, 1, jobDir2); err != nil {
 		t.Fatalf("prepare with CloneFrom: %v", err)

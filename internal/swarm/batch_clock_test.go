@@ -99,7 +99,9 @@ func testWait() time.Duration {
 // A tick after the batch has returned is a no-op: every card is done, the monitor has
 // left on allDone, and a bare send would block the test forever (the hang a loaded
 // bench found in TestBatchIdleDoesNotKillAWritingCard, whose card can finish before
-// its second tick).
+// its second tick). A tick that nothing receives within testWait is dropped, not
+// held, so a monitor gone without a batch fails one test instead of hanging the
+// package (nova-tools #1983).
 func (c *manualClock) tick() {
 	c.mu.Lock()
 	now := c.now
@@ -108,10 +110,15 @@ func (c *manualClock) tick() {
 	case c.tickCh <- now:
 	case <-c.gone:
 		return
+	case <-time.After(testWait()):
+		// Nothing received the tick within the allowed poll bound: the monitor is gone
+		// without a batch to close c.gone (TestIssue1983, nova-tools #1983). Drop it.
+		return
 	}
 	select {
 	case <-c.polled:
 	case <-c.gone:
+	case <-time.After(testWait()):
 	}
 }
 

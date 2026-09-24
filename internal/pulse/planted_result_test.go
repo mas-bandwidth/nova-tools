@@ -41,7 +41,7 @@ func plantResultSymlink(t *testing.T, job, body string) string {
 func TestHarvestDoesNotTreatAPlantedSymlinkAsADoneResult(t *testing.T) {
 	root, specs, arglog := setupPulse(t)
 	fakeGit(t, specs, arglog)
-	fakeGH(t, specs, arglog, "https://github.com/owner/repo/pull/233")
+	fakeGH(t, specs, arglog, "https://forge.invalid/owner/repo/pull/233")
 
 	addCard(t, root, "plant", "1", "flash", "RESULT plant sha=aaa", "")
 	job := filepath.Join(root, "1", "jobs", "plant")

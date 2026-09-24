@@ -2035,9 +2035,9 @@ launcher that puts the flag on the argv is Rowan's.
 `MODE: script` card. Do not reuse `nativeSandboxArgv` as it stands. A dest
 grant, if one is ever named, is `(remote ip "localhost:PORT")` on darwin, the
 form Apple will load — the same form `--net-allow` (issue #591, `--net-allow`
-section above) now emits, once the nested SBPL form
-`(local ip (host ..) (port ..))` that PR #599 originally pinned (`sandbox-exec`
-exit 65, unbound variable: host) was replaced with it on rebase.
+section above) now emits. Do not pin the #599 nested SBPL form
+`(local ip (host ..) (port ..))`: `sandbox-exec` is exit 65, unbound
+variable: host; PR #599 replaced it with this form on rebase.
 
 The card-scope read set is declared writes (PATHS) plus dispatcher-approved
 contextual reads (SPEC-SWARM the harness wall). A directory glob may be a
