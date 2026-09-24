@@ -505,16 +505,19 @@ func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 // comment or review capture that carries a typed disposition near the end of a long
 // thread is not evidence this tool may read a 64 KiB prefix of and call complete
 // (nova-tools #2522 measured one such capture at 63,499 bytes).
-// The body is projected and bounded via --jq (.body[:65536]) so that individual comment
-// payloads cannot cause unbounded memory consumption during capture and decoding.
+// The body is projected and bounded via --jq (.body[:MaxParseBodyBytes+1], in
+// characters) so that individual comment payloads cannot cause unbounded memory
+// consumption; that bound is far above GitHub's 65,536-character limit, and a body
+// cut by it is still over MaxParseBodyBytes, which the parser refuses as a hold
+// (nova-tools #3443), never reading a prefix as the whole body.
 func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
 	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n),
-		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), created_at, user: {login: .user.login}}]", MaxCommentBodyBytes))
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), created_at, user: {login: .user.login}}]", MaxParseBodyBytes+1))
 	if err != nil {
 		return nil, err
 	}
 	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n),
-		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), state, submitted_at, commit_id, user: {login: .user.login}}]", MaxCommentBodyBytes))
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), state, submitted_at, commit_id, user: {login: .user.login}}]", MaxParseBodyBytes+1))
 	if err != nil {
 		return nil, err
 	}
