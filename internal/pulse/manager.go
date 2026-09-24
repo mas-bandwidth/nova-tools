@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // ManagerInput is the verb's input, held apart from flag parsing so a test can drive a whole
@@ -343,26 +344,7 @@ func (m *manager) harvest() {
 
 // abstainReason is an abstain's reason token, "" when the card did not abstain: triage routes on it.
 func abstainReason(lines []string) string {
-	for i, l := range lines {
-		if i > 1 {
-			break
-		}
-		rest, ok := strings.CutPrefix(strings.TrimSpace(l), "ABSTAIN")
-		if !ok {
-			continue
-		}
-		fields := strings.Fields(rest)
-		for _, f := range fields {
-			if v, ok := strings.CutPrefix(f, "reason="); ok {
-				return strings.Trim(v, ":,")
-			}
-		}
-		if len(fields) > 0 {
-			return strings.Trim(fields[0], ":,")
-		}
-		return "unsaid"
-	}
-	return ""
+	return typedrec.AbstainReason(lines)
 }
 
 // verdict is one read card's answer about one PR.
@@ -373,41 +355,18 @@ type verdict struct {
 	Head string
 }
 
-// readVerdict reads a read card's PR<n>: APPROVE|HOLD line, with the head it read.
+// readVerdict reads a read card's PR line, with the head it read.
 func readVerdict(lines []string) *verdict {
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if !strings.HasPrefix(t, "PR") {
-			continue
-		}
-		num, rest, ok := strings.Cut(strings.TrimPrefix(t, "PR"), ":")
-		if !ok {
-			continue
-		}
-		n, err := strconv.Atoi(strings.TrimSpace(num))
-		if err != nil {
-			continue
-		}
-		v := &verdict{PR: n}
-		for _, f := range strings.Fields(rest) {
-			switch {
-			case f == "APPROVE" || f == "HOLD":
-				v.Say = f
-			default:
-				if s, ok := strings.CutPrefix(f, "head="); ok {
-					v.Head = s
-				}
-				if s, ok := strings.CutPrefix(f, "repo="); ok {
-					v.Repo = strings.TrimPrefix(s, "github.com/")
-				}
-			}
-		}
-		if v.Say == "" {
-			continue
-		}
-		return v
+	r := typedrec.ParseReadVerdict(lines)
+	if r == nil {
+		return nil
 	}
-	return nil
+	return &verdict{
+		Repo: r.Repo,
+		PR:   r.PR,
+		Say:  r.Say,
+		Head: r.Head,
+	}
 }
 
 // recordVerdict files an APPROVE for the merge step and a HOLD as a hold plus one escalation.
@@ -545,20 +504,7 @@ func (m *manager) prNumber(repo, branch string) int {
 }
 
 func branchAndRepo(lines []string) (branch, repo string) {
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		for _, p := range []string{"BRANCH:", "BRANCH"} {
-			if v, ok := strings.CutPrefix(t, p); ok && branch == "" {
-				branch = strings.TrimSpace(v)
-			}
-		}
-		for _, p := range []string{"REPO:", "REPO"} {
-			if v, ok := strings.CutPrefix(t, p); ok && repo == "" {
-				repo = strings.TrimPrefix(strings.TrimSpace(v), "github.com/")
-			}
-		}
-	}
-	return branch, repo
+	return typedrec.BranchAndRepo(lines)
 }
 
 func isFixBranch(branch string) bool {

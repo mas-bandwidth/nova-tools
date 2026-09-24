@@ -107,6 +107,12 @@ func fieldInt(line, key string) (int, bool, error) {
 }
 
 // ParseSuggest reads `nova-pulse sprint calibration` stdout and returns the
+var (
+	kindLinePrefix    = "KIND "
+	suggestLinePrefix = "SUGGEST "
+)
+
+// ParseSuggest parses calibration's SUGGEST lines into a map from kind to the
 // minute count each kind's measurement argues for. KIND and OWNER lines are
 // the report around those counts. A report with no SUGGEST line has no
 // measurement; the caller keeps each task's own estimate.
@@ -114,10 +120,11 @@ func ParseSuggest(stdout string) (map[string]int, error) {
 	if strings.TrimSpace(stdout) == "" {
 		return nil, fmt.Errorf("calibration printed nothing")
 	}
+
 	suggest := map[string]int{}
 	for _, line := range strings.Split(stdout, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "KIND ") || strings.HasPrefix(line, "OWNER ") {
+		if line == "" || strings.HasPrefix(line, kindLinePrefix) || strings.HasPrefix(line, "OWNER ") {
 			continue
 		}
 		kind, minutes, ok, err := suggestOf(line)
@@ -137,10 +144,10 @@ func ParseSuggest(stdout string) (map[string]int, error) {
 
 // suggestOf parses `SUGGEST fix 90m (default 120m)`, the line calibration prints.
 func suggestOf(line string) (kind string, minutes int, ok bool, err error) {
-	if !strings.HasPrefix(line, "SUGGEST ") {
+	if !strings.HasPrefix(line, suggestLinePrefix) {
 		return "", 0, false, nil
 	}
-	rest := strings.TrimPrefix(line, "SUGGEST ")
+	rest := strings.TrimPrefix(line, suggestLinePrefix)
 	kind, rest, found := strings.Cut(rest, " ")
 	if !found || kind == "" {
 		return "", 0, true, fmt.Errorf("SUGGEST wants a kind and its minutes: %q", line)

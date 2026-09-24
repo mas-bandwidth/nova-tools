@@ -53,6 +53,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/keyshape"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // HarvestMemory is what a batch pass remembers between passes and reports after each one.
@@ -227,7 +228,7 @@ func harvestBenchBatch(in HarvestInput) int {
 			state[label] = jobDone
 			continue
 		}
-		if st := resultState(j.Result); st != "DONE" {
+		if st := resultState(j.Result); st != typedrec.StatusDone {
 			skip(label, "state")
 			continue
 		}
@@ -712,25 +713,7 @@ func (idx launchedIndex) lookup(dirs []string, label string) string {
 // still carries the template's `<-` arrow or its `<why>` placeholder is TEMPLATE, the
 // unedited card, and is never harvested (Stella's HOLD of #2926 at 2b48d622).
 func resultState(lines []string) string {
-	seen := false
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if t == "" {
-			continue
-		}
-		if !seen {
-			seen = true
-			continue
-		}
-		f := strings.Fields(t)
-		for _, w := range f {
-			if w == "<-" || strings.Contains(w, "<why>") {
-				return "TEMPLATE"
-			}
-		}
-		return strings.TrimRight(f[0], ":,;.")
-	}
-	return ""
+	return typedrec.ResultState(lines)
 }
 
 // repoName is the repository's own name: the part after the owner.

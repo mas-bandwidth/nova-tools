@@ -3,10 +3,13 @@ package card
 import (
 	"context"
 	"errors"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // RedisLedger is the wrapper's ledger over the sprint's Redis functions:
@@ -53,6 +56,61 @@ func (l *RedisLedger) Launched(ctx context.Context, branch, jobDir string) (int,
 func (l *RedisLedger) Beat(ctx context.Context) (int, error) {
 	res, err := Beat(ctx, l.Store, BeatRequest{Sprint: l.Sprint, Label: l.Label, Token: l.Token})
 	return res.Code, err
+}
+
+// Result calls ns_card_result (#2506) to record the parsed RESULT envelope.
+func (l *RedisLedger) Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error) {
+	const verb = "card result"
+	if l.Store == nil || l.Store.Client() == nil || !validSprintLabel(l.Sprint, l.Label) || l.Token == "" {
+		return usage(verb, l.Label).Code, nil
+	}
+	c, err := l.Card(ctx)
+	if err != nil {
+		return WrapperExitRedis, err
+	}
+	attemptStr := strconv.Itoa(c.Attempt)
+	if c.Attempt < 1 && res.Attempt > 0 {
+		attemptStr = strconv.Itoa(res.Attempt)
+	}
+
+	validStr := "0"
+	if res.Valid {
+		validStr = "1"
+	}
+
+	args := []any{
+		l.Sprint,
+		l.Label,
+		attemptStr,
+		l.Token,
+		res.Schema,
+		res.Kind,
+		validStr,
+		res.Field,
+		res.Defect,
+		strconv.Itoa(res.Line),
+		res.RawSHA256,
+		string(res.RawBytes),
+		resultsDir,
+	}
+
+	var claimKeys []string
+	for k := range res.Claims {
+		claimKeys = append(claimKeys, k)
+	}
+	sort.Strings(claimKeys)
+	for _, k := range claimKeys {
+		args = append(args, "c_"+strings.ToLower(k), res.Claims[k])
+	}
+
+	reply, err := fcall(ctx, l.Store, "ns_card_result", cardKeys(l.Sprint, l.Label), args...)
+	if err != nil {
+		if res, down := redisDown(verb, l.Label, err); down {
+			return res.Code, nil
+		}
+		return 0, err
+	}
+	return reply.Code, nil
 }
 
 // End writes end.record into the results directory, then calls ns_card_end.

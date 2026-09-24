@@ -53,6 +53,8 @@ const (
 	KindTask = "task"
 )
 
+var outcomeDone = "DONE"
+
 // Item is one card or task as ready sees it.
 type Item struct {
 	Sprint    string
@@ -216,7 +218,7 @@ func (f *forge) entryBlocker(ctx context.Context, snap Snapshot, c Item, e strin
 		}
 		ref, err := f.ref(ctx, repo, d.PR)
 		return refBlocker(e, d.PR, ref, err, c.Base)
-	case d.State == "ended" && d.Outcome == "DONE" && d.PushedSHA == "":
+	case d.State == "ended" && d.Outcome == outcomeDone && d.PushedSHA == "":
 		return "" // closed with no PR and no commit: nothing to land
 	case d.State == "cancelled" || d.State == "superseded":
 		return "DEAD " + e + " card-" + d.State

@@ -421,6 +421,25 @@ func (o *OkFriend) onHarvested(ctx context.Context, e *okEvent, census *readerCe
 	if pr <= 0 || head == "" || head != c["pushed_sha"] {
 		return o.skip(ctx, e, "unverified-head", e.label+":unverified-head:"+c["base_sha"])
 	}
+
+	resKey := "s:" + o.Sprint + ":card:" + e.label + ":result:a" + e.attempt
+	if o.Store.Client().Exists(ctx, resKey).Val() == 1 {
+		resFields, err := o.Store.Client().HMGet(ctx, resKey, "valid", "c_check", "field").Result()
+		if err == nil && len(resFields) >= 3 {
+			valid, _ := resFields[0].(string)
+			cCheck, _ := resFields[1].(string)
+			defectField, _ := resFields[2].(string)
+			if valid != "1" {
+				if defectField == "" {
+					defectField = "result"
+				}
+				return o.skip(ctx, e, defectField, "")
+			}
+			if cCheck != "pass" {
+				return o.skip(ctx, e, "CHECK", "")
+			}
+		}
+	}
 	want := census.required(c)
 	readers := census.pick(want, c["author"])
 	if len(readers) < want {

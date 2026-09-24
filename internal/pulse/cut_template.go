@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // DefaultDiffCap is the 6 KB cap on inlined prior diffs in v2 cards (A1).
@@ -455,6 +456,42 @@ func ValidateCardV2(cardText string) error {
 	if !hasRedWhen || redWhenVal == "" {
 		return fmt.Errorf("cutter lint: card missing required RED-WHEN: declaration (every v2 card must declare the falsifiable condition that makes the test red)")
 	}
+
+	// Validate embedded RESULT.md Fill-in Template if present
+	if templateStart := strings.Index(cardText, "## RESULT.md Fill-in Template"); templateStart >= 0 {
+		templateRegion := cardText[templateStart:]
+		if endIdx := strings.Index(templateRegion[len("## RESULT.md Fill-in Template"):], "\n## "); endIdx >= 0 {
+			templateRegion = templateRegion[:len("## RESULT.md Fill-in Template")+endIdx]
+		}
+		tLines := strings.Split(templateRegion, "\n")
+		kind := ""
+		for _, l := range tLines {
+			trimmed := strings.TrimSpace(l)
+			if strings.HasPrefix(trimmed, "KIND: ") {
+				kind = strings.TrimSpace(strings.TrimPrefix(trimmed, "KIND: "))
+				break
+			}
+		}
+		if kind != "" {
+			for _, f := range typedrec.Fields(kind) {
+				key, _, _ := strings.Cut(f, ":")
+				key = strings.TrimSpace(key)
+				found := false
+				for _, l := range tLines {
+					if strings.HasPrefix(strings.TrimSpace(l), key+":") {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return fmt.Errorf("cutter lint: card RESULT template missing required field %s", key)
+				}
+			}
+		} else if !strings.Contains(templateRegion, "KIND:") {
+			return fmt.Errorf("cutter lint: card RESULT template missing required field KIND")
+		}
+	}
+
 	region, err := OperativeRegion(cardText)
 	if err != nil {
 		return err
@@ -623,180 +660,13 @@ func endsArgument(s string, i int) bool {
 }
 
 // ResultTemplateV2 returns the fill-in skeleton for a kind (A7).
-// Preserves terminal words DONE, ABSTAIN, BLOCKED; requires CHECK: pass|fail|not-run.
-// Emits live harvest space-delimited wire shape (BRANCH <branch>, REPO <repo>, PATHS <paths>).
 func ResultTemplateV2(kind string) string {
-	var b strings.Builder
-	b.WriteString("<line 1 of this card verbatim>\n")
-	b.WriteString("<DONE | ABSTAIN <why> | BLOCKED <why>>\n")
-	b.WriteString("SCHEMA: v2\n")
-	b.WriteString("ATTEMPT: 1\n")
-	b.WriteString("CHECK: <pass | fail | not-run>\n")
-	b.WriteString("BRANCH <working branch>\n")
-	b.WriteString("REPO <owner>/<name>\n")
-	b.WriteString("PATHS <space-separated list of modified files>\n")
-
-	switch kind {
-	case "read":
-		b.WriteString("## Head\n")
-		b.WriteString("findings: <n>\n")
-		b.WriteString("floor: <HIGH | MEDIUM | LOW>\n")
-		b.WriteString("repo: <owner>/<name>\n")
-		b.WriteString("head: <sha>\n")
-		b.WriteString("PR<number>: <APPROVE | HOLD> head=<sha> repo=<owner>/<name>\n")
-		b.WriteString("## Findings\n")
-		b.WriteString("- <severity> <file:line> `<exact quoted rule>` <one-clause fix>\n")
-	case "report":
-		b.WriteString("## Probes\n")
-		b.WriteString("| probe | command | result |\n")
-		b.WriteString("| --- | --- | --- |\n")
-		b.WriteString("| <name> | <command> | <measured value> |\n")
-		b.WriteString("## Summary\n")
-		b.WriteString("<one paragraph factual summary without opinions>\n")
-	case "docs-guard":
-		b.WriteString("## Verification\n")
-		b.WriteString("| target | check | state |\n")
-		b.WriteString("| --- | --- | --- |\n")
-		b.WriteString("| <doc file:line> | <symbol/link> | verified |\n")
-		b.WriteString("## Gates\n")
-		b.WriteString("| name | result | seconds |\n")
-		b.WriteString("| --- | --- | --- |\n")
-		b.WriteString("| <test command> | pass | <sec> |\n")
-	default: // fix, recut, port
-		b.WriteString("RED: <command and failing output summary>\n")
-		b.WriteString("GREEN: <command and passing output summary>\n")
-		b.WriteString("## Gates\n")
-		b.WriteString("| name | result | seconds |\n")
-		b.WriteString("| --- | --- | --- |\n")
-		b.WriteString("| <test command> | pass | <sec> |\n")
-		b.WriteString("## Left owed\n")
-		b.WriteString("- <item left owed or none>\n")
-	}
-	return b.String()
+	return typedrec.Template(kind)
 }
 
 // ResultExemplarV2 returns one format illustration for each kind (A7).
-// Format illustration only; not observed evidence or historical review provenance.
-// Demonstrates syntax and architectural boundaries:
-// 1. Status preserves DONE/ABSTAIN/BLOCKED.
-// 2. Separate typed CHECK conclusion.
-// 3. Verified/Landed never appear as worker result words.
-// 4. Worker claims distinct from machinery facts.
-// 5. Uses wire-compatible space-delimited BRANCH, REPO, PATHS headers.
 func ResultExemplarV2(kind string) string {
-	switch kind {
-	case "read":
-		return `RESULT CARD-100 sha=a1b2c3d4e5f6 nova-tools read: read PR 812 at abc123def456
-DONE
-SCHEMA: v2
-ATTEMPT: 1
-CHECK: pass
-BRANCH worker/read-812
-REPO mas-bandwidth/nova-tools
-PATHS internal/pulse/cut.go
-## Head
-findings: 1
-floor: HIGH
-repo: mas-bandwidth/nova-tools
-head: abc123def456
-PR812: HOLD head=abc123def456 repo=mas-bandwidth/nova-tools
-## Findings
-- HIGH internal/pulse/cut.go:42 ` + "`STEP 1 must carry mkdir -p scratch`" + ` add directory creation before clone`
-
-	case "recut":
-		return `RESULT CARD-101 sha=b2c3d4e5f6a1 nova-tools recut: fix boundary handling in cut
-DONE
-SCHEMA: v2
-ATTEMPT: 1
-CHECK: pass
-BRANCH emma/fix-boundary-recut
-REPO mas-bandwidth/nova-tools
-PATHS internal/pulse/cut.go internal/pulse/cut_test.go
-RED: go test ./internal/pulse -run TestBoundary failed with nil pointer dereference
-GREEN: go test ./internal/pulse -run TestBoundary passed in 0.04s
-## Gates
-| name | result | seconds |
-| --- | --- | --- |
-| go test ./internal/pulse -run TestBoundary | pass | 0.04 |
-| make preflight | pass | 1.12 |
-## Left owed
-- none`
-
-	case "port":
-		return `RESULT CARD-102 sha=c3d4e5f6a1b2 serialize port: port varint encoder to rust
-DONE
-SCHEMA: v2
-ATTEMPT: 1
-CHECK: pass
-BRANCH emma/port-varint-rs
-REPO mas-bandwidth/serialize
-PATHS serialize.rs/src/varint.rs serialize.rs/tests/varint_test.rs
-RED: cargo test test_varint_parity failed: reference vector mismatch at byte 3
-GREEN: cargo test test_varint_parity passed: 48/48 test vectors identical to C++ reference
-## Gates
-| name | result | seconds |
-| --- | --- | --- |
-| cargo test | pass | 2.10 |
-| make preflight | pass | 0.85 |
-## Left owed
-- none`
-
-	case "docs-guard":
-		return `RESULT CARD-103 sha=d4e5f6a1b2c3 nova-tools docs-guard: verify spec-swarm CLI flags
-DONE
-SCHEMA: v2
-ATTEMPT: 1
-CHECK: pass
-BRANCH emma/docs-guard-swarm
-REPO mas-bandwidth/nova-tools
-PATHS docs/SPEC-SWARM.md
-## Verification
-| target | check | state |
-| --- | --- | --- |
-| docs/SPEC-SWARM.md:1448 | --name flag syntax | verified |
-| docs/SPEC-SWARM.md:1460 | template names list | verified |
-## Gates
-| name | result | seconds |
-| --- | --- | --- |
-| go test ./internal/docs -run TestDocLinks | pass | 0.45 |
-| make preflight | pass | 1.05 |`
-
-	case "report":
-		return `RESULT CARD-104 sha=e5f6a1b2c3d4 nova-tools report: measure harvest throughput
-DONE
-SCHEMA: v2
-ATTEMPT: 1
-CHECK: pass
-BRANCH worker/report-throughput
-REPO mas-bandwidth/nova-tools
-PATHS reports/2026-09-21-harvest.tsv
-## Probes
-| probe | command | result |
-| --- | --- | --- |
-| p95 latency | nova-pulse harvest --bench-measure | 142ms |
-| memory rss | ps -o rss= -p $PID | 34.2MB |
-## Summary
-Harvest latency stays under 150ms across 100 iterations with zero heap growth.`
-
-	default: // fix
-		return `RESULT CARD-105 sha=f6a1b2c3d4e5 nova-tools fix: null pointer on empty queue
-DONE
-SCHEMA: v2
-ATTEMPT: 1
-CHECK: pass
-BRANCH emma/fix-nil-queue
-REPO mas-bandwidth/nova-tools
-PATHS internal/pulse/queue.go internal/pulse/queue_test.go
-RED: go test ./internal/pulse -run TestEmptyQueueDoesNotPanic panic: runtime error: invalid memory address
-GREEN: go test ./internal/pulse -run TestEmptyQueueDoesNotPanic passed in 0.02s
-## Gates
-| name | result | seconds |
-| --- | --- | --- |
-| go test ./internal/pulse -run TestEmptyQueueDoesNotPanic | pass | 0.02 |
-| make preflight | pass | 0.98 |
-## Left owed
-- none`
-	}
+	return typedrec.Exemplar(kind)
 }
 
 // ResultEnvelopeV2 represents a parsed and validated RESULT.md v2 document.
@@ -815,184 +685,27 @@ type ResultEnvelopeV2 struct {
 }
 
 // KnownResultV2Headers defines the allowed typed headers before markdown sections.
-var KnownResultV2Headers = map[string]bool{
-	"CHECK":     true,
-	"BRANCH":    true,
-	"REPO":      true,
-	"PATHS":     true,
-	"KIND":      true,
-	"SCHEMA":    true,
-	"ATTEMPT":   true,
-	"HEAD":      true,
-	"PR":        true,
-	"ISSUE":     true,
-	"BASE":      true,
-	"BASE-SHA":  true,
-	"BASE_SHA":  true,
-	"HOLD":      true,
-	"HOLD_FILE": true,
-	"RED":       true,
-	"GREEN":     true,
-	"LOCATION":  true,
-	"COMMAND":   true,
-	"TEST":      true,
-	"APPLIED":   true,
-	"REMAINS":   true,
-}
+var KnownResultV2Headers = typedrec.KnownResultV2Headers
 
 // ValidateResultV2 parses and strictly validates a RESULT.md against v2 envelope rules.
-// Enforces Stella's architectural boundaries:
-// - Envelope size capped at MaxResultEnvelopeSize (64 KB).
-// - Status enum must strictly be DONE, ABSTAIN, BLOCKED.
-// - Separate typed CHECK: pass|fail|not-run line required.
-// - Status DONE with failed check is accepted as a valid wire envelope (representing a Returned attempt).
-// - Verified and Landed are rejected as worker result statuses.
-// - Duplicate, unknown, or oversized fields (>4096 bytes) are refused.
-// - Malformed non-header lines before markdown body are refused.
-// - Worker-authored DISPOSITION never mints friend approval.
-// - Human evidence body bounded by MaxResultBodySize (32 KB).
 func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
-	var env ResultEnvelopeV2
-	env.Fields = make(map[string]string)
-
-	if len(raw) > MaxResultEnvelopeSize {
-		return env, fmt.Errorf("RESULT.md exceeds maximum size limit of %d bytes (got %d)", MaxResultEnvelopeSize, len(raw))
+	env, err := typedrec.ValidateResultV2(raw, kind)
+	if err != nil {
+		return ResultEnvelopeV2{}, err
 	}
-
-	lines := strings.Split(raw, "\n")
-	if len(lines) < 3 {
-		return env, fmt.Errorf("RESULT.md v2 wants at least 3 lines, got %d", len(lines))
-	}
-
-	// Line 1: contract line
-	line1 := strings.TrimSpace(lines[0])
-	if !strings.HasPrefix(line1, "RESULT ") && !strings.HasPrefix(line1, "RESULT:") {
-		return env, fmt.Errorf("line 1 must begin with RESULT, got %q", line1)
-	}
-	env.ContractLine = line1
-
-	// Line 2: terminal word strictly DONE, ABSTAIN, BLOCKED
-	line2 := strings.TrimSpace(lines[1])
-	statusWord := line2
-	if idx := strings.IndexByte(line2, ' '); idx >= 0 {
-		statusWord = line2[:idx]
-	}
-	switch statusWord {
-	case "DONE", "ABSTAIN", "BLOCKED":
-		env.Status = statusWord
-	case "Returned", "check-failed", "Verified", "Landed":
-		return env, fmt.Errorf("line 2 status %q is prohibited as a worker terminal word; must be DONE, ABSTAIN, or BLOCKED", statusWord)
-	default:
-		return env, fmt.Errorf("line 2 wants DONE, ABSTAIN, or BLOCKED, got %q", line2)
-	}
-
-	seenKeys := make(map[string]bool)
-	bodyStart := len(lines)
-
-	// Scan typed header fields before markdown headers
-	for i := 2; i < len(lines); i++ {
-		ln := strings.TrimSpace(lines[i])
-		if ln == "" {
-			continue
-		}
-		if strings.HasPrefix(ln, "## ") {
-			bodyStart = i
-			break
-		}
-		if len(ln) > 4096 {
-			return env, fmt.Errorf("line %d exceeds 4096-byte field limit", i+1)
-		}
-
-		var key, val string
-		colon := strings.IndexByte(ln, ':')
-		space := strings.IndexByte(ln, ' ')
-
-		// Parse either KEY: VAL or KEY VAL
-		if colon > 0 && (space < 0 || colon < space) {
-			key = strings.ToUpper(strings.TrimSpace(ln[:colon]))
-			val = strings.TrimSpace(ln[colon+1:])
-		} else if space > 0 {
-			candidateKey := strings.ToUpper(strings.TrimSpace(ln[:space]))
-			if KnownResultV2Headers[candidateKey] {
-				key = candidateKey
-				val = strings.TrimSpace(ln[space+1:])
-			} else {
-				return env, fmt.Errorf("unknown header field %q at line %d", candidateKey, i+1)
-			}
-		} else {
-			return env, fmt.Errorf("malformed header line %d: %q", i+1, ln)
-		}
-
-		if !KnownResultV2Headers[key] {
-			return env, fmt.Errorf("unknown header field %q at line %d", key, i+1)
-		}
-
-		if seenKeys[key] {
-			return env, fmt.Errorf("duplicate field %q at line %d", key, i+1)
-		}
-		seenKeys[key] = true
-		env.Fields[key] = val
-
-		switch key {
-		case "SCHEMA":
-			env.Schema = val
-		case "ATTEMPT":
-			env.Attempt = val
-		case "CHECK":
-			if val != "pass" && val != "fail" && val != "not-run" {
-				return env, fmt.Errorf("CHECK wants pass, fail, or not-run, got %q", val)
-			}
-			env.Check = val
-		case "BRANCH":
-			env.Branch = val
-		case "REPO":
-			env.Repo = val
-		case "PATHS":
-			env.Paths = val
-		}
-	}
-
-	if env.Schema == "" {
-		return env, fmt.Errorf("RESULT.md v2 requires a typed `SCHEMA: v2` line")
-	}
-	if env.Schema != "v2" {
-		return env, fmt.Errorf("unsupported SCHEMA %q (wants v2)", env.Schema)
-	}
-	if env.Attempt == "" {
-		return env, fmt.Errorf("RESULT.md v2 requires a typed `ATTEMPT: <n>` line")
-	}
-	if env.Check == "" {
-		return env, fmt.Errorf("RESULT.md v2 requires a typed `CHECK: <pass|fail|not-run>` line")
-	}
-	if env.Repo == "" {
-		return env, fmt.Errorf("RESULT.md v2 requires a REPO line")
-	}
-
-	// For DONE status on non-read/non-report kinds, require BRANCH and PATHS.
-	// ABSTAIN and BLOCKED envelopes are validated for version, status, check, repo and bounds
-	// without demanding working branch or modified paths.
-	if env.Status == "DONE" && kind != "read" && kind != "report" && kind != "" {
-		if env.Branch == "" {
-			return env, fmt.Errorf("RESULT.md v2 for %s requires BRANCH line", kind)
-		}
-		if env.Paths == "" {
-			return env, fmt.Errorf("RESULT.md v2 for %s requires PATHS line", kind)
-		}
-	}
-
-	// Capture remaining body as human evidence
-	if bodyStart < len(lines) {
-		bodyContent := strings.Join(lines[bodyStart:], "\n")
-		if len(bodyContent) > MaxResultBodySize {
-			return env, fmt.Errorf("RESULT.md evidence body exceeds %d bytes (got %d)", MaxResultBodySize, len(bodyContent))
-		}
-		env.Body = bodyContent
-	}
-
-	// Authority Boundary: Parsing worker-authored DISPOSITION must never mint friend approval
-	env.IsFriendApproval = false
-
-	return env, nil
+	return ResultEnvelopeV2{
+		ContractLine:     env.ContractLine,
+		Status:           env.Status,
+		Schema:           env.Schema,
+		Attempt:          env.Attempt,
+		Check:            env.Check,
+		Branch:           env.Branch,
+		Repo:             env.Repo,
+		Paths:            env.Paths,
+		IsFriendApproval: env.IsFriendApproval,
+		Fields:           env.Fields,
+		Body:             env.Body,
+	}, nil
 }
 
 var cardHeaderKeyRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*:`)

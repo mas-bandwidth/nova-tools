@@ -45,6 +45,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -88,6 +89,7 @@ type WrapperLedger interface {
 	Claim(ctx context.Context, nonce string) (int, error)
 	Launched(ctx context.Context, branch, jobDir string) (int, error)
 	Beat(ctx context.Context) (int, error)
+	Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error)
 	End(ctx context.Context, end WrapperEnd) (int, error)
 }
 
@@ -407,6 +409,10 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 		return *rep
 	}
 	writeWrapperLine(results, cfg, end, rep.Beats, wall)
+	if data, err := os.ReadFile(filepath.Join(results, "RESULT.md")); err == nil {
+		parsed := typedrec.ParseResult(data, typedrec.ParseOptions{ExpectedAttempt: cfg.Attempt})
+		_, _ = ledger.Result(ctx, parsed, results)
+	}
 	code, err := ledger.End(ctx, end)
 	cleanup()
 	if err != nil || code != 0 {

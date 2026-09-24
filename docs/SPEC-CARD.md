@@ -243,8 +243,9 @@ is multiline, its header `RUN:` is removed.
 
 Preserve immutable input identity, expected attempt binding, owned RESULT schema, DONE versus check
 outcome, Returned/Verified/Landed distinction, retained evidence, STOP/HOLD/UNKNOWN, and contextual
-read scope. SYMBOL/RED-WHEN are declarations, not proof of runtime coverage. A4 text lint is not
-actual PATHS enforcement.
+read scope. See the [Typed records](SPEC-SWARM.md#typed-records) section in `docs/SPEC-SWARM.md` for the
+canonical versioned contract of RESULT v2 and DISPOSITION v1. SYMBOL/RED-WHEN are declarations, not
+proof of runtime coverage. A4 text lint is not actual PATHS enforcement.
 
 A rule that reads prose reads only the card's own instructions to the worker, never a fenced block,
 a quoted prior card, an inlined diff or other retained evidence.
