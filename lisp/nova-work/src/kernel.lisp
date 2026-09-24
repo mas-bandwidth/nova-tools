@@ -951,14 +951,18 @@ event kind, its ordered field list and its subject (SPEC-WORK.md:2960)."
 
 (defstruct (prompt-profile
              (:constructor make-prompt-profile
-                 (&key name pointer digest policy-version evidence expiry owner)))
+                 (&key name pointer digest policy-version evidence expiry owner
+                       model harness work-type)))
   name       ; display name, selected at start and never swapped mid-session
   pointer    ; a file path in the repository, never inline
   digest     ; the SHA-256 of the prompt content the path resolved to
   policy-version
   evidence   ; a dated measurement, or :UNKNOWN where none has been taken
   expiry     ; the date after which the profile is stale
-  owner)
+  owner
+  model      ; the manager model identity (e.g. "sonnet", "opus", "sol")
+  harness    ; the harness identity (e.g. "claude-cli", "codex-cli")
+  work-type) ; the work-type label (e.g. "task", "review")
 
 (defun prompt-profile-state (profile &key content-digest today)
   "The status line's `profile-state=`: absent when no profile is named, mismatch
@@ -995,5 +999,132 @@ unknown bytes (SPEC-WORK.md:3366)."
               (format nil "SESSION FAIL session=~A profile=~A: digest mismatch"
                       (or session "-") (prompt-profile-name profile))
               1)
-      (values t "SESSION OK" 0)))
+       (values t "SESSION OK" 0)))
+
+;;; ------------------------------------------------------------------
+;;; prompt-profile unique-triple invariant and versioned edit grammar
+;;; (SPEC-WORK.md:3349-3376)
+;;; ------------------------------------------------------------------
+
+(defstruct (profile-registry
+             (:constructor make-profile-registry (&key (profiles nil) (journal nil))))
+  "A registry of prompt profiles keyed by name. No two profiles hold one
+model, harness and work-type triple (SPEC-WORK.md:3350-3353). The journal
+records every edit as a versioned event (SPEC-WORK.md:3372-3376)."
+  profiles
+  journal)
+
+(defstruct (profile-edit-record
+             (:constructor make-profile-edit-record
+                 (&key profile-name version fields by stamp)))
+  "One versioned record of a profile edit. The edit grammar is one new versioned
+record with :by, naming the profile and stating the fields it changes, never
+an in-place rewrite (SPEC-WORK.md:3372-3376)."
+  profile-name
+  version
+  fields
+  by
+  stamp)
+
+(defun profile-triple (profile)
+  "The (model, harness, work-type) identity triple of a profile."
+  (list (prompt-profile-model profile)
+        (prompt-profile-harness profile)
+        (prompt-profile-work-type profile)))
+
+(defun profile-registry-find-triple (registry triple)
+  "Find a profile in REGISTRY whose triple matches TRIPLE, or NIL."
+  (find-if (lambda (p) (equal (profile-triple p) triple))
+           (profile-registry-profiles registry)))
+
+(defun profile-registry-find (registry name)
+  "Find a profile in REGISTRY by NAME, or NIL."
+  (find name (profile-registry-profiles registry)
+        :key #'prompt-profile-name :test #'string=))
+
+(defun register-profile (registry profile &key (by "coordinator") (stamp ""))
+  "Register PROFILE in REGISTRY. Refuses if another profile already holds the
+same (model, harness, work-type) triple (SPEC-WORK.md:3350-3353)."
+  (let* ((triple (profile-triple profile))
+         (existing (profile-registry-find-triple registry triple)))
+    (if existing
+        (values nil
+                (format nil "PROFILE FAIL name=~A: triple ~S already held by ~A"
+                        (prompt-profile-name profile) triple
+                        (prompt-profile-name existing)))
+        (progn
+          (push profile (profile-registry-profiles registry))
+          (values t
+                  (format nil "PROFILE OK name=~A triple=~S by=~A"
+                          (prompt-profile-name profile) triple by))))))
+
+(defun profile-edit (registry profile-name &key pointer digest policy-version
+                      evidence expiry owner by stamp)
+  "Edit a profile in REGISTRY by creating one new versioned record with :by,
+stating the fields it changes. Never an in-place rewrite (SPEC-WORK.md:3372-3376)."
+  (let* ((profile (profile-registry-find registry profile-name)))
+    (unless profile
+      (return-from profile-edit
+        (values nil
+                (format nil "PROFILE EDIT FAIL name=~A: no such profile"
+                        profile-name)
+                nil)))
+    (let* ((prior-edits (count-if (lambda (r)
+                                    (string= (profile-edit-record-profile-name r)
+                                             profile-name))
+                                  (profile-registry-journal registry)))
+           (version (1+ prior-edits))
+           (changed-fields '()))
+      (when pointer
+        (push :pointer changed-fields) (push pointer changed-fields))
+      (when digest
+        (push :digest changed-fields) (push digest changed-fields))
+      (when policy-version
+        (push :policy-version changed-fields) (push policy-version changed-fields))
+      (when evidence
+        (push :evidence changed-fields) (push evidence changed-fields))
+      (when expiry
+        (push :expiry changed-fields) (push expiry changed-fields))
+      (when owner
+        (push :owner changed-fields) (push owner changed-fields))
+      (when (null changed-fields)
+        (return-from profile-edit
+          (values nil
+                  (format nil "PROFILE EDIT FAIL name=~A: no fields to change"
+                          profile-name)
+                  nil)))
+      (let ((updated (make-prompt-profile
+                      :name (prompt-profile-name profile)
+                      :pointer (or pointer (prompt-profile-pointer profile))
+                      :digest (or digest (prompt-profile-digest profile))
+                      :policy-version (or policy-version
+                                          (prompt-profile-policy-version profile))
+                      :evidence (or evidence (prompt-profile-evidence profile))
+                      :expiry (or expiry (prompt-profile-expiry profile))
+                      :owner (or owner (prompt-profile-owner profile))
+                      :model (prompt-profile-model profile)
+                      :harness (prompt-profile-harness profile)
+                      :work-type (prompt-profile-work-type profile))))
+        (setf (profile-registry-profiles registry)
+              (cons updated (remove-if (lambda (p)
+                                         (string= (prompt-profile-name p)
+                                                  profile-name))
+                                       (profile-registry-profiles registry))))
+        (let ((record (make-profile-edit-record
+                       :profile-name profile-name
+                       :version version
+                       :fields changed-fields
+                       :by (or by "coordinator")
+                       :stamp (or stamp ""))))
+          (push record (profile-registry-journal registry))
+          (values t record updated))))))
+
+(defun profile-edit-journal (registry &key profile-name)
+  "Return the edit journal, optionally filtered by PROFILE-NAME."
+  (if profile-name
+      (remove-if-not (lambda (r)
+                       (string= (profile-edit-record-profile-name r)
+                                profile-name))
+                     (profile-registry-journal registry))
+      (profile-registry-journal registry)))
 
