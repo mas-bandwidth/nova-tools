@@ -468,6 +468,8 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"next":         cmdNext,
 	"ask":          cmdAsk,
 	"asks":         cmdAsks,
+	"proving-run":  cmdProvingRun,
+	"dogfood":      cmdDogfood,
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a
@@ -487,6 +489,28 @@ func production() Deps {
 		},
 	}
 }
+
+// absorbDecision is the decision record of nova-tools#2090, in the issue's own
+// terms, carried as the one line this binary answers `absorb` with. It is a
+// record for later, not a promise: nothing in it is work to start, and the
+// three E09-F04 criteria it names stay unverified on purpose until one of the
+// named triggers reopens the issue. Before it lived here the caller who asked
+// was told `unknown verb`, a sentence that says nobody decided -- which is
+// false: the decision is made, it is just NO, and Glenn's rulings of 2026-09-20
+// (link mode today; absorb only if radically cheaper or a second tracker
+// arrives, never to answer sync pain with a cleverer sync; and if one side
+// must be primary, "the internal lisp data structure representation would
+// win") are the reasoning this line keeps from having to be reconstructed.
+const absorbDecision = "absorb is not scheduled (the decision record of nova-tools#2090, E09-F04): " +
+	"link is the intake mode today and GitHub stays the source of truth for issues; " +
+	"it reopens only on one of three triggers -- a radical saving in tokens and wall clock shown by the dogfood tables (#2089), " +
+	"a second issue tracker beside GitHub, or sync pain, drift that needs a person or a decision made on a stale copy; " +
+	"which side wins is already decided: if one side must be primary it is nova-work's Lisp data structure, " +
+	"and the GitHub copy is what stops being maintained; " +
+	"and before it is built all three E09-F04 criteria must be verified: " +
+	"absorb separate from the default link with selected scope and authority, " +
+	"source identity, provenance and content archived before removal with the deletion outcome receipt appended, " +
+	"and deletion left pending on missing content, a source change or an uncertain network result"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
@@ -533,6 +557,11 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	if verb == "attempt" && len(rest) > 0 && (rest[0] == "record" || rest[0] == "list") {
 		return cmdAttempt(rest, stdout, stderr)
 	}
+	// visualize reads one record the caller names and reaches nothing outside the
+	// process, so it dispatches the same way, outside the socket-verb switch.
+	if verb == "visualize" {
+		return cmdVisualize(rest, stdout, stderr)
+	}
 	switch verb {
 	case "help", "--help", "-h":
 		if len(rest) != 0 {
@@ -548,6 +577,13 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return 0
 	case "query":
 		return queryVerb(rest, stdout, stderr)
+	}
+	// absorb is the one name answered with a decision record rather than a
+	// verb or an "unknown verb": the roadmap holds it as E09-F04 and the
+	// 2026-09-20 ruling left it not scheduled (nova-tools#2090), so the caller
+	// who asks is owed the record, said in one line.
+	if verb == "absorb" {
+		return refused(stderr, absorbDecision)
 	}
 	// Every other verb the spec addresses to a session is a row of verbFlags
 	// and no case of its own: see socketverbs.go. The block's lines this
@@ -905,6 +941,12 @@ var verbFlags = map[string][]flagSpec{
 		{name: "max"},
 		{name: "now"},
 	},
+	// session status is a verb of the session's one request schema,
+	// *REQUEST-SCHEMA* in lisp/nova-work/src/request-line.lisp (E08-F01-01):
+	// this row is its flags, name for name, and
+	// lisp/nova-work/tests/criterion-e08-f01-01.lisp reads it from here and sends
+	// every flag this client admits or refuses over a real socket, so a row that
+	// drifts from the schema, or a wire that disagrees with it, is a red test.
 	"session status": {
 		{name: "session"},
 	},
@@ -1027,7 +1069,47 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	if verb == "session start" {
+		if journal := *strs["journal"]; journal != "" {
+			if pid, held := checkJournalHeld(journal); held {
+				fmt.Fprintf(stderr, "SESSION REFUSED session=%s: journal held by pid %s on %s\n", oneline.Field(socket), oneline.Field(pid), oneline.Field(journal))
+				return 1
+			}
+		}
+		if pid, held := checkSocketLocked(socket); held {
+			fmt.Fprintf(stderr, "SESSION FAIL session=%s: socket held by pid %s\n", oneline.Field(socket), oneline.Field(pid))
+			return 1
+		}
+	}
 	return ask(socket, b.String(), frameFor(verb, specs, strs, bools, mults), within, stdout, stderr)
+}
+
+// checkJournalHeld reports the pid a journal's .lock file names, raw; the caller
+// escapes it at the print site.
+func checkJournalHeld(journal string) (pid string, held bool) {
+	return lockPid(journal + ".lock")
+}
+
+// checkSocketLocked reports the pid a socket's .lock file names, raw; the caller
+// escapes it at the print site.
+func checkSocketLocked(socket string) (pid string, held bool) {
+	return lockPid(socket + ".lock")
+}
+
+// lockPid returns the first pid= value in a lock file (the first space-separated
+// token after "pid="), or held=false when the file is absent or names no pid.
+func lockPid(path string) (pid string, held bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "pid="); ok {
+			pid, _, _ = strings.Cut(rest, " ")
+			return pid, true
+		}
+	}
+	return "", false
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable

@@ -544,4 +544,70 @@
         (instrumented-closed-page state :max 20 :cursor cursor :floor 1005)
       (declare (ignore more4 cursor4))
       (check-equal nil rows4 "an expired page reads no rows")
-      (ok (search "page expired" line4) "the refusal names the expiry: ~A" line4)))))
+       (ok (search "page expired" line4) "the refusal names the expiry: ~A" line4)))))
+
+;;; E03-F01: partial cascade test -- frame 2 errors after frame 1 applied.
+;;; SPEC-WORK.md:3348 -- the envelope candidate is all-or-none; apply-envelope
+;;; copies state so a mid-envelope error leaves the caller's state byte-for-byte
+;;; intact. Without the copy, apply-event mutates the original and a failure
+;;; partway through corrupts it.
+
+(deftest "e03-f01-partial-cascade-frame-2-errors" "docs/SPEC-WORK.md:3348,E03-F01"
+    "expected=frame-1-applied;frame-2-errors-during-apply-event;state-unchanged-after-error;no-partial-mutation"
+  (let ((k (fresh)))
+    ;; Frame 1: close the seed item, applied successfully.
+    (multiple-value-bind (okp line code)
+        (submit k (close-request :request "frame-1"))
+      (declare (ignore line))
+      (ok okp "frame 1 was applied")
+      (check-equal 0 code "frame 1 exit code"))
+    ;; Record the state after frame 1.
+    (let* ((state (kernel-state k))
+           (digest-after (root-digest state))
+           (open-after (state-open-count state))
+           (history-after (length (state-history state)))
+           (rows-after (length (state-closed-rows state)))
+           (rev-after (state-revision state))
+           (t2-state-before (node-state state "acme/work/f1/t2"))
+           ;; Frame 2: craft an envelope with TWO events:
+           ;;   1. A :transition on t2 (succeeds, mutates the candidate)
+           ;;   2. A :settle on the already-settled t1 (errors at state.lisp:685)
+           ;; Without copy-state, event 1 mutates the original and event 2
+           ;; errors, leaving the original partially corrupted.
+           (event-1 (make-work-event
+                     :kind :transition :node "acme/work/f1/t2" :by "rowan"
+                     :fields (list :to :done :reason "test")
+                     :stamp "2026-09-14T14:00:00Z" :clock :tool
+                     :request "frame-2" :generation-owner "gen-4" :rev 5
+                     :session-written-p t))
+           (event-2 (make-work-event
+                     :kind :settle :node "acme/work/f1/t1" :by "rowan"
+                     :fields (list :disposition :done)
+                     :stamp "2026-09-14T14:00:00Z" :clock :tool
+                     :request "frame-2" :generation-owner "gen-4" :rev 6
+                     :session-written-p t))
+           (bad-envelope (list :request "frame-2"
+                               :digest "bad"
+                               :events (list event-1 event-2)))
+           (errored nil))
+      ;; Apply the bad envelope directly. With copy-state the original is
+      ;; untouched; without it the original is mutated before the error.
+      (handler-case
+          (nova-work::apply-envelope state bad-envelope)
+        (unsupported-input (c)
+          (setf errored c)))
+      (ok errored "frame 2 did not error during apply-event")
+      ;; The state after the error must be byte-for-byte the state after frame 1.
+      (check-string= digest-after (root-digest state)
+                     "root digest unchanged after frame 2 error")
+      (check-equal open-after (state-open-count state)
+                   "open count unchanged after frame 2 error")
+      (check-equal history-after (length (state-history state))
+                   "history length unchanged after frame 2 error")
+      (check-equal rows-after (length (state-closed-rows state))
+                   "closed rows unchanged after frame 2 error")
+      (check-equal rev-after (state-revision state)
+                   "revision unchanged after frame 2 error")
+      ;; The mutation from event 1 must NOT have leaked into the original.
+      (check-equal t2-state-before (node-state state "acme/work/f1/t2")
+                   "t2 state unchanged after frame 2 error"))))
