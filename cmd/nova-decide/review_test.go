@@ -358,7 +358,7 @@ case "$1" in
     esac
     ;;
   api)
-    printf '{"total_count\":1,\"check_runs\":[{\"name\":\"ci-ok\",\"status\":\"completed\",\"conclusion\":\"success\",\"head_sha\":\"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3\",\"started_at\":\"2026-09-22T00:00:00Z\",\"completed_at\":\"2026-09-22T00:00:01Z\"}]}'
+    printf '{"total_count":1,"check_runs":[{"name":"ci-ok","status":"completed","conclusion":"success","head_sha":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","started_at":"2026-09-22T00:00:00Z","completed_at":"2026-09-22T00:00:01Z"}]}'
     ;;
   *) echo "unexpected $*" >&2; exit 2 ;;
 esac
@@ -373,7 +373,7 @@ esac
 
 			line := out.String()
 			if !strings.Contains(line, tc.wantBase) {
-				t.Errorf("stdout = %q, want it to contain %q", line, tc.wantBase)
+				t.Errorf("stdout = %q, want it to contain %q (stderr %q)", line, tc.wantBase, errb.String())
 			}
 			raw, err := os.ReadFile(ledger)
 			if err != nil {
