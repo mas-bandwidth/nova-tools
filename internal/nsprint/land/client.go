@@ -172,13 +172,13 @@ func CallBatchPlan(ctx context.Context, c *redis.Client, sprint, repo, base, bat
 
 // GateTakeResult holds the outcome of calling ns_gate_take.
 type GateTakeResult struct {
-	Status   string // "OK", "NOBUDGET", "NODATA", "STALE", "VOID"
-	Base     string
-	BatchID  string
-	Attempt  int
-	Token    string
-	EntryID  string
-	Reason   string
+	Status  string // "OK", "NOBUDGET", "NODATA", "STALE", "VOID"
+	Base    string
+	BatchID string
+	Attempt int
+	Token   string
+	EntryID string
+	Reason  string
 }
 
 // CallGateTake calls ns_gate_take (spec 5.2).
