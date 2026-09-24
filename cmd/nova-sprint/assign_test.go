@@ -23,6 +23,7 @@ func TestAssignStdinVerbPrintsOneLinePerInputLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	head := strings.Repeat("a", 40)
+	t.Setenv("NOVA_FRIEND", "emma") // #2929: task push runs from a seat
 	seed(t, addr, [][]string{
 		{"SADD", "sprints", "s1"},
 		{"HSET", "s:s1", "status", "open"},

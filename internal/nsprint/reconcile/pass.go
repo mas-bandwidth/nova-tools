@@ -13,17 +13,22 @@ import (
 const DefaultInterval = time.Second
 
 // Counts is what one duty did in one pass; the pass sums them into
-// proc:reconciler (spec 5.1.2: dealt, routed, expired).
+// proc:reconciler (spec 5.1.2: dealt, routed, expired; #2930 rev 5: retried
+// and ambiguous from the expire duty). Each counts a distinct transition.
 type Counts struct {
-	Dealt   int
-	Routed  int
-	Expired int
+	Dealt     int
+	Routed    int
+	Expired   int
+	Retried   int // ended cards fed back once (ns_card_retry)
+	Ambiguous int // pending idem keys flipped past open_ms (ns_idem_ambiguous)
 }
 
 func (c *Counts) add(o Counts) {
 	c.Dealt += o.Dealt
 	c.Routed += o.Routed
 	c.Expired += o.Expired
+	c.Retried += o.Retried
+	c.Ambiguous += o.Ambiguous
 }
 
 // Duty is one reconciler duty (spec 5.2): deal (#2743), refill (#2935),
@@ -84,7 +89,8 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 	res.Err = strings.Join(errs, "; ")
 	sent := lp.Lease.now()
 	reply, err := lp.Lease.call(ctx, fnPass, lp.Lease.token, lp.Lease.ttl.Milliseconds(),
-		res.Took.Milliseconds(), res.Counts.Dealt, res.Counts.Routed, res.Counts.Expired, res.Err)
+		res.Took.Milliseconds(), res.Counts.Dealt, res.Counts.Routed, res.Counts.Expired, res.Err,
+		res.Counts.Retried, res.Counts.Ambiguous)
 	if err != nil {
 		return PassResult{}, err
 	}
