@@ -325,6 +325,11 @@ identically, no gap. Returns (values okp line)."
       (unless (equal *e10-f04-03-repository* (getf receipt :repository))
         (no (format nil "unauthorised repository ~S" (getf receipt :repository))))
       (unless calls (no "no reads recorded"))
+      ;; the repository is pinned in every call, not only in :repository.
+      (let* ((prefix (format nil "repos/~A/" *e10-f04-03-repository*))
+             (off (find-if-not (lambda (c) (eql 0 (search prefix (second c)))) calls)))
+        (when off (no (format nil "call outside the authorised repository ~A ~A"
+                              (first off) (second off)))))
       (let ((bad (find-if-not (lambda (c) (equal "GET" (first c))) calls)))
         (when bad (no (format nil "mutation call ~A ~A" (first bad) (second bad)))))
       (unless (eql 0 (getf receipt :mutations)) (no "mutation count is not zero"))
@@ -337,12 +342,12 @@ identically, no gap. Returns (values okp line)."
                    (%pilot-sha-p (getf imp :manifest-sha256)) (%pilot-sha-p msha))
         (no "the import is not a nova-work export"))
       (unless (equal msha (getf dest :repeat-member-sha256))
-        (no "repeat or resume differs from the first import"))
+        (no "repeat differs from the first import"))
       (unless (and (equal msha (getf resume :member-sha256))
                    (plusp (or (getf resume :kept) 0))
                    (%pilot-sha-p (getf resume :partial-member-sha256))
                    (not (equal msha (getf resume :partial-member-sha256))))
-        (no "repeat or resume differs from the first import"))
+        (no "resume differs from the first import"))
       (let ((line (getf ld :line)))
         (unless (and (stringp line) (eql 0 (search "LOAD OK" line))
                      (search (format nil "manifest=~A" (getf imp :manifest-sha256)) line))
@@ -418,7 +423,7 @@ work-set, each hashed here from the loaded bytes: receipt-shaped plists."
              (let ((r (copy-tree receipt))) (setf (getf r key) value) r))
            (dest-with (key value)
              (let ((d (copy-tree dest))) (setf (getf d key) value) d)))
-      (dolist (case (list (list (tampered :calls (cons '("POST" "repos/x/issues")
+      (dolist (case (list (list (tampered :calls (cons '("POST" "repos/mas-bandwidth/nova-pilot/issues")
                                                        (getf receipt :calls)))
                                 "mutation call POST")
                           (list (tampered :source-after (make-string 64 :initial-element #\0))
@@ -428,9 +433,15 @@ work-set, each hashed here from the loaded bytes: receipt-shaped plists."
                           (list (tampered :destination
                                           (dest-with :records (rest (getf dest :records))))
                                 "count mismatch")
+                          (list (tampered :calls (cons '("GET" "repos/mas-bandwidth/nova-tools/issues")
+                                                       (getf receipt :calls)))
+                                "call outside the authorised repository")
+                          (list (tampered :destination
+                                          (dest-with :repeat-member-sha256 (make-string 64 :initial-element #\0)))
+                                "repeat differs")
                           (list (tampered :destination
                                           (dest-with :resume (list :member-sha256 "0")))
-                                "repeat or resume differs")
+                                "resume differs")
                           (list (tampered :destination
                                           (dest-with :load (list :line "LOAD FAIL: changed digest"
                                                                  :reexport-sha256 (getf imp :member-sha256))))
@@ -447,3 +458,76 @@ work-set, each hashed here from the loaded bytes: receipt-shaped plists."
         (multiple-value-bind (okp line) (%pilot-receipt-verdict (first case))
           (ok (not okp) "a tampered receipt is refused: ~A" (second case))
           (ok (search (second case) line) "the refusal names ~A: ~A" (second case) line))))))
+
+;;; The runner is bound to the authorised sandbox: a PILOT_REPO naming any
+;;; other repository is refused before a single gh or git call. Fake gh, git
+;;; and sbcl first on PATH record every call they receive; the control proves
+;;; the refusal leaves that log empty and writes no receipt. The same fakes
+;;; show the gate is what empties the log (unset and the authorised value
+;;; reach the fake gh for nova-pilot), and that a failed read or a failed
+;;; engine run stops the pilot by name instead of being swallowed.
+
+(defun %pilot-runner-control (pilot-repo &key (gh-exit 0))
+  "Run E10-F04-03-run.sh with fake gh/git/sbcl that log their argv (gh
+answers [] and exits GH-EXIT, git answers nothing, sbcl exits 7);
+PILOT-REPO NIL leaves the variable unset. No network is reachable from the
+fakes. Answer (values exit-code stderr calls receipt-p)."
+  (let* ((dir (test-temp-dir "e10-f04-03-control"))
+         (bin (merge-pathnames "bin/" dir))
+         (log (namestring (merge-pathnames "calls.log" dir)))
+         (out (namestring (merge-pathnames "receipt.sexp" dir)))
+         (script (namestring (asdf:system-relative-pathname
+                              :nova-work/tests "tests/pilots/E10-F04-03-run.sh"))))
+    (ensure-directories-exist bin)
+    (loop for (tool body) in `(("gh" ,(format nil "echo '[]'; exit ~D" gh-exit))
+                               ("git" "exit 0")
+                               ("sbcl" "exit 7"))
+          for path = (namestring (merge-pathnames tool bin))
+          do (with-open-file (f path :direction :output :if-exists :supersede)
+               (format f "#!/bin/sh~%echo \"~A $*\" >> ~A~%~A~%"
+                       tool (uiop:escape-sh-token log) body))
+             (sb-posix:chmod path #o755))
+    (with-open-file (f log :direction :output :if-exists :supersede))
+    (let ((env (append (list (format nil "PATH=~A:~A" (namestring bin)
+                                     (or (sb-posix:getenv "PATH") "/usr/bin:/bin"))
+                             (format nil "HOME=~A" (namestring dir)))
+                       (when pilot-repo (list (format nil "PILOT_REPO=~A" pilot-repo))))))
+      (multiple-value-bind (stdout stderr code)
+          (uiop:run-program (append (list "/usr/bin/env" "-i") env
+                                    (list "bash" script
+                                          (namestring (merge-pathnames "root/" dir)) out))
+                            :output :string :error-output :string :ignore-error-status t)
+        (declare (ignore stdout))
+        (values code stderr
+                (with-open-file (in log) (loop for l = (read-line in nil) while l collect l))
+                (probe-file out))))))
+
+(deftest "TestE10F04PilotRunnerRefusesForeignRepo" "docs/SPEC-WORK.md:7228-7229"
+    "expected=foreign-PILOT_REPO-refused-before-any-gh-or-git-call;authorised-repo-reaches-gh;read-and-engine-failures-stop-the-pilot"
+  (dolist (foreign '("mas-bandwidth/nova-tools" "someone/private" ""))
+    (multiple-value-bind (code stderr calls receipt) (%pilot-runner-control foreign)
+      (ok (eql 2 code) "PILOT_REPO=~S exits 2 (got ~A)" foreign code)
+      (ok (search "PILOT REFUSED" stderr) "PILOT_REPO=~S is refused by name: ~A" foreign stderr)
+      (ok (null calls) "PILOT_REPO=~S makes zero gh/git calls: ~S" foreign calls)
+      (ok (not receipt) "PILOT_REPO=~S writes no receipt" foreign)))
+  (let ((want (format nil "gh api --method GET repos/~A/" *e10-f04-03-repository*)))
+    ;; the controls: unset and the authorised value pass the gate, read the
+    ;; authorised repository only, and the failing fake engine stops the run.
+    (dolist (authorised (list nil *e10-f04-03-repository*))
+      (multiple-value-bind (code stderr calls receipt) (%pilot-runner-control authorised)
+        (ok (not (search "PILOT REFUSED" stderr)) "PILOT_REPO=~S passes the gate: ~A" authorised stderr)
+        (ok (and calls (eql 0 (search want (first calls))))
+            "PILOT_REPO=~S reaches gh for the authorised repository: ~S" authorised calls)
+        (ok (every (lambda (c) (or (search "nova-pilot" c) (eql 0 (search "sbcl " c)))) calls)
+            "every gh/git call names the authorised repository: ~S" calls)
+        (ok (eql 1 code) "the failed engine run exits 1 (got ~A)" code)
+        (ok (search "PILOT FAIL: engine import exited 7" stderr)
+            "an engine failure is named, not swallowed: ~A" stderr)
+        (ok (not receipt) "a stopped run writes no receipt")))
+    ;; a failed GitHub read stops the capture before git or the engine run.
+    (multiple-value-bind (code stderr calls receipt) (%pilot-runner-control nil :gh-exit 4)
+      (ok (eql 1 code) "a failed gh read exits 1 (got ~A)" code)
+      (ok (search "PILOT FAIL: gh GET" stderr) "a failed read is named: ~A" stderr)
+      (ok (and (= 1 (length calls)) (eql 0 (search want (first calls))))
+          "the pilot stops at the failed read: ~S" calls)
+      (ok (not receipt) "a failed read writes no receipt"))))

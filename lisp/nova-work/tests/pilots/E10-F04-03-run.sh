@@ -19,9 +19,19 @@
 # `read-loaded-snapshot`, hashes every loaded record itself and re-exports;
 # this script compares that inventory to the capture.
 #
+# The repository is BOUND, not configurable: the authorisation names one
+# sandbox, so a PILOT_REPO naming any other repository is refused here, before
+# any gh or git call is made (the receipt check runs only after the capture,
+# too late to keep a foreign repository from being read).
+#
 # usage: E10-F04-03-run.sh <import-root-dir> <receipt-out.sexp> [<retain-export-dir>]
 set -euo pipefail
-REPO=${PILOT_REPO:-mas-bandwidth/nova-pilot}
+AUTHORISED=mas-bandwidth/nova-pilot
+if [ -n "${PILOT_REPO+set}" ] && [ "$PILOT_REPO" != "$AUTHORISED" ]; then
+  echo "PILOT REFUSED: PILOT_REPO=$PILOT_REPO is not the authorised $AUTHORISED; no call made" >&2
+  exit 2
+fi
+REPO=$AUTHORISED
 ROOT=$1; OUT=$2; RETAIN=${3:-}
 HERE=$(cd "$(dirname "$0")" && pwd); NW=$(cd "$HERE/../.." && pwd)
 SBCL=$(command -v sbcl)
@@ -30,7 +40,12 @@ mkdir -p "$ROOT"
 WORK=$(mktemp -d "$ROOT/pilot.XXXXXX")
 CALLS=$WORK/calls; : > "$CALLS"
 
-ghget() { printf 'GET %s\n' "$1" >> "$CALLS"; gh api --method GET "$1"; }
+# A failed read stops the pilot (a command substitution clears set -e, so the
+# exit is explicit): a capture is never recorded from a partial answer.
+ghget() {
+  printf 'GET %s\n' "$1" >> "$CALLS"
+  gh api --method GET "$1" || { echo "PILOT FAIL: gh GET $1 exited $?" >&2; exit 1; }
+}
 sha() { shasum -a 256 | cut -c1-64; }
 
 # capture <dir>: the source's issues, comments and refs as one record per file
@@ -39,7 +54,9 @@ capture() {
   local d=$1; mkdir -p "$d/records"
   ghget "repos/$REPO/issues?state=all&per_page=100" > "$d/issues.json"
   ghget "repos/$REPO/issues/comments?per_page=100" > "$d/comments.json"
-  git ls-remote "https://github.com/$REPO.git" | sort > "$d/refs"
+  git ls-remote "https://github.com/$REPO.git" > "$d/refs.raw" \
+    || { echo "PILOT FAIL: git ls-remote $REPO exited $?" >&2; exit 1; }
+  sort "$d/refs.raw" > "$d/refs"
   jq -r '.[] | select(.pull_request|not) | .number' "$d/issues.json" | sort -n | while read -r n; do
     jq -j --argjson n "$n" '.[]|select(.number==$n)|"\(.title)\n\(.body // "")\n"' "$d/issues.json" > "$d/records/issue-$n"
     printf 'issue-%s\tissues\t%s#%s\t%s\n' "$n" "$REPO" "$n" "$(sha < "$d/records/issue-$n")"
@@ -52,8 +69,11 @@ capture() {
 }
 
 # engine <verb> <args...>: one nova-work engine run, a new SBCL process with an
-# empty environment (only PATH and HOME, for the fasl cache).
+# empty environment (only PATH and HOME, for the fasl cache). A failed run
+# stops the pilot with the engine's exit code and output: it is never
+# swallowed into a short count.
 engine() {
+  local rc=0
   env -i PATH="$(dirname "$SBCL"):/usr/bin:/bin" HOME="$HOME" "$SBCL" --noinform \
     --non-interactive --no-userinit --no-sysinit \
     --eval '(require :asdf)' \
@@ -61,8 +81,12 @@ engine() {
     --eval "(handler-bind ((warning #'muffle-warning)) (asdf:load-system :nova-work))" \
     --load "$HERE/E10-F04-03-engine.lisp" \
     --eval '(nova-work-pilot:main (rest (member "--args" sb-ext:*posix-argv* :test (function string=))))' \
-    --end-toplevel-options --args "$@" > "$WORK/engine.out" 2>&1 || true
+    --end-toplevel-options --args "$@" > "$WORK/engine.out" 2>&1 || rc=$?
   cat "$WORK/engine.out" >> "$WORK/engine.log"
+  if [ "$rc" -ne 0 ]; then
+    { echo "PILOT FAIL: engine $1 exited $rc; see $WORK/engine.log"; tail -20 "$WORK/engine.out"; } >&2
+    exit 1
+  fi
   grep -E '^(IMPORT|LOAD|REC|REEXPORT)' "$WORK/engine.out" || true
 }
 field() { sed -n "s/.* $1=\([^ ]*\).*/\1/p"; }
