@@ -22,6 +22,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // slotLine is one row of `nova-swarm slots list`, exactly as internal/swarm writes it.
@@ -201,17 +203,13 @@ func TestTheProbeAnswerIsBounded(t *testing.T) {
 // used to become a measured zero.
 func breakTheLoadReaders(t *testing.T) {
 	t.Helper()
-	bin := fakeBins(t)
-	raw, err := os.ReadFile(filepath.Join(bin, "nova-swarm"+exeSuffix()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	fake := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
 	broken := filepath.Join(t.TempDir(), "broken-readers")
 	if err := os.MkdirAll(broken, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"cut", "sysctl"} {
-		if err := os.WriteFile(filepath.Join(broken, name+exeSuffix()), raw, 0o755); err != nil {
+		if err := testbin.Place(fake, filepath.Join(broken, name+exeSuffix())); err != nil {
 			t.Fatal(err)
 		}
 	}
