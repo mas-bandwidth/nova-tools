@@ -10,8 +10,9 @@ do
 
 -- From ci.lua through NS (loader.go: each file is its own do-block).
 local ci_sha256_hex, gate_receipt_write = NS.ci.sha256_hex, NS.ci.gate_receipt_write
--- From capacity.lua through NS.
-local cap_budget_take, cap_budget_give = NS.capacity.budget_take, NS.capacity.budget_give
+-- cap_budget_take and cap_budget_give are capacity.lua's (it sorts before
+-- this file), handed over through NS.capacity.
+local cap_budget_take, cap_budget_give = NS.capacity.cap_budget_take, NS.capacity.cap_budget_give
 
 local function land_now_ms()
   local t = redis.call('TIME')

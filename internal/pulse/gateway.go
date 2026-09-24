@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // A gateway death is an attempt that ended with no model turn (issue #2634): the
@@ -41,16 +42,12 @@ func resultVerdict(jobDir string) string {
 	if err != nil {
 		return ""
 	}
-	lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
-	if len(lines) <= 1 {
-		return ""
-	}
-	switch line2 := strings.TrimSpace(lines[1]); {
-	case strings.HasPrefix(line2, "ABSTAIN"):
+	switch typedrec.Status(raw) {
+	case typedrec.StatusAbstain:
 		return "abstain"
-	case strings.HasPrefix(line2, "BLOCKED"):
+	case typedrec.StatusBlocked:
 		return "blocked"
-	case strings.HasPrefix(line2, "DONE"):
+	case typedrec.StatusDone:
 		return "done"
 	}
 	return ""
