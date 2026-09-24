@@ -32,7 +32,14 @@ local function task_push(keys, args)
   local to, front = args[10], args[11] == '1'
   local priority, payload_sha = tonumber(args[12]), args[13]
   local actor, idem = args[14], args[15]
+  local est = args[16] or ''
   local key = 's:' .. S .. ':task:' .. id
+
+  if est ~= '' then
+    if not string.match(est, '^[1-9]%d*$') or #est > 5 or tonumber(est) > 10080 then
+      return { 'INVALID' }
+    end
+  end
 
   local existing = redis.call('HGET', key, 'payload_sha')
   if existing then
@@ -64,13 +71,18 @@ local function task_push(keys, args)
     end
   end
 
+  if front and priority == 0 then
+    priority = 1
+  end
+
   local at = now_ms()
   redis.call('HSET', key,
     'kind', kind, 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
     'title', title, 'effects', effects, 'owner', '', 'priority', tostring(priority),
     'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
     'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
-    'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
+    'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
+    'est', est, 'pushed_at', tostring(at))
   local score = priority
   if front then
     score = -priority
