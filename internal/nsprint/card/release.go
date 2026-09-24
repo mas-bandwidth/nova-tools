@@ -90,9 +90,9 @@ func releasableCards(ctx context.Context, client *redis.Client, sprint string, r
 			case dependencyCard:
 				localKeys[dep.Typed()] = keyCard(sprint, dep.Value)
 			case dependencyTask:
-				localKeys[dep.Typed()] = "s:" + sprint + ":task:" + dep.Value
+				localKeys[dep.Typed()] = keyTask(sprint, dep.Value)
 			case dependencyStream:
-				localKeys[dep.Typed()] = "s:" + sprint + ":stream:" + dep.Value
+				localKeys[dep.Typed()] = keyStream(sprint, dep.Value)
 			}
 		}
 	}

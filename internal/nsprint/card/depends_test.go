@@ -55,6 +55,9 @@ func TestCardPushAcceptsEveryDependsOnForm(t *testing.T) {
 	parent := validCard(repo)
 	parent.label = "dep-parent"
 	mustPush(t, ctx, client, parent.render(), "pool")
+	// Task and stream records must exist at push; open ones park the card.
+	client.HSet(ctx, "s:"+sprint+":stream:nova-pulse", "state", "open")
+	client.HSet(ctx, "s:"+sprint+":task:build-index", "state", "open")
 
 	cases := []struct {
 		label string
@@ -120,6 +123,7 @@ func TestCardReleaseFreesOnDoneTask(t *testing.T) {
 	ctx := context.Background()
 	client := newRedis(t)
 	srv := repoServer(t)
+	client.HSet(ctx, "s:"+sprint+":task:build-index", "state", "open")
 	f := validCard(srv.URL + "/acme/public.git")
 	f.label, f.depends = "wait-task", "task:build-index"
 	mustPush(t, ctx, client, f.render(), "waiting")
@@ -127,7 +131,7 @@ func TestCardReleaseFreesOnDoneTask(t *testing.T) {
 	refs := newDependsRefs()
 	res := card.ReleaseWith(ctx, client, sprint, refs)
 	if res.Code != 0 || !strings.Contains(res.Stdout, "moved=0 waiting=1") {
-		t.Fatalf("missing task release: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
+		t.Fatalf("open task release: exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
 	}
 	client.HSet(ctx, "s:"+sprint+":task:build-index", "state", "closed")
 	res = card.ReleaseWith(ctx, client, sprint, refs)
@@ -142,6 +146,7 @@ func TestCardReleaseFreesOnClosedIssueLandedStreamAndDoneCard(t *testing.T) {
 	client := newRedis(t)
 	srv := repoServer(t)
 	repo := srv.URL + "/acme/public.git"
+	client.HSet(ctx, "s:"+sprint+":stream:nova-pulse", "state", "open")
 
 	for _, tc := range []struct {
 		label string
@@ -185,4 +190,32 @@ func TestCardPushRefusesUnknownCardId(t *testing.T) {
 		t.Fatalf("exit %d stdout %q stderr %q", res.Code, res.Stdout, res.Stderr)
 	}
 	assertAbsent(t, ctx, client, f.label)
+}
+
+// A task or stream dependency whose record does not exist in the sprint is
+// refused at push, naming the record: nothing may park in waiting on a record
+// that nothing will ever write (#3503 bullet 2).
+func TestCardPushRefusesUnknownTaskAndStream(t *testing.T) {
+	ctx := context.Background()
+	client := newRedis(t)
+	srv := repoServer(t)
+	repo := srv.URL + "/acme/public.git"
+	for _, tc := range []struct {
+		label, dep, want string
+	}{
+		{label: "unknown-task-child", dep: "task:missing-task",
+			want: "DEPENDS-ON: task:missing-task has no record s:" + sprint + ":task:missing-task in sprint " + sprint},
+		{label: "unknown-stream-child", dep: "stream/missing-stream",
+			want: "DEPENDS-ON: stream/missing-stream has no record s:" + sprint + ":stream:missing-stream in sprint " + sprint},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			f := validCard(repo)
+			f.label, f.depends = tc.label, tc.dep
+			res := card.Push(ctx, client, sprint, f.render())
+			if res.Code != 2 || res.Stdout != "" || !strings.Contains(res.Stderr, tc.want) {
+				t.Fatalf("exit %d stdout %q stderr %q, want refusal %q", res.Code, res.Stdout, res.Stderr, tc.want)
+			}
+			assertAbsent(t, ctx, client, f.label)
+		})
+	}
 }

@@ -10,15 +10,19 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func keyCard(sprint, label string) string { return "s:" + sprint + ":card:" + label }
-func keyPool(sprint string) string        { return "s:" + sprint + ":pool" }
-func keyWaiting(sprint string) string     { return "s:" + sprint + ":waiting" }
-func keyLog(sprint string) string         { return "s:" + sprint + ":log" }
-func keyIdx(sprint, state string) string  { return "s:" + sprint + ":idx:card:" + state }
+func keyCard(sprint, label string) string  { return "s:" + sprint + ":card:" + label }
+func keyPool(sprint string) string         { return "s:" + sprint + ":pool" }
+func keyWaiting(sprint string) string      { return "s:" + sprint + ":waiting" }
+func keyLog(sprint string) string          { return "s:" + sprint + ":log" }
+func keyIdx(sprint, state string) string   { return "s:" + sprint + ":idx:card:" + state }
+func keyTask(sprint, id string) string     { return "s:" + sprint + ":task:" + id }
+func keyStream(sprint, slug string) string { return "s:" + sprint + ":stream:" + slug }
 
 // Push lints the card, then writes it into the pool or the waiting set.
 // Exit 2: a missing required line, a private repository, or Redis did not
-// accept the write. A dependency that is not landed goes to waiting, not the pool.
+// accept the write. A card, task or stream dependency with no record in the
+// sprint is refused, naming the record. A dependency that is not landed goes to
+// waiting, not the pool.
 func Push(ctx context.Context, client *redis.Client, sprint string, body []byte) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
@@ -70,9 +74,9 @@ func dependenciesReadyAtPush(ctx context.Context, client *redis.Client, sprint s
 		case dependencyCard:
 			reads[i] = pipe.HGetAll(ctx, keyCard(sprint, dep.Value))
 		case dependencyTask:
-			reads[i] = pipe.HGetAll(ctx, "s:"+sprint+":task:"+dep.Value)
+			reads[i] = pipe.HGetAll(ctx, keyTask(sprint, dep.Value))
 		case dependencyStream:
-			reads[i] = pipe.HGetAll(ctx, "s:"+sprint+":stream:"+dep.Value)
+			reads[i] = pipe.HGetAll(ctx, keyStream(sprint, dep.Value))
 		case dependencyGitHub:
 			ready = false // the forge is read once by release, never once per push
 		}
@@ -85,14 +89,28 @@ func dependenciesReadyAtPush(ctx context.Context, client *redis.Client, sprint s
 			continue
 		}
 		fields := reads[i].Val()
-		if dep.Kind == dependencyCard && len(fields) == 0 {
-			return false, fmt.Errorf("DEPENDS-ON: %s is not a card in sprint %s", dep.Value, sprint)
+		if len(fields) == 0 {
+			return false, missingDependency(sprint, dep)
 		}
 		if !localDependencyReady(dep.Kind, fields) {
 			ready = false
 		}
 	}
 	return ready, nil
+}
+
+// missingDependency is the push refusal for a local dependency whose record
+// does not exist. A card parked on a record nothing will ever write waits for
+// ever, so every local kind (card, task, stream) must name an existing record
+// at push time; the refusal names the record the push looked for.
+func missingDependency(sprint string, dep dependency) error {
+	switch dep.Kind {
+	case dependencyTask:
+		return fmt.Errorf("DEPENDS-ON: task:%s has no record %s in sprint %s", dep.Value, keyTask(sprint, dep.Value), sprint)
+	case dependencyStream:
+		return fmt.Errorf("DEPENDS-ON: stream/%s has no record %s in sprint %s", dep.Value, keyStream(sprint, dep.Value), sprint)
+	}
+	return fmt.Errorf("DEPENDS-ON: %s is not a card in sprint %s", dep.Value, sprint)
 }
 
 func localDependencyReady(kind dependencyKind, fields map[string]string) bool {
