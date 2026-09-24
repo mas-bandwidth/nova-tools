@@ -6,7 +6,8 @@ package main
 //	nova-sprint route --redis <addr> --sprint <S> [--actor <name>]
 //
 // Rules wired: ok-to-friend (#2933), report-to-read (#3036) and pr-to-read
-// (#2941). Not wired yet, each one line here when its handler lands: the
+// (#2941 heads and reads, joined with #3040 runner rows and no-card PR
+// adoption from ev:github). Not wired yet, each one line here when its handler lands: the
 // 3.3 classification (#3076, consume.Classifier is already a consume.Handler)
 // and hold-to-fix (#3092, consume.HoldToFix).
 //
@@ -68,7 +69,11 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	host, _ := os.Hostname()
 	ok := &consume.OkFriend{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	report := &consume.Report{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
-	pr := &consume.PRRead{Store: st, Sprint: *sprint, Consumer: instance, Instance: instance, Actor: *actor, Remote: consumePRReadRemote}
+	read := &consume.PRRead{Store: st, Sprint: *sprint, Consumer: instance, Instance: instance, Actor: *actor, Remote: consumePRReadRemote}
+	// The ci cut is nil here as it is for ok-to-friend: the ci verb (#2842)
+	// is not wired into route yet, so an adoption prints cut=0.
+	runner := &consume.PRToReadRule{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor, Out: out}
+	pr := consume.JoinPRToRead(read, runner)
 	router := &consume.Router{
 		Store: st, Sprint: *sprint, Instance: instance, Host: host,
 		Rules: consume.Rules(ok, report, nil, pr, nil),

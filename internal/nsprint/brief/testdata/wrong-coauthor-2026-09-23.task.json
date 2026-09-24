@@ -1,0 +1,11 @@
+{
+  "note": "The brief beside this file is ops/briefs/child-build.md from the coordinator's self repo as it stood on 2026-09-23 (hand-edited, rules appended by hand): every build child that day ran on Opus 5.5, and the brief told it to sign commits Co-Authored-By: Claude Fable 5.1. The hash below is that day's build task shape (build-3154-r6-a) with the MODEL the child actually ran; it was never rendered, so it carries no brief_* fields.",
+  "sprint": "fixture-2026-09-23",
+  "id": "build-3154-r6-a-brief-render-lint",
+  "hash": {
+    "kind": "build",
+    "state": "working",
+    "owner": "rowan",
+    "title": "mas-bandwidth/nova-tools#3154 WHO: any | nova-tools#3154 rev 6 build a: nova-sprint brief render and brief lint | DONE-WHEN: on a bench with redis-server on PATH `go test -v ./internal/nsprint/brief/... -run 'TestBriefLintRefusesCoauthorModelMismatch|TestBriefLintRefusesWrongCoauthorFixture20260923'` exits 0 | PATHS: internal/nsprint/brief/ internal/nsprint/fn/lua/task_brief.lua internal/nsprint/task/brief.go cmd/nova-sprint/brief.go | BASE: dev base-sha: b5df1c3bff37 | DEPENDS-ON: none | MODEL: opus-5.5 | STREAM: nova-sprint + merge + bus | est: 100 working"
+  }
+}
