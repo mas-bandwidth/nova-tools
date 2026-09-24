@@ -83,8 +83,15 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 //
 // NOTHING IS NORMALISED HERE, and that is a property of this transcript rather
 // than a shortcut: nova-ci reads a fixture on disk and prints what it counted,
-// so every digit on both lines reproduces. onboarding.Execute is told so by
-// being handed no Norm, and it says as much under any line that disagrees.
+// so every digit on both lines reproduces. onboarding.CompareTranscript is told
+// so by being handed no field of the onboarding.Volatile table, and it says as
+// much under any line that disagrees.
+//
+// The comparison is onboarding.CompareTranscript and nothing else, which is what
+// TestEveryTranscriptIsExecutedLineForLine (internal/ci) asserts of every tool:
+// RUNNING the steps is this package's business, because only this package knows
+// how to call its own entry point, and COMPARING them is the one shared
+// comparator's, so that a green here is worth what a green is worth everywhere.
 //
 // The transcript's paths (`cmd/nova-ci/testdata/example-events.jsonl`) are
 // written from the root of the checkout, which is where a reader typing them
@@ -113,7 +120,19 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if len(steps) != 2 {
 		t.Errorf("the `### First run` block runs %d commands, want 2: one budget the fixture exceeds and one it does not", len(steps))
 	}
-	for _, p := range onboarding.Execute(steps, runDocumented(t)) {
+	// The sitting: every documented command, in order, in one temp-free run.
+	// A command that could not be invoked at all stops the sitting, because
+	// every line after it would be compared against a state that never happened.
+	run := runDocumented(t)
+	got := make([]onboarding.Result, 0, len(steps))
+	for _, s := range steps {
+		res, err := run(s)
+		if err != nil {
+			t.Fatalf("the documented command\n  %s\ncould not be run: %v", s.Line, err)
+		}
+		got = append(got, res)
+	}
+	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
 		t.Error(p)
 	}
 }

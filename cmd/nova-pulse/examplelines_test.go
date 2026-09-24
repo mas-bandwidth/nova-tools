@@ -115,6 +115,8 @@ var leftOwedExampleLines = map[string]string{
 	"nova-pulse hygiene --lane-dirs \"$HOME/rowan-working/tmp\" --older-than 2d --dry-run": "the lane sweep walks the real $HOME/rowan-working/tmp, which the test's HOME does not hold; no fixture stands behind a stranger's working directory",
 	// why: survey runs tools/bench-standard.sh over ssh on every bench in
 	// ./fleet.tsv; the file does not exist and no test may reach a machine.
+	"nova-pulse index --repo ./nova-tools --out ./index/nova-tools": "index reads a git clone at the landed tip and testdata cannot hold a .git; TestCutOnAnIssueNamingASpecIDPrintsParagraphAndGuardingTest runs this line and the cut below against a fixture repo it commits",
+	"nova-pulse cut --kind fix --repo mas-bandwidth/nova-tools --issue 2498 --title \"...\" --body-file issue.md --index ./index/nova-tools --out ./queue/pending --queue ./queue": "it reads the index the line above builds from a git clone; TestCutOnAnIssueNamingASpecIDPrintsParagraphAndGuardingTest runs it against a fixture repo",
 	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
 }
 

@@ -18,6 +18,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `civerdict/` | reader of a commit's CI verdict record | `go test ./internal/civerdict` | `go test ./internal/civerdict` |
 | `control/` | fleet control desired state, lock, and acks | `go test ./internal/control` | `go test ./internal/control` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
+| `ctxindex/` | per-repo spec, test and symbol index for cards | `go test ./internal/ctxindex` | `go test ./internal/ctxindex` |
 | `deal/` | the dealer's rule for every work consumer | `go test ./internal/deal` | `go test ./internal/deal` |
 | `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
 | `dispatch/` | command dispatch and runner interface | `go test ./internal/dispatch` | `go test ./internal/dispatch` |
