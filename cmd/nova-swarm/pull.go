@@ -253,6 +253,14 @@ func pullRedis(addr, kind, bench string, lanes []string, wait time.Duration, std
 	}
 	defer q.Close()
 	ctx := context.Background()
+	lease, held, err := q.TakeLease(ctx, kind, bench, redisq.ConsumerLease)
+	if err != nil {
+		return refuse(stderr, " pull", oneline.Err(err))
+	}
+	if !held {
+		return refuse(stderr, " pull", "the worker lease is already held; wait for its holder or lease expiry")
+	}
+	defer q.ReleaseLease(ctx, lease) // the token check makes a stale worker's release a no-op
 	for _, ln := range lanes {
 		name := "nova:queue:" + kind + ":" + ln
 		if err := q.EnsureGroup(ctx, name); err != nil {
@@ -273,9 +281,10 @@ func pullRedis(addr, kind, bench string, lanes []string, wait time.Duration, std
 		}
 		fmt.Fprintf(stdout, "PULL stream=%s bench=%s card=%s\n",
 			oneline.Field(name), oneline.Field(bench), oneline.Field(card.ID))
-		// The clip: the card has landed, so the one thing safe to forget is forgotten.
-		if err := q.Ack(ctx, name, card.ID); err != nil {
+		if ok, err := q.FencedAck(ctx, lease, name, card.ID); err != nil {
 			return refuse(stderr, " pull", oneline.Err(err))
+		} else if !ok {
+			return refuse(stderr, " pull", "the worker lease lapsed before acknowledgement")
 		}
 		return 0
 	}
