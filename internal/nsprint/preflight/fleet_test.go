@@ -396,6 +396,28 @@ func TestPreflightFleetChecksInOrder(t *testing.T) {
 	t.Run("7.14 REST budget unknown", func(t *testing.T) {
 		red(t, func(in *FleetInput) { in.REST.Known = false }, "7.14", "MISSING")
 	})
+	t.Run("7.14 zero REST calls green", func(t *testing.T) {
+		in := green
+		in.REST.CallsPerPass = 0
+		found := false
+		for _, l := range FleetChecks(ctx, in) {
+			if l.Check == "7.14" {
+				found = true
+				if l.Red {
+					t.Fatalf("7.14 red: %s", l)
+				}
+				if !strings.Contains(l.What, "0 REST calls per pass") {
+					t.Fatalf("7.14 want text containing '0 REST calls per pass', got %s", l.What)
+				}
+			}
+		}
+		if !found {
+			t.Fatal("7.14 not found")
+		}
+	})
+	t.Run("7.14 negative calls MISSING", func(t *testing.T) {
+		red(t, func(in *FleetInput) { in.REST.CallsPerPass = -1 }, "7.14", "MISSING")
+	})
 	t.Run("7.17 orphan past grace", func(t *testing.T) {
 		red(t, func(in *FleetInput) { in.Orphans = []OrphanCard{{ID: "c1", Age: 10 * time.Minute}} }, "7.17", "c1 orphan-effect 600s with no unresolved item")
 	})
