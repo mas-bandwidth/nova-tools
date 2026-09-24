@@ -1,0 +1,8 @@
+#nova-sprint-plan v1
+# control 3 transfer: ta 4->20 first, then tb 20->4, on mt (ceiling 32)
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+bench	ta	mt	20
+bench	tb	mt	4
