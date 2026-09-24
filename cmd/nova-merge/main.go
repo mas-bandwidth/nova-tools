@@ -61,7 +61,7 @@ usage:
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
   nova-merge simulate   --repo <path> --base <branch> [--entries <file> | --prs <list>] [--checks "<a>,<b>"] [--timeout <duration>]
-  nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
+  nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>] [--dry-run|--yes]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
   nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
@@ -154,7 +154,7 @@ simulate is the exception to the exit codes below: it exits 2 when it FINDS a po
 entry -- the one that is green alone and red on top of the entries ahead of it -- and 1
 when it could not run at all, because a tool that could not run is not a red queue.
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a merge that
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a red wait, a merge that
 could not be landed, a merge that RACED, a publication the remote refused, an entry
 STOPPED, a pass that ended with at least one BLOCKED entry, an init of a lane that
 exists; 2 could not run: missing flag, unreadable lane state, a directory that is

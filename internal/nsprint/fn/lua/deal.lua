@@ -60,6 +60,13 @@ local function deal_runs(legs, leg)
   return false
 end
 
+local function deal_names(list, name)
+  for item in string.gmatch(list or '', '%S+') do
+    if item == name then return true end
+  end
+  return false
+end
+
 -- Backpressure for one sprint, read once per call (#2756 5.3): ON flows only
 -- the priority tier; a missing hash applies the declared policy.
 local function deal_backpressure(S)
@@ -100,8 +107,14 @@ local function card_deal(keys, args)
   if redis.call('EXISTS', 'bench:' .. bench .. ':reset') == 1 then
     return { 'NONE', 'resetting' }
   end
-  if redis.call('EXISTS', 'bench:' .. bench .. ':beat') == 0 then
-    return { 'NONE', 'down' }
+  local bstate = redis.call('HGET', 'bench:' .. bench .. ':state', 'state')
+  if not bstate or bstate == '' then
+    bstate = 'down'
+  else
+    bstate = string.lower(bstate)
+  end
+  if bstate ~= 'up' then
+    return { 'NONE', bstate }
   end
   local desired = redis.call('HMGET', 'bench:' .. bench .. ':desired', 'slots', 'paused', 'legs')
   if desired[2] == '1' or desired[2] == 'true' then
@@ -127,7 +140,7 @@ local function card_deal(keys, args)
       bp[S] = deal_backpressure(S)
     end
     local ck = 's:' .. S .. ':card:' .. label
-    local c = redis.call('HMGET', ck, 'state', 'attempt', 'bench', 'leg', 'tier', 'base_sha')
+    local c = redis.call('HMGET', ck, 'state', 'attempt', 'bench', 'leg', 'tier', 'base_sha', 'avoid')
     local score = redis.call('ZSCORE', 's:' .. S .. ':pool', label)
     local pin = c[3] or ''
     if open[S] and c[1] == 'queued' and score and attempt and
@@ -135,7 +148,7 @@ local function card_deal(keys, args)
         string.sub(ctoken, 1, #tostring(attempt) + 1) == tostring(attempt) .. '.' and
         string.match(ctoken, '^%d+%.[0-9a-f]+$') and #ctoken == #tostring(attempt) + 33 and
         string.match(csha, '^[0-9a-f]+$') and #csha == 12 and
-        (pin == '' or pin == bench) and deal_runs(desired[3], c[4]) and
+		(pin == '' or pin == bench) and not deal_names(c[7], bench) and deal_runs(desired[3], c[4]) and
         (not bp[S] or c[5] == 'priority') then
       local identity = S .. '/' .. label .. '/' .. string.sub(c[6] or '', 1, 8) .. '/' .. bench .. '/' .. attempt
       redis.call('HSET', ck, 'state', 'dealt', 'attempt', tostring(attempt),
