@@ -122,4 +122,5 @@
                 (:file "tests/replays-e02-clip")
                 (:file "tests/replays-undo-roadmap")
                 (:file "tests/replays-undo-roadmap-rows")
-                (:file "tests/replays-785-dep")))
+                (:file "tests/replays-785-dep")
+                (:file "tests/integrity")))
