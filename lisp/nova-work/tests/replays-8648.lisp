@@ -501,10 +501,7 @@ tip is still EXPECTED: the compare-and-swap an owner uses."
   "Orchestrate one process-level lifecycle against a temporary Git remote on
 disk and real child processes. Answers a report plist of outcomes read back
 from the remote, the fake provider and the ownership claims."
-  (let* ((root (uiop:ensure-directory-pathname
-                (merge-pathnames (format nil "nova-work-e10f04-~D-~D/"
-                                         (get-universal-time) (random 1000000))
-                                 (uiop:temporary-directory))))
+  (let* ((root (test-temp-dir "nova-work-e10f04"))
          (remote (merge-pathnames "remote.git/" root))
          (seed-clone (merge-pathnames "seed/" root))
          (emma (merge-pathnames "emma/" root))
