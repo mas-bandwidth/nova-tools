@@ -755,6 +755,14 @@ jobs:
         # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
         # exactly as the inline command here did.
         # GOTEST_TIMEOUT: run 35999520176's studio-nova-13 shard failed only on Go's default 10m (cmd/nova-bus 600.3 s, cmd/nova-merge 600.5 s, 9,916 passes, 0 failing tests), so studio legs get 18m under the 20-minute push cap and 11m under the 12-minute PR/merge-group cap; space keeps Go's default 10m. internal/ci: TestShardGoTestTimeoutFitsTheJobCap.
+        # NOVA_CI_PR_STUDIO (2026-09-24, #3497 run 36010839171 and #3547 run 36014606764): a PR's Studio leg sets it,
+        # and cmd/nova-merge's git-lab tests skip there (cmd/nova-merge/helpers_test.go, skipLabOnPRStudioLeg). The
+        # package has no darwin-specific file; it rode onto the Studio as an importer of internal/bus, and its 240
+        # parallel lab tests ran 660 s at GOMAXPROCS=4 (Go's 11m timeout) and 12 min (the cap) on a loaded Studio.
+        # They run in full on the same PR's Linux leg, on every push to dev (8 Studio shards) and in the merge group.
+        # Not a global -short: that would also skip internal/bus's multi-process tests, the darwin evidence this leg is for.
+        env:
+          NOVA_CI_PR_STUDIO: ${{ matrix.entry.group == 'macOS' && github.event_name == 'pull_request' && '1' || '' }}
         run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && '18m' || matrix.entry.group == 'macOS' && '11m' || '10m' }}"
 
   test-race-queue:
