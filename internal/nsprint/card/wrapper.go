@@ -104,6 +104,9 @@ type WrapperConfig struct {
 	ResultsRoot string // results live at <ResultsRoot>/<identity>
 	Clock       time.Duration
 	BeatEvery   time.Duration // zero means DefaultBeatEvery
+	// LaunchDeadline is the launcher's absolute batch deadline. A wrapper
+	// reached at or after it must not claim or launch the attempt.
+	LaunchDeadline time.Time
 	// Started is called after Redis accepts the launched transition and
 	// before the job directory or harness is created.
 	Started func()
@@ -200,6 +203,12 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if every <= 0 {
 		every = DefaultBeatEvery
 	}
+	expired := func() bool {
+		return !cfg.LaunchDeadline.IsZero() && !now().Before(cfg.LaunchDeadline)
+	}
+	if expired() {
+		return refuse(WrapperExitCouldNot, "launch deadline exceeded")
+	}
 
 	// 1. Refuse a card that is not ours before anything is written.
 	c, err := ledger.Card(ctx)
@@ -220,6 +229,9 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if err != nil || id.Sprint != cfg.Sprint || id.Label != cfg.Label || id.Bench != cfg.Bench || id.Attempt != cfg.Attempt {
 		return refuse(WrapperExitNotDealt, "card identity "+strconv.Quote(c.Identity)+" is not this attempt")
 	}
+	if expired() {
+		return refuse(WrapperExitCouldNot, "launch deadline exceeded")
+	}
 
 	// 2. The claim and launched in Redis, then the job directory. Redis is the
 	// only claim (#3328): with two wrappers racing for the same dealt attempt,
@@ -236,6 +248,9 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	if code, err := ledger.Claim(ctx, nonce); err != nil || code != 0 {
 		return refuse(ledgerCode(code, err), fmt.Sprintf("card claim refused code=%d%s", code, errSuffix(err)))
+	}
+	if expired() {
+		return refuse(WrapperExitCouldNot, "launch deadline exceeded")
 	}
 	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job)
 	if err != nil || code != 0 {

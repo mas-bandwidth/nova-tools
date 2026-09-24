@@ -33,6 +33,16 @@
 # for one work type; dropped = refused everywhere. A dropped route re-enters
 # only by a measured A/B written here, never mid-push (memory:
 # continual-refinement-loop). Re-run from the fold every sprint.
+#
+# faults / faults_from (#2498 S8): the fault classes the route's preamble is
+# built from, one sentence per class (internal/nsprint/route/preamble.go).
+# Every route a pro card can reach carries them. Source: rowan-new
+# reports/attribution-2026-09-21.md, per-model levers of the sub-8 results
+# (testdata/attribution-2026-09-21.tsv). faults_from: model = the classes the
+# attribution charged to this route's model, most first; faults_from: rung =
+# the model has none it can act on, so the pro rung's pooled classes seen 3+
+# times stand in. TestProRoutesCarryAPreamble recomputes both from the
+# fixture. The A/B of preamble against none (30 cards) is not yet run.
 source: "reports/model-efficiency-2026-09-22.md interim ranking 2026-09-23 12:16 AM Eastern"
 rule: "useful = 8+; drop = dead, or Q <= 0 with n >= 8 and useful < 3/4 of the rung median, or Pareto-dominated with Q <= 0; allow = measured (U >= 5) and efficiency within +0.01 of the rung's best third, unless benched; hold = the rest (too few, second tier, unranked, benched)"
 
@@ -235,6 +245,8 @@ routes:
     tok_per_8: 10.5
     wall_s: 504
     why: "pro leader: 8 of 12 scored at 8+; opencode serves input from cache"
+    faults: [CARD-LINT, TOOLING-CLEANTREE]
+    faults_from: model
   - route: ocminimax
     rung: pro
     model: minimax-m3
@@ -250,6 +262,8 @@ routes:
     tok_per_8: 22.7
     wall_s: 751
     why: "pro leader: 8 of 13 scored at 8+, 40% reliable, best third on efficiency"
+    faults: [CARD-GATE, CARD-NOCTRL]
+    faults_from: model
   - route: orkimi3
     rung: pro
     model: moonshotai/kimi-k3
@@ -265,6 +279,8 @@ routes:
     tok_per_8: 14.6
     wall_s: 1181
     why: "second tier: on the pro frontier but outside the best third (eff 11.38); cell3 only (5 of 5 scored at 8+)"
+    faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
+    faults_from: rung
   - route: ormimo26pro
     rung: pro
     model: xiaomi/mimo-v2.6-pro
@@ -280,6 +296,8 @@ routes:
     tok_per_8: 14.8
     wall_s: 1372
     why: "too few to say (U=3); on the pro frontier"
+    faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
+    faults_from: rung
   - route: ormimopro
     rung: pro
     model: xiaomi/mimo-v2.5-pro
@@ -295,6 +313,8 @@ routes:
     tok_per_8: 24.1
     wall_s: 659
     why: "too few to say (U=3); on the pro frontier"
+    faults: [TOOLING-CLEANTREE]
+    faults_from: model
   - route: orqwenplus
     rung: pro
     model: qwen/qwen3.6-plus
@@ -340,6 +360,8 @@ routes:
     tok_per_8: 16.7
     wall_s: 978
     why: "quality rule: Q -0.64 on 20 scored (numbers are the model, both routes)"
+    faults: [CARD-WIRE, CARD-STALE, CARD-BENCHPIN, CARD-GATE, CARD-NOCTRL, CARD-DOCGUARD]
+    faults_from: model
   - route: ocglm53
     rung: pro
     model: glm-5.3
@@ -370,6 +392,8 @@ routes:
     tok_per_8: 31.3
     wall_s: 983
     why: "second tier: Pareto-dominated by qwen3.6-plus and minimax-m3 (opencode), but Q +0.04 > 0, so held rather than dropped"
+    faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
+    faults_from: rung
   - route: orkimicode
     rung: pro
     model: moonshotai/kimi-k2.7-code
@@ -430,6 +454,8 @@ routes:
     tok_per_8: 13.3
     wall_s: 623
     why: "Pareto-dominated by qwen3.6-plus with Q -0.71"
+    faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
+    faults_from: rung
   - route: ordevstral
     rung: pro
     model: mistralai/devstral-2512

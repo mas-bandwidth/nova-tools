@@ -2,11 +2,23 @@ package land
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/pr"
 	"github.com/redis/go-redis/v9"
 )
+
+// ErrUnresolved is wrapped when ns_unit_head met a write-once reap field
+// (paths, card_type, cut_at) with a different value: the stored value is kept
+// and s:<S>:unresolved names the field (nova-tools#3091).
+var ErrUnresolved = errors.New("UNRESOLVED")
+
+// ErrNoUnit is returned by CallRead when the unit hash does not exist: the
+// read record is written, no unit field is (nova-tools#3091).
+var ErrNoUnit = errors.New("NOUNIT")
 
 // UnitHeadParams holds fields written by ns_unit_head.
 type UnitHeadParams struct {
@@ -24,13 +36,33 @@ type UnitHeadParams struct {
 	Class       string
 	PR          string
 	Author      string
+	// Card is the label of the card whose TASK: line names the unit (arg 15).
+	// Empty: paths, card_type and cut_at stay absent (MISSING).
+	Card string
 }
 
-// CallUnitHead calls ns_unit_head.
+// CallUnitHead calls ns_unit_head. With a Card, it reads that card's PATHS
+// and canonicalizes them with pr.CanonJSON (arg 16); ns_unit_head reads the
+// card's card_type and cut_at itself. A refused PATHS still writes the unit,
+// leaves paths absent and returns the seq with the refusal (wrapping
+// pr.ErrRefused). A write-once field that met a different value returns the
+// seq with an error wrapping ErrUnresolved that names the field.
 func CallUnitHead(ctx context.Context, c *redis.Client, p UnitHeadParams) (int64, error) {
+	var pathsJSON string
+	var pathsErr error
+	if p.Card != "" {
+		raw, err := c.HGet(ctx, "s:"+p.Sprint+":card:"+p.Card, "paths").Result()
+		switch {
+		case err == nil:
+			pathsJSON, pathsErr = pr.CanonJSON(raw)
+		case !errors.Is(err, redis.Nil):
+			return 0, err
+		}
+	}
 	res, err := c.FCall(ctx, "ns_unit_head", nil,
 		p.Sprint, p.Unit, p.Repo, p.Base, p.Branch, p.Head, p.BaseSHA,
 		p.StackParent, p.Files, p.PathsHash, p.Security, p.Class, p.PR, p.Author,
+		p.Card, pathsJSON,
 	).Slice()
 	if err != nil {
 		return 0, err
@@ -42,7 +74,18 @@ func CallUnitHead(ctx context.Context, c *redis.Client, p UnitHeadParams) (int64
 	if err != nil {
 		return 0, err
 	}
-	return seq, nil
+	var errs []error
+	if len(res) >= 3 && fmt.Sprint(res[2]) == "UNRESOLVED" {
+		fields := make([]string, 0, len(res)-3)
+		for _, f := range res[3:] {
+			fields = append(fields, fmt.Sprint(f))
+		}
+		errs = append(errs, fmt.Errorf("%w %s", ErrUnresolved, strings.Join(fields, " ")))
+	}
+	if pathsErr != nil {
+		errs = append(errs, pathsErr)
+	}
+	return seq, errors.Join(errs...)
 }
 
 // CallUnitEval calls ns_unit_eval.
@@ -100,7 +143,8 @@ func CallRelease(ctx context.Context, c *redis.Client, sprint, unit, holder, rel
 	return seq, nil
 }
 
-// CallRead calls ns_read.
+// CallRead calls ns_read. It returns the seq and ErrNoUnit when the unit hash
+// does not exist (the read record is written, no unit field is).
 func CallRead(ctx context.Context, c *redis.Client, sprint, unit, who, head, verdict, score, kind, files, doneWhen string) (int64, error) {
 	res, err := c.FCall(ctx, "ns_read", nil, sprint, unit, who, head, verdict, score, kind, files, doneWhen).Slice()
 	if err != nil {
@@ -112,6 +156,9 @@ func CallRead(ctx context.Context, c *redis.Client, sprint, unit, who, head, ver
 	seq, err := strconv.ParseInt(fmt.Sprint(res[1]), 10, 64)
 	if err != nil {
 		return 0, err
+	}
+	if len(res) >= 3 && fmt.Sprint(res[2]) == "NOUNIT" {
+		return seq, ErrNoUnit
 	}
 	return seq, nil
 }
