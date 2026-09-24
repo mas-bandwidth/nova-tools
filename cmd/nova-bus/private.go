@@ -14,7 +14,7 @@ package main
 // caller sets. privateDecider is a different TYPE from the public route's noteDecider: it
 // has no base URL, no key-env name and no client field, so there is nothing in it to build
 // a client from or read a key with. The private route constructs this type and no other.
-// cmd/nova-bus/private_boundary_test.go holds the rest of the promise against this file's
+// cmd/nova-bus/private_test.go holds the rest of the promise against this file's
 // own source: no `internal/decide` import, no `net/*`, no environment read, no `decide.New`.
 //
 // What is DELIBERATELY NOT HERE: any override. There is no `--allow-private`, no
