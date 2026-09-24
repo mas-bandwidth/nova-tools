@@ -1,0 +1,5 @@
+14/23 61% -> ~9h
+C=14 O=9 W=0
+wall ~9h work ~9h critical johnny
+TASK id=gate-fix-holds kind=fix owner=johnny state=open est=120
+TASK id=wait-verb kind=fix owner=emma state=open est=120 depends=gate-fix-holds paths=cmd/nova-pulse/wait.go

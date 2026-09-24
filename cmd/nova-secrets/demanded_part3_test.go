@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -84,29 +84,75 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 		// File has unsealed key
 		_ = os.WriteFile(filepath.Join(storeDir, name), []byte("UNENCRYPTED_KEY: plaintext\nsops:\n  version: 3.13.3\n  age:\n    - recipient: "+keyA.pubKey+"\n"), 0644)
 	}
-	// 1 foreign file that opens when it should not:
-	// File is sealed to keyA, but rule says foreignKey!
-	rules = append(rules, fmt.Sprintf("  - path_regex: ^foreign\\.yaml$\n    age: %s,%s", foreignKey.pubKey, recKey.pubKey))
-	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "foreign.yaml"), []string{foreignKey.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_for\n")
+	// The quiet kind: two files whose rule and whose recorded recipients name another
+	// seat's key, yet this seat's key opens them (sealed to it, the recipient string then
+	// rewritten, which sops does not check on decrypt): foreign-openable.
+	for _, name := range []string{"foreign_a", "foreign_b"} {
+		rules = append(rules, fmt.Sprintf("  - path_regex: ^%s\\.yaml$\n    age: %s,%s", name, foreignKey.pubKey, recKey.pubKey))
+		fp := filepath.Join(storeDir, name+".yaml")
+		sealFileWithSops(t, sopsPath, fp, []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_for\n")
+		sealed, err := os.ReadFile(fp)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = os.WriteFile(fp, []byte(strings.ReplaceAll(string(sealed), keyA.pubKey, foreignKey.pubKey)), 0644)
+	}
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "main.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_main\n")
 
 	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte("creation_rules:\n"+strings.Join(rules, "\n")+"\n"), 0644)
 	commitAndPush(t, storeDir)
 
-	// Run check with default max=20
+	failLines := func(errOut, kindMarker string) int {
+		n := 0
+		for _, l := range strings.Split(errOut, "\n") {
+			if strings.HasPrefix(l, "SECRETS CHECK FAIL ") && !strings.HasPrefix(l, "SECRETS CHECK FAIL as=") && strings.Contains(l, kindMarker) {
+				n++
+			}
+		}
+		return n
+	}
+	summary := regexp.MustCompile(`(?m)^SECRETS CHECK FAIL as=main files=33 failed=(\d+) shown=(\d+)$`)
+
+	// Default --max 20: the loud kind (30 unsealed) caps at 20 with its own MORE line,
+	// and does not eat the quiet kind, whose two lines are all shown with no MORE.
 	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath)
 	if code != 1 {
-		t.Fatalf("expected check exit 1, got %d", code)
+		t.Fatalf("expected check exit 1, got %d: %s", code, errOut)
 	}
-
-	// Loud kind (unsealed) should cap at 20 with MORE line
+	if got := failLines(errOut, "outside unencrypted_regex"); got != 20 {
+		t.Errorf("the loud kind shows %d lines at --max 20, want 20: %s", got, errOut)
+	}
 	if !strings.Contains(errOut, "SECRETS CHECK MORE kind=unsealed shown=20 total=30") {
 		t.Errorf("expected MORE line for unsealed: %s", errOut)
 	}
+	if got := failLines(errOut, "recipients do not list it"); got != 2 {
+		t.Errorf("the loud kind ate the quiet one: %d foreign lines shown, want both: %s", got, errOut)
+	}
+	if strings.Contains(errOut, "MORE kind=foreign-openable") {
+		t.Errorf("a kind under its cap printed a MORE line: %s", errOut)
+	}
+	// The count line prints on the red run, and its numbers are the run's.
+	m := summary.FindStringSubmatch(errOut)
+	if m == nil {
+		t.Fatalf("the red run printed no count line: %s", errOut)
+	}
+	if m[2] != fmt.Sprint(failLines(errOut, "")) {
+		t.Errorf("the count line's shown=%s does not match the FAIL lines printed: %s", m[2], errOut)
+	}
 
-	// Summary line prints total counts
-	if !strings.Contains(errOut, "failed=") || !strings.Contains(errOut, "files=32") {
-		t.Errorf("summary line missing in stderr: %s", errOut)
+	// --max 1: EACH kind caps separately, each with its own MORE line.
+	_, errOut1, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "main", "--key", keyA.privPath, "--sops", sopsPath, "--max", "1")
+	if code != 1 {
+		t.Fatalf("expected exit 1 at --max 1, got %d", code)
+	}
+	if !strings.Contains(errOut1, "SECRETS CHECK MORE kind=unsealed shown=1 total=30") {
+		t.Errorf("--max 1: no MORE line of the loud kind's own: %s", errOut1)
+	}
+	if !regexp.MustCompile(`SECRETS CHECK MORE kind=foreign-openable shown=1 total=2 `).MatchString(errOut1) {
+		t.Errorf("--max 1: no MORE line of the quiet kind's own: %s", errOut1)
+	}
+	if summary.FindStringSubmatch(errOut1) == nil {
+		t.Errorf("--max 1: the count line is missing on the red run: %s", errOut1)
 	}
 
 	// --max 0 prints all
@@ -116,6 +162,9 @@ func TestCheckCapsEachKindSeparatelyAndAlwaysPrintsTheCount(t *testing.T) {
 	}
 	if strings.Contains(errOutAll, "MORE kind=") {
 		t.Errorf("max 0 should not print MORE line: %s", errOutAll)
+	}
+	if got := failLines(errOutAll, "outside unencrypted_regex"); got != 30 {
+		t.Errorf("--max 0 shows %d unsealed lines, want all 30", got)
 	}
 
 	// Negative --max is refused at exit 2
@@ -285,12 +334,65 @@ func TestKeygenNeverOverwritesAndNeverTouchesTheStore(t *testing.T) {
 }
 
 // Test 15: TestTheLauncherOrderWorksWithTheStoreFullyDenied
+//
+// End to end in nova-sandbox's real grammar, built from this commit: the write set carries
+// the probe's HOME, and neither the store nor the key directory is in any read set. In
+// the launcher's order (nova-secrets outside, the wall inside) the probe sees its keys and
+// cannot read the store or the key; in the reverse nesting the tool inside the wall cannot
+// open the store and the command never starts. It skips, naming nova-sandbox's own
+// refusal, only where this machine cannot build the wall.
 func TestTheLauncherOrderWorksWithTheStoreFullyDenied(t *testing.T) {
 	t.Parallel()
-	// Nova-sandbox integration test. Skips with stated reason if nova-sandbox is not built
-	sandboxBin, err := exec.LookPath("nova-sandbox")
-	if err != nil {
-		t.Skip("skipping TestTheLauncherOrderWorksWithTheStoreFullyDenied: nova-sandbox not built on PATH")
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+	sb := buildNovaSandbox(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	_ = os.MkdirAll(storeDir, 0755)
+	initGitStore(t, storeDir)
+	keyA := genKey(t, td, "keya")
+	recKey := genKey(t, td, "rec")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(fmt.Sprintf("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: %s,%s\n", keyA.pubKey, recKey.pubKey)), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_launcher_value\n")
+	commitAndPush(t, storeDir)
+
+	home := filepath.Join(td, "probehome")
+	_ = os.MkdirAll(home, 0700)
+	requireWall(t, sb, home)
+
+	// The probe prints the key it was given, then tries the store and the key file.
+	probe := `echo "SEEN=$GH_TOKEN"; cat "$0" >/dev/null 2>&1 && echo STORE-READ; cat "$1" >/dev/null 2>&1 && echo KEY-READ; exit 0`
+	storeFile := filepath.Join(storeDir, "rowan.yaml")
+
+	// The launcher's order: nova-secrets opens the file and becomes nova-sandbox, which
+	// becomes the probe. No read set names the store, the key or sops.
+	wall := []string{sb, "--write", home}
+	for _, r := range wallReads() {
+		wall = append(wall, "--read", r)
 	}
-	_ = sandboxBin
+	wall = append(wall, "--net-deny", "--", "/bin/sh", "-c", probe, storeFile, keyA.privPath)
+	launcher := append([]string{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
+		"--only", "GH_TOKEN", "--require", "GH_TOKEN", "--"}, wall...)
+	env := []string{"PATH=" + os.Getenv("PATH"), "HOME=" + home}
+	out, errOut, code, _ := runWithEnv(bin, env, launcher...)
+	if code != 0 || !strings.Contains(out, "SEEN=ghp_launcher_value\n") {
+		t.Fatalf("launcher order: the probe must see its key, exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(out, "STORE-READ") || strings.Contains(out, "KEY-READ") {
+		t.Errorf("launcher order: the probe read the store or the key through the wall: %s", out)
+	}
+
+	// The reverse nesting: the wall outside, nova-secrets inside. With the store and the
+	// key in no read set it must FAIL, and the probe must never run.
+	out, errOut, code = inWall(sb, home, []string{filepath.Dir(bin), filepath.Dir(sopsPath)}, true,
+		bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
+		"--only", "GH_TOKEN", "--", "/bin/sh", "-c", probe, storeFile, keyA.privPath)
+	if code == 0 || strings.Contains(out, "SEEN=") {
+		t.Errorf("reverse nesting must fail before the command runs, got exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(out+errOut, "ghp_launcher_value") {
+		t.Errorf("reverse nesting leaked the value: %s%s", out, errOut)
+	}
 }

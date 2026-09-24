@@ -13,5 +13,6 @@ read seam for census and other non-snapshot bulk reads. A table snapshot must
 use a single read-only Redis Function to retain one consistent instant.
 
 The tests start a throwaway Redis server bound to loopback, with its working
-directory beneath the test's temporary directory. When `redis-server` is absent
-from a CI runner, the integration controls skip there; they run on a Redis bench.
+directory beneath the test's temporary directory (`internal/nsprint/testutil`).
+CI sets `NOVA_CI=1` and installs `redis-server`, so a missing binary fails the
+run instead of skipping it. The process is private. It is not the fleet store.

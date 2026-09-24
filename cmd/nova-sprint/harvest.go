@@ -60,13 +60,18 @@ func (l *listFlag) Set(v string) error {
 func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("card harvest", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
+	for _, a := range args {
+		if a == "--results-root" || strings.HasPrefix(a, "--results-root=") || a == "-results-root" || strings.HasPrefix(a, "-results-root=") {
+			// #3329: deleted, not ignored; a launcher still passing it is told where the dir lives now.
+			return refuse(errOut, "card harvest", "unknown flag --results-root: the results dir is the absolute card hash field s:<S>:card:<label> results, written by card end")
+		}
+	}
 	redisAddr := fs.String("redis", "", "")
 	sprint := fs.String("sprint", "", "")
 	var benches listFlag
 	fs.Var(&benches, "bench", "")
 	clock := fs.Duration("clock", harvest.DefaultClock, "")
 	instance := fs.String("instance", "", "")
-	resultsRoot := fs.String("results-root", "", "")
 	owner := fs.String("owner", "mas-bandwidth", "")
 	orphans := fs.Bool("orphans", false, "")
 	if err := fs.Parse(args); err != nil {
@@ -117,7 +122,7 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 	results := harvest.Run(ctx, st, harvest.Options{
 		Sprint: *sprint, Benches: benches, Labels: only, Clock: *clock, Instance: *instance,
 		Forge:  harvest.GitHub{Owner: *owner},
-		Pusher: harvest.SSHPusher{ResultsRoot: *resultsRoot},
+		Pusher: harvest.SSHPusher{},
 	})
 	code := 0
 	for _, r := range results {

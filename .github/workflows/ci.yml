@@ -80,6 +80,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # #3113: nova-sprint controls that need redis-server fail instead of skipping.
+  # The install step puts the binary on PATH; a green run executed the store.
+  NOVA_CI: "1"
+
 concurrency:
   # THE INTEGRATION BRANCHES ARE ONE LIST, and this `fromJSON` is it. Adding a
   # branch is this edit; internal/ci's TestIntegrationBranchesAreOneList fails
@@ -710,6 +715,14 @@ jobs:
         if: matrix.entry.packages != ''
         run: make vet PKGS="${{ matrix.entry.packages }}"
 
+      - name: install redis-server
+        if: matrix.entry.packages != ''
+        # #3113. The controls spawn a throwaway redis-server. Self-hosted rows
+        # (Studio, hulk) also get the binary from rowan-tools fleet/bench.yml;
+        # this step is what a runner has before that playbook has converged,
+        # and what the hosted rows run below. It does not dial the fleet store.
+        run: bash .github/scripts/install-redis-server.sh
+
       - name: test
         if: matrix.entry.packages != ''
         # The default bash flags on a `run:` step are `-eo pipefail`, so a
@@ -799,6 +812,12 @@ jobs:
 
       - name: vet
         run: make vet
+
+      - name: install redis-server
+        # #3113, the hosted row. ubuntu-latest has no redis-server until apt
+        # installs it; macos-latest uses Homebrew. A service container would
+        # not put the binary on PATH, and the controls spawn their own server.
+        run: bash .github/scripts/install-redis-server.sh
 
       - name: test (shard ${{ matrix.shard }} of 4)
         # Four shards per OS, dealt by package order (stable: go list sorts), so a
@@ -1039,6 +1058,12 @@ jobs:
           esac
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+
+      - name: install redis-server
+        # #3113. The merge gate runs the changed packages in full, including a
+        # nova-sprint control when the group touches one. Same installer as the
+        # hosted row: apt on Linux, Homebrew on the Studio.
+        run: bash .github/scripts/install-redis-server.sh
 
       - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of ${{ needs.plan-merge.outputs.slots }})
         # NOT -short: the group commit must answer the hosted-only tests the

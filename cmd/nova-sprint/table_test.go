@@ -131,3 +131,18 @@ func TestTableWritesNoFile(t *testing.T) {
 		}
 	}
 }
+
+func TestTableLiveLayoutRefusesWithoutItsInputs(t *testing.T) {
+	code, _, stderr := runSprint("table", "--layout", "live")
+	if code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	for _, want := range []string{"--redis", "--sprint", "--friends"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("refusal lacks %s: %s", want, stderr)
+		}
+	}
+	if code, _, stderr := runSprint("table", "--layout", "tall"); code != 2 || !strings.Contains(stderr, "live or wide") {
+		t.Fatalf("--layout tall: exit %d %s", code, stderr)
+	}
+}

@@ -20,10 +20,15 @@ import (
 // "nova-card" it is the fixture card wrapper: it reads its one line from
 // stdin, records what it got, and runs on the way a card does. Started with
 // NOVA_LAUNCH_TEST_ROLE=launcher it is the bench side of the ssh session:
-// `card launch --stdin` over the fixture wrapper.
+// `card launch --stdin` over the fixture wrapper. Started with
+// NOVA_LAUNCH_TEST_HARNESS set it is the harness the real nova-card runs
+// (TestLaunchRealWrapper).
 func TestMain(m *testing.M) {
 	if filepath.Base(os.Args[0]) == WrapperName {
 		os.Exit(fixtureWrapper())
+	}
+	if os.Getenv(realHarnessEnv) != "" {
+		os.Exit(realHarness())
 	}
 	if os.Getenv("NOVA_LAUNCH_TEST_ROLE") == "launcher" {
 		res, err := Launch(os.Stdin, os.Stdout, Config{Wrapper: os.Getenv("NOVA_LAUNCH_TEST_WRAPPER")})

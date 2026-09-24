@@ -301,3 +301,59 @@ func TestTESTSNamesNovaPlayOnce(t *testing.T) {
 		t.Fatalf("docs/TESTS.md heads %d `## nova-play` sections, want exactly 1; only the first is executed by this file", sections)
 	}
 }
+
+// bannerSetupLine matches the one setup line the banner prints above `example:`:
+// a printf of a single-quoted format redirected into a file. It is the only shell
+// the banner asks a reader to type that is not a nova-play command.
+var bannerSetupLine = regexp.MustCompile(`^printf '([^']*)' > (\S+)$`)
+
+// TestBannerExamplesRunFromAnEmptyDirectory is #1455's control, in the shape
+// #1920 gave cmd/nova-tokens: a stranger pastes the banner into an EMPTY
+// directory, so this test pre-seeds nothing. It runs the banner's own setup line
+// (printf's `\n` is the only escape the line uses, and it is applied here as the
+// shell would), then every `example:` line in order. TestUsageBannerExamplesRun
+// above uses firstRunDir, which writes story.txt itself, so it stays green with
+// the setup line deleted; this one goes red, because `annotate` then finds no
+// source and exits 1.
+func TestBannerExamplesRunFromAnEmptyDirectory(t *testing.T) {
+	code, banner, stderr := runPlay(t, "help")
+	if code != 0 {
+		t.Fatalf("`nova-play help` exits %d, want 0; stderr: %s", code, stderr)
+	}
+	examples, err := onboarding.ExampleLines(banner, "nova-play")
+	if err != nil {
+		t.Fatalf("%v\n\nwhat the banner printed:\n%s", err, banner)
+	}
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	before, _, _ := strings.Cut(banner, "\nexample:")
+	setups := 0
+	for _, line := range strings.Split(before, "\n") {
+		m := bannerSetupLine.FindStringSubmatch(strings.TrimSpace(line))
+		if m == nil {
+			continue
+		}
+		setups++
+		body := strings.ReplaceAll(m[1], `\n`, "\n")
+		if err := os.WriteFile(filepath.Join(dir, m[2]), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if setups == 0 {
+		t.Fatalf("the banner prints no `printf '...' > <file>` setup line above `example:`, so its examples start in a directory holding nothing:\n%s", before)
+	}
+
+	for _, ex := range examples {
+		args := shellFields(t, ex)
+		code, stdout, stderr := runPlay(t, args[1:]...)
+		if code != 0 {
+			t.Errorf("pasted into an empty directory after the banner's setup line, the usage example\n  %s\nexits %d (want 0)\nstderr: %s", ex, code, stderr)
+			continue
+		}
+		if stdout == "" {
+			t.Errorf("the usage example %q printed nothing on stdout", ex)
+		}
+	}
+}

@@ -301,8 +301,10 @@ branch name or error text can ride out on a payload.
 
 The provider is offered only the eligible rungs at the
 supported height and the one above it, so a typed answer can advise sideways or up but never down;
-an answer below the floor steps up, and a provider error or a rung nobody offered leaves the rules'
-answer standing (rule 5). A floor that is not a number between 0 and 1 — NaN, an infinity, a
+a mechanical kind with no confirmed failure is offered its supported rung alone, so no decision is
+asked for it at all, and a confirmed failure restores that step-up offer (#1513); an answer below the
+floor steps up, and a provider error or a rung nobody offered leaves the rules' answer standing
+(rule 5). A floor that is not a number between 0 and 1 — NaN, an infinity, a
 negative, anything above one — is refused with one remedy line, because NaN compares false against
 every bound and would otherwise gate a decision on a number that is not one. `--no-jev` answers by
 the rules alone, with no key and no network, so the loop runs where the API does not.
@@ -313,38 +315,38 @@ would have chosen, which is how the route is measured against the coordinator's 
 `nova-decide log --summary` regenerates the starting rung per kind from those rows, and a kind with
 no success keeps the rung it started from.
 
-**The log has two sinks and one contract.** Glenn, 2026-09-18: *the decision and escalation log
-lives in Postgres beside card results; every Jev decision — the evidence, the rung, the outcome,
-the rung that succeeded — is a row, and the token report and the routing table read it.* So `--log`
-takes either a **path**, which is the append-only JSON lines file it has always been, or the literal
-word **`postgres`**, which is the table `decide_log` in the same database as `card_results`
-(SPEC-STATE.md, *the record: card results*) — one join from a decision to the card result it
-produced. Both sinks are the same interface and the same rows: `log --summary` reads either one and
-prints the same lines, because the summary is a projection of the rows and never of a file format.
-The required-accounting rule below stands for both, and it is now checked by OPENING the sink
-before the call: a table that will not open is nowhere to record the decision, so the refusal still
-comes before the provider is asked.
+**The log has two sinks.** `--log <path>` is the append-only JSON lines file it has always been,
+the whole row with its evidence, and `log --summary` reads it. `--store <host:port>` also writes
+each decision as one **`decide` event on the `cards:done` stream** of the fleet Redis (nova-tools
+#2623), through the same writer every card transition goes through (`internal/events`: one writer,
+one stream), and `nova-pulse fold` keeps it in its **`decisions`** table, where the calibration
+set is answered across benches (`decisions_by_kind` in `fold --report`). The required-accounting
+rule below stands for both, and it is checked by OPENING each sink before the call: a log or a
+store that will not open is nowhere to record the decision, so the refusal still comes before the
+provider is asked.
 
-**The table's columns** are the decision: `ts`, `unit_id`, `kind`, the size buckets `files`,
-`packages` and `lanes`, `lane`, `rung_tried`, `height`, `confidence`, `floor`, `stepped_up`,
-`escalated`, `designated`, `source`, `rowan_pick`, `reason`, `wait`, `awaiting_termination`,
-`refusal`, `outcome`, `rung_succeeded`, `calls`, `tokens_in`, `tokens_out`, `usage_failed`, and the
-whole `evidence` as JSONB so the summary reads the attempts off the table as it does off the file.
-`tokens_in` and `tokens_out` are **SQL NULL** where the provider did not report that counter — the
-presence rule below, in the table's own vocabulary: an absence is not a zero, and a reported zero is
-stored as a zero. The migration is `internal/decide/migrations/0001_decide_log.sql`, plain
-idempotent SQL applied in one transaction by `nova-decide log migrate --dsn-env <NAME>`, safe to
-run on every start.
+**The event's fields are the decision**, under the names the retired `decide_log` table gave its
+columns: `unit_id`, `kind` (the unit's kind; the entry's own transition field is `event=decide`),
+the size buckets `files`, `packages` and `lanes`, `lane`, `rung_tried`, `height`, `confidence`,
+`floor`, `stepped_up`, `escalated`, `designated`, `source`, `rowan_pick`, `reason`, `wait`,
+`awaiting_termination`, `refusal`, `outcome`, `rung_succeeded`, `calls`, `tokens_in`, `tokens_out`
+and `usage_failed`. The stamp is the entry's `at`, and the event id is the fold's primary key, so a
+redelivery is a no-op. The `evidence` document does not ride the stream, which carries ids and
+counts only: its measured columns do, and the whole of it is in the JSON lines log beside the
+event. For the same reason a `reason` or `refusal` longer than the 200-byte field ceiling is cut
+with a `...+<n>B` mark rather than refused, so a long reason never costs the decision.
+`tokens_in` and `tokens_out` are **absent** from the entry, and NULL in the fold, where the
+provider did not report that counter — the presence rule below: an absence is not a zero, and a
+reported zero is written as a zero. An absent string is NULL in the fold, never `''`.
 
-**The DSN never appears on argv.** There is no `--dsn` flag on `route` or on `log`: a connection
-string carries a password, and a password in a process listing is a leak. The DSN arrives in the
-**environment**, under the name `--dsn-env` gives (default `NOVA_DECIDE_LOG_DSN`), put there by
-`nova-secrets exec --store <store> --as <seat> --only NOVA_DECIDE_LOG_DSN -- nova-decide ...`. A
-verb told `--log postgres` with that variable unset refuses in one line naming the variable and the
-remedy, and an error that must print a DSN prints it with the password redacted. The unit tests run
-on an in-memory sink over the same interface and never open a socket; the real server is one
-integration test behind the `postgres` build tag and a `DECIDE_TEST_PG` DSN, which is what keeps
-the fake honest.
+**No credential appears on argv.** The store's password arrives in the **environment**, under the
+name `--password-env` gives (default `NOVA_REDIS_BENCH_PASSWORD`), put there by
+`nova-secrets exec --store <store> --as <seat> --only NOVA_REDIS_BENCH_PASSWORD -- nova-decide ...`.
+The unit tests run on an in-memory sink and an in-memory stream, and the end-to-end test writes
+through the real writer to a miniredis and folds it; none opens a socket to the fleet.
+
+The `decide_log` table, `--log`'s table form, `--dsn-env` and `log migrate` are retired: the
+decision record was the one row the stream lacked, and it no longer is (#2623).
 
 **What a call spent is kept, not dropped.** A routing decision that called the provider records its
 usage: the call count and the tokens in the log row, and one row of the fleet's own usage TSV at
@@ -685,14 +687,15 @@ public or synthetic before it was hashed (rule 4). Red test:
 `the-second-identical-question-is-served-from-redis-with-no-provider-call` — the first call hits
 the fake, the second is a cache hit before the TTL and a fresh call after it.
 
-### Postgres — the decisions table
+### The decisions table
 
 The question: what did we decide, at what confidence, above what floor, and what followed. The
 answer, the provider confidence and the floor live in the row; the outcome is filled when known.
 The invariant: a decisions table `(question_hash, kind, answer, provider_confidence, floor,
-outcome)`, written by one writer, is the calibration record rule 8 owes; `nova-decide tune` reads
-it and refuses a floor with no rows behind it (rule 8); the table is a projection of the log and
-never an authority over the machinery. Red test:
+outcome)`, a TSV file written by one writer, is the calibration record rule 8 owes; `nova-decide
+tune` reads it and refuses a floor with no rows behind it (rule 8); the table is a projection of
+the log and never an authority over the machinery. A `--dsn` that is a URL rather than a path is
+refused: there is no database behind the table (#2623). Red test:
 `nova-decide-tune-refuses-a-floor-with-no-rows` — an untuned floor is refused, and a row joins its
 confidence to the outcome that followed.
 
@@ -910,10 +913,30 @@ S7. SPEC-AHEAD: #1616
    `.public` marker, `private` otherwise. Private evidence offered to a `sees=public` decider is
    refused **before** any call, the line says `why=private-evidence`, and the question falls to
    the next decider in the chain (D2). So a private bus is triaged by the rule table or by a
-   loopback model, and by nothing else. (`docs/CLI.md:479` documents an `--allow-private` flag on
-   `nova-bus inbox --decide`; rule 4 has no such door, this amendment adopts none, and the
-   disagreement between that line and rule 4 is filed as #1644 for a ruling rather than settled
-   here by accident.) Secrets are redacted before framing. The redaction is new text in this
+   loopback model, and by nothing else.
+
+   **#1644 IS SETTLED, in favour of rule 4.** `docs/CLI.md` documented an `--allow-private` flag on
+   `nova-bus inbox --decide` and rule 4 had no such door. Stella's ruling of 2026-09-19T23:13Z
+   (`stella-17a099112fb1`) settles the disagreement: "A bus without `.public` is private. Explicit
+   `inbox --decide` may use rules or a mechanically admitted local/private decider with no network
+   or provider-key access; it should not blanket-refuse when that safe path exists. If the
+   requested route cannot be satisfied privately, refuse before client, key or network, and never
+   fall back to a public route. A `local` label or redaction alone does not prove the boundary.
+   `wait` remains rules/local passive and does not instantiate a deciding poller; it has no
+   `--allow-private` override. Do not add `ALLOW-PRIVATE=true` absent a separately authorized real
+   override: under this ruling private evidence is not allowed out, so that marker would
+   misdescribe the action. Report the actual privacy/source/refusal through existing typed
+   receipts." The flag is **removed** from the tool, no marker replaces it, and the blanket
+   refusal it pointed at is replaced by the rule table: `inbox --decide` on a private bus answers
+   every note the table has a row for and refuses the rest with `privacy=private decider=rules
+   why=private-evidence` before any client, key read or call, on the run's existing `INBOX
+   REFUSED` and `INBOX DECIDED` receipts (`cmd/nova-bus/private.go`, whose type has no endpoint,
+   no key-env and no client field: that absence is what admits it, not a flag or a label).
+   `local` is **not yet admitted here**, because nothing in `internal/decide` yet carries the
+   mechanical `sees=private` capability D1/D2 describe; until it does, a `local` route on a
+   private bus takes the same refusal, and a loopback URL is a label rather than an admission. An
+   explicit remote-private inbox exception remains outside this: it needs separate live scoped
+   authorization and is not in the tool. Secrets are redacted before framing. The redaction is new text in this
    rule, not an existing one: every `sk-` token (the pattern `nova-bus` already redacts,
    `docs/CLI.md:479`) and every `<NAME>_KEY=`, `<NAME>_TOKEN=` and `<NAME>_SECRET=` assignment is
    replaced with a placeholder, and an evidence text that still matches any of those patterns
@@ -1614,7 +1637,7 @@ H3. SPEC-AHEAD: #1624
    rows later the log cannot say whether that is true.
 
 H4. SPEC-AHEAD: #1625
-   **Routing happens in the launcher, so no brief can forget it.** `--route` (:343-349) stops being
+    **decide housekeeping: routing is a launcher step, not a line in a brief.** Routing happens in the launcher, so no brief can forget it. `--route` (:343-349) stops being
    opt-in:
    `nova-swarm batch`, `nova-swarm run` (#1486) and `nova-pulse launch` route every admitted card
    before it is assigned a model, in process, and print the card's `ROUTE` receipt line. A launch
