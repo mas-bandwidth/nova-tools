@@ -215,6 +215,17 @@ func TestOneTaskStoreControls(t *testing.T) {
 		if r.ExitCode() != 4 {
 			t.Fatalf("LEASED exit = %d", r.ExitCode())
 		}
+
+		// A task pushed before the one-store cutover has no dest field. Close
+		// must still remove it from its existing friend's queue and attribute
+		// its done index to that friend.
+		fx.push("c-legacy", "a", nil)
+		fx.client.HDel(fx.ctx, fx.key("c-legacy"), "dest")
+		r, err = task.Close(fx.ctx, fx.st, fx.S, "c-legacy", "old task", "a", "")
+		fx.want("close of a legacy open task", r, err, "CLOSED-NOW")
+		if contains(fx.queue("a"), "c-legacy") || !fx.member("s:"+fx.S+":done:a", "c-legacy") || fx.counts("a").Ready != 0 {
+			t.Fatal("close left a legacy task on its old queue")
+		}
 	})
 
 	t.Run("front", func(t *testing.T) {
@@ -244,6 +255,16 @@ func TestOneTaskStoreControls(t *testing.T) {
 		}
 		r, err = task.Move(fx.ctx, fx.st, fx.S, "m1", "b", "a", "")
 		fx.want("move to the same friend", r, err, "SAME")
+
+		// Pre-cutover open tasks have queue membership but no dest field.
+		fx.push("m-legacy", "a", func(r *task.PushRequest) { r.Priority = 7 })
+		fx.client.HDel(fx.ctx, fx.key("m-legacy"), "dest")
+		r, err = task.Move(fx.ctx, fx.st, fx.S, "m-legacy", "b", "a", "")
+		fx.want("move of a legacy open task", r, err, "MOVED")
+		if contains(fx.queue("a"), "m-legacy") || fx.client.ZScore(fx.ctx, "s:"+fx.S+":open:b", "m-legacy").Val() != 7 ||
+			fx.field("m-legacy", "dest") != "b" || fx.field("m-legacy", "moved_from") != "a" {
+			t.Fatal("move did not resolve a legacy task's queue")
+		}
 
 		fx.push("m2", "a", nil)
 		claim := fx.take("m2", "a")

@@ -129,6 +129,31 @@ function DEP.enqueue(S, id, dest, front, priority)
   redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
 end
 
+-- DEP.open_location finds an open task's queue and score. Tasks pushed before
+-- the one-store cutover have no dest field, so fall back to the registered
+-- friend's queue that already contains the id. The friends set is bounded and
+-- avoids the KEYS/SCAN commands unavailable to the function ACL.
+function DEP.open_location(S, id, dest)
+  local q = 's:' .. S .. ':ready'
+  if dest ~= '' then
+    q = 's:' .. S .. ':open:' .. dest
+  end
+  local score = redis.call('ZSCORE', q, id)
+  if score or dest ~= '' then
+    return dest, q, score
+  end
+  local friends = redis.call('SMEMBERS', 'friends')
+  table.sort(friends)
+  for _, friend in ipairs(friends) do
+    q = 's:' .. S .. ':open:' .. friend
+    score = redis.call('ZSCORE', q, id)
+    if score then
+      return friend, q, score
+    end
+  end
+  return '', 's:' .. S .. ':ready', nil
+end
+
 -- DEP.dequeue removes an open task from every queue it can be in.
 function DEP.dequeue(S, id, dest)
   if dest ~= '' then
@@ -252,11 +277,8 @@ local function task_move(keys, args)
   local at = tq_now_ms()
 
   if state == 'open' then
-    local q = 's:' .. S .. ':ready'
-    if dest ~= '' then
-      q = 's:' .. S .. ':open:' .. dest
-    end
-    local score = redis.call('ZSCORE', q, id)
+    local q, score
+    dest, q, score = DEP.open_location(S, id, dest)
     if not score then
       return { 'INVALID', 'not on its queue' }
     end
@@ -318,6 +340,7 @@ local function task_close(keys, args)
   end
   local dest = redis.call('HGET', key, 'dest') or ''
   if state == 'open' then
+    dest = DEP.open_location(S, id, dest)
     DEP.dequeue(S, id, dest)
   elseif state == 'waiting' then
     local on = redis.call('HGET', key, 'wait_on') or ''
