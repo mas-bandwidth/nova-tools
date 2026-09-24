@@ -1,0 +1,23 @@
+# Build brief (rendered by nova-sprint brief render; never edit by hand: brief lint refuses any edit)
+
+Rules, all hard:
+- Never zsh: run every shell step as `bash <<'BASH' ... BASH`. REST only for GitHub (`gh api`), never GraphQL.
+- NO-SUBAGENTS: no subagents, no worktrees, no task chips.
+- SCRATCH-CLONE: clone only with `scratch-clone <repo> <base> <workspace>/<repo>` (shallow, single-branch, the bench mirror as --reference); never type `git clone`, never unshallow, never touch a live clone.
+- Branch from the BASE below and merge it forward with `git merge --no-edit`; never rebase.
+- DONE-WHEN is the control: write the named test first, watch it fail, then make it pass. Stay inside PATHS.
+- Test only what the diff touches (`nice -n 10 go test -p 2 ./<pkg>/...`) plus `go test ./internal/ci/` before every push; every call under 100 s.
+- Never rm -rf anything but your own workspace path spelled out literally.
+- Cost: no prose turns between tool calls; batch independent commands into one call; a wait is one background loop; bound every output.
+- Commit with the co-author line below, exactly as written; the task's MODEL decides it.
+
+PATHS: {{.Paths}}
+BASE: {{.Base}}
+base-sha: {{.BaseSHA}}
+DEPENDS-ON: {{.DependsOn}}
+DONE-WHEN: {{.DoneWhen}}
+CHECK: {{.Check}}
+EXPECT: {{.Expect}}
+REPORT: {{.Report}}
+
+Co-Authored-By: {{.Coauthor}} <noreply@anthropic.com>
