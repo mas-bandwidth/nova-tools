@@ -21,9 +21,9 @@ cmd/nova-local SPEC-LOCAL's plan; nova-local is specified and unbuilt
 cmd/nova-local/main.go SPEC-LOCAL's plan: the command's entry point
 cmd/nova-pulse/testdata/accept/ SPEC-TOOLWORK §1's selftest fixture repository for `accept --selftest`, not yet shipped
 cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
-cmd/nova-test SPEC-TEST's proposed binary: `git ls-files` shows no `cmd/nova-test` and no implementation
 cmd/nova-wake/quickstart SPEC-WAKE's plan, item 7: the quickstart verb's own file
 docs/roadmap.sexp SPEC-WORK's plan: the state input the roadmap projection will read
+docs/roadmaps/ingest-map.sexp SPEC-WORK's plan (3:58 PM ruling): the ingest map moves into the work repository's roadmaps, not this tree
 docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 internal/chat/discord.go SPEC-CHAT's plan, item 5: the Discord adapter
 internal/chat/fuse.go SPEC-CHAT's plan, item 7: the nova-fuse calls before each cycle
@@ -82,6 +82,7 @@ docs/SPEC-WORK-PILOT.md the same: a named commit on codex/, not in this tree
 docs/SPEC-WORK-VALIDATION.md the same: a named commit on codex/, not in this tree
 docs/coordination/card-contract-2608-proposal.md SPEC-CARD.md's lineage cites it in mas-bandwidth/stella-tools@2fb4393, not here
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
+docs/roadmaps/sprint-x.sexp SPEC-WORK's example batch path on mas-bandwidth/work, another repository
 docs/spec-pulse/10 SPEC-TOOLWORK.md cites a retired spec-pulse chapter at line 4 as it stood before that draft; the chapter files now carry names
 fleet/authorized_keys the fleet's public keys live in the self repository; there is no fleet/ here
 fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
