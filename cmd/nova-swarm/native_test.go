@@ -1454,6 +1454,9 @@ func TestNativeSharedGoCaches(t *testing.T) {
 	if !strings.Contains(got, "GOTOOLCHAIN=local\n") {
 		t.Errorf("GOTOOLCHAIN is not local:\n%s", got)
 	}
+	if !strings.Contains(got, "ASDF_OUTPUT_TRANSLATIONS=") || !strings.Contains(got, filepath.Join(cacheDir, "common-lisp")) {
+		t.Errorf("ASDF_OUTPUT_TRANSLATIONS does not point at the shared Lisp cache:\n%s", got)
+	}
 	// Each directory existed before the child ran: the record is written by the child, so
 	// its own stat is the proof the parent made them first. Windows has no POSIX mode bits,
 	// so there the record proves existence and this test proves a file can be created;
@@ -1518,7 +1521,7 @@ func TestNativeNoSharedCachesRestoresHomeCaches(t *testing.T) {
 		t.Fatalf("the harness recorded no cache-record: %v", err)
 	}
 	got := string(record)
-	for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN"} {
+	for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN", "ASDF_OUTPUT_TRANSLATIONS"} {
 		if !strings.Contains(got, name+"=\n") {
 			t.Errorf("--no-shared-caches set %s; the caches must stay under HOME:\n%s", name, got)
 		}

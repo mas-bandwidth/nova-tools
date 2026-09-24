@@ -1547,9 +1547,9 @@ func benchOS(cfg nativeRunConfig) string {
 // XDG_CONFIG_HOME and XDG_CACHE_HOME are dropped, never inherited, so the harness defaults
 // them under HOME and never follows them outside the wall.
 //
-// cacheDir, when nonempty, points GOMODCACHE and GOCACHE at the bench-shared caches under
-// <root>/cache and pins GOTOOLCHAIN=local (card 8963); empty is --no-shared-caches, and the
-// three names are then as absent as they have always been.
+// cacheDir, when nonempty, points GOMODCACHE, GOCACHE and ASDF's compiled Lisp output at
+// the bench-shared caches under <root>/cache and pins GOTOOLCHAIN=local; empty is
+// --no-shared-caches, and the four names are then absent.
 //
 // secretEnv is the NAME a worker description's `secret` carries (issue #881): the value is
 // passed through to the child BY NAME, exactly once -- stripped from the inherited set even
@@ -1574,7 +1574,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	}
 	remove := []string{
 		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR",
-		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM", "ASDF_OUTPUT_TRANSLATIONS",
 	}
 	if shimShell != "" {
 		remove = append(remove, "SHELL")
@@ -1599,6 +1599,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 			"GOMODCACHE="+filepath.Join(cacheDir, "go-mod"),
 			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
 			"GOTOOLCHAIN=local",
+			"ASDF_OUTPUT_TRANSLATIONS="+swarm.ASDFOutputTranslations(filepath.Dir(cacheDir), filepath.Join(jobDir, swarm.JobRepo)),
 		)
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the

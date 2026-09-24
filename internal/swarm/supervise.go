@@ -585,7 +585,7 @@ func childEnv(w Worker, slot int, id, key, root string) []string {
 	// ONE shared cache root for every job under this pool (issue #1048): GOMODCACHE,
 	// GOCACHE and NPM_CONFIG_CACHE point at <root>/cache, which is a write root beside the
 	// job directory, so 120 cards do not each download the Go toolchain and every module.
-	env = append(env, CacheEnv(root)...)
+	env = append(env, CacheEnv(root, filepath.Join(w.JobDir(slot, id), JobRepo))...)
 	if runtime.GOOS == "windows" {
 		env = append(env, "Path="+pathVal)
 		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
