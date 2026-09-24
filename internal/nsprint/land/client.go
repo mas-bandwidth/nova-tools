@@ -20,6 +20,46 @@ var ErrUnresolved = errors.New("UNRESOLVED")
 // read record is written, no unit field is (nova-tools#3091).
 var ErrNoUnit = errors.New("NOUNIT")
 
+// ErrStaleHead is returned by CallUnitMergeable when the word was observed
+// at a head that is not the unit's current head: nothing is written.
+var ErrStaleHead = errors.New("STALE")
+
+// Mergeable words, the forge's vocabulary (Forge).
+const (
+	MergeableYes      = "MERGEABLE"
+	MergeableConflict = "CONFLICTING"
+	MergeableUnknown  = "UNKNOWN"
+)
+
+// CallUnitMergeable calls ns_unit_mergeable, the one writer of a unit's
+// mergeable word (nova-tools #3092 rev 7): word must be MERGEABLE,
+// CONFLICTING or UNKNOWN, and head the unit's current head (ErrStaleHead
+// otherwise; ErrNoUnit when the unit hash is absent). An unchanged word at
+// the same head writes nothing and returns seq 0.
+func CallUnitMergeable(ctx context.Context, c *redis.Client, sprint, unit, head, word string) (int64, error) {
+	res, err := c.FCall(ctx, "ns_unit_mergeable", nil, sprint, unit, head, word).Slice()
+	if err != nil {
+		return 0, err
+	}
+	if len(res) == 0 {
+		return 0, fmt.Errorf("ns_unit_mergeable: empty reply")
+	}
+	switch fmt.Sprint(res[0]) {
+	case "OK":
+		if len(res) < 2 {
+			return 0, fmt.Errorf("ns_unit_mergeable: %v", res)
+		}
+		return strconv.ParseInt(fmt.Sprint(res[1]), 10, 64)
+	case "SAME":
+		return 0, nil
+	case "NOUNIT":
+		return 0, fmt.Errorf("ns_unit_mergeable %s: %w", unit, ErrNoUnit)
+	case "STALE":
+		return 0, fmt.Errorf("ns_unit_mergeable %s at %s: %w (unit head %v)", unit, head, ErrStaleHead, res[1:])
+	}
+	return 0, fmt.Errorf("ns_unit_mergeable %s: %v", unit, res)
+}
+
 // UnitHeadParams holds fields written by ns_unit_head.
 type UnitHeadParams struct {
 	Sprint      string

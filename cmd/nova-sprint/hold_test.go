@@ -635,7 +635,9 @@ func TestHoldRouteNoFixSelfOrCI(t *testing.T) {
 		t.Fatalf("ci note: fix %v, stella %v", e.fixIDs(), e.queue("stella"))
 	}
 	e.unit(22, headA, "rowan")
-	e.c.HSet(ctx, "s:"+e.S+":u:"+unitOf(22), "mergeable", "CONFLICTING")
+	if _, err := land.CallUnitMergeable(ctx, e.c, e.S, unitOf(22), headA, land.MergeableConflict); err != nil {
+		t.Fatalf("mergeable #22: %v", err)
+	}
 	e.mustIngest(22, typed("stella", headA, "HOLD", 5, "CI is red on shard 2."), "RECORD note")
 	e.route()
 	if q := e.queue("johnny"); len(q) != 1 || q[0] != disposition.UpdateID("22", headA) {
@@ -786,7 +788,9 @@ func TestHoldRouteUnparkFix(t *testing.T) {
 	c := setup(t, "s-fix-c")
 	c.setDown("rowan", true)
 	c.unit(42, headA, "johnny")
-	c.c.HSet(ctx, "s:"+c.S+":u:"+unitOf(42), "mergeable", "CONFLICTING")
+	if _, err := land.CallUnitMergeable(ctx, c.c, c.S, unitOf(42), headA, land.MergeableConflict); err != nil {
+		t.Fatalf("(c) mergeable #42: %v", err)
+	}
 	c.mustIngest(42, typed("stella", headA, "HOLD", 5, "CI is red on shard 1."), "RECORD note")
 	noteEvent := c.lastEvent()
 	c.route()
@@ -1016,5 +1020,217 @@ func TestHoldRouteZeroREST(t *testing.T) {
 	}
 	if n := stub.Calls(); n != 0 {
 		t.Fatalf("GitHub was called %d times", n)
+	}
+}
+
+// reviewTask pushes one review task for pr at head to f and claims it; it
+// returns the task id and its token.
+func (e *holdEnv) reviewTask(pr int, head, f string) (string, string) {
+	e.t.Helper()
+	ctx := context.Background()
+	st := store.New(e.c)
+	id := task.ReviewID(holdRepo, pr, head, f)
+	// ns_task_push still fences a review push on the PR record's head
+	// (task_claim.lua), a key outside this unit.
+	if err := e.c.HSet(ctx, "s:"+e.S+":pr:"+holdRepo+":"+strconv.Itoa(pr), "head", head).Err(); err != nil {
+		e.t.Fatal(err)
+	}
+	if got, err := task.Push(ctx, st, task.PushRequest{Sprint: e.S, ID: id, Kind: task.KindReview,
+		Title: "read", Effects: task.EffectsNone, Repo: holdRepo, PR: pr, Head: head, To: f}); err != nil || got != task.PushCreated {
+		e.t.Fatalf("push %s: %v %v", id, got, err)
+	}
+	if err := e.c.HSet(ctx, "s:"+e.S, "status", "open").Err(); err != nil {
+		e.t.Fatal(err)
+	}
+	if code, _, errOut := e.run("friend", "hello", "--as", f, "--slots", "8", "--once", "--host", "ctl", "--session", "ctl-"+f); code != 0 {
+		e.t.Fatalf("hello %s --slots 8: %s", f, errOut)
+	}
+	claims, err := task.TakeAvailable(ctx, st, f, e.S, id, 1, f, "take-"+id)
+	if err != nil || len(claims) != 1 {
+		e.t.Fatalf("take %s: %v %v", id, claims, err)
+	}
+	return id, claims[0].Token
+}
+
+// done runs `task done` on a review task with a body file.
+func (e *holdEnv) done(id, token, url, body string, extra ...string) (int, string, string) {
+	e.t.Helper()
+	path := filepath.Join(e.t.TempDir(), "done.md")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		e.t.Fatal(err)
+	}
+	args := []string{"task", "done", "--sprint", e.S, "--id", id, "--token", token,
+		"--evidence", url, "--url", url, "--body-file", path}
+	return e.run(append(args, extra...)...)
+}
+
+// TestTaskDoneReviewIngest: `task done --body-file` on a review task goes
+// through the shared parser and ns_ingest_disposition in the same atomic
+// call as the close (#3092 rev 7, hold item 1 on #3473): APPROVE and HOLD
+// make their records and close; a malformed or prose body, a typed head
+// that is not the task head, and a who that is not the task owner refuse
+// with the task still claimed and no record. The legacy flag path the
+// deployed friend-harness uses keeps closing.
+func TestTaskDoneReviewIngest(t *testing.T) {
+	ctx := context.Background()
+	e := newHoldEnv(t, "s-done")
+	e.friends("stella", "emma", "rowan", "johnny")
+	e.policy("rowan", "emma")
+	e.unit(81, headA, "johnny")
+	id, token := e.reviewTask(81, headA, "stella")
+	url := "mas-bandwidth/nova-tools/pull/81#issuecomment-5900000081"
+	taskKey := "s:" + e.S + ":task:" + id
+	readKey := "s:" + e.S + ":read:" + unitOf(81) + ":stella"
+	claimed := func(what string) {
+		t.Helper()
+		if s := e.hget(taskKey, "state"); s != "claimed" {
+			t.Fatalf("%s: task state %q, want claimed", what, s)
+		}
+		if e.c.Exists(ctx, readKey).Val() != 0 {
+			t.Fatalf("%s: a read record was written", what)
+		}
+	}
+
+	// Malformed (the obsolete rev 4 form): REFUSED, exit 2, nothing written.
+	if code, out, _ := e.done(id, token, url, "DISPOSITION who=stella HOLD #81 at aaaaaaaa score=6 kind=substance reason=x\n"); code != 2 || !strings.Contains(out, "REFUSED") {
+		t.Fatalf("malformed: exit %d %q", code, out)
+	}
+	claimed("malformed")
+	// Prose: a review close needs a record.
+	if code, out, _ := e.done(id, token, url, "**stella HOLD 4:** fixed\n"); code != 2 || !strings.Contains(out, "REFUSED") {
+		t.Fatalf("prose: exit %d %q", code, out)
+	}
+	claimed("prose")
+	// Head mismatch: the task-head fence.
+	if code, out, _ := e.done(id, token, url, typed("stella", headB, "APPROVE", 9, "")); code != 2 || !strings.Contains(out, "INVALID") {
+		t.Fatalf("head mismatch: exit %d %q", code, out)
+	}
+	claimed("head mismatch")
+	// A line typed by someone other than the task owner.
+	if code, out, _ := e.done(id, token, url, typed("emma", headA, "APPROVE", 9, "")); code != 2 || !strings.Contains(out, "REFUSED who-not-owner") {
+		t.Fatalf("who not owner: exit %d %q", code, out)
+	}
+	claimed("who not owner")
+	// Flags and a body file together are refused before any call.
+	if code, _, _ := e.done(id, token, url, typed("stella", headA, "APPROVE", 9, ""), "--verdict", "APPROVE"); code != 2 {
+		t.Fatalf("flags and body: exit %d", code)
+	}
+	claimed("flags and body")
+
+	// APPROVE: closed, read record at head, the disp field in the doc.go shape.
+	if code, out, errOut := e.done(id, token, url, typed("stella", headA, "APPROVE", 9, "looks right")); code != 0 || !strings.HasPrefix(out, "DONE DONE id="+id) || !strings.Contains(out, "RECORD read") {
+		t.Fatalf("approve: exit %d %q %q", code, out, errOut)
+	}
+	if s := e.hget(taskKey, "state"); s != "closed" {
+		t.Fatalf("approve: task state %q", s)
+	}
+	if v, s := e.hget(taskKey, "verdict"), e.hget(taskKey, "score"); v != "APPROVE" || s != "9" {
+		t.Fatalf("approve: task verdict %q score %q", v, s)
+	}
+	if h, v, u := e.hget(readKey, "head"), e.hget(readKey, "verdict"), e.hget(readKey, "url"); h != headA || v != "APPROVE" || u != url {
+		t.Fatalf("approve read record: head %q verdict %q url %q", h, v, u)
+	}
+	if d := e.hget("s:"+e.S+":disp:"+holdRepo+":81", "stella@"+headA); d != "APPROVE 9 "+url+" 5900000081" {
+		t.Fatalf("approve disp = %q", d)
+	}
+	// A repeated identical done is CLOSED and writes nothing new.
+	if code, out, _ := e.done(id, token, url, typed("stella", headA, "APPROVE", 9, "looks right")); code != 0 || !strings.HasPrefix(out, "DONE CLOSED") {
+		t.Fatalf("repeat: exit %d %q", code, out)
+	}
+
+	// HOLD: a hold record with its event, and the close.
+	e.unit(82, headA, "johnny")
+	hid, htoken := e.reviewTask(82, headA, "emma")
+	hurl := "mas-bandwidth/nova-tools/pull/82#issuecomment-5900000082"
+	if code, out, errOut := e.done(hid, htoken, hurl, typed("emma", headA, "HOLD", 4, substance)); code != 0 || !strings.Contains(out, "RECORD hold") {
+		t.Fatalf("hold: exit %d %q %q", code, out, errOut)
+	}
+	hk := e.holdKey(82, "emma")
+	if h, k := e.hget(hk, "head"), e.hget(hk, "kind"); h != headA || k != "substance" {
+		t.Fatalf("hold record: head %q kind %q", h, k)
+	}
+	if n := e.c.XLen(ctx, disposition.EventsKey(e.S)).Val(); n != 1 {
+		t.Fatalf("hold events = %d, want 1", n)
+	}
+	if s := e.hget("s:"+e.S+":task:"+hid, "state"); s != "closed" {
+		t.Fatalf("hold: task state %q", s)
+	}
+	if d := e.hget("s:"+e.S+":disp:"+holdRepo+":82", "emma@"+headA); !strings.HasPrefix(d, "HOLD 4 "+hurl) {
+		t.Fatalf("hold disp = %q", d)
+	}
+
+	// No unit for the PR: refused, the task stays claimed.
+	nid, ntoken := e.reviewTask(83, headA, "stella")
+	if code, out, _ := e.done(nid, ntoken, url, typed("stella", headA, "APPROVE", 9, "")); code != 2 || !strings.Contains(out, "REFUSED no-unit") {
+		t.Fatalf("no unit: exit %d %q", code, out)
+	}
+	if s := e.hget("s:"+e.S+":task:"+nid, "state"); s != "claimed" {
+		t.Fatalf("no unit: task state %q", s)
+	}
+
+	// The legacy flag path (rowan-tools bin/friend-harness) still closes and
+	// keeps the base disp value for the readers #3491 has not moved.
+	e.unit(84, headA, "johnny")
+	lid, ltoken := e.reviewTask(84, headA, "stella")
+	if code, out, errOut := e.run("task", "done", "--sprint", e.S, "--id", lid, "--token", ltoken,
+		"--evidence", "legacy evidence", "--verdict", "APPROVE", "--score", "8", "--head", headA); code != 0 || out != "DONE DONE id="+lid+"\n" {
+		t.Fatalf("legacy: exit %d %q %q", code, out, errOut)
+	}
+	if d := e.hget("s:"+e.S+":disp:"+holdRepo+":84", "stella@"+headA); d != "APPROVE 8 legacy evidence" {
+		t.Fatalf("legacy disp = %q", d)
+	}
+}
+
+// TestUnitMergeableWriter: ns_unit_mergeable is the production writer of a
+// unit's mergeable word (#3092 rev 7 hold item 6 on #3473), fenced on the
+// unit head; a head move resets the word to UNKNOWN; a CONFLICTING word
+// written by it routes a CI note to one update-<n>-<sha8> for fix_to.
+func TestUnitMergeableWriter(t *testing.T) {
+	ctx := context.Background()
+	e := newHoldEnv(t, "s-merg")
+	e.friends("stella", "johnny", "rowan")
+	e.policy("johnny", "rowan")
+	ukey := "s:" + e.S + ":u:" + unitOf(71)
+
+	if _, err := land.CallUnitMergeable(ctx, e.c, e.S, unitOf(71), headA, "CONFLICTING"); !errors.Is(err, land.ErrNoUnit) {
+		t.Fatalf("no unit: %v, want ErrNoUnit", err)
+	}
+	e.unit(71, headA, "stella")
+	if _, err := land.CallUnitMergeable(ctx, e.c, e.S, unitOf(71), headA, "BEHIND"); err == nil {
+		t.Fatalf("BEHIND accepted")
+	}
+	if _, err := land.CallUnitMergeable(ctx, e.c, e.S, unitOf(71), headB, "CONFLICTING"); !errors.Is(err, land.ErrStaleHead) {
+		t.Fatalf("stale head: %v, want ErrStaleHead", err)
+	}
+	if m := e.hget(ukey, "mergeable"); m != "" {
+		t.Fatalf("a refused write left mergeable=%q", m)
+	}
+	if _, err := land.CallUnitMergeable(ctx, e.c, e.S, unitOf(71), headA, "CONFLICTING"); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if m, h := e.hget(ukey, "mergeable"), e.hget(ukey, "mergeable_head"); m != "CONFLICTING" || h != headA {
+		t.Fatalf("unit mergeable %q at %q", m, h)
+	}
+	e.mustIngest(71, typed("rowan", headA, "HOLD", 5, "CI is red on shard 2."), "RECORD note")
+	e.route()
+	if q := e.queue("johnny"); len(q) != 1 || q[0] != disposition.UpdateID("71", headA) {
+		t.Fatalf("CONFLICTING from the writer: johnny %v", q)
+	}
+
+	// A new head: the old word is not carried; the CI note is a read.
+	e.unit(71, headB, "stella")
+	if m := e.hget(ukey, "mergeable"); m != "UNKNOWN" {
+		t.Fatalf("after a head move mergeable = %q, want UNKNOWN", m)
+	}
+	if _, err := land.CallUnitMergeable(ctx, e.c, e.S, unitOf(71), headB, "MERGEABLE"); err != nil {
+		t.Fatalf("write at headB: %v", err)
+	}
+	e.mustIngest(71, typed("rowan", headB, "HOLD", 5, "CI is red on shard 2."), "RECORD note")
+	e.route()
+	if q := e.queue("johnny"); len(q) != 1 {
+		t.Fatalf("MERGEABLE cut another update: johnny %v", q)
+	}
+	if q := e.queue("rowan"); len(q) != 1 || q[0] != task.ReviewID(holdRepo, 71, headB, "rowan") {
+		t.Fatalf("MERGEABLE ci note read: rowan %v", q)
 	}
 }

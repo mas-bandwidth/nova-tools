@@ -116,6 +116,12 @@ redis.register_function('ns_unit_head', function(keys, args)
   if created then
     redis.call('HSET', ukey, 'last_read_at', '', 'approve_head', '', 'merged_at', '')
   end
+  -- A mergeable word is the forge's answer at one head (ns_unit_mergeable):
+  -- a head move leaves it UNKNOWN until the writer answers for the new head.
+  local mh = redis.call('HGET', ukey, 'mergeable_head')
+  if mh and mh ~= head then
+    redis.call('HSET', ukey, 'mergeable', 'UNKNOWN', 'mergeable_head', head)
+  end
   if pr and pr ~= '' and pr ~= '0' then
     redis.call('HSET', ukey, 'pr', pr)
     redis.call('SET', 's:' .. S .. ':prunit:' .. repo .. ':' .. pr, unit)
@@ -134,6 +140,36 @@ redis.register_function('ns_unit_head', function(keys, args)
   if #changed > 0 then
     return { 'OK', tostring(seq), 'UNRESOLVED', unpack(changed) }
   end
+  return { 'OK', tostring(seq) }
+end)
+
+-- ns_unit_mergeable: the one writer of a unit's mergeable word (nova-tools
+-- #3092 rev 7: the hold router sends a ci/self note to update-<n>-<sha8> on
+-- CONFLICTING). args = S, unit, head, word. The word is the forge's
+-- (land.Forge): MERGEABLE, CONFLICTING or UNKNOWN; anything else is INVALID.
+-- The write is fenced on the unit head: a word observed at another head is
+-- STALE and writes nothing, and ns_unit_head resets the word to UNKNOWN on a
+-- head move. Reply { 'OK', seq } | { 'SAME' } | { 'NOUNIT' } |
+-- { 'STALE', <unit head> } | { 'INVALID', <word> }.
+redis.register_function('ns_unit_mergeable', function(keys, args)
+  local S, unit, head, word = args[1], args[2], args[3], args[4]
+  if word ~= 'MERGEABLE' and word ~= 'CONFLICTING' and word ~= 'UNKNOWN' then
+    return { 'INVALID', word or '' }
+  end
+  local ukey = 's:' .. S .. ':u:' .. unit
+  if redis.call('EXISTS', ukey) == 0 then
+    return { 'NOUNIT' }
+  end
+  local u = redis.call('HMGET', ukey, 'head', 'mergeable', 'mergeable_head')
+  if (u[1] or '') ~= head or head == '' then
+    return { 'STALE', u[1] or '' }
+  end
+  if u[2] == word and u[3] == head then
+    return { 'SAME' }
+  end
+  local seq = redis.call('INCR', 'rec:seq')
+  redis.call('HSET', ukey, 'mergeable', word, 'mergeable_head', head,
+    'mergeable_at', tostring(land_now_ms()), 'mergeable_seq', tostring(seq))
   return { 'OK', tostring(seq) }
 end)
 

@@ -85,6 +85,14 @@ func (r IngestResult) String() string {
 
 var commentID = regexp.MustCompile(`(\d+)$`)
 
+// CommentID is the trailing number of a comment URL, or "".
+func CommentID(url string) string {
+	if m := commentID.FindStringSubmatch(url); m != nil {
+		return m[1]
+	}
+	return ""
+}
+
 // Ingest parses the body and makes at most one record with one
 // ns_ingest_disposition call.
 func Ingest(ctx context.Context, c *redis.Client, req IngestRequest) (IngestResult, error) {
@@ -97,10 +105,7 @@ func Ingest(ctx context.Context, c *redis.Client, req IngestRequest) (IngestResu
 	if ln.Type == TypeDisposition && ln.Verdict == "HOLD" && ln.Kind == "" {
 		derived = Classify(ln.Reason, req.PR)
 	}
-	cid := ""
-	if m := commentID.FindStringSubmatch(req.URL); m != nil {
-		cid = m[1]
-	}
+	cid := CommentID(req.URL)
 	score := ""
 	if ln.Score > 0 {
 		score = strconv.Itoa(ln.Score)

@@ -2,10 +2,13 @@
 // (nova-tools #3092 rev 7): `DISPOSITION who=<f> head=<sha40>
 // verdict=<APPROVE|HOLD> score=<k>` and `REPAIR who=<f> head=<sha40>
 // ready=<true|false>`, each with an optional `:` inline tail. `hold ingest`
-// and the hold router share it. Records are keyed by the #3139 unit contract
-// (s:<S>:u:<unit>, resolved through s:<S>:prunit:<repo>:<n>); no retired PR
-// key (s:<S>:pr:*, s:<S>:disp:*) is written (nova-tools #3491, SPEC-NOTE on
-// #3139 comment 5814524499).
+// and the hold router share it, and so does `task done --body-file` on a
+// review task. Records are keyed by the #3139 unit contract
+// (s:<S>:u:<unit>, resolved through s:<S>:prunit:<repo>:<n>); the retired PR
+// record s:<S>:pr:* is never written (nova-tools #3491, SPEC-NOTE on #3139
+// comment 5814524499). s:<S>:disp:<repo>:<n> keeps its one writer,
+// ns_ingest_disposition (#3092 rev 7 key table), for the readers #3491 has
+// not yet moved to s:<S>:read:<unit>:<friend>.
 package disposition
 
 import (

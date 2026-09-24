@@ -1,7 +1,12 @@
 -- Holds and releases as records (nova-tools #3092 rev 7), keyed by the #3139
 -- unit contract: a PR resolves to its unit through s:<S>:prunit:<repo>:<n>,
--- and head and author are read from s:<S>:u:<unit>. The retired PR keys
--- (s:<S>:pr:*, s:<S>:disp:*) are never read or written here (#3491).
+-- and head and author are read from s:<S>:u:<unit>. The retired PR record
+-- s:<S>:pr:* is never read or written here (#3491). s:<S>:disp:<repo>:<n> is
+-- written, never read: ns_ingest_disposition is its one writer (#3092 rev 7
+-- key table, moved from task_claim.lua), in the land/doc.go shape
+-- <friend>@<head> -> "<verdict> <score> <url> <comment_id>", for the readers
+-- still on it (task.lua read waits, redistribute.lua, consume/prread.go,
+-- fold) until #3491 moves them to s:<S>:read:<unit>:<friend>.
 --   s:<S>:read:<unit>:<friend>   the typed read (ns_read's field set + url, comment_id)
 --   s:<S>:hold:<unit>:<holder>   the hold (ns_hold's field set + score, scope, comment_id)
 --   s:<S>:note:<unit>            hash n<k> -> JSON {who, head, kind, reason, url, score, at}
@@ -10,7 +15,11 @@
 --   s:<S>:holdpark               hash <repo>:<n>:<owner field> -> JSON
 --   s:<S>:hold:events            stream, group hold-route
 -- The locals are scoped to this block (the route.lua pattern) so the
--- library's one chunk stays under Lua's local limit.
+-- library's one chunk stays under Lua's local limit. HD is the block's one
+-- chunk local: task_claim.lua's ns_task_done calls HD.ingest in its own
+-- atomic call (task done --body-file), and HD.write_disp for the legacy
+-- flag close.
+local HD = {}
 do
   local function now_ms()
     local t = redis.call('TIME')
@@ -81,6 +90,11 @@ do
     end
   end
 
+  -- write_disp: the one s:<S>:disp writer (see the header).
+  local function write_disp(S, repo, pr, field, value)
+    redis.call('HSET', 's:' .. S .. ':disp:' .. repo .. ':' .. pr, field, value)
+  end
+
   -- ns_ingest_disposition: one typed line, already parsed by
   -- internal/nsprint/disposition (Go), becomes at most one record. Who and
   -- self are resolved here, against the registry and the unit's author.
@@ -136,6 +150,10 @@ do
       'kind', kind, 'files', '', 'done_when', '', 'at', tostring(at),
       'url', url, 'comment_id', comment_id)
     update_reap_read_fields(ukey, f, head, verdict, kind, seq, at)
+    if kind ~= 'self' then
+      write_disp(S, repo, pr, f .. '@' .. head,
+        verdict .. ' ' .. score .. ' ' .. url .. ' ' .. (comment_id ~= '' and comment_id or '-'))
+    end
     local hkey = 's:' .. S .. ':hold:' .. unit .. ':' .. f
 
     if verdict == 'APPROVE' then
@@ -474,6 +492,7 @@ do
     return { 'RELEASED', unit, tostring(seq) }
   end
 
+  HD.ingest, HD.resolve_who, HD.write_disp = ingest, resolve_who, write_disp
   redis.register_function('ns_ingest_disposition', ingest)
   redis.register_function('ns_hold_route', route)
   redis.register_function('ns_hold_release', release)
