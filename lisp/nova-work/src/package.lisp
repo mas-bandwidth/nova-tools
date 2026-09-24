@@ -30,12 +30,13 @@
    #:journal-uncertain-write-reason
    #:journal-held
    #:journal-held-path
-   ;; restricted data and canonical serialization
-   #:+absent+
-   #:absentp
-   #:canonical-string
-   #:canonical-print
-   #:read-restricted
+;; restricted data and canonical serialization
+    #:+absent+
+    #:absentp
+    #:canonical-string
+    #:canonical-print
+    #:read-restricted
+    #:roadmap-bug-counts
    ;; digest
    #:sha256-hex
    ;; events
@@ -311,6 +312,8 @@
     #:fetch-link
     #:*link-fetch-count*
     #:node-add
+    #:decompose-node
+    #:%bug-child-id-p
     #:node-repo
     #:repo-holder
     #:node-type
