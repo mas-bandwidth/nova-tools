@@ -84,6 +84,7 @@ usage:
    nova-swarm slots list --store <dir>
    nova-swarm worker    check <description.json> [--env] [--max <n>]
    nova-swarm pull      --bench <dir> --worker <name> --cores <n> --load1 <n> --free-gb <n> --memfree-gb <n> [--running <n>]
+   nova-swarm pull      --submit --bench <dir> --worker <name> --cores <n> --load1 <f> --image <image> --runner <cmd> --jobs <dir>
    nova-swarm pull-lanes --queue <dir> [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]]
    nova-swarm pull     --stream <kind> --bench <name> (--redis <addr> | --dir <dir>) [--lane <lane>] [--wait <duration>]
    nova-swarm pull      --bench <name> --slots <n> --seat <seat> [--store <dir>] [--harvest <dir>] [--image <image>] [--runner <cmd>] [--once]
