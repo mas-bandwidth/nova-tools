@@ -2,7 +2,7 @@ package consume
 
 // runner_test.go is control 33 of #2756 (10.7, 10.8.3) as nova-tools #3040
 // rev 4 names it: the pr-to-read rule of `nova-sprint route` copies runner-only
-// check rows from ev:github into the one key ci:<repo>:<sha>, keeps the
+// check rows from ev:github into the GID key ci:<repo>:<head>:<gid>, keeps the
 // highest attempt key (gen, check_run_id, status rank, at) with rerequested
 // as the rank -1 sentinel of a new generation, and adopts once every sprint PR
 // no card produced. The store is a throwaway redis-server with the nova_sprint
@@ -15,11 +15,13 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
@@ -48,6 +50,8 @@ func newC33(t *testing.T) *c33Fix {
 	seedSprint(t, client, c33Sprint)
 	ctx := context.Background()
 	must(t, client.HSet(ctx, "s:"+c33Sprint+":policy", "runner_rows", c33Rows).Err())
+	must(t, client.HSet(ctx, civerdict.PolicyKey(c33Short, "dev"), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1").Err())
+	must(t, client.HSet(ctx, civerdict.TipKey(c33Short, "dev"), "sha", c33Head).Err())
 	f := &c33Fix{t: t, ctx: ctx, client: client, out: &bytes.Buffer{}}
 	f.rule = &PRToReadRule{Store: st, Sprint: c33Sprint, Consumer: "c33-route", Out: f.out,
 		Block: -1, Actor: "route",
@@ -91,7 +95,7 @@ func (f *c33Fix) apply(id, name, action, status, conclusion, at string) string {
 
 func (f *c33Fix) ci() map[string]string {
 	f.t.Helper()
-	m, err := f.client.HGetAll(f.ctx, "ci:"+c33Short+":"+c33Head).Result()
+	m, err := civerdict.ReadHead(f.ctx, f.client, c33Short, c33Head)
 	must(f.t, err)
 	return m
 }
@@ -100,7 +104,7 @@ func (f *c33Fix) attempt(row string) RunnerAttempt {
 	f.t.Helper()
 	a, ok := ReadRunnerAttempt(f.ci(), row)
 	if !ok {
-		f.t.Fatalf("ci:%s:%s has no runner:%s", c33Short, c33Head, row)
+		f.t.Fatalf("ci for %s@%s has no runner:%s", c33Short, c33Head, row)
 	}
 	return a
 }
@@ -208,8 +212,12 @@ func TestControl33PrToRead(t *testing.T) {
 		}
 		keys, err := f.client.Keys(f.ctx, "ci:*").Result()
 		must(t, err)
-		if !reflect.DeepEqual(keys, []string{"ci:" + c33Short + ":" + c33Head}) {
-			t.Fatalf("ci keys %v, want the one key ci:%s:%s", keys, c33Short, c33Head)
+		sort.Strings(keys)
+		expGID := civerdict.GID("single", "dev", c33Head, "req1", "pol1", "run1")
+		wantKeys := []string{"ci:" + c33Short + ":" + c33Head + ":" + expGID, "ci:" + c33Short + ":" + c33Head + ":gids"}
+		sort.Strings(wantKeys)
+		if !reflect.DeepEqual(keys, wantKeys) {
+			t.Fatalf("ci keys %v, want %v", keys, wantKeys)
 		}
 		// RunnerReady reads only the ci record it is handed.
 		if ok, missing := RunnerReady(map[string]string{}, []string{"windows"}); ok || !reflect.DeepEqual(missing, []string{"windows"}) {
@@ -235,8 +243,8 @@ func TestControl33PrToRead(t *testing.T) {
 		if strings.Contains(out, "RUNNER") {
 			t.Fatalf("a check not in runner_rows printed %q", out)
 		}
-		if n, _ := f.client.Exists(f.ctx, "ci:"+c33Short+":"+c33Head).Result(); n != 0 {
-			t.Fatalf("a check not in runner_rows wrote ci:%s:%s: %v", c33Short, c33Head, f.ci())
+		if n, _ := f.client.Exists(f.ctx, "ci:"+c33Short+":"+c33Head+":gids").Result(); n != 0 {
+			t.Fatalf("a check not in runner_rows wrote ci keys: %v", f.ci())
 		}
 		if p := f.pending(); p != 0 {
 			t.Fatalf("pending %d after the pass, want 0", p)

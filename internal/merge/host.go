@@ -240,7 +240,7 @@ type GH struct {
 	Timeout time.Duration
 	Runner  Runner
 	// CI is the injectable CI verdict source GH.Checks reads. NewGH sets it to
-	// RedisFromEnv (ci:<owner/repo>:<sha>); WithCISource overrides it. It is
+	// RedisFromEnv (ci:<owner/repo>:<head>:<gid>); WithCISource overrides it. It is
 	// never GitHub's check-runs.
 	CI CISource
 }
@@ -432,7 +432,7 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<sha>
+// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<head>:<gid>
 // (the injectable source) answers first; when it says nothing -- absent, no
 // verdict, or unreadable -- the commit's GitHub check-runs answer, and the
 // result's Source is "from-github". A missing record is not a verdict.

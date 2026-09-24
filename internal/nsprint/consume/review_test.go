@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -42,6 +43,18 @@ func initTestRedis(t *testing.T) (*store.Store, *redis.Client) {
 	// Fallback registration for #3092 ns_ingest_disposition if not already present
 	registerIngestDispositionFallback(t, client)
 	return store.New(client), client
+}
+
+func seedCI(ctx context.Context, pipe redis.Pipeliner, repo, head string, verdict ...string) {
+	v := "OK"
+	if len(verdict) > 0 && verdict[0] != "" {
+		v = verdict[0]
+	}
+	gid := civerdict.GID("single", "dev", head, "req1", "pol1", "run1")
+	pipe.HSet(ctx, civerdict.PolicyKey(repo, "dev"), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+	pipe.HSet(ctx, civerdict.TipKey(repo, "dev"), "sha", head)
+	pipe.HSet(ctx, civerdict.Key(repo, head, gid), "verdict", v, "base", "dev", "base_sha", head, "gid", gid, "head", head, "repo", repo)
+	pipe.SAdd(ctx, civerdict.GIDsKey(repo, head), gid)
 }
 
 func registerIngestDispositionFallback(t *testing.T, client *redis.Client) {
@@ -331,28 +344,50 @@ func TestControl06CancelledCINeverLandReady(t *testing.T) {
 		}
 	}
 
+	// Setup base policy and tip for expected GID
+	must(t, client.HSet(ctx, civerdict.PolicyKey(repo, "dev"), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1").Err())
+	must(t, client.HSet(ctx, civerdict.TipKey(repo, "dev"), "sha", headB).Err())
+	expGID, err := civerdict.Expected(ctx, client, repo, "dev", headB)
+	if err != nil {
+		t.Fatalf("expected GID: %v", err)
+	}
+
 	// 1. CANCELLED
-	_ = client.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "CANCELLED").Err()
+	_ = client.HSet(ctx, civerdict.Key(repo, headB, expGID), "verdict", "CANCELLED", "base", "dev", "base_sha", headB).Err()
+	_ = client.SAdd(ctx, civerdict.GIDsKey(repo, headB), expGID).Err()
 	assertReviewReady("verdict CANCELLED")
 
 	// 2. SKIPPED
-	_ = client.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "SKIPPED").Err()
+	_ = client.HSet(ctx, civerdict.Key(repo, headB, expGID), "verdict", "SKIPPED").Err()
 	assertReviewReady("verdict SKIPPED")
 
 	// 3. empty verdict
-	_ = client.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "").Err()
+	_ = client.HSet(ctx, civerdict.Key(repo, headB, expGID), "verdict", "").Err()
 	assertReviewReady("verdict empty")
 
 	// 4. absent
-	_ = client.Del(ctx, "ci:"+repo+":"+headB).Err()
+	_ = client.Del(ctx, civerdict.Key(repo, headB, expGID)).Err()
+	_ = client.Del(ctx, civerdict.GIDsKey(repo, headB)).Err()
 	assertReviewReady("ci record absent")
 
-	// 5. OK at older head A
-	_ = client.HSet(ctx, "ci:"+repo+":"+headA, "verdict", "OK").Err()
+	// 5. Stale GID (old tip)
+	staleTip := strings.Repeat("9", 40)
+	staleGID := civerdict.GID("single", "dev", staleTip, "req1", "pol1", "run1")
+	_ = client.HSet(ctx, civerdict.Key(repo, headB, staleGID), "verdict", "OK", "base", "dev", "base_sha", staleTip).Err()
+	_ = client.SAdd(ctx, civerdict.GIDsKey(repo, headB), staleGID).Err()
+	assertReviewReady("ci stale GID")
+	_ = client.Del(ctx, civerdict.Key(repo, headB, staleGID)).Err()
+	_ = client.Del(ctx, civerdict.GIDsKey(repo, headB)).Err()
+
+	// 6. OK at older head A
+	expGIDA := civerdict.GID("single", "dev", headA, "req1", "pol1", "run1")
+	_ = client.HSet(ctx, civerdict.Key(repo, headA, expGIDA), "verdict", "OK", "base", "dev", "base_sha", headA).Err()
+	_ = client.SAdd(ctx, civerdict.GIDsKey(repo, headA), expGIDA).Err()
 	assertReviewReady("ci OK at older head A")
 
-	// 6. OK at exact head B
-	_ = client.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK").Err()
+	// 7. OK at exact head B
+	_ = client.HSet(ctx, civerdict.Key(repo, headB, expGID), "verdict", "OK", "base", "dev", "base_sha", headB).Err()
+	_ = client.SAdd(ctx, civerdict.GIDsKey(repo, headB), expGID).Err()
 	r := pass()
 	if r != "reads 1/1" {
 		t.Fatalf("verdict OK at head B: reason = %q, want 'reads 1/1'", r)
@@ -574,7 +609,7 @@ func TestControlOpenHoldBlocksLandReady(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(prNum), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label)
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 		pipe.HSet(ctx, fmt.Sprintf("s:%s:disp:%s:%d", S, repo, prNum),
 			"stella@"+headB, "APPROVE 9 https://example.com/1 1")
 		if _, err := pipe.Exec(ctx); err != nil {
@@ -815,7 +850,7 @@ func TestPrToReadMakesNoRestCall(t *testing.T) {
 	pipe.ZAdd(ctx, "s:"+S+":open:stella", redis.Z{Score: 5, Member: tA})
 	pipe.SAdd(ctx, "s:"+S+":idx:task:open", tA)
 	// CI verdict OK at headB
-	pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+	seedCI(ctx, pipe, repo, headB)
 	// Disp at headB: stella APPROVE 9
 	pipe.HSet(ctx, fmt.Sprintf("s:%s:disp:%s:%d", S, repo, prNum),
 		"stella@"+headB, "APPROVE 9 https://example.com/1 1")
@@ -879,7 +914,7 @@ func TestConsumeTwoSeatsOneWriter(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(prNum), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label)
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 		pipe.HSet(ctx, fmt.Sprintf("s:%s:disp:%s:%d", S, repo, prNum),
 			"stella@"+headB, "APPROVE 9 https://example.com/1 1")
 		if _, err := pipe.Exec(ctx); err != nil {
@@ -1119,7 +1154,7 @@ func TestControlRequiredReads(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(prNum), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label)
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 		if _, err := pipe.Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -1184,7 +1219,7 @@ func TestControlRequiredReads(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(prNum), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label)
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 
 		// Three reads at B: rowan (author), jev, ghost (not in friends)
 		pipe.HSet(ctx, fmt.Sprintf("s:%s:disp:%s:%d", S, repo, prNum),
@@ -1236,7 +1271,7 @@ func TestControlRequiredReads(t *testing.T) {
 				"repo", repo, "pr", strconv.Itoa(num), "paths", "internal/x.go",
 				"author", "rowan", "state", "review-ready", "attempt", "1")
 			pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", lbl)
-			pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+			seedCI(ctx, pipe, repo, headB)
 			pipe.HSet(ctx, fmt.Sprintf("s:%s:disp:%s:%d", S, repo, num),
 				"stella@"+headB, "APPROVE 9 url 1")
 		}
@@ -1303,7 +1338,7 @@ func TestControlRequiredReads(t *testing.T) {
 		pipe.HSet(ctx, fmt.Sprintf("s:%s:card:card-%d", S, prSec), cardSec)
 		pipe.HSet(ctx, fmt.Sprintf("s:%s:card:card-%d", S, prNonSec), cardNonSec)
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", fmt.Sprintf("card-%d", prSec), fmt.Sprintf("card-%d", prNonSec))
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 
 		// Both get stella APPROVE 9
 		pipe.HSet(ctx, fmt.Sprintf("s:%s:disp:%s:%d", S, repo, prSec), "stella@"+headB, "APPROVE 9 url 1")
@@ -1388,7 +1423,7 @@ func TestControlRequiredReads(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(prNum), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label)
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 		pipe.Del(ctx, "s:"+S+":unresolved")
 		if _, err := pipe.Exec(ctx); err != nil {
 			t.Fatal(err)
@@ -1479,7 +1514,7 @@ func TestControlRequiredReads(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(pr6), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label6)
-		pipe.HSet(ctx, "ci:"+repo+":"+headB, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headB)
 		if _, err := pipe.Exec(ctx); err != nil {
 			t.Fatal(err)
 		}
@@ -1504,8 +1539,8 @@ func TestControlRequiredReads(t *testing.T) {
 			"repo", repo, "pr", strconv.Itoa(pr7), "paths", "internal/x.go",
 			"author", "rowan", "state", "review-ready", "attempt", "1")
 		pipe.SAdd(ctx, "s:"+S+":idx:card:review-ready", label7)
-		pipe.HSet(ctx, "ci:"+repo+":"+headA, "verdict", "OK")
-		pipe.HSet(ctx, "ci:"+repo+":"+headC, "verdict", "OK")
+		seedCI(ctx, pipe, repo, headA)
+		seedCI(ctx, pipe, repo, headC)
 		if _, err := pipe.Exec(ctx); err != nil {
 			t.Fatal(err)
 		}

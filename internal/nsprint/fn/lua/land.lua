@@ -321,7 +321,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   local failing, flaky_rerun, core_s = args[14], args[15], args[16]
 
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
-  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip')
+  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'class', 'members')
   if not b[1] then return 'NOTFOUND' end
   if b[1] ~= tostring(attempt) or b[2] ~= tostring(token) then return 'STALE' end
 
@@ -350,6 +350,57 @@ redis.register_function('ns_gate_receipt', function(keys, args)
     'core_s', core_s or '0',
     'at', tostring(now)
   )
+
+  local class = b[6]
+  local members = b[7]
+  local kind = nil
+  if class == 'single' or (class == 'full' and members and not string.find(members, ',')) then
+    kind = 'single'
+  elseif class == 'tip' then
+    kind = 'tip'
+  end
+
+  if kind then
+    local head = ''
+    local base_sha = b[5] or ''
+    if kind == 'single' then
+      if members and members ~= '' then
+        head = string.match(members, '^[^@]+@([^@,]+)') or (train_head or '')
+      else
+        head = train_head or ''
+      end
+    elseif kind == 'tip' then
+      head = train_head or ''
+      if head == '' then
+        head = b[5] or ''
+      end
+      if base_sha == '' then
+        base_sha = head
+      end
+    end
+
+    local pol_key = 'land:' .. repo .. ':' .. base .. ':policy'
+    local pol = redis.call('HMGET', pol_key, 'policy_id', 'required_set_id', 'runner_id')
+    local policy_id, required_set_id, runner_id = pol[1], pol[2], pol[3]
+    if policy_id and policy_id ~= '' and required_set_id and required_set_id ~= '' and runner_id and runner_id ~= '' and head ~= '' then
+      local raw = 'kind=' .. kind .. ',' .. base .. ',' .. base_sha .. ',' .. required_set_id .. ',' .. policy_id .. ',' .. runner_id
+      local gid = string.sub(ci_sha256_hex(raw), 1, 16)
+      local gverdict = 'FAIL'
+      if string.upper(verdict or '') == 'GREEN' or string.upper(verdict or '') == 'OK' then
+        gverdict = 'OK'
+      end
+      local pkg, test = '', ''
+      if failing and failing ~= '' then
+        local p, t = string.match(failing, '^([^%s]+)%s+(.+)$')
+        if p and t then
+          pkg, test = p, t
+        else
+          pkg = failing
+        end
+      end
+      gate_receipt_write(repo, head, gid, gverdict, kind, base, base_sha, required_set_id, policy_id, runner_id, rkey, bench or '', pkg, test, now)
+    end
+  end
 
   local new_st = string.lower(verdict)
   redis.call('HSET', bkey, 'state', new_st, 'receipt', rkey, 'train_head', train_head or '', 'train_tree', train_tree or '')

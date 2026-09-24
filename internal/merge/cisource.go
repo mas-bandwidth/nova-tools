@@ -14,7 +14,7 @@ import (
 )
 
 // The injectable CI source. GH.Checks reads one commit's verdict record,
-// ci:<owner/repo>:<sha>, through internal/civerdict -- the same HASH, key and
+// ci:<owner/repo>:<head>:<gid>, through internal/civerdict -- the same HASH, key and
 // "verdict" field nova-sprint's land reads. A record that carries a verdict is
 // the answer: OK is green, FAIL is red, anything else is pending.
 //

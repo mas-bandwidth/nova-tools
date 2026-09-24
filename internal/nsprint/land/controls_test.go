@@ -907,11 +907,42 @@ func TestL31d(t *testing.T) {
 		tipSHA := "1111111111111111111111111111111111111111"
 		gid, _ := civerdict.Expected(f.ctx, f.client, f.repo, f.base, tipSHA)
 
-		res1, err := land.CallGateReceiptWrite(f.ctx, f.client, f.repo, headH, gid, "OK", "single", f.base, tipSHA, "req-1", "pol-1", "runner-1", "batch:1", "bench-1", "pkg", "Test")
+		unitID := "gh/mas-bandwidth/nova-tools/103"
+		if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "card-103", Head: headH, BaseSHA: tipSHA,
+		}); err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+
+		batchID := "batch-c1"
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unitID+"@"+headH, "", "single", tipSHA, "in-c1")
+		if err != nil {
+			t.Fatalf("batch plan: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "bench-1", "slot-1"); err != nil {
+			t.Fatalf("gate claim: %v", err)
+		}
+		res1, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "GREEN", "bench-1", "worker-1", headH, "tree-1", "in-c1", "", "", "", "", "10")
 		if err != nil || res1 != "OK" {
 			t.Fatalf("first receipt write: %s, %v", res1, err)
 		}
-		res2, err := land.CallGateReceiptWrite(f.ctx, f.client, f.repo, headH, gid, "OK", "single", f.base, tipSHA, "req-1", "pol-1", "runner-1", "batch:1", "bench-1", "pkg", "Test")
+		ckey := civerdict.Key(f.repo, headH, gid)
+		if n, _ := f.client.Exists(f.ctx, ckey).Result(); n != 1 {
+			t.Fatalf("single gate receipt %s exists = %d, want 1", ckey, n)
+		}
+		rec, _ := civerdict.Read(f.ctx, f.client, f.repo, headH, gid)
+		if rec["verdict"] != "OK" || rec["kind"] != "single" {
+			t.Fatalf("single gate receipt = %+v, want OK single", rec)
+		}
+		if isMem, _ := f.client.SIsMember(f.ctx, civerdict.GIDsKey(f.repo, headH), gid).Result(); !isMem {
+			t.Fatalf("gid %s not in %s", gid, civerdict.GIDsKey(f.repo, headH))
+		}
+
+		res2, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "GREEN", "bench-1", "worker-1", headH, "tree-1", "in-c1", "", "", "", "", "10")
 		if err != nil || res2 != "ALREADY" {
 			t.Fatalf("second receipt write: %s, %v; want ALREADY", res2, err)
 		}
@@ -924,12 +955,30 @@ func TestL31d(t *testing.T) {
 		currTipSHA := "1111111111111111111111111111111111111111"
 
 		gidOld, _ := civerdict.Expected(f.ctx, f.client, f.repo, f.base, oldTipSHA)
-		res, err := land.CallGateReceiptWrite(f.ctx, f.client, f.repo, headH, gidOld, "OK", "single", f.base, oldTipSHA, "req-1", "pol-1", "runner-1", "batch:1", "bench-1", "pkg", "Test")
+		unitID := "gh/mas-bandwidth/nova-tools/104"
+		if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "card-104", Head: headH, BaseSHA: oldTipSHA,
+		}); err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+		batchOld := "batch-old"
+		tokOld, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchOld, f.lease, unitID+"@"+headH, "", "single", oldTipSHA, "in-old")
+		if err != nil {
+			t.Fatalf("batch plan: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, batchOld, 1, tokOld, "bench-1", "slot-1"); err != nil {
+			t.Fatalf("gate claim: %v", err)
+		}
+		res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchOld, 1, tokOld, "GREEN", "bench-1", "worker-1", headH, "tree-1", "in-old", "", "", "", "", "10")
 		if err != nil || res != "OK" {
 			t.Fatalf("write receipt: %s, %v", res, err)
 		}
 
-		unitID := "gh/mas-bandwidth/nova-tools/104"
+		unitID = "gh/mas-bandwidth/nova-tools/104"
 		_, err = land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
 			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
 			Branch: "feat-104", Head: headH, BaseSHA: currTipSHA, PR: "104",
@@ -1255,6 +1304,50 @@ func TestL31d(t *testing.T) {
 		keysAfter, _ := f.client.Keys(f.ctx, "*").Result()
 		if len(keysBefore) != len(keysAfter) {
 			t.Fatalf("keys before=%d, after=%d; sprintci.Bench.Run wrote keys", len(keysBefore), len(keysAfter))
+		}
+	})
+
+	t.Run("tip gate writes both ci:<repo>:<tipSHA>:<gid> and ci:<repo>:<base>:tip:<tipSHA>:<gid>", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		tipSHA := "3333111122223333444455556666777788889999"
+		gid := civerdict.GID("tip", f.base, tipSHA, "req-1", "pol-1", "runner-1")
+		unitID := "gh/mas-bandwidth/nova-tools/105"
+		if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "card-105", Head: tipSHA, BaseSHA: tipSHA,
+		}); err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+		batchID := "batch-tip-1"
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unitID+"@"+tipSHA, "", "tip", tipSHA, "in-tip")
+		if err != nil {
+			t.Fatalf("batch plan: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "bench-1", "slot-1"); err != nil {
+			t.Fatalf("gate claim: %v", err)
+		}
+		res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "GREEN", "bench-1", "worker-1", tipSHA, "tree-tip", "in-tip", "", "", "", "", "10")
+		if err != nil || res != "OK" {
+			t.Fatalf("gate receipt: %s, %v", res, err)
+		}
+		ckey := civerdict.Key(f.repo, tipSHA, gid)
+		if n, _ := f.client.Exists(f.ctx, ckey).Result(); n != 1 {
+			t.Fatalf("tip gate receipt %s exists = %d, want 1", ckey, n)
+		}
+		rec, _ := civerdict.Read(f.ctx, f.client, f.repo, tipSHA, gid)
+		if rec["verdict"] != "OK" || rec["kind"] != "tip" {
+			t.Fatalf("tip gate receipt = %+v, want OK tip", rec)
+		}
+		tipKey := fmt.Sprintf("ci:%s:%s:tip:%s:%s", f.repo, f.base, tipSHA, gid)
+		if n, _ := f.client.Exists(f.ctx, tipKey).Result(); n != 1 {
+			t.Fatalf("tip key %s exists = %d, want 1", tipKey, n)
+		}
+		tipRec, _ := f.client.HGetAll(f.ctx, tipKey).Result()
+		if tipRec["verdict"] != "OK" || tipRec["kind"] != "tip" {
+			t.Fatalf("tip key rec = %+v, want OK tip", tipRec)
 		}
 	})
 }

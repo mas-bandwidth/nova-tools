@@ -6,7 +6,7 @@ package consume
 // router needs its own group to see every event) and does two things:
 //
 //   - runner rows: a check_run whose name is a policy runner_rows row lands
-//     as field runner:<row> of the one key ci:<repo>:<sha>, keeping the
+//     as field runner:<row> of the GID key ci:<repo>:<head>:<gid>, keeping the
 //     attempt with the highest key (gen, check_run_id, status rank, at)
 //     whatever its conclusion (ns_prtoread_runner, prtoread.lua);
 //   - adoption: a sprint PR no card produced gets its ci cut and one review
@@ -26,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -44,7 +45,7 @@ const (
 	RunnerStateMissing = "MISSING" // anything else, an absent field included
 )
 
-// RunnerAttempt is the stored value of ci:<repo>:<sha> field runner:<row>.
+// RunnerAttempt is the stored value of ci:<repo>:<head>:<gid> field runner:<row>.
 type RunnerAttempt struct {
 	Gen        int    `json:"gen"`
 	CheckRunID string `json:"check_run_id"`
@@ -87,7 +88,7 @@ func RunnerRow(ci map[string]string, row string) string {
 }
 
 // RunnerReady is the one readiness rule the lander and `land why` call over a
-// head's ci:<repo>:<sha> record: ok only when every named row is READY;
+// head's ci:<repo>:<head>:<gid> record: ok only when every named row is READY;
 // missing names, in order, every row that is not (MISSING or FAIL; RunnerRow
 // says which).
 func RunnerReady(ci map[string]string, rows []string) (bool, []string) {
@@ -337,7 +338,8 @@ func (p *PRToReadRule) batch(ctx context.Context, msgs []redis.XMessage, policy 
 			return 0, fmt.Errorf("pr-to-read: attempt %s: %w", m.ID, err)
 		}
 		c := &runnerCandidate{repo: repo, head: v("head"), row: row}
-		c.cmd = pipe.FCall(ctx, FunctionPRToReadRunner, []string{"ci:" + repo + ":" + c.head}, row, string(arg))
+		ciKey := civerdict.Key(repo, c.head, "expected")
+		c.cmd = pipe.FCall(ctx, FunctionPRToReadRunner, []string{ciKey}, row, string(arg))
 		cands = append(cands, c)
 	}
 	if len(cands) > 0 {

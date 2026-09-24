@@ -137,7 +137,7 @@ type HeadRecord struct {
 	Repo       string
 	PR         int
 	Head       string
-	CICard     bool // a ci card exists for ci:<repo>:<head>
+	CICard     bool // a ci card exists for ci:<repo>:<head>:<gid>
 	RunnerOnly bool // a runner-only record exists for the head
 }
 
@@ -146,7 +146,7 @@ type LandReceipt struct {
 	Repo   string
 	PR     int
 	Head   string
-	Source string // must be the ci:<repo>:<head> key
+	Source string // must be the ci:<repo>:<head>:<gid> key
 }
 
 // OrphanCard is a card in orphan-effect.

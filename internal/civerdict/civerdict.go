@@ -1,5 +1,5 @@
 // Package civerdict is the one reader of a commit's CI verdict record,
-// ci:<owner/repo>:<sha>, shared by nova-sprint's land and nova-merge.
+// ci:<owner/repo>:<head>:<gid>, shared by nova-sprint's land and nova-merge.
 //
 // The record is a HASH whose "verdict" field is OK, or FAIL plus the package
 // and the test (the sprint CI card's end writes it; internal/sprintci). Two
