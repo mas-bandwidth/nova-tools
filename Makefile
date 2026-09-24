@@ -147,7 +147,10 @@ lint: fmt vet vet-laws
 
 # preflight is the standard check for swarm cards and developers (#2498 S4):
 # gofmt + go vet + go test -count=1
-preflight: PKGS ?= $(CL_PKGS)
+# No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
+# target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
+# every studio shard of dev push run 35999520176 ran the whole tree instead of
+# its PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
 preflight:
 	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
@@ -168,9 +171,13 @@ preflight:
 # benches (about 3x slower per core than the Studio), where the alert still
 # prints every CI-SLOW line but the budget is 300 s. Dated exception,
 # 2026-09-18; remove with those cards.
+#
+# GOTEST_TIMEOUT is `go test -timeout` for this target; the default is Go's own
+# 10m. The workflow sets it per leg to fit the leg's job cap.
+GOTEST_TIMEOUT ?= 10m
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
 	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
