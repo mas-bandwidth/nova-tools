@@ -31,6 +31,9 @@ func runCapacity(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	switch args[0] {
 	case "friend":
+		if hasWakeFlag(args[1:]) {
+			return runCapacityWake(ctx, args[1:], out, errOut) // friend.go (#3101)
+		}
 		return runCapacityDesired(ctx, capacity.KindFriend, args[1:], out, errOut)
 	case "bench":
 		return runCapacityDesired(ctx, capacity.KindBench, args[1:], out, errOut)

@@ -48,8 +48,9 @@ var cardLintAdvisory = map[string]bool{"size": true}
 // gate parser they have to agree with (internal/pulse/cardheader.go, #1721 at f927bccc),
 // and `depends-on` (#2636), which fires only under `--typed`, and the four base checks of
 // internal/swarm/lintbase.go -- `paths-at-base`, `no-push-steps`, `leg-in-fleet` and
-// `deadline-p95` (#2636) -- which fire only under `--base-check`.
-const cardLintChecks = 21
+// `deadline-p95` (#2636) -- with `donewhen-test-name` (#3083), which fire only under
+// `--base-check`.
+const cardLintChecks = 22
 
 // EVERY DRIFT NAMES ITS REMEDY, AND THE BINARY CAN PRINT THE WHOLE TABLE (issue #1464).
 //
@@ -350,9 +351,341 @@ func matchingTemplate(raw []byte) string {
 	return ""
 }
 
+// THE FLEET'S SCRIPTS ARE LINTED TOO (issue #2012).
+//
+// Two self-inflicted outages in one night, same class. A launcher used `mapfile`;
+// launchers execute on the coordinator -- a Mac whose /bin/bash is 3.2 -- so every
+// Linux launch failed ~10 minutes on `mapfile: command not found` while the darwin
+// benches kept working. Earlier, a zsh one-liner passed `$C` unquoted expecting word
+// splitting, and four loops printed usage and died; the lanes also measured zsh eating
+// `:r` in refspecs (`$NEW:refs/...`) and `set -- $var` not splitting.
+//
+// `lint --fleet <script>` is the rule the issue asks for, in the tool the fleet already
+// runs: it reads the ONE launcher script it is handed -- no model, no probe, one file,
+// before any launch -- and fails it on the three shapes that night cost. It runs no
+// shell and asks no bench which bash it has; it holds every fleet script to the one the
+// coordinator pins, /bin/bash 3.2, because that is the least the fleet has.
+
+// fleetLintChecks is how many independent shapes lintFleetScript looks for. It rides the
+// LINT OK line the way cardLintChecks does, so a reader knows how much of the script
+// was actually checked and a check added without a remedy is a red test.
+const fleetLintChecks = 3
+
+// fleetLintRemedies is the fleet table, the same contract as cardLintRemedies: every
+// drift names what its rule wants, and the table lives in the binary because a bench's
+// clone of this repository is months behind the binary installed on it. It is a
+// SEPARATE table rather than a fourth section of cardLintRemedies because `--rules`
+// lists the card checks and its count is cardLintChecks -- one table, one count,
+// two verbs that never share a file.
+var fleetLintRemedies = map[string]string{
+	"bash-shebang":       "line 1 is the interpreter line and it names bash, the one shell every fleet script is linted for: `#!/bin/bash` is the spelling the coordinator pins, `#!/usr/bin/env bash` names the same shell through PATH. `#!/bin/zsh` runs zsh, which neither word-splits an unquoted variable nor forgives `$NEW:refs/...` (its `:r` modifier eats it), and a script with no interpreter line is run by whatever shell typed its name -- on the coordinator that is zsh (nova-tools #2012)",
+	"bash4-builtin":      "`mapfile` and `readarray` are one bash-4 builtin under two names and macOS's /bin/bash is 3.2 and has neither: every Linux launch died ~10 minutes on `mapfile: command not found` while the darwin benches kept working. Read lines the 3.2 way -- `while IFS= read -r line; do ...; done < \"$file\"` (nova-tools #2012)",
+	"unquoted-expansion": "put the expansion in double quotes -- `\"$C\"` -- or, when it concatenates, quote the variable and let the literal follow: `\"$NEW\":refs/heads/x`. zsh does not word-split an unquoted variable (four loops printed usage and died on `for c in $C`, and `set -- $var` does not split) and its `:r` modifier eats `$NEW:refs/...`; when the split is the point, ask for it in a spelling every shell keeps: `read -r -a xs <<< \"$C\"` and then `\"${xs[@]}\"` (nova-tools #2012)",
+}
+
+// fleetLintRemedy is what one fleet rule wants, in one line -- the same contract as
+// cardLintRemedy, over this verb's own table.
+func fleetLintRemedy(check string) string {
+	if r, ok := fleetLintRemedies[check]; ok {
+		return r
+	}
+	return "this fleet rule carries no remedy line, which is itself a defect in nova-swarm; run `nova-swarm lint --fleet <script>` for the rules that do"
+}
+
+// fleetBash4RE is the bash-4-only command set this lint fails: `mapfile` and `readarray`
+// are one builtin under its two names, new in bash 4.0, and macOS's /bin/bash is 3.2.
+// The word must stand alone -- `remapfile` is not the builtin, `./mapfile` is a file,
+// `--mapfile` is a flag and `x=mapfile` is a string -- and it is matched only in text
+// OUTSIDE quotes, where fleetLineScan has already cut comments: a `mapfile` in prose or
+// in a quoted string is a word, not a command.
+var fleetBash4RE = regexp.MustCompile(`(?:^|[^A-Za-z0-9_.=-])(?:mapfile|readarray)(?:[^A-Za-z0-9_-]|$)`)
+
+// fleetShebangNamesBash reports whether a script's first line is the interpreter line
+// and names bash: `#!/bin/bash` is the spelling the coordinator pins and
+// `#!/usr/bin/env bash` names the same shell through PATH. `#!/bin/zsh`, `#!/bin/sh`
+// and a first line with no `#!` at all are the shapes the second outage came from: a
+// launcher run by name on a Mac gets whatever shell the line names, and with none it
+// gets the shell that typed it, which there is zsh.
+func fleetShebangNamesBash(first string) bool {
+	rest, ok := strings.CutPrefix(first, "#!")
+	if !ok {
+		return false
+	}
+	for _, f := range strings.Fields(rest) {
+		if f == "bash" || strings.HasSuffix(f, "/bash") {
+			return true
+		}
+	}
+	return false
+}
+
+// lintFleetScript returns every mechanical defect in one fleet script's text, in line
+// order: a first line that does not name bash, a bash-4-only builtin macOS's 3.2 has
+// not got, and an unquoted parameter expansion relying on a word split zsh never makes.
+// It reads nothing but the bytes it was handed.
+func lintFleetScript(raw []byte) []cardFinding {
+	lines := strings.Split(string(raw), "\n")
+	var out []cardFinding
+	add := func(check string, line int, excerpt string) {
+		out = append(out, cardFinding{check: check, line: line, excerpt: excerpt})
+	}
+
+	// 1. the fleet runs under /bin/bash. The interpreter line is the one thing a
+	// launcher run by name controls, and on the coordinator it is the whole of the
+	// zsh outage.
+	first := ""
+	if len(lines) > 0 {
+		first = lines[0]
+	}
+	if !fleetShebangNamesBash(first) {
+		add("bash-shebang", 1, first)
+	}
+
+	// 2. and 3. read the script line by line, skipping what is not code: a heredoc's
+	// body is data, a comment is prose, and neither can run a builtin or lean on a
+	// split. The shebang line reads as a comment to the scanner, which it is.
+	heredoc := ""
+	for i, l := range lines {
+		if heredoc != "" {
+			if strings.TrimLeft(l, "\t") == heredoc {
+				heredoc = ""
+			}
+			continue
+		}
+		bare, unquoted, start := fleetLineScan(l)
+		if start != "" {
+			heredoc = start
+		}
+		if fleetBash4RE.MatchString(bare) {
+			add("bash4-builtin", i+1, l)
+		}
+		if unquoted {
+			add("unquoted-expansion", i+1, l)
+		}
+	}
+	return out
+}
+
+// fleetLineScan walks one line the way a shell reads it and returns the line's text
+// OUTSIDE single and double quotes with any comment cut (bare), whether an unquoted
+// parameter expansion sits in it, and the delimiter when the line starts a heredoc.
+// Bare text is what a builtin check may read: a `mapfile` inside a quoted string is
+// prose, a `mapfile` inside `$( )` is code, and the difference is the quotes.
+func fleetLineScan(line string) (bare string, unquoted bool, heredoc string) {
+	// The text is gathered with append rather than a strings.Builder's Write* methods
+	// because the one-line audit refuses those by name anywhere in this package: the
+	// tripwire cannot tell a builder from a stream and is right not to guess.
+	var out []byte
+	inSingle, inDouble := false, false
+	for i := 0; i < len(line); {
+		c := line[i]
+		switch {
+		case c == '\\' && !inSingle && i+1 < len(line):
+			// an escaped character is literal; no quote it spells opens anything
+			if !inDouble {
+				out = append(out, line[i:i+2]...)
+			}
+			i += 2
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			i++
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			i++
+		case c == '#' && !inSingle && !inDouble && (i == 0 || line[i-1] == ' ' || line[i-1] == '\t'):
+			// a `#` outside quotes at a word start is a comment: prose, not code
+			return string(out), unquoted, heredoc
+		case c == '$' && !inSingle && fleetSubstAt(line, i):
+			// a command substitution is a script of its own with its own quote state:
+			// its quoted words are prose, its bare words and unquoted expansions are
+			// code, whether or not the substitution itself sits in double quotes
+			n, closed := fleetSubstSpan(line, i)
+			end := i + n
+			if closed {
+				end--
+			}
+			innerBare, innerUnquoted, _ := fleetLineScan(line[i+2 : end])
+			out = append(out, "$("...)
+			out = append(out, innerBare...)
+			out = append(out, ')')
+			unquoted = unquoted || innerUnquoted
+			i += n
+		case c == '$' && !inSingle:
+			n, splits := fleetExpansionSpan(line, i)
+			if n == 0 {
+				if !inDouble {
+					out = append(out, c)
+				}
+				i++
+				continue
+			}
+			if !inDouble && splits {
+				unquoted = true
+			}
+			out = append(out, line[i:i+n]...)
+			i += n
+		case c == '<' && !inSingle && !inDouble && strings.HasPrefix(line[i:], "<<") && heredoc == "":
+			if d, n := fleetHeredocAt(line, i); n > 0 {
+				heredoc = d
+				i += n
+				continue
+			}
+			out = append(out, c)
+			i++
+		default:
+			// quoted text is prose: only bytes outside both quote kinds reach bare
+			if !inSingle && !inDouble {
+				out = append(out, c)
+			}
+			i++
+		}
+	}
+	return string(out), unquoted, heredoc
+}
+
+// fleetExpansionSpan reports how many bytes of line the parameter or command expansion
+// at line[i] -- a `$` -- covers, 0 when it is not one, and whether the expansion is one
+// whose word-splitting differs between bash and zsh. A parameter expansion does differ:
+// zsh never word-splits an unquoted one, which is the outage. The single-character
+// specials do not: zsh splits `$@` and `$*` like bash does, and `$# $? $$ $! $-` hold
+// nothing splittable. Command and arithmetic substitution do not: zsh splits the output
+// of an unquoted `$( )` exactly like bash, and `$(( ))` never splits.
+func fleetExpansionSpan(line string, i int) (n int, splits bool) {
+	if i+1 >= len(line) {
+		return 0, false
+	}
+	switch c := line[i+1]; {
+	case c == '{':
+		depth := 0
+		for j := i + 1; j < len(line); j++ {
+			switch line[j] {
+			case '{':
+				depth++
+			case '}':
+				depth--
+				if depth == 0 {
+					return j - i + 1, true
+				}
+			}
+		}
+		return len(line) - i, true // unterminated: the whole tail is the expansion
+	case c == '(':
+		open := 1
+		for j := i + 2; j < len(line); j++ {
+			switch line[j] {
+			case '(':
+				open++
+			case ')':
+				open--
+				if open == 0 {
+					return j - i + 1, false
+				}
+			}
+		}
+		return len(line) - i, false // unterminated: taken whole, never flagged
+	case c == '@' || c == '*' || c == '#' || c == '?' || c == '$' || c == '!' || c == '-':
+		return 2, false
+	case fleetNameByte(c):
+		j := i + 1
+		for j < len(line) && fleetNameByte(line[j]) {
+			j++
+		}
+		return j - i, true
+	default:
+		return 0, false
+	}
+}
+
+// fleetSubstAt reports whether line[i] -- a `$` -- opens a command substitution `$( )`.
+// `$(( ))` is arithmetic, which runs no command and is left to fleetExpansionSpan.
+func fleetSubstAt(line string, i int) bool {
+	return strings.HasPrefix(line[i:], "$(") && !strings.HasPrefix(line[i:], "$((")
+}
+
+// fleetSubstSpan returns the byte length of the command substitution at line[i] and
+// whether its closing `)` is on the line. The close is found the way the shell finds
+// it: a `(` or `)` inside quotes, after a backslash, or inside a nested `$( )` does not
+// count, so `"$(printf '%s' ")")"` ends at its last `)`, not its first.
+func fleetSubstSpan(line string, i int) (n int, closed bool) {
+	inSingle, inDouble := false, false
+	depth := 1
+	for j := i + 2; j < len(line); {
+		c := line[j]
+		switch {
+		case c == '\\' && !inSingle:
+			j += 2
+			continue
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+		case c == '$' && !inSingle && fleetSubstAt(line, j):
+			m, _ := fleetSubstSpan(line, j)
+			j += m
+			continue
+		case c == '(' && !inSingle && !inDouble:
+			depth++
+		case c == ')' && !inSingle && !inDouble:
+			depth--
+			if depth == 0 {
+				return j - i + 1, true
+			}
+		}
+		j++
+	}
+	return len(line) - i, false // unterminated: the whole tail is the substitution
+}
+
+// fleetHeredocAt reads the heredoc a `<<` at line[i] starts and returns its delimiter
+// and its byte length. `<<-` strips the body's leading tabs, a quoted delimiter makes
+// the body literal, and `<<<` -- a herestring, not a heredoc -- and no delimiter word
+// are not one. The body a heredoc opens is data to the shell that reads it and is not
+// code this lint may judge.
+func fleetHeredocAt(line string, i int) (delim string, n int) {
+	j := i + 2
+	if j < len(line) && line[j] == '-' {
+		j++
+	}
+	for j < len(line) && (line[j] == ' ' || line[j] == '\t') {
+		j++
+	}
+	quote := byte(0)
+	if j < len(line) && (line[j] == '\'' || line[j] == '"') {
+		quote = line[j]
+		j++
+	}
+	start := j
+	for j < len(line) && fleetNameByte(line[j]) {
+		j++
+	}
+	if j == start {
+		return "", 0
+	}
+	d := line[start:j]
+	if quote != 0 {
+		if j >= len(line) || line[j] != quote {
+			return "", 0
+		}
+		j++
+	}
+	return d, j - i
+}
+
+// fleetNameByte is the character set a shell name is spelled with: the letters, the
+// digits and the underscore.
+func fleetNameByte(c byte) bool {
+	return c == '_' || (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+}
+
 func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
 	card := f.fs.String("card", "", "")
+	// `--fleet <file>` IS THE LAUNCHER'S OWN LINT (issue #2012). A card is checked for
+	// what it costs a bench to run; a fleet script is checked for what it costs the
+	// fleet to RUN AT ALL: the coordinator's /bin/bash is 3.2 and a script that leans
+	// on bash 4 or on zsh's word-splitting differences takes every launch down with it.
+	// The same verb, the same one-file contract, the same drift lines and remedies.
+	fleet := f.fs.String("fleet", "", "")
 	rules := f.fs.Bool("rules", false, "")
 	// THE TYPED HEADER IS CHECKED WHEN THE CARD HAS ONE, AND ON DEMAND WHEN IT DOES NOT.
 	// A card cut under SPEC-TOOLWORK §5 carries five typed lines; every card written before
@@ -394,6 +727,53 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		return 0
 	}
 	f.wantMax(*max)
+	// THE FLEET SCRIPT IS THE OTHER ONE-FILE INPUT, AND THE TWO NEVER SHARE A RUN
+	// (issue #2012). A card is read by shape rules a card writer meets on a bench; a
+	// launcher script is read by shell rules a fleet meets on the coordinator. The card
+	// flags over a script are a guess about a different file, so they are refused, and
+	// the verdict lines say `script=` rather than `card=` so a caller cannot mistake
+	// one input's verdict for the other's.
+	if *fleet != "" {
+		if *card != "" {
+			f.add("--card and --fleet want one input: --card is a worker card, --fleet is a launcher script; give one and lint the other in its own run")
+		}
+		if *typed || *trustPath != "" || *lineupPath != "" {
+			f.add("--typed, --trust and --lineup are card checks; --fleet holds a launcher script, and a card flag over a script is a guess about a different file")
+		}
+		if f.refused(stderr) {
+			return 2
+		}
+		raw, err := os.ReadFile(*fleet)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm lint: --fleet wants a readable launcher script of shell text to check: %s\n", oneline.Err(err))
+			return 2
+		}
+		name := filepath.Base(*fleet)
+		findings := lintFleetScript(raw)
+		if len(findings) == 0 {
+			fmt.Fprintf(stdout, "LINT OK script=%s checks=%d bytes=%d\n", oneline.Field(name), fleetLintChecks, len(raw))
+			return 0
+		}
+		printed := findings
+		more := false
+		if *max > 0 && len(findings) > *max {
+			printed, more = findings[:*max], true
+		}
+		for _, fd := range printed {
+			// The remedy rides on the same line as the card lint's drifts (#1464): a
+			// launcher writer holding this line reads what the rule wants without
+			// grepping any clone.
+			fmt.Fprintf(stdout, "LINT DRIFT script=%s %s: %d: %s remedy=%s\n",
+				oneline.Field(name), oneline.Field(fd.check), fd.line,
+				oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
+				oneline.Escape(fleetLintRemedy(fd.check)))
+		}
+		if more {
+			fmt.Fprintf(stdout, "LINT MORE script=%s findings=%d remedy=nova-swarm lint --fleet %s --max 0\n",
+				oneline.Field(name), len(findings), oneline.Field(*fleet))
+		}
+		return 2
+	}
 	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; --rules prints every rule and what it wants instead")
 	if f.refused(stderr) {
 		return 2

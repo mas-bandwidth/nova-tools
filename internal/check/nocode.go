@@ -1,7 +1,6 @@
 package check
 
 import (
-	"bufio"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -292,11 +291,20 @@ func ParseDenyList(spec string) ([]string, error) {
 // exempt lists elsewhere in this repo obey. The deny-list runs the other way:
 // it is a floor that ships with the tool, because a narrowing that goes
 // missing fails open and a floor that ships cannot.
+//
+// Stage selects the read substrate: false (the default) walks the tree
+// under Dir; true reads the staged content of Dir as the index carries
+// it. The two paths share the same floor lists, the same --allow
+// prefixing, and the same NAME/LOCATION/EXTENSION rules — the substrate
+// is only what feeds the executable-bit check (the walk's perm, the
+// index's DstMode) and the shebang check (the walk's Peek(2) on the
+// file, the index's first two bytes through ONE cat-file --batch pipe).
 type NoCodeOptions struct {
 	Dir        string   // root of the tree being guarded (required)
 	Allow      []string // path prefixes where machinery may live; empty by default
 	DenyExt    []string // effective deny-list; empty means the floor list
 	DenySource string   // provenance; required when DenyExt is set
+	Stage      bool     // read the index, not the working tree
 }
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
@@ -315,36 +323,18 @@ type NoCodeOptions struct {
 // A file that cannot be read produces a finding rather than a pass. Making a
 // file less readable must not make this gate greener.
 func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
-	deny := opts.DenyExt
-	source := opts.DenySource
-	if len(deny) == 0 {
-		// No list supplied means the floor, and the floor is what gets
-		// reported: a finding may never name a list that did not produce it.
-		deny, err = FloorDenyExts()
-		if err != nil {
-			return 0, nil, err
-		}
-		source = DenyFloor
-	} else if source == "" {
-		return 0, nil, errors.New("DenyExt was set without DenySource: a finding may not name an unknown list")
+	if opts.Stage {
+		// The index path keeps the same call surface and the same
+		// flag set; only the substrate changes. The cmd/nova-check
+		// nocode command reaches for this entry today for the walk;
+		// a future `--staged` flag would set opts.Stage and reach
+		// the audit's index counterpart from the same line.
+		return noCodeStaged(opts)
 	}
-	denySet := make(map[string]bool, len(deny))
-	for _, e := range deny {
-		denySet[strings.ToLower(e)] = true
-	}
-
-	// The name and path floors are always the embedded floor, and deliberately
-	// are NOT replaced by --deny-ext. That flag answers "which LANGUAGES does
-	// this line legitimately keep inside its own self", which has nothing to
-	// say about whether a CI workflow belongs in a prose tree. A line that
-	// genuinely keeps build machinery declares WHERE with --allow, which is the
-	// existing escape hatch and is narrower than switching a floor off.
-	denyNames, denyPrefixes, err := FloorDenyNames()
+	rules, err := newNoCodeRules(opts)
 	if err != nil {
 		return 0, nil, err
 	}
-
-	allow := normalizeAllow(opts.Allow)
 
 	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
 	// naming a link to the repo passed the directory check and then handed
@@ -377,12 +367,12 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		}
 		if d.IsDir() {
 			// .git is machinery by construction and is not repo content.
-			if d.Name() == ".git" || isAllowed(rel, allow) {
+			if d.Name() == ".git" || rules.allowed(rel) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if isAllowed(rel, allow) {
+		if rules.allowed(rel) {
 			return nil
 		}
 		fi, infoErr := d.Info()
@@ -401,7 +391,8 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 			return nil
 		}
 		scanned++
-		if reasons := classify(path, rel, fi, isLink, denySet, source, denyNames, denyPrefixes); len(reasons) > 0 {
+		peek := func() ([]byte, error) { return peekTwoFile(path) }
+		if reasons := rules.classify(rel, fi.Mode().Perm(), isLink, peek); len(reasons) > 0 {
 			findings = append(findings, Failure{rel, strings.Join(reasons, "; ")})
 		}
 		return nil
@@ -438,36 +429,28 @@ func isAllowed(rel string, allow []string) bool {
 	return false
 }
 
-// classify returns every reason the file is machinery, or nil if it is prose.
-// All reasons are reported when more than one holds: a gate that says only
-// "no" teaches nothing, and each reason is separately actionable.
-func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
-	var reasons []string
-	// Name and location are checked FIRST, and before the symlink return
-	// below, because both read only the path. A symlink called Makefile is
-	// machinery by the same argument that catches a file called Makefile, and
-	// deciding that requires no dereference.
-	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
-		reasons = append(reasons, fmt.Sprintf("build machinery by name %s (floor name list)", base))
-	}
-	// Lowercased on both sides so location matching agrees with name matching.
-	// They disagreed: on a case-insensitive filesystem a tree checked out as
-	// .GitHub/workflows/ is the same directory on disk and the floor did not
-	// fire, while a file named MAKEFILE did. An asymmetry a reader cannot tell
-	// was decided is worse than either choice.
-	lowerRel := strings.ToLower(rel)
-	for _, pre := range denyPrefixes {
-		if lowerRel == pre || strings.HasPrefix(lowerRel, pre+"/") {
-			reasons = append(reasons, fmt.Sprintf("machinery by location %s/ (floor name list)", pre))
-			break
-		}
-	}
-	// Trailing whitespace is trimmed for MATCHING only: a file named "x.py "
-	// has extension ".py " by Go's reckoning and would otherwise miss the list
-	// while being every bit as much a script.
-	if ext := strings.TrimSpace(strings.ToLower(filepath.Ext(rel))); denySet[ext] {
-		reasons = append(reasons, fmt.Sprintf("code extension %s (%s)", ext, source))
-	}
+// classifyParametrised returns every reason the file is machinery, or nil if
+// it is prose. All reasons are reported when more than one holds: a gate that
+// says only "no" teaches nothing, and each reason is separately actionable.
+//
+// Its two substrate-bound inputs are supplied by the caller (docs/SPEC.md,
+// "What called unchanged costs"): the permission-bit value, and a reader for
+// the first two bytes with its read error. The walk supplies them from the
+// filesystem (peekTwoFile), a staged/index caller from the index record and
+// the blob (readFirstTwo over the blob's bytes), and both call this one
+// function, so parity holds by construction rather than by transcription.
+//
+// The PATH-SIDE rules (name, location, extension) are the stream's
+// `pathOnlyReasons`, shared with the index-side classifier in
+// nocode_staged.go (SPEC.md 858).
+//
+// peekTwo returns AT MOST the first two bytes: fewer for a short or empty
+// file, which is not an error. Whether those bytes are "#!" is decided here
+// and only here, so no caller carries its own copy of the shebang rule. A
+// nil peekTwo on a non-symlink is a finding, never a pass: a caller that
+// cannot say what the file starts with cannot rule out a shebang.
+func classifyParametrised(rel string, perm os.FileMode, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string, peekTwo func() ([]byte, error)) []string {
+	reasons := pathOnlyReasons(rel, denySet, source, denyNames, denyPrefixes)
 	if isLink {
 		// Never dereferenced: the name is classified, the target is not read
 		// and its mode is not consulted.
@@ -476,40 +459,106 @@ func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[str
 		}
 		return reasons
 	}
-	if fi.Mode().Perm()&0o111 != 0 {
-		reasons = append(reasons, fmt.Sprintf("executable (mode %04o)", fi.Mode().Perm()))
+	if perm&0o111 != 0 {
+		reasons = append(reasons, fmt.Sprintf("executable (mode %04o)", perm))
 	}
-	shebang, err := hasShebang(fullPath)
+	if peekTwo == nil {
+		return append(reasons, "unreadable: no first-two-bytes reader supplied (cannot rule out machinery)")
+	}
+	head, err := peekTwo()
 	switch {
 	case err != nil:
 		reasons = append(reasons, "unreadable: "+err.Error()+" (cannot rule out machinery)")
-	case shebang:
+	case string(head) == "#!":
 		reasons = append(reasons, "executable script (shebang)")
 	}
 	return reasons
 }
 
-// hasShebang reports whether a file begins with "#!".
-//
-// An unreadable file returns an error rather than false. Reporting "no
+// noCodeRules is everything NoCode resolves once per run before it looks at a
+// single file: the effective extension deny-set and its provenance
+// (--deny-ext replaces the floor, --deny-ext-add extends it), the name and
+// path floors, and the --allow prefixes. The walk builds it from
+// NoCodeOptions; a staged/index caller builds it from the same options, so the
+// flags act identically on both substrates.
+type noCodeRules struct {
+	denySet      map[string]bool
+	source       string
+	denyNames    map[string]bool
+	denyPrefixes []string
+	allow        []string
+}
+
+func newNoCodeRules(opts NoCodeOptions) (noCodeRules, error) {
+	deny := opts.DenyExt
+	source := opts.DenySource
+	if len(deny) == 0 {
+		// No list supplied means the floor, and the floor is what gets
+		// reported: a finding may never name a list that did not produce it.
+		var err error
+		deny, err = FloorDenyExts()
+		if err != nil {
+			return noCodeRules{}, err
+		}
+		source = DenyFloor
+	} else if source == "" {
+		return noCodeRules{}, errors.New("DenyExt was set without DenySource: a finding may not name an unknown list")
+	}
+	denySet := make(map[string]bool, len(deny))
+	for _, e := range deny {
+		denySet[strings.ToLower(e)] = true
+	}
+	// The name and path floors are always the embedded floor, and deliberately
+	// are NOT replaced by --deny-ext. That flag answers "which LANGUAGES does
+	// this line legitimately keep inside its own self", which has nothing to
+	// say about whether a CI workflow belongs in a prose tree. A line that
+	// genuinely keeps build machinery declares WHERE with --allow, which is the
+	// existing escape hatch and is narrower than switching a floor off.
+	denyNames, denyPrefixes, err := FloorDenyNames()
+	if err != nil {
+		return noCodeRules{}, err
+	}
+	return noCodeRules{
+		denySet:      denySet,
+		source:       source,
+		denyNames:    denyNames,
+		denyPrefixes: denyPrefixes,
+		allow:        normalizeAllow(opts.Allow),
+	}, nil
+}
+
+// allowed reports whether rel is, or lies beneath, a declared --allow prefix.
+func (r noCodeRules) allowed(rel string) bool { return isAllowed(rel, r.allow) }
+
+// classify runs the one classifier under this run's rules.
+func (r noCodeRules) classify(rel string, perm os.FileMode, isLink bool, peekTwo func() ([]byte, error)) []string {
+	return classifyParametrised(rel, perm, isLink, r.denySet, r.source, r.denyNames, r.denyPrefixes, peekTwo)
+}
+
+// peekTwoFile is the walk's first-two-bytes reader: it opens p and reads at
+// most two bytes. The open error is returned, not swallowed: reporting "no
 // shebang" for a file nobody could open would mean a chmod 000 makes this
 // gate greener, which is the fail-open shape this whole check exists against.
-func hasShebang(p string) (bool, error) {
+func peekTwoFile(p string) ([]byte, error) {
 	f, err := os.Open(p)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	defer f.Close()
-	b, err := bufio.NewReader(f).Peek(2)
-	if err != nil {
-		// Short file: genuinely no shebang. Anything else is a read that
-		// failed, and scoring that as "no shebang" is the fail-open shape.
-		if errors.Is(err, io.EOF) {
-			return false, nil
-		}
-		return false, err
+	return readFirstTwo(f)
+}
+
+// readFirstTwo reads at most the first two bytes of r. A short stream is
+// genuinely "no shebang" and returns the bytes it has with a nil error;
+// anything else is a read that failed, and scoring that as "no shebang" is the
+// fail-open shape, so it is returned as an error.
+func readFirstTwo(r io.Reader) ([]byte, error) {
+	buf := make([]byte, 2)
+	n, err := io.ReadFull(r, buf)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return nil, err
 	}
-	return string(b) == "#!", nil
+	return buf[:n], nil
 }
 
 func sortedKeys(m map[string]bool) []string {

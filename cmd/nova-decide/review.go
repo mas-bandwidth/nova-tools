@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
@@ -38,7 +39,11 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	cardPath := fs.String("card", "", "the card file; when absent PATHS and SYMBOL are inferred from the pull request body")
 	post := fs.Bool("post", false, "post the typed line on the pull request as a comment")
 	dryRun := fs.Bool("dry-run", false, "print the typed line and post nothing (the default)")
-	ledger := fs.String("ledger", "file", "where the verdict is appended: file | redis")
+	ledger := fs.String("ledger", "file", "where the verdict is written: file | redis | file,redis (redis is one kind=jev entry on cards:done per JEV line)")
+	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the fleet Redis host:port, for --ledger redis (env NOVA_REDIS_ADDR)")
+	storeUser := fs.String("store-user", "", "the Redis ACL user, for --ledger redis")
+	storePasswordEnv := fs.String("store-password-env", "NOVA_REDIS_BENCH_PASSWORD", "the environment variable holding the Redis password; the password is never a flag")
+	stream := fs.String("stream", events.Stream, "the stream the Jev entries go to")
 	ledgerPath := fs.String("ledger-path", defaultLedgerPath(), "the JSONL ledger, for --ledger file")
 	noJev := fs.Bool("no-jev", false, "run the four mechanical checks only; ask no provider and spend nothing")
 	baseURL := fs.String("base-url", decide.DefaultBaseURL, "the Jev endpoint")
@@ -77,16 +82,13 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	if *batch != "" && *cardPath != "" {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--card names one card and --batch is many pull requests; give --card with --pr")
 	}
-	switch *ledger {
-	case "file":
-	case "redis":
-		// #2563 is the ev:cards stream and its Emit. Until it is on dev there
-		// is nothing to call, and a sink that silently does nothing is worse
-		// than one that says so.
+	toFile, toRedis, err := ledgerSinks(*ledger)
+	if err != nil {
+		return refuse(stderr, "REVIEW", "bad-arguments", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if toRedis && strings.TrimSpace(*store) == "" {
 		return refuse(stderr, "REVIEW", "no-ledger",
-			"--ledger redis wants the ev:cards Emit from nova-tools #2563, which is not on dev yet; use --ledger file (the JSONL) and re-point this when #2563 lands")
-	default:
-		return refuse(stderr, "REVIEW", "bad-arguments", "--ledger is file or redis, got "+oneline.Field(*ledger))
+			"--ledger redis wants --store host:port (or NOVA_REDIS_ADDR), the fleet Redis cards:done lives on; refusing to guess one")
 	}
 
 	enabled, err := prereview.ParseEnabled(*checksList)
@@ -126,6 +128,19 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		asker = prereview.ClientAsker{Client: client, Last: usage}
 	}
 
+	var jevStream events.Emitter
+	if toRedis {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		em, closeStream, err := dialJevStream(ctx, events.Dial{Addr: *store, Username: *storeUser,
+			Password: os.Getenv(*storePasswordEnv), Stream: *stream})
+		cancel()
+		if err != nil {
+			return refuse(stderr, "REVIEW", "no-ledger", "--ledger redis: "+oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		defer func() { _ = closeStream() }()
+		jevStream = em
+	}
+
 	gh := ghRunner{path: *ghPath}
 	held := 0
 	for _, n := range numbers {
@@ -141,8 +156,16 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		if *table {
 			fmt.Fprintln(stdout, tableRow(d))
 		}
-		if err := prereview.AppendLedger(*ledgerPath, d); err != nil {
-			fmt.Fprintf(stderr, "REVIEW LEDGER FAILED pr=%d reason=%s\n", n, oneline.Err(err))
+		if toFile {
+			if err := prereview.AppendLedger(*ledgerPath, d); err != nil {
+				fmt.Fprintf(stderr, "REVIEW LEDGER FAILED pr=%d reason=%s\n", n, oneline.Err(err))
+			}
+		}
+		if jevStream != nil {
+			if err := streamJevLine(jevStream, d); err != nil {
+				fmt.Fprintf(stderr, "REVIEW STREAM FAILED pr=%d reason=%s\n", n, oneline.Err(err))
+				held++
+			}
 		}
 		if d.Verdict != prereview.Pass {
 			held++
@@ -152,6 +175,41 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		return 3
 	}
 	return 0
+}
+
+// ledgerSinks reads --ledger: file, redis, or both as a comma list.
+func ledgerSinks(list string) (toFile, toRedis bool, err error) {
+	for _, raw := range strings.Split(list, ",") {
+		switch strings.TrimSpace(raw) {
+		case "file":
+			toFile = true
+		case "redis":
+			toRedis = true
+		default:
+			return false, false, fmt.Errorf("--ledger is file, redis or file,redis, got %s", oneline.Field(list))
+		}
+	}
+	return toFile, toRedis, nil
+}
+
+// dialJevStream opens the stream the Jev lines go to. It is a variable so a
+// test swaps in the in-memory events.FakeStream and dials nothing.
+var dialJevStream = func(ctx context.Context, d events.Dial) (events.Emitter, func() error, error) {
+	s, err := events.Open(ctx, d)
+	if err != nil {
+		return nil, nil, err
+	}
+	return s, s.Close, nil
+}
+
+// streamJevLine writes the JEV line just printed to the ledger stream: one
+// kind=jev entry, the same head and the same score the line carries.
+func streamJevLine(em events.Emitter, d prereview.Disposition) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, err := decide.WriteJevLedger(ctx, em, decide.JevVerdict{Repo: d.Repo, PR: d.PR, Head: d.Head,
+		Verdict: string(d.Verdict), Score: d.Score, Scored: d.Scored, Model: d.Model})
+	return err
 }
 
 // defaultLedgerPath is the JSONL ledger today. It is under the coordinator's

@@ -9,6 +9,8 @@
 -- sprints its cards come from (the pass shares a bench across open sprints,
 -- so the sprint travels with each card, not once per call). ns_card_undeal is
 -- one call per returned batch. ns_bench_ssh writes the dealer's ssh cell.
+-- ns_card_gate is one call per sprint per pass for the DEPENDS-ON gate
+-- (#3066): pool <-> waiting.
 --
 -- Where the dealer's ssh state lives (#3063 ruling): bench:<b>:ssh, a hash
 -- {state, why, at}, written ONLY by ns_bench_ssh from the deal pass. The
@@ -41,9 +43,13 @@ local function deal_receipt(S, kind, id, from_state, to_state, attempt, token_sh
     'idem', idem or '', 'at', tostring(at))
 end
 
--- The bench profile: an empty legs field runs every leg.
+-- The bench profile: an empty legs field runs every leg, and a card with no
+-- leg deals to any bench. A missing field is the empty set: HMGET answers it
+-- with Lua false, never nil (nova-tools #3321: the fleet's benches carry no
+-- legs field and `card push` stores no leg, so gmatch on false failed every
+-- deal).
 local function deal_runs(legs, leg)
-  if leg == nil or leg == '' or legs == nil or legs == '' then
+  if not leg or leg == '' or not legs or legs == '' then
     return true
   end
   for l in string.gmatch(legs, '[^, ]+') do
@@ -222,6 +228,64 @@ local function bench_ssh(keys, args)
   return { 'OK', tostring(at) }
 end
 
+-- ns_card_gate(token, S, actor, idem, then per card: label, verb, why)
+-- The deal pass's DEPENDS-ON gate for one sprint in one call (nova-tools
+-- #3066, #2756 3.2 `card release`). verb `wait` moves a queued, pooled card
+-- to s:<S>:waiting (its pool score kept in priority, why in wait_why), or
+-- rewrites wait_why on a card already waiting; verb `release` moves a queued,
+-- waiting card back to the pool at its priority and clears wait_why. A card
+-- that is not queued, or not where the verb expects it, is skipped, so a
+-- repeat writes nothing. ns_card_deal deals only pooled cards, so a waiting
+-- card cannot be dealt. Returns FENCED, NONE <why>, or GATED <waited>
+-- <released>.
+local function card_gate(keys, args)
+  local token, S, actor, idem = args[1], args[2], args[3], args[4]
+  local fenced = deal_fence(token)
+  if fenced then
+    return fenced
+  end
+  if (#args - 4) % 3 ~= 0 then
+    return redis.error_reply('ns_card_gate: cards are label, verb, why')
+  end
+  if redis.call('HGET', 's:' .. S, 'status') ~= 'open' then
+    return { 'NONE', 'sprint not open' }
+  end
+  local at = deal_now_ms()
+  local pool, waiting = 's:' .. S .. ':pool', 's:' .. S .. ':waiting'
+  local waited, released = 0, 0
+  for i = 5, #args, 3 do
+    local label, verb, why = args[i], args[i + 1], args[i + 2]
+    local ck = 's:' .. S .. ':card:' .. label
+    local c = redis.call('HMGET', ck, 'state', 'priority', 'wait_why', 'attempt')
+    if c[1] == 'queued' then
+      if verb == 'wait' then
+        local score = redis.call('ZSCORE', pool, label)
+        if score then
+          redis.call('ZREM', pool, label)
+          redis.call('SADD', waiting, label)
+          redis.call('HSET', ck, 'priority', tostring(score), 'wait_why', why or '')
+          deal_receipt(S, 'card wait', label, 'queued', 'queued', c[4], '', actor, why, idem, at)
+          waited = waited + 1
+        elseif redis.call('SISMEMBER', waiting, label) == 1 and c[3] ~= why then
+          redis.call('HSET', ck, 'wait_why', why or '')
+        end
+      elseif verb == 'release' then
+        if redis.call('SISMEMBER', waiting, label) == 1 then
+          redis.call('SREM', waiting, label)
+          redis.call('ZADD', pool, tonumber(c[2]) or 0, label)
+          redis.call('HDEL', ck, 'wait_why')
+          deal_receipt(S, 'card release', label, 'queued', 'queued', c[4], '', actor, 'depends-on landed', idem, at)
+          released = released + 1
+        end
+      else
+        return redis.error_reply('ns_card_gate: verb must be wait or release')
+      end
+    end
+  end
+  return { 'GATED', tostring(waited), tostring(released) }
+end
+
 redis.register_function('ns_card_deal', card_deal)
+redis.register_function('ns_card_gate', card_gate)
 redis.register_function('ns_card_undeal', card_undeal)
 redis.register_function('ns_bench_ssh', bench_ssh)

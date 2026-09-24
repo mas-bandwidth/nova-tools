@@ -263,7 +263,7 @@ func TestParseReviewDismissalReleasesNothing(t *testing.T) {
 	t.Parallel()
 	rs := parseRevTSV(t, "rowan\trowan-login\tyes\n")
 	head := strings.Repeat("a", 40)
-	v, ok := ParseReview(201, "rowan-login", "", "DISMISSED", head, "2026-09-19T10:00:00Z", rs, "author", head)
+	v, ok := ParseReview(201, "rowan-login", "", "DISMISSED", head, "2026-09-19T10:00:00Z", rs, "author", head, false)
 	if !ok {
 		t.Fatalf("ParseReview must not drop a DISMISSED review")
 	}

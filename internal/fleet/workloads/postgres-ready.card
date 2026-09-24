@@ -1,0 +1,15 @@
+roles: services
+expect: ^POSTGRES OK
+
+set -eu
+PORT="${NOVA_POSTGRES_PORT:-5432}"
+READY=$(command -v pg_isready 2>/dev/null || true)
+if [ -z "$READY" ]; then
+  echo "POSTGRES FAIL no pg_isready on the services host"
+  exit 1
+fi
+OUT=$("$READY" -h localhost -p "$PORT" 2>&1 || true)
+case "$OUT" in
+  *"accepting connections"*) echo "POSTGRES OK localhost:$PORT $OUT" ;;
+  *) echo "POSTGRES FAIL localhost:$PORT $OUT"; exit 1 ;;
+esac

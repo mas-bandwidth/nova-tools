@@ -80,6 +80,8 @@ RDB and no AOF, so a restart is a clean slate by construction and the record
 in git is provably untouched. If a value must survive a restart, it does not
 belong in Redis.
 
+Bind nova-redis to localhost and the tailnet, take auth from nova-secrets, and keep persistence off
+
 ## Rules
 
 1. **Git stays the record; nothing in Redis is the only copy of anything.**

@@ -4,65 +4,19 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
-func startRedis(t *testing.T) string {
+func startRedis(t *testing.T, extra ...string) string {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable; run this integration control on a Redis bench: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	log, err := os.Create(filepath.Join(dir, "redis.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = log.Close() })
-	port := strings.TrimPrefix(addr, "127.0.0.1:")
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", port,
-		"--save", "", "--appendonly", "no", "--dir", dir)
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	client := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = client.Close() })
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := client.Ping(ctx).Err()
-		cancel()
-		if err == nil {
-			return addr
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("throwaway redis did not start: %v", err)
-		}
-		// Wait only for the next readiness probe, never as the assertion.
-		time.Sleep(10 * time.Millisecond)
-	}
+	return testutil.Start(t, extra...)
 }
 
 func TestFunctionLibraryLoadsFromFiles(t *testing.T) {
@@ -163,5 +117,44 @@ func TestPipelineThousandReadsOneRoundTrip(t *testing.T) {
 		if len(values) != 2 || values[0] != "open" || values[1] != "stella" {
 			t.Fatalf("reply %d = %v", i, values)
 		}
+	}
+}
+
+// TestOpenAuthenticatesFromEnv is the fleet shape (users.acl on space:6380):
+// the default user is off, so an unauthenticated Open fails NOAUTH, and every
+// nova-sprint verb failed that way on 2026-09-23 (adoption receipt on #3009).
+// The password comes from the environment nova-secrets exec leaves it in,
+// never from a flag.
+func TestOpenAuthenticatesFromEnv(t *testing.T) {
+	addr := startRedis(t, "--user", "default", "off", "--user", "bench", "on", ">bench-secret", "~*", "&*", "+@all")
+	ctx := context.Background()
+
+	// An inherited NOVA_SPRINT_REDIS_PASSWORD_ENV would redirect the default path
+	// below to another seat's variable; clear it so the test is deterministic.
+	t.Setenv(store.PasswordEnvEnv, "")
+	t.Setenv(store.UserEnv, "")
+	t.Setenv(store.DefaultPasswordEnv, "bench-secret")
+	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOAUTH") {
+		t.Fatalf("Open without %s = %v; want NOAUTH (the password alone never picks a user)", store.UserEnv, err)
+	}
+
+	t.Setenv(store.UserEnv, "bench")
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatalf("Open as bench with %s: %v", store.DefaultPasswordEnv, err)
+	}
+	if err := st.Client().Set(ctx, "auth:probe", "1", 0).Err(); err != nil {
+		t.Fatalf("authenticated write: %v", err)
+	}
+	_ = st.Close()
+
+	t.Setenv(store.PasswordEnvEnv, "NOVA_REDIS_OTHER_SEAT")
+	t.Setenv("NOVA_REDIS_OTHER_SEAT", "")
+	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "NOVA_REDIS_OTHER_SEAT is empty") {
+		t.Fatalf("Open with an empty named password variable = %v; want a refusal naming it", err)
+	}
+	t.Setenv("NOVA_REDIS_OTHER_SEAT", "wrong")
+	if _, err := store.Open(ctx, addr); err == nil || !strings.Contains(err.Error(), "WRONGPASS") {
+		t.Fatalf("Open with the wrong password = %v; want WRONGPASS", err)
 	}
 }

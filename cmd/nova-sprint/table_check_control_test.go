@@ -3,66 +3,21 @@ package main
 import (
 	"bytes"
 	"context"
-	"net"
-	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
-// startThrowawayRedis starts a real redis-server on a free loopback port and
-// returns its address. The controls need real Redis for FCALL_RO and the
-// fixture keyspace; if a server cannot run the test skips rather than lies.
+// startThrowawayRedis starts a real server on a free loopback port and returns
+// its address. The controls need real Redis for FCALL_RO and the fixture
+// keyspace. A missing binary fails under NOVA_CI and skips otherwise.
 func startThrowawayRedis(t *testing.T) string {
 	t.Helper()
-	bin, err := exec.LookPath("redis-server")
-	if err != nil {
-		t.Skip("redis-server not available")
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Skipf("no loopback port: %v", err)
-	}
-	_, port, err := net.SplitHostPort(ln.Addr().String())
-	if err != nil {
-		ln.Close()
-		t.Fatal(err)
-	}
-	addr := "127.0.0.1:" + port
-	ln.Close()
-	dir := t.TempDir()
-	cmd := exec.Command(bin,
-		"--port", port,
-		"--bind", "127.0.0.1",
-		"--save", "",
-		"--appendonly", "no",
-		"--dir", dir,
-		"--logfile", dir+"/redis.log",
-	)
-	if err := cmd.Start(); err != nil {
-		t.Skipf("redis-server did not start: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-	})
-	client := redis.NewClient(&redis.Options{Addr: addr})
-	defer client.Close()
-	ctx := context.Background()
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if err := client.Ping(ctx).Err(); err == nil {
-			return addr
-		}
-		if time.Now().After(deadline) {
-			t.Skipf("redis-server at %s never became ready", addr)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	return testutil.Start(t)
 }
 
 func seed(t *testing.T, addr string, cmds [][]string) {
