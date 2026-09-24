@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
 	"github.com/mas-bandwidth/nova-tools/internal/lanes"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -96,6 +97,7 @@ type CutKindInput struct {
 	TestName  string // recut: the failing test copied from the HOLD or passed directly
 	HoldLine  string // recut: the HOLD DISPOSITION line, carried as evidence
 	Remains   string // recut: REMAINS: brief from the HOLD when present
+	Index     string // the per-repo context index (ctxindex); the card inlines the spec IDs its title and body name
 	Out       string // the directory the card is written into
 	Queue     string // the queue directory holding the state file and its lock
 	Stdout    io.Writer
@@ -199,6 +201,21 @@ func CutKind(in CutKindInput) int {
 		return 2
 	}
 	rendered = withCardExemplar(in.Kind, rendered)
+	if in.Index != "" {
+		ix, err := ctxindex.Open(in.Index)
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --index %s: %s\n", oneline.Field(in.Index), oneline.Err(err))
+			return 2
+		}
+		block, err := ix.Context(strings.Join([]string{in.Title, body, in.Names}, "\n"))
+		if err != nil {
+			fmt.Fprintf(in.Stderr, "CUT REFUSED: --index %s: %s\n", oneline.Field(in.Index), oneline.Err(err))
+			return 2
+		}
+		if block != "" {
+			rendered = strings.TrimRight(rendered, "\n") + "\n" + block
+		}
+	}
 	card := contractSHA12(rendered)
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))

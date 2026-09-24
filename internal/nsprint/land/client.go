@@ -208,10 +208,63 @@ func CallBatchPlan(ctx context.Context, c *redis.Client, sprint, repo, base, bat
 	if res[0] == "REFUSED" {
 		return "", "", fmt.Errorf("REFUSED %v", res[1])
 	}
+	if res[0] == "REUSE" {
+		return "REUSE", fmt.Sprint(res[1]), nil
+	}
 	if res[0] != "OK" || len(res) < 3 {
 		return "", "", fmt.Errorf("ns_batch_plan failed: %v", res)
 	}
 	return fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
+}
+
+// GateTakeResult holds the outcome of calling ns_gate_take.
+type GateTakeResult struct {
+	Status  string // "OK", "NOBUDGET", "NODATA", "STALE", "VOID"
+	Base    string
+	BatchID string
+	Attempt int
+	Token   string
+	EntryID string
+	Reason  string
+}
+
+// CallGateTake calls ns_gate_take (spec 5.2).
+func CallGateTake(ctx context.Context, c *redis.Client, repo, bench, slot, class string, cpuMilli, memMB int) (GateTakeResult, error) {
+	res, err := c.FCall(ctx, "ns_gate_take", nil, repo, bench, slot, class, strconv.Itoa(cpuMilli), strconv.Itoa(memMB)).Slice()
+	if err != nil {
+		return GateTakeResult{}, err
+	}
+	if len(res) == 0 {
+		return GateTakeResult{Status: "NODATA"}, nil
+	}
+	status := fmt.Sprint(res[0])
+	switch status {
+	case "OK":
+		if len(res) < 6 {
+			return GateTakeResult{}, fmt.Errorf("unexpected ns_gate_take OK reply: %v", res)
+		}
+		att, _ := strconv.Atoi(fmt.Sprint(res[3]))
+		return GateTakeResult{
+			Status:  "OK",
+			Base:    fmt.Sprint(res[1]),
+			BatchID: fmt.Sprint(res[2]),
+			Attempt: att,
+			Token:   fmt.Sprint(res[4]),
+			EntryID: fmt.Sprint(res[5]),
+		}, nil
+	case "NOBUDGET":
+		return GateTakeResult{Status: "NOBUDGET"}, nil
+	case "NODATA":
+		return GateTakeResult{Status: "NODATA"}, nil
+	case "STALE", "VOID":
+		batchID := ""
+		if len(res) > 1 {
+			batchID = fmt.Sprint(res[1])
+		}
+		return GateTakeResult{Status: status, BatchID: batchID}, nil
+	default:
+		return GateTakeResult{Status: status}, nil
+	}
 }
 
 // CallGateClaim calls ns_gate_claim.
@@ -219,9 +272,38 @@ func CallGateClaim(ctx context.Context, c *redis.Client, repo, base, batchID str
 	return c.FCall(ctx, "ns_gate_claim", nil, repo, base, batchID, strconv.Itoa(attempt), token, bench, slot).Text()
 }
 
+// GateReceiptGIDParams holds optional gid receipt parameters for CallGateReceiptWithGID.
+type GateReceiptGIDParams struct {
+	GID           string
+	Kind          string
+	Head          string
+	BaseSHA       string
+	RequiredSetID string
+	PolicyID      string
+	RunnerID      string
+	Pkg           string
+	Test          string
+}
+
 // CallGateReceipt calls ns_gate_receipt.
 func CallGateReceipt(ctx context.Context, c *redis.Client, repo, base, batchID string, attempt int, token, verdict, bench, worker, trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS string) (string, error) {
-	return c.FCall(ctx, "ns_gate_receipt", nil, repo, base, batchID, strconv.Itoa(attempt), token, verdict, bench, worker, trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS).Text()
+	return CallGateReceiptWithGID(ctx, c, repo, base, batchID, attempt, token, verdict, bench, worker, trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS, nil)
+}
+
+// CallGateReceiptWithGID calls ns_gate_receipt with optional gid receipt parameters.
+func CallGateReceiptWithGID(ctx context.Context, c *redis.Client, repo, base, batchID string, attempt int, token, verdict, bench, worker, trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS string, gidParams *GateReceiptGIDParams) (string, error) {
+	args := []any{
+		repo, base, batchID, strconv.Itoa(attempt), token, verdict, bench, worker,
+		trainHead, trainTree, inputID, selection, steps, failing, flakyRerun, coreS,
+	}
+	if gidParams != nil && gidParams.GID != "" {
+		args = append(args,
+			gidParams.GID, gidParams.Kind, gidParams.Head, gidParams.BaseSHA,
+			gidParams.RequiredSetID, gidParams.PolicyID, gidParams.RunnerID,
+			gidParams.Pkg, gidParams.Test,
+		)
+	}
+	return c.FCall(ctx, "ns_gate_receipt", nil, args...).Text()
 }
 
 // CallRequeue calls ns_requeue.

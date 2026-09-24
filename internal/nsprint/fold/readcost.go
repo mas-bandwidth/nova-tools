@@ -88,10 +88,26 @@ func (rc ReadCost) PerLanded() string {
 	return tokens.Usd((rc.USDMicro + int64(rc.Landed)/2) / int64(rc.Landed))
 }
 
+// PerLandedFigure is read_usd_per_landed as the line prints it after the name (#3159):
+// exact only when every read is priced, `=<x> coverage=100.00% (<n>/<n>)`; below that a
+// lower bound, `>=<x> coverage=<p>% (<priced>/<reads>)`. The dash stays `=-`, with no
+// coverage, because there is nothing to bound.
+func (rc ReadCost) PerLandedFigure() string {
+	per := rc.PerLanded()
+	if per == tokens.Dash || rc.Reads == 0 {
+		return "=" + tokens.Dash
+	}
+	op := ">="
+	if rc.Priced == rc.Reads {
+		op = "="
+	}
+	return fmt.Sprintf("%s%s coverage=%.2f%% (%d/%d)", op, per, 100*float64(rc.Priced)/float64(rc.Reads), rc.Priced, rc.Reads)
+}
+
 // PrintReads prints the fold's friend-read line.
 func PrintReads(out io.Writer, sprint string, rc ReadCost) {
-	fmt.Fprintf(out, "FOLD READS sprint=%s reads=%d priced=%d unmetered=%d malformed=%d read_usd=%s landed=%d read_usd_per_landed=%s\n",
-		oneline.Field(sprint), rc.Reads, rc.Priced, rc.Unmetered, rc.Malformed, rc.USD(), rc.Landed, rc.PerLanded())
+	fmt.Fprintf(out, "FOLD READS sprint=%s reads=%d priced=%d unmetered=%d malformed=%d read_usd=%s landed=%d read_usd_per_landed%s\n",
+		oneline.Field(sprint), rc.Reads, rc.Priced, rc.Unmetered, rc.Malformed, rc.USD(), rc.Landed, rc.PerLandedFigure())
 }
 
 // ReadTasks reads the sprint's closed tasks from the store in two round
