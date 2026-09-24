@@ -101,7 +101,7 @@ func TestCutLine1IsContract(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("cut(%s) = %d, want 0; stdout=%s", kind, code, stdout)
 		}
-		card, err := os.ReadFile(filepath.Join(out, "1.md"))
+		card, err := os.ReadFile(filepath.Join(out, "card-1.md"))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -142,7 +142,7 @@ func TestCutLine1IsContract(t *testing.T) {
 	if !strings.Contains(stderr, "line 1 is not the RESULT contract") {
 		t.Fatalf("prose line 1: stderr=%q, want the rule named", stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("prose line 1: a card was written despite the refusal")
 	}
 
@@ -152,7 +152,7 @@ func TestCutLine1IsContract(t *testing.T) {
 	if code != 2 || !strings.Contains(stderr, "does not clone over https") {
 		t.Fatalf("git@ clone: code=%d stderr=%q, want CUT REFUSED naming https", code, stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("git@ clone: a card was written despite the refusal")
 	}
 }
@@ -173,7 +173,7 @@ func TestCutStepOneSetsNoTmpDir(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("a STEP 1 with no TMPDIR export is cut, got %d, stderr=%q", code, stderr)
 	}
-	card, err := os.ReadFile(filepath.Join(out, "1.md"))
+	card, err := os.ReadFile(filepath.Join(out, "card-1.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -198,7 +198,7 @@ func TestCutStepOneSetsNoTmpDir(t *testing.T) {
 	if !strings.Contains(stderr, "STEP 1 sets TMPDIR") {
 		t.Errorf("the refusal names the rule, got %q", stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Error("a card was written despite the refusal")
 	}
 }
@@ -213,14 +213,14 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("cut = %d, want 0; stdout=%s", code, stdout)
 	}
-	read, err := os.ReadFile(filepath.Join(out, "1.md"))
+	read, err := os.ReadFile(filepath.Join(out, "card-1.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(read), "Do not run go build, go test or any toolchain") {
 		t.Fatalf("read card %q lacks the no-build line", read)
 	}
-	fix, err := os.ReadFile(filepath.Join(out, "2.md"))
+	fix, err := os.ReadFile(filepath.Join(out, "card-2.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +237,7 @@ func TestCutTextTemplateForbidsBuild(t *testing.T) {
 	if !strings.Contains(stderr, "no-build line") {
 		t.Fatalf("text no-build: stderr=%q, want the rule named", stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("text no-build: a card was written despite the refusal")
 	}
 
@@ -267,7 +267,7 @@ func TestCutAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
 	if strings.Contains(stderr, "CUT REFUSED") {
 		t.Fatalf("cut refused a declared text kind: %s", stderr)
 	}
-	for _, name := range []string{"1.md", "2.md"} {
+	for _, name := range []string{"card-1.md", "card-2.md"} {
 		raw, err := os.ReadFile(filepath.Join(out, name))
 		if err != nil {
 			t.Fatal(err)
@@ -282,7 +282,7 @@ func TestCutAcceptsReportAndRefusesANonsenseKind(t *testing.T) {
 	if code != 2 || !strings.Contains(stderr, "CUT REFUSED") {
 		t.Fatalf("a nonsense kind is refused: exit %d stderr=%q", code, stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("a nonsense kind wrote a card")
 	}
 }
@@ -349,7 +349,7 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	// A read card of exactly eight turns is cut.
 	if code, _, stderr, out, _ := runCut(t, map[string]string{"read": card("read", 8)}, "s\t1\tread\tt\tread\n"); code != 0 {
 		t.Fatalf("8-step read card: cut = %d, want 0; stderr=%q", code, stderr)
-	} else if _, err := os.Stat(filepath.Join(out, "1.md")); err != nil {
+	} else if _, err := os.Stat(filepath.Join(out, "card-1.md")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -361,7 +361,7 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	if !strings.Contains(stderr, "CUT REFUSED template=read") {
 		t.Fatalf("9-step read card: stderr=%q, want CUT REFUSED template=read", stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("9-step read card: a card was written despite the refusal")
 	}
 
@@ -373,7 +373,7 @@ func TestCutStepsAreTheTurnBudget(t *testing.T) {
 	if code != 2 || !strings.Contains(stderr, "over the 20-turn budget") {
 		t.Fatalf("21-step fix card: code=%d stderr=%q, want CUT REFUSED naming the 20-turn budget", code, stderr)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("21-step fix card: a card was written despite the refusal")
 	}
 }
@@ -458,7 +458,7 @@ func TestCutValidateContractRefusesALocatorThatDoesNotResolve(t *testing.T) {
 	if err != nil || !strings.Contains(string(calls), "gh repo view no/such-repo") {
 		t.Fatalf("the fake gh recorded %q (err=%v); want one `gh repo view no/such-repo`", calls, err)
 	}
-	if _, err := os.Stat(filepath.Join(out, "1.md")); err == nil {
+	if _, err := os.Stat(filepath.Join(out, "card-1.md")); err == nil {
 		t.Fatal("a card file was written despite the unresolved locator")
 	}
 }
@@ -611,7 +611,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 			if code != 0 {
 				t.Fatalf("Cut = %d, want 0; stderr=%s", code, stderr.String())
 			}
-			card, err := os.ReadFile(filepath.Join(out, "1.md"))
+			card, err := os.ReadFile(filepath.Join(out, "card-1.md"))
 			if err != nil {
 				t.Fatal(err)
 			}

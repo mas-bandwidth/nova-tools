@@ -115,7 +115,7 @@ func Cut(in CutInput) int {
 				continue
 			}
 		}
-		cardName := row.ID + ".md"
+		cardName := cardFileName(row.ID)
 		if err := os.WriteFile(filepath.Join(in.Out, cardName), []byte(card), 0o644); err != nil {
 			fmt.Fprintf(in.Stderr, "CUT REFUSED: card %s: %s\n", oneline.Field(cardName), oneline.Err(err))
 			return 2

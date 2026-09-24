@@ -49,7 +49,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`
 	if code != 0 {
 		t.Fatalf("run cut = %d, stderr=%s", code, stderr.String())
 	}
-	cardBytes, err := os.ReadFile(filepath.Join(out, "1.md"))
+	cardBytes, err := os.ReadFile(filepath.Join(out, "card-1.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -474,7 +474,7 @@ STEP last. Write RESULT.md with line 1 equal to this card's line 1.`)
 	if code != 0 {
 		t.Fatalf("cut exit = %d, stderr=%s", code, errb.String())
 	}
-	card, err := os.ReadFile(filepath.Join(dir, "cards", "417.md"))
+	card, err := os.ReadFile(filepath.Join(dir, "cards", "card-417.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
