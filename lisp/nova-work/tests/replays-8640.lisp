@@ -209,3 +209,47 @@
     (check-equal nil (getf result :delivery) "the bare correct claims no delivery")
     (check-equal t (getf result :evidence-invalidated)
                  "the bare correct still invalidates evidence")))
+
+;;; ------------------------------------------------------------------
+;;; E01-F04-04: represent-project-and-stream-groupings
+;;;   docs/SPEC-WORK.md:1557-1561 — "Project and stream containers use
+;;;   :type :work-set with the existing explicit :category label (\"project\"
+;;;   or \"stream\") ... its role must not be inferred from that title or from
+;;;   its position."                         SPEC-WORK.md:1557
+;;; ------------------------------------------------------------------
+
+(defparameter *project-stream-seed*
+  '((:id "proj" :type :work-set :category "project" :title "Project Alpha")
+    (:id "proj/stream" :type :work-set :parent "proj" :category "stream"
+     :title "nova-work")
+    (:id "proj/stream/ws" :type :work-set :parent "proj/stream" :category "stream"
+     :title "unrelated-deep-name")
+    (:id "proj/feature" :type :feature :parent "proj" :title "looks-like-a-stream"))
+  "Project and stream groupings carried as `:work-set` nodes with an explicit
+`category` label, exercised at two depths with titles that must not drive kind.")
+
+(deftest "TestE01F04RepresentProjectAndStreamGroupings" "docs/SPEC-WORK.md:1557"
+    "expected=project-and-stream-are-work-sets-with-explicit-category;kind-not-inferred-from-title-or-position"
+  (let ((state (make-seed-state *project-stream-seed*)))
+    ;; A project is a :work-set node whose kind is the explicit :type, and whose
+    ;; grouping label is the explicit :category.
+    (check-equal :work-set (node-type state "proj")
+                 "a project grouping is a :work-set node")
+    (check-equal "project" (node-category state "proj")
+                 "the project grouping carries the explicit category \"project\"")
+    ;; A stream whose title is "nova-work" is still a :work-set: the role is not
+    ;; inferred from the title.
+    (check-equal :work-set (node-type state "proj/stream")
+                 "a stream titled \"nova-work\" does not change kind")
+    (check-equal "stream" (node-category state "proj/stream")
+                 "the stream grouping carries the explicit category \"stream\"")
+    ;; A deeper work-set keeps its kind and category at another depth: position
+    ;; does not drive kind either.
+    (check-equal :work-set (node-type state "proj/stream/ws")
+                 "a nested work-set keeps its kind at a deeper position")
+    (check-equal "stream" (node-category state "proj/stream/ws")
+                 "a nested stream keeps its explicit category label")
+    ;; A feature titled like a stream stays a feature: kind is the declared
+    ;; :type, never a guess from the title.
+    (check-equal :feature (node-type state "proj/feature")
+                 "a feature titled like a stream is not reclassified")))

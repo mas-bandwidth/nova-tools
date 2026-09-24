@@ -133,16 +133,40 @@ func TestSimulateReadsTheLiveQueueThroughTheFakeReader(t *testing.T) {
 // letting the run hang. The process group is killed, so this test finishes; if the
 // deadline did not fire, `go test`'s own timeout is what would catch it, not an
 // assertion on the clock.
+//
+// THE TEST OWNS THE CLOCK (#2958 class; nova-tools' rule that a unit test never touches
+// wall-clock timing it does not control). The first cut passed --timeout 1s and let a real
+// timer race `sleep 30`. That one second also bounded every git step of the run -- the
+// fetch, the worktree, the squash-merge, the commit -- so on a loaded Studio shard a git
+// step slower than a second refused the run (exit 2, SIMULATE REFUSED, no POISON line)
+// before the check was ever reached: measured by holding each fetch 1.2 s, the old test
+// fails every time. Now the git steps get a generous --timeout, and the check's deadline
+// is the test's own channel: it is expired from the moment the check asks for it, so the
+// check is always the one that outran it, whatever the machine is doing. `sleep 30`
+// cannot finish first on any bench.
 func TestSimulateDeadlineMakesASlowCheckPoison(t *testing.T) {
 	l := simulateRepo(t)
 	entries := entriesFile(t, l, 1)
+	var asked []time.Duration
+	l.checkDeadline = func(d time.Duration) <-chan time.Time {
+		asked = append(asked, d)
+		expired := make(chan time.Time)
+		close(expired)
+		return expired
+	}
 	exit, stdout, stderr := l.run("simulate", "--repo", l.work, "--base", "dev",
-		"--entries", entries, "--checks", "sleep 30", "--timeout", "1s")
+		"--entries", entries, "--checks", "sleep 30", "--timeout", "2m")
 	if exit != 2 {
 		t.Fatalf("a timed-out check is a poison at exit 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	contains(t, stdout, "SIMULATE POISON #1 check=\"sleep 30\"")
-	contains(t, stdout, "no answer within")
+	contains(t, stdout, "no answer within the 2m0s --timeout")
+	contains(t, stdout, "SIMULATE DONE entries=1 ok=0 conflicts=0 poison=#1")
+	// The deadline the check ran under is --timeout itself, asked for once: one check, one
+	// deadline, and the value the caller typed.
+	if len(asked) != 1 || asked[0] != 2*time.Minute {
+		t.Fatalf("the check's deadline was asked for as %v, want exactly [2m0s] (the --timeout)", asked)
+	}
 }
 
 // THE EXIT TABLE docs/CLI.md documents, which the code contradicted on every invalid

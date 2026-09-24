@@ -603,3 +603,57 @@ func TestAnOldHeartbeatNeverRetiresALivePid(t *testing.T) {
 		t.Errorf("the refusal is %v; a live pid is a holder and has to be named as one", err)
 	}
 }
+
+// Feature 87 hold (#2857): the renew decision must stop renewing once the beat file
+// exists and has not moved; before it exists the tick renews (connecting grace).
+func TestLeaseProviderBeatRenewsOnlyOnAdvance(t *testing.T) {
+	job := t.TempDir()
+	beat := filepath.Join(job, ProviderBeatName)
+	var last time.Time
+	renew, last := providerBeatRenews(beat, last)
+	if !renew || !last.IsZero() {
+		t.Fatalf("no beat file yet: renew=%v last=%v, want renew with zero last", renew, last)
+	}
+	t0 := time.Now().Add(-time.Minute).Truncate(time.Second)
+	if err := touchProviderBeat(job, t0); err != nil {
+		t.Fatal(err)
+	}
+	if renew, last = providerBeatRenews(beat, last); !renew || !last.Equal(t0) {
+		t.Fatalf("first beat: renew=%v last=%v, want renew at %v", renew, last, t0)
+	}
+	for i := 0; i < 3; i++ {
+		if renew, last = providerBeatRenews(beat, last); renew {
+			t.Fatalf("tick %d with an unmoved beat file renewed the lease", i)
+		}
+	}
+	t1 := t0.Add(10 * time.Second)
+	if err := touchProviderBeat(job, t1); err != nil {
+		t.Fatal(err)
+	}
+	if renew, last = providerBeatRenews(beat, last); !renew || !last.Equal(t1) {
+		t.Fatalf("advanced beat: renew=%v last=%v, want renew at %v", renew, last, t1)
+	}
+	if err := os.Remove(beat); err != nil {
+		t.Fatal(err)
+	}
+	if renew, _ = providerBeatRenews(beat, last); renew {
+		t.Fatal("beat file removed after being seen still renewed")
+	}
+}
+
+// touchProviderBeat must create the file when absent (the first sample may already
+// show turns > 0, where a bare Chtimes silently did nothing).
+func TestLeaseTouchProviderBeatCreatesAbsentFile(t *testing.T) {
+	job := t.TempDir()
+	now := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := touchProviderBeat(job, now); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(filepath.Join(job, ProviderBeatName))
+	if err != nil {
+		t.Fatalf("beat file not created: %v", err)
+	}
+	if !st.ModTime().Equal(now) {
+		t.Fatalf("beat mtime %v, want %v", st.ModTime(), now)
+	}
+}

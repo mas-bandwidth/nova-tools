@@ -454,6 +454,8 @@ type RouteResult struct {
 	// measured row, or the built-in default with no rows behind it. A floor
 	// nobody can trace is a feeling with a number on it.
 	FloorFrom string
+	// Excluded is the set of down friend rungs excluded from routing (#3397).
+	Excluded []string
 }
 
 // ReadField renders the readers as one field: the names in order, or the dash,
@@ -556,15 +558,20 @@ const (
 // same answer every time. It is what --no-jev runs, and it is the answer the
 // provider's is measured against in the log.
 func RouteRules(reg *Registry, u Unit, floor float64) (RouteResult, error) {
-	return routeRules(reg, u, floor, nil)
+	return routeRules(reg, u, floor, nil, nil)
+}
+
+// RouteRulesExcluded is RouteRules with down friends excluded (#3397).
+func RouteRulesExcluded(reg *Registry, u Unit, floor float64, excluded map[string]bool, downExclusions []string) (RouteResult, error) {
+	return routeRules(reg, u, floor, excluded, downExclusions)
 }
 
 // routeRules is RouteRules with an exclusion set: the rungs a step-up has
 // already answered below the floor, which are off the ladder for this ask the
 // way a tried rung is. Nothing else about the rules changes, so an ordinary
 // route (an empty set) is the same answer it always was.
-func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) (RouteResult, error) {
-	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone, Steps: 1}
+func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool, downExclusions []string) (RouteResult, error) {
+	res := RouteResult{Unit: u.ID, Kind: u.Kind, Floor: floor, Source: SourceRules, Wait: WaitNone, Steps: 1, Excluded: downExclusions}
 	if reg == nil || len(reg.Minds) == 0 {
 		return res.refuse(fmt.Errorf("decide: no registry; a ladder with no rungs is not a ladder"))
 	}
@@ -614,9 +621,17 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 	// finish carries the designation notes onto the answer the ladder gives, so
 	// every return below says what was attached and why.
 	finish := func(r RouteResult) RouteResult {
+		var all []string
 		if len(notes) > 0 {
-			r.Reason = strings.Join(append(append([]string{}, notes...), r.Reason), "; ")
+			all = append(all, notes...)
 		}
+		if len(r.Reason) > 0 {
+			all = append(all, r.Reason)
+		}
+		if len(downExclusions) > 0 {
+			all = append(all, "excluded="+strings.Join(downExclusions, ","))
+		}
+		r.Reason = strings.Join(all, "; ")
 		return r
 	}
 
@@ -653,13 +668,13 @@ func routeRules(reg *Registry, u Unit, floor float64, excluded map[string]bool) 
 	// constant, so anything that makes the unit not that constant -- a prior
 	// attempt, a security touch, a fresh take or a size above the smallest
 	// bucket -- steps it aside and the ladder answers as today (H1).
-	if m, rule, ok := ruled(reg, u); ok {
+	if m, rule, ok := ruled(reg, u); ok && !excluded[m.Name] {
 		res.Rung = m
 		res.Confidence = confDesignated
 		res.Source = SourceRule
 		res.RulesRung = m.Name
 		res.Reason = fmt.Sprintf("a committed rule: %s is always %s here, by %s, so no call is made", u.Kind, m.Name, rule.By)
-		return res, nil
+		return finish(res), nil
 	}
 
 	height, reasons := supportedHeight(reg, u, burned)
@@ -1004,7 +1019,12 @@ type Decider interface {
 // floor steps up, and a provider error or a rung nobody offered leaves the
 // rules' answer standing.
 func RouteJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64) (RouteResult, error) {
-	return routeJev(ctx, d, reg, u, floor, nil)
+	return routeJev(ctx, d, reg, u, floor, nil, nil)
+}
+
+// RouteJevExcluded is RouteJev with down friends excluded (#3397).
+func RouteJevExcluded(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, excluded map[string]bool, downExclusions []string) (RouteResult, error) {
+	return routeJev(ctx, d, reg, u, floor, excluded, downExclusions)
 }
 
 // DefaultMaxSteps is how many decisions --step-up makes before it stops. Three
@@ -1026,14 +1046,24 @@ const DefaultMaxSteps = 3
 // the ordinary one -- a step-up that never got above the floor is still a
 // suggestion, never an authorization.
 func RouteStepUp(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, maxSteps int) ([]RouteResult, error) {
+	return RouteStepUpExcluded(ctx, d, reg, u, floor, maxSteps, nil, nil)
+}
+
+// RouteStepUpExcluded is RouteStepUp with down friends excluded (#3397).
+func RouteStepUpExcluded(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, maxSteps int, initialExcluded map[string]bool, downExclusions []string) ([]RouteResult, error) {
 	if maxSteps < 1 {
 		return nil, fmt.Errorf("decide: --max-steps %d asks nothing; it wants at least 1, such as --max-steps %d", maxSteps, DefaultMaxSteps)
 	}
 	excluded := map[string]bool{}
+	for k, v := range initialExcluded {
+		if v {
+			excluded[k] = true
+		}
+	}
 	var order []string
 	steps := make([]RouteResult, 0, maxSteps)
 	for i := 1; i <= maxSteps; i++ {
-		res, err := routeJev(ctx, d, reg, u, floor, excluded)
+		res, err := routeJev(ctx, d, reg, u, floor, excluded, downExclusions)
 		res.Steps = i
 		if len(order) > 0 {
 			res.Reason = fmt.Sprintf("step %d: %s answered below the floor and %s excluded from the criteria; %s",
@@ -1069,8 +1099,8 @@ func pluralRungs(order []string) string {
 }
 
 // routeJev is RouteJev with an exclusion set; see routeRules.
-func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, excluded map[string]bool) (RouteResult, error) {
-	rules, err := routeRules(reg, u, floor, excluded)
+func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float64, excluded map[string]bool, downExclusions []string) (RouteResult, error) {
+	rules, err := routeRules(reg, u, floor, excluded, downExclusions)
 	if err != nil {
 		// The rules refused before any call could be made: that result is
 		// already populated, and it carries the refusal.
@@ -1085,6 +1115,18 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	}
 	offered := offer(reg, u, rules.Rung.Height, tried, failedAt)
 	rules.Offered = mindNames(offered)
+	// #1513 / Stella's HOLD on #1860: mechanical work with no CONFIRMED failure
+	// never reaches the provider -- not even when the supported height holds
+	// more than one eligible mind (offer()'s own bound only limits how many
+	// HEIGHTS are gathered; a height can hold two lineages). The semantic
+	// decision boundary is HERE: a fact about the unit and its attempts, never
+	// a proxy on len(offered).
+	if Mechanical(u.Kind) && len(failedAt) == 0 {
+		// Its own reason: the height may hold several minds, so "one
+		// eligible rung" would be false here.
+		rules.Reason += "; a mechanical kind with no confirmed failure, so no decision to ask"
+		return rules, nil
+	}
 	if len(offered) < 2 {
 		rules.Reason += "; one eligible rung, so no decision to ask"
 		return rules, nil
@@ -1129,6 +1171,7 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 	res.Rung = chosen
 	res.Confidence = a.Confidence
 	res.SteppedUp = false
+	res.Excluded = downExclusions
 	res.Reason = fmt.Sprintf("jev chose %s among %s over the evidence (%s)", chosen.Name, strings.Join(rules.Offered, ", "), rules.Reason)
 	if a.Confidence < floor {
 		up, why, err := stepUp(reg, u, chosen, tried, failedAt)
@@ -1151,6 +1194,15 @@ func routeJev(ctx context.Context, d Decider, reg *Registry, u Unit, floor float
 func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt map[int]map[string]bool) []Mind {
 	var out []Mind
 	rungs := 0
+	// #1513: a mechanical kind with no CONFIRMED failure is offered its
+	// supported rung ALONE -- there is no step the evidence has earned, so no
+	// decision is asked for it at all. A confirmed failure (see
+	// Attempt.Failed) restores the ordinary offer of the supported rung and
+	// the next one that holds a mind.
+	bound := 2
+	if Mechanical(u.Kind) && len(failedAt) == 0 {
+		bound = 1
+	}
 	for _, h := range reg.Heights() {
 		if h < height {
 			continue
@@ -1166,7 +1218,7 @@ func offer(reg *Registry, u Unit, height int, tried map[string]bool, failedAt ma
 		}
 		out = append(out, at...)
 		rungs++
-		if rungs == 2 {
+		if rungs == bound {
 			break
 		}
 	}

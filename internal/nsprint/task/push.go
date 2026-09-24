@@ -9,6 +9,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,7 +26,40 @@ const (
 	FunctionDone = "ns_task_done"
 )
 
-var sprintNameRx = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+var (
+	sprintNameRx = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+	estRx        = regexp.MustCompile(`^[1-9][0-9]{0,4}$`)
+	titleEstRx   = regexp.MustCompile(`(?i)\best:\s*(\S+)\s*mins?\b`)
+)
+
+// IsValidEst reports whether s is a valid task estimate: a whole number of
+// minutes 1..10080 (at most one week), matching ^[1-9][0-9]{0,4}$ as text.
+func IsValidEst(s string) bool {
+	if !estRx.MatchString(s) {
+		return false
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 1 && n <= 10080
+}
+
+// ParseTitleEst extracts an estimate from a task title in the form `est: <v> min`.
+// If found and in-domain, it returns the estimate string.
+// If found but outside the domain 1..10080, it writes a warning to errOut and returns "".
+// If not found, it returns "".
+func ParseTitleEst(title string, errOut io.Writer) string {
+	matches := titleEstRx.FindStringSubmatch(title)
+	if len(matches) < 2 {
+		return ""
+	}
+	v := matches[1]
+	if IsValidEst(v) {
+		return v
+	}
+	if errOut != nil {
+		fmt.Fprintf(errOut, "WARN est: title value %s outside 1..10080, stored empty\n", v)
+	}
+	return ""
+}
 
 // Kind is a task kind (spec 4.2: read, review, harvest, fix, work).
 type Kind string
@@ -65,6 +100,8 @@ type PushRequest struct {
 	PayloadSHA string
 	Actor      string
 	Idem       string
+	Est        string
+	ErrOut     io.Writer
 }
 
 // PushStatus is the outcome of one push.
@@ -115,6 +152,7 @@ func PayloadSHA(req PushRequest) string {
 		string(req.Kind), req.Repo, req.Ref, strconv.Itoa(req.PR),
 		req.Head, req.Title, string(req.Effects), req.To,
 		strconv.FormatBool(req.Front), strconv.Itoa(req.Priority),
+		req.Est,
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])
@@ -167,6 +205,21 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	default:
 		return PushResult{}, fmt.Errorf("task push: invalid effects %q", req.Effects)
 	}
+	errOut := req.ErrOut
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+	if req.Est != "" {
+		if !IsValidEst(req.Est) {
+			fmt.Fprintf(errOut, "INVALID est=%s: whole minutes 1..10080\n", req.Est)
+			return PushResult{Status: PushInvalid}, nil
+		}
+	} else {
+		req.Est = ParseTitleEst(req.Title, errOut)
+	}
+	if req.Front && req.Priority == 0 {
+		req.Priority = 1
+	}
 	if req.PayloadSHA == "" {
 		req.PayloadSHA = PayloadSHA(req)
 	}
@@ -184,7 +237,7 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	reply, err := st.Client().FCall(ctx, FunctionPush, nil,
 		req.Sprint, req.ID, string(req.Kind), req.Title, string(req.Effects),
 		req.Repo, strconv.Itoa(req.PR), req.Head, req.Ref, req.To, front,
-		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem).Result()
+		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est).Result()
 	if err != nil {
 		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}

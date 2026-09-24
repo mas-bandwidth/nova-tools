@@ -50,6 +50,8 @@ type Kind string
 
 // The kinds, in the order a card walks them. `read` is a friend's read of a pull request,
 // `landed` the lander's merge, `jev` a Jev decision; the rest are the card's own life.
+// `decide` (decide.go) is a routing decision carrying the decide_log fields: the record
+// that was the decide_log table until #2623.
 const (
 	Queued    Kind = "queued"
 	Leased    Kind = "leased"
@@ -66,7 +68,7 @@ const (
 )
 
 // Kinds is every kind the stream accepts, in banner order.
-var Kinds = []Kind{Queued, Leased, Started, Turn, OK, Fail, Asked, Harvested, PullReq, Read, Landed, Jev}
+var Kinds = []Kind{Queued, Leased, Started, Turn, OK, Fail, Asked, Harvested, PullReq, Read, Landed, Jev, Decide}
 
 // KindList is the kinds as the refusal and the usage banner spell them.
 func KindList() string {
@@ -106,6 +108,9 @@ type Event struct {
 	PR        string
 	Head      string
 	At        time.Time
+
+	// Decision is the decide_log row a `decide` entry carries, and nil on every other kind.
+	Decision *Decision
 }
 
 // Int64 and Float64 are the one-line way to fill a reported number: Event{USD: Float64(0.11)}.
@@ -153,6 +158,14 @@ func (e Event) Validate() error {
 	if e.USD != nil && (math.IsNaN(*e.USD) || math.IsInf(*e.USD, 0) || *e.USD < 0) {
 		return fmt.Errorf("usd is a price in dollars, got %v", *e.USD)
 	}
+	switch {
+	case e.Kind == Decide && e.Decision == nil:
+		return fmt.Errorf("a decide event carries the decision's fields; nova-decide route --store writes it, not a hand")
+	case e.Kind != Decide && e.Decision != nil:
+		return fmt.Errorf("only a decide event carries a decision, and this one is %q", string(e.Kind))
+	case e.Decision != nil:
+		return e.Decision.validate()
+	}
 	return nil
 }
 
@@ -184,10 +197,12 @@ func (e Event) Stamp(now time.Time) Event {
 // reported is left out, so the entry has no such field rather than a zero.
 func (e Event) Values() []any {
 	f := e.Fields()
-	out := make([]any, 0, 2*len(fieldNames))
-	for _, name := range fieldNames {
-		if v, ok := f[name]; ok {
-			out = append(out, name, v)
+	out := make([]any, 0, 2*(len(fieldNames)+len(decisionFieldNames)))
+	for _, names := range [][]string{fieldNames, decisionFieldNames} {
+		for _, name := range names {
+			if v, ok := f[name]; ok {
+				out = append(out, name, v)
+			}
 		}
 	}
 	return out
@@ -219,6 +234,9 @@ func (e Event) Fields() map[string]string {
 	}
 	if e.USD != nil {
 		f["usd"] = strconv.FormatFloat(*e.USD, 'f', -1, 64)
+	}
+	if e.Decision != nil {
+		e.Decision.fields(f)
 	}
 	return f
 }
@@ -259,6 +277,11 @@ func FromFields(f map[string]string) (Event, error) {
 			return Event{}, fmt.Errorf("at %q is not an RFC3339 stamp", raw)
 		}
 		e.At = when.UTC()
+	}
+	if e.Kind == Decide {
+		if e.Decision, err = decisionFromFields(f); err != nil {
+			return Event{}, err
+		}
 	}
 	if err := e.Validate(); err != nil {
 		return Event{}, err

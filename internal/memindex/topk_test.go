@@ -3,8 +3,10 @@ package memindex
 import (
 	"fmt"
 	"math/rand/v2"
+	"os"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -46,6 +48,32 @@ func TestTopKMatchesFullSort(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestTopKSelectsWithABoundedHeap is the negative control for reverting the
+// heap selector in channels.go. TestTopKMatchesFullSort is an ordering
+// oracle both the pre-2f3c6e0e full sort and the heap satisfy, so it stayed
+// green when the production file was restored.
+func TestTopKSelectsWithABoundedHeap(t *testing.T) {
+	src, err := os.ReadFile("channels.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	for _, want := range []string{
+		`"container/heap"`,
+		"type scoreHeap",
+		"heap.Init",
+		"heap.Fix",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("channels.go must keep the bounded heap top-k selector; missing %q", want)
+		}
+	}
+	// The unguarded selector allocated every candidate, sorted, then sliced.
+	if strings.Contains(text, "make([]Scored, 0, len(scores))") {
+		t.Error("topK must not collect every candidate before selecting k")
 	}
 }
 

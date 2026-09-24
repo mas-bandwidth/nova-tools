@@ -1,0 +1,21 @@
+SPRINT TABLE
+blocked: ?
+landed: ?
+sprint: SPRINT ? (sprint-xy has not written yet)
+
+host       | ready | working |  done |    ok |  fail |  ok% |   load
+-----------+-------+---------+-------+-------+-------+------+-------
+-----------+-------+---------+-------+-------+-------+------+-------
+total      |     0 |       0 |     0 |     0 |     0 |   0% |
+
+
+friend     | ready | working |  done | status    
+-----------+-------+---------+-------+------------
+rowan      |     - |       - |     - | ?         
+johnny     |     - |       - |     - | ?         
+emma       |     - |       - |     - | ?         
+stella     |     - |       - |     - | ?         
+-----------+-------+---------+-------+------------
+total      |     0 |       0 |     0 |
+stale: never read (Redis did not answer since start)
+stale: xy key missing and no SPRINT-XY.txt (sprint-xy is not running)

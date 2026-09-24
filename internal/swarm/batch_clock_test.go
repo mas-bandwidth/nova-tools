@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"bytes"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +20,8 @@ type manualClock struct {
 	afterDone chan struct{}
 	tickCh    chan time.Time
 	tickDone  chan struct{}
+	polled    chan struct{}
+	gone      chan struct{}
 	afterOnce sync.Once
 	tickOnce  sync.Once
 }
@@ -30,6 +33,8 @@ func newManualClock() *manualClock {
 		afterDone: make(chan struct{}),
 		tickCh:    make(chan time.Time),
 		tickDone:  make(chan struct{}),
+		polled:    make(chan struct{}, 1),
+		gone:      make(chan struct{}),
 	}
 }
 
@@ -73,13 +78,48 @@ func (c *manualClock) advance(d time.Duration) {
 	}
 }
 
-// tick delivers one idle poll and waits for the monitor to receive it, so the
-// monitor's state after the call is settled.
+// testWait is the allowed poll bound: NOVA_TEST_WAIT when set, thirty seconds
+// otherwise. It is read at the call, never written as a constant, so a loaded
+// machine lengthens the wait rather than flaking a test.
+func testWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
+}
+
+// tick delivers one idle poll and waits for the monitor to FINISH it -- every card
+// sampled, every decision taken, every kill reaped -- so the monitor's state after the
+// call is settled. Waiting only for the receive was not enough: the monitor could
+// still be reading a card's store when the test's next write landed, and read the
+// write as part of the tick before it (#2958).
+//
+// A tick after the batch has returned is a no-op: every card is done, the monitor has
+// left on allDone, and a bare send would block the test forever (the hang a loaded
+// bench found in TestBatchIdleDoesNotKillAWritingCard, whose card can finish before
+// its second tick). A tick that nothing receives within testWait is dropped, not
+// held, so a monitor gone without a batch fails one test instead of hanging the
+// package (nova-tools #1983).
 func (c *manualClock) tick() {
 	c.mu.Lock()
 	now := c.now
 	c.mu.Unlock()
-	c.tickCh <- now
+	select {
+	case c.tickCh <- now:
+	case <-c.gone:
+		return
+	case <-time.After(testWait()):
+		// Nothing received the tick within the allowed poll bound: the monitor is gone
+		// without a batch to close c.gone (TestIssue1983, nova-tools #1983). Drop it.
+		return
+	}
+	select {
+	case <-c.polled:
+	case <-c.gone:
+	case <-time.After(testWait()):
+	}
 }
 
 // runBatchClock drives one Batch under the given manual clock. drive runs while the
@@ -88,11 +128,12 @@ func (c *manualClock) tick() {
 // clock the kill logic reads is injected.
 func runBatchClock(in BatchInput, clk *manualClock, drive func()) (int, string, string) {
 	in.clock = clk
+	in.polled = func() { clk.polled <- struct{}{} }
 	var out, errb bytes.Buffer
 	in.Stdout = &out
 	in.Stderr = &errb
 	done := make(chan int, 1)
-	go func() { done <- Batch(in) }()
+	go func() { done <- Batch(in); close(clk.gone) }()
 	drive()
 	code := <-done
 	return code, out.String(), errb.String()
@@ -153,4 +194,42 @@ func waitForLog(t *testing.T, path string, want int) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("waiting for %s to hold %d log lines: timed out", path, want)
+}
+
+// TestIssue1983 reproduces nova-tools #1983 as its title states it:
+// TestBatchIdleDoesNotKillAWritingCard hangs the whole internal/swarm package
+// for 10m under the gate's capped flags. The hang is the fixture's, not any
+// head's: the idle monitor exits with the batch (batch.go closes stopMonitor,
+// or allDone fires), and under a tight scheduler -- GOMAXPROCS=8 -p 2
+// -parallel 4 -race on a loaded bench, 2026-09-19 -- the drive callback still
+// held a tick when it was gone, so tick blocked sending a tick that nothing
+// was left to receive, with no timeout of its own: the goroutine dump named a
+// nine-minute chan send at batch_clock_test.go:82 under
+// TestBatchIdleDoesNotKillAWritingCard.func1 (batch_test.go:348), and the test
+// could not fail, only hang until the package's bound took every other result
+// with it. Here the monitor is gone by construction -- its ticker taken, no
+// receiver left -- and the same send is watched with a bound of its own, so
+// the fault fails one test in seconds instead of hanging the package for ten
+// minutes.
+func TestIssue1983(t *testing.T) {
+	// The give-up bound this reproduction runs under: the no-receiver state is
+	// built here by construction, never won from the machine's scheduler, so a
+	// short bound is the arrangement under proof, not a bet on load.
+	t.Setenv("NOVA_TEST_WAIT", "1s") // wall-ok: this test's own arranged give-up bound, never a machine bet
+	clk := newManualClock()
+	// The monitor has taken its ticker and is gone, exactly as it is once the
+	// batch has ended: nothing is left to receive a tick.
+	clk.NewTicker(idlePollInterval)
+	returned := make(chan struct{})
+	go func() {
+		clk.tick()
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(30 * time.Second): // wall-ok: the reproduction's watchdog give-up, never a product bound
+		t.Fatalf("manualClock.tick blocked sending a tick nothing is left to receive (nova-tools #1983): " +
+			"the idle monitor is gone and the send has no bound of its own, so a test can only hang " +
+			"until the package's 10m bound takes every other result with it")
+	}
 }

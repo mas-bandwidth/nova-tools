@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Work list 5: the host, and the one sentence that governs everything it returns --
@@ -38,6 +40,12 @@ type Checks struct {
 	RedNames     []string
 	Details      []CheckDetail
 	PendingNames []string
+	// Source is where the evidence came from: CIFromRedis (the verdict
+	// record), CIFromGitHub (check-runs, because the record said nothing), or
+	// "" for a host that does not say. SourceWhy is the record's state when
+	// the forge answered.
+	Source    string
+	SourceWhy string
 }
 
 // Bucket classifies one check's state the way the merge condition counts it.
@@ -94,7 +102,7 @@ func (c *Checks) AddRun(name, state, sha string) {
 // stale sha cannot make a head with a run in progress red (nova-tools #1014).
 func (c Checks) ForSHA(oid string) Checks {
 	oid = strings.TrimSpace(oid)
-	var out Checks
+	out := Checks{Source: c.Source, SourceWhy: c.SourceWhy}
 	for _, d := range c.Details {
 		if d.SHA == "" || oid == "" || d.SHA == oid {
 			out.AddRun(d.Name, d.Conclusion, d.SHA)
@@ -275,9 +283,9 @@ func (h *GH) gh(args ...string) (string, error) {
 	return out, nil
 }
 
-// ghWhole is gh without execOutputCap on a successful call: for the three captures a
-// parser reads whole rather than a person -- a pull request's own JSON, its comments,
-// its reviews -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
+// ghWhole is gh without execOutputCap on a successful call: for the captures on the
+// landing path a parser reads whole rather than a person -- a pull request's own JSON,
+// its comments, its reviews (#2455) -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
 // JSON it cannot parse at all (nova-tools #2522). See RunUncapped for the mechanism and
 // for what still happens to a FAILING call's captured output.
 func (h *GH) ghWhole(args ...string) (string, error) {
@@ -352,6 +360,33 @@ func decodePR(out string, n int, repo string) (PR, error) {
 	}, nil
 }
 
+// CreatePR opens the one pull request a fold lands (docs/SPEC-MERGE.md "The fold
+// (#1142)"). It is not part of the Host interface the lane's pass uses: the fold reaches
+// it through a narrower interface of its own, so the merge path has no way to open one.
+func (h *GH) CreatePR(head, base, title, body string) (int, error) {
+	out, err := h.gh("pr", "create", "--repo", h.Repo, "--head", head, "--base", base,
+		"--title", title, "--body", body)
+	if err != nil {
+		return 0, err
+	}
+	// gh prints the pull request's URL; the number is its last path segment. A URL
+	// with no readable number is refused rather than guessed: FOLD OK names the PR.
+	u := strings.TrimSpace(out)
+	u = strings.TrimSuffix(u, "/")
+	if i := strings.LastIndex(u, "/"); i >= 0 {
+		if n, err := strconv.Atoi(u[i+1:]); err == nil {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("gh pr create did not name the pull request's number: %s", oneLineOf(out))
+}
+
+// ClosePR closes one folded pull request as superseded by the squash.
+func (h *GH) ClosePR(n int) error {
+	_, err := h.gh("pr", "close", strconv.Itoa(n), "--repo", h.Repo)
+	return err
+}
+
 // BranchOID resolves a branch entry's head through the host, so that a read-only verb
 // never depends on a clone's freshness (the prototype shelled into the clone).
 func (h *GH) BranchOID(branch string) (string, error) {
@@ -396,25 +431,54 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's CI verdict from the injectable source, at
-// ci:<owner/repo>:<sha>, and NEVER from GitHub's check-runs. A check-run the
-// forge reports -- green or not -- is not evidence this tool may merge on
-// (nova-tools #2924), so this method does not invoke gh at all. A missing,
-// empty or non-OK key answers ErrCIMissing, which a caller reports as
-// "ci: MISSING"; only an OK value answers green.
+// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<sha>
+// (the injectable source) answers first; when it says nothing -- absent, no
+// verdict, or unreadable -- the commit's GitHub check-runs answer, and the
+// result's Source is "from-github". A missing record is not a verdict.
+// ErrCIMissing is returned only when both say nothing.
 func (h *GH) Checks(oid string) (Checks, error) {
-	if h.CI == nil {
-		return Checks{}, ErrCIMissing
+	oid = strings.TrimSpace(oid)
+	why := "no ci source"
+	if h.CI != nil {
+		value, ok, err := h.CI.Read(h.Repo, oid)
+		switch {
+		case err != nil:
+			why = CIKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
+		case ok:
+			c := Checks{Source: CIFromRedis}
+			c.AddRun("ci", ciState(value), oid)
+			return c, nil
+		default:
+			why = CIKey(h.Repo, oid) + " absent"
+		}
 	}
-	value, ok, err := h.CI.Read(h.Repo, oid)
+	c, err := h.checkRuns(oid)
 	if err != nil {
-		return Checks{}, fmt.Errorf("%w: %v", ErrCIMissing, err)
+		return Checks{}, fmt.Errorf("ci: %s, and the github check-runs could not be read: %w", why, err)
 	}
-	if !ok || !ciGreen(value) {
-		return Checks{}, ErrCIMissing
+	if c.Total() == 0 {
+		return Checks{}, fmt.Errorf("%w (%s, and github has no check-runs at %s)", ErrCIMissing, why, oid)
+	}
+	c.Source, c.SourceWhy = CIFromGitHub, why
+	return c, nil
+}
+
+// checkRuns reads a commit's GitHub check-runs and buckets them.
+func (h *GH) checkRuns(oid string) (Checks, error) {
+	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
+		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
+	if err != nil {
+		return Checks{}, err
 	}
 	var c Checks
-	c.AddRun("ci", "success", strings.TrimSpace(oid))
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		name, rest, _ := strings.Cut(line, "\t")
+		state, sha, _ := strings.Cut(rest, "\t")
+		c.AddRun(name, state, sha)
+	}
 	return c, nil
 }
 
@@ -441,12 +505,19 @@ func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 // comment or review capture that carries a typed disposition near the end of a long
 // thread is not evidence this tool may read a 64 KiB prefix of and call complete
 // (nova-tools #2522 measured one such capture at 63,499 bytes).
+// The body is projected and bounded via --jq (.body[:MaxParseBodyBytes+1], in
+// characters) so that individual comment payloads cannot cause unbounded memory
+// consumption; that bound is far above GitHub's 65,536-character limit, and a body
+// cut by it is still over MaxParseBodyBytes, which the parser refuses as a hold
+// (nova-tools #3443), never reading a prefix as the whole body.
 func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
-	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n),
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), created_at, user: {login: .user.login}}]", MaxParseBodyBytes+1))
 	if err != nil {
 		return nil, err
 	}
-	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n),
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), state, submitted_at, commit_id, user: {login: .user.login}}]", MaxParseBodyBytes+1))
 	if err != nil {
 		return nil, err
 	}

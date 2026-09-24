@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 )
 
 const (
@@ -149,6 +150,10 @@ type Lane struct {
 	Store  Store
 	Filer  Filer
 	Clock  Clock
+	// Metrics receives the batch depth, the members admitted to the gate
+	// and one latency per forge read and gate run (nx-g61); nil exports
+	// nothing, and it is the one optional field.
+	Metrics *metrics.Set
 }
 
 // FlakyKey is flaky:<repo>:<pkg>.<test>, the dedup key of spec 2.2.
@@ -170,16 +175,18 @@ func (l Lane) Run(ctx context.Context, batch Batch) (Result, error) {
 	if strings.TrimSpace(batch.Repo) == "" || len(batch.Members) == 0 {
 		return Result{}, fmt.Errorf("land: a batch needs a repo and a member")
 	}
+	l.Metrics.QueueDepth(metrics.Lander, len(batch.Members))
 	kept, keptRes, dropped, err := l.admit(ctx, batch)
 	if err != nil {
 		return Result{}, err
 	}
+	l.Metrics.LeasesHeld(metrics.Lander, len(kept))
 	res := Result{Kept: keptRes, Dropped: dropped}
 	if len(kept) == 0 {
 		return res, nil
 	}
 	gated := Batch{Repo: batch.Repo, Name: batch.Name, Members: kept}
-	v, err := l.Gate.Run(ctx, gated, 0)
+	v, err := l.gate(ctx, gated, 0)
 	res.Runs = 1
 	if err != nil {
 		return res, err
@@ -214,7 +221,7 @@ func (l Lane) Run(ctx context.Context, batch Batch) (Result, error) {
 	res.Record = rec
 	res.Filed = filed
 
-	v2, err := l.Gate.Run(ctx, gated, 1)
+	v2, err := l.gate(ctx, gated, 1)
 	res.Runs = 2
 	res.Retries = 1
 	if err != nil {
@@ -224,6 +231,14 @@ func (l Lane) Run(ctx context.Context, batch Batch) (Result, error) {
 		return res, nil
 	}
 	return l.land(ctx, res, gated, v2)
+}
+
+// gate runs the batch through Gate and records its latency.
+func (l Lane) gate(ctx context.Context, batch Batch, attempt int) (Verdict, error) {
+	start := l.Clock.Now()
+	v, err := l.Gate.Run(ctx, batch, attempt)
+	l.Metrics.ProviderLatency(metrics.Lander, "gate", l.Clock.Now().Sub(start))
+	return v, err
 }
 
 func (l Lane) land(ctx context.Context, res Result, batch Batch, v Verdict) (Result, error) {
@@ -266,7 +281,9 @@ func (l Lane) readMergeable(ctx context.Context, repo string, number int) (Membe
 		if err := ctx.Err(); err != nil {
 			return MemberResult{}, false, err
 		}
+		start := l.Clock.Now()
 		state, err := l.Forge.Mergeable(ctx, repo, number)
+		l.Metrics.ProviderLatency(metrics.Lander, "forge", l.Clock.Now().Sub(start))
 		if err != nil {
 			return MemberResult{}, false, err
 		}

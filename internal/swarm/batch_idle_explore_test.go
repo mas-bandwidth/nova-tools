@@ -46,6 +46,12 @@ func TestIdleWatchCountsHarnessStoreProgress(t *testing.T) {
 	// `explore` writes NOTHING to its log and burns NO CPU. All it does is grow the harness
 	// store the way a harness taking turns does, then publish. `stuck` sleeps past the idle
 	// window and touches nothing at all.
+	//
+	// THE TEST DECIDES WHEN THE TURN LANDS (#2958). The first cut let the runner append 40
+	// turns 25 ms apart and waited for "one more" to reach disk; under load the monitor's
+	// first reading could land after that turn, the store then sat still until the second
+	// tick, and a working card was idle-killed about one run in fifteen. Now the store moves
+	// exactly once, between the two readings, and only when the test says so.
 	store := "{root}/{slot}/data/opencode/opencode.db"
 	runner := runnerDoing(t, dir, "explore",
 		runnerStep{Op: "mkdir", Path: "{job}"},
@@ -56,7 +62,13 @@ func TestIdleWatchCountsHarnessStoreProgress(t *testing.T) {
 		runnerStep{Op: "exit", N: 0, When: "label==stuck"},
 		// The turn the provider answered DURING the idle window: the store grows and
 		// nothing else moves.
-		runnerStep{Op: "appendn", Path: store, Body: "turn {i}", N: 40, Ms: 25, When: "label==explore"},
+		runnerStep{Op: "waitfile", Path: "{root}/turn-now", When: "label==explore"},
+		runnerStep{Op: "append", Path: store, Body: "turn 2", When: "label==explore"},
+		runnerStep{Op: "write", Path: "{root}/turned", When: "label==explore"},
+		// The card publishes only after the test has finished looking. A result on disk
+		// makes the monitor spare the card for a different reason (#916), which would let
+		// this test pass with the store rule gone.
+		runnerStep{Op: "waitfile", Path: "{root}/finish-now", When: "label==explore"},
 		publishCard("{job}"),
 	)
 	// Neither card's process tree moves: the sampler answers a constant for both, so CPU
@@ -69,16 +81,17 @@ func TestIdleWatchCountsHarnessStoreProgress(t *testing.T) {
 		snapshot: func() activitySnapshot { return sampler },
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "explore-started"))
-		db := filepath.Join(root, "1", "data", "opencode", "opencode.db")
 		clk.waitTick()
-		clk.tick() // the first reading of both cards
-		// The clock is injected, so two ticks in a row are the same instant of REAL time and
-		// the store would not have moved between them for reasons that have nothing to do
-		// with the monitor. The test waits for one more turn to actually land on disk, which
-		// is the event it is about, and only then advances the virtual idle window.
-		waitForGrowth(t, db)
+		clk.tick() // the first reading of both cards, settled: explore's store holds one turn
+		if err := os.WriteFile(filepath.Join(root, "turn-now"), []byte("go"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		waitForFile(t, filepath.Join(root, "turned"))
 		clk.advance(testIdleBudget)
-		clk.tick() // a whole idle window later: explore's store grew, stuck's did not
+		clk.tick() // a whole idle window later: explore's store grew, stuck's did not; kills reaped
+		if err := os.WriteFile(filepath.Join(root, "finish-now"), []byte("go"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if code != 1 {
 		t.Fatalf("a batch holding one idle card exits 1, got %d; stderr: %s", code, errs)
@@ -126,21 +139,6 @@ func TestAStoreThatStoppedGrowingIsStillIdle(t *testing.T) {
 	if !strings.Contains(out, "a slot=1: "+idleReason) {
 		t.Fatalf("a card whose store was written once and never again is idle:\n%s", out)
 	}
-}
-
-// waitForGrowth blocks until the named file is larger than it is now, so a test that means
-// "one more turn landed" waits for that event rather than for a duration.
-func waitForGrowth(t *testing.T, path string) {
-	t.Helper()
-	start := fileSize(path)
-	deadline := time.Now().Add(10 * time.Second) // wall-ok: a test's own give-up, not a product timeout
-	for time.Now().Before(deadline) {
-		if fileSize(path) > start {
-			return
-		}
-		time.Sleep(5 * time.Millisecond) // wall-ok: polling a file in a test
-	}
-	t.Fatalf("the harness store %s never grew past %d bytes", path, start)
 }
 
 func fileSize(path string) int64 {

@@ -32,6 +32,11 @@ md_items=$(grep -c '^- \[ \]\|^- \[x\]' "$md")
 sexp_features=$(grep -o ':current-features [0-9]*' "$sexp" | grep -o '[0-9]*' | tail -n1)
 sexp_items=$(grep -o ':current-acceptance-items [0-9]*' "$sexp" | grep -o '[0-9]*' | tail -n1)
 
+sexp_bugs_open=$(grep -o ':current-bugs ([0-9]* [0-9]*)' "$sexp" | grep -o '[0-9][0-9]* [0-9][0-9]*' | awk '{print $1}')
+sexp_bugs_fixed=$(grep -o ':current-bugs ([0-9]* [0-9]*)' "$sexp" | grep -o '[0-9][0-9]* [0-9][0-9]*' | awk '{print $2}')
+sexp_bugs_open=${sexp_bugs_open:-0}
+sexp_bugs_fixed=${sexp_bugs_fixed:-0}
+
 open=$(grep -o '(' "$sexp" | wc -l | tr -d ' ')
 close=$(grep -o ')' "$sexp" | wc -l | tr -d ' ')
 
@@ -102,5 +107,28 @@ case "$items_report" in
     ;;
 esac
 
-echo "PARITY features md=$md_features sexp=$sexp_features items md=$md_items sexp=$sexp_items parens=$open/$close $items_line $status"
+# Per-criterion record (the sexp is primary; the page is a view). For every feature, the sequence of
+# '- [x]' / '- [ ]' lines in the page's detail block must equal, in order, the sequence of :criteria
+# rows' :state in the sexp (verified = x; unverified and unmet = blank), and each by-feature row's
+# :verified must equal its count of verified criteria. A tick the data does not hold fails the build.
+#
+# A sexp that carries no :criteria records at all is the legacy/summary-only shape (case (a)'s
+# ":current-acceptance-items N" style, and the test's other synthetic fixtures): it tracks no
+# per-criterion state for this check to compare against, so the check does not apply -- same
+# "absent means vacuous" treatment the items-column check above already gives a sexp/page that
+# doesn't carry that column. Only once the sexp records at least one criterion does the sequence
+# have to line up, feature by feature.
+crit_records=$(grep -c ':id "E[0-9]*-F[0-9]*-[0-9]*" :state' "$sexp")
+crit_line="criteria-records=$crit_records"
+if [ "$crit_records" -gt 0 ]; then
+  md_seq=$(awk '/^\*\*E[0-9]+-F[0-9]+ — /{f=substr($1,3)} /^- \[x\]/{if(f)s[f]=s[f]"x"} /^- \[ \]/{if(f)s[f]=s[f]"."} END{for(k in s)print k" "s[k]}' "$md" | sort)
+  sx_seq=$(awk '{ if (match($0,/\(:feature "E[0-9]+-F[0-9]+"/)) { f=substr($0,RSTART+11,RLENGTH-12); if (match($0,/:verified [0-9]+/)) want[f]=substr($0,RSTART+10,RLENGTH-10) }
+                 if (f && match($0,/:id "E[0-9]+-F[0-9]+-[0-9]+" :state "[a-z]+"/)) { st=$0; sub(/.*:state "/,"",st); sub(/".*/,"",st); if(st=="verified"){s[f]=s[f]"x";n[f]++} else s[f]=s[f]"." } }
+            END{for(k in s){ if(n[k]+0!=want[k]+0) print k" COUNT-MISMATCH verified="want[k]" criteria="n[k]+0; else print k" "s[k]}}' "$sexp" | sort)
+  if [ "$md_seq" != "$sx_seq" ]; then status=FAIL; crit_line="$crit_line CRITERIA-MISMATCH: $(diff <(echo "$md_seq") <(echo "$sx_seq") | grep '^[<>]' | head -4 | tr '\n' ' ')"; fi
+else
+  crit_line="$crit_line (absent, skipped)"
+fi
+
+echo "PARITY features md=$md_features sexp=$sexp_features items md=$md_items sexp=$sexp_items parens=$open/$close bugs=$sexp_bugs_open/$sexp_bugs_fixed $items_line $crit_line $status"
 [ "$status" = "OK" ]
