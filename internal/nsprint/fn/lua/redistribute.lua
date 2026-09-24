@@ -434,8 +434,6 @@ end
 -- friend name state moved leases released unrouted pending.
 local function friend_redistribute(keys, args)
   local actor, idem = args[1], args[2]
-  local actor_err = fr_actor(actor)
-  if actor_err then return actor_err end
   local roster = fr_roster()
   if not roster then return redis.error_reply('ERR NOROSTER') end
   local mayhold, builders, coord = roster.mayhold, roster.builders, roster.coordinator
