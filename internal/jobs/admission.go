@@ -340,6 +340,21 @@ func (a *Admission) IsUncertain(id string) bool {
 	return ok
 }
 
+// SetUncertain marks a live grant uncertain: its lease is past expiry (or its
+// attempt ended) without a termination proof, so the unit may still be
+// running (docs/SPEC-JOBS.md A4). The grant keeps its reservation and is never
+// re-granted on expiry: Release refuses it and a second Grant under the same
+// id is refused, until termination is proved (Report with Proof, for an
+// executor) or a fence is written (Fence). There is deliberately no way to
+// clear the mark without one of those transitions
+// (jobs-uncertain-keeps-its-resources,
+// jobs-an-uncertain-attempt-is-never-re-granted-on-expiry).
+func (a *Admission) SetUncertain(id string) error {
+	var err error
+	a.do(func(st *state) { err = st.setUncertain(id) })
+	return err
+}
+
 func (st *state) grant(req Request) (Grant, error) {
 	id := strings.TrimSpace(req.ID)
 	if id == "" {
@@ -442,6 +457,17 @@ func (st *state) admitExecutor(e Executor) (ExecutorGrant, error) {
 
 func (st *state) releaseExecutor(id string) error {
 	return st.release(id)
+}
+
+func (st *state) setUncertain(id string) error {
+	if _, live := st.grants[id]; !live {
+		return &Refusal{ID: id, Reason: fmt.Sprintf("no live grant %q to mark uncertain; only a held reservation can be kept", id)}
+	}
+	if st.uncertain == nil {
+		st.uncertain = map[string]bool{}
+	}
+	st.uncertain[id] = true
+	return nil
 }
 
 func (st *state) fence(id, fence string) error {
