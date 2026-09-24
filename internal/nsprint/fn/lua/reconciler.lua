@@ -86,9 +86,12 @@ local function reconciler_renew(keys, args)
   return { 'OK', tostring(at) }
 end
 
--- ns_reconciler_pass(token, ttl_ms, took_ms, dealt, routed, expired, err)
+-- ns_reconciler_pass(token, ttl_ms, took_ms, dealt, routed, expired, err,
+-- retried, ambiguous)
 -- Records one pass in proc:reconciler (one writer: the lease holder) and
--- renews the lease in the same call. pass_at and at are Redis TIME.
+-- renews the lease in the same call. pass_at and at are Redis TIME. retried
+-- and ambiguous (#2930 rev 5, the expire duty) read 0 when absent; n counts
+-- every transition once: dealt + routed + expired + retried + ambiguous.
 local function reconciler_pass(keys, args)
   local token = args[1]
   local ttl = reconciler_ttl(args[2])
@@ -103,12 +106,15 @@ local function reconciler_pass(keys, args)
   local routed = tonumber(args[5]) or 0
   local expired = tonumber(args[6]) or 0
   local err = args[7] or ''
+  local retried = tonumber(args[8]) or 0
+  local ambiguous = tonumber(args[9]) or 0
   local at = reconciler_now_ms()
   local h = redis.call('HMGET', RECONCILER_LEASE, 'instance', 'host')
   redis.call('HSET', RECONCILER_PROC,
     'pass_at', tostring(at), 'took_ms', tostring(took),
     'dealt', tostring(dealt), 'routed', tostring(routed), 'expired', tostring(expired),
-    'n', tostring(dealt + routed + expired), 'err', err,
+    'retried', tostring(retried), 'ambiguous', tostring(ambiguous),
+    'n', tostring(dealt + routed + expired + retried + ambiguous), 'err', err,
     'instance', h[1] or '', 'host', h[2] or '', 'at', tostring(at))
   redis.call('HSET', RECONCILER_LEASE, 'at', tostring(at))
   redis.call('PEXPIRE', RECONCILER_LEASE, ttl)
