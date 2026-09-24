@@ -34,6 +34,11 @@ type sprintDeps struct {
 	records func(friends []string) sprint.Records
 	cards   func(addr, user, password string) (sprint.Cards, error)
 	getenv  func(string) string
+	// setCheck runs nova-work set check and returns its stdout and exit code;
+	// sleep waits between reconciliation rounds. Both are seams so a test runs
+	// the evaluate verb without a gh, a network or a fixed wait.
+	setCheck func(ctx context.Context, bin string, args []string) (string, int, error)
+	sleep    func(time.Duration)
 }
 
 func defaultSprintDeps() sprintDeps {
@@ -47,7 +52,9 @@ func defaultSprintDeps() sprintDeps {
 		cards: func(addr, user, password string) (sprint.Cards, error) {
 			return sprint.DialCards(context.Background(), addr, user, password)
 		},
-		getenv: os.Getenv,
+		getenv:   os.Getenv,
+		setCheck: runSetCheck,
+		sleep:    time.Sleep,
 	}
 }
 
@@ -57,7 +64,7 @@ func defaultSprintDeps() sprintDeps {
 // noun and a second dispatcher for the same verb would drift from this one forever.
 func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(args) == 0 {
-		return refuse(stderr, " sprint", "a sub-verb is required; it is one of funnel, open, add, status, route, split, refill, wall, calibration, close")
+		return refuse(stderr, " sprint", "a sub-verb is required; it is one of funnel, open, add, status, route, split, refill, wall, calibration, evaluate, close")
 	}
 	if args[0] == "funnel" {
 		return cmdSprintFunnel(args[1:], stdout, stderr, now)
@@ -67,7 +74,7 @@ func cmdSprint(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 func runSprint(args []string, stdout, stderr io.Writer, now time.Time, deps sprintDeps) int {
 	if len(args) == 0 {
-		return refuse(stderr, " sprint", "no verb given; it is one of open, add, status, route, split, refill, wall, calibration, close")
+		return refuse(stderr, " sprint", "no verb given; it is one of open, add, status, route, split, refill, wall, calibration, evaluate, close")
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
@@ -87,10 +94,12 @@ func runSprint(args []string, stdout, stderr io.Writer, now time.Time, deps spri
 		return sprintWall(rest, stdout, stderr, now, deps)
 	case "calibration":
 		return sprintCalibration(rest, stdout, stderr, now, deps)
+	case "evaluate":
+		return sprintEvaluate(rest, stdout, stderr, now, deps)
 	case "close":
 		return sprintClose(rest, stdout, stderr, now, deps)
 	}
-	return refuse(stderr, " sprint", fmt.Sprintf("unknown verb %q; it is one of open, add, status, route, split, refill, wall, calibration, close", verb))
+	return refuse(stderr, " sprint", fmt.Sprintf("unknown verb %q; it is one of open, add, status, route, split, refill, wall, calibration, evaluate, close", verb))
 }
 
 // storeFlags are the three flags every sprint verb takes to reach the store. The password is
@@ -169,6 +178,9 @@ func sprintOpen(args []string, stdout, stderr io.Writer, now time.Time, deps spr
 	s := sprint.Sprint{Name: *name, Goal: *goal, OpenedAt: now, PlannedCloseAt: planned}
 	if err := st.PutSprint(context.Background(), s); err != nil {
 		return refuse(stderr, " sprint open", err.Error())
+	}
+	if code := writeProgress(stderr, "sprint open", context.Background(), st, s.Name); code != 0 {
+		return code
 	}
 	fmt.Fprintf(stdout, "SPRINT OPEN %s %s\n", s.Name, s.Goal)
 	return 0
@@ -250,6 +262,9 @@ func sprintAdd(args []string, stdout, stderr io.Writer, now time.Time, deps spri
 	if err := st.AddTask(ctx, *name, t.ID); err != nil {
 		return refuse(stderr, " sprint add", err.Error())
 	}
+	if code := writeProgress(stderr, "sprint add", ctx, st, *name); code != 0 {
+		return code
+	}
 	fmt.Fprintf(stdout, "TASK %s %s kind=%s owner=%s est=%s\n", t.ID, t.Ref, t.Kind, dash(t.Owner), sprint.Minutes(t.EstMinutes))
 	return 0
 }
@@ -289,7 +304,7 @@ func sprintStatus(args []string, stdout, stderr io.Writer, now time.Time, deps s
 			defer closer.Close()
 		}
 		for _, s := range active {
-			if code := flipFromRecords(ctx, st, s.Name, splitList(*friends), now, deps, cards, stdout); code != 0 {
+			if code := flipFromRecords(ctx, st, s.Name, splitList(*friends), now, deps, cards, stdout, stderr); code != 0 {
 				return code
 			}
 		}
@@ -329,7 +344,7 @@ func sprintStatus(args []string, stdout, stderr io.Writer, now time.Time, deps s
 	return 0
 }
 
-func flipFromRecords(ctx context.Context, st sprint.Store, name string, friends []string, now time.Time, deps sprintDeps, cards sprint.Cards, stdout io.Writer) int {
+func flipFromRecords(ctx context.Context, st sprint.Store, name string, friends []string, now time.Time, deps sprintDeps, cards sprint.Cards, stdout, stderr io.Writer) int {
 	tasks, err := st.Tasks(ctx, name)
 	if err != nil {
 		return 2
@@ -347,6 +362,11 @@ func flipFromRecords(ctx context.Context, st sprint.Store, name string, friends 
 	}
 	for _, p := range problems {
 		fmt.Fprintf(stdout, "UNREADABLE %s\n", p)
+	}
+	if len(changed) > 0 {
+		if code := writeProgress(stderr, "sprint status", ctx, st, name); code != 0 {
+			return code
+		}
 	}
 	return 0
 }
@@ -432,6 +452,11 @@ func sprintRoute(args []string, stdout, stderr io.Writer, now time.Time, deps sp
 			}
 		}
 	}
+	if *apply {
+		if code := writeProgress(stderr, "sprint route", ctx, st, sprintName); code != 0 {
+			return code
+		}
+	}
 	if bad > 0 {
 		return 1
 	}
@@ -491,6 +516,12 @@ func sprintSplit(args []string, stdout, stderr io.Writer, now time.Time, deps sp
 		if err := st.PutTask(ctx, t); err != nil {
 			return refuse(stderr, " sprint split", err.Error())
 		}
+		if code := writeProgress(stderr, "sprint split", ctx, st, *name); code != 0 {
+			return code
+		}
+		if err := sprint.WriteProgressContaining(ctx, st, t.ID); err != nil {
+			return refuse(stderr, " sprint split", err.Error())
+		}
 	}
 	return 0
 }
@@ -528,6 +559,11 @@ func sprintRefill(args []string, stdout, stderr io.Writer, now time.Time, deps s
 	}
 	for _, line := range res.Lines() {
 		fmt.Fprintln(stdout, line)
+	}
+	if !*dry {
+		if code := writeProgress(stderr, "sprint refill", ctx, st, sprintName); code != 0 {
+			return code
+		}
 	}
 	return 0
 }
@@ -661,6 +697,9 @@ func sprintClose(args []string, stdout, stderr io.Writer, now time.Time, deps sp
 		if err := st.PutTask(ctx, t); err != nil {
 			return refuse(stderr, " sprint close", err.Error())
 		}
+		if code := writeProgress(stderr, "sprint close", ctx, st, *name); code != 0 {
+			return code
+		}
 		fmt.Fprintf(stdout, "CLOSED %s %s %s\n", t.ID, t.Ref, t.Evidence)
 		return 0
 	}
@@ -677,7 +716,23 @@ func sprintClose(args []string, stdout, stderr io.Writer, now time.Time, deps sp
 	if err := st.PutSprint(ctx, s); err != nil {
 		return refuse(stderr, " sprint close", err.Error())
 	}
+	if code := writeProgress(stderr, "sprint close", ctx, st, s.Name); code != 0 {
+		return code
+	}
 	fmt.Fprintf(stdout, "SPRINT CLOSED %s %d/%d %d%%\n", s.Name, c.Closed, c.Total, sprint.Percent(c.Closed, c.Total))
+	return 0
+}
+
+// writeProgress rewrites sprint:<name> {done, units, percent, eta_minutes} after
+// a task state change. done, units and percent stay the last SET OK / SET DONE
+// evaluation; eta is the wall. An older read does not land after a newer one.
+func writeProgress(stderr io.Writer, verb string, ctx context.Context, st sprint.Store, name string) int {
+	if strings.TrimSpace(name) == "" {
+		return 0
+	}
+	if err := sprint.WriteProgress(ctx, st, name); err != nil {
+		return refuse(stderr, " "+verb, err.Error())
+	}
 	return 0
 }
 

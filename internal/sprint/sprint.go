@@ -17,7 +17,11 @@
 // no reason for these things to be apart").
 //
 // THE STORE IS REDIS, core types only, ids and counts and nothing else: `sprint:<name>` a
-// hash, `sprint:<name>:tasks` a set, `task:<id>` a hash. The history lives in the fold over
+// hash, `sprint:<name>:tasks` a set, `task:<id>` a hash. The hash also carries done, units,
+// percent and eta_minutes (#2684). done, units and percent are the acceptance evaluation
+// (`SET OK` / `SET DONE`), not how many tasks are closed; eta_minutes is the wall. A task
+// state change rewrites them together, and an older snapshot does not land after a newer
+// one. The history lives in the fold over
 // ev:cards (#2587), never in the hot store. Every state flip comes from a PRIMARY RECORD --
 // a PR merged, an issue closed, a typed line at head, a landed card event -- and never from
 // a hand: that is the Records seam at the bottom of this file.
@@ -88,13 +92,19 @@ var DefaultEstimate = map[string]int{
 // four hour one.
 const SplitBound = 90
 
-// Sprint is the bounded set itself. Nothing but ids, times and one goal sentence.
+// Sprint is the bounded set itself. Nothing but ids, times, one goal sentence, and the
+// four counts the table reads off the same hash: done, units and percent from the
+// acceptance evaluation, eta_minutes from the wall.
 type Sprint struct {
 	Name           string
 	Goal           string
 	OpenedAt       time.Time
 	ClosedAt       time.Time
 	PlannedCloseAt time.Time
+	Done           int
+	Units          int
+	Percent        int
+	ETAMinutes     int
 }
 
 // Active reports whether the sprint is still the bounded set of something.
@@ -235,6 +245,15 @@ func ValidateState(state string) error {
 type Store interface {
 	PutSprint(ctx context.Context, s Sprint) error
 	GetSprint(ctx context.Context, name string) (Sprint, error)
+	// PutProgress writes done, units, percent and eta_minutes onto sprint:<name>
+	// and leaves the goal and the times alone. Those stay PutSprint's.
+	// WriteProgress is the path that publishes a view it just read: PutProgress
+	// alone does not prove that view is still current.
+	PutProgress(ctx context.Context, name string, p Progress) error
+	// PublishProgress reads the tasks and the acceptance counts, calls measure,
+	// and writes the four fields only if that view is still current. ok is
+	// false when a newer write landed first; nothing was written.
+	PublishProgress(ctx context.Context, name string, measure func(ProgressView) (Progress, error)) (ok bool, err error)
 	Sprints(ctx context.Context) ([]Sprint, error)
 	PutTask(ctx context.Context, t Task) error
 	GetTask(ctx context.Context, id string) (Task, error)

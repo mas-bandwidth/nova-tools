@@ -15,7 +15,8 @@ import (
 // ids, counts and event ids and NOTHING else -- never a diff, a prompt or a transcript, so
 // Valkey stays a drop-in and the hot store never becomes the database):
 //
-//	sprint:<name>         hash  {goal, opened_at, closed_at, planned_close_at}
+//	sprint:<name>         hash  {goal, opened_at, closed_at, planned_close_at,
+//	                             done, units, percent, eta_minutes, evaluated}
 //	sprint:<name>:tasks   set   of task ids
 //	task:<id>             hash  {kind, ref, owner, route, route_reason, state, est_minutes,
 //	                             leased_at, done_at, actual_minutes, evidence, depends_on,
@@ -104,7 +105,123 @@ func (s *RedisStore) GetSprint(ctx context.Context, name string) (Sprint, error)
 		OpenedAt:       unstamp(m["opened_at"]),
 		ClosedAt:       unstamp(m["closed_at"]),
 		PlannedCloseAt: unstamp(m["planned_close_at"]),
+		Done:           atoi(m["done"]),
+		Units:          atoi(m["units"]),
+		Percent:        atoi(m["percent"]),
+		ETAMinutes:     atoi(m["eta_minutes"]),
 	}, nil
+}
+
+// PutProgress writes the four fields the table reads. It does not rewrite the
+// goal or the times: a state change must not look like the sprint was reopened.
+func (s *RedisStore) PutProgress(ctx context.Context, name string, p Progress) error {
+	if err := ValidateName("sprint", name); err != nil {
+		return err
+	}
+	n, err := s.rdb.Exists(ctx, sprintPrefix+name).Result()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("no sprint named %q is open; run: nova-pulse sprint open %s --goal <one sentence>", name, name)
+	}
+	return s.rdb.HSet(ctx, sprintPrefix+name, progressFields(p)).Err()
+}
+
+// PublishProgress is the optimistic write. The task set and each member task
+// are watched with the sprint hash, so a close or a newer evaluation that
+// lands after this read fails EXEC instead of overwriting that newer snapshot.
+// measure runs inside the watch; a slow measure does not get to publish the
+// view it started with once the keys have moved.
+func (s *RedisStore) PublishProgress(ctx context.Context, name string, measure func(ProgressView) (Progress, error)) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if err := ValidateName("sprint", name); err != nil {
+		return false, err
+	}
+	sprintKey := sprintPrefix + name
+	setKey := sprintKey + ":tasks"
+	ids, err := s.rdb.SMembers(ctx, setKey).Result()
+	if err != nil {
+		return false, err
+	}
+	sort.Strings(ids)
+	keys := make([]string, 0, len(ids)+2)
+	keys = append(keys, sprintKey, setKey)
+	for _, id := range ids {
+		keys = append(keys, taskPrefix+id)
+	}
+	var moved bool
+	err = s.rdb.Watch(ctx, func(tx *redis.Tx) error {
+		n, err := tx.Exists(ctx, sprintKey).Result()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("no sprint named %q is open; run: nova-pulse sprint open %s --goal <one sentence>", name, name)
+		}
+		got, err := tx.SMembers(ctx, setKey).Result()
+		if err != nil {
+			return err
+		}
+		sort.Strings(got)
+		if !sameIDs(ids, got) {
+			moved = true
+			return nil
+		}
+		view, err := readProgressView(ctx, tx, sprintKey, ids)
+		if err != nil {
+			return err
+		}
+		p, err := measure(view)
+		if err != nil {
+			return err
+		}
+		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			pipe.HSet(ctx, sprintKey, progressFields(p))
+			return nil
+		})
+		return err
+	}, keys...)
+	if moved && err == nil {
+		return false, nil
+	}
+	if err == redis.TxFailedErr {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func readProgressView(ctx context.Context, tx *redis.Tx, sprintKey string, ids []string) (ProgressView, error) {
+	pipe := tx.Pipeline()
+	sm := pipe.HGetAll(ctx, sprintKey)
+	cmds := make([]*redis.MapStringStringCmd, len(ids))
+	for i, id := range ids {
+		cmds[i] = pipe.HGetAll(ctx, taskPrefix+id)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return ProgressView{}, err
+	}
+	m, err := sm.Result()
+	if err != nil && err != redis.Nil {
+		return ProgressView{}, err
+	}
+	var tasks []Task
+	for i, cmd := range cmds {
+		hm, err := cmd.Result()
+		if err != nil && err != redis.Nil {
+			return ProgressView{}, err
+		}
+		if len(hm) == 0 {
+			continue
+		}
+		tasks = append(tasks, taskFrom(ids[i], hm))
+	}
+	return ProgressView{Tasks: tasks, Acceptance: acceptanceFrom(m)}, nil
 }
 
 // Sprints is every sprint in the store. It SCANs rather than KEYS: a blocking KEYS on the
