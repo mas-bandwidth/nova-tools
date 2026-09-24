@@ -4466,3 +4466,33 @@ and must not be swept. Six rules bind it:
 **What this does not change.** The bench slot store (`slots take` / `slots
 release`, above) is capacity accounting and is untouched: a run can hold a seat
 and still be refused its job directory, and that refusal is the correct answer.
+
+## Sparse checkout of PATHS packages (#2498 S10)
+
+*(Appended rather than written into **The same clone, once per swarm job**, so
+the line citations above this stay put.)*
+
+Staging for a card that declares `PATHS:` checks out the **minimal tree**:
+those packages and their in-module dependencies only. A package the card did
+not name is not materialized. The named package's tests still run. `PATHS:
+none`, or no `PATHS:` line, stays a full checkout. `prepare` does this into
+`<job>/repo` when it is given the reference checkout. When `CloneFrom` is
+empty and the card declares `PATHS:`, `prepare` sets it from the pool's
+reference checkout `ref/<owner>/<name>@<rev>` when that checkout is present.
+`SOURCE:` names the repo; `@<rev>` on that token names the rev, and a card
+that names no rev uses the one checkout present for that repo. No checkout
+there leaves the card to clone itself.
+
+A lookup that finds no in-module directories is a valid empty set: the PATHS
+and TEST cones are still checked out. An import that cannot be resolved is
+not empty. Staging refuses, and does not hand the worker a sparse tree that
+omits that dependency.
+
+**Red tests.** `TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage`: a
+fixture PATHS list does not materialize an unrelated package; the named
+package's tests still run. `TestPrepareStagesASparseJobClone`: prepare with
+`CloneFrom` stages that sparse tree under the job root.
+`TestSparseCheckoutRefusesAMissingInModuleImport`: a named package that
+imports an in-module package that is not there makes staging refuse.
+`TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS`: a PATHS list that
+names no Go package still checks out that path.
