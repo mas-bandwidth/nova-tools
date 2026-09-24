@@ -221,3 +221,66 @@
       (check-equal 1 code "an owner-changed reconfirm is not a refusal")
       (ok (search "owner changed" line) "the owner change is not refused by name: ~A" line)
       (check-equal :fenced (session-state sess) "an owner-changed session did not fence"))))
+
+;;; E08-F03-03 "Include coordinator identity and attribute model, bench, attempt
+;;;   and usage" (docs/roadmaps/nova-work.sexp, feature E08-F03).
+;;;   docs/SPEC-WORK.md:3379-3380 — "The coordinator is a friend in `friends`
+;;;   and is tracked by the same indexes as everyone else — her or his own
+;;;   tasks, executions, model, bench, usage and availability, through the same
+;;;   queries."
+;;;   docs/SPEC-WORK.md:3406-3408 — an execution instance is "linked to their
+;;;   friend, capability, canonical task and attempt, retaining requested and
+;;;   observed model, bench, status, deadline, provider handle and usage
+;;;   receipts": model, bench, attempt and usage are attributed, never collapsed.
+(deftest "TestE08F03IncludeCoordinatorIdentityAndAttribute"
+    "docs/SPEC-WORK.md:3379-3380,3406-3408"
+    "expected=coordinator-included-among-friends;model,bench,attempt,usage-attributed-distinctly"
+  ;; The coordinator's identity is one friend among `friends`, tracked by the
+  ;; same indexes as everyone else, not a second store of its own.
+  (let* ((fleet (make-fleet :friends '("rowan" "emma" "priya"))))
+    (ok (member "rowan" (fleet-friends fleet) :test #'string=)
+        "the coordinator's identity is not among the friends")
+    (check-equal 3 (length (fleet-friends fleet)) "a friend identity was dropped"))
+  ;; "Through the same queries" (:3380): the coordinator's own tasks are read
+  ;; through the one holder (friend) index every friend is read through, not a
+  ;; coordinator-only path. The coordinator and another friend each take a task
+  ;; on a real kernel; the same indexed query answers both, and the maintained
+  ;; index agrees with a full independent reconstruction.
+  (let* ((seed '((:id "r" :type :work-set :parent nil :state :unknown)
+                 (:id "r/f" :type :feature :parent "r" :state :unknown)
+                 (:id "r/f/coord" :type :task :parent "r/f" :state :doing)
+                 (:id "r/f/friend" :type :task :parent "r/f" :state :doing)
+                 (:id "r/f/free" :type :task :parent "r/f" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)
+                         :friends '("rowan" "emma" "priya"))))
+    (ok (member "rowan" (fleet-friends (kernel-fleet k)) :test #'string=)
+        "the kernel's session fleet does not carry the coordinator as a friend")
+    (take-lease k "r/f/coord" "rowan")
+    (take-lease k "r/f/friend" "emma")
+    (let ((index (state-holder-index (kernel-state k))))
+      (check-equal '("r/f/coord") (cdr (assoc "rowan" index :test #'equal))
+                   "the coordinator's task is not answered by the holder index query")
+      (check-equal '("r/f/friend") (cdr (assoc "emma" index :test #'equal))
+                   "another friend's task is not answered by the same query")
+      (check-equal 2 (length index)
+                   "the holder index carries a holder other than the two who took"))
+    (check-equal '() (state-index-mismatches (kernel-state k))
+                 "the coordinator's entry in the holder index disagrees with reconstruction"))
+  ;; An execution attributes model, bench, attempt and usage as distinct
+  ;; fields: the requested model is never the observed model, the bench and the
+  ;; attempt stay separate, and the usage receipt is retained, never guessed.
+  (let* ((execution (make-execution-reference
+                     :attempt 2 :requested-model "beta" :observed-model "astra"
+                     :harness "sbcl" :bench "local"
+                     :usage '(:input 10 :output 5))))
+    (check-equal 2 (getf execution :attempt) "the attempt was not attributed")
+    (check-equal "beta" (getf execution :requested-model)
+                 "the requested model was not attributed")
+    (check-equal "astra" (getf execution :observed-model)
+                 "the observed model was not attributed")
+    (check-equal "local" (getf execution :bench) "the bench was not attributed")
+    (ok (equal '(:input 10 :output 5) (getf execution :usage))
+        "the usage receipt was not attributed")
+    (ok (not (string= (getf execution :requested-model)
+                      (getf execution :observed-model)))
+        "requested and observed model collapsed into one field")))

@@ -147,3 +147,61 @@
       (ok okp "completing the cell was refused: ~A" line))
     (check-equal :done (node-disposition (kernel-state k) "root/f2")
                  "the completed cell did not read back as done")))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F04CollectReleaseLevelResultsFrom     SPEC-WORK.md:7239-7240
+;;; ------------------------------------------------------------------
+;;; Criterion E10-F04-02 (docs/roadmaps/nova-work.sexp): "Collect
+;;; release-level results from the owning fencing, recovery, paging and
+;;; as-of features without re-owning their assertions." The contract is
+;;; docs/SPEC-WORK.md:7239-7240 -- *before a release each suite's
+;;; exact-revision results are attached* -- read with 953-954 and 2083-2090:
+;;; a suite (fencing, recovery, paging, as-of) owns its own assertion, and a
+;;; release COLLECTS the result by naming the suite's id in its `:deps`, read
+;;; back through the reverse-dependency index, so the release never re-owns
+;;; (stores a second copy of) the suite's assertion.
+
+(deftest "TestE10F04CollectReleaseLevelResultsFrom" "docs/SPEC-WORK.md:7239-7240"
+    "expected=release-collects-the-four-owning-features-by-reference;released-read-through-the-reverse-index;feature-assertion-never-re-owned"
+  ;; The four owning features each keep their own assertion (a disposition and
+  ;; its evidence); none stores a release version of its own.
+  (let ((features (list (make-finding "acme/fencing" :disposition :done
+                                      :evidence (list '(:criterion :merged :against "f1f1f1")))
+                        (make-finding "acme/recovery" :disposition :done
+                                      :evidence (list '(:criterion :merged :against "c0c0c0")))
+                        (make-finding "acme/paging" :disposition :done
+                                      :evidence (list '(:criterion :merged :against "a9a9a9")))
+                        (make-finding "acme/as-of" :disposition :done
+                                      :evidence (list '(:criterion :merged :against "05105f"))))))
+    ;; The release task collects them by id reference: its :deps name the four
+    ;; features and carry none of their assertions.
+    (let ((release (make-release-task "acme/release/v0.5.0"
+                                      :version "v0.5.0"
+                                      :deps '("acme/fencing" "acme/recovery"
+                                              "acme/paging" "acme/as-of")
+                                      :branch :c
+                                      :settle-stamp "2026-09-20T00:00:00Z")))
+      (check-equal 4 (length (release-task-deps release))
+                   "the release names all four owning features")
+      (check-equal '("acme/fencing" "acme/recovery" "acme/paging" "acme/as-of")
+                   (release-task-deps release)
+                   "the release references the features by id, never by assertion")
+      ;; Each feature's release-level result is collected from the release task
+      ;; that names it, through the reverse-dependency index.
+      (dolist (feature features)
+        (check-equal "v0.5.0" (finding-released feature (list release))
+                     (format nil "~A collects its release from the referencing task"
+                             (finding-id feature)))
+        (check-equal "v0.5.0" (getf (disposition-row feature (list release)) :released)
+                     (format nil "~A's release-level result is read from the referencing task's version"
+                             (finding-id feature)))
+        ;; ...and its own assertion is untouched: the disposition row still
+        ;; carries :done, the feature's own fact, not a release-owned one.
+        (check-equal :done (getf (disposition-row feature (list release)) :disposition)
+                     (format nil "~A keeps its own disposition" (finding-id feature))))
+      ;; Without re-owning: drop the release reference and every feature's
+      ;; release-level result is unresolved, because it was never stored on the
+      ;; feature itself -- it was collected, not owned.
+      (dolist (feature features)
+        (check-equal "-" (finding-released feature '())
+                     (format nil "~A owns no release version of its own" (finding-id feature)))))))

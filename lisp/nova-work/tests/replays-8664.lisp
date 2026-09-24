@@ -381,3 +381,13 @@ primary method.")
                  "the unknown leaf lost its :unknown state")
     (check-equal :c (node-branch (kernel-state k) "root/f-missing")
                  "a completion-only read moved the missing-evidence feature out of C")))
+
+;;; ------------------------------------------------------------------
+;;; E09-F04-03 ("Leave deletion pending on missing content, source change
+;;; or uncertain network result", docs/SPEC-WORK.md:7598-7611) is NOT
+;;; claimed here. It needs the absorb deletion gate in src/control.lisp
+;;; (outside this tests-only change); nova-tools#3293 adds that gate and
+;;; TestE09F04LeaveDeletionPendingOnMissing in tests/replays-8641.lisp with
+;;; all three prongs. The missing-content-only copy that stood here was
+;;; removed so the name is registered once, by the complete test.
+;;; ------------------------------------------------------------------
