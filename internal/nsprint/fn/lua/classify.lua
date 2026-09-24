@@ -1,40 +1,30 @@
--- ok-to-friend 3.3 classification (#2756 3.3, control 16; nova-tools
--- #3038). No shebang: loader.go prepends the single library header. One call
--- per `ended` event of a card that did not end DONE: it checks the
--- idempotency key `<group>:<event id>`, guards the card (ended, at the
--- event's attempt, not DONE), checks the row's retry budget against the
--- card's `retry_<class>` counter, writes the action with its index moves and
--- receipts, records the result under the key and XACKs the event, all
--- atomically (spec 2.1 rule 2, 5.4). Unresolved items are written create-only
--- under the dedup key `<label>:<reason>:<base_sha>`, so repeated events yield
--- one item. The locals are scoped to this block.
+-- Atomic non-DONE classification (#3038 rev 6). One ns_classify function
+-- owns the decision, charge, transition, receipt, idempotency record and ack.
 do
   local function now_ms()
     local t = redis.call('TIME')
     return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   end
 
-  local function receipt(S, id, from_state, to_state, attempt, actor, reason, evidence, idem, at)
-    redis.call('XADD', 's:' .. S .. ':log', '*',
-      'kind', 'card', 'id', id, 'from', from_state, 'to', to_state,
-      'attempt', tostring(attempt or 0), 'token_sha', '',
-      'actor', actor or '', 'reason', reason or '', 'evidence', evidence or '',
-      'idem', idem or '', 'at', tostring(at))
-  end
-
-  local function finish(S, group, event_id, result)
-    redis.call('HSET', 's:' .. S .. ':idem', group .. ':' .. event_id, result)
-    redis.call('XACK', 's:' .. S .. ':log', group, event_id)
-    return { 'OK', result }
-  end
-
-  -- pool_score: the front of the pool is negative, as in open:<c>.
-  local function pool_score(priority, front)
-    local p = tonumber(priority) or 0
-    if front then
-      return -math.abs(p) - 1
+  local function has_word(list, word)
+    for item in string.gmatch(list or '', '%S+') do
+      if item == word then return true end
     end
-    return p
+    return false
+  end
+
+  local function add_word(list, word)
+    if word == nil or word == '' or has_word(list, word) then return list or '' end
+    if list == nil or list == '' then return word end
+    return list .. ' ' .. word
+  end
+
+  local function runs(legs, leg)
+    if not leg or leg == '' or not legs or legs == '' then return true end
+    for item in string.gmatch(legs, '[^, ]+') do
+      if item == leg then return true end
+    end
+    return false
   end
 
   local function move(S, label, from_state, to_state)
@@ -42,160 +32,223 @@ do
     redis.call('SADD', 's:' .. S .. ':idx:card:' .. to_state, label)
   end
 
-  local function unresolve(S, card, label, attempt, reason, base_sha, item, actor, idem, at)
-    redis.call('HSETNX', 's:' .. S .. ':unresolved', label .. ':' .. reason .. ':' .. base_sha, item)
-    redis.call('HSET', card, 'state', 'unresolved', 'unresolved_at', tostring(at))
-    move(S, label, 'ended', 'unresolved')
-    receipt(S, label, 'ended', 'unresolved', attempt, actor, reason, item, idem, at)
-    return 'UNRESOLVED ' .. label .. ':' .. reason .. ':' .. base_sha
+  local function finish(S, event_id, result)
+    redis.call('HSET', 's:' .. S .. ':idem', 'classify:' .. event_id, result)
+    redis.call('XACK', 's:' .. S .. ':log', 'classify', event_id)
+    return { 'OK', result }
   end
 
-  local function add_word(list, word)
-    if not list then
-      list = ''
+  local function record(S, ckey, classkey, label, event_id, action, actor, at)
+    redis.call('HSET', ckey, 'classified', action, 'classified_at', tostring(at),
+      'classified_event', event_id)
+    redis.call('HSET', classkey, 'last_event', event_id, 'last_action', action, 'at', tostring(at))
+    redis.call('XADD', 's:' .. S .. ':log', '*',
+      'kind', 'card-classify', 'id', label, 'from', 'ended', 'to', action,
+      'attempt', redis.call('HGET', ckey, 'attempt') or '0', 'token_sha', '',
+      'actor', actor or '', 'reason', redis.call('HGET', ckey, 'reason') or '',
+      'evidence', '', 'idem', 'classify:' .. event_id, 'at', tostring(at))
+  end
+
+  local function unresolved(S, ckey, classkey, label, root, reason, base_sha,
+      event_id, actor, at, why)
+    local marker = root .. ':' .. reason .. ':' .. string.sub(base_sha or '', 1, 8)
+    redis.call('HSETNX', 's:' .. S .. ':unresolved', marker, event_id)
+    if why and why ~= '' then
+      redis.call('HSET', ckey, 'why', why, 'why_at', tostring(at))
     end
-    for w in string.gmatch(list, '%S+') do
-      if w == word then
-        return list
+    record(S, ckey, classkey, label, event_id, 'UNRESOLVED', actor, at)
+    return finish(S, event_id, 'UNRESOLVED')
+  end
+
+  local function pr_class(S, repo, n)
+    if repo == nil or repo == '' then return 'unknown', 'no repo' end
+    local state = redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. n, 'state')
+    if state == 'landed' then return 'landed', '' end
+    if state == 'closed' then return 'dead', 'can no longer land: closed without merge' end
+    if state == 'opened' or state == 'reading' or state == 'landable' or state == 'landing' or state == 'dropped' then
+      return 'live', ''
+    end
+    return 'unknown', 'unknown: no PR record'
+  end
+
+  local function dep_class(S, blocked_repo, typ, a, b)
+    if typ == 'r' then
+      local class, why = pr_class(S, a, b)
+      return class, a .. '#' .. b .. ': ' .. why
+    end
+    local label = a
+    local key = 's:' .. S .. ':card:' .. label
+    if redis.call('EXISTS', key) == 0 then
+      return 'dead', label .. ': can no longer land: no such card in sprint ' .. S
+    end
+    local d = redis.call('HMGET', key, 'state', 'outcome', 'repo', 'base', 'pr', 'pushed_sha')
+    local state, outcome, repo, pr, pushed = d[1] or '', d[2] or '', d[3] or '', tonumber(d[5]) or 0, d[6] or ''
+    if state == 'landed' then return 'landed', '' end
+    if pr > 0 then
+      if repo == '' then repo = blocked_repo or '' end
+      if repo == '' then return 'unknown', label .. ': unknown: PR #' .. pr .. ' has no repo' end
+      local class, why = pr_class(S, repo, tostring(pr))
+      return class, label .. ': ' .. why
+    end
+    if state == 'ended' and outcome == 'DONE' and pushed == '' then return 'landed', '' end
+    if state == 'cancelled' or state == 'superseded' then
+      return 'dead', label .. ': can no longer land: card ' .. state .. ' without a PR'
+    end
+    if state == 'queued' or state == 'dealt' or state == 'launched' or state == 'running' then
+      return 'live', ''
+    end
+    return 'unknown', label .. ': unknown: card ' .. state .. '/' .. outcome .. ', no PR record'
+  end
+
+  local function dealable(pin, avoid, leg)
+    local candidates = {}
+    if pin and pin ~= '' then candidates = { pin } else candidates = redis.call('SMEMBERS', 'benches') end
+    for _, bench in ipairs(candidates) do
+      if redis.call('SISMEMBER', 'benches', bench) == 1 and not has_word(avoid, bench) then
+        local legs = redis.call('HGET', 'bench:' .. bench .. ':desired', 'legs')
+        if runs(legs, leg) then return true end
       end
     end
-    if list == '' then
-      return word
-    end
-    return list .. ' ' .. word
+    return false
   end
 
-  local copied = { 'kind', 'leg', 'tier', 'repo', 'base', 'paths', 'priority', 'author',
-    'retry_crash', 'retry_env', 'retry_base_moved', 'retry_tests_red' }
+  local function classify(keys, args)
+    if args[1] == 'pass' then
+      local at = now_ms()
+      redis.call('HSET', 'proc:classify', 'pass_at', tostring(at), 'took_ms', args[2] or '0',
+        'n', args[3] or '0', 'err', args[4] or '', 'at', tostring(at))
+      return { 'OK', 'PASS' }
+    end
+    if args[1] ~= 'event' then return redis.error_reply('ns_classify: mode event or pass') end
 
-  -- ns_classify_end: args S, group, event_id, label, attempt, action, class,
-  -- budget, reason, new_label, new_base_sha, new_payload_sha, new_title,
-  -- actor.
-  local function classify_end(keys, args)
-    local S, group, event_id, label, attempt = args[1], args[2], args[3], args[4], args[5]
-    local action, class, budget, reason = args[6], args[7], tonumber(args[8]) or 0, args[9]
-    local new_label, new_base, new_payload, new_title, actor = args[10], args[11], args[12], args[13], args[14]
-    local idem = group .. ':' .. event_id
-    local prev = redis.call('HGET', 's:' .. S .. ':idem', idem)
-    if prev then
-      redis.call('XACK', 's:' .. S .. ':log', group, event_id)
-      return { 'DUP', prev }
+    local S, event_id, label, attempt, actor = args[2], args[3], args[4], args[5], args[6]
+    local deps_raw, dep_n = args[7] or '', tonumber(args[8]) or 0
+    local tail = 9 + dep_n * 3
+    local expect_n, new_label = tonumber(args[tail]) or 0, args[tail + 1] or ''
+    local new_base, payload, title = args[tail + 2] or '', args[tail + 3] or '', args[tail + 4] or ''
+    local idem = redis.call('HGET', 's:' .. S .. ':idem', 'classify:' .. event_id)
+    if idem then
+      redis.call('XACK', 's:' .. S .. ':log', 'classify', event_id)
+      return { 'DUP', idem }
     end
-    local card = 's:' .. S .. ':card:' .. label
-    local state = redis.call('HGET', card, 'state')
-    if action == '' then
-      return finish(S, group, event_id, 'SKIP not-classified')
-    elseif state ~= 'ended' then
-      return finish(S, group, event_id, 'SKIP state ' .. tostring(state))
-    elseif redis.call('HGET', card, 'attempt') ~= attempt then
-      return finish(S, group, event_id, 'SKIP stale-attempt')
-    elseif redis.call('HGET', card, 'outcome') == 'DONE' then
-      return finish(S, group, event_id, 'SKIP done')
+
+    local ckey = 's:' .. S .. ':card:' .. label
+    local guard = redis.call('HMGET', ckey, 'state', 'end_receipt', 'attempt')
+    if guard[1] ~= 'ended' or guard[2] ~= event_id or guard[3] ~= attempt then
+      return finish(S, event_id, 'SKIP stale')
     end
+    local card = redis.call('HMGET', ckey, 'kind', 'outcome', 'reason', 'root', 'base_sha',
+      'bench', 'pin', 'avoid', 'leg', 'repo', 'base', 'paths', 'priority', 'author', 'tier')
+    local kind, outcome, reason = card[1] or '', card[2] or '', card[3] or ''
+    if kind == 'ci' then return finish(S, event_id, 'SKIP ci') end
+    local root = card[4] or ''
+    if root == '' then root = label end
+    local base_sha, bench, pin, avoid, leg = card[5] or '', card[6] or '', card[7] or '', card[8] or '', card[9] or ''
+    local action, counter, policy, default = 'UNRESOLVED', '', '', 0
+    if outcome == 'DONE' then return finish(S, event_id, 'SKIP stale') end
+    if outcome == 'FAILED' and (reason == 'crash' or reason == 'timeout' or reason == 'idle-killed') then
+      action, counter, policy, default = 'REQUEUE', 'fail', 'retry_fail', 2
+    elseif outcome == 'BLOCKED' and reason == 'env' then
+      action, counter, policy, default = 'REQUEUE', 'env', 'retry_env', 1
+    elseif outcome == 'BLOCKED' and reason == 'base-moved' then
+      action, counter, policy, default = 'RECUT', 'recut', 'retry_recut', 1
+    elseif outcome == 'BLOCKED' and reason == 'deps' then
+      action, counter, policy, default = 'WAIT', 'deps', 'retry_deps', 1
+    elseif outcome == 'FAILED' and reason == 'tests-red' then
+      action, counter, policy, default = 'FIX', 'fix', 'retry_fix', 1
+    end
+    if reason == '' then reason = 'other' end
+    local classkey = 's:' .. S .. ':classify:' .. root
+    local used, budget = 0, 0
+    if counter ~= '' then
+      used = tonumber(redis.call('HGET', classkey, counter)) or 0
+      budget = tonumber(redis.call('HGET', 's:' .. S .. ':policy', policy))
+      if budget == nil or budget < 0 then budget = default end
+    end
+
+    if action == 'WAIT' and used < budget then
+      if redis.call('HGET', ckey, 'depends_on') ~= deps_raw then return { 'RETRY', 'deps changed' } end
+    end
+    if (action == 'FIX' or action == 'RECUT') and used < budget then
+      if used + 1 ~= expect_n or new_label == '' or redis.call('EXISTS', 's:' .. S .. ':card:' .. new_label) == 1 then
+        return { 'RETRY', 'follow-up changed' }
+      end
+    end
+
     local at = now_ms()
-    local base_sha = redis.call('HGET', card, 'base_sha') or ''
-    local bench = redis.call('HGET', card, 'bench') or ''
-    local outcome = redis.call('HGET', card, 'outcome') or ''
-    local item = 'outcome=' .. outcome .. ' reason=' .. reason .. ' attempt=' .. attempt ..
-      ' bench=' .. bench .. ' event=' .. event_id .. ' for=cutter'
-
-    local counter = 'retry_' .. class
-    if class ~= '' then
-      local used = tonumber(redis.call('HGET', card, counter)) or 0
-      if used >= budget then
-        return finish(S, group, event_id, unresolve(S, card, label, attempt, reason, base_sha,
-          item .. ' budget=' .. used .. '/' .. budget, actor, idem, at))
-      end
+    if counter ~= '' then redis.call('HINCRBY', classkey, counter, 1) end
+    if counter ~= '' and used >= budget then
+      local why = ''
+      if action == 'WAIT' then why = 'deps over budget' end
+      return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, why)
     end
 
-    if action == 'requeue' or action == 'requeue-env' then
-      local priority = redis.call('HGET', card, 'priority') or '0'
-      local avoid = add_word(redis.call('HGET', card, 'avoid_benches'), bench)
-      redis.call('HINCRBY', card, counter, 1)
-      redis.call('HINCRBY', card, 'retries', 1)
-      redis.call('HSET', card, 'state', 'queued', 'bench', '', 'front', '1',
-        'avoid_benches', avoid, 'requeued_at', tostring(at))
-      redis.call('ZADD', 's:' .. S .. ':pool', pool_score(priority, true), label)
+    if action == 'REQUEUE' then
+      if reason == 'env' then
+        redis.call('HSET', ckey, 'why', 'env ' .. leg, 'why_at', tostring(at))
+        redis.call('HSETNX', 's:' .. S .. ':unresolved', 'bench:' .. bench .. ':env:' .. leg, event_id)
+        if pin ~= '' then
+          redis.call('HINCRBY', classkey, counter, -1)
+          return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, '')
+        end
+      end
+      local next_avoid = avoid
+      if pin == '' then next_avoid = add_word(avoid, bench) end
+      if not dealable(pin, next_avoid, leg) then
+        return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, '')
+      end
+      redis.call('HSET', ckey, 'state', 'queued', 'token', '', 'bench', pin, 'avoid', next_avoid)
       move(S, label, 'ended', 'queued')
-      if action == 'requeue-env' then
-        local leg = redis.call('HGET', card, 'leg') or ''
-        redis.call('HSET', 'bench:' .. bench .. ':why', 'env ' .. leg,
-          'why: env ' .. leg .. ' ' .. S .. '/' .. label .. '/' .. attempt .. ' at ' .. at)
-        redis.call('HSETNX', 's:' .. S .. ':unresolved', 'bench:' .. bench .. ':env:' .. leg, item)
-      end
-      receipt(S, label, 'ended', 'queued', attempt, actor, reason, 'avoid ' .. avoid, idem, at)
-      return finish(S, group, event_id, 'REQUEUED ' .. label .. ' avoid ' .. avoid)
+      redis.call('ZADD', 's:' .. S .. ':pool', at - 10000000000000, label)
+      record(S, ckey, classkey, label, event_id, 'REQUEUE', actor, at)
+      return finish(S, event_id, 'REQUEUE')
     end
 
-    if action == 'waiting' then
-      local dep = redis.call('HGET', card, 'blocked_on') or ''
-      if dep == '' then
-        return finish(S, group, event_id, unresolve(S, card, label, attempt, reason, base_sha,
-          item .. ' dependency=unnamed', actor, idem, at))
+    if action == 'WAIT' then
+      local live, bad = 0, {}
+      for i = 0, dep_n - 1 do
+        local p = 9 + i * 3
+        local class, why = dep_class(S, card[10] or '', args[p], args[p + 1], args[p + 2])
+        if class == 'live' then live = live + 1
+        elseif class == 'dead' or class == 'unknown' then bad[#bad + 1] = why end
       end
-      local deps = redis.call('HGET', card, 'depends_on') or ''
-      for d in string.gmatch(dep, '[^%s,]+') do
-        deps = add_word(deps, d)
+      if #bad > 0 then
+        return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, 'deps ' .. table.concat(bad, '; '))
       end
-      redis.call('HSET', card, 'state', 'queued', 'bench', '', 'depends_on', deps, 'requeued_at', tostring(at))
+      if live == 0 then
+        return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, 'deps landed')
+      end
+      redis.call('HSET', ckey, 'state', 'queued', 'token', '', 'bench', pin)
+      move(S, label, 'ended', 'queued')
       redis.call('SADD', 's:' .. S .. ':waiting', label)
-      move(S, label, 'ended', 'queued')
-      receipt(S, label, 'ended', 'queued', attempt, actor, reason, 'waiting on ' .. deps, idem, at)
-      return finish(S, group, event_id, 'WAITING ' .. label .. ' on ' .. deps)
+      record(S, ckey, classkey, label, event_id, 'WAIT', actor, at)
+      return finish(S, event_id, 'WAIT')
     end
 
-    if action == 'fix' or action == 'recut' then
-      local new = 's:' .. S .. ':card:' .. new_label
-      local existing = redis.call('HGET', new, 'payload_sha')
-      local status = 'CREATED'
-      if existing then
-        if existing ~= new_payload then
-          return finish(S, group, event_id, unresolve(S, card, label, attempt, reason, base_sha,
-            item .. ' conflict=' .. new_label, actor, idem, at))
-        end
-        status = 'EXISTS'
+    if action == 'FIX' or action == 'RECUT' then
+      local nkey = 's:' .. S .. ':card:' .. new_label
+      local new_kind = card[1] or 'model'
+      if action == 'FIX' then new_kind = 'fix' end
+      redis.call('HSET', nkey, 'label', new_label, 'kind', new_kind, 'repo', card[10] or '',
+        'base', card[11] or '', 'base_sha', new_base, 'paths', card[12] or '', 'depends_on', '',
+        'priority', card[13] or '0', 'payload_sha', payload, 'state', 'queued', 'attempt', '0',
+        'retries', '0', 'root', root, 'tier', 'priority', 'front', '1', 'title', title)
+      if action == 'FIX' then
+        redis.call('HSET', nkey, 'fixes', label)
+        redis.call('HSET', ckey, 'fixed_by', new_label)
       else
-        local fields = { 'state', 'queued', 'attempt', '0', 'retries', '0', 'front', '1',
-          'base_sha', new_base, 'depends_on', '', 'payload_sha', new_payload, 'parent', label,
-          'title', new_title, 'cut_reason', reason, 'queued_at', tostring(at) }
-        if new_base == '' then
-          fields[#fields + 1] = 'cut_at_deal'
-          fields[#fields + 1] = '1'
-        end
-        local values = redis.call('HMGET', card, unpack(copied))
-        for i, f in ipairs(copied) do
-          if values[i] and f ~= counter then
-            fields[#fields + 1] = f
-            fields[#fields + 1] = values[i]
-          end
-        end
-        local used = tonumber(redis.call('HGET', card, counter)) or 0
-        fields[#fields + 1] = counter
-        fields[#fields + 1] = tostring(used + 1)
-        redis.call('HSET', new, unpack(fields))
-        local priority = redis.call('HGET', card, 'priority') or '0'
-        redis.call('ZADD', 's:' .. S .. ':pool', pool_score(priority, true), new_label)
-        redis.call('SADD', 's:' .. S .. ':idx:card:queued', new_label)
-        receipt(S, new_label, '', 'queued', 0, actor, action .. ' ' .. reason, 'parent ' .. label, idem, at)
+        redis.call('HSET', nkey, 'supersedes', label)
+        redis.call('HSET', ckey, 'state', 'superseded', 'superseded_by', new_label)
+        move(S, label, 'ended', 'superseded')
       end
-      redis.call('HSET', card, 'state', 'superseded', 'superseded_by', new_label, 'superseded_at', tostring(at))
-      move(S, label, 'ended', 'superseded')
-      receipt(S, label, 'ended', 'superseded', attempt, actor, reason, 'by ' .. new_label, idem, at)
-      return finish(S, group, event_id, status .. ' ' .. new_label)
+      redis.call('SADD', 's:' .. S .. ':idx:card:queued', new_label)
+      redis.call('ZADD', 's:' .. S .. ':pool', at - 10000000000000, new_label)
+      record(S, ckey, classkey, label, event_id, action, actor, at)
+      return finish(S, event_id, action)
     end
 
-    return finish(S, group, event_id, unresolve(S, card, label, attempt, reason, base_sha, item, actor, idem, at))
+    return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, '')
   end
 
-  -- ns_classify_pass: the proc line (spec 2.2 proc:<name>) with server TIME.
-  local function classify_pass(keys, args)
-    local name, took_ms, n, err = args[1], args[2], args[3], args[4]
-    local at = now_ms()
-    redis.call('HSET', 'proc:' .. name, 'pass_at', tostring(at), 'took_ms', took_ms,
-      'n', n, 'err', err, 'at', tostring(at))
-    return { 'OK' }
-  end
-
-  redis.register_function('ns_classify_end', classify_end)
-  redis.register_function('ns_classify_pass', classify_pass)
+  redis.register_function('ns_classify', classify)
 end

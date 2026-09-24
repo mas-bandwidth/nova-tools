@@ -36,17 +36,22 @@ func GoBuildCacheDir(root string) string { return filepath.Join(root, CacheDirNa
 // NPMCacheDir is the shared npm cache (NPM_CONFIG_CACHE) under a swarm root.
 func NPMCacheDir(root string) string { return filepath.Join(root, CacheDirName, "npm") }
 
-// CacheEnv is the three cache variables the harness child carries: one cache root for every
+// CacheEnv is the cache environment the harness child carries: one cache root for every
 // job under one swarm root, so N workers do not each download the same toolchain and modules.
-func CacheEnv(root string) []string {
+// sourceRoot optionally names the job checkout ASDF maps into its private Lisp overlay.
+func CacheEnv(root string, sourceRoot ...string) []string {
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
-	return []string{
+	out := []string{
 		"GOMODCACHE=" + GoModCacheDir(root),
 		"GOCACHE=" + GoBuildCacheDir(root),
 		"NPM_CONFIG_CACHE=" + NPMCacheDir(root),
 	}
+	if len(sourceRoot) > 0 && strings.TrimSpace(sourceRoot[0]) != "" {
+		out = append(out, "ASDF_OUTPUT_TRANSLATIONS="+JobASDFOutputTranslations(sourceRoot[0]))
+	}
+	return out
 }
 
 // EnsureCacheDirs makes the three shared cache directories, so the child's first cache write
@@ -55,7 +60,7 @@ func EnsureCacheDirs(root string) error {
 	if strings.TrimSpace(root) == "" {
 		return nil
 	}
-	for _, dir := range []string{GoModCacheDir(root), GoBuildCacheDir(root), NPMCacheDir(root)} {
+	for _, dir := range []string{GoModCacheDir(root), GoBuildCacheDir(root), NPMCacheDir(root), LispCacheDir(root)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}

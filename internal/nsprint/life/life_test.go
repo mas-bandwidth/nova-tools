@@ -73,7 +73,7 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 	res, err := life.Hello(ctx, st, life.HelloRequest{
 		Sprint: sprint, As: friend, Slots: 1,
 		Harness: "codex", Host: "bench-a", Session: "sess-1",
-		Actor: "control15", Idem: "hello-1",
+		Actor: friend, Idem: "hello-1",
 	})
 	if err != nil {
 		t.Fatalf("friend hello: %v", err)
@@ -107,7 +107,7 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 		t.Fatalf("consumed wake repeated: %q, %v", wake, err)
 	}
 	if _, err := life.Hello(ctx, st, life.HelloRequest{
-		As: friend, Slots: -1, Host: "bench-a", Session: "other-session",
+		As: friend, Slots: -1, Host: "bench-a", Session: "other-session", Actor: friend,
 	}); err == nil || !strings.Contains(err.Error(), "BUSY") {
 		t.Fatalf("second live hello = %v, want BUSY", err)
 	}
@@ -203,7 +203,7 @@ func TestBenchBeatSingleInstance(t *testing.T) {
 	}
 }
 
-func TestFriendHelloRefusesMachineCeilingWithoutChangingDesired(t *testing.T) {
+func TestFriendHelloPreservesConfiguredCapacity(t *testing.T) {
 	st, client, _ := controlRedis(t)
 	ctx := context.Background()
 	client.HSet(ctx, "machine:studio:ceiling", "slots", 64)
@@ -212,35 +212,55 @@ func TestFriendHelloRefusesMachineCeilingWithoutChangingDesired(t *testing.T) {
 	client.HSet(ctx, "friend:b:desired", "slots", 32, "machine", "studio", "paused", "0")
 
 	for _, req := range []life.HelloRequest{
-		{As: "a", Slots: 64, Host: "studio", Session: "a-1"},
-		{As: "b", Slots: 33, Host: "studio", Session: "b-1"},
+		{As: "a", Slots: 64, Host: "studio", Session: "a-1", Actor: "a"},
+		{As: "b", Slots: 33, Host: "studio", Session: "b-1", Actor: "b"},
 	} {
-		if _, err := life.Hello(ctx, st, req); err == nil || !strings.Contains(err.Error(), "CEILING") {
-			t.Fatalf("hello %s slots=%d: got %v, want CEILING refusal", req.As, req.Slots, err)
+		res, err := life.Hello(ctx, st, req)
+		if err != nil || res.Slots != 32 {
+			t.Fatalf("hello %s slots=%d: got %+v, %v; want configured 32", req.As, req.Slots, res, err)
 		}
 		if got := client.HGet(ctx, "friend:"+req.As+":desired", "slots").Val(); got != "32" {
-			t.Fatalf("refused hello changed %s desired to %s", req.As, got)
+			t.Fatalf("hello changed %s desired to %s", req.As, got)
 		}
-		if client.Exists(ctx, "friend:"+req.As+":beat").Val() != 0 {
-			t.Fatalf("refused hello brought %s up", req.As)
+		if _, err := life.Bye(ctx, st, req.As, req.As, ""); err != nil {
+			t.Fatal(err)
 		}
 	}
 	res, err := life.Hello(ctx, st, life.HelloRequest{
-		As: "a", Slots: -1, Host: "studio.local", Machine: "studio", Session: "a-preserve",
+		As: "a", Slots: -1, Host: "studio.local", Machine: "studio", Session: "a-preserve", Actor: "a",
 	})
 	if err != nil || res.Slots != 32 {
 		t.Fatalf("hello without --slots must preserve configured 32 slots: %+v, %v", res, err)
 	}
-	client.HSet(ctx, "machine:bench:ceiling", "slots", 1)
+}
+
+func TestHelloNeverWritesDesired(t *testing.T) {
+	st, client, _ := controlRedis(t)
+	ctx := context.Background()
+	client.SAdd(ctx, "friends", "f")
+	client.HSet(ctx, "friend:f:desired", "slots", 7, "machine", "m", "paused", 0, "at", 1)
+	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
+
 	if _, err := life.Hello(ctx, st, life.HelloRequest{
-		As: "new", Slots: 1, Host: "bench.local", Machine: "bench", Session: "new-1",
+		As: "f", Slots: 3, Host: "m", Session: "s", Actor: "f",
 	}); err != nil {
-		t.Fatalf("first hello with configured machine distinct from beat host: %v", err)
+		t.Fatal(err)
 	}
-	if got := client.HGet(ctx, "friend:new:desired", "machine").Val(); got != "bench" {
-		t.Fatalf("desired machine = %q, want bench", got)
+	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "7" {
+		t.Fatalf("hello rewrote desired slots=%q, want 7", got)
 	}
-	if got := client.HGet(ctx, "friend:new:beat", "host").Val(); got != "bench.local" {
-		t.Fatalf("actual beat host = %q, want bench.local", got)
+}
+
+func TestHelloUnregisteredRefuses(t *testing.T) {
+	st, client, _ := controlRedis(t)
+	ctx := context.Background()
+	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
+	if _, err := life.Hello(ctx, st, life.HelloRequest{
+		As: "new", Slots: 1, Host: "m", Session: "s", Actor: "new",
+	}); err == nil || !strings.Contains(err.Error(), "UNREGISTERED new: nova-sprint capacity friend") {
+		t.Fatalf("hello error=%v", err)
+	}
+	if client.SIsMember(ctx, "friends", "new").Val() || client.Exists(ctx, "friend:new:desired").Val() != 0 {
+		t.Fatal("unregistered hello wrote capacity state")
 	}
 }

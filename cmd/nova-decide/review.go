@@ -17,6 +17,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/events"
+	"github.com/mas-bandwidth/nova-tools/internal/jevcalib"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/prereview"
 )
@@ -57,14 +58,18 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	ghPath := fs.String("gh", "gh", "the gh executable")
 	table := fs.Bool("table", false, "also print one table row per pull request")
 	def := prereview.DefaultTuning()
-	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS")
+	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS; when absent, the prompt's own threshold (the tuned prompt 6b7343c3's is jevcalib.TunedPassAbove, 8), else 7")
 	bounceBelow := fs.Int("bounce-below", def.BounceBelow, "a score strictly below this BOUNCEs")
 	checksList := fs.String("checks", strings.Join(prereview.DefaultChecks, ","), "the checks that may decide (checks_enabled): donewhen,selfcheck,paths,claims,score; name ci to require ci-ok at the exact head")
 	inRate := fs.Float64("usd-per-mtok-in", 0, "the provider's input rate, US dollars per million tokens; 0 is unknown and prints cost=$-")
 	outRate := fs.Float64("usd-per-mtok-out", 0, "the provider's output rate, US dollars per million tokens; 0 is unknown")
+	promptRef := fs.String("prompt", "", "the score question's prompt: a file path or an embedded sha8 (internal/jevcalib/prompts); default: prompt= in --conf, else the embedded default")
+	confPath := fs.String("conf", defaultJevConf(), "the jev.conf whose prompt= key names the prompt when --prompt is absent (default $NOVA_JEV_CONF, e.g. ~/rowan-working/etc/jev.conf; unset or none reads no conf)")
+	prDir := fs.String("pr-dir", "", "read each pull request from <dir>/<n>/ (view.json in the gh pr view --json shape, diff.txt, optional check-runs.json) instead of gh: the calibration dry run, no GitHub call; refused with --post")
 	skipHeads := fs.String("skip-heads", "", "a file of head shas already posted on; a pull request at one of them is skipped before any call")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("review", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "review") {
 			return 0
@@ -86,6 +91,9 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	// Posting is the only act this verb has, so it is the one that must be
 	// asked for by name. The default is the dry run.
 	posting := *post
+	if posting && strings.TrimSpace(*prDir) != "" {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--pr-dir reads cached pull requests for a dry run; it never posts, so --post is refused with it")
+	}
 	if *batch != "" && *cardPath != "" {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--card names one card and --batch is many pull requests; give --card with --pr")
 	}
@@ -102,6 +110,24 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--checks: "+oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	skip, err := readHeads(*skipHeads)
+	if err != nil {
+		return refuse(stderr, "REVIEW", "bad-arguments", "--skip-heads: "+oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+
+	prompt, err := reviewPrompt(*promptRef, *confPath)
+	if err != nil {
+		return refuse(stderr, "REVIEW", "bad-prompt", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	// A prompt and its pass threshold are tuned together (#2536): the tuned
+	// prompt passes only above jevcalib.TunedPassAbove, because at 7 it
+	// passed 13 of the 128 heads the friends held (10.2%); the default (the
+	// seed) keeps 7. An explicit --pass-above always wins.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if !explicit["pass-above"] {
+		*passAbove = jevcalib.PassAboveFor(prompt, def.PassAbove)
+	}
 	if *bounceBelow > *passAbove+1 {
 		return refuse(stderr, "REVIEW", "bad-arguments", fmt.Sprintf("--bounce-below %d is above --pass-above %d plus one; a score could both PASS and BOUNCE", *bounceBelow, *passAbove))
 	}
@@ -109,10 +135,6 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		Model: decide.DefaultModel, USDPerMTokIn: *inRate, USDPerMTokOut: *outRate}
 	if *noJev {
 		tune.Model = "none"
-	}
-	skip, err := readHeads(*skipHeads)
-	if err != nil {
-		return refuse(stderr, "REVIEW", "bad-arguments", "--skip-heads: "+oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 
 	numbers, err := reviewTargets(*pr, *batch)
@@ -148,10 +170,13 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 		jevStream = em
 	}
 
-	gh := ghRunner{path: *ghPath}
+	var src prSource = ghRunner{path: *ghPath}
+	if strings.TrimSpace(*prDir) != "" {
+		src = dirSource{dir: *prDir}
+	}
 	held := 0
 	for _, n := range numbers {
-		d, err := reviewOne(gh, *repo, n, *cardPath, asker, usage, tune, skip, *record, posting, stdout, stderr)
+		d, err := reviewOne(src, *repo, n, *cardPath, asker, usage, tune, prompt, skip, *record, posting, stdout, stderr)
 		if err == errSkipped {
 			continue
 		}
@@ -219,6 +244,35 @@ func streamJevLine(em events.Emitter, d prereview.Disposition) error {
 	return err
 }
 
+// defaultJevConf is the conf review reads prompt= from when --conf is absent:
+// $NOVA_JEV_CONF (on the Studio, ~/rowan-working/etc/jev.conf, the file
+// bin/jev-loop is tuned by), else none. The verb never assumes a home layout.
+func defaultJevConf() string {
+	if v := strings.TrimSpace(os.Getenv("NOVA_JEV_CONF")); v != "" {
+		return v
+	}
+	return "none"
+}
+
+// reviewPrompt is the prompt the score question is asked with: --prompt, else
+// the conf's prompt= key, else the embedded default. A prompt that is named
+// and does not resolve is a refusal, never a silent fall back to the default:
+// a tuning that says prompt X must score with X or not at all.
+func reviewPrompt(flagRef, conf string) (jevcalib.Prompt, error) {
+	ref := strings.TrimSpace(flagRef)
+	if ref == "" && conf != "" && conf != "none" {
+		v, err := jevcalib.ConfPrompt(conf)
+		if err != nil {
+			return jevcalib.Prompt{}, fmt.Errorf("--conf %s: %w", conf, err)
+		}
+		ref = v
+	}
+	if ref == "" {
+		return jevcalib.Default(), nil
+	}
+	return jevcalib.Resolve(ref)
+}
+
 // defaultLedgerPath is the JSONL ledger today. It is under the coordinator's
 // session directory, beside the other lanes' receipts.
 func defaultLedgerPath() string {
@@ -270,7 +324,7 @@ func reviewTargets(pr int, batch string) ([]int, error) {
 }
 
 // reviewOne is the pass over one pull request.
-func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
+func reviewOne(gh prSource, repo string, n int, cardPath string, asker prereview.Asker, usage *decide.Usage, tune prereview.Tuning, prompt jevcalib.Prompt, skip map[string]bool, record string, posting bool, stdout, stderr io.Writer) (prereview.Disposition, error) {
 	pr, err := gh.pullRequest(repo, n)
 	if err != nil {
 		return prereview.Disposition{}, err
@@ -302,19 +356,19 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 	d := prereview.Disposition{
 		Who:  prereview.Who,
 		Repo: repo, PR: n, Head: pr.Head,
-		Rubric: prereview.RubricVersion(), Base: base,
+		Rubric: prereview.LevelsVersion(prompt.Levels), Prompt: prompt.Sha8, Base: base,
 		Checks: checks.Field(), Reason: checks.Why(), Evidence: checks.Evidence(), Model: tune.Model,
 		PathsFrom: card.PathsFrom, SymbolFrom: card.SymbolFrom, CardPath: card.Path,
 		At: time.Now().UTC().Format(time.RFC3339),
 	}
 	if asker != nil && tune.Enabled["score"] {
 		*usage = decide.Usage{}
-		raw, conf, err := prereview.Score(context.Background(), asker, pr, card)
+		raw, conf, err := prereview.ScoreWith(context.Background(), asker, prompt.Question(), pr, card)
 		d.InTokens, d.OutTokens, d.UsageKnown = usage.InputTokens, usage.OutputTokens, usage.Known()
 		if err != nil {
 			d.Reason = "score unavailable (" + oneline.Err(err) + "); " + d.Reason
 		} else {
-			d.RawScore, d.Conf, d.Score, d.Scored = raw, conf, prereview.ScoreFromAnswer(raw), true
+			d.RawScore, d.Conf, d.Score, d.Scored = raw, conf, tune.GateCap(checks, prereview.ScoreFromAnswer(raw)), true
 			if record != "" {
 				if err := prereview.RecordFixture(record, repo, n, raw, conf); err != nil {
 					fmt.Fprintf(stderr, "REVIEW RECORD FAILED pr=%d reason=%s\n", n, oneline.Err(err))
@@ -325,7 +379,7 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 	d.Verdict, d.Explain = tune.Decide(checks, d.Score, d.Scored)
 	d.Checks = tune.ChecksField(checks, d.Score, d.Scored)
 	if d.Scored {
-		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, one %s question over the RESULT and the diff", d.Score, d.RawScore, d.Conf, tune.Model))
+		d.Evidence = append(d.Evidence, fmt.Sprintf("score: %d -- raw %.2f, confidence %.2f, one %s question (prompt %s) over the body and the diff", d.Score, d.RawScore, d.Conf, tune.Model, prompt.Sha8))
 	} else {
 		d.Evidence = append(d.Evidence, "score: - -- "+scoreWhy(asker, tune, d.Reason))
 	}
@@ -350,39 +404,62 @@ func tableRow(d prereview.Disposition) string {
 	return fmt.Sprintf("ROW\t%d\t%s\t%s\t%s", d.PR, d.Checks, score, d.Verdict)
 }
 
-// ghRunner is the one thing this verb shells out to. It is a struct so a test
-// can point it at a script and never touch the network.
-type ghRunner struct{ path string }
-
-// prWire is the subset of `gh pr view --json` this pass reads.
-type prWire struct {
-	Number     int    `json:"number"`
-	HeadRefOid string `json:"headRefOid"`
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	Files      []struct {
-		Path string `json:"path"`
-	} `json:"files"`
-	Mergeable        string `json:"mergeable"`
-	MergeStateStatus string `json:"mergeStateStatus"`
+// prSource is where a pass reads a pull request and, with --post, writes its
+// one line: gh (the default) or a directory of cached pull requests (--pr-dir).
+type prSource interface {
+	pullRequest(repo string, n int) (prereview.PR, error)
+	comment(repo string, n int, body string) error
 }
 
-// pullRequest fetches the public facts and the diff.
-func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
-	raw, err := g.run("pr", "view", strconv.Itoa(n), "-R", repo, "--json", "number,headRefOid,title,body,files,mergeable,mergeStateStatus")
+// dirSource reads pull requests cached under dir/<n>/ (nova-tools #2536: the
+// calibration set is scored through the real review path with no GitHub call).
+// view.json is the `gh pr view --json` document (baseRefName and mergeable
+// optional), diff.txt the unified diff, check-runs.json the commit check-runs
+// document at the head; without it the ci check has nothing to read (missing,
+// not a bounce). It never writes: comment refuses.
+type dirSource struct{ dir string }
+
+func (s dirSource) pullRequest(repo string, n int) (prereview.PR, error) {
+	d := filepath.Join(s.dir, strconv.Itoa(n))
+	raw, err := os.ReadFile(filepath.Join(d, "view.json"))
 	if err != nil {
-		return prereview.PR{}, fmt.Errorf("gh pr view %d: %w", n, err)
+		return prereview.PR{}, fmt.Errorf("--pr-dir %d: %w", n, err)
 	}
 	var w prWire
 	if err := json.Unmarshal(raw, &w); err != nil {
-		return prereview.PR{}, fmt.Errorf("gh pr view %d: decode: %w", n, err)
+		return prereview.PR{}, fmt.Errorf("--pr-dir %d: view.json: %w", n, err)
 	}
-	diff, err := g.run("pr", "diff", strconv.Itoa(n), "-R", repo)
+	if w.Number != 0 && w.Number != n {
+		return prereview.PR{}, fmt.Errorf("--pr-dir %d: view.json is pull request %d", n, w.Number)
+	}
+	diff, err := os.ReadFile(filepath.Join(d, "diff.txt"))
 	if err != nil {
-		return prereview.PR{}, fmt.Errorf("gh pr diff %d: %w", n, err)
+		return prereview.PR{}, fmt.Errorf("--pr-dir %d: %w", n, err)
 	}
+	pr := w.pr(repo, n, string(diff))
+	runs, err := os.ReadFile(filepath.Join(d, "check-runs.json"))
+	switch {
+	case os.IsNotExist(err):
+		pr.ChecksUnread = true
+	case err != nil:
+		return prereview.PR{}, fmt.Errorf("--pr-dir %d: %w", n, err)
+	default:
+		if pr.Checks, _, err = prereview.ParseCheckRollup(runs); err != nil {
+			return prereview.PR{}, fmt.Errorf("--pr-dir %d: check-runs.json: %w", n, err)
+		}
+	}
+	return pr, nil
+}
+
+func (s dirSource) comment(string, int, string) error {
+	return fmt.Errorf("--pr-dir is a dry run: it has nowhere to post")
+}
+
+// pr is the wire document as the pass's PR, the one conversion both sources use.
+func (w prWire) pr(repo string, n int, diff string) prereview.PR {
 	pr := prereview.PR{
-		Repo: repo, Number: n, Head: w.HeadRefOid, Title: w.Title, Body: w.Body, Diff: string(diff),
+		Repo: repo, Number: n, Head: w.HeadRefOid, Title: w.Title, Body: w.Body, Diff: diff,
+		BaseRef:          w.BaseRefName,
 		Base:             string(prereview.BaseGateFromGH(w.Mergeable, w.MergeStateStatus)),
 		Mergeable:        w.Mergeable,
 		MergeStateStatus: w.MergeStateStatus,
@@ -394,6 +471,44 @@ func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
 	if len(pr.Files) == 0 {
 		pr.Files = prereview.DiffFiles(pr.Diff)
 	}
+	return pr
+}
+
+// ghRunner is the one thing this verb shells out to. It is a struct so a test
+// can point it at a script and never touch the network.
+type ghRunner struct{ path string }
+
+// prWire is the subset of `gh pr view --json` this pass reads.
+type prWire struct {
+	Number     int    `json:"number"`
+	HeadRefOid string `json:"headRefOid"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	// BaseRefName is the branch the pull request targets; the base check
+	// reads a stacked base (not the repository's trunk) as a gate failure.
+	BaseRefName string `json:"baseRefName"`
+	Files       []struct {
+		Path string `json:"path"`
+	} `json:"files"`
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+}
+
+// pullRequest fetches the public facts and the diff.
+func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
+	raw, err := g.run("pr", "view", strconv.Itoa(n), "-R", repo, "--json", "number,headRefOid,title,body,baseRefName,files,mergeable,mergeStateStatus")
+	if err != nil {
+		return prereview.PR{}, fmt.Errorf("gh pr view %d: %w", n, err)
+	}
+	var w prWire
+	if err := json.Unmarshal(raw, &w); err != nil {
+		return prereview.PR{}, fmt.Errorf("gh pr view %d: decode: %w", n, err)
+	}
+	diff, err := g.run("pr", "diff", strconv.Itoa(n), "-R", repo)
+	if err != nil {
+		return prereview.PR{}, fmt.Errorf("gh pr diff %d: %w", n, err)
+	}
+	pr := w.pr(repo, n, string(diff))
 	if err := g.attachChecks(&pr); err != nil {
 		return prereview.PR{}, err
 	}

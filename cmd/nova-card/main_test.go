@@ -2,13 +2,34 @@ package main
 
 import (
 	"bytes"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/launch"
 )
 
 const testToken = "1.0123456789abcdef0123456789abcdef"
 
 func noEnv(string) string { return "" }
+
+func TestConfigCarriesTheLauncherDeadline(t *testing.T) {
+	deadline := time.UnixMilli(1_900_000_000_123)
+	env := map[string]string{
+		"NOVA_CARD_REDIS": "127.0.0.1:6379", "NOVA_CARD_BENCH": "bench-one",
+		"NOVA_CARD_HARNESS": "/bin/true", "NOVA_CARD_JOBS": "/jobs",
+		"NOVA_CARD_RESULTS": "/results", "NOVA_CARD_CLOCK": "45m",
+		launch.LaunchDeadlineEnv: strconv.FormatInt(deadline.UnixMilli(), 10),
+	}
+	cfg, err := config(launch.Line{Sprint: "s", Label: "card", Attempt: 1}, func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.LaunchDeadline.Equal(deadline) {
+		t.Fatalf("launch deadline = %s, want %s", cfg.LaunchDeadline, deadline)
+	}
+}
 
 // TestLaunchLineMustNameTheCard: the stdin line is the launcher's, argv is
 // what ps shows; a wrapper whose two disagree runs nothing, and no refusal

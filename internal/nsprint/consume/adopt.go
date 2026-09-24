@@ -11,6 +11,7 @@ package consume
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -127,7 +128,19 @@ func (p *PRToReadRule) adopt(ctx context.Context, out *strings.Builder) (int, er
 		}
 		cut := "0"
 		if p.CICut != nil {
-			if err := p.CICut(ctx, CICut{Sprint: S, Repo: pr.repo, PR: pr.n, Head: head, Base: rec["base"]}); err != nil {
+			err := p.CICut(ctx, CICut{Sprint: S, Repo: pr.repo, PR: pr.n, Head: head, Base: rec["base"]})
+			// #3040 adoption step 1: the cut, then the Function, so every
+			// ADOPT line says cut=1. A cut that cannot be made yet writes no
+			// adopt record: the head is not marked adopted (line 110) and the
+			// next pass tries the cut again.
+			switch {
+			case errors.Is(err, ErrNoBaseTip):
+				fmt.Fprintf(out, "WAIT %s no base tip\n", pr.id)
+				continue
+			case errors.Is(err, ErrCutSkipped):
+				fmt.Fprintf(out, "WAIT %s ci cut: %v\n", pr.id, err)
+				continue
+			case err != nil:
 				return adopted, fmt.Errorf("pr-to-read: ci cut %s at %s: %w", pr.id, head12(head), err)
 			}
 			cut = "1"
@@ -156,6 +169,10 @@ func (p *PRToReadRule) adopt(ctx context.Context, out *strings.Builder) (int, er
 			adopted++
 		case len(reply) > 0 && reply[0] == "NOOP":
 			fmt.Fprintf(out, "SKIP %s adopted\n", pr.id)
+		case len(reply) > 0 && reply[0] == "WAIT":
+			// The Function's own recheck of the live record (head, state,
+			// draft, card, hold) refused: it moved after this pass read it.
+			fmt.Fprintf(out, "WAIT %s %s\n", pr.id, strings.Join(reply[1:], " "))
 		default:
 			fmt.Fprintf(out, "WAIT %s %s\n", pr.id, strings.Join(reply, " "))
 		}

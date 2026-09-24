@@ -85,6 +85,7 @@ func runOutcome(args []string, stdout, stderr io.Writer) int {
 	ofTime := fs.String("of-time", "", "with --result void: the RFC3339 Time of the --unit-id outcome row to retract; refuse to guess one")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("outcome", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "outcome") {
 			return 0

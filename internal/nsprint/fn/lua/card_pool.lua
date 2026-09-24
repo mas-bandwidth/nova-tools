@@ -10,24 +10,25 @@ local function is_merge(s)
   return type(s) == 'string' and #s == 40 and string.match(s, '^[0-9a-f]+$') ~= nil
 end
 
-local function is_landed(key)
-  local st = redis.call('HGET', key, 'state')
-  local merge = redis.call('HGET', key, 'merge_sha')
-  return st == 'landed' and is_merge(merge)
-end
-
 local function now_s()
   local t = redis.call('TIME')
   return t[1]
 end
 
--- keys: card, pool, waiting, log, idx queued, then one card hash per dependency
--- args: label, payload_sha, priority, base, base_sha, paths, repo, kind, depends_on
+-- keys: card, pool, waiting, log, idx queued
+-- args: label, payload_sha, priority, base, base_sha, paths, repo, kind,
+--       depends_on, card_type (the optional TYPE: line, nova-tools#3091;
+--       empty: not stored), depends_on_typed, ready (0|1).
+-- ready is resolved by the Go caller (card.Push); a caller that omits it
+-- (the pre-#3503 ten-argument shape) gets pool only when depends_on is empty.
+-- The card also gets cut_at, Redis TIME seconds at this push (nova-tools#3091).
 redis.register_function('ns_card_push', function(keys, args)
   local card, pool, waiting, log, idx = keys[1], keys[2], keys[3], keys[4], keys[5]
   local label, payload, priority = args[1], args[2], args[3]
   local base, base_sha, paths = args[4], args[5], args[6]
   local repo, kind, depends_on = args[7], args[8], args[9]
+  local card_type = args[10]
+  local depends_on_typed, ready_arg = args[11], args[12]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -37,26 +38,18 @@ redis.register_function('ns_card_push', function(keys, args)
     end
     return 'CONFLICT'
   end
-  local dep_count = 0
-  if depends_on ~= '' then
-    for _ in string.gmatch(depends_on, '[^,]+') do
-      dep_count = dep_count + 1
-    end
+  if type(depends_on_typed) ~= 'string' then
+    depends_on_typed = ''
   end
-  if #keys - 5 ~= dep_count then
-    return redis.error_reply('dependency keys do not match depends_on')
-  end
-  local ready = true
-  for i = 6, #keys do
-    if not is_landed(keys[i]) then
-      ready = false
-    end
+  local ready = ready_arg == '1'
+  if ready_arg == nil and depends_on == '' then
+    ready = true
   end
   local place = 'waiting'
   if ready then
     place = 'pool'
   end
-  redis.call('HSET', card,
+  local fields = {
     'label', label,
     'kind', kind,
     'repo', repo,
@@ -64,9 +57,16 @@ redis.register_function('ns_card_push', function(keys, args)
     'base_sha', base_sha,
     'paths', paths,
     'depends_on', depends_on,
+    'depends_on_typed', depends_on_typed,
     'priority', priority,
     'payload_sha', payload,
-    'state', 'queued')
+    'state', 'queued',
+    'cut_at', now_s()}
+  if type(card_type) == 'string' and card_type ~= '' then
+    table.insert(fields, 'card_type')
+    table.insert(fields, card_type)
+  end
+  redis.call('HSET', card, unpack(fields))
   redis.call('SADD', idx, label)
   if place == 'pool' then
     redis.call('ZADD', pool, priority, label)
@@ -86,12 +86,19 @@ redis.register_function('ns_card_push', function(keys, args)
 end)
 
 -- keys: waiting, pool, log
--- args: sprint
+-- args: sprint, then the labels whose typed dependencies the caller resolved
+--       in this pass (GitHub reads are cached by the caller).
 redis.register_function('ns_card_release', function(keys, args)
   local waiting, pool, log = keys[1], keys[2], keys[3]
   local sprint = args[1]
   if type(sprint) ~= 'string' or string.match(sprint, '^[-a-z0-9]+$') == nil or #sprint > 40 or #sprint < 1 then
     return redis.error_reply('bad sprint')
+  end
+  local releasable = {}
+  for i = 2, #args do
+    if safe_id(args[i]) then
+      releasable[args[i]] = true
+    end
   end
   local labels = redis.call('SMEMBERS', waiting)
   local moved, still = 0, 0
@@ -100,18 +107,7 @@ redis.register_function('ns_card_release', function(keys, args)
       still = still + 1
     else
       local card = 's:' .. sprint .. ':card:' .. label
-      local deps = redis.call('HGET', card, 'depends_on')
-      if type(deps) ~= 'string' then
-        deps = ''
-      end
-      local ready = true
-      for dep in string.gmatch(deps, '[^,]+') do
-        if not safe_id(dep) or not is_landed('s:' .. sprint .. ':card:' .. dep) then
-          ready = false
-          break
-        end
-      end
-      if ready then
+      if releasable[label] and redis.call('HGET', card, 'state') == 'queued' then
         redis.call('SREM', waiting, label)
         local priority = redis.call('HGET', card, 'priority')
         if type(priority) ~= 'string' or priority == '' then

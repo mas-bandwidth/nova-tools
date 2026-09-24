@@ -106,16 +106,19 @@ func setupDealFixture(t *testing.T, c *redis.Client, sprint string) {
 
 	// paused: desired.paused=1
 	c.HSet(ctx, "bench:paused:beat", "host", "paused.host", "user", "bench", "at", strconv.FormatInt(nowMs, 10))
+	c.HSet(ctx, "bench:paused:state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	c.HSet(ctx, "bench:paused:desired", "slots", "2", "paused", "1")
 
 	// full: free 0
 	c.HSet(ctx, "bench:full:beat", "host", "full.host", "user", "bench", "at", strconv.FormatInt(nowMs, 10))
+	c.HSet(ctx, "bench:full:state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	c.HSet(ctx, "bench:full:desired", "slots", "2", "paused", "0")
 	c.ZAdd(ctx, "bench:full:starting", redis.Z{Score: float64(nowMs), Member: sprint + "/card-f1/1"})
 	c.ZAdd(ctx, "bench:full:living", redis.Z{Score: float64(nowMs), Member: sprint + "/card-f2/1"})
 
 	// ok: free 2, ssh=refused
 	c.HSet(ctx, "bench:ok:beat", "host", "ok.host", "user", "bench", "at", strconv.FormatInt(nowMs, 10))
+	c.HSet(ctx, "bench:ok:state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	c.HSet(ctx, "bench:ok:desired", "slots", "2", "paused", "0")
 	c.HSet(ctx, "bench:ok:ssh", "state", "refused", "why", "connection refused", "at", strconv.FormatInt(nowMs-5000, 10))
 

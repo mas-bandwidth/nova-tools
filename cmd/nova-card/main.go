@@ -20,7 +20,9 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -52,6 +54,7 @@ The bench configures it through the environment the launcher runs in:
   NOVA_CARD_RESULTS  absolute root of results (<root>/<identity>)
   NOVA_CARD_CLOCK    the card clock, a Go duration (45m)
   NOVA_CARD_BEAT     the beat cadence, a Go duration (default 60s)
+  NOVA_CARD_LAUNCH_DEADLINE_MS  launcher's absolute batch deadline
 
 The harness runs in the job dir with NOVA_CARD, NOVA_CARD_BRANCH,
 NOVA_CARD_JOB and NOVA_CARD_OUT set; what it writes under NOVA_CARD_OUT is
@@ -69,6 +72,8 @@ example:
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Getenv)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+	ack := launchAcker(getenv)
+	defer ack("REFUSED wrapper exited before card launched")
 	if len(args) == 0 {
 		return refuse(stderr, "wants <sprint>/<label>/<attempt> with the launch line on stdin")
 	}
@@ -99,20 +104,48 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	}
 	cfg, err := config(line, getenv)
 	if err != nil {
+		ack("REFUSED " + err.Error())
 		fmt.Fprintln(stdout, card.WrapperReport{Code: card.WrapperExitUsage, Card: line.Card(), Why: err.Error()}.Line())
 		return card.WrapperExitUsage
 	}
 	ctx := context.Background()
 	st, err := store.Open(ctx, getenv("NOVA_CARD_REDIS"))
 	if err != nil {
+		ack("REFUSED redis unavailable")
 		fmt.Fprintln(stdout, card.WrapperReport{Code: card.WrapperExitRedis, Card: line.Card(), Why: "redis: " + err.Error()}.Line())
 		return card.WrapperExitRedis
 	}
 	defer st.Close()
-	ledger := &card.RedisLedger{Store: st, Sprint: line.Sprint, Label: line.Label, Token: line.Token}
+	cfg.Started = func() { ack("LAUNCHED") }
+	ledger := &card.RedisLedger{
+		Store: st, Sprint: line.Sprint, Label: line.Label, Token: line.Token,
+		LaunchDeadline: cfg.LaunchDeadline,
+	}
 	rep := card.RunWrapper(ctx, cfg, ledger)
+	if rep.Code != card.WrapperExitEnded {
+		ack("REFUSED " + rep.Why)
+	}
 	fmt.Fprintln(stdout, rep.Line())
 	return rep.Code
+}
+
+// launchAcker writes the one child-to-launcher status on the inherited fd.
+// It is a no-op when nova-card was invoked outside `card launch --stdin`.
+func launchAcker(getenv func(string) string) func(string) {
+	raw := getenv(launch.LaunchAckFDEnv)
+	fd, err := strconv.Atoi(raw)
+	if raw == "" || err != nil || fd < 3 {
+		return func(string) {}
+	}
+	f := os.NewFile(uintptr(fd), "nova-card-launch-ack")
+	var once sync.Once
+	return func(status string) {
+		once.Do(func() {
+			status = strings.ReplaceAll(strings.ReplaceAll(status, "\r", " "), "\n", " ")
+			fmt.Fprintln(f, status)
+			_ = f.Close()
+		})
+	}
 }
 
 // readLaunchLine reads the one canonical line; a second line is refused.
@@ -142,6 +175,14 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 	var bad []string
 	if getenv("NOVA_CARD_REDIS") == "" {
 		bad = append(bad, "NOVA_CARD_REDIS")
+	}
+	if raw := getenv(launch.LaunchDeadlineEnv); raw != "" {
+		ms, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || ms <= 0 {
+			bad = append(bad, launch.LaunchDeadlineEnv)
+		} else {
+			cfg.LaunchDeadline = time.UnixMilli(ms)
+		}
 	}
 	for _, kv := range []struct {
 		name string

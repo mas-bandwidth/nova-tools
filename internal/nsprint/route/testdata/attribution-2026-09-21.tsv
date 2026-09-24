@@ -1,0 +1,33 @@
+# Per-model fault classes of the sub-8 results, from rowan-new reports/attribution-2026-09-21.md
+# (lane record ~/rowan-working/tmp/session-0919b/attribution/ATTRIBUTION.tsv, 122 rows; the 75 UNJOINED rows
+# carry no model and are left out). One row per model and lever: n is how many sub-8 PRs of
+# that model the attribution charged to that lever. NONE is a MODEL-caused failure (no lever).
+model	cause	lever	n
+Claude Opus 5	CARD	CARD-GATEREACH	1
+claude-haiku-4.5	MODEL	NONE	1
+deepseek-v4-flash	CARD	CARD-DOCGUARD	3
+deepseek-v4-flash	CARD	CARD-PARITY	1
+deepseek-v4-flash	MODEL	NONE	4
+deepseek-v4-pro	CARD	CARD-BENCHPIN	2
+deepseek-v4-pro	CARD	CARD-DOCGUARD	1
+deepseek-v4-pro	CARD	CARD-GATE	2
+deepseek-v4-pro	CARD	CARD-NOCTRL	2
+deepseek-v4-pro	CARD	CARD-STALE	3
+deepseek-v4-pro	CARD	CARD-WIRE	9
+deepseek-v4-pro	MODEL	NONE	2
+deepseek-v4-pro	TOOLING	TOOLING-TITLE	1
+devstral-2512	MODEL	NONE	1
+kimi-k2.7-code	CARD	TOOLING-PRIOR	1
+kimi-k2.7-code	TOOLING	TOOLING-PRIOR	1
+mercury-2.5	CARD	CARD-CONTROL	1
+mimo-v2.5-pro	TOOLING	TOOLING-CLEANTREE	1
+minimax-m3	CARD	CARD-GATE	1
+minimax-m3	CARD	CARD-NOCTRL	1
+muse-spark-1.3	CARD	CARD-FLOOR	1
+muse-spark-1.3	CARD	CARD-MEASURE	1
+muse-spark-1.3	CARD	CARD-REVDEP	1
+qwen3.6-plus	CARD	CARD-LINT	1
+qwen3.6-plus	MODEL	NONE	1
+qwen3.6-plus	TOOLING	TOOLING-CLEANTREE	1
+qwen3.7-flash	CARD	CARD-REVDEP	1
+qwen3.7-flash	MODEL	NONE	1

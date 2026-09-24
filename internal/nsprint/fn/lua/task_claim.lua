@@ -4,16 +4,26 @@
 -- guard, moves the id between index sets, reads server TIME and appends one
 -- receipt, all atomically (spec #2756 2.1 rule 2, 3.1, 4.2).
 
+-- DEP is the DEPENDS-ON machinery of #3206 PR A (ruling nova-tools#3516:
+-- there is no blocked state; a task with an unmet dependency is waiting and
+-- never ready). It is declared here, in the first task file of the one
+-- library chunk, so push and done below can call it; task_queue.lua fills it
+-- in. Every call happens at run time, after the whole chunk has loaded.
+local DEP = {}
+
 local function now_ms()
   local t = redis.call('TIME')
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
 
-local function receipt(S, kind, id, from_state, to_state, attempt, token_sha, actor, reason, evidence, idem, at)
+-- for_friend is the effective friend of the transition (#2929): --to on a
+-- push, --as on a take and a denied take. actor is recorded as given and never
+-- judged here; the CLI verbs own the initiator rule.
+local function receipt(S, kind, id, from_state, to_state, attempt, token_sha, actor, for_friend, reason, evidence, idem, at)
   redis.call('XADD', 's:' .. S .. ':log', '*',
     'kind', kind, 'id', id, 'from', from_state, 'to', to_state,
     'attempt', tostring(attempt or 0), 'token_sha', token_sha or '',
-    'actor', actor or '', 'reason', reason or '', 'evidence', evidence or '',
+    'actor', actor or '', 'for', for_friend or '', 'reason', reason or '', 'evidence', evidence or '',
     'idem', idem or '', 'at', tostring(at))
 end
 
@@ -33,7 +43,24 @@ local function task_push(keys, args)
   local priority, payload_sha = tonumber(args[12]), args[13]
   local actor, idem = args[14], args[15]
   local est = args[16] or ''
+  -- needs (#2939): space-separated ids in <S> that must be closed before
+  -- this task can be claimed; written only when non-empty.
+  local needs = args[17] or ''
   local key = 's:' .. S .. ':task:' .. id
+
+  -- #2929 rev 5: a down friend gets nothing. The marker is read first, before
+  -- any other read, so a re-push of an existing id is refused too; it is only
+  -- read, never written. The ready pool and harvest targets are not checked.
+  if to ~= '' and string.sub(to, 1, 8) ~= 'harvest:' then
+    local down = DEP.down(to)
+    if down then
+      return { 'DOWN', down }
+    end
+  end
+  local conds, bad = DEP.parse(args[18] or '')
+  if bad then
+    return { 'INVALID', 'depends-on ' .. bad }
+  end
 
   if est ~= '' then
     if not string.match(est, '^[1-9]%d*$') or #est > 5 or tonumber(est) > 10080 then
@@ -67,7 +94,7 @@ local function task_push(keys, args)
       registered = redis.call('SISMEMBER', 'friends', to)
     end
     if registered == 0 then
-      return { 'INVALID' }
+      return { 'INVALID', 'unknown friend' }
     end
   end
 
@@ -82,18 +109,30 @@ local function task_push(keys, args)
     'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
     'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
     'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
-    'est', est, 'pushed_at', tostring(at))
-  local score = priority
+    'est', est, 'pushed_at', tostring(at), 'pushed_by', actor or '')
+  if needs ~= '' then
+    redis.call('HSET', key, 'needs', needs)
+  end
+  -- #3206 PR A: the queue a task was pushed to, its front flag and the
+  -- DEPENDS-ON list stay on the hash, so move, front and the dependency
+  -- release find the queue without a scan. Author is the read rule's field.
+  local front_text = '0'
   if front then
-    score = -priority
+    front_text = '1'
   end
-  if to ~= '' then
-    redis.call('ZADD', 's:' .. S .. ':open:' .. to, score, id)
-  else
-    redis.call('ZADD', 's:' .. S .. ':ready', score, id)
+  redis.call('HSET', key, 'dest', to, 'front', front_text,
+    'depends_on', table.concat(conds, ';'), 'author', args[19] or '')
+  local unmet = DEP.unmet(S, conds)
+  if #unmet > 0 then
+    DEP.wait(S, id, key, to, unmet, at)
+    receipt(S, 'task push', id, '', 'waiting', 0, '', actor, to, 'depends-on ' .. table.concat(unmet, ';'), '', idem, at)
+    return { 'CREATED', 'waiting', tostring(#unmet) }
   end
-  redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-  receipt(S, 'task push', id, '', 'open', 0, '', actor, '', '', idem, at)
+  DEP.enqueue(S, id, to, front, priority)
+  receipt(S, 'task push', id, '', 'open', 0, '', actor, to, '', '', idem, at)
+  if #conds > 0 then
+    return { 'CREATED', 'on-met' }
+  end
   return { 'CREATED' }
 end
 
@@ -125,7 +164,26 @@ local function task_take(keys, args)
     return { 'NONE' }
   end
 
-  -- Presence and capacity are global, shared by every open sprint.
+  -- A task whose needs are not all closed is passed over (#2939): the reply
+  -- names the unmet ids and nothing is written.
+  local needs = redis.call('HGET', key, 'needs')
+  if needs and needs ~= '' then
+    local unmet = {}
+    for need in string.gmatch(needs, '%S+') do
+      if redis.call('SISMEMBER', 's:' .. S .. ':idx:task:closed', need) == 0 then
+        unmet[#unmet + 1] = need
+      end
+    end
+    if #unmet > 0 then
+      return { 'BLOCKED', table.concat(unmet, ' ') }
+    end
+  end
+
+  -- Presence and capacity are global, shared by every open sprint. A down
+  -- marker refuses the take like an absent beat (#3206 PR A).
+  if DEP.down(friend) then
+    return { 'DOWN' }
+  end
   if redis.call('SISMEMBER', 'friends', friend) == 0 or
       redis.call('EXISTS', 'friend:' .. friend .. ':beat') == 0 then
     return { 'DOWN' }
@@ -158,8 +216,10 @@ local function task_take(keys, args)
   redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
   redis.call('SADD', 's:' .. S .. ':idx:task:claimed', id)
   redis.call('ZADD', 'friend:' .. friend .. ':starting', at, S .. '/' .. id .. '/' .. attempt)
-  receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, '', '', idem, at)
-  return { 'CLAIMED', S, id, tostring(attempt), token }
+  receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, friend, '', '', idem, at)
+  return { 'CLAIMED', S, id, tostring(attempt), token,
+    redis.call('HGET', key, 'kind') or '', redis.call('HGET', key, 'ref') or '',
+    redis.call('HGET', key, 'title') or '' }
 end
 
 -- task_done: claimed/working -> closed (spec 3.1 row 7, 4.2). The token must
@@ -170,12 +230,21 @@ local function task_done(keys, args)
   local S, id, token = args[1], args[2], args[3]
   local evidence, verdict, score, head = args[4], args[5], args[6], args[7]
   local actor, idem = args[8], args[9]
+  local as = args[10] or ''
   local key = 's:' .. S .. ':task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
   end
-  if redis.call('HGET', key, 'token') ~= token then
+  -- #3206 PR A: `done --as <f>` with no token is the friend-queue shape; it
+  -- is accepted only when f is the owner (the state rules below still hold,
+  -- so only a claimed or working lease closes). Anything else without the
+  -- stored token refuses FENCED.
+  if token == '' and as ~= '' then
+    if redis.call('HGET', key, 'owner') ~= as then
+      return { 'FENCED' }
+    end
+  elseif redis.call('HGET', key, 'token') ~= token then
     return { 'FENCED' }
   end
   local state = redis.call('HGET', key, 'state')
@@ -219,10 +288,21 @@ local function task_done(keys, args)
     redis.call('HSET', 's:' .. S .. ':disp:' .. repo .. ':' .. pr,
       friend .. '@' .. head, verdict .. ' ' .. score .. ' ' .. evidence)
   end
-  receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', evidence, idem, at)
-  return { 'DONE' }
+  receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', '', evidence, idem, at)
+  local ready = DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
+  return { 'DONE', tostring(ready) }
+end
+
+-- task_take_denied: the receipt of a take refused by the CLI because --as is
+-- not the initiator (#2929 rev 6). It writes exactly one receipt and touches
+-- no other key; the task is unchanged. The library's Take never calls it.
+local function task_take_denied(keys, args)
+  local S, id, actor, for_friend, idem = args[1], args[2], args[3], args[4], args[5]
+  receipt(S, 'task take denied', id, '', '', 0, '', actor, for_friend, 'as-not-initiator', '', idem, now_ms())
+  return { 'DENIED' }
 end
 
 redis.register_function('ns_task_push', task_push)
 redis.register_function('ns_task_take', task_take)
 redis.register_function('ns_task_done', task_done)
+redis.register_function('ns_task_take_denied', task_take_denied)

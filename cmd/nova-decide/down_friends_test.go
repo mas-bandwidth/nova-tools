@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sort"
@@ -61,6 +62,94 @@ func TestRouteStoreExcludesDownFriend(t *testing.T) {
 	}
 	if !strings.Contains(entry.Reason, "excluded=emma:down") {
 		t.Errorf("entry reason must contain excluded=emma:down, got: %s", entry.Reason)
+	}
+}
+
+func TestRouteReadsSeatPresenceWithoutWritingEvent(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.Set("friend:stella:down", "out-of-credits")
+	t.Setenv("NOVA_REDIS_ADDR", mr.Addr())
+	log := filepath.Join(t.TempDir(), "decide.jsonl")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"route", "--unit-id", "seat", "--kind", "spec", "--no-jev", "--log", log}, &stdout, &stderr)
+	if code != 0 && code != 3 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "rung=astra") {
+		t.Fatalf("astra routed while Stella is down: %s", stdout.String())
+	}
+	if mr.Exists("cards:done") {
+		t.Fatal("presence-only store wrote cards:done")
+	}
+	raw, _ := os.ReadFile(log)
+	if !strings.Contains(string(raw), `"down_checked":true`) || !strings.Contains(string(raw), "stella:down") {
+		t.Fatalf("missing presence evidence: %s", raw)
+	}
+}
+
+func TestRouteWithoutPresenceStoreNotesAndLogsUncheckedBusRung(t *testing.T) {
+	t.Setenv("NOVA_REDIS_ADDR", "")
+	log := filepath.Join(t.TempDir(), "decide.jsonl")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"route", "--unit-id", "unchecked", "--kind", "spec", "--no-jev", "--log", log}, &stdout, &stderr)
+	if code != 0 && code != 3 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	const note = "ROUTE NOTE down friends not checked (no store)\n"
+	if stderr.String() != note {
+		t.Fatalf("stderr=%q want exact presence note %q", stderr.String(), note)
+	}
+
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry decide.Entry
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &entry); err != nil {
+		t.Fatalf("unmarshal log row: %v", err)
+	}
+	if entry.DownChecked {
+		t.Fatalf("down_checked=true without a presence store: %s", raw)
+	}
+	reg, err := decide.DefaultRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	busRung := false
+	for _, mind := range reg.Minds {
+		if mind.Name == entry.RungTried && mind.Ask == decide.AskBus {
+			busRung = true
+			break
+		}
+	}
+	if !busRung {
+		t.Fatalf("rung_tried=%q is not a bus rung; route=%s", entry.RungTried, stdout.String())
+	}
+}
+
+func TestRouteDefaultPresenceStoreFailureIsFailClosed(t *testing.T) {
+	t.Setenv("NOVA_REDIS_ADDR", "presence.invalid:6379")
+	was := downFriendsOpener
+	var gotAddr string
+	downFriendsOpener = func(_ context.Context, addr, _, _ string, _ *decide.Registry) (map[string]bool, []string, error) {
+		gotAddr = addr
+		return nil, nil, errors.New("dial presence store: unavailable")
+	}
+	t.Cleanup(func() { downFriendsOpener = was })
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"route", "--unit-id", "presence-failure", "--kind", "spec", "--no-jev"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit=%d want 2 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
+	}
+	if gotAddr != "presence.invalid:6379" {
+		t.Fatalf("presence opener addr=%q want environment default", gotAddr)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("route answered despite failed presence check: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "ROUTE REFUSED reason=presence-unavailable") {
+		t.Fatalf("stderr=%q want explicit fail-closed presence refusal", stderr.String())
 	}
 }
 
