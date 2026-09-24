@@ -56,7 +56,7 @@ func TestEveryTranscriptIsExecutedLineForLine(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, m := range missing {
-		t.Errorf("%s: section %q has no test in cmd/%s/firstrun_test.go calling onboarding.Compare or onboarding.Execute; every transcript section must be executed by a test using the shared comparator (docs/SPEC-TOOLWORK.md §3), and notYetExecuted only shrinks",
+		t.Errorf("%s: section %q has no test in cmd/%s/firstrun_test.go calling onboarding.CompareTranscript, onboarding.Compare or onboarding.Execute; every transcript section must be executed by a test using the shared comparator (docs/SPEC-TOOLWORK.md §3), and notYetExecuted only shrinks",
 			testsMDPath, m, m)
 	}
 
@@ -92,7 +92,7 @@ func toolSectionsFromMD(md string) []string {
 }
 
 // firstRunExecutes reports whether cmd/<tool>/firstrun_test.go calls
-// onboarding.Compare, Execute or ExecuteWith from a Test function, directly
+// onboarding.CompareTranscript, Compare, Execute or ExecuteWith from a Test function, directly
 // or through a helper or function literal declared in the same file. Each
 // function literal is its own node in the call graph and is reached only
 // when it is invoked: called in place (func(){...}(), go and defer
@@ -168,7 +168,7 @@ func firstRunExecutes(t *testing.T, root, tool string) bool {
 				case *ast.SelectorExpr:
 					if x, ok := fun.X.(*ast.Ident); ok && x.Name == "onboarding" {
 						switch fun.Sel.Name {
-						case "Compare", "Execute", "ExecuteWith":
+						case "Compare", "CompareTranscript", "Execute", "ExecuteWith":
 							direct[node] = true
 						}
 					}

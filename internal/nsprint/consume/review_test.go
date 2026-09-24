@@ -40,7 +40,9 @@ func initTestRedis(t *testing.T) (*store.Store, *redis.Client) {
 	if err := fn.Load(ctx, client); err != nil {
 		t.Fatalf("load nova_sprint library: %v", err)
 	}
-	// Fallback registration for #3092 ns_ingest_disposition if not already present
+	// A test double of the PR-keyed hold contract this package reads; it is
+	// named apart from #3092's real ns_ingest_disposition (unit-keyed, in the
+	// nova_sprint library) so the two never collide.
 	registerIngestDispositionFallback(t, client)
 	return store.New(client), client
 }
@@ -117,7 +119,7 @@ local function ingest_disposition(keys, args)
   return { 'OK' }
 end
 
-redis.register_function('ns_ingest_disposition', ingest_disposition)
+redis.register_function('ns_test_ingest_disposition', ingest_disposition)
 `
 	_ = client.FunctionLoad(ctx, src).Err()
 }
@@ -129,7 +131,7 @@ func ingestDisposition(ctx context.Context, client *redis.Client, sprint, repo s
 	if releaseFor != "" {
 		args = append(args, releaseFor)
 	}
-	err := client.FCall(ctx, "ns_ingest_disposition", nil, args...).Err()
+	err := client.FCall(ctx, "ns_test_ingest_disposition", nil, args...).Err()
 	if err == nil {
 		return nil
 	}
@@ -584,7 +586,7 @@ func TestControl32HeadChange(t *testing.T) {
 
 // TestControlOpenHoldBlocksLandReady:
 //   - blocks: open hold h1 blocks land-ready even with ci OK and reads at the bar.
-//   - release: feeding dispositions through ns_ingest_disposition leaves h1 open
+//   - release: feeding dispositions through ns_test_ingest_disposition leaves h1 open
 //     until authorized release, after which the card goes land-ready.
 func TestControlOpenHoldBlocksLandReady(t *testing.T) {
 	st, client := initTestRedis(t)
