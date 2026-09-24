@@ -10,7 +10,13 @@
 
 (in-package #:nova-work/tests)
 
-(defparameter *dep-seed*
+;;; The fixture names are this file's own (*DEP-VERB-SEED*, DEP-VERB-ADD,
+;;; DEP-VERB-REMOVE): tests/replays-785-dep.lisp defines *DEP-SEED*, DEP-ADD and
+;;; DEP-REMOVE with a different seed and a different DEP-EDIT call, and under
+;;; sorted discovery (#1947) the later-loading file's definitions would win for
+;;; both.
+
+(defparameter *dep-verb-seed*
   '((:id "acme/work"   :type :work-set :parent nil         :state :unknown)
     (:id "acme/work/d" :type :task     :parent "acme/work" :state :todo
      :deps ("acme/work/n"))
@@ -18,12 +24,12 @@
     (:id "acme/work/m" :type :task     :parent "acme/work" :state :doing))
   "D needs the open N; M is unattached.")
 
-(defun dep-add (k node need &key (as "rowan") (reason "the new order")
+(defun dep-verb-add (k node need &key (as "rowan") (reason "the new order")
                                  (request (format nil "dep-add-~A-~A" node need)))
   (dep-edit k :node node :add need :as as :reason reason
               :request request :stamp "2026-09-16T14:00:00Z"))
 
-(defun dep-remove (k node need &key (as "rowan") (reason "it does not need it")
+(defun dep-verb-remove (k node need &key (as "rowan") (reason "it does not need it")
                                     (request (format nil "dep-rm-~A-~A" node need)))
   (dep-edit k :node node :remove need :as as :reason reason
               :request request :stamp "2026-09-16T15:00:00Z"))
@@ -32,9 +38,9 @@
     "docs/SPEC-WORK.md:987,2362"
     "expected=an-added-edge-is-on-the-node-and-a-removed-one-is-gone"
   (let* ((j (make-ordering-journal :capacity 64))
-         (k (make-kernel :state (make-seed-state *dep-seed*) :journal j :rev-base 1)))
+         (k (make-kernel :state (make-seed-state *dep-verb-seed*) :journal j :rev-base 1)))
     ;; add: the edge lands on the node and the receipt says so
-    (multiple-value-bind (okp line code) (dep-add k "acme/work/d" "acme/work/m")
+    (multiple-value-bind (okp line code) (dep-verb-add k "acme/work/d" "acme/work/m")
       (ok okp "an edge is admitted: ~A" line)
       (check-equal 0 code "at exit 0")
       (ok (search "change=add" line) "the receipt names the change: ~A" line)
@@ -43,7 +49,7 @@
                  (node-deps (kernel-state k) "acme/work/d")
                  "the forward edge is on the node, in the order it was added")
     ;; remove: the override of a direct need
-    (multiple-value-bind (okp line code) (dep-remove k "acme/work/d" "acme/work/n")
+    (multiple-value-bind (okp line code) (dep-verb-remove k "acme/work/d" "acme/work/n")
       (ok okp "the override is a recorded edit of the edge: ~A" line)
       (check-equal 0 code "at exit 0")
       (ok (search "change=remove" line) "the receipt names the removal: ~A" line))
@@ -58,17 +64,17 @@
     "docs/SPEC-WORK.md:4997,5041"
     "expected=rule-3-refuses-a-cycle-rule-2-refuses-an-id-that-names-nothing"
   (let* ((j (make-ordering-journal :capacity 64))
-         (k (make-kernel :state (make-seed-state *dep-seed*) :journal j :rev-base 1))
+         (k (make-kernel :state (make-seed-state *dep-verb-seed*) :journal j :rev-base 1))
          (before (node-deps (kernel-state k) "acme/work/d")))
-    (multiple-value-bind (okp line code) (dep-add k "acme/work/d" "acme/work/d")
+    (multiple-value-bind (okp line code) (dep-verb-add k "acme/work/d" "acme/work/d")
       (ok (not okp) "a node that needs itself is a cycle of length one")
       (check-equal 1 code "at exit 1")
       (ok (search "rule 3" line) "and the receipt says rule 3: ~A" line))
-    (multiple-value-bind (okp line code) (dep-add k "acme/work/n" "acme/work/d")
+    (multiple-value-bind (okp line code) (dep-verb-add k "acme/work/n" "acme/work/d")
       (ok (not okp) "an edge closing a two-node cycle is refused")
       (check-equal 1 code "at exit 1")
       (ok (search "rule 3" line) "and says rule 3: ~A" line))
-    (multiple-value-bind (okp line code) (dep-add k "acme/work/d" "acme/work/nowhere")
+    (multiple-value-bind (okp line code) (dep-verb-add k "acme/work/d" "acme/work/nowhere")
       (ok (not okp) "an id naming nothing is refused")
       (check-equal 1 code "at exit 1")
       (ok (search "rule 2: dangling" line) "and says rule 2: ~A" line))
@@ -79,17 +85,17 @@
     "docs/SPEC-WORK.md:307,2362"
     "expected=the-edge-the-verb-acknowledged-is-the-edge-a-restart-reads"
   (let* ((path (test-journal-path "dep-verb"))
-         (seed (make-seed-state *dep-seed*))
+         (seed (make-seed-state *dep-verb-seed*))
          (digest (root-digest seed))
          (j (open-file-journal path :initial-state-hash digest :capacity 64))
-         (k (make-kernel :state (make-seed-state *dep-seed*) :journal j :rev-base 1)))
+         (k (make-kernel :state (make-seed-state *dep-verb-seed*) :journal j :rev-base 1)))
     (unwind-protect
          (progn
-           (multiple-value-bind (okp line) (dep-add k "acme/work/d" "acme/work/m")
+           (multiple-value-bind (okp line) (dep-verb-add k "acme/work/d" "acme/work/m")
              (ok okp "the edge is admitted: ~A" line))
            (close-file-journal j)
            (let* ((j2 (open-file-journal path :initial-state-hash digest :capacity 64))
-                  (k2 (make-kernel :state (make-seed-state *dep-seed*) :journal j2 :rev-base 1)))
+                  (k2 (make-kernel :state (make-seed-state *dep-verb-seed*) :journal j2 :rev-base 1)))
              (unwind-protect
                   (progn
                     (replay-journal j2 k2)
@@ -107,15 +113,15 @@
     "docs/SPEC-WORK.md:307,315"
     "expected=a-retransmitted-request-answers-its-record-and-conflicts-refuse"
   (let* ((j (make-ordering-journal :capacity 64))
-         (k (make-kernel :state (make-seed-state *dep-seed*) :journal j :rev-base 1)))
-    (multiple-value-bind (okp first) (dep-add k "acme/work/d" "acme/work/m" :request "dep-once")
+         (k (make-kernel :state (make-seed-state *dep-verb-seed*) :journal j :rev-base 1)))
+    (multiple-value-bind (okp first) (dep-verb-add k "acme/work/d" "acme/work/m" :request "dep-once")
       (ok okp "the first request lands: ~A" first)
-      (multiple-value-bind (okp2 second code2) (dep-add k "acme/work/d" "acme/work/m" :request "dep-once")
+      (multiple-value-bind (okp2 second code2) (dep-verb-add k "acme/work/d" "acme/work/m" :request "dep-once")
         (ok okp2 "the identical retry is answered, not refused")
         (check-equal 0 code2 "at exit 0")
         (check-string= first second "with the original receipt"))
       ;; the same id with a changed payload is refused, and nothing is applied
-      (multiple-value-bind (okp3 line3 code3) (dep-add k "acme/work/d" "acme/work/n" :request "dep-once")
+      (multiple-value-bind (okp3 line3 code3) (dep-verb-add k "acme/work/d" "acme/work/n" :request "dep-once")
         (ok (not okp3) "a conflicting payload under one id is refused")
         (check-equal 1 code3 "at exit 1")
         (ok (search "different payload" line3) "naming the conflict: ~A" line3))

@@ -11,6 +11,40 @@ Run the acceptance suite:
 
 SBCL, non-interactive. Exit 0 when every case passes, 1 otherwise.
 
+## Adding a test file
+
+Write `tests/<name>.lisp` and run `./run-tests.sh`. **Do not add a line to
+`nova-work.asd`.** The `nova-work/tests` system names an explicit prelude —
+`tests/harness`, then `tests/acceptance` — and *discovers* every other regular
+`tests/*.lisp`, sorted by name (nova-tools#1947: the hand-written list made
+every pair of open nova-work PRs conflict on that one file and on no other file
+at all). `src/` is the opposite and stays written out by hand: `:serial t` makes
+its order the load order and later files depend on earlier ones.
+
+Discovery never recurses. The per-slice files under `tests/acceptance/` are
+`load`ed by `tests/acceptance.lisp` and must not also be components. A
+duplicate, a case collision, a name that could escape `tests/`, or a symbolic
+link is a loud error *while the `.asd` is read*, not a quiet change of what
+compiles.
+
+**The reload caveat.** ASDF discovers when the `.asd` is **read**, not when the
+system is loaded. `run-tests.sh` and `tools/ci/lisp-test.sh` start a fresh image
+every time, so CI always sees the directory as it stands. A **long-lived
+interactive image** that has already read `nova-work.asd` will not see a test
+file added since — it has to reread the file:
+
+    (asdf:clear-system :nova-work/tests)
+    (asdf:load-asd #p"/path/to/lisp/nova-work/nova-work.asd")
+
+or simply be restarted. `(asdf:load-system :nova-work/tests)` alone is not
+enough, and the missing file looks exactly like a test that did not register.
+
+`tests/asd-discovery.lisp` holds all of this against the tree on every run, and
+`tools/asd-order-check.sh` re-measures the two claims underneath it: that the
+order after the prelude carries no meaning (the suite in current, sorted and
+reverse order, three fresh images, compared by test-name set and by every case's
+outcome), and that the system loads out of a `git archive` with no Git in it.
+
 ## Layout
 
 The spec fixes the engine's language and no directory for it —
