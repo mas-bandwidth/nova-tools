@@ -17,15 +17,8 @@
 
 (in-package #:nova-work/tests)
 
-(defvar *staging-test-counter* 0)
-
 (defun test-staging-root (name)
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames (format nil "nova-work-test-staging/~A-~D-~D/"
-                                       name (get-universal-time)
-                                       (incf *staging-test-counter*))
-                               base)))
-    (ensure-directories-exist dir)
+  (let ((dir (test-temp-dir (format nil "staging-~A" name))))
     (string-right-trim "/" (namestring (truename dir)))))
 
 (defun staging-fixture (name &key (limits *capture-stage-limits*))

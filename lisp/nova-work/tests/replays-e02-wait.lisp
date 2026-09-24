@@ -23,16 +23,9 @@
 (defun elapsed-seconds (start)
   (/ (- (get-internal-real-time) start) internal-time-units-per-second))
 
-(defvar *wait-test-counter* 0)
-
 (defun test-session-root (name)
   "A fresh empty directory to hold a session and its recovery journal."
-  (let* ((base (uiop:default-temporary-directory))
-         (dir (merge-pathnames (format nil "nova-work-test-sessions/~A-~D-~D/"
-                                       name (get-universal-time)
-                                       (incf *wait-test-counter*))
-                               base)))
-    (ensure-directories-exist dir)
+  (let ((dir (test-temp-dir (format nil "sessions-~A" name))))
     (string-right-trim "/" (namestring (truename dir)))))
 
 (defun wait-test-registry (path)
