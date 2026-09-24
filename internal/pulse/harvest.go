@@ -678,7 +678,7 @@ func contractLineMatch(job, contract string) bool {
 	if want == "" {
 		return false
 	}
-	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	raw, err := readResult(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		return false
 	}
@@ -755,13 +755,19 @@ func isV2CardContent(content string) bool {
 	return false
 }
 
+// readResult reads a job's RESULT.md. A symlink is not followed and a FIFO is not
+// opened: the worker owns the job directory (issue #233).
+func readResult(path string) ([]byte, error) {
+	return swarm.ReadRegular(path)
+}
+
 // classify reads a card's RESULT.md and returns its disposition and the push details.
 // done -> pushed unless the branch is main or a pro card lacks a red: line (refused).
 func classify(jobDir string, c CardRow, contract string) (state, branch, repo string, resultLines []string) {
 	if swarm.AcceptanceUnknown(jobDir) {
 		return "unknown", "", "", nil
 	}
-	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	raw, err := readResult(filepath.Join(jobDir, "RESULT.md"))
 	if err != nil {
 		return "abstain", "", "", nil
 	}
@@ -960,7 +966,7 @@ func classifyPool(root string, c CardRow, contract string) (state, branch, repo 
 	pool := filepath.Join(root, "pool")
 	for _, st := range []string{"done", "failed"} {
 		for _, id := range poolTaskIDs(pool, st, c.Label) {
-			raw, err := os.ReadFile(filepath.Join(pool, "reports", id, "RESULT.md"))
+			raw, err := readResult(filepath.Join(pool, "reports", id, "RESULT.md"))
 			if err != nil {
 				continue
 			}

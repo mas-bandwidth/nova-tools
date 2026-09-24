@@ -125,13 +125,16 @@ local function capacity_desired(keys, args)
   return { 'SET', machine, tostring(sum), tostring(ceiling) }
 end
 
--- capacity_machine: set machine:<m>:ceiling. Refuses a ceiling below the slots
--- already desired on the machine so config can never break the invariant.
--- args = machine, slots, cores, mem_gb, actor, idem.
+-- capacity_machine: set machine:<m>:ceiling and machine:<m>:budget (spec 5.1).
+-- Refuses a ceiling below the slots already desired on the machine so config
+-- can never break the invariant.
+-- args = machine, slots, cores, mem_gb, actor, idem, cpu_milli, mem_mb.
 local function capacity_machine(keys, args)
   local machine, slots = args[1], tonumber(args[2])
   local cores, mem_gb = args[3], args[4]
   local actor, idem = args[5], args[6]
+  local cpu_milli = tonumber(args[7] or '')
+  local mem_mb = tonumber(args[8] or '')
 
   if not slots or slots < 0 then
     return { 'INVALID', machine, '0', '0' }
@@ -146,6 +149,20 @@ local function capacity_machine(keys, args)
   redis.call('HSET', key, 'slots', tostring(slots), 'at', tostring(at))
   if cores ~= '' then redis.call('HSET', key, 'cores', cores) end
   if mem_gb ~= '' then redis.call('HSET', key, 'mem_gb', mem_gb) end
+
+  if not cpu_milli and cores ~= '' and tonumber(cores) and tonumber(cores) > 0 then
+    cpu_milli = math.floor(tonumber(cores) * 1000 * 0.90)
+  end
+  if not mem_mb and mem_gb ~= '' and tonumber(mem_gb) and tonumber(mem_gb) > 0 then
+    mem_mb = math.floor(tonumber(mem_gb) * 1024 * 0.90)
+  end
+  if cpu_milli or mem_mb then
+    local bkey = 'machine:' .. machine .. ':budget'
+    if cpu_milli then redis.call('HSET', bkey, 'cpu_milli', tostring(cpu_milli)) end
+    if mem_mb then redis.call('HSET', bkey, 'mem_mb', tostring(mem_mb)) end
+    redis.call('HSET', bkey, 'at', tostring(at))
+  end
+
   receipt('capacity machine', machine, machine, slots, actor, idem, at)
   return { 'SET', machine, tostring(sum), tostring(slots) }
 end
@@ -296,6 +313,202 @@ local function sprint_plan(keys, args)
   return { 'APPLIED', sha, tostring(n) }
 end
 
+-- cap_budget_set sets machine:<m>:budget (cpu_milli, mem_mb).
+-- args = machine, cpu_milli, mem_mb, actor, idem.
+local function cap_budget_set(keys, args)
+  local machine = args[1]
+  local cpu_milli = tonumber(args[2] or '0') or 0
+  local mem_mb = tonumber(args[3] or '0') or 0
+  local actor = args[4] or ''
+  local idem = args[5] or ''
+  local at = now_ms()
+  local bkey = 'machine:' .. machine .. ':budget'
+  redis.call('HSET', bkey, 'cpu_milli', tostring(cpu_milli), 'mem_mb', tostring(mem_mb), 'at', tostring(at))
+  receipt('capacity budget', machine, machine, cpu_milli, actor, idem, at)
+  return { 'SET', machine, tostring(cpu_milli), tostring(mem_mb) }
+end
+
+-- cap_budget_take debits machine:<m>:budget for one consumer atomically (spec 5.1).
+-- Refuses with NOBUDGET when live and quarantined debits plus request exceed the budget.
+-- args = machine, consumer, cpu_milli, mem_mb, ttl_ms, pgid, kind.
+local function cap_budget_take(keys, args)
+  local machine = args[1]
+  local consumer = args[2]
+  local req_cpu = tonumber(args[3] or '0') or 0
+  local req_mem = tonumber(args[4] or '0') or 0
+  local ttl_ms = tonumber(args[5] or '30000') or 30000
+  if ttl_ms <= 0 then ttl_ms = 30000 end
+  local pgid = args[6] or ''
+  local kind = args[7] or ''
+
+  local bkey = 'machine:' .. machine .. ':budget'
+  local budget_cpu = tonumber(redis.call('HGET', bkey, 'cpu_milli') or '')
+  local budget_mem = tonumber(redis.call('HGET', bkey, 'mem_mb') or '')
+  if not budget_cpu or not budget_mem then
+    local ckey = 'machine:' .. machine .. ':ceiling'
+    local cores = tonumber(redis.call('HGET', ckey, 'cores') or '')
+    local mem_gb = tonumber(redis.call('HGET', ckey, 'mem_gb') or '')
+    if cores and cores > 0 then budget_cpu = math.floor(cores * 1000 * 0.90) end
+    if mem_gb and mem_gb > 0 then budget_mem = math.floor(mem_gb * 1024 * 0.90) end
+  end
+  if not budget_cpu or not budget_mem then
+    return { 'NOBUDGET', machine, '0', '0', '0', '0' }
+  end
+
+  local debits_key = 'machine:' .. machine .. ':debits'
+  local consumers = redis.call('SMEMBERS', debits_key)
+  local used_cpu = 0
+  local used_mem = 0
+  local now = now_ms()
+  for _, c in ipairs(consumers) do
+    local dkey = 'machine:' .. machine .. ':debit:' .. c
+    if redis.call('EXISTS', dkey) == 1 then
+      local d_cpu = tonumber(redis.call('HGET', dkey, 'cpu_milli') or '0') or 0
+      local d_mem = tonumber(redis.call('HGET', dkey, 'mem_mb') or '0') or 0
+      local renew_at = tonumber(redis.call('HGET', dkey, 'renew_at') or '0') or 0
+      local state = redis.call('HGET', dkey, 'state')
+      if renew_at > 0 and now > renew_at and state ~= 'quarantined' then
+        redis.call('HSET', dkey, 'state', 'quarantined')
+        state = 'quarantined'
+      end
+      if c ~= consumer then
+        used_cpu = used_cpu + d_cpu
+        used_mem = used_mem + d_mem
+      end
+    else
+      redis.call('SREM', debits_key, c)
+    end
+  end
+
+  if (used_cpu + req_cpu > budget_cpu) or (used_mem + req_mem > budget_mem) then
+    return { 'NOBUDGET', machine, tostring(used_cpu + req_cpu), tostring(budget_cpu), tostring(used_mem + req_mem), tostring(budget_mem) }
+  end
+
+  local dkey = 'machine:' .. machine .. ':debit:' .. consumer
+  local renew_time = now + ttl_ms
+  redis.call('SADD', debits_key, consumer)
+  redis.call('HSET', dkey,
+    'cpu_milli', tostring(req_cpu),
+    'mem_mb', tostring(req_mem),
+    'pgid', tostring(pgid),
+    'renew_at', tostring(renew_time),
+    'at', tostring(now),
+    'state', 'live',
+    'machine', machine,
+    'consumer', consumer,
+    'kind', kind)
+  redis.call('SET', 'debit:machine:' .. consumer, machine)
+  receipt('budget take', consumer, machine, req_cpu, kind, '', now)
+  return { 'OK', machine, tostring(used_cpu + req_cpu), tostring(budget_cpu), tostring(used_mem + req_mem), tostring(budget_mem) }
+end
+
+-- cap_budget_renew updates renew_at and pgid for an active debit (spec 5.1).
+-- args = machine, consumer, pgid, ttl_ms OR consumer, pgid, ttl_ms.
+local function cap_budget_renew(keys, args)
+  local machine, consumer, pgid, ttl_ms
+  if #args >= 2 and redis.call('EXISTS', 'machine:' .. args[1] .. ':debit:' .. args[2]) == 1 then
+    machine = args[1]
+    consumer = args[2]
+    pgid = args[3] or ''
+    ttl_ms = tonumber(args[4] or '30000') or 30000
+  else
+    consumer = args[1]
+    pgid = args[2] or ''
+    ttl_ms = tonumber(args[3] or '30000') or 30000
+    machine = redis.call('GET', 'debit:machine:' .. consumer)
+  end
+  if not machine or machine == '' then
+    return { 'NOTFOUND', consumer }
+  end
+  local dkey = 'machine:' .. machine .. ':debit:' .. consumer
+  if redis.call('EXISTS', dkey) == 0 then
+    return { 'NOTFOUND', consumer }
+  end
+  local now = now_ms()
+  if ttl_ms <= 0 then ttl_ms = 30000 end
+  local renew_time = now + ttl_ms
+  redis.call('HSET', dkey, 'renew_at', tostring(renew_time), 'state', 'live')
+  if pgid ~= '' then redis.call('HSET', dkey, 'pgid', tostring(pgid)) end
+  return { 'OK', consumer, tostring(renew_time) }
+end
+
+-- cap_budget_give returns capacity for a completed or reaped debit (spec 5.1).
+-- A quarantined debit with an active process group requires confirmed ESRCH.
+-- args = consumer, pgid, confirmed OR machine, consumer, pgid, confirmed.
+local function cap_budget_give(keys, args)
+  local machine, consumer, pgid, confirmed
+  if #args >= 2 and redis.call('EXISTS', 'machine:' .. args[1] .. ':debit:' .. args[2]) == 1 then
+    machine = args[1]
+    consumer = args[2]
+    pgid = args[3] or ''
+    confirmed = args[4] or ''
+  else
+    consumer = args[1]
+    pgid = args[2] or ''
+    confirmed = args[3] or ''
+    machine = redis.call('GET', 'debit:machine:' .. consumer)
+  end
+  if not machine or machine == '' then
+    return { 'NOTFOUND', consumer }
+  end
+  local dkey = 'machine:' .. machine .. ':debit:' .. consumer
+  if redis.call('EXISTS', dkey) == 0 then
+    return { 'NOTFOUND', consumer }
+  end
+  local state = redis.call('HGET', dkey, 'state')
+  local stored_pgid = redis.call('HGET', dkey, 'pgid') or ''
+  local renew_at = tonumber(redis.call('HGET', dkey, 'renew_at') or '0') or 0
+  local now = now_ms()
+  if renew_at > 0 and now > renew_at then state = 'quarantined' end
+
+  if state == 'quarantined' and stored_pgid ~= '' and stored_pgid ~= '0' then
+    local is_confirmed = (confirmed == '1' or confirmed == 'true' or confirmed == 'confirmed' or confirmed == 'ESRCH')
+    if not is_confirmed then
+      return { 'STILLALIVE', consumer, stored_pgid }
+    end
+  end
+
+  local d_cpu = tonumber(redis.call('HGET', dkey, 'cpu_milli') or '0') or 0
+  redis.call('DEL', dkey)
+  redis.call('SREM', 'machine:' .. machine .. ':debits', consumer)
+  redis.call('DEL', 'debit:machine:' .. consumer)
+  receipt('budget give', consumer, machine, d_cpu, '', '', now)
+  return { 'OK', consumer }
+end
+
+-- cap_budget_debits returns debits on machine m as colon-separated strings.
+local function cap_budget_debits(keys, args)
+  local machine = args[1]
+  local debits_key = 'machine:' .. machine .. ':debits'
+  local consumers = redis.call('SMEMBERS', debits_key)
+  local result = {}
+  local now = now_ms()
+  for _, c in ipairs(consumers) do
+    local dkey = 'machine:' .. machine .. ':debit:' .. c
+    if redis.call('EXISTS', dkey) == 1 then
+      local d_cpu = redis.call('HGET', dkey, 'cpu_milli') or '0'
+      local d_mem = redis.call('HGET', dkey, 'mem_mb') or '0'
+      local pgid = redis.call('HGET', dkey, 'pgid') or ''
+      local renew_at = redis.call('HGET', dkey, 'renew_at') or '0'
+      local state = redis.call('HGET', dkey, 'state') or 'live'
+      local kind = redis.call('HGET', dkey, 'kind') or ''
+      if tonumber(renew_at) > 0 and now > tonumber(renew_at) then
+        state = 'quarantined'
+      end
+      table.insert(result, c .. ':' .. d_cpu .. ':' .. d_mem .. ':' .. pgid .. ':' .. renew_at .. ':' .. state .. ':' .. kind)
+    else
+      redis.call('SREM', debits_key, c)
+    end
+  end
+  return result
+end
+
 redis.register_function('ns_capacity_desired', capacity_desired)
 redis.register_function('ns_capacity_machine', capacity_machine)
+redis.register_function('ns_budget_set', cap_budget_set)
+redis.register_function('ns_budget_take', cap_budget_take)
+redis.register_function('ns_budget_renew', cap_budget_renew)
+redis.register_function('ns_budget_give', cap_budget_give)
+redis.register_function('ns_budget_debits', cap_budget_debits)
 redis.register_function('ns_sprint_plan', sprint_plan)
+

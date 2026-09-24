@@ -246,7 +246,7 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		}
 		poisonCheck := ""
 		for _, check := range checks {
-			out, err := runCheck(scratch, check, timeout, nil)
+			out, err := runCheckUntil(scratch, check, timeout, nil, deps.CheckDeadline)
 			if err != nil {
 				poisonCheck = check
 				fmt.Fprintf(stdout, "SIMULATE POISON #%d check=%q %s\n",
@@ -460,6 +460,13 @@ func firstLine(out string, err error) string {
 // goenv.Clean plus the credential names Clean still keeps, because the child runs
 // code from the tree under test (#1836).
 func runCheck(dir, check string, timeout time.Duration, env []string) (string, error) {
+	return runCheckUntil(dir, check, timeout, env, nil)
+}
+
+// runCheckUntil is runCheck on an injected clock: deadline is handed the --timeout once the
+// check has started and returns the channel that says it expired. A nil deadline is a real
+// timer of that length, which is every production caller (Deps.CheckDeadline).
+func runCheckUntil(dir, check string, timeout time.Duration, env []string, deadline func(time.Duration) <-chan time.Time) (string, error) {
 	name, args := shellCommand(check)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -473,12 +480,18 @@ func runCheck(dir, check string, timeout time.Duration, env []string) (string, e
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	var expired <-chan time.Time
+	if deadline != nil {
+		expired = deadline(timeout)
+	} else {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		expired = timer.C
+	}
 	select {
 	case err := <-done:
 		return buf.String(), err
-	case <-timer.C:
+	case <-expired:
 		killCheckProcess(cmd)
 		<-done
 		return buf.String(), fmt.Errorf("no answer within the %s --timeout", timeout)

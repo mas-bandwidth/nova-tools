@@ -174,15 +174,43 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 		t.Fatalf("read %s is not in %s's open queue: %v", readID, friend, err)
 	}
 
-	// Not built on dev: refused with the issue named, exit 2.
-	for _, group := range []string{"pr-to-read", "hold-to-fix"} {
-		code, _, errOut := run(group, "once")
-		if code != 2 || !strings.Contains(errOut, "#2941") {
-			t.Fatalf("consume %s once: exit %d err %q; want 2 naming #2941", group, code, errOut)
-		}
+	// pr-to-read verb tests: requires --sprint; run is refused; once consumes.
+	code, _, errOut = run("pr-to-read", "once")
+	if code != 2 || !strings.Contains(errOut, "--sprint") {
+		t.Fatalf("consume pr-to-read once without --sprint: exit %d err %q; want 2 naming --sprint", code, errOut)
+	}
+	code, _, errOut = run("pr-to-read", "run", "--sprint", S)
+	if code != 2 || !strings.Contains(errOut, "nova-sprint route") {
+		t.Fatalf("consume pr-to-read run: exit %d err %q; want 2 naming nova-sprint route", code, errOut)
+	}
+	origRemote := consumePRReadRemote
+	consumePRReadRemote = func(_ context.Context, repo string) (map[int]string, error) {
+		t.Fatalf("consumePRReadRemote called unexpectedly for repo %s", repo)
+		return nil, nil
+	}
+	t.Cleanup(func() { consumePRReadRemote = origRemote })
+
+	code, out, errOut = run("pr-to-read", "once", "--sprint", S)
+	if code != 0 || !strings.Contains(out, "CONSUMED pr-to-read sprint="+S) {
+		t.Fatalf("consume pr-to-read once: exit %d out %q err %q", code, out, errOut)
+	}
+	procUp("proc:pr-to-read")
+	if exists, err := c.Exists(ctx, "lease:route:"+S).Result(); err != nil || exists != 0 {
+		t.Fatalf("lease:route:%s exists = %d (%v); want 0 after consume once", S, exists, err)
+	}
+
+	// hold-to-fix remains unbuilt: refused naming #3092, exit 2.
+	code, _, errOut = run("hold-to-fix", "once")
+	if code != 2 || !strings.Contains(errOut, "#3092") {
+		t.Fatalf("consume hold-to-fix once: exit %d err %q; want 2 naming #3092", code, errOut)
 	}
 	code, out, _ = run("list")
-	for _, want := range []string{"ok-to-friend duty=reconcile", "harvest duty=reconcile", "pr-to-read not-built=#2941", "hold-to-fix not-built=#2941"} {
+	for _, want := range []string{
+		"ok-to-friend duty=reconcile",
+		"harvest duty=reconcile",
+		"pr-to-read duty=route verb=consume-once proc=proc:pr-to-read",
+		"hold-to-fix not-built=#3092",
+	} {
 		if code != 0 || !strings.Contains(out, want) {
 			t.Fatalf("consume list: exit %d out %q; want %q", code, out, want)
 		}

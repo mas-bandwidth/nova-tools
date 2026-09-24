@@ -110,23 +110,40 @@ Answers (values OK-P LINE EXIT-CODE ENVELOPE) (SPEC-WORK.md:135, :1354-1357)."
               (values t recorded 0 (list :request rid :digest digest :events '() :replayed t))
               (values nil (%dedup-refusal "LEASE" rid verdict recorded) 1 nil)))))
     ;; ---- and only now the mutable state -----------------------------------
-    (let ((n (%node-quiet (kernel-state kernel) node)))
-      (unless n
-        (return-from %take-node-submit
-          (values nil (format nil "LEASE FAIL node=~A: rule 2: no such node ~A" node node)
-                  1 nil)))
-      (unless (eq :o (wnode-branch n))
-        (return-from %take-node-submit
-          (values nil (format nil "LEASE FAIL node=~A: ~A is in C and takes no lease" node node)
-                  1 nil)))
-      (when (wnode-holder n)
-        (return-from %take-node-submit
-          (values nil (format nil "LEASE FAIL node=~A holder=~A: held" node (wnode-holder n))
-                  1 nil)))
-      (let ((line (format nil "LEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
-                          (event-id event) rid node by (work-event-rev event))))
-        (%oneshot-submit kernel rid digest line event "LEASE"
-                         (list :verb :take-node :node node :holder by :request request))))))
+    (let ((state (kernel-state kernel)))
+      (let ((n (%node-quiet state node)))
+        (unless n
+          (return-from %take-node-submit
+            (values nil (format nil "LEASE FAIL node=~A: rule 2: no such node ~A" node node)
+                    1 nil)))
+        (unless (eq :o (wnode-branch n))
+          (return-from %take-node-submit
+            (values nil (format nil "LEASE FAIL node=~A: ~A is in C and takes no lease" node node)
+                    1 nil)))
+        ;; rule 3's gate: every admission verb refuses a node that is not needs-met
+        ;; (SPEC-WORK.md:4869-4924). The refusal names the unmet need and its reason,
+        ;; and comes before the "held" check (:4905-4911).
+        (let ((unmet 0) (first-need nil) (first-reason nil))
+          (dolist (dep (wnode-deps n))
+            (multiple-value-bind (met reason) (%need-met-recorded-p state dep)
+              (unless met
+                (incf unmet)
+                (unless first-need
+                  (setf first-need dep first-reason reason)))))
+          (when first-need
+            (return-from %take-node-submit
+              (values nil (format nil "LEASE FAIL node=~A unmet=~D: unmet need ~A ~A"
+                                  node unmet first-need
+                                  (string-downcase (symbol-name first-reason)))
+                      1 nil))))
+        (when (wnode-holder n)
+          (return-from %take-node-submit
+            (values nil (format nil "LEASE FAIL node=~A holder=~A: held" node (wnode-holder n))
+                    1 nil)))
+        (let ((line (format nil "LEASE OK id=~A request=~A node=~A holder=~A rev=~D pushed=-"
+                            (event-id event) rid node by (work-event-rev event))))
+          (%oneshot-submit kernel rid digest line event "LEASE"
+                           (list :verb :take-node :node node :holder by :request request)))))))
 
 (defun %release-node-submit (kernel request)
   "`release`: a claim is ended by the one who made it, never a third name

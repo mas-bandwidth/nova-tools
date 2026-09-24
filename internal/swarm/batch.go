@@ -168,6 +168,11 @@ type BatchInput struct {
 	// activity and process tree lifecycle are deterministic events rather than
 	// scheduler races.
 	snapshot func() activitySnapshot
+	// polled is called once the idle monitor has finished acting on a tick: every card
+	// sampled, every decision taken, every kill reaped. nil in production; a test that
+	// injects its clock uses it so "the monitor has read the store" is an event it waits
+	// for, never a race between its next write and the monitor's read (#2958).
+	polled func()
 }
 
 // batchClock is the batch's view of time: the idle window (Now), the whole-batch
@@ -630,6 +635,9 @@ func Batch(in BatchInput) int {
 					// lock would hold it for the whole grace and report every group as a
 					// survivor.
 					reapCardGroups(toReap)
+					if in.polled != nil {
+						in.polled()
+					}
 				}
 			}
 		}()
@@ -1160,13 +1168,14 @@ func liftResult(job, label string, notes io.Writer) {
 
 // FindCardResult is THE ONE PLACE a card's published result is looked for: the job root
 // first (ResultPath, the name the legacy runner's records use), then `repo/` and one
-// directory below it, exactly as far as `liftResult` copies from (issue #594). It is
-// exported because `native` asks the same question before the batch ever gathers -- whether
-// the harness published anything at all (issue #591) -- and a second, shallower lookup there
-// would call a card that published under `repo/` silent about a run that worked. One lookup,
-// one answer, both sides.
+// directory below it, exactly as far as `liftResult` copies from (issue #594). A path that
+// is not a regular file is not a result: a planted symlink is not followed and a FIFO is
+// not a published report (issue #233). It is exported because `native` asks the same
+// question before the batch ever gathers -- whether the harness published anything at all
+// (issue #591) -- and a second, shallower lookup there would call a card that published
+// under `repo/` silent about a run that worked. One lookup, one answer, both sides.
 func FindCardResult(job string) (string, bool) {
-	if root := ResultPath(job); fileExists(root) {
+	if root := ResultPath(job); isRegularFile(root) {
 		return root, true
 	}
 	return findResultBelow(job, resultLiftDepth)
@@ -1198,7 +1207,7 @@ func findResultBelow(dir string, depth int) (string, bool) {
 		}
 	}
 	for _, name := range dirs {
-		if p := filepath.Join(dir, name, "RESULT.md"); fileExists(p) {
+		if p := filepath.Join(dir, name, "RESULT.md"); isRegularFile(p) {
 			return p, true
 		}
 	}

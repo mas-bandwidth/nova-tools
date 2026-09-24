@@ -20,6 +20,8 @@ type manualClock struct {
 	afterDone chan struct{}
 	tickCh    chan time.Time
 	tickDone  chan struct{}
+	polled    chan struct{}
+	gone      chan struct{}
 	afterOnce sync.Once
 	tickOnce  sync.Once
 }
@@ -31,6 +33,8 @@ func newManualClock() *manualClock {
 		afterDone: make(chan struct{}),
 		tickCh:    make(chan time.Time),
 		tickDone:  make(chan struct{}),
+		polled:    make(chan struct{}, 1),
+		gone:      make(chan struct{}),
 	}
 }
 
@@ -86,24 +90,34 @@ func testWait() time.Duration {
 	return 30 * time.Second
 }
 
-// tick delivers one idle poll and waits for the monitor to receive it, so the
-// monitor's state after the call is settled. The waiting half is bounded: the
-// idle monitor exits with the batch (batch.go closes stopMonitor, or allDone
-// fires), and under the gate's capped flags -- GOMAXPROCS=8 -p 2 -parallel 4
-// -race on a loaded bench, 2026-09-19 -- the drive callback still held a tick
-// when it was gone, so this send blocked on a channel nothing was left to
-// receive, for nine minutes, and took the whole internal/swarm package to its
-// ten-minute bound at heads that had nothing to do with it (nova-tools #1983).
-// A tick that waits past the allowed poll bound is dropped, not held: nothing
-// is left to receive it because the batch it polled for is over, and the test
-// can then fail or pass on its own assertions instead of hanging every other
-// result in the package.
+// tick delivers one idle poll and waits for the monitor to FINISH it -- every card
+// sampled, every decision taken, every kill reaped -- so the monitor's state after the
+// call is settled. Waiting only for the receive was not enough: the monitor could
+// still be reading a card's store when the test's next write landed, and read the
+// write as part of the tick before it (#2958).
+//
+// A tick after the batch has returned is a no-op: every card is done, the monitor has
+// left on allDone, and a bare send would block the test forever (the hang a loaded
+// bench found in TestBatchIdleDoesNotKillAWritingCard, whose card can finish before
+// its second tick). A tick that nothing receives within testWait is dropped, not
+// held, so a monitor gone without a batch fails one test instead of hanging the
+// package (nova-tools #1983).
 func (c *manualClock) tick() {
 	c.mu.Lock()
 	now := c.now
 	c.mu.Unlock()
 	select {
 	case c.tickCh <- now:
+	case <-c.gone:
+		return
+	case <-time.After(testWait()):
+		// Nothing received the tick within the allowed poll bound: the monitor is gone
+		// without a batch to close c.gone (TestIssue1983, nova-tools #1983). Drop it.
+		return
+	}
+	select {
+	case <-c.polled:
+	case <-c.gone:
 	case <-time.After(testWait()):
 	}
 }
@@ -114,11 +128,12 @@ func (c *manualClock) tick() {
 // clock the kill logic reads is injected.
 func runBatchClock(in BatchInput, clk *manualClock, drive func()) (int, string, string) {
 	in.clock = clk
+	in.polled = func() { clk.polled <- struct{}{} }
 	var out, errb bytes.Buffer
 	in.Stdout = &out
 	in.Stderr = &errb
 	done := make(chan int, 1)
-	go func() { done <- Batch(in) }()
+	go func() { done <- Batch(in); close(clk.gone) }()
 	drive()
 	code := <-done
 	return code, out.String(), errb.String()

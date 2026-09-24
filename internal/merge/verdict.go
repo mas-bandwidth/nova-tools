@@ -18,7 +18,7 @@ type Verdict struct {
 	Word     string   // "hold", "approve", "abstain", "pending", "note"
 	Head     string   // commit SHA it binds to
 	At       string   // ISO 8601 timestamp (created_at / submitted_at)
-	Source   string   // "record", "review", "comment-rule", "comment-decided", "comment-pending"
+	Source   string   // "record", "review", "comment-rule", "comment-decided", "comment-pending", "comment-truncated"
 	Scope    string   // optional scope text
 	Releases []string // hold IDs released by scoped approve
 	Conf     string   // confidence string, default "-"
@@ -229,8 +229,10 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
 	}
-	if len(rawBody) > MaxCommentBodyBytes {
-		rawBody = strings.Clone(rawBody[:MaxCommentBodyBytes])
+	// nova-tools #3443: verdict lines are read over the WHOLE body. A body this tool
+	// cannot read whole is refused as a hold that names the clamp, never read clear.
+	if len(rawBody) > MaxParseBodyBytes {
+		return truncatedBodyHold(fmt.Sprintf("comment:%d", id), id, at, currentHead), true
 	}
 	clean := StripQuotedAndCode(rawBody)
 	if IsAuthorNote(clean, author, rs) {
@@ -410,8 +412,14 @@ func ParseReview(id int64, login, rawBody, state, commitID, submittedAt string, 
 	if rs != nil && !rs.IsScanned(login) {
 		return Verdict{Foreign: true}, false
 	}
-	if len(rawBody) > MaxCommentBodyBytes {
-		rawBody = strings.Clone(rawBody[:MaxCommentBodyBytes])
+	// nova-tools #3443: an over-cap body holds whatever the review's state, since
+	// an APPROVE read off a prefix would release a HOLD this tool never saw.
+	if len(rawBody) > MaxParseBodyBytes {
+		head := strings.ToLower(strings.TrimSpace(commitID))
+		if head == "" {
+			head = currentHead
+		}
+		return truncatedBodyHold(fmt.Sprintf("review:%d", id), id, submittedAt, head), true
 	}
 	clean := StripQuotedAndCode(rawBody)
 
@@ -888,13 +896,22 @@ func deriveHoldWho(line string) string {
 	return normWho(m[1])
 }
 
-// MaxCommentBodyBytes is the upper bound on a single comment or review body, in bytes.
-// Matches execOutputCap and ChildCap (64 KiB): remote comment bodies are clamped to this
-// ceiling during projection and decoding so that oversized payloads cannot cause
-// unbounded heap allocation.
+// MaxCommentBodyBytes is the upper bound on a comment or review body that is STORED
+// or PRINTED, in bytes. Matches execOutputCap and ChildCap (64 KiB). It is never the
+// bound on what is PARSED for verdict lines: that is MaxParseBodyBytes (nova-tools
+// #3443; #2512 parsed a 64 KiB prefix as the whole body, so a HOLD past it read clear).
 const MaxCommentBodyBytes = 64 * 1024
 
-// boundedBody clamps remote payload strings to MaxCommentBodyBytes upon unmarshaling.
+// MaxParseBodyBytes is the hard cap on a comment or review body read for verdict
+// lines: 1 MiB, far above GitHub's 65,536-character body limit (at most 256 KiB of
+// UTF-8). Verdict lines are parsed over the whole body up to this cap; a body beyond
+// it is refused as a hold (truncatedBodyHold), never read as clear.
+const MaxParseBodyBytes = 1 << 20
+
+// boundedBody bounds a remote payload string upon unmarshaling to MaxParseBodyBytes+1
+// bytes: memory stays bounded, and a body that was cut is still longer than
+// MaxParseBodyBytes, so ParseComment and ParseReview see it was not read whole and
+// refuse it (nova-tools #3443).
 type boundedBody string
 
 func (b *boundedBody) UnmarshalJSON(data []byte) error {
@@ -902,11 +919,31 @@ func (b *boundedBody) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &s); err != nil {
 		return err
 	}
-	if len(s) > MaxCommentBodyBytes {
-		s = strings.Clone(s[:MaxCommentBodyBytes])
+	if len(s) > MaxParseBodyBytes+1 {
+		s = strings.Clone(s[:MaxParseBodyBytes+1])
 	}
 	*b = boundedBody(s)
 	return nil
+}
+
+// truncatedBodyHold is the fail-closed verdict for a body over MaxParseBodyBytes
+// (nova-tools #3443). No evidence is not negative evidence: a body this tool could not
+// read whole is not a body with no HOLD. It is a hold with who=unknown (no line was
+// read, so nobody's own later word can supersede it) and source=comment-truncated,
+// which the LAND REFUSED and BATCH DROP lines print, and --untyped-comments=ignore
+// does not drop it, since it is not an untyped comment but an unread one.
+func truncatedBodyHold(verdictID string, rawID int64, at, head string) Verdict {
+	return Verdict{
+		ID:     verdictID,
+		Who:    "unknown",
+		Word:   "hold",
+		Head:   head,
+		At:     at,
+		Source: "comment-truncated",
+		RawID:  rawID,
+		Conf:   "-",
+		Kind:   "line",
+	}
 }
 
 // friendNameRE is the fixed set of friend names, case-insensitive, whole words.
