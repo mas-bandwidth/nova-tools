@@ -38,6 +38,22 @@ import (
 // CutKinds are the kinds this cutter knows, in the order help prints them.
 var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "recut", "port", "docs-guard", "report"}
 
+// cardExemplars is #2498 S6's reviewed-PR catalog at the generation boundary.
+// Keeping the mapping here makes every real card carry its matching example;
+// docs/EXEMPLARS.md explains why each one was selected.
+var cardExemplars = map[string]string{
+	"read":       "https://github.com/mas-bandwidth/nova-tools/pull/3483",
+	"fix":        "https://github.com/mas-bandwidth/nova-tools/pull/3061",
+	"replay":     "https://github.com/mas-bandwidth/nova-tools/pull/2792",
+	"spec":       "https://github.com/mas-bandwidth/nova-tools/pull/3162",
+	"rebase":     "https://github.com/mas-bandwidth/nova-tools/pull/2794",
+	"guard":      "https://github.com/mas-bandwidth/nova-tools/pull/2543",
+	"recut":      "https://github.com/mas-bandwidth/nova-tools/pull/2918",
+	"port":       "https://github.com/mas-bandwidth/nova-tools/pull/2751",
+	"docs-guard": "https://github.com/mas-bandwidth/nova-tools/pull/3140",
+	"report":     "https://github.com/mas-bandwidth/nova-tools/pull/3337",
+}
+
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
 	Kind      string
@@ -163,6 +179,7 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	rendered = withCardExemplar(in.Kind, rendered)
 	card := contractSHA12(rendered)
 	if err := os.MkdirAll(in.Out, 0o755); err != nil {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: --out %s: %s (pass a directory cut may create)\n", oneline.Field(in.Out), oneline.Err(err))
@@ -181,6 +198,18 @@ func CutKind(in CutKindInput) int {
 	}
 	fmt.Fprintf(in.Stdout, "CUT CARD card=%s kind=%s number=%d out=%s\n", oneline.Field(name), oneline.Field(in.Kind), n, oneline.Field(in.Out))
 	return 0
+}
+
+// withCardExemplar puts guidance immediately below the contract line, before
+// either renderer's task body. cutKindProblem already proved kind is supported,
+// so a missing map entry is a source defect held by the all-kinds regression.
+func withCardExemplar(kind, rendered string) string {
+	exemplar := cardExemplars[kind]
+	line := "Example to follow: " + exemplar + "\n"
+	if first, rest, ok := strings.Cut(rendered, "\n"); ok {
+		return first + "\n" + line + rest
+	}
+	return rendered + "\n" + line
 }
 
 // cutKindLane places the one typed card in its lane: a fix repairs a red bench
@@ -208,6 +237,8 @@ func cutKindProblem(in CutKindInput) string {
 	switch {
 	case !cutKindKnown(in.Kind):
 		return fmt.Sprintf("--kind %s is not one of %s (pass one of those kinds)", oneline.Field(in.Kind), strings.Join(CutKinds, "|"))
+	case cardExemplars[in.Kind] == "":
+		return fmt.Sprintf("--kind %s has no reviewed exemplar (add its verified PR to cardExemplars before cutting it)", oneline.Field(in.Kind))
 	case strings.TrimSpace(in.Repo) == "":
 		return "--repo is required; line 1 of every card names the repo (pass --repo <owner>/<name>)"
 	case strings.TrimSpace(in.Queue) == "":

@@ -1,10 +1,10 @@
 # Card exemplars
 
 These pull requests are the worked examples for the ten kinds accepted by `nova-pulse cut
---kind`. Six use the v2 renderer and four still use their legacy renderer. A card writer links the
-matching row in the task body as `Example to follow:`. The link is guidance about method and
-evidence; the card's pinned source, PATHS, test, and DONE-WHEN remain the authority for the new
-job.
+--kind`. Six use the v2 renderer and four still use their legacy renderer. The typed cutter writes
+the matching pull request into every generated task body as `Example to follow:`. The link is
+guidance about method and evidence; the card's pinned source, PATHS, test, and DONE-WHEN remain
+the authority for the new job.
 
 The v2-rendered kinds are `recut`, `fix`, `port`, `docs-guard`, `report`, and `read`;
 `replay`, `spec`, `rebase`, and `guard` retain their legacy renderer.
