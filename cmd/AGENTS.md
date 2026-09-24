@@ -17,6 +17,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-play/` | sandboxed evaluation CLI | `go test ./cmd/nova-play` | `go test ./cmd/nova-play` |
 | `nova-post/` | PR and issue posting CLI | `go test ./cmd/nova-post` | `go test ./cmd/nova-post` |
 | `nova-pulse/` | sprint telemetry and health CLI | `go test ./cmd/nova-pulse` | `go test ./cmd/nova-pulse` |
+| `nova-redis/` | Redis spill and recall CLI | `go test ./cmd/nova-redis` | `go test ./cmd/nova-redis` |
 | `nova-review/` | review packet and verdict CLI | `go test ./cmd/nova-review` | `go test ./cmd/nova-review` |
 | `nova-sandbox/` | OS-level process sandbox CLI | `go test ./cmd/nova-sandbox` | `go test ./cmd/nova-sandbox` |
 | `nova-secrets/` | zero-leak secrets store CLI | `go test ./cmd/nova-secrets` | `go test ./cmd/nova-secrets` |
