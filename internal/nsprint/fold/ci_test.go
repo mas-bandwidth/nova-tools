@@ -13,6 +13,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fold"
 )
 
@@ -27,16 +28,17 @@ type ciAttempt struct {
 }
 
 // addCIHead writes one ci card, its verdict record and its receipts in the
-// shapes internal/nsprint/fn/lua/ci.lua (nova-tools #2936) writes: `ci cut`,
-// then per attempt a `ci end` (and a `ci rerun` between attempts). The
-// record is the latest pointer: the last attempt's verdict and wall.
+// shapes internal/nsprint/fn/lua/ci.lua writes: `ci cut`, then per attempt
+// a `ci end` (and a `ci rerun` between attempts). The record is the GID
+// receipt under ci:<repo>:<head>:<gid> tracked in ci:<repo>:<head>:gids.
 // Receipt evidence carries wall_s=<n> unless noWall is set.
 func addCIHead(t *testing.T, c *redis.Client, sprint, pr, head string, cutMs, endMs int64, noWall bool, attempts ...ciAttempt) {
 	t.Helper()
 	ctx := context.Background()
 	s := "s:" + sprint
 	label := "ci-" + pr + "-" + head[:8]
-	recKey := "ci:nova-tools:" + head
+	gid := civerdict.GID("single", ciBase, ciBase, "req1", "pol1", "run1")
+	recKey := civerdict.Key("nova-tools", head, gid)
 	last := attempts[len(attempts)-1]
 	must := func(err error) {
 		t.Helper()
@@ -52,12 +54,13 @@ func addCIHead(t *testing.T, c *redis.Client, sprint, pr, head string, cutMs, en
 	}).Err())
 	must(c.SAdd(ctx, s+":idx:card:ended", label).Err())
 	rec := map[string]any{"attempt": len(attempts), "card": sprint + "/" + label, "head": head,
-		"base": ciBase, "pr": pr, "repo": "nova-tools", "wall_s": last.wallS,
+		"base": ciBase, "base_sha": ciBase, "gid": gid, "pr": pr, "repo": "nova-tools", "wall_s": last.wallS,
 		"cut_at": cutMs, "end_at": endMs, "source": "card"}
 	if last.verdict != "" {
 		rec["verdict"] = last.verdict
 	}
 	must(c.HSet(ctx, recKey, rec).Err())
+	must(c.SAdd(ctx, civerdict.GIDsKey("nova-tools", head), gid).Err())
 	receipt := func(kind, from, to string, attempt int, reason, evidence string) {
 		must(c.XAdd(ctx, &redis.XAddArgs{Stream: s + ":log", Values: []string{
 			"kind", kind, "id", label, "from", from, "to", to, "attempt", fmt.Sprint(attempt),
@@ -109,7 +112,8 @@ func addCIHeadBase(t *testing.T, c *redis.Client, sprint, pr, head, label, base,
 	t.Helper()
 	ctx := context.Background()
 	s := "s:" + sprint
-	recKey := "ci:nova-tools:" + head
+	gid := civerdict.GID("single", base, ciBase, "req1", "pol1", "run1")
+	recKey := civerdict.Key("nova-tools", head, gid)
 	must := func(err error) {
 		t.Helper()
 		if err != nil {
@@ -123,12 +127,13 @@ func addCIHeadBase(t *testing.T, c *redis.Client, sprint, pr, head, label, base,
 	}).Err())
 	must(c.SAdd(ctx, s+":idx:card:ended", label).Err())
 	rec := map[string]any{"attempt": 1, "card": s + "/" + label, "head": head,
-		"base": base, "pr": pr, "repo": "nova-tools", "wall_s": wallS,
+		"base": base, "base_sha": ciBase, "gid": gid, "pr": pr, "repo": "nova-tools", "wall_s": wallS,
 		"cut_at": cutMs, "end_at": endMs, "source": "card"}
 	if verdict != "" {
 		rec["verdict"] = verdict
 	}
 	must(c.HSet(ctx, recKey, rec).Err())
+	must(c.SAdd(ctx, civerdict.GIDsKey("nova-tools", head), gid).Err())
 	evidence := recKey + " " + verdict + " bench=b1 pkg= test= log=results/x wall_s=" + strconv.Itoa(wallS)
 	must(c.XAdd(ctx, &redis.XAddArgs{Stream: s + ":log", Values: []string{
 		"kind", "ci end", "id", label, "from", "running", "to", "ended", "attempt", "1",
@@ -143,6 +148,8 @@ func seedCI(t *testing.T, noWall bool) (*redis.Client, string) {
 	t.Helper()
 	_, client, fx := seed(t)
 	removeCICards(t, client, fx.Sprint)
+	client.HSet(context.Background(), civerdict.PolicyKey("nova-tools", ciBase), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+	client.HSet(context.Background(), civerdict.TipKey("nova-tools", ciBase), "sha", ciBase)
 	const t0 = int64(1_790_000_000_000)
 	addCIHead(t, client, fx.Sprint, "101", fullSHA("aaaa1111"), t0, t0+200_000, noWall,
 		ciAttempt{"DONE", "done", "OK", 120})
@@ -246,6 +253,8 @@ func TestFoldCICostOnItsOwnLine(t *testing.T) {
 	t.Run("wall-only-counts-the-matching-base-record", func(t *testing.T) {
 		client, s := seedCI(t, false)
 		const otherBase = "3333333333333333333333333333333333333333"
+		client.HSet(ctx, civerdict.PolicyKey("nova-tools", otherBase), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+		client.HSet(ctx, civerdict.TipKey("nova-tools", otherBase), "sha", ciBase)
 		head := fullSHA("aaaa6666")
 		ctx := context.Background()
 		if err := client.HSet(ctx, "s:"+s+":card:c6", map[string]any{

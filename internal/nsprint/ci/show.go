@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -18,7 +19,7 @@ var RecordFields = []string{
 	"flaky", "source", "reruns", "rerun", "why", "disposition", "at",
 }
 
-// Record is ci:<repo>:<sha> as read. Found is false when the key is absent.
+// Record is ci:<repo>:<head>:<gid> as read. Found is false when the key is absent.
 type Record struct {
 	Key    string
 	Found  bool
@@ -53,15 +54,16 @@ func (r Record) Verdict() string {
 // sprint log named in the record's card field; the log is never trimmed
 // before fold, so every attempt is there.
 func Read(ctx context.Context, st *store.Store, repo, head string) (Record, error) {
-	key := RecordKey(repo, head)
-	fields, err := st.Client().HGetAll(ctx, key).Result()
+	fields, err := civerdict.ReadHead(ctx, st.Client(), repo, head)
 	if err != nil {
-		return Record{}, fmt.Errorf("HGETALL %s: %w", key, err)
+		return Record{}, err
 	}
-	rec := Record{Key: key, Found: len(fields) > 0, Fields: fields}
-	if !rec.Found {
-		return rec, nil
+	if len(fields) == 0 {
+		return Record{Key: "ci:" + repo + ":" + head, Found: false, Fields: nil}, nil
 	}
+	gid := fields["gid"]
+	key := civerdict.Key(repo, head, gid)
+	rec := Record{Key: key, Found: true, Fields: fields}
 	sprint, label, ok := strings.Cut(fields["card"], "/")
 	if !ok {
 		return rec, nil
@@ -138,18 +140,16 @@ func WriteShow(w io.Writer, rec Record) int {
 // is given the record must have been tested on that base; a moved base is
 // the lander's retest (10.6 item 1), not a pass here.
 func LandReady(ctx context.Context, st *store.Store, repo, head, base string) (bool, string, error) {
-	fields, err := st.Client().HMGet(ctx, RecordKey(repo, head), "verdict", "head", "base").Result()
+	fields, err := civerdict.ReadHead(ctx, st.Client(), repo, head)
 	if err != nil {
-		return false, "", fmt.Errorf("HMGET %s: %w", RecordKey(repo, head), err)
+		return false, "", err
 	}
-	verdict, _ := fields[0].(string)
-	recHead, _ := fields[1].(string)
-	recBase, _ := fields[2].(string)
-	switch {
-	case recHead == "":
+	if len(fields) == 0 {
 		return false, "ci: MISSING", nil
-	case recHead != head:
-		return false, "ci: record is for another head", nil
+	}
+	verdict := fields["verdict"]
+	recBase := fields["base"]
+	switch {
 	case verdict == "":
 		return false, "ci: MISSING", nil
 	case verdict == Flaky:

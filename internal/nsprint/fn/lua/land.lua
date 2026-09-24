@@ -8,53 +8,17 @@ do
 -- Keys 2.2, fences and intent cut 2.3, events 2.2/7.7.
 -- Every lua/ file shares one chunk, so locals carry a land_ prefix.
 
+-- From ci.lua through NS (loader.go: each file is its own do-block).
+local ci_sha256_hex, gate_receipt_write = NS.ci.sha256_hex, NS.ci.gate_receipt_write
+-- cap_budget_take and cap_budget_give are capacity.lua's (it sorts before
+-- this file), handed over through NS.capacity.
+local cap_budget_take, cap_budget_give = NS.capacity.cap_budget_take, NS.capacity.cap_budget_give
+
 local function land_now_ms()
   local t = redis.call('TIME')
   return string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
 end
 
--- gate_receipt_write (3.7): writes the write-once single or tip gid receipt.
--- ci:<repo>:<head>:<gid> and ci:<repo>:<base>:tip:<tip>:<gid>.
-local function gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test, at)
-  local ckey = 'ci:' .. repo .. ':' .. head .. ':' .. gid
-  if redis.call('EXISTS', ckey) == 1 then
-    return 'ALREADY'
-  end
-  at = at or land_now_ms()
-  redis.call('HSET', ckey,
-    'verdict', verdict,
-    'kind', kind,
-    'base', base,
-    'base_sha', base_sha,
-    'required_set_id', required_set_id,
-    'policy_id', policy_id,
-    'runner_id', runner_id,
-    'receipt', receipt,
-    'bench', bench or '',
-    'pkg', pkg or '',
-    'test', test or '',
-    'at', tostring(at)
-  )
-  redis.call('SADD', 'ci:' .. repo .. ':' .. head .. ':gids', gid)
-  if kind == 'tip' then
-    local tip_key = 'ci:' .. repo .. ':' .. base .. ':tip:' .. base_sha .. ':' .. gid
-    redis.call('HSET', tip_key,
-      'verdict', verdict,
-      'kind', kind,
-      'base', base,
-      'base_sha', base_sha,
-      'required_set_id', required_set_id,
-      'policy_id', policy_id,
-      'runner_id', runner_id,
-      'receipt', receipt,
-      'bench', bench or '',
-      'pkg', pkg or '',
-      'test', test or '',
-      'at', tostring(at)
-    )
-  end
-  return 'OK'
-end
 
 redis.register_function('ns_gate_receipt_write', function(keys, args)
   local repo, head, gid, verdict = args[1], args[2], args[3], args[4]
@@ -143,6 +107,11 @@ redis.register_function('ns_unit_head', function(keys, args)
     end
   end
   redis.call('SADD', 's:' .. S .. ':units', unit)
+  if branch and branch ~= '' then
+    -- #3139 B2: the branch index the evaluator's mirror reconcile and webhook
+    -- heads resolve a ref through (refs/heads/<branch> -> unit), no scan.
+    redis.call('SET', 's:' .. S .. ':branchunit:' .. repo .. ':' .. branch, unit)
+  end
   if #changed > 0 then
     return { 'OK', tostring(seq), 'UNRESOLVED', unpack(changed) }
   end
@@ -241,6 +210,35 @@ end)
 -- ns_release: releases a hold. Decrements holds_open only when post_land was 0.
 redis.register_function('ns_release', function(keys, args)
   local S, unit, holder, released_by, release_kind, release_reason, release_url = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
+  -- Who may release (#3139 3.4, 3.5; arg 8 is the may-hold roster, csv):
+  --   the holder itself, any kind (superseded is only ever the holder's own);
+  --   repair-scoped by anyone, only for a hold that names a done_when test
+  --     (the evaluator checks the five 3.5 conditions before it calls this);
+  --   a login:<x> inbound hold by a friend's --releases record (3.4);
+  --   otherwise only a may-hold reader, and only while friend:<holder>:down.
+  if released_by ~= holder then
+    local hk = 's:' .. S .. ':hold:' .. unit .. ':' .. holder
+    if release_kind == 'superseded' then
+      return { 'REFUSED', 'superseded only by the holder' }
+    elseif release_kind == 'repair-scoped' then
+      local dw = redis.call('HGET', hk, 'done_when')
+      if not dw or dw == '' then
+        return { 'REFUSED', 'repair-scoped needs done_when' }
+      end
+    elseif not string.find(holder, '^login:') then
+      if redis.call('EXISTS', 'friend:' .. holder .. ':down') ~= 1 then
+        return { 'REFUSED', 'holder not down' }
+      end
+      local may = false
+      for r in string.gmatch(args[8] or '', '[^,%s]+') do
+        if r == released_by then may = true end
+      end
+      if not may then
+        return { 'REFUSED', 'releaser not may-hold' }
+      end
+    end
+  end
+
   local seq = redis.call('INCR', 'rec:seq')
   local hkey = 's:' .. S .. ':hold:' .. unit .. ':' .. holder
   local held = redis.call('HMGET', hkey, 'released_by', 'post_land')
@@ -274,6 +272,9 @@ redis.register_function('ns_read', function(keys, args)
   local S, unit, who, head, verdict, score, kind, files, done_when = args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]
   local seq = redis.call('INCR', 'rec:seq')
   local rkey = 's:' .. S .. ':read:' .. unit .. ':' .. who
+  -- #3139 B2: the unit's readers index, so the evaluator counts reads and
+  -- supersedes holds without a KEYS scan (2.2).
+  redis.call('SADD', 's:' .. S .. ':readers:' .. unit, who)
   local now = land_now_ms()
   redis.call('HSET', rkey,
     'seq', tostring(seq),
@@ -309,6 +310,64 @@ redis.register_function('ns_read', function(keys, args)
   return { 'OK', tostring(seq) }
 end)
 
+-- ns_ci_single (#3139 B2, 3.3, L31b): queues the one ci single for a unit's
+-- expected identity, once. args: repo, base, unit, head, gid. A receipt that
+-- already exists returns HAVE; an identity already queued returns ALREADY and
+-- writes nothing; otherwise the marker land:<repo>:ciq:<head>:<gid>, a token
+-- from the gate fence counter and one land:<repo>:gates entry (attempt 1).
+redis.register_function('ns_ci_single', function(keys, args)
+  local repo, base, unit, head, gid = args[1], args[2], args[3], args[4], args[5]
+  if redis.call('EXISTS', 'ci:' .. repo .. ':' .. head .. ':' .. gid) == 1 then
+    return { 'HAVE', '' }
+  end
+  local mk = 'land:' .. repo .. ':ciq:' .. head .. ':' .. gid
+  if not redis.call('SET', mk, unit, 'NX') then
+    return { 'ALREADY', redis.call('GET', mk) or '' }
+  end
+  local token = redis.call('INCR', 'land:' .. repo .. ':tok')
+  local now = land_now_ms()
+  local id = redis.call('XADD', 'land:' .. repo .. ':gates', '*',
+    'base', base, 'batch', 'ci:' .. gid, 'attempt', '1', 'token', tostring(token),
+    'unit', unit, 'head', head, 'gid', gid, 'kind', 'single', 'priority', 'ci')
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'CI QUEUED', 'repo', repo, 'base', base, 'unit', unit, 'head', head, 'gid', gid, 'at', now)
+  return { 'QUEUED', id, tostring(token) }
+end)
+
+-- ns_ref_seen (#3139 B2, 3.2, L32): the head of one ref as the evaluator saw it.
+-- args: repo, ref, sha, source (delivery: a webhook named it and the mirror
+-- was fetched; git: the reconcile read the mirror). A git read that finds the
+-- ref moved since the last record, with no delivery naming the new sha,
+-- writes INBOUND MISSED (event and land:<repo>:inbound missed count).
+redis.register_function('ns_ref_seen', function(keys, args)
+  local repo, ref, sha, source = args[1], args[2], args[3], args[4]
+  local k = 'land:' .. repo .. ':ref:' .. ref
+  local prev = redis.call('HGET', k, 'sha')
+  local now = land_now_ms()
+  redis.call('HSET', k, 'sha', sha, 'source', source, 'at', now)
+  if not prev then
+    return { 'NEW', '' }
+  end
+  if prev ~= sha and source == 'git' then
+    redis.call('HINCRBY', 'land:' .. repo .. ':inbound', 'missed', 1)
+    redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+      'event', 'INBOUND MISSED', 'repo', repo, 'ref', ref, 'sha', sha, 'prev', prev, 'at', now)
+    return { 'MISSED', prev }
+  end
+  if prev ~= sha then
+    return { 'MOVED', prev }
+  end
+  return { 'SEEN', prev }
+end)
+
+-- ns_inbound_beat (#3139 B2, 3.2): the land consumer's beat on
+-- ev:github:consumer:land after each drain. args: last delivery id, pending.
+redis.register_function('ns_inbound_beat', function(keys, args)
+  local now = land_now_ms()
+  redis.call('HSET', 'ev:github:consumer:land', 'last_id', args[1] or '', 'pending', args[2] or '0', 'at', now)
+  return { 'OK', now }
+end)
+
 -- ns_policy_set: writes base policy record.
 redis.register_function('ns_policy_set', function(keys, args)
   local repo, base, policy_id, required_set_id, runner_id = args[1], args[2], args[3], args[4], args[5]
@@ -323,10 +382,59 @@ redis.register_function('ns_policy_set', function(keys, args)
   return 'OK'
 end)
 
--- ns_writer: bumps writer gen and sets owner (old-loop or nova-sprint).
+-- ns_writer: the sole writer of land:<repo>:<base>:writer (gen, owner, since, by),
+-- #3139 rev 7 section 10.2 (B0). args: repo, base, to, by, [inflight].
+-- to '' or 'get' reads (gen 0, owner old-loop when unset); to old-loop|nova-sprint
+-- bumps gen from land:<repo>:<base>:writer:seq and appends one WRITER event to
+-- land:<repo>:events. Cutover to nova-sprint is REFUSED while the old loop's
+-- inflight count (the inflight arg, or land:<repo>:<base>:inflight as a string,
+-- set or zset) is nonzero. Rollback to old-loop is REFUSED (REFUSED pub <batch>) while
+-- land:<repo>:<base>:pub:active names an intent not yet resolved (state other than dead),
+-- per 10.2 "bumps gen after resolving any pub:* by 7.2": ns_pub_state dead or ns_land
+-- clears it first.
 redis.register_function('ns_writer', function(keys, args)
-  local repo, base, to_owner, by = args[1], args[2], args[3], args[4]
+  local repo, base, to_owner, by, inflight_arg = args[1], args[2], args[3], args[4], args[5]
+  if not repo or repo == '' or not base or base == '' then
+    return redis.error_reply('ns_writer: repo and base are required')
+  end
   local wkey = 'land:' .. repo .. ':' .. base .. ':writer'
+  if not to_owner or to_owner == '' or to_owner == 'get' then
+    local cur = redis.call('HMGET', wkey, 'gen', 'owner', 'since', 'by')
+    return { 'OK', cur[1] or '0', cur[2] or 'old-loop', cur[3] or '', cur[4] or '' }
+  end
+  if to_owner ~= 'old-loop' and to_owner ~= 'nova-sprint' then
+    return { 'INVALID', 'owner must be old-loop or nova-sprint' }
+  end
+  if to_owner == 'nova-sprint' then
+    if inflight_arg and inflight_arg ~= '' then
+      local inf = tonumber(inflight_arg) or 0
+      if inf > 0 then
+        return { 'REFUSED', 'inflight', tostring(inf) }
+      end
+    end
+    local ikey = 'land:' .. repo .. ':' .. base .. ':inflight'
+    local ktype = redis.call('TYPE', ikey)['ok']
+    local inf = 0
+    if ktype == 'string' then
+      inf = tonumber(redis.call('GET', ikey)) or 0
+    elseif ktype == 'set' then
+      inf = redis.call('SCARD', ikey)
+    elseif ktype == 'zset' then
+      inf = redis.call('ZCARD', ikey)
+    end
+    if inf > 0 then
+      return { 'REFUSED', 'inflight', tostring(inf) }
+    end
+  end
+  if to_owner == 'old-loop' then
+    local active_pub = redis.call('GET', 'land:' .. repo .. ':' .. base .. ':pub:active')
+    if active_pub and active_pub ~= '' then
+      local ap_st = redis.call('HGET', 'land:' .. repo .. ':' .. base .. ':pub:' .. active_pub, 'state')
+      if ap_st ~= 'dead' then
+        return { 'REFUSED', 'pub', active_pub }
+      end
+    end
+  end
   local gen = redis.call('INCR', 'land:' .. repo .. ':' .. base .. ':writer:seq')
   local now = land_now_ms()
   redis.call('HSET', wkey,
@@ -335,7 +443,13 @@ redis.register_function('ns_writer', function(keys, args)
     'since', tostring(now),
     'by', by or ''
   )
-  return { 'OK', tostring(gen) }
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'WRITER',
+    'gen', tostring(gen),
+    'owner', to_owner,
+    'by', by or '',
+    'at', tostring(now))
+  return { 'OK', tostring(gen), to_owner, tostring(now), by or '' }
 end)
 
 -- land_storage_split: the five storage-split paths under docs/roadmaps/ (4.1, amendment 5802461060).
@@ -769,7 +883,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   local failing, flaky_rerun, core_s = args[14], args[15], args[16]
 
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
-  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'slot')
+  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'class', 'members', 'slot')
   if not b[1] then return 'NOTFOUND' end
   if b[1] ~= tostring(attempt) or b[2] ~= tostring(token) then return 'STALE' end
 
@@ -799,6 +913,47 @@ redis.register_function('ns_gate_receipt', function(keys, args)
     'at', tostring(now)
   )
 
+  -- The gid receipt's kind is the batch's shape (#3139 3.3, 5.4, 8.4): the
+  -- selector's class for a ci single and a tip gate is full, so a full batch
+  -- of exactly one member is a single (its head, on from_tip) and a full batch
+  -- with no members is a tip gate (from_tip itself). Any other batch is a
+  -- train and writes no gid receipt. No field is filled with a default: a
+  -- gate with no from_tip writes none either.
+  local class, members, from_tip = b[6] or '', b[7] or '', b[5] or ''
+  local kind, head = nil, ''
+  if class == 'full' and from_tip ~= '' then
+    if members == '' then
+      kind, head = 'tip', from_tip
+    elseif not string.find(members, ',') then
+      kind, head = 'single', string.match(members, '^[^@]+@([^@,]+)$') or ''
+    end
+  end
+
+  if kind and head ~= '' then
+    local base_sha = from_tip
+    local pol_key = 'land:' .. repo .. ':' .. base .. ':policy'
+    local pol = redis.call('HMGET', pol_key, 'policy_id', 'required_set_id', 'runner_id')
+    local policy_id, required_set_id, runner_id = pol[1], pol[2], pol[3]
+    if policy_id and policy_id ~= '' and required_set_id and required_set_id ~= '' and runner_id and runner_id ~= '' and head ~= '' then
+      local raw = 'kind=' .. kind .. ',' .. base .. ',' .. base_sha .. ',' .. required_set_id .. ',' .. policy_id .. ',' .. runner_id
+      local gid = string.sub(ci_sha256_hex(raw), 1, 16)
+      local gverdict = 'FAIL'
+      if string.upper(verdict or '') == 'GREEN' or string.upper(verdict or '') == 'OK' then
+        gverdict = 'OK'
+      end
+      local pkg, test = '', ''
+      if failing and failing ~= '' then
+        local p, t = string.match(failing, '^([^%s]+)%s+(.+)$')
+        if p and t then
+          pkg, test = p, t
+        else
+          pkg = failing
+        end
+      end
+      gate_receipt_write(repo, head, gid, gverdict, kind, base, base_sha, required_set_id, policy_id, runner_id, rkey, bench or '', pkg, test, now)
+    end
+  end
+
   local new_st = string.lower(verdict)
   redis.call('HSET', bkey, 'state', new_st, 'receipt', rkey, 'train_head', train_head or '', 'train_tree', train_tree or '')
 
@@ -807,7 +962,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   end
 
   -- Return budget debit for this slot
-  local slot = b[6]
+  local slot = b[8]
   if bench and bench ~= '' and slot and slot ~= '' then
     local m = redis.call('HGET', 'bench:' .. bench .. ':desired', 'machine')
     if not m or m == '' then m = redis.call('HGET', 'bench:' .. bench .. ':land', 'machine') end

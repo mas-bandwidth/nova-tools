@@ -1800,7 +1800,7 @@ serialize runtimes.
 ### land
 
 ```
-nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>] [--loop <duration>] [--allowed-red <check>[,<check>...]] [--friends <names>]
+nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>] [--loop <duration>] [--allowed-red <check>[,<check>...]] [--friends <names>] [--redis <addr>]
 ```
 
 `land` is the ONE caller of the one door that admits anything to a merge queue. `batch`
@@ -1823,6 +1823,17 @@ The hold flags are `batch`'s, with the same meanings and the same refusals: exac
 required under `--reviewers` and may not be the literal `none`, and
 `--untyped-comments ignore` demands its own `--reason`. `--receipt` and `--receipt-file` are
 two spellings of one receipt and giving both is exit 2.
+
+Every `land` reads the lander's writer generation (#3139 B0) before any write, from
+`--redis <addr>`, else `NOVA_REDIS_ADDR`, else `NOVA_REDIS_HOST:NOVA_REDIS_PORT`. With no
+address it refuses with `LAND REFUSED writer unresolved` and exit 1; a read that fails
+(store down, NOPERM, WRONGTYPE) refuses with `LAND REFUSED writer unreadable`. A missing
+`land:<repo>:<base>:writer` is the initial owner, `old-loop`; when it names any other
+owner, the old loop no longer writes, and `land` refuses with
+`LAND REFUSED writer gen=<g> owner=<owner>` and exit 1.
+`nova-sprint land writer --repo <r> --base <b> [--to old-loop|nova-sprint]` reads or moves
+that generation through `ns_writer`, its one writer; rollback to `old-loop` is refused
+(`REFUSED pub=<batch>`) while an intent in `pub:active` is unresolved.
 
 ```
 LAND OK      pr=<n> head=<sha> branch=<ref> checks=<required|waived> members=<list> jump=<true|false>
@@ -5482,3 +5493,11 @@ the same rule (so nothing is written), and harvest refuses it before ssh. `nova-
 `<results>/repo` on the bench as read from that field; there is no
 `--results-root` (it is refused as an unknown flag that names the field),
 because no worker needs to know a bench's layout (#3329).
+
+### `nova-sprint bench reset`
+
+`nova-sprint bench reset --bench <bench> [--keep-queue] [--grace 5s] [--redis <addr>] [--actor <seat>] [--idem <key>]` stops the bench's in-flight card process groups in one SSH session and returns stopped attempts to their sprint pools without charging a retry. A persistent reset record blocks the dealer until every process is gone. An SSH refusal or surviving process leaves the record held and the command exits 1.
+
+Recover by rerunning the command, or clear a held record with an operator receipt: `nova-sprint bench reset --bench <bench> --clear --why '<reason>' [--actor <seat>]`. A fresh running reset cannot be cleared. Reset does not restart services, modify fleet UP/DOWN state, or delete job storage.
+
+The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. Its input is one `<sprint> <label> <attempt>` per line. It prints `STOPPED`, `GONE`, or `ALIVE` for the exact `nova-card <sprint>/<label>/<attempt>` process group, one line per card and nothing else on stdout; the `STOP stopped= gone= alive=` summary goes to stderr. It exits 0 whenever the protocol completed, ALIVE included (the reset holds on ALIVE); a non-zero exit means the session failed and the reset holds with `why=ssh:...`. A beat error that is not a takeover holds the record with `why=beat:...`.

@@ -8,6 +8,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -20,11 +21,11 @@ const (
 
 func full(prefix string) string { return prefix + strings.Repeat("0", 40-len(prefix)) }
 
-// ciHead writes one ci card and its verdict record in the shapes
-// internal/nsprint/fn/lua/ci.lua (nova-tools #2936) writes: the card hash
-// under s:<S>:card:ci-<pr>-<sha8> in its state index, and the global record
-// ci:<repo>:<head> as the latest pointer. verdict "" leaves the record
-// without a verdict field (MISSING).
+// ciHead writes one ci card and its verdict record in the GID shape
+// internal/nsprint/fn/lua/ci.lua writes: the card hash under
+// s:<S>:card:ci-<pr>-<sha8> in its state index, and the receipt
+// ci:<repo>:<head>:<gid> in ci:<repo>:<head>:gids. verdict "" leaves the
+// record without a verdict field (MISSING).
 func ciHead(t *testing.T, c *redis.Client, pr, head, cardBase, recBase, verdict string, attempt int) {
 	t.Helper()
 	ctx := context.Background()
@@ -35,15 +36,17 @@ func ciHead(t *testing.T, c *redis.Client, pr, head, cardBase, recBase, verdict 
 		"ci_repo": fxRepo, "ci_pr": pr, "ci_head": head, "base": cardBase,
 		"attempt": attempt, "reruns": attempt - 1,
 	}
+	gid := civerdict.GID("single", recBase, fxBase, "req1", "pol1", "run1")
 	rec := map[string]any{"attempt": attempt, "card": fxSprint + "/" + label,
-		"head": head, "base": recBase, "pr": pr, "repo": fxRepo}
+		"head": head, "base": recBase, "base_sha": fxBase, "gid": gid, "pr": pr, "repo": fxRepo}
 	if verdict != "" {
 		rec["verdict"] = verdict
 	}
 	for _, err := range []error{
 		c.HSet(ctx, "s:"+fxSprint+":card:"+label, card).Err(),
 		c.SAdd(ctx, "s:"+fxSprint+":idx:card:ended", label).Err(),
-		c.HSet(ctx, "ci:"+fxRepo+":"+head, rec).Err(),
+		c.HSet(ctx, civerdict.Key(fxRepo, head, gid), rec).Err(),
+		c.SAdd(ctx, civerdict.GIDsKey(fxRepo, head), gid).Err(),
 	} {
 		if err != nil {
 			t.Fatal(err)
@@ -58,6 +61,8 @@ func seedStatus(t *testing.T) (*redis.Client, *store.Store) {
 	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
 	c.HSet(ctx, "s:"+fxSprint, "status", "open")
+	c.HSet(ctx, civerdict.PolicyKey(fxRepo, fxBase), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+	c.HSet(ctx, civerdict.TipKey(fxRepo, fxBase), "sha", fxBase)
 	// Model cards in the same indexes are not ci verdicts.
 	c.HSet(ctx, "s:"+fxSprint+":card:m1", "kind", "model", "state", "landed", "repo", fxRepo, "pr", "101")
 	c.SAdd(ctx, "s:"+fxSprint+":idx:card:landed", "m1")

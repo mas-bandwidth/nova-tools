@@ -62,6 +62,21 @@ func fsFriends(t *testing.T, client *redis.Client, names ...string) {
 		fsMust(t, client.SAdd(ctx, "friends", name).Err())
 		fsMust(t, client.HSet(ctx, "friend:"+name+":desired", "slots", "8", "machine", "studio", "paused", "0").Err())
 		fsMust(t, client.HSet(ctx, "friend:"+name+":beat", "host", "studio", "session", name+"-1", "at", "1").Err())
+		var roles []string
+		for _, reader := range fsRoster.MayHold {
+			if reader == name {
+				roles = append(roles, "may-hold")
+			}
+		}
+		for _, builder := range fsRoster.Builders {
+			if builder == name {
+				roles = append(roles, "builder")
+			}
+		}
+		if fsRoster.Coordinator == name {
+			roles = append(roles, "coordinator")
+		}
+		fsMust(t, client.HSet(ctx, "friend:"+name+":roles", "roles", strings.Join(roles, ",")).Err())
 	}
 }
 

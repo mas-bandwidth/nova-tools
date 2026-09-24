@@ -53,6 +53,8 @@ const (
 	Author Status = "AUTHOR"
 	// Dedup is a read the friend already holds or has answered at that head.
 	Dedup Status = "DEDUP"
+	// NoRoute means the target lacks the Redis-configured role for the task.
+	NoRoute Status = "NOROUTE"
 )
 
 // Line is one `<task> <friend>` line.
@@ -162,7 +164,9 @@ type FromRequest struct {
 	To string
 	// Kinds, when set, limits the move to these task kinds (for example
 	// work and fix for an underfull rebalance, which never moves reads).
-	Kinds  []string
+	Kinds []string
+	// Roster is retained for source compatibility and ignored. Every routing
+	// FCALL reads friend:<f>:roles for the members of friends atomically.
 	Roster life.Roster
 	Actor  string
 	Idem   string
@@ -218,7 +222,7 @@ func From(ctx context.Context, st *store.Store, req FromRequest) (FromResult, er
 	if req.From == "" || req.Reason == "" {
 		return FromResult{}, fmt.Errorf("redistribute: --from and --reason are required")
 	}
-	for _, list := range [][]string{req.Roster.MayHold, req.Roster.Builders, {req.Roster.Coordinator}, req.Kinds} {
+	for _, list := range [][]string{req.Kinds} {
 		for _, name := range list {
 			if strings.Contains(name, ",") {
 				return FromResult{}, fmt.Errorf("redistribute: name %q contains a comma", name)
@@ -227,8 +231,7 @@ func From(ctx context.Context, st *store.Store, req FromRequest) (FromResult, er
 	}
 	reply, err := st.Client().FCall(ctx, FunctionRedistributeFrom, nil,
 		req.From, req.Reason, req.To, strings.Join(req.Kinds, ","),
-		strings.Join(req.Roster.MayHold, ","), strings.Join(req.Roster.Builders, ","),
-		req.Roster.Coordinator, req.Actor, req.Idem).Result()
+		req.Actor, req.Idem).Result()
 	if err != nil {
 		return FromResult{}, fmt.Errorf("redistribute %s: %w", req.From, err)
 	}

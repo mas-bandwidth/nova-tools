@@ -11,13 +11,13 @@ import (
 // workflows_rows_test.go is #2925: nova-tools Actions keeps only the
 // runner-only rows, and every Linux or darwin `go test` row runs as a ci card
 // (#2842: a CI pass is a script card under the dealer's slot share, its verdict
-// in ci:<repo>:<sha>) instead of as a second scheduler on the swarm benches
+// in the ci verdict record) instead of as a second scheduler on the swarm benches
 // (#2795: vision at load 97 on 64 cores, ~39 of them Go compile/link from nine
 // CI shards).
 //
 // THE SWAP IS A FLAG, NOT YET A DELETION. Ready = dependencies merged, and the
 // two this rests on are not on dev yet: the ci card itself (#2842, PR #2886)
-// and the lander reading CI from ci:<repo>:<sha> instead of check-runs (#2924).
+// and the lander reading CI from the ci verdict record instead of check-runs (#2924).
 // Until both land, deleting the rows would leave a PR with no test evidence the
 // lander reads. So every Linux or darwin `go test` job carries ONE gate as the
 // first conjunct of its job-level `if:`,

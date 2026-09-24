@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -487,6 +488,43 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 		}
 		if !strings.Contains(skipVal, "CHECK") {
 			t.Fatalf("skip val %q does not name CHECK", skipVal)
+		}
+	})
+
+	// nova-merge (#2506 part B): the lander's typed APPROVE goes through
+	// typedrec.ParseDisposition. An APPROVE with no head= is refused by field
+	// name instead of quietly binding to the current head, and yields no
+	// approve verdict; the same line with its head approves.
+	t.Run("nova-merge", func(t *testing.T) {
+		const head = "0123456789abcdef0123456789abcdef01234567"
+		rs, err := merge.ParseReviewers(strings.NewReader("who\tlogins\tmay-hold\nstella\tstella-bot\tyes\n"))
+		if err != nil {
+			t.Fatalf("reviewers: %v", err)
+		}
+		valid := "DISPOSITION who=stella head=" + head + " verdict=APPROVE"
+		noHead := "DISPOSITION who=stella verdict=APPROVE"
+
+		c, isLine := typedrec.ParseDisposition(valid)
+		if !isLine || !c.Valid || c.Head != head || c.Verdict != "APPROVE" || !c.Whole {
+			t.Fatalf("valid APPROVE: isLine=%v claim=%+v", isLine, c)
+		}
+		v, ok := merge.ParseComment(1, "stella-bot", valid, "2026-09-24T00:00:00Z", rs, "rowan", head, false)
+		if !ok || v.Word != "approve" || v.Who != "stella" || v.Head != head {
+			t.Fatalf("valid APPROVE: want an approve verdict at %s, got ok=%v %+v", head, ok, v)
+		}
+
+		c, isLine = typedrec.ParseDisposition(noHead)
+		if !isLine || c.Valid || c.Field != "head" || c.Defect != typedrec.DefectMissing {
+			t.Fatalf("APPROVE without head: want refused field=head defect=missing, got isLine=%v claim=%+v", isLine, c)
+		}
+		refusal := c.Refusal()
+		if !strings.Contains(refusal, "field=head defect=missing") {
+			t.Fatalf("refusal line %q does not name field=head defect=missing", refusal)
+		}
+		t.Log(refusal)
+		v, ok = merge.ParseComment(2, "stella-bot", noHead, "2026-09-24T00:00:00Z", rs, "rowan", head, false)
+		if ok && v.Word == "approve" {
+			t.Fatalf("APPROVE without head yielded an approve verdict: %+v", v)
 		}
 	})
 }

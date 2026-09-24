@@ -104,6 +104,9 @@ local function card_deal(keys, args)
   if redis.call('SISMEMBER', 'benches', bench) == 0 then
     return { 'NONE', 'unregistered' }
   end
+  if redis.call('EXISTS', 'bench:' .. bench .. ':reset') == 1 then
+    return { 'NONE', 'resetting' }
+  end
   local bstate = redis.call('HGET', 'bench:' .. bench .. ':state', 'state')
   if not bstate or bstate == '' then
     bstate = 'down'

@@ -14,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -284,8 +285,16 @@ func buildRealWrapper(t *testing.T) string {
 	return bin
 }
 
-// startLaunchRedis starts a throwaway redis-server on a free local port.
+// startLaunchRedis starts a throwaway redis-server on a free local port and
+// loads the nova_sprint library as the owner, as ns-deploy does on the fleet:
+// the card path never loads it itself (#3551).
 func startLaunchRedis(t *testing.T) string {
 	t.Helper()
-	return testutil.Start(t)
+	addr := testutil.Start(t)
+	owner := redis.NewClient(&redis.Options{Addr: addr})
+	defer func() { _ = owner.Close() }()
+	if err := fn.Load(context.Background(), owner); err != nil {
+		t.Fatal(err)
+	}
+	return addr
 }

@@ -65,11 +65,16 @@ func TestRoutePRToReadCutsCI(t *testing.T) {
 	if got := pass(); !strings.Contains(got, fmt.Sprintf("ADOPT %s@%s cut=1 reads=rt-b", id, head[:12])) {
 		t.Fatalf("tip recorded: pass printed %q, want ADOPT %s@%s cut=1 reads=rt-b", got, id, head[:12])
 	}
-	rec, err := client.HGetAll(ctx, "ci:"+repo+":"+head).Result()
+	// The cut writes the ci card only (#3139 rev 7 3.7): PENDING lives on
+	// s:<S>:card:<label>, and no ci: key exists until the card ends.
+	card, err := client.HMGet(ctx, "s:"+S+":card:ci-7-"+head[:8], "verdict", "base", "base_sha").Result()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec["verdict"] != "PENDING" || rec["base"] != tip {
-		t.Fatalf("ci:%s:%s = %v, want the route's cut PENDING at base %s", repo, head, rec, tip)
+	if card[0] != "PENDING" || card[1] != "dev" || card[2] != tip {
+		t.Fatalf("ci card verdict/base/base_sha = %v, want the route's cut PENDING at dev %s", card, tip)
+	}
+	if keys, err := client.Keys(ctx, "ci:"+repo+":"+head+"*").Result(); err != nil || len(keys) != 0 {
+		t.Fatalf("the cut wrote ci keys %v (err %v), want none", keys, err)
 	}
 }

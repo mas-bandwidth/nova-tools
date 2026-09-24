@@ -42,8 +42,8 @@ type allowlistEntry struct {
 	reason string
 }
 
-// specAllowlist is the spec's list (#2506 rev 3/4, "Allowlist"): 23 entries,
-// the two part=B entries included. B deletes those two and leaves 21.
+// specAllowlist is the spec's list (#2506 rev 3/4, "Allowlist"): 23 entries
+// less the two part=B entries, which part B deleted, leaving 21.
 var specAllowlist = []allowlistEntry{
 	// Card header (SPEC-CARD)
 	{file: "internal/pulse/cut_template.go", fn: "ValidateCardV2", record: "SPEC-CARD"},
@@ -72,9 +72,8 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
 
-	// part=B
-	{file: "internal/merge/verdict.go", fn: "ParseDispositionLine", record: "disposition", partB: true},
-	{file: "internal/merge/verdict.go", fn: "dispositionWholeLine", record: "disposition", partB: true},
+	// part=B (merge/verdict.go ParseDispositionLine, dispositionWholeLine)
+	// moved into typedrec.ParseDisposition; their two entries are gone.
 }
 
 // driftAllowlist holds hits that dev gained after the spec's measurement at
@@ -102,6 +101,12 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the SUGGEST lines of nova-pulse sprint calibration stdout"},
 	{file: "internal/nsprint/task/take.go", fn: "Take", record: "task-take-status", since: "7aebc02f",
 		reason: "task take status BLOCKED, the ns task-take function's reply word, not a RESULT field"},
+	{file: "internal/nsprint/disposition/line.go", fn: "Parse", record: "DISPOSITION", since: "73980a14",
+		reason: "first line of a typed DISPOSITION/REPAIR comment (#3092), a friend read record, not RESULT line 2"},
+	{file: "internal/nsprint/task/take.go", fn: "DoneTyped", record: "task-done-status", since: "50fbecdb",
+		reason: "task done status DONE, the ns task-done function's reply word, not a RESULT field"},
+	{file: "internal/nsprint/land/eval_records.go", fn: "ParseInboundObjection", record: "objection", since: "362dde93",
+		reason: "first word of an inbound comment/review or PR body (HOLD, BLOCKED), the lander's B2 objection record (#3139), not RESULT line 2"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -668,15 +673,15 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// The spec's list is 23 entries with exactly two part=B (B leaves 21).
+		// The spec's list after part B: 21 entries, none tagged part=B.
 		partB := 0
 		for _, a := range specAllowlist {
 			if a.partB {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 23 || partB != 2 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 23 and 2", len(specAllowlist), partB)
+		if len(specAllowlist) != 21 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 21 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

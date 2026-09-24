@@ -497,3 +497,6 @@ do
   redis.register_function('ns_hold_route', route)
   redis.register_function('ns_hold_release', release)
 end
+-- HD leaves this file's block through NS (loader.go wraps every file in its
+-- own do-block); task_claim.lua binds it back as a local.
+NS.HD = HD

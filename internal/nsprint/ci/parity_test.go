@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 )
@@ -20,7 +21,7 @@ const (
 // cutEnd cuts the ci card for one PR head, deals it and ends it with verdict.
 func (f *fixture) cutEnd(prN int, sha, verdict string) {
 	f.t.Helper()
-	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: prN, Head: sha, Base: base, Actor: "ctl"})
+	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: prN, Head: sha, Base: base, BaseRef: "dev", Actor: "ctl"})
 	if err != nil || r.Status != "CREATED" {
 		f.t.Fatalf("cut %d %s = %v, %v; want CREATED", prN, sha[:8], r, err)
 	}
@@ -61,11 +62,12 @@ func (f *fixture) parity(minHeads int) (string, int) {
 
 // TestParityCountsEveryActionsPassedHead is nova-tools #3041 (#2756 10.8.1):
 // over one sprint, every head of a sprint PR that Actions passed must have
-// ci:<repo>:<sha> OK. A head Actions passed whose key is FAIL, or that has no
+// ci:<repo>:<head>:<gid> OK. A head Actions passed whose key is FAIL, or that has no
 // key at all (MISSING), prints `PARITY FAIL <head>` and the verb exits 1.
 // Heads Actions failed, and PRs the sprint never cut, are not counted.
 func TestParityCountsEveryActionsPassedHead(t *testing.T) {
 	f := newFixture(t, "ctl-a", "ctl-b")
+	f.client.HSet(f.ctx, "s:"+f.sprint+":policy", "ci_reruns", "0")
 	f.cutEnd(101, headA, ci.OK)   // Actions passed, key OK: parity
 	f.cutEnd(102, headB, ci.Fail) // Actions passed, key FAIL: PARITY FAIL
 	f.cutEnd(103, headC, ci.Fail) // Actions failed: not counted
@@ -101,7 +103,11 @@ func TestParityCountsEveryActionsPassedHead(t *testing.T) {
 	// The same sprint at parity: the missing head is cut and passes, and the
 	// failed head's key reads OK (what a typed APPROVE on a FLAKY record writes).
 	f.cutEnd(101, headA2, ci.OK)
-	f.client.HSet(f.ctx, ci.RecordKey(repo, headB), "verdict", ci.OK)
+	gidB, err := civerdict.Expected(f.ctx, f.client, repo, "dev", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.client.HSet(f.ctx, civerdict.Key(repo, headB, gidB), "verdict", ci.OK)
 	out, code = f.parity(3)
 	if code != 0 || !strings.Contains(out, "PARITY 3/3") || strings.Contains(out, "PARITY FAIL") {
 		t.Fatalf("at parity: exit %d; want 0 and PARITY 3/3\n%s", code, out)

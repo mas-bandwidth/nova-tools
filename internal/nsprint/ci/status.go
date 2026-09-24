@@ -58,32 +58,30 @@ func Cards(ctx context.Context, st *store.Store, sprint string) ([]Card, error) 
 	reads := make([]store.HashRead, len(labels))
 	for i, l := range labels {
 		reads[i] = store.HashRead{Key: "s:" + sprint + ":card:" + l,
-			Fields: []string{"ci_repo", "ci_head", "attempt", "cut_at", "blocked"}}
+			Fields: []string{"ci_repo", "ci_head", "attempt", "cut_at", "blocked", "verdict"}}
 	}
 	cardVals, err := st.PipelineHMGet(ctx, reads)
 	if err != nil {
 		return nil, err
 	}
 	cards := make([]Card, len(labels))
-	recReads := make([]store.HashRead, len(labels))
 	for i, l := range labels {
 		v := cardVals[i]
-		c := Card{Label: l, State: members[l], Repo: str(v[0]), Head: str(v[1]), Attempt: str(v[2]), Blocked: str(v[4])}
-		c.CutAt, _ = strconv.ParseInt(str(v[3]), 10, 64)
-		cards[i] = c
-		recReads[i] = store.HashRead{Key: RecordKey(c.Repo, c.Head), Fields: []string{"verdict", "card", "attempt"}}
-	}
-	recVals, err := st.PipelineHMGet(ctx, recReads)
-	if err != nil {
-		return nil, err
-	}
-	for i := range cards {
-		v := recVals[i]
-		cards[i].Verdict = str(v[0])
-		if cards[i].Verdict == "" {
-			cards[i].Verdict = Missing
+		c := Card{
+			Label:   l,
+			State:   members[l],
+			Repo:    str(v[0]),
+			Head:    str(v[1]),
+			Attempt: str(v[2]),
+			Blocked: str(v[4]),
+			Verdict: str(v[5]),
+			Owner:   true,
 		}
-		cards[i].Owner = str(v[1]) == sprint+"/"+cards[i].Label && str(v[2]) == cards[i].Attempt
+		c.CutAt, _ = strconv.ParseInt(str(v[3]), 10, 64)
+		if c.Verdict == "" {
+			c.Verdict = Missing
+		}
+		cards[i] = c
 	}
 	return cards, nil
 }

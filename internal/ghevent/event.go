@@ -40,6 +40,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -348,9 +349,9 @@ func fillHeadFromLine(e *Entry, body string) {
 	}
 	clean := merge.StripQuotedAndCode(body)
 	for _, line := range strings.Split(clean, "\n") {
-		_, head, _, _, ok := merge.ParseDispositionLine(line)
-		if ok && head != "" {
-			e.Head = head
+		c, ok := typedrec.ParseDisposition(line)
+		if ok && c.Head != "" {
+			e.Head = c.Head
 			return
 		}
 	}

@@ -21,13 +21,19 @@ func TestFriendVerbs(t *testing.T) {
 	if err := fn.Load(ctx, client); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"emma", "johnny"} {
+	for _, name := range []string{"emma", "johnny", "rowan", "reconciler"} {
 		if err := client.SAdd(ctx, "friends", name).Err(); err != nil {
 			t.Fatal(err)
 		}
 		if err := client.HSet(ctx, "friend:"+name+":desired", "slots", "8", "machine", "studio").Err(); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := client.HSet(ctx, "friend:johnny:roles", "roles", "builder").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "friend:rowan:roles", "roles", "coordinator").Err(); err != nil {
+		t.Fatal(err)
 	}
 	runOK := func(args ...string) string {
 		t.Helper()

@@ -1813,7 +1813,7 @@ jobs:
             # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
-            # NOVA_CI_CARDS=on (#2925): these rows run as ci cards and the lander reads ci:<repo>:<sha> (#2842, #2924), so Actions skipping them is the design.
+            # NOVA_CI_CARDS=on (#2925): these rows run as ci cards and the lander reads the ci verdict (#2842, #2924), so Actions skipping them is the design.
             if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|test-race-queue|e2e|test-hosted-merge) continue ;; esac; fi
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue

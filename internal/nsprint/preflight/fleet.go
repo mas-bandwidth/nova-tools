@@ -137,7 +137,7 @@ type HeadRecord struct {
 	Repo       string
 	PR         int
 	Head       string
-	CICard     bool // a ci card exists for ci:<repo>:<head>
+	CICard     bool // a ci card exists for ci:<repo>:<head>:<gid>
 	RunnerOnly bool // a runner-only record exists for the head
 }
 
@@ -146,7 +146,7 @@ type LandReceipt struct {
 	Repo   string
 	PR     int
 	Head   string
-	Source string // must be the ci:<repo>:<head> key
+	Source string // must be the ci:<repo>:<head>:<gid> key
 }
 
 // OrphanCard is a card in orphan-effect.
@@ -535,13 +535,14 @@ func CheckTwoSchedulers(in FleetInput) FleetLine {
 		}
 	}
 	for _, l := range in.LandReady {
-		if l.Source != "ci:"+l.Repo+":"+l.Head {
+		prefix := "ci:" + l.Repo + ":" + l.Head + ":"
+		if !strings.HasPrefix(l.Source, prefix) {
 			src := l.Source
 			if src == "" {
 				src = "MISSING"
 			}
-			reds = append(reds, fmt.Sprintf("%s#%d at %s land-ready from %s, not ci:%s:%s",
-				oneline.Escape(l.Repo), l.PR, oneline.Escape(l.Head), oneline.Escape(src), oneline.Escape(l.Repo), oneline.Escape(l.Head)))
+			reds = append(reds, fmt.Sprintf("%s#%d at %s land-ready from %s, not %s<gid>",
+				oneline.Escape(l.Repo), l.PR, oneline.Escape(l.Head), oneline.Escape(src), oneline.Escape(prefix)))
 		}
 	}
 	return line("7.16", "two schedulers", reds, fmt.Sprintf("%d go rows on runners, none a bench leg; %d review-ready, %d land-ready from ci keys",
