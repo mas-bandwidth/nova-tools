@@ -190,7 +190,7 @@ func TestControl2929PushTakeFromSeat(t *testing.T) {
 		f := newSeat(t)
 		f.as("a")
 		before := f.xlen()
-		f.run(2, "", "task", "push", "--to", "z", "--id", "k1", "--kind", "work", "--ref", "r", "--title", "T")
+		f.run(2, "unknown friend", "task", "push", "--to", "z", "--id", "k1", "--kind", "work", "--ref", "r", "--title", "T")
 		if got := f.xlen(); got != before {
 			t.Fatalf("log grew by %d; want unchanged", got-before)
 		}
