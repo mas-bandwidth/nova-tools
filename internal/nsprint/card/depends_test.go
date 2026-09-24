@@ -202,13 +202,21 @@ func TestCardPushRefusesUnknownTaskAndStream(t *testing.T) {
 	repo := srv.URL + "/acme/public.git"
 	for _, tc := range []struct {
 		label, dep, want string
+		seed             string // task id seeded with state cancelled before push
 	}{
+		{label: "cancelled-task-child", dep: "task:cancelled-task", seed: "cancelled-task",
+			want: "DEPENDS-ON: task:cancelled-task is cancelled in sprint " + sprint + " and will never finish"},
 		{label: "unknown-task-child", dep: "task:missing-task",
 			want: "DEPENDS-ON: task:missing-task has no record s:" + sprint + ":task:missing-task in sprint " + sprint},
 		{label: "unknown-stream-child", dep: "stream/missing-stream",
 			want: "DEPENDS-ON: stream/missing-stream has no record s:" + sprint + ":stream:missing-stream in sprint " + sprint},
 	} {
 		t.Run(tc.label, func(t *testing.T) {
+			if tc.seed != "" {
+				if err := client.HSet(ctx, "s:"+sprint+":task:"+tc.seed, "state", "cancelled").Err(); err != nil {
+					t.Fatal(err)
+				}
+			}
 			f := validCard(repo)
 			f.label, f.depends = tc.label, tc.dep
 			res := card.Push(ctx, client, sprint, f.render())

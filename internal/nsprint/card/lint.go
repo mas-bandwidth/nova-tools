@@ -89,6 +89,7 @@ type cardDoc struct {
 	TypedDependsOn string
 	Repo           string // owner/name
 	Kind           string
+	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
 	Payload        string
 }
 
@@ -143,6 +144,7 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		TypedDependsOn: typedDependencies(deps),
 		Repo:           repo,
 		Kind:           kind,
+		Type:           header["TYPE"],
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }

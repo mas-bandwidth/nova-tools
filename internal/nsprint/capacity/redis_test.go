@@ -78,8 +78,11 @@ func TestControl27RedisAtomicCeiling(t *testing.T) {
 	if cores := c.HGet(ctx, "machine:ctl-machine:ceiling", "cores").Val(); cores != "64" {
 		t.Fatalf("slot-only update erased measured cores: %q", cores)
 	}
-	if _, err := capacity.SetFriend(ctx, st, "unknown", "ctl-machine", 0, "test", ""); err == nil || !strings.Contains(err.Error(), "UNREGISTERED") {
-		t.Fatalf("unregistered friend allowed: %v", err)
+	if _, err := capacity.SetFriend(ctx, st, "new", "ctl-machine", 0, "test", ""); err != nil {
+		t.Fatalf("first capacity write did not register friend: %v", err)
+	}
+	if !c.SIsMember(ctx, "friends", "new").Val() {
+		t.Fatal("first capacity write omitted friends registry")
 	}
 
 	// Two concurrent raises must not both pass the atomic Lua guard.

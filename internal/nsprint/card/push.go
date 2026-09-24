@@ -47,7 +47,7 @@ func Push(ctx context.Context, client *redis.Client, sprint string, body []byte)
 	}
 	reply, err := client.FCall(ctx, "ns_card_push", keys,
 		doc.Label, doc.Payload, "0", doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind,
-		doc.DependsOn, doc.TypedDependsOn, boolString(ready),
+		doc.DependsOn, doc.Type, doc.TypedDependsOn, boolString(ready),
 	).Text()
 	if err != nil {
 		return refused(err.Error())
@@ -92,6 +92,9 @@ func dependenciesReadyAtPush(ctx context.Context, client *redis.Client, sprint s
 		if len(fields) == 0 {
 			return false, missingDependency(sprint, dep)
 		}
+		if dep.Kind == dependencyTask && deadTaskState(fields["state"]) {
+			return false, fmt.Errorf("DEPENDS-ON: task:%s is %s in sprint %s and will never finish", dep.Value, fields["state"], sprint)
+		}
 		if !localDependencyReady(dep.Kind, fields) {
 			ready = false
 		}
@@ -111,6 +114,13 @@ func missingDependency(sprint string, dep dependency) error {
 		return fmt.Errorf("DEPENDS-ON: stream/%s has no record %s in sprint %s", dep.Value, keyStream(sprint, dep.Value), sprint)
 	}
 	return fmt.Errorf("DEPENDS-ON: %s is not a card in sprint %s", dep.Value, sprint)
+}
+
+// deadTaskState names the task states task.lua treats as dead dependencies
+// (dep:cancelled, dep:reconcile-required): a card parked on one waits for ever,
+// so push refuses it the way it refuses a missing record.
+func deadTaskState(state string) bool {
+	return state == "cancelled" || state == "reconcile-required"
 }
 
 func localDependencyReady(kind dependencyKind, fields map[string]string) bool {
