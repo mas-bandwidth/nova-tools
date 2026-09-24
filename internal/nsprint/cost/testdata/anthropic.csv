@@ -1,0 +1,7 @@
+usage_date,workspace_name,model,cost_usd
+2026-09-21,nova,claude-opus-5-5,12.345678
+2026-09-21,nova,claude-sonnet-5,3.210000
+2026-09-21,rocketnet,claude-opus-5-5,1.000001
+2026-09-22,nova,claude-opus-5-5,20.500000
+2026-09-22,nova,claude-opus-5-5,0.250000
+2026-09-22,nova,claude-fable-5-1,4.125000

@@ -44,7 +44,7 @@ func TestControl55Cost(t *testing.T) {
 	rc := fold.SumReads(tasks, 2)
 	var out bytes.Buffer
 	fold.PrintReads(&out, sprint, rc)
-	want := "FOLD READS sprint=control-55 reads=3 priced=2 unmetered=1 malformed=0 read_usd=1.5 landed=2 read_usd_per_landed=0.75\n"
+	want := "FOLD READS sprint=control-55 reads=3 priced=2 unmetered=1 malformed=0 read_usd=1.5 landed=2 read_usd_per_landed>=0.75 coverage=66.67% (2/3)\n"
 	if out.String() != want {
 		t.Fatalf("read line\n got %q\nwant %q", out.String(), want)
 	}

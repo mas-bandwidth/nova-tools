@@ -5336,6 +5336,59 @@ nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibratio
 
 **What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
 
+### cost import
+
+`nova-sprint cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>`
+imports one provider usage export (#3159). It runs from any seat: no home path,
+no `--as`, no friend name; the file is the only input, with zero REST calls
+and zero model tokens. Redis auth comes from the environment, as for every
+nova-sprint verb.
+
+The CSV's header is matched case-insensitively by alias: day (`date`, `day`,
+`usage_date`, `created_at`; the first ten characters, a UTC `YYYY-MM-DD`),
+cost (`cost_usd`, `usd`, `cost`, `total_cost`; dollars, >= 0), model
+(`model`, `model_name`, `model_permaslug`) and the optional project
+(`workspace`, `workspace_name`, `api_key_name`, `key_name`, `project`; `-`
+when absent). A row whose day cell is `total` is the export's own total,
+allowed only in a single-day file. Each row goes to the field
+`<project>|<route>`: the routes.yaml route with `via: openrouter` (for
+`openrouter`) or `via: opencode` (for `oc`) and the same model, else
+`model:<model>` (every `anthropic` row), counted in `unrouted_rows`.
+
+Each day is reconciled in integer micro-dollars before anything is written:
+the fields sum to the day's rows and a `total` row equals them, within $0.01.
+The day is written whole as the hash `cost:<provider>:<day>` (the fields,
+`total`, `rows`, `unrouted_rows`, `source_sha256`, `source_name`, `writer`,
+`at` in epoch ms UTC) with member `<provider>:<day>` in the zset `cost:idx`,
+score `YYYYMMDD`; neither key has a TTL. A clean import is two round trips: one
+pipeline reads what is stored, one MULTI/EXEC writes each changed day (DEL,
+HSET, ZADD). A day is `same` (not written, `at` kept) only when its stored hash
+without `at` and its index score both match; the same file with either half
+missing is `repaired`; a different file is `replaced` whole.
+
+```text
+COST IMPORT provider=<p> day=<d> rows=<n> total=<usd> fields=<n> unrouted_rows=<n> source=<sha8> state=new|same|replaced|repaired[ recovered=1]
+COST IMPORT DONE provider=<p> days=<n> written=<n> same=<n> repaired=<n> recovered=<n>
+```
+
+EXEC is not a rollback, so after a command error or a lost EXEC reply the verb
+reads each day back, retries the days not written once, and reads back again
+(at most five round trips). A Redis error reply in a read-back is a reply:
+the day is `partial`. Only a read-back with no reply makes a day `unknown`.
+
+| exit | meaning |
+|---|---|
+| 0 | imported (every day `same` included); a day recovered by the read-back adds `recovered=1` |
+| 2 | could not run: a flag, an unknown provider, no `--file` or `--redis` |
+| 3 | bad export: unreadable, no header, a required column missing (named), a day or cost that does not parse, a negative cost, a `\|` in a project or model, a `total` row in a multi-day file |
+| 4 | does not reconcile; nothing written |
+| 6 | Redis failed before the write (dial, AUTH, the read pipeline, `cost:idx` not a zset, EXECABORT); `nothing written`, proven |
+| 8 | outcome unknown: a read-back got no reply; each such day prints `state=unknown`; re-run the same import (it is idempotent) |
+| 9 | written in part: every reply received, and after one retry a day is not written; days print `state=written\|unchanged\|partial` and stderr names each failing command and its reply |
+
+Exit 7 is not used: in nova-sprint it means DOWN (`task push`, #2929). Exits 8
+and 9 never print `nothing written`.
+
 ### Where a card's results live
 
 `nova-sprint card end --results <dir>` writes `<dir>` once into the card hash

@@ -286,8 +286,9 @@ func TestViewsCountPerModelRoutePerBenchAndPerDay(t *testing.T) {
 			t.Errorf("the report does not carry %q:\n%s", want, got)
 		}
 	}
-	// fable/studio: five ok, one fail, $0.55 over one landed card.
-	if !strings.Contains(got, "fable\tstudio\t6\t5\t1\t6\t0.55\t0.11\t1\t0.55") {
+	// fable/studio: five ok, one fail, $0.55 over one landed card, all five cards priced
+	// (#3159: cards, priced_cards, then the figure with its coverage).
+	if !strings.Contains(got, "fable\tstudio\t6\t5\t1\t6\t0.55\t0.11\t1\t5\t5\t=0.55 coverage=100.00% (5/5)\n") {
 		t.Errorf("the fable/studio row is not the arithmetic this fold holds:\n%s", got)
 	}
 	// The row the sprint table reads: eleven done, ten ok, one fail, one landed.
@@ -361,8 +362,9 @@ func TestAMissingCostFoldsToNullNotZero(t *testing.T) {
 	if err := unpriced.Report(ctx, &report, 0); err != nil {
 		t.Fatal(err)
 	}
-	// cards rows done ok fail reads landed usd: the usd of a fold that holds no price is a dash.
-	if !strings.Contains(report.String(), "1\t1\t1\t1\t0\t0\t0\t-\n") {
+	// cards rows done ok fail reads landed usd priced_cards usd_per_landed: the usd of a fold
+	// that holds no price is a dash, no card is priced, and $/landed is a dash too (#3159).
+	if !strings.Contains(report.String(), "1\t1\t1\t1\t0\t0\t0\t-\t0\t-\n") {
 		t.Errorf("the totals row prices an unpriced fold; want usd as a dash:\n%s", report.String())
 	}
 }
