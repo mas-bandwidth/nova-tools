@@ -941,6 +941,12 @@ var verbFlags = map[string][]flagSpec{
 		{name: "max"},
 		{name: "now"},
 	},
+	// session status is a verb of the session's one request schema,
+	// *REQUEST-SCHEMA* in lisp/nova-work/src/request-line.lisp (E08-F01-01):
+	// this row is its flags, name for name, and
+	// lisp/nova-work/tests/criterion-e08-f01-01.lisp reads it from here and sends
+	// every flag this client admits or refuses over a real socket, so a row that
+	// drifts from the schema, or a wire that disagrees with it, is a red test.
 	"session status": {
 		{name: "session"},
 	},
