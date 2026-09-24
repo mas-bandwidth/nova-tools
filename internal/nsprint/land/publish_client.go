@@ -22,3 +22,10 @@ func CallTip(ctx context.Context, c *redis.Client, repo, base, sha, by, leaseVal
 func PubActiveKey(repo, base string) string {
 	return "land:" + repo + ":" + base + ":pub:active"
 }
+
+// CallPubVoid calls ns_pub_void: the publisher's void under the lease fence.
+// With only set it voids that batch; otherwise every chain batch whose from_tip
+// is not keep (all when keep is empty). It returns OK or STALE.
+func CallPubVoid(ctx context.Context, c *redis.Client, sprint, repo, base, leaseVal, reason, keep, only string) (string, error) {
+	return c.FCall(ctx, "ns_pub_void", nil, sprint, repo, base, leaseVal, reason, keep, only).Text()
+}

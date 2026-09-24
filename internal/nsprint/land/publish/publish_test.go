@@ -501,6 +501,54 @@ func TestL22(t *testing.T) {
 	})
 }
 
+// TestL22Fenced: the tip-moved void is a publisher write, so it carries the
+// lease fence: a publisher whose lease was taken over, or whose writer
+// generation is gone, voids nothing and gets FENCED (HOLD 5 on #3531, item 1).
+func TestL22Fenced(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		stale func(f *fx) string
+	}{
+		{"lease-taken-over", func(f *fx) string {
+			old := f.lease("pub-a")
+			f.takeLease("pub-b")
+			return old
+		}},
+		{"writer-generation-moved", func(f *fx) string {
+			old := f.lease("pub-a")
+			if _, err := land.CallWriter(f.ctx, f.rdb, f.repo, f.base, "nova-sprint", "fixture-2"); err != nil {
+				f.t.Fatalf("writer: %v", err)
+			}
+			return old
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFx(t)
+			u, h := f.member()
+			f.gate("b22f", f.plan("b22f", u+"@"+h))
+			moved := f.handPush()
+			if err := f.rdb.HSet(f.ctx, land.TipKey(f.repo, f.base), "sha", moved, "by", "fetch").Err(); err != nil {
+				t.Fatal(err)
+			}
+			r := f.land(f.publisher(tc.stale(f), nil))
+			if r.Outcome != publish.Fenced || r.Pushes != 0 {
+				t.Fatalf("stale publisher on a moved tip: %+v, want FENCED with 0 pushes", r)
+			}
+			if st := f.hget(land.BatchKey(f.repo, f.base, "b22f"), "state"); st != "green" {
+				t.Fatalf("batch %q, want green (the stale publisher voids nothing)", st)
+			}
+			if n, _ := f.rdb.ZCard(f.ctx, land.ChainKey(f.repo, f.base)).Result(); n != 1 {
+				t.Fatalf("chain holds %d, want 1", n)
+			}
+			if n := f.events("VOID"); n != 0 {
+				t.Fatalf("VOID %d, want 0", n)
+			}
+		})
+	}
+}
+
 // TestL28: the paused publisher, cases (i)-(iv) of section 11.
 func TestL28(t *testing.T) {
 	t.Parallel()

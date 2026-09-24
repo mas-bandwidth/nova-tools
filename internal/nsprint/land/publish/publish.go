@@ -5,7 +5,8 @@
 // One LandFront call is one pass of 7.1:
 //
 //  1. the front batch is GREEN and its from_tip equals the tip record, else the
-//     chain is voided from it for re-planning (L22);
+//     chain is voided from it for re-planning (L22), under the lease fence
+//     (ns_pub_void: a publisher that lost the lease voids nothing);
 //  2. ns_land_intent, the linearization point (2.3);
 //  3. the train rebuilt from the publisher's own mirror and compared with the
 //     receipt's train_head and train_tree;
@@ -188,8 +189,8 @@ func (p *Publisher) LandFront(ctx context.Context) (Result, error) {
 		return Result{}, err
 	}
 	if b.fromTip != tip {
-		if err := p.voidChain(ctx, "", "tip-moved"); err != nil {
-			return Result{}, err
+		if ok, err := p.voidChain(ctx, "", "tip-moved"); err != nil || !ok {
+			return ps.fenced(err)
 		}
 		return ps.done(Voided, fmt.Sprintf("VOID b%s from_tip=%s tip=%s", b.id, short(b.fromTip), short(tip))), nil
 	}
@@ -308,8 +309,8 @@ func (ps *pass) verified(ctx context.Context, tr *TrainResult, remote string) (R
 		if r, err := land.CallTip(ctx, c.Redis, c.Repo, c.Base, remote, "fetch", c.Lease); err != nil || r != "OK" {
 			return ps.fenced(err)
 		}
-		if err := p.voidChain(ctx, remote, "tip-moved"); err != nil {
-			return ps.res, err
+		if ok, err := p.voidChain(ctx, remote, "tip-moved"); err != nil || !ok {
+			return ps.fenced(err)
 		}
 		line += " descendant=" + short(remote)
 	}
@@ -325,8 +326,8 @@ func (ps *pass) dead(ctx context.Context, remote string) (Result, error) {
 	if r, err := land.CallTip(ctx, c.Redis, c.Repo, c.Base, remote, "fetch", c.Lease); err != nil || r != "OK" {
 		return ps.fenced(err)
 	}
-	if err := ps.p.voidChain(ctx, "", "dead"); err != nil {
-		return ps.res, err
+	if ok, err := ps.p.voidChain(ctx, "", "dead"); err != nil || !ok {
+		return ps.fenced(err)
 	}
 	return ps.done(Dead, fmt.Sprintf("DEAD b%s %s=%s is not a descendant of %s; chain voided", b.id, c.Base, short(remote), short(b.trainHead))), nil
 }
@@ -339,8 +340,8 @@ func (ps *pass) nondeterministic(ctx context.Context, tr *TrainResult) (Result, 
 	if ok, err := ps.step(ctx, "dead"); err != nil || !ok {
 		return ps.fenced(err)
 	}
-	if err := land.CallBatchVoid(ctx, c.Redis, c.Sprint, c.Repo, c.Base, b.id, "nondeterministic"); err != nil {
-		return ps.res, err
+	if r, err := land.CallPubVoid(ctx, c.Redis, c.Sprint, c.Repo, c.Base, c.Lease, "nondeterministic", "", b.id); err != nil || r != "OK" {
+		return ps.fenced(err)
 	}
 	return ps.done(Mismatch, fmt.Sprintf("LAND REFUSED nondeterministic b%s rebuilt=%s receipt=%s", b.id, short(tr.TrainHead), short(b.trainHead))), nil
 }
@@ -429,28 +430,15 @@ func (ps *pass) isDescendant(ctx context.Context, t string) (bool, error) {
 }
 
 // voidChain voids every batch on the chain whose from_tip is not keep (all of
-// them when keep is empty), for the batcher to re-plan.
-func (p *Publisher) voidChain(ctx context.Context, keep, reason string) error {
+// them when keep is empty), for the batcher to re-plan. It is one ns_pub_void
+// under the lease fence: false is STALE, and then nothing was voided.
+func (p *Publisher) voidChain(ctx context.Context, keep, reason string) (bool, error) {
 	c := p.cfg
-	ids, err := c.Redis.ZRange(ctx, land.ChainKey(c.Repo, c.Base), 0, -1).Result()
+	r, err := land.CallPubVoid(ctx, c.Redis, c.Sprint, c.Repo, c.Base, c.Lease, reason, keep, "")
 	if err != nil {
-		return err
+		return false, err
 	}
-	for _, id := range ids {
-		if keep != "" {
-			ft, err := c.Redis.HGet(ctx, land.BatchKey(c.Repo, c.Base, id), "from_tip").Result()
-			if err != nil && !errors.Is(err, redis.Nil) {
-				return err
-			}
-			if ft == keep {
-				continue
-			}
-		}
-		if err := land.CallBatchVoid(ctx, c.Redis, c.Sprint, c.Repo, c.Base, id, reason); err != nil {
-			return err
-		}
-	}
-	return nil
+	return r == "OK", nil
 }
 
 func (p *Publisher) readBatch(ctx context.Context, id string) (batch, error) {

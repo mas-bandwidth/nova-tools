@@ -47,3 +47,44 @@ redis.register_function('ns_tip', function(keys, args)
     'event', 'TIP', 'repo', repo, 'base', base, 'sha', sha, 'by', by, 'at', now)
   return 'OK'
 end)
+
+-- ns_pub_void: the publisher's void, under the same fence (HOLD 5 on #3531):
+-- ns_batch_void carries no lease check, so a publisher that lost the lease
+-- would void the new holder's chain. Args: sprint, repo, base, lease, reason,
+-- keep, only. With only set, that one batch; otherwise every chain batch whose
+-- from_tip is not keep (all of them when keep is empty). Each void is
+-- ns_batch_void's: state void, off the chain, members landable, the batch's
+-- unresolved intent dropped, a VOID event. STALE writes nothing.
+redis.register_function('ns_pub_void', function(keys, args)
+  local S, repo, base, lease_val, reason, keep, only = args[1], args[2], args[3], args[4], args[5], args[6] or '', args[7] or ''
+  local pre = 'land:' .. repo .. ':' .. base
+  local writer = redis.call('HMGET', pre .. ':writer', 'gen', 'owner')
+  if writer[2] ~= 'nova-sprint' then return 'STALE' end
+  if redis.call('GET', pre .. ':lease') ~= lease_val then return 'STALE' end
+  if string.match(lease_val or '', '^([^:]+):') ~= writer[1] then return 'STALE' end
+  local ids
+  if only ~= '' then ids = { only } else ids = redis.call('ZRANGE', pre .. ':chain', 0, -1) end
+  local t = redis.call('TIME')
+  local now = string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
+  for _, id in ipairs(ids) do
+    local bkey = pre .. ':batch:' .. id
+    if keep == '' or redis.call('HGET', bkey, 'from_tip') ~= keep then
+      redis.call('HSET', bkey, 'state', 'void', 'reason', reason)
+      redis.call('ZREM', pre .. ':chain', id)
+      for m in string.gmatch(redis.call('HGET', bkey, 'members') or '', '[^,]+') do
+        local unit = string.match(m, '^([^@]+)@')
+        if unit then
+          local ukey = 's:' .. S .. ':u:' .. unit
+          redis.call('HSET', ukey, 'state', 'landable', 'batch', '')
+          redis.call('ZADD', 's:' .. S .. ':landable:' .. repo .. ':' .. base, tonumber(redis.call('HGET', ukey, 'seq') or 0), unit)
+        end
+      end
+      if redis.call('GET', pre .. ':pub:active') == id then
+        redis.call('DEL', pre .. ':pub:' .. id, pre .. ':pub:active')
+      end
+      redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+        'event', 'VOID', 'repo', repo, 'base', base, 'batch', id, 'reason', reason, 'at', now)
+    end
+  end
+  return 'OK'
+end)
