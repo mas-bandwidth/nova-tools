@@ -359,6 +359,8 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
 nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
+nova-memory view   [--exclude <glob>]... [--max <n>] <file>...
+                                                                        the companion view: a chronological timeline of shared moments, sources never rewritten
 ```
 
 ### First run
