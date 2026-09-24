@@ -97,8 +97,14 @@ local function card_deal(keys, args)
   if redis.call('SISMEMBER', 'benches', bench) == 0 then
     return { 'NONE', 'unregistered' }
   end
-  if redis.call('EXISTS', 'bench:' .. bench .. ':beat') == 0 then
-    return { 'NONE', 'down' }
+  local bstate = redis.call('HGET', 'bench:' .. bench .. ':state', 'state')
+  if not bstate or bstate == '' then
+    bstate = 'down'
+  else
+    bstate = string.lower(bstate)
+  end
+  if bstate ~= 'up' then
+    return { 'NONE', bstate }
   end
   local desired = redis.call('HMGET', 'bench:' .. bench .. ':desired', 'slots', 'paused', 'legs')
   if desired[2] == '1' or desired[2] == 'true' then

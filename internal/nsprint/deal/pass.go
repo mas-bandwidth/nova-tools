@@ -589,6 +589,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	pipe = c.Pipeline()
 	type benchCmds struct {
 		desired, beat, ssh *redis.MapStringStringCmd
+		state              *redis.StringCmd
 		starting, living   *redis.IntCmd
 	}
 	bc := make([]benchCmds, len(names))
@@ -596,6 +597,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		bc[i] = benchCmds{
 			desired:  pipe.HGetAll(ctx, "bench:"+b+":desired"),
 			beat:     pipe.HGetAll(ctx, "bench:"+b+":beat"),
+			state:    pipe.HGet(ctx, "bench:"+b+":state", "state"),
 			ssh:      pipe.HGetAll(ctx, RowKey(b)),
 			starting: pipe.ZCard(ctx, "bench:"+b+":starting"),
 			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
@@ -621,7 +623,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Name:   name,
 			Host:   beat["host"],
 			User:   beat["user"],
-			Up:     len(beat) > 0,
+			Up:     bc[i].state.Val() == "UP",
 			Paused: d["paused"] == "1" || d["paused"] == "true",
 			Legs:   splitList(d["legs"]),
 			Slots:  slots,

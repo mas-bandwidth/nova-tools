@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 )
@@ -219,6 +220,7 @@ type BenchRequest struct {
 	Probe    string
 	Launcher string
 	Why      string
+	Build    string
 	Session  string
 	Live     []string
 	Actor    string
@@ -241,10 +243,14 @@ func BenchBeat(ctx context.Context, st *store.Store, req BenchRequest) (BenchRes
 	if st == nil || req.Bench == "" || req.Session == "" {
 		return BenchResult{}, fmt.Errorf("bench beat: store, bench and session are required")
 	}
+	build := req.Build
+	if build == "" {
+		build = buildinfo.Line("nova-sprint", "")
+	}
 	reply, err := st.Client().FCall(ctx, FunctionBenchBeat, nil,
 		req.Bench, req.Host, req.User, req.Load1, req.SSH, req.Probe,
 		req.Launcher, strings.Join(req.Live, liveSeparator), req.Why,
-		req.Session, req.Actor, req.Idem).Result()
+		req.Session, req.Actor, req.Idem, build).Result()
 	if err != nil {
 		return BenchResult{}, fmt.Errorf("bench beat %s: %w", req.Bench, err)
 	}

@@ -119,6 +119,30 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 		*instance = fmt.Sprintf("%s-%d", host, os.Getpid())
 	}
 
+	var activeBenches []string
+	if len(benches) > 0 {
+		reads := make([]store.HashRead, len(benches))
+		for i, b := range benches {
+			reads[i] = store.HashRead{Key: "bench:" + b + ":state", Fields: []string{"state"}}
+		}
+		vals, err := st.PipelineHMGet(ctx, reads)
+		if err != nil {
+			return refuse(errOut, "card harvest", err.Error())
+		}
+		for i, b := range benches {
+			state, _ := vals[i][0].(string)
+			if state == "" {
+				state = "DOWN"
+			}
+			if state != "UP" {
+				fmt.Fprintf(out, "bench %s skipped: %s\n", b, strings.ToLower(state))
+				continue
+			}
+			activeBenches = append(activeBenches, b)
+		}
+	}
+	benches = activeBenches
+
 	results := harvest.Run(ctx, st, harvest.Options{
 		Sprint: *sprint, Benches: benches, Labels: only, Clock: *clock, Instance: *instance,
 		Forge:  harvest.GitHub{Owner: *owner},

@@ -10,7 +10,7 @@
 --   friend:<f>:beat             hash (harness, host, session, at), TTL 5 s
 --   friend:<f>:wake             list max 1, TTL 600 s
 --   bench:<b>:beat              hash (host, user, load1, ssh, probe,
---                                    launcher, live, why, at), TTL 5 s
+--                                    launcher, live, why, build, at), TTL 5 s
 --   bench:<b>:live              set of card identities, TTL 5 s
 --   bench:<b>:owner             fenced owner session, TTL 5 s (single
 --                                    instance; a different session is BUSY)
@@ -182,6 +182,7 @@ local function bench_beat(keys, args)
   local ssh, probe, launcher = args[5], args[6], args[7]
   local live, why = args[8], args[9]
   local session, actor, idem = args[10], args[11], args[12]
+  local build = args[13]
   if not session or session == '' then
     session = actor or ''
   end
@@ -200,7 +201,7 @@ local function bench_beat(keys, args)
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
-    'live', '0', 'why', why or '', 'at', tostring(at))
+    'live', '0', 'why', why or '', 'build', build or '', 'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', PL_BEAT_MS)
   redis.call('SET', owner_key, session, 'PX', PL_BEAT_MS)
 
