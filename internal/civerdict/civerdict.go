@@ -10,7 +10,10 @@ package civerdict
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -25,9 +28,50 @@ const (
 	Missing = "MISSING"
 )
 
-// Key is where one commit's verdict lives: ci:<owner/repo>:<sha>.
-func Key(repo, sha string) string {
-	return "ci:" + repo + ":" + strings.TrimSpace(sha)
+var (
+	ErrNoPolicy = errors.New("civerdict: no policy record")
+)
+
+// GID computes the 16-hex gate receipt identity (spec §2.2 / §3.7):
+// sha256("kind=single", base, base_sha, required_set_id, policy_id, runner_id)[:16].
+func GID(kind, base, baseSHA, requiredSetID, policyID, runnerID string) string {
+	raw := fmt.Sprintf("kind=%s,%s,%s,%s,%s,%s", kind, base, baseSHA, requiredSetID, policyID, runnerID)
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// Key is where one commit's verdict lives: ci:<owner/repo>:<head>:<gid>.
+func Key(repo, head, gid string) string {
+	return "ci:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(head) + ":" + strings.TrimSpace(gid)
+}
+
+// GIDsKey is the set of all GIDs gated for a head: ci:<owner/repo>:<head>:gids.
+func GIDsKey(repo, head string) string {
+	return "ci:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(head) + ":gids"
+}
+
+// PolicyKey is where the base policy record lives: land:<repo>:<base>:policy.
+func PolicyKey(repo, base string) string {
+	return "land:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(base) + ":policy"
+}
+
+// Expected reads the land:<repo>:<base>:policy record from Redis and returns the expected GID for base and baseSHA.
+func Expected(ctx context.Context, c redis.Cmdable, repo, base, baseSHA string) (string, error) {
+	if c == nil {
+		return "", ErrNoPolicy
+	}
+	polKey := PolicyKey(repo, base)
+	fields, err := c.HMGet(ctx, polKey, "policy_id", "required_set_id", "runner_id").Result()
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", polKey, err)
+	}
+	policyID, _ := fields[0].(string)
+	requiredSetID, _ := fields[1].(string)
+	runnerID, _ := fields[2].(string)
+	if policyID == "" || requiredSetID == "" || runnerID == "" {
+		return "", ErrNoPolicy
+	}
+	return GID("single", base, baseSHA, requiredSetID, policyID, runnerID), nil
 }
 
 // Of is the verdict word a record carries, trimmed, or "" when the record is
@@ -46,8 +90,8 @@ func Green(verdict string) bool { return strings.TrimSpace(verdict) == OK }
 // Read fetches one commit's record with HGETALL. An absent key is an empty
 // map and a nil error. Any error (WRONGTYPE, NOPERM, a dead store) is returned
 // as is: it is an unreadable record, never a verdict.
-func Read(ctx context.Context, c redis.Cmdable, repo, sha string) (map[string]string, error) {
-	fields, err := c.HGetAll(ctx, Key(repo, sha)).Result()
+func Read(ctx context.Context, c redis.Cmdable, repo, head, gid string) (map[string]string, error) {
+	fields, err := c.HGetAll(ctx, Key(repo, head, gid)).Result()
 	if errors.Is(err, redis.Nil) {
 		return map[string]string{}, nil
 	}
@@ -55,4 +99,36 @@ func Read(ctx context.Context, c redis.Cmdable, repo, sha string) (map[string]st
 		return nil, err
 	}
 	return fields, nil
+}
+
+// ReadHead reads all receipts for a head using ci:<repo>:<head>:gids.
+// If any receipt is Green, it returns that record. Otherwise it returns the latest or first record.
+func ReadHead(ctx context.Context, c redis.Cmdable, repo, head string) (map[string]string, error) {
+	if c == nil {
+		return map[string]string{}, nil
+	}
+	gids, err := c.SMembers(ctx, GIDsKey(repo, head)).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, err
+	}
+	if len(gids) == 0 {
+		return map[string]string{}, nil
+	}
+	var last map[string]string
+	for _, gid := range gids {
+		rec, err := Read(ctx, c, repo, head, gid)
+		if err != nil {
+			return nil, err
+		}
+		if len(rec) > 0 {
+			if Green(Of(rec)) {
+				return rec, nil
+			}
+			last = rec
+		}
+	}
+	if last != nil {
+		return last, nil
+	}
+	return map[string]string{}, nil
 }

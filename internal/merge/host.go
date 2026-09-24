@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -443,13 +444,13 @@ func (h *GH) Checks(oid string) (Checks, error) {
 		value, ok, err := h.CI.Read(h.Repo, oid)
 		switch {
 		case err != nil:
-			why = CIKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
+			why = civerdict.GIDsKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
 		case ok:
 			c := Checks{Source: CIFromRedis}
 			c.AddRun("ci", ciState(value), oid)
 			return c, nil
 		default:
-			why = CIKey(h.Repo, oid) + " absent"
+			why = civerdict.GIDsKey(h.Repo, oid) + " absent"
 		}
 	}
 	c, err := h.checkRuns(oid)

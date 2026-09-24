@@ -37,12 +37,13 @@ const ReadTitleSuffix = "DONE-WHEN: typed DISPOSITION at head with score; 8+ lan
 // cut is idempotent per head and base, so a redelivered harvested event may
 // call it again.
 type CICut struct {
-	Sprint string
-	Label  string
-	Repo   string
-	PR     int
-	Head   string
-	Base   string
+	Sprint  string
+	Label   string
+	Repo    string
+	PR      int
+	Head    string
+	Base    string
+	BaseRef string
 }
 
 // OkFriend is the ok-to-friend consumer for one sprint (#2756 4.5): a card
@@ -363,7 +364,7 @@ func (o *OkFriend) skip(ctx context.Context, e *okEvent, reason, unresolved stri
 }
 
 // isCICard: a ci card (10.2) carries ci_for; its verdict is already in
-// ci:<repo>:<sha>, so it has nothing to harvest and is never a read.
+// ci:<repo>:<head>:<gid>, so it has nothing to harvest and is never a read.
 func isCICard(label string, card map[string]string) bool {
 	return card["ci_for"] != "" || (card["kind"] == "script" && strings.HasPrefix(label, "ci-"))
 }
@@ -428,7 +429,7 @@ func (o *OkFriend) onHarvested(ctx context.Context, e *okEvent, census *readerCe
 	}
 	if o.CICut != nil {
 		if err := o.CICut(ctx, CICut{Sprint: o.Sprint, Label: e.label, Repo: c["repo"],
-			PR: pr, Head: head, Base: c["base_sha"]}); err != nil {
+			PR: pr, Head: head, Base: c["base_sha"], BaseRef: c["base"]}); err != nil {
 			return fmt.Errorf("ok-to-friend: ci cut %s at %s: %w", e.label, head, err)
 		}
 	}

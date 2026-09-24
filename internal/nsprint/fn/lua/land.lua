@@ -7,48 +7,6 @@ local function land_now_ms()
   return string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
 end
 
--- gate_receipt_write (3.7): writes the write-once single or tip gid receipt.
--- ci:<repo>:<head>:<gid> and ci:<repo>:<base>:tip:<tip>:<gid>.
-local function gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test, at)
-  local ckey = 'ci:' .. repo .. ':' .. head .. ':' .. gid
-  if redis.call('EXISTS', ckey) == 1 then
-    return 'ALREADY'
-  end
-  at = at or land_now_ms()
-  redis.call('HSET', ckey,
-    'verdict', verdict,
-    'kind', kind,
-    'base', base,
-    'base_sha', base_sha,
-    'required_set_id', required_set_id,
-    'policy_id', policy_id,
-    'runner_id', runner_id,
-    'receipt', receipt,
-    'bench', bench or '',
-    'pkg', pkg or '',
-    'test', test or '',
-    'at', tostring(at)
-  )
-  redis.call('SADD', 'ci:' .. repo .. ':' .. head .. ':gids', gid)
-  if kind == 'tip' then
-    local tip_key = 'ci:' .. repo .. ':' .. base .. ':tip:' .. base_sha .. ':' .. gid
-    redis.call('HSET', tip_key,
-      'verdict', verdict,
-      'kind', kind,
-      'base', base,
-      'base_sha', base_sha,
-      'required_set_id', required_set_id,
-      'policy_id', policy_id,
-      'runner_id', runner_id,
-      'receipt', receipt,
-      'bench', bench or '',
-      'pkg', pkg or '',
-      'test', test or '',
-      'at', tostring(at)
-    )
-  end
-  return 'OK'
-end
 
 redis.register_function('ns_gate_receipt_write', function(keys, args)
   local repo, head, gid, verdict = args[1], args[2], args[3], args[4]

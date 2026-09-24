@@ -1,6 +1,6 @@
 // Package sprintci is a CI pass as a card (nova-tools#2842).
 //
-// A CI pass is one card per PR head. Its id is ci:<repo>:<sha>, the Redis
+// A CI pass is one card per PR head. Its id is cicard:<repo>:<sha>, the Redis
 // key for that head, and the sha is the full head rather than eight digits.
 // It takes one slot inside the machine width. Half the slots stay for model
 // cards: the CI share is width/2 (the odd slot, if there is one, stays with
@@ -14,7 +14,7 @@
 // front tier: KIND script, zero model calls. The bench runs that script from
 // its mirror at the sha, never a clone from GitHub. The script runs gofmt,
 // go vet, and go test on the PATHS packages. The card's end writes Redis
-// ci:<repo>:<sha> as OK, or FAIL plus the package and the test.
+// ci:<repo>:<head>:<gid> as OK, or FAIL plus the package and the test.
 package sprintci
 
 import (
@@ -95,17 +95,17 @@ func (d *Dealer) ModelHeld() int {
 	return len(d.model)
 }
 
-// ID is ci:<repo>:<sha>, the Redis key for this head. The sha is the full
+// ID is cicard:<repo>:<sha>, the card identity for this head. The sha is the full
 // 40-digit head. Eight hex digits are not a head, and the repository is part
 // of the card: two repos, or two heads that share only those eight digits,
-// are not one card. The pull request is not in the id. One head has one
-// verdict. A card that is not one head has no id.
+// are not one card. The pull request is not in the id. A card that is not
+// one head has no id.
 func (c Card) ID() (string, error) {
 	sha, err := c.norm()
 	if err != nil {
 		return "", err
 	}
-	return "ci:" + c.Repo + ":" + sha, nil
+	return "cicard:" + c.Repo + ":" + sha, nil
 }
 
 // fileName is the front-tier file ci-<pr>-<sha8>.md. It is not the card id.

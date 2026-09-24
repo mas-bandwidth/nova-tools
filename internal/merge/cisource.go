@@ -46,9 +46,9 @@ type CISource interface {
 	Read(repo, sha string) (value string, ok bool, err error)
 }
 
-// CIKey is where a commit's verdict record lives: ci:<owner/repo>:<sha>.
-func CIKey(repo, sha string) string {
-	return civerdict.Key(repo, sha)
+// CIKey is where a commit's verdict record lives: ci:<owner/repo>:<head>:<gid>.
+func CIKey(repo, sha, gid string) string {
+	return civerdict.Key(repo, sha, gid)
 }
 
 // ciState maps a record's verdict word onto a check-run state Checks buckets:
@@ -68,12 +68,12 @@ func ciState(value string) string {
 // ciReadTimeout bounds one Redis read so a hung server cannot hang a pass.
 const ciReadTimeout = 5 * time.Second
 
-// RedisCISource is the production CISource: one HGETALL per commit.
+// RedisCISource is the production CISource: reads through civerdict.ReadHead.
 type RedisCISource struct {
 	Client redis.UniversalClient
 }
 
-// Read fetches ci:<owner/repo>:<sha> through civerdict.Read. A nil client, a
+// Read fetches the commit's verdict record through civerdict.ReadHead. A nil client, a
 // missing key or a record without a verdict reads as ok false; a transport or
 // ACL error is returned, and GH.Checks falls back to the forge on it.
 func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
@@ -82,7 +82,7 @@ func (r *RedisCISource) Read(repo, sha string) (string, bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), ciReadTimeout)
 	defer cancel()
-	fields, err := civerdict.Read(ctx, r.Client, repo, sha)
+	fields, err := civerdict.ReadHead(ctx, r.Client, repo, sha)
 	if err != nil {
 		return "", false, err
 	}

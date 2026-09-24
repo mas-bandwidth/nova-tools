@@ -20,7 +20,7 @@ import (
 // verb. A pass outside the dealer's share does not run. A bench with no
 // dealt slot does not start. ci cut writes the script card into the front
 // tier, the bench runs that script from the mirror, and the end writes
-// ci:<repo>:<sha>.
+// ci:<repo>:<head>:<gid>.
 func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 	t.Parallel()
 	checkShares(t)
@@ -80,9 +80,13 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 	}
 
 	mr := miniredis.RunT(t)
-	key, err := sprintci.VerdictKey(repo, sha)
+	head := sprintci.Card{Repo: repo, PR: pr, SHA: sha}
+	id, err := head.ID()
 	if err != nil {
 		t.Fatal(err)
+	}
+	if want := "cicard:" + repo + ":" + sha; id != want {
+		t.Fatalf("id = %s, want %s", id, want)
 	}
 	d, err := sprintci.New(8)
 	if err != nil {
@@ -103,11 +107,10 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 	if entries, _ := os.ReadDir(idleRoot); len(entries) != 0 {
 		t.Fatalf("a bench with no dealt slot wrote %d entries", len(entries))
 	}
-	if mr.Exists(key) {
+	if len(mr.Keys()) != 0 {
 		t.Fatal("the end wrote Redis without a run")
 	}
 
-	head := sprintci.Card{Repo: repo, PR: pr, SHA: sha}
 	if ok, reason := d.Deal("hulk", head); !ok {
 		t.Fatalf("deal hulk: %s", reason)
 	}
@@ -147,11 +150,12 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !res.Started || res.Value != "OK" || res.Key != key {
+	if !res.Started {
 		t.Fatalf("OK run: %+v", res)
 	}
-	if got, err := mr.Get(key); err != nil || got != "OK" {
-		t.Fatalf("redis %s = %q, %v; want OK", key, got, err)
+	// Bench.Run writes no Redis key (spec §3.7 / B21)
+	if len(mr.Keys()) != 0 {
+		t.Fatalf("Bench.Run wrote Redis keys: %v", mr.Keys())
 	}
 
 	failFront := filepath.Join(t.TempDir(), "front")
@@ -160,12 +164,11 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantFail = "FAIL example.com/ci/bad TestBad"
-	if !res.Started || res.Value != wantFail {
+	if !res.Started {
 		t.Fatalf("FAIL run: %+v", res)
 	}
-	if got, err := mr.Get(key); err != nil || got != wantFail {
-		t.Fatalf("redis %s = %q, %v; want %s", key, got, err, wantFail)
+	if len(mr.Keys()) != 0 {
+		t.Fatalf("Bench.Run wrote Redis keys on fail: %v", mr.Keys())
 	}
 	if runDealer.CIHeld() != 1 {
 		t.Fatalf("the failing rerun took a second slot: CI held %d", runDealer.CIHeld())
