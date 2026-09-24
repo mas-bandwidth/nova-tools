@@ -106,6 +106,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "first line of a typed DISPOSITION/REPAIR comment (#3092), a friend read record, not RESULT line 2"},
 	{file: "internal/nsprint/task/take.go", fn: "DoneTyped", record: "task-done-status", since: "50fbecdb",
 		reason: "task done status DONE, the ns task-done function's reply word, not a RESULT field"},
+	{file: "internal/nsprint/land/eval_records.go", fn: "ParseInboundObjection", record: "objection", since: "362dde93",
+		reason: "first word of an inbound comment/review or PR body (HOLD, BLOCKED), the lander's B2 objection record (#3139), not RESULT line 2"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
