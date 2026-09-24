@@ -59,6 +59,14 @@ HOME_DIR="${HOME:-}"
 DRIFTS=0
 STRAY_PIDS=""
 
+# Build the card environment before any tool resolution so the verdict
+# does not depend on the caller's PATH (nova-tools#2052).
+if [ -f "$HOME_DIR/sdk/env.sh" ]; then
+  set +u
+  . "$HOME_DIR/sdk/env.sh"
+  set -u
+fi
+
 drift() {
   echo "DRIFT $*"
   DRIFTS=$((DRIFTS + 1))
@@ -187,6 +195,110 @@ fi
 if ! command -v sbcl >/dev/null 2>&1; then
   drift "sbcl not on PATH"
 fi
+
+# (3c) THE TOOLCHAIN MUST BE RUNNABLE INSIDE THE WALL, not merely on PATH.
+# `command -v sbcl` answers about the bench user's own shell. A card runs behind the
+# sandbox wall, whose linux read roots are the system table of
+# internal/sandbox/wrap_linux.go plus the toolchain roots of internal/swarm/toolchain.go.
+# Of the toolchain roots only `sdk` carries EXECUTE (`go/pkg/mod` is read WITHOUT execute),
+# so the roots that can run a tool are the system table plus `$HOME/sdk`. An sbcl at
+# $HOME/.local/bin/sbcl is on PATH and is `Permission denied` inside the wall, which is why
+# every lisp card was forced onto the one bench whose sbcl is /usr/bin/sbcl -- measured
+# 2026-09-19: E09-G1 on vision 1036 s against 248-393 s for the same class on space, and the
+# r1785 worker on mini fetched an SBCL 2.4.0 of its own into $TMPDIR before it could run a
+# test.
+#
+# THE ROOTS ARE THE WALL'S, WHOLE. The system table below and linuxReadRoots in
+# internal/sandbox/wrap_linux.go are ONE list: internal/ci's class test fails when they
+# drift apart (a hand-picked subset reported a tool under /etc or /dev "under NO read
+# root" while the wall executes it). Every entry there is landlock's read subset, which
+# carries EXECUTE. The wall also grants, per machine, the directory /etc/resolv.conf
+# RESOLVES to (linuxRoots, #1737: /mnt/wsl on WSL2), so this check grants it too.
+# NOVA_RESOLV_CONF is the test seam for that file, as resolvConfPath is the wall's.
+# NOVA_WALL_READ_ROOTS BEGIN
+NOVA_WALL_READ_ROOTS="/usr /bin /sbin /lib /lib64 /etc /run/systemd/resolve /opt /dev /proc"
+# NOVA_WALL_READ_ROOTS END
+wall_resolv_dir=""
+wall_resolv="$(readlink -f "${NOVA_RESOLV_CONF:-/etc/resolv.conf}" 2>/dev/null || true)"
+if [ -n "$wall_resolv" ] && [ -e "$wall_resolv" ]; then
+  wall_resolv_dir="$(dirname "$wall_resolv")"
+  case "$wall_resolv_dir" in /|.|"") wall_resolv_dir="" ;; esac
+fi
+for tool in go sbcl; do
+  p="$(command -v "$tool" 2>/dev/null || true)"
+  [ -n "$p" ] || continue          # absent is the check above's DRIFT, not this one's
+  rp="$(readlink -f "$p" 2>/dev/null || echo "$p")"
+  granted=0
+  # $HOME/sdk is the one toolchain root granted WITH execute (internal/swarm/toolchain.go);
+  # go/pkg/mod is granted without it, so a tool there is still undrivable and not listed.
+  for root in $NOVA_WALL_READ_ROOTS $wall_resolv_dir "$HOME_DIR/sdk"; do
+    rroot="$(readlink -f "$root" 2>/dev/null || echo "$root")"
+    [ -n "$rroot" ] || continue
+    case "$rp" in "$rroot"/*) granted=1 ;; esac
+  done
+  if [ "$granted" != "1" ]; then
+    drift "$tool on PATH is $p -> $rp, under NO read root the sandbox wall grants (the system roots of internal/sandbox/wrap_linux.go, the resolver directory, and \$HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under $HOME_DIR/sdk/$tool-<ver>/ and point the PATH entry there"
+  fi
+done
+# (3d) THE SBCL PIN, not only its presence (nova-tools#2053): space ran SBCL 2.6.0.debian
+# from /usr/bin while the fleet pins $NOVA_SBCL under ~/sdk, and a presence check printed
+# PINNED for it. The version is `sbcl --version`'s second word, compared whole (2.5.80 is
+# not 2.5.8); the path is the resolved one, compared against the resolved ~/sdk (macOS
+# temp and home dirs sit behind /var -> /private/var). An absent sbcl is (3)'s DRIFT.
+NOVA_SBCL="${NOVA_SBCL:-2.5.8}"
+sdk_real="$(readlink -f "$HOME_DIR/sdk" 2>/dev/null || echo "$HOME_DIR/sdk")"
+if command -v sbcl >/dev/null 2>&1; then
+  sbcl_out="$(sbcl --version 2>&1 | head -1 || true)"
+  sbcl_ver="$(printf '%s\n' "$sbcl_out" | awk '{print $2}')"
+  if [ "$sbcl_ver" != "$NOVA_SBCL" ]; then
+    drift "sbcl version [$sbcl_out] want $NOVA_SBCL (NOVA_SBCL)"
+  fi
+  sbcl_p="$(command -v sbcl)"
+  sbcl_rp="$(readlink -f "$sbcl_p" 2>/dev/null || echo "$sbcl_p")"
+  case "$sbcl_rp" in
+    "$sdk_real"/*) ;;
+    *) drift "sbcl at $sbcl_p -> $sbcl_rp not under $HOME_DIR/sdk (want $HOME_DIR/sdk/sbcl-$NOVA_SBCL/)" ;;
+  esac
+fi
+
+# (3e) THE PRO RUNG (nova-tools#2053): pro loops existed on five linux benches only; the
+# Macs were flash-only and 528 of 998 slots sat idle in a pro wave. A bench has the rung
+# when NOVA_PRO_RUNG names an executable or ~/nova-bench/rungs/pro or ~/nova-bench/pro exists.
+NOVA_PRO_RUNG="${NOVA_PRO_RUNG:-}"
+pro_rung=0
+if [ -n "$NOVA_PRO_RUNG" ] && [ -x "$NOVA_PRO_RUNG" ]; then
+  pro_rung=1
+else
+  for rp in "$HOME_DIR/nova-bench/rungs/pro" "$HOME_DIR/nova-bench/pro"; do
+    if [ -d "$rp" ]; then pro_rung=1; break; fi
+  done
+fi
+if [ "$pro_rung" = "0" ]; then
+  drift "pro rung missing (no executable NOVA_PRO_RUNG, no $HOME_DIR/nova-bench/rungs/pro, no $HOME_DIR/nova-bench/pro)"
+fi
+
+# (3f) SQLITE3 UNDER ~/sdk (nova-tools#2053): space resolved /usr/bin/sqlite3 while the
+# other benches carry ~/sdk/sqlite3-<ver>, so one card saw two sqlite3s by bench.
+if ! command -v sqlite3 >/dev/null 2>&1; then
+  drift "sqlite3 not on PATH (want $HOME_DIR/sdk/sqlite3-<ver>/bin/sqlite3)"
+else
+  sq_p="$(command -v sqlite3)"
+  sq_rp="$(readlink -f "$sq_p" 2>/dev/null || echo "$sq_p")"
+  case "$sq_rp" in
+    "$sdk_real"/*) ;;
+    *) drift "sqlite3 at $sq_p -> $sq_rp not under $HOME_DIR/sdk (want $HOME_DIR/sdk/sqlite3-<ver>/bin/sqlite3)" ;;
+  esac
+fi
+
+# (3g) THE SLOT SHARE IS DECLARED (nova-tools#2053): hulk 110/125, vision 104/121, space
+# 192/125, hetzner 64/61, superman 54/64, batman 24/32, the Studio 450/512, and no formula
+# recorded anywhere. A bench declares its share as a positive whole number of slots.
+NOVA_SLOT_SHARE="${NOVA_SLOT_SHARE:-}"
+case "$NOVA_SLOT_SHARE" in
+  "") drift "NOVA_SLOT_SHARE unset (declare the bench's slot share, a positive whole number of slots)" ;;
+  *[!0-9]*|0|0*) drift "NOVA_SLOT_SHARE=$NOVA_SLOT_SHARE is not a positive whole number of slots" ;;
+esac
+
 harness_ok=0
 if [ -n "$NOVA_HARNESS" ]; then
   if [ -x "$NOVA_HARNESS" ]; then
@@ -203,6 +315,35 @@ else
   done
   if [ "$harness_ok" = "0" ]; then
     drift "harness missing at $HOME_DIR/nova-bench/harness-<ver>/opencode"
+  fi
+fi
+
+# (3c) harness canary: try to start the harness inside the sandbox wall.
+# A harness that cannot start inside the wall means the bench is unfit for
+# cards -- every card would fail at startup (#2388).
+if [ "$harness_ok" = "1" ] && [ "$OS" = "Linux" ]; then
+  _hbin=""
+  if [ -n "$NOVA_HARNESS" ]; then
+    _hbin="$NOVA_HARNESS"
+  else
+    for _h in "$HOME_DIR"/nova-bench/harness-*/opencode; do
+      [ -x "$_h" ] || continue
+      _hbin="$_h"
+      break
+    done
+  fi
+  if [ -n "$_hbin" ]; then
+    _sbin="$HOME_DIR/.local/bin/nova-sandbox"
+    if [ -x "$_sbin" ]; then
+      _cdir="$(mktemp -d "$HOME_DIR/nova-bench/nova-canary.XXXXXX" 2>/dev/null || true)"
+      if [ -n "$_cdir" ]; then
+        mkdir -p "$_cdir/home"
+        if ! HOME="$_cdir/home" "$_sbin" --read "$HOME_DIR/nova-bench" --write "$_cdir" --cwd "$_cdir" -- "$_hbin" --help >/dev/null 2>&1; then
+          drift "harness cannot start inside the sandbox wall; $_hbin --help failed under nova-sandbox"
+        fi
+        rm -rf "$_cdir"
+      fi
+    fi
   fi
 fi
 
@@ -265,6 +406,29 @@ if [ -d "$seatdir" ]; then
     seatkey="$k"
   done
 fi
+# Exactly one seat key per owner prefix (SPEC-SECRETS.md dogfooding item 6):
+# the owner is the key name before its first "-" (rowan-claude and
+# rowan-codex are both owner rowan). Two keys for one owner is a lost key
+# still trusted or an undeclared grant, named by owner. Portable to bash 3.2
+# (no associative arrays).
+if [ "$nkeys" -gt 1 ]; then
+  owners=""
+  for k in "$seatdir"/*.key; do
+    [ -e "$k" ] || continue
+    kn="$(basename "$k" .key)"
+    owners="$owners${kn%%-*}
+"
+  done
+  # Heredoc, not a pipe, so drift() counts in this shell.
+  while read -r n owner; do
+    [ -n "$owner" ] || continue
+    if [ "$n" -gt 1 ]; then
+      drift "seat owner=$owner keys=$n want=1 in $seatdir"
+    fi
+  done <<OWNERS
+$(printf '%s' "$owners" | sort | uniq -c)
+OWNERS
+fi
 if [ "$nkeys" != "1" ]; then
   drift "seat keys=$nkeys want=1 in $seatdir"
 else
@@ -273,6 +437,9 @@ else
   else
     seat="$(basename "$seatkey" .key)"
     store="${NOVA_SECRETS_STORE:-}"
+    if [ -z "$store" ] && [ -d "$HOME_DIR/nova-bench/secrets" ]; then
+      store="$HOME_DIR/nova-bench/secrets"
+    fi
     if [ -z "$store" ] && [ -d "$HOME_DIR/secrets" ]; then
       store="$HOME_DIR/secrets"
     fi

@@ -93,6 +93,59 @@ func TestAStoreThatWillNotAnswerIsAnErrorAndNotAnEmptyRoom(t *testing.T) {
 	}
 }
 
+// TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent is #2675: a friend is
+// present only while friend:<name> itself is alive. A missing key is
+// absent, the untimed :last memory of a beat is still absent, a live key
+// is present, and the same key past its TTL is absent again. There is no
+// override file to consult when the key is gone.
+func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
+	st := NewFakeStore(at)
+	ctx := context.Background()
+
+	sts := mustRead(t, st, []string{"stella"})
+	if vals, err := st.MGet(ctx, Key("stella")); err != nil || vals[0] != "" {
+		t.Fatalf("beat key before any write = %q, %v; want it missing", vals, err)
+	}
+	if sts[0].Present() {
+		t.Fatal("a missing beat key is present; want absent")
+	}
+	if got := sts[0].Phrase(at); got != "stella none" {
+		t.Fatalf("missing key phrase = %q; want %q", got, "stella none")
+	}
+
+	// :last alone is the memory of a beat, not a friend who is here.
+	if err := st.Set(ctx, LastKey("stella"), at.UTC().Format(Stamp), 0); err != nil {
+		t.Fatalf("set last: %v", err)
+	}
+	sts = mustRead(t, st, []string{"stella"})
+	if sts[0].Present() {
+		t.Fatal("friend:stella:last with no beat key is present; want absent")
+	}
+	if sts[0].State != Away {
+		t.Fatalf("last-only state = %v; want Away (absent, dated)", sts[0].State)
+	}
+
+	if err := Beat(ctx, st, "stella", at, DefaultTTL); err != nil {
+		t.Fatalf("beat: %v", err)
+	}
+	sts = mustRead(t, st, []string{"stella"})
+	if !sts[0].Present() {
+		t.Fatal("a live beat key is absent; want present")
+	}
+	if got := sts[0].Phrase(at); got != "stella up 0s" {
+		t.Fatalf("live key phrase = %q; want %q", got, "stella up 0s")
+	}
+
+	st.Advance(DefaultTTL)
+	sts = mustRead(t, st, []string{"stella"})
+	if vals, err := st.MGet(ctx, Key("stella"), LastKey("stella")); err != nil || vals[0] != "" || vals[1] == "" {
+		t.Fatalf("after the ttl, keys = %q, %v; want the beat key missing and :last kept", vals, err)
+	}
+	if sts[0].Present() {
+		t.Fatal("an expired beat key is present; want absent")
+	}
+}
+
 func TestAKeyWhoseValueIsNotAStampIsStillPresence(t *testing.T) {
 	// The key's EXISTENCE is the presence; its value only dates it. A
 	// friend running an older beat must not read as away.

@@ -207,3 +207,53 @@ so a covered cash charge is never read as a zero reference cost."
        (not (absentp (getf breakdown :reference-tokens)))
        (not (eql (getf breakdown :measured-cash)
                  (getf breakdown :reference-tokens)))))
+
+;;; ------------------------------------------------------------------
+;;; issue-correspondence                        SPEC-WORK.md:7570-7572
+;;; ------------------------------------------------------------------
+;;; E09-F02 "Link mode and correspondence reconciliation", criterion
+;;; E09-F02-01: an explicit mapping where one public issue may require many
+;;; work nodes, and one work node or landed fix may address several issues.
+;;; A repeated intake updates the existing correspondence, never duplicating
+;;; the work.
+
+(defun make-issue-correspondence ()
+  "The empty issue correspondence: one entry per provider/repository/issue
+identity, each carrying its current URL, its last observed remote revision and
+the distinct work nodes that issue maps to (SPEC-WORK.md:7570-7572)."
+  '())
+
+(defun %correspondence-entry (corr issue)
+  (find issue corr :key (lambda (entry) (getf entry :issue)) :test #'string=))
+
+(defun record-issue-link (corr issue node &key url revision)
+  "Map ISSUE to NODE. When ISSUE already has a correspondence entry the existing
+entry is updated in place -- NODE is appended only if absent, and a provided
+URL or REVISION replaces the stored one -- so a repeated intake never
+duplicates a work node (SPEC-WORK.md:7570-7572)."
+  (let ((entry (%correspondence-entry corr issue)))
+    (if entry
+        (progn
+          (unless (member node (getf entry :nodes) :test #'string=)
+            (setf (getf entry :nodes) (append (getf entry :nodes) (list node))))
+          (when url (setf (getf entry :url) url))
+          (when revision (setf (getf entry :revision) revision))
+          corr)
+        (append corr
+                (list (list :issue issue :nodes (list node)
+                            :url url :revision revision))))))
+
+(defun correspondence-nodes (corr issue)
+  "The distinct work nodes ISSUE maps to, in the order they were linked."
+  (let ((entry (%correspondence-entry corr issue)))
+    (if entry (getf entry :nodes) nil)))
+
+(defun correspondence-url (corr issue)
+  "The current URL of ISSUE, or NIL when no correspondence exists yet."
+  (let ((entry (%correspondence-entry corr issue)))
+    (if entry (getf entry :url) nil)))
+
+(defun correspondence-revision (corr issue)
+  "The last observed remote revision of ISSUE, or NIL when none is recorded."
+  (let ((entry (%correspondence-entry corr issue)))
+    (if entry (getf entry :revision) nil)))

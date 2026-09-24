@@ -19,8 +19,8 @@ func TestAppendEntryIsAppendOnlyJSONLines(t *testing.T) {
 		Evidence:   Unit{ID: "u1", Kind: KindRebase, Files: 2, Packages: 1},
 		RungTried:  "flash",
 		Height:     0,
-		Confidence: 0.9,
-		Floor:      DefaultFloor,
+		Confidence: measured(0.9),
+		Floor:      measured(DefaultFloor),
 		Source:     SourceRules,
 		RowanPick:  "flash",
 	}

@@ -45,7 +45,7 @@ func DefectGolden() string {
 		"friend:eight | up | 8 | 7 | 1 | 0 | 8 | 0 | 0 | \n" +
 		"friend:fran | up | missing | 0 | 0 | 0 | 0 | 0 | 0 | missing: desired\n" +
 		"friend:sleeping | down | 2 | 0 | 0 | 0 | 0 | 0 | 0 | down: beat\n" +
-		"pipeline s1 queued=0 dealt=0 running=0 ended=0 harvested=0 review-ready=0 land-ready=0 landed=0 pool=1 waiting=0 backpressure=0 orphan-effect=0 reconcile-required=0\n"
+		"pipeline s1 queued=0 dealt=0 running=0 ended=0 harvested=0 review-ready=0 land-ready=0 landed=0 ready=1 waiting=0 backpressure=0 orphan-effect=0 reconcile-required=0\n"
 	for _, name := range []string{"backpressure", "harvest:b1", "harvest:b2", "harvest:b3", "hold-to-fix", "ok-to-friend", "pr-to-read", "reconciler"} {
 		body += "proc " + name + " down age=-1s why=missing: pass\n"
 	}

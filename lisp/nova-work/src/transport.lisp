@@ -666,6 +666,48 @@ family is AF_UNIX, so this is false; an AF_INET family would make it true."
     (and family (not (eql family (local-socket-family))))))
 
 ;;; ------------------------------------------------------------------
+;;; The endpoint lock reconciled across platform spellings, before it is
+;;; taken (SPEC-WORK.md:178-190, :2647-2648).
+;;; ------------------------------------------------------------------
+
+(defun named-pipe-endpoint-p (session-path)
+  "True when SESSION-PATH names a Windows named pipe (`\\\\.\\pipe\\<name>`): the
+platform's spelling of the one local endpoint, never a second transport. A pipe
+name is not a filesystem path, so no `<session>.lock` file can be created under
+it (SPEC-WORK.md:186-190, :2647-2648)."
+  (and (stringp session-path)
+       (>= (length session-path) 9)
+       (string-equal (subseq session-path 0 9) "\\\\.\\pipe\\")))
+
+(defun canonical-socket-key (socket-path)
+  "The endpoint lock's key: the socket path's canonical spelling. When the
+socket exists this is its truename; otherwise the truename of its directory plus
+the file name, so a symlink and a relative spelling resolve to the same endpoint
+(SPEC-WORK.md:184-185)."
+  (let* ((merged (merge-pathnames socket-path))
+         (existing (ignore-errors (probe-file merged))))
+    (if existing
+        ;; The socket (or a symlink to it) exists: its truename, so every
+        ;; alias of one live socket keys the same <session>.lock.
+        (namestring existing)
+        (let* ((dir (directory-namestring merged))
+               (real-dir (or (ignore-errors (namestring (truename (pathname dir))))
+                             dir)))
+          (concatenate 'string real-dir (file-namestring merged))))))
+
+(defun session-endpoint-lock-path (session-path)
+  "The endpoint's own lock, reconciled before it is taken. Where SESSION-PATH is
+a filesystem path the lock is a file: the socket's canonical spelling with
+`.lock` appended, in the socket's own directory (SPEC-WORK.md:184-185). Where it
+names the Windows named pipe there is no lock file at all -- the first-instance
+create (`FILE_FLAG_FIRST_PIPE_INSTANCE`) IS the endpoint lock -- so NIL is
+answered and no caller ever writes a `.lock` under `\\\\.\\pipe\\`
+(SPEC-WORK.md:186-190)."
+  (if (named-pipe-endpoint-p session-path)
+      nil
+      (concatenate 'string (canonical-socket-key session-path) ".lock")))
+
+;;; ------------------------------------------------------------------
 ;;; The local listener: bind, listen, accept.
 ;;; ------------------------------------------------------------------
 
@@ -763,9 +805,15 @@ cadence and every bound, each read rather than remembered
             (session-build-identity)
             (session-emitted session))))
 
-(defun session-identity-line (session)
-  "The `SESSION OK` identity line a running session prints and serves."
-  (session-status-line session))
+;;; `session-identity-line` was defined HERE as a one-line delegation to
+;;; `session-status-line`, and AGAIN below, in this same file, with a whole
+;;; format string of its own (nova-tools #1612). The second definition is the
+;;; one that has been running -- the two lines are not the same line; this one
+;;; prints `session=`, `file=`, `journal=` and the counts and the other does
+;;; not -- so the dead delegation is removed and the live definition is left
+;;; exactly as it is. Which of the two shapes the grammar wants is a question
+;;; for `docs/SPEC-WORK.md:5340`, not something to decide by deleting the copy
+;;; that happens to lose the load.
 
 ;;; ------------------------------------------------------------------
 ;;; `session stop` and `session handoff` (SPEC-WORK.md:814-828).
@@ -813,13 +861,26 @@ refused the push (SPEC-WORK.md:2740-2747, output grammar :5362-5363)."
                 (session-base session) commit (session-pushed session)))))
 
 (defun session-stop-lifecycle (session &key no-clip race
+                                           clip-registry clip-operation
+                                           (git-timeout "30s")
                                            (now (format-rfc3339 (get-universal-time))))
   "`session stop` is the same sequence as a handoff without a successor: clip
 unless NO-CLIP, then release the owner with `until` at the stop's stamp, so a
 taker after a planned stop waits `--skew` (SPEC-WORK.md:824-826). Answers
 (values T LINES RECORD); LINES is the CLIP OK line (unless NO-CLIP) followed by
-the SESSION OK identity line."
-  (let ((clip-line (unless no-clip (session-clip-line session :race race)))
+the SESSION OK identity line.
+
+When the stop's own clip is a long operation on the scheduler -- CLIP-REGISTRY
+and CLIP-OPERATION, launched by CLIP-REQUEST -- the stop waits for it by the
+same `operation wait`, inside GIT-TIMEOUT (SESSION-STOP-WAIT-FOR-CLIP,
+SPEC-WORK.md:2748-2750, :6091-6095), and prints the line the transport
+settled, or the wait's NOTE line with the transport left running."
+  (let ((clip-line (unless no-clip
+                     (if (and clip-registry clip-operation)
+                         (values (session-stop-wait-for-clip
+                                  clip-registry clip-operation
+                                  :git-timeout git-timeout))
+                         (session-clip-line session :race race))))
         (status-line (session-status-line session))
         (released (%released-ownership-record (session-owning-record session)
                                               :now now :successor nil)))
