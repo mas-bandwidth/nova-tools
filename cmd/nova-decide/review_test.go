@@ -175,8 +175,8 @@ func TestReviewRefusals(t *testing.T) {
 		{"both pr and batch", []string{"review", "--repo", "a/b", "--pr", "1", "--batch", "x"}, "exactly one"},
 		{"post and dry-run", []string{"review", "--repo", "a/b", "--pr", "1", "--post", "--dry-run"}, "two halves"},
 		{"card with batch", []string{"review", "--repo", "a/b", "--batch", "x", "--card", "c"}, "--card"},
-		{"redis ledger", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "redis"}, "#2563"},
-		{"unknown ledger", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "postgres"}, "file or redis"},
+		{"redis ledger without a store", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "redis", "--store", ""}, "--store"},
+		{"unknown ledger", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "postgres"}, "file, redis"},
 		{"stray argument", []string{"review", "--repo", "a/b", "--pr", "1", "extra"}, "unexpected argument"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

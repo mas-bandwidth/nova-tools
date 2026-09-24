@@ -87,12 +87,14 @@ var (
 
 func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " fleet", "a sub-verb is required (registry, add, survey, suspend, wake, reboot, secrets, standard, mirror, join, sleep, keeper)")
+		return refuse(stderr, " fleet", "a sub-verb is required (registry, certify, add, survey, suspend, wake, reboot, secrets, standard, mirror, join, sleep, keeper)")
 	}
 	sub, rest := args[0], args[1:]
 	switch sub {
 	case "registry":
 		return cmdFleetRegistry(rest, stdout, stderr)
+	case "certify":
+		return cmdFleetCertify(rest, stdout, stderr)
 	case "add":
 		return cmdFleetAdd(rest, stdout, stderr)
 	case "survey":
@@ -116,7 +118,7 @@ func cmdFleet(args []string, stdout, stderr io.Writer) int {
 	case "keeper":
 		return cmdFleetKeeper(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are registry, add, survey, suspend, wake, reboot, secrets, standard, mirror, join, sleep, keeper; run: nova-pulse help)\n", sub)
+	fmt.Fprintf(stderr, "nova-pulse fleet: unknown sub-verb %q (the sub-verbs are registry, certify, add, survey, suspend, wake, reboot, secrets, standard, mirror, join, sleep, keeper; run: nova-pulse help)\n", sub)
 	return 2
 }
 

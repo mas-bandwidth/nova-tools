@@ -60,6 +60,7 @@ nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|as
 nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
+nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>] [--diag-days <n>] [--diag-max-bytes <n>]
 nova-pulse hygiene reap <slot> --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>

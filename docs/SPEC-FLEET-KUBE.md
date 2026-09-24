@@ -90,7 +90,35 @@ Linux bench runs its own k3s and schedules only its own cards. The Studio is not
 `RESULT.md`, one `usage.tsv` row, one deadline, one clip — so one card gets one pod. The Job
 gives the card its own cgroup, its own env, its own log stream, its own `activeDeadlineSeconds`,
 and a failure whose effect is defined by the platform. It also makes the capacity line a
-*scheduler* fact rather than a number a person counts. **The pull is not replaced.** A per-bench
+*scheduler* fact rather than a number a person counts.
+
+```go
+// === internal/fleetkube: reference types for per-bench k3s and Job-per-card template ===
+
+// BenchNode declares one single-node k3s per bench. There is
+// no fleet-level cluster reference; the scheduler must never
+// move a card across benches, and the Studio is not a node.
+type BenchNode struct {
+	BenchName    string // nova.mas-bandwidth.com/bench=<name>
+	Kind         string // kind label(s): go, lisp, docs, schema-leg
+	K3sInstalled bool   // node runs its own single-node k3s, not a fleet cluster join
+}
+
+// CardJob is the template for one card: one Job, one pod,
+// never replicated or split across pods. The Job gives the
+// card its own cgroup, env, log stream, and
+// activeDeadlineSeconds.
+type CardJob struct {
+	CardName              string
+	Image                 string
+	CPU                   string
+	Memory                string
+	EphemeralStorage      string
+	ActiveDeadlineSeconds int
+}
+```
+
+**The pull is not replaced.** A per-bench
 puller (`nova-swarm pull --submit`, one replica) lists `queue/lanes/`, takes one card by
 `rename(<name>.card, taken/<worker>-<name>.card)` — atomic within the directory, as SPEC-JOBS
 rule 2 already says — and creates the Job for that card. The puller does not choose a worker or
@@ -142,7 +170,7 @@ The kernel's ready set is not a thing Kubernetes exposes and is not invented her
 *is* the ready set, and the take is its lock. A card whose Job dies is returned by the puller to
 the lane it came from; `taken/` is the only place a card waits on a lease.
 
-**Secrets: sealed, decrypted at apply, named key by key.** The store stays sops. At apply, the
+**Secrets: sealed, decrypted at apply, named key by key.** Seal secrets per kind and deliver only the named keys via secretKeyRef, never envFrom. The store stays sops. At apply, the
 plaintext is produced from the store and immediately sealed into a SealedSecret, so state and git
 hold only the ciphertext, and the sealed-secrets controller decrypts it in-cluster into an
 ordinary Secret. **That Secret holds only the keys one worker kind is entitled to, and no other
@@ -167,7 +195,11 @@ that `nova-swarm` already writes, on the shared volume, so `nova-pulse status` a
 read one schema and one file whether the card ran under the launcher or a pod. After each card
 the pod's last step is the clip — commit the card's branch, harvest its `RESULT.md`, reset the
 kept worktree to base — exactly SPEC-JOBS §6, so the next Job sees warmth and never another
-card's uncommitted diff.
+card's uncommitted diff. `internal/fleetkube` runs a pod in that order — harness, usage row,
+clip (`PodSteps`) — and a card that exits non-zero is accounted and clipped the same way.
+The Job's container `command` is one executable's argv, `/bin/sh -c <script> nova-pod <harness
+argv...>` (`JobCommand`): the script runs the harness, appends the usage row, runs `nova-work
+clip` last, and exits with the harness's code.
 
 ## Part 3 — What nova-sandbox still adds, and what the Studio keeps
 

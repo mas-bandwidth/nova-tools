@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -382,24 +384,58 @@ func TestRingBufferBelowCapacityKeepsEverythingUntruncated(t *testing.T) {
 // crosses the ceiling gets CeilingExceededError, not a partial parse, and the command is
 // cancelled rather than left to run to completion uncancelled. It goes through
 // runUncappedCapture with small synthetic limits (see that function's doc) so this proves
-// the wiring deterministically without a fixture anywhere near the real 64 MiB ceiling.
+// the wiring without a fixture anywhere near the real 64 MiB ceiling.
+//
+// The helper is deterministic on purpose (the first cut flaked on the gate benches and on
+// hosted CI: it wrote 3x the ceiling, then the marker, then exited 0, so the ceiling's
+// cancel could kill it BETWEEN those two writes and the marker was never written). Now:
+//   - it writes exactly `ceiling` bytes, which is not over (Over is strictly greater), so
+//     nothing can be cancelled yet;
+//   - it then writes the marker in ONE write shorter than PIPE_BUF (512 on every POSIX
+//     host), so the marker enters the pipe atomically and it is the marker's own first
+//     byte that crosses the ceiling -- the cancel cannot land before the marker exists,
+//     and bytes already in the pipe survive the writer's death, so the reader drains all
+//     of it before EOF;
+//   - it then blocks forever. It never exits on its own, so the only way runUncappedCapture
+//     returns before the test's safety deadline is the ceiling's own cancel killing it.
+//     The test observes that explicitly: the deadline has not fired, and the helper's PID
+//     (which it writes to a file before any stdout) no longer names a live process.
+//
+// Remove the cancel from ceilingWriter and this fails at the safety deadline instead.
 func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T) {
 	const ceiling = 4096
 	const ringSize = 256
 	const marker = "TAIL-written-just-past-the-ceiling-must-survive"
 
 	if os.Getenv("NOVA_MERGE_UNCAPPED_OVERCEILING_HELPER") == "1" {
-		_, _ = io.WriteString(os.Stdout, strings.Repeat("o", ceiling*3))
+		pidFile := os.Getenv("NOVA_MERGE_UNCAPPED_OVERCEILING_PIDFILE")
+		if err := os.WriteFile(pidFile, []byte(fmt.Sprint(os.Getpid())), 0o644); err != nil {
+			os.Exit(3)
+		}
+		_, _ = io.WriteString(os.Stdout, strings.Repeat("o", ceiling))
 		_, _ = io.WriteString(os.Stdout, marker)
-		os.Exit(0)
+		// Block with no clock: wait on a signal that never comes. Only the ceiling's
+		// cancel (SIGKILL via exec.CommandContext), or the safety deadline, ends this.
+		never := make(chan os.Signal, 1)
+		signal.Notify(never, os.Interrupt)
+		for range never {
+		}
+		os.Exit(4)
 	}
+	pidFile := filepath.Join(t.TempDir(), "helper.pid")
 	t.Setenv("NOVA_MERGE_UNCAPPED_OVERCEILING_HELPER", "1")
+	t.Setenv("NOVA_MERGE_UNCAPPED_OVERCEILING_PIDFILE", pidFile)
 
+	// A safety deadline only: the helper never exits by itself, so reaching this deadline
+	// means the ceiling did NOT cancel the command, and the test fails on that below.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	out, err := runUncappedCapture(ctx, "", os.Args[0], ceiling, ringSize,
 		"-test.run=TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand")
 
+	if ctx.Err() != nil {
+		t.Fatalf("the helper was not cancelled by the ceiling: runUncappedCapture only returned at the safety deadline (%v), err=%v", ctx.Err(), err)
+	}
 	ce, ok := AsCeilingExceededError(err)
 	if !ok {
 		t.Fatalf("error is %v (%T), want *CeilingExceededError naming the ceiling", err, err)
@@ -407,6 +443,21 @@ func TestRunUncappedRefusesStdoutOverTheCeilingAndCancelsTheCommand(t *testing.T
 	if ce.Ceiling != ceiling {
 		t.Fatalf("CeilingExceededError.Ceiling = %d, want %d", ce.Ceiling, ceiling)
 	}
+
+	raw, readErr := os.ReadFile(pidFile)
+	if readErr != nil {
+		t.Fatalf("the helper never wrote its PID file: %v", readErr)
+	}
+	var pid int
+	if _, scanErr := fmt.Sscan(string(raw), &pid); scanErr != nil || pid <= 0 {
+		t.Fatalf("the helper's PID file holds %q, not a PID", raw)
+	}
+	if proc, findErr := os.FindProcess(pid); findErr == nil {
+		if sigErr := proc.Signal(syscall.Signal(0)); sigErr == nil {
+			t.Fatalf("helper PID %d is still alive after runUncappedCapture returned: the command was not cancelled", pid)
+		}
+	}
+
 	if len(out) > ringSize {
 		t.Fatalf("returned tail is %d bytes, want at most the %d-byte ring: no allocation beyond ceiling+ring", len(out), ringSize)
 	}

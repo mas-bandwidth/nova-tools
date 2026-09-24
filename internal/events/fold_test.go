@@ -177,7 +177,15 @@ func TestRebuildProducesTheSameRowsAsTheIncrementalFold(t *testing.T) {
 	stream := NewFakeStream()
 	stream.Now = func() time.Time { return at }
 	emitOK(t, stream, 100)
-	// A read and a landing too, so all three tables are compared and not only attempts.
+	// A read, a landing and a decision too, so all four tables are compared and not only
+	// attempts.
+	for i := 0; i < 3; i++ {
+		d := decideEvent()
+		d.Label, d.Decision.UnitID = fmt.Sprintf("card-%03d", i), fmt.Sprintf("card-%03d", i)
+		if _, err := stream.Emit(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
 	for i := 0; i < 5; i++ {
 		if _, err := stream.Emit(ctx, Event{Label: fmt.Sprintf("card-%03d", i), Kind: Read, Bench: "stella", PR: "2563", At: at}); err != nil {
 			t.Fatal(err)
@@ -207,8 +215,8 @@ func TestRebuildProducesTheSameRowsAsTheIncrementalFold(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Inserted != 110 {
-		t.Fatalf("the rebuild wrote %d rows, want 110", stats.Inserted)
+	if stats.Inserted != 113 {
+		t.Fatalf("the rebuild wrote %d rows, want 113", stats.Inserted)
 	}
 
 	var a, b bytes.Buffer
@@ -221,8 +229,8 @@ func TestRebuildProducesTheSameRowsAsTheIncrementalFold(t *testing.T) {
 	if a.String() != b.String() {
 		t.Fatalf("the rebuild's rows differ from the fold's:\nfold:\n%s\nrebuild:\n%s", firstLines(a.String()), firstLines(b.String()))
 	}
-	if strings.Count(a.String(), "\n") != 111 { // the header and 110 rows
-		t.Fatalf("the dump holds %d lines, want a header and 110 rows", strings.Count(a.String(), "\n"))
+	if strings.Count(a.String(), "\n") != 115 { // two headers, 110 card rows and 3 decisions
+		t.Fatalf("the dump holds %d lines, want two headers and 113 rows", strings.Count(a.String(), "\n"))
 	}
 
 	// A rebuild over a file that already holds the rows is a second no-op, not a doubling.

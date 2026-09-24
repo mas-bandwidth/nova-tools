@@ -216,3 +216,143 @@ func TestDeriveMovesARowWhenItsNumbersMove(t *testing.T) {
 		t.Fatalf("orglm53 at Q -0.01 derived %+v, want dropped as Pareto-dominated", d)
 	}
 }
+
+// The interim code-rung override (fold 2026-09-23, reports/fold-2026-09-22-
+// landed-per-route.md: $ per LANDED code PR, not the $-per-8+-scored ranking
+// above) replaces the pro rung's code list outright with exactly the three
+// routes that landed: ocqwenplus, orhaiku, ordspro. It may name a route the
+// ranking drops (ordspro and orhaiku are both "dropped" rows above) -- that
+// is the point of an override, unlike a types row.
+func TestAllowedRoutesCodeOverrideIsExactlyTheThreeThatLanded(t *testing.T) {
+	tab, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ocqwenplus orhaiku ordspro"
+	if got := strings.Join(tab.Allowed("pro", "code"), " "); got != want {
+		t.Fatalf("allowed pro/code = %q, want %q", got, want)
+	}
+	for _, r := range strings.Fields(want) {
+		if err := tab.Check(Card{Rung: "pro", Type: "code", Route: r}); err != nil {
+			t.Errorf("%s on the code override refused: %v", r, err)
+		}
+	}
+	// ordspro and orhaiku stay dropped for every other type and for the
+	// rung's default (no type) list: the override touches only pro/code.
+	for _, typ := range []string{"", "recut", "cell3"} {
+		for _, r := range []string{"ordspro", "orhaiku"} {
+			assertRefused(t, tab, Card{Rung: "pro", Type: typ, Route: r}, "dropped")
+		}
+	}
+	// ocminimax is allowed by default on pro (see TestAllowedRoutesPerRung
+	// FromTheRanking) but is not on the code override's exact list, and
+	// ormimopro was never allowed on pro at all -- both stay off pending
+	// their own landed-PR evidence.
+	for _, r := range []string{"ocminimax", "ormimopro"} {
+		assertRefused(t, tab, Card{Rung: "pro", Type: "code", Route: r}, "not on the code override")
+	}
+	// Every route the fold found expensive or landing nothing stays off the
+	// code rung too, whatever its state on the $-per-8+ ranking.
+	for _, r := range []string{"orqwenplus", "orkimi3", "orminimax", "ocglm53", "orglm53", "orkimicode", "orgemini25pro"} {
+		assertRefused(t, tab, Card{Rung: "pro", Type: "code", Route: r}, "not on the code override")
+	}
+	// The flash rung is untouched by this override.
+	if got := strings.Join(tab.Allowed("flash", ""), " "); got != "orqwen38 ords41 ormimo26 ormimo ords" {
+		t.Fatalf("flash rung moved: %q", got)
+	}
+}
+
+// A benched or dead route is refused even when an override names it: the
+// override list is not the last word, Check is.
+func TestAllowedRoutesOverrideNeverAdmitsABenchedRoute(t *testing.T) {
+	src := `routes:
+  - route: a
+    rung: pro
+    model: m/a
+    via: openrouter
+    state: allowed
+    run: 20
+    scored: 10
+    u8: 8
+    u9: 6
+    usd_per_8: 1.00
+    efficiency: 1.00
+    q: 0.10
+    tok_per_8: 5.0
+    wall_s: 400
+    why: "leader"
+  - route: b
+    rung: pro
+    model: m/b
+    via: openrouter
+    state: held
+    flag: benched
+    why: "ROUTE-BENCHED"
+overrides:
+  - type: code
+    rung: pro
+    routes: [a, b]
+    source: "test fold"
+    why: "b should never run even though the override names it"
+`
+	tab, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tab.Check(Card{Rung: "pro", Type: "code", Route: "a"}); err != nil {
+		t.Errorf("a on the code override refused: %v", err)
+	}
+	assertRefused(t, tab, Card{Rung: "pro", Type: "code", Route: "b"}, "benched")
+	if got := strings.Join(tab.Allowed("pro", "code"), " "); got != "a" {
+		t.Fatalf("allowed pro/code = %q, want %q (b is benched)", got, "a")
+	}
+}
+
+func TestParseOverridesValidation(t *testing.T) {
+	base := `routes:
+  - route: a
+    rung: pro
+    model: m/a
+    state: allowed
+  - route: b
+    rung: flash
+    model: m/b
+    state: allowed
+`
+	for _, tc := range []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"unknown route", base + "overrides:\n  - type: code\n    rung: pro\n    routes: [nosuchroute]\n    source: s\n    why: w\n", "unknown route"},
+		{"wrong rung", base + "overrides:\n  - type: code\n    rung: pro\n    routes: [b]\n    source: s\n    why: w\n", "rung flash route"},
+		{"missing why", base + "overrides:\n  - type: code\n    rung: pro\n    routes: [a]\n    source: s\n", "needs type, rung, routes, source and why"},
+		{"duplicate rung+type", base + "overrides:\n  - type: code\n    rung: pro\n    routes: [a]\n    source: s\n    why: w\n  - type: code\n    rung: pro\n    routes: [a]\n    source: s2\n    why: w2\n", "appears twice"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Parse([]byte(tc.src)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("parse: %v, want error containing %q", err, tc.want)
+			}
+		})
+	}
+	// Unlike a types row, an overrides row MAY name a dropped route.
+	src := base + `  - route: c
+    rung: pro
+    model: m/c
+    state: dropped
+    why: "dropped"
+overrides:
+  - type: code
+    rung: pro
+    routes: [a, c]
+    source: s
+    why: w
+`
+	tab, err := Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("overrides row naming a dropped route should parse: %v", err)
+	}
+	if err := tab.Check(Card{Rung: "pro", Type: "code", Route: "c"}); err != nil {
+		t.Errorf("c on the code override refused despite being dropped: %v", err)
+	}
+}

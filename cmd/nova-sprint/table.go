@@ -24,11 +24,15 @@ import (
 const tableWants = "the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>"
 
 type tableOpts struct {
-	once   bool
-	redis  string
-	sprint string
-	check  bool
-	loop   bool
+	once    bool
+	redis   string
+	sprint  string
+	check   bool
+	loop    bool
+	layout  string
+	compare string
+	friends string
+	xyFile  string
 }
 
 func cmdTable(args []string, stdout, stderr io.Writer) int {
@@ -41,11 +45,24 @@ func cmdTable(args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&opts.sprint, "sprint", "", "")
 	fs.BoolVar(&opts.check, "check", false, "")
 	fs.BoolVar(&opts.loop, "loop", false, "")
+	fs.StringVar(&opts.layout, "layout", "wide", "")
+	fs.StringVar(&opts.compare, "compare", "", "")
+	fs.StringVar(&opts.friends, "friends", "", "")
+	fs.StringVar(&opts.xyFile, "xy-file", "", "")
 	if err := fs.Parse(args); err != nil {
 		return tableRefuse(stderr, err.Error()+"; "+tableWants)
 	}
 	if fs.NArg() > 0 {
 		return tableRefuse(stderr, "takes flags, not positional arguments")
+	}
+	if opts.layout == "live" || opts.compare != "" {
+		return cmdTableLive(opts, stdout, stderr)
+	}
+	if opts.layout != "wide" {
+		return tableRefuse(stderr, "--layout wants live or wide")
+	}
+	if opts.friends != "" || opts.xyFile != "" {
+		return tableRefuse(stderr, "--friends and --xy-file belong to --layout live")
 	}
 	if opts.check {
 		if opts.loop || opts.once || opts.sprint != "" {
