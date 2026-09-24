@@ -1,5 +1,11 @@
 -- Atomic floor redistribution (#3103). args = sprint, floor, max-move,
 -- actor, idem. The complete plan and its writes happen in this FCALL.
+
+local FR, RD = NS.friend_roles, NS.redistribute
+local fr_actor, fr_has_role, fr_roster = FR.fr_actor, FR.fr_has_role, FR.fr_roster
+local rd_caplog, rd_carried_hold, rd_free = RD.rd_caplog, RD.rd_carried_hold, RD.rd_free
+local rd_now_ms, rd_open_sprints, rd_route = RD.rd_now_ms, RD.rd_open_sprints, RD.rd_route
+
 local function redistribute_floor(keys, args)
   local S, floor, maxmove = args[1], tonumber(args[2]), tonumber(args[3])
   local actor, idem = args[4], args[5]

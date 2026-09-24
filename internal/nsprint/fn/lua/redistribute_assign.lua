@@ -1,8 +1,9 @@
 -- assign --stdin and redistribute --from (nova-tools #3103, spec #2756 v6
 -- 4.6, control 46). No shebang: loader.go prepends the single library
--- header. This file sorts after redistribute.lua, so the rd_ helpers there
--- (routing, the reader pick, the transfer dedup of 5.7 (6)) are in scope;
--- locals here carry an ra_ prefix because every lua/ file shares one chunk.
+-- header. loader.go wraps this file in its own do-block; it sorts after
+-- friend.lua and redistribute.lua and imports their helpers (routing, the
+-- reader pick, the transfer dedup of 5.7 (6)) from NS.friend and
+-- NS.redistribute just below this comment.
 --
 -- ns_assign_batch moves many tasks in ONE call: args = S, reason, actor,
 -- idem, then (task, friend) pairs. Every line is refused or moved by the same
@@ -33,6 +34,15 @@
 -- { 'OK', { f, state, moved, leases, released, unrouted, kept }, events }
 -- where events are four values each: MOVED id to marker, DEDUP id friend
 -- reason, KEPT id f why.
+
+local fs_clear = NS.friend.fs_clear
+local RD = NS.redistribute
+local RD_OUT = RD.RD_OUT
+local FR = NS.friend_roles
+local fr_actor, fr_has_role, fr_roster = FR.fr_actor, FR.fr_has_role, FR.fr_roster
+local rd_author, rd_caplog, rd_close_leases, rd_csv = RD.rd_author, RD.rd_caplog, RD.rd_close_leases, RD.rd_csv
+local rd_dedup, rd_free, rd_log, rd_mark = RD.rd_dedup, RD.rd_free, RD.rd_log, RD.rd_mark
+local rd_move_open, rd_note_held, rd_now_ms, rd_open_sprints = RD.rd_move_open, RD.rd_note_held, RD.rd_now_ms, RD.rd_open_sprints
 
 local function ra_wake(woken, at, actor, idem, why)
   local targets = {}

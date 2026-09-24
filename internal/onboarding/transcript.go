@@ -422,21 +422,29 @@ type Norm struct {
 	// boundary. It is the same rule as field, for the norms that have no field
 	// name to anchor to: a `version` line's build triple is two tokens and the
 	// version word is one, and neither of them may be matched from the middle
-	// of a longer token. A norm with neither field nor run is a plain
-	// substitution -- Path and Elide, where the caller wrote the pattern and
-	// owns its boundaries.
+	// of a longer token. A norm with neither field, run nor path is a plain
+	// substitution -- Elide, where the caller wrote the pattern and owns its
+	// boundaries.
 	run bool
+	// path says the literal names a directory and may be replaced only at the end
+	// of a token, before `/`, or before the comma used around a path in prose, so
+	// descendants are covered without swallowing a longer neighbouring path that
+	// merely shares the prefix.
+	path bool
 }
 
-// A norm with no field replaces LITERALLY. As is a sentence a person reads in a
-// failure message, not a template: `$PWD/rehearsal.git` -- which is how
-// docs/TESTS.md's nova-merge block writes the path a reader types -- would
+// A plain norm and a path norm replace LITERALLY. As is a sentence a person
+// reads in a failure message, not a template: `$PWD/rehearsal.git` -- which is
+// how docs/TESTS.md's nova-merge block writes the path a reader types -- would
 // otherwise be read as a reference to a capture group named PWD, expand to
 // nothing, and leave the two sides disagreeing about a path that had just been
 // normalised. The token path below never templated: it copies As whole.
 func (n Norm) apply(line string) string {
 	if n.run {
 		return n.applyRun(line)
+	}
+	if n.path {
+		return n.applyPath(line)
 	}
 	if n.field == "" {
 		return n.Re.ReplaceAllLiteralString(line, n.As)
@@ -455,6 +463,26 @@ func (n Norm) apply(line string) string {
 		out.WriteString(n.replaceToken(line[i:j]))
 		i = j
 	}
+	return out.String()
+}
+
+// applyPath replaces the declared directory only where it is a complete path:
+// at the end of a token, before a slash that begins a descendant, or before the
+// comma used when output places a path in prose. A longer neighbouring path such
+// as /tmp/run-next is kept as written.
+func (n Norm) applyPath(line string) string {
+	var out strings.Builder
+	last := 0
+	for _, m := range n.Re.FindAllStringIndex(line, -1) {
+		end := m[1]
+		if end < len(line) && line[end] != '/' && line[end] != ' ' && line[end] != '\t' && line[end] != ',' {
+			continue
+		}
+		out.WriteString(line[last:m[0]])
+		out.WriteString(n.As)
+		last = end
+	}
+	out.WriteString(line[last:])
 	return out.String()
 }
 
@@ -556,6 +584,7 @@ func Path(from, to string) Norm {
 		Name: fmt.Sprintf("%s (the directory of this run, written %s)", to, from),
 		Re:   regexp.MustCompile(regexp.QuoteMeta(to)),
 		As:   from,
+		path: true,
 	}
 }
 

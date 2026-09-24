@@ -22,8 +22,9 @@ import (
 var schemaSQL string
 
 // SchemaVersion is the migration version schema.sql installs. Version 2 added the decisions
-// table (#2623), the record the decide_log table held.
-const SchemaVersion = 2
+// table (#2623), the record the decide_log table held. Version 3 (#3159) rebuilds every view
+// on open and prints $/landed as a lower bound with its coverage.
+const SchemaVersion = 3
 
 // Tables is the fold's tables, as the --init receipt names them.
 const Tables = "attempts,reads,landings,decisions"
@@ -57,11 +58,31 @@ func OpenDB(ctx context.Context, path string) (*DB, error) {
 			return nil, fmt.Errorf("sqlite %s: %s: %w", path, pragma, err)
 		}
 	}
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
+	if err := applySchema(ctx, db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("sqlite %s: schema: %w", path, err)
 	}
 	return &DB{db: db, path: path}, nil
+}
+
+// applySchema runs schema.sql inside one BEGIN IMMEDIATE ... COMMIT (#3159): the views are
+// dropped and recreated, so a second opener must never see the file between the two, and a
+// failed statement leaves the file as it was.
+func applySchema(ctx context.Context, db *sql.DB) error {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
+		_, _ = conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return err
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
+	return err
 }
 
 // Path is the file this fold writes.
@@ -253,8 +274,8 @@ func nullFloat(f sql.NullFloat64) string {
 // `nova-pulse status` will read. max caps the rows of each block; 0 means all.
 func (d *DB) Report(ctx context.Context, w io.Writer, max int) error {
 	for _, v := range []struct{ name, query string }{
-		{"totals", `SELECT cards, "rows", done, ok, fail, reads, landed, usd FROM totals`},
-		{"by_model_route", `SELECT model, route, "rows", ok, fail, done, usd, usd_per_ok, landed, usd_per_landed FROM by_model_route ORDER BY model, route`},
+		{"totals", `SELECT cards, "rows", done, ok, fail, reads, landed, usd, priced_cards, usd_per_landed FROM totals`},
+		{"by_model_route", `SELECT model, route, "rows", ok, fail, done, usd, usd_per_ok, landed, cards, priced_cards, usd_per_landed FROM by_model_route ORDER BY model, route`},
 		{"by_bench", `SELECT bench, "rows", cards, ok, fail, done, usd FROM by_bench ORDER BY bench`},
 		{"by_day", `SELECT day, "rows", cards, ok, fail, done, usd FROM by_day ORDER BY day`},
 		{"decisions_by_kind", `SELECT kind, decisions, units, stepped_up, escalated, refused, calls, tokens_in, tokens_out FROM decisions_by_kind ORDER BY kind`},

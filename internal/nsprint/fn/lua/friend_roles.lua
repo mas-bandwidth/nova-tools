@@ -83,3 +83,7 @@ local function friend_roles(keys, args)
 end
 
 redis.register_function('ns_friend_roles', friend_roles)
+
+-- The cross-file surface redistribute*.lua import (loader.go: every file is
+-- its own do-block; NS is the one chunk-level local).
+NS.friend_roles = { fr_actor = fr_actor, fr_has_role = fr_has_role, fr_roster = fr_roster }

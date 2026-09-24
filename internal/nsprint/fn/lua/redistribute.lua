@@ -2,7 +2,9 @@
 -- (nova-tools #3047, mechanism 1 of #3033; replaces the #2756 5.2 sentence
 -- "work assigned to a friend who goes down stays with that friend until
 -- `assign` moves it"). No shebang: loader.go prepends the single library
--- header. Locals carry an rd_ prefix because every lua/ file shares one chunk.
+-- header. loader.go wraps this file in its own do-block; friend.lua's helpers
+-- arrive through NS.friend and the rd_ helpers redistribute_assign.lua calls
+-- leave through NS.redistribute (both at the ends of the two files).
 --
 -- Keys:
 --   friend:<f>:state   hash, written only through friend.lua's fs_set and
@@ -36,6 +38,10 @@
 --   * every moved title carries `[moved from <f>: <why>]`; each receiving
 --     friend gets one wake. No model and no coordinator is called.
 -- Free width = desired slots - leased - open tasks queued, over open sprints.
+
+local FS_AWAY, FS_IDLE, FS_UNDER = NS.friend.FS_AWAY, NS.friend.FS_IDLE, NS.friend.FS_UNDER
+local fs_blocks, fs_set, fs_clear = NS.friend.fs_blocks, NS.friend.fs_set, NS.friend.fs_clear
+local fr_has_role, fr_roster = NS.friend_roles.fr_has_role, NS.friend_roles.fr_roster
 
 local RD_OUT = 'out-of-credits'
 local RD_DOWN = 'down'
@@ -516,3 +522,14 @@ local function friend_redistribute(keys, args)
 end
 
 redis.register_function('ns_friend_redistribute', friend_redistribute)
+
+-- The cross-file surface redistribute_assign.lua imports (loader.go: every
+-- file is its own do-block; NS is the one chunk-level local).
+NS.redistribute = {
+  RD_OUT = RD_OUT,
+  rd_author = rd_author, rd_caplog = rd_caplog, rd_close_leases = rd_close_leases,
+  rd_csv = rd_csv, rd_dedup = rd_dedup, rd_free = rd_free, rd_log = rd_log,
+  rd_mark = rd_mark, rd_move_open = rd_move_open, rd_note_held = rd_note_held,
+  rd_now_ms = rd_now_ms, rd_open_sprints = rd_open_sprints,
+  rd_carried_hold = rd_carried_hold, rd_route = rd_route,
+}
