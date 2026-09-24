@@ -8193,9 +8193,10 @@ observed data, not that word; the issue verbs filter on `:assignees` and `who` n
 closing PR's URL and the closing commit's URL; a unit that later gains a fix PR by `issue link` gains
 that link. A PR is never a node (*The data*); its record is nova-sprint's PR record (#3091).
 
-**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`.**
-Glenn, 2026-09-23 6:35-6:45 PM ET, answering this section's former first open question for good: the
-work RECORD — the cross-repo sexp, the ingest map, fold receipts — lives in the private repo
+**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`; its manifest is `work.sexp`; the tool stays `cmd/nova-work` in nova-tools.**
+Glenn, 2026-09-23 6:35-6:45 PM ET, answering this section's former first open question for good and
+superseding his 3:58 PM ruling (comment 5801899651), which had put the record under nova-tools
+`docs/roadmaps/`: the work RECORD — the cross-repo sexp, the ingest map, fold receipts — lives in the private repo
 `mas-bandwidth/work` (created 2026-09-23; its README says data only, no code), and the TOOL stays
 `cmd/nova-work` and `lisp/nova-work` in nova-tools: *"I don't want any confusion between nova-work
 the tool, and work the repo."* *Link versus absorb* requires
@@ -8212,16 +8213,18 @@ roadmap only**: its `*.sexp` files and the rendered `ROADMAP.md` stay public in 
 through nova-tools' lander like any other change, and are never a record path.
 
 **Where it lives.** In the storage split of section 9, at the root of the work repo
-(`mas-bandwidth/work`), branch `main`: the manifest `nova-work.sexp`, one O file and one C file per repository under
+(`mas-bandwidth/work`), branch `main`: the manifest `work.sexp`, one O file and one C file per repository under
 `work/`, bodies as content-addressed blobs under `blobs/`, and the map `ingest-map.sexp`. **In this
 section a record path is always relative to the root of the work repo**, and a path in
 nova-tools is written with `nova-tools:` in front. **All of it is the record, and all of it is
-checked in** by section 5. The record's manifest keeps the name `nova-work.sexp` because the tool
-reads it; it is a file of the work repo, and `nova-tools:docs/roadmaps/nova-work.sexp` is nova-tools'
-roadmap for the tool, a different file that no record write touches. **The sexp moves there in the
+checked in** by section 5. The record's manifest is named for the repo, not the tool (*"I don't want
+any confusion between nova-work the tool, and work the repo"*): `work.sexp` is a file of the work
+repo, and `nova-tools:docs/roadmaps/nova-work.sexp` is nova-tools' roadmap for the tool, a different
+file that no record write touches. **The sexp moves there in the
 cutover** (section 12, step 0): from (b)'s first write the record is written only in the work repo,
-and any record data the cutover carries over from nova-tools is committed there byte-identical, the
-commit message naming the nova-tools commit it was taken from; nova-tools' roadmap files stay where
+and any record data the cutover carries over from nova-tools is committed there byte-identical under the
+record's names (a manifest as `work.sexp`), the commit message naming the nova-tools commit it was
+taken from; nova-tools' roadmap files stay where
 they are. **The work repo exists (created 2026-09-23); it must be reachable before anything is
 written**: rowan-claude and the writer's bench able to push to it, a `work.git` mirror in the bench
 mirror set and its read credential sealed on every bench is the first line of (b) — an org act that
@@ -8493,7 +8496,7 @@ SAMPLE who=<friend> seed=<n> commit=<nova-work sha> ok=<k>/30 [bad=<unit>:<field
 (*GitHub is a git remote only*): `nova-work ingest sample-record --who <friend> --seed <n> --commit
 <sha> --ok <k> [--bad <unit>:<field>]... --reason <text>` appends `(:sample :who "<f>" :seed <n>
 :ok <k> :of 30 :bad (...) :at "<stamp>")` to the `:samples` list of the `:verify` entry whose
-`:commit` is `<sha>` in `nova-work.sexp`, publishes the same line to `w:verify` field
+`:commit` is `<sha>` in `work.sexp`, publishes the same line to `w:verify` field
 `sample:<commit>`, and prints it. It refuses (exit 1) when no `:verify` entry has that commit, when
 `--who` is the ingest's owner, or when `--ok` is outside 0–30. `ok` below 30 names each unit and
 field in `bad=` and each is filed as a fix. The seed is printed, so the draw is reproducible and a
@@ -8501,7 +8504,7 @@ second friend can re-read the same thirty. The cutover rule of section 1 reads t
 
 **Verify writes one record into the sexp**: `(:verify :at "<stamp>" :commit "<sha>" :repos ((:repo
 "<o>/<r>" :issues <a> :units <b> :missing <m> :extra <e> :drift <d>) ...))`, appended to
-`nova-work.sexp`'s `:verify` list (bounded: the newest 52 kept, older ones reachable in
+`work.sexp`'s `:verify` list (bounded: the newest 52 kept, older ones reachable in
 git) and to `w:verify`, so `issue mirror status` of section 10 answers from the sexp with no network. **It runs weekly
 after the cutover** (a scripted card of the sprint machinery, never a model), and a failing weekly
 verify files one fix per `MISSING`/`EXTRA`/`DRIFT` class.
@@ -8520,13 +8523,25 @@ batch on that repository**: a batch kind whose gate is **`nova-work check --snap
 manifest and every file of section 9's storage split (the validator whole, rule by rule) under the
 reader's three bounds, and nothing else — no build and no test**, because a data-only change is
 proved by its own lint; the lint binary is the nova-tools `nova-work` at the lander's pinned engine
-commit, printed on the landing receipt. The lander refuses, on `mas-bandwidth/work`, any batch
-that is not a `roadmap` batch from the writer (`LAND REFUSED repo=mas-bandwidth/work: only the
-record writer lands here`) and a `roadmap` batch touching a path outside the storage split
-(`LAND REFUSED batch=roadmap path=<p>: not a record path`). **nova-tools' lander is unaffected by
-record writes**, because the record is not in nova-tools: no record write is ever a nova-tools batch,
-so nova-tools gains no record rule and no path refusal, and its `docs/roadmaps/` — nova-tools' own
-roadmap — lands like any other change. That the writer never targets a nova-tools path is the
+commit, printed on the landing receipt.
+
+**The refusal path set is #3168's five, and nothing else.** #3168's AMENDMENT (rev 7) narrowed the
+lander's refusal to the five storage-split paths, which it named under nova-tools `docs/roadmaps/`
+by the 3:58 PM ruling: `docs/roadmaps/nova-work.sexp`, `docs/roadmaps/work/<repo>.sexp`, `docs/roadmaps/work/<repo>.closed.sexp`, `docs/roadmaps/blobs/**` and `docs/roadmaps/ingest-map.sexp`.
+The 6:35-6:45 PM ruling moves the record to the work repo, so the same five are, at the work repo's
+root, `work.sexp`, `work/<repo>.sexp`, `work/<repo>.closed.sexp`, `blobs/**` and `ingest-map.sexp`
+(the manifest named for the repo, section 2). On `mas-bandwidth/work` the lander carries #3168's two
+refusals, both exit 1:
+
+- a `roadmap` batch that touches a path outside the five: `LAND REFUSED batch=roadmap path=<p>: not a roadmap path`;
+- any other batch, or a `roadmap` batch not from the writer, that touches one of the five: `LAND REFUSED path=<p>: written outside the nova-work writer`.
+
+A work-repo change touching none of the five (its README) is an ordinary batch. **nova-tools' lander
+is unaffected by record writes**, because the record is not in nova-tools: no record write is ever a
+nova-tools batch, so nova-tools gains no record rule and no path refusal, and its `docs/roadmaps/` —
+nova-tools' own roadmap, and the sprint set files written by `nova-work set` such as
+`docs/roadmaps/sprint-fixes-2026-09-22.sexp`, which #3168 kept landing as ordinary batches — lands
+like any other change. That the writer never targets a nova-tools path is the
 writer's own check (replay `record-lives-in-the-work-repo`, section 11). That is *One
 coordinator, one live reader/writer* applied to the files on disk: **one writer of the sexp**, landing
 in the work repo with its lease `lease:nova-work-writer` in nova-sprint's Redis
@@ -8603,7 +8618,7 @@ row prints its reason and its resolver, as the ask already promises. `order` wit
 other value, is refused naming the flag.
 
 **x/y is `set check`'s.** A sprint is a work set (SPEC-WORKLANG A1); its units carry `:ref
-"<O node id>"`, and `nova-work set check --file <sprint>.sexp --open nova-work.sexp`
+"<O node id>"`, and `nova-work set check --file <sprint>.sexp --open work.sexp`
 resolves every ref (refusing a dangling one by name) and derives each unit's done from the O node's
 state and evidence — so **x/y z% is `done/units` from the `SET OK` line and nothing else**, the same
 walk at every level (*sprint is any bounded goal*). `--open` is the one new flag.
@@ -8700,7 +8715,7 @@ index) and adds the ones issue parity needs.
 
 | path | what | why this shape |
 |---|---|---|
-| `nova-work.sexp` | **the manifest**: gains `:repositories`, one `(:repo "<o>/<r>" :file "<O path>" :file-digest "<sha256>" :closed "<C path>" :closed-digest "<sha256>" :digest "<sha256>")` per declared repository, public or private, and `:digest`, the root digest over the repository digests; its existing keys (`:epics`, `:verification`, `:events`, ...) unchanged. **Digest rule:** `:file-digest` and `:closed-digest` are the SHA-256 of the canonical bytes of that repository's O and C files (a repository with no closed rows yet has an empty C file and the empty file's hash); the repository `:digest` is SHA-256 over `:file-digest` then `:closed-digest`, in that order; the root `:digest` is SHA-256 over the repository digests in manifest order. **Every write to either file rewrites both of its file digests, the repository digest and the root digest in the same commit**, so a C-only change (a `:settle` or `:revive` row, or a check-in that touches only the C file) moves the root digest exactly as an O change does; lint refuses (`WORK FAIL digest`) a manifest whose digests do not match the bytes on disk | one small file every reader opens first; a digest check over every O and every C file tells a cold start whether anything moved |
+| `work.sexp` | **the manifest**: gains `:repositories`, one `(:repo "<o>/<r>" :file "<O path>" :file-digest "<sha256>" :closed "<C path>" :closed-digest "<sha256>" :digest "<sha256>")` per declared repository, public or private, and `:digest`, the root digest over the repository digests; its existing keys (`:epics`, `:verification`, `:events`, ...) unchanged. **Digest rule:** `:file-digest` and `:closed-digest` are the SHA-256 of the canonical bytes of that repository's O and C files (a repository with no closed rows yet has an empty C file and the empty file's hash); the repository `:digest` is SHA-256 over `:file-digest` then `:closed-digest`, in that order; the root `:digest` is SHA-256 over the repository digests in manifest order. **Every write to either file rewrites both of its file digests, the repository digest and the root digest in the same commit**, so a C-only change (a `:settle` or `:revive` row, or a check-in that touches only the C file) moves the root digest exactly as an O change does; lint refuses (`WORK FAIL digest`) a manifest whose digests do not match the bytes on disk | one small file every reader opens first; a digest check over every O and every C file tells a cold start whether anything moved |
 | `work/<repo>.sexp` | that repository's **O** subtree: its repository work set, its containers and its open units | *The root is COW*: every top-level child of O is a repository work set; git conflicts are scoped to one repository |
 | `work/<repo>.closed.sexp` | that repository's **C** rows: one per `:settle` and per `:revive`, keyed `<event-rev>:<id>`, the closed-index row shape of *The root is COW*, append-only; its hash is the manifest row's `:closed-digest`, folded into the repository and root digests | C beside the snapshot, never inside it; the per-repository file is the partition until E07's day partitions exist; a session loads none of it at start, and the digest still covers it |
 | `blobs/<aa>/<sha256>` | **bodies**, content-addressed (`<aa>` the first two hex digits), write-once, referenced from `:correspondence` by `:body-sha256` | *"retain external reports separately from the coordinator's accepted plan"* (Stella); bodies never bloat a parse or a diff, and identical bodies are stored once |
@@ -8966,7 +8981,7 @@ written red first:
 | `bug-label-is-a-category` | a closed `bug`-labelled issue with no test imports and settles | the import refuses by rule 19, or `bugs=` counts it |
 | `verify-sets-and-hashes` | a fixture with one missing, one extra and one drifted issue | fewer than three lines, a wrong field named, or exit 0 |
 | `verify-names-what-it-does-not-capture` | every `VERIFY <repo>` line carries `not-captured=comments,reactions,timeline` | the field is absent on any line |
-| `roadmap-batch-gates-on-lint-only` | on `mas-bandwidth/work`: a `roadmap` batch with a `WORK FAIL` finding is refused, a clean one lands without build or test, a `roadmap` batch with a path outside the storage split is refused, and a batch not from the writer is refused; nova-tools' lander carries no record rule, because no record write reaches it | any of the four lands the wrong way, or nova-tools' lander refuses a batch for a record path |
+| `roadmap-batch-gates-on-lint-only` | on `mas-bandwidth/work`: a `roadmap` batch with a `WORK FAIL` finding is refused, a clean one lands without build or test, a `roadmap` batch with a path outside section 5's five is refused `not a roadmap path`, and a batch not from the writer that touches one of the five is refused `written outside the nova-work writer`; nova-tools' lander carries no record rule, because no record write reaches it, and a nova-tools batch touching only `docs/roadmaps/sprint-x.sexp` lands | any of the four lands the wrong way, or nova-tools' lander refuses a batch for a record path |
 | `one-writer-of-the-sexp` | a second writer run while `lease:nova-work-writer` is held refuses | two writers each write a commit |
 | `main-equals-the-writer-within-a-cycle` | after an ingest at T, the record paths on `mas-bandwidth/work` `main` equal the writer's bytes by T + one cycle, and `nova-work lag` says so | `lag` exits 0 while they differ, or the bytes differ past the bound |
 | `webhook-edit-within-sixty-seconds` | an `issues.edited` delivery changes the unit within 60 s with zero REST calls | a REST call is made, or 60 s pass |
@@ -9046,7 +9061,7 @@ former seventh, *who adds the org webhook*, is answered by *"You are org admin r
 2026-09-23 3:15 PM): it is a precondition of (c), Rowan's to do. Six remain, renumbered:
 
 1. **One file or a forest.** Glenn said *"this file"*; section 9 writes one logical forest as a small
-   manifest (`nova-work.sexp`, the record's manifest in the work repo), one O and one C
+   manifest (`work.sexp`, the record's manifest in the work repo), one O and one C
    file per repository and content-addressed bodies, because one file for 80 repositories and
    thousands of units is one hot file for every writer and every diff. Confirm the forest, or hold to
    one file?
