@@ -139,6 +139,9 @@ func readFoldBranches(path string) ([]foldBranch, error) {
 			continue
 		}
 		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue // unreachable: line is non-blank after TrimSpace
+		}
 		b := foldBranch{Name: fields[0]}
 		b.Cards = append(b.Cards, fields[1:]...)
 		out = append(out, b)
