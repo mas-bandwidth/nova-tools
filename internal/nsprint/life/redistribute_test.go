@@ -68,6 +68,16 @@ func rdFixture(t *testing.T, st *store.Store, client *redis.Client, f string) ma
 		if name != "sleepy" {
 			must(client.HSet(ctx, "friend:"+name+":beat", "host", "studio", "session", name+"-1", "at", "1").Err())
 		}
+		roles := ""
+		switch name {
+		case "stella", "fran", "sleepy":
+			roles = "may-hold"
+		case "johnny":
+			roles = "builder,may-hold"
+		case "rowan":
+			roles = "coordinator"
+		}
+		must(client.HSet(ctx, "friend:"+name+":roles", "roles", roles).Err())
 	}
 	must(client.HSet(ctx, "friend:fran:desired", "slots", "2").Err())
 	must(client.ZAdd(ctx, "friend:fran:living",
@@ -274,7 +284,7 @@ func TestOutOfCreditsRedistributesSameTick(t *testing.T) {
 	if err := life.SetState(ctx, st, "emma", life.StateOutOfCredits, until, "usage limit", "keeper", ""); err != nil {
 		t.Fatal(err)
 	}
-	moves, err := life.Redistribute(ctx, st, rdRoster, "reconciler", "")
+	moves, err := life.Redistribute(ctx, st, rdRoster, "rowan", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +296,7 @@ func TestOutOfCreditsRedistributesSameTick(t *testing.T) {
 	rdAssertMoved(t, st, client, "emma", "out of credits", tokens)
 
 	// A second tick is a no-op: nothing is left to move.
-	again, err := life.Redistribute(ctx, st, rdRoster, "reconciler", "")
+	again, err := life.Redistribute(ctx, st, rdRoster, "rowan", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,7 +318,7 @@ func TestDownFriendRedistributesAfterOneTick(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	first, err := life.Redistribute(ctx, st, rdRoster, "reconciler", "")
+	first, err := life.Redistribute(ctx, st, rdRoster, "rowan", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +327,7 @@ func TestDownFriendRedistributesAfterOneTick(t *testing.T) {
 	}
 	rdCounts(t, client, "emma", 5, 2)
 
-	second, err := life.Redistribute(ctx, st, rdRoster, "reconciler", "")
+	second, err := life.Redistribute(ctx, st, rdRoster, "rowan", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,13 +348,13 @@ func TestFriendBackBeforeSecondTickKeepsWork(t *testing.T) {
 	if err := client.Del(ctx, "friend:emma:beat").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := life.Redistribute(ctx, st, rdRoster, "reconciler", ""); err != nil {
+	if _, err := life.Redistribute(ctx, st, rdRoster, "rowan", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.HSet(ctx, "friend:emma:beat", "host", "studio", "session", "emma-2", "at", "2").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := life.Redistribute(ctx, st, rdRoster, "reconciler", ""); err != nil {
+	if _, err := life.Redistribute(ctx, st, rdRoster, "rowan", ""); err != nil {
 		t.Fatal(err)
 	}
 	rdCounts(t, client, "emma", 5, 2)
