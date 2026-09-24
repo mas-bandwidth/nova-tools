@@ -46,11 +46,9 @@ bytes on darwin."
         (nova-work:session-server-stop server)
         (ignore-errors (sb-posix:rmdir (namestring dir)))))))
 
-(defmacro with-served-session ((server socket &key (owner "rowan")) &body body)
-  `(call-with-served-session (lambda (,server ,socket)
-                               (declare (ignorable ,server ,socket))
-                               ,@body)
-                             :owner ,owner))
+;; WITH-SERVED-SESSION, the macro over CALL-WITH-SERVED-SESSION, is in the
+;; prelude (tests/harness.lisp): tests/criterion-e08-f01-01.lisp expands it and
+;; sorts before this file under discovery (#1947).
 
 (defun ask-over-the-socket (socket request)
   "Write ONE request line to SOCKET and read the ONE line back, the way

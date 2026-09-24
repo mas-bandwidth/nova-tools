@@ -34,6 +34,11 @@ import (
 // and the reconciler's live-identity census match.
 const WrapperName = "nova-card"
 
+// LaunchAckFDEnv names the inherited file descriptor nova-card uses to
+// acknowledge that Redis accepted `card launched`, or to report a refusal.
+// The token never crosses this descriptor.
+const LaunchAckFDEnv = "NOVA_CARD_LAUNCH_ACK_FD"
+
 // DefaultBudget is how long one batch may take to start: the verb returns
 // within it (#2931). A line reached after the budget is REFUSED timeout and
 // its card is not started; the reconciler requeues a dealt card that never
@@ -172,16 +177,22 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 			continue
 		}
 		seen[l.Card()] = true
-		if spent := now().Sub(began); spent > budget {
+		spent := now().Sub(began)
+		if spent > budget {
 			res.Refused++
 			fmt.Fprintf(out, "REFUSED line=%d timeout %s: batch at %dms is past the %dms launch budget\n",
 				n, l.Card(), spent.Milliseconds(), budget.Milliseconds())
 			continue
 		}
-		pid, err := startDetached(cfg.Wrapper, l)
+		pid, ack, err := startDetached(cfg.Wrapper, l, budget)
 		if err != nil {
 			res.Refused++
 			fmt.Fprintf(out, "REFUSED line=%d start %s: %s\n", n, l.Card(), oneline.Err(err))
+			continue
+		}
+		if ack != "LAUNCHED" {
+			res.Refused++
+			fmt.Fprintf(out, "REFUSED line=%d wrapper %s: %s\n", n, l.Card(), oneline.Escape(ack))
 			continue
 		}
 		res.Started++
