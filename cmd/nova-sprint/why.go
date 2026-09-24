@@ -30,7 +30,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "land",
-		Summary: "land status --redis <addr> --sprint <S>: lanes in flight, landable, dropped by reason, held by holder",
+		Summary: "land status|flaky ...: lander status and flaky observation store",
 		Run:     runLand,
 	})
 }
@@ -97,11 +97,17 @@ func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) > 0 && args[0] == "writer" {
+	if len(args) == 0 {
+		return refuse(errOut, "land", "want status or flaky or writer (sprint land is the lander's verb, #2942)")
+	}
+	if args[0] == "writer" {
 		return runLandWriter(ctx, args[1:], out, errOut)
 	}
-	if len(args) == 0 || args[0] != "status" {
-		return refuse(errOut, "land", "want status or writer (sprint land is the lander's verb, #2942)")
+	if args[0] == "flaky" {
+		return runLandFlaky(ctx, args[1:], out, errOut)
+	}
+	if args[0] != "status" {
+		return refuse(errOut, "land", "want status or flaky or writer (sprint land is the lander's verb, #2942)")
 	}
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])
 	if err != nil {

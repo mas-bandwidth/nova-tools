@@ -34,8 +34,17 @@ import (
 // and the reconciler's live-identity census match.
 const WrapperName = "nova-card"
 
+// LaunchAckFDEnv names the inherited file descriptor nova-card uses to
+// acknowledge that Redis accepted `card launched`, or to report a refusal.
+// The token never crosses this descriptor.
+const LaunchAckFDEnv = "NOVA_CARD_LAUNCH_ACK_FD"
+
+// LaunchDeadlineEnv is the batch's absolute Unix-millisecond deadline. The
+// child and Redis transition both refuse to launch after it.
+const LaunchDeadlineEnv = "NOVA_CARD_LAUNCH_DEADLINE_MS"
+
 // DefaultBudget is how long one batch may take to start: the verb returns
-// within it (#2931). A line reached after the budget is REFUSED timeout and
+// within it (#2931). A line reached at or after the budget is REFUSED timeout and
 // its card is not started; the reconciler requeues a dealt card that never
 // acked launched (#2756 3.2).
 const DefaultBudget = 5 * time.Second
@@ -106,6 +115,8 @@ type Config struct {
 	Budget time.Duration
 	// Now is the clock the budget is read on; nil means time.Now.
 	Now func() time.Time
+	// start is the process seam for deterministic deadline tests.
+	start func(string, Line, time.Time) (int, string, error)
 }
 
 // Result counts the batch: wrappers started and lines refused.
@@ -149,6 +160,11 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 		budget = DefaultBudget
 	}
 	began := now()
+	deadline := began.Add(budget)
+	start := cfg.start
+	if start == nil {
+		start = startDetached
+	}
 	seen := map[string]bool{}
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 512), maxLine)
@@ -172,16 +188,23 @@ func Launch(in io.Reader, out io.Writer, cfg Config) (Result, error) {
 			continue
 		}
 		seen[l.Card()] = true
-		if spent := now().Sub(began); spent > budget {
+		current := now()
+		spent := current.Sub(began)
+		if !current.Before(deadline) {
 			res.Refused++
-			fmt.Fprintf(out, "REFUSED line=%d timeout %s: batch at %dms is past the %dms launch budget\n",
+			fmt.Fprintf(out, "REFUSED line=%d timeout %s: batch at %dms is at or past the %dms launch budget\n",
 				n, l.Card(), spent.Milliseconds(), budget.Milliseconds())
 			continue
 		}
-		pid, err := startDetached(cfg.Wrapper, l)
+		pid, ack, err := start(cfg.Wrapper, l, deadline)
 		if err != nil {
 			res.Refused++
 			fmt.Fprintf(out, "REFUSED line=%d start %s: %s\n", n, l.Card(), oneline.Err(err))
+			continue
+		}
+		if ack != "LAUNCHED" {
+			res.Refused++
+			fmt.Fprintf(out, "REFUSED line=%d wrapper %s: %s\n", n, l.Card(), oneline.Escape(ack))
 			continue
 		}
 		res.Started++

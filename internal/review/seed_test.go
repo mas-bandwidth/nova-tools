@@ -60,6 +60,23 @@ func TestSeedTimeoutIsACouldNotRunAndNeverAKill(t *testing.T) {
 
 const wantDeadline = "--timeout deadline passed"
 
+// The same rule one step earlier: a deadline that passes while the private clone is
+// still being made is a could-not-run naming the deadline, never "could not clone"
+// (dev run 36012558540: a loaded Studio runner spent the whole 1 s --timeout in git
+// clone, and the verb blamed the repo).
+func TestSeedTimeoutDuringTheCloneNamesTheDeadline(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second)) // wall-ok: a deadline in the past waits for nothing
+	defer cancel()
+	err := cloneHead(ctx, newRepo(t), filepath.Join(t.TempDir(), "wt"), "0123456789abcdef0123456789abcdef01234567")
+	if err == nil {
+		t.Fatal("a clone under a dead context succeeded")
+	}
+	if !strings.Contains(err.Error(), wantDeadline) || !strings.Contains(err.Error(), "clone") {
+		t.Fatalf("err = %v, want %q naming the clone", err, wantDeadline)
+	}
+}
+
 // The refusal for a package that does not exist names the package and nothing else.
 // `go list`'s own first line is `stat <the throwaway worktree>/nosuch: directory not
 // found`, and that line is quoted into PR bodies and harvest logs (#1708, cold read 2,

@@ -36,6 +36,16 @@ var ScoreLevels = []string{
 	"10: exemplary: the law, the production path and a biting control, nothing else",
 }
 
+// LevelsVersion is the sha8 of a level list, the same hash RubricVersion is
+// of ScoreLevels: a prompt that sends its own levels prints their version.
+func LevelsVersion(levels []string) string {
+	if levels == nil {
+		levels = ScoreLevels
+	}
+	sum := sha256.Sum256([]byte(strings.Join(levels, "\x00")))
+	return hex.EncodeToString(sum[:])[:8]
+}
+
 // RubricVersion is the sha8 of ScoreLevels (first 8 hex characters of sha256
 // of the canonical ScoreLevels joined with NUL, matching TestScoreLevelOrderIsPinned).
 func RubricVersion() string {
@@ -43,19 +53,35 @@ func RubricVersion() string {
 	return hex.EncodeToString(sum[:])[:8]
 }
 
+// SeedInstructions is the score question's instructions as the first posted
+// run asked them. It is the seed prompt of the calibration harness
+// (internal/jevcalib/prompts/fd94795e.txt is this string plus one newline), so
+// it never changes: a new prompt is a new file, not an edit here.
+const SeedInstructions = "Score this pull request from 1 to 10 as a reviewer would, where 1 is the worst and 10 the best. " +
+	"The change is one cell of a conformance matrix: a single added test that must exercise the generated code " +
+	"for one law, in the paths its card declares, with a negative control that really goes red. " +
+	"A test that builds the bytes it then asserts, re-declares the type it claims to test, compares against a " +
+	"reference pasted into the file, or asserts a literal true scores 3 or below however well it is written."
+
 // ScoreQuestion is THE question set: exactly one score question. One question,
 // one call, one price. The instructions restate the numbering the levels carry
 // so that a provider answering with a number answers in 1-10 and not in level
 // indexes; the raw answer is kept in the ledger either way (ScoreFromAnswer).
 func ScoreQuestion() map[string]decide.Question {
+	return ScoreQuestionWith(SeedInstructions, nil)
+}
+
+// ScoreQuestionWith is the one score question asked with a prompt file's
+// instructions (nova-tools #2536). levels nil means ScoreLevels; a prompt that
+// carries its own ten levels sends those, in its order.
+func ScoreQuestionWith(instructions string, levels []string) map[string]decide.Question {
+	if levels == nil {
+		levels = ScoreLevels
+	}
 	return map[string]decide.Question{
 		"score": {
-			Instructions: "Score this pull request from 1 to 10 as a reviewer would, where 1 is the worst and 10 the best. " +
-				"The change is one cell of a conformance matrix: a single added test that must exercise the generated code " +
-				"for one law, in the paths its card declares, with a negative control that really goes red. " +
-				"A test that builds the bytes it then asserts, re-declares the type it claims to test, compares against a " +
-				"reference pasted into the file, or asserts a literal true scores 3 or below however well it is written.",
-			Score: ScoreLevels,
+			Instructions: instructions,
+			Score:        levels,
 		},
 	}
 }
@@ -125,7 +151,13 @@ func (a ClientAsker) Ask(ctx context.Context, state string, qs map[string]decide
 // Score asks the one question and returns the raw score and the confidence. An
 // error is a pass with no score, not a pass with a zero.
 func Score(ctx context.Context, a Asker, pr PR, card Card) (raw, conf float64, err error) {
-	answers, err := a.Ask(ctx, State(pr, card), ScoreQuestion())
+	return ScoreWith(ctx, a, ScoreQuestion(), pr, card)
+}
+
+// ScoreWith asks the given score question (ScoreQuestionWith) over the pull
+// request's state.
+func ScoreWith(ctx context.Context, a Asker, qs map[string]decide.Question, pr PR, card Card) (raw, conf float64, err error) {
+	answers, err := a.Ask(ctx, State(pr, card), qs)
 	if err != nil {
 		return 0, 0, err
 	}

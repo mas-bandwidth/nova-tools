@@ -491,6 +491,9 @@ var clTierCeilings = map[string]int{
 	// the label by machine class is the real repair and wants its own change;
 	// twelve is the honest ceiling until then.
 	"test": 12,
+
+	// The lisp tier on both SBCL platforms; lispCeiling carries its receipts.
+	"lisp": lispCeiling,
 }
 
 func jobNames(src string) []string {
@@ -774,5 +777,36 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
 	if m := re.FindString(src); m != "" {
 		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
+	}
+}
+
+// lispMeasuredMaxSecs is the slowest lisp job wall clock measured on
+// 2026-09-24, set-up to Complete job. The first measurement, 158 s (studio, run
+// 36007928793), set the cap at 6; both studio legs on the next two runs
+// (36011449625 on studio-nova-15, 36011918432 on studio-nova-16) were then
+// cancelled at 6:40 with the suite unfinished, because at Studio load 50-70 the
+// sweep took 42-90 s and checkout 107-157 s (14 s at 13:38Z): 265-293 s before
+// the suite starts. 430 s = 293 s to reach the suite + 110 s, the slowest suite
+// seen (space, run 36006767411) + 27 s teardown. Space legs ran 82-107 s.
+const lispMeasuredMaxSecs = 430
+
+// lispCeiling is the lisp job's cap in minutes: twice the measured max, rounded
+// up to a whole minute.
+const lispCeiling = 15
+
+// TestLispCapIsAboveTheMeasuredFloor: the lisp job's timeout-minutes must be at
+// least twice the slowest measured lisp job, so the cap is a hang detector and
+// not a coin flip on the load of the minute.
+func TestLispCapIsAboveTheMeasuredFloor(t *testing.T) {
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	mins, ok := jobTimeouts(src)["lisp"]
+	if !ok {
+		t.Fatal("the lisp job declares no timeout-minutes")
+	}
+	if mins*60 < 2*lispMeasuredMaxSecs {
+		t.Errorf("lisp timeout-minutes = %d (%d s), want >= 2 x the measured %d s job wall clock", mins, mins*60, lispMeasuredMaxSecs)
+	}
+	if mins != lispCeiling {
+		t.Errorf("lisp timeout-minutes = %d, want lispCeiling %d (change both with a new measurement)", mins, lispCeiling)
 	}
 }
