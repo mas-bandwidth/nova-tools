@@ -13,7 +13,6 @@ import (
 	"io"
 	"os"
 	"strconv"
-	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -421,7 +420,7 @@ func runCapacityHook(ctx context.Context, args []string, out, errOut io.Writer) 
 		}
 		resolvedPgid := *pgid
 		if resolvedPgid == 0 {
-			resolvedPgid = syscall.Getpgrp()
+			resolvedPgid = currentPgrp()
 		}
 		if resolvedPgid == 0 {
 			resolvedPgid = os.Getpid()

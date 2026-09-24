@@ -2,11 +2,9 @@ package capacity
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -323,25 +321,9 @@ func Reap(ctx context.Context, st *store.Store, machine string) ([]Debit, error)
 		if !isQuarantined {
 			continue
 		}
-		confirmed := false
+		confirmed := true
 		if d.PGID > 0 {
-			// kill -0 -<pgid> answers ESRCH?
-			err := syscall.Kill(-d.PGID, 0)
-			if errors.Is(err, syscall.ESRCH) {
-				confirmed = true
-			} else if err == nil {
-				// Process group is still running: SIGKILL it per 5.1
-				_ = syscall.Kill(-d.PGID, syscall.SIGKILL)
-				for i := 0; i < 10; i++ {
-					time.Sleep(10 * time.Millisecond)
-					if kerr := syscall.Kill(-d.PGID, 0); errors.Is(kerr, syscall.ESRCH) {
-						confirmed = true
-						break
-					}
-				}
-			}
-		} else {
-			confirmed = true
+			confirmed = reapGroup(d.PGID)
 		}
 
 		if confirmed {
