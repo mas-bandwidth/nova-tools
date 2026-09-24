@@ -264,6 +264,9 @@ type DoneRequest struct {
 	// Cost, when set, is appended to Evidence as its cost clause (#3105).
 	// A read done without one is unmetered in the fold, never $0.
 	Cost *Cost
+	// As closes without a token when As owns the claimed or working lease
+	// (#3206 PR A, the friend-queue `done --as` shape).
+	As string
 }
 
 // DoneStatus is the outcome of one done.
@@ -315,7 +318,7 @@ func Done(ctx context.Context, st *store.Store, req DoneRequest) (DoneStatus, er
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDone, nil,
 		req.Sprint, req.ID, req.Token, req.Evidence, req.Verdict, req.Score,
-		req.Head, req.Actor, req.Idem).Result()
+		req.Head, req.Actor, req.Idem, req.As).Result()
 	if err != nil {
 		return "", fmt.Errorf("task done %s: %w", req.ID, err)
 	}

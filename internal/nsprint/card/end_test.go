@@ -7,12 +7,42 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
+
+// TestLaunchedRefusesAnExpiredBatchDeadline proves the final Redis transition,
+// not only the parent wait, fences a child that reaches launch after its one
+// batch deadline. The dealt card and event log remain untouched.
+func TestLaunchedRefusesAnExpiredBatchDeadline(t *testing.T) {
+	ctx := context.Background()
+	st, client := newSprint(t)
+	id := card.Identity{Sprint: "deadline", Label: "expired", BaseSHA: "0123abcd", Bench: "ctl-bench", Attempt: 1}
+	token := attemptToken(1, "0123456789abcdef0123456789abcdef")
+	seedCard(t, ctx, client, id, "dealt", token)
+
+	got, err := card.Launched(ctx, st, card.LaunchRequest{
+		Sprint: id.Sprint, Label: id.Label, Token: token,
+		Branch: "nova/deadline/expired-a1", JobDir: "/jobs/deadline/expired/1",
+		Deadline: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != 2 || got.Reason != "TIMEOUT" || got.Resolved {
+		t.Fatalf("expired launch = %+v, want code=2 TIMEOUT unresolved", got)
+	}
+	if state := stateOf(t, ctx, client, id.Sprint, id.Label); state != "dealt" {
+		t.Fatalf("expired launch moved card to %q", state)
+	}
+	if n := xlen(t, ctx, client, id.Sprint); n != 0 {
+		t.Fatalf("expired launch wrote %d log entries", n)
+	}
+}
 
 func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	ctx := context.Background()
@@ -220,6 +250,118 @@ func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	}
 	if hashOf(t, ctx, client, sprint, label)["outcome"] != "DONE" || xlen(t, ctx, client, sprint) != baseline+1 {
 		t.Fatal("fenced call after end rewrote the card")
+	}
+}
+
+// TestEndAfterPushAndDealRecordsEnded is nova-tools #3351's production-shape
+// regression. Card push stores the linted 40-hex base_sha while deal binds the
+// attempt identity to its 8-hex prefix. End must compare those two shapes
+// without weakening the identity check, free the bench slot, and expose the
+// ended card to harvest.
+func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
+	ctx := context.Background()
+	st, client := newSprint(t)
+	const (
+		sprint = "control-3351"
+		label  = "end-after-push-deal"
+		bench  = "ctl-bench"
+	)
+
+	srv := repoServer(t)
+	fixture := validCard(srv.URL + "/acme/public.git")
+	fixture.label = label
+	if got := card.Push(ctx, client, sprint, fixture.render()); got.Code != 0 {
+		t.Fatalf("card push: exit %d stdout %q stderr %q", got.Code, got.Stdout, got.Stderr)
+	}
+	if err := client.HSet(ctx, "s:"+sprint, "status", "open").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "lease:reconciler", "token", "live-fence").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SAdd(ctx, "benches", bench).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "bench:"+bench+":beat", "host", "bench.invalid", "user", "worker").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "bench:"+bench+":state", "state", "UP").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "bench:"+bench+":desired", "slots", "1", "paused", "0").Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	token := attemptToken(1, "0123456789abcdef0123456789abcdef")
+	reply, err := client.FCall(ctx, "ns_card_deal", nil,
+		bench, "live-fence", "test", "3351",
+		sprint, label, "1", token, card.TokenSHA(token)).StringSlice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reply) != 5 || reply[0] != "DEALT" {
+		t.Fatalf("deal reply = %v, want one DEALT card", reply)
+	}
+	body := hashOf(t, ctx, client, sprint, label)
+	id, err := card.ParseIdentity(body["identity"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(body["base_sha"]) != 40 || id.BaseSHA != body["base_sha"][:8] {
+		t.Fatalf("push/deal identity shape: base_sha=%q identity=%q", body["base_sha"], body["identity"])
+	}
+	member := sprint + "/" + label + "/1"
+	if !zHas(t, ctx, client, card.BenchStartingKey(bench), member) {
+		t.Fatal("deal did not lease the slot")
+	}
+
+	if got, err := card.Launched(ctx, st, card.LaunchRequest{
+		Sprint: sprint, Label: label, Token: token, Branch: card.WrapperBranch(sprint, label, 1), JobDir: "/jobs/" + label,
+	}); err != nil || !got.Resolved {
+		t.Fatalf("launched = %+v, %v", got, err)
+	}
+	if got, err := card.Beat(ctx, st, card.BeatRequest{Sprint: sprint, Label: label, Token: token}); err != nil || !got.Resolved {
+		t.Fatalf("beat = %+v, %v", got, err)
+	}
+	results := canonicalResults(t, id)
+	pushed := "89abcdef0123456789abcdef0123456789abcdef"
+	writeRecord(t, results, card.EndRecord{
+		Identity: id, Outcome: "DONE", Reason: "done", ExitCode: 0,
+		TokenSHA: card.TokenSHA(token), PushedSHA: pushed, At: "1970-01-01T00:00:00Z",
+	})
+	ended, err := card.End(ctx, st, card.EndRequest{
+		Sprint: sprint, Label: label, Token: token, Outcome: "DONE", Reason: "done", ResultsDir: results,
+	})
+	if err != nil || !ended.Resolved || ended.Code != 0 {
+		t.Fatalf("end after push and deal = %+v, %v", ended, err)
+	}
+	body = hashOf(t, ctx, client, sprint, label)
+	if body["state"] != "ended" || body["results"] != results || body["pushed_sha"] != pushed {
+		t.Fatalf("ended card = %+v", body)
+	}
+	if zHas(t, ctx, client, card.BenchStartingKey(bench), member) || zHas(t, ctx, client, card.BenchLivingKey(bench), member) {
+		t.Fatal("end left the bench slot leased")
+	}
+
+	due, err := client.FCall(ctx, "ns_harvest_due", nil, sprint, bench, "10").StringSlice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) < 4 || due[0] != "OK" || due[3] != label {
+		t.Fatalf("harvest due = %v, want %s", due, label)
+	}
+	msgs, err := client.XRange(ctx, card.LogKey(sprint), "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ends := 0
+	for _, msg := range msgs {
+		if fmt.Sprint(msg.Values["kind"]) == "card" && fmt.Sprint(msg.Values["id"]) == label && fmt.Sprint(msg.Values["to"]) == "ended" {
+			ends++
+		}
+	}
+	if ends != 1 {
+		t.Fatalf("card-end log entries = %d, want 1", ends)
 	}
 }
 

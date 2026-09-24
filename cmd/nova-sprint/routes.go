@@ -20,6 +20,11 @@ import (
 //	nova-sprint routes
 //	nova-sprint routes --rung flash [--type recut]
 //	nova-sprint routes --check orgptnano --rung flash [--type read3 [--redis <host:port>]]
+//	nova-sprint routes --preamble ordspro
+//
+// --preamble prints the route's one-paragraph preamble (#2498 S8), built from
+// the attribution's fault classes the table carries for it, for a card front
+// to inline; a route that carries none is REFUSED (exit 1, nothing on stdout).
 //
 // With --check and --type, the answer is the fold's (#3178): the command reads
 // routes:<type> (one HGETALL; `nova-sprint fold` is its only writer) from
@@ -35,7 +40,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "routes",
-		Summary: "print allowed_routes per rung and work type with the ranking numbers; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED)",
+		Summary: "print allowed_routes per rung and work type with the ranking numbers; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
 		Run:     cmdRoutes,
 	})
 }
@@ -47,12 +52,16 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	rung := fs.String("rung", "", "")
 	typ := fs.String("type", "", "")
 	check := fs.String("check", "", "")
+	preamble := fs.String("preamble", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route> and --redis <host:port>")
+		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route> and --redis <host:port>")
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "routes", "takes flags, not positional arguments")
+	}
+	if *preamble != "" && (*check != "" || *typ != "" || *rung != "") {
+		return refuse(stderr, "routes", "--preamble takes no other flag")
 	}
 	if (*check != "" || *typ != "") && *rung == "" {
 		return refuse(stderr, "routes", "--check and --type need --rung flash or --rung pro")
@@ -62,6 +71,14 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return refuse(stderr, "routes", err.Error())
 	}
 	switch {
+	case *preamble != "":
+		p, err := tab.Preamble(*preamble)
+		if err != nil {
+			fmt.Fprintf(stderr, "REFUSED %s\n", err)
+			return 1
+		}
+		fmt.Fprintln(stdout, p)
+		return 0
 	case *check != "":
 		var fold *route.Fold
 		if *typ != "" {

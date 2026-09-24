@@ -172,6 +172,7 @@ func TestHarvestOrphansEndsOnlyOnItsRecord(t *testing.T) {
 	id := seedOrphan(t, c, bench, label, 1, token)
 	rid := seedOrphan(t, c, bench, red, 1, rtoken)
 	c.HSet(ctx, "bench:"+bench+":beat", "host", bench, "user", "nova")
+	c.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1")
 	forge := newOrphanForge()
 	harvestForge := newForge()
 	harvestForge.heads["nova/"+sprint+"/"+label+"-a1"] = sha(label)
