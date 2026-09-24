@@ -22,6 +22,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # #3113: the same fail-closed switch as ci.yml. The test and perf jobs
+  # install redis-server before they run the suite.
+  NOVA_CI: "1"
+
 concurrency:
   group: certification-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
@@ -65,6 +70,11 @@ jobs:
 
       - name: vet
         run: go vet ./...
+
+      - name: install redis-server
+        # #3113. This job is the hosted full suite, ubuntu-latest and
+        # macos-latest. The controls spawn redis-server; they do not dial a bench.
+        run: bash .github/scripts/install-redis-server.sh
 
       - name: test
         run: go test -race ./...
@@ -958,6 +968,11 @@ jobs:
         # place this file is compiled at all is here. Vet before test, so a perf file that
         # stopped compiling says that rather than failing as a bound.
         run: go vet -tags perf ./...
+
+      - name: install redis-server
+        # #3113. This step runs the whole suite, so a nova-sprint control must
+        # have redis-server or NOVA_CI fails it. The binary is not the fleet store.
+        run: bash .github/scripts/install-redis-server.sh
 
       - name: the wall-clock tests, one at a time
         # EVERY PACKAGE `./...` REACHES, under the tag -- not a -run naming one test and not

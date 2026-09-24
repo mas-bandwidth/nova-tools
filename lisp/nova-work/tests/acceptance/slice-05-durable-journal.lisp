@@ -2302,5 +2302,26 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
       (check-equal :late deffect "a late decline carries :effect :late")
       (check-equal reservations (leasebook-reservations dbook)
                    "a late decline releases no committed reservation")
-      (check-equal leases (leasebook-leases dbook)
-                   "a late decline releases no lease"))))
+(check-equal leases (leasebook-leases dbook)
+                    "a late decline releases no lease"))))
+
+(deftest "E03-F02-recorded-order-pinned" "docs/SPEC-WORK.md:330,339"
+    "expected=kind-fields-in-verb-defined-order"
+  (let* ((fields '(:to :doing :reason "test reason" :blocked-by "node1"
+                   :evidence ("ev1" "ev2")))
+         (event (make-work-event :kind :transition :node "nx/t1" :by "rowan"
+                                 :fields fields
+                                 :stamp "2026-01-01T00:00:00Z" :clock :tool
+                                 :request "req-1" :generation-owner "gen-1" :rev 1
+                                 :session-written-p t))
+         (form (event-record-form event)))
+    (let ((kind-fields (nthcdr 16 form)))
+      (check-equal 4 (/ (length kind-fields) 2) "four kind fields")
+      (check-equal :to (nth 0 kind-fields) ":to is first")
+      (check-equal :doing (nth 1 kind-fields) ":to's value follows")
+      (check-equal :reason (nth 2 kind-fields) ":reason after :to")
+      (check-equal "test reason" (nth 3 kind-fields) ":reason's value follows")
+      (check-equal :blocked-by (nth 4 kind-fields) ":blocked-by after :reason")
+      (check-equal "node1" (nth 5 kind-fields) ":blocked-by's value follows")
+      (check-equal :evidence (nth 6 kind-fields) ":evidence is last")
+      (check-equal '("ev1" "ev2") (nth 7 kind-fields) ":evidence's value follows"))))

@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -232,4 +236,167 @@ func copyDir(t *testing.T, from, to string) {
 			t.Fatal(err)
 		}
 	}
+}
+
+// TestHelpExampleLinesRunAsPrinted: every line of this tool's `example:` block runs, as printed,
+// from the root of a checkout, after the setup line the banner carries above it. nova-tools #1455
+// measured 28 of 61 pasted example lines exiting 2 because the line names an input the reader has
+// not made; an example exiting 2 is a broken example (ONBOARDING point 1). This is the #1920 shape
+// (cmd/nova-tokens), and unlike TestUsageBannerExamplesRun it does NOT localize(): the lines run
+// verbatim through `sh -c` in an empty temp root, so dropping the setup line turns this test red.
+//
+// The banner is read AS SOURCE (the usage constant), the binary is built so the lines can be RUN
+// with it first on PATH and stdin closed, exactly as a stranger would. "Runs" is this repo's exit
+// law: 1 is an answer (both fixture pages carry findings), 2 is "could not run". No line here
+// pushes, publishes, contacts a forge, acts on a machine or needs a key, so none is skipped.
+func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
+	lines := exampleBlockLines(usage)
+	if len(lines) == 0 {
+		t.Fatal("the usage banner's `example:` block holds no line; this test would pass by running nothing")
+	}
+
+	setup := fixtureSetupLine(usage)
+	if setup == "" {
+		t.Fatalf("the usage banner has no fixture setup line above the block, so a stranger pasting it names\n"+
+			"inputs they have not made (nova-tools #1455: an example exiting 2 is a broken example).\n"+
+			"The missing line is:\n  %s", wantFixtureSetup)
+	}
+
+	bin := buildExampleBinary(t)
+
+	root := t.TempDir()
+	// The one path the setup line reads, at the path it names: the checkout shape and nothing else.
+	copyExampleTree(t, examplePages, filepath.Join(root, "cmd", "nova-self-talk", "testdata", "example-pages"))
+
+	if exit, out := runExampleLine(t, root, filepath.Dir(bin), setup); exit != 0 {
+		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nits first output line: %s",
+			exit, setup, exampleFirstLine(out))
+	}
+
+	for _, line := range lines {
+		exit, out := runExampleLine(t, root, filepath.Dir(bin), line)
+		if exit == 2 {
+			t.Errorf("the example `%s` exits 2 (could not run) -- a line a stranger pastes must run as printed:\nfirst output line: %s",
+				line, exampleFirstLine(out))
+			continue
+		}
+		if exit != 1 {
+			t.Errorf("the example `%s` exits %d, want 1: the fixture pages carry findings, so a line that stopped flagging them has drifted\nfirst output line: %s",
+				line, exit, exampleFirstLine(out))
+		}
+	}
+}
+
+// wantFixtureSetup is the line the class fix added above the block, named so a test that finds it
+// missing says which line a reader lost.
+const wantFixtureSetup = "cp -R cmd/nova-self-talk/testdata/example-pages ./pages"
+
+// exampleBlockLines returns every command under an `example:` heading in a usage banner, in
+// banner order. A line beginning with the tool's name under the heading is an example; a blank
+// line closes the block, so the prose after it is not swept up.
+func exampleBlockLines(usage string) []string {
+	var out []string
+	inBlock := false
+	for _, line := range strings.Split(usage, "\n") {
+		if line == "example:" {
+			inBlock = true
+			continue
+		}
+		if !inBlock {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			inBlock = false
+			continue
+		}
+		if strings.HasPrefix(trimmed, "nova-self-talk ") {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// fixtureSetupLine returns the setup line the block reads, or "" when the banner loses it. It
+// matches the line's shape rather than its exact text, so the printed line is what is run.
+func fixtureSetupLine(usage string) string {
+	for _, line := range strings.Split(usage, "\n") {
+		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "cp -R cmd/nova-self-talk/testdata/example-pages") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+// buildExampleBinary builds this command into a temp dir and returns its path; goenv.Clean keeps
+// the parent's GOFLAGS from reshaping the build (internal/goenv).
+func buildExampleBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "nova-self-talk")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	cmd := exec.Command("go", "build", "-o", bin, ".")
+	cmd.Env = goenv.Clean(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("building nova-self-talk: %v\n%s", err, out)
+	}
+	return bin
+}
+
+// runExampleLine runs one line through `sh -c` with the built binary first on PATH, from dir,
+// with stdin closed. It returns the exit code and the combined output.
+func runExampleLine(t *testing.T, dir, binDir, line string) (int, string) {
+	t.Helper()
+	cmd := exec.Command("sh", "-c", line)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "PATH="+binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Stdin = nil
+	var out strings.Builder
+	cmd.Stdout, cmd.Stderr = &out, &out
+	var exitErr *exec.ExitError
+	switch err := cmd.Run(); {
+	case err == nil:
+		return 0, out.String()
+	case errors.As(err, &exitErr):
+		return exitErr.ExitCode(), out.String()
+	default:
+		t.Fatalf("running %q: %v", line, err)
+		return 0, ""
+	}
+}
+
+// copyExampleTree copies src under dst. Every path it writes is inside the caller's t.TempDir()
+// (AGENTS.md rule 10).
+func copyExampleTree(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, p)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		raw, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, raw, 0o644)
+	})
+	if err != nil {
+		t.Fatalf("copying the fixture %s: %v", src, err)
+	}
+}
+
+// exampleFirstLine is the first line of an output, which is where a refusal says what was wrong.
+func exampleFirstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }

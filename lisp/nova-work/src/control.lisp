@@ -245,11 +245,94 @@ never reads a newer scope, so a ctl-clip or a later assignment cannot change it.
                                  (list :anchor (hold-anchor hold)
                                        :targets (hold-targets hold))))))
 
-(defun ctl-clip (kernel)
+(defun ctl-clip (kernel &key clip-after clip-every retain last-clip-time pending-count events structure path)
   "Publish a ctl-clip. A live hold's anchor and span are carried forward, never
-reconstructed from the newer scope."
-  (incf (ctl-clip-revision (kernel-controls kernel)))
-  (values t "CLIP OK" 0))
+reconstructed from the newer scope. The session clips when its pending accepted events
+reach --clip-after, or when --clip-every has elapsed since the last clip with at least
+one event pending, whichever comes first; a clip with nothing pending is not run
+(SPEC-WORK.md:498-499)."
+  (if (or clip-after clip-every retain last-clip-time pending-count events structure path)
+      ;; New behavior: use the periodic clipping logic
+      (when (clip-should-trigger-p kernel :clip-after clip-after :clip-every clip-every
+                            :last-clip-time last-clip-time :pending-count pending-count)
+        (let* ((clip-stamp (get-universal-time))
+               (boundary (calculate-retention-boundary events retain clip-stamp))
+               (retained-events (loop for event in events
+                                      when (>= (getf event :rev) boundary)
+                                        collect event))
+               (pre-boundary-events (loop for event in events
+                                           when (< (getf event :rev) boundary)
+                                             collect event))
+               (snapshot-path (or path "snapshot.lisp"))
+               (archive-path (retention-archive-path snapshot-path)))
+          (write-clip-snapshot structure boundary retained-events snapshot-path)
+          (write-retention-archive pre-boundary-events archive-path :revision-range (list 0 boundary))
+          (incf (ctl-clip-revision (kernel-controls kernel)))
+          (values t "CLIP OK" 0)))
+      ;; Old behavior: just increment the clip-revision
+      (progn
+        (incf (ctl-clip-revision (kernel-controls kernel)))
+        (values t "CLIP OK" 0))))
+
+;;; ------------------------------------------------------------------
+;;; SPEC-WORK work-a: periodic clipping triggers and retention-boundary logic
+;;; (nova-tools#2333, docs/SPEC-WORK.md:495-533)
+;;; ------------------------------------------------------------------
+
+(defun clip-should-trigger-p (kernel &key clip-after clip-every last-clip-time pending-count)
+  "Check if a clip should be triggered based on --clip-after or --clip-every.
+According to SPEC-WORK.md:498: the session clips when its pending accepted events
+reach --clip-after, or when --clip-every has elapsed since the last clip with at
+least one event pending, whichever comes first; a clip with nothing pending is not run."
+  (declare (ignore kernel))
+  (and pending-count (> pending-count 0)
+       (or (and clip-after (>= pending-count clip-after))
+           (and clip-every last-clip-time
+                (> (get-universal-time) (+ last-clip-time clip-every))))))
+
+(defun retention-archive-path (snapshot-path)
+  "The sibling retention archive for SNAPSHOT-PATH: same directory, name
+<snapshot>-archive, same type (SPEC-WORK.md:530: a sibling file the same clip
+commits). Keeping the directory is the point: an absolute snapshot path must not
+send its archive to the process working directory."
+  (let ((snap (pathname snapshot-path)))
+    (namestring
+     (make-pathname :name (format nil "~A-archive" (pathname-name snap))
+                    :type (or (pathname-type snap) "lisp")
+                    :defaults snap))))
+
+(defun calculate-retention-boundary (events retain-duration clip-stamp)
+  "Calculate the retention boundary revision.
+According to SPEC-WORK.md:522-525: the revision it names is the newest clipped
+revision whose commit stamp is older than the clip's own stamp less --retain."
+  (let ((cutoff (- clip-stamp retain-duration)))
+    (loop for event in (reverse events)
+          for stamp = (getf event :stamp)
+          for revision = (getf event :rev)
+          when (and stamp (< (parse-rfc3339 stamp) cutoff))
+            return revision
+          finally (return 0))))
+
+(defun write-clip-snapshot (structure retention-boundary retained-events path)
+  "Write the deterministic snapshot with three components.
+According to SPEC-WORK.md:527-529: Every clip writes three things into its one
+deterministic snapshot: the structure; the retention boundary, the derived state
+as the tool computed it at the revision --retain names; and every event after that
+boundary."
+  (with-open-file (out path :direction :output :if-exists :supersede)
+    (format out "~S~%~S~%~S~%" structure retention-boundary retained-events))
+  t)
+
+(defun write-retention-archive (pre-boundary-events path &key revision-range)
+  "Write the retention archive with pre-boundary events.
+According to SPEC-WORK.md:530: Events before it are written unchanged and in order
+into a sibling retention archive file the same clip commits, named in the
+snapshot's header with its revision range."
+  (with-open-file (out path :direction :output :if-exists :supersede)
+    (format out ";; retention archive revision-range=~A~%" revision-range)
+    (dolist (event pre-boundary-events)
+      (format out "~S~%" event)))
+  t)
 
 ;;; ------------------------------------------------------------------
 ;;; The dispatch barrier: revalidated at offer, at conversion, at send.
@@ -602,6 +685,57 @@ badge for a test that passes when its asserted behaviour is broken
   (if (regression-evidence-p receipt behaviour) :evidence nil))
 
 ;;; ------------------------------------------------------------------
+;;; retain-fixtures-revisions-fault-points (SPEC-WORK.md:7057-7059)
+;;; ------------------------------------------------------------------
+
+(defstruct (regression-retention
+             (:constructor make-regression-retention
+                 (&key fixtures seed engine-version client-version schema-version
+                        fault-point invocation captured-revision
+                        expected actual result)))
+  "One retained test record: the input fixtures, the deterministic seed, the
+engine, client and schema versions, its fault point, its invocation, its
+captured revision, its expected-against-actual pair and its result — everything
+a test keeps after it runs (SPEC-WORK.md:7057-7059)."
+  fixtures seed engine-version client-version schema-version
+  fault-point invocation captured-revision expected actual result)
+
+(defun reconcile-retention (retention)
+  "Reconcile the retained expected against the retained actual. A match is
+reported :reconciled and keeps the fixtures, revision and fault point beside the
+result; a difference is reported :diverged and carries the fault point and the
+expected-against-actual pair, so a divergence is visible rather than a silent
+green (SPEC-WORK.md:7057-7059)."
+  (let ((expected (regression-retention-expected retention))
+        (actual (regression-retention-actual retention))
+        (fault (regression-retention-fault-point retention)))
+    (if (equal expected actual)
+        (list :verdict :reconciled
+              :fixtures (regression-retention-fixtures retention)
+              :revision (regression-retention-captured-revision retention)
+              :fault-point fault
+              :result (regression-retention-result retention))
+        (list :verdict :diverged
+              :expected expected :actual actual :fault-point fault))))
+
+(defun retention-complete-p (retention)
+  "T when every field a test must retain is present: input fixtures, the seed,
+the three version strings, a fault point, an invocation, a captured revision, an
+expected, an actual and a result. A test that drops one has not retained its
+evidence (SPEC-WORK.md:7057-7059)."
+  (not (null (and (regression-retention-fixtures retention)
+                  (regression-retention-seed retention)
+                  (regression-retention-engine-version retention)
+                  (regression-retention-client-version retention)
+                  (regression-retention-schema-version retention)
+                  (regression-retention-fault-point retention)
+                  (regression-retention-invocation retention)
+                  (regression-retention-captured-revision retention)
+                  (regression-retention-expected retention)
+                  (regression-retention-actual retention)
+                  (regression-retention-result retention)))))
+
+;;; ------------------------------------------------------------------
 ;;; a-savepoint-is-not-a-shared-backup (SPEC-WORK.md:5790-5793, :6270-6303)
 ;;; ------------------------------------------------------------------
 
@@ -769,7 +903,7 @@ written in order, absent `(:absent)`."
 
 (defun write-node-add-value (value stream)
   "Serializer two's own writer, independent of `canonical-print`, over the same
-restricted spellings: `(:absent)`, `()`, `""` and `false` remain distinct."
+restricted spellings: `(:absent)`, `()`, `\"\"` and `false` remain distinct."
   (typecase value
     (null (write-string "()" stream))
     (cons (write-char #\( stream)
@@ -846,6 +980,51 @@ silent drop."
 absorbed (SPEC-WORK.md:6232)."
   (null (archive-capture-gaps capture)))
 
+(defun archive-named-revision-p (revision)
+  "True when REVISION names a remote revision: a string with at least one
+non-whitespace character. NIL, a non-string, an empty string or a
+whitespace-only string names nothing, so the deletion gate never treats two
+of them as an unchanged source (SPEC-WORK.md:7602-7608)."
+  (and (stringp revision)
+       (string/= "" (string-trim '(#\Space #\Tab #\Newline #\Return #\Page
+                                   #\Linefeed)
+                                 revision))))
+
+(defun archive-deletion-gate (capture &key capture-revision source-revision
+                                           delete-result)
+  "The absorb deletion gate beside ARCHIVE-ABSORBABLE-P (SPEC-WORK.md:7596-7611).
+CAPTURE-REVISION is the named remote revision the capture was taken at,
+SOURCE-REVISION the revision the pre-delete recheck found, DELETE-RESULT the
+outcome of a delete attempt (NIL before one is made, :DELETED when the
+remote confirmed it). Returns three values: the deletion state, the pending
+reason (NIL unless the state is :PENDING) and the archive, which the gate
+always keeps.
+  :PENDING :MISSING-CONTENT -- the capture has gaps (:7598): unavailable or
+    unpreserved content leaves deletion pending, not silently skipped.
+  :PENDING :SOURCE-CHANGED  -- the source revision differs from the capture
+    revision, or either is unnamed -- NIL, empty or whitespace-only
+    (:7602-7608): reconcile and checkpoint
+    the added content first.
+  :PENDING :RECONCILE       -- the delete result is a failure, uncertain or
+    unknown (:7610-7611): the archive is preserved and reconciliation is
+    pending.
+  :ALLOWED                  -- every check passed and no delete was attempted.
+  :DELETED                  -- every check passed and the delete was confirmed.
+The checks run in that order, so no delete result overrides missing content
+or a source change."
+  (cond ((not (archive-absorbable-p capture))
+         (values :pending :missing-content capture))
+        ((not (and (archive-named-revision-p capture-revision)
+                   (archive-named-revision-p source-revision)
+                   (equal capture-revision source-revision)))
+         (values :pending :source-changed capture))
+        ((null delete-result)
+         (values :allowed nil capture))
+        ((eq delete-result :deleted)
+         (values :deleted nil capture))
+        (t
+         (values :pending :reconcile capture))))
+
 (defun author-retains-source-p (capture)
   "A mixed, external or unknown author retains its source issue."
   (and (member (archive-capture-author capture) '(:mixed :external :unknown))
@@ -864,13 +1043,18 @@ absorbed (SPEC-WORK.md:6232)."
 ;;; its command exits non-zero, never green (SPEC-WORK.md:7098).
 ;;; ------------------------------------------------------------------
 
+;;; The lanes are not restated here: `*per-change-suites*` and
+;;; `*exhaustive-suites*` (src/verifier.lisp, #2270) are the one lane source,
+;;; `acceptance-suite-lane` answers a suite's lane from them, and `lane-suites`
+;;; lists a lane. This registry adds only owner, owner-source and cases.
+
 (defstruct (acceptance-suite
              (:constructor %make-acceptance-suite
-                 (name lane owner owner-source cases)))
-  "One suite of Preservation and recovery acceptance: NAME, LANE (:per-change
-or :nightly), OWNER and OWNER-SOURCE (the spec line naming the owner), and
-CASES, the deftest names that exercise it."
-  name lane owner owner-source cases)
+                 (name owner owner-source cases)))
+  "One suite of Preservation and recovery acceptance: NAME, OWNER and
+OWNER-SOURCE (the spec line naming the owner), and CASES, the deftest names
+that exercise it. Its lane is `(acceptance-suite-lane NAME)`."
+  name owner owner-source cases)
 
 (defparameter *intake-adapter-suites*
   '("source-inventory" "read-only-intake" "import-replay" "moving-source"
@@ -878,64 +1062,56 @@ CASES, the deftest names that exercise it."
   "The six rows the spec names as the intake adapter's gate
 (SPEC-WORK.md:7102-7107).")
 
-(defun %acceptance-suite (name lane cases)
-  (if (member name *intake-adapter-suites* :test #'string=)
-      (%make-acceptance-suite name lane "intake-adapter"
-                              "docs/SPEC-WORK.md:7102-7107" cases)
-      (%make-acceptance-suite name lane "stella"
-                              "docs/SPEC-WORK.md:7045" cases)))
+(defparameter *suite-cases*
+  '(("format-determinism" "supported-subset-format-determinism")
+    ("referential-integrity" "referential-integrity-refuses-a-cycle")
+    ("retry-protocol")
+    ("read-only-intake" "read-only-intake")
+    ("undo-redo" "undo-redo")
+    ("roadmap-proof" "roadmap-proof")
+    ("source-inventory" "source-inventory")
+    ("import-replay")
+    ("moving-source" "moving-source")
+    ("archive-completeness" "archive-completeness")
+    ("full-round-trip" "full-round-trip")
+    ("old-history" "old-history")
+    ("atomic-mutation")
+    ("async-operations" "async-operations")
+    ("single-writer" "single-writer" "single-writer-kernel-total-order")
+    ("indexes-and-counters" "indexes-and-counters")
+    ("materialized-working-set" "materialized-working-set")
+    ("batches-and-pipelines" "batches-and-pipelines")
+    ("recovery")
+    ("schema-evolution" "schema-evolution")
+    ("hostile-data" "hostile-data"))
+  "Each suite's deftest names; a suite with none is owed (SPEC-WORK.md:7098).")
+
+(defun %acceptance-suite (name)
+  (let ((cases (rest (assoc name *suite-cases* :test #'string=))))
+    (if (member name *intake-adapter-suites* :test #'string=)
+        (%make-acceptance-suite name "intake-adapter"
+                                "docs/SPEC-WORK.md:7102-7107" cases)
+        (%make-acceptance-suite name "stella"
+                                "docs/SPEC-WORK.md:7045" cases))))
 
 (defparameter *suite-registry*
-  (list
-   ;; per change, inside the one-minute target and two-minute bound
-   ;; (SPEC-WORK.md:7091-7092)
-   (%acceptance-suite "format-determinism" :per-change
-                      '("supported-subset-format-determinism"))
-   (%acceptance-suite "referential-integrity" :per-change
-                      '("referential-integrity-refuses-a-cycle"))
-   (%acceptance-suite "retry-protocol" :per-change '())
-   (%acceptance-suite "read-only-intake" :per-change '("read-only-intake"))
-   (%acceptance-suite "undo-redo" :per-change '("undo-redo"))
-   (%acceptance-suite "roadmap-proof" :per-change '("roadmap-proof"))
-   ;; nightly or pre-release, whole matrices (SPEC-WORK.md:7093-7098)
-   (%acceptance-suite "source-inventory" :nightly '("source-inventory"))
-   (%acceptance-suite "import-replay" :nightly '())
-   (%acceptance-suite "moving-source" :nightly '("moving-source"))
-   (%acceptance-suite "archive-completeness" :nightly '("archive-completeness"))
-   (%acceptance-suite "full-round-trip" :nightly '("full-round-trip"))
-   (%acceptance-suite "old-history" :nightly '("old-history"))
-   (%acceptance-suite "atomic-mutation" :nightly '())
-   (%acceptance-suite "async-operations" :nightly '("async-operations"))
-   (%acceptance-suite "single-writer" :nightly
-                      '("single-writer" "single-writer-kernel-total-order"))
-   (%acceptance-suite "indexes-and-counters" :nightly '("indexes-and-counters"))
-   (%acceptance-suite "materialized-working-set" :nightly
-                      '("materialized-working-set"))
-   (%acceptance-suite "batches-and-pipelines" :nightly
-                      '("batches-and-pipelines"))
-   (%acceptance-suite "recovery" :nightly '())
-   (%acceptance-suite "schema-evolution" :nightly '("schema-evolution"))
-   (%acceptance-suite "hostile-data" :nightly '("hostile-data")))
-  "Every suite of Preservation and recovery acceptance (SPEC-WORK.md:7064-7086)
-mapped to its lane, owner and cases.")
+  (mapcar #'%acceptance-suite (append *per-change-suites* *exhaustive-suites*))
+  "Every suite of Preservation and recovery acceptance (SPEC-WORK.md:7064-7086),
+in lane order, with its owner and cases.")
 
 (defun find-acceptance-suite (name)
   "The registered suite NAME, or NIL."
   (find name *suite-registry* :key #'acceptance-suite-name :test #'string=))
-
-(defun lane-suites (lane)
-  "The names of the suites in LANE (:per-change or :nightly), in registry order."
-  (loop for s in *suite-registry*
-        when (eq lane (acceptance-suite-lane s))
-          collect (acceptance-suite-name s)))
 
 (defun suite-command (name)
   "The command that runs suite NAME and nothing else."
   (format nil "lisp/nova-work/run-tests.sh --suite ~A" name))
 
 (defun lane-command (lane)
-  "The command that runs every suite of LANE."
-  (format nil "lisp/nova-work/run-tests.sh --lane ~(~A~)" lane))
+  "The command that runs every suite of LANE (:per-change or
+:nightly-pre-release, spelled `nightly` on the command line)."
+  (format nil "lisp/nova-work/run-tests.sh --lane ~A"
+          (ecase lane (:per-change "per-change") (:nightly-pre-release "nightly"))))
 
 (defun suite-owed-p (name)
   "True when suite NAME is registered but has no case yet."

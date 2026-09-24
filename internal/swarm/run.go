@@ -68,6 +68,13 @@ type RunInput struct {
 	// behaviour (rule 5). nil leaves every claimed task to the launch, which is
 	// the behaviour every existing caller has today.
 	Route *RouteInput
+	// CloneFrom is the on-disk checkout a job clone is staged from. Empty leaves
+	// the card to clone itself (today's STEP 1), unless the card declares PATHS:
+	// prepare then sets this from the pool's reference checkout
+	// ref/<owner>/<name>@<rev> when that checkout is present (#2498 S10).
+	// When set, prepare stages <job>/repo as a sparse checkout of the card's
+	// PATHS packages.
+	CloneFrom string
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -969,6 +976,18 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 	}
 	if err := writeAtomic(NotePath(jobDir), nil, 0o644); err != nil {
 		return err
+	}
+	// A PATHS card takes the pool's reference checkout when the run was not
+	// handed one. The assignment is on this call's copy of the input, so one
+	// card's checkout is not the next card's. No checkout leaves CloneFrom
+	// empty and the card clones itself.
+	if in.CloneFrom == "" && in.Pool != nil {
+		in.CloneFrom = referenceCheckout(in.Pool.Dir, string(text))
+	}
+	if in.CloneFrom != "" {
+		if err := StageJobTree(in.CloneFrom, filepath.Join(jobDir, JobRepo), text); err != nil {
+			return err
+		}
 	}
 	prompt := Prompt(PromptInput{
 		ID: sc.ID, JobDir: jobDir, Deadline: taskDeadline(sc, in.Worker), Files: sc.Files,

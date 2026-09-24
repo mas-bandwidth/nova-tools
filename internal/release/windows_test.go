@@ -45,7 +45,7 @@ func TestAdoptTakesWindowsDrivePathsForBinAndDest(t *testing.T) {
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt",
+	code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
 		"--machines", windowsMachines(t, "threadripper"),
 		"--ssh", "ssh", "--from", from,
@@ -68,7 +68,7 @@ func TestAdoptComposesSlashPathsForAWindowsBench(t *testing.T) {
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"adopt",
+	if code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
 		"--machines", windowsMachines(t, "threadripper"),
 		"--ssh", "ssh", "--from", from,
@@ -105,7 +105,7 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "nova-update v0.15.0 windows/amd64 go1.26.5\n"}}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"adopt",
+	if code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
 		"--machines", windowsMachines(t, "threadripper"),
 		"--ssh", "ssh", "--from", from,
@@ -136,7 +136,7 @@ func TestAdoptDryRunProbesTheExeOnAWindowsBench(t *testing.T) {
 func TestAdoptRefusesAWindowsPathForALinuxTarget(t *testing.T) {
 	from := built(t, "v0.16.0", "linux-amd64", "nova-bus", "nova-update")
 	var o, e bytes.Buffer
-	code := Run("nova-update", []string{"adopt",
+	code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
 		"--machines", windowsMachines(t, "hulk"),
 		"--ssh", "ssh", "--from", from,
@@ -209,7 +209,7 @@ func TestTheMachineColumnsTakeAWindowsPath(t *testing.T) {
 	from := built(t, "v0.16.0", "windows-amd64", "nova-bus", "nova-update")
 	s := &fakeSSH{answer: map[string]string{"threadripper": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"}}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"adopt",
+	if code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
 		"--machines", windowsMachines(t, "threadripper\t"+`C:\nova\bin`+"\t"+`C:\nova\release`),
 		"--ssh", "ssh", "--from", from,
@@ -241,7 +241,7 @@ func TestAdoptFetchesFromAWindowsBuildHost(t *testing.T) {
 		answer: map[string]string{"vision": "RELEASE INSTALLED version=v0.16.0 tools=2 skipped=0 retired=0\n"},
 	}
 	var o, e bytes.Buffer
-	if code := Run("nova-update", []string{"adopt",
+	if code := Run("nova-update", []string{"adopt", "--no-certify",
 		"--version", "v0.16.0",
 		"--machines", windowsMachines(t, "vision"),
 		"--ssh", "ssh",

@@ -192,7 +192,7 @@
   ;; operation; a mismatched --at refuses (SPEC-WORK.md:3216-3218).
   (let* ((k (fresh))
          (manifest (export-manifest (kernel-state k) :id "exp-snap"))
-         (snap (load-state manifest :max-bytes 1000000)))
+         (snap (load-state manifest :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)))
     (multiple-value-bind (result line code) (snapshot-state-export snap 0)
       (declare (ignore result))
       (check-equal 0 code "the snapshot export refused")

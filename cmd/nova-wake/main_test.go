@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
@@ -64,9 +65,11 @@ func wakeRunAt(t *testing.T, start time.Time, args ...string) result {
 // test: it was the one that woke the builder. A measurement that names the
 // wrong test sends the next person to the wrong place.
 //
-// What survives the build is the BYTES. Nothing here keeps a directory alive
-// beyond TestMain's own.
-var fakeBins map[string][]byte
+// What survives the build is the PATHS: the programs stay under TestMain's own
+// directory and each test gets them placed by link (a copy only where a link is
+// impossible, internal/testbin), never a copy of the bytes. Nothing here keeps
+// a directory alive beyond TestMain's own.
+var fakePaths map[string]string
 
 // fakePrograms are the test programs built together: the four fakes on PATH and
 // the recording wrapper advance_test.go puts in front of the real nova-bus. The
@@ -79,15 +82,15 @@ var fakePrograms = map[string]string{
 	"recordbus": "recordbus",
 }
 
-// buildFakes builds every program in fakePrograms with ONE `go build` and reads
-// the results into fakeBins. It returns an error rather than taking a *testing.T
-// because it runs in TestMain, where there is no test to fail yet.
+// buildFakes builds every program in fakePrograms with ONE `go build` into
+// TestMain's directory and records their paths in fakePaths. It returns an
+// error rather than taking a *testing.T because it runs in TestMain, where
+// there is no test to fail yet.
 func buildFakes() error {
-	dir, err := os.MkdirTemp("", "nova-wake-build-")
-	if err != nil {
+	dir := filepath.Join(fakeRoot, "build")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	defer os.RemoveAll(dir)
 
 	args := []string{"build", "-o", dir}
 	names := make([]string, 0, len(fakePrograms))
@@ -104,22 +107,22 @@ func buildFakes() error {
 		return fmt.Errorf("building the fakes: %v\n%s", err, raw)
 	}
 
-	fakeBins = map[string][]byte{}
+	paths := map[string]string{}
 	for _, name := range names {
 		built := filepath.Join(dir, fakePrograms[name])
 		if runtime.GOOS == "windows" {
 			built += ".exe"
 		}
-		raw, err := os.ReadFile(built)
-		if err != nil {
+		if _, err := os.Stat(built); err != nil {
 			return err
 		}
-		fakeBins[name] = raw
+		paths[name] = built
 	}
+	fakePaths = paths
 	return nil
 }
 
-// install writes one of the built fakes into dir under the name the tool will
+// install places one of the built fakes into dir under the name the tool will
 // start it by, and returns the path.
 func install(t *testing.T, dir, name string) string {
 	t.Helper()
@@ -127,7 +130,7 @@ func install(t *testing.T, dir, name string) string {
 	if runtime.GOOS == "windows" {
 		out += ".exe"
 	}
-	if err := os.WriteFile(out, fakeBins[name], 0o755); err != nil {
+	if err := testbin.Place(fakePaths[name], out); err != nil {
 		t.Fatal(err)
 	}
 	return out
@@ -184,7 +187,7 @@ func fakeBinDir(t *testing.T) string {
 			if runtime.GOOS == "windows" {
 				out += ".exe"
 			}
-			if err := os.WriteFile(out, fakeBins[name], 0o755); err != nil {
+			if err := testbin.Place(fakePaths[name], out); err != nil {
 				sharedBinErr = err
 				return
 			}
@@ -203,12 +206,12 @@ func fakeBinDir(t *testing.T) string {
 // for the toolchain. A test that wakes the builder makes docs/TEST-DURATIONS.md
 // name the wrong test, and the next person looks in the wrong place.
 func TestMainBuildsAllFakesEagerly(t *testing.T) {
-	if fakeBins == nil {
-		t.Fatal("fakeBins is nil: the fakes were not built in TestMain; the first test to call buildFakes will be charged for the toolchain")
+	if fakePaths == nil {
+		t.Fatal("fakePaths is nil: the fakes were not built in TestMain; the first test to call buildFakes will be charged for the toolchain")
 	}
 	for _, name := range []string{"nova-bus", "gh", "on-note", "git", "recordbus"} {
-		if _, ok := fakeBins[name]; !ok {
-			t.Errorf("fakeBins[%q] is missing: the recording wrapper is still built lazily in advance_test.go", name)
+		if _, ok := fakePaths[name]; !ok {
+			t.Errorf("fakePaths[%q] is missing: the recording wrapper is still built lazily in advance_test.go", name)
 		}
 	}
 }

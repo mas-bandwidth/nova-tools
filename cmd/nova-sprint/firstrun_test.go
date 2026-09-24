@@ -1,15 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
+// TestUsageBannerExamplesRun runs the help banner's three examples against a
+// throwaway server holding the fixture keyspace (the documented address is
+// swapped for the throwaway one), and checks they print a table and leave the
+// working directory empty: the table is written nowhere (#3326).
 func TestUsageBannerExamplesRun(t *testing.T) {
 	code, stdout, stderr := runSprint("help")
 	if code != 0 {
@@ -22,17 +26,13 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	if len(examples) != 3 {
 		t.Fatalf("example block has %d commands, want 3", len(examples))
 	}
-	fixture, err := os.ReadFile(filepath.Join("testdata", "table.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	addr := startThrowawayRedis(t)
+	loadTableFunction(t, addr)
+	seed(t, addr, table.DefectFixture())
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "table.txt"), fixture, 0o644); err != nil {
-		t.Fatal(err)
-	}
 	t.Chdir(dir)
 	for _, ex := range examples {
-		args := strings.Fields(ex)[1:]
+		args := strings.Fields(strings.ReplaceAll(ex, "127.0.0.1:6379", addr))[1:]
 		code, out, stderr := runSprint(args...)
 		if code != 0 {
 			t.Errorf("%s exit %d; stderr %s", ex, code, stderr)
@@ -41,12 +41,12 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 			t.Errorf("%s printed nothing", ex)
 		}
 	}
-	got, err := os.ReadFile("sprint-table.txt")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got, fixture) {
-		t.Fatalf("after the examples the published table is not the fixture (%d bytes, want %d)", len(got), len(fixture))
+	if len(entries) != 0 {
+		t.Fatalf("the examples left %d files in the working directory; the table is written nowhere", len(entries))
 	}
 }
 
@@ -55,7 +55,7 @@ func TestARefusalSaysWhatTheInputWants(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("exit %d, want 2", code)
 	}
-	for _, want := range []string{"--once", "--out", "run: nova-sprint help"} {
+	for _, want := range []string{"flag provided but not defined: -refresh", "--redis <addr>", "--once", "run: nova-sprint help"} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("missing %q in %s", want, stderr)
 		}

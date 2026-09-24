@@ -1,0 +1,10 @@
+#nova-sprint-plan v1
+# control 2: three benches and one friend over two machines
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+bench	a	m1	6
+bench	b	m1	4
+friend	x	m1	8
+bench	c	m2	8

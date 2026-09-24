@@ -9,6 +9,7 @@ package sandbox
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/user"
@@ -76,6 +77,7 @@ type Input struct {
 	Name        string // windows container name; accepted and ignored elsewhere
 	NetDeny     bool
 	NetListen   bool
+	NetAllow    []string // host:port the profile opens back up by name (issue #591)
 	GPU         string   // --gpu none|metal; empty means none (issue #230)
 	Argv        []string // the command and its arguments, everything after --
 	Home        string   // the caller's HOME as the child will see it (rule 9)
@@ -96,6 +98,7 @@ type Policy struct {
 	Name        string
 	NetDeny     bool
 	NetListen   bool
+	NetAllow    []string // host:port the profile opens back up by name (issue #591)
 	GPUMode     GPUMode
 	Command     string   // the resolved absolute path of the executable
 	Argv        []string // Command followed by its arguments, verbatim
@@ -394,6 +397,19 @@ func insideAny(path string, dirs []string) bool {
 // offered: the tool REFUSES such a path, naming the flag, rather than trying to quote it.
 const sbplMetacharacters = "\"\\()"
 
+// loopbackHostText reports whether host names the machine's own loopback: the literal
+// "localhost" (case-insensitively) or a numeric address in 127.0.0.0/8 or ::1. It is
+// deliberately narrower than "resolves to loopback" (issue #591): --net-allow opens a
+// single named port back up for a local-model provider, never a promise a DNS answer
+// could widen.
+func loopbackHostText(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func badPathText(path string) string { return badPathTextFor(runtime.GOOS, path) }
 
 // badPathTextFor is badPathText with the platform named, so that a test on one machine can
@@ -525,6 +541,32 @@ func Build(in Input) (*Policy, []Refusal) {
 	// would be deciding which of the two the caller meant.
 	if in.NetDeny && in.NetListen {
 		bad = append(bad, refuse("bad_net", "--net-deny and --net-listen together: one asks for an enforced denial and the other for an inbound grant; pass at most one"))
+	}
+
+	// --net-allow names one host:port the wall opens back up (issue #591): a keyless
+	// local-model provider on its own loopback port, never a wider promise. An entry that
+	// does not split into host and port, or whose host is not the machine's own loopback,
+	// is refused rather than carried into a profile that would grant more than a loopback
+	// address, or that sandbox-exec would reject outright: measured on darwin, the SBPL
+	// form only accepts a literal "localhost" or "*" for host, never a numeric address
+	// (`sandbox-exec: host must be * or localhost in network address`), so this is also
+	// where a caller's numeric loopback (127.0.0.1, ::1) is confirmed loopback and DarwinProfile
+	// is freed to emit the one literal darwin's compiler accepts.
+	for _, hp := range in.NetAllow {
+		host, port, err := net.SplitHostPort(hp)
+		if err != nil || host == "" || port == "" {
+			bad = append(bad, refuse("bad_net", "--net-allow wants host:port and got %s: --net-allow <host:port>", hp))
+			continue
+		}
+		if badPathText(host) != "" || badPathText(port) != "" {
+			bad = append(bad, refuse("bad_net", "--net-allow host:port %s carries a character the generated policy cannot", hp))
+			continue
+		}
+		if !loopbackHostText(host) {
+			bad = append(bad, refuse("bad_net", "--net-allow %s names a host that is not the machine's own loopback (localhost, 127.0.0.0/8 or ::1); --net-allow opens a local provider's port back up, never a remote address", hp))
+			continue
+		}
+		p.NetAllow = append(p.NetAllow, net.JoinHostPort(host, port))
 	}
 
 	if len(in.Argv) == 0 {

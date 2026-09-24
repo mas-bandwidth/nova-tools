@@ -4,17 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -26,47 +22,11 @@ const (
 )
 
 // startRedis starts a throwaway redis-server for a control sprint, the same
-// shape as internal/nsprint/task: skip with the reason when it is absent.
+// shape as internal/nsprint/task. A missing binary fails under NOVA_CI and
+// skips otherwise (internal/nsprint/testutil).
 func startRedis(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable; run this control on a Redis bench: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	log, err := os.Create(filepath.Join(dir, "redis.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = log.Close() })
-	port := strings.TrimPrefix(addr, "127.0.0.1:")
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", port,
-		"--save", "", "--appendonly", "no", "--dir", dir)
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	client := redis.NewClient(&redis.Options{Addr: addr})
-	defer client.Close()
-	deadline := time.Now().Add(30 * time.Second)
-	for client.Ping(context.Background()).Err() != nil {
-		if time.Now().After(deadline) {
-			t.Fatal("throwaway redis did not start")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return addr
+	return testutil.Start(t)
 }
 
 // fixture is a control sprint with fixture benches that beat and carry go.
