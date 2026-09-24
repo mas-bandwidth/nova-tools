@@ -100,6 +100,9 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		return refuse(errOut, "land", "want status or flaky (sprint land is the lander's verb, #2942)")
 	}
+	if args[0] == "worker" {
+		return runLandWorker(ctx, args[1:], out, errOut)
+	}
 	if args[0] == "flaky" {
 		return runLandFlaky(ctx, args[1:], out, errOut)
 	}
