@@ -29,7 +29,8 @@ import (
 // legacy runner, which passes a prompt FILE to a harness selected by a worker
 // description. Here the model, the card text, the auth copy, the slot and the
 // deadline are all in the configuration, and the child is
-// `<binary> run --model <provider/model> --title <label> -- <card text>`.
+// `<binary> run --model <provider/model> --title <label> -- <card text>`, the shape the
+// providers table declares and swarm.LaunchArgvFor builds (nativeLaunchArgv).
 
 // nativeRunConfig is the frozen configuration of one native run.
 type nativeRunConfig struct {
@@ -275,6 +276,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	provider, ok := providerOf(cfg.model)
 	if !ok {
 		refuseNative(errOut, fmt.Sprintf("the model %q has no provider prefix (a native model is provider/model, one slash, both sides nonempty)", cfg.model))
+		return nativeRunResult{}, 2
+	}
+
+	// (2a) THE ONE LAUNCHER (tools-48, #2646). The harness argv comes from the providers
+	// table, never a literal here: the route's provider row (or the table's default row)
+	// gives the shape, and this run's binary, model, label and card fill it. A table that
+	// cannot be read is refused before any directory is made.
+	launch, err := nativeLaunchArgv(bin, cfg, provider)
+	if err != nil {
+		refuseNative(errOut, fmt.Sprintf("the providers table gave no argv for %s: %s", oneline.Field(cfg.model), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 
@@ -639,8 +650,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
 	// and one naming repos is refused, never unwalled. A machine with no wall binary at all
 	// refuses unless --no-wall owns every read and write the child makes.
-	runPath := bin
-	runArgv := []string{"run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card)}
+	runPath := launch[0]
+	runArgv := launch[1:]
 	wall := cfg.sandbox
 	if wall == "" && !cfg.noWall {
 		found, err := exec.LookPath(swarm.SandboxBinary)
@@ -657,7 +668,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		runPath = wall
-		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
+		runArgv = nativeSandboxArgv(launch, cfg, dataHome, jobDir, tmpDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -1377,13 +1388,14 @@ func sandboxHostRules(sandbox string) bool {
 }
 
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
-// harness verbatim (SPEC-SANDBOX rule 12). The job directory is the first --write and the
+// harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
 // temp directory is a --write so the child's TMPDIR is usable inside the wall; the
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
-func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+	bin := launch[0]
 	argv := []string{
 		"--read", cfg.slotDir,
 		"--write", jobDir,
@@ -1447,7 +1459,7 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 		argv = append(argv, "--repo", r)
 	}
 	argv = append(argv, "--")
-	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
+	argv = append(argv, launch...)
 	return argv
 }
 
@@ -1929,6 +1941,22 @@ func sweepNativeJob(root, job string) error {
 		return fmt.Errorf("the job directory is not known")
 	}
 	return safepath.RemoveUnder(root, job)
+}
+
+// launchArgvFor is the one launcher, swarm.LaunchArgvFor: the providers table decides the
+// argv every native launch hands its harness. It is a variable only so a test can prove
+// that a launch asks it; nothing else ever assigns it.
+var launchArgvFor = swarm.LaunchArgvFor
+
+// nativeLaunchArgv is the harness argv of one native run, built by the one launcher from
+// the providers table (tools-48, #2646). The table's row for the route's provider gives the
+// shape -- the row swarm.DefaultLaunchRow when the table names no row of its own -- and
+// this run fills it: the binary resolved from --harness, the provider/model the run was
+// routed to, its label as the title, and the card text as the prompt.
+func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
+	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
+		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: string(cfg.card),
+	})
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
