@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -198,6 +199,12 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return 6
 	}
 	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
+	var blocked *task.BlockedError
+	if errors.As(err, &blocked) {
+		// #2939: exit 7, new because 3-6 are taken.
+		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
+		return 7
+	}
 	if err != nil {
 		return refuseSeat(errOut, "task take", initiator, err)
 	}
