@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e compile-lisp test-lisp check clean darwin-timeout map
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map
 
 help:
 	@echo "make help        this list"
@@ -86,6 +86,7 @@ help:
 	@echo "make test-merge  go test -count=1 -timeout MERGE_TIMEOUT -run RUN PKGS"
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
+	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
 	@echo "make compile-lisp compile nova-work and its tests without running them"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
@@ -209,6 +210,10 @@ test-race:
 
 test-e2e:
 	$(GO) test -count=1 -run TestFriendSequence ./cmd/...
+
+test-prewarm-done:
+	$(GO) test -count=1 ./tools/testmanifest
+	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
 test-lisp:
 	./lisp/nova-work/run-tests.sh

@@ -141,4 +141,5 @@ var DefaultCatalog = []Entry{
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
 	E("tools/ci", "CI helper and build scripts", "go test ./internal/ci", "make test"),
 	E("tools/testdur", "test duration analyzer and budget checker", "go test ./tools/testdur", "go test ./tools/testdur"),
+	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }
