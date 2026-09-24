@@ -152,53 +152,128 @@ function WD.ready(S, key)
   return true, ''
 end
 
--- ns_width_write: writes friend:<f>:fillstate for every friend in the pass.
--- args: fence token (lease:reconciler), then 14 fields per friend:
---   f, slots, leased, working, deficit, eligible, idle_no_ready, idle_deps,
---   idle_input, idle_unfilled, peak, peak_at, unfilled_since, starting, living
+-- ns_width_write: writes friend:<f>:fillstate and READ-BOUND state under the reconciler lease fence.
+-- args:
+--   1: fence token (lease:reconciler)
+--   2: read_bound ('1' or '0')
+--   3: num_policy_readers
+--   4 .. 3+num_policy_readers: policy reader names
+--   next: num_open_sprints
+--   next .. : open sprint names
+--   next: num_friends
+--   then 15 fields per friend:
+--     f, slots, leased, working, deficit, eligible, idle_no_ready, idle_deps,
+--     idle_input, idle_unfilled, peak, peak_at, unfilled_since, starting, living
 local function width_write(keys, args)
   local fence = args[1]
   if not WD.holds(fence) then
     return WD.fenced()
   end
   local at = WD.now_ms()
-  local i = 2
-  while i <= #args do
-    local f = args[i]
-    local slots = args[i + 1] or '0'
-    local leased = args[i + 2] or '0'
-    local working = args[i + 3] or '0'
-    local deficit = args[i + 4] or '0'
-    local eligible = args[i + 5] or '0'
-    local idle_no_ready = args[i + 6] or '0'
-    local idle_deps = args[i + 7] or '0'
-    local idle_input = args[i + 8] or '0'
-    local idle_unfilled = args[i + 9] or '0'
-    local peak = args[i + 10] or '0'
-    local peak_at = args[i + 11] or '0'
-    local unfilled_since = args[i + 12] or '0'
-    local starting = args[i + 13] or '0'
-    local living = args[i + 14] or '0'
-    i = i + 15
 
-    local key = 'friend:' .. f .. ':fillstate'
-    redis.call('HSET', key,
-      'slots', slots,
-      'leased', leased,
-      'working', working,
-      'deficit', deficit,
-      'eligible', eligible,
-      'idle_no_ready', idle_no_ready,
-      'idle_deps', idle_deps,
-      'idle_input', idle_input,
-      'idle_unfilled', idle_unfilled,
-      'peak', peak,
-      'peak_at', peak_at,
-      'unfilled_since', unfilled_since,
-      'starting', starting,
-      'living', living,
-      'at', tostring(at)
-    )
+  if args[2] == '0' or args[2] == '1' then
+    local read_bound = args[2]
+    local num_readers = tonumber(args[3] or '0') or 0
+    local idx = 4
+    for r_i = 1, num_readers do
+      local r = args[idx]
+      if r and r ~= '' then
+        redis.call('SADD', 'width:readers', r)
+      end
+      idx = idx + 1
+    end
+
+    local num_sprints = tonumber(args[idx] or '0') or 0
+    idx = idx + 1
+    for s_i = 1, num_sprints do
+      local S = args[idx]
+      if S and S ~= '' then
+        redis.call('HSETNX', 's:' .. S .. ':backpressure', 'state', 'OFF')
+        redis.call('HSET', 's:' .. S .. ':backpressure', 'read_bound', read_bound, 'at', tostring(at))
+      end
+      idx = idx + 1
+    end
+
+    redis.call('SET', 'sprint:read_bound', read_bound)
+
+    local num_friends = tonumber(args[idx] or '0') or 0
+    idx = idx + 1
+    for f_i = 1, num_friends do
+      local f = args[idx]
+      local slots = args[idx + 1] or '0'
+      local leased = args[idx + 2] or '0'
+      local working = args[idx + 3] or '0'
+      local deficit = args[idx + 4] or '0'
+      local eligible = args[idx + 5] or '0'
+      local idle_no_ready = args[idx + 6] or '0'
+      local idle_deps = args[idx + 7] or '0'
+      local idle_input = args[idx + 8] or '0'
+      local idle_unfilled = args[idx + 9] or '0'
+      local peak = args[idx + 10] or '0'
+      local peak_at = args[idx + 11] or '0'
+      local unfilled_since = args[idx + 12] or '0'
+      local starting = args[idx + 13] or '0'
+      local living = args[idx + 14] or '0'
+      idx = idx + 15
+
+      local key = 'friend:' .. f .. ':fillstate'
+      redis.call('HSET', key,
+        'slots', slots,
+        'leased', leased,
+        'working', working,
+        'deficit', deficit,
+        'eligible', eligible,
+        'idle_no_ready', idle_no_ready,
+        'idle_deps', idle_deps,
+        'idle_input', idle_input,
+        'idle_unfilled', idle_unfilled,
+        'peak', peak,
+        'peak_at', peak_at,
+        'unfilled_since', unfilled_since,
+        'starting', starting,
+        'living', living,
+        'at', tostring(at)
+      )
+    end
+  else
+    local i = 2
+    while i <= #args do
+      local f = args[i]
+      local slots = args[i + 1] or '0'
+      local leased = args[i + 2] or '0'
+      local working = args[i + 3] or '0'
+      local deficit = args[i + 4] or '0'
+      local eligible = args[i + 5] or '0'
+      local idle_no_ready = args[i + 6] or '0'
+      local idle_deps = args[i + 7] or '0'
+      local idle_input = args[i + 8] or '0'
+      local idle_unfilled = args[i + 9] or '0'
+      local peak = args[i + 10] or '0'
+      local peak_at = args[i + 11] or '0'
+      local unfilled_since = args[i + 12] or '0'
+      local starting = args[i + 13] or '0'
+      local living = args[i + 14] or '0'
+      i = i + 15
+
+      local key = 'friend:' .. f .. ':fillstate'
+      redis.call('HSET', key,
+        'slots', slots,
+        'leased', leased,
+        'working', working,
+        'deficit', deficit,
+        'eligible', eligible,
+        'idle_no_ready', idle_no_ready,
+        'idle_deps', idle_deps,
+        'idle_input', idle_input,
+        'idle_unfilled', idle_unfilled,
+        'peak', peak,
+        'peak_at', peak_at,
+        'unfilled_since', unfilled_since,
+        'starting', starting,
+        'living', living,
+        'at', tostring(at)
+      )
+    end
   end
   return { 'OK' }
 end
@@ -342,7 +417,7 @@ end
 -- returns { 'OK', tostring(moved_count) }
 local function width_move(keys, args)
   local fence = args[1]
-  if fence ~= '' and not WD.holds(fence) then
+  if not WD.holds(fence) then
     return WD.fenced()
   end
   local from_f = args[2]

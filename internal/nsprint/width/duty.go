@@ -41,18 +41,33 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 
 	client := d.Store.Client()
 
-	// Round 1: Pipeline reading friends, sprints, sprint:order, and TIME.
+	// Round 1: Pipeline reading friends, sprints, sprint:order, TIME, and readers.
 	pipe1 := client.Pipeline()
 	friendsCmd := pipe1.SMembers(ctx, "friends")
 	sprintsCmd := pipe1.SMembers(ctx, "sprints")
 	orderCmd := pipe1.ZRange(ctx, "sprint:order", 0, -1)
 	timeCmd := pipe1.Time(ctx)
+	widthReadersCmd := pipe1.SMembers(ctx, "width:readers")
+	readersCmd := pipe1.SMembers(ctx, "readers")
 	if _, err := pipe1.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return reconcile.Counts{}, fmt.Errorf("width duty: round 1: %w", err)
 	}
 
 	friends := friendsCmd.Val()
 	sort.Strings(friends)
+
+	// Determine active readers for READ-BOUND evaluation
+	var policyReaders []string
+	var activeReaders []string
+	if len(d.Policy.Readers) > 0 {
+		policyReaders = d.Policy.Readers
+		activeReaders = d.Policy.Readers
+	} else {
+		activeReaders = widthReadersCmd.Val()
+		if len(activeReaders) == 0 {
+			activeReaders = readersCmd.Val()
+		}
+	}
 
 	nowMs := timeCmd.Val().UnixMilli()
 
@@ -283,8 +298,46 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 
 	idleUnfilledMap := make(map[string]int)
 
-	// Build arguments for ns_width_write
-	writeArgs := []any{l.Token()}
+	// READ-BOUND evaluation
+	readBound := false
+	if len(activeReaders) > 0 {
+		allDeficitZero := true
+		hasUpReader := false
+		for _, r := range activeReaders {
+			rc := computed[r]
+			if rc != nil && rc.up {
+				hasUpReader = true
+				if rc.deficit > 0 {
+					allDeficitZero = false
+					break
+				}
+			}
+		}
+		if hasUpReader && allDeficitZero && hasOpenRead {
+			readBound = true
+		}
+	}
+	readBoundVal := "0"
+	if readBound {
+		readBoundVal = "1"
+	}
+
+	// Build arguments for ns_width_write:
+	// fence, read_bound, num_policy_readers, [policy_readers...], num_open_sprints, [open_sprints...], num_friends, [friends_fields...]
+	writeArgs := []any{
+		l.Token(),
+		readBoundVal,
+		strconv.Itoa(len(policyReaders)),
+	}
+	for _, r := range policyReaders {
+		writeArgs = append(writeArgs, r)
+	}
+	writeArgs = append(writeArgs, strconv.Itoa(len(openSprints)))
+	for _, S := range openSprints {
+		writeArgs = append(writeArgs, S)
+	}
+	writeArgs = append(writeArgs, strconv.Itoa(len(friends)))
+
 	for _, f := range friends {
 		c := computed[f]
 		tc := taskCounts[f]
@@ -386,56 +439,18 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 				toC := computed[toF]
 				if toC != nil && toC.up && toC.deficit > 0 {
 					for _, S := range openSprints {
-						_, _ = client.FCall(ctx, "ns_width_move", nil,
+						moveReply, err := client.FCall(ctx, "ns_width_move", nil,
 							l.Token(), fromF, toF, S, strconv.FormatInt(rebalAfterMs, 10), actor, "").Result()
+						if err != nil {
+							return reconcile.Counts{}, fmt.Errorf("width duty: move: %w", err)
+						}
+						if slice, ok := moveReply.([]any); ok && len(slice) > 0 && slice[0] == "FENCED" {
+							return reconcile.Counts{}, reconcile.ErrFenced
+						}
 					}
 				}
 			}
 		}
-	}
-
-	// READ-BOUND evaluation
-	readers := d.Policy.Readers
-	if len(readers) > 0 {
-		for _, r := range readers {
-			client.SAdd(ctx, "width:readers", r)
-		}
-	} else {
-		readers = client.SMembers(ctx, "width:readers").Val()
-		if len(readers) == 0 {
-			readers = client.SMembers(ctx, "readers").Val()
-		}
-	}
-	readBound := false
-	if len(readers) > 0 {
-		allDeficitZero := true
-		hasUpReader := false
-		for _, r := range readers {
-			rc := computed[r]
-			if rc != nil && rc.up {
-				hasUpReader = true
-				if rc.deficit > 0 {
-					allDeficitZero = false
-					break
-				}
-			}
-		}
-		if hasUpReader && allDeficitZero && hasOpenRead {
-			readBound = true
-		}
-	}
-	for _, S := range openSprints {
-		val := "0"
-		if readBound {
-			val = "1"
-		}
-		client.HSetNX(ctx, "s:"+S+":backpressure", "state", "OFF")
-		client.HSet(ctx, "s:"+S+":backpressure", "read_bound", val, "at", strconv.FormatInt(nowMs, 10))
-	}
-	if readBound {
-		client.Set(ctx, "sprint:read_bound", "1", 0)
-	} else {
-		client.Set(ctx, "sprint:read_bound", "0", 0)
 	}
 
 	return reconcile.Counts{}, nil

@@ -2,6 +2,7 @@ package width
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -921,4 +922,240 @@ func TestWidthControls(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestWidthMoveRequiresFence tests Defect 1:
+// ns_width_move must require the fence token even when empty (""), failing closed with FENCED.
+func TestWidthMoveRequiresFence(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	// Calling ns_width_move with an empty fence string must return FENCED, not skip the check.
+	res, err := client.FCall(ctx, "ns_width_move", nil, "", "fromF", "toF", "s1", "30000", "width", "").Result()
+	if err != nil {
+		t.Fatalf("ns_width_move unexpected error: %v", err)
+	}
+	slice, ok := res.([]any)
+	if !ok || len(slice) == 0 || slice[0] != "FENCED" {
+		t.Fatalf("ns_width_move with empty fence returned %v; want FENCED", res)
+	}
+}
+
+type moveRefusalHook struct {
+	client *redis.Client
+}
+
+func (h *moveRefusalHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *moveRefusalHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		name := strings.ToLower(cmd.Name())
+		if name == "fcall" {
+			args := cmd.Args()
+			if len(args) > 1 && fmt.Sprint(args[1]) == FunctionWrite {
+				defer func() {
+					_ = h.client.HSet(ctx, "lease:reconciler", "token", "stolen-lease-token").Err()
+				}()
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *moveRefusalHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		return next(ctx, cmds)
+	}
+}
+
+// TestWidthDutySurfacesMoveRefusal tests Defect 2:
+// width duty must not drop the move reply; it must return ErrFenced on FENCED from ns_width_move.
+func TestWidthDutySurfacesMoveRefusal(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sprint := "s1"
+	client.SAdd(ctx, "sprints", sprint)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+	client.HSet(ctx, "s:"+sprint, "status", "open")
+
+	timeVal, err := client.Time(ctx).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowMs := timeVal.UnixMilli()
+	rebalAfter := 30 * time.Second
+
+	client.SAdd(ctx, "friends", "A", "B")
+	client.HSet(ctx, "friend:A:desired", "slots", "8")
+	client.HSet(ctx, "friend:A:beat", "at", "1")
+	client.HSet(ctx, "friend:B:desired", "slots", "8")
+	client.HSet(ctx, "friend:B:beat", "at", "1")
+	client.HSet(ctx, "friend:B:fillstate", "fill_at", strconv.FormatInt(nowMs-5000, 10), "fill_n", "1")
+
+	unfilledSince := nowMs - int64((rebalAfter + time.Second).Milliseconds())
+	client.HSet(ctx, "friend:A:fillstate",
+		"unfilled_since", strconv.FormatInt(unfilledSince, 10),
+		"idle_unfilled", "2",
+	)
+	client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "e1"})
+	client.HSet(ctx, "s:"+sprint+":task:e1", "state", "open", "kind", "work", "depends_on", "")
+
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c-move-fenced"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Install hook to mutate lease token after FunctionWrite completes, causing ns_width_move to receive FENCED
+	st.Client().AddHook(&moveRefusalHook{client: client})
+
+	duty := &Duty{Store: st, RebalanceAfter: rebalAfter}
+	_, err = duty.Run(ctx, lease)
+	if !errors.Is(err, reconcile.ErrFenced) {
+		t.Fatalf("duty.Run returned err = %v; want ErrFenced", err)
+	}
+}
+
+type unfencedHook struct {
+	unfencedWrites int
+}
+
+func (h *unfencedHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *unfencedHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		name := strings.ToLower(cmd.Name())
+		args := cmd.Args()
+		if len(args) > 1 {
+			key := fmt.Sprint(args[1])
+			if name == "sadd" && key == "width:readers" {
+				h.unfencedWrites++
+			}
+			if (name == "hset" || name == "hsetnx") && strings.HasSuffix(key, ":backpressure") {
+				h.unfencedWrites++
+			}
+			if name == "set" && key == "sprint:read_bound" {
+				h.unfencedWrites++
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *unfencedHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			name := strings.ToLower(cmd.Name())
+			args := cmd.Args()
+			if len(args) > 1 {
+				key := fmt.Sprint(args[1])
+				if name == "sadd" && key == "width:readers" {
+					h.unfencedWrites++
+				}
+				if (name == "hset" || name == "hsetnx") && strings.HasSuffix(key, ":backpressure") {
+					h.unfencedWrites++
+				}
+				if name == "set" && key == "sprint:read_bound" {
+					h.unfencedWrites++
+				}
+			}
+		}
+		return next(ctx, cmds)
+	}
+}
+
+// TestWidthReadBoundFencedAtomic tests Defect 3:
+// READ-BOUND state must NOT be written outside the fenced Function.
+// Unfenced plain client writes to width:readers, s:<S>:backpressure, sprint:read_bound are forbidden.
+func TestWidthReadBoundFencedAtomic(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	sprint := "s1"
+	client.SAdd(ctx, "sprints", sprint)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+	client.HSet(ctx, "s:"+sprint, "status", "open")
+
+	client.SAdd(ctx, "friends", "r1")
+	client.HSet(ctx, "friend:r1:desired", "slots", "2")
+	client.HSet(ctx, "friend:r1:beat", "at", "1")
+
+	timeVal, err := client.Time(ctx).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowMs := timeVal.UnixMilli()
+
+	client.ZAdd(ctx, "friend:r1:living",
+		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live1/1"},
+		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live2/1"},
+	)
+	client.ZAdd(ctx, "s:"+sprint+":open:r1", redis.Z{Score: 1, Member: "read-task"})
+	client.HSet(ctx, "s:"+sprint+":task:read-task",
+		"state", "open", "kind", "read", "repo", "nova-tools", "pr", "10", "head", "abcdef")
+
+	hook := &unfencedHook{}
+	st.Client().AddHook(hook)
+
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c-atomic"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	duty := &Duty{Store: st, Policy: Policy{Readers: []string{"r1"}}}
+	if _, err := duty.Run(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+
+	// Must have 0 unfenced writes outside the function
+	if hook.unfencedWrites != 0 {
+		t.Fatalf("unfenced plain writes = %d; want 0 (must be written inside ns_width_write under the fence)", hook.unfencedWrites)
+	}
+
+	// Verify state was correctly written
+	isMember, _ := client.SIsMember(ctx, "width:readers", "r1").Result()
+	if !isMember {
+		t.Fatalf("width:readers missing r1")
+	}
+	bp, _ := client.HGetAll(ctx, "s:"+sprint+":backpressure").Result()
+	if bp["read_bound"] != "1" {
+		t.Fatalf("s:%s:backpressure read_bound = %q; want 1", sprint, bp["read_bound"])
+	}
+	rb, _ := client.Get(ctx, "sprint:read_bound").Result()
+	if rb != "1" {
+		t.Fatalf("sprint:read_bound = %q; want 1", rb)
+	}
 }
