@@ -24,8 +24,10 @@ func TestCostImportExitCodes(t *testing.T) {
 	}
 	// Ten permitted $1e12 rows: each cell is accepted, but the day's sum (1e19 micro-dollars)
 	// overflows int64. Unchecked, it wrapped to -8446744073709551616 and reconciled.
+	// The day is 2026-09-19, which no other case writes, so a write would add its own key.
+	const overflowDay = "2026-09-19"
 	overflow := filepath.Join(t.TempDir(), "overflow.csv")
-	rows := "usage_date,workspace_name,model,cost_usd\n" + strings.Repeat("2026-09-21,nova,claude-opus-5-5,1000000000000\n", 10)
+	rows := "usage_date,workspace_name,model,cost_usd\n" + strings.Repeat(overflowDay+",nova,claude-opus-5-5,1000000000000\n", 10)
 	if err := os.WriteFile(overflow, []byte(rows), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -63,5 +65,17 @@ func TestCostImportExitCodes(t *testing.T) {
 	}
 	if keys := mr.Keys(); len(keys) != 2+1 {
 		t.Fatalf("only the one good import may write: keys %v", keys)
+	}
+	if mr.Exists("cost:anthropic:" + overflowDay) {
+		t.Fatalf("the overflowing day was written: cost:anthropic:%s exists", overflowDay)
+	}
+	if members, err := mr.ZMembers("cost:idx"); err != nil {
+		t.Fatalf("cost:idx: %v", err)
+	} else {
+		for _, m := range members {
+			if m == "anthropic:"+overflowDay {
+				t.Fatalf("the overflowing day was indexed: cost:idx %v", members)
+			}
+		}
 	}
 }

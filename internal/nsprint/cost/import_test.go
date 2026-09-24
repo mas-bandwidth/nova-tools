@@ -456,7 +456,9 @@ func TestCostImportWriteOutcomes(t *testing.T) {
 		if totalAfterExec != clean21["total"] {
 			t.Fatalf("after the failed EXEC total = %q, want %q: EXEC applied the HSET beside the failed ZADD", totalAfterExec, clean21["total"])
 		}
-		if res.code != cost.ExitPartial {
+		// The literal 7, not cost.ExitPartial: the exit number is the contract, so a
+		// change to the constant must fail here.
+		if res.code != 7 {
 			t.Fatalf("exit %d, want 7 (partial; rev 7: exits are scoped per verb)\n%s%s", res.code, res.out, res.errOut)
 		}
 		if !strings.Contains(res.out, "state=partial") || strings.Contains(res.out, "state=unknown") {
