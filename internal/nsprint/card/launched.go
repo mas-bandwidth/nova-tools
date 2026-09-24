@@ -2,7 +2,9 @@ package card
 
 import (
 	"context"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -14,6 +16,9 @@ type LaunchRequest struct {
 	Token  string
 	Branch string
 	JobDir string
+	// Deadline is the launcher's absolute batch deadline. Zero preserves the
+	// direct verb's historical no-deadline behavior.
+	Deadline time.Time
 }
 
 // Launched moves dealt to launched. A token that is not this attempt's token
@@ -23,8 +28,12 @@ func Launched(ctx context.Context, st *store.Store, req LaunchRequest) (Result, 
 	if st == nil || st.Client() == nil || !validSprintLabel(req.Sprint, req.Label) || req.Token == "" || strings.TrimSpace(req.Branch) == "" || strings.TrimSpace(req.JobDir) == "" {
 		return usage(verb, req.Label), nil
 	}
+	deadline := ""
+	if !req.Deadline.IsZero() {
+		deadline = strconv.FormatInt(req.Deadline.UnixMilli(), 10)
+	}
 	reply, err := fcall(ctx, st, "ns_card_launched", cardKeys(req.Sprint, req.Label),
-		req.Sprint, req.Label, req.Token, req.Branch, req.JobDir)
+		req.Sprint, req.Label, req.Token, req.Branch, req.JobDir, deadline)
 	if err != nil {
 		if res, down := redisDown(verb, req.Label, err); down {
 			return res, nil
