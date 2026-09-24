@@ -1,22 +1,53 @@
 package docs
 
 import (
-	"bytes"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"testing"
 )
 
-func TestIssue2281(t *testing.T) {
+// TestIssue2281BehavioursAreProvedInNovaRedis ties behaviours 22-25 of
+// docs/SPEC-REDIS.md "Tests this spec demands" (bind, auth, persistence,
+// restart; nova-tools #2281) to the tests that prove them: each name the spec
+// lists must be declared as a test in cmd/nova-redis, where `serve` lives, so
+// the spec cannot claim a proof the tree does not carry.
+func TestIssue2281BehavioursAreProvedInNovaRedis(t *testing.T) {
+	t.Parallel()
+
 	spec, err := os.ReadFile("../../docs/SPEC-REDIS.md")
 	if err != nil {
-		t.Fatalf("reading spec: %v", err)
+		t.Fatalf("docs/SPEC-REDIS.md: %v", err)
 	}
-
-	// This is the text we will add to the spec.
-	// The test will fail until this text is present.
-	want := []byte("Bind nova-redis to localhost and the tailnet, take auth from nova-secrets, and keep persistence off")
-
-	if !bytes.Contains(spec, want) {
-		t.Errorf("spec does not contain %q", want)
+	files, err := filepath.Glob("../../cmd/nova-redis/*_test.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("cmd/nova-redis holds no test files (err %v)", err)
+	}
+	var tests strings.Builder
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tests.Write(b)
+	}
+	for n, name := range map[int]string{
+		22: "TestBoundToLocalhostAndTailnetOnly",
+		23: "TestAuthFromNovaSecretsNeverAPlaintextArgument",
+		24: "TestPersistenceOffNoRDBNoAOF",
+		25: "TestRestartIsACleanSlate",
+	} {
+		item := regexp.MustCompile(`(?m)^\d+\. ` + "`" + name + "`")
+		if !item.Match(spec) {
+			t.Errorf("docs/SPEC-REDIS.md does not list behaviour %d as `%s`", n, name)
+		}
+		decl := regexp.MustCompile(`(?m)^func ` + name + `\(t \*testing\.T\) \{`)
+		if !decl.MatchString(tests.String()) {
+			t.Errorf("behaviour %d: cmd/nova-redis declares no %s; the spec claims a proof the tree does not carry", n, name)
+		}
+	}
+	if !strings.Contains(string(spec), "`cmd/nova-redis/serve_test.go` proves 22, 23, 24 and 25") {
+		t.Error("docs/SPEC-REDIS.md does not say serve_test.go proves 22-25")
 	}
 }

@@ -1,5 +1,7 @@
-// Command nova-redis is the Layer 2 binary of docs/SPEC-REDIS.md. This first
-// slice carries the scratch verbs: `spill` writes a value under an owner
+// Command nova-redis is the Layer 2 binary of docs/SPEC-REDIS.md, the owner of
+// the local instance: `serve` launches it bound to loopback and the tailnet,
+// with auth from nova-secrets and persistence off (serve.go, #2281). It also
+// carries the scratch verbs: `spill` writes a value under an owner
 // prefix with a required TTL, and `recall` reads it back and refuses a missing
 // or expired key. A write with no owner or no TTL is refused before the
 // instance is dialled, so an unbounded key never reaches Redis (rules 2 and
@@ -18,6 +20,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -41,9 +44,10 @@ const (
 	fieldExpires = "expires_ms"
 )
 
-const usage = `nova-redis — the scratch half of the local Redis instance (docs/SPEC-REDIS.md)
+const usage = `nova-redis — owns the local Redis instance and its scratch verbs (docs/SPEC-REDIS.md)
 
 usage:
+  nova-redis serve  --bind <addr>[,<addr>...] --port <port>
   nova-redis spill  --addr <host:port> --owner <owner> --name <name> --ttl <duration> --value <text>
   nova-redis recall --addr <host:port> --owner <owner> --name <name>
   nova-redis version
@@ -55,9 +59,15 @@ refuses a missing owner or a missing, zero or negative TTL (exit 2) and
 writes nothing; an unbounded key is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
 Auth is read from NOVA_REDIS_PASSWORD, never from an argument.
+serve runs redis-server in the foreground, bound only to loopback and tailnet
+addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
+wildcard, public or LAN address is refused (exit 2). The password reaches
+redis-server on stdin, never in an argument; persistence is off (no RDB, no
+AOF) and every launch gets a fresh empty dir, so a restart is a clean slate.
 
 example:
   nova-redis version
+  nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379
   nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
   nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
 `
@@ -69,6 +79,14 @@ type deps struct {
 	dial   func(addr, password string) redis.Cmdable
 	now    func() time.Time
 	getenv func(string) string
+
+	// The serve seams: the environment handed to the child, where the
+	// instance program is found, the root its fresh working dir is made
+	// under, and the launch itself.
+	environ  func() []string
+	lookPath func(string) (string, error)
+	tempRoot func() string
+	launch   func(ctx context.Context, spec launchSpec, stdout, stderr io.Writer) error
 }
 
 func realDeps() deps {
@@ -76,8 +94,12 @@ func realDeps() deps {
 		dial: func(addr, password string) redis.Cmdable {
 			return redis.NewClient(&redis.Options{Addr: addr, Password: password})
 		},
-		now:    time.Now,
-		getenv: os.Getenv,
+		now:      time.Now,
+		getenv:   os.Getenv,
+		environ:  os.Environ,
+		lookPath: exec.LookPath,
+		tempRoot: os.TempDir,
+		launch:   launchRedis,
 	}
 }
 
@@ -90,13 +112,15 @@ func refuse(stderr io.Writer, where, what string) int {
 
 func run(args []string, stdout, stderr io.Writer, d deps) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; spill writes scratch, recall reads it")
+		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it")
 	}
 	switch args[0] {
 	case "spill":
 		return cmdSpill(args[1:], stdout, stderr, d)
 	case "recall":
 		return cmdRecall(args[1:], stdout, stderr, d)
+	case "serve":
+		return cmdServe(args[1:], stdout, stderr, d)
 	case "version", "--version":
 		if len(args) > 1 {
 			return refuse(stderr, " version", fmt.Sprintf("takes no arguments, got %d", len(args)-1))
