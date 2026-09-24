@@ -107,10 +107,10 @@ do not equate `fix` with `fix-red` by a hidden alias. `MODE: script` describes e
 not another KIND. Unlisted cell/rule/spec2 producers need an explicit adapter/decision before
 recutting.
 
-The six kinds currently implemented by `RenderCardV2` have one reviewed worked example each in
-[Card exemplars](EXEMPLARS.md). A cut card links its matching row in the task body as
-`Example to follow:`; that prose is guidance and never a second command authority. The other four
-kinds enter that catalog when their v2 renderers and a landed exact-head score-10 example exist.
+All ten cutter kinds have one reviewed worked example in [Card exemplars](EXEMPLARS.md). A cut
+card links its matching row in the task body as `Example to follow:`; that prose is guidance and
+never a second command authority. The catalog says which six kinds use `RenderCardV2` today and
+which four retain their legacy renderer, so the example cannot be mistaken for renderer support.
 
 This set is the name set a v2 card declares. It does not globally retire the names in
 `internal/hygiene/kinds.txt`, and no legacy consumer is removed by it: old names reach v2 only
