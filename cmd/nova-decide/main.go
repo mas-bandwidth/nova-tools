@@ -33,7 +33,7 @@ usage:
   nova-decide tune --decisions <jsonl> [--floors 0.5,0.7,0.8,0.9,0.95]
                    [--label <field, default label>] [--choice <field, default decision>]
                    [--conf <field, default confidence>] [--max-escalation 0.7]
-                   [--observations]
+                   [--default <answer>] [--observations]
 
   nova-decide tune --kind <k> [--dsn <dsn>] [--decisions <tsv path>]
                    (the decisions table: refuse a floor with no rows behind it)
@@ -46,7 +46,8 @@ usage:
 
   nova-decide route --unit <json file|inline json> --usage <path> --log <path>
                     [--store <host:port> [--user <acl user>]
-                     [--password-env NOVA_REDIS_BENCH_PASSWORD]]
+                     [--store-user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]
+                     [--store-password-env NOVA_REDIS_BENCH_PASSWORD]] [--down-store <host:port>]
                     [--registry <path>] [--floor 0.9] [--base-url <url>]
                     [--key-env JEV_API_KEY]
                     (--usage and --log are REQUIRED whenever jev is asked)
@@ -54,6 +55,7 @@ usage:
                     [--lane-owner <lane>] [--attempt rung:outcome:reason] [--platform <name>]
                     [--guard] [--secrets] [--touches guard|secrets|sandbox|sudo|deploy-keys|network]
                     [--fresh-take] [--deadline 45m] [--no-jev]
+                    [--card <path> --allowed-routes <path>] [--jev]
   nova-decide route ... [--step-up] [--max-steps 3]
                     (below the floor, re-ask the same question with that rung
                      excluded; every step is a logged decision)
@@ -73,6 +75,9 @@ usage:
                      [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>]
                      [--user <user>] [--password-env <NAME>] [--ledger-path <jsonl>]
                      [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
+                     [--base-url <url>] [--key-env <name>] [--gh <path>] [--stream <name>]
+                     [--store-user <user>] [--store-password-env <NAME>] [--skip-heads <file>]
+                     [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>]
                      [--no-jev] [--table] [--record <dir>] [--replay <dir>]
   nova-decide review --repo <owner/name> --batch <file of pull request numbers>
                     (the Jev FIRST PASS, nova-tools #2565: mechanical checks in
@@ -85,10 +90,10 @@ usage:
                      --dry-run is the default; --post is the only write.)
 
   nova-decide classify --question <q> --evidence <file|-> --pointer <id>
-                       [--decider rules] [--floor <f>] [--rules <tsv>] [--tamper <file>]
+                       [--version 1] [--decider rules] [--floor <f>] [--rules <tsv>] [--tamper <file>]
                        [--escalate-to <name>] [--log <path>] [--private]
 
-  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
+  nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped [--of-time <RFC3339>]
                      (what HAPPENED to a unit a decision routed; the kind and
                       the rung are read from that decision, never retyped)
 
@@ -490,6 +495,7 @@ func runTune(args []string, stdout, stderr io.Writer) int {
 	fs.Var(floorFor, "floor-for", "override one proposal as kind=floor, such as new-verb=0.75; repeatable, and refused above what the provider has ever answered for that kind")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("tune", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "tune") {
 			return 0

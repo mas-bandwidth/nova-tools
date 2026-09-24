@@ -64,6 +64,28 @@ func TestRouteStoreExcludesDownFriend(t *testing.T) {
 	}
 }
 
+func TestRouteReadsSeatPresenceWithoutWritingEvent(t *testing.T) {
+	mr := miniredis.RunT(t)
+	mr.Set("friend:stella:down", "out-of-credits")
+	t.Setenv("NOVA_REDIS_ADDR", mr.Addr())
+	log := filepath.Join(t.TempDir(), "decide.jsonl")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"route", "--unit-id", "seat", "--kind", "spec", "--no-jev", "--log", log}, &stdout, &stderr)
+	if code != 0 && code != 3 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stdout.String(), "rung=astra") {
+		t.Fatalf("astra routed while Stella is down: %s", stdout.String())
+	}
+	if mr.Exists("cards:done") {
+		t.Fatal("presence-only store wrote cards:done")
+	}
+	raw, _ := os.ReadFile(log)
+	if !strings.Contains(string(raw), `"down_checked":true`) || !strings.Contains(string(raw), "stella:down") {
+		t.Fatalf("missing presence evidence: %s", raw)
+	}
+}
+
 type recordingDecider struct {
 	conf      float64
 	questions map[string]decide.Question

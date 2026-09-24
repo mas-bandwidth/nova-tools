@@ -40,6 +40,7 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 	private := fs.Bool("private", false, "the evidence is private: no decider that leaves the machine may see it")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("classify", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "classify") {
 			return 0

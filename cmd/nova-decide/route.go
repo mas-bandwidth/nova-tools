@@ -132,6 +132,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	logPath := fs.String("log", "", "append the decision to this JSON lines log")
 	store := fs.String("store", "", "the fleet Redis as host:port: write the decision as one decide event on cards:done, which the fold keeps in its decisions table")
+	downStore := fs.String("down-store", os.Getenv("NOVA_REDIS_ADDR"), "fleet Redis to read friend presence from without writing an event (default NOVA_REDIS_ADDR; --store also supplies it)")
 	var storeUser string
 	fs.StringVar(&storeUser, "user", "", "with --store: the ACL user")
 	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
@@ -166,6 +167,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	fs.Var(touches, "touches", "security this unit touches: "+strings.Join(decide.Touches, " | ")+"; repeatable")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("route", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "route") {
 			return 0
@@ -287,7 +289,14 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		}
 		eventSink = opened
 
-		down, list, err := downFriendsOpener(context.Background(), *store, storeUser, os.Getenv(passwordEnv), reg)
+	}
+	presenceStore := strings.TrimSpace(*downStore)
+	if strings.TrimSpace(*store) != "" {
+		presenceStore = strings.TrimSpace(*store)
+	}
+	downChecked := presenceStore != ""
+	if downChecked {
+		down, list, err := downFriendsOpener(context.Background(), presenceStore, storeUser, os.Getenv(passwordEnv), reg)
 		if err != nil {
 			if fileSink != nil {
 				fileSink.Close()
@@ -299,6 +308,8 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		}
 		downExcluded = down
 		downList = list
+	} else {
+		fmt.Fprintln(stderr, "ROUTE NOTE down friends not checked (no store)")
 	}
 	var sink decide.LogSink
 	if fileSink != nil || eventSink != nil {
@@ -360,8 +371,10 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	// it onto the line and into every log row -- including the steps, each of
 	// which was gated on the same floor.
 	res.FloorFrom = floorFrom
+	res.DownChecked = downChecked
 	for i := range steps {
 		steps[i].FloorFrom = floorFrom
+		steps[i].DownChecked = downChecked
 	}
 	if ask {
 		fmt.Fprintf(stderr, "nova-decide route: jev answered for unit %s\n", oneline.Field(unit.ID))
@@ -656,6 +669,7 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 	asked := fs.Bool("asked-all-friends", false, "all friends have already been asked")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("help", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "help") {
 			return 0
@@ -704,6 +718,7 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	summary := fs.Bool("summary", false, "print the per-kind escalation counts and the regenerated starting rung")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("log", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "log") {
 			return 0
