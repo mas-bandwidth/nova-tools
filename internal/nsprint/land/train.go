@@ -3,6 +3,7 @@ package land
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -21,20 +22,23 @@ func (e *MergeConflictError) Error() string {
 	return fmt.Sprintf("merge conflict between %s and %s: %s", e.CurrentHead, e.MemberHead, e.Stdout)
 }
 
-func formatCommitDate(raw string) string {
-	if raw == "" {
-		return "@1790252098 +0000"
+// trainDate turns a batch's created_at into the fixed author and committer date,
+// by the same rule as publish.gitDate (the publisher rebuilds this train and
+// compares shas, 5.3, 5.5): ns_batch_plan stamps Unix milliseconds, so a value
+// of 1e12 or more is divided to whole seconds; seconds pass through; empty is
+// the fixed epoch; anything else is refused, never handed to git to parse.
+func trainDate(createdAt string) (string, error) {
+	if createdAt == "" {
+		createdAt = "1790252098"
 	}
-	if strings.HasPrefix(raw, "@") {
-		return raw
+	n, err := strconv.ParseInt(createdAt, 10, 64)
+	if err != nil || n < 0 {
+		return "", fmt.Errorf("build train: created_at %q is not a Unix time", createdAt)
 	}
-	if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
-		if n > 100000000000 { // milliseconds timestamp
-			n = n / 1000
-		}
-		return fmt.Sprintf("@%d +0000", n)
+	if n >= 1e12 { // milliseconds
+		n /= 1000
 	}
-	return raw
+	return "@" + strconv.FormatInt(n, 10) + " +0000", nil
 }
 
 // TrainParams holds inputs for deterministic train construction (spec 5.3).
@@ -55,82 +59,72 @@ type TrainResult struct {
 
 // BuildTrain constructs the deterministic merge train using git merge-tree --write-tree
 // and git commit-tree under fixed author, committer, message and date (spec 5.3).
+//
+// It is the same construction as publish.BuildTrain, command for command (the
+// publisher rebuilds the train and must reach the same sha; TestTrainMatchesPublisher
+// holds the two together). The worker cannot call publish.BuildTrain itself:
+// package publish imports land, so land importing publish is a cycle. The one
+// addition is the typed conflict: merge-tree exits 1 on a conflicted merge and
+// prints the conflict on stdout, so exit status 1 is a *MergeConflictError
+// (receipted CONFLICT) and any other failure is a plain error (receipted ERROR).
 func BuildTrain(ctx context.Context, p TrainParams) (*TrainResult, error) {
 	if p.FromTip == "" {
 		return nil, fmt.Errorf("build train: from_tip is required")
 	}
-	currentHead := p.FromTip
-	currentTree := ""
+	date, err := trainDate(p.CreatedAt)
+	if err != nil {
+		return nil, err
+	}
+	head, tree := p.FromTip, ""
 	var commits []string
-
-	for i, memberHead := range p.Members {
-		if memberHead == "" {
+	for i, member := range p.Members {
+		if member == "" {
 			continue
 		}
-		// 1. git merge-tree --write-tree <currentHead> <memberHead>
-		mergeArgs := []string{"merge-tree", "--write-tree", currentHead, memberHead}
-		cmd := exec.CommandContext(ctx, "git", mergeArgs...)
-		if p.GitDir != "" {
-			cmd.Dir = p.GitDir
-		}
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			outStr := stdout.String()
-			errStr := stderr.String()
-			if strings.Contains(outStr, "CONFLICT") || strings.Contains(errStr, "CONFLICT") ||
-				strings.Contains(outStr, "conflict") || strings.Contains(errStr, "conflict") {
-				return nil, &MergeConflictError{
-					CurrentHead: currentHead,
-					MemberHead:  memberHead,
-					Stdout:      outStr,
-					Stderr:      errStr,
-				}
+		out, errOut, err := trainGit(ctx, p.GitDir, nil, "merge-tree", "--write-tree", head, member)
+		if err != nil {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+				return nil, &MergeConflictError{CurrentHead: head, MemberHead: member, Stdout: out, Stderr: errOut}
 			}
-			return nil, fmt.Errorf("merge-tree %s %s: %w (stdout: %s, stderr: %s)", currentHead, memberHead, err, outStr, errStr)
+			return nil, fmt.Errorf("merge-tree %s %s: %w: %s", head, member, err, errOut)
 		}
-		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
-		if len(lines) == 0 || len(lines[0]) != 40 {
-			return nil, fmt.Errorf("merge-tree %s %s: invalid tree output %q", currentHead, memberHead, stdout.String())
+		lines := strings.Split(out, "\n")
+		if len(lines[0]) != 40 {
+			return nil, fmt.Errorf("merge-tree %s %s: invalid tree output %q", head, member, out)
 		}
-		treeSHA := lines[0]
-		currentTree = treeSHA
-
-		// 2. git commit-tree <treeSHA> -p <currentHead> -p <memberHead> -m <message>
-		msg := fmt.Sprintf("train %s member %d: %s", p.BatchID, i+1, memberHead)
-		commitArgs := []string{"commit-tree", treeSHA, "-p", currentHead, "-p", memberHead, "-m", msg}
-		commitCmd := exec.CommandContext(ctx, "git", commitArgs...)
-		if p.GitDir != "" {
-			commitCmd.Dir = p.GitDir
-		}
-		date := formatCommitDate(p.CreatedAt)
-		commitCmd.Env = append(cmd.Environ(),
+		tree = lines[0]
+		msg := fmt.Sprintf("train %s member %d: %s", p.BatchID, i+1, member)
+		env := []string{
 			"GIT_AUTHOR_NAME=nova-sprint",
 			"GIT_AUTHOR_EMAIL=nova-sprint@mas-bandwidth.com",
-			"GIT_AUTHOR_DATE="+date,
+			"GIT_AUTHOR_DATE=" + date,
 			"GIT_COMMITTER_NAME=nova-sprint",
 			"GIT_COMMITTER_EMAIL=nova-sprint@mas-bandwidth.com",
-			"GIT_COMMITTER_DATE="+date,
-		)
-		stdout.Reset()
-		stderr.Reset()
-		commitCmd.Stdout = &stdout
-		commitCmd.Stderr = &stderr
-		if err := commitCmd.Run(); err != nil {
-			return nil, fmt.Errorf("commit-tree %s: %w (stderr: %s)", treeSHA, err, stderr.String())
+			"GIT_COMMITTER_DATE=" + date,
 		}
-		commitSHA := strings.TrimSpace(stdout.String())
-		if len(commitSHA) != 40 {
-			return nil, fmt.Errorf("commit-tree returned invalid commit SHA: %q", commitSHA)
+		sha, errOut, err := trainGit(ctx, p.GitDir, env, "-c", "commit.gpgsign=false", "commit-tree", tree, "-p", head, "-p", member, "-m", msg)
+		if err != nil {
+			return nil, fmt.Errorf("commit-tree %s: %w: %s", tree, err, errOut)
 		}
-		commits = append(commits, commitSHA)
-		currentHead = commitSHA
+		if len(sha) != 40 {
+			return nil, fmt.Errorf("commit-tree returned invalid commit sha %q", sha)
+		}
+		commits = append(commits, sha)
+		head = sha
 	}
+	return &TrainResult{TrainHead: head, TrainTree: tree, Commits: commits}, nil
+}
 
-	return &TrainResult{
-		TrainHead: currentHead,
-		TrainTree: currentTree,
-		Commits:   commits,
-	}, nil
+// trainGit runs git in dir and returns its trimmed stdout and stderr.
+func trainGit(ctx context.Context, dir string, env []string, args ...string) (string, string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = dir
+	if env != nil {
+		cmd.Env = append(cmd.Environ(), env...)
+	}
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	err := cmd.Run()
+	return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), err
 }

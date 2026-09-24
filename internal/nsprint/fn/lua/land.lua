@@ -1,3 +1,9 @@
+-- land.lua is one do-block: the whole nova_sprint library is one Lua main
+-- function, which holds at most 200 locals (luaY MAXVARS). The six helpers
+-- below are used only here, so their scope ends with this file and they do
+-- not count against the verbs loaded after it (dev reached 206 at #3487).
+do
+
 -- land.lua: nova_sprint functions for the lander service (Issue #3139 rev 7).
 -- Keys 2.2, fences and intent cut 2.3, events 2.2/7.7.
 -- Every lua/ file shares one chunk, so locals carry a land_ prefix.
@@ -1116,3 +1122,5 @@ redis.register_function('ns_land', function(keys, args)
   )
   return 'OK'
 end)
+
+end

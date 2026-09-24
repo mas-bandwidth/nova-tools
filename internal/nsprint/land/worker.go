@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,9 @@ type WorkerConfig struct {
 	MirrorDir              string
 	HeartbeatInterval      time.Duration
 	QuarantineReapInterval time.Duration
+	// Log receives one line per gate fault (a failed read, a refused receipt,
+	// an infrastructure ERROR); nil is os.Stderr.
+	Log io.Writer
 }
 
 // RequeuedBatch records a batch requeued by SweepReclaim.
@@ -117,6 +121,9 @@ func NewWorker(cfg WorkerConfig) *Worker {
 	if cfg.QuarantineReapInterval <= 0 {
 		cfg.QuarantineReapInterval = 5 * time.Second
 	}
+	if cfg.Log == nil {
+		cfg.Log = os.Stderr
+	}
 	return &Worker{cfg: cfg}
 }
 
@@ -157,6 +164,7 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 // RunOnce attempts to process one gate attempt across any configured repo and returns whether one was run.
+// A gate that ran but could not be receipted, or was receipted ERROR, returns (true, err).
 func (w *Worker) RunOnce(ctx context.Context, slot string) (bool, error) {
 	for _, repo := range w.cfg.Repos {
 		res, err := CallGateTake(ctx, w.cfg.Client, repo, w.cfg.Bench, slot, w.cfg.Class, 0, 0)
@@ -164,8 +172,7 @@ func (w *Worker) RunOnce(ctx context.Context, slot string) (bool, error) {
 			return false, err
 		}
 		if res.Status == "OK" {
-			w.executeGate(ctx, repo, res.Base, res.BatchID, res.Attempt, res.Token, slot)
-			return true, nil
+			return true, w.executeGate(ctx, repo, res.Base, res.BatchID, res.Attempt, res.Token, slot)
 		}
 	}
 	return false, nil
@@ -183,11 +190,14 @@ func (w *Worker) runSlot(ctx context.Context, slot string) {
 		for _, repo := range w.cfg.Repos {
 			res, err := CallGateTake(ctx, w.cfg.Client, repo, w.cfg.Bench, slot, w.cfg.Class, 0, 0)
 			if err != nil {
+				w.logf("%s %s: gate take: %v", repo, slot, err)
 				time.Sleep(50 * time.Millisecond)
 				continue
 			}
 			if res.Status == "OK" {
-				w.executeGate(ctx, repo, res.Base, res.BatchID, res.Attempt, res.Token, slot)
+				if err := w.executeGate(ctx, repo, res.Base, res.BatchID, res.Attempt, res.Token, slot); err != nil {
+					w.logf("%s %s: %v", repo, slot, err)
+				}
 				processed = true
 				break
 			} else if res.Status == "NOBUDGET" {
@@ -200,7 +210,51 @@ func (w *Worker) runSlot(ctx context.Context, slot string) {
 	}
 }
 
-func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, attempt int, token, slot string) {
+func (w *Worker) logf(format string, args ...any) {
+	fmt.Fprintf(w.cfg.Log, "nova-sprint land worker: "+format+"\n", args...)
+}
+
+// GateReceiptErr turns an ns_gate_receipt reply into an error: OK is written,
+// ALREADY is the write-once receipt already there (a duplicate, not a fault);
+// STALE, NOTFOUND or any other reply means this attempt's receipt was not
+// written, and the batch would sit in gating until the heartbeat reclaim.
+func GateReceiptErr(reply string, err error) error {
+	if err != nil {
+		return fmt.Errorf("gate receipt: %w", err)
+	}
+	switch reply {
+	case "OK", "ALREADY":
+		return nil
+	}
+	return fmt.Errorf("gate receipt refused: %s", reply)
+}
+
+// gateAttempt is one taken attempt: what every receipt it writes carries.
+type gateAttempt struct {
+	repo, base, batchID, token, slot string
+	attempt                          int
+	gid                              *GateReceiptGIDParams
+}
+
+// receipt writes the attempt's receipt and returns an error when it was not written.
+func (w *Worker) receipt(ctx context.Context, a gateAttempt, verdict, trainHead, trainTree, inputID, selection, failing, coreS string) error {
+	reply, err := CallGateReceiptWithGID(ctx, w.cfg.Client, a.repo, a.base, a.batchID, a.attempt, a.token, verdict, w.cfg.Bench, "worker-"+a.slot, trainHead, trainTree, inputID, selection, "", failing, "", coreS, a.gid)
+	if err := GateReceiptErr(reply, err); err != nil {
+		return fmt.Errorf("batch %s attempt %d %s: %w", a.batchID, a.attempt, verdict, err)
+	}
+	return nil
+}
+
+// infraError receipts ERROR (retryable: the attempt is requeued, the members are
+// not blamed) for a fault of the bench rather than the train, and returns it.
+func (w *Worker) infraError(ctx context.Context, a gateAttempt, trainHead, trainTree, inputID string, cause error) error {
+	if err := w.receipt(ctx, a, "ERROR", trainHead, trainTree, inputID, "", "", "0"); err != nil {
+		return fmt.Errorf("batch %s attempt %d: %v; and %w", a.batchID, a.attempt, cause, err)
+	}
+	return fmt.Errorf("batch %s attempt %d receipted ERROR: %w", a.batchID, a.attempt, cause)
+}
+
+func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, attempt int, token, slot string) error {
 	// 1. Start heartbeat renewing worker:<bench>:<slot> PX 15000 every 5 s (spec 5.2)
 	hbCtx, cancelHB := context.WithCancel(ctx)
 	defer cancelHB()
@@ -223,17 +277,22 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 		}
 	}()
 
+	a := gateAttempt{repo: repo, base: base, batchID: batchID, token: token, slot: slot, attempt: attempt}
+
 	// 2. Read batch info
 	bkey := BatchKey(repo, base, batchID)
 	bvals, err := w.cfg.Client.HMGet(ctx, bkey, "from_tip", "members", "class", "created_at", "input_id", "paths").Result()
-	if err != nil || len(bvals) < 5 {
-		return
+	if err != nil || len(bvals) < 6 {
+		if err == nil {
+			err = fmt.Errorf("short reply (%d fields)", len(bvals))
+		}
+		return w.infraError(ctx, a, "", "", "", fmt.Errorf("read batch %s: %w", bkey, err))
 	}
 	fromTip, _ := bvals[0].(string)
 	membersCSV, _ := bvals[1].(string)
 	class, _ := bvals[2].(string)
 	createdAt, _ := bvals[3].(string)
-	inputID, _ := bvals[4].(string)
+	planInputID, _ := bvals[4].(string)
 
 	var memberHeads []string
 	var changedFiles []string
@@ -245,52 +304,62 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 			}
 		}
 	}
-	if len(bvals) > 5 && bvals[5] != nil {
-		if pathsCSV, ok := bvals[5].(string); ok && pathsCSV != "" {
-			for _, p := range strings.Split(pathsCSV, ",") {
-				p = strings.TrimSpace(p)
-				if p != "" {
-					changedFiles = append(changedFiles, p)
-				}
+	if pathsCSV, ok := bvals[5].(string); ok && pathsCSV != "" {
+		for _, p := range strings.Split(pathsCSV, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				changedFiles = append(changedFiles, p)
 			}
 		}
 	}
 
-	// Read base policy for GID receipt (spec 3.7, 5.5)
-	var gidParams *GateReceiptGIDParams
+	// Read base policy for GID receipt and input_id (spec 3.7, 5.5)
+	var policyID, requiredSetID, runnerID string
 	pkey := PolicyKey(repo, base)
 	pvals, err := w.cfg.Client.HMGet(ctx, pkey, "policy_id", "required_set_id", "runner_id").Result()
-	if err == nil && len(pvals) >= 3 && pvals[0] != nil {
-		policyID, _ := pvals[0].(string)
-		requiredSetID, _ := pvals[1].(string)
-		runnerID, _ := pvals[2].(string)
-		if policyID != "" || requiredSetID != "" || runnerID != "" {
-			kind := "full"
-			head := fromTip
-			if len(memberHeads) == 1 {
-				kind = "single"
-				head = memberHeads[0]
-			} else if len(memberHeads) == 0 {
-				kind = "tip"
-				head = fromTip
-			}
-			gid := GID(kind, base, fromTip, requiredSetID, policyID, runnerID)
-			gidParams = &GateReceiptGIDParams{
-				GID:           gid,
-				Kind:          kind,
-				Head:          head,
-				BaseSHA:       fromTip,
-				RequiredSetID: requiredSetID,
-				PolicyID:      policyID,
-				RunnerID:      runnerID,
-			}
+	if err != nil {
+		return w.infraError(ctx, a, "", "", planInputID, fmt.Errorf("read policy %s: %w", pkey, err))
+	}
+	if len(pvals) >= 3 {
+		policyID, _ = pvals[0].(string)
+		requiredSetID, _ = pvals[1].(string)
+		runnerID, _ = pvals[2].(string)
+	}
+	if policyID != "" || requiredSetID != "" || runnerID != "" {
+		kind := "full"
+		head := fromTip
+		if len(memberHeads) == 1 {
+			kind = "single"
+			head = memberHeads[0]
+		} else if len(memberHeads) == 0 {
+			kind = "tip"
+			head = fromTip
 		}
+		a.gid = &GateReceiptGIDParams{
+			GID:           GID(kind, base, fromTip, requiredSetID, policyID, runnerID),
+			Kind:          kind,
+			Head:          head,
+			BaseSHA:       fromTip,
+			RequiredSetID: requiredSetID,
+			PolicyID:      policyID,
+			RunnerID:      runnerID,
+		}
+	}
+
+	// The gate tests a checkout of the train; with no mirror there is nothing to
+	// check out, and running the steps anywhere else would receipt a verdict on
+	// the wrong tree.
+	if w.cfg.MirrorDir == "" {
+		return w.infraError(ctx, a, "", "", planInputID, errors.New("no mirror configured (--mirror)"))
+	}
+	if fromTip == "" {
+		return w.infraError(ctx, a, "", "", planInputID, errors.New("batch has no from_tip"))
 	}
 
 	// 3. Build deterministic train (spec 5.3)
 	trainHead := fromTip
 	trainTree := ""
-	if w.cfg.MirrorDir != "" && len(memberHeads) > 0 {
+	if len(memberHeads) > 0 {
 		tr, err := BuildTrain(ctx, TrainParams{
 			GitDir:    w.cfg.MirrorDir,
 			FromTip:   fromTip,
@@ -299,119 +368,108 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 			CreatedAt: createdAt,
 		})
 		if err != nil {
-			verdict := "ERROR"
 			var conflictErr *MergeConflictError
-			if errors.As(err, &conflictErr) || strings.Contains(err.Error(), "conflict") || strings.Contains(err.Error(), "CONFLICT") {
-				verdict = "CONFLICT"
+			if errors.As(err, &conflictErr) {
+				return w.receipt(ctx, a, "CONFLICT", trainHead, trainTree, planInputID, "", "", "0")
 			}
-			_, _ = CallGateReceiptWithGID(ctx, w.cfg.Client, repo, base, batchID, attempt, token, verdict, w.cfg.Bench, "worker-"+slot, trainHead, trainTree, inputID, "", "", "", "", "0", gidParams)
-			return
+			return w.infraError(ctx, a, trainHead, trainTree, planInputID, fmt.Errorf("build train: %w", err))
 		}
 		trainHead = tr.TrainHead
 		trainTree = tr.TrainTree
 	}
-	if gidParams != nil && gidParams.Kind == "full" {
-		gidParams.Head = trainHead
+	if a.gid != nil && a.gid.Kind == "full" {
+		a.gid.Head = trainHead
 	}
 
-	if w.cfg.MirrorDir != "" && fromTip != "" && trainHead != "" && fromTip != trainHead {
+	if fromTip != trainHead {
 		cmd := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "diff", "--name-only", fromTip, trainHead)
-		if out, err := cmd.Output(); err == nil {
-			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-				line = strings.TrimSpace(line)
-				if line != "" {
-					changedFiles = append(changedFiles, line)
-				}
+		out, err := cmd.Output()
+		if err != nil {
+			return w.infraError(ctx, a, trainHead, trainTree, planInputID, fmt.Errorf("diff %s %s: %w", fromTip, trainHead, err))
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				changedFiles = append(changedFiles, line)
 			}
 		}
 	}
 	changedFiles = dedupeAndSort(changedFiles)
 
-	// Create disposable worktree at train head for testing (spec 5.3)
-	var wtDir string
-	if w.cfg.MirrorDir != "" && trainHead != "" {
-		tempRoot := os.TempDir()
-		if eval, err := filepath.EvalSymlinks(tempRoot); err == nil {
-			tempRoot = eval
-		}
-		tmpDir, err := os.MkdirTemp(tempRoot, "land-wt-*")
-		if err == nil {
-			if eval, err := filepath.EvalSymlinks(tmpDir); err == nil {
-				tmpDir = eval
-			}
-			cmd := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "worktree", "add", "--detach", tmpDir, trainHead)
-			if err := cmd.Run(); err == nil {
-				wtDir = tmpDir
-				defer func() {
-					_ = exec.Command("git", "-C", w.cfg.MirrorDir, "worktree", "remove", "--force", wtDir).Run()
-					_ = safepath.RemoveUnder(tempRoot, wtDir)
-				}()
-			} else {
-				_ = safepath.RemoveUnder(tempRoot, tmpDir)
-			}
-		}
+	// Create disposable worktree at train head for testing (spec 5.3). A bench
+	// that cannot make one receipts ERROR: the steps never fall back to the mirror.
+	tempRoot := os.TempDir()
+	if eval, err := filepath.EvalSymlinks(tempRoot); err == nil {
+		tempRoot = eval
 	}
+	tmpDir, err := os.MkdirTemp(tempRoot, "land-wt-*")
+	if err != nil {
+		return w.infraError(ctx, a, trainHead, trainTree, planInputID, fmt.Errorf("worktree dir: %w", err))
+	}
+	if eval, err := filepath.EvalSymlinks(tmpDir); err == nil {
+		tmpDir = eval
+	}
+	if out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "worktree", "add", "--detach", tmpDir, trainHead).CombinedOutput(); err != nil {
+		_ = safepath.RemoveUnder(tempRoot, tmpDir)
+		return w.infraError(ctx, a, trainHead, trainTree, planInputID, fmt.Errorf("worktree add %s: %w: %s", trainHead, err, strings.TrimSpace(string(out))))
+	}
+	wtDir := tmpDir
+	defer func() {
+		_ = exec.Command("git", "-C", w.cfg.MirrorDir, "worktree", "remove", "--force", wtDir).Run()
+		_ = safepath.RemoveUnder(tempRoot, wtDir)
+	}()
 
-	if trainTree == "" && trainHead != "" && w.cfg.MirrorDir != "" {
-		if out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "rev-parse", trainHead+"^{tree}").Output(); err == nil {
-			trainTree = strings.TrimSpace(string(out))
+	if trainTree == "" {
+		out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "rev-parse", trainHead+"^{tree}").Output()
+		if err != nil {
+			return w.infraError(ctx, a, trainHead, trainTree, planInputID, fmt.Errorf("rev-parse %s tree: %w", trainHead, err))
 		}
+		trainTree = strings.TrimSpace(string(out))
 	}
-	baseTree := ""
-	if fromTip != "" && w.cfg.MirrorDir != "" {
-		if out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "rev-parse", fromTip+"^{tree}").Output(); err == nil {
-			baseTree = strings.TrimSpace(string(out))
-		}
+	out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "rev-parse", fromTip+"^{tree}").Output()
+	if err != nil {
+		return w.infraError(ctx, a, trainHead, trainTree, planInputID, fmt.Errorf("rev-parse %s tree: %w", fromTip, err))
 	}
+	baseTree := strings.TrimSpace(string(out))
 
 	// 4. Test selection (spec 5.4, B4)
 	goos := runtime.GOOS
 	cfgHash := ConfigHash(nil, runtime.Version(), "", "")
 	var baseGraph *Graph
-	if baseTree != "" {
-		if revs, found, _ := SelGet(ctx, w.cfg.Client, repo, baseTree, goos, cfgHash); found {
-			baseGraph = &Graph{
-				Tree:        baseTree,
-				GOOS:        goos,
-				ReverseDeps: revs,
-			}
+	if revs, found, _ := SelGet(ctx, w.cfg.Client, repo, baseTree, goos, cfgHash); found {
+		baseGraph = &Graph{
+			Tree:        baseTree,
+			GOOS:        goos,
+			ReverseDeps: revs,
 		}
 	}
 
 	var trainGraph *Graph
-	targetDir := wtDir
-	if targetDir == "" {
-		targetDir = w.cfg.MirrorDir
-	}
-	if targetDir != "" {
-		if tg, err := LoadLiveGraph(ctx, targetDir, goos, nil); err == nil {
-			trainGraph = tg
-			trainGraph.Tree = trainTree
-			if trainTree != "" {
-				_, _ = SelPut(ctx, w.cfg.Client, repo, trainTree, goos, cfgHash, time.Now().UnixMilli(), trainGraph.ReverseDeps)
-			}
+	if tg, err := LoadLiveGraph(ctx, wtDir, goos, nil); err == nil {
+		trainGraph = tg
+		trainGraph.Tree = trainTree
+		_, _ = SelPut(ctx, w.cfg.Client, repo, trainTree, goos, cfgHash, time.Now().UnixMilli(), trainGraph.ReverseDeps)
+	} else if revs, found, _ := SelGet(ctx, w.cfg.Client, repo, trainTree, goos, cfgHash); found {
+		trainGraph = &Graph{
+			Tree:        trainTree,
+			GOOS:        goos,
+			ReverseDeps: revs,
 		}
 	}
-	if trainGraph == nil && trainTree != "" {
-		if revs, found, _ := SelGet(ctx, w.cfg.Client, repo, trainTree, goos, cfgHash); found {
-			trainGraph = &Graph{
-				Tree:        trainTree,
-				GOOS:        goos,
-				ReverseDeps: revs,
-			}
-		}
+
+	// The input identity is computed here, from what this gate actually tested
+	// (spec 5.5, L31), never taken on trust from the plan.
+	inputID := GateInputID(fromTip, memberHeads, class, baseTree, trainTree, goos, cfgHash, policyID, runnerID)
+	if planInputID != "" && planInputID != inputID {
+		w.logf("batch %s attempt %d: plan input_id %s differs from the gate's %s; receipting the gate's", batchID, attempt, planInputID, inputID)
 	}
 
 	sel := SelectUnion(changedFiles, baseGraph, trainGraph)
 	steps := merge.StepsFor(merge.Selection{Class: class, Packages: sel.Packages})
 
 	// 5. Run steps in worktree (spec 5, B5)
-	stepDir := wtDir
-	if stepDir == "" {
-		stepDir = w.cfg.MirrorDir
-	}
 	runner := &merge.StepRunner{
-		Dir:     stepDir,
+		Dir:     wtDir,
 		Timeout: 5 * time.Minute,
 	}
 	startTime := time.Now()
@@ -438,5 +496,5 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 	coreS := fmt.Sprintf("%.2f", totalCoreSec)
 
 	// 6. Write receipt with atomic ack (spec 5.5, L31)
-	_, _ = CallGateReceiptWithGID(ctx, w.cfg.Client, repo, base, batchID, attempt, token, verdict, w.cfg.Bench, "worker-"+slot, trainHead, trainTree, inputID, sel.Checks, "", failing, "", coreS, gidParams)
+	return w.receipt(ctx, a, verdict, trainHead, trainTree, inputID, sel.Checks, failing, coreS)
 }

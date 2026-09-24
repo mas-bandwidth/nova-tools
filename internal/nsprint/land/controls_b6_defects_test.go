@@ -1,6 +1,8 @@
 package land_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	landpub "github.com/mas-bandwidth/nova-tools/internal/nsprint/land/publish"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -468,5 +471,139 @@ func TestDefect5_WorkerMergeConflictVerdict(t *testing.T) {
 	}
 	if state != "conflict" {
 		t.Fatalf("expected batch state conflict, got %q", state)
+	}
+}
+
+// newGateWorker gives bench a land budget and returns a one-slot worker on mirror.
+func newGateWorker(t *testing.T, f *landTestFixture, bench, mirror string) *land.Worker {
+	t.Helper()
+	st, err := store.Open(f.ctx, f.client.Options().Addr)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	_ = capacity.SetBudget(f.ctx, st, bench, 4000, 8192, "operator", "")
+	_ = f.client.HSet(f.ctx, "bench:"+bench+":desired", "machine", bench).Err()
+	_ = f.client.HSet(f.ctx, "bench:"+bench+":land", "cores_go", "2000", "mem_go", "4096").Err()
+	return land.NewWorker(land.WorkerConfig{
+		Client:    f.client,
+		Store:     st,
+		Bench:     bench,
+		Repos:     []string{f.repo},
+		Slots:     1,
+		MirrorDir: mirror,
+	})
+}
+
+// TestDefect6_WorkerWorktreeFailureIsError verifies that a bench which cannot make the
+// train worktree receipts ERROR (retryable, members not blamed) and RunOnce reports it,
+// instead of running the steps in the mirror and receipting a verdict on the wrong tree.
+func TestDefect6_WorkerWorktreeFailureIsError(t *testing.T) {
+	f := newLandFixture(t, "nova-tools", "dev")
+
+	bareDir, workDir, runGit := setupGitMirror(t)
+	missing := filepath.Join(t.TempDir(), "no-such-dir")
+	_ = os.WriteFile(filepath.Join(workDir, "go.mod"), []byte("module testpkg\n\ngo 1.24\n"), 0644)
+	_ = os.MkdirAll(filepath.Join(workDir, "pkg"), 0755)
+	_ = os.WriteFile(filepath.Join(workDir, "pkg", "pkg.go"), []byte("package pkg\n\nfunc Val() int { return 1 }\n"), 0644)
+	runGit("add", ".")
+	runGit("commit", "-m", "base commit")
+	runGit("push", "origin", "HEAD:main")
+	fromTip := runGit("rev-parse", "HEAD")
+	runGit("checkout", "-b", "m6", fromTip)
+	_ = os.WriteFile(filepath.Join(workDir, "pkg", "pkg.go"), []byte("package pkg\n\nfunc Val() int { return 6 }\n"), 0644)
+	runGit("commit", "-am", "change")
+	runGit("push", "origin", "HEAD:m6")
+	m6Head := runGit("rev-parse", "HEAD")
+
+	unit := "gh/mas-bandwidth/nova-tools/306"
+	_, _ = land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+		Sprint: f.sprint, Unit: unit, Repo: f.repo, Base: f.base,
+		Branch: "m6", Head: m6Head, BaseSHA: fromTip,
+	})
+	_, _ = land.CallUnitEval(f.ctx, f.client, f.sprint, unit, f.repo, f.base, 0)
+	batchID := "batch-d6"
+	if _, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unit+"@"+m6Head, "pkg/pkg.go", "go", fromTip, ""); err != nil {
+		t.Fatalf("batch plan: %v", err)
+	}
+	w := newGateWorker(t, f, "bench-d6", bareDir)
+
+	// The worktree lives under the temp root; a temp root that does not exist is a
+	// bench fault the worker cannot make the worktree in.
+	t.Setenv("TMPDIR", missing)
+
+	ran, err := w.RunOnce(f.ctx, "slot-1")
+	if !ran {
+		t.Fatalf("RunOnce did not take the gate (err %v)", err)
+	}
+	if err == nil {
+		t.Fatalf("RunOnce returned nil for a gate whose worktree could not be made")
+	}
+	verdict, herr := f.client.HGet(f.ctx, land.ReceiptKey(f.repo, batchID, 1), "verdict").Result()
+	if herr != nil {
+		t.Fatalf("HGet verdict: %v", herr)
+	}
+	if verdict != "ERROR" {
+		t.Fatalf("worktree failure receipted %s, want ERROR", verdict)
+	}
+}
+
+// TestDefect7_GateReceiptRepliesAreErrors verifies that the worker treats a receipt the
+// function did not write (STALE, NOTFOUND, a transport error) as an error, never drops it.
+func TestDefect7_GateReceiptRepliesAreErrors(t *testing.T) {
+	for _, tc := range []struct {
+		reply string
+		err   error
+		fails bool
+	}{
+		{"OK", nil, false},
+		{"ALREADY", nil, false},
+		{"STALE", nil, true},
+		{"NOTFOUND", nil, true},
+		{"", errors.New("connection refused"), true},
+	} {
+		if got := land.GateReceiptErr(tc.reply, tc.err); (got != nil) != tc.fails {
+			t.Fatalf("GateReceiptErr(%q, %v) = %v, want error=%v", tc.reply, tc.err, got, tc.fails)
+		}
+	}
+}
+
+// TestDefect8_TrainMatchesPublisher verifies that the worker's train is the publisher's
+// train: the same head and tree for the same inputs (a millisecond created_at included),
+// and the same refusal of a created_at that is not a Unix time (spec 5.3, 5.5; #3531).
+func TestDefect8_TrainMatchesPublisher(t *testing.T) {
+	ctx := context.Background()
+	bareDir, workDir, runGit := setupGitMirror(t)
+	_ = os.WriteFile(filepath.Join(workDir, "README.md"), []byte("# base\n"), 0644)
+	runGit("add", ".")
+	runGit("commit", "-m", "base")
+	runGit("push", "origin", "HEAD:main")
+	fromTip := runGit("rev-parse", "HEAD")
+	var members []string
+	for _, m := range []string{"a", "b"} {
+		runGit("checkout", "-b", "m-"+m, fromTip)
+		_ = os.WriteFile(filepath.Join(workDir, m+".txt"), []byte(m+"\n"), 0644)
+		runGit("add", ".")
+		runGit("commit", "-m", "member "+m)
+		runGit("push", "origin", "HEAD:m-"+m)
+		members = append(members, runGit("rev-parse", "HEAD"))
+	}
+
+	for _, createdAt := range []string{"", "1790252098", "1790252098123", "99999999999", "100000000000", "1000000000000"} {
+		lt, lerr := land.BuildTrain(ctx, land.TrainParams{GitDir: bareDir, FromTip: fromTip, Members: members, BatchID: "b8", CreatedAt: createdAt})
+		pt, perr := landpub.BuildTrain(ctx, landpub.TrainParams{GitDir: bareDir, FromTip: fromTip, Members: members, BatchID: "b8", CreatedAt: createdAt})
+		if lerr != nil || perr != nil {
+			t.Fatalf("created_at %q: land err %v, publish err %v", createdAt, lerr, perr)
+		}
+		if lt.TrainHead != pt.TrainHead || lt.TrainTree != pt.TrainTree {
+			t.Fatalf("created_at %q: land train %s/%s, publisher train %s/%s", createdAt, lt.TrainHead, lt.TrainTree, pt.TrainHead, pt.TrainTree)
+		}
+	}
+	for _, createdAt := range []string{"2026-09-24T12:00:00Z", "@1790252098 +0000", "-5"} {
+		_, lerr := land.BuildTrain(ctx, land.TrainParams{GitDir: bareDir, FromTip: fromTip, Members: members, BatchID: "b8", CreatedAt: createdAt})
+		_, perr := landpub.BuildTrain(ctx, landpub.TrainParams{GitDir: bareDir, FromTip: fromTip, Members: members, BatchID: "b8", CreatedAt: createdAt})
+		if lerr == nil || perr == nil {
+			t.Fatalf("created_at %q: land err %v, publish err %v; both must refuse", createdAt, lerr, perr)
+		}
 	}
 }

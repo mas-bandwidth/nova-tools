@@ -46,3 +46,21 @@ func ComputeRunnerID(novaToolsVersion, goVersion, lispVersion string) string {
 	h.Write([]byte(lispVersion))
 	return hex.EncodeToString(h.Sum(nil))
 }
+
+// SelGraphID names one selection graph by the identity it is cached under
+// (land:<repo>:sel:<tree>:<goos>:<cfg>, spec 5.4), so the same tree, platform
+// and configuration always give the same id.
+func SelGraphID(tree, goos, cfg string) string {
+	return tree + ":" + goos + ":" + cfg
+}
+
+// GateInputID is the input identity the gate worker computes and receipts
+// (spec 5.5): from_tip, the ordered member heads, the class, the base and train
+// selection graph ids, policy_id and runner_id. A GREEN receipt is indexed by
+// it (land:<repo>:receipt_by_input:<id>), so a later plan of the same inputs
+// reuses the receipt and a changed policy, runner or tree re-gates (L31).
+func GateInputID(fromTip string, memberHeads []string, class, baseTree, trainTree, goos, cfg, policyID, runnerID string) string {
+	return ComputeInputID(fromTip, memberHeads, class,
+		[]string{SelGraphID(baseTree, goos, cfg), SelGraphID(trainTree, goos, cfg)},
+		policyID, runnerID)
+}

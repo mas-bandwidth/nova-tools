@@ -2,10 +2,10 @@ package land_test
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -240,108 +240,125 @@ func TestL5(t *testing.T) {
 
 // TestL31 verifies control L31 (Issue #3139 rev 7 §11):
 // a GREEN receipt is reused only when input_id matches; a changed policy file or toolchain re-gates
-// (fails on: a stale green landing).
+// (fails on: a stale green landing). The gate is driven through the worker (RunOnce): the plan
+// carries no input_id, the worker computes it from what it tested (from_tip, member heads, class,
+// base and train selection graph ids, policy_id, runner_id) and receipts that.
 func TestL31(t *testing.T) {
 	f := newLandFixture(t, "nova-tools", "dev")
 
-	unit := "gh/mas-bandwidth/nova-tools/131"
-	head := "3131111122223333444455556666777788889999"
-	fromTip := "1111111111111111111111111111111111111111"
+	bareDir, workDir, runGit := setupGitMirror(t)
+	_ = os.WriteFile(filepath.Join(workDir, "go.mod"), []byte("module testpkg\n\ngo 1.24\n"), 0644)
+	_ = os.MkdirAll(filepath.Join(workDir, "pkg"), 0755)
+	_ = os.WriteFile(filepath.Join(workDir, "pkg", "pkg.go"), []byte("package pkg\n\nfunc Val() int { return 1 }\n"), 0644)
+	runGit("add", ".")
+	runGit("commit", "-m", "base commit")
+	runGit("push", "origin", "HEAD:main")
+	fromTip := runGit("rev-parse", "HEAD")
+	baseTree := runGit("rev-parse", fromTip+"^{tree}")
 
-	_, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+	runGit("checkout", "-b", "m31", fromTip)
+	_ = os.WriteFile(filepath.Join(workDir, "pkg", "pkg.go"), []byte("package pkg\n\nfunc Val() int { return 31 }\n"), 0644)
+	runGit("commit", "-am", "member 31")
+	runGit("push", "origin", "HEAD:m31")
+	head := runGit("rev-parse", "HEAD")
+
+	unit := "gh/mas-bandwidth/nova-tools/131"
+	if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
 		Sprint: f.sprint, Unit: unit, Repo: f.repo, Base: f.base,
-		Branch: "card-131", Head: head, BaseSHA: fromTip,
-	})
-	if err != nil {
+		Branch: "m31", Head: head, BaseSHA: fromTip,
+	}); err != nil {
 		t.Fatalf("unit head: %v", err)
 	}
 	if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unit, f.repo, f.base, 0); err != nil {
 		t.Fatalf("unit eval: %v", err)
 	}
 
-	// 1. Inputs for batch 1
-	policy1 := "readers: 0\nrequired:\n  - build\n  - test\n"
+	w := newGateWorker(t, f, "bench-l31", bareDir)
+
+	policyID1 := land.ComputePolicyID("readers: 0\nrequired:\n  - build\n  - test\n", "build,test")
 	reqSet1 := "build,test"
-	policyID1 := land.ComputePolicyID(policy1, reqSet1)
 	runnerID1 := land.ComputeRunnerID("v1.0.0", "go1.24", "sbcl2.4")
-	inputID1 := land.ComputeInputID(fromTip, []string{head}, "go", []string{"graph-1"}, policyID1, runnerID1)
-
-	// 2. Plan batch 1 and gate GREEN
-	tok1, entry1, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-1", f.lease, unit+"@"+head, "", "go", fromTip, inputID1)
-	if err != nil || tok1 == "REUSE" {
-		t.Fatalf("plan batch 1: got tok=%s, entry=%s, err=%v", tok1, entry1, err)
-	}
-	claimRes, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, "batch-l31-1", 1, tok1, "studio", "slot-1")
-	if err != nil || claimRes != "OK" {
-		t.Fatalf("claim batch 1: got %s, err %v", claimRes, err)
-	}
-	rRes, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, "batch-l31-1", 1, tok1, "GREEN", "studio", "worker-1", "train-head-31", "train-tree-31", inputID1, "", "", "", "", "10")
-	if err != nil || rRes != "OK" {
-		t.Fatalf("write receipt 1: got %s, err %v", rRes, err)
+	if err := land.CallPolicySet(f.ctx, f.client, f.repo, f.base, policyID1, reqSet1, runnerID1); err != nil {
+		t.Fatalf("policy set: %v", err)
 	}
 
-	// Void batch 1 so member returns to landable state for re-plan
-	if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-1", "replan-test"); err != nil {
-		t.Fatalf("void batch 1: %v", err)
+	// gate plans batchID with no input_id, runs it through the worker and returns the receipt.
+	gate := func(batchID string) (inputID, rkey, trainTree string) {
+		t.Helper()
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unit+"@"+head, "pkg/pkg.go", "go", fromTip, "")
+		if err != nil || tok == "REUSE" {
+			t.Fatalf("plan %s: tok=%s err=%v", batchID, tok, err)
+		}
+		ran, err := w.RunOnce(f.ctx, "slot-1")
+		if err != nil || !ran {
+			t.Fatalf("RunOnce %s: ran=%v err=%v", batchID, ran, err)
+		}
+		rkey = land.ReceiptKey(f.repo, batchID, 1)
+		vals, err := f.client.HMGet(f.ctx, rkey, "verdict", "input_id", "train_tree").Result()
+		if err != nil {
+			t.Fatalf("receipt %s: %v", rkey, err)
+		}
+		if v, _ := vals[0].(string); v != "GREEN" {
+			t.Fatalf("receipt %s verdict %v, want GREEN", rkey, vals[0])
+		}
+		inputID, _ = vals[1].(string)
+		trainTree, _ = vals[2].(string)
+		if inputID == "" || trainTree == "" {
+			t.Fatalf("receipt %s: input_id=%q train_tree=%q, want both set by the worker", rkey, inputID, trainTree)
+		}
+		return inputID, rkey, trainTree
+	}
+	void := func(batchID string) {
+		t.Helper()
+		if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, "replan-test"); err != nil {
+			t.Fatalf("void %s: %v", batchID, err)
+		}
 	}
 
-	// 3. Re-plan batch 2 with IDENTICAL input_id -> MUST REUSE receipt
-	tok2, entry2, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-2", f.lease, unit+"@"+head, "", "go", fromTip, inputID1)
+	// 1. The worker computes input_id from what it gated and indexes the GREEN receipt by it.
+	cfg := land.ConfigHash(nil, runtime.Version(), "", "")
+	inputID1, rkey1, trainTree := gate("batch-l31-1")
+	want := land.GateInputID(fromTip, []string{head}, "go", baseTree, trainTree, runtime.GOOS, cfg, policyID1, runnerID1)
+	if inputID1 != want {
+		t.Fatalf("receipt input_id %s, want the gate's own %s", inputID1, want)
+	}
+	if got, _ := f.client.Get(f.ctx, "land:"+f.repo+":receipt_by_input:"+inputID1).Result(); got != rkey1 {
+		t.Fatalf("receipt_by_input:%s = %q, want %s", inputID1, got, rkey1)
+	}
+	void("batch-l31-1")
+
+	// 2. Re-plan with IDENTICAL input_id -> MUST REUSE the receipt.
+	tok2, entry2, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-2", f.lease, unit+"@"+head, "pkg/pkg.go", "go", fromTip, inputID1)
 	if err != nil {
 		t.Fatalf("plan batch 2 with identical input_id: %v", err)
 	}
-	if tok2 != "REUSE" {
-		t.Fatalf("expected REUSE on identical input_id, got token %s", tok2)
+	if tok2 != "REUSE" || entry2 != rkey1 {
+		t.Fatalf("expected REUSE of %s on identical input_id, got %s %s", rkey1, tok2, entry2)
 	}
-	expectedReceiptKey := fmt.Sprintf("land:%s:receipt:batch-l31-1:1", f.repo)
-	if entry2 != expectedReceiptKey {
-		t.Fatalf("expected reuse receipt %s, got %s", expectedReceiptKey, entry2)
-	}
-	b2State, _ := f.client.HGet(f.ctx, land.BatchKey(f.repo, f.base, "batch-l31-2"), "state").Result()
-	if b2State != "green" {
+	if b2State, _ := f.client.HGet(f.ctx, land.BatchKey(f.repo, f.base, "batch-l31-2"), "state").Result(); b2State != "green" {
 		t.Fatalf("expected batch 2 state green on reuse, got %s", b2State)
 	}
+	void("batch-l31-2")
 
-	// Void batch 2 so member returns to landable state for re-plan
-	if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-2", "replan-test"); err != nil {
-		t.Fatalf("void batch 2: %v", err)
+	// 3. Changed policy file -> the worker's input_id changes -> a fresh gate, not the old receipt.
+	policyID2 := land.ComputePolicyID("readers: 0\nrequired:\n  - build\n  - vet\n  - test\n", "build,vet,test")
+	if err := land.CallPolicySet(f.ctx, f.client, f.repo, f.base, policyID2, "build,vet,test", runnerID1); err != nil {
+		t.Fatalf("policy set 2: %v", err)
 	}
-
-	// 4. Changed policy file -> input_id changes -> MUST RE-GATE (not reuse)
-	policy2 := "readers: 0\nrequired:\n  - build\n  - vet\n  - test\n"
-	reqSet2 := "build,vet,test"
-	policyID2 := land.ComputePolicyID(policy2, reqSet2)
-	inputID2 := land.ComputeInputID(fromTip, []string{head}, "go", []string{"graph-1"}, policyID2, runnerID1)
-	if inputID2 == inputID1 {
-		t.Fatalf("input_id must change when policy changes")
-	}
-
-	tok3, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-3", f.lease, unit+"@"+head, "", "go", fromTip, inputID2)
-	if err != nil {
-		t.Fatalf("plan batch 3: %v", err)
-	}
-	if tok3 == "REUSE" {
-		t.Fatalf("expected re-gate when policy file changed, but batch reused stale receipt")
-	}
-
-	// Void batch 3 so member returns to landable state for re-plan
-	if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-3", "replan-test"); err != nil {
-		t.Fatalf("void batch 3: %v", err)
-	}
-
-	// 5. Changed toolchain -> runner_id changes -> input_id changes -> MUST RE-GATE (not reuse)
-	runnerID2 := land.ComputeRunnerID("v1.1.0", "go1.25", "sbcl2.5")
-	inputID3 := land.ComputeInputID(fromTip, []string{head}, "go", []string{"graph-1"}, policyID1, runnerID2)
+	inputID3, _, _ := gate("batch-l31-3")
 	if inputID3 == inputID1 {
-		t.Fatalf("input_id must change when toolchain changes")
+		t.Fatalf("input_id must change when the policy changes")
 	}
+	void("batch-l31-3")
 
-	tok4, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, "batch-l31-4", f.lease, unit+"@"+head, "", "go", fromTip, inputID3)
-	if err != nil {
-		t.Fatalf("plan batch 4: %v", err)
+	// 4. Changed toolchain -> runner_id changes -> input_id changes -> a fresh gate.
+	runnerID2 := land.ComputeRunnerID("v1.1.0", "go1.25", "sbcl2.5")
+	if err := land.CallPolicySet(f.ctx, f.client, f.repo, f.base, policyID1, reqSet1, runnerID2); err != nil {
+		t.Fatalf("policy set 3: %v", err)
 	}
-	if tok4 == "REUSE" {
-		t.Fatalf("expected re-gate when toolchain changed, but batch reused stale receipt")
+	inputID4, _, _ := gate("batch-l31-4")
+	if inputID4 == inputID1 || inputID4 == inputID3 {
+		t.Fatalf("input_id must change when the toolchain changes")
 	}
 }
 

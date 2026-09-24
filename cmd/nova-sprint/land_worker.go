@@ -44,13 +44,13 @@ func runLandWorker(ctx context.Context, args []string, out, errOut io.Writer) in
 		return refuse(errOut, "land worker", "needs --bench <b>")
 	}
 
-	addr := *redisAddr
-	if addr == "" {
-		addr = os.Getenv("NOVA_REDIS_ADDR")
-		if addr == "" {
-			addr = "127.0.0.1:6379"
-		}
+	if *mirrorDir == "" {
+		return refuse(errOut, "land worker", "needs --mirror <dir> (the gate checks out the train from it)")
 	}
+
+	// The same address order as every other nova-sprint verb (lifeAddr):
+	// --redis, then NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR.
+	addr := lifeAddr(*redisAddr)
 
 	st, err := store.Open(ctx, addr)
 	if err != nil {
@@ -70,6 +70,7 @@ func runLandWorker(ctx context.Context, args []string, out, errOut io.Writer) in
 		Repos:     repos,
 		Slots:     *slots,
 		MirrorDir: *mirrorDir,
+		Log:       errOut,
 	})
 
 	if *once {
