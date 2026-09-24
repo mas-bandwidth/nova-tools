@@ -188,11 +188,16 @@ func (w *Wiring) log(lines string) {
 			continue
 		}
 		if w.in.Log != nil {
-			fmt.Fprintf(w.in.Log, "%s %s\n", w.in.Now().UTC().Format("15:04:05Z"), l)
+			fmt.Fprintf(w.in.Log, "%s %s\n", w.in.Now().UTC().Format("2006-01-02T15:04:05Z"), l)
 			continue
 		}
-		appendLine(filepath.Join(w.in.Queue, "pulse.log"), w.in.Now().UTC().Format("15:04:05Z")+" "+l)
+		appendLine(filepath.Join(w.in.Queue, "pulse.log"), w.in.Now().UTC().Format("2006-01-02T15:04:05Z")+" "+l)
 	}
+}
+
+// Log writes one verb's lines to pulse.log (or w.in.Log if configured).
+func (w *Wiring) Log(lines string) {
+	w.log(lines)
 }
 
 // ------------------------------------------------------------------------------ 1. gate
