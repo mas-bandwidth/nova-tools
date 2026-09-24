@@ -42,8 +42,8 @@ type allowlistEntry struct {
 	reason string
 }
 
-// specAllowlist is the spec's list (#2506 rev 3/4, "Allowlist"): 23 entries,
-// the two part=B entries included. B deletes those two and leaves 21.
+// specAllowlist is the spec's list (#2506 rev 3/4, "Allowlist"): 23 entries
+// less the two part=B entries, which part B deleted, leaving 21.
 var specAllowlist = []allowlistEntry{
 	// Card header (SPEC-CARD)
 	{file: "internal/pulse/cut_template.go", fn: "ValidateCardV2", record: "SPEC-CARD"},
@@ -72,9 +72,8 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
 
-	// part=B
-	{file: "internal/merge/verdict.go", fn: "ParseDispositionLine", record: "disposition", partB: true},
-	{file: "internal/merge/verdict.go", fn: "dispositionWholeLine", record: "disposition", partB: true},
+	// part=B (merge/verdict.go ParseDispositionLine, dispositionWholeLine)
+	// moved into typedrec.ParseDisposition; their two entries are gone.
 }
 
 // driftAllowlist holds hits that dev gained after the spec's measurement at
@@ -672,15 +671,15 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// The spec's list is 23 entries with exactly two part=B (B leaves 21).
+		// The spec's list after part B: 21 entries, none tagged part=B.
 		partB := 0
 		for _, a := range specAllowlist {
 			if a.partB {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 23 || partB != 2 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 23 and 2", len(specAllowlist), partB)
+		if len(specAllowlist) != 21 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 21 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {
