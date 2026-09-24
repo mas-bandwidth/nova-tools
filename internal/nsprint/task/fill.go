@@ -21,7 +21,7 @@ type FillTask struct {
 	Token string
 }
 
-// FillResult is the outcome of task.Fill.
+// FillResult is the outcome of task.WidthFill.
 type FillResult struct {
 	Tasks   []FillTask
 	Friend  string
@@ -29,24 +29,26 @@ type FillResult struct {
 	Deficit int
 }
 
-// Fill claims min(deficit, eligible, max) tasks for friend as via ns_width_fill.
-func Fill(ctx context.Context, st *store.Store, as, sprint string, max int, actor, idem string) (FillResult, error) {
+// WidthFill claims min(deficit, eligible, max) tasks for friend as via
+// ns_width_fill; it is the Go side of `nova-sprint width fill`. The one task
+// store's queue lease (`task fill`, #3206 PR A) is task.Fill in board.go.
+func WidthFill(ctx context.Context, st *store.Store, as, sprint string, max int, actor, idem string) (FillResult, error) {
 	if st == nil {
-		return FillResult{}, fmt.Errorf("task fill: nil store")
+		return FillResult{}, fmt.Errorf("width fill: nil store")
 	}
 	if as == "" {
-		return FillResult{}, fmt.Errorf("task fill: as is required")
+		return FillResult{}, fmt.Errorf("width fill: as is required")
 	}
 	if max < 0 {
-		return FillResult{}, fmt.Errorf("task fill: max must be a positive integer")
+		return FillResult{}, fmt.Errorf("width fill: max must be a positive integer")
 	}
 	client := st.Client()
 	if client.Exists(ctx, "friend:"+as+":desired").Val() == 0 {
-		return FillResult{}, fmt.Errorf("task fill: friend %s has no desired slots", as)
+		return FillResult{}, fmt.Errorf("width fill: friend %s has no desired slots", as)
 	}
 	slotsStr, err := client.HGet(ctx, "friend:"+as+":desired", "slots").Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return FillResult{}, fmt.Errorf("task fill: read slots: %w", err)
+		return FillResult{}, fmt.Errorf("width fill: read slots: %w", err)
 	}
 
 	// One random part per possible claim. ns_width_fill claims at most
@@ -66,7 +68,7 @@ func Fill(ctx context.Context, st *store.Store, as, sprint string, max int, acto
 	for i := 0; i < numParts; i++ {
 		tok, err := RandomToken()
 		if err != nil {
-			return FillResult{}, fmt.Errorf("task fill: random token: %w", err)
+			return FillResult{}, fmt.Errorf("width fill: random token: %w", err)
 		}
 		randoms[i] = tok
 	}
@@ -76,15 +78,15 @@ func Fill(ctx context.Context, st *store.Store, as, sprint string, max int, acto
 
 	reply, err := client.FCall(ctx, FunctionFill, nil, args...).Result()
 	if err != nil {
-		return FillResult{}, fmt.Errorf("task fill: %w", err)
+		return FillResult{}, fmt.Errorf("width fill: %w", err)
 	}
 
 	vals, ok := reply.([]any)
 	if !ok || len(vals) < 3 {
-		return FillResult{}, fmt.Errorf("task fill: unexpected reply %T", reply)
+		return FillResult{}, fmt.Errorf("width fill: unexpected reply %T", reply)
 	}
 	if fmt.Sprint(vals[0]) != "OK" {
-		return FillResult{}, fmt.Errorf("task fill: status %v", vals[0])
+		return FillResult{}, fmt.Errorf("width fill: status %v", vals[0])
 	}
 	n, _ := strconv.Atoi(fmt.Sprint(vals[1]))
 	deficit, _ := strconv.Atoi(fmt.Sprint(vals[2]))

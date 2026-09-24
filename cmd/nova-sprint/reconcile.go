@@ -27,6 +27,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
@@ -78,7 +79,13 @@ func productionDuties(st *store.Store, set *metrics.Set) ([]reconcile.Duty, []st
 		Client: st.Client(),
 		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
 	}
-	duties := []reconcile.Duty{refill.Run}
+	fleetRefill := func(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+		if err := fleet.Step(ctx, st.Client()); err != nil {
+			return reconcile.Counts{}, err
+		}
+		return refill.Run(ctx, l)
+	}
+	duties := []reconcile.Duty{fleetRefill}
 	names := []string{"refill"}
 	for _, b := range reconcileDuties {
 		d, err := b.Build(st)

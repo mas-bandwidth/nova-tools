@@ -28,18 +28,51 @@ type benchCheck struct {
 }
 
 // cmdBench dispatches the bench verb's subcommands. probe proves one bench;
-// size measures its width.
+// size measures its width; prewarm prepares one exact repository tip.
 func cmdBench(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, " bench", "wants a subcommand: probe (bench probe --benches <file> --bench <name>), size (bench size --benches <file> --bench <name> [--max <n>])")
+		return refuse(stderr, " bench", "wants a subcommand: probe (bench probe --benches <file> --bench <name>), size (bench size --benches <file> --bench <name> [--max <n>]), prewarm (bench prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>)")
 	}
 	switch args[0] {
 	case "probe":
 		return cmdBenchProbe(args[1:], stdout, stderr)
 	case "size":
 		return cmdBenchSize(args[1:], stdout, stderr)
+	case "prewarm":
+		return cmdBenchPrewarm(args[1:], stdout, stderr)
 	}
 	return refuse(stderr, " bench", fmt.Sprintf("unknown subcommand %q", args[0]))
+}
+
+var benchPrewarm = swarm.Prewarm
+
+// cmdBenchPrewarm prepares the reference checkout and four caches an exact-tip card uses.
+// It is local on purpose: fleet adoption invokes the installed binary on each named bench,
+// so this verb needs no host list, SSH authority or guessed mirror path.
+func cmdBenchPrewarm(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("bench prewarm")
+	root := f.fs.String("root", "", "")
+	source := f.fs.String("source", "", "")
+	repo := f.fs.String("repo", "", "")
+	tip := f.fs.String("tip", "", "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	f.want(*root, "root", "the local swarm root whose ref/ and cache/ directories jobs use")
+	f.want(*source, "source", "a local checkout that already holds the exact tip; this verb never guesses or fetches")
+	f.want(*repo, "repo", "the owner/name used in ref/<owner>/<name>@<tip>")
+	f.want(*tip, "tip", "the full 40-character commit sha being warmed")
+	if f.refused(stderr) {
+		return 2
+	}
+	got, err := benchPrewarm(swarm.PrewarmInput{Root: *root, Source: *source, Repo: *repo, Tip: *tip})
+	if err != nil {
+		fmt.Fprintf(stderr, "BENCH PREWARM REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	fmt.Fprintf(stdout, "BENCH PREWARM OK repo=%s tip=%s checkout=%s reused=%t phases=%d\n",
+		oneline.Field(*repo), oneline.Field(got.Tip), oneline.Field(got.Checkout), got.Reused, got.Phases)
+	return 0
 }
 
 // cmdBenchProbe proves one bench: ssh reachable, root writable, harness --version,

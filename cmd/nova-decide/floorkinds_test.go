@@ -119,7 +119,8 @@ func TestUsageRowIsPricedFromTheRateTable(t *testing.T) {
 	if row["usd"] != "0.002448" {
 		t.Errorf("usd = %q, want 0.002448 priced from the rate table", row["usd"])
 	}
-	if strings.Contains(stderr.String(), "ROUTE NOTE") {
+	withoutPresenceNote := strings.ReplaceAll(stderr.String(), "ROUTE NOTE down friends not checked (no store)\n", "")
+	if strings.Contains(withoutPresenceNote, "ROUTE NOTE") {
 		t.Errorf("a priced row needs no note: %q", stderr.String())
 	}
 

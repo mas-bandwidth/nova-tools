@@ -74,10 +74,11 @@ var ErrFenced = errors.New("FENCED: the reconciler lease is held by another inst
 type Card struct {
 	Sprint   string
 	Label    string
-	Priority float64 // the pool score; lower deals first, front items are negative
-	Leg      string  // empty: any bench
-	Tier     string  // TierPriority or anything else (bulk)
-	Bench    string  // pinned by `card push --bench`; empty: any bench
+	Priority float64  // the pool score; lower deals first, front items are negative
+	Leg      string   // empty: any bench
+	Tier     string   // TierPriority or anything else (bulk)
+	Bench    string   // pinned by `card push --bench`; empty: any bench
+	Avoid    []string // benches already failed by classification
 	// DependsOn is the card's DEPENDS-ON entries (card ids in its sprint or
 	// <owner>/<repo>#<n>); `-`, `none` or empty waits for nothing (#3066).
 	DependsOn []string
@@ -188,7 +189,7 @@ func Plan(in Input, hold time.Duration) []Batch {
 		total := 0
 		for i, s := range in.Sprints {
 			for _, c := range pools[i] {
-				if taken[key(c)] || (c.Bench != "" && c.Bench != b.Name) || !b.runs(c.Leg) {
+				if taken[key(c)] || (c.Bench != "" && c.Bench != b.Name) || contains(c.Avoid, b.Name) || !b.runs(c.Leg) {
 					continue
 				}
 				if s.Backpressure && c.Tier != TierPriority {
@@ -215,6 +216,15 @@ func Plan(in Input, hold time.Duration) []Batch {
 }
 
 func key(c Card) string { return c.Sprint + "/" + c.Label }
+
+func contains(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
+}
 
 func eligible(b Bench, now time.Time, hold time.Duration) bool {
 	if !b.Up || b.Paused || b.Free() == 0 {
@@ -589,6 +599,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	pipe = c.Pipeline()
 	type benchCmds struct {
 		desired, beat, ssh *redis.MapStringStringCmd
+		state              *redis.StringCmd
 		starting, living   *redis.IntCmd
 	}
 	bc := make([]benchCmds, len(names))
@@ -596,6 +607,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		bc[i] = benchCmds{
 			desired:  pipe.HGetAll(ctx, "bench:"+b+":desired"),
 			beat:     pipe.HGetAll(ctx, "bench:"+b+":beat"),
+			state:    pipe.HGet(ctx, "bench:"+b+":state", "state"),
 			ssh:      pipe.HGetAll(ctx, RowKey(b)),
 			starting: pipe.ZCard(ctx, "bench:"+b+":starting"),
 			living:   pipe.ZCard(ctx, "bench:"+b+":living"),
@@ -621,7 +633,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Name:   name,
 			Host:   beat["host"],
 			User:   beat["user"],
-			Up:     len(beat) > 0,
+			Up:     bc[i].state.Val() == "UP",
 			Paused: d["paused"] == "1" || d["paused"] == "true",
 			Legs:   splitList(d["legs"]),
 			Slots:  slots,
@@ -667,7 +679,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		cmd     *redis.SliceCmd
 	}
 	var cards []cardCmd
-	fields := []string{"state", "leg", "tier", "bench", "depends_on", "repo", "base", "wait_why", "priority"}
+	fields := []string{"state", "leg", "tier", "bench", "depends_on", "repo", "base", "wait_why", "priority", "avoid"}
 	for _, i := range live {
 		for _, z := range pools[i].Val() {
 			label, _ := z.Member.(string)
@@ -694,6 +706,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			Sprint: sprintNames[cc.sprint], Label: cc.label, Priority: cc.score,
 			Leg: str(v, 1), Tier: str(v, 2), Bench: str(v, 3),
 			DependsOn: splitDeps(str(v, 4)), Repo: str(v, 5), Base: str(v, 6), WaitWhy: str(v, 7),
+			Avoid: strings.Fields(str(v, 9)),
 		}
 		if cc.waiting {
 			card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)

@@ -162,6 +162,31 @@ do
     if redis.call('HGET', akey, 'head') == head then
       return { 'NOOP', head }
     end
+    -- The caller read the PR record, card and holds before this call; recheck
+    -- them here, atomically with the writes, so a head that moved or a card,
+    -- hold, draft or close that landed in between gets no review tasks (a
+    -- review at a dead head; task_push's live-head guard is not on this path).
+    local live = redis.call('HMGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'head', 'state', 'draft')
+    if live[1] ~= head then
+      return { 'WAIT', 'head moved' }
+    end
+    if live[2] == 'landed' or live[2] == 'dropped' or live[2] == 'closed' then
+      return { 'WAIT', 'state ' .. live[2] }
+    end
+    if live[3] == 'true' or live[3] == '1' then
+      return { 'WAIT', 'draft' }
+    end
+    local card = redis.call('HGET', 's:' .. S .. ':prcard', repo .. '#' .. pr)
+    if card and card ~= '' then
+      return { 'WAIT', 'card ' .. card }
+    end
+    local holds = redis.call('HVALS', 's:' .. S .. ':hold:' .. repo .. ':' .. pr)
+    for _, raw in ipairs(holds) do
+      local ok, h = pcall(cjson.decode, raw)
+      if not ok or type(h) ~= 'table' or type(h.released_by) ~= 'string' or h.released_by == '' then
+        return { 'WAIT', 'hold' }
+      end
+    end
     if n == nil or n < 1 then
       return { 'RETRY', 'no readers' }
     end

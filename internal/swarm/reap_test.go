@@ -42,6 +42,9 @@ func TestTwoJobsOnOneRootShareTheGoModuleCache(t *testing.T) {
 	if got, want := cacheEnvValue(t, a, "GOCACHE"), GoBuildCacheDir(root); got != want {
 		t.Errorf("GOCACHE=%q, want %q", got, want)
 	}
+	if gotA, gotB := cacheEnvValue(t, a, "ASDF_OUTPUT_TRANSLATIONS"), cacheEnvValue(t, b, "ASDF_OUTPUT_TRANSLATIONS"); gotA == gotB {
+		t.Errorf("two jobs share one writable ASDF output translation: %q", gotA)
+	}
 }
 
 func makeSlotFile(t *testing.T, path string, n int) {

@@ -85,9 +85,9 @@ func TestWidthControls(t *testing.T) {
 			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
 		}
 
-		res, err := task.Fill(ctx, st, "f1", sprint, 0, "f1", "")
+		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
 		if err != nil {
-			t.Fatalf("task.Fill failed: %v", err)
+			t.Fatalf("task.WidthFill failed: %v", err)
 		}
 		if res.N != 8 || len(res.Tasks) != 8 {
 			t.Fatalf("res.N=%d, len(res.Tasks)=%d; want 8", res.N, len(res.Tasks))
@@ -151,7 +151,7 @@ func TestWidthControls(t *testing.T) {
 			t.Fatalf("after done deficit = %d; want 1", fs.Deficit)
 		}
 
-		res2, err := task.Fill(ctx, st, "f1", sprint, 0, "f1", "")
+		res2, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
 		if err != nil {
 			t.Fatalf("fill 2 failed: %v", err)
 		}
@@ -197,7 +197,7 @@ func TestWidthControls(t *testing.T) {
 		ch := make(chan fillOut, 2)
 		for i := 0; i < 2; i++ {
 			go func() {
-				r, e := task.Fill(ctx, st, "f1", sprint, 0, "f1", "")
+				r, e := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
 				ch <- fillOut{res: r, err: e}
 			}()
 		}
@@ -242,7 +242,7 @@ func TestWidthControls(t *testing.T) {
 		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t1"})
 		client.HSet(ctx, "s:"+sprint+":task:t1", "state", "open", "kind", "work", "ref", "t1")
 
-		res, err := task.Fill(ctx, st, "f1", sprint, 0, "f1", "")
+		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
 		if err != nil || res.N != 1 {
 			t.Fatalf("fill: res=%+v err=%v", res, err)
 		}
@@ -532,9 +532,9 @@ func TestWidthControls(t *testing.T) {
 			t.Fatalf("fs.IdleDeps = %d; want 1", fs.IdleDeps)
 		}
 
-		res, err := task.Fill(ctx, st, "f1", sprint, 0, "f1", "")
+		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
 		if err != nil {
-			t.Fatalf("task.Fill failed: %v", err)
+			t.Fatalf("task.WidthFill failed: %v", err)
 		}
 		if res.N != 0 {
 			t.Fatalf("claimed N = %d; want 0", res.N)
@@ -1287,8 +1287,8 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 		}
 	}
 
-	// task.Fill supplies one part per claim: the other 62 all claim.
-	res, err := task.Fill(ctx, st, "f1", "s1", 0, "f1", "")
+	// task.WidthFill supplies one part per claim: the other 62 all claim.
+	res, err := task.WidthFill(ctx, st, "f1", "s1", 0, "f1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1306,7 +1306,7 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 	}
 }
 
-// TestWidthFillSizesPartsToClaims is the recut-3071 fill control: task.Fill
+// TestWidthFillSizesPartsToClaims is the recut-3071 fill control: task.WidthFill
 // sizes its random parts to the claim count (min(slots, max)), so an
 // unbounded fill of 65 ready tasks claims all 65, not 64, and every claim's
 // suffix is a distinct 32-hex part. A bounded fill supplies max parts.
@@ -1336,7 +1336,7 @@ func TestWidthFillSizesPartsToClaims(t *testing.T) {
 		}
 	}
 
-	res, err := task.Fill(ctx, st, "f1", "s1", 0, "f1", "")
+	res, err := task.WidthFill(ctx, st, "f1", "s1", 0, "f1", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1358,7 +1358,7 @@ func TestWidthFillSizesPartsToClaims(t *testing.T) {
 		t.Fatalf("after unbounded fill, f1 open = %d; want 0", n)
 	}
 
-	bounded, err := task.Fill(ctx, st, "f2", "s1", 3, "f2", "")
+	bounded, err := task.WidthFill(ctx, st, "f2", "s1", 3, "f2", "")
 	if err != nil {
 		t.Fatal(err)
 	}

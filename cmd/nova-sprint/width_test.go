@@ -141,11 +141,11 @@ func TestWidthVerbs(t *testing.T) {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			code1 = run([]string{"task", "fill", "--as", "f1", "--sprint", sprint, "--redis", addr}, &out1, &err1)
+			code1 = run([]string{"width", "fill", "--as", "f1", "--sprint", sprint, "--redis", addr}, &out1, &err1)
 		}()
 		go func() {
 			defer wg.Done()
-			code2 = run([]string{"task", "fill", "--as", "f1", "--sprint", sprint, "--redis", addr}, &out2, &err2)
+			code2 = run([]string{"width", "fill", "--as", "f1", "--sprint", sprint, "--redis", addr}, &out2, &err2)
 		}()
 		wg.Wait()
 
@@ -169,21 +169,21 @@ func TestWidthVerbs(t *testing.T) {
 			t.Fatalf("the C2 loser did not print FILLED f1 n=0: %q", loserOut)
 		}
 
-		// task fill with no --as exits 2 and prints no FILL line
+		// width fill with no --as exits 2 and prints no FILL line
 		var outNoAs, errNoAs bytes.Buffer
-		codeNoAs := run([]string{"task", "fill", "--sprint", sprint, "--redis", addr}, &outNoAs, &errNoAs)
+		codeNoAs := run([]string{"width", "fill", "--sprint", sprint, "--redis", addr}, &outNoAs, &errNoAs)
 		if codeNoAs != 2 {
-			t.Fatalf("task fill no --as exit code=%d; want 2", codeNoAs)
+			t.Fatalf("width fill no --as exit code=%d; want 2", codeNoAs)
 		}
 		if strings.Contains(outNoAs.String(), "FILL ") {
-			t.Fatalf("task fill no --as printed FILL line: %q", outNoAs.String())
+			t.Fatalf("width fill no --as printed FILL line: %q", outNoAs.String())
 		}
 
 		// --max 0 exits 2
 		var outMax0, errMax0 bytes.Buffer
-		codeMax0 := run([]string{"task", "fill", "--as", "f1", "--max", "0", "--sprint", sprint, "--redis", addr}, &outMax0, &errMax0)
+		codeMax0 := run([]string{"width", "fill", "--as", "f1", "--max", "0", "--sprint", sprint, "--redis", addr}, &outMax0, &errMax0)
 		if codeMax0 != 2 {
-			t.Fatalf("task fill --max 0 exit code=%d; want 2", codeMax0)
+			t.Fatalf("width fill --max 0 exit code=%d; want 2", codeMax0)
 		}
 	})
 
@@ -196,20 +196,13 @@ func TestWidthVerbs(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		// task width --as a exits 2 (unknown subverb)
+		// dev keeps `task width` in the task verb's switch (#3206 PR A;
+		// coordinator 2026-09-24), so this control reads width through the
+		// width verb and sets it through capacity friend only.
 		var stdout, stderr bytes.Buffer
-		code := run([]string{"task", "width", "--as", "a", "--redis", addr}, &stdout, &stderr)
-		if code != 2 {
-			t.Fatalf("task width exit code=%d; want 2", code)
-		}
-		if !strings.Contains(stderr.String(), "unknown subverb width") {
-			t.Fatalf("task width stderr=%q; want unknown subverb width", stderr.String())
-		}
 
 		// capacity friend --as op --machine m1 a 8
 		client.SAdd(ctx, "friends", "a")
-		stdout.Reset()
-		stderr.Reset()
 		if code := run([]string{"capacity", "machine", "--redis", addr, "--as", "op", "m1", "64"}, &stdout, &stderr); code != 0 {
 			t.Fatalf("capacity machine code=%d: %s", code, stderr.String())
 		}
@@ -234,7 +227,7 @@ func TestWidthVerbs(t *testing.T) {
 
 		stdout.Reset()
 		stderr.Reset()
-		code = run([]string{"width", "--as", "a", "--redis", addr}, &stdout, &stderr)
+		code := run([]string{"width", "--as", "a", "--redis", addr}, &stdout, &stderr)
 		if code != 0 {
 			t.Fatalf("width --as a code=%d stderr=%q", code, stderr.String())
 		}

@@ -95,6 +95,7 @@ func TestConsumerVerbsRunOnce(t *testing.T) {
 	pipe.HSet(ctx, "s:"+S+":policy", "readers", "1", "readers_security", "2")
 	pipe.SAdd(ctx, "benches", bench)
 	pipe.HSet(ctx, "bench:"+bench+":beat", "host", bench+".fixture", "user", "nova", "at", "1")
+	pipe.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	pipe.SAdd(ctx, "friends", friend)
 	pipe.HSet(ctx, "friend:"+friend+":desired", "slots", "4", "paused", "0")
 	pipe.HSet(ctx, "friend:"+friend+":beat", "harness", "ctl", "at", "1")

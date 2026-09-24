@@ -18,6 +18,11 @@
 --                         next move in the same pass sees the spare that
 --                         is left, never the snapshot's (#3484 hold 1).
 
+-- The whole file runs inside one closure: the library's main chunk is at
+-- Lua's 200 active locals before this file (dev at 8d12fb19 already fails
+-- FUNCTION LOAD with "main function has more than 200 local variables"), so
+-- width.lua adds none to it; its locals live in the closure's own frame.
+do (function()
 local WD = {}
 
 function WD.now_ms()
@@ -555,3 +560,4 @@ end
 redis.register_function('ns_width_write', width_write)
 redis.register_function('ns_width_fill', width_fill)
 redis.register_function('ns_width_move', width_move)
+end)() end

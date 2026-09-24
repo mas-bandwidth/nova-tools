@@ -805,6 +805,37 @@ are not new card admissions.
     needs to read it. The shared `cache/` is never a reap target: it is the
     thing the next job reuses.
 
+## Exact-tip bench prewarm (#2498 S3)
+
+`nova-swarm bench prewarm --root <dir> --source <checkout> --repo <owner/name>
+--tip <full-sha>` prepares the inputs a new job would otherwise compile cold.
+The source is an existing local checkout that already holds the full 40-character
+commit; the verb never fetches, guesses a branch or contacts a fleet host. It makes
+`<root>/ref/<owner>/<name>@<tip>` as the reference checkout already consumed by
+staging and runs four phases against that exact detached tree: modules, ordinary
+builds, compiled Go test binaries and ASDF FASLs. The phases use the same
+`<root>/cache/go-mod`, `<root>/cache/go-build` and
+`<root>/cache/common-lisp/<tip>` seed. Before a card starts, that exact-tip seed
+is copied into a private overlay under the card's job directory. The card reads
+and writes only its overlay, so an edited Lisp source cannot replace a sibling
+card's FASL or the shared seed. The harness's general XDG cache and HOME remain
+per-card.
+
+A new reference checkout stays under an owned temporary directory and is hidden
+until all four phases succeed. A failed phase names itself and publishes neither
+the reference checkout nor `<root>/prewarm/<owner>/<name>@<tip>.receipt`.
+Go's caches may contain valid entries produced before the failure, but those
+entries are not an adoption record. A repeated invocation for an exact checkout
+runs the phases again, so clearing one shared cache cannot leave a stale receipt
+standing in for warmth.
+
+The success line and durable receipt are `PREWARM OK repo=<owner/name>
+tip=<full-sha> phases=modules,build,test-binaries,lisp`. A PREWARM receipt proves
+preparation, not fleet adoption. S3 is adopted only when this command has run at
+the current tip on every intended bench and `make test` in a fresh job on each
+adopted bench finishes in under 60 seconds. That measurement is an operator's
+fleet receipt; unit tests and a PREWARM line do not manufacture it.
+
 ## The card is a pipeline, not a loop (issue #856)
 
 Glenn, 2026-09-16, on why every tool call re-sent the context: *"The idea is for
@@ -971,6 +1002,7 @@ nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetere
 nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
 nova-swarm bench    probe --benches <file> --bench <name>
 nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
+nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
 nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
