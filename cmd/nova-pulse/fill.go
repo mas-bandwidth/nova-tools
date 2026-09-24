@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -153,7 +154,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Stderr:     stderr,
 		Now:        func() time.Time { return now },
 		Capacity:   reader,
-		Launcher:   flashLauncher{bin: *launcher, deadline: *deadline, grace: wait},
+		Launcher:   flashLauncher{bin: *launcher, deadline: *deadline, grace: wait, note: stderr},
 	})
 }
 
@@ -256,12 +257,14 @@ func (c sshCapacity) Capacity(bench string) (int, error) {
 // every bench, and a card's deadline is the caller's to set.
 const defaultCardDeadline = 2400
 
-// defaultLaunchGrace is how long fill waits on a launcher before it takes the card as
-// launched and moves on. Launching used to be cmd.Run(): one tick launched three cards one
-// after another and blocked for nine minutes, because the launcher runs the card, not just
-// the start of it (dogfood, 2026-09-18). A launcher that fails, fails at once -- a missing
-// binary, a refused ssh, a bad argument -- so the grace catches the failure without waiting
-// for the work.
+// defaultLaunchGrace is how long fill waits on a launcher for its answer before it says,
+// on the loop log, that the launch is still unanswered. Launching used to be cmd.Run(): one
+// tick launched three cards one after another and blocked for nine minutes, because the
+// launcher runs the card, not just the start of it (dogfood, 2026-09-18). A launcher that
+// keeps the contract answers inside the grace -- LAUNCH ACCEPTED or STAGE OK when the card
+// is handed to the bench, a non-zero exit when it refuses -- so the tick moves on without
+// waiting for the work. The grace is never a verdict: silence at the grace is not an
+// acceptance (#2381, #2874); see flashLauncher.
 const defaultLaunchGrace = 10 * time.Second
 
 // FillIntervalDefault is what a resident fill ticks at unless --interval says otherwise.
@@ -305,14 +308,47 @@ func parseGrace(s string) (time.Duration, error) {
 // flashLauncher hands one moved card to flash-native-bench.sh, fill-loop.sh's per-card
 // launcher, or to the program --launcher names.
 //
-// It starts the child and waits only the grace: a launcher that is still running when the
-// grace is up has launched the card, and the bench owns it from there. The child is waited
-// on in a goroutine, so it is reaped rather than left a zombie, and it is never killed.
+// A card counts as launched ONLY on a positive record from the launcher: a line on its
+// stdout or stderr that starts with `LAUNCH ACCEPTED` (the contract line: the launcher
+// has passed every refusal and handed the card to the bench) or `STAGE OK` (the
+// self-staging launcher's line: the job dir is cloned at the pinned base and the card is
+// starting), or the launcher exiting 0. A launcher that exits non-zero before it has
+// accepted has REFUSED, however late its exit lands: rc 2 is the contract's
+// refused-before-launch, and it is slow on exactly the bench that causes it -- the ssh
+// that says "over capacity", "disk full" or "unreachable" is answered late by the bench
+// that is too loaded to take the card. Counting "still running at a deadline" as launched
+// is what dropped 191 cards into launched/ with no job behind them on the 2026-09-20 load
+// test (#2381); a second, longer window only moved the deadline (Stella, HOLD on #2874).
+//
+// So the grace is no longer a verdict. Inside it the launcher answers (accepted, exited 0,
+// refused) and the tick moves on at once; a launcher still silent when it is up is noted
+// on stderr and waited for, still for an answer, until the bound: the card's own
+// deadline plus launchAnswerSlack. A launcher that has neither accepted nor exited by the
+// bound is killed with its process group, so it cannot start the card after the card has
+// been handed back, and the launch is refused as unanswered. After acceptance the child is
+// waited on in a goroutine, so it is reaped rather than left a zombie, and it is never
+// killed: the bench owns the card from there.
 type flashLauncher struct {
 	bin      string
 	deadline int
 	grace    time.Duration
+	// note is where a launch still unanswered at the grace is said, the loop log. Nil
+	// says nothing.
+	note io.Writer
+	// after is the clock: nil is the wall clock. Tests inject one, so the boundary a
+	// refusal lands on is an event the test orders, never a sleep it races.
+	after func(time.Duration) <-chan time.Time
 }
+
+// launchAnswerSlack is how far past the card's own deadline fill waits for a launcher that
+// has neither accepted nor exited. The shell launcher's own per-card timeout is the
+// deadline plus 100 s, so a launcher silent past this is hung, not slow.
+const launchAnswerSlack = 5 * time.Minute
+
+// acceptancePrefixes are the lines that are a launcher's positive record. They are read at
+// the start of a line, on stdout and stderr alike, so a refusal that happens to quote one
+// mid-line is still a refusal.
+var acceptancePrefixes = []string{"LAUNCH ACCEPTED", "STAGE OK"}
 
 // The seat is the machines registry's, handed down by pulse.Fill (#2014). It used to be
 // `swarm-`+bench, computed here from the bench's name: right for six benches and wrong for
@@ -327,32 +363,116 @@ func (l flashLauncher) Launch(bench, seat, card string) error {
 	if deadline <= 0 {
 		deadline = defaultCardDeadline
 	}
+	after := l.after
+	if after == nil {
+		after = time.After
+	}
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
 	cmd := exec.Command(bin, bench, seat, card, label, strconv.Itoa(deadline))
+	// One watcher on both streams: the shell launcher echoes its refusals on STDOUT, and a
+	// reason thrown away there never reached the loop log.
 	said := &tail{}
-	cmd.Stdout, cmd.Stderr = io.Discard, said
+	w := newLaunchWatch(said)
+	cmd.Stdout, cmd.Stderr = w, w
+	powerSetProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		return said.wrap(err)
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	if l.grace <= 0 {
-		if err := <-done; err != nil {
-			return said.wrap(err)
+	// exited is an exit that is the launch's answer: 0 is launched, anything else is a
+	// refusal UNLESS the launcher accepted first (Wait returns only after both streams are
+	// drained, so an acceptance it printed is already seen).
+	exited := func(err error) error {
+		if err == nil || w.isAccepted() {
+			return nil
 		}
-		return nil
+		return said.wrap(err)
 	}
-	timer := time.NewTimer(l.grace)
-	defer timer.Stop()
+	if l.grace <= 0 {
+		return exited(<-done)
+	}
 	select {
 	case err := <-done:
-		if err != nil {
-			return said.wrap(err)
-		}
+		return exited(err)
+	case <-w.accepted:
 		return nil
-	case <-timer.C:
+	case <-after(l.grace):
+	}
+	// The grace is up and the launcher has said nothing either way. That is not an
+	// acceptance: keep waiting for one, or for its exit, up to the bound.
+	bound := time.Duration(deadline)*time.Second + launchAnswerSlack
+	if l.note != nil {
+		fmt.Fprintf(l.note, "FILL NOTE bench=%s card=%s launch unanswered at the grace (%s): waiting for LAUNCH ACCEPTED, STAGE OK or the launcher's exit, bound %s\n",
+			oneline.Field(bench), oneline.Field(filepath.Base(card)), l.grace, bound)
+	}
+	select {
+	case err := <-done:
+		return exited(err)
+	case <-w.accepted:
+		return nil
+	case <-after(bound):
+	}
+	_ = powerKillProcessGroup(cmd)
+	if err := <-done; err == nil || w.isAccepted() {
+		// It answered in the instant before the kill landed.
 		return nil
 	}
+	return said.wrap(fmt.Errorf("LAUNCH UNANSWERED: neither accepted nor exited within %s; killed, the card is not launched", bound))
+}
+
+// launchWatch is the launcher's two streams: every byte goes to the tail, and the first
+// line that starts with an acceptance prefix closes accepted. exec writes one stream at a
+// time when both are the same writer, but the tail is read from the launch goroutine, so
+// the tail carries its own lock.
+type launchWatch struct {
+	mu       sync.Mutex
+	tail     *tail
+	partial  []byte
+	ok       bool
+	accepted chan struct{}
+}
+
+func newLaunchWatch(t *tail) *launchWatch {
+	return &launchWatch{tail: t, accepted: make(chan struct{})}
+}
+
+func (w *launchWatch) Write(p []byte) (int, error) {
+	_, _ = w.tail.Write(p)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.ok {
+		return len(p), nil
+	}
+	w.partial = append(w.partial, p...)
+	for {
+		i := bytes.IndexByte(w.partial, '\n')
+		if i < 0 {
+			break
+		}
+		line := strings.TrimSpace(string(w.partial[:i]))
+		w.partial = w.partial[i+1:]
+		for _, pre := range acceptancePrefixes {
+			if strings.HasPrefix(line, pre) {
+				w.ok = true
+				close(w.accepted)
+				w.partial = nil
+				return len(p), nil
+			}
+		}
+	}
+	// A line is a reason, not a payload: past tailBytes without a newline it is not an
+	// acceptance line either, and holding it would be unbounded.
+	if len(w.partial) > tailBytes {
+		w.partial = w.partial[len(w.partial)-tailBytes:]
+	}
+	return len(p), nil
+}
+
+func (w *launchWatch) isAccepted() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.ok
 }
 
 // tailBytes is how much of a child's stderr is kept: the last words of a failure are the
@@ -362,9 +482,14 @@ const tailBytes = 4096
 // tail keeps the last tailBytes of what is written to it and nothing else. io.Discard was
 // there before, and `exit status 255` with the reason thrown away is the whole dogfood
 // edge: the FILL NOTE named the code and never the cause.
-type tail struct{ buf []byte }
+type tail struct {
+	mu  sync.Mutex
+	buf []byte
+}
 
 func (t *tail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.buf = append(t.buf, p...)
 	if len(t.buf) > tailBytes {
 		t.buf = t.buf[len(t.buf)-tailBytes:]
@@ -375,6 +500,8 @@ func (t *tail) Write(p []byte) (int, error) {
 // lastLine is the last non-empty line the child printed, which is where a tool puts its
 // reason.
 func (t *tail) lastLine() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	lines := strings.Split(strings.ReplaceAll(string(t.buf), "\r\n", "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if s := strings.TrimSpace(lines[i]); s != "" {
