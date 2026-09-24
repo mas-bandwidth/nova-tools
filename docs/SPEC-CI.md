@@ -1404,12 +1404,38 @@ line through one comparator, the thing the class test asserts.
 
 ### `kernel-components` — no kernel source is compiled by nobody
 
-**The rule.** Every `.lisp` file under `lisp/nova-work/src/` and
-`lisp/nova-work/tests/` is named by a `:components` list in
+**The rule, in two halves.** Every `.lisp` file under `lisp/nova-work/src/` is
+named by the `nova-work` system's `:components` list in
 `lisp/nova-work/nova-work.asd`, or is named in the `notCompiled` ledger with the
 issue that owes its removal. The system names no file that is gone, and an entry
 whose file is gone or has become a component fails too, so the ledger only
-shrinks.
+shrinks. **`tests/` is the other half and is not written out**: since
+`nova-tools#1947` the `nova-work/tests` system names an explicit, ordered
+prelude — `tests/harness`, then `tests/acceptance` — and **discovers** every
+other regular `tests/*.lisp`, sorted by canonical system-relative name with
+`string<`. So the test half of the rule is the *shape* that makes discovery
+safe: the tests system names the prelude and nothing else, both prelude files
+exist, the discovery forms are still in the file, and `notCompiled` holds no
+`tests/` entry, because under discovery a test file cannot be uncompiled.
+**Why two halves.** `src`'s order is semantic — `:serial t` makes it the load
+order and later files depend on earlier ones, so adding a kernel file is a
+decision and is made by hand. A test file is a leaf: it registers `deftest`
+cases against the prelude and nothing reads it. Writing that list out cost
+thirteen pull requests on 2026-09-19 — every PR appended at the same position,
+so **every pair of open nova-work PRs conflicted on this one file and on no
+other file at all** — for zero disagreement, and the cost is quadratic in the
+number of concurrent branches. Closing parens on their own line does not fix it:
+two insertions at one position still conflict under `git merge-tree`, measured.
+**The reload caveat.** ASDF discovers when the `.asd` is **read**, not when the
+system is loaded. `run-tests.sh` and `tools/ci/lisp-test.sh` are fresh images
+every run, so CI always sees the directory as it stands; a **long-lived
+interactive image** must reread the file — `(asdf:clear-system
+:nova-work/tests)` then `(asdf:load-asd …/nova-work.asd)`, or restart — or a
+test file added since will silently not register.
+**Its refusals.** A duplicate component, two names differing only by case (one
+file on the darwin runners), a name that could escape `tests/`, a symbolic link,
+or a missing prelude file is a loud error **while the `.asd` is read**, never a
+quiet change of which files compile.
 **The hurt.** ASDF loads a file because the system names it, never because it is
 in the directory, so an unnamed file is not slow-to-load — SBCL never reads it.
 On 2026-09-19, `dev@47d81e9c`: **28 of the 60 files in `src/` were in no system**
@@ -1425,7 +1451,18 @@ get green, with nobody able to say which of the 700 forms went.
 **The test.** `TestEveryKernelSourceIsACompiledComponent`
 (`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
 on purpose: the lisp job runs only when `lisp/**` or `docs/SPEC-WORK.md` moved,
-and a file nothing compiles is exactly what a green lisp run cannot see.
+and a file nothing compiles is exactly what a green lisp run cannot see. It
+reads the `.asd` as text and needs no SBCL, so it holds the *shape* of the tests
+half; the facts that need a running image are held beside the suite, in
+`lisp/nova-work/tests/asd-discovery.lisp` — the components ARE the directory
+(parity, computed from the filesystem, not from the `.asd`'s own function),
+every component registered exactly once, the prelude first and really shared,
+nothing under `tests/acceptance/` discovered, and each refusal above. That the
+order after the prelude carries no meaning is a measurement, re-runnable as
+`lisp/nova-work/tools/asd-order-check.sh`: the whole suite in current, sorted
+and reverse order in three fresh images, compared by test-name set, by each
+name's multiplicity and by every case's outcome, plus a `git archive` with no
+Git in it.
 **Its allowlist.** `notCompiled` in the test file: 28 entries, every one owed to
 `#1102`. It is the point of the test rather than a hole in it — a silent file is
 invisible, a listed one is a debt with an issue number that cannot grow without
@@ -1435,7 +1472,9 @@ compiles nothing, no acceptance case covers it, and `run-tests.sh` is green
 without it.
 **Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
 under `src/` and `tests/`. It reads the component list, not the load: whether the
-system as named *loads* is `make test-lisp`'s business.
+system as named *loads* is `make test-lisp`'s business. It does not run the
+discovery either — it checks that the discovery forms stand; what they actually
+return is `asd-discovery.lisp`'s, inside the suite.
 ### `asd-closing-line` — no ASDF component shares its closing line
 
 **The rule.** No line in `lisp/nova-work/nova-work.asd` that names a
