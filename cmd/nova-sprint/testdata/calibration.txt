@@ -1,0 +1,2 @@
+KIND fix n=2 est=~4h actual=~3h error=-25%
+SUGGEST fix 90m (default 120m)

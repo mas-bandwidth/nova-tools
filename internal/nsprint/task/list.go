@@ -9,7 +9,7 @@ import (
 )
 
 // ListRequest selects one friend's tasks. A state filter is optional; without
-// one, only open, claimed, and working tasks are returned.
+// one, only open, claimed, working and waiting tasks are returned.
 type ListRequest struct {
 	Sprint string
 	As     string
@@ -70,7 +70,7 @@ func (r RedisReader) Candidates(ctx context.Context, sprint, as string) ([]Candi
 	}
 	for _, key := range []string{
 		"s:" + sprint + ":idx:task:claimed", "s:" + sprint + ":idx:task:working",
-		"s:" + sprint + ":done:" + as,
+		"s:" + sprint + ":idx:task:" + StateWaiting, "s:" + sprint + ":done:" + as,
 	} {
 		ids, err := client.SMembers(ctx, key).Result()
 		if err != nil {
@@ -121,7 +121,11 @@ func (r RedisReader) Details(ctx context.Context, sprint string, ids []string) (
 	return out, nil
 }
 
-func live(state string) bool { return state == "open" || state == "claimed" || state == "working" }
+// live includes waiting (#3090): a waiting task is still the owner's, it only
+// holds no child.
+func live(state string) bool {
+	return state == "open" || state == "claimed" || state == "working" || state == StateWaiting
+}
 
 // List deduplicates ids within each sprint and counts a task only by its
 // current hash state. An open task must be in this friend's assigned queue;

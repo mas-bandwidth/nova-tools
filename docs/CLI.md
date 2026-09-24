@@ -627,7 +627,9 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
 
 ### Reading a backlog with a typed decision
 
-`--decide` is opt-in and asks TypeSafe Jev (`internal/decide`) one typed decision per `INBOX NOTE` line: the note's subject and the first 600 characters of its body, with any `sk-` key redacted, are sent with a `kind` choice (`start`, `done`, `question`, `edge`, `refusal`, `receipt`), `needs_reply` and `blocked` noul questions, and a `wake` choice (`ack`, `info`, `needs-action`) that says whether the note wakes its reader: `ack` only confirms receipt or completion and asks nothing, `info` reports a fact and asks nothing of this reader, and `needs-action` asks this reader to do, decide, review, answer or stop something. Each `INBOX NOTE` line then carries ` kind=<k> needs_reply=<p> blocked=<p> conf=<c> wake=<w> owner=<lane> ref=<refs>`, where `owner` is the note's `To:` header and `ref` is every `#<digits>` and `<owner>/<repo>#<digits>` in the subject and body (at most four, then `+<n>`), both read mechanically and never asked of the provider. The run ends with `INBOX DECIDED n=<n> needs_reply=<m> below_floor=<b> wake=<w>` where `n` is the notes judged, `needs_reply` how many of them at or above 0.5, `below_floor` how many kinds the provider was less sure of than `--floor` (default 0.9), and `wake` how many notes read `needs-action` or `unknown` and so must wake a window. A decision below the floor is a suggestion: the listing still prints it and the caller keeps today's behaviour. `--key-env` names the environment variable holding the key (default `JEV_API_KEY`) and `--base-url` names the endpoint. The key is never printed and never a file or an argument. A subject starting `STOP:` or `HOLD:` is a structured signal and is never sent: it is always marked `kind=edge needs_reply=1.00 wake=needs-action` by rule, because a structured signal asks for action and is never something a model filters (Stella's rule — structured signals bypass semantic filtering). `--decide` refuses a clone with no `.public` marker, by name, because the provider may train on what it receives; `--allow-private` is the one explicit way to mean it anyway. The pass is lazy, so an empty inbox makes zero provider calls.
+`--decide` is opt-in and asks TypeSafe Jev (`internal/decide`) one typed decision per `INBOX NOTE` line: the note's subject and the first 600 characters of its body, with any `sk-` key redacted, are sent with a `kind` choice (`start`, `done`, `question`, `edge`, `refusal`, `receipt`), `needs_reply` and `blocked` noul questions, and a `wake` choice (`ack`, `info`, `needs-action`) that says whether the note wakes its reader: `ack` only confirms receipt or completion and asks nothing, `info` reports a fact and asks nothing of this reader, and `needs-action` asks this reader to do, decide, review, answer or stop something. Each `INBOX NOTE` line then carries ` kind=<k> needs_reply=<p> blocked=<p> conf=<c> wake=<w> owner=<lane> ref=<refs>`, where `owner` is the note's `To:` header and `ref` is every `#<digits>` and `<owner>/<repo>#<digits>` in the subject and body (at most four, then `+<n>`), both read mechanically and never asked of the provider. The run ends with `INBOX DECIDED n=<n> needs_reply=<m> below_floor=<b> wake=<w>` where `n` is the notes judged, `needs_reply` how many of them at or above 0.5, `below_floor` how many kinds the provider was less sure of than `--floor` (default 0.9), and `wake` how many notes read `needs-action` or `unknown` and so must wake a window. A decision below the floor is a suggestion: the listing still prints it and the caller keeps today's behaviour. `--key-env` names the environment variable holding the key (default `JEV_API_KEY`) and `--base-url` names the endpoint. The key is never printed and never a file or an argument. A subject starting `STOP:` or `HOLD:` is a structured signal and is never sent: it is always marked `kind=edge needs_reply=1.00 wake=needs-action` by rule, because a structured signal asks for action and is never something a model filters (Stella's rule — structured signals bypass semantic filtering). That is the **rule table**, and it is consulted first on every bus. The pass is lazy, so an empty inbox makes zero provider calls.
+
+**On a private bus — a clone with no `.public` marker — `--decide` runs from the rule table and from nothing else.** The marker is the clone's own statement that its text may leave, and its absence is the default. A private run builds no provider client, reads no provider key and opens no socket: the route is chosen from the marker before the first note is opened, and the value it uses (`privateDecider`, `cmd/nova-bus/private.go`) has no endpoint, no key-env and no client in it, so there is nothing in it to call out with. Every note the rule table can answer is answered — its `INBOX NOTE` line still carries `wake=`, `owner=` and `ref=` like any other, read mechanically off the same local file — and the run's own `INBOX DECIDED` line carries `wake=<w>` plus two more fields — `privacy=private decider=rules` — so the receipt says what actually decided. A note the table has **no** row for is refused by name before the client, before the key and before any call: one `INBOX REFUSED: privacy=private decider=rules why=private-evidence id=<id> path=<path>` line and exit 2. The run never retries that note on the public route. **There is no override**: no `--allow-private` (removed here), no marker file, no environment variable, and `wait` has never had `--decide` at all and does not decide. A `local` label — a loopback `--base-url`, say — is a string and buys nothing; a locally-run decider becomes usable on a private bus when it can be admitted mechanically, and until then it is refused with this same reason. This settles #1644 in favour of [SPEC-DECIDE.md](SPEC-DECIDE.md) rule 4 and S7; an explicit remote-private exception is a separate, live, scoped authorization and is not in the tool.
 
 ### The rule this tool does not enforce
 
@@ -1182,6 +1184,13 @@ the first thing dropped under load. A window that exits, runs out of credit or
 is killed simply stops writing, and the key lapses within the TTL: there is no
 shutdown hook to forget to run, which is the whole point.
 
+Two flags sit beside that and change nothing when they are left off.
+`--window <time>` is the cap's reset time, stored as passed on
+`friend:<name>:window` — the beat does not read a clock to invent one — and
+`--width <n>` is how many children are in use now, on `friend:<name>:width`.
+Zero is a real count. A missing flag writes no key and does not fail the beat.
+Both keys carry the beat's TTL.
+
 `nova-wake presence --store <host:port> --bus <dir>` reads those keys back and
 prints one line for the swarm table:
 
@@ -1192,7 +1201,13 @@ friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · fredd
 
 `up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
 with the age of the last beat and its clock time, both from the untimed key;
-`none` is a friend who has never beaten. `AWAY` is the only word in capitals
+`none` is a friend who has never beaten. A friend is present only while
+`friend:<name>` itself is alive: a missing key is absent (`none`, or `AWAY`
+when only `friend:<name>:last` remains), and a live key is present (`up`).
+The untimed key is not presence, and this verb reads no hand-written override.
+When `friend:<name>:window` or
+`friend:<name>:width` is present, that friend's phrase also carries
+`window=<time>` and `width=<n>`; a key that is absent adds nothing. `AWAY` is the only word in capitals
 because it is the only one that changes what the reader does next. The roster is the bus's —
 `--bus <dir>` reads its `participants.json`, `--participants <file>` names that
 file directly and `--friends <a,b,c>` names them by hand — minus Glenn and
@@ -5075,6 +5090,17 @@ kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
 `fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
 itself signals only the unit's pid.
 
+`table --layout live --redis <addr> --sprint <name> --friends <a,b,...>` is
+Glenn's live sprint table, ported from rowan-tools `bin/sprint-table-redis`
+(#2674). It reads only the keys that script reads (`friend:<f>` and
+`friend:<f>:down`, `sprint:<name>:xy` and `:landed`, `ZCARD q:blocked`, and
+every `bench:*` hash found by SCAN) in one pipeline after the SCAN, and prints
+the same bytes. Like every table mode it is written nowhere (#3326): `--loop`
+prints a table once a second; a failed read keeps the last good friend rows
+and adds a `stale:` line.
+`table --compare <file>` (same flags) waits for the file's next publish,
+renders from Redis, and prints `MATCH` or a unified diff and exits 1.
+
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
@@ -5099,4 +5125,39 @@ What a first run gets wrong, and what each one wants:
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
 - **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
 
-There is **no `quickstart` verb**. A one-word first run would have to invent a server address. The three lines above are the first run, in an empty directory that stays empty.
+There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
+
+**The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
+
+### xy
+
+The one line under the sprint table, `x/y z% -> ~eta`. It does not render the table.
+
+x, y and the percent are the stdout of `nova-work set check --evaluate`: `SET OK units=<y>` and `SET DONE done=<x> percent=<p>`. The percent is printed as that tool printed it. A `:status "done"` or `:status "landed"` in the work-set is not counted; those are the hand-marked receipts the old sprint-xy bash grepped.
+
+eta is the sprint verb's wall. `nova-pulse sprint calibration` prints `SUGGEST <kind> <n>m`, the mean lease-to-done actual for that kind, and each still-open task is charged that instead of its stored estimate when the task names a kind. The wall is one lane per owner, or per the route's consumer when the owner is clear, with real dependencies waited on. It is not the sum of the work, and it is not `open * 10/3 + 12`. `nova-pulse sprint status --verbose` prints C/O/W rows (`Open` or `Working`, `owner=`, `route=`, `est=` as `~Nh` or `~Nm`, `kind=`, `depends=`), not `TASK` lines. `depends=-` is no edge. A row without `kind=` or `depends=` is a refusal: the printed estimate alone is not the calibrated wall.
+
+Run from the repo root. The three files are captured tool output and the open tasks. `--set` is a work-set whose receipts are already marked done; the line does not move.
+
+```text
+nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibration-out cmd/nova-sprint/testdata/calibration.txt --open cmd/nova-sprint/testdata/open.tsv --set cmd/nova-sprint/testdata/set.sexp
+# prints
+26/42 61% -> ~3h
+```
+
+**Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
+
+**What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
+
+### Where a card's results live
+
+`nova-sprint card end --results <dir>` writes `<dir>` once into the card hash
+`s:<S>:card:<label>` field `results` (single writer `ns_card_end`, stamped
+`ended_at` from Redis TIME). The dir is always a Unix absolute path on the
+bench: a leading `/`, not `//` (a network share), no backslash, no `..`
+segment; a drive root (`C:\x`, `C:/x`) or a scheme is refused. `card end`
+exits 1 (USAGE) on anything else before it opens Redis, `ns_card_end` applies
+the same rule (so nothing is written), and harvest refuses it before ssh. `nova-sprint card harvest` pushes from
+`<results>/repo` on the bench as read from that field; there is no
+`--results-root` (it is refused as an unknown flag that names the field),
+because no worker needs to know a bench's layout (#3329).

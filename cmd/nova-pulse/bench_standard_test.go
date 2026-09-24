@@ -60,9 +60,13 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 	// so a fake written straight into the PATH dir is a bench the standard rightly refuses.
 	goReal := filepath.Join(home, "sdk", "go-"+goVer, "bin", "go")
 	writeBenchExe(t, goReal, "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
-	sbclReal := filepath.Join(home, "sdk", "sbcl-test", "bin", "sbcl")
-	writeBenchExe(t, sbclReal, "#!/bin/sh\nexit 0\n")
-	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal} {
+	// sbcl answers the pin (check 3d, NOVA_SBCL defaults to 2.5.8) and sqlite3 resolves
+	// under ~/sdk (check 3f), the way a standard bench keeps them (nova-tools#2053).
+	sbclReal := filepath.Join(home, "sdk", "sbcl-2.5.8", "bin", "sbcl")
+	writeBenchExe(t, sbclReal, "#!/bin/sh\necho 'SBCL 2.5.8'\n")
+	sqliteReal := filepath.Join(home, "sdk", "sqlite3-3.46.0", "bin", "sqlite3")
+	writeBenchExe(t, sqliteReal, "#!/bin/sh\necho '3.46.0'\n")
+	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal, "sqlite3": sqliteReal} {
 		if err := os.Symlink(real, filepath.Join(bin, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -79,6 +83,10 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 	}
 	// Fake harness at $HOME/nova-bench/harness-<ver>/opencode.
 	writeBenchExe(t, filepath.Join(home, "nova-bench", "harness-v1", "opencode"), "#!/bin/sh\nexit 0\n")
+	// The pro rung (check 3e): a standard bench carries ~/nova-bench/rungs/pro.
+	if err := os.MkdirAll(filepath.Join(home, "nova-bench", "rungs", "pro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// Fake seat: exactly one *.key.
 	seatDir := filepath.Join(home, ".config", "nova-secrets")
 	if err := os.MkdirAll(seatDir, 0o700); err != nil {
@@ -106,6 +114,8 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		"NOVA_WANT="+want,
 		"NOVA_GO="+goVer,
 		"NOVA_PROBE_URL=https://probe.invalid/api.json",
+		// The bench's declared slot share (check 3g).
+		"NOVA_SLOT_SHARE=64",
 		// With a toolchain root removed the script can reach a system go, which
 		// under go.mod's go line would download a toolchain into HOME's read-only
 		// module cache and fail t.TempDir cleanup (hulk runners, stream/nova-decide).
