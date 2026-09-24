@@ -137,6 +137,15 @@ below the state's revision is refused rather than silently reissued."
     ;; event whose `:add` or `:remove` names the edge (nova-tools#1673, #785).
     (:dep :verb :node :by :add :remove :reason
           :request :stamp :clock :generation-owner)
+    ;; The scope and ordering verbs (E03-F03, SPEC-WORK.md:2929): one event of
+    ;; their own kind each, see %scope-submit in node-verbs.lisp.
+    (:node-require :verb :node :by :to :reason
+                   :request :stamp :clock :generation-owner)
+    (:baseline :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:discovery :verb :node :by :members :reason
+                :request :stamp :clock :generation-owner)
+    (:prioritise :verb :node :by :change :context :rank :reason
+                 :request :stamp :clock :generation-owner)
     ;; The two receipt verbs (SPEC-WORK.md:2295-2296). :staged carries the
     ;; immutable stage the readers produced outside the mutation loop; :lease-by
     ;; and :lease-default are the CLI's --by and --default, renamed here because
@@ -392,7 +401,12 @@ command loop is a defect)."
     ;; `dep` is a structure verb and a WRITER, not an admission verb
     ;; (SPEC-WORK.md:2362): one journaled `:structure` event edits one `:deps`
     ;; reference edge. See dep-verb.lisp.
-    (:dep (return-from %submit (%dep-submit kernel request))))
+    (:dep (return-from %submit (%dep-submit kernel request)))
+    ;; The scope verbs and `prioritise` (E03-F03, SPEC-WORK.md:2929): WRITERS
+    ;; on this one thread, each a journaled event of its own kind that
+    ;; `apply-event` replays. See %scope-submit in node-verbs.lisp.
+    ((:node-require :baseline :discovery :prioritise)
+     (return-from %submit (%scope-submit kernel request))))
   (let ((verb (getf request :verb)))
     ;; THE SIX CONFIG/ACTIVE VERBS (nova-tools#1695): the one verb that
     ;; configures the fleet (SPEC-WORK.md:3541), the one verb that configures
