@@ -1,6 +1,7 @@
 package ctxindex
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,7 +111,7 @@ func TestLookupReadsOnlyItsBucket(t *testing.T) {
 		if ix.buckets[sub] < 2 && sub != "symbol" {
 			t.Fatalf("%s has %d bucket(s); BucketSize=1 must spread it", sub, ix.buckets[sub])
 		}
-		entries, err := os.ReadDir(filepath.Join(out, sub))
+		entries, err := os.ReadDir(filepath.Join(ix.dir, sub))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -119,7 +120,7 @@ func TestLookupReadsOnlyItsBucket(t *testing.T) {
 				continue
 			}
 			garbled++
-			if err := os.WriteFile(filepath.Join(out, sub, e.Name()), []byte("{not json"), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(ix.dir, sub, e.Name()), []byte("{not json"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -139,7 +140,7 @@ func TestLookupReadsOnlyItsBucket(t *testing.T) {
 }
 
 // A rebuild at a later landing answers from the new head only: a spec ID removed there
-// is gone, and a bucket whose head is not HEAD's answers nothing.
+// is gone.
 func TestRebuildAnswersFromTheNewHeadOnly(t *testing.T) {
 	repo := fixture(t)
 	out := filepath.Join(t.TempDir(), "ix")
@@ -164,25 +165,110 @@ func TestRebuildAnswersFromTheNewHeadOnly(t *testing.T) {
 	if block, _ := ix.Context("beta-rule-two"); block != "" {
 		t.Errorf("context for a removed ID = %q, want empty", block)
 	}
-	stale := strings.Repeat("0", 40)
-	raw, err := os.ReadFile(filepath.Join(out, "HEAD"))
+}
+
+// A build that stops partway (or is still running) never changes what a cut reads:
+// CURRENT still names the last complete head, whose directory answers whole. The next
+// complete build swaps CURRENT and the new head answers.
+func TestPartialBuildLeavesThePreviousIndexWhole(t *testing.T) {
+	repo := fixture(t)
+	out := filepath.Join(t.TempDir(), "ix")
+	st1, err := Build(repo, out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fields := strings.SplitN(string(raw), " ", 2)
-	if len(fields) != 2 {
-		t.Fatalf("HEAD = %q", raw)
+	write(t, repo, "docs/SPEC-A.md", "1. `alpha-rule-one`: alpha is refused.\n")
+	gitIn(t, repo, "commit", "-q", "-am", "drop beta")
+	stop := errors.New("killed partway")
+	afterBuckets = func(kind string) error {
+		if kind == "test" {
+			return stop
+		}
+		return nil
 	}
-	if err := os.WriteFile(filepath.Join(out, "HEAD"), []byte(stale+" "+fields[1]), 0o644); err != nil {
+	_, err = Build(repo, out)
+	afterBuckets = func(string) error { return nil }
+	if !errors.Is(err, stop) {
+		t.Fatalf("partial build err = %v, want %v", err, stop)
+	}
+	head2 := strings.TrimSpace(gitOutput(t, repo, "rev-parse", "HEAD"))
+	if _, err := os.Stat(filepath.Join(out, head2, "spec")); err != nil {
+		t.Fatalf("the control needs the partial build's spec buckets on disk: %v", err)
+	}
+	ix, err := Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ix.Head != st1.Head {
+		t.Fatalf("after a partial build CURRENT = %s, want the complete head %s", ix.Head, st1.Head)
+	}
+	block, err := ix.Context("beta-rule-two alpha-rule-one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"SPEC beta-rule-two", "SPEC alpha-rule-one (docs/SPEC-A.md:1): 1. `alpha-rule-one`: alpha is refused when empty.", "GUARDING TEST: pkg/a.TestAlpha"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("context from the previous complete head lacks %q:\n%s", want, block)
+		}
+	}
+	st2, err := Build(repo, out)
+	if err != nil {
 		t.Fatal(err)
 	}
 	ix, err = Open(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := ix.Spec("alpha-rule-one"); ok {
-		t.Error("a bucket built at another head answered")
+	if ix.Head != st2.Head || ix.Head != head2 {
+		t.Fatalf("after the complete build CURRENT = %s, want %s", ix.Head, head2)
 	}
+	if _, ok, _ := ix.Spec("beta-rule-two"); ok {
+		t.Error("the new head answered a spec ID it removed")
+	}
+}
+
+// A bucket in the CURRENT head's directory that is missing or carries another head is
+// a damaged index: the lookup, and so the cut, is refused rather than silently missing.
+func TestDamagedBucketRefusesTheLookup(t *testing.T) {
+	repo := fixture(t)
+	out := filepath.Join(t.TempDir(), "ix")
+	if _, err := Build(repo, out); err != nil {
+		t.Fatal(err)
+	}
+	ix, err := Open(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(ix.dir, "spec", bucketName(bucketOf("alpha-rule-one", ix.buckets["spec"])))
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := strings.Replace(string(raw), ix.Head, strings.Repeat("0", 40), 1)
+	if foreign == string(raw) {
+		t.Fatal("the control needs the bucket to carry its head")
+	}
+	if err := os.WriteFile(p, []byte(foreign), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.Context("alpha-rule-one"); err == nil || !strings.Contains(err.Error(), "damaged") {
+		t.Errorf("foreign-head bucket: Context err = %v, want a damaged-index error", err)
+	}
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ix.Context("alpha-rule-one"); err == nil || !strings.Contains(err.Error(), "damaged") {
+		t.Errorf("missing bucket: Context err = %v, want a damaged-index error", err)
+	}
+}
+
+func gitOutput(t *testing.T, repo string, args ...string) string {
+	t.Helper()
+	out, err := exec.Command("git", append([]string{"-C", repo}, args...)...).Output()
+	if err != nil {
+		t.Fatalf("git %v: %v", args, err)
+	}
+	return string(out)
 }
 
 func TestOpenRefusesAnUnbuiltIndex(t *testing.T) {

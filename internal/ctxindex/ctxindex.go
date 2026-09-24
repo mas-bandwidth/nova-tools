@@ -6,12 +6,12 @@
 // Three indices, each a directory of hash buckets, so a lookup reads the one bucket
 // its key hashes to and never scans (Glenn 2026-09-23: "no linear scans"):
 //
-//	spec/<b>.json      spec ID -> the paragraph it names, where, and its guarding tests
-//	test/<b>.json      test (<dir>.<TestName>) -> where it is and the files it covers
-//	symbol/<b>.json    symbol (<dir>.<Name> or <dir>.<Type>.<Method>) -> definition and guarding tests
+//	<head>/spec/<b>.json      spec ID -> the paragraph it names, where, and its guarding tests
+//	<head>/test/<b>.json      test (<dir>.<TestName>) -> where it is and the files it covers
+//	<head>/symbol/<b>.json    symbol (<dir>.<Name> or <dir>.<Type>.<Method>) -> definition and guarding tests
 //
 // The bucket count per index is sized at build time to keep a bucket near BucketSize
-// entries and is written into HEAD, so a bucket stays small however the repo grows. One
+// entries and is written into <head>/HEAD, so a bucket stays small however the repo grows. One
 // file per key was measured first and rejected: 30k files took minutes to write on a
 // loaded Studio, where the buckets are a few hundred files.
 //
@@ -20,10 +20,15 @@
 // comment opens with that name and a colon (// cut-line1-is-contract: ...), the
 // convention the repo's specs and tests already follow.
 //
-// Build is run at each landing, on a clone at the landed tip. It never deletes: each
-// bucket is written whole (temp file then rename) carrying the head it was built at,
-// and HEAD is renamed into place last. A bucket whose head is not HEAD's (a build in
-// progress, or a bucket left by an older build with more buckets) answers nothing.
+// Build is run at each landing, on a clone at the landed tip. Each head is built into
+// its own directory <out>/<head>/, every bucket written whole (temp file then rename),
+// and the one-line <out>/CURRENT file naming the head is renamed into place last. That
+// rename is the swap: a reader opens CURRENT and reads only that head's directory, so a
+// cut during a build, or after a build that failed partway, reads the previous complete
+// index whole, never a mix. Build never deletes: older head directories stay until the
+// caller prunes them. A bucket that is missing or carries another head inside the
+// CURRENT directory is a damaged index, and the lookup returns an error so the cut is
+// refused instead of carrying no CONTEXT.
 package ctxindex
 
 import (
@@ -146,6 +151,7 @@ func Build(repo, out string) (Stats, error) {
 			st.Guarded++
 		}
 	}
+	dir := filepath.Join(out, head)
 	counts := map[string]int{}
 	for _, kind := range []struct {
 		name    string
@@ -153,18 +159,29 @@ func Build(repo, out string) (Stats, error) {
 	}{
 		{"spec", asAny(specs)}, {"test", asAny(tests)}, {"symbol", asAny(symbols)},
 	} {
-		n, err := writeBuckets(out, kind.name, head, kind.entries)
+		n, err := writeBuckets(dir, kind.name, head, kind.entries)
 		if err != nil {
+			return Stats{}, err
+		}
+		if err := afterBuckets(kind.name); err != nil {
 			return Stats{}, err
 		}
 		counts[kind.name] = n
 	}
 	headLine := fmt.Sprintf("%s spec=%d test=%d symbol=%d\n", head, counts["spec"], counts["test"], counts["symbol"])
-	if err := writeAtomic(filepath.Join(out, "HEAD"), []byte(headLine)); err != nil {
+	if err := writeAtomic(filepath.Join(dir, "HEAD"), []byte(headLine)); err != nil {
+		return Stats{}, err
+	}
+	// The swap: CURRENT names the head only once its directory is complete.
+	if err := writeAtomic(filepath.Join(out, "CURRENT"), []byte(head+"\n")); err != nil {
 		return Stats{}, err
 	}
 	return st, nil
 }
+
+// afterBuckets runs after each index's buckets are written; a test makes it fail to
+// stand for a build that stops partway.
+var afterBuckets = func(kind string) error { return nil }
 
 // skippedGoPath is a Go file the index does not read: fixtures and vendored code.
 func skippedGoPath(f string) bool {
@@ -367,30 +384,40 @@ func recvType(e ast.Expr) string {
 	return ""
 }
 
-// Index is an opened index: its HEAD and each index's bucket count.
+// Index is an opened index: the head CURRENT names and each index's bucket count.
 type Index struct {
-	dir     string
+	dir     string // <out>/<head>
 	Head    string
 	buckets map[string]int
 }
 
-// ErrNoIndex is an index directory with no HEAD: never built.
-var ErrNoIndex = errors.New("no HEAD: the index was never built (run nova-pulse index --repo <clone> --out <dir>)")
+// ErrNoIndex is an index directory with no CURRENT: no build ever completed.
+var ErrNoIndex = errors.New("no CURRENT: the index was never built (run nova-pulse index --repo <clone> --out <dir>)")
 
-// Open reads the index's HEAD line: the sha and each index's bucket count.
-func Open(dir string) (*Index, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "HEAD"))
+// Open reads CURRENT, the head of the last complete build, then that head's HEAD line:
+// the sha and each index's bucket count.
+func Open(out string) (*Index, error) {
+	cur, err := os.ReadFile(filepath.Join(out, "CURRENT"))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("%s: %w", dir, ErrNoIndex)
+		return nil, fmt.Errorf("%s: %w", out, ErrNoIndex)
 	}
 	if err != nil {
 		return nil, err
 	}
-	fields := strings.Fields(string(raw))
-	if len(fields) != 4 || !headRE.MatchString(fields[0]) {
-		return nil, fmt.Errorf("%s/HEAD holds %q, not <sha> spec=<n> test=<n> symbol=<n>", dir, strings.TrimSpace(string(raw)))
+	head := strings.TrimSpace(string(cur))
+	if !headRE.MatchString(head) {
+		return nil, fmt.Errorf("%s/CURRENT holds %q, not a sha", out, head)
 	}
-	ix := &Index{dir: dir, Head: fields[0], buckets: map[string]int{}}
+	dir := filepath.Join(out, head)
+	raw, err := os.ReadFile(filepath.Join(dir, "HEAD"))
+	if err != nil {
+		return nil, fmt.Errorf("%s/CURRENT names %s but its HEAD is unreadable: %w", out, head[:12], err)
+	}
+	fields := strings.Fields(string(raw))
+	if len(fields) != 4 || fields[0] != head {
+		return nil, fmt.Errorf("%s/HEAD holds %q, not %s spec=<n> test=<n> symbol=<n>", dir, strings.TrimSpace(string(raw)), head)
+	}
+	ix := &Index{dir: dir, Head: head, buckets: map[string]int{}}
 	for _, f := range fields[1:] {
 		name, val, _ := strings.Cut(f, "=")
 		var n int
@@ -444,19 +471,18 @@ func bucketName(b int) string { return fmt.Sprintf("%04x.json", b) }
 
 func (ix *Index) read(kind, key string, v any) (bool, error) {
 	p := filepath.Join(ix.dir, kind, bucketName(bucketOf(key, ix.buckets[kind])))
+	// Every bucket of a complete build exists and carries its head, so a missing or
+	// foreign bucket is a damaged index: an error, never a silent miss.
 	raw, err := os.ReadFile(p)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("index at %s damaged: %w (rebuild with nova-pulse index)", ix.Head[:12], err)
 	}
 	var bf bucketFile
 	if err := json.Unmarshal(raw, &bf); err != nil {
 		return false, fmt.Errorf("%s: %w", p, err)
 	}
 	if bf.Head != ix.Head {
-		return false, nil
+		return false, fmt.Errorf("index at %s damaged: %s was built at %.12s (rebuild with nova-pulse index)", ix.Head[:12], p, bf.Head)
 	}
 	entry, ok := bf.Entries[key]
 	if !ok {

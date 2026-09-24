@@ -249,8 +249,11 @@ example:
 
 index builds the per-repo context index at a clone's HEAD (#2498 S2), run at each
 landing: spec ID -> paragraph, test -> covered files, symbol -> definition and
-guarding tests, one file per key so a lookup is one open, never a scan. It never
-deletes; entries from an older head are ignored. cut --kind ... --index <dir>
+guarding tests. Each index is a directory of FNV-32a hash buckets (about 64 keys
+each, the counts in <head>/HEAD), so a lookup reads the one bucket its key hashes
+to, never a scan. A build writes <out>/<head>/ whole, then renames the one-line
+<out>/CURRENT last, so a cut reads one complete head; a damaged bucket refuses the
+cut. It never deletes; older head directories stay. cut --kind ... --index <dir>
 inlines, for each spec ID the title or body names, the paragraph, the guarding
 test and the files it covers, under a CONTEXT line.
 
