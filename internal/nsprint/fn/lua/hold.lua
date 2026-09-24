@@ -225,11 +225,22 @@ do
     return nil
   end
 
+  -- open_fix: a fix-<n>-* task in any nonterminal state (open, claimed,
+  -- working, waiting, waiting-ci, parked, reconcile-required; the TASK_Y set
+  -- of sprint.lua less closed) holds the at-most-one guard. A take moves a
+  -- fix out of idx:task:open, and the next holder must still see it.
+  local LIVE_FIX_IDX = { 'open', 'claimed', 'working', 'waiting', 'waiting-ci',
+    'parked', 'reconcile-required' }
   local function open_fix(S, pr)
     local prefix = 'fix-' .. pr .. '-'
-    for _, id in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':idx:task:open')) do
-      if string.sub(id, 1, #prefix) == prefix then
-        return id
+    for _, idx in ipairs(LIVE_FIX_IDX) do
+      for _, id in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':idx:task:' .. idx)) do
+        if string.sub(id, 1, #prefix) == prefix then
+          local st = redis.call('HGET', 's:' .. S .. ':task:' .. id, 'state')
+          if st and st ~= 'closed' and st ~= 'cancelled' then
+            return id
+          end
+        end
       end
     end
     return nil

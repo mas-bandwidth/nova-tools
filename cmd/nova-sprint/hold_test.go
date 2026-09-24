@@ -400,6 +400,26 @@ func TestIngestDeployedLines(t *testing.T) {
 	if e2.c.Exists(ctx, "s:"+e2.S+":read:"+unitOf(3286)+":rowan").Val() != 1 {
 		t.Fatalf("contrast ingest did not write rowan@<head>")
 	}
+
+	// Hold 5 on #3473 at 90527217: NAME-IS-LOGIN on every hello, aliases or
+	// not; a mapped login never registers as a friend.
+	if code, _, errOut := e.run("friend", "hello", "--as", "rowan-claude", "--once", "--host", "ctl", "--session", "ctl-rc"); code != 2 || !strings.Contains(errOut, "NAME-IS-LOGIN rowan-claude") {
+		t.Fatalf("hello --as a mapped login, no --login: exit %d %q, want 2 NAME-IS-LOGIN", code, errOut)
+	}
+	if e.c.SIsMember(ctx, "friends", "rowan-claude").Val() {
+		t.Fatalf("a mapped login registered as a friend")
+	}
+	// A duplicate alias in one hello is one mapping and one receipt.
+	receipts := countLogin()
+	if code, _, errOut := e.run("friend", "hello", "--as", "johnny", "--login", "jz-bot", "--login", "jz-bot", "--once", "--host", "ctl", "--session", "ctl-johnny"); code != 0 {
+		t.Fatalf("hello johnny --login jz-bot twice: %d %s", code, errOut)
+	}
+	if n := countLogin(); n != receipts+1 {
+		t.Fatalf("duplicate alias receipts = %d, want %d", n, receipts+1)
+	}
+	if got := e.c.HGet(ctx, "friends:login", "jz-bot").Val(); got != "johnny" {
+		t.Fatalf("friends:login jz-bot = %q, want johnny", got)
+	}
 }
 
 func TestControl40(t *testing.T) {
@@ -456,7 +476,7 @@ func TestControl53(t *testing.T) {
 func TestHoldRouteOneOwner(t *testing.T) {
 	ctx := context.Background()
 	e := newHoldEnv(t, "s-owner")
-	e.friends("stella", "johnny", "rowan")
+	e.friends("stella", "johnny", "rowan", "emma")
 	e.policy("rowan", "stella")
 	st := store.New(e.c)
 
@@ -493,6 +513,33 @@ func TestHoldRouteOneOwner(t *testing.T) {
 	}
 	if q := e.queue("stella"); len(q) != 1 || q[0] != task.ReviewID(holdRepo, 3, headB, "stella") {
 		t.Fatalf("re-read: %v", q)
+	}
+
+	// Hold 3 on #3473 at 90527217: a fix taken by fix_to (claimed, out of
+	// idx:task:open) still holds the at-most-one guard for a second holder.
+	e.unit(6, headA, "johnny")
+	e.mustIngest(6, typed("stella", headA, "HOLD", 5, substance), "RECORD hold")
+	e.route()
+	fix6 := disposition.FixID("6", "stella", headA)
+	if err := e.c.HSet(ctx, "s:"+e.S, "status", "open").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--slots", "4", "--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
+		t.Fatalf("hello rowan --slots 4: %s", errOut)
+	}
+	claims, err := task.TakeAvailable(ctx, st, "rowan", e.S, fix6, 1, "rowan", "take-fix6")
+	if err != nil || len(claims) != 1 {
+		t.Fatalf("take %s: %v %v", fix6, claims, err)
+	}
+	if s := e.hget("s:"+e.S+":task:"+fix6, "state"); s != "claimed" {
+		t.Fatalf("%s state = %q, want claimed", fix6, s)
+	}
+	e.mustIngest(6, typed("emma", headA, "HOLD", 5, substance), "RECORD hold")
+	if out := e.route(); !strings.Contains(out, "OPEN-FIX "+fix6) {
+		t.Fatalf("second holder with a claimed fix: %q, want OPEN-FIX %s", out, fix6)
+	}
+	if e.c.Exists(ctx, "s:"+e.S+":task:"+disposition.FixID("6", "emma", headA)).Val() != 0 {
+		t.Fatalf("a second fix task was created while the first was claimed")
 	}
 
 	// A jev HOLD line makes no hold and no task.
@@ -854,6 +901,39 @@ func TestHoldRouteCrashReplay(t *testing.T) {
 	}
 	c.route("--reclaim-idle", "50")
 	after(t, c, eid)
+
+	// Hold 4 on #3473 at 90527217: lease:hold-route renew and release are
+	// token-checked in one script. An owner whose lease expired can neither
+	// extend nor delete its successor's lease.
+	ctx2 := context.Background()
+	lc := c.c
+	lc.Del(ctx2, disposition.LeaseKey)
+	if ok, err := holdLease(ctx2, lc, "stale"); err != nil || !ok {
+		t.Fatalf("first take: %v %v", ok, err)
+	}
+	lc.Del(ctx2, disposition.LeaseKey) // the stale owner's lease expires
+	if ok, err := holdLease(ctx2, lc, "next"); err != nil || !ok {
+		t.Fatalf("successor take: %v %v", ok, err)
+	}
+	lc.PExpire(ctx2, disposition.LeaseKey, 2*time.Second)
+	if ok, err := holdLease(ctx2, lc, "stale"); err != nil || ok {
+		t.Fatalf("stale renew: %v %v, want false", ok, err)
+	}
+	if ttl := lc.PTTL(ctx2, disposition.LeaseKey).Val(); ttl > 2*time.Second {
+		t.Fatalf("stale renew extended the successor's lease: pttl %v", ttl)
+	}
+	if dropLease(ctx2, lc, "stale") {
+		t.Fatalf("stale release reported a delete")
+	}
+	if v := lc.Get(ctx2, disposition.LeaseKey).Val(); v != "next" {
+		t.Fatalf("stale release touched the successor's lease: %q", v)
+	}
+	if ok, err := holdLease(ctx2, lc, "next"); err != nil || !ok {
+		t.Fatalf("owner renew: %v %v", ok, err)
+	}
+	if !dropLease(ctx2, lc, "next") || lc.Exists(ctx2, disposition.LeaseKey).Val() != 0 {
+		t.Fatalf("owner release did not delete")
+	}
 }
 
 func TestHoldReleaseHolderOnly(t *testing.T) {

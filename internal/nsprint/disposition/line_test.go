@@ -31,11 +31,18 @@ func TestParseTypedLines(t *testing.T) {
 
 func TestClassify(t *testing.T) {
 	for reason, want := range map[string]string{
-		"CI is red on shard 2. Pending rerun.":      "ci",
-		"red at internal/x/y.go:12 on the shard":    "substance",
-		"waits on #3091 landing first":              "order",
-		"waits on #7 and the parser is wrong. Fix.": "substance",
-		"the helper overstates its result":          "substance",
+		"CI is red on shard 2. Pending rerun.":                   "ci",
+		"red at internal/x/y.go:12 on the shard":                 "substance",
+		"waits on #3091 landing first":                           "order",
+		"waits on #7 and the parser is wrong. Fix.":              "substance",
+		"the helper overstates its result":                       "substance",
+		"CI is red on the shard 1/4 leg. Pending a rerun.":       "ci",
+		"test (1/4 studio) cancelled; ci-ok failed at 90527217.": "ci",
+		// Hold 2 on #3473 at 90527217: substantive prose with one CI word is
+		// never a CI note, file:line or not.
+		"CI is red because the parser accepts invalid certificates and lets forged approvals land.": "substance",
+		"The retry leaves the lease red for the successor.":                                         "substance",
+		"CI is green. The parser accepts invalid certificates.":                                     "substance",
 	} {
 		if got := Classify(reason, 7); got != want {
 			t.Errorf("Classify(%q) = %s, want %s", reason, got, want)

@@ -77,24 +77,31 @@ local function friend_hello(keys, args)
   end
   -- Login aliases (#3092 rev 6): args[9..] are `--login` values. This is the
   -- only writer of friends:login; every alias is checked before any write.
+  -- NAME-IS-LOGIN holds on every hello, with or without aliases: a name
+  -- that is a mapped login never registers as a friend. Aliases repeated in
+  -- one request are written (and receipted) once.
   local logins = {}
-  if redis.call('HEXISTS', 'friends:login', friend) == 1 and #args > 8 then
+  local seen = {}
+  if redis.call('HEXISTS', 'friends:login', friend) == 1 then
     return { 'NAME-IS-LOGIN', friend }
   end
   for i = 9, #args do
     local alias = args[i]
-    if not string.match(alias, '^[A-Za-z0-9][A-Za-z0-9-]*$') then
-      return { 'INVALID', alias }
-    end
-    if alias == friend or redis.call('SISMEMBER', 'friends', alias) == 1 then
-      return { 'LOGIN-IS-FRIEND', alias }
-    end
-    local mapped = redis.call('HGET', 'friends:login', alias)
-    if mapped and mapped ~= friend then
-      return { 'LOGIN-TAKEN', alias, mapped }
-    end
-    if not mapped then
-      logins[#logins + 1] = alias
+    if not seen[alias] then
+      seen[alias] = true
+      if not string.match(alias, '^[A-Za-z0-9][A-Za-z0-9-]*$') then
+        return { 'INVALID', alias }
+      end
+      if alias == friend or redis.call('SISMEMBER', 'friends', alias) == 1 then
+        return { 'LOGIN-IS-FRIEND', alias }
+      end
+      local mapped = redis.call('HGET', 'friends:login', alias)
+      if mapped and mapped ~= friend then
+        return { 'LOGIN-TAKEN', alias, mapped }
+      end
+      if not mapped then
+        logins[#logins + 1] = alias
+      end
     end
   end
   local at = pl_now_ms()

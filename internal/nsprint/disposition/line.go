@@ -240,6 +240,46 @@ var (
 	sentence = regexp.MustCompile(`[.!?](\s+|$)|\n+`)
 )
 
+// ciVocab is every word a CI-state-only clause may use: the CI state words,
+// the leg and shard names, and the glue of a status sentence. A clause with
+// any other word (a cause, a defect, a component: "because the parser
+// accepts invalid certificates") is not CI-only, whatever CI word it has.
+var ciVocab = map[string]bool{
+	"ci": true, "ci-ok": true, "check": true, "checks": true, "check-run": true, "check-runs": true,
+	"job": true, "jobs": true, "run": true, "runs": true, "rerun": true, "re-run": true,
+	"reruns": true, "rerunning": true, "leg": true, "legs": true, "shard": true, "shards": true,
+	"red": true, "green": true, "pending": true, "queued": true, "cancelled": true, "canceled": true,
+	"cancel": true, "terminated": true, "failed": true, "failing": true, "timed": true, "timeout": true,
+	"out": true, "signal": true, "bench": true, "kill": true, "killed": true, "flaky": true,
+	"test": true, "tests": true, "lint": true, "e2e": true, "studio": true, "space": true,
+	"linux": true, "macos": true, "hosted": true, "self-hosted": true, "is": true, "are": true,
+	"was": true, "were": true, "still": true, "now": true, "on": true, "at": true, "in": true,
+	"of": true, "for": true, "the": true, "a": true, "an": true, "this": true, "head": true,
+	"and": true, "or": true, "only": true, "waiting": true, "awaiting": true, "needs": true,
+	"need": true, "not": true, "yet": true, "all": true, "every": true, "one": true, "two": true,
+}
+
+var ciToken = regexp.MustCompile(`[A-Za-z0-9/_-]+`)
+
+// ciStateOnly: the clause names CI state and nothing else. It has at least
+// one CI word, and every token is CI vocabulary, a number or a leg label
+// such as 1/4 or sha-like hex.
+func ciStateOnly(s string) bool {
+	if !ciWord.MatchString(s) {
+		return false
+	}
+	for _, w := range ciToken.FindAllString(s, -1) {
+		lw := strings.ToLower(strings.Trim(w, "-_/"))
+		if lw == "" || ciVocab[lw] || ciLegLabel.MatchString(lw) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+var ciLegLabel = regexp.MustCompile(`^([0-9]+(/[0-9]+)?|[0-9a-f]{7,40})$`)
+
 // Classify derives the kind of a HOLD with no explicit kind= from its
 // reason (rules 2-4; rule 1, self, is decided in Lua against the unit's
 // author): every sentence names only CI state and there is no file:line ->
@@ -259,7 +299,7 @@ func Classify(reason string, pr int) string {
 	}
 	allCI := true
 	for _, s := range sentences {
-		if !ciWord.MatchString(s) {
+		if !ciStateOnly(s) {
 			allCI = false
 			break
 		}

@@ -218,29 +218,47 @@ func leaseToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// holdLease takes or renews lease:hold-route (TTL 5 s) for this token.
+// holdRenewScript and holdReleaseScript are the token-checked lease moves
+// (the internal/redisq renewScript/releaseScript shape): the stored token must
+// be the caller's or the script is a no-op, so an expired owner can never
+// extend or delete a successor's lease.
+var holdRenewScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
+end
+return 0
+`)
+
+var holdReleaseScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return redis.call('DEL', KEYS[1])
+end
+return 0
+`)
+
+const holdLeaseTTL = 5 * time.Second
+
+// holdLease takes or renews lease:hold-route (TTL 5 s) for this token. The
+// renew is one atomic compare-token script, never GET then PEXPIRE.
 func holdLease(ctx context.Context, c *redis.Client, token string) (bool, error) {
-	ok, err := c.SetNX(ctx, disposition.LeaseKey, token, 5*time.Second).Result()
+	ok, err := c.SetNX(ctx, disposition.LeaseKey, token, holdLeaseTTL).Result()
 	if err != nil {
 		return false, err
 	}
 	if ok {
 		return true, nil
 	}
-	cur, err := c.Get(ctx, disposition.LeaseKey).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
+	n, err := holdRenewScript.Run(ctx, c, []string{disposition.LeaseKey}, token, holdLeaseTTL.Milliseconds()).Int64()
+	if err != nil {
 		return false, err
 	}
-	if cur != token {
-		return false, nil
-	}
-	return true, c.PExpire(ctx, disposition.LeaseKey, 5*time.Second).Err()
+	return n == 1, nil
 }
 
-func dropLease(ctx context.Context, c *redis.Client, token string) {
-	if cur, err := c.Get(ctx, disposition.LeaseKey).Result(); err == nil && cur == token {
-		_ = c.Del(ctx, disposition.LeaseKey).Err()
-	}
+// dropLease deletes lease:hold-route only while this token still holds it.
+func dropLease(ctx context.Context, c *redis.Client, token string) bool {
+	n, err := holdReleaseScript.Run(ctx, c, []string{disposition.LeaseKey}, token).Int64()
+	return err == nil && n == 1
 }
 
 func runHoldShow(ctx context.Context, args []string, out, errOut io.Writer) int {
