@@ -135,6 +135,9 @@ type lab struct {
 	now      time.Time
 	build    string
 	runner   merge.Runner
+	// checkDeadline is Deps.CheckDeadline: the clock a simulate check's --timeout runs on.
+	// nil is the real timer; a test that is about the deadline hands it one it controls.
+	checkDeadline func(time.Duration) <-chan time.Time
 	// testTree and testLayout are the fold verb's fake test runners (docs/SPEC-MERGE.md
 	// "The fold (#1142)"): the package test the repository names for the tree, and the
 	// layout test of #560. A nil one is the production subprocess.
@@ -415,10 +418,11 @@ func (l *lab) deps() Deps {
 		NewFailForge: func(string, time.Duration) ci.FailForge {
 			return l.failForge
 		},
-		Launcher:   l.launcher,
-		BuildID:    func() string { return l.build },
-		TestTree:   l.testTree,
-		TestLayout: l.testLayout,
+		Launcher:      l.launcher,
+		BuildID:       func() string { return l.build },
+		TestTree:      l.testTree,
+		TestLayout:    l.testLayout,
+		CheckDeadline: l.checkDeadline,
 		// react's two edges. Dial is the caller's own address -- every react test
 		// hands it a miniredis of its own -- and the forge is the fake.
 		BatchGate: labBatchGate(),

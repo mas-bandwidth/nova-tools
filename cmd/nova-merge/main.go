@@ -308,6 +308,14 @@ type Deps struct {
 	// Both are injected so a fold test uses a fake and reaches no toolchain.
 	TestTree   func(dir string) error
 	TestLayout func(dir string) error
+	// CheckDeadline is the clock a `simulate` check's --timeout runs on: it is handed the
+	// --timeout and returns the channel that says it has expired. nil -- which is what
+	// production() leaves it -- is a real timer of that length. It is injected so the test
+	// that proves "a check that outruns --timeout is the poison" decides WHEN the deadline
+	// passes instead of racing a one-second wall clock on a loaded bench (#2958 class: a
+	// 1 s --timeout also bounds every git step of the run, and a git step slower than
+	// that on a loaded Studio shard refused the run before the check was reached).
+	CheckDeadline func(timeout time.Duration) <-chan time.Time
 }
 
 func production() Deps {
