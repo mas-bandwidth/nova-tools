@@ -167,7 +167,7 @@ func (s *Sweeper) Run(ctx context.Context) error {
 			_, _ = fmt.Fprintln(log, l)
 		}
 		if err != nil && ctx.Err() == nil {
-			_, _ = fmt.Fprintf(log, "SWEEP ERROR %v\n", err)
+			_, _ = fmt.Fprintf(log, "SWEEP ABORTED %v\n", err)
 		}
 		select {
 		case <-ctx.Done():
