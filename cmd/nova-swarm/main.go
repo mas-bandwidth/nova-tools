@@ -1733,6 +1733,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// password must still run cards, so there is no refusal here and no default host: see
 	// internal/events/writer.go. The password is never a flag and is never printed.
 	eventsStore := f.fs.String("events-store", "", "")
+	benchFlag := f.fs.String("bench", "", "")
+	stageTimeout := f.fs.String("stage-timeout", "", "")
 	var repos, recipients []string
 	f.fs.Var(stringListValue{&repos}, "repo", "")
 	f.fs.Var(stringListValue{&recipients}, "recipient", "")
@@ -1870,6 +1872,15 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			effectiveModel = w.Provider + "/" + w.Model
 		}
 	}
+	var stageDur time.Duration
+	if *stageTimeout != "" {
+		v, serr := time.ParseDuration(*stageTimeout)
+		if serr != nil || v <= 0 {
+			fmt.Fprintf(stderr, "nova-swarm native: --stage-timeout wants a positive duration: %s\n", oneline.Field(*stageTimeout))
+			return 2
+		}
+		stageDur = v
+	}
 	cfg := nativeRunConfig{
 		binary:         *harness,
 		model:          effectiveModel,
@@ -1890,6 +1901,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		tokens:         budgetTokens,
 		unmetered:      budgetUnmetered,
 		usageInterval:  usageInterval.d,
+		benchName:      *benchFlag,
+		stageTimeout:   stageDur,
 	}
 	if workerGiven {
 		cfg.worker = &w

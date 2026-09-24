@@ -110,6 +110,10 @@ type nativeRunConfig struct {
 	// database while the launch runs (rule 13d). cmdNative has already refused one under a
 	// second and one not shorter than the deadline, so what reaches here is a usable interval.
 	usageInterval time.Duration
+	// benchName is the name of this bench (e.g. hulk, vision); "" means resolve via os.Hostname.
+	benchName string
+	// stageTimeout is the hard timeout for staging (default 120s).
+	stageTimeout time.Duration
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -204,6 +208,7 @@ var (
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
@@ -559,6 +564,74 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// caller can prove later that neither the card nor the binary changed under it.
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
+	// (4e) STAGING FROM BENCH MIRROR (issue #2882).
+	// Staging clones from the bench's local mirror (--reference or clone --shared)
+	// with a hard timeout (120 s) that ends the card RESULT: BLOCKED stage-timeout <bench> <secs>
+	// and writes the end record like any other card.
+	bench := cfg.benchName
+	if bench == "" {
+		if h, err := os.Hostname(); err == nil {
+			if idx := strings.Index(h, "."); idx != -1 {
+				h = h[:idx]
+			}
+			bench = h
+		}
+	}
+	if bench == "" {
+		bench = "bench"
+	}
+	stageOpts := swarm.StageOptions{
+		Card:      cfg.card,
+		TargetDir: filepath.Join(jobDir, "repo"),
+		JobDir:    jobDir,
+		BenchHome: cfg.benchHome,
+		BenchName: bench,
+		Timeout:   cfg.stageTimeout,
+	}
+	stageRes, stageErr := swarm.StageCard(stageOpts)
+	if stageErr != nil {
+		if stageRes.TimedOut {
+			secs := int(cfg.stageTimeout.Seconds())
+			if secs <= 0 {
+				if cfg.stageTimeout > 0 {
+					secs = 1
+				} else {
+					secs = int(swarm.DefaultStageTimeout.Seconds())
+				}
+			}
+			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
+			// STAGE FAIL (issue #3050): the rowan-tools #187 launcher watches stdout for a
+			// STAGE OK/FAIL line and detaches 2s after seeing it; without one on every
+			// failure path (this one included) it waits out the full 135s and prints
+			// STAGE UNSEEN even though staging already ended.
+			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
+				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
+			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", errOut)
+			res := nativeRunResult{
+				rc:           -1,
+				cardSHA256:   hex.EncodeToString(cardHash[:]),
+				binarySHA256: binaryHash,
+				job:          jobDir,
+				wall:         "none",
+				configSHA:    configSHA,
+				tmp:          tmpDir,
+				end:          "stage-timeout",
+				wallSeconds:  time.Since(startTime).Seconds(),
+			}
+			return res, 1
+		}
+		// STAGE FAIL (issue #3050): see the timeout branch above for why this line has
+		// to be printed here rather than left to the caller's own NATIVE line.
+		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), oneline.Escape(stageErr.Error()))
+		refuseNative(errOut, stageErr.Error())
+		return nativeRunResult{}, 2
+	}
+	// STAGE OK (issue #3050): staging returned silently, so the rowan-tools #187 launcher
+	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
+	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
+	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
+		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
 
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
