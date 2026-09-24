@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -405,6 +406,9 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	note := f.fs.String("note", "", "")
 	scope := f.fs.String("scope", "", "")
 	releases := f.fs.String("releases", "", "")
+	// --redis names the store the typed line becomes one kind=read event in (#2683).
+	// Without it the lane-branch record is the only truth and nothing else is written.
+	redisAddr := f.fs.String("redis", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -464,6 +468,26 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file),
 			oneline.Escape(oneline.Cap(pushErr.Error(), oneline.TailBytes)))
 		return 1
+	}
+	if *redisAddr != "" {
+		// #2683: the typed line becomes one kind=read event on cards:done, so the 1 s
+		// table's done column is a store read and not a per-tick GitHub call. The
+		// record is pushed -- that is the truth -- so a store that cannot be reached
+		// is a NOTE, never a lost record, and the verb's exit stands.
+		silenceRedis()
+		rdb := deps.Dial(*redisAddr)
+		eventPR := ""
+		if *pr > 0 {
+			eventPR = id
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), f.dur())
+		_, _, eventErr := emitReadEvent(ctx, rdb, id, *who, *verdict, *head, eventPR, sub.At)
+		cancel()
+		_ = rdb.Close()
+		if eventErr != nil {
+			fmt.Fprintf(stderr, "READ NOTE the record is pushed and the read event could not be written to the store: %s; the 1 s table's done count reads cards:done, so re-run the same verb with --redis to post it\n",
+				oneline.Err(eventErr))
+		}
 	}
 	if _, _, err := foldInto(*f.lane, st, recs, f.dur()); err != nil {
 		// The record is at the remote tip -- that is what pushed=true means -- so this
@@ -549,10 +573,16 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	mergeSHA := f.fs.String("merge", "", "")
 	verdict := f.fs.String("verdict", "", "")
 	summary := f.fs.String("summary", "", "")
+	benchName, machines := gateBench(f)
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.check()
+	bench, benchErr := gateBenchValidate(*benchName, *machines, stderr)
+	if benchErr != nil {
+		fmt.Fprintf(stderr, "%s\n", benchErr)
+		return 2
+	}
 	id := entrySelector(f, pr, branch, false)
 	for _, s := range []struct{ name, value, wants string }{
 		{"head", *head, "the full 40-character sha of the entry's head this gate was taken for"},
@@ -627,24 +657,24 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	inLane := st.Find(id) != nil
 	newest := isNewest(st, id, *head, *baseSHA, sub.At)
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
-	merge.Appendf(*f.lane, deps.Now(), "GATE entry=%s head=%s base=%s merge=%s verdict=%s file=%s", id, *head, *baseSHA, *mergeSHA, *verdict, file)
+	merge.Appendf(*f.lane, deps.Now(), "GATE entry=%s head=%s base=%s merge=%s bench=%s verdict=%s file=%s", id, *head, *baseSHA, *mergeSHA, bench, *verdict, file)
 	pushErr := recs.Deliver(sub, []merge.Item{
 		{Path: file, Body: body},
 		{Path: merge.SummaryFile(file), Body: summaryBytes},
 	})
 	if pushErr != nil {
-		fmt.Fprintf(stderr, "GATE FAIL entry=%s head=%s base=%s merge=%s file=%s pushed=false: %s; re-run the same verb to push it\n",
+		fmt.Fprintf(stderr, "GATE FAIL entry=%s head=%s base=%s merge=%s bench=%s file=%s pushed=false: %s; re-run the same verb to push it\n",
 			oneline.Field(id), oneline.Field(merge.Short(*head)), oneline.Field(merge.Short(*baseSHA)),
-			oneline.Field(merge.Short(*mergeSHA)), oneline.Field(file),
+			oneline.Field(merge.Short(*mergeSHA)), oneline.Field(bench), oneline.Field(file),
 			oneline.Escape(oneline.Cap(pushErr.Error(), oneline.TailBytes)))
 		return 1
 	}
 	if _, _, err := foldInto(*f.lane, st, recs, f.dur()); err != nil {
 		fmt.Fprintf(stderr, "GATE NOTE the record is pushed and this lane could not fold the branch afterwards: %s; the next run folds it\n", oneline.Err(err))
 	}
-	fmt.Fprintf(stdout, "GATE OK entry=%s head=%s base=%s merge=%s verdict=%s summary=%s in_lane=%t newest=%t file=%s pushed=true\n",
+	fmt.Fprintf(stdout, "GATE OK entry=%s head=%s base=%s merge=%s bench=%s verdict=%s summary=%s in_lane=%t newest=%t file=%s pushed=true\n",
 		oneline.Field(id), oneline.Field(merge.Short(*head)), oneline.Field(merge.Short(*baseSHA)),
-		oneline.Field(merge.Short(*mergeSHA)), oneline.Field(*verdict), oneline.Field(abs), inLane, newest, oneline.Field(file))
+		oneline.Field(merge.Short(*mergeSHA)), oneline.Field(bench), oneline.Field(*verdict), oneline.Field(abs), inLane, newest, oneline.Field(file))
 	return 0
 }
 

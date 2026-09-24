@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // TestNativeBudgetEndsTheCardAndKeepsFindings is demanded test 13d (SPEC-SWARM.md:3324,
@@ -67,6 +69,11 @@ func TestNativeRefusesWithoutTheBudgetWord(t *testing.T) {
 	}{
 		{"absent", "", []string{"--tokens"}},
 		{"zero", "0", []string{"--tokens"}},
+		// FULL STRING, not a numeric prefix (Stella HOLD on PR #2131): parseInt's
+		// Sscanf("%d") accepted "50oops" as 50, made the job tree, and printed
+		// budget=-/50. The word is a positive integer in full or the exact word
+		// unmetered.
+		{"malformed", "50oops", []string{"--tokens", "50oops"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root, slot := aSlot(t)
@@ -121,6 +128,12 @@ func TestNativeUnmeteredPrintsTheWordOnTheLine(t *testing.T) {
 // sample has observed anything the spelling is rule 13's own dash -- "`budget=-/<n>` for a
 // job whose usage was never observed" -- and it is never silence and never `unmetered`.
 func TestNativeNumericBudgetPrintsAgainstTheNumber(t *testing.T) {
+	// A NUMERIC BUDGET WANTS A READER (rule 13d, and this repo's slice 2): on a bench with
+	// no `sqlite3` the same launch is a NATIVE REFUSED, which is the rule working and not
+	// this assertion failing. The skip names the missing program rather than pretending.
+	if !swarm.SQLiteOnPath() {
+		t.Skipf("%s is not on PATH, and a numeric budget is refused without it (rule 13d)", swarm.SQLiteBinary)
+	}
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
 	card := budgetCard(t, root)
@@ -163,6 +176,18 @@ func TestNativeBudgetSitsWhereTheGrammarPutsIt(t *testing.T) {
 		return
 	}
 	t.Fatalf("the NATIVE OK line carries no harness= field:\n%s", line)
+}
+
+// fieldOf is one `k=v` field of a line, or "" when the line does not carry it. It lives in
+// this file, which no build tag guards, because every budget test reads a field of the
+// NATIVE verdict line and one of them is unix-only.
+func fieldOf(line, key string) string {
+	for _, f := range strings.Fields(line) {
+		if v, ok := strings.CutPrefix(f, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 // nativeOKLine is the one NATIVE verdict line in a capture, failed for if there is none.

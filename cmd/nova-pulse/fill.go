@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/metrics"
@@ -346,7 +347,7 @@ func (l flashLauncher) Launch(bench, seat, card string) error {
 	label := strings.TrimSuffix(filepath.Base(card), ".md")
 	cmd := exec.Command(bin, bench, seat, card, label, strconv.Itoa(deadline))
 	said := &tail{}
-	cmd.Stdout, cmd.Stderr = io.Discard, said
+	cmd.Stdout, cmd.Stderr = said, said
 	if err := cmd.Start(); err != nil {
 		return said.wrap(err)
 	}
@@ -355,6 +356,9 @@ func (l flashLauncher) Launch(bench, seat, card string) error {
 	if l.grace <= 0 {
 		if err := <-done; err != nil {
 			return said.wrap(err)
+		}
+		if line, refused := said.refused(); refused {
+			return fmt.Errorf("slots refused: %s", line)
 		}
 		return nil
 	}
@@ -365,8 +369,16 @@ func (l flashLauncher) Launch(bench, seat, card string) error {
 		if err != nil {
 			return said.wrap(err)
 		}
+		if line, refused := said.refused(); refused {
+			return fmt.Errorf("slots refused: %s", line)
+		}
 		return nil
 	case <-timer.C:
+		// The child is still running and still writing to said: refused takes the same lock
+		// as Write, so this read never races the child's output.
+		if line, refused := said.refused(); refused {
+			return fmt.Errorf("slots refused: %s", line)
+		}
 		return nil
 	}
 }
@@ -378,9 +390,18 @@ const tailBytes = 4096
 // tail keeps the last tailBytes of what is written to it and nothing else. io.Discard was
 // there before, and `exit status 255` with the reason thrown away is the whole dogfood
 // edge: the FILL NOTE named the code and never the cause.
-type tail struct{ buf []byte }
+//
+// The grace path reads it while the child is still running and writing, so every read and
+// every Write hold mu (johnny's read of #3050: fill.go read buf on the timer path while
+// Write appended it with no lock).
+type tail struct {
+	mu  sync.Mutex
+	buf []byte
+}
 
 func (t *tail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	t.buf = append(t.buf, p...)
 	if len(t.buf) > tailBytes {
 		t.buf = t.buf[len(t.buf)-tailBytes:]
@@ -388,10 +409,27 @@ func (t *tail) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// refused reports whether the child has printed SLOTS REFUSED, with its last line, read
+// under one lock so the answer and the line come from the same bytes.
+func (t *tail) refused() (string, bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !bytes.Contains(t.buf, []byte("SLOTS REFUSED")) {
+		return "", false
+	}
+	return lastLineOf(t.buf), true
+}
+
 // lastLine is the last non-empty line the child printed, which is where a tool puts its
 // reason.
 func (t *tail) lastLine() string {
-	lines := strings.Split(strings.ReplaceAll(string(t.buf), "\r\n", "\n"), "\n")
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return lastLineOf(t.buf)
+}
+
+func lastLineOf(buf []byte) string {
+	lines := strings.Split(strings.ReplaceAll(string(buf), "\r\n", "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
 		if s := strings.TrimSpace(lines[i]); s != "" {
 			return s

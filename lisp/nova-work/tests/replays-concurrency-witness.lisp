@@ -149,5 +149,60 @@ writer and its counters rather than on one node's transition table.")
                       (check-equal '() (state-index-mismatches (kernel-state k2))
                                    "the replayed state's indexes disagree with a reconstruction"))
                  (ignore-errors (close-file-journal j2))))))
-      (ignore-errors (close-file-journal j))
-      (ignore-errors (delete-file path)))))
+       (ignore-errors (close-file-journal j))
+       (ignore-errors (delete-file path)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE10F05ExactRevisionPinRequiresRecheck
+;;;   criterion E10-F05-03 (docs/roadmaps/nova-work.sexp): "Pin scenarios,
+;;;   owners and commands before implementation; require exact-revision
+;;;   correctness and measured operational results before adoption".
+;;;
+;;;   This pins ONE half of that criterion: exact-revision correctness.
+;;;   docs/SPEC-WORK.md:7238-7239 states it: "changing the code a receipt
+;;;   covers invalidates that receipt". A scenario is pinned as a tick that
+;;;   records the exact revision it was measured at; a changed source or
+;;;   criterion re-opens verification and can never silently carry a green
+;;;   across a different revision, while the historic pin survives.
+;;;
+;;;   NOT pinned here, and not claimed: the other half, "each suite is mapped
+;;;   to its named scenarios, assertions, owner, command and CI lane"
+;;;   (docs/SPEC-WORK.md:7239-7240, again at :7381). The kernel has no
+;;;   suite-to-owner/command/CI-lane record to assert against; that mapping is
+;;;   the E10-F03 subfeature "Map each suite to an owner, command and CI lane"
+;;;   (state "missing" in the sexp). E10-F05-03 therefore stays partly unmet
+;;;   until E10-F03 lands a suite map and a test drives it.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F05ExactRevisionPinRequiresRecheck" "docs/SPEC-WORK.md:7238-7239"
+    "expected=scenario-pinned-at-exact-revision;source-or-criterion-change=recheck-needed;pin-survives;suite-owner-command-lane-map=not-pinned-here(E10-F03)"
+  (let ((tick (make-tick-record :id "fixed-tables/update-one-fact"
+                                :pinned-rev "f01a0c42d7de"
+                                :source-sha "f01a0c42d7de"
+                                :scope "fixed-tables"
+                                :historic-tick t
+                                :current-verification :verified)))
+    ;; The scenario is pinned at the exact revision it was measured at, before
+    ;; implementation, and the same exact source is what the receipt names.
+    (check-equal "f01a0c42d7de" (tick-record-pinned-rev tick)
+                 "the scenario is not pinned at its exact revision")
+    (check-equal "f01a0c42d7de" (tick-record-source-sha tick)
+                 "the receipt does not name the exact source it measured")
+    ;; exact-revision correctness: a changed source must never silently keep the
+    ;; old green; the answer is recheck-needed, and the pinned revision stays
+    ;; untouched (the green is tied to the revision that produced it).
+    (let ((after (source-change tick :new-source-sha "9d5a1b0c2e3f")))
+      (check-equal :recheck-needed (tick-record-current-verification after)
+                   "a changed source kept the old green instead of requiring re-verification")
+      (check-equal "f01a0c42d7de" (tick-record-pinned-rev after)
+                   "the pin was silently rewritten to another revision")
+      (check-equal "f01a0c42d7de" (tick-record-source-sha after)
+                   "the historic receipt lost its pinned source")
+      (check-equal t (tick-record-historic-tick after)
+                   "the historic tick did not survive the source change"))
+    ;; A changed criterion (the acceptance that was pinned before implementation)
+    ;; re-opens verification the same way.
+    (check-equal :recheck-needed
+                 (tick-record-current-verification
+                  (source-change tick :new-criterion "measured operational results"))
+                 "a changed criterion did not require re-verification before adoption")))
