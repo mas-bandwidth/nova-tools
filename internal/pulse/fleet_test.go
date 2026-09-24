@@ -81,9 +81,20 @@ exit 0
 	writeFleetExe(t, filepath.Join(bin, "sudo"), "#!/bin/sh\nexit 0\n")
 	sshPath = filepath.Join(dir, "ssh")
 	writeFleetExe(t, sshPath, `#!/bin/sh
-# the remote command is the last argument, the ssh target the one before it
-for a in "$@"; do target="$prev"; prev="$a"; done
-cmd="$prev"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n) exec </dev/null; shift;;
+    -o) shift 2;;
+    -*) shift;;
+    *) break;;
+  esac
+done
+target="$1"
+shift # the host
+cmd="$*"
+if [ "$1" = "bash" ]; then
+  cmd=$(cat)
+fi
 home="${NOVA_FAKE_HOME:?}"
 if [ -f "$home/never" ]; then exit 255; fi
 case "$cmd" in

@@ -15,6 +15,7 @@ package pulse
 // of minutes without waiting for one.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -174,17 +175,25 @@ func fleetPowerPrint(w io.Writer, max int, results []fleetPowerResult, remedy st
 }
 
 // fleetSSH runs one remote script on the bench with the ssh program from --ssh, through
-// `ssh <target> bash -s`, bounded by --timeout. The target is the benches file's ssh
+// `ssh <target> bash -s --`, bounded by --timeout. The target is the benches file's ssh
 // column; the script is the remote command, on the child's stdin.
 func fleetSSH(ctx context.Context, program, target, script string) (string, error) {
 	if program == "" {
 		program = "ssh"
 	}
-	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
-	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s")
+	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s", "--")
+	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s", "--")
 	cmd.Stdin = strings.NewReader(script)
-	raw, err := cmd.CombinedOutput()
-	return string(raw), err
+	var out bytes.Buffer
+	said := &benchTail{}
+	cmd.Stdout, cmd.Stderr = &out, said
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("timeout waiting for %s", target)
+		}
+		return out.String(), said.wrap(err)
+	}
+	return out.String(), nil
 }
 
 // fleetPowerTimeout is the per-child bound: the input's, or the default.
@@ -628,7 +637,8 @@ func (in FleetRebootInput) rebootOne(b FleetBench, wait time.Duration) fleetRebo
 }
 
 // ssh runs one remote script on the bench with the ssh program from --ssh, bounded by
-// --timeout. The target is the benches file's ssh column; the script is the remote command.
+// --timeout. The target is the benches file's ssh column; the script is the remote command
+// on stdin through fleetSSH.
 func (in FleetRebootInput) ssh(target, script string) (string, error) {
 	program := in.SSH
 	if program == "" {
@@ -640,10 +650,8 @@ func (in FleetRebootInput) ssh(target, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
-	cmd := exec.CommandContext(ctx, program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, script)
-	raw, err := cmd.CombinedOutput()
-	return string(raw), err
+	testguard.RefuseHosts(program, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", target, "bash", "-s", "--")
+	return fleetSSH(ctx, in.SSH, target, script)
 }
 
 // fleetReady reads the poll script's answer: `READY <n>` when the runners are listening,
@@ -800,23 +808,18 @@ func fleetSeatParse(out string) (fleetSeat, bool) {
 
 // checkFleetSeat runs one bench's seat script under the per-bench timeout.
 func checkFleetSeat(ctx context.Context, ssh string, b fleetBench) fleetSeat {
-	cmd := exec.CommandContext(ctx, ssh, b.Target, "bash", "-s")
-	cmd.Stdin = strings.NewReader(fleetSeatScript(b.Home))
-	var stdout, stderr strings.Builder
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	out, err := fleetSSH(ctx, ssh, b.Target, fleetSeatScript(b.Home))
 	if ctx.Err() == context.DeadlineExceeded {
 		return fleetSeat{status: "UNREACHABLE", reason: "timeout"}
 	}
 	if err != nil {
-		reason := lastLine(stderr.String())
+		reason := lastLine(err.Error())
 		if reason == "" {
 			reason = err.Error()
 		}
 		return fleetSeat{status: "UNREACHABLE", reason: reason}
 	}
-	if s, ok := fleetSeatParse(stdout.String()); ok {
+	if s, ok := fleetSeatParse(out); ok {
 		return s
 	}
 	return fleetSeat{status: "UNREACHABLE", reason: "no answer"}

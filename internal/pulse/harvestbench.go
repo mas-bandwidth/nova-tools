@@ -28,7 +28,6 @@ package pulse
 // gh, and git through the PATH the tests put a fake on. No test here opens a connection.
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -1004,9 +1003,9 @@ func localProbe(root string, labels []string) map[string]string {
 	return out
 }
 
-// sshShell is the shipped BenchShell: one bounded ssh per call, `ssh host bash -s` with the
-// script on the child's stdin, the same door fleetSSH uses. The remote command is exactly
-// `bash -s`, so the bench's login shell never reads the script: on the Macs that shell is
+// sshShell is the shipped BenchShell: one bounded ssh per call, `ssh host bash -s --` with the
+// script on the child's stdin, through fleetSSH. The remote command is exactly
+// `bash -s --`, so the bench's login shell never reads the script: on the Macs that shell is
 // zsh, and zsh took `$3:refs/harvest/$4` in the stage script as the `:r` modifier and ate
 // every refspec (#3291; never zsh, Glenn 2026-09-21). No `-n`: it points ssh's stdin at
 // /dev/null and `bash -s` then runs nothing at all (the edge of 2026-09-17).
@@ -1019,16 +1018,8 @@ func (s sshShell) Run(bench, script string) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), childTimeout)
 	defer cancel()
-	testguard.RefuseHosts(prog, "-o", "BatchMode=yes", bench, "bash", "-s")
-	cmd := exec.CommandContext(ctx, prog, "-o", "BatchMode=yes", bench, "bash", "-s")
-	cmd.Stdin = strings.NewReader(script)
-	var out bytes.Buffer
-	said := &benchTail{}
-	cmd.Stdout, cmd.Stderr = &out, said
-	if err := cmd.Run(); err != nil {
-		return out.String(), said.wrap(err)
-	}
-	return out.String(), nil
+	testguard.RefuseHosts(prog, "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", bench, "bash", "-s", "--")
+	return fleetSSH(ctx, prog, bench, script)
 }
 
 // benchTail keeps the last words a child said, so a failure names its cause and not only

@@ -266,16 +266,18 @@ func (s ServiceRestarter) Restart(name string) error {
 	// more than one that reads "before the right child".
 	remote := svc.Host != "" && svc.Host != "-"
 	if remote {
-		testguard.RefuseHosts("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, command)
+		testguard.RefuseHosts("ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, "bash", "-s", "--")
 	}
-	var cmd *exec.Cmd
 	if !remote {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-	} else {
-		cmd = exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", svc.Host, command)
+		cmd := exec.CommandContext(ctx, "sh", "-c", command)
+		if raw, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %w (%s)", command, err, oneline.Escape(strings.TrimSpace(string(raw))))
+		}
+		return nil
 	}
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w (%s)", command, err, oneline.Escape(strings.TrimSpace(string(raw))))
+	raw, err := fleetSSH(ctx, "ssh", svc.Host, command)
+	if err != nil {
+		return fmt.Errorf("%s: %w (%s)", command, err, oneline.Escape(strings.TrimSpace(raw)))
 	}
 	return nil
 }
