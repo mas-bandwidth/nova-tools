@@ -327,10 +327,59 @@ redis.register_function('ns_policy_set', function(keys, args)
   return 'OK'
 end)
 
--- ns_writer: bumps writer gen and sets owner (old-loop or nova-sprint).
+-- ns_writer: the sole writer of land:<repo>:<base>:writer (gen, owner, since, by),
+-- #3139 rev 7 section 10.2 (B0). args: repo, base, to, by, [inflight].
+-- to '' or 'get' reads (gen 0, owner old-loop when unset); to old-loop|nova-sprint
+-- bumps gen from land:<repo>:<base>:writer:seq and appends one WRITER event to
+-- land:<repo>:events. Cutover to nova-sprint is REFUSED while the old loop's
+-- inflight count (the inflight arg, or land:<repo>:<base>:inflight as a string,
+-- set or zset) is nonzero. Rollback to old-loop is REFUSED (REFUSED pub <batch>) while
+-- land:<repo>:<base>:pub:active names an intent not yet resolved (state other than dead),
+-- per 10.2 "bumps gen after resolving any pub:* by 7.2": ns_pub_state dead or ns_land
+-- clears it first.
 redis.register_function('ns_writer', function(keys, args)
-  local repo, base, to_owner, by = args[1], args[2], args[3], args[4]
+  local repo, base, to_owner, by, inflight_arg = args[1], args[2], args[3], args[4], args[5]
+  if not repo or repo == '' or not base or base == '' then
+    return redis.error_reply('ns_writer: repo and base are required')
+  end
   local wkey = 'land:' .. repo .. ':' .. base .. ':writer'
+  if not to_owner or to_owner == '' or to_owner == 'get' then
+    local cur = redis.call('HMGET', wkey, 'gen', 'owner', 'since', 'by')
+    return { 'OK', cur[1] or '0', cur[2] or 'old-loop', cur[3] or '', cur[4] or '' }
+  end
+  if to_owner ~= 'old-loop' and to_owner ~= 'nova-sprint' then
+    return { 'INVALID', 'owner must be old-loop or nova-sprint' }
+  end
+  if to_owner == 'nova-sprint' then
+    if inflight_arg and inflight_arg ~= '' then
+      local inf = tonumber(inflight_arg) or 0
+      if inf > 0 then
+        return { 'REFUSED', 'inflight', tostring(inf) }
+      end
+    end
+    local ikey = 'land:' .. repo .. ':' .. base .. ':inflight'
+    local ktype = redis.call('TYPE', ikey)['ok']
+    local inf = 0
+    if ktype == 'string' then
+      inf = tonumber(redis.call('GET', ikey)) or 0
+    elseif ktype == 'set' then
+      inf = redis.call('SCARD', ikey)
+    elseif ktype == 'zset' then
+      inf = redis.call('ZCARD', ikey)
+    end
+    if inf > 0 then
+      return { 'REFUSED', 'inflight', tostring(inf) }
+    end
+  end
+  if to_owner == 'old-loop' then
+    local active_pub = redis.call('GET', 'land:' .. repo .. ':' .. base .. ':pub:active')
+    if active_pub and active_pub ~= '' then
+      local ap_st = redis.call('HGET', 'land:' .. repo .. ':' .. base .. ':pub:' .. active_pub, 'state')
+      if ap_st ~= 'dead' then
+        return { 'REFUSED', 'pub', active_pub }
+      end
+    end
+  end
   local gen = redis.call('INCR', 'land:' .. repo .. ':' .. base .. ':writer:seq')
   local now = land_now_ms()
   redis.call('HSET', wkey,
@@ -339,7 +388,13 @@ redis.register_function('ns_writer', function(keys, args)
     'since', tostring(now),
     'by', by or ''
   )
-  return { 'OK', tostring(gen) }
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'WRITER',
+    'gen', tostring(gen),
+    'owner', to_owner,
+    'by', by or '',
+    'at', tostring(now))
+  return { 'OK', tostring(gen), to_owner, tostring(now), by or '' }
 end)
 
 -- land_storage_split: the five storage-split paths under docs/roadmaps/ (4.1, amendment 5802461060).

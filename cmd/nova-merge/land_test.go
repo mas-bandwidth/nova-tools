@@ -3,13 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/redis/go-redis/v9"
 )
 
 // `land` IS THE ONE CALLER OF THE ONE DOOR (Glenn, 2026-09-18: nothing reaches the dev
@@ -43,14 +49,56 @@ func (f *fakeLandEnqueue) EnqueuePullRequest(ctx context.Context, id string, jum
 
 // landDeps hands the verb a fake lane host and a fake queue edge, and records neither
 // timeout nor repo beyond what the test asserts.
+//
+// Every land reads the writer fence (#3139 B0) from the normal configuration when --redis
+// is absent, so these deps name one package-wide empty store as NOVA_REDIS_ADDR: a missing
+// writer key is the initial old-loop owner, and the land tests that are not about the fence
+// land as before.
 func landDeps(h *merge.FakeHost, q *fakeLandEnqueue) Deps {
+	return landDepsEnv(h, q, landTestEnv)
+}
+
+// landTestEnv is the environment land tests run in: NOVA_REDIS_ADDR names sharedLandStore.
+func landTestEnv(name string) string {
+	if name == "NOVA_REDIS_ADDR" {
+		return sharedLandStore()
+	}
+	return ""
+}
+
+func landDepsEnv(h *merge.FakeHost, q *fakeLandEnqueue, getenv func(string) string) Deps {
 	return Deps{
 		NewHost:        func(repo string, timeout time.Duration) merge.Host { return h },
 		NewEnqueueHost: func(repo string, timeout time.Duration) merge.EnqueueHost { return q },
+		Getenv:         getenv,
 	}
 }
 
+var (
+	landStoreOnce sync.Once
+	landStoreAddr string
+)
+
+// sharedLandStore is one miniredis for the package's land tests. Nothing writes a writer
+// key to it, so it answers every fence read with the initial owner.
+func sharedLandStore() string {
+	landStoreOnce.Do(func() {
+		m, err := miniredis.Run()
+		if err != nil {
+			panic(err)
+		}
+		landStoreAddr = m.Addr()
+	})
+	return landStoreAddr
+}
+
 func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string) (int, string, string) {
+	t.Helper()
+	return runLandWith(t, landDeps(h, q), args...)
+}
+
+// runLandWith is runLand with the caller's own deps (the environment the fence resolves from).
+func runLandWith(t *testing.T, deps Deps, args ...string) (int, string, string) {
 	t.Helper()
 	effective := append([]string(nil), args...)
 	hasReviewers := false
@@ -77,7 +125,7 @@ func runLand(t *testing.T, h *merge.FakeHost, q *fakeLandEnqueue, args ...string
 		effective = append(effective, "--lane", t.TempDir())
 	}
 	var out, errb bytes.Buffer
-	exit := run(effective, &out, &errb, landDeps(h, q))
+	exit := run(effective, &out, &errb, deps)
 	return exit, out.String(), errb.String()
 }
 
@@ -306,6 +354,7 @@ func TestLandReadsCIRecordThenFallsBackToGitHub(t *testing.T) {
 			deps := Deps{
 				NewHost:        func(repo string, timeout time.Duration) merge.Host { return host },
 				NewEnqueueHost: func(repo string, timeout time.Duration) merge.EnqueueHost { return q },
+				Getenv:         landTestEnv,
 			}
 			var out, errb bytes.Buffer
 			exit := run([]string{"land", "--repo", "o/n", "--pr", "1341", "--receipt", receipt,
@@ -320,5 +369,173 @@ func TestLandReadsCIRecordThenFallsBackToGitHub(t *testing.T) {
 				contains(t, errb.String(), tc.stderrHas)
 			}
 		})
+	}
+}
+
+// TestL30 is the Section 10.2 / 11 control: after cutover the old loop's
+// nova-merge land is refused with dev unchanged; after rollback the new
+// publisher's intent is refused (two writers on one base).
+func TestL30(t *testing.T) {
+	addr := testutil.Start(t)
+	ctx := context.Background()
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatalf("load nova_sprint functions: %v", err)
+	}
+
+	repo := "mas-bandwidth/nova-tools"
+	head := strings.Repeat("e", 40)
+	base := strings.Repeat("d", 40)
+	receipt := "BATCH OK name=integration-6 base=" + base + " head=" + head + " members=1341 dropped=none"
+
+	fake := greenBatchPR(t, 1341, head)
+	q := &fakeLandEnqueue{}
+
+	// 1. Before cutover (no writer key or owner=old-loop): land succeeds and enqueues.
+	exit, out, errb := runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 0 {
+		t.Fatalf("land before cutover: exit=%d out=%q err=%q", exit, out, errb)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued before cutover, got %d", len(q.enqueued))
+	}
+
+	// 2. Cutover to nova-sprint: calls ns_writer (args repo, base, to, by; the
+	// one writer B1's land.CallWriter also calls).
+	res, err := client.FCall(ctx, "ns_writer", nil, repo, "dev", "nova-sprint", "stella").Slice()
+	if err != nil {
+		t.Fatalf("ns_writer cutover: %v", err)
+	}
+	if len(res) < 3 || res[0] != "OK" || res[1] != "1" || res[2] != "nova-sprint" {
+		t.Fatalf("unexpected cutover reply: %v", res)
+	}
+
+	// 3. After cutover: nova-merge land is REFUSED with exit 1 and dev unchanged.
+	exit, out, errb = runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 1 {
+		t.Fatalf("land after cutover: exit=%d (want 1) out=%q err=%q", exit, out, errb)
+	}
+	wantRefusal := "LAND REFUSED writer gen=1 owner=nova-sprint\n"
+	if errb != wantRefusal {
+		t.Fatalf("stderr got %q, want %q", errb, wantRefusal)
+	}
+	// dev unchanged: queue still has only the 1 pre-cutover enqueue
+	if len(q.enqueued) != 1 {
+		t.Fatalf("dev changed after cutover refusal: enqueued count=%d (want 1)", len(q.enqueued))
+	}
+
+	// 3a. #3485 hold item 1: --redis omitted is the normal invocation, and the fence is
+	// read from the normal configuration (NOVA_REDIS_ADDR), so it still refuses.
+	envStore := func(name string) string {
+		if name == "NOVA_REDIS_ADDR" {
+			return addr
+		}
+		return ""
+	}
+	exit, out, errb = runLandWith(t, landDepsEnv(fake, q, envStore), "land", "--repo", repo, "--pr", "1341", "--receipt", receipt)
+	if exit != 1 || errb != wantRefusal {
+		t.Fatalf("land with --redis omitted after cutover: exit=%d (want 1) out=%q err=%q", exit, out, errb)
+	}
+	// 3b. Omitted store: no --redis and no configuration refuses without writes.
+	noStore := func(string) string { return "" }
+	exit, out, errb = runLandWith(t, landDepsEnv(fake, q, noStore), "land", "--repo", repo, "--pr", "1341", "--receipt", receipt)
+	if exit != 1 || !strings.HasPrefix(errb, "LAND REFUSED writer unresolved: ") {
+		t.Fatalf("land with no store configured: exit=%d (want 1) out=%q err=%q", exit, out, errb)
+	}
+	// 3c. #3485 hold item 2, unavailable store: a store that refuses the connection is a
+	// failed read, never the initial owner.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadAddr := ln.Addr().String()
+	_ = ln.Close()
+	exit, out, errb = runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", deadAddr)
+	if exit != 1 || !strings.HasPrefix(errb, "LAND REFUSED writer unreadable addr="+deadAddr+": ") {
+		t.Fatalf("land with the store down: exit=%d (want 1) out=%q err=%q", exit, out, errb)
+	}
+	// 3d. A failed read of a key that exists (WRONGTYPE) refuses the same way.
+	wrongRepo := "mas-bandwidth/wrongtype"
+	if err := client.Set(ctx, "land:"+wrongRepo+":dev:writer", "old-loop", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	exit, out, errb = runLand(t, fake, q, "land", "--repo", wrongRepo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 1 || !strings.HasPrefix(errb, "LAND REFUSED writer unreadable addr="+addr+": ") || !strings.Contains(errb, "WRONGTYPE") {
+		t.Fatalf("land with a WRONGTYPE writer key: exit=%d (want 1) out=%q err=%q", exit, out, errb)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("a refused fence read enqueued: count=%d (want 1)", len(q.enqueued))
+	}
+
+	// 3e. The new publisher holds a gen-1 lease; its intent passes the writer and lease
+	// checks (it stops later, on the batch that does not exist).
+	leaseKey := "land:" + repo + ":dev:lease"
+	lease := "1:nova-sprint"
+	if err := client.Set(ctx, leaseKey, lease, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	intent, err := client.FCall(ctx, "ns_land_intent", nil, "S", repo, "dev", "b9", lease).Slice()
+	if err != nil {
+		t.Fatalf("ns_land_intent before rollback: %v", err)
+	}
+	if len(intent) < 2 || intent[0] != "REFUSED" || intent[1] != "batch not green" {
+		t.Fatalf("ns_land_intent before rollback: got %v, want the writer and lease checks passed", intent)
+	}
+
+	// 3f. #3485 hold item 3 (#3139 10.2): rollback is refused while pub:active names an
+	// unresolved intent, and the generation does not move.
+	if err := client.Set(ctx, "land:"+repo+":dev:pub:active", "b1", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, "land:"+repo+":dev:pub:b1", "state", "intent").Err(); err != nil {
+		t.Fatal(err)
+	}
+	res, err = client.FCall(ctx, "ns_writer", nil, repo, "dev", "old-loop", "emma").Slice()
+	if err != nil {
+		t.Fatalf("ns_writer rollback with an unresolved intent: %v", err)
+	}
+	if len(res) < 3 || res[0] != "REFUSED" || res[1] != "pub" || res[2] != "b1" {
+		t.Fatalf("rollback with an unresolved intent: got %v, want REFUSED pub b1", res)
+	}
+	if owner, _ := client.HGet(ctx, "land:"+repo+":dev:writer", "owner").Result(); owner != "nova-sprint" {
+		t.Fatalf("refused rollback moved the owner to %q", owner)
+	}
+	if err := client.FCall(ctx, "ns_pub_state", nil, repo, "dev", "b1", "dead").Err(); err != nil {
+		t.Fatalf("ns_pub_state dead: %v", err)
+	}
+
+	// 4. Rollback to old-loop: calls ns_writer
+	res, err = client.FCall(ctx, "ns_writer", nil, repo, "dev", "old-loop", "emma").Slice()
+	if err != nil {
+		t.Fatalf("ns_writer rollback: %v", err)
+	}
+	if len(res) < 3 || res[0] != "OK" || res[1] != "2" || res[2] != "old-loop" {
+		t.Fatalf("unexpected rollback reply: %v", res)
+	}
+
+	// 4a. #3485 hold item 4, the second half of the L30 row: after rollback the new
+	// publisher's intent under its gen-1 lease is refused (two writers on one base).
+	intent, err = client.FCall(ctx, "ns_land_intent", nil, "S", repo, "dev", "b9", lease).Slice()
+	if err != nil {
+		t.Fatalf("ns_land_intent after rollback: %v", err)
+	}
+	if len(intent) < 2 || intent[0] != "REFUSED" || intent[1] != "writer owner not nova-sprint" {
+		t.Fatalf("ns_land_intent after rollback: got %v, want REFUSED writer owner not nova-sprint", intent)
+	}
+
+	// 5. After rollback: nova-merge land succeeds again.
+	exit, out, errb = runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 0 {
+		t.Fatalf("land after rollback: exit=%d out=%q err=%q", exit, out, errb)
+	}
+	if len(q.enqueued) != 2 {
+		t.Fatalf("expected 2 enqueued after rollback, got %d", len(q.enqueued))
 	}
 }

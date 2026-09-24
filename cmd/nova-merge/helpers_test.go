@@ -451,6 +451,9 @@ func (l *lab) deps() Deps {
 		// hands it a miniredis of its own -- and the forge is the fake.
 		BatchGate: labBatchGate(),
 		Dial:      func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		// land's writer fence (#3139 B0) resolves the package's empty store: the initial
+		// old-loop owner.
+		Getenv: landTestEnv,
 		Forge: func(string, string, time.Duration) ci.Forge {
 			return &reactFakeForge{}
 		},

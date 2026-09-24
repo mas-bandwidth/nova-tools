@@ -300,8 +300,12 @@ type Deps struct {
 	// Dial and Forge are the react verb's two edges: the pub/sub instance it subscribes
 	// to, and the forge it asks which PRs a base move made DIRTY. They are injected so a
 	// test drives a miniredis and a fake forge and reaches no network.
-	Dial  func(addr string) *redis.Client
-	Forge func(repo, base string, timeout time.Duration) ci.Forge
+	Dial func(addr string) *redis.Client
+	// Getenv is the environment land resolves the writer store's address from when --redis
+	// is absent (#3139 B0). production() sets it; nil is no environment, and a test passes
+	// its own.
+	Getenv func(string) string
+	Forge  func(repo, base string, timeout time.Duration) ci.Forge
 	// TestTree runs the package test the repository names for the fold's scratch tree
 	// (docs/SPEC-MERGE.md "The fold (#1142)"): lisp/nova-work/run-tests.sh for a
 	// nova-work fold, go test for Go. TestLayout runs the layout test of #560 after it.
@@ -350,6 +354,7 @@ func production() Deps {
 		Launcher: merge.BenchLauncher{},
 		BuildID:  buildID,
 		Dial:     func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		Getenv:   os.Getenv, // the writer store's address for land (#3139 B0), never a path
 		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
 			return ci.NewGHForge(repo, base, timeout)
 		},

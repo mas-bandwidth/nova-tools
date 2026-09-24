@@ -1800,7 +1800,7 @@ serialize runtimes.
 ### land
 
 ```
-nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>] [--loop <duration>] [--allowed-red <check>[,<check>...]] [--friends <names>]
+nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>] [--loop <duration>] [--allowed-red <check>[,<check>...]] [--friends <names>] [--redis <addr>]
 ```
 
 `land` is the ONE caller of the one door that admits anything to a merge queue. `batch`
@@ -1823,6 +1823,17 @@ The hold flags are `batch`'s, with the same meanings and the same refusals: exac
 required under `--reviewers` and may not be the literal `none`, and
 `--untyped-comments ignore` demands its own `--reason`. `--receipt` and `--receipt-file` are
 two spellings of one receipt and giving both is exit 2.
+
+Every `land` reads the lander's writer generation (#3139 B0) before any write, from
+`--redis <addr>`, else `NOVA_REDIS_ADDR`, else `NOVA_REDIS_HOST:NOVA_REDIS_PORT`. With no
+address it refuses with `LAND REFUSED writer unresolved` and exit 1; a read that fails
+(store down, NOPERM, WRONGTYPE) refuses with `LAND REFUSED writer unreadable`. A missing
+`land:<repo>:<base>:writer` is the initial owner, `old-loop`; when it names any other
+owner, the old loop no longer writes, and `land` refuses with
+`LAND REFUSED writer gen=<g> owner=<owner>` and exit 1.
+`nova-sprint land writer --repo <r> --base <b> [--to old-loop|nova-sprint]` reads or moves
+that generation through `ns_writer`, its one writer; rollback to `old-loop` is refused
+(`REFUSED pub=<batch>`) while an intent in `pub:active` is unresolved.
 
 ```
 LAND OK      pr=<n> head=<sha> branch=<ref> checks=<required|waived> members=<list> jump=<true|false>
