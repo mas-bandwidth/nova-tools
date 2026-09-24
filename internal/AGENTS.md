@@ -4,6 +4,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
+| `adoption/` | evidence-based tool and verb adoption ledger | `go test ./internal/adoption` | `go test ./internal/adoption` |
 | `benchcount/` | per-bench landed and useful counts | `go test ./internal/benchcount` | `go test ./internal/benchcount` |
 | `board/` | board structures and view rendering | `go test ./internal/board` | `go test ./internal/board` |
 | `bounded/` | bounded readers and byte buffers | `go test ./internal/bounded` | `go test ./internal/bounded` |
@@ -13,17 +14,23 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `chat/` | friend conversation protocol | `go test ./internal/chat` | `go test ./internal/chat` |
 | `check/` | hygiene rules and tree checkers | `go test ./internal/check` | `go test ./internal/check` |
 | `ci/` | class tests and CI budget invariants | `go test ./internal/ci` | `go test ./internal/ci` |
+| `civerdict/` | reader of a commit's CI verdict record | `go test ./internal/civerdict` | `go test ./internal/civerdict` |
+| `control/` | fleet control desired state, lock, and acks | `go test ./internal/control` | `go test ./internal/control` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
+| `deal/` | the dealer's rule for every work consumer | `go test ./internal/deal` | `go test ./internal/deal` |
 | `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
 | `dispatch/` | command dispatch and runner interface | `go test ./internal/dispatch` | `go test ./internal/dispatch` |
 | `docs/` | documentation guards and map generator | `go test ./internal/docs` | `go test ./internal/docs` |
 | `dogfood/` | dogfood self-test gates | `go test ./internal/dogfood` | `go test ./internal/dogfood` |
 | `events/` | card event stream and SQLite fold | `go test ./internal/events` | `go test ./internal/events` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
+| `fleetkube/` | Kubernetes fleet model: labels, jobs, volumes | `go test ./internal/fleetkube` | `go test ./internal/fleetkube` |
 | `friendqueue/` | friend queue reader over dealer streams | `go test ./internal/friendqueue` | `go test ./internal/friendqueue` |
 | `friendread/` | per-friend read done counts | `go test ./internal/friendread` | `go test ./internal/friendread` |
+| `friendrow/` | one friend's sprint-table row from its beat | `go test ./internal/friendrow` | `go test ./internal/friendrow` |
 | `friends/` | friend registry and signatures | `go test ./internal/friends` | `go test ./internal/friends` |
 | `fuse/` | workspace isolation boundaries | `go test ./internal/fuse` | `go test ./internal/fuse` |
+| `ghcapture/` | read-only GitHub issue adapter for nova-work | `go test ./internal/ghcapture/...` | `go test ./internal/ghcapture/...` |
 | `ghevent/` | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
 | `harvest/` | card result harvester and aggregation | `go test ./internal/harvest` | `go test ./internal/harvest` |
@@ -36,6 +43,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `log/` | structured logging helpers | `go test ./internal/log` | `go test ./internal/log` |
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
 | `merge/` | batch merge queue and land operations | `go test ./internal/merge` | `go test ./internal/merge` |
+| `metrics/` | Prometheus surface shared by the queue verbs | `go test ./internal/metrics/...` | `go test ./internal/metrics/...` |
 | `nsprint/` | nova-sprint dealer, store, fold, and table | `go test ./internal/nsprint/...` | `go test ./internal/nsprint/...` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
@@ -50,17 +58,23 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `redisq/` | Redis transport queue | `go test ./internal/redisq` | `go test ./internal/redisq` |
 | `release/` | release packaging and manifest gates | `go test ./internal/release` | `go test ./internal/release` |
 | `review/` | peer review verdict parser and evaluator | `go test ./internal/review` | `go test ./internal/review` |
+| `roadmap/` | roadmap epics, features, and criteria parser | `go test ./internal/roadmap` | `go test ./internal/roadmap` |
 | `safepath/` | path sanitization and sandboxing | `go test ./internal/safepath` | `go test ./internal/safepath` |
 | `sandbox/` | OS isolation primitives (seatbelt/landlock) | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
 | `secrets/` | zero-leak memory and file vault | `go test ./internal/secrets` | `go test ./internal/secrets` |
 | `selftalk/` | agent self-talk journal stream | `go test ./internal/selftalk` | `go test ./internal/selftalk` |
 | `specwork/` | worklang spec compliance checks | `go test ./internal/specwork` | `go test ./internal/specwork` |
+| `sprint/` | sprint progress, wall, router, and calibration | `go test ./internal/sprint` | `go test ./internal/sprint` |
 | `sprintci/` | CI pass as a card per PR head | `go test ./internal/sprintci` | `go test ./internal/sprintci` |
+| `sprintcol/` | one column of the unified sprint table | `go test ./internal/sprintcol` | `go test ./internal/sprintcol` |
+| `sprintline/` | sprint x/y z% -> eta line | `go test ./internal/sprintline` | `go test ./internal/sprintline` |
 | `sprinttable/` | sprint table publish and restart behaviour | `go test ./internal/sprinttable` | `go test ./internal/sprinttable` |
 | `swarm/` | swarm worker pool and execution engine | `go test ./internal/swarm` | `go test ./internal/swarm` |
+| `testbin/` | places a built program into a test dir | `go test ./internal/testbin` | `go test ./internal/testbin` |
 | `testguard/` | host seam and leak interception | `go test ./internal/testguard` | `go test ./internal/testguard` |
 | `tokens/` | token counter and budget tracker | `go test ./internal/tokens` | `go test ./internal/tokens` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
 | `wake/` | slot leases and heartbeat monitors | `go test ./internal/wake` | `go test ./internal/wake` |
 | `workclient/` | client bindings for nova-work daemon | `go test ./internal/workclient` | `go test ./internal/workclient` |
 | `worklang/` | worklang s-expression evaluator | `go test ./internal/worklang` | `go test ./internal/worklang` |
+| `workreconcile/` | GitHub issue import and work reconcile | `go test ./internal/workreconcile` | `go test ./internal/workreconcile` |

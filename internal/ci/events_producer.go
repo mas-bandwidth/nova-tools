@@ -3,10 +3,14 @@ package ci
 // events_producer.go is the producer half of "Events, not ticks": nova-work events. It
 // does two things and neither is a model call.
 //
-//  1. It reads the cards:done stream with the events consumer group and republishes each
-//     entry as card-done. A restart resumes at the group's cursor, so a card finished
+//  1. It reads the cards:done stream with the events consumer group and republishes a
+//     card's END as card-done. A restart resumes at the group's cursor, so a card finished
 //     while the bridge was down is not lost and one already published is not replayed to
-//     a fresh consumer.
+//     a fresh consumer. The stream carries every transition since #2563 -- queued, leased,
+//     a turn, a read, a decide event (#2623) -- and only an ok or a fail is a card that is
+//     done; every other entry is acked and NOT re-announced. An entry with no `event`
+//     field is one written before the field existed, by the card-end writer, and is
+//     announced as it always was.
 //  2. It polls gh on --gh-poll while webhooks are not wired here. The poll is the fallback
 //     heartbeat the principle allows: it publishes pr-checks-done only when a suite's
 //     conclusion changed, and dev-moved only when the base head moved. A quiet poll says
@@ -59,8 +63,8 @@ func NewProducer(rdb *redis.Client, forge Forge, consumer string, log io.Writer)
 		conclusions: map[int]string{}}
 }
 
-// PublishCardsDone reads the unclaimed entries of cards:done once and republishes each as
-// card-done, acking it after the publish. It returns how many it published.
+// PublishCardsDone reads the unclaimed entries of cards:done once and republishes each
+// card end as card-done, acking every entry it read. It returns how many it published.
 func (p *Producer) PublishCardsDone(ctx context.Context) (int, error) {
 	if err := p.ensureGroup(ctx); err != nil {
 		return 0, err
@@ -84,6 +88,14 @@ func (p *Producer) PublishCardsDone(ctx context.Context) (int, error) {
 	published := 0
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
+			if !cardEnded(msg.Values) {
+				// Not a card that is done: acked, so the group's pending list does not
+				// grow with every transition, and not announced.
+				if err := p.RDB.XAck(ctx, StreamCardsDone, GroupEvents, msg.ID).Err(); err != nil {
+					return published, fmt.Errorf("ack %s: %w", msg.ID, err)
+				}
+				continue
+			}
 			card := valueString(msg.Values["card"])
 			label := valueString(msg.Values["label"])
 			if card == "" {
@@ -100,6 +112,21 @@ func (p *Producer) PublishCardsDone(ctx context.Context) (int, error) {
 		}
 	}
 	return published, nil
+}
+
+// cardEnded reports whether one cards:done entry is a card's end: an `event` of ok or
+// fail, or no `event` at all (an entry from before the field, which only the card-end
+// writer wrote).
+func cardEnded(values map[string]interface{}) bool {
+	event, ok := values["event"]
+	if !ok {
+		return true
+	}
+	switch valueString(event) {
+	case "ok", "fail":
+		return true
+	}
+	return false
 }
 
 // ensureGroup creates the consumer group at the stream's end, once, tolerating the

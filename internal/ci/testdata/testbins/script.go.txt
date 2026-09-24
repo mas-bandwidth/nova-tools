@@ -1,0 +1,15 @@
+package fixture
+
+import (
+	"os"
+	"testing"
+)
+
+// A shell script written 0o755 is not the offender: the interpreter is the
+// executable, and the script's bytes are never assessed by the scanner.
+func TestFixtureWritesAShellScript(t *testing.T) {
+	script := []byte("#!/bin/sh\nexit 0\n")
+	if err := os.WriteFile("tool", script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -5,12 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
-	"github.com/redis/go-redis/v9"
 )
 
 // preflight is #2756 section 7: one line per check, GREEN or RED with its
@@ -45,7 +42,7 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	}
 	var problems []string
 	if *addr == "" {
-		problems = append(problems, "--redis <host:port> is required, the fleet Redis the sprint lives in; the password reaches this process as NOVA_REDIS_BENCH_PASSWORD")
+		problems = append(problems, "--redis <host:port> is required, the fleet Redis the sprint lives in; "+preflight.SeatHint)
 	}
 	if fs.NArg() > 0 {
 		problems = append(problems, "takes flags, not positional arguments")
@@ -53,10 +50,12 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 	if len(problems) > 0 {
 		return refuse(stderr, "preflight", strings.Join(problems, "; "))
 	}
-	client := redis.NewClient(&redis.Options{
-		Addr: *addr, Password: os.Getenv("NOVA_REDIS_BENCH_PASSWORD"),
-		DialTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, MaxRetries: -1,
-	})
+	// #3320: one auth path. preflight opens through store.Open like every
+	// other verb, as the seat NOVA_SPRINT_REDIS_USER names.
+	client, err := preflight.Open(ctx, *addr)
+	if err != nil {
+		return refuse(stderr, "preflight", err.Error())
+	}
 	defer client.Close()
 	lines := preflight.StoreChecks(ctx, client, preflight.Options{
 		Sprint: *sprint, PolicyFile: *policy, UnitEnv: unitEnv,

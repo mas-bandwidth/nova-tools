@@ -174,3 +174,255 @@
                                    :priced-p nil)))
       (ok (absentp (getf unknown :measured-cash))
           "an unsupported cash dimension was reported as zero"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE03F02SupportAddMetadataEditMove          SPEC-WORK.md:2928
+;;;
+;;; nova-work acceptance criterion E03-F02-01: "Support add, metadata
+;;; edit, move/reparent, decompose, link/unlink and retire". This test
+;;; pins the operations the slice-1 kernel already provides — add
+;;; (`node-add`), permitted-metadata edit and link/unlink (`node-edit`),
+;;; move/reparent (`node-move`) and retire (`node-remove`). It names the
+;;; SPEC-WORK "work structure" row (docs/SPEC-WORK.md:2928). `decompose`
+;;; (the `--into` split verb) is not yet present in this slice and is
+;;; pinned separately by replays-8651's reversibility registry, so it is
+;;; outside this test's scope.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE03F02SupportAddMetadataEditMove" "docs/SPEC-WORK.md:2928"
+    "expected=add=ok,edit=ok,link=ok,unlink=ok,move=ok,retire=ok"
+  (let ((k (fresh)))
+    ;; add: a new feature is admitted under the work set.
+    (multiple-value-bind (okp line)
+        (node-add k :id "acme/work/f3" :type :feature :parent "acme/work")
+      (ok okp "add refused: ~A" line))
+    (check-equal :feature (node-type (kernel-state k) "acme/work/f3")
+                 "the added feature's type")
+    ;; metadata edit: title and a link are permitted fields.
+    (multiple-value-bind (okp line)
+        (node-edit k "acme/work/f3"
+                   :changes (list :title "F3"
+                                  :links (list "https://example.com/i1"))
+                   :request "edit-1")
+      (ok okp "metadata edit refused: ~A" line))
+    (check-string= "F3"
+                   (getf (node-metadata (kernel-state k) "acme/work/f3") :title)
+                   "the edited title")
+    (check-equal '("https://example.com/i1")
+                 (getf (node-metadata (kernel-state k) "acme/work/f3") :links)
+                 "the added link")
+    ;; unlink: links are a permitted metadata patch, cleared in place.
+    (multiple-value-bind (okp line)
+        (node-edit k "acme/work/f3" :changes (list :links :clear) :request "edit-2")
+      (ok okp "unlink refused: ~A" line))
+    (check-equal '() (getf (node-metadata (kernel-state k) "acme/work/f3") :links)
+                 "the cleared links")
+    ;; move/reparent: the task's containment edge moves from f1 to f2.
+    (multiple-value-bind (okp line)
+        (node-move k :id "acme/work/f1/t1" :from "acme/work/f1" :under "acme/work/f2"
+                   :request "move-1")
+      (ok okp "move refused: ~A" line))
+    (check-string= "acme/work/f2"
+                   (node-parent (kernel-state k) "acme/work/f1/t1")
+                   "the moved node's new parent")
+    (ok (member "acme/work/f1/t1"
+                (node-children (kernel-state k) "acme/work/f2") :test #'equal)
+        "the moved node is not listed under its new parent")
+    ;; retire: node removal settles the added feature out of O.
+    (multiple-value-bind (okp line) (node-remove k "acme/work/f3")
+      (ok okp "retire refused: ~A" line))
+    (check-equal :c (node-branch (kernel-state k) "acme/work/f3")
+                 "the retired node's branch")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F01PreserveBodyCommentsLabelsRelationships  SPEC-WORK.md:7067
+;;;
+;;; nova-work acceptance criterion E09-F01-02: "Preserve body, comments,
+;;; labels, relationships, attachments and pagination". This pins the
+;;; SPEC-WORK `source-inventory` suite row (docs/SPEC-WORK.md:7067):
+;;; "open and closed issues, comments, identities, labels, relationships,
+;;; attachments and pagination; every captured source record maps to a
+;;; preserved original plus a normalised mapping, or to an explicit
+;;; unresolved entry". The slice-1 capture layer preserves each observed
+;;; field through `capture-observe` (body, comments, labels, relationships
+;;; and attachments are recorded as versioned observations, never dropped
+;;; by a later one) and retains every paginated record through
+;;; `inventory-record` / `reconcile-inventory` (equal record counts across
+;;; pages reconcile; none is lost).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F01PreserveBodyCommentsLabelsRelationships" "docs/SPEC-WORK.md:7067"
+    "expected=body=preserved,comments=preserved,labels=preserved,relationships=preserved,attachments=preserved,pagination=all-pages-reconcile"
+  (let ((cap (make-source-capture :source-revision 1)))
+    (capture-observe cap "i1" :body "issue body text" :revision 1)
+    (capture-observe cap "i1" :comments '("first" "second") :revision 1)
+    (capture-observe cap "i1" :labels '("bug" "p1") :revision 1)
+    (capture-observe cap "i1" :relationships '("related#42" "blocked-by#7") :revision 1)
+    (capture-observe cap "i1" :attachments '("shot.png") :revision 1)
+    ;; body: the captured body is preserved, never replaced by an empty cell.
+    (check-string= "issue body text"
+                   (source-version-value (first (capture-versions cap "i1" :body)))
+                   "the issue body was not preserved")
+    (check-equal '("first" "second")
+                 (source-version-value (first (capture-versions cap "i1" :comments)))
+                 "the comments were not preserved")
+    (check-equal '("bug" "p1")
+                 (source-version-value (first (capture-versions cap "i1" :labels)))
+                 "the labels were not preserved")
+    (check-equal '("related#42" "blocked-by#7")
+                 (source-version-value (first (capture-versions cap "i1" :relationships)))
+                 "the relationships were not preserved")
+    (check-equal '("shot.png")
+                 (source-version-value (first (capture-versions cap "i1" :attachments)))
+                 "the attachments were not preserved"))
+  ;; pagination: records captured across pages are all retained and reconcile.
+  (let* ((paginated (list (inventory-record "issue-1" :issue
+                                            :original "{\"number\":1}"
+                                            :mapping "acme/work/f1")
+                          (inventory-record "comment-1" :comment
+                                            :original "{\"body\":\"hi\"}"
+                                            :mapping "acme/work/f1#c1")
+                          (inventory-record "attach-1" :attachment
+                                            :original "{\"name\":\"shot.png\"}"
+                                            :mapping "acme/work/f1#a1")))
+         (recaptured (copy-tree paginated)))
+    (check-equal 3 (length paginated) "the paginated records were dropped")
+    (multiple-value-bind (okp line) (reconcile-inventory paginated recaptured)
+      (ok okp "a paginated inventory does not reconcile against itself: ~A" line))))
+
+;;; TestE09F02MapOneIssueToMany                 SPEC-WORK.md:7570-7572
+;;; E09-F02 "Link mode and correspondence reconciliation", criterion
+;;; E09-F02-01 "Map one issue to many nodes and repeated updates without
+;;; duplicates": one public issue may require many work nodes, and a repeated
+;;; intake updates the existing correspondence, never duplicating the work.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F02MapOneIssueToMany" "docs/SPEC-WORK.md:7570-7572"
+    "expected=one-issue=many-nodes,repeated-intake=no-duplicates"
+  (let* ((c0 (make-issue-correspondence))
+         (c1 (record-issue-link c0 "acme/work#11" "acme/work/f1/t1"
+                                :url "https://github.com/acme/work/issues/11"
+                                :revision "r1"))
+         (c2 (record-issue-link c1 "acme/work#11" "acme/work/f1/t2"
+                                :url "https://github.com/acme/work/issues/11"
+                                :revision "r2"))
+         (c3 (record-issue-link c2 "acme/work#11" "acme/work/f1/t3")))
+    ;; One public issue maps to many work nodes, in the order they were linked.
+    (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3")
+                 (correspondence-nodes c3 "acme/work#11")
+                 "one issue did not map to its many work nodes")
+    ;; A repeated intake of an already-linked node updates the existing
+    ;; correspondence rather than appending a second instance of the work.
+    (let ((c4 (record-issue-link c3 "acme/work#11" "acme/work/f1/t2")))
+      (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3")
+                   (correspondence-nodes c4 "acme/work#11")
+                   "a repeated intake duplicated a work node")
+      ;; The existing correspondence keeps its last observed remote revision.
+      (check-string= "r2" (correspondence-revision c4 "acme/work#11")
+                     "the correspondence lost the observed remote revision")
+      ;; A repeated intake of a new node extends the mapping without duplicates.
+      (let ((c5 (record-issue-link c4 "acme/work#11" "acme/work/f1/t4")))
+        (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3"
+                       "acme/work/f1/t4")
+                     (correspondence-nodes c5 "acme/work#11")
+                     "an extended intake did not add the new node once")
+        ;; A second issue keeps its own distinct correspondence without
+        ;; disturbing the first issue's nodes.
+        (let ((c6 (record-issue-link c5 "acme/work#12" "acme/work/f2/t1")))
+          (check-equal '("acme/work/f2/t1") (correspondence-nodes c6 "acme/work#12")
+                       "a second issue did not get its own correspondence")
+          (check-equal '("acme/work/f1/t1" "acme/work/f1/t2" "acme/work/f1/t3"
+                         "acme/work/f1/t4")
+                       (correspondence-nodes c6 "acme/work#11")
+                       "a second issue disturbed the first issue's nodes"))))))
+
+;;; E10-F07-03  session start --repair only when findings strictly
+;;; decrease                                  (SPEC-WORK.md:2430-2440)
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F07SupportSessionStartRepairOnly" "docs/SPEC-WORK.md:2430"
+    "expected=red-load-names-its-findings;source-unmodified;strict-decrease-admitted;otherwise-refused-with-no-repair"
+  ;; A red set under rule 18 (SPEC-WORK.md:5496): an id whose latest closed row
+  ;; settles it while its node still reads :o. One hand-written row = one
+  ;; finding; two rows over two still-open ids = two findings.
+  (let* ((red (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7))
+         (red-again (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7))
+         (redder (hand-write-closed-row
+                  (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7)
+                  "acme/work/f1/t2" 8))
+         (clean (make-seed-state *seed*)))
+    (ok (= 1 (length (cow-load-findings red))) "the red fixture is not red")
+    (multiple-value-bind (sess line code)
+        (session-start :repair t :state-seed red :owner "rowan" :base "tip")
+      (ok sess "session start --repair did not start a session: ~A" line)
+      ;; A red load under --repair still names its findings, and only a load
+      ;; with zero findings exits 0 (SPEC-WORK.md:2438).
+      (check-equal 1 (session-findings sess)
+                   "session start --repair did not name its loaded finding count")
+      (check-equal 1 code "a red --repair load did not exit 1")
+      (ok (search "findings=1" (session-status-line sess))
+          "the SESSION OK line does not carry findings=: ~A"
+          (session-status-line sess))
+      ;; The unmodified source: starting left the red state it was given alone.
+      (check-equal 1 (length (cow-load-findings red))
+                   "session start --repair rewrote the unmodified source")
+      ;; Repair admits a candidate only when its finding count strictly drops.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess clean :node "acme/work/f1/t1")
+        (ok admitted "a repair dropping findings to zero was refused: ~A" rline)
+        (check-equal 0 rcode "the admitted repair is not exit 0"))
+      ;; The same count is no repair: refused at exit 1 with the repair diff.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess red-again :node "acme/work/f1/t1")
+        (ok (not admitted) "a repair that keeps the finding count was admitted")
+        (check-equal 1 rcode "the refused non-decrease is not exit 1")
+        (ok (search "no repair" rline)
+            "the refusal is not the `no repair` line: ~A" rline)
+        (ok (search "findings=1" rline)
+            "the refusal does not name the candidate findings: ~A" rline)
+        (ok (search "was=1" rline)
+            "the refusal does not name the current findings: ~A" rline))
+      ;; A candidate that raises the count is refused too.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess redder :node "acme/work/f1/t2")
+        (ok (not admitted) "a repair that raises the finding count was admitted")
+        (check-equal 1 rcode "the refused increase is not exit 1")
+        (ok (search "no repair" rline)
+            "the refusal is not the `no repair` line: ~A" rline)))))
+
+(deftest "TestE10F07RepairSessionSubmitIsGated" "docs/SPEC-WORK.md:2430"
+    "expected=non-decrease-refused-through-submit;nothing-applied;decrease-admitted-through-submit;findings-updated"
+  ;; The gate is the session's mutation path, not a free function: a mutation
+  ;; submitted to a --repair session reaches O only when the candidate's
+  ;; finding count strictly drops (SPEC-WORK.md:2430-2440).
+  (let ((red (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7)))
+    (multiple-value-bind (sess line code)
+        (session-start :repair t :state-seed red :owner "rowan" :base "tip")
+      (declare (ignore code))
+      (ok sess "session start --repair did not start a session: ~A" line)
+      (let* ((k (session-kernel sess))
+             (history (length (state-history (kernel-state k)))))
+        ;; t2 moving to doing leaves t1's finding standing: no repair.
+        (multiple-value-bind (okp rline rcode)
+            (session-submit sess (list :verb :state-to-doing :node "acme/work/f1/t2"
+                                       :by "rowan" :reason "picked up" :evidence '("ev-1")
+                                       :request "repair-no-1" :stamp "2026-09-14T12:00:00Z"
+                                       :clock :tool :generation-owner "gen-4"))
+          (ok (not okp) "a mutation that keeps the finding count was admitted: ~A" rline)
+          (check-equal 1 rcode "the refused non-decrease is not exit 1")
+          (ok (and rline (search "no repair" rline))
+              "the refusal is not the `no repair` line: ~A" rline))
+        (check-equal history (length (state-history (kernel-state k)))
+                     "the refused mutation was applied to O")
+        (check-equal 1 (session-findings sess)
+                     "the refused mutation moved the finding count")
+        ;; Settling t1 takes it out of O: the one finding goes, so it is admitted.
+        (multiple-value-bind (okp rline rcode)
+            (session-submit sess (close-request :node "acme/work/f1/t1"
+                                                :request "repair-yes-1"))
+          (ok okp "a mutation that drops the finding count was refused: ~A" rline)
+          (check-equal 0 rcode "the admitted repair is not exit 0"))
+        (check-equal 0 (session-findings sess)
+                     "the admitted repair did not update the finding count")
+        (check-equal 0 (length (cow-load-findings (kernel-state k)))
+                     "the admitted repair did not reach O")))))

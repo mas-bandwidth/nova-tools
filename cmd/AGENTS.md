@@ -7,6 +7,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-board/` | board viewer and coordinator CLI | `go test ./cmd/nova-board` | `go test ./cmd/nova-board` |
 | `nova-bus/` | coordination bus inbox, send, and wait CLI | `go test ./cmd/nova-bus` | `go test ./cmd/nova-bus` |
 | `nova-cairn/` | dusk memory distillation CLI | `go test ./cmd/nova-cairn` | `go test ./cmd/nova-cairn` |
+| `nova-card/` | card wrapper owning one card attempt on a bench | `go test ./cmd/nova-card` | `go test ./cmd/nova-card` |
 | `nova-check/` | codebase hygiene and constraint check CLI | `go test ./cmd/nova-check` | `go test ./cmd/nova-check` |
 | `nova-ci/` | CI slowtests budget and check CLI | `go test ./cmd/nova-ci` | `go test ./cmd/nova-ci` |
 | `nova-decide/` | criteria evaluation and decision engine CLI | `go test ./cmd/nova-decide` | `go test ./cmd/nova-decide` |
@@ -22,6 +23,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-self-talk/` | internal dialogue recording CLI | `go test ./cmd/nova-self-talk` | `go test ./cmd/nova-self-talk` |
 | `nova-sprint/` | sprint dealer, table, and CI-card CLI | `go test ./cmd/nova-sprint` | `go test ./cmd/nova-sprint` |
 | `nova-swarm/` | multi-agent worker pool CLI | `go test ./cmd/nova-swarm` | `go test ./cmd/nova-swarm` |
+| `nova-test/` | validation-layer run store and status CLI | `go test ./cmd/nova-test` | `go test ./cmd/nova-test` |
 | `nova-tokens/` | token consumption metering and budgeting CLI | `go test ./cmd/nova-tokens` | `go test ./cmd/nova-tokens` |
 | `nova-update/` | binary release update CLI | `go test ./cmd/nova-update` | `go test ./cmd/nova-update` |
 | `nova-version/` | build identity and version CLI | `go test ./cmd/nova-version` | `go test ./cmd/nova-version` |

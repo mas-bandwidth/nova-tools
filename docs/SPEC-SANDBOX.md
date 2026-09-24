@@ -160,6 +160,23 @@ near the end.
    nothing wider; a job that does not listen cannot be listened to.
    (`profiles/darwin-check.sh`, checks `unix_socket_outside`,
    `unix_socket_outside_control` and `unix_socket_inside`.)
+   **The loopback is opened by name with `--net-allow <host:port>`.** The
+   no-promise grant `(allow network-outbound (remote ip))` reaches remote IP
+   only, not `127.0.0.1`, so a job that must reach a keyless local provider
+   (ollama on `localhost`) dies silently without its host:port named.
+   `--net-allow` emits one `(allow network-outbound (remote ip "localhost:<p>"))`
+   per entry — the one port, nothing wider — and Build refuses an entry whose
+   host is not the machine's own loopback (`reason=bad_net` at exit 125) before
+   a profile is ever generated. THE FORM MATTERS: the nested
+   `(local ip (host "<h>") (port "<p>"))` this section named before is not SBPL
+   sandbox-exec accepts at all — measured on darwin 27.2, it aborts the whole
+   profile with `unbound variable: host` at exit 65, before the child ever
+   runs. `remote ip`'s own host slot additionally accepts only the literal
+   `localhost` or `*`, never a numeric address (`host must be * or localhost
+   in network address`), which is why the host is confirmed loopback in Build
+   and always written as the literal `localhost` here — measured,
+   `"localhost:<p>"` admits both a `127.0.0.1` and a `::1` listener on that
+   port.
    **One unix socket is granted by literal, and it is DNS.** macOS does not
    resolve names over IP from the process: it asks `mDNSResponder` over the
    unix socket `/private/var/run/mDNSResponder`, so IP-only outbound is a wall
@@ -455,9 +472,9 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
-nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
+nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
@@ -2017,9 +2034,10 @@ launcher that puts the flag on the argv is Rowan's.
 **TODO launcher: Rowan** — pass `--net-deny` on the `nova-sandbox` argv of a
 `MODE: script` card. Do not reuse `nativeSandboxArgv` as it stands. A dest
 grant, if one is ever named, is `(remote ip "localhost:PORT")` on darwin, the
-form Apple will load. Do not pin the #599 nested SBPL form
-`(local ip (host ..) (port ..))`. `sandbox-exec` is exit 65, unbound
-variable: host. `--net-allow` is not on origin/dev.
+form Apple will load — the same form `--net-allow` (issue #591, `--net-allow`
+section above) now emits. Do not pin the #599 nested SBPL form
+`(local ip (host ..) (port ..))`: `sandbox-exec` is exit 65, unbound
+variable: host; PR #599 replaced it with this form on rebase.
 
 The card-scope read set is declared writes (PATHS) plus dispatcher-approved
 contextual reads (SPEC-SWARM the harness wall). A directory glob may be a

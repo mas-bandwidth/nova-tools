@@ -78,8 +78,8 @@ func TestTheLogRowCarriesTheFloorSourceAndTheRead(t *testing.T) {
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &e); err != nil {
 		t.Fatal(err)
 	}
-	if e.FloorFrom != decide.FloorFromKind || e.Floor != 0.70 {
-		t.Errorf("floor %.2f from %q, want 0.70 from kind", e.Floor, e.FloorFrom)
+	if e.FloorFrom != decide.FloorFromKind || e.Floor == nil || *e.Floor != 0.70 {
+		t.Errorf("floor %v from %q, want 0.70 from kind", e.Floor, e.FloorFrom)
 	}
 	if e.Read != "johnny" {
 		t.Errorf("read = %q, want johnny: the row says who reads the work", e.Read)

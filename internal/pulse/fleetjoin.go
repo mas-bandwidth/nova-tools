@@ -1,6 +1,6 @@
 package pulse
 
-// `fleet join` is scripts/ts-join-one.sh as a verb: one bench joined to the tailnet.
+// `fleet join` is the retired ts-join-one.sh as a verb: one bench joined to the tailnet.
 //
 // The one rule this verb exists to keep is where the auth key may be. It reaches this
 // process ONLY through the environment variable named by --authkey-env, which

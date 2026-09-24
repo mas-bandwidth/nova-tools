@@ -147,6 +147,9 @@ type Refill struct {
 	Now func() time.Time
 	// AfterDeal, when set, sees every deal pass the duty ran and why.
 	AfterDeal func(Wake, deal.Result)
+	// WriteMargin is the lease time kept back from the bench sessions for the
+	// pass's fenced writes (#3322); DefaultWriteMargin when zero.
+	WriteMargin time.Duration
 
 	mu        sync.Mutex
 	instance  string              // the lease instance the state below belongs to
@@ -304,6 +307,11 @@ func (r *Refill) now() time.Time {
 func (r *Refill) pass(l *Lease) *deal.Pass {
 	p := *r.Deal
 	p.Fence = LeaseFence{l}
+	if p.Dialer != nil {
+		// Every bench session ends inside the lease, so a wedged sshd can
+		// neither fence the pass nor strand its reservations (#3322).
+		p.Dialer = LeaseBound{Dialer: p.Dialer, Lease: l, Margin: r.WriteMargin}
+	}
 	fns := &DealFunctions{Client: r.Client, Actor: r.actor()}
 	if p.Source == nil {
 		p.Source = deal.RedisSource{Client: r.Client}

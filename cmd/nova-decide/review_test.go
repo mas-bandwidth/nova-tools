@@ -90,7 +90,7 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%s stdout=%s (a BOUNCE exits 3)", code, errb.String(), out.String())
 	}
 	line := out.String()
-	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6 model=jev-latest cost=$- explain=") {
+	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6 model=jev-latest cost=$- explain=") {
 		t.Fatalf("stdout = %q", line)
 	}
 	if !strings.Contains(line, "checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6") {
@@ -104,16 +104,20 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 		t.Fatalf("the verdict was not appended to the ledger: %v", err)
 	}
 	var d struct {
+		Who      string  `json:"who"`
 		PR       int     `json:"pr"`
 		Verdict  string  `json:"verdict"`
 		Score    int     `json:"score"`
 		RawScore float64 `json:"raw_score"`
+		Conf     float64 `json:"conf"`
+		Rubric   string  `json:"rubric"`
+		Base     string  `json:"base"`
 		Posted   bool    `json:"posted"`
 	}
 	if err := json.Unmarshal(bytes.TrimSpace(raw), &d); err != nil {
 		t.Fatal(err)
 	}
-	if d.PR != 1488 || d.Verdict != "BOUNCE" || d.Score != 6 || d.Posted {
+	if d.Who != "jev" || d.PR != 1488 || d.Verdict != "BOUNCE" || d.Score != 6 || d.Conf != 0.21 || d.Rubric != "816c4381" || d.Base != "ok" || d.Posted {
 		t.Fatalf("ledger row = %+v", d)
 	}
 	if d.RawScore == 0 {
@@ -175,8 +179,8 @@ func TestReviewRefusals(t *testing.T) {
 		{"both pr and batch", []string{"review", "--repo", "a/b", "--pr", "1", "--batch", "x"}, "exactly one"},
 		{"post and dry-run", []string{"review", "--repo", "a/b", "--pr", "1", "--post", "--dry-run"}, "two halves"},
 		{"card with batch", []string{"review", "--repo", "a/b", "--batch", "x", "--card", "c"}, "--card"},
-		{"redis ledger", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "redis"}, "#2563"},
-		{"unknown ledger", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "postgres"}, "file or redis"},
+		{"redis ledger without a store", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "redis", "--store", ""}, "--store"},
+		{"unknown ledger", []string{"review", "--repo", "a/b", "--pr", "1", "--ledger", "postgres"}, "file, redis"},
 		{"stray argument", []string{"review", "--repo", "a/b", "--pr", "1", "extra"}, "unexpected argument"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,6 +318,80 @@ func TestReviewCIControlsReplayTheRecordedRollup(t *testing.T) {
 				if strings.Contains(out.String(), w) {
 					t.Errorf("stdout contains %q:\n%s", w, out.String())
 				}
+			}
+		})
+	}
+}
+
+// TestReviewBaseGatePinsBaseOutput verifies that base=ok|behind|conflict is printed
+// on the JEV line and recorded in the ledger based on PR merge status (#3394).
+func TestReviewBaseGate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is a shell script")
+	}
+	for _, tc := range []struct {
+		name      string
+		mergeable string
+		status    string
+		wantBase  string
+	}{
+		{"ok", "MERGEABLE", "CLEAN", "base=ok"},
+		{"behind", "MERGEABLE", "BEHIND", "base=behind"},
+		{"conflict", "CONFLICTING", "DIRTY", "base=conflict"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			viewJSON := fmt.Sprintf(`{"number":1488,"headRefOid":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","title":"t","body":"DONE\n","files":[],"mergeable":%q,"mergeStateStatus":%q}`, tc.mergeable, tc.status)
+			viewFile := filepath.Join(dir, "view.json")
+			if err := os.WriteFile(viewFile, []byte(viewJSON), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ghScript := filepath.Join(dir, "gh")
+			script := fmt.Sprintf(`#!/bin/sh
+case "$1" in
+  pr)
+    case "$2" in
+      view) cat %q ;;
+      diff) printf '' ;;
+      comment) exit 0 ;;
+      *) echo "unexpected pr $*" >&2; exit 2 ;;
+    esac
+    ;;
+  api)
+    printf '{"total_count":1,"check_runs":[{"name":"ci-ok","status":"completed","conclusion":"success","head_sha":"8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3","started_at":"2026-09-22T00:00:00Z","completed_at":"2026-09-22T00:00:01Z"}]}'
+    ;;
+  *) echo "unexpected $*" >&2; exit 2 ;;
+esac
+`, viewFile)
+			if err := os.WriteFile(ghScript, []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ledger := filepath.Join(dir, "ledger.jsonl")
+			var out, errb bytes.Buffer
+			_ = run([]string{"review", "--repo", "mas-bandwidth/schema", "--pr", "1488",
+				"--no-jev", "--gh", ghScript, "--ledger-path", ledger}, &out, &errb)
+
+			line := out.String()
+			if !strings.Contains(line, tc.wantBase) {
+				t.Errorf("stdout = %q, want it to contain %q (stderr %q)", line, tc.wantBase, errb.String())
+			}
+			raw, err := os.ReadFile(ledger)
+			if err != nil {
+				t.Fatalf("failed reading ledger: %v", err)
+			}
+			var row map[string]any
+			if err := json.Unmarshal(bytes.TrimSpace(raw), &row); err != nil {
+				t.Fatal(err)
+			}
+			wantBaseWord := strings.TrimPrefix(tc.wantBase, "base=")
+			if row["base"] != wantBaseWord {
+				t.Errorf("ledger base = %v, want %q", row["base"], wantBaseWord)
+			}
+			if row["who"] != "jev" {
+				t.Errorf("ledger who = %v, want jev", row["who"])
+			}
+			if row["rubric"] != "816c4381" {
+				t.Errorf("ledger rubric = %v, want 816c4381", row["rubric"])
 			}
 		})
 	}
