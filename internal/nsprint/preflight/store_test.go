@@ -3,9 +3,7 @@ package preflight
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +11,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -396,29 +395,12 @@ func TestStoreChecksPrintEveryCheckAndUnreachableIsRed(t *testing.T) {
 // Check 7.1 needs INFO and FUNCTION, which miniredis does not serve; it runs
 // against a throwaway redis-server as the store package's controls do.
 func TestPreflightRedisAndLibrary(t *testing.T) {
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable: %v", err)
-	}
 	ctx := context.Background()
 	for _, aof := range []string{"no", "yes"} {
-		l, _ := net.Listen("tcp", "127.0.0.1:0")
-		addr := l.Addr().String()
-		_ = l.Close()
-		dir := t.TempDir()
-		cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", strings.TrimPrefix(addr, "127.0.0.1:"),
-			"--save", "", "--appendonly", aof, "--dir", dir)
-		if err := cmd.Start(); err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+		// The helper starts with --appendonly no; a later argument wins.
+		addr := testutil.Start(t, "--appendonly", aof)
 		c := redis.NewClient(&redis.Options{Addr: addr})
 		t.Cleanup(func() { _ = c.Close() })
-		for deadline := time.Now().Add(30 * time.Second); c.Ping(ctx).Err() != nil; {
-			if time.Now().After(deadline) {
-				t.Fatal("throwaway redis did not start")
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
 		if aof == "no" {
 			if err := fn.Load(ctx, c); err != nil {
 				t.Fatal(err)

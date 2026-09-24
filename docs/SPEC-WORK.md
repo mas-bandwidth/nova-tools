@@ -1583,7 +1583,8 @@ these layouts. None of this relaxes the separate repository registration or acce
 
 **The move from O to C is an event, and the item's id, its history and its evidence move with
 it unchanged.** An item settles when its work has ended: a `:to :done` transition, a `:cancel`,
-a `:supersede` or the `:remove` of a `node remove`. The verb that writes that event writes one
+a `:supersede` or the `:remove` of a `node remove`. **An `event --kind cancel` settles the node
+into C with disposition `:cancelled`; it does not leave the node in O** (nova-tools #1594). The verb that writes that event writes one
 more in the same envelope — a **`:settle`** event carrying `:disposition` (`done`, `cancelled`,
 `superseded` or `removed`) and `:reason` — one journal record, all-or-none, one `OK` line, one
 request id, exactly as a structure verb's envelope already is. The `:settle` is the session's

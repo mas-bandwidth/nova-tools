@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // ---------------------------------------------------------------- the binaries
@@ -471,11 +472,11 @@ func headOf(checkout string) string {
 func (r reporter) wrapperOnPath(t *testing.T, boundary string) (dir, record string) {
 	t.Helper()
 	dir = t.TempDir()
-	self, err := os.ReadFile(os.Args[0])
+	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(dir, exeName("nova-bus")), self, 0700); err != nil {
+	if err = testbin.Place(self, filepath.Join(dir, exeName("nova-bus"))); err != nil {
 		t.Fatal(err)
 	}
 	record = filepath.Join(dir, "record")
