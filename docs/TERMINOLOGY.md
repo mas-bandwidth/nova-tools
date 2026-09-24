@@ -95,7 +95,7 @@ is available today.
   twice. ([SPEC-WORK.md, The resident session](SPEC-WORK.md#the-resident-session-stella-from-her-amendment-at-60b9027-governs-the-execution-model-where-it-says-more-than-the-section-above))
 - **lane** — nova-merge's ordered queue, a directory holding one state file, one
   clone, and the records of reads and gates. One lane, one merge per pass.
-  ([SPEC-MERGE.md, The lane](SPEC-MERGE.md#the-lane) · [SPEC-MERGE.md rule 20](SPEC-MERGE.md#the-rules-numbered))
+  ([SPEC-MERGE.md, Retired: the per-PR lander role](SPEC-MERGE.md#retired-the-per-pr-lander-role-2026-09-24) · [SPEC-MERGE.md rule 20](SPEC-MERGE.md#the-rules-numbered))
 - **LAUNCH** — the pulse verb that scatters: every card that can run now runs
   now, one slot each, one batch id, one deadline. ([SPEC-PULSE.md rule 10](SPEC-PULSE.md#the-rules-numbered))
 - **lease** — the ownership-of-execution record. One live lease per node; a

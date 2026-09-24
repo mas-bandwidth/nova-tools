@@ -1395,239 +1395,59 @@ mail*).
 
 ## nova-merge
 
-`nova-merge` lands an **ordered lane** of entries — pull requests, or branches
-with no pull request at all — onto one base branch, one at a time, and it refuses
-to land anything whose evidence it cannot name. Its contract is
-[docs/SPEC-MERGE.md](SPEC-MERGE.md), which is normative; this section is the
-door.
+`nova-merge` keeps the **evidence a stream lands on**: a typed read at a head, a
+local gate's verdict for a merge, a typed classification of a failed merge-group
+run, a batch gate that merges N heads onto a base and runs the tests, and a fold of
+branches onto a base into one out-branch. Its contract is
+[docs/SPEC-MERGE.md](SPEC-MERGE.md), which is normative; this section is the door.
 
-A lane in this shape landed 30-odd pull requests onto one base in a morning, and
-failed in every way a shell loop around `gh pr merge` fails. The tool is those
-failures closed, one rule each: `--auto` and every force-push refused in the one
-function that runs a mutating command; a merge that rests on **one predicate** —
-the newest gate record for `(the entry's head, the base sha read this pass)` being
-green, for an **integration commit this tool built and publishes unchanged**; a
-compare-and-swap push whose lease is the expected base, so a base that moved is
-`MERGE RACED` *before* anything lands; reads and gates as **immutable files in the
-lane's own branch**, so a reader on another machine records a verdict where every
-lane folds it; a conflict that is `BLOCKED` with its file list and the exact hand
-command, because the lane never edits an entry's content.
-
-### First run
-
-Make a lane, queue an entry, and look at it. Every path is a flag; there is no
-default lane, no default repository and no default base.
-
-**The first run pushes, and this is the line that says so.** `init` — and so
-`quickstart`, which is `init` and then `status` — creates the lane's **record
-branch**, the name given to `--lane-branch`, and when the repository does not have
-that branch already it **pushes it to `origin`** of the repository `--repo` names:
-one commit holding `.gitignore`, subject `nova-merge: the lane's record branch`,
-author and committer **`nova-merge <nova-merge@localhost>`** — the tool's own
-placeholder identity, not a person and not an account anywhere, so a commit on
-that branch says the lane made it wherever the lane ran. That push is not a side
-effect to be tidied up later — the record branch is where every read and gate
-lives, so that a reader on another machine records a verdict where every lane
-folds it ([SPEC-MERGE.md](SPEC-MERGE.md) rule 22). `joined=false` on the
-`INIT OK` line says this lane created that branch and pushed it; `joined=true`
-says the branch was already there and nothing was created or pushed.
-
-So the line below, pasted as it stands, writes a ref to
-`mas-bandwidth/nova-tools`. **Rehearse against a bare repository of your own
-first.** `--remote <url>` is the URL this lane clones from and pushes to, and
-with a local bare repository the whole first run reaches no forge:
-
-```sh
-git init -q --bare ./rehearsal.git
-nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main \
-           --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
-```
-
-Both paths are deliberate. `--remote` is handed to git **inside the lane's own
-directory**, so it wants an absolute path or a URL — `"$PWD/rehearsal.git"` is
-that, and a relative `./rehearsal.git` resolves against the lane and is refused
-with git's own sentence and nothing left behind. And the rehearsal gets a lane of
-its own, because `init` creates a lane once: rehearsing into the directory the
-live line then uses is `INIT REFUSED` on the next command. The push, the clone
-and the record branch all land in `./rehearsal.git`; a rehearsal repository with
-no `--base` branch in it prints one `STATUS NOTE` and `base_state=UNKNOWN` at
-exit 0, which is the rehearsal saying it has no base to read rather than a
-failure. The corresponding transcripts in [TESTS.md](TESTS.md) are executed by
-tests; selected flags and warning phrases on this page are checked too.
-
-Then the live form, whose first line creates and pushes `nova-merge/main` in
-`mas-bandwidth/nova-tools`:
+The per-PR lander role is **retired** (stream is the unit, 2026-09-24): `init`,
+`quickstart`, `add`, `add-branch`, `run`, `status`, `dry-run`, `packet`, `stop`,
+`queue` (and `queue audit`), `wait`, `sweep`, `simulate`, `rebase`, `react`,
+`land`, `integrate`, `stack` and `receipt` are gone, and each is now an unknown
+subcommand at exit 2. A stream lands onto dev by hand until the stream-lander spec
+names the verb that does it.
 
 ```
-$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
-INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
-STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
-
-$ nova-merge add --lane ./lane --pr 949 --needs-read
-ADD OK kind=pr entry=949 needs_read=yes lane=1/0
-
-$ nova-merge status --lane ./lane
-STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
-STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+nova-merge version
+nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
+nova-merge gate     --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
+nova-merge fold     --branches <file> --onto <base> --out <branch> --lane <dir>
+nova-merge fold     --close-folded --pr <n>
+nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
 
-The lane is created once, with its repository, its base and the branch its
-records live in, and no other verb takes those three. A second lane on the same
-branch — a reader on another machine — joins it: `joined=true`, and it creates
-and pushes nothing.
+`batch` has its own section below, with its full flag list.
 
-Reading that status: `state=PENDING` is an entry **waiting**, which is not a
-failure and exits 0. `checks=g4/p1/r0` counts green, pending and red **separately**
-— zero red is not the same news as zero pending, and the merge condition wants
-zero of both. `gate=-` means no gate record; `head` means one for this head against
-an older base (a candidate); `merge` means one for this head against the base as it
-is now, which is the only thing that merges. `read=0a/0h` are approves and holds
-for **this** head, and `stale=` counts the verdicts recorded for a head that has
-since moved: kept, counted, and authorizing nothing.
+### read and gate
 
-The things a first run gets wrong, and what each one wants:
+A read and a gate are each **one immutable file in the lane's branch**, written to a
+durable outbox first and pushed in a compare-and-swap loop, so a reader on another
+machine records a verdict where every lane on that branch folds it
+([SPEC-MERGE.md](SPEC-MERGE.md), *The read condition* and *The local gate*). The lane
+directory is an existing one; the verbs that made lanes left with the lander role,
+and the stream-lander spec says where these records live next (Redis, per the
+"GitHub is a git remote only" ruling).
 
-- **pasting the live line to see what the tool does** — the record branch is
-  created and pushed to `--repo` before there is any output to read, and a
-  throwaway `--lane-branch` is still a ref in a shared repository (Johnny,
-  nova-tools #116, who deleted the one his first run left). Rehearse with
-  `--remote "$PWD/rehearsal.git"` first; the live line is for the lane you mean
-  to keep.
-- **`add --base main`** — exit 2. The base is a property of the lane, written by
-  `init`; a `--base` on a queueing verb would let two invocations disagree about
-  where the lane lands.
 - **`gate --base <sha>`** — exit 2, naming `--base-sha`. The lane's branch and the
   base **sha** a gate was taken against are different words on purpose.
 - **`read` with no `--head`** — exit 2. A verdict binds to the sha the reader had
   open, never to whatever the entry's head is when the verb runs: an approve
   recorded a minute after the author pushed is an approve for code nobody read.
-- **`run --loop 5m` with no `--hours`** — exit 2. Every loop ends on its own.
-- **a verb on a directory that is not a lane** — exit 2, with the whole `init`
-  command in the refusal, and nothing written on the way past.
+- **a verb on a directory that is not a lane** — exit 2, and nothing written on the
+  way past.
 
-### simulate
+### fold
 
-```
-nova-merge simulate --repo <path> --base <branch> [--entries <file> | --prs <list>] [--checks "<a>,<b>"] [--timeout <duration>]
-```
+`fold --branches <file> --onto <base> --out <branch> --lane <dir>` merges the
+listed branches in the file's order onto `--onto` in a scratch clone of the lane's
+repository, drops a branch whose conflict it may not resolve or that stays red
+after three tries, squashes the rest to one commit on `--out` and opens it as one
+pull request — card PRs into a stream branch. `fold --close-folded --pr <n>`
+closes the member pull requests a merged fold carried. See
+[SPEC-MERGE.md](SPEC-MERGE.md), *The fold (#1142)*.
 
-`simulate` checks a queue as a growing batch. It fetches `origin/<base>`, makes a
-scratch worktree under the repository's own `.git` — never the system temp
-directory — squash-merges each entry's `pull/<n>/head` in queue order, and runs
-every check after each successful merge. A conflicting entry is reported and
-skipped. The pass stops at the first step whose configured checks fail; it does
-not separately prove that entry green on its own or identify a unique culprit.
-
-`--repo` is a local clone whose origin holds the queue's heads. `--entries` is a
-file of pull request numbers, one per line; **`--prs`** is the same queue as a list —
-`1749,1753,1754` — for a caller who has the numbers rather than a file, and giving both
-is refused because two spellings of one queue are two queues. With neither, the queue
-itself is read, one `gh api graphql` naming the base branch's merge queue. `--checks` is a
-comma-separated list of commands and defaults to
-`go build ./...,go test ./internal/ci/`, which is the hand loop this verb replaces,
-written out as it was run. `--timeout` is a duration **per check**, default `5m`.
-The scratch worktree is removed on the way out — **the directory and git's own entry
-for it under `.git/worktrees/`** — and a removal that could not happen is one
-`SIMULATE NOTE` rather than a silence. A pass leaves the repository as it found it:
-`git worktree list` says afterwards exactly what it said before, and there is nothing
-for `git worktree prune` to find.
-
-Four lines, one per entry and one at the end:
-
-```
-SIMULATE OK #<n>
-SIMULATE CONFLICT #<n> with the entries ahead
-SIMULATE POISON #<n> check="<command>" <the check's first line>
-SIMULATE DONE entries=<n> ok=<n> conflicts=<n> poison=<#n|none>
-```
-
-A conflict is counted, the worktree is reset and the pass carries on, because an
-entry that will not merge is not the entry that turns the base red.
-
-Exit 0 means no configured check failed; conflicts, reported separately, do not
-change that result. Exit 2 means either a configured check failed or the invocation
-was invalid. Exit 1 is a preparation or runtime refusal. Read the `SIMULATE` output
-with the exit code to distinguish these cases; the code alone is not the whole
-result.
-
-**Invalid invocation** is the invocation naming something this verb cannot use: a
-missing or malformed flag, an empty `--checks`, a `--repo` that is not a git
-repository, an `--entries` file that cannot be read or that holds a line which is
-not a pull request number, a `--base` the origin does not have, and an entry whose
-`pull/<n>/head` the origin does not have. **Preparation or runtime refusal** is
-everything after that: a scratch worktree that could not be made, a squash-merge that
-failed for a reason other than a conflict, a commit or a reset the work tree refused,
-a `gh` read of the live queue that did not answer.
-
-### rebase, react and classify — the lane's three ticks
-
-```
-nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>] [--dry-run|--yes]
-nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
-nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
-```
-
-**These three land with batch 3 (nova-tools #1308) and are not on `dev` yet.** The
-lines below are read off their source and are what the verbs print; until that batch
-merges, this section describes a binary your bench does not have.
-
-`rebase --once` is the hand rebase loop's tick as a verb: one pass over the
-repository's open pull requests, and for each one the host calls `DIRTY` whose head
-branch is `rowan/<something>` — `rowan/replays-*` excluded, it has its own verb — a
-plan names the pull request and launch command. The default writes nothing and exits 2
-asking for `--yes` or `--dry-run`; `--dry-run` prints the same plan and exits 0. Only
-`--yes` cuts and launches a card, unless `--markers` already holds a file for that number.
-`--markers` is the whole memory of the pass, so a pull request is carded once and not
-once per tick; `--out` is where the cards go; `--queue` is the queue whose state file
-numbers them, under its lock, so two cutters never share a number. `--base` is `dev`
-by default and `--timeout` is 120 seconds. **`--once` is required**: this pass cuts
-what it finds now and never loops on its own. One line, and exit 0 whether it cut
-nothing or many:
-
-```
-REBASE tick cards=<n>
-REBASE NOTE PR #<n> card=<name> is cut and marked and was not launched: <reason>; launch it by hand, the marker stops a second cut
-```
-
-`react` is the lane's subscriber, and it holds no timer of its own: it blocks on the
-pub/sub channels until a message lands or `--deadline` is reached, and acts once per
-message. A `pr-checks-done` that succeeded **enqueues the pull request into
-`<lane>/queue.json`** — the one queue this tree has, the one `nova-merge queue` writes
-and `nova-merge run` walks — unless that queue's skip set or `<lane>/hold` stops it; a
-`dev-moved` asks for a rebase unit for every pull request the move made `DIRTY`; a
-`card-done` does nothing, because the recorder and the harvester read the stream
-themselves.
-
-**`--lane` is required, and it is the queue.** It used to be optional, and without it
-the reactor enqueued into a redis set called `merge:queue` that nothing in this tree
-ever read: `REACT enqueue pr=<n>`, exit 0, and nothing reachable afterwards. There is
-**one hold and one skip set**, the lane's; the redis `enqueue:hold` and `enqueue:skip`
-are gone, because two mechanisms wearing the same words are one mechanism nobody can
-reason about — a held lane with the pull request skipped still printed `REACT enqueue`.
-
-**`--once` or `--deadline <seconds>` is required.** The loop form with neither ran a
-60-second loop and exited 0 although the help said one was required; it is now refused
-by name, like `nova-work events`. `--once` with no `--deadline` waits 60 seconds for
-its one message.
-
-```
-REACT enqueue pr=<n> head=<sha>
-REACT skip pr=<n> head=<sha> reason=queue-skip
-REACT hold pr=<n> head=<sha> reason=<the hold's own reason>
-REACT rebase-wanted pr=<n> head=<sha> base=<sha>
-REACT DROP channel=<name> reason=<why the payload could not be read>
-REACT OK once=true dropped=<n>
-REACT OK once=false deadline=<n>s dropped=<n>
-```
-
-**Returning at the deadline is the design and not a failure**, so a window in which
-nothing was published is still `REACT OK`, exit 0; `REACT FAIL` on stderr, exit 1, is
-the reactor that could not read its channels. **One malformed payload is one message
-dropped**, said on a `REACT DROP` line and counted in `dropped=<n>` on the closing
-line — it used to kill the whole reactor at exit 1, although an unknown channel was
-already ignored. go-redis's own connection-pool chatter is silenced before the first
-dial, so a bus this verb cannot reach is one `REACT FAIL` line and not five `redis:
-… pool.go` lines in front of it.
+### classify
 
 `classify` asks one typed decision about **one failed merge-group run**: was the
 failure flaky under the queue's load, the environment, or the pull request's own
@@ -1647,59 +1467,6 @@ are the decide route's, as everywhere else; a run the host cannot read, a route 
 will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
 exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
 risk; never a merge*.
-
-### queue
-
-```
-nova-merge queue --lane <dir> (status | hold "<reason>" --who <name> | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration>) [--timeout <seconds>] [--max <n>]
-nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--head <sha>] [--pr <n>|--branch <name>] [--test <name>] [--note <text>] [--who <name>]
-```
-
-`queue` is the mechanical hand that keeps the lane's order. One queue
-(`<lane>/queue.json`: `queued`, `skipped`, `parked`), one hold (`<lane>/hold`), one
-order — the order `run` walks. Every write is a read-modify-write under the lane's own
-lock through a fixed temp name.
-
-**`status`** reads the two files and nothing else — no forge, no clone, no lock — so it
-runs on a bench with no `gh` and no token:
-
-```
-QUEUE ENTRY pos=<n> entry=<pr> state=queued
-QUEUE ENTRY pos=- entry=<pr> state=skipped|parked
-QUEUE STATUS lane=<dir> queued=<n> skipped=<n> parked=<n> hold=<reason|-> by=<who|->
-```
-
-Before it existed there was no way to see the queue at all: a lane standing still under
-a hold read exactly like a lane with nothing to do, and a skipped pull request read
-exactly like one nobody had queued.
-
-**`hold "<reason>" --who <name>`** writes the reason into `<lane>/hold`. **`--who` is
-required**: it was undocumented and optional, and a hold written without it said
-`by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release. This
-tool reads no environment variable, so `$USER` is the caller's to pass. While a hold
-stands, the sweep refuses, `front` and every enqueue refuse, **`run` refuses** —
-`RUN REFUSED: a hold is standing (<reason>) by <who>` at exit 2, read at the top of
-every pass so a hold written during a `--loop` stops the next one — and `react` prints
-`REACT hold` instead of enqueueing. **`release`** removes the file and prints how long
-it stood.
-
-**`skip`/`unskip`/`front`** are **local**: they reorder numbers in a file and reach no
-forge. `front` used to read the pull request and its checks from the host first, which
-made the one local verb of the family need a network, a `gh` and a token, over a
-judgement `run` makes again on every pass anyway; the one thing it still checks is that
-the entry is in this lane.
-
-**`sweep --window <duration>`** walks the open pull requests the host reports inside the
-session window and enqueues each that is green, not skipped, not parked, not dirty and
-not already queued. It **runs against a real repository now**: `QueuePRs`,
-`PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so
-every real invocation answered `QUEUE REFUSED: this host cannot list open pull requests
-… no host, no sweep` — the verb passed its tests and had never once run.
-
-**A `queue.json` that does not parse is `QUEUE REFUSED` / `RUN REFUSED` at exit 2 naming
-the file.** The error used to be swallowed, which left the walk order empty — and an
-empty walk order meant "walk everything", so a corrupt file **silently un-skipped every
-skip and every parked poison**.
 
 ### batch
 
@@ -1778,7 +1545,7 @@ the gate had said OK. A member that has not been green on its own is a member no
 has judged on every platform, and putting it in a batch asks this gate a question it
 cannot answer. A member whose head is **a batch's own branch** (`rowan/integration-*`) or is named by a
 `BATCH OK` line in **`--receipt-file`** is admitted on the gate's own evidence instead of
-the forge's rollup — that is the same receipt `nova-merge land` takes, read by the same
+the forge's rollup, read by the same
 parser — so a batch pull request whose own CI is still running is never refused as a
 member of the next one. `--no-require-checks` waives the whole check and says so on
 `BATCH NOTE` and on the verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
@@ -1796,120 +1563,6 @@ The last `@` splits url from ref, so an ssh URL is
 `git@host:path.git@v1.16.2`. A sibling that cannot be cloned is `BATCH REFUSED`,
 not a red test. Tests stage a `file://` fixture; they do not clone the real
 serialize runtimes.
-
-### land
-
-```
-nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>] [--loop <duration>] [--allowed-red <check>[,<check>...]] [--friends <names>] [--redis <addr>]
-```
-
-`land` is the ONE caller of the one door that admits anything to a merge queue. `batch`
-builds the integration branch, tests it the way CI tests, prints `BATCH OK` and **pushes
-nothing**; a person pushes that branch and opens the pull request, because that is the step
-that needs somebody who knows this is the batch they wanted. `land` is everything after: it
-reads the pull request back from the forge, refuses it unless its head is a batch's — or
-unless a `BATCH OK` receipt given with `--receipt` or `--receipt-file` says this very commit
-is one — refuses it unless the pull request's **own** checks are green, and enqueues it at
-the front unless `--no-jump`.
-
-**Two green-nesses are two questions and both are asked.** The gate's green is a bench's:
-this tree builds, vets, tests and runs the lisp suite. CI's green is the forge's, on the
-commit the queue will take. `integration-4` went green on a bench under a plain
-`go test ./...` and three CI legs then failed; a lander that trusted the receipt alone
-would have queued it.
-
-The hold flags are `batch`'s, with the same meanings and the same refusals: exactly one of
-`--reviewers <file>` and `--no-require-holds --reason <text>` is required, `--lane <dir>` is
-required under `--reviewers` and may not be the literal `none`, and
-`--untyped-comments ignore` demands its own `--reason`. `--receipt` and `--receipt-file` are
-two spellings of one receipt and giving both is exit 2.
-
-Every `land` reads the lander's writer generation (#3139 B0) before any write, from
-`--redis <addr>`, else `NOVA_REDIS_ADDR`, else `NOVA_REDIS_HOST:NOVA_REDIS_PORT`. With no
-address it refuses with `LAND REFUSED writer unresolved` and exit 1; a read that fails
-(store down, NOPERM, WRONGTYPE) refuses with `LAND REFUSED writer unreadable`. A missing
-`land:<repo>:<base>:writer` is the initial owner, `old-loop`; when it names any other
-owner, the old loop no longer writes, and `land` refuses with
-`LAND REFUSED writer gen=<g> owner=<owner>` and exit 1.
-`nova-sprint land writer --repo <r> --base <b> [--to old-loop|nova-sprint]` reads or moves
-that generation through `ns_writer`, its one writer; rollback to `old-loop` is refused
-(`REFUSED pub=<batch>`) while an intent in `pub:active` is unresolved.
-
-```
-LAND OK      pr=<n> head=<sha> branch=<ref> checks=<required|waived> members=<list> jump=<true|false>
-LAND REFUSED reason=held member=#<n> who=<name> hold=<id> source=<source> held_at=<stamp> carried=<yes|no> at=<stamp> conf=<n>
-LAND REFUSED: <what was wrong>
-```
-
-### integrate
-
-```
-nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--sensitive <file> --designated <who>] [--checks "<a>,<b>"] [--reference <mirror>] [--ci-timeout <duration>] [--ci-interval <duration>] [--title <text>] [--no-draft] [--gomaxprocs <n>] [--timeout <duration>] [--untyped-comments ignore --reason <text>]
-```
-
-`integrate` is **the landing verb**: the integration batch, which seven landing shifts ran
-by hand on 2026-09-19 — sixteen times in one shift — as ONE verb. Issue #1845, L6 of
-#1725. It **composes and duplicates nothing**: steps 3, 4 and 9 below are `simulate`,
-`batch` and `land` run with the arguments a hand would have typed; the hold read is
-`internal/merge`'s verdict fold (#1572), the same one `batch` and `land` use, and there is
-no second parser for a `DISPOSITION` line in it; a red is named through the same engine
-`nova-ci failed` prints.
-
-The eleven steps, each one typed line, in order:
-
-```
-INTEGRATE START     name=<name> base=<branch> members=<#n@sha,...> lane=<dir> on=<bench> dry_run=<bool> steps=11
-INTEGRATE HEADS     ok=<n> moved=none members=<list>                       1 the heads are the CALLER'S
-INTEGRATE HOLD      pass=1 member=#<n> head=<sha> verdict=clear verdicts=<n> sensitive=<who|none|unchecked>
-INTEGRATE SIMULATE  entries=<n> conflicts=none base=<branch>               3 onto the base AS IT STANDS
-INTEGRATE BATCH     on=<bench> head=<sha> members=<list> dropped=none      4 the gate
-INTEGRATE PUSH      branch=<b> head=<sha> lease=must-not-exist existed=0 readback=<sha> forced=no
-INTEGRATE PR        number=<n> url=<url> draft=<bool> receipt=in-body basis=<file>
-INTEGRATE CI        pr=<n> head=<sha> check=ci-ok state=<pending|green|failure|timeout>
-INTEGRATE HOLD      pass=2 ...                                             8 the read AT THE DOOR
-INTEGRATE LAND      pr=<n> head=<sha> members=<list>                       9 `land`, the one door
-INTEGRATE CLOSE     member=#<n> head=<sha> pointer=batch-<n> verdict=closed
-INTEGRATE REVERIFY  pr=#<n> base=<branch> mergeable=<state>               11 what the move left behind
-INTEGRATE DONE      name=<name> pr=<n> head=<sha> members=<list> closed=<n> steps=11/11
-INTEGRATE FAIL      pr=<n> run=<id> test=<name> pkg=<pkg> job=<job> at=<file:line>
-INTEGRATE REFUSED   step=<step> member=#<n> reason="<what it was>"
-```
-
-**`--members` takes the head and will not guess one** — `1749@4f7092ad,1753@9589cc26`. A
-member whose head the forge now reports differently is refused by name and nothing is
-gated: every read this landing folds was recorded at the head the caller named, and a
-verb that read the head off the forge at the moment of the merge would fold a read of a
-commit nobody looked at.
-
-**The hold is read twice by this verb and once more by the gate**, so a member is read
-three times: at admission, inside `batch`'s own reading-3 fold, and at the door
-immediately before `land`. `--lane` is required — reading 3 makes the lane's own records
-half the evidence — and **no flag here lifts a hold**.
-
-**The push is a must-not-exist lease and never a force.** `origin` is asked for the ref
-first and a branch that already exists is a refusal; the push itself is a plain one,
-which creates a branch and cannot overwrite one, and the ref is read back and compared.
-The gated object lives only in the gate's own clone (`batch` pushes nothing), so it is
-fetched from `<root>/<name>/repo` and checked against the receipt's head before the push.
-
-**`--dry-run` runs steps 1-3 and nothing else**: it gates nothing, pushes nothing, opens
-nothing and queues nothing, and its `INTEGRATE DONE` says `steps=3/11 landed=none`.
-
-**A red is terminal and nothing is retried.** `ci-ok` is polled to `--ci-timeout`; a red
-is read through `nova-ci failed`'s engine and every failing test is named on its own
-`INTEGRATE FAIL` line. A named failing test is a finding, never a rerun. The
-runner-cleanup shape of #1751 is **not** special-cased: it was repaired on dev by #1779,
-and a verb carrying a permanent exemption for a fault that has been fixed is a verb that
-will one day swallow a real red wearing the same clothes.
-
-**`--sensitive <file> --designated <who>`** is `docs/SPEC-TOOLWORK.md` eligibility rule 13:
-a member whose diff touches one of the named path prefixes has one reader, and only that
-mind's APPROVE **at this head** admits it. With no `--sensitive` file the rule is
-`sensitive=unchecked` on the line rather than silently passed — the same discipline
-hygiene's `paths=-` keeps.
-
-Exit 0 is a landing; 1 is the verb saying NO; 2 is an unusable invocation or something
-outside the decision that could not run.
 
 ## nova-pulse
 

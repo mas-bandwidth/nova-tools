@@ -57,11 +57,13 @@ it skipped names a precondition stated here. **A step skipped for a reason this
 file does not state is a defect in this file, not a pass** — being able to tell
 those two apart is the whole value of writing the line down.
 
-Four `Requires:` lines are owed today, one per section, from the same dogfood
+Three `Requires:` lines are owed today, one per section, from the same dogfood
 run: `## nova-decide` (the ladder block routes through JEV and wants
-`JEV_API_KEY`), `## nova-merge` (`init` pushes, and wants a forge credential),
-`## nova-post` (`send` wants a posting credential) and `## nova-secrets` (two
-steps invoke `nova-check`, which is a different tool's binary).
+`JEV_API_KEY`), `## nova-post` (`send` wants a posting credential) and
+`## nova-secrets` (two steps invoke `nova-check`, which is a different tool's
+binary). nova-merge has no section since its lane-making verbs (`init`,
+`quickstart`, `add`) left with the per-PR lander role; its kept verbs are
+exercised by cmd/nova-merge's own tests.
 
 ## nova-bus
 
@@ -445,8 +447,7 @@ WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default 
 
 ### First run
 
-`nova-review` builds an artifact from a lane already initialized by
-`nova-merge`; it has no state-creating quickstart. Its first safe command only
+`nova-review` builds an artifact from an existing nova-merge lane; it has no state-creating quickstart. Its first safe command only
 identifies the binary.
 
 Two parts of the line below belong to the run and not to the document, and both
@@ -506,47 +507,23 @@ MUTATE be009676 ABSTAIN reason=no-change-to-revert: every changed file is a test
 
 ## nova-merge
 
-Fixture: a bare git repository and a fake host, both made in `t.TempDir()` by
-`cmd/nova-merge/helpers_test.go`. The lane below is `./lane`; the test points it
-at a directory of its own, and `mas-bandwidth/nova-tools` resolves to the fixture
-repository, so this transcript reaches no network.
-
 ### First run
 
-Run against a live `--repo` rather than this fixture, `quickstart` **pushes** the
-`--lane-branch` to `origin` of that repository — the lane's record branch, one
-commit, author `nova-merge <nova-merge@localhost>`, a placeholder identity rather
-than a person. So the rehearsal comes first, against a bare repository of your
-own (`git init -q --bare ./rehearsal.git`), whose absolute path is what `--remote`
-wants: git runs inside the lane directory, so a relative one resolves against the
-lane and is refused. Both lines below are executed by
-`cmd/nova-merge/firstrun_test.go`. A line opening `! ` is one the tool writes to
-standard ERROR: the two NOTE lines are findings about the reader's own repository,
-and `# Stderr: whole` says they are ALL it writes there (#1549, #1570).
+`nova-merge` keeps the evidence a stream lands on (`read`, `gate`, `classify`,
+`batch`, `fold`); the lane-making verbs left with the per-PR lander role on
+2026-09-24, so it has no state-creating quickstart. Its first safe command only
+identifies the binary.
+
+Three parts of the line below belong to the run and not to the document, and all
+three are declared by `cmd/nova-merge/firstrun_test.go`: the build triple
+`<goos>/<goarch> go<version>` is whichever machine runs it, the version word is
+whatever the build stamped itself with (`devel` for the unstamped binary
+`go test` builds), and `build=` is the sha256 of the binary's own file, twelve
+hex, which differs for every build. Everything else on the line is compared.
 
 ```
-$ nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"   # Stderr: whole
-! INIT NOTE the repository's default branch could not be read from $PWD/rehearsal.git, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15). nova-merge init --lane ./rehearsal-lane --default-branch <branch> records it, and --hosted-red names states the other arm outright
-INIT OK lane=./rehearsal-lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
-! STATUS NOTE the lane's base main could not be read from origin, so base_state is UNKNOWN: git fetch origin main: exit status 128: fatal: couldn't find remote ref main
-STATUS OK prs=0 branches=0 base=main base_state=UNKNOWN ready=0 blocked=0 waiting=0 reads=0a/0h
-```
-
-The rehearsal's `base_state=UNKNOWN` is the empty bare repository having no base to
-read, not a failure: it exits 0. Then the live form, whose first line creates and
-pushes `nova-merge/main` in the repository `--repo` names.
-
-```
-$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
-INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
-STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
-
-$ nova-merge add --lane ./lane --pr 949 --needs-read
-ADD OK kind=pr entry=949 needs_read=yes lane=1/0
-
-$ nova-merge status --lane ./lane
-STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
-STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+$ nova-merge version
+nova-merge devel darwin/arm64 go1.27.1 build=391dac11a7b7
 ```
 
 ## nova-decide

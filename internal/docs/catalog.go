@@ -34,7 +34,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-decide", "criteria evaluation and decision engine CLI", "go test ./cmd/nova-decide", "go test ./cmd/nova-decide"),
 	E("cmd/nova-fuse", "workspace isolation and boundary CLI", "go test ./cmd/nova-fuse", "go test ./cmd/nova-fuse"),
 	E("cmd/nova-memory", "memory indexing and search CLI", "go test ./cmd/nova-memory", "go test ./cmd/nova-memory"),
-	E("cmd/nova-merge", "batch merge and queue landing CLI", "go test ./cmd/nova-merge", "go test ./cmd/nova-merge"),
+	E("cmd/nova-merge", "batch gate and stream fold CLI", "go test ./cmd/nova-merge", "go test ./cmd/nova-merge"),
 	E("cmd/nova-play", "sandboxed evaluation CLI", "go test ./cmd/nova-play", "go test ./cmd/nova-play"),
 	E("cmd/nova-post", "PR and issue posting CLI", "go test ./cmd/nova-post", "go test ./cmd/nova-post"),
 	E("cmd/nova-pulse", "sprint telemetry and health CLI", "go test ./cmd/nova-pulse", "go test ./cmd/nova-pulse"),

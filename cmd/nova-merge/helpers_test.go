@@ -14,7 +14,6 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
@@ -128,16 +127,11 @@ type lab struct {
 	host   *merge.FakeHost
 	// queue, when set, is what a `simulate` run with no --entries reads; it is the fake
 	// gh of these tests, and it reaches nothing.
-	queue QueueReader
 	// launcher is the fake the rebase verb's cards are handed to, so a test proves the
 	// launch without a bench.
-	launcher *fakeLauncher
-	now      time.Time
-	build    string
-	runner   merge.Runner
-	// checkDeadline is Deps.CheckDeadline: the clock a simulate check's --timeout runs on.
-	// nil is the real timer; a test that is about the deadline hands it one it controls.
-	checkDeadline func(time.Duration) <-chan time.Time
+	now    time.Time
+	build  string
+	runner merge.Runner
 	// testTree and testLayout are the fold verb's fake test runners (docs/SPEC-MERGE.md
 	// "The fold (#1142)"): the package test the repository names for the tree, and the
 	// layout test of #560. A nil one is the production subprocess.
@@ -149,12 +143,6 @@ type lab struct {
 	// heads is the batch fixture's pull request heads by number, so a batch test can
 	// say what the FORGE thinks of one member's own head (edge 25).
 	heads map[int]string
-	// forge, enqueue and failForge are `integrate`'s three edges beyond the lane host:
-	// the forge's write side, the merge queue's door, and the engine that names the test
-	// behind a red. Every one of them is a fake and none reaches a network.
-	forge     *merge.FakeIntegrateForge
-	enqueue   *fakeLandEnqueue
-	failForge ci.FailForge
 }
 
 func newLab(t *testing.T) *lab {
@@ -166,15 +154,12 @@ func newLab(t *testing.T) *lab {
 	dir := t.TempDir()
 	l := &lab{
 		t: t, dir: dir,
-		remote:   filepath.Join(dir, "remote.git"),
-		work:     filepath.Join(dir, "work"),
-		lane:     filepath.Join(dir, "lane"),
-		host:     merge.NewFakeHost(),
-		forge:    merge.NewFakeIntegrateForge(),
-		enqueue:  &fakeLandEnqueue{},
-		launcher: &fakeLauncher{},
-		now:      time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
-		build:    "aaaaaaaaaaaa",
+		remote: filepath.Join(dir, "remote.git"),
+		work:   filepath.Join(dir, "work"),
+		lane:   filepath.Join(dir, "lane"),
+		host:   merge.NewFakeHost(),
+		now:    time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
+		build:  "aaaaaaaaaaaa",
 	}
 	// The bare repository, its first commit and the clone are BUILT ONCE for the
 	// process and COPIED here. Building them is six git subprocesses, and 82 newLab
@@ -353,12 +338,6 @@ func (l *lab) baseSHA() string {
 	return l.git(l.work, "rev-parse", "refs/remotes/origin/main")
 }
 
-func (l *lab) refreshBase() string {
-	l.t.Helper()
-	l.git(l.work, "fetch", "-q", "origin", "main")
-	return l.git(l.work, "rev-parse", "FETCH_HEAD")
-}
-
 // hookRunner is how a test puts A HAND AT ANOTHER KEYBOARD inside the window rule 21
 // closes: it runs before the command the lane is about to run, so a test can move the
 // remote's base between the pass's last read and its push and prove the lease catches it.
@@ -427,36 +406,14 @@ func (l *lab) deps() Deps {
 			}
 			return l.remote
 		},
-		NewHost: func(string, time.Duration) merge.Host { return l.host },
-		NewQueue: func(string, time.Duration) QueueReader {
-			if l.queue != nil {
-				return l.queue
-			}
-			return nil
-		},
-		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
-		NewIntegrateForge: func(string, time.Duration) merge.IntegrateForge {
-			return l.forge
-		},
-		NewEnqueueHost: func(string, time.Duration) merge.EnqueueHost { return l.enqueue },
-		NewFailForge: func(string, time.Duration) ci.FailForge {
-			return l.failForge
-		},
-		Launcher:      l.launcher,
-		BuildID:       func() string { return l.build },
-		TestTree:      l.testTree,
-		TestLayout:    l.testLayout,
-		CheckDeadline: l.checkDeadline,
+		NewHost:    func(string, time.Duration) merge.Host { return l.host },
+		BuildID:    func() string { return l.build },
+		TestTree:   l.testTree,
+		TestLayout: l.testLayout,
 		// react's two edges. Dial is the caller's own address -- every react test
 		// hands it a miniredis of its own -- and the forge is the fake.
 		BatchGate: labBatchGate(),
 		Dial:      func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
-		// land's writer fence (#3139 B0) resolves the package's empty store: the initial
-		// old-loop owner.
-		Getenv: landTestEnv,
-		Forge: func(string, string, time.Duration) ci.Forge {
-			return &reactFakeForge{}
-		},
 	}
 }
 
@@ -518,14 +475,14 @@ func (l *lab) run(args ...string) (int, string, string) {
 		}
 	}
 	var out, errb bytes.Buffer
-	exit := run(effective, &out, &errb, l.deps())
+	exit := laneRun(effective, &out, &errb, l.deps())
 	return exit, out.String(), errb.String()
 }
 
 func (l *lab) runBare(args ...string) (int, string, string) {
 	l.t.Helper()
 	var out, errb bytes.Buffer
-	exit := run(args, &out, &errb, l.deps())
+	exit := laneRun(args, &out, &errb, l.deps())
 	return exit, out.String(), errb.String()
 }
 
@@ -604,16 +561,4 @@ func absent(t *testing.T, haystack, needle string) {
 	if strings.Contains(haystack, needle) {
 		t.Errorf("did not want %q in:\n%s", needle, haystack)
 	}
-}
-
-// timeValue and parseStamp let a test move the clock to an exact instant, which is what
-// the tie tests need: two records with ONE `at` to the second.
-type timeValue = time.Time
-
-func parseStamp(s string) time.Time {
-	t, err := time.Parse(merge.Stamp, s)
-	if err != nil {
-		panic(err)
-	}
-	return t
 }

@@ -10,14 +10,9 @@
 # These predate the checker. Each is a GitHub URL carried in a fixture, a fake
 # gh stub, a fake git remote or a card template -- text handed to a fake, not a
 # live unit-test endpoint. The allowed shape is httptest or a local fake.
-cmd/nova-merge/footguns_test.go:96 url 2026-09-17 an api.github.com URL in a fake gh error string, not a live call; predates the checker
-cmd/nova-merge/hostedred_test.go:66 url 2026-09-17 a github-style URL in a remote-rewrite fixture, not a live call; predates the checker
-cmd/nova-merge/hostedred_test.go:67 url 2026-09-17 a github-style URL in a remote-rewrite fixture, not a live call; predates the checker
-cmd/nova-merge/hostedred_test.go:68 url 2026-09-17 a github-style URL in a remote-rewrite fixture, not a live call; predates the checker
 cmd/nova-pulse/main_test.go:335 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 cmd/nova-pulse/main_test.go:357 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
 cmd/nova-pulse/main_test.go:360 url 2026-09-17 a github.com clone line in a card template fixture, not a live call; predates the checker
-cmd/nova-review/friendsequence_test.go:86 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
 cmd/nova-review/main_test.go:867 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
 cmd/nova-review/main_test.go:931 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
 cmd/nova-review/main_test.go:1126 url 2026-09-17 a github.com insteadOf rewrite in a fake git config, not a live call; predates the checker
