@@ -425,7 +425,7 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             SPACE_SHARDS=4
-            STUDIO_SHARDS=4
+            STUDIO_SHARDS=2 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
           elif [ "${{ github.event_name }}" = "merge_group" ]; then
             base="${{ github.event.merge_group.base_sha }}"
             STUDIO_SHARDS=2
