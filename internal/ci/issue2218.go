@@ -11,93 +11,84 @@ import (
 )
 
 // CILegsFromYAML reads the ci.yml workflow text and returns the GOOS values
-// for which it runs legs. The legs are derived from literal runs-on labels
-// (self-hosted linux -> "linux", self-hosted macOS -> "darwin") and from the
-// GitHub-hosted matrix OS values (ubuntu-latest -> "linux", macos-latest ->
-// "darwin"). There is no native Windows leg since 2026-09-18.
+// for which it runs legs. A leg is declared by the value of a `runs-on:` key
+// or of a matrix key that feeds one (`os:`, `runner:`, `labels:`), because a
+// darwin leg is usually a matrix value behind a `runs-on: ${{ ... }}`
+// expression. The labels are self-hosted linux -> "linux", self-hosted macOS
+// -> "darwin", and the GitHub-hosted ubuntu-latest -> "linux" and
+// macos-latest -> "darwin". A comment never declares a leg. There is no
+// native Windows leg since 2026-09-18.
 func CILegsFromYAML(yaml string) map[string]bool {
 	legs := make(map[string]bool)
 	for _, line := range strings.Split(yaml, "\n") {
-		if !strings.HasPrefix(line, "    runs-on:") && !strings.HasPrefix(line, "        runs-on:") {
+		trimmed := strings.TrimPrefix(strings.TrimSpace(line), "- ")
+		key, value, ok := strings.Cut(trimmed, ":")
+		if !ok {
 			continue
 		}
-		switch {
-		case hasPlatformLabel(line, "linux"):
-			legs["linux"] = true
-		case hasPlatformLabel(line, "macOS"):
-			legs["darwin"] = true
-		case strings.Contains(line, "ubuntu-latest"):
-			legs["linux"] = true
-		case strings.Contains(line, "macos-latest"):
-			legs["darwin"] = true
+		switch key {
+		case "runs-on", "os", "runner", "labels":
+		default:
+			continue
+		}
+		value, _, _ = strings.Cut(value, " #")
+		for _, label := range strings.FieldsFunc(value, func(r rune) bool {
+			return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-'
+		}) {
+			switch label {
+			case "linux", "ubuntu-latest":
+				legs["linux"] = true
+			case "macOS", "macos-latest":
+				legs["darwin"] = true
+			}
 		}
 	}
 	return legs
 }
 
-func hasPlatformLabel(line, label string) bool {
-	tokens := strings.Fields(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(line, "    runs-on:"), "        runs-on:")))
-	for _, t := range tokens {
-		if strings.Trim(strings.TrimSuffix(strings.TrimSuffix(t, "]"), "["), `"' `) == label {
-			return true
-		}
-	}
-	return false
-}
-
 // PlatformLinesFromTESTSmd reads docs/TESTS.md and returns the GOOS values
 // named by `Platform:` lines that appear within `## nova-*` sections.
 // A platform line may be written as `Platform: darwin` or
-// `Platform: recorded on macOS (darwin) — prose...`; in either case the
-// GOOS keyword (linux, darwin) is extracted.
-func PlatformLinesFromTESTSmd(md string) []string {
-	var platforms []string
-	for _, section := range toolSectionBodies(md) {
-		for _, line := range strings.Split(section, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if !strings.HasPrefix(trimmed, "Platform:") {
-				continue
-			}
-			platforms = append(platforms, goosValues(trimmed)...)
-		}
-	}
-	return platforms
-}
-
-func toolSectionBodies(md string) []string {
-	var bodies []string
-	head := "\n" + md
-	for {
-		top, rest, hasTop := strings.Cut(head, "\n## ")
-		if !hasTop {
-			break
-		}
-		head = rest
-		_ = top
-		name := strings.Fields(head)[0]
-		if !strings.HasPrefix(name, "nova-") {
+// `Platform: recorded on macOS (darwin) — prose...`; in either case every
+// GOOS the line names as a whole word, in any case ("Linux" names linux), is
+// extracted. A Platform line in a `## nova-*` section that names no
+// recognised GOOS is an error naming its line number, so a typo or an
+// unsupported platform is never silently left out of the CI-leg check.
+func PlatformLinesFromTESTSmd(md string) ([]string, error) {
+	var platforms, unnamed []string
+	inTool := false
+	for i, line := range strings.Split(md, "\n") {
+		if heading, ok := strings.CutPrefix(line, "## "); ok {
+			fields := strings.Fields(heading)
+			inTool = len(fields) > 0 && strings.HasPrefix(fields[0], "nova-")
 			continue
 		}
-		body, after, cut := strings.Cut(head, "\n## ")
-		if !cut {
-			bodies = append(bodies, head)
-			break
+		trimmed := strings.TrimSpace(line)
+		if !inTool || !strings.HasPrefix(trimmed, "Platform:") {
+			continue
 		}
-		bodies = append(bodies, body)
-		head = after
+		goos := goosValues(trimmed)
+		if len(goos) == 0 {
+			unnamed = append(unnamed, fmt.Sprintf("line %d: %q", i+1, trimmed))
+			continue
+		}
+		platforms = append(platforms, goos...)
 	}
-	return bodies
+	if len(unnamed) > 0 {
+		return platforms, fmt.Errorf("docs/TESTS.md has %d Platform line(s) in a `## nova-*` section naming no recognised GOOS (known: %s); name the GOOS the block was recorded on:\n%s", len(unnamed), strings.Join(knownGOOS, ", "), strings.Join(unnamed, "\n"))
+	}
+	return platforms, nil
 }
 
 var knownGOOS = []string{"linux", "darwin", "windows", "freebsd", "netbsd", "openbsd", "plan9", "solaris", "aix", "android", "illumos", "ios", "js", "wasip1"}
 
-// goosValues returns the known GOOS values the line names as whole words:
-// "(darwin)" names darwin, "json" does not name js and "ratios" does not name
-// ios.
+// goosValues returns the known GOOS values the line names as whole words,
+// in any case: "(darwin)" and "Linux" name darwin and linux, "json" does not
+// name js and "ratios" does not name ios.
 func goosValues(line string) []string {
 	words := make(map[string]bool)
 	for _, w := range strings.FieldsFunc(line, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
-		words[w] = true
+		words[strings.ToLower(w)] = true
 	}
 	var vals []string
 	for _, g := range knownGOOS {

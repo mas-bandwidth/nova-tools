@@ -21,7 +21,10 @@ func TestIssue2218(t *testing.T) {
 		}
 
 		md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
-		platforms := PlatformLinesFromTESTSmd(md)
+		platforms, err := PlatformLinesFromTESTSmd(md)
+		if err != nil {
+			t.Fatal(err)
+		}
 		for _, p := range platforms {
 			if !legs[p] {
 				t.Errorf("docs/TESTS.md carries Platform: %s in a `## nova-*` section, which is not a GOOS that ci.yml runs a leg for (the platform a skipped transcript names must still be executed somewhere; known legs: %v)", p, mapKeysSorted(legs))
