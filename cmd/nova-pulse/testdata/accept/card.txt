@@ -1,0 +1,4 @@
+LABEL: accept-fixture
+KIND: fix-red
+TEST: TestSignZero
+PATHS: sign.go, sign_test.go

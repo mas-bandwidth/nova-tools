@@ -50,6 +50,8 @@ nova-pulse progress --queue <dir> --roots <dirs> [--day <d>]
 nova-pulse capacity --bench <name> [--cores <n>] [--load1 <n>] [--free-gb <n>] [--memfree-gb <n>]
 nova-pulse gate    --repo <owner/name> --branch <name> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse gate-facts --dir <git-dir> --base <ref> --head <ref> [--pr <n>] [--repo <owner/name>] [--card <file>] [--paths <glob>[,<glob>...]] [--rollup <file>] [--receipt-file <path>] [--timeout <s>] [--max <n>]
+nova-pulse accept  --job <dir> --card <path> --base <ref> --bench <name> --cert <path> --identity <Name <email>>[,...] [--timeout <s>]
+nova-pulse accept  --selftest --bench <name> --cert <path> [--timeout <s>]
 nova-pulse run     --queue <dir> --roots <dirs> --repo <o/n> --branch <b> --hours <n> [--tick <s>] [--once] [--deadline <s>] [--timeout <s>] [--bus <clone>] [--as <name>] [--decide [--floor <f>] [--key-env <var>] [--base-url <url>]] [--slots-store <dir>] [--owner <name>] [--max <n>]
 nova-pulse triage  --case <kind> --queue <dir> --out <card> [--ref <r>] [--evidence <file>] [--decide] [--dedupe --issues <file>] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>]
 nova-pulse sweep   --repo <o/n> --queue <dir> [--source <file>] [--timeout <s>] [--decide] [--base-url <u>] [--key-env <v>] [--floor <f>]
@@ -490,6 +492,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdGate(rest, stdout, stderr)
 	case "gate-facts":
 		return cmdGateFacts(rest, stdout, stderr)
+	case "accept":
+		return cmdAccept(rest, stdout, stderr, now)
 	case "run":
 		return cmdRun(rest, stdout, stderr, now)
 	case "triage":

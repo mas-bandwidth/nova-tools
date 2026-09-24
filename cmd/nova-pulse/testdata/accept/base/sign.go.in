@@ -1,0 +1,19 @@
+package sign
+
+import "fmt"
+
+// Sign is -1 for a negative n, 1 for a positive n and 0 for zero.
+func Sign(n int) int {
+	switch {
+	case n < 0:
+		return -1
+	case n > 0:
+		return 1
+	}
+	return -1
+}
+
+// Label names the sign of n for a person.
+func Label(n int) string {
+	return fmt.Sprintf("sign(%d)=%d", n, Sign(n))
+}
