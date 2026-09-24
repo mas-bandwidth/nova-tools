@@ -131,6 +131,7 @@ var DefaultCatalog = []Entry{
 	E("internal/workreconcile", "GitHub issue import and work reconcile", "go test ./internal/workreconcile", "go test ./internal/workreconcile"),
 
 	// docs/
+	E("docs/spec-pulse", "the card contract kept for nova-pulse cut (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/decide", "decision criteria and evaluation records", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/drafts", "in-flight design drafts and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),

@@ -10,3 +10,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-sprint/` | nova-sprint verb guide | `go test ./internal/docs` | `go test ./internal/docs` |
 | `roadmaps/` | sprint roadmaps and milestones | `go test ./internal/docs` | `go test ./internal/docs` |
 | `schemas/` | event and payload schema definitions | `go test ./internal/docs` | `go test ./internal/docs` |
+| `spec-pulse/` | the card contract kept for nova-pulse cut (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24 | `go test ./internal/docs` | `go test ./internal/docs` |
