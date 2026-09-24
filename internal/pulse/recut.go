@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Attempt3WayApply attempts `git apply --3way --check` of diffPath in repoDir.
@@ -57,9 +58,9 @@ func parseHoldFile(raw string) (holdCard, string) {
 		if trim == "" {
 			continue
 		}
-		if who, head, verdict, _, ok := merge.ParseDispositionLine(trim); ok && h.Line == "" {
+		if c, ok := typedrec.ParseDisposition(trim); ok && h.Line == "" {
 			h.Line = trim
-			h.Who, h.Head, h.Verdict = who, head, verdict
+			h.Who, h.Head, h.Verdict = c.Who, c.Head, c.Verdict
 			continue
 		}
 		if v, ok := headerValue(trim, "PATHS"); ok {

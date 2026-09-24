@@ -7,7 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
-	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Verdict is one piece of evidence regarding a hold or approval.
@@ -53,149 +54,16 @@ func StripQuotedAndCode(body string) string {
 	return strings.Join(out, "\n")
 }
 
-// ParseDispositionLine parses a typed DISPOSITION line:
-// DISPOSITION who=<name> head=<sha40> verdict=HOLD [scope="<text>"]
+// ParseDispositionLine is the lenient view of a typed DISPOSITION line,
+// DISPOSITION who=<name> head=<sha> verdict=HOLD [scope="<text>"]. The one
+// parser is typedrec.ParseDisposition (#2506 part B); this keeps the
+// (who, head, verdict, scope, ok) shape for callers that only want those.
 func ParseDispositionLine(line string) (who, head, verdict, scope string, ok bool) {
-	line = strings.TrimSpace(line)
-	if !strings.HasPrefix(line, "DISPOSITION") {
+	c, ok := typedrec.ParseDisposition(line)
+	if !ok {
 		return "", "", "", "", false
 	}
-	rest := strings.TrimSpace(strings.TrimPrefix(line, "DISPOSITION"))
-	fields := parseKeyValueFields(rest)
-	who = normWho(fields["who"])
-	head = strings.ToLower(fields["head"])
-	verdict = strings.ToUpper(fields["verdict"])
-	scope = fields["scope"]
-	if verdict != "" {
-		return who, head, verdict, scope, true
-	}
-	return "", "", "", "", false
-}
-
-// dispositionWholeLine parses a line that is a DISPOSITION line WHOLE and nothing else:
-// the first token is exactly DISPOSITION, and everything after it is key=value fields with
-// no stray prose and no repeated key.
-//
-// nova-tools #2550, second ask: "the DISPOSITION line must be the whole line (no smuggled
-// verdict inside a multi-line body)". This strict form gates the RELEASING verdict only --
-// a typed APPROVE. A HOLD keeps the lenient ParseDispositionLine, on purpose: tightening
-// the parser on the holding side would turn a sloppily typed HOLD into a non-hold, and a
-// rule about smuggling must never fail open on the side that stops a merge.
-func dispositionWholeLine(line string) (map[string]string, bool) {
-	line = strings.TrimSpace(line)
-	const word = "DISPOSITION"
-	if !strings.HasPrefix(line, word) {
-		return nil, false
-	}
-	rest := line[len(word):]
-	if rest != "" && !isSpaceByte(rest[0]) {
-		// DISPOSITIONS, DISPOSITION: and friends are not the typed line.
-		return nil, false
-	}
-	return parseKeyValueFieldsStrict(rest)
-}
-
-func isSpaceByte(b byte) bool {
-	return b == ' ' || b == '\t' || b == '\r' || b == '\n' || b == '\v' || b == '\f'
-}
-
-// parseKeyValueFieldsStrict is parseKeyValueFields with the tolerance taken out: every
-// token must belong to a key=value field, keys must be bare words, a quoted value must
-// close, and no key may be given twice. Anything else and the line is not a typed line.
-func parseKeyValueFieldsStrict(s string) (map[string]string, bool) {
-	res := make(map[string]string)
-	for {
-		s = strings.TrimLeft(s, " \t\r\n\v\f")
-		if s == "" {
-			return res, true
-		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
-			return nil, false
-		}
-		key := s[:eq]
-		if !isBareKey(key) {
-			return nil, false
-		}
-		s = s[eq+1:]
-		var val string
-		if len(s) > 0 && s[0] == '"' {
-			s = s[1:]
-			closeQuote := strings.IndexByte(s, '"')
-			if closeQuote < 0 {
-				return nil, false
-			}
-			val = s[:closeQuote]
-			s = s[closeQuote+1:]
-			if s != "" && !isSpaceByte(s[0]) {
-				return nil, false
-			}
-		} else {
-			sp := strings.IndexFunc(s, unicode.IsSpace)
-			if sp >= 0 {
-				val, s = s[:sp], s[sp:]
-			} else {
-				val, s = s, ""
-			}
-		}
-		if _, dup := res[key]; dup {
-			return nil, false
-		}
-		res[key] = val
-	}
-}
-
-func isBareKey(k string) bool {
-	if k == "" {
-		return false
-	}
-	for _, r := range k {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
-func parseKeyValueFields(s string) map[string]string {
-	res := make(map[string]string)
-	for len(s) > 0 {
-		s = strings.TrimSpace(s)
-		if len(s) == 0 {
-			break
-		}
-		eq := strings.IndexByte(s, '=')
-		if eq <= 0 {
-			break
-		}
-		key := strings.TrimSpace(s[:eq])
-		s = s[eq+1:]
-		var val string
-		if len(s) > 0 && s[0] == '"' {
-			s = s[1:]
-			closeQuote := strings.IndexByte(s, '"')
-			if closeQuote >= 0 {
-				val = s[:closeQuote]
-				s = s[closeQuote+1:]
-			} else {
-				val = s
-				s = ""
-			}
-		} else {
-			sp := strings.IndexFunc(s, unicode.IsSpace)
-			if sp >= 0 {
-				val = s[:sp]
-				s = s[sp+1:]
-			} else {
-				val = s
-				s = ""
-			}
-		}
-		res[key] = val
-	}
-	return res
+	return c.Who, c.Head, c.Verdict, c.Scope, true
 }
 
 // IsAuthorNote checks if the body contains a typed note by the pull request's author:
@@ -348,7 +216,7 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 //
 // Two guards, both from nova-tools #2550:
 //
-//   - the DISPOSITION must be the WHOLE line (dispositionWholeLine), so a release cannot
+//   - the DISPOSITION must be the WHOLE line (typedrec.ParseDisposition's Whole), so a release cannot
 //     be smuggled into a sentence in a long body;
 //   - its head= is kept as typed and compared later by headMatch, which is the same
 //     prefix rule a typed HOLD's head= gets. `head=5adf9cb2` and the whole 40-character
@@ -360,21 +228,21 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 // the pending branch and fails closed.
 func approveVerdict(id int64, login string, lines []string, at string, rs *ReviewerSet, currentHead string) (Verdict, bool) {
 	for _, l := range lines {
-		fields, ok := dispositionWholeLine(l)
-		if !ok {
+		c, ok := typedrec.ParseDisposition(l)
+		if !ok || !c.Whole || c.Verdict != "APPROVE" {
 			continue
 		}
-		if !strings.EqualFold(fields["verdict"], "APPROVE") {
+		// #2506 part B: a refused claim approves nothing. An APPROVE with no
+		// head= is refused as field=head defect=missing; it no longer binds to
+		// the current head.
+		if !c.Valid {
 			continue
 		}
-		resolvedWho, _ := rs.ResolveWho(login, fields["who"])
+		resolvedWho, _ := rs.ResolveWho(login, c.Who)
 		if resolvedWho == "" || resolvedWho == "unknown" {
 			continue
 		}
-		head := strings.ToLower(strings.TrimSpace(fields["head"]))
-		if head == "" {
-			head = currentHead
-		}
+		head := strings.TrimSpace(c.Head)
 		return Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
 			Who:    resolvedWho,
@@ -382,7 +250,7 @@ func approveVerdict(id int64, login string, lines []string, at string, rs *Revie
 			Head:   head,
 			At:     at,
 			Source: "comment-rule",
-			Scope:  fields["scope"],
+			Scope:  c.Scope,
 			RawID:  id,
 			Conf:   "-",
 			Kind:   "line",
