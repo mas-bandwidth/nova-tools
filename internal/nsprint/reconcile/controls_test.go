@@ -611,6 +611,7 @@ func TestControl08NoSecondPR(t *testing.T) {
 	})
 
 	t.Run("ensure_pr_validation", func(t *testing.T) {
+		dbsizeBefore := client.DBSize(ctx).Val()
 		for _, bad := range []struct {
 			name string
 			h    reconcile.PRHost
@@ -628,6 +629,9 @@ func TestControl08NoSecondPR(t *testing.T) {
 			}
 			if forge.calls.Load() != calls {
 				t.Fatalf("%s asked the forge", bad.name)
+			}
+			if client.DBSize(ctx).Val() != dbsizeBefore {
+				t.Fatalf("%s modified redis keyspace", bad.name)
 			}
 		}
 	})
@@ -730,7 +734,9 @@ func checkForgeReads(fset *token.FileSet, f *ast.File) []string {
 }
 
 // TestNoForgeReadInReconcile: GitHub is a git remote only (#2930 rev 5). No
-// file of the reconcile package names http.MethodGet or FindOpen.
+// production file of the reconcile package names http.MethodGet or FindOpen.
+// Test files (*_test.go) are excluded because test fixtures in TestASTForgeReadGuard
+// intentionally contain these constructs to verify the AST guard.
 func TestNoForgeReadInReconcile(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	must(t, err)
@@ -766,58 +772,58 @@ func TestASTForgeReadGuard(t *testing.T) {
 		wantMatch bool
 	}{
 		{
-			name: "raw string GET",
-			src:  "package p\nvar _ = `GET`\n",
+			name:      "raw string GET",
+			src:       "package p\nvar _ = `GET`\n",
 			wantMatch: true,
 		},
 		{
-			name: "raw string HEAD",
-			src:  "package p\nvar _ = `HEAD`\n",
+			name:      "raw string HEAD",
+			src:       "package p\nvar _ = `HEAD`\n",
 			wantMatch: true,
 		},
 		{
-			name: "aliased import MethodGet",
-			src:  "package p\nimport h \"net/http\"\nvar _ = h.MethodGet\n",
+			name:      "aliased import MethodGet",
+			src:       "package p\nimport h \"net/http\"\nvar _ = h.MethodGet\n",
 			wantMatch: true,
 		},
 		{
-			name: "aliased import MethodHead",
-			src:  "package p\nimport custom \"net/http\"\nvar _ = custom.MethodHead\n",
+			name:      "aliased import MethodHead",
+			src:       "package p\nimport custom \"net/http\"\nvar _ = custom.MethodHead\n",
 			wantMatch: true,
 		},
 		{
-			name: "dot import MethodGet",
-			src:  "package p\nimport . \"net/http\"\nvar _ = MethodGet\n",
+			name:      "dot import MethodGet",
+			src:       "package p\nimport . \"net/http\"\nvar _ = MethodGet\n",
 			wantMatch: true,
 		},
 		{
-			name: "interpreted string GET",
-			src:  "package p\nvar _ = \"GET\"\n",
+			name:      "interpreted string GET",
+			src:       "package p\nvar _ = \"GET\"\n",
 			wantMatch: true,
 		},
 		{
-			name: "interpreted string HEAD",
-			src:  "package p\nvar _ = \"HEAD\"\n",
+			name:      "interpreted string HEAD",
+			src:       "package p\nvar _ = \"HEAD\"\n",
 			wantMatch: true,
 		},
 		{
-			name: "standard import MethodGet",
-			src:  "package p\nimport \"net/http\"\nvar _ = http.MethodGet\n",
+			name:      "standard import MethodGet",
+			src:       "package p\nimport \"net/http\"\nvar _ = http.MethodGet\n",
 			wantMatch: true,
 		},
 		{
-			name: "FindOpen call",
-			src:  "package p\nfunc f() { host.FindOpen() }\n",
+			name:      "FindOpen call",
+			src:       "package p\nfunc f() { host.FindOpen() }\n",
 			wantMatch: true,
 		},
 		{
-			name: "FindOpen declaration",
-			src:  "package p\nfunc FindOpen() {}\n",
+			name:      "FindOpen declaration",
+			src:       "package p\nfunc FindOpen() {}\n",
 			wantMatch: true,
 		},
 		{
-			name: "clean net/http MethodPost",
-			src:  "package p\nimport \"net/http\"\nvar _ = http.MethodPost\nvar _ = \"POST\"\n",
+			name:      "clean net/http MethodPost",
+			src:       "package p\nimport \"net/http\"\nvar _ = http.MethodPost\nvar _ = \"POST\"\n",
 			wantMatch: false,
 		},
 	}
