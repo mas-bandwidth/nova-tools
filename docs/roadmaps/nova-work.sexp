@@ -64,8 +64,8 @@
     :suite-result "NOVA-WORK SLICE1 total=336 pass=336 fail=0"
     :criteria-rule "each :criteria row is THE record of one acceptance criterion: :id is stable (feature id + ordinal), :state is verified | unverified | unmet (a test exists and is RED: the behaviour is missing), :tests names the proving tests when known; ROADMAP.md checkboxes are a view of these rows and tools/roadmap-parity.sh fails when they differ"
     :rule "a criterion is verified only when a named test in this repository proves it and that test passed at :revision; a feature is verified only when every one of its criteria is"
-    :verified-features 23
-    :verified-acceptance-items 155
+    :verified-features 24
+    :verified-acceptance-items 157
     :by-feature (
       (:feature "E01-F01" :verified 3 :total 3 :tests "tests/acceptance/slice-01-reader.lisp: forbidden-token-boundary-before-interning, line-comments-accepted, comment-inside-form, comment-text-is-text, quote-in-comment-is-text, semicolon-in-string-is-literal, reader-eof-sentinel-is-not-payload, malformed-trailing-unclosed-form, malformed-trailing-unclosed-list, dispatch-byte-offset-utf8, eof-byte-offset-utf8, trailing-byte-offset-utf8, unterminated-string-start-byte, forbidden-after-unicode-comment, utf8-byte-offsets; hostile-data"
        :criteria ((:id "E01-F01-01" :state "verified" :text "Accept only lists, keywords, strings, integers and comments")
@@ -274,9 +274,9 @@
                   (:id "E08-F05-03" :state "verified" :text "Keep requested versus observed model and measured suitability separate")
                   (:id "E08-F05-04" :state "verified" :text "policy-round-trip-and-replay: preserve per-friend efficiency policy, trial manifests and execution references through validated intake, export/import, restart, undo and replay")
                   (:id "E08-F05-05" :state "verified" :text "packet-and-route-gates: refuse oversized or history-disallowed packets and ineligible/stale routes; retain a scoped reason for economical-route exceptions")))
-      (:feature "E09-F01" :verified 1 :total 3 :tests "archive-completeness"
-       :criteria ((:id "E09-F01-01" :state "unverified" :text "Capture stable provider/repository/issue identity, revision and URL")
-                  (:id "E09-F01-02" :state "unverified" :text "Preserve body, comments, labels, relationships, attachments and pagination")
+      (:feature "E09-F01" :verified 3 :total 3 :tests "archive-completeness; internal/ghcapture/adapter_test.go: TestStableIdentityRevisionAndURL, TestBodyCommentsLabelsRelationshipsAndPagination"
+       :criteria ((:id "E09-F01-01" :state "verified" :text "Capture stable provider/repository/issue identity, revision and URL")
+                  (:id "E09-F01-02" :state "verified" :text "Preserve body, comments, labels, relationships, attachments and pagination")
                   (:id "E09-F01-03" :state "verified" :text "Keep inaccessible or unsupported fields explicit")))
       (:feature "E09-F02" :verified 1 :total 3 :tests "read-only-intake; hostile-data"
        :criteria ((:id "E09-F02-01" :state "unverified" :text "Map one issue to many nodes and repeated updates without duplicates")
