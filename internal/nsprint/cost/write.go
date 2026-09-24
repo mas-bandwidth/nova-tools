@@ -281,7 +281,7 @@ func recoverWrite(ctx context.Context, client *redis.Client, e *Export, plans, p
 
 // verdict decides after a read-back. Any unknown day is exit 8 at once, never retried. With
 // every day written, the days are recovered and the import goes on to its DONE line. Else,
-// before the retry, the caller retries; after it, exit 9.
+// before the retry, the caller retries; after it, exit 7.
 func verdict(e *Export, plans []*plan, result map[*plan]string, out, errOut io.Writer, final bool) (int, bool) {
 	unknown, notWritten := 0, 0
 	for _, s := range result {

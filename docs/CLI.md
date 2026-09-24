@@ -5383,11 +5383,11 @@ the day is `partial`. Only a read-back with no reply makes a day `unknown`.
 | 3 | bad export: unreadable, no header, a required column missing (named), a day or cost that does not parse, a negative cost, a `\|` in a project or model, a `total` row in a multi-day file |
 | 4 | does not reconcile; nothing written |
 | 6 | Redis failed before the write (dial, AUTH, the read pipeline, `cost:idx` not a zset, EXECABORT); `nothing written`, proven |
+| 7 | written in part: every reply received, and after one retry a day is not written; days print `state=written\|unchanged\|partial` and stderr names each failing command and its reply |
 | 8 | outcome unknown: a read-back got no reply; each such day prints `state=unknown`; re-run the same import (it is idempotent) |
-| 9 | written in part: every reply received, and after one retry a day is not written; days print `state=written\|unchanged\|partial` and stderr names each failing command and its reply |
 
-Exit 7 is not used: in nova-sprint it means DOWN (`task push`, #2929). Exits 8
-and 9 never print `nothing written`.
+Exit codes are scoped per verb: `task push`'s DOWN 7 (#2929) does not alter this
+verb's 7. Exits 7 and 8 never print `nothing written`.
 
 ### Where a card's results live
 

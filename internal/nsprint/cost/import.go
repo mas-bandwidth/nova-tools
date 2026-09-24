@@ -19,16 +19,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/route"
 )
 
-// Exit codes of `nova-sprint cost import`. 7 is not used: in nova-sprint it already means
-// DOWN (`task push`, #2929), so a partial write is 9, never 7.
+// Exit codes of `nova-sprint cost import`. Exit codes are scoped per verb (spec #3159 rev 7):
+// `task push`'s DOWN 7 does not alter cost import's specified exits 7 and 8.
 const (
 	ExitOK        = 0
 	ExitUsage     = 2 // could not run: a flag, the provider, no --file or --redis
 	ExitExport    = 3 // bad export
 	ExitReconcile = 4 // does not reconcile; nothing written
 	ExitPreWrite  = 6 // pre-write Redis failure; nothing written, proven
+	ExitPartial   = 7 // the write failed in part after one retry; every reply received
 	ExitUnknown   = 8 // outcome unknown: a read-back got no reply
-	ExitPartial   = 9 // the write failed in part after one retry; every reply received
 )
 
 // Writer is the value of every hash's `writer` field: the only writer of cost:*.
@@ -229,8 +229,17 @@ func Parse(provider, sourceName string, data []byte, routes []route.Row) (*Expor
 		if !routed {
 			d.Unrouted++
 		}
-		d.Micro += micro
-		d.Fields[project+"|"+rt] += micro
+		dayMicro, ok := addMicro(d.Micro, micro)
+		if !ok {
+			return nil, badExport("line %d: day %s: the rows' sum overflows int64 micro-dollars", line, day)
+		}
+		field := project + "|" + rt
+		fieldMicro, ok := addMicro(d.Fields[field], micro)
+		if !ok {
+			return nil, badExport("line %d: day %s: field %s's sum overflows int64 micro-dollars", line, day, field)
+		}
+		d.Micro = dayMicro
+		d.Fields[field] = fieldMicro
 	}
 	if len(days) == 0 {
 		return nil, badExport("the export has no data rows")
@@ -260,8 +269,12 @@ func Parse(provider, sourceName string, data []byte, routes []route.Row) (*Expor
 func (e *Export) Reconcile() error {
 	for _, d := range e.Days {
 		var fields int64
-		for _, v := range d.Fields {
-			fields += v
+		for k, v := range d.Fields {
+			sum, ok := addMicro(fields, v)
+			if !ok {
+				return &ExportError{Msg: fmt.Sprintf("day %s: the fields' sum overflows int64 micro-dollars at %s", d.Day, k)}
+			}
+			fields = sum
 		}
 		if diff := fields - d.Micro; diff > tolerance || diff < -tolerance {
 			return &ReconcileError{Msg: fmt.Sprintf("day %s: the fields sum to %s but the rows to %s", d.Day, formatMicro(fields), formatMicro(d.Micro))}
@@ -273,6 +286,16 @@ func (e *Export) Reconcile() error {
 		}
 	}
 	return nil
+}
+
+// addMicro is a+b for nonnegative micro-dollar amounts, false when the sum overflows int64.
+// Every cell is at most $1e12 (1e18 micro-dollars), so ten accepted rows can wrap an
+// unchecked sum negative; a sum that overflows is a bad export (exit 3), before Redis opens.
+func addMicro(a, b int64) (int64, bool) {
+	if a < 0 || b < 0 || a > math.MaxInt64-b {
+		return 0, false
+	}
+	return a + b, true
 }
 
 // parseDay takes the first ten characters of a day cell as a UTC YYYY-MM-DD.

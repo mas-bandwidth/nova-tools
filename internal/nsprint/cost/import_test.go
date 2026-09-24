@@ -457,7 +457,7 @@ func TestCostImportWriteOutcomes(t *testing.T) {
 			t.Fatalf("after the failed EXEC total = %q, want %q: EXEC applied the HSET beside the failed ZADD", totalAfterExec, clean21["total"])
 		}
 		if res.code != cost.ExitPartial {
-			t.Fatalf("exit %d, want 9 (partial; 7 is DOWN in nova-sprint)\n%s%s", res.code, res.out, res.errOut)
+			t.Fatalf("exit %d, want 7 (partial; rev 7: exits are scoped per verb)\n%s%s", res.code, res.out, res.errOut)
 		}
 		if !strings.Contains(res.out, "state=partial") || strings.Contains(res.out, "state=unknown") {
 			t.Fatalf("want state=partial and no state=unknown:\n%s", res.out)

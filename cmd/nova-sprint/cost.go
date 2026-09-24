@@ -19,7 +19,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "cost",
-		Summary: "cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>: a provider export into cost:<p>:<day> (exit 2 usage, 3 bad export, 4 does not reconcile, 6 no Redis/nothing written, 8 outcome unknown, 9 partial)",
+		Summary: "cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>: a provider export into cost:<p>:<day> (exit 2 usage, 3 bad export, 4 does not reconcile, 6 no Redis/nothing written, 7 partial, 8 outcome unknown)",
 		Run:     runCost,
 	})
 }

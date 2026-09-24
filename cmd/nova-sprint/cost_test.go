@@ -11,7 +11,8 @@ import (
 )
 
 // TestCostImportExitCodes is nova-tools #3159's exit table through run: 0, 2, 3, 4 and 6.
-// 8 and 9 need a failure inside the write and are TestCostImportWriteOutcomes' cases.
+// Exit 3 includes a day whose accepted rows overflow int64 micro-dollars: nothing written.
+// 7 and 8 need a failure inside the write and are TestCostImportWriteOutcomes' cases.
 func TestCostImportExitCodes(t *testing.T) {
 	t.Setenv("HOME", t.TempDir()) // the any-seat check: nothing under HOME is read
 	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
@@ -19,6 +20,13 @@ func TestCostImportExitCodes(t *testing.T) {
 	fixtures := filepath.Join("..", "..", "internal", "nsprint", "cost", "testdata")
 	noCost := filepath.Join(t.TempDir(), "no-cost.csv")
 	if err := os.WriteFile(noCost, []byte("date,workspace,model\n2026-09-21,nova,claude-opus-5-5\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Ten permitted $1e12 rows: each cell is accepted, but the day's sum (1e19 micro-dollars)
+	// overflows int64. Unchecked, it wrapped to -8446744073709551616 and reconciled.
+	overflow := filepath.Join(t.TempDir(), "overflow.csv")
+	rows := "usage_date,workspace_name,model,cost_usd\n" + strings.Repeat("2026-09-21,nova,claude-opus-5-5,1000000000000\n", 10)
+	if err := os.WriteFile(overflow, []byte(rows), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	closed := miniredis.RunT(t)
@@ -38,6 +46,7 @@ func TestCostImportExitCodes(t *testing.T) {
 		{"no redis", []string{"--provider", "anthropic", "--file", filepath.Join(fixtures, "anthropic.csv")}, 2, "", "no --redis"},
 		{"missing file", []string{"--provider", "anthropic", "--file", filepath.Join(t.TempDir(), "absent.csv"), "--redis", mr.Addr()}, 3, "", "cannot read the export"},
 		{"no cost column", []string{"--provider", "anthropic", "--file", noCost, "--redis", mr.Addr()}, 3, "", "no cost column"},
+		{"sum overflows", []string{"--provider", "anthropic", "--file", overflow, "--redis", mr.Addr()}, 3, "", "overflows int64"},
 		{"bad total", []string{"--provider", "openrouter", "--file", filepath.Join(fixtures, "openrouter-bad-total.csv"), "--redis", mr.Addr()}, 4, "", "total row"},
 		{"closed redis", []string{"--provider", "anthropic", "--file", filepath.Join(fixtures, "anthropic.csv"), "--redis", closedAddr}, 6, "", "nothing written"},
 	} {
