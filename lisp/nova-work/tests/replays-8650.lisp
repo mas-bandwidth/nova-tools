@@ -335,3 +335,94 @@
                          "acme/work/f1/t4")
                        (correspondence-nodes c6 "acme/work#11")
                        "a second issue disturbed the first issue's nodes"))))))
+
+;;; E10-F07-03  session start --repair only when findings strictly
+;;; decrease                                  (SPEC-WORK.md:2430-2440)
+;;; ------------------------------------------------------------------
+
+(deftest "TestE10F07SupportSessionStartRepairOnly" "docs/SPEC-WORK.md:2430"
+    "expected=red-load-names-its-findings;source-unmodified;strict-decrease-admitted;otherwise-refused-with-no-repair"
+  ;; A red set under rule 18 (SPEC-WORK.md:5496): an id whose latest closed row
+  ;; settles it while its node still reads :o. One hand-written row = one
+  ;; finding; two rows over two still-open ids = two findings.
+  (let* ((red (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7))
+         (red-again (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7))
+         (redder (hand-write-closed-row
+                  (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7)
+                  "acme/work/f1/t2" 8))
+         (clean (make-seed-state *seed*)))
+    (ok (= 1 (length (cow-load-findings red))) "the red fixture is not red")
+    (multiple-value-bind (sess line code)
+        (session-start :repair t :state-seed red :owner "rowan" :base "tip")
+      (ok sess "session start --repair did not start a session: ~A" line)
+      ;; A red load under --repair still names its findings, and only a load
+      ;; with zero findings exits 0 (SPEC-WORK.md:2438).
+      (check-equal 1 (session-findings sess)
+                   "session start --repair did not name its loaded finding count")
+      (check-equal 1 code "a red --repair load did not exit 1")
+      (ok (search "findings=1" (session-status-line sess))
+          "the SESSION OK line does not carry findings=: ~A"
+          (session-status-line sess))
+      ;; The unmodified source: starting left the red state it was given alone.
+      (check-equal 1 (length (cow-load-findings red))
+                   "session start --repair rewrote the unmodified source")
+      ;; Repair admits a candidate only when its finding count strictly drops.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess clean :node "acme/work/f1/t1")
+        (ok admitted "a repair dropping findings to zero was refused: ~A" rline)
+        (check-equal 0 rcode "the admitted repair is not exit 0"))
+      ;; The same count is no repair: refused at exit 1 with the repair diff.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess red-again :node "acme/work/f1/t1")
+        (ok (not admitted) "a repair that keeps the finding count was admitted")
+        (check-equal 1 rcode "the refused non-decrease is not exit 1")
+        (ok (search "no repair" rline)
+            "the refusal is not the `no repair` line: ~A" rline)
+        (ok (search "findings=1" rline)
+            "the refusal does not name the candidate findings: ~A" rline)
+        (ok (search "was=1" rline)
+            "the refusal does not name the current findings: ~A" rline))
+      ;; A candidate that raises the count is refused too.
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess redder :node "acme/work/f1/t2")
+        (ok (not admitted) "a repair that raises the finding count was admitted")
+        (check-equal 1 rcode "the refused increase is not exit 1")
+        (ok (search "no repair" rline)
+            "the refusal is not the `no repair` line: ~A" rline)))))
+
+(deftest "TestE10F07RepairSessionSubmitIsGated" "docs/SPEC-WORK.md:2430"
+    "expected=non-decrease-refused-through-submit;nothing-applied;decrease-admitted-through-submit;findings-updated"
+  ;; The gate is the session's mutation path, not a free function: a mutation
+  ;; submitted to a --repair session reaches O only when the candidate's
+  ;; finding count strictly drops (SPEC-WORK.md:2430-2440).
+  (let ((red (hand-write-closed-row (make-seed-state *seed*) "acme/work/f1/t1" 7)))
+    (multiple-value-bind (sess line code)
+        (session-start :repair t :state-seed red :owner "rowan" :base "tip")
+      (declare (ignore code))
+      (ok sess "session start --repair did not start a session: ~A" line)
+      (let* ((k (session-kernel sess))
+             (history (length (state-history (kernel-state k)))))
+        ;; t2 moving to doing leaves t1's finding standing: no repair.
+        (multiple-value-bind (okp rline rcode)
+            (session-submit sess (list :verb :state-to-doing :node "acme/work/f1/t2"
+                                       :by "rowan" :reason "picked up" :evidence '("ev-1")
+                                       :request "repair-no-1" :stamp "2026-09-14T12:00:00Z"
+                                       :clock :tool :generation-owner "gen-4"))
+          (ok (not okp) "a mutation that keeps the finding count was admitted: ~A" rline)
+          (check-equal 1 rcode "the refused non-decrease is not exit 1")
+          (ok (and rline (search "no repair" rline))
+              "the refusal is not the `no repair` line: ~A" rline))
+        (check-equal history (length (state-history (kernel-state k)))
+                     "the refused mutation was applied to O")
+        (check-equal 1 (session-findings sess)
+                     "the refused mutation moved the finding count")
+        ;; Settling t1 takes it out of O: the one finding goes, so it is admitted.
+        (multiple-value-bind (okp rline rcode)
+            (session-submit sess (close-request :node "acme/work/f1/t1"
+                                                :request "repair-yes-1"))
+          (ok okp "a mutation that drops the finding count was refused: ~A" rline)
+          (check-equal 0 rcode "the admitted repair is not exit 0"))
+        (check-equal 0 (session-findings sess)
+                     "the admitted repair did not update the finding count")
+        (check-equal 0 (length (cow-load-findings (kernel-state k)))
+                     "the admitted repair did not reach O")))))

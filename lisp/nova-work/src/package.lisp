@@ -172,6 +172,9 @@
     #:session-submit
     #:session-check-admission
     #:session-reconfirm
+    #:session-findings
+    #:session-repair
+    #:session-repair-gate
     #:parse-rfc3339
     #:format-rfc3339
     #:parse-duration
