@@ -295,17 +295,25 @@ func TestAVolatileEntryNeverSwallowsANeighbouringFieldsValue(t *testing.T) {
 func TestTheDirectoryEntryTouchesNothingButThatDirectory(t *testing.T) {
 	doc := []string{
 		"$ nova-bus read --root /tmp/nova-bus-1",
-		"BUS READ root=/tmp/nova-bus-1 home=/tmp/other n=0",
+		"BUS READ root=/tmp/nova-bus-1 home=/tmp/nova-bus-1x/cache n=0",
 	}
-	run := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/other n=0\n"}}
+	run := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/nova-bus-1x/cache n=0\n"}}
 	field := Field{Name: "tmpdir", Doc: "/tmp/nova-bus-1", Run: "/run/T/nova-bus-9f3"}
 
 	if problems := CompareTranscript(parse(t, doc), run, []Field{field}); len(problems) != 0 {
 		t.Fatalf("the run's directory was not normalised: %d problem(s):\n%s", len(problems), joinProblems(problems))
 	}
-	moved := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/tmp/elsewhere n=0\n"}}
+	moved := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3 home=/run/T/nova-bus-9f3x/cache n=0\n"}}
 	if problems := CompareTranscript(parse(t, doc), moved, []Field{field}); len(problems) != 1 {
-		t.Fatalf("another path on the line was swallowed: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
+		t.Fatalf("a longer neighbouring path with the run directory as its prefix was swallowed: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
+	}
+	descendantDoc := []string{
+		"$ nova-bus read --root /tmp/nova-bus-1",
+		"BUS READ root=/tmp/nova-bus-1/cache n=0",
+	}
+	descendantRun := []Result{{Stdout: "BUS READ root=/run/T/nova-bus-9f3/cache n=0\n"}}
+	if problems := CompareTranscript(parse(t, descendantDoc), descendantRun, []Field{field}); len(problems) != 0 {
+		t.Fatalf("a descendant of the run's directory was not normalised: %d problem(s):\n%s", len(problems), joinProblems(problems))
 	}
 }
 
@@ -318,5 +326,17 @@ func TestAVolatileEntryLeavesAnInvalidValueOnTheLine(t *testing.T) {
 	run := []Result{{Stdout: "BUS READ took=soon\n"}}
 	if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "took"}}); len(problems) != 1 {
 		t.Fatalf("`took=soon` was normalised as a duration: %d problem(s), want 1:\n%s", len(problems), joinProblems(problems))
+	}
+}
+
+func TestTookAcceptsEveryGoDuration(t *testing.T) {
+	doc := []string{"$ nova-bus read", "BUS READ took=5ms"}
+	for _, duration := range []string{"1h3m1ns", "1h3m1us", "1h3m1µs"} {
+		t.Run(duration, func(t *testing.T) {
+			run := []Result{{Stdout: "BUS READ took=" + duration + "\n"}}
+			if problems := CompareTranscript(parse(t, doc), run, []Field{{Name: "took"}}); len(problems) != 0 {
+				t.Fatalf("a duration accepted by time.ParseDuration drew %d problem(s):\n%s", len(problems), joinProblems(problems))
+			}
+		})
 	}
 }

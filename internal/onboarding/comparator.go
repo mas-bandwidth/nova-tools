@@ -98,9 +98,9 @@ type VolatileField struct {
 // mistake rather than by the entry, so a sixth entry that forgets is one row of
 // a table away from being caught.
 //
-// `tmpdir` is the exception and is sound without a field: its pattern is a
-// literal absolute path THIS RUN made, which names no field because a path on a
-// line carries none, and which nothing else on the line can be.
+// `tmpdir` is the exception and is sound without a field: Path replaces its
+// literal absolute directory only at the end of a token or before `/`, so it
+// covers descendants without swallowing a longer path that shares the prefix.
 var Volatile = []VolatileField{
 	{
 		Name: "at",
@@ -118,7 +118,7 @@ var Volatile = []VolatileField{
 		norm: func(Field) Norm {
 			return Norm{
 				Name:  "took= (how long this run took)",
-				Re:    regexp.MustCompile(`^took=[0-9]+(\.[0-9]+)?(ns|µs|us|ms|s|m|h)([0-9]+(\.[0-9]+)?(ms|s|m|h))*$`),
+				Re:    regexp.MustCompile(`^took=.*$`),
 				As:    "took=<how long this run took>",
 				field: "took",
 				valid: isDuration,
