@@ -123,8 +123,15 @@ func writeScript(work string, card Card) (string, error) {
 	return path, nil
 }
 
+// execScript runs the card through /bin/sh rather than exec'ing the file it
+// just wrote. On Linux, exec of a file another goroutine's fork may still hold
+// open for writing fails with ETXTBSY (golang/go#22315): dev run 36015701004,
+// test (4/8 space) on vision-nova-20, "fork/exec .../card.sh: text file busy"
+// under parallel subtests. sh opens the script for reading, which that race
+// cannot refuse; cardReady already requires the #!/bin/sh line, so the
+// interpreter is the one the card names.
 func execScript(path string, args ...string) (stdout, stderr string, code int, err error) {
-	cmd := exec.Command(path, args...)
+	cmd := exec.Command("/bin/sh", append([]string{path}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_EDITOR=true")
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
