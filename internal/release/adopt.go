@@ -539,19 +539,62 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			continue
 		}
 		// THE MACHINE IS ASKED WHAT IT ALREADY HOLDS before anything is
-		// streamed. A bench that took this release an hour ago does not need
-		// twenty-one binaries pushed to it again, and on a fleet this is most
-		// of the benches most of the time.
+		// streamed, and "holds" means every artifact verifies against
+		// SHA256SUMS -- not that the checksum file is present. A killed
+		// transfer leaves SHA256SUMS and a handful of binaries; trusting
+		// that directory is how the next adopt skips the stream and then
+		// cannot find nova-update (#1981).
 		sent := "yes"
-		if remote, err := ssh.Run(ctx, machine, []string{"cat", path.Join(remoteDir, SumsFile)}); err == nil && sameSums(remote, localSums) {
-			sent = "no"
-			progress(errs, "%s already holds %s; streaming nothing", machine, o.version)
-		} else {
-			progress(errs, "sending %s to %s:%s", o.version, machine, remoteDir)
-			if output, err := ssh.Send(ctx, machine, local, path.Dir(remoteDir)); err != nil {
+		remote, catErr := ssh.Run(ctx, machine, []string{"cat", path.Join(remoteDir, SumsFile)})
+		heldSums := catErr == nil && sameSums(remote, localSums)
+		verified := 0
+		if heldSums {
+			vout, verr := ssh.Run(ctx, machine, verifyArgv(remoteDir))
+			verified = countVerified(vout)
+			if verr == nil && verified == len(arts) {
+				sent = "no"
+				progress(errs, "%s already holds %s (%d/%d); streaming nothing", machine, o.version, verified, len(arts))
+			}
+		}
+		if sent == "yes" {
+			if heldSums {
+				progress(errs, "%s holds %d/%d of %s; re-streaming", machine, verified, len(arts), o.version)
+			}
+			// Stream into <version>.partial/ and rename into place only after
+			// the bench verifies the copy, so a killed transfer cannot leave
+			// a final directory the next adopt would trust.
+			partialRoot := path.Join(dest, o.version+partialSuffix)
+			partialDir := path.Join(partialRoot, goos+"-"+goarch)
+			progress(errs, "sending %s to %s:%s", o.version, machine, partialDir)
+			if output, err := ssh.Send(ctx, machine, local, partialRoot); err != nil {
 				refused++
 				fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (check `ssh %s` reaches it and that %s is writable there; adopt runs from the host that has ssh to every machine)\n",
 					field(machine), field(o.version), oneLine(output, err), machine, dest)
+				continue
+			}
+			vout, verr := ssh.Run(ctx, machine, verifyArgv(partialDir))
+			got := countVerified(vout)
+			if verr != nil || got != len(arts) {
+				why := fmt.Sprintf("streamed copy verified %d/%d", got, len(arts))
+				if verr != nil {
+					why = oneLine(vout, verr)
+				}
+				refused++
+				fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (the bits are in %s; adopt again to re-stream)\n",
+					field(machine), field(o.version), why, partialDir)
+				continue
+			}
+			// A leftover final dir from an older killed send would make
+			// `mv partial final` nest the new tree inside it. Remove this
+			// release's own files by name -- never recursively -- then rename.
+			_, _ = ssh.Run(ctx, machine, clearReleaseFilesArgv(remoteDir, arts))
+			_, _ = ssh.Run(ctx, machine, []string{"rmdir", remoteDir})
+			finalRoot := path.Dir(remoteDir)
+			_, _ = ssh.Run(ctx, machine, []string{"rmdir", finalRoot})
+			if output, err := ssh.Run(ctx, machine, []string{"test", "!", "-e", finalRoot, "&&", "mv", partialRoot, finalRoot}); err != nil {
+				refused++
+				fmt.Fprintf(errs, "RELEASE REFUSED machine=%s version=%s: %s (move the leftover %s aside and adopt again)\n",
+					field(machine), field(o.version), oneLine(output, err), finalRoot)
 				continue
 			}
 		}
@@ -594,13 +637,27 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 		// tools=21 (it had nothing). Two different facts, two fields.
 		fmt.Fprintf(out, "RELEASE ADOPTED machine=%s version=%s tools=%s skipped=%s retired=%s sent=%s bin=%s\n",
 			field(machine), field(o.version), field(m[2]), field(m[3]), field(retired), field(sent), field(bin))
+		// THE ADOPT INVALIDATED THIS MACHINE'S CERTIFICATES by changing its build. With
+		// --certify the renewal happens here, under the version just installed, so the
+		// machine is never left adopted-and-uncertified with a fill that will refuse it.
+		if o.certify != "" {
+			if certifyAdopted(ctx, o, ssh, machine, o.version, out, errs) != 0 {
+				refused++
+			}
+		}
 	}
 	w, result, code := out, "OK", 0
 	if refused > 0 {
 		w, result, code = errs, "FAIL", 1
 	}
-	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s dry-run=%s\n",
-		result, len(machines), adopted, refused, field(o.version), map[bool]string{true: "yes", false: "no"}[o.dryRun])
+	certified := "yes"
+	if o.noCertify {
+		// Said out loud, on the verdict line, because a waived check that is silent is a
+		// check that was never there.
+		certified = "waived"
+	}
+	fmt.Fprintf(w, "RELEASE ADOPT %s machines=%d adopted=%d refused=%d version=%s certified=%s dry-run=%s\n",
+		result, len(machines), adopted, refused, field(o.version), certified, map[bool]string{true: "yes", false: "no"}[o.dryRun])
 	return code
 }
 
@@ -608,8 +665,8 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 // `release build` wrote it. The first whitespace-separated token is taken, so a
 // file produced by `sha256sum SHA256SUMS` -- which is `<digest>  SHA256SUMS` --
 // reads too, and a person who made one by hand that way is not punished for it.
-// The path is LOCAL: this function opens a file, and nothing in this package
-// ever asks a machine to hash anything.
+// The path is LOCAL: this function opens a file. A digest computed on the
+// machine holding the bits is not evidence about a fetch.
 func ReadDigestFile(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -632,6 +689,39 @@ var errNoReceipt = fmt.Errorf("no receipt")
 // WHOLE file rather than of a digest, because both sides are already here.
 func sameSums(remote string, local []byte) bool {
 	return strings.TrimSpace(remote) != "" && strings.TrimSpace(remote) == strings.TrimSpace(string(local))
+}
+
+// partialSuffix is the directory adopt streams into. The final <version>/ name
+// is created only by rename after the bench verifies every artifact, so a
+// killed transfer cannot leave a directory the next adopt would trust.
+const partialSuffix = ".partial"
+
+// verifyArgv is the far-side check that every file SHA256SUMS names is present
+// and hashes. sha256sum is GNU/Git Bash; shasum is darwin. Grouped so a
+// successful sha256sum does not still run shasum (`&&` / `||` are left-assoc).
+func verifyArgv(dir string) []string {
+	return []string{"cd", dir, "&&", "(", "sha256sum", "-c", SumsFile, "||", "shasum", "-a", "256", "-c", SumsFile, ")"}
+}
+
+// countVerified is how many lines a sha256sum -c / shasum -c run marked OK.
+func countVerified(output string) int {
+	n := 0
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasSuffix(strings.TrimSpace(line), ": OK") {
+			n++
+		}
+	}
+	return n
+}
+
+// clearReleaseFilesArgv removes this release's own files from a leftover final
+// directory, by name, so the subsequent mv of <version>.partial cannot nest.
+func clearReleaseFilesArgv(dir string, arts []Artifact) []string {
+	argv := []string{"rm", "-f"}
+	for _, a := range arts {
+		argv = append(argv, path.Join(dir, a.Name))
+	}
+	return append(argv, path.Join(dir, SumsFile))
 }
 
 // firstToken is the version a tool printed, for a probe line: its `version`

@@ -42,6 +42,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
+// NoBatchTokensRefusal is the ONE line a batch of cards prints when it was given no budget
+// word (SPEC-SWARM rule 13d, issue #1545). Like NoSlotsStoreRefusal beside it, it is a
+// constant so that the batch's refusal and `native`'s own say the same thing and a caller
+// who greps for one finds the other.
+//
+// IT NAMES BOTH SPELLINGS, because a caller running a local model has no accounting to read
+// and `unmetered` is the only honest thing they can say; and it says whose budget the word
+// is, because the first question a reader asks of a batch-wide flag is whether ten cards
+// share it.
+const NoBatchTokensRefusal = "BATCH REFUSED reason=no_tokens: --tokens is required; it wants a token budget for EACH card in this batch, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; it is never divided among the cards and never a total for the batch; refusing to guess"
+
 // admitRefusalLine is the one place a card's admission refusal is written: ADMIT REFUSED
 // <label> <why>, where <why> is the reason the card alone was refused -- a card shape
 // against docs/WORKER-CARDS.md practice 17, or a repository it could not reach.
@@ -96,9 +107,21 @@ type BatchInput struct {
 	// every bench. Said plainly here because it is the seam a reader will meet.
 	SlotsStore string
 	SlotOwner  string
-	Benches    string // path to the benches table; empty means no table is read
-	Bench      string // comma-separated bench names to allocate the cards across; empty means local only
-	Then       string // a follow-on command, run with sh -c only when every card is done; "" means none
+	// Tokens is the budget word this batch carries for EVERY card (SPEC-SWARM rule 13d,
+	// issue #1545): a number, or the literal `unmetered`. It is REQUIRED -- a batch without
+	// it is exit 2 before any card starts -- and it is carried as the caller TYPED it,
+	// never parsed here, because rule 13d says the batch puts it "verbatim into every
+	// `native` argv it builds" and `native` is the one verb that decides what a budget word
+	// means.
+	//
+	// IT IS EACH CARD'S OWN BUDGET, NOT THE BATCH'S. The same word goes to every card, the
+	// shape `batch --tasks` already has: it is never divided among the cards and never a
+	// total for the batch. Ten cards under `--tokens 100000` may spend a million tokens
+	// between them, and that is what the caller said.
+	Tokens  string
+	Benches string // path to the benches table; empty means no table is read
+	Bench   string // comma-separated bench names to allocate the cards across; empty means local only
+	Then    string // a follow-on command, run with sh -c only when every card is done; "" means none
 	// MaxInflight is the per-route in-flight cap of nova-tools#917: at most this many of a
 	// batch's cards run against one provider/model/key at a time, and the rest WAIT --
 	// held, not refused, holding no process and no spend, with their deadlines not begun.
@@ -145,6 +168,11 @@ type BatchInput struct {
 	// activity and process tree lifecycle are deterministic events rather than
 	// scheduler races.
 	snapshot func() activitySnapshot
+	// polled is called once the idle monitor has finished acting on a tick: every card
+	// sampled, every decision taken, every kill reaped. nil in production; a test that
+	// injects its clock uses it so "the monitor has read the store" is an event it waits
+	// for, never a race between its next write and the monitor's read (#2958).
+	polled func()
 }
 
 // batchClock is the batch's view of time: the idle window (Now), the whole-batch
@@ -197,6 +225,18 @@ const maxHoldLines = 11
 // search of a card whose log has stopped growing. It is short enough that an idle kill lands
 // close to the timeout and long enough that it does not busy-spin over n files.
 const idlePollInterval = 100 * time.Millisecond
+
+// idleLogDribble is how many bytes a card's log must gain within one idle window before
+// the log alone counts as progress.
+//
+// The watch used to treat any size change as work (`size != lastSize`). The card can write
+// the files the monitor reads: native.log grows when the card prints, and harness.log sits
+// under the job directory which is `--write`. A child that appended one byte a poll, or
+// that rewrote the file shorter, reset the still-clock until the deadline (issue #1893).
+// Four kilobytes per window is a page of harness output, orders of magnitude above a
+// dribble and below a card that is actually stepping. A card working in silence is held
+// by the tree's CPU, which is a separate reading.
+const idleLogDribble int64 = 4096
 
 // Batch runs one batch through scatter, wait and gather and returns the process exit code:
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
@@ -251,6 +291,17 @@ func Batch(in BatchInput) int {
 	// is somebody else's program and the bench cannot speak for what it takes.
 	if in.Runner == "" && (in.SlotsStore == "" || in.SlotOwner == "") {
 		fmt.Fprintln(in.Stderr, NoSlotsStoreRefusal)
+		return 2
+	}
+	// THE BUDGET WORD IS REQUIRED OF EVERY BATCH OF CARDS (rule 13d, "Every caller of
+	// `native` passes the word, and none invents it"). It is said ONCE, here, before a
+	// single card starts -- not once per card as each `native` refuses in turn -- and it
+	// binds a `--runner` batch too: the runner is handed the word as its sixth argument,
+	// and a runner that reaches `native` without passing it on meets `native`'s own
+	// refusal. There is no default, because a supplied default is exactly the guess rule
+	// 13 forbids.
+	if strings.TrimSpace(in.Tokens) == "" {
+		fmt.Fprintln(in.Stderr, NoBatchTokensRefusal)
 		return 2
 	}
 	// Admission is per card: every refusal is said once, by name, and the card is scored
@@ -410,6 +461,8 @@ func Batch(in BatchInput) int {
 			tickC, stopTicker := clk.NewTicker(idlePollInterval)
 			defer stopTicker()
 			lastSize := make([]int64, len(procs))
+			lastStore := make([]string, len(procs))
+			growFrom := make([]int64, len(procs))
 			var lastSample time.Time
 			for {
 				select {
@@ -444,15 +497,47 @@ func Batch(in BatchInput) int {
 						if !procs[i].launched || procs[i].done || procs[i].idleKilled || procs[i].stallKilled {
 							continue
 						}
+						// EVERY SIGNAL IS SAMPLED BEFORE ANY OF THEM DECIDES, and that is not
+						// a tidiness. The CPU check below keeps STATE -- the previous sample
+						// it compares against -- so a signal above it that said "alive" and
+						// jumped to the next card would leave that state unset, and the tree
+						// would have no baseline to have grown from on the tick after. A card
+						// with a harness store would then never establish one at all. So each
+						// check records what it saw and sets `active`; the decision is one
+						// place, at the bottom.
+						active := false
 						size := logSize(cardLogPath(in.Root, procs[i].scratch, procs[i].label))
 						if size > 0 {
 							procs[i].moved = true
 						}
-						if size != lastSize[i] {
-							lastSize[i] = size
+						var logGrew bool
+						lastSize[i], growFrom[i], logGrew = idleLogProgress(size, lastSize[i], growFrom[i])
+						if logGrew {
 							procs[i].moved = true
-							procs[i].lastGrow = now
-							continue
+							active = true
+						}
+						// A SILENT LOG AND A STILL TREE ARE NOT A STILL CARD EITHER, when the
+						// card is waiting on the provider. A `MODE: explore` card spends most
+						// of its window blocked on an HTTP response: it writes no byte to its
+						// log, and a process blocked on the network spends none of the CPU the
+						// check below is looking for. On the Studio, 2026-09-19 14:58Z, that
+						// cost a healthy card that had cloned, branched and was walking a
+						// source file -- `ABSTAIN reason=idle=300 log=1730`, no RESULT.md, and
+						// its spend reported as zero.
+						//
+						// The provider's answers land in the harness's OWN STORE, under the
+						// card's data home -- the same database `native` samples its usage
+						// from (#1712). A store that GREW since the last poll is a turn that
+						// came back, which is progress this monitor can measure where the
+						// provider actually leaves it. It is read for its growth exactly as
+						// the log is: a store written once at startup and still ever since
+						// certifies nothing, and the card is on the clock like any other.
+						if stamp := cardStoreStamp(in.Root, procs[i].scratch); stamp != "" {
+							if stamp != lastStore[i] {
+								lastStore[i] = stamp
+								procs[i].moved = true
+								active = true
+							}
 						}
 						// A silent log is not a silent card: a harness inside a `go test` that
 						// prints nothing for minutes is working, and its work is CPU its process
@@ -487,15 +572,21 @@ func Batch(in BatchInput) int {
 									// first-token check below never fires for a
 									// card that is compiling in silence (#593).
 									procs[i].moved = true
-									procs[i].lastGrow = now
-									continue
+									active = true
 								}
 								if shrank {
 									procs[i].moved = true
-									procs[i].lastGrow = now
-									continue
+									active = true
 								}
 							}
+						}
+						// THE ONE DECISION. A card is alive when ANY of the three moved.
+						// Any signal that moved the still-clock is also the new floor the log's
+						// next page is measured from (#1893).
+						if active {
+							procs[i].lastGrow = now
+							growFrom[i] = lastSize[i]
+							continue
 						}
 						// THE FIRST-TOKEN DEADLINE (nova-tools#917), and it is NOT the idle
 						// timeout above. Every signal the idle window has needs a first
@@ -544,6 +635,9 @@ func Batch(in BatchInput) int {
 					// lock would hold it for the whole grace and report every group as a
 					// survivor.
 					reapCardGroups(toReap)
+					if in.polled != nil {
+						in.polled()
+					}
 				}
 			}
 		}()
@@ -624,7 +718,7 @@ func Batch(in BatchInput) int {
 		if c.bench != "" {
 			// On a remote bench the batch builds the native command itself: ssh <host>
 			// [taskset -c <core>] <root>/bin/nova-swarm native ..., with the card copied first.
-			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, logFile)
+			cmd, err = remoteRun(c, benches[c.bench], in.Root, int(in.Deadline.Seconds()), in.SlotsStore, in.SlotOwner, in.Tokens, logFile)
 			if err != nil {
 				_ = logFile.Close()
 				fmt.Fprintln(in.Stderr, err)
@@ -639,7 +733,11 @@ func Batch(in BatchInput) int {
 				return 2
 			}
 		} else {
-			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root)
+			// THE SIXTH ARGUMENT (rule 13d). A runner is somebody else's program reading argv
+			// by index, so the budget word goes AFTER the five that were already there --
+			// label, slot, model, card path, root -- and never among them: every runner
+			// written before this rule is still correct about its first five.
+			cmd = exec.Command(in.Runner, c.label, strconv.Itoa(c.slot), c.model, c.cardPath, in.Root, in.Tokens)
 			cmd.Env = append(os.Environ(), "NOVA_SWARM_ROOT="+in.Root, "NOVA_SWARM_JOB="+job)
 			cmd.Stdout = logFile
 			cmd.Stderr = logFile
@@ -708,10 +806,12 @@ func Batch(in BatchInput) int {
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
 	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
 	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
-	// time, and kills a card only when neither has moved for the idle window: a dead card is
-	// removed from the wait, so the batch returns on its slowest still-working card rather
-	// than burning the whole deadline, and a card whose harness is busy and silent -- a
-	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
+	// time, and kills a card only when neither has moved for the idle window. Log movement
+	// is a page of growth in the window, not any size change: a card can write those files
+	// (issue #1893). A dead card is removed from the wait, so the batch returns on its
+	// slowest still-working card rather than burning the whole deadline, and a card whose
+	// harness is busy and silent -- a `go test` that prints nothing for minutes -- is not
+	// a dead card (issue #593).
 
 	select {
 	case <-allDone:
@@ -769,10 +869,10 @@ func Batch(in BatchInput) int {
 	// row that names ONE reason token (issue #461), so the packet is the whole read.
 	idleSeconds := int(in.Idle.Seconds())
 	var (
-		done, abstain, idle, stalled, partial int
-		holds                                 []string
-		totalIn, totalOut                     int
-		total                                 float64
+		done, abstain, held, idle, stalled, partial int
+		holds                                       []string
+		totalIn, totalOut                           int
+		total                                       float64
 	)
 	type row struct {
 		label    string
@@ -893,6 +993,10 @@ func Batch(in BatchInput) int {
 			}
 			continue
 		}
+		if state == "hold" {
+			held++
+			continue
+		}
 		abstain++
 		if strings.HasPrefix(reason, "idle=") {
 			idle++
@@ -941,6 +1045,9 @@ func Batch(in BatchInput) int {
 	// past n + 12 lines whatever the batch holds.
 	fmt.Fprintf(in.Stdout, "BATCH %s n=%d done=%d abstain=%d in=%d out=%d usd=%s idle=%d stalled=%d",
 		oneline.Field(in.ID), len(cards), done, abstain, totalIn, totalOut, formatUSD(total), idle, stalled)
+	if held > 0 {
+		fmt.Fprintf(in.Stdout, " held=%d", held)
+	}
 	// partial=<n> IS THE FLOOR SAYING IT IS A FLOOR. Every card whose numbers came from the
 	// harness store rather than from its own usage row was killed mid-turn, and the turn in
 	// flight carries no tokens object anywhere -- the provider charged for it and no
@@ -962,6 +1069,10 @@ func Batch(in BatchInput) int {
 		fmt.Fprintln(in.Stdout, line)
 	}
 	for _, r := range rows {
+		if r.state == "hold" {
+			fmt.Fprintf(in.Stdout, "%s slot=%d: HOLD reason=%s log=%d %s\n", oneline.Field(r.label), r.slot, oneline.Field(r.reason), r.logLines, r.tail)
+			continue
+		}
 		if r.state == "done" {
 			line := fmt.Sprintf("%s slot=%d: %s log=%d", oneline.Field(r.label), r.slot, r.line2, r.logLines)
 			if r.tail != "" {
@@ -1015,7 +1126,7 @@ func Batch(in BatchInput) int {
 		}
 	}
 
-	if abstain == 0 && len(holds) == 0 {
+	if abstain == 0 && held == 0 && len(holds) == 0 {
 		return 0
 	}
 	return 1
@@ -1057,13 +1168,14 @@ func liftResult(job, label string, notes io.Writer) {
 
 // FindCardResult is THE ONE PLACE a card's published result is looked for: the job root
 // first (ResultPath, the name the legacy runner's records use), then `repo/` and one
-// directory below it, exactly as far as `liftResult` copies from (issue #594). It is
-// exported because `native` asks the same question before the batch ever gathers -- whether
-// the harness published anything at all (issue #591) -- and a second, shallower lookup there
-// would call a card that published under `repo/` silent about a run that worked. One lookup,
-// one answer, both sides.
+// directory below it, exactly as far as `liftResult` copies from (issue #594). A path that
+// is not a regular file is not a result: a planted symlink is not followed and a FIFO is
+// not a published report (issue #233). It is exported because `native` asks the same
+// question before the batch ever gathers -- whether the harness published anything at all
+// (issue #591) -- and a second, shallower lookup there would call a card that published
+// under `repo/` silent about a run that worked. One lookup, one answer, both sides.
 func FindCardResult(job string) (string, bool) {
-	if root := ResultPath(job); fileExists(root) {
+	if root := ResultPath(job); isRegularFile(root) {
 		return root, true
 	}
 	return findResultBelow(job, resultLiftDepth)
@@ -1095,7 +1207,7 @@ func findResultBelow(dir string, depth int) (string, bool) {
 		}
 	}
 	for _, name := range dirs {
-		if p := filepath.Join(dir, name, "RESULT.md"); fileExists(p) {
+		if p := filepath.Join(dir, name, "RESULT.md"); isRegularFile(p) {
 			return p, true
 		}
 	}
@@ -1134,6 +1246,11 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	// A remote card's job came back under <root>/<bench>-<n>/jobs/<label>; a local card's
 	// sits under <root>/<n>/jobs/<label>.
 	job := filepath.Join(root, scratchName(c), "jobs", c.label)
+	// A provider read that may have been accepted is not a missing result and not
+	// a finished card, even when a RESULT.md is sitting beside the marker.
+	if AcceptanceUnknown(job) {
+		return "hold", "unknown-acceptance", "job=" + job, ""
+	}
 	raw, err := readFileSteady(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		// A RESULT.md that is a symlink or a FIFO is refused by name, in the one line the
@@ -1248,6 +1365,12 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	if deadKilled {
 		return "abstain", "result-after-deadline", "", ""
 	}
+	// A read verdict or a BRANCH whose run carries a known failure signature was not earned:
+	// the run failed mechanically (the toolchain, the packages, the fence or a permission),
+	// never by judgement, and the signature is checked before the result is scored done.
+	if sig, class, ok := failureSignatureInFile(filepath.Join(job, "harness-output.log")); ok {
+		return "abstain", fmt.Sprintf("signature sig=%q class=%s", sig, class), "", ""
+	}
 	if extra := len(one) - len(cardLine); extra > 0 {
 		return "done", "", "tail=" + strconv.Itoa(extra), two
 	}
@@ -1358,14 +1481,100 @@ func readCards(path string) ([]batchCard, error) {
 }
 
 // logSize is the byte length of a card's log file, or zero when the file is not there yet.
-// Growth is the only signal the idle monitor trusts: a card that has written nothing, or has
-// stopped writing, reads the same size twice and is on the clock.
 func logSize(path string) int64 {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return 0
 	}
 	return fi.Size()
+}
+
+// cardStoreStamp is the growth signal of a card's own harness store: the database the
+// harness writes every turn into the card's data home, at the standard locations
+// `OpenCodeStoreLocations` already names for the usage reader.
+//
+// THE STAMP IS SIZES AND THE WAL-INDEX HEADER, NEVER MODIFICATION TIMES. This package's own
+// class test in `revision_test.go` admits a modification-time read in two files and this is
+// not one of them.
+//
+// SIZES ALONE ARE NOT ENOUGH, and that is measured rather than argued. With stock settings
+// (`journal_size_limit = -1`) SQLite RESETS THE WAL IN PLACE after the first autocheckpoint:
+// it keeps its high-water mark and writes the next transactions back over the front of it.
+// Two hundred rows and then six commits moved none of `<db>`, `<db>-wal` or `<db>-shm` by a
+// byte of length (Fable's cold read of this change, 2026-09-19). A harness at a steady state
+// of commits would read as STILL -- the exact fault this whole change exists to close,
+// reintroduced one layer down. Apple's `sqlite3` CLI sets a 32768-byte limit and hides it;
+// the SQLite inside the harness is unverified, so the stock behaviour is the one to assume.
+//
+// THE WAL-INDEX HEADER IS WHAT MOVES. `<db>-shm`'s first 48 bytes hold two copies of the
+// record SQLite rewrites at EVERY commit -- a change counter and `mxFrame` among them -- at
+// a constant file length. Those bytes are read, and nothing else is: this is a liveness
+// probe, not a reader of anybody's data. There is no parse, no field is interpreted, and the
+// question stays the only one this monitor asks -- did the harness move -- never what it
+// said. A header that cannot be read (the file is gone between the stat and the open, or the
+// platform will not map it) contributes nothing and the sizes still stand.
+//
+// An empty stamp means NO STORE AT EITHER LOCATION, which is not a signal in either
+// direction: a card whose harness has not written one yet, and every runner that is not this
+// harness, keep exactly the log-and-CPU behaviour they have today.
+func cardStoreStamp(root, scratch string) string {
+	var b strings.Builder
+	for _, db := range OpenCodeStoreLocations(filepath.Join(root, scratch, "data")) {
+		seen := false
+		for _, path := range []string{db, db + "-wal", db + "-shm"} {
+			fi, err := os.Stat(path)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			fmt.Fprintf(&b, "%s:%d;", path, fi.Size())
+			seen = true
+		}
+		// The header only when there is a store here: an empty stamp has to keep meaning NO
+		// STORE, because that is what tells the monitor to leave the log-and-CPU behaviour
+		// alone. A `<db>:;` for a card that has no database would be a non-empty stamp for
+		// every runner in the world.
+		if seen {
+			fmt.Fprintf(&b, "%s:%x;", db, walIndexHeader(db+"-shm"))
+		}
+	}
+	return b.String()
+}
+
+// walIndexHeaderBytes is how much of `<db>-shm` the stamp above folds in: the wal-index
+// header, two copies of a 24-byte record at the very front of the file. Nothing past it is
+// read -- the rest is a hash table whose size tracks the WAL, and the stamp already has that
+// file's length.
+const walIndexHeaderBytes = 48
+
+// walIndexHeader is those bytes, or nil when there is no readable `-shm` there. A short file
+// yields what it has: a harness that has just created the index is mid-write, not a caller
+// error, and the bytes it does hold still differ from the bytes it will hold next.
+func walIndexHeader(path string) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	buf := make([]byte, walIndexHeaderBytes)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && n == 0 {
+		return nil
+	}
+	return buf[:n]
+}
+
+// idleLogProgress is whether a new log size is work. last is the size at the previous
+// poll; from is the size when the still-clock last moved. A truncation is a new floor,
+// not work. Growth below idleLogDribble is a dribble the card can feed for free (#1893).
+func idleLogProgress(size, last, from int64) (newLast, newFrom int64, grew bool) {
+	switch {
+	case size < last:
+		return size, size, false
+	case size-from >= idleLogDribble:
+		return size, size, true
+	default:
+		return size, from, false
+	}
 }
 
 // cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,
@@ -1777,6 +1986,10 @@ func selfNative(c batchCard, in BatchInput, logFile *os.File) (*exec.Cmd, error)
 		"--deadline", strconv.Itoa(int(in.Deadline.Seconds())) + "s",
 		"--slots-store", in.SlotsStore,
 		"--owner", in.SlotOwner,
+		// VERBATIM (rule 13d). The batch neither parses the word nor divides it: whatever
+		// the caller typed is what this card's own `native` reads, and `native` is the one
+		// verb that decides what it means.
+		"--tokens", in.Tokens,
 	}
 	if in.Auth != "" {
 		argv = append(argv, "--auth", in.Auth)
@@ -2005,6 +2218,11 @@ func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[str
 // vocabulary inside the step, the RESULT shape last and short, no capitalised contract
 // block and no launcher text.
 func cardShapeFailure(model, raw string) string {
+	// The TURNS: budget on an explore card is universal admission (issue #2035): it holds
+	// for every model, so it runs before the DeepSeek-only practice-17 checks below.
+	if reason := cardExploreMissingTurns(raw); reason != "" {
+		return reason
+	}
 	if !isDeepSeekModel(model) {
 		return ""
 	}

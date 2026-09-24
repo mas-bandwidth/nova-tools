@@ -431,16 +431,20 @@ pointer names and freeze their digest, which the writer matches against
                            (admitted-receipts (kernel-state kernel)))
             (return-from %receipt-submit
               (%receipt-fail verb request "no received receipt" 1))))
-        ;; One reply id names one set of received bytes. A second admission of
-        ;; the same reply over other bytes is refused by name and writes
-        ;; nothing (SPEC-WORK.md:6019).
+        ;; One reply id names one set of received bytes. A receipt of a receipt
+        ;; -- the same reply id admitted again -- is refused as a duplicate; a
+        ;; second admission over other bytes is refused by name; either writes
+        ;; nothing (SPEC-WORK.md:4650, :6019).
         (let ((prior (admitted-receipt (kernel-state kernel) (getf request :reply))))
-          (when (and prior (not (equal (getf prior :receipt-digest)
-                                       (staged-input-digest staged))))
+          (when prior
             (return-from %receipt-submit
               (%receipt-fail verb request
-                             (format nil "conflicting bytes for receipt ~A"
-                                     (getf request :reply))
+                             (if (equal (getf prior :receipt-digest)
+                                        (staged-input-digest staged))
+                                 (format nil "duplicate receipt ~A"
+                                         (getf request :reply))
+                                 (format nil "conflicting bytes for receipt ~A"
+                                         (getf request :reply)))
                              1))))
         (let* ((result (staged-input-result staged))
                (effect (receipt-effect verb (getf request :stage)))

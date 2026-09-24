@@ -279,6 +279,13 @@ func TestGoNoticesAreNotTheFailure(t *testing.T) {
 	if got := firstLine(dropGoNotices(out), nil); got != "# example.com/batch/pkg/c" {
 		t.Errorf("the reason is %q; a `go: downloading` line is a notice and never the failure", got)
 	}
+	_, _, reason := stepFailure(batchStep{name: "build", command: "go build ./..."}, out, nil)
+	if strings.Contains(reason, "go: downloading") {
+		t.Errorf("BATCH FAIL reason = %q; a `go: downloading` line is a notice and never the failure", reason)
+	}
+	if !strings.Contains(reason, "undefined: X") {
+		t.Errorf("BATCH FAIL reason = %q; the compiler line must survive once the notices are dropped (#2499 item 3)", reason)
+	}
 	// A step whose output is ONLY notices still says what it said, rather than nothing.
 	only := "go: downloading go1.26 (linux/amd64)\n"
 	if got := firstLine(dropGoNotices(only), nil); got == "" || got == "(no output)" {
@@ -373,10 +380,115 @@ func TestBatchDropsAMemberWhoseOwnHeadIsNotGreen(t *testing.T) {
 	}
 	contains(t, stderr, "BATCH DROP #1 reason=\"head "+l.heads[1]+" has no green ci-ok (state=failure)\"")
 	contains(t, stderr, "BATCH DROP #3 reason=\"head "+l.heads[3]+" has no green ci-ok (state=none)\"")
+	contains(t, stderr, "check=ci-ok")
 	contains(t, stdout, "members=none")
 	contains(t, stdout, "dropped=1,3")
 	contains(t, stdout, "checks=required")
+	contains(t, stdout, "check=ci-ok")
 	absent(t, stderr, "BATCH MERGED")
+}
+
+// #2499 / #2508. Schema's required check is named `tests`, not `ci-ok`. A member whose
+// own head is green on tests and has no ci-ok is DROPPED today, because the gate looks
+// for nova-tools' rollup. After the patch, --check-name tests (or .nova-merge
+// required-check=tests) keeps it, and the name is on the BATCH OK / DROP receipt so a
+// lane script can parse it. Default remains ci-ok.
+func TestBatchDropsAMemberGreenOnTestsWhenTheRequiredCheckIsCiOk(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "tests", Conclusion: "success", SHA: l.heads[1]})
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-schema-drop", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+	if exit != 0 {
+		t.Fatalf("a batch whose members were all dropped still runs its gate: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH DROP #1 reason=\"head "+l.heads[1]+" has no green ci-ok (state=none)\"")
+	contains(t, stderr, "check=ci-ok")
+	contains(t, stdout, "members=none")
+	contains(t, stdout, "dropped=1")
+	contains(t, stdout, "check=ci-ok")
+	absent(t, stderr, "BATCH MERGED")
+}
+
+func TestBatchCheckNameKeepsAMemberGreenOnThatCheck(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "tests", Conclusion: "success", SHA: l.heads[1]})
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-schema-flag", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m",
+		"--check-name", "tests")
+	if exit != 0 {
+		t.Fatalf("--check-name tests keeps a member green on tests: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH MERGED #1")
+	contains(t, stdout, "members=1")
+	contains(t, stdout, "dropped=none")
+	contains(t, stdout, "checks=required")
+	contains(t, stdout, "check=tests")
+	absent(t, stdout, "check=ci-ok")
+	absent(t, stderr, "BATCH DROP #1")
+}
+
+func TestBatchNovaMergeFileNamesTheRequiredCheck(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "tests", Conclusion: "success", SHA: l.heads[1]})
+	l.git(l.work, "checkout", "-q", "dev")
+	l.write(".nova-merge", "required-check=tests\n")
+	l.commit("schema required-check")
+	l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-schema-file", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+	if exit != 0 {
+		t.Fatalf(".nova-merge required-check=tests keeps a member green on tests: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH MERGED #1")
+	contains(t, stdout, "members=1")
+	contains(t, stdout, "dropped=none")
+	contains(t, stdout, "check=tests")
+	absent(t, stdout, "check=ci-ok")
+	absent(t, stderr, "BATCH DROP #1")
+}
+
+func TestBatchCheckNameOverridesTheNovaMergeFile(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	l.host.SetCheckRuns(l.heads[1], merge.CheckDetail{Name: "tests", Conclusion: "success", SHA: l.heads[1]})
+	l.git(l.work, "checkout", "-q", "dev")
+	l.write(".nova-merge", "required-check=ci-ok\n")
+	l.commit("nova-tools required-check")
+	l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-schema-override", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m",
+		"--check-name", "tests")
+	if exit != 0 {
+		t.Fatalf("--check-name wins over .nova-merge: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH MERGED #1")
+	contains(t, stdout, "check=tests")
+	absent(t, stdout, "check=ci-ok")
+}
+
+func TestBatchRefusesAnEmptyRequiredCheckInNovaMerge(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	l.git(l.work, "checkout", "-q", "dev")
+	l.write(".nova-merge", "required-check=\n")
+	l.commit("empty required-check")
+	l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/dev")
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-empty-check", "--pr", "1",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+	if exit != 2 {
+		t.Fatalf("an empty required-check is BATCH REFUSED at exit 2, got %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH REFUSED")
+	contains(t, stderr, "required-check")
+	absent(t, stdout, "BATCH OK")
 }
 
 // EDGE 25, the override: --no-require-checks merges whatever the caller named and SAYS

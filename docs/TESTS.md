@@ -36,6 +36,33 @@ section carries it, read an unmarked line as *not yet checked* rather than as
 mismarked by that gap is `DRAFT NOTE …` under [`## nova-bus`](#nova-bus), which
 the tool writes to standard error.
 
+**Preconditions: what a step needs that the machine may not have.** Some steps
+cannot run everywhere, and a reader is owed that before the fence rather than by
+a failure. A section states each one in a single line of its own prose,
+beginning with a keyword, exactly as `Platform:` already does:
+
+- `Platform:` — the machine the block was recorded on, and what a different
+  machine prints instead. Already in use under [`## nova-sandbox`](#nova-sandbox)
+  and [`## nova-swarm`](#nova-swarm), and checked by
+  `internal/ci/firstrun_platform_test.go`.
+- `Requires:` — something a step needs that the machine running it may not have,
+  and in a sandboxed test bench must sometimes *not* have: a key, a forge
+  credential, a posting credential, or another tool's binary. The line names the
+  thing and the verbs it gates.
+
+A harness that cannot meet a stated precondition reports
+`SKIP-PRECONDITION <verb> why=<the stated line>` and that step is not a defect.
+A section counts as clean when every step it could run is clean and every step
+it skipped names a precondition stated here. **A step skipped for a reason this
+file does not state is a defect in this file, not a pass** — being able to tell
+those two apart is the whole value of writing the line down.
+
+Four `Requires:` lines are owed today, one per section, from the same dogfood
+run: `## nova-decide` (the ladder block routes through JEV and wants
+`JEV_API_KEY`), `## nova-merge` (`init` pushes, and wants a forge credential),
+`## nova-post` (`send` wants a posting credential) and `## nova-secrets` (two
+steps invoke `nova-check`, which is a different tool's binary).
+
 ## nova-bus
 
 Fixture: `cmd/nova-bus/testdata/example-bus`, copied out and given a repository of its own, with a bare repository beside it as `origin`. That is what the example's own README tells a reader to do and what the tool requires — every git-reading verb refuses a `--bus` that is not its repository's root, because git reports changed paths from the root and a bus one directory down would report an empty change set over unread notes. `cmd/nova-bus/firstrun_test.go` builds both in `t.TempDir()`, so every push below lands in a bare repository on this disk and no line here reaches a network. A real bus is a **private** repository; this one is three participants and four notes, small enough to read in a sitting.
@@ -156,11 +183,11 @@ PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nov
 PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
 PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
 PROBE STEP name=read_root expect=allow got=allow path=/Users/me/bin/nova-sandbox
-PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise gpu=none
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /Users/me/.config/anthropic/env'
 SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AGENT_PID SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies
-SANDBOX OK backend=sandbox-exec abi=- read=1 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ cmd=sh
+SANDBOX OK backend=sandbox-exec abi=- read=1 read-noexec=0 write=1 net=nopromise cwd=/Users/me/pool/jobs/j1 cwdb64=L1VzZXJzL21lL3Bvb2wvam9icy9qMQ ancestors=11 cmd=sh gpu=none
 cat: /Users/me/.config/anthropic/env: Operation not permitted
 ```
 
@@ -204,6 +231,15 @@ $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-se
 fake-gh
 ```
 
+**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
+bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
+`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
+store file omits the `swarm-` prefix, and the darwin launcher used to ask for
+the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
+nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
+Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
+empty wave.
+
 ## nova-check
 
 Fixture: `cmd/nova-check/testdata/example-self`.
@@ -220,6 +256,11 @@ QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
+
+The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
+cannot demonstrate `floors` by itself. That check compares a derived core with
+the matching source seed it came from; name a core and source pair you own rather
+than borrowing an unrelated `SEED.md` merely to make the command pass.
 
 ### hygiene, on a branch
 
@@ -264,7 +305,7 @@ it does not hold is refused by name rather than left to unlock nothing (#1848):
 
 ```
 $ nova-check hygiene --repo . --base main --head card --identity "Rowan <rowan@mas-bandwidth.com>" --kind fix-with-red-test
-nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, read, probe, text, tone; run: nova-check help
+nova-check hygiene: --kind "fix-with-red-test" is not a kind this tool declares; one of: fix-red, transcript-test, rebase, sweep, mutation-kill, guard, read, probe, text, tone, report; run: nova-check help
 ```
 
 ## nova-self-talk
@@ -542,8 +583,6 @@ $ nova-decide version
 nova-decide v0.16.0-dev.c839379e.0.20260919154525-3c3efc0e155c darwin/arm64 go1.27.1
 ```
 
-### The ladder of minds
-
 `route`, `help` and `log` need no key and no network with `--no-jev`: the rules
 alone answer, the same way every time. These lines were produced by running the
 binary built on this branch. `log` reads a log of your own: the one below is
@@ -553,20 +592,20 @@ before it runs the block.
 
 ```
 $ nova-decide route --unit-id card-41 --kind rebase --files 2 --packages 1 --no-jev
-ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.65 wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card ms=-
+ROUTE unit=card-41 rung=flash confidence=0.90 floor=0.65 floor_from=built-in read=- wait=- next=- steps=1 reason="kind rebase starts at rung flash" ask=card ms=-
 
 $ nova-decide route --unit-id card-9 --kind fleet-chore --files 1 --guard --no-jev
-ROUTE unit=card-9 rung=johnny confidence=1.00 floor=0.65 wait=- next=- steps=1 reason="security is a kind and not a height: guard is johnny's always, at any height, at any floor and after any attempt" ask=bus ms=-
+ROUTE unit=card-9 rung=flash confidence=0.90 floor=0.70 floor_from=kind read=johnny wait=- next=- steps=1 reason="security is a kind and not a height: guard, so a security READ by johnny is attached to this unit at any height, at any floor and after any attempt -- johnny is reserved for reads and for the STOP a read can call, and the WORK goes to the rung the evidence supports; kind fleet-chore starts at rung flash" ask=card ms=-
 
 $ nova-decide route --unit-id s-1 --kind guard --files 1 --attempt johnny:timeout --no-jev
-ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.65 wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard is johnny's always, at any height, at any floor and after any attempt; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus ms=-
+ROUTE unit=s-1 rung=johnny confidence=1.00 floor=0.65 floor_from=built-in read=johnny wait=awaiting_termination next=- steps=1 reason="security is a kind and not a height: kind guard, so a security READ by johnny is attached to this unit at any height, at any floor and after any attempt -- johnny is reserved for reads and for the STOP a read can call, and the WORK goes to the rung the evidence supports; the attempt on johnny timed out (timeout) and is not known to have terminated: its expiry is UNKNOWN, so this is a WAIT on the same rung and NOT permission to retry -- establish termination first" ask=bus ms=-
 
 $ nova-decide help --hours 6 --asked-all-friends
 HELP answer=ask-glenn reason="6.0 h on the same problem; landing has not moved in 6.0 h; the friends have been asked and it is still open"
 
 $ nova-decide log --log ./decide.jsonl --summary
-LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false lat_n=0 median_ms=- p95_ms=-
-LOG OK rows=1 kinds=1 escalations=0 coverage=0/1 lat_rules=0,-,-
+LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flash start_height=0 default_rung=flash regenerated=false floor=0.65 floor_from=built-in provider_rows=0 conf_min=- conf_max=- conf_p25=- below_floor=0 defeated=false hist=0.0-0.5:0,0.5-0.6:0,0.6-0.7:0,0.7-0.8:0,0.8-0.9:0,0.9-1.0:0 lat_n=0 median_ms=- p95_ms=-
+LOG OK rows=1 kinds=1 escalations=0 defeated=0 coverage=0/1 lat_rules=0,-,-
 ```
 
 ## nova-pulse
@@ -684,6 +723,113 @@ fake harness: cat /…/key: open /…/key: operation not permitted
 ```
 
 
+### The budget word on the native route
+
+Every `nova-swarm native` launch carries `--tokens <n>` or `--tokens unmetered`
+(SPEC-SWARM rule 13d, issue #1545). Recorded against the same fake harness, with the paths
+abridged:
+
+```
+$ nova-swarm native --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is required; it wants a token budget for this job, or the word `unmetered` when this provider has no live accounting and the deadline is the only stop; refusing to guess
+
+$ nova-swarm native --tokens 0 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+nova-swarm native: --tokens is a budget and is at least 1, got 0; `unmetered` is how a caller says there is no accounting
+
+$ nova-swarm native --tokens unmetered --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE NOTE: no harness store: looked at ./root/slot-1/data/opencode/opencode.db and ./root/slot-1/data/.local/share/opencode/opencode.db
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0 wall=0.18s sandbox=none-by-flag card_sha256=ab6468b200da0b3d5a0175e863d1b1cf772f010abdf4fe70b3ea39926f3fc826 binary_sha256=13c788f4813d7d81152460f6a16d45123314342ce0269f3fb43e6c8438192852 config=68719609 harness=ok budget=unmetered usage=none reason=no-store path=./root/slot-1/data/opencode/opencode.db
+```
+
+Both refusals exit 2 and make no directory: `<slot>/jobs`, `<slot>/data` and `<slot>/tmp`
+do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
+
+### A budget nothing can observe, refused before anything is made
+
+A budget wants a source this tool can read (rule 13d). The source is the worker
+description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
+
+```
+$ nova-swarm native --tokens 100000 --worker ./usage-none.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+
+$ PATH=./empty nova-swarm native --tokens 100000 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens is read from the harness's own database with `sqlite3 -readonly`, and sqlite3 is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install sqlite3 on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+The card's own budget is read from the same source, so it meets the same refusal whatever
+`--tokens` says — `unmetered` included:
+
+```
+$ nova-swarm native --tokens unmetered --worker ./usage-none-max-turns.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: this worker description's max_turns wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+`--tokens unmetered` with no such description runs under both conditions, as it does today.
+After every refusal above, `<slot>` is empty: nothing was made.
+
+### What the line reports against the number
+
+The fake harness writes a **real sqlite database** in the harness's own shape
+(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
+
+```
+# a harness that reported nothing
+harness=ok budget=-/50000
+# only tokens_in
+harness=ok budget=900+/50000
+# every column a reported zero
+harness=ok budget=0/50000
+# tokens_in 100, tokens_out 50, cache_write 9000, cache_read 90000, reasoning 7
+harness=ok budget=157/50000
+```
+
+The last is the whole of the sum rule: `tokens_in + tokens_out + reasoning` is 157, and the
+99,000 of cache stands in the usage row and never in the budget. A reported `0` is a
+measurement and prints `0/50000` — never `unmetered`. `--tokens unmetered` prints the word
+whatever the harness reported.
+
+### The stop
+
+A card that publishes a report, spends past `--tokens 100000` and then declines the
+terminate, under `--deadline 120s` so that the budget is what ends it:
+
+```
+$ nova-swarm native --tokens 100000 --usage-interval 1s … --deadline 120s
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=-1 wall=5.05s sandbox=none-by-flag card_sha256=8e1f… binary_sha256=ad88… config=ffdf555f harness=ok budget=100000/100000 stopped=tokens
+```
+
+Exit 1. The launch's own row carries `end=budget` and a dash for `rc`, while the line prints
+`rc=-1`:
+
+```
+$ cut -f1-8 ./root/slot-1/jobs/card/usage.tsv
+job	attempt	started	ended	end	rc	provider	model
+card	1	2026-09-19T13:16:05Z	2026-09-19T13:16:10Z	budget	-	fake	fake-model
+```
+
+And what the card published is kept byte for byte — the tool writes nothing into it:
+
+```
+$ grep -c PROMPT-DEFECT ./root/slot-1/jobs/card/RESULT.md
+0
+$ grep "findings:" ./root/slot-1/jobs/card/RESULT.md
+findings: 2
+```
+
+### The sample interval's floor and ceiling
+
+```
+$ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
+! nova-swarm native: --usage-interval is at least 1s, got 900ms; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering
+
+$ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
+! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
+```
+
+`1s` exactly is accepted — the floor is inclusive — and the ceiling is exclusive.
+
 ### First run
 
 ```
@@ -700,6 +846,13 @@ STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ## nova-tokens
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
+
+`fold` writes the token tables under `--out`, which must already exist; make it
+first:
+
+```sh
+mkdir -p ./out
+```
 
 ### First run
 
@@ -724,8 +877,8 @@ SUM PAIR model=gemini-2.5-pro repo=schema input=123456 output=7890 cache_write=-
 SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=- cache_read=4000 reasoning=- rough=0 dashes=0,0,1,0,1 nonutc=0 days=1
 SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,1,0,2 nonutc=0 repos=2
 SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
-SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
-SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
+SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2 units=1
+SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 units=1 nonutc=0
 ```
 
 
@@ -789,6 +942,21 @@ REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-ve
 ```
 
 
+## nova-card
+
+The card wrapper (#3059) is started by `nova-sprint card launch --stdin`, never
+by hand, and its real run needs the sprint Redis and a dealt card; that run is
+`TestWrapperOwnsOneCardEndToEnd` in `internal/nsprint/card/wrapper_test.go`.
+The first run a stranger can type reads nothing and writes nothing.
+
+### First run
+
+```text
+$ nova-card version
+nova-card v0.16.0-dev darwin/arm64 go1.26.6
+```
+
+
 ## nova-cairn
 
 No fixture: the store is created by the run itself. Every line below is local
@@ -831,54 +999,31 @@ endpoints — an `httptest` server per channel, a fake mailer, an injected clock
 environment `nova-secrets exec` delivers, is never printed, and is never
 measured.
 
-The outward gate of [docs/SPEC-OUTBOUND.md](SPEC-OUTBOUND.md). Slice 1 carries
-only the in-process `fake` channel: every line below is local, and no socket, no
-credential and no provider is touched. `draft` writes the payload under
-`./drafts`; `show` prints the exact payload bytes to stdout and its OK line to
-stderr; `send` releases only on a bus receipt from Glenn that names the hash and
-is under 24 hours old, and a second send of a sent hash prints the recorded
-result. The refresh stamps come from the injected clock in tests; a real run
-reads the wall clock and there is no `--now` flag, because a caller who can name
-the time can forge freshness.
+The outward gate of [docs/SPEC-OUTBOUND.md](SPEC-OUTBOUND.md), on one of its four
+channels: `ghost`. Every line below is local, and no socket, no credential and no
+provider is touched: `draft` renders the payload and writes it under `./drafts`,
+and `show` prints the exact payload bytes to stdout and its OK line to stderr
+(the `! ` line). `send` releases only on a bus receipt from Glenn that names the
+hash and is under 24 hours old, so it is not in this block: without a receipt it
+refuses at exit 1. The fixture is exact, because the hash is: `./body.md` holds
+the one line `A first post for the ghost channel.`, `./allowlist` holds the one
+line `ghost<TAB>example.com`, and `./drafts` is an empty directory you create.
+The hash is the SHA-256 of the payload the draft wrote, so
+`shasum -a 256 ./drafts/<hash>.post` prints it back.
+`cmd/nova-post/firstrun_test.go` writes that fixture and runs every `$` line.
 
 ### First run
 
 ```text
 $ nova-post draft --channel ghost --target example.com --file ./body.md --drafts ./drafts --allowlist ./allowlist
-POST DRAFT OK hash=<sha256> channel=ghost target=example.com bytes=42 drafts=./drafts
+POST DRAFT OK hash=b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f channel=ghost target=example.com bytes=115 drafts=./drafts
 
-$ nova-post show --draft <sha256> --drafts ./drafts
-POST SHOW OK hash=<sha256> channel=ghost bytes=42 drafts=./drafts
-
-$ nova-post send --draft <sha256> --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
-POST OK channel=ghost id=123 url=https://example.com/p/123 hash=<sha256> approval=glenn-0123456789ab bytes=42
-$ nova-post
-POST REFUSED reason=no-arguments give one of draft, show, send, version or help; run: nova-post help
+$ nova-post show --draft b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f --drafts ./drafts
+{"posts":[{"title":"","html":"A first post for the ghost channel.\n","status":"published","tags":["example.com"]}]}
+! POST SHOW OK hash=b150f3e20ecedbf62ea231eca325d74de5dc1123d0e061c7453f524fb6c8315f channel=ghost bytes=115 drafts=./drafts
 
 $ nova-post version
 nova-post devel linux/amd64 go1.26.5
-
-$ nova-post draft --channel ghost --target rowan.example --file ./body.md --drafts ./drafts --allowlist ./allowlist
-POST DRAFT OK hash=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 channel=ghost target=rowan.example bytes=98 drafts=./drafts
-
-$ nova-post show --draft 8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 --drafts ./drafts
-POST SHOW OK hash=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 channel=ghost bytes=98 drafts=./drafts
-
-$ nova-post send --draft 8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4 --approval glenn-0123456789ab --drafts ./drafts --bus ./bus --allowlist ./allowlist
-POST REFUSED reason=no-approval no receipt glenn-0123456789ab in ./bus; have Glenn send `APPROVE nova-post sha256=8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4` and pass its id
-
-$ nova-post draft --channel fake --target friends --file body.md --drafts ./drafts --allowlist ./allowlist
-POST DRAFT OK hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf channel=fake target=friends bytes=38 drafts=./drafts
-
-$ nova-post show --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --drafts ./drafts
-A first post for the friends channel.
-POST SHOW OK hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf channel=fake bytes=38 drafts=./drafts
-
-$ nova-post send --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --approval rec-1 --drafts ./drafts --bus ./bus --allowlist ./allowlist
-POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf approval=rec-1 bytes=38
-
-$ nova-post send --draft 46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf --approval rec-1 --drafts ./drafts --bus ./bus --allowlist ./allowlist
-POST OK channel=fake id=- url=- hash=46e16da3d69fa8dc39527b24ea1e7a5d6a160d41b2f879cbd424412495797bcf approval=rec-1 bytes=38
 ```
 
 ## nova-work
@@ -887,10 +1032,19 @@ No fixture: the graph file is created by the run itself under `--graph`, and eve
 line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
 network. A `:deps` cycle is refused at exit 2 before anything is written.
 
-The bounded reader for a `.work` plan. No fixture and no network: the plan is a
-file the run writes, and every line below is read from local bytes alone.
-`cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
-it, so the `./work.work` below is a fresh file per run.
+The bounded reader for a `.work` plan. No fixture and no network: create the
+exact local input before the transcript, then every line below reads local bytes
+alone:
+
+```sh
+printf '%s\n' '(:plan :version 1 (:node :id "n1" :kind docs))' > ./work.work
+```
+
+This minimal plan demonstrates `plan check`; `plan expand` also requires each
+node to declare `:output`.
+
+`cmd/nova-work/firstrun_test.go` performs that setup and runs each `$` line
+against it, so the `./work.work` below is a fresh file per run.
 
 ### First run
 
@@ -930,33 +1084,6 @@ that could not run at all, and `nova-work <verb>:` is what a verb that ran and r
 its input says about the input. `cmd/nova-work/firstrun_test.go` executes this
 block as well as the one above; until 2026-09-19 it executed neither refusal, and
 what that cost is written below.
-
-### The card-result record
-
-`nova-work record` consumes the `cards:done` Redis stream and writes one row per result
-into the `card_results` table, idempotent on the stream id, acking only after the commit;
-`nova-work results` lists and filters those rows.
-
-These lines are a `###` subsection of this one `## nova-work` section rather than a second
-section of their own: `onboarding.Section` reads the first match of a name, so a second
-`## nova-work` is read by nobody and drifts unwatched. They are also not under
-`### First run`, because that block is executed with the tool's production seams and these
-two verbs would reach a real Postgres and a real Redis. `cmd/nova-work/firstrun_test.go`
-runs each `$` line below through `run` with a fake store and a one-message consumer behind
-the seam, and the same store answers every line, so the `results` call lists the row the
-`record` call wrote.
-
-```text
-$ nova-work record --migrate --postgres postgres://space/nova
-MIGRATE OK schema=1
-
-$ nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
-RECORD id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results inserted=true result=RESULT: CARD-9347 card results in Postgres
-RECORD OK seen=1 inserted=1 duplicate=0 malformed=0
-
-$ nova-work results --postgres postgres://space/nova --bench space --failed
-RESULT id=1-0 card=9347 bench=space exit=1 commit=abc1234 branch=rowan/postgres-card-results pr=- done=2026-09-18T12:00:00Z result=RESULT: CARD-9347 card results in Postgres
-```
 
 ### The event bridge
 
@@ -1004,3 +1131,49 @@ is whole seconds and defaults to 60. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
+
+
+## nova-sprint
+
+Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
+still be empty afterwards: the table is read from Redis and written nowhere
+(#3326), so none of these lines needs a server and none writes a file.
+
+`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is `nova-pulse sprint calibration` (`SUGGEST fix 90m`). `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is `nova-pulse sprint status --verbose` as the producer prints it: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
+
+### First run
+
+```text
+$ nova-sprint table --once --out sprint-table.txt
+! nova-sprint table: flag provided but not defined: -out; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+
+$ nova-sprint table --once
+! nova-sprint table: --redis <addr> is required; the table is read from Redis and written nowhere: --redis <addr> [--sprint <name>] (--once | --loop), or --check --redis <addr>; run: nova-sprint help
+
+$ nova-sprint table --check
+! nova-sprint table: --check needs --redis <addr>, a throwaway server for the fixture keyspace; run: nova-sprint help
+```
+
+The first is the deleted file cut: `--out` (like `--fixture` and `--refresh`)
+is an unknown flag. The second and third name the server the table is read
+from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
+start) and checks the directory stays empty.
+
+## nova-test
+
+The fixture is `cmd/nova-test/testdata/runs`: five runs at varied states, one
+queued before the boundary. The clock comes from `--now` because a transcript
+must read the same twice; a stranger's first run omits it and the real clock
+answers. Plain files only: no runner, no network. `cmd/nova-test/firstrun_test.go`
+runs the `$` line and compares every line printed.
+
+### First run
+
+```text
+$ nova-test status --store cmd/nova-test/testdata/runs --since 2026-09-23T00:00:00Z --now 2026-09-23T10:30:00Z
+STATUS RUN id=done state=completed queued=2026-09-23T10:00:00Z queue=30s drain=- exec=2m0s e2e=2m30s attempts=done.a1 prior_failures=-
+STATUS RUN id=cancel state=cancelled queued=2026-09-23T10:05:00Z queue=5s drain=45s exec=1m40s e2e=1m45s attempts=cancel.a1 prior_failures=-
+STATUS RUN id=retry state=completed queued=2026-09-23T10:10:00Z queue=20s drain=- exec=4m0s e2e=4m20s attempts=retry.a1,retry.a2 prior_failures=retry.a1:lint
+STATUS RUN id=waiting state=queued queued=2026-09-23T10:20:00Z queue=10m0s+ drain=- exec=- e2e=10m0s+ attempts=- prior_failures=-
+STATUS OK store=cmd/nova-test/testdata/runs since=2026-09-23T00:00:00Z now=2026-09-23T10:30:00Z runs=4 shown=4 older=1
+```

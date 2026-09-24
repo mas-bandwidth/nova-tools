@@ -47,22 +47,26 @@ usage:
   nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge add        --lane <dir> --pr <n> [--needs-read]
   nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
-  nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
+  nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
   nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
   nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
   nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
   nova-merge dry-run    --lane <dir> [--max <n>]
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>] [--decide [--floor <0-1>] [--card <file>] [--key-env <var>] [--base-url <url>]]
   nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+  nova-merge fold       --branches <file> --onto <base> --out <branch> [--lane <dir>]
+  nova-merge fold       --close-folded --pr <n>
   nova-merge stop       --lane <dir>
   nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
   nova-merge sweep      --repo <owner>/<name> --branch <branch> --once [--prefix <head-prefix>] [--timeout <seconds>]
-  nova-merge simulate   --repo <path> --base <branch> [--entries <file>] [--checks "<a>,<b>"] [--timeout <duration>]
+  nova-merge simulate   --repo <path> --base <branch> [--entries <file> | --prs <list>] [--checks "<a>,<b>"] [--timeout <duration>]
   nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
   nova-merge react      --redis <addr> --lane <dir> (--once | --deadline <seconds>) [--timeout <seconds>]
-  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--receipt-file <path>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
   nova-merge land       --repo <owner>/<name> --pr <n> (--receipt <line> | --receipt-file <path>) [--no-jump] [--timeout <seconds>]
+  nova-merge integrate  --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--sensitive <file> --designated <who>] [--ci-timeout <duration>] [--ci-interval <duration>] [--no-draft]
+  nova-merge receipt    --repo <owner>/<name> --pr <n> [--timeout <seconds>]
 
   nova-merge queue    --lane <dir> (status|hold <reason> --who <name>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
   nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
@@ -78,33 +82,43 @@ batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, 
 each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
 will not merge and says so, and then builds, vets, tests and runs the lisp suite over
 what is left, one progress line per step on stderr with the elapsed time. Green is
-"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list>"
-at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages and
-the failing tests at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]"
+at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages,
+the failing tests and the step's captured stderr (capped at oneline.TailBytes) at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
 never claims a suite it only ran part of; --require-lisp turns a skipped lisp step into a
 FAIL for a caller who needs it run, and a program that is not on PATH is also looked for
 under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
 the tree's go.mod BEFORE the first merge, so an old go on PATH is one refusal with the
 remedy rather than a red build step quoting a download notice. checks=required is the
-default: a member whose own head has no green ci-ok is DROPPED BEFORE THE MERGE, because
+default: a member whose own head has no green required check is DROPPED BEFORE THE MERGE, because
 the gate runs on one operating system and CI runs on three and a member nobody has judged
-on its own would turn the whole batch red for its own fault. A member whose head is a
+on its own would turn the whole batch red for its own fault. The check's name is ci-ok
+here, --check-name or .nova-merge required-check= elsewhere, and it is printed as check=
+on BATCH OK and BATCH DROP so a lane script can parse it. A member whose head is a
 batch's own branch (rowan/integration-*) or is named by a BATCH OK line in --receipt-file
 is admitted on the gate's own evidence instead -- the same receipt nova-merge land takes.
 --no-require-checks waives the whole check and says so on the verdict line. Pushing that
 branch and opening the pull request is the caller's, who is
 the one who knows whether this is the batch they wanted. --base defaults to dev, which is
 where this repository's integration batches land; --root is rebuilt on every run, so give
-it a directory of the batch's own.
+it a directory of the batch's own. --sibling <name>=<url>@<ref> (repeatable) clones that
+repository beside the job checkout (repo/) at the named branch or tag, so a tree whose
+tests look next door — schema's serialize.go at ../serialize.go — finds it after the
+rebuild. name is one path element (dots allowed); repo and tmp are reserved. The last @
+splits url from ref.
 
 THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
 runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
 is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
-that goes green here is a batch that ran what CI runs. integration-4 went green under a
-plain "go test ./..." and three CI legs then failed. The one thing not mirrored is CI's
-fair share of the machine, which is the machine's own fact and not a number this tool may
-write down: pass --gomaxprocs <n> on a bench that is also running CI, and the gate takes
-that many cores instead of all of them.
+that goes green here is a batch that ran what CI runs. The test step writes that whole
+stream to <root>/test-<round>.jsonl before it is condensed. Round is 1 the first time
+that root keeps one and the next free integer after that, so a re-run does not erase the
+stream a red left behind; the directory rebuilt each run is <root>/<name>, and the stream
+is not inside it. A red test step's reason begins with stream=<that path>. integration-4
+went green under a plain "go test ./..." and three CI legs then failed. The one thing not
+mirrored is CI's fair share of the machine, which is the machine's own fact and not a
+number this tool may write down: pass --gomaxprocs <n> on a bench that is also running
+CI, and the gate takes that many cores instead of all of them.
 
 land IS THE ONE ENTRANCE TO THE MERGE QUEUE (Glenn, 2026-09-18: nothing reaches the dev
 merge queue but a batch). It reads the pull request back from the forge and enqueues it AT
@@ -120,6 +134,15 @@ branch's name and not that list, so a land that carries no members= to fold is r
 (no-receipt) rather than enqueued with the fold skipped. Everything else -- a card's
 branch, a green swarm result, a revert -- is a member of a batch somebody has yet to
 build, and this verb says so and stops.
+
+receipt IS THE READ SIDE OF #2693, AND ONLY THAT. nova-merge receipt --repo
+<owner>/<name> --pr <n> reads the pull request, finds the BATCH OK lines its body
+quotes, and prints the last one naming the pull request's current head on stdout
+-- the same line a caller hands to nova-merge land --receipt. The body is editable,
+so the line is a quote and not evidence bound to the gate run; stderr says so
+(RECEIPT SOURCE pr-body). A PR whose body quotes no BATCH OK line, or only lines
+naming other heads, is refused with the reason named on stderr (exit 1). Storing
+the gate's own receipt artifact and fetching it from another machine is #3183.
 
 queue audit is the other half of that lock: it lists every open pull request carrying
 GitHub's auto-merge and TAKES IT OFF, because auto-merge is not an enqueue -- it is a
@@ -176,9 +199,10 @@ read rather than a failure. The two transcripts are in docs/TESTS.md, and both a
 by this binary's tests.
 
 The repository, the base and the lane branch are properties of the LANE, written
-once by init. No other verb takes --repo, --base or --lane-branch, and the flag
-on gate that names the base SHA is spelled --base-sha so the two are never one
-word.
+once by init. Lane verbs read them from there; simulate, batch and land name
+--repo, and simulate and batch also --base, because they reach the forge without
+a lane. The flag on gate that names the base SHA is spelled --base-sha so the
+two are never one word.
 
 ONE PREDICATE. An entry merges on the NEWEST gate record for (its head, the base
 sha read this pass) being green, that gate's merge being an object in the lane's
@@ -196,6 +220,11 @@ order and nothing else.
 The lane never edits an entry's content. A conflict is BLOCKED with every
 conflicting file named and the exact hand command on the line; no code path here
 writes a resolved file.
+
+The five lines below are one sitting against a bare repository of your own, so
+make that repository first if the rehearsal above did:
+
+  git init -q --bare ./rehearsal.git
 
 example:
   nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
@@ -244,6 +273,14 @@ type Deps struct {
 	// NewAuditHost is `queue audit`'s edge: the open pull requests carrying an auto-merge,
 	// and the one call that takes it off.
 	NewAuditHost func(repo string, timeout time.Duration) merge.AuditHost
+	// NewIntegrateForge is the ONE WRITE SIDE of a forge this binary has: open a pull
+	// request, comment on one, close one. It is `integrate`'s and nothing else's, for the
+	// reason NewEnqueueHost is its own seam -- the smaller the surface that can write to a
+	// forge, the fewer the ways something reaches it that nobody meant to.
+	NewIntegrateForge func(repo string, timeout time.Duration) merge.IntegrateForge
+	// NewFailForge is how `integrate` NAMES the test behind a red: the same engine
+	// `nova-ci failed` prints, so a red on a batch reads the same way whoever asks.
+	NewFailForge func(repo string, timeout time.Duration) ci.FailForge
 	// NewQueue reads the live merge queue for `simulate --entries`-less runs. It is a
 	// field so the tests hand it a fake queue and reach no network.
 	NewQueue func(repo string, timeout time.Duration) QueueReader
@@ -265,6 +302,20 @@ type Deps struct {
 	// test drives a miniredis and a fake forge and reaches no network.
 	Dial  func(addr string) *redis.Client
 	Forge func(repo, base string, timeout time.Duration) ci.Forge
+	// TestTree runs the package test the repository names for the fold's scratch tree
+	// (docs/SPEC-MERGE.md "The fold (#1142)"): lisp/nova-work/run-tests.sh for a
+	// nova-work fold, go test for Go. TestLayout runs the layout test of #560 after it.
+	// Both are injected so a fold test uses a fake and reaches no toolchain.
+	TestTree   func(dir string) error
+	TestLayout func(dir string) error
+	// CheckDeadline is the clock a `simulate` check's --timeout runs on: it is handed the
+	// --timeout and returns the channel that says it has expired. nil -- which is what
+	// production() leaves it -- is a real timer of that length. It is injected so the test
+	// that proves "a check that outruns --timeout is the poison" decides WHEN the deadline
+	// passes instead of racing a one-second wall clock on a loaded bench (#2958 class: a
+	// 1 s --timeout also bounds every git step of the run, and a git step slower than
+	// that on a loaded Studio shard refused the run before the check was reached).
+	CheckDeadline func(timeout time.Duration) <-chan time.Time
 }
 
 func production() Deps {
@@ -284,6 +335,12 @@ func production() Deps {
 		NewAuditHost: func(repo string, timeout time.Duration) merge.AuditHost {
 			return merge.NewGHEnqueue(repo, timeout, nil)
 		},
+		NewIntegrateForge: func(repo string, timeout time.Duration) merge.IntegrateForge {
+			return merge.NewGHIntegrate(repo, timeout, nil)
+		},
+		NewFailForge: func(repo string, timeout time.Duration) ci.FailForge {
+			return ci.NewGHFailForge(repo, "gh", timeout)
+		},
 		NewQueue: func(repo string, timeout time.Duration) QueueReader {
 			return newGHQueue(repo, timeout, nil)
 		},
@@ -296,6 +353,8 @@ func production() Deps {
 		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
 			return ci.NewGHForge(repo, base, timeout)
 		},
+		TestTree:   realTestTree,
+		TestLayout: realTestLayout,
 	}
 }
 
@@ -364,6 +423,8 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdDryRun(rest, stdout, stderr, deps)
 	case "packet":
 		return cmdPacket(rest, stdout, stderr, deps)
+	case "fold":
+		return cmdFold(rest, stdout, stderr, deps)
 	case "stop":
 		return cmdStop(rest, stdout, stderr, deps)
 	case "queue":
@@ -384,6 +445,12 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return cmdBatch(rest, stdout, stderr, deps)
 	case "land":
 		return cmdLand(rest, stdout, stderr, deps)
+	case "integrate":
+		return cmdIntegrate(rest, stdout, stderr, deps)
+	case "stack":
+		return cmdStack(rest, stdout, stderr, deps)
+	case "receipt":
+		return cmdReceipt(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -405,8 +472,9 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 	// `batch` names the one it clones, and `rebase` is not a lane verb at all -- it reads
 	// the open list from a repository and cuts cards into a directory -- so all five name
 	// the repository outright rather than reading it from the lane's state, like `init`
-	// does; every other verb reads the lane's.
-	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue"
+	// does; every other verb reads the lane's. `receipt` is the same shape: a reader on
+	// another machine who can name the pull request is not the lane's owner (#2693).
+	namesRepo := verb == "wait" || verb == "sweep" || verb == "simulate" || verb == "rebase" || verb == "batch" || verb == "land" || verb == "queue" || verb == "integrate" || verb == "stack" || verb == "receipt"
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if name == "repo" && namesRepo {
 			continue
@@ -419,9 +487,11 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		switch verb {
 		case "gate":
 			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
-		case "simulate", "batch":
-			// simulate predicts a queue onto a base branch and batch builds an
-			// integration branch on top of one; neither owns a lane's.
+		case "simulate", "batch", "integrate", "stack":
+			// simulate predicts a queue onto a base branch, batch builds an
+			// integration branch on top of one, and integrate is the two of them
+			// with the landing either side; stack re-lands same-base PRs onto one.
+			// None of the four owns a lane's.
 		case "rebase":
 			// rebase cuts a card per open pull request against a base branch it names
 			// outright; it is not a lane verb, so it does not own a lane's --base either.

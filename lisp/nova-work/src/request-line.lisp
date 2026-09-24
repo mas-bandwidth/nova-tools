@@ -104,10 +104,85 @@ client splits on and what it prints to stderr at exit 1."
           (session-generation session)
           reason))
 
-(defparameter *status-verbs* '("session status" "status" "session ping" "ping")
-  "The spellings that ask a session who it is. `session status` is the verb of
-the spec's block; the other three are the in-process spellings the seam's first
-handler already answered, kept so that nothing that worked stops working.")
+(defparameter *request-schema*
+  '(("session status" :answers :status :source :spec
+     :flags (("session" "<path>" :endpoint))
+     :example "session status --session /run/work.sock")
+    ("session ping" :answers :status :source :in-process
+     :flags (("session" "<path>" :endpoint))
+     :example "session ping --session /run/work.sock")
+    ("status" :answers :status :source :in-process
+     :flags (("session" "<path>" :endpoint))
+     :example "status")
+    ("ping" :answers :status :source :in-process
+     :flags (("session" "<path>" :endpoint))
+     :example "ping"))
+  "THE ONE SCHEMA of the verbs this session answers (nova-work E08-F01-01: \"use
+one schema for client validation, protocol, help and examples\"). Each entry is
+(VERB :answers WHAT :source WHERE :flags ((NAME PLACEHOLDER KIND) ...) :example
+REQUEST), and every reading of a verb is taken from it and from nowhere else:
+
+- the protocol: SERVE-REQUEST-LINE answers exactly these verbs;
+- validation: REQUEST-SCHEMA-PROBLEM refuses a flag the entry does not list,
+  and a listed flag with no value;
+- help: REQUEST-SCHEMA-USAGE renders the usage line, which for a :source :spec
+  verb is the spec's own verbs-block line (docs/SPEC-WORK.md, \"The verbs\");
+- examples: REQUEST-SCHEMA-EXAMPLE, which the same validator admits.
+
+`session status` is the verb of the spec's block; the other three are the
+in-process spellings the seam's first handler already answered, kept so that
+nothing that worked stops working. An :endpoint flag names the socket the
+request travels over: the client refuses a request without it and so the help
+line prints it bare, while the session, which IS that socket, answers without it.")
+
+(defun request-schema-verb (entry) (first entry))
+
+(defun request-schema-entry (verb)
+  "The schema entry for VERB, or NIL when the session does not answer it."
+  (assoc verb *request-schema* :test #'string=))
+
+(defun request-schema-in-spec-p (entry)
+  (eq (getf (rest entry) :source) :spec))
+
+(defun request-schema-example (verb)
+  (getf (rest (request-schema-entry verb)) :example))
+
+(defun request-schema-usage (verb)
+  "VERB's help line, rendered from the schema: the verb, then each flag as
+`--name <placeholder>`, bracketed when optional. An :endpoint flag prints bare,
+because the client requires it."
+  (let ((entry (request-schema-entry verb)))
+    (when entry
+      (format nil "~A~{ ~A~}" verb
+              (mapcar (lambda (f)
+                        (destructuring-bind (name placeholder &optional kind) f
+                          (if (member kind '(:endpoint :required))
+                              (format nil "--~A ~A" name placeholder)
+                              (format nil "[--~A ~A]" name placeholder))))
+                      (getf (rest entry) :flags))))))
+
+(defun request-schema-problem (request)
+  "NIL when REQUEST is a request line the schema admits, or else the one-phrase
+reason it is not: a verb the schema does not list, a flag its entry does not
+list, a listed flag with no value, or a stray word after the flags. Every value
+is one word, because the client escapes whitespace inside a value
+(internal/oneline Field) and the session validates the value itself."
+  (let* ((verb (request-line-verb request))
+         (entry (request-schema-entry verb)))
+    (if (null entry)
+        (format nil "this session does not answer the verb ~A" (%echo-safely verb))
+        (let ((flags (mapcar #'first (getf (rest entry) :flags)))
+              (words (nthcdr (length (%request-words verb)) (%request-words request))))
+          (loop while words
+                do (let ((w (pop words)))
+                     (cond
+                       ((not (and (> (length w) 2) (string= "--" w :end2 2)))
+                        (return (format nil "~A takes no word ~A here" verb (%echo-safely w))))
+                       ((not (member (subseq w 2) flags :test #'string=))
+                        (return (format nil "~A does not take ~A" verb (%echo-safely w))))
+                       ((null words)
+                        (return (format nil "~A needs a value" (%echo-safely w))))
+                       (t (pop words)))))))))
 
 (defun serve-request-line (server request)
   "Answer ONE request line against SERVER, as (values OK LINE EXIT).
@@ -118,6 +193,10 @@ start`, `session status` and `session stop` print alike (docs/SPEC-WORK.md,
 served, which carries no `session=`, no `journal=`, no counts and no
 `emitted=`, and so is not a line of the grammar at all.
 
+Which verbs are answered, and which flags each takes, is *REQUEST-SCHEMA* and
+nothing else: a request the schema does not admit is refused naming what it
+does not admit, with the verb's usage line and example from the same schema.
+
 Every other verb is refused BY NAME in the grammar's own `SESSION FAIL` shape
 at exit 2: the session says which verb it does not answer, rather than saying
 that something unnamed was unsupported. A request with no verb -- flags alone,
@@ -125,17 +204,21 @@ or nothing -- is refused the same way and says so."
   (let* ((session (session-server-session server))
          (verb (request-line-verb request)))
     (cond
-      ((member verb *status-verbs* :test #'string=)
-       (values t (session-status-line session) 0))
       ((zerop (length verb))
        (values nil (session-fail-line session "a verb is required") 2))
+      ((null (request-schema-entry verb))
+       (values nil (session-fail-line session (request-schema-problem request)) 2))
       (t
-       (values nil
-               (session-fail-line
-                session
-                (format nil "this session does not answer the verb ~A"
-                        (%echo-safely verb)))
-               2)))))
+       (let ((problem (request-schema-problem request)))
+         (if problem
+             (values nil
+                     (session-fail-line
+                      session
+                      (format nil "~A; usage: ~A; example: ~A" problem
+                              (request-schema-usage verb)
+                              (request-schema-example verb)))
+                     2)
+             (values t (session-status-line session) 0)))))))
 
 ;;; The seam, bound. src/transport.lisp's own docstring for
 ;;; *SESSION-REQUEST-HANDLER* is "The serve seam: NIL selects

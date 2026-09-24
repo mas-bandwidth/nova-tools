@@ -13,14 +13,23 @@
 (defun %request-line-dir ()
   "A fresh 0700 directory for one endpoint. The endpoint refuses a directory
 whose mode is not 0700, which is the spec's own requirement, so the test makes
-one rather than borrowing the bench's temp directory."
-  (let* ((name (format nil "nova-work-reqline-~D-~D"
-                       (sb-posix:getpid)
+one rather than borrowing the bench's temp directory.
+
+It stays on /tmp rather than under the harness's run root because sun_path is
+capped at 104 bytes on darwin and the run root's name does not fit inside that
+with a socket under it. The run's own random tag carries the uniqueness instead
+(`test-short-tag`, harness.lisp): the pid alone kept two LIVE processes apart
+but not two runs, so a recycled pid met the socket an earlier run left behind,
+and `rmdir` never removed a directory that still had one in it. Registering the
+directory hands it to the harness's exit cleanup (nova-tools#1699)."
+  (let* ((name (format nil "nova-work-reqline-~A-~D"
+                       (test-short-tag "reqline")
                        (incf *request-line-socket-counter*)))
          (dir (merge-pathnames (concatenate 'string name "/")
                                #p"/tmp/")))
     (ensure-directories-exist dir)
     (sb-posix:chmod (namestring dir) #o700)
+    (test-temp-register dir)
     dir))
 
 (defun call-with-served-session (fn &key (owner "rowan"))
@@ -197,3 +206,46 @@ second token, or NIL when the line has not got two."
   (check-string= "session status"
                  (nova-work::request-line-verb "  session   status   --session s ")
                  "runs of spaces are one separator"))
+
+;;; ------------------------------------------------------------------
+;;; TestE11F06FinalityRisesWithTierA     docs/SPEC-WORK.md:4592, :4653
+;;;
+;;; E11-F06-03: finality-rises-with-tier. "Finality rises with the tier and is
+;;; never final below the seat: a child's `done` is a claim against the parent's
+;;; acceptance until the parent verifies it itself, with evidence bound to the
+;;; criteria and 'not merely a worker's success claim'". A child that settles
+;;; `:done` naming evidence has made a success claim and nothing more: the
+;;; dependent does not treat that need as met -- it does not move -- until the
+;;; parent's own verification holds the raw fact the child's criterion names.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE11F06FinalityRisesWithTierA"
+    "docs/SPEC-WORK.md:4592"
+    "a child's done is a claim; the parent moves only after its own verification with evidence bound to the child's criterion; a worker's success claim alone never moves a node below the seat"
+  ;; The child N settles :done naming ev-1: that is the worker's success claim.
+  ;; It must not move the dependent D (a node below the seat) on its own.
+  (let* ((k (gate-kernel))
+         (evidence (gate-job-evidence "acme/work/n"))
+         (session (gate-session))
+         (view (make-needs-view :session session
+                                :evidence (list (list "acme/work/n" evidence)))))
+    (gate-done k "acme/work/n")
+    (multiple-value-bind (met reason)
+        (need-met-p (kernel-state k) "acme/work/n" :view view)
+      (ok (not met) "a child's done (success claim) alone does not satisfy the need: ~A" reason)
+      (check-equal :need-unverified reason
+                   "a worker's success claim alone reads need-unverified, never met"))
+    (multiple-value-bind (unmet need reason)
+        (node-needs-status (kernel-state k) "acme/work/d" :view view)
+      (check-equal 1 unmet "the dependent still counts one unmet need: the parent has not moved")
+      (check-string= "acme/work/n" need "and names the claiming child")
+      (check-equal :need-unverified reason "with the one token"))
+    ;; The parent's own verification: the cache holds the raw fact, and only now
+    ;; does the child's done move anything.
+    (gate-cache-holds session (verify-evidence-pointer evidence) "acme/work/n")
+    (multiple-value-bind (met reason)
+        (need-met-p (kernel-state k) "acme/work/n" :view view)
+      (ok met "the need is met only once the parent verifies the evidence: ~A" reason))
+    (multiple-value-bind (unmet)
+        (node-needs-status (kernel-state k) "acme/work/d" :view view)
+      (check-equal 0 unmet "and only now does the dependent read unmet=0"))))

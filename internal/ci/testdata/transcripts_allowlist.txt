@@ -1,6 +1,6 @@
 # The `## <tool>` sections of docs/TESTS.md that no test yet executes line for line
 # through onboarding.CompareTranscript, one per line as <tool>, each with the issue
-# that owes it (docs/SPEC-TOOLWORK.md §7 rule 3, PR #1637 at 32b73d77).
+# that owes it (docs/SPEC-TOOLWORK.md §7 rule 3).
 #
 # THE LIST ONLY SHRINKS. TestEveryTranscriptIsExecutedLineForLine checks it in BOTH
 # directions: a section that is not listed and that no test executes with the one
@@ -37,10 +37,14 @@ nova-sandbox  # #1657 -- one line pinned by substring
 nova-secrets  # #1657 -- no firstrun_test.go at all
 nova-work     # #1657 -- collects what was printed into a set
 
-# #1722: the six sections SPEC-TOOLWORK's work list names in no row.
+# #1722: the sections SPEC-TOOLWORK's work list names in no row (six filed with
+# #1722; nova-card, nova-sprint and nova-test gained sections on dev after it).
+nova-card     # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-memory   # #1722 -- its firstrun_test.go executes README.md, not this section
 nova-play     # #1722 -- #1602 made it line for line with its own comparison, not the shared one
+nova-sprint   # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-swarm    # #1722 -- compares the event prefix and the field names, dropping every value
+nova-test     # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-tokens   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-update   # #1722 -- compares the event prefix and the field names, dropping every value
 nova-version  # #1722 -- compares the event prefix and the field names, dropping every value

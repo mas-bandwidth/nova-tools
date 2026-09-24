@@ -71,6 +71,13 @@ var swarmAudit = audit.Config{
 		// it is another one-safe-token tail like fenceSuffix. Only the empty string and the
 		// escaped literal can come back.
 		"termSuffix",
+		// stoppedSuffix (main.go, SPEC-SWARM rule 13d, issue #1545) renders the one token a
+		// budget stop carries, ` stopped=<tokens|max_turns|max_cache_read|unverifiable>`,
+		// and puts the word through oneline.Field inside itself, so it is another
+		// one-safe-token tail like termSuffix. The word is one of four compile-time
+		// constants in nativesample.go and never a caller-supplied value at all, so only
+		// the empty string and an escaped literal can come back.
+		"stoppedSuffix",
 		// swarm.PublicRefusalLine (CARD-8390) renders the whole CARD REFUSED line and
 		// puts the repo and the worker name through oneline.Field inside
 		// internal/swarm before returning, so the line it returns is already one
@@ -78,6 +85,13 @@ var swarmAudit = audit.Config{
 		// author writes -- and the worker name from the description, so nothing
 		// but Field-escaped fields can come back.
 		"swarm.PublicRefusalLine",
+		// l.Line (nova-tools#2033) is SlotLease.Line: every field of the SLOT list
+		// row -- id, owner, label, until, state, kind, weight, stranded -- goes
+		// through oneline.Field (or a numeric verb) inside internal/swarm before
+		// the string returns, so cmdSlotsList printing it whole cannot write past
+		// the escape. TestSlotsListMarksADeadHolderStrandedWithItsLabel is the
+		// behavioural test for this site.
+		"l.Line",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads
@@ -96,6 +110,14 @@ var swarmAudit = audit.Config{
 		// syscall only sets Setpgid -- the process-group flag that lets the deadline reap
 		// the whole tree -- and holds no writer of its own.
 		`"os/signal"`, `"syscall"`,
+		// nativesample.go (SPEC-SWARM rule 13d, issue #1545) needs sync, and it holds no
+		// writer of any kind. sync.Mutex and sync.Once are the only two things taken from
+		// it: the mutex guards the figures the sampling goroutine and the launch's own
+		// goroutine share, and the Once closes the stop channel and sends the one stop word
+		// exactly once. Neither can write to a stream, and the sampler itself prints
+		// nothing at all -- what it learns leaves it as values this package renders through
+		// oneline.Field on the NATIVE OK line.
+		`"sync"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts
@@ -128,6 +150,16 @@ var swarmAudit = audit.Config{
 		// card files it places; it never writes to a stream, and every id it
 		// returns is put through oneline.Field before this package prints it.
 		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
+		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
+		// it IS a writer of this package's stream: `native` hands events.Writer the run's
+		// own stderr so a card that could not be measured says so. It cannot write past
+		// the escape, and the reason is mechanical rather than a promise -- events.Writer
+		// has exactly ONE print site, `note` (internal/events/writer.go), which renders
+		// the whole message through oneline.Escape before writing it, so a Redis error or
+		// a card label carrying a newline cannot split one skip into two lines. Nothing
+		// else in that package holds a writer: Emit goes to Redis, and Validate refuses a
+		// field with a control character in it before it ever reaches the store.
+		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
 		// native.go (issue #296) needs these and none of them writes a stream, so
 		// none can write past the escape. context only gave CommandContext its deadline
 		// and holds no writer; crypto/sha256 and encoding/hex compute and hex-encode the
@@ -137,6 +169,11 @@ var swarmAudit = audit.Config{
 		// and writes only dataHome/auth.json, which is the child's credential, not this
 		// binary's line.
 		`"context"`, `"crypto/sha256"`, `"encoding/base64"`, `"encoding/hex"`, `"encoding/json"`,
+		// native.go (issue #591) needs net and net/url to read the keyless provider's
+		// loopback host:port out of the carried config; neither writes a stream, so neither
+		// can write past the escape: url.Parse reads the baseURL string and net.SplitHostPort
+		// / net.JoinHostPort / net.ParseIP split, join and classify a host, holding no writer.
+		`"net"`, `"net/url"`,
 		// publish.go (slice 7) needs bytes and it writes to no stream. bytes.Buffer only
 		// holds the trimmed stdout/stderr of the git and gh children it samples, and every
 		// one of those strings is put through oneline.Field or oneline.Err before this
@@ -146,6 +183,10 @@ var swarmAudit = audit.Config{
 		// column it occupies: Itoa of an int cannot hold a control character, and it
 		// holds no writer of its own.
 		`"strconv"`,
+		// sync/atomic (native.go, issue #2632) only increments the counter that
+		// distinguishes two results publishes in one process. AddUint64 returns a
+		// number; the package holds no writer and prints nothing.
+		`"sync/atomic"`,
 		// runtime (authmode.go, issue #915) reads GOOS and nothing else. It holds no
 		// writer, and the one value selects which permission-bit rule the auth copy asks:
 		// NTFS reports 0666 for every readable file, so the unix looseness check refused

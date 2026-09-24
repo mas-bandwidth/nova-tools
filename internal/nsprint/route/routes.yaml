@@ -1,0 +1,506 @@
+# allowed_routes for the nova-sprint router (#2895).
+#
+# Source: rowan-new reports/model-efficiency-2026-09-22.md, "Interim ranking,
+# 12:16 AM Eastern" (1151 run cards, 731 scored) and its "Pattern read at the
+# 8+ bar". Numbers per route are that table's row for the route's model:
+# run, scored, u8 (cards scored 8+), u9, usd_per_8 ($ of ALL run cards / u8),
+# efficiency (($/U) x sqrt((T/U)/median) x (W/W_med)^0.25, lower is better),
+# q (mean of (score-7.5)/2.5 over scored cards), tok_per_8 (millions of
+# tokens of all run cards per 8+ card), wall_s (median wall seconds).
+#
+# The state of every row is the rule below applied to these numbers, first
+# match wins; TestTheTableFollowsItsRule recomputes it and fails on any
+# disagreement, so the rule line and the table cannot drift apart.
+#   n = scored, U = u8, useful = U/n, reliability = U/run. The rung's measured
+#   routes are its rows with numbers and U >= 5, counted once per model.
+#   1. flag dead -> dropped (dead route).
+#   2. no numbers -> held (not in the ranking).
+#   3. Q <= 0 and n >= 8 and useful < 3/4 of the median useful of the rung's
+#      measured routes -> dropped (quality rule: Q <= 0 AND useful far below).
+#   4. a measured route not dropped by 3 whose efficiency is within a rounding
+#      (+0.01) of the rung's best third (the ceil(k/3)-th best efficiency of
+#      the k measured routes that survive 3) -> allowed, or held if flag
+#      benched.
+#   5. Pareto-dominated with Q <= 0 -> dropped. Dominated = another row of the
+#      rung with U >= 1 is no worse on $ per 8+, tokens per 8+, median wall and
+#      reliability and better on one (the report's Pareto view).
+#   6. U < 5 -> held (too few).
+#   7. otherwise -> held (second tier: dominated with Q > 0, or outside the
+#      best third).
+#
+# state: allowed = in the rung's list; held = kept out of the rung's list
+# (second tier, too few, unranked or route-benched) unless a types row adds it
+# for one work type; dropped = refused everywhere. A dropped route re-enters
+# only by a measured A/B written here, never mid-push (memory:
+# continual-refinement-loop). Re-run from the fold every sprint.
+source: "reports/model-efficiency-2026-09-22.md interim ranking 2026-09-23 12:16 AM Eastern"
+rule: "useful = 8+; drop = dead, or Q <= 0 with n >= 8 and useful < 3/4 of the rung median, or Pareto-dominated with Q <= 0; allow = measured (U >= 5) and efficiency within +0.01 of the rung's best third, unless benched; hold = the rest (too few, second tier, unranked, benched)"
+
+routes:
+  # flash: the five leaders of the pattern read, in efficiency order.
+  - route: orqwen38
+    rung: flash
+    model: qwen/qwen3.8-flash
+    via: openrouter
+    state: allowed
+    run: 104
+    scored: 63
+    u8: 58
+    u9: 47
+    usd_per_8: 0.04
+    efficiency: 0.01
+    q: 0.36
+    tok_per_8: 1.5
+    wall_s: 232
+    why: "flash leader: 92% of 63 scored at 8+"
+  - route: ords41
+    rung: flash
+    model: deepseek/deepseek-v4.1-flash
+    via: openrouter
+    state: allowed
+    run: 79
+    scored: 45
+    u8: 37
+    u9: 27
+    usd_per_8: 0.05
+    efficiency: 0.02
+    q: 0.32
+    tok_per_8: 2.2
+    wall_s: 167
+    why: "flash leader: 82% of 45 scored at 8+, fastest leader (167 s)"
+  - route: ormimo26
+    rung: flash
+    model: xiaomi/mimo-v2.6-flash
+    via: openrouter
+    state: allowed
+    run: 81
+    scored: 44
+    u8: 42
+    u9: 26
+    usd_per_8: 0.03
+    efficiency: 0.01
+    q: 0.42
+    tok_per_8: 1.5
+    wall_s: 284
+    why: "flash leader: 95% of 44 scored at 8+"
+  - route: ormimo
+    rung: flash
+    model: xiaomi/mimo-v2.5
+    via: openrouter
+    state: allowed
+    run: 112
+    scored: 91
+    u8: 76
+    u9: 45
+    usd_per_8: 0.03
+    efficiency: 0.01
+    q: 0.18
+    tok_per_8: 2.0
+    wall_s: 242
+    why: "flash leader: 83% of 91 scored at 8+"
+  - route: ords
+    rung: flash
+    model: deepseek/deepseek-v4-flash
+    via: openrouter
+    state: allowed
+    run: 106
+    scored: 96
+    u8: 81
+    u9: 54
+    usd_per_8: 0.03
+    efficiency: 0.01
+    q: 0.23
+    tok_per_8: 1.3
+    wall_s: 260
+    why: "flash leader: 84% of 96 scored at 8+, 76% reliable (numbers are the model, both routes)"
+  - route: ocflash
+    rung: flash
+    model: deepseek/deepseek-v4-flash
+    via: opencode
+    state: held
+    flag: benched
+    run: 106
+    scored: 96
+    u8: 81
+    u9: 54
+    usd_per_8: 0.03
+    efficiency: 0.01
+    q: 0.23
+    tok_per_8: 1.3
+    wall_s: 260
+    why: "same model as ords; route carries a ROUTE-BENCHED flag (#2895)"
+  - route: ocglmflash
+    rung: flash
+    model: glm-5.3-flash
+    via: opencode
+    state: held
+    run: 87
+    scored: 55
+    u8: 48
+    u9: 38
+    usd_per_8: 0.10
+    efficiency: 0.03
+    q: 0.31
+    tok_per_8: 2.2
+    wall_s: 254
+    why: "second tier: leader quality at three times the price; allowed on nx"
+  - route: orglmflash
+    rung: flash
+    model: z-ai/glm-5.3-flash
+    via: openrouter
+    state: held
+    run: 77
+    scored: 50
+    u8: 44
+    u9: 31
+    usd_per_8: 0.14
+    efficiency: 0.05
+    q: 0.25
+    tok_per_8: 2.3
+    wall_s: 233
+    why: "second tier: leader quality at five times the price"
+  - route: orqwen
+    rung: flash
+    model: qwen/qwen3.7-flash
+    via: openrouter
+    state: held
+    flag: benched
+    why: "not in the ranking; ROUTE-BENCHED flag (#2895)"
+  - route: mercury
+    rung: flash
+    model: inception/mercury-2.5
+    via: datacenter
+    state: held
+    flag: benched
+    why: "not in the ranking; datacenter only; ROUTE-BENCHED flag (#2895)"
+  - route: orgptnano
+    rung: flash
+    model: openai/gpt-5-nano
+    via: openrouter
+    state: dropped
+    run: 50
+    scored: 44
+    u8: 18
+    u9: 9
+    usd_per_8: 0.02
+    efficiency: 0.00
+    q: -0.83
+    tok_per_8: 1.0
+    wall_s: 233
+    why: "quality rule: Q -0.83, 40% of 44 scored at 8+, mean 5.4"
+  - route: orgeminilite
+    rung: flash
+    model: google/gemini-2.5-flash-lite
+    via: openrouter
+    state: dropped
+    run: 32
+    scored: 29
+    u8: 10
+    u9: 3
+    usd_per_8: 0.02
+    efficiency: 0.00
+    q: -1.22
+    tok_per_8: 0.527
+    wall_s: 48
+    why: "quality rule: Q -1.22, 34% of 29 scored at 8+, mean 4.4"
+  - route: ornemotron
+    rung: flash
+    model: nvidia/nemotron-3-nano-30b-a3b
+    via: openrouter
+    state: dropped
+    run: 58
+    scored: 57
+    u8: 23
+    u9: 14
+    usd_per_8: 0.19
+    efficiency: 0.08
+    q: -0.87
+    tok_per_8: 3.8
+    wall_s: 162
+    why: "quality rule: Q -0.87, 40% of 57 scored at 8+; route does not cache"
+
+  # pro: the two measured routes within a rounding of the best third on efficiency.
+  - route: ocqwenplus
+    rung: pro
+    model: qwen3.6-plus
+    via: opencode
+    state: allowed
+    run: 26
+    scored: 12
+    u8: 8
+    u9: 8
+    usd_per_8: 0.88
+    efficiency: 0.78
+    q: 0.07
+    tok_per_8: 10.5
+    wall_s: 504
+    why: "pro leader: 8 of 12 scored at 8+; opencode serves input from cache"
+  - route: ocminimax
+    rung: pro
+    model: minimax-m3
+    via: opencode
+    state: allowed
+    run: 20
+    scored: 13
+    u8: 8
+    u9: 5
+    usd_per_8: 1.55
+    efficiency: 2.21
+    q: -0.02
+    tok_per_8: 22.7
+    wall_s: 751
+    why: "pro leader: 8 of 13 scored at 8+, 40% reliable, best third on efficiency"
+  - route: orkimi3
+    rung: pro
+    model: moonshotai/kimi-k3
+    via: openrouter
+    state: held
+    run: 25
+    scored: 12
+    u8: 8
+    u9: 7
+    usd_per_8: 8.86
+    efficiency: 11.38
+    q: 0.17
+    tok_per_8: 14.6
+    wall_s: 1181
+    why: "second tier: on the pro frontier but outside the best third (eff 11.38); cell3 only (5 of 5 scored at 8+)"
+  - route: ormimo26pro
+    rung: pro
+    model: xiaomi/mimo-v2.6-pro
+    via: openrouter
+    state: held
+    run: 18
+    scored: 4
+    u8: 3
+    u9: 3
+    usd_per_8: 0.66
+    efficiency: 0.89
+    q: 0.30
+    tok_per_8: 14.8
+    wall_s: 1372
+    why: "too few to say (U=3); on the pro frontier"
+  - route: ormimopro
+    rung: pro
+    model: xiaomi/mimo-v2.5-pro
+    via: openrouter
+    state: held
+    run: 25
+    scored: 7
+    u8: 3
+    u9: 3
+    usd_per_8: 0.69
+    efficiency: 0.98
+    q: -0.20
+    tok_per_8: 24.1
+    wall_s: 659
+    why: "too few to say (U=3); on the pro frontier"
+  - route: orqwenplus
+    rung: pro
+    model: qwen/qwen3.6-plus
+    via: openrouter
+    state: dropped
+    run: 43
+    scored: 16
+    u8: 9
+    u9: 8
+    usd_per_8: 7.80
+    efficiency: 9.53
+    q: -0.07
+    tok_per_8: 19.0
+    wall_s: 569
+    why: "Pareto-dominated by qwen3.6-plus (opencode, same model at $0.88 per 8+) with Q -0.07"
+  - route: ocpro
+    rung: pro
+    model: deepseek/deepseek-v4-pro
+    via: opencode
+    state: dropped
+    run: 35
+    scored: 20
+    u8: 8
+    u9: 6
+    usd_per_8: 3.41
+    efficiency: 4.47
+    q: -0.64
+    tok_per_8: 16.7
+    wall_s: 978
+    why: "quality rule: Q -0.64 on 20 scored (numbers are the model, both routes)"
+  - route: ordspro
+    rung: pro
+    model: deepseek/deepseek-v4-pro
+    via: openrouter
+    state: dropped
+    run: 35
+    scored: 20
+    u8: 8
+    u9: 6
+    usd_per_8: 3.41
+    efficiency: 4.47
+    q: -0.64
+    tok_per_8: 16.7
+    wall_s: 978
+    why: "quality rule: Q -0.64 on 20 scored (numbers are the model, both routes)"
+  - route: ocglm53
+    rung: pro
+    model: glm-5.3
+    via: opencode
+    state: dropped
+    run: 24
+    scored: 12
+    u8: 5
+    u9: 4
+    usd_per_8: 11.85
+    efficiency: 24.84
+    q: -0.33
+    tok_per_8: 35.9
+    wall_s: 1374
+    why: "quality rule: Q -0.33 on 12 scored"
+  - route: orglm53
+    rung: pro
+    model: z-ai/glm-5.3
+    via: openrouter
+    state: held
+    run: 23
+    scored: 10
+    u8: 6
+    u9: 4
+    usd_per_8: 6.00
+    efficiency: 10.80
+    q: 0.04
+    tok_per_8: 31.3
+    wall_s: 983
+    why: "second tier: Pareto-dominated by qwen3.6-plus and minimax-m3 (opencode), but Q +0.04 > 0, so held rather than dropped"
+  - route: orkimicode
+    rung: pro
+    model: moonshotai/kimi-k2.7-code
+    via: openrouter
+    state: dropped
+    run: 26
+    scored: 13
+    u8: 6
+    u9: 3
+    usd_per_8: 4.01
+    efficiency: 4.36
+    q: -0.35
+    tok_per_8: 14.2
+    wall_s: 640
+    why: "Pareto-dominated by qwen3.6-plus with Q -0.35; 46% of 13 scored at 8+ is not far below the rung"
+  - route: orminimax
+    rung: pro
+    model: minimax/minimax-m3
+    via: openrouter
+    state: dropped
+    run: 14
+    scored: 8
+    u8: 4
+    u9: 4
+    usd_per_8: 3.63
+    efficiency: 8.29
+    q: -0.15
+    tok_per_8: 48.1
+    wall_s: 1087
+    why: "Pareto-dominated by minimax-m3 (opencode, $1.55 per 8+) and qwen3.6-plus with Q -0.15"
+  - route: orgemini25pro
+    rung: pro
+    model: google/gemini-2.5-pro
+    via: openrouter
+    state: dropped
+    run: 18
+    scored: 6
+    u8: 2
+    u9: 1
+    usd_per_8: 11.04
+    efficiency: 14.78
+    q: -1.27
+    tok_per_8: 25.1
+    wall_s: 467
+    why: "Pareto-dominated by the muse-spark-1.3 routes with Q -1.27, mean 4.3 on 6 scored"
+  - route: orhaiku
+    rung: pro
+    model: anthropic/claude-haiku-4.5
+    via: openrouter
+    state: dropped
+    run: 15
+    scored: 7
+    u8: 3
+    u9: 3
+    usd_per_8: 2.17
+    efficiency: 2.27
+    q: -0.71
+    tok_per_8: 13.3
+    wall_s: 623
+    why: "Pareto-dominated by qwen3.6-plus with Q -0.71"
+  - route: ordevstral
+    rung: pro
+    model: mistralai/devstral-2512
+    via: openrouter
+    state: dropped
+    run: 26
+    scored: 11
+    u8: 2
+    u9: 1
+    usd_per_8: 7.38
+    efficiency: 25.76
+    q: -0.82
+    tok_per_8: 132.6
+    wall_s: 775
+    why: "quality rule: Q -0.82 on 11 scored, 132.6M tokens per 8+"
+  - route: ocmuse
+    rung: pro
+    model: muse-spark-1.3
+    via: opencode
+    state: dropped
+    run: 18
+    scored: 5
+    u8: 2
+    u9: 2
+    usd_per_8: 4.70
+    efficiency: 5.63
+    q: -0.36
+    tok_per_8: 21.1
+    wall_s: 423
+    why: "Pareto-dominated by meta/muse-spark-1.3 with Q -0.36; re-try only as a measured A/B"
+  - route: ormuse
+    rung: pro
+    model: meta/muse-spark-1.3
+    via: openrouter
+    state: dropped
+    flag: dead
+    run: 9
+    scored: 1
+    u8: 1
+    u9: 0
+    usd_per_8: 0.93
+    efficiency: 0.12
+    q: 0.20
+    tok_per_8: 1.9
+    wall_s: 7
+    why: "dead route: 8 of 9 launches returned nothing"
+
+# A types row widens one rung for one work type by held routes the report
+# measured on that type. It may not add a dropped route.
+types:
+  - type: cell3
+    rung: pro
+    add: [orkimi3]
+    why: "cell3 succeeds on pro; kimi-k3 5 of 5 scored at 8+ at $3.71 per 8+"
+  - type: nx
+    rung: flash
+    add: [ocglmflash]
+    why: "nx is the type where a flash model matches pro: glm-5.3-flash 5 of 6 at $0.29 per 8+"
+
+# An overrides row replaces a rung's list for one work type outright (unlike
+# a types row, which only widens it), and may name a route this table's rule
+# holds or drops -- the whole point of the escape hatch. It is a manual,
+# interim exception, not derived, and TestTheTableFollowsItsRule does not
+# check it: the rule above still governs every row's persisted state and the
+# default (type "") list per rung. An override is reconciled or removed at
+# the next full re-rank (memory: try-then-remove, continual-refinement-loop),
+# never left to drift. A benched or dead route is refused even when the
+# override names it (Check, not the list, has the last word).
+overrides:
+  - type: code
+    rung: pro
+    routes: [ocqwenplus, orhaiku, ordspro]
+    source: "rowan-new reports/fold-2026-09-22-landed-per-route.md, fold 2026-09-23: cost per LANDED code PR (v6 4.10), not this file's $-per-8+-scored ranking"
+    why: "interim: the only routes that landed code were ocqwenplus $5.08/landed, orhaiku $5.50/landed and ordspro $16.38/landed; the 2026-09-23 02:31Z route change dropped ordspro and orhaiku here on $ per 9+ though they land; orqwenplus (same model as ocqwenplus, via openrouter) cost $119.90/landed, orkimi3 $98/landed, orminimax $31.55/landed; ocglm53, orglm53, orkimicode and orgemini25pro spent $198.81 on 53 PRs and landed none; ocminimax and ormimopro have no landed-PR evidence either way and are left off pending it"

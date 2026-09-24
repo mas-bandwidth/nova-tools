@@ -78,6 +78,11 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		gitTimeout = fs.Int("git-timeout", DefaultGHTimeout, "")
 		words      = fs.Int("receipt-max-words", 0, "")
 		redeliver  = fs.String("redeliver", "", "")
+		// noBeat passes --no-beat through to every `nova-bus wait` this serve polls
+		// with (#1517): a serve runs BESIDE a line, and its poll must not write and
+		// push a BEAT for that line, or the two writers collide on from-<name>/BEAT
+		// and the serve never reads a note.
+		noBeat = fs.Bool("no-beat", false, "")
 	)
 	if !parseFlags(fs, args, stderr) {
 		return 2
@@ -176,6 +181,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		bus: *busDir, as: *as, onNote: *onNote, batchMax: *batchMax,
 		idempotent: *idempotent, receipt: *receipt, remote: *remote, branch: *branch,
 		words: *words, timeout: time.Duration(*gitTimeout) * time.Second,
+		noBeat:  *noBeat,
 		inOrder: map[string]bool{},
 		ledger:  dispatch.New(st, "serve:"),
 	}
@@ -206,6 +212,9 @@ type server struct {
 	remote, branch string
 	words          int
 	timeout        time.Duration
+	// noBeat is --no-beat: the `wait` argv this serve polls with carries --no-beat,
+	// so a serve running beside a line does not beat for it (#1517).
+	noBeat bool
 
 	fired, notes, redelivered, cc int
 	failed                        int
@@ -452,10 +461,17 @@ func (s *server) sourceLine(ctx context.Context) {
 // consumed. The timeout is DERIVED FROM THE INTERVAL this run was given and is
 // never a guessed second.
 func (s *server) busArgs(budget time.Duration) []string {
-	return []string{"wait", "--bus", s.bus, "--as", s.as,
+	args := []string{"wait", "--bus", s.bus, "--as", s.as,
 		"--receipt-max-words", strconv.Itoa(s.words),
 		"--timeout", wake.Dur(budget), "--interval", wake.Dur(budget),
 		"--remote", s.remote, "--branch", s.branch}
+	// A serve is BESIDE the line, not the line: with --no-beat its poll writes and
+	// pushes no BEAT, so it does not fight the line's own harness for from-<name>/BEAT
+	// (#1517). Without it the argv is exactly what it was before the flag existed.
+	if s.noBeat {
+		args = append(args, "--no-beat")
+	}
+	return args
 }
 
 // dispatch hands every queued id to ONE invocation, in bus order, at most
@@ -576,6 +592,14 @@ func (s *server) spawn(ctx context.Context, ids []string) int {
 		}
 	}
 	fields := strings.Fields(s.onNote)
+	// serve refuses an empty --on-note at parse time, so this is the same rule
+	// read a second time where the indexing happens: a server built inside the
+	// package, or a later flag path that forgets the parse-time check, would
+	// otherwise index an empty slice and panic where nothing is watching -- the
+	// class Emma's #1390 named.
+	if len(fields) == 0 {
+		return refused(s.stderr, "on-note: --on-note carries no command, so there is nothing to start")
+	}
 	cmd := exec.CommandContext(ctx, fields[0], append(append([]string{}, fields[1:]...), ids...)...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.Stdin = nil

@@ -214,3 +214,110 @@ ownership are untouched (rule 6/rule 7)."))
                                         milli-floor suggestion-p)))
             (journal-decision journal event)
             (event->decision event :source (if provider :provider :kernel)))))))
+
+;;; ------------------------------------------------------------------
+;;; Decision packets (SPEC-WORK.md:4546-4556, replay row 4648).
+;;; ------------------------------------------------------------------
+;;;
+;;; What comes back up to the coordinator is a decision packet, built by
+;;; machinery, ONE per item and revision. Machinery observes and books; a
+;;; model wakes only when there is something to decide:
+;;;
+;;;   * the first observation of an (item, revision) builds its packet and
+;;;     wakes the reader once;
+;;;   * a further observation of the same (item, revision) AMENDS that packet
+;;;     (new facts appended, findings merged by id) and never builds a second
+;;;     one; while the reader is busy the amendment wakes nothing;
+;;;   * a newer revision supersedes the packet: a new packet is built for the
+;;;     new revision carrying every finding still :open, and the old packet
+;;;     names its successor;
+;;;   * an observation with no facts and no findings -- an empty pulse -- builds
+;;;     nothing, amends nothing and wakes no model;
+;;;   * an observation of an older revision than the item's current packet is
+;;;     stale and is booked nowhere.
+
+(defstruct (decision-packet
+            (:constructor %make-decision-packet
+                (&key item revision facts findings amendments superseded-by)))
+  item           ; the item the packet decides
+  revision       ; the exact revision it was built for
+  facts          ; the new behaviour and evidence pointers, oldest first
+  findings       ; alist (finding-id . disposition); :open is unresolved
+  amendments     ; how many observations amended it after it was built
+  superseded-by) ; the revision whose packet superseded it, or NIL
+
+(defstruct (packet-book (:constructor make-packet-book ()))
+  (current (make-hash-table :test 'equal)) ; item -> its current packet
+  (built '())                              ; every packet ever built, newest first
+  (wakes 0))                               ; model wakes this book has caused
+
+(defun %revision< (a b)
+  "Revisions are integers or strings; strings compare lexically."
+  (if (and (integerp a) (integerp b)) (< a b) (string< (princ-to-string a)
+                                                       (princ-to-string b))))
+
+(defun %merge-findings (old new)
+  "OLD findings with NEW merged by id: a new disposition for a known id
+replaces the old one, an unknown id is appended. Order is first-seen."
+  (let ((merged (copy-alist old)))
+    (dolist (finding new merged)
+      (let ((cell (assoc (car finding) merged :test #'equal)))
+        (if cell
+            (setf (cdr cell) (cdr finding))
+            (setf merged (append merged (list (cons (car finding) (cdr finding))))))))))
+
+(defun open-findings (packet)
+  "The findings of PACKET whose disposition is still :open."
+  (remove-if-not (lambda (finding) (eq (cdr finding) :open))
+                 (decision-packet-findings packet)))
+
+(defun %build-packet (book item revision facts findings)
+  (let ((packet (%make-decision-packet :item item :revision revision
+                                       :facts (copy-list facts)
+                                       :findings (%merge-findings '() findings)
+                                       :amendments 0)))
+    (setf (gethash item (packet-book-current book)) packet)
+    (push packet (packet-book-built book))
+    packet))
+
+(defun book-observation (book observation &key reader-busy-p)
+  "Book one OBSERVATION, a plist (:item :revision :facts :findings), into
+BOOK. Answers (values packet action) where action is :built, :amended,
+:superseded, :empty or :stale. Only :built and :superseded wake the reader,
+and only when it is not busy; an amendment or an empty pulse wakes nothing."
+  (let* ((item (getf observation :item))
+         (revision (getf observation :revision))
+         (facts (getf observation :facts))
+         (findings (getf observation :findings))
+         (current (gethash item (packet-book-current book))))
+    (flet ((wake () (unless reader-busy-p (incf (packet-book-wakes book)))))
+      (cond
+        ((and (null facts) (null findings))
+         (values current :empty))
+        ((null current)
+         (wake)
+         (values (%build-packet book item revision facts findings) :built))
+        ((equal revision (decision-packet-revision current))
+         (setf (decision-packet-facts current)
+               (append (decision-packet-facts current) facts)
+               (decision-packet-findings current)
+               (%merge-findings (decision-packet-findings current) findings))
+         (incf (decision-packet-amendments current))
+         (values current :amended))
+        ((%revision< revision (decision-packet-revision current))
+         (values current :stale))
+        (t
+         (let ((next (%build-packet book item revision facts
+                                    (%merge-findings (open-findings current)
+                                                     findings))))
+           (setf (decision-packet-superseded-by current) revision)
+           (wake)
+           (values next :superseded)))))))
+
+(defun packets-for (book item &optional (revision nil revision-p))
+  "Every packet BOOK ever built for ITEM (at REVISION when given), oldest first."
+  (reverse (remove-if-not (lambda (p)
+                            (and (equal item (decision-packet-item p))
+                                 (or (not revision-p)
+                                     (equal revision (decision-packet-revision p)))))
+                          (packet-book-built book))))

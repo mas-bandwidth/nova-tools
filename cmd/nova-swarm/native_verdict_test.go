@@ -30,6 +30,15 @@ import (
 // nativeVerdict runs one card through `native` with the fake harness and returns stdout.
 func nativeVerdict(t *testing.T, label, card string) string {
 	t.Helper()
+	stdout, _, _ := nativeVerdictRun(t, label, card)
+	return stdout
+}
+
+// nativeVerdictRun is nativeVerdict plus stderr and the process exit, so a test can
+// pin that a finished card never exits 255 (#2058). Local ssh(1) 255 is any error,
+// not proof the remote command never started.
+func nativeVerdictRun(t *testing.T, label, card string) (stdout, stderr string, code int) {
+	t.Helper()
 	windowsIsNotABench(t)
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -37,13 +46,14 @@ func nativeVerdict(t *testing.T, label, card string) string {
 	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	var stdout, stderr bytes.Buffer
-	run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
+	var out, errb bytes.Buffer
+	code = run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1",
 		"--harness", bin, "--model", "fake/fake-model", "--label", label,
 		"--card", cardPath, "--slot", slot, "--root", root,
+		"--tokens", "unmetered",
 		"--deadline", "30s", "--no-wall"},
-		strings.NewReader(""), &stdout, &stderr, time.Now())
-	return stdout.String()
+		strings.NewReader(""), &out, &errb, time.Now())
+	return out.String(), errb.String(), code
 }
 
 // THE C18 SHAPE: the provider answers 5xx at request start, the harness exits 1, and the
@@ -96,5 +106,87 @@ func TestNativeStillSaysOKForARunThatProducedItsResult(t *testing.T) {
 	}
 	if strings.Contains(out, "why=") {
 		t.Fatalf("an OK verdict carries no why= tail:\n%s", out)
+	}
+}
+
+// THE SUPERMAN SHAPE (nova-tools #2058). Darwin, harness v1.18.20, 24 cards at once:
+// 23 NATIVE OK, 1 launch exited 255 twice. Both job dirs held a complete RESULT.md;
+// harness-output.log showed `error: Error starting FSEvents stream` right after
+// `> build · <model>`, then the card's commands and "Wrote file successfully".
+// The launcher printed the CAPACITY line and then nothing: no attempt=, no
+// NATIVE OK/INCOMPLETE, exit 255. rr-run.sh retried in place and ran the card
+// twice. Local ssh(1) exits 255 for any error, which is not proof the remote
+// command never started: the outcome is potentially UNKNOWN, and a retry waits
+// on reconciliation. A native that finishes a card and then exits 255 is a
+// finished card a launcher can misread as a transport failure and retry.
+//
+// RED WITHOUT THE FIX: process exit 255 (the child's code passed through), or
+// any verdict other than exactly one NATIVE INCOMPLETE with rc=255 why=rc.
+func TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255(t *testing.T) {
+	stdout, stderr, code := nativeVerdictRun(t, "fsevents", "FAKE-FSEVENTS\n")
+	combined := stdout + stderr
+	if strings.Contains(combined, "NATIVE OK") {
+		t.Fatalf("a harness that exited 255 after writing RESULT.md must not say OK:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
+	}
+	if strings.Contains(combined, "NATIVE REFUSED") {
+		t.Fatalf("a harness that exited 255 after writing RESULT.md must not say REFUSED:\nstdout:\n%s\nstderr:\n%s\nexit %d", stdout, stderr, code)
+	}
+	var incomplete []string
+	for _, line := range strings.Split(combined, "\n") {
+		if strings.HasPrefix(line, "NATIVE INCOMPLETE ") {
+			incomplete = append(incomplete, line)
+		}
+	}
+	if len(incomplete) != 1 {
+		t.Fatalf("want exactly one NATIVE INCOMPLETE line, got %d:\nstdout:\n%s\nstderr:\n%s\nexit %d", len(incomplete), stdout, stderr, code)
+	}
+	line := incomplete[0]
+	hasRC, hasWhy := false, false
+	for _, f := range strings.Fields(line) {
+		if f == "rc=255" {
+			hasRC = true
+		}
+		if f == "why=rc" {
+			hasWhy = true
+		}
+	}
+	if !hasRC || !hasWhy {
+		t.Fatalf("the INCOMPLETE line must carry rc=255 and why=rc:\n%s", line)
+	}
+	if code == 255 {
+		t.Fatalf("native exited 255; local ssh(1) 255 is any error and is potentially UNKNOWN, so a launcher may retry a finished card. The child's 255 belongs on the line as rc=255:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if code != 1 {
+		t.Fatalf("the verb ran and said NO, want exit 1, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+}
+
+// THE NEGATIVE, so the 255 clamp is not "never say OK/INCOMPLETE": a card that
+// produced its RESULT.md is still NATIVE OK at exit 0, and a silent harness is
+// still NATIVE INCOMPLETE, and neither process exits 255.
+func TestNativeOrdinaryCardsStillPrintOKAndIncomplete(t *testing.T) {
+	stdout, stderr, code := nativeVerdictRun(t, "green255", "FAKE-RESULT ok\n")
+	if !strings.Contains(stdout, "NATIVE OK ") {
+		t.Fatalf("a run that produced its RESULT.md must still be OK:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if strings.Contains(stdout, "NATIVE INCOMPLETE ") {
+		t.Fatalf("an OK card must not also be INCOMPLETE:\n%s", stdout)
+	}
+	if code == 255 {
+		t.Fatalf("a normal OK card must not exit 255:\n%s", stdout)
+	}
+	if code != 0 {
+		t.Fatalf("a run that produced its RESULT.md still exits 0, got %d:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+
+	stdout, stderr, code = nativeVerdictRun(t, "quiet255", "FAKE-NORESULT\n")
+	if !strings.Contains(stdout, "NATIVE INCOMPLETE ") {
+		t.Fatalf("a silent harness must still be INCOMPLETE:\n%s\nstderr:\n%s", stdout, stderr)
+	}
+	if strings.Contains(stdout, "NATIVE OK ") {
+		t.Fatalf("a silent harness must not be OK:\n%s", stdout)
+	}
+	if code == 255 {
+		t.Fatalf("an incomplete card must not exit 255:\n%s", stdout)
 	}
 }

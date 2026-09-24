@@ -248,7 +248,17 @@ machine that did the build:
 
 and `adopt --expect-sums-from <that file>` reads it there. The file is **local by rule**: a
 `--expect-sums-from host:path` is refused by name, and no verb in this package ever asks a machine to
-hash anything — not `sha256sum`, not `shasum`, not `openssl dgst`. `SUMS.digest` is not listed in the
+hash `SHA256SUMS` as evidence about a fetch — not `sha256sum SHA256SUMS`, not `shasum`, not
+`openssl dgst`. That is decision 2: a digest computed where the bits live is the machine vouching
+for itself.
+
+A destination checking a copy this host already verified is a different question (#1981): `adopt`
+runs `sha256sum -c SHA256SUMS` (or `shasum -a 256 -c` on darwin) in the artifact directory on the
+bench, of the artifacts, never as a substitute for `--expect-sums`. "Already holds" is that verified
+count, never an existence check, and the stream lands in `<version>.partial/` until the check
+passes.
+
+`SUMS.digest` is not listed in the
 `SHA256SUMS` it is the digest of, or its own value would depend on the last time the directory was
 built — and `pull` names it alongside the listed artifacts, because the `rmdir` that ends a pull
 refuses a directory that is not empty and one file this tool wrote itself must not be what stops it.
@@ -365,9 +375,122 @@ reason still fails, with the old binary put back under its own name.
 `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused`,
 `TestSnapshotReadsExeNamesAndKeepsTheSuffix`, `TestTheWindowsBenchIsInTheReleaseSpec`.*
 
+## 11. A release is cut only when a non-author has run it
+
+Glenn, 2026-09-18, the definition of done: a tool is finished when it has been **tested**, **dogfooded
+by somebody who did not write it** on real work, and the **feedback applied**. `nova-check dogfood
+gate` made that mechanical — receipts on disk, read against the command reference, an exit code. What
+it did not have was a caller. The claim that a release had been dogfooded was whatever the last person
+said it was, and a tag cannot be quietly amended and pushed again.
+
+**`cut` and `build` run the gate FIRST.** Before the forge is asked anything, before a single tool is
+compiled. The gate is `internal/dogfood.Gate` in process rather than a shell out to `nova-check` — one
+process, one set of refusals, no shell to get wrong — and it is the same read
+`nova-check dogfood gate --cli <reference> --receipts <dir>` does.
+
+**An OPEN EDGE refuses.** An open edge is a verb somebody ran, that did not do what they needed, and
+that nobody has run since and said it did. Feedback *filed* is not feedback *applied*, and the third
+step of the definition is the one that used to go missing:
+
+```
+RELEASE CUT REFUSED reason=dogfood-gate open=<n> remedy="fix the open edges or --no-dogfood-gate --reason <why>"
+```
+
+`build` refuses the same way under `RELEASE BUILD REFUSED`, because a dev build has no tag and no
+changelog and still reaches four benches through `adopt`. The gate asks the question a release turns
+on, not the stronger `--require-all` one: a tag held hostage to the last unrun verb in a long reference
+is a tag nobody ever cuts.
+
+**The two inputs, and the one default in this package.** `--cli` names the command reference and
+defaults to `docs/CLI.md` beside the checkout the verb was already given (`--changelog` for `cut`,
+`--source` for `build`). `--receipts` names the receipts directory and defaults to
+`~/rowan-working/dogfood` **when that directory exists** — the single exception to SPEC-UPDATE rule 1,
+taken because the alternative fails in the direction that lets a tool ship. A run with neither is not a
+run that passed: it prints `RELEASE CUT NOTE dogfood-gate=skipped …` naming what was missing.
+
+**The waiver is work, and it outlives the terminal.** `--no-dogfood-gate` without `--reason <why>`
+refuses. With one, the reason is printed as `RELEASE CUT DOGFOOD WAIVED reason=<why>`, the receipt line
+carries `dogfood=waived`, and the reason is written into the CHANGELOG section as
+`Dogfood gate waived: <why>` — in the file that travels by git, because a waiver nobody can find later
+is a gate nobody has. Every release line now carries `dogfood=ok|waived|skipped`.
+
+*Tests: `TestCutRefusesOnAnOpenEdgeBeforeItAsksTheForgeAnything`,
+`TestBuildRefusesOnAnOpenEdgeBeforeItCompilesAnything`,
+`TestCutWaivesTheGateOnlyWithAReasonAndRecordsItEverywhere`, `TestCutNamesASkippedGate`,
+`TestCutFindsTheReferenceBesideTheChangelog`, `TestTheRefusalIsBounded`, `TestTheGateIsASeam`,
+`TestTheDogfoodGateIsInTheReleaseSpec`.*
+
 ## What this file does not cover
 
 The verbs themselves, the machines file, the retire rule, where `adopt` runs from and Johnny's read of
 `adopt` are all in [SPEC-UPDATE.md](SPEC-UPDATE.md). SPEC.md's **Conventions** govern throughout — exit
 codes, the one-line grammar, the field law, no guessed paths — and no unit test of any of this reaches the
 network or a real machine.
+
+## Tests this spec demands
+
+The release tests run entirely against fakes and temp dirs — a `fakeForge`, a `fakeSSH`, a `fakeToolchain`, a `fakeGit` — and never reach a network or a real machine; the sensitive-list, command-reference and windows-spec parity checks live in `internal/ci` and read the spec file directly. The suite was seen red first (each test proved able to fail by mutation) before being trusted.
+One numbered line per test: where one test holds several behaviours, they share its line, so the 53 behaviours a test already proves are carried by the 51 numbered lines below (lines 41 and 42 also name, in parentheses, a second test holding the other side of the same behaviour). The 8 behaviours this spec demands that no test proves yet follow, unnumbered; 61 behaviours in all.
+
+1. `TestCutRefusesASensitiveRangeWithoutJohnnysRead` — a cut whose range touched a sensitive prefix is refused (exit 2) and names the paths, until `--security-read` is supplied.
+2. `TestCutWithJohnnysReadSaysSoOnItsOwnLine` — with `--security-read` the cut prints `RELEASE CUT SENSITIVE paths=<n> read=<id>` above its receipt.
+3. `TestCutOfAnOrdinaryRangeSaysNothingAboutSensitivePaths` — an ordinary range prints no `RELEASE CUT SENSITIVE` line.
+4. `TestSensitiveClassifiesByPrefixAndNothingElse` — classification is by directory prefix (trailing slash load-bearing) and nothing else, never by filename or substring.
+5. `TestTheSensitivePathListIsTheSameInTheCodeAndInTheSpec` — the list in `internal/release/sensitive.go` and the spec block stay the same list in the same order.
+6. `TestCutRefusesARangeTooBigToClassify` — a range whose file list reaches the compare ceiling (300) is refused rather than classified from a prefix.
+7. `TestCutRefusesASecurityReadNoReceiptCouldCarry` — `--security-read` is held to the field law (no whitespace, no `=`, one token) and refused otherwise, even on an ordinary range.
+8. `TestTheTagIsAnnotatedAndCarriesTheSumsDigest` — the tag object's message carries the version, `Cut from <sha>.`, and `sums=<sha256>` (written only with `--sums`).
+9. `TestTheAnnotatedTagIsTheObjectThenTheRef` — the annotated tag is two ordered calls: the tag object (`POST git/tags`) then the ref (`POST git/refs` pointing at that object, never at the commit).
+10. `TestSumsInAnnotationReadsOnlyItsOwnLine` — the `sums=` digest is read by an anchored match on its own line, never a sha drifted into prose.
+11. `TestAdoptReadsTheDigestFromTheTagObject` — `adopt --repo` reads the digest off the tag object, travelling by git rather than beside the bits.
+12. `TestAdoptRefusesWhenTheTagDigestAndTheBitsDisagree` — a mismatch refuses and names both digests and the source, and pushes nothing.
+13. `TestAdoptSaysSoWhenTheTagCarriesNoDigest` — a tag with no annotation, or no `sums=` line, is said plainly with the `--expect-sums` remedy.
+14. `TestPullDeletesTheArtifactsHereAndOnEveryMachine` — `pull` deletes the artifacts here and on every machine, keeps the tag, and marks the changelog section with the date and `--reason`; remote deletion is one `rm -f <dir>/<name>` per machine then an `rmdir`, never recursive (`rm -rf` cannot be composed).
+15. `TestPullDeletesOnlyWhatTheChecksumFileNames` — deletion is by name from the release's own `SHA256SUMS`; anything else is left alone.
+16. `TestPullRefusesWhenItCannotNameTheFiles` — `--out` must still hold the release; with nothing to read it refuses.
+17. `TestPullRefusesAPathTheRemoteShellWouldReadAsSyntax` — every path is validated (`ValidRemotePath`) on `--dest` and each machine's `dest` column before any remote command is composed.
+18. `TestPullDryRunDeletesNothing` — `--dry-run` asks each machine, prints `RELEASE WOULD PULL`, and deletes nothing (changelog included).
+19. `TestMarkPulledIsIdempotentAndRefusesAnUnknownVersion` — the changelog mark is idempotent (a second pull does not stack a note) and an unknown version is refused.
+20. `TestCutNamesTheTruncationBeforeTheHitsItFoundInIt` — a truncated compare is decided and named first, as the field line `RELEASE CUT REFUSED reason=compare-truncated files=300 range=… remedy=…`.
+21. `TestCutRefusesATruncatedRangeEvenWithASecurityRead` — `--security-read` does not get past a truncated compare; only a complete list does.
+22. `TestCutLocalDiffClassifiesTheCompleteListItProduced` — `--local-diff <checkout>` runs `git -C <checkout> diff --name-only <prev>...<head>` (three dots) and classifies that complete list.
+23. `TestCutLocalDiffWritesThePathsFileItClassified` — `--paths-from` is written with `--local-diff` and read back without it.
+24. `TestCutRefusesAPathsFileNobodyProduced` — a paths file without the verb's header line, or for a different range, is refused.
+25. `TestCutLocalDiffWithAReadSaysWhereTheListCameFrom` — the cut prints `RELEASE CUT PATHS source=local-diff|paths-from files=<n> range=…` above its receipt.
+26. `TestBuildTakesSeveralPlatformsAtOnce` — `--platform` is repeatable and comma-separated; every value is resolved.
+27. `TestBuildRefusesAnUnsupportedPairBeforeBuildingAnything` — an unsupported pair refuses before the first compile and leaves nothing behind.
+28. `TestBuildBuildsEveryPlatformAndNamesEachInTheReceipt` — every platform gets its own receipt line and one line names them all (`platforms=`/`sums=` the same list in the same order).
+29. `TestBuildWritesTheSumsDigestBesideTheArtifacts` — `build` writes the digest of the just-verified `SHA256SUMS` to `<release-dir>/SUMS.digest`; `SUMS.digest` is not listed in the `SHA256SUMS` it digests.
+30. `TestAdoptExpectSumsFromReadsTheCoordinatorsDigestFile` — `adopt --expect-sums-from <file>` reads the coordinator's local digest file.
+31. `TestAdoptRefusesADigestFileOnTheFarSide` — `--expect-sums-from host:path` is refused by name.
+32. `TestPullDeletesTheDigestFileToo` — `pull` names and removes `SUMS.digest` alongside the listed artifacts, so the final `rmdir` does not find it non-empty.
+33. `TestAdoptRefusesWhenTheLocalToolPredatesTheRelease` — `adopt` refuses when the local tool predates the release, naming both versions and the `release install` that fixes it.
+34. `TestTheStandardScriptLookupSaysWhereItLooked` — the standard-script lookup names the first directory tried, the last, and what it wanted to find there.
+35. `TestTheStandardScriptLookupStopsAtHome` — the walk stops at `$HOME` (never the volume root); a stray script above the stop directory does not answer.
+36. `TestTheStandardScriptLookupWalksUpToTheCheckout` — the walk finds the script from anywhere inside the checkout.
+37. `TestFleetSurveyRefusesARunnerHostAndSurveysTheRest` — `fleet survey --machines <file>` holds benches against the registry (a runner host is refused, its neighbours still surveyed); without `--machines` every bench is surveyed as before.
+38. `TestSnapshotRefusesAMissingFlag` — `nova-version snapshot` requires both `--bin` and `--out` and defaults neither.
+39. `TestTheCommandReferenceDeclaresEveryReleaseVerb` — `docs/CLI.md` declares every release verb, held against `internal/release.Verbs`.
+40. `TestTheFourthDogfoodsLessonsAreInTheReleaseSpec` — the fourth dogfood's lessons are in the release spec.
+41. `TestAdoptTakesWindowsDrivePathsForBinAndDest` — drive-absolute paths are accepted for the windows target only (refused by name elsewhere: `TestAdoptRefusesAWindowsPathForALinuxTarget`).
+42. `TestRemotePathFoldsBackslashesForTheFarSidesShell` — backslashes are folded to forward slashes by `RemotePath` before any command is composed (POSIX shell, no PowerShell: `TestAdoptComposesSlashPathsForAWindowsBench`).
+43. `TestAWindowsPathMayStillCarryNoShellSyntax` — drive-relative (`C:Users\…`) and UNC (`\\…`) paths are refused everywhere.
+44. `TestAdoptFetchesFromAWindowsBuildHost` — `--from host:dir` allows the drive form whatever the target, since that directory belongs to the build host.
+45. `TestTheMachineColumnsTakeAWindowsPath` — the `--machines` columns take the drive form and are normalised the same way.
+46. `TestTheWindowsSumsFileNamesOnlyExeFiles` — `release.ToolFile` is the only place a tool name becomes a file name; a windows release's `SHA256SUMS` lists `.exe` names and nothing else.
+47. `TestInstallOnAWindowsArtifactDirectoryUsesExeNamesThroughout` — `install` reads names out of `SHA256SUMS` rather than rebuilding them, using `.exe` throughout on windows.
+48. `TestAdoptDryRunProbesTheExeOnAWindowsBench` — `adopt` sends/runs `nova-update.exe` (and `pull` removes `.exe`, `snapshot` records the suffix).
+49. `TestAWindowsBuildDoesNotClaimToHaveRunItsOwnArtifacts` — a cross-built windows artifact is not self-verified; the build claims only the checksum round trip.
+50. `TestInstallMovesARunningFileAsideWhenTheRenameIsRefused` — `install` moves a running binary aside (dot-prefixed) when its rename is refused, and restores the old binary if the fallback also fails.
+51. `TestTheWindowsBenchIsInTheReleaseSpec` — the windows bench is in the release spec.
+
+Demanded, and proven by no test yet (8):
+
+- (absent) — when `--repo` and `--expect-sums` are both given, `--expect-sums` wins.
+- (absent) — local deletion goes through `safepath.RemoveUnder` only for regular files; a non-regular file is left alone.
+- (absent) — `pull` does not touch an installed binary; it deletes the release's stamp only.
+- (absent) — a machine that never held the release says so (`held=no`) rather than refusing.
+- (absent) — artifacts are deleted first, the record last; if the changelog cannot be written the receipt is `PULL FAIL … the artifacts are deleted; mark the section by hand`.
+- (absent) — no verb in this package ever asks a machine to hash anything (`sha256sum`, `shasum`, `openssl dgst`).
+- (absent) — precedence when more than one digest source is given: `--expect-sums`, then `--expect-sums-from`, then `--repo`.
+- (absent) — an adopt whose local binary has no readable stamp does not refuse.

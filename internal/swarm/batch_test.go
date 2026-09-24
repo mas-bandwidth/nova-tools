@@ -77,7 +77,8 @@ func runBatch(t *testing.T, cards, root, runner string, deadline time.Duration) 
 	t.Helper()
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: deadline, Cards: cards, Root: root, Runner: runner,
 		Stdout: &out, Stderr: &errb,
 	})
 	return code, out.String(), errb.String()
@@ -273,7 +274,8 @@ func TestBatchKillsAtDeadline(t *testing.T) {
 	runner := runnerDoing(t, dir, "slow", runnerStep{Op: "sleep", Ms: 30000})
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitDeadline()
 		clk.advance(30 * time.Second)
@@ -300,7 +302,8 @@ func TestBatchKillsIdleCardEarly(t *testing.T) {
 	runner := runnerDoing(t, dir, "idle", runnerStep{Op: "sleep", Ms: 30000})
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		clk.advance(testIdleBudget)
@@ -325,27 +328,43 @@ func TestBatchIdleDoesNotKillAWritingCard(t *testing.T) {
 	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A runner whose log grows the whole time: it writes to stdout every tick, then publishes
-	// its result. The idle monitor must leave it alone because its log never sits still. The
-	// window is injected: the test proves a tick at the end of a whole --idle sees the growth
-	// since the previous tick and does not kill, rather than betting the writes beat a real
-	// four-second clock.
+	// A runner whose log grows by a page in the window, then publishes. A byte at a time is
+	// not work (issue #1893); a page of harness output is. The window is injected: the test
+	// proves a tick at the end of a whole --idle sees that growth and does not kill.
+	page := strings.Repeat("a harness step, printed\n", 256) // ~6 KiB, past idleLogDribble
+	cont := filepath.Join(root, "continue")
+	release := filepath.Join(root, "release")
+	log := filepath.Join(root, "1", "jobs", "a", "harness.log")
 	runner := runnerDoing(t, dir, "writing",
 		runnerStep{Op: "mkdir", Path: "{job}"},
-		runnerStep{Op: "stdout", Body: "working {i}", N: 6, Ms: 10},
+		runnerStep{Op: "stdout", Body: page},
+		runnerStep{Op: "waitfile", Path: cont},
+		runnerStep{Op: "stdout", Body: page},
+		runnerStep{Op: "waitfile", Path: release},
 		publishCard("{job}"),
 	)
-	log := filepath.Join(root, "1", "jobs", "a", "harness.log")
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForLog(t, log, 1)
 		clk.tick()
-		waitForLog(t, log, 6)
+		// tick returns when the monitor RECEIVES the poll, not when it has read the log: a
+		// second poll at the same instant is taken only after the first is settled, and it
+		// moves nothing, so page 2 cannot land inside the first reading (#1893).
+		clk.tick()
+		before := logSize(log)
+		if err := os.WriteFile(cont, []byte("go\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		waitForLogBytes(t, log, before+int64(len(page)))
 		clk.advance(testIdleBudget)
 		clk.tick()
+		if err := os.WriteFile(release, []byte("go\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if code != 0 {
 		t.Fatalf("a batch over a card that keeps writing exits 0, got %d; stderr: %s", code, errs)
@@ -376,7 +395,8 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	// for --idle. No sleep: the readiness wait is the assertion's event.
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForFile(t, filepath.Join(root, "2", "jobs", "b", "RESULT.md"))
@@ -395,9 +415,9 @@ func TestBatchLineCountsIdle(t *testing.T) {
 	}
 }
 
-// TestIdleWatchesNativeLog: a runner appends a line to <slot>/native.log every 200 ms for
-// longer than --idle=1s. The idle monitor must watch the child's own log (native.log once it
-// exists), not harness.log, so the card is never killed.
+// TestIdleWatchesNativeLog: a runner writes a page to <slot>/native.log, then another page
+// after the first sample. The idle monitor must watch the child's own log (native.log once
+// it exists), not harness.log, and a page of growth in the window is work (issue #1893).
 func TestIdleWatchesNativeLog(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "root")
@@ -406,25 +426,40 @@ func TestIdleWatchesNativeLog(t *testing.T) {
 	if err := os.WriteFile(tsv, []byte("a\t1\tmodel\t"+card+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	page := strings.Repeat("a harness step, printed\n", 256) // ~6 KiB, past idleLogDribble
+	cont := filepath.Join(root, "continue")
+	release := filepath.Join(root, "release")
+	log := filepath.Join(root, "1", "native.log")
 	runner := runnerDoing(t, dir, "native-writes",
 		runnerStep{Op: "mkdir", Path: "{job}"},
-		runnerStep{Op: "appendn", Path: "{root}/{slot}/native.log", Body: "line {i}", N: 12, Ms: 10},
+		runnerStep{Op: "append", Path: "{root}/{slot}/native.log", Body: page},
+		runnerStep{Op: "waitfile", Path: cont},
+		runnerStep{Op: "append", Path: "{root}/{slot}/native.log", Body: page},
+		runnerStep{Op: "waitfile", Path: release},
 		publishCard("{job}"),
 	)
-	// The kill window is injected: a tick after a whole --idle sees the growth since
-	// the previous tick and leaves the card alone, so the assertion is about the file
-	// the monitor watched, not about the runner beating a real clock.
-	log := filepath.Join(root, "1", "native.log")
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForLog(t, log, 1)
 		clk.tick()
-		waitForLog(t, log, 6)
+		// tick returns when the monitor RECEIVES the poll, not when it has read the log: a
+		// second poll at the same instant is taken only after the first is settled, and it
+		// moves nothing, so page 2 cannot land inside the first reading (#1893).
+		clk.tick()
+		before := logSize(log)
+		if err := os.WriteFile(cont, []byte("go\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		waitForLogBytes(t, log, before+int64(len(page)))
 		clk.advance(testIdleBudget)
 		clk.tick()
+		if err := os.WriteFile(release, []byte("go\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if code != 0 {
 		t.Fatalf("a card writing native.log is never idle-killed, exits 0, got %d; stderr: %s", code, errs)
@@ -458,7 +493,8 @@ func TestIdleKillsWhenNativeLogStops(t *testing.T) {
 	// old test raced the runner's first write against a real four-second window.
 	clk := newManualClock()
 	code, out, _ := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 	}, clk, func() {
 		clk.waitTick()
 		waitForLog(t, filepath.Join(root, "1", "native.log"), 3)
@@ -928,7 +964,8 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	runner := fakeRunner(t, dir)
 	var out, errb bytes.Buffer
 	code := Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `[ "$BATCH_ID" = "B1" ] && [ "$BATCH_DONE" = "$BATCH_N" ] && exit 7`,
 		Stdout: &out, Stderr: &errb,
 	})
@@ -950,7 +987,8 @@ func TestBatchThenRunsOnlyWhenAllDone(t *testing.T) {
 	out.Reset()
 	var out2, errb2 bytes.Buffer
 	code = Batch(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Cards: tsv, Root: root, Runner: runner,
 		Then:   `exit 0`,
 		Stdout: &out2, Stderr: &errb2,
 	})
@@ -1027,7 +1065,8 @@ func TestIdleWatchCountsChildActivity(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B1", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot {
 			round.Add(1)
 			return sampler
@@ -1082,7 +1121,8 @@ func TestIdleWatchTopologyChangeKeepsCardAlive(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B-TOPO", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B-TOPO", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot {
 			round.Add(1)
 			return sampler
@@ -1130,7 +1170,8 @@ func TestIdleWatchSub1PercentJitterKilled(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B-JITTER", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B-JITTER", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot {
 			round.Add(1)
 			return sampler
@@ -1160,15 +1201,19 @@ func TestIdleWatchUnknownSampleReliesOnLog(t *testing.T) {
 		{"active-log", "RESULT: active-log\nfinished via log"},
 		{"silent", "RESULT: silent\nMISSING"},
 	})
+	page := strings.Repeat("a harness step, printed\n", 256) // ~6 KiB, past idleLogDribble
+	cont := filepath.Join(root, "continue")
+	release := filepath.Join(root, "release")
 	runner := runnerDoing(t, dir, "log-watcher",
 		runnerStep{Op: "mkdir", Path: "{job}"},
-		runnerStep{Op: "stdout", Body: "line 1", When: "label==active-log"},
+		runnerStep{Op: "stdout", Body: page, When: "label==active-log"},
 		runnerStep{Op: "write", Path: "{root}/line1", When: "label==active-log"},
 		runnerStep{Op: "sleep", Ms: 30000, When: "label==silent"},
-		runnerStep{Op: "sleep", Ms: 50, When: "label==active-log"},
-		runnerStep{Op: "stdout", Body: "line 2", When: "label==active-log"},
+		runnerStep{Op: "waitfile", Path: cont, When: "label==active-log"},
+		runnerStep{Op: "stdout", Body: page, When: "label==active-log"},
 		runnerStep{Op: "write", Path: "{root}/line2", When: "label==active-log"},
-		publishCard("{job}"),
+		runnerStep{Op: "waitfile", Path: release, When: "label==active-log"},
+		func() runnerStep { s := publishCard("{job}"); s.When = "label==active-log"; return s }(),
 	)
 	sampler := &fakeTreeSampler{}
 	sampler.cpuForCard = func(cardIndex, pid int) (uint64, bool) {
@@ -1176,15 +1221,26 @@ func TestIdleWatchUnknownSampleReliesOnLog(t *testing.T) {
 	}
 	clk := newManualClock()
 	code, out, errs := runBatchClock(BatchInput{
-		ID: "B-UNK", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
+		Tokens: "unmetered",
+		ID:     "B-UNK", Deadline: 30 * time.Second, Idle: testIdleBudget, Cards: tsv, Root: root, Runner: runner,
 		snapshot: func() activitySnapshot { return sampler },
 	}, clk, func() {
 		waitForFile(t, filepath.Join(root, "line1"))
 		clk.waitTick()
-		clk.tick() // round 1: active-log has line 1
+		clk.tick() // round 1: active-log has a page
+		// tick returns when the monitor RECEIVES the poll, not when it has read the log: a
+		// second poll at the same instant is taken only after the first is settled, and it
+		// moves nothing, so page 2 cannot land inside the first reading (#1893).
+		clk.tick()
+		if err := os.WriteFile(cont, []byte("go\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		waitForFile(t, filepath.Join(root, "line2"))
 		clk.advance(testIdleBudget)
-		clk.tick() // round 2: log grew to line 2, active-log is saved while silent is idle-killed
+		clk.tick() // round 2: log grew by another page; silent is idle-killed
+		if err := os.WriteFile(release, []byte("go\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	})
 	if code != 1 {
 		t.Fatalf("batch exit = %d, want 1; stderr: %s", code, errs)

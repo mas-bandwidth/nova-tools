@@ -21,7 +21,7 @@ list_all() {
   while read -r pkg; do
     [ -n "$pkg" ] || continue
     printf './%s\n' "${pkg#github.com/mas-bandwidth/nova-tools/}"
-  done < <(go list ./cmd/... ./internal/...)
+  done < <(go list ./cmd/... ./internal/... ./tools/...)
 }
 
 if [ "${1:-}" = "--all" ]; then
@@ -48,6 +48,24 @@ changed_dirs=$(git diff --name-only "$base" HEAD -- '*.go' | xargs -r -n1 dirnam
 want=""
 for d in $changed_dirs; do want="$want ./$d"; done
 
+# dependents: every package in the tree that imports a changed one.
+while read -r pkg deps; do
+  p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
+  for dep in $deps; do
+    case "$dep" in github.com/mas-bandwidth/nova-tools/*) ;; *) continue ;; esac
+    dp="./${dep#github.com/mas-bandwidth/nova-tools/}"
+    case " $want " in *" $dp "*) want="$want $p"; break ;; esac
+  done
+done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/... ./tools/...)
+
+# THE TWO CLASS-TEST PACKAGES ARE ADDED AFTER THE DEPENDENTS, not before. Added
+# before, they dragged their own importers (cmd/nova-ci, cmd/nova-merge,
+# cmd/nova-work) into every PR's shards although the change touched none of
+# them: all 95 PR runs read on 2026-09-23 carried those five packages, and
+# cmd/nova-merge is the slowest package on the Macs (342 s). When a change
+# does touch internal/ci or internal/docs, the diff names them above and the
+# loop still selects their importers, so no change loses a dependent (#2795).
+
 # internal/ci holds the class tests that read the workflow and script files as
 # text; it scans the tree rather than importing what it guards, so no *.go diff
 # can name it as a dependent. A cmd/nova-swarm edit (PR #1073) left an
@@ -65,15 +83,11 @@ want="$want ./internal/ci"
 # the PR that broke it (#1364, #1409).
 want="$want ./internal/docs"
 
-# dependents: every package in the tree that imports a changed one.
-while read -r pkg deps; do
-  p="./${pkg#github.com/mas-bandwidth/nova-tools/}"
-  for dep in $deps; do
-    case "$dep" in github.com/mas-bandwidth/nova-tools/*) ;; *) continue ;; esac
-    dp="./${dep#github.com/mas-bandwidth/nova-tools/}"
-    case " $want " in *" $dp "*) want="$want $p"; break ;; esac
-  done
-done < <(go list -f '{{.ImportPath}}{{range .Deps}} {{.}}{{end}}' ./cmd/... ./internal/...)
+# tools/testdur holds the two-minute rule's suite budget tests; when
+# docs/TEST-DURATIONS.md is updated, tools/testdur must be judged.
+if git diff --name-only "$base" HEAD 2>/dev/null | grep -q '^docs/TEST-DURATIONS\.md$'; then
+  want="$want ./tools/testdur"
+fi
 
 for pkg in "${all[@]}"; do
   case " $want " in *" $pkg "*) printf '%s\n' "$pkg" ;; esac

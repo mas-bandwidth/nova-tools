@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -55,6 +56,14 @@ const (
 // sources are named, because either one answers and neither is ever guessed.
 const sourceRemedy = "name a verb list: --cli <docs/CLI.md>, or --tools <dir of built nova-* binaries>, or both; refusing to guess"
 
+// Seams for tests. On a real run these stay nil/default and the production
+// clock and runners are used.
+var (
+	dogfoodClock      = time.Now
+	dogfoodGitRunner  dogfood.Runner
+	dogfoodHelpRunner dogfood.HelpRunner
+)
+
 func cmdDogfood(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, " dogfood", "no sub-verb given; ledger reads it, record writes one receipt, gate is the one with an exit code")
@@ -100,6 +109,9 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 	}
 	var fromTools []dogfood.Verb
 	if s.tools != "" {
+		if s.timeout <= 0 {
+			return nil, refuse(stderr, " dogfood "+verb, "--tools-timeout must be positive; a read with no time budget will hang forever")
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.timeout)*time.Second)
 		defer cancel()
 		// A program says what it is doing when what it is doing takes long
@@ -108,7 +120,7 @@ func (s *dogfoodSources) verbList(verb string, failMax int, stderr io.Writer) ([
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE asking the binaries for their verbs: %d/%d\n", done, total)
 		})
-		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, nil, progress)
+		verbs, failures, err := dogfood.VerbsFromTools(ctx, s.tools, dogfoodHelpRunner, progress)
 		if err != nil {
 			return nil, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -171,12 +183,16 @@ func dogfoodGather(verb string, src *dogfoodSources, receiptsDir, authorsFile, r
 
 	authors := dogfood.Authors{}
 	if repo != "" {
+		if gitTimeout <= 0 {
+			return read, refuse(stderr, " dogfood "+verb, "--git-timeout must be positive; a read with no time budget will hang forever")
+		}
+		fmt.Fprintf(stderr, "DOGFOOD NOTE reading authorship from git over %d verbs; this can take seconds\n", len(verbs))
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(gitTimeout)*time.Second)
 		defer cancel()
 		progress := dogfood.NewProgress(nil, 100*time.Millisecond, 2*time.Second, func(done, total int) {
 			fmt.Fprintf(stderr, "DOGFOOD NOTE reading authorship from git: %d/%d verbs\n", done, total)
 		})
-		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, nil, progress)
+		fromGit, err := dogfood.AuthorsFromGit(ctx, repo, verbs, dogfoodGitRunner, progress)
 		if err != nil {
 			return read, refuse(stderr, " dogfood "+verb, oneline.Err(err))
 		}
@@ -309,6 +325,7 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 	ok := fs.Bool("ok", false, "the verb did what the run needed")
 	notOK := fs.Bool("not-ok", false, "it did not; file the edge and name it with --issue")
 	issue := fs.Int("issue", 0, "the issue number of the edge filed, when there is one")
+	closes := fs.String("closes", "", "the id of the finding this run answers, as the gate prints it")
 	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{
 		"tool": tool, "verb": verb, "by": by, "notes": notes, "receipts": receipts,
@@ -341,14 +358,24 @@ func cmdDogfoodRecord(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " dogfood record", fmt.Sprintf("%s %s is not a verb the list declares; %s",
 			oneline.Field(*tool), oneline.Field(*verb), oneline.Escape(remedy)))
 	}
+	// A --closes that answers a finding nobody can point at is a close nobody can
+	// check. The id is the eight characters the gate prints beside the edge and
+	// the same eight that end the receipt's filename, so it is checked for shape
+	// here and matched against the real findings by the ledger: an id that names
+	// nothing closes nothing, and says so by leaving the edge open.
+	if id := strings.TrimSpace(*closes); id != "" && !dogfood.IsReceiptID(id) {
+		fmt.Fprintf(stderr, "nova-check dogfood record: --closes is a receipt id, the eight hex characters the gate prints as receipt=<id>, got %s\n", oneline.Field(id))
+		return 2
+	}
 	receipt := dogfood.Receipt{
-		Tool:  *tool,
-		Verb:  *verb,
-		By:    *by,
-		At:    time.Now().UTC().Format(time.RFC3339),
-		OK:    *ok,
-		Notes: *notes,
-		Issue: *issue,
+		Tool:   *tool,
+		Verb:   *verb,
+		By:     *by,
+		At:     dogfoodClock().UTC().Format(time.RFC3339),
+		OK:     *ok,
+		Notes:  *notes,
+		Issue:  *issue,
+		Closes: strings.TrimSpace(*closes),
 	}
 	path, err := dogfood.Record(*receipts, receipt)
 	if err != nil {

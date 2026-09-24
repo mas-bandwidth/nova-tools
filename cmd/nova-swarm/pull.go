@@ -44,9 +44,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -87,7 +89,8 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	lastSteal := f.fs.String("last-steal", "", "")
 	// Section 7 (backpressure and idle): the four probe numbers, read, never probed.
 	cores := f.fs.Int("cores", -1, "")
-	load1 := f.fs.Int("load1", -1, "")
+	// load1 is a load average, read as the float nova-wake probe --here prints.
+	load1 := f.fs.Float64("load1", -1, "")
 	freeGB := f.fs.Int("free-gb", -1, "")
 	memFreeGB := f.fs.Int("memfree-gb", -1, "")
 	running := f.fs.Int("running", 0, "")
@@ -98,13 +101,30 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 	repo := f.fs.String("repo", "", "")
 	runner := f.fs.String("runner", "", "")
 	base := f.fs.String("base", "", "")
+	// Section 3 (lease take) and the pull worker daemon.
+	store := f.fs.String("store", "", "")
+	owner := f.fs.String("owner", "", "")
+	forDur := f.fs.String("for", "", "")
+	slots := f.fs.Int("slots", 0, "")
+	seat := f.fs.String("seat", "", "")
+	image := f.fs.String("image", "", "")
+	model := f.fs.String("model", "", "")
+	container := f.fs.String("container", "", "")
+	once := f.fs.Bool("once", false, "")
+	// SPEC-FLEET-KUBE Part 2: the per-bench puller that takes one card and creates its Job.
+	submit := f.fs.Bool("submit", false, "")
+	jobs := f.fs.String("jobs", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	// The Kubernetes puller (SPEC-FLEET-KUBE Part 2) is the shape whenever --submit is named.
+	if *submit {
+		return pullSubmit(f, *bench, *worker, *cores, *load1, *image, *runner, *jobs, stdout, stderr)
+	}
 	// Batching (section 6) is the shape whenever any of its own flags is present; it is
 	// asked first because it shares --queue with the affinity pull of section 4.
-	if *batch > 0 || strings.TrimSpace(*runner) != "" || strings.TrimSpace(*clone) != "" {
+	if *batch > 0 || strings.TrimSpace(*clone) != "" || (strings.TrimSpace(*runner) != "" && strings.TrimSpace(*bench) == "") {
 		f.want(*queue, "queue", "the directory cards wait in")
 		f.want(*clone, "clone", "the one kept clone every card in the batch runs on")
 		f.want(*harvest, "harvest", "where every card's RESULT.md lands, one directory per label")
@@ -163,10 +183,19 @@ func cmdPull(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return pullDirectory(*dir, *stream, *bench, lanes, stdout, stderr)
 	}
+	// Pull worker daemon (section 3): --seat or --slots given, or --bench given without
+	// --worker, runs cards in a container or runner under a slot lease.
+	if strings.TrimSpace(*seat) != "" || *slots > 0 || (strings.TrimSpace(*bench) != "" && strings.TrimSpace(*worker) == "") {
+		return pullWorker(f, *bench, *slots, *seat, *store, *harvest, *image, *model, *runner, *container, *forDur, *once, stdout, stderr)
+	}
+	// Lease take (section 3): --store and --owner given without --bench.
+	if strings.TrimSpace(*store) != "" && strings.TrimSpace(*owner) != "" {
+		return pullLease(f, *store, *owner, *forDur, stdout, stderr, now)
+	}
 	// Backpressure (section 7) is the shape whenever any probe number is present; without
 	// one, --bench and --worker are section 2's per-bench queue pull.
 	if *cores >= 0 || *load1 >= 0 || *freeGB >= 0 || *memFreeGB >= 0 || *running != 0 {
-		return pullBackpressure(f, *bench, *worker, *cores, *load1, *freeGB, *memFreeGB, *running, stdout, stderr)
+		return pullBackpressure(f, *bench, *worker, *cores, loadWhole(*load1), *freeGB, *memFreeGB, *running, stdout, stderr)
 	}
 	return pullBench(f, *bench, *worker, *steal, *capacity, *lastSteal, stdout, stderr, now)
 }
@@ -453,6 +482,75 @@ func harvestPullResult(clone, result string) error {
 	return nil
 }
 
+// pullWorker runs the pull worker process in container/runner (section 3).
+func pullWorker(f *flags, bench string, slots int, seat, store, harvest, image, model, runner, container, forDur string, once bool, stdout, stderr io.Writer) int {
+	f.want(bench, "bench", "the bench name or directory")
+	if slots <= 0 {
+		slots = 1
+	}
+	dur := swarm.DefaultWorkerLeaseDur
+	if strings.TrimSpace(forDur) != "" {
+		d, err := time.ParseDuration(forDur)
+		if err != nil || d <= 0 {
+			f.add(fmt.Sprintf("--for wants a positive duration, got %q", forDur))
+		} else {
+			dur = d
+		}
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	ctx := context.Background()
+
+	opts := swarm.PullWorkerOptions{
+		Bench:     bench,
+		Slots:     slots,
+		Seat:      seat,
+		Store:     store,
+		Harvest:   harvest,
+		Image:     image,
+		Model:     model,
+		Runner:    runner,
+		Container: container,
+		For:       dur,
+		Once:      once,
+		Stdout:    stdout,
+		Stderr:    stderr,
+	}
+	return swarm.RunPullWorker(ctx, opts)
+}
+
+// pullLease takes a card from store/ under a slot lease (section 3).
+func pullLease(f *flags, store, owner, forDur string, stdout, stderr io.Writer, now time.Time) int {
+	f.want(store, "store", "the bench store holding shares.tsv, queue/ and slots/")
+	f.want(owner, "owner", "whose share the lease counts against")
+	dur, err := time.ParseDuration(forDur)
+	if err != nil || dur <= 0 {
+		f.add(fmt.Sprintf("--for wants a positive duration such as 30m, got %q", forDur))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+
+	res, err := swarm.PullLease(store, owner, dur, now, os.Getpid())
+	if swarm.IsNoCard(err) {
+		fmt.Fprintf(stdout, "PULL IDLE owner=%s cards=0\n", oneline.Field(owner))
+		return 0
+	}
+	if ref, ok := swarm.AsLeaseRefusal(err); ok {
+		return refuse(stderr, " pull", fmt.Sprintf(
+			"no lease for owner=%s card=%s held=%d share=%d free=%d holders=%s; a launch without a lease is refused",
+			oneline.Field(owner), oneline.Field(ref.Card), ref.Held, ref.Share, ref.Free, oneline.Escape(ref.Holders)))
+	}
+	if err != nil {
+		return refuse(stderr, " pull", oneline.Err(err))
+	}
+	fmt.Fprintf(stdout, "PULL OK owner=%s card=%s lease=%s until=%s\n",
+		oneline.Field(res.Owner), oneline.Field(res.Card), oneline.Field(res.Lease),
+		oneline.Field(res.Until.UTC().Format(time.RFC3339)))
+	return 0
+}
+
 // pullBackpressure is section 7's take: `nova-swarm pull --bench <dir> --worker <name>
 // --cores <n> --load1 <n> --free-gb <n> --memfree-gb <n> [--running <n>]`.
 func pullBackpressure(f *flags, bench, worker string, cores, load1, freeGB, memFreeGB, running int, stdout, stderr io.Writer) int {
@@ -519,4 +617,69 @@ func splitList(s string) []string {
 		}
 	}
 	return out
+}
+
+// loadWhole rounds a load average up to the whole number section 7's integer line reads.
+func loadWhole(load1 float64) int {
+	if load1 < 0 {
+		return -1
+	}
+	return int(math.Ceil(load1))
+}
+
+// pullSubmit is SPEC-FLEET-KUBE Part 2's puller: load1 is read from the flag (nova-wake
+// probe --here prints it); the one card taken has its Job written to --jobs, the k3s
+// auto-deploy manifests directory.
+func pullSubmit(f *flags, bench, worker string, cores int, load1 float64, image, runner, jobs string, stdout, stderr io.Writer) int {
+	f.want(bench, "bench", "the bench root holding queue/lanes/ and taken/")
+	f.want(worker, "worker", "this puller's name, written on every card it takes")
+	f.want(image, "image", "the container image every card's Job runs")
+	f.want(runner, "runner", "the command the Job runs on the taken card, handed PULL_CARD")
+	f.want(jobs, "jobs", "the directory the Job manifest is written to, the k3s manifests directory on a bench")
+	if cores <= 0 {
+		f.add(fmt.Sprintf("--cores is required and is 1 or more, got %d; the load line reads it, refusing to guess", cores))
+	}
+	if load1 < 0 {
+		f.add(fmt.Sprintf("--load1 is required and is 0 or more, got %g; read it from nova-wake probe --here, refusing to guess", load1))
+	}
+	if f.refused(stderr) {
+		return 2
+	}
+	res, err := swarm.PullSubmit(swarm.PullSubmitInput{
+		Bench:  bench,
+		Worker: worker,
+		Cores:  cores,
+		Load1:  load1,
+		Image:  image,
+		Runner: runner,
+		Submit: func(name string, job swarm.KubeJob) error { return writeJobManifest(jobs, name, job) },
+	})
+	if err != nil {
+		return refuse(stderr, " pull", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	card, job := res.Card, res.Job
+	if card == "" {
+		card, job = "-", "-"
+	}
+	fmt.Fprintf(stdout, "PULL SUBMIT bench=%s worker=%s declined=%t card=%s job=%s headroom=%g\n",
+		oneline.Field(filepath.Base(bench)), oneline.Field(worker), res.Declined,
+		oneline.Field(card), oneline.Field(job), res.Headroom)
+	return 0
+}
+
+// writeJobManifest writes the Job as <jobs>/<name>.yaml (JSON is YAML) by a temp file and a
+// rename, so k3s never applies a half-written manifest.
+func writeJobManifest(dir, name string, job swarm.KubeJob) error {
+	raw, err := json.MarshalIndent(job, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := filepath.Join(dir, "."+name+".tmp")
+	if err := os.WriteFile(tmp, append(raw, '\n'), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, filepath.Join(dir, name+".yaml"))
 }

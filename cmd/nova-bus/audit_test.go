@@ -28,6 +28,7 @@ var messageBusAudit = audit.Config{
 		"main.go|count|f.verb":            "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|count|name":              "a required flag's name, a literal at every call site in this file",
 		"main.go|receiptMaxWords|f.verb":  "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|host|f.verb":             "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|openBus|verb":            "the verb's own name, a literal at every call site in this file",
 		"main.go|printOpenEntries|token":  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
 		"main.go|printBodyItem|kind":      "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned immediately above the site",
@@ -87,12 +88,17 @@ var messageBusAudit = audit.Config{
 		// bidi controls among them) and the quote and backslash, so it is one line whatever
 		// the value holds. quoteList is this package's own wrapper over it and its body is
 		// walked by the same classifier.
-		"oneline.Quote", "quoteList", "cappedList",
+		// hostField is this package's wrapper over oneline.Field for the one OPTIONAL field
+		// on an inbox line: it returns "host=<escaped name> " when the note named a machine
+		// and the empty string when it did not, so the token cannot be built at the call
+		// site without an if. Its body is walked by the same classifier, which is where the
+		// oneline.Field is read.
+		//
 		// decideSuffix builds the typed-decision suffix on an INBOX NOTE line: every text
 		// field (kind, wake, owner, ref) goes through oneline.Field inside it and the three
 		// numbers use numeric verbs, so its result is safe to interpolate raw. It exists so
 		// the two INBOX NOTE sites cannot drift apart (#1617).
-		"decideSuffix",
+		"oneline.Quote", "quoteList", "cappedList", "hostField", "decideSuffix",
 	},
 	Imports: []string{
 		// version.go's resolution order, which now lives once in internal/buildinfo
@@ -134,6 +140,10 @@ var messageBusAudit = audit.Config{
 		// only bytes it touches are the HTTP request body, and every value this package
 		// prints from an answer goes through oneline.Field or is numeric.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// questions is S7's shared redaction (Redact, SecretShaped): pure string
+		// functions over the provider-bound state. It holds no writer and reaches no
+		// stream; nothing it returns is printed.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide/questions"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at

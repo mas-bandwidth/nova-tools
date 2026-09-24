@@ -27,6 +27,14 @@
   deps dependents
   ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
   needs-broken
+  ;; SPEC-WORK.md:1096-1100 -- the required-set membership the node's last
+  ;; `:baseline` event recorded, member by member, or NIL while none has. It is
+  ;; the scope snapshot rule 11 compares the live set against, and it is moved
+  ;; only by that event, so a replay rebuilds it.
+  baseline
+  ;; SPEC-WORK.md:3167 -- `:priority (:self <rank|absent> :subtree
+  ;; <rank|absent>)`, ordering intent only, moved only by a `:prioritise` event.
+  (priority (list :self +absent+ :subtree +absent+))
   ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
   ;; They live on the node like every other value and move on write. :repo is
   ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
@@ -60,7 +68,18 @@
   revision
   ;; SPEC-WORK.md:1674-1680 -- the lease log, newest first, "kept whole for
   ;; handoffs". A settle of a live lease appends a :release here.
-  lease-log)
+  lease-log
+  ;; The CONFIG/ACTIVE halves the six journaled verbs write: the fleet's
+  ;; `:kind :machine` members, the `:kind :route` model routes, and the one
+  ;; allocator per physical machine with its allocations and observations
+  ;; (nova-tools#1695). They live ON THE STATE, not on the kernel, so the
+  ;; half a `replay-journal` reconstruction rebuilds from the journaled
+  ;; events (apply-event below) is the half the kernel reads after a
+  ;; restart; the kernel reaches them through KERNEL-FLEET,
+  ;; KERNEL-ROUTES and KERNEL-ALLOCATIONS (src/kernel.lisp). A work envelope
+  ;; never touches them, so `copy-state` carries the very objects and no
+  ;; candidate install can orphan a live CONFIG member.
+  fleet routes allocations)
 
 (defun %node (state id)
   "Every node access goes through here so *VISITS* is honest."
@@ -281,7 +300,16 @@ absent field defaults to T; an explicitly supplied value is exactly T or NIL."
                      (setf cur (wnode-coordinator node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
-                              :history '() :rows '() :revision 0 :lease-log '())))
+                              :history '() :rows '() :revision 0 :lease-log '()
+                              ;; The CONFIG/ACTIVE halves start empty beside
+                              ;; the seed (nova-tools#1695): the fleet's
+                              ;; friends are the session's own CONFIG
+                              ;; (make-kernel sets them), and the members,
+                              ;; routes and allocations arrive through the
+                              ;; journaled verbs and through replay only.
+                              :fleet (make-fleet)
+                              :routes (make-route-registry)
+                              :allocations (make-fleet-registry))))
       ;; Seed the counters once, on the write path that builds the set.
       (dolist (id order)
         (%adjust-counters state id 1))
@@ -359,6 +387,26 @@ coordination tree's edge (SPEC-WORK.md:4256), independent of the containment
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-coordinator n)))
 
+(defun node-required-p (state id)
+  "True when ID is in its containment parent's required set (SPEC-WORK.md:1147):
+the boolean `required` flag, distinct from the counts it feeds."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (and (wnode-required n) t)))
+
+(defun node-baseline (state id)
+  "The required-set membership ID's last `:baseline` event recorded, member by
+member, or NIL while none has (SPEC-WORK.md:1096-1100)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-baseline n))))
+
+(defun node-priority (state id)
+  "ID's `:priority (:self .. :subtree ..)` field (SPEC-WORK.md:3167)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-priority n))))
+
 (defun node-required-count (state id)
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
@@ -376,12 +424,11 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (copy-list (wnode-deps n))))
 
-(defun node-needs-broken (state id)
-  "True when a need of this node was reverted after this node landed
-(SPEC-WORK.md:2110, the `needs-broken` flag)."
-  (let ((n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (wnode-needs-broken n)))
+;;; `node-needs-broken` is DERIVED (SPEC-WORK.md:4972), so it no longer lives
+;;; here as a slot reader: it moved to src/needs.lisp beside the other readings
+;;; of rule 5. The slot stays as `ready-p`'s cache of one reason (a remaining
+;;; reverted need, `%needs-broken-by-a-revert-p`); the derived reading never
+;;; reads it, so a stale bit cannot outlive the edge it was raised for.
 
 ;;; ------------------------------------------------------------------
 ;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
@@ -498,16 +545,34 @@ nodes and mutates none."
   (loop for id in (wstate-order state)
         when (ready-p state id) collect id))
 
+(defun %needs-broken-by-a-revert-p (state id)
+  "True while one of ID's REMAINING needs is still a reverted one: in O, with a
+`:revive` on its closed index, and not closed-unaccepted (rule 2 row 2,
+SPEC-WORK.md:4820). This is the only reason the write path's cached
+`needs-broken` bit stands for; the rest of rule 5 (engaged, in C) is read at
+read time (src/needs.lisp). An edge that is gone, or a need that settled again,
+leaves no bit behind (SPEC-WORK.md:4972: the flag is derived)."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (some (lambda (dep)
+                 (let ((d (%node-quiet state dep)))
+                   (and d
+                        (eq :o (wnode-branch d))
+                        (not (%need-closed-unaccepted-p state dep))
+                        (%need-revived-p state dep))))
+               (wnode-deps n))
+         t)))
+
 (defun %recheck-needs-broken (state id settled-p)
-  "Re-evaluate the dependents of ID after it settled (SETTLED-P true, clear the
-flag where every need is terminal again) or was reverted (false, raise it)."
+  "Re-evaluate the dependents of ID after it settled (SETTLED-P true: the bit
+stands only while another remaining need is still reverted) or was reverted
+(false, raise it)."
   (dolist (dependent (wnode-dependents (%node-quiet state id)))
     (let ((d (%node-quiet state dependent)))
       (when d
         (setf (wnode-needs-broken d)
               (if settled-p
-                  (not (every (lambda (dep) (%need-terminal-p state dep))
-                              (wnode-deps d)))
+                  (%needs-broken-by-a-revert-p state dependent)
                   t))))))
 (defun node-estimate (state id)
   "The node's estimate record, or +ABSENT+ when it carries none. A node with an
@@ -567,6 +632,11 @@ rather than zero. A view: it never writes, and a closed node is not in it."
 ;;; installed only when the whole of it succeeded.
 
 (defun copy-state (state)
+  ;; The CONFIG/ACTIVE registries are carried, never copied: a work envelope's
+  ;; candidate install must not orphan a live CONFIG member or an ACTIVE
+  ;; allocation the journaled verbs wrote (nova-tools#1695), and only the six
+  ;; verbs' own events -- which the live path never routes through here --
+  ;; mutate them, on the replay's single lineage.
   (let ((table (make-hash-table :test #'equal :size (hash-table-count (wstate-nodes state)))))
     (maphash (lambda (id node) (setf (gethash id table) (copy-wnode node)))
              (wstate-nodes state))
@@ -580,7 +650,285 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                  :history (wstate-history state)
                  :rows (wstate-rows state)
                  :revision (wstate-revision state)
-                 :lease-log (wstate-lease-log state))))
+                 :lease-log (wstate-lease-log state)
+                 :fleet (wstate-fleet state)
+                 :routes (wstate-routes state)
+                 :allocations (wstate-allocations state))))
+
+;;; ------------------------------------------------------------------
+;;; The six CONFIG/ACTIVE verbs' events, and the replay half that rebuilds
+;;; what they wrote (nova-tools#1695)
+;;; ------------------------------------------------------------------
+;;;
+;;; `machine`, `route`, `take`, `heartbeat`, `release` and `probe` journal one
+;;; event of their own kind (src/kernel.lisp, %submit-config), and a restart
+;;; rebuilds the CONFIG members, the model routes and the one allocator per
+;;; machine with its allocations and observations by APPLYING those events
+;;; here -- exactly the way the work tree's own envelopes replay. The kinds'
+;;; ordered field lists are named here (beside the code that reconstructs
+;;; them) rather than in src/event.lisp: %submit-config reads them through
+;;; KIND-FIELDS, the journal's record and digest through EVENT-RECORD-FORM,
+;;; and this file's apply-event through the replay below.
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (dolist (row '((:machine   ; the `machine` verb (SPEC-WORK.md:3541)
+                  :change :machine :owner :name :connect :roles :permits
+                  :excludes :limits :facts :aliases :generation :workload
+                  :key :value :declared-by)
+                 (:route      ; the `route` verb (SPEC-WORK.md:2289)
+                  :change :route :provider :endpoint :key-location :plan
+                  :cost-per-mtok :capabilities :owner :card :pass :wall :usd
+                  :benched-until :source)
+                 (:allocation ; `take`, `heartbeat`, `release`
+                  ; (SPEC-WORK.md:3646-3687)
+                  :change :machine :allocation :allocation-id :node :slots
+                  :offer :attempt :generation :allocation-generation
+                  :request-ref :batch :holder :parent :now :deadline :fenced
+                  :stop-observed :not-started)
+                 (:probe      ; the fleet's `probe` verb (SPEC-WORK.md:3691)
+                  :machine :slot :source :fact :at)
+                 ;; The scope and ordering verbs (E03-F03, SPEC-WORK.md:2929):
+                 ;; each scope kind's own fields in digest order
+                 ;; (SPEC-WORK.md:1096-1100) and `:prioritise`'s (:1011).
+                 ;; Named here beside the apply-event branches that replay them.
+                 (:require :to :reason)
+                 (:baseline :members :reason)
+                 (:discovery :members :reason)
+                 (:prioritise :change :context :rank :reason)))
+    (pushnew row *kind-field-order* :test #'equal)))
+
+(defun %config-field (fields key)
+  "The event field's value with the absent spelling read as empty. NIL is a
+value and survives as itself: an absent field and an empty one are two
+spellings, and reconstruction treats both as empty."
+  (let ((value (getf fields key)))
+    (if (absentp value) nil value)))
+
+(defun %apply-machine-event (state event)
+  "Replay half of the `machine` CONFIG verb: rebuild the fleet member and open
+its one allocator exactly as src/fleet.lisp's register, retire and change
+paths wrote them live, from the journaled event alone."
+  (let* ((fields (work-event-fields event))
+         (fleet (wstate-fleet state))
+         (registry (wstate-allocations state))
+         (change (getf fields :change))
+         (id (%config-field fields :machine)))
+    (case change
+      (:register
+       (let* ((limits (%config-field fields :limits))
+              (roles (%config-field fields :roles))
+              (facts (%config-field fields :facts))
+              (member (%make-machine
+                       :id id
+                       :name (%config-field fields :name)
+                       :owner (%config-field fields :owner)
+                       :connect (%config-field fields :connect)
+                       :roles (copy-list roles)
+                       :permits (copy-list (%config-field fields :permits))
+                       :excludes (copy-list (%config-field fields :excludes))
+                       :limits (copy-list limits)
+                       :facts (copy-list facts))))
+         (setf (gethash id (fleet-machines fleet)) member)
+         (push id (fleet-order fleet))
+         ;; The machine is CONFIG; opening its one ACTIVE allocator is what a
+         ;; slot later becomes takeable with (SPEC-WORK.md:3707-3715).
+         (fleet-register-machine registry
+                                 :machine-id id
+                                 :aliases (%config-field fields :aliases)
+                                 :name (%config-field fields :name)
+                                 :owner (%config-field fields :owner)
+                                 :concurrent (or (getf limits :concurrent) 1)
+                                 :cores (getf limits :cores)
+                                 :generation (or (%config-field fields :generation) 1)
+                                 :facts (copy-list facts)
+                                 :limits (copy-list limits)
+                                 :connect (%config-field fields :connect)
+                                 :roles (copy-list roles))))
+      (:retire
+       (remhash id (fleet-machines fleet))
+       (setf (fleet-order fleet) (remove id (fleet-order fleet) :test #'equal))
+       (remhash id (fleet-registry-allocators registry)))
+      ((:permit :exclude :limit :fact)
+       (let ((member (gethash id (fleet-machines fleet))))
+         (when member
+           (case change
+             (:permit (pushnew (%config-field fields :workload)
+                               (machine-permits member) :test #'equal))
+             (:exclude (pushnew (%config-field fields :workload)
+                                (machine-excludes member) :test #'equal))
+             (:limit (setf (machine-limits member)
+                           (let ((l (copy-list (machine-limits member))))
+                             (setf (getf l (%config-field fields :key))
+                                   (%config-field fields :value))
+                             l)))
+             (:fact
+              (setf (machine-facts member)
+                    (list* (list :key (%config-field fields :key)
+                                 :value (%config-field fields :value)
+                                 :declared-by (%config-field fields :declared-by)
+                                 :declared-at (work-event-stamp event))
+                           (remove (%config-field fields :key) (machine-facts member)
+                                   :key (lambda (f) (getf f :key)) :test #'equal)))))
+           ;; A meaningful machine CONFIG change moves the live allocator's
+           ;; declared numbers and bumps the machine generation
+           ;; (SPEC-WORK.md:3724-3730), as %sync-machine-allocator does live.
+           (let ((allocator (fleet-allocator-of registry id)))
+             (when allocator
+               (setf (fleet-allocator-limits allocator)
+                     (copy-list (machine-limits member)))
+               (setf (fleet-allocator-facts allocator)
+                     (copy-list (machine-facts member)))
+               (when (eq change :limit)
+                 (let ((concurrent (getf (machine-limits member) :concurrent)))
+                   (when concurrent
+                     (setf (fleet-allocator-concurrent allocator) concurrent))))
+               (incf (fleet-allocator-generation allocator))))))))))
+
+(defun %apply-route-event (state event)
+  "Replay half of the `route` CONFIG verb: rebuild the `:kind :route` member,
+its retirement and its dated probes exactly as src/routes.lisp wrote them
+live."
+  (let* ((fields (work-event-fields event))
+         (registry (wstate-routes state))
+         (change (getf fields :change))
+         (id (%config-field fields :route)))
+    (case change
+      (:register
+       (setf (gethash id (route-registry-routes registry))
+             (make-route :id id
+                         :provider (%config-field fields :provider)
+                         :endpoint (%config-field fields :endpoint)
+                         :key-location (%config-field fields :key-location)
+                         :plan (%config-field fields :plan)
+                         :cost-per-mtok (%config-field fields :cost-per-mtok)
+                         :capabilities (%config-field fields :capabilities)
+                         :owner (%config-field fields :owner)))
+       (push id (route-registry-order registry)))
+      (:retire
+       (remhash id (route-registry-routes registry))
+       (setf (route-registry-order registry)
+             (remove id (route-registry-order registry) :test #'equal)))
+      (:probe
+       (route-probe registry id
+                    :card (%config-field fields :card)
+                    :pass (%config-field fields :pass)
+                    :wall (%config-field fields :wall)
+                    :usd (%config-field fields :usd)
+                    :source (%config-field fields :source)
+                    :benched-until (%config-field fields :benched-until))))))
+
+(defun %apply-allocation-event (state event)
+  "Replay half of the fleet's ACTIVE verbs: rebuild the allocation `take`
+  wrote, the renewal a `heartbeat` made and the release a `release` confirmed,
+  exactly as src/fleet.lisp wrote them live."
+  (let* ((fields (work-event-fields event))
+         (registry (wstate-allocations state))
+         (change (getf fields :change)))
+    (case change
+      (:take
+       (let* ((machine (%config-field fields :machine))
+              (canonical (fleet-resolve registry machine))
+              (allocator (gethash canonical (fleet-registry-allocators registry))))
+         (when allocator
+           (let* ((generation (or (%config-field fields :generation)
+                                  (fleet-allocator-generation allocator)))
+                  (parent (%config-field fields :parent))
+                  (parent-record (and parent (fleet-find-allocation registry parent)))
+                  (nested-p (not (null parent-record)))
+                  (slots (or (%config-field fields :slots) 1))
+                  (holder (or (%config-field fields :holder) (work-event-by event)))
+                  (ev (incf (fleet-registry-events registry)))
+                  (aid (or (%config-field fields :allocation-id)
+                           (format nil "alloc-~A" ev)))
+                  (ag (or (%config-field fields :allocation-generation)
+                          (format nil "ag-~A" ev)))
+                  (slot-no (if nested-p (allocation-record-slot parent-record) 1))
+                  (record (make-allocation-record
+                           :allocation-id aid :machine canonical :alias machine
+                           :slot slot-no :slots slots
+                           :node (%config-field fields :node)
+                           :batch (%config-field fields :batch)
+                           :offer (%config-field fields :offer)
+                           :attempt (%config-field fields :attempt)
+                           :machine-generation generation :allocation-generation ag
+                           :request (work-event-request event)
+                           :request-ref (%config-field fields :request-ref)
+                           :holder holder
+                           :parent (and parent-record
+                                        (allocation-record-allocation-id parent-record))
+                           :deadline (%config-field fields :deadline)
+                           :state :active :admission-phase :before-preparation
+                           :core-pin nil
+                           :created (or (%config-field fields :now) 0))))
+             (push record (fleet-allocator-allocations allocator))
+             ;; The take's own retry table, rebuilt with the line the take
+             ;; answered -- the format kept identical to fleet-take's
+             ;; (src/fleet.lisp) so the reconstructed record is the live one.
+             (setf (gethash (work-event-request event)
+                            (fleet-allocator-requests allocator))
+                   (list :payload (list machine
+                                        (%config-field fields :node)
+                                        slots
+                                        (%config-field fields :offer)
+                                        (%config-field fields :attempt)
+                                        generation
+                                        (%config-field fields :request-ref)
+                                        (%config-field fields :batch))
+                         :line (format nil
+                                       "ALLOC OK id=ev-~4,'0D request=~A machine=~A allocation=~A slot=~A slots=~A node=~A batch=~A offer=~A attempt=~A machine-generation=~A allocation-generation=~A rev=~A pushed=- changed=1 emitted=300"
+                                       ev (work-event-request event) canonical aid
+                                       slot-no slots
+                                       (%config-field fields :node)
+                                       (%config-field fields :batch)
+                                       (%config-field fields :offer)
+                                       (%config-field fields :attempt)
+                                       generation ag ev)))))))
+       (:heartbeat
+       (multiple-value-bind (record allocator)
+           (fleet-find-allocation registry (%config-field fields :allocation))
+         (declare (ignore allocator))
+         (when (and record (allocation-live-p record))
+           ;; The renewal a passing heartbeat made (SPEC-WORK.md:3663).
+           (let ((now (or (%config-field fields :now) 0)))
+             (when (and now (allocation-record-deadline record))
+               (setf (allocation-record-deadline record) (+ now 1000)))))))
+      (:release
+       (multiple-value-bind (record allocator)
+           (fleet-find-allocation registry (%config-field fields :allocation))
+         (declare (ignore allocator))
+         (when (and record (allocation-live-p record))
+           ;; Free exactly that allocation's slot after both generations
+           ;; validated (SPEC-WORK.md:3667-3687).
+           (setf (allocation-record-released record) t
+                 (allocation-record-fenced record)
+                 (and (%config-field fields :fenced) t))))))))
+
+(defun %apply-probe-event (state event)
+  "Replay half of the fleet's `probe` verb: the dated observed ACTIVE evidence
+a probe wrote, never a declared CONFIG field (SPEC-WORK.md:3691-3702)."
+  (let* ((fields (work-event-fields event))
+         (registry (wstate-allocations state))
+         (machine (%config-field fields :machine))
+         (allocator (fleet-allocator-of registry machine)))
+    (when allocator
+      (push (list :machine (fleet-resolve registry machine)
+                  :slot (%config-field fields :slot)
+                  :fact (or (%config-field fields :fact) :observed)
+                  :at (or (%config-field fields :at) 0)
+                  :source (%config-field fields :source))
+            (fleet-allocator-observations allocator)))))
+
+(defun %apply-config-event (state event)
+  "Dispatch one CONFIG/ACTIVE event to the half it rebuilds. Only the six
+journaled verbs write these kinds (src/kernel.lisp, %submit-config), so this
+runs on the replay and reconstruction paths, never between the live verb and
+its own mutation."
+  (case (work-event-kind event)
+    (:machine (%apply-machine-event state event))
+    (:route (%apply-route-event state event))
+    (:allocation (%apply-allocation-event state event))
+    (:probe (%apply-probe-event state event))))
+
 
 ;;; Applying one event. The live path and the replay path share it, which is
 ;;; what makes the reconstruction independent of the live counters.
@@ -590,6 +938,15 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     ;; A recorded external effect is an outcome, not a verb of the state
     ;; grammar: it advances the revision and changes nothing else.
     (when (eq kind :external)
+      (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
+      (return-from apply-event state))
+    ;; THE SIX CONFIG/ACTIVE VERBS' events (nova-tools#1695): they name no
+    ;; containment node and move no work revision -- their :rev is the state's
+    ;; own revision at submit -- but they DO rebuild the CONFIG and ACTIVE
+    ;; halves a restart has to find again: the fleet members, the model routes
+    ;; and the one allocator per machine with its allocations and observations.
+    (when (member kind '(:machine :route :allocation :probe))
+      (%apply-config-event state event)
       (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
       (return-from apply-event state))
     ;; The six new verbs draft 26 added write the `friends`, `models` and
@@ -608,6 +965,73 @@ rather than zero. A view: it never writes, and a closed node is not in it."
     (unless node
       (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (ecase (work-event-kind event)
+      (:structure
+       ;; SPEC-WORK.md:2362 -- a structure verb appends one structure event; its
+       ;; `:verb` names the verb (`dep`) and v1's body fixes the field order at
+       ;; :987. `dep` edits the `:deps` reference edge, so the forward edge, the
+       ;; reverse edge and the append-only structure log are all rebuilt here
+       ;; and a canonical replay reconstructs the same edge the live path did
+       ;; (nova-tools#1673, #785).
+       (let* ((fields (work-event-fields event))
+              (verb (getf fields :verb))
+              (add (getf fields :add +absent+))
+              (remove (getf fields :remove +absent+))
+              (reason (getf fields :reason +absent+)))
+         (unless (eq verb :dep)
+           (error 'unsupported-input
+                  :what (format nil "unsupported: structure verb ~A is not in slice 1"
+                                (if verb (string-downcase (princ-to-string verb)) "-"))))
+         (when (and (stringp add) (plusp (length add)))
+           (unless (member add (wnode-deps node) :test #'equal)
+             (setf (wnode-deps node) (append (wnode-deps node) (list add)))
+             (let ((target (%node-quiet state add)))
+               (when target
+                 (setf (wnode-dependents target)
+                       (append (wnode-dependents target) (list id)))))))
+         (when (and (stringp remove) (plusp (length remove)))
+           (setf (wnode-deps node) (remove remove (wnode-deps node) :test #'equal))
+           (let ((target (%node-quiet state remove)))
+             (when target
+               (setf (wnode-dependents target)
+                     (remove id (wnode-dependents target) :test #'equal)))))
+         ;; The cached `needs-broken` bit is recomputed from the needs that
+         ;; REMAIN: it stands only while one of them is still a reverted need.
+         ;; Removing the reverted edge clears it even when another need is
+         ;; still open, since `need-open` alone never breaks an unengaged node
+         ;; in O (SPEC-WORK.md:4765; stella's hold at 3a71ee48). Adding an edge
+         ;; to an already reverted need raises it for the same reason.
+         (when (eq verb :dep)
+           (setf (wnode-needs-broken node) (%needs-broken-by-a-revert-p state id)))
+         (push (list :op :structure :kind :structure :verb verb
+                     :node id :add add :remove remove
+                     :by (work-event-by event) :reason reason
+                     :request (work-event-request event)
+                     :stamp (work-event-stamp event)
+                     :rev (work-event-rev event))
+               (wnode-meta-log node))))
+      ;; The scope verbs (E03-F03, SPEC-WORK.md:1096-1100, :2929). Each moves
+      ;; the required set by its own stated delta and nothing else, here, on
+      ;; the one path the live verb and the replay share.
+      (:require
+       (%scope-set-required state node (eq :true (getf (work-event-fields event) :to)))
+       (%scope-log node event))
+      (:baseline
+       (setf (wnode-baseline node)
+             (copy-list (getf (work-event-fields event) :members)))
+       (%scope-log node event))
+      (:discovery
+       (dolist (m (getf (work-event-fields event) :members))
+         (let ((mn (%node-quiet state m)))
+           (when mn (%scope-set-required state mn t))))
+       (%scope-log node event))
+      ;; `prioritise` moves the one slot and nothing else (SPEC-WORK.md:3167).
+      (:prioritise
+       (let* ((fields (work-event-fields event))
+              (new (copy-list (wnode-priority node))))
+         (setf (getf new (getf fields :context))
+               (if (eq :set (getf fields :change)) (getf fields :rank) +absent+))
+         (setf (wnode-priority node) new)
+         (%scope-log node event)))
       (:edit
        ;; The five permitted metadata fields, each a tagged patch.
        (dolist (field *metadata-fields*)
@@ -687,6 +1111,29 @@ rather than zero. A view: it never writes, and a closed node is not in it."
              (wstate-rows state))))
     (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
     state))
+
+(defun %scope-set-required (state node to)
+  "Move NODE into (TO true) or out of its containment parent's required set,
+keeping the parent's two counters on write. It detaches nothing: the node stays
+in the parent's :children either way (SPEC-WORK.md:1147)."
+  (let ((was (and (wnode-required node) t))
+        (to (and to t)))
+    (unless (eq was to)
+      (setf (wnode-required node) to)
+      (let ((parent (and (wnode-parent node) (%node-quiet state (wnode-parent node))))
+            (delta (if to 1 -1)))
+        (when parent
+          (incf (wnode-required-count parent) delta)
+          (when (eq :o (wnode-branch node))
+            (incf (wnode-required-open parent) delta)))))))
+
+(defun %scope-log (node event)
+  "Append the event to the node's append-only meta log, newest first."
+  (push (list* :op :scope :kind (work-event-kind event) :node (wnode-id node)
+               :by (work-event-by event) :request (work-event-request event)
+               :stamp (work-event-stamp event) :rev (work-event-rev event)
+               (copy-list (work-event-fields event)))
+        (wnode-meta-log node)))
 
 (defun apply-envelope (state envelope)
   "Pure: STATE is never touched. The candidate is built whole and returned, so

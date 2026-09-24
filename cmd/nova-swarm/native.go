@@ -8,12 +8,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -28,7 +31,8 @@ import (
 // legacy runner, which passes a prompt FILE to a harness selected by a worker
 // description. Here the model, the card text, the auth copy, the slot and the
 // deadline are all in the configuration, and the child is
-// `<binary> run --model <provider/model> --title <label> -- <card text>`.
+// `<binary> run --model <provider/model> --title <label> -- <card text>`, the shape the
+// providers table declares and swarm.LaunchArgvFor builds (nativeLaunchArgv).
 
 // nativeRunConfig is the frozen configuration of one native run.
 type nativeRunConfig struct {
@@ -65,6 +69,57 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
+	// (issue #591).
+	netAllow string
+	// bodySilence is the gap, after response headers, with no body bytes, that
+	// ends the attempt UNKNOWN. Zero means ProviderBodySilence (45s). Production
+	// leaves it zero. A test may set a shorter gap so the suite does not wait 45s.
+	bodySilence time.Duration
+	// bodyAfter arms that gap. Nil means the timer inside readWithinSilence.
+	// A test passes a clock it can fire so the 45s gap is an event.
+	bodyAfter func(time.Duration) <-chan time.Time
+	// headerWait is how long the proxy waits for response headers after the
+	// request is written; expiry ends the attempt UNKNOWN. Zero means
+	// ProviderHeaderTimeout (45s). Production leaves it zero.
+	headerWait time.Duration
+	// onProxy receives the proxy once it is listening, before the child starts.
+	// Nil in production.
+	onProxy func(*swarm.ProviderProxy)
+	// resultsRoot is where RESULT.md, usage.tsv and the report are published,
+	// outside the job directory a sweep deletes (issue #2632). Empty means the
+	// caller did not ask: the direct tests keep the files in the job directory.
+	// The verb itself always names one, derived from --root when --results-root
+	// is absent, because that root was already given.
+	resultsRoot string
+	// runID is this invocation's directory under <results-root>/<label>/. It is
+	// claimed once, shared by every attempt of this run, and never reused: a
+	// later invocation of the same label gets its own id, so attempt numbers
+	// that restart at 1 cannot overwrite the previous run (issue #2632).
+	runID string
+	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). Every native launch carries the word:
+	// `tokens` is the number the caller named and `unmetered` is the caller's statement
+	// that this provider has no live accounting and the deadline is the only stop. There
+	// is no default and no third state -- cmdNative refuses a launch that named neither,
+	// before any directory is made -- so a zero `tokens` beside a false `unmetered` cannot
+	// reach this struct from the command line.
+	//
+	// THE TOOL INFERS NEITHER FROM THE PROVIDER. Rule 13d: "there is no test for a
+	// provider that costs money, because this document has no such predicate and cannot
+	// have one: a provider's name is whatever a config file says it is, a `baseURL` can
+	// point a local-looking name at a metered endpoint". Nor from usage: a reported `0` is
+	// a measurement that adds nothing to the sum and is never a reason to print
+	// `unmetered`.
+	tokens    int
+	unmetered bool
+	// usageInterval is how often the live sampler (startLiveSampler) reads the harness's
+	// database while the launch runs (rule 13d). cmdNative has already refused one under a
+	// second and one not shorter than the deadline, so what reaches here is a usable interval.
+	usageInterval time.Duration
+	// benchName is the name of this bench (e.g. hulk, vision); "" means resolve via os.Hostname.
+	benchName string
+	// stageTimeout is the hard timeout for staging (default 120s).
+	stageTimeout time.Duration
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -75,6 +130,8 @@ type nativeRunResult struct {
 	cardSHA256   string            // sha256 of the card text, lowercase hex
 	binarySHA256 string            // sha256 of the harness binary, lowercase hex
 	job          string            // the job directory <slot>/jobs/<label> the child ran in
+	root         string            // the resolved swarm root; the sweep removes the job only under it
+	resultsDir   string            // <results-root>/<label>/<attempt> when the publish landed, else ""
 	usageState   string            // the store path the NATIVE OK line names when no store answered, "" otherwise
 	usageReason  string            // no-rows | no-store | no-sqlite3 | query-failed, "" when the store answered
 	configSHA    string            // sha8 of the carried provider config, "" when --config named none
@@ -82,12 +139,39 @@ type nativeRunResult struct {
 	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	reason       string            // harness-silent when the child exited 0 but wrote no report, "" otherwise
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
-	end          string            // the end the usage row records: done, failed, or wall (issue #644's follow-up)
+	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
+	end          string            // the end the usage row records: done, failed, wall, or unknown
+	lost         bool              // the provider read died after the request may have been accepted
+	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
-	idleEnd      swarm.IdleEnd     // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
-	idled        bool              // the idle watch ended the run, not the deadline and not the child
-	blockedPath  string            // the report the run wrote FOR a card that published none, "" when it wrote none
+	// THE JOB'S OWN FIGURE (rule 13d, "Two numbers, kept apart: the row is the launch's and
+	// the line is the job's"). These three are the JOB's -- the sum over every launch of
+	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
+	// renders. The per-launch usage ROW is written elsewhere (writeNativeUsage) and carries
+	// that launch's own figures, never these: a job's rows are disjoint, so that adding
+	// them counts each launch once, and two launches reported at 40 and 70 under
+	// `--tokens 100` keep 40 and 70 in their rows while the line prints 110/100.
+	spent    int  // the observed sum over the whole job at the final read
+	observed bool // any budget column was a number at all
+	partial  bool // some budget column was a dash: the plus on the line
+	// stopped is the `stopped=<tokens|max_turns|max_cache_read|unverifiable>` field of rule
+	// 13d, and "" for a card the machinery did not stop under that rule. It is a KEY OF ITS
+	// OWN (decision 17): `reason=terminated` stays what a TERM from outside prints, and the
+	// `reason=` inside the `usage=none` group stays the usage read's.
+	stopped string
+	// defect is the PROMPT-DEFECT line a card budget's stop owes. Rule 13d prints it on
+	// native's own stdout AFTER the NATIVE OK line and writes it into NO file.
+	defect      string
+	idleEnd     swarm.IdleEnd // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
+	idled       bool          // the idle watch ended the run, not the deadline and not the child
+	blockedPath string        // the report the run wrote FOR a card that published none, "" when it wrote none
+	// usage is the LAST attempt's usage row, exactly as it was appended to usage.tsv. It
+	// is carried out of the run so the card-end event carries the numbers the row carries
+	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
+	// the provider store that could disagree with the file (nova-tools #2563 item 1).
+	usage swarm.UsageRow
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -103,7 +187,7 @@ type nativeRunResult struct {
 // 16an on hulk while its own ci-ok was green, because ci.yml's CL tier shards only the
 // touched packages and never puts the machine under that load.
 //
-// These three vars are the whole fix on the production side. They are the real functions,
+// These vars are the whole fix on the production side. They are the real functions,
 // byte for byte, and nothing about the run's behaviour is decided by them being variables:
 // no call site changed except the name it is reached through, and no test sets them in a
 // run that is not testing the wait itself. A test may now hand the wait an idle end
@@ -114,13 +198,24 @@ var (
 	nativeWatchIdle = swarm.WatchIdle
 	nativeReap      = swarm.Reap
 	nativeKillGroup = swarm.KillGroup
+	// nativeDeadline is the fourth event the wait can be told about (issue #2993). The
+	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
+	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
+	// and 6.13 s at 2a43d771 (3.04 s on the Studio) with the kill unchanged. The binary
+	// gets the real timer, byte for byte; a test hands the wait a deadline that fires when
+	// the tree it means to kill is actually there.
+	nativeDeadline = func(d time.Duration) (fire <-chan time.Time, stop func() bool) {
+		t := time.NewTimer(d)
+		return t.C, t.Stop
+	}
 )
 
 // nativeRun executes one frozen configuration and returns the recorded result and
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
-func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code int) {
+	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
@@ -138,6 +233,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		return nativeRunResult{}, 2
 	}
 	cfg.root = absroot
+	if strings.TrimSpace(cfg.resultsRoot) != "" {
+		absResults, err := swarm.AbsResolved(cfg.resultsRoot)
+		if err != nil {
+			refuseNative(errOut, fmt.Sprintf("the results root %s could not be made absolute: %s", oneline.Field(cfg.resultsRoot), oneline.Escape(err.Error())))
+			return nativeRunResult{}, 2
+		}
+		cfg.resultsRoot = absResults
+	}
 
 	// THE PUBLIC-CLASS GATE (CARD-8390): a public-class worker never sees a
 	// card that clones an unlisted repo. The card is refused with CARD REFUSED
@@ -179,6 +282,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	provider, ok := providerOf(cfg.model)
 	if !ok {
 		refuseNative(errOut, fmt.Sprintf("the model %q has no provider prefix (a native model is provider/model, one slash, both sides nonempty)", cfg.model))
+		return nativeRunResult{}, 2
+	}
+
+	// (2a) THE ONE LAUNCHER (tools-48, #2646). The harness argv comes from the providers
+	// table, never a literal here: the route's provider row (or the table's default row)
+	// gives the shape, and this run's binary, model, label and card fill it. A table that
+	// cannot be read is refused before any directory is made.
+	launch, err := nativeLaunchArgv(bin, cfg, provider)
+	if err != nil {
+		refuseNative(errOut, fmt.Sprintf("the providers table gave no argv for %s: %s", oneline.Field(cfg.model), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 
@@ -245,6 +358,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// that cwd (SPEC-SWARM rule 13). HOME is a data directory under the slot directory; the
 	// child is pointed at it and nothing above it.
 	jobDir := filepath.Join(cfg.slotDir, "jobs", cfg.label)
+	// THE RESULTS ROOT IS NOT THE JOB (issue #2632). A sweep deletes the job
+	// directory. Publishing into it, or into a directory inside it, would make
+	// the copy the sweep removes.
+	if cfg.resultsRoot != "" && within(jobDir, cfg.resultsRoot) {
+		refuseNative(errOut, fmt.Sprintf("the results root %s is inside the job directory %s; pass a --results-root outside the directory a sweep deletes",
+			oneline.Field(cfg.resultsRoot), oneline.Field(jobDir)))
+		return nativeRunResult{}, 2
+	}
 	// The join is checked as well as the name (#1923): NameOK above makes this true by
 	// construction, and a derivation that decides where a card writes is checked anyway,
 	// because the cost of the two being out of step once is a MkdirAll and a --write
@@ -387,13 +508,33 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
 	// this step is skipped entirely for one. When a description IS given and --auth is
 	// used, the copy is the legacy path and one NOTE line says so.
+	//
+	// AND THE COPY DIES WITH THE CARD. The child reads the copy for as long as it runs
+	// -- every launch of a retried card included -- and when the run returns by any path
+	// the copy is removed: a plaintext key file that outlives its card is the bench
+	// standard's plaintext-key drift (docs/SPEC-SECRETS.md, the dogfooding ten), left
+	// in a data home the hygiene reap may not visit for days. The secret shape still
+	// writes nothing at all.
 	if cfg.authFile != "" {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
 		}
+		// A copy the cleanup could not remove is not a NOTE: the card had write access to
+		// the data home and may have made it read-only to keep the key (a chmod 0555 of
+		// dataHome or dataHome/opencode). removeAuthCopy takes the write bit back before it
+		// unlinks, and any copy still on disk after that fails the run with one REFUSED
+		// line naming it, so a plaintext key never outlives its card silently.
+		defer func() {
+			if left := removeAuthCopy(dataHome, errOut); len(left) > 0 {
+				refuseNative(errOut, fmt.Sprintf("the auth copy outlived the card: %s is still on disk after the run's cleanup", oneline.Field(strings.Join(left, ","))))
+				if code == 0 {
+					code = 2
+				}
+			}
+		}()
 		if cfg.worker != nil {
-			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
+			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600, and the copy is removed when the run ends; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
 				oneline.Field(cfg.authFile))
 		}
 	}
@@ -441,16 +582,99 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		reads = swarm.CardReadPaths(cfg.card)
 	}
 	reads = append(reads, nativeReadRoots(cfg)...)
-	configSHA, reason := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
+	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
+		if proxy != nil {
+			_ = proxy.Close()
+		}
 		refuseNative(errOut, reason)
 		return nativeRunResult{}, 2
+	}
+	if proxy != nil {
+		defer proxy.Close()
+		if cfg.onProxy != nil {
+			cfg.onProxy(proxy)
+		}
+	}
+	// The keyless provider's loopback host:port travels to the wall as --net-allow
+	// (issue #591): (allow network-outbound (remote ip)) does not reach 127.0.0.1, so a
+	// local-model card runs and dies silently without the named grant.
+	if cfg.configFile != "" {
+		cfg.netAllow = providerLoopback(cfg.configFile, provider)
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
 	// caller can prove later that neither the card nor the binary changed under it.
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
+	// (4e) STAGING FROM BENCH MIRROR (issue #2882).
+	// Staging clones from the bench's local mirror (--reference or clone --shared)
+	// with a hard timeout (120 s) that ends the card RESULT: BLOCKED stage-timeout <bench> <secs>
+	// and writes the end record like any other card.
+	bench := cfg.benchName
+	if bench == "" {
+		if h, err := os.Hostname(); err == nil {
+			if idx := strings.Index(h, "."); idx != -1 {
+				h = h[:idx]
+			}
+			bench = h
+		}
+	}
+	if bench == "" {
+		bench = "bench"
+	}
+	stageOpts := swarm.StageOptions{
+		Card:      cfg.card,
+		TargetDir: filepath.Join(jobDir, "repo"),
+		JobDir:    jobDir,
+		BenchHome: cfg.benchHome,
+		BenchName: bench,
+		Timeout:   cfg.stageTimeout,
+	}
+	stageRes, stageErr := swarm.StageCard(stageOpts)
+	if stageErr != nil {
+		if stageRes.TimedOut {
+			secs := int(cfg.stageTimeout.Seconds())
+			if secs <= 0 {
+				if cfg.stageTimeout > 0 {
+					secs = 1
+				} else {
+					secs = int(swarm.DefaultStageTimeout.Seconds())
+				}
+			}
+			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
+			// STAGE FAIL (issue #3050): the rowan-tools #187 launcher watches stdout for a
+			// STAGE OK/FAIL line and detaches 2s after seeing it; without one on every
+			// failure path (this one included) it waits out the full 135s and prints
+			// STAGE UNSEEN even though staging already ended.
+			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
+				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
+			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", errOut)
+			res := nativeRunResult{
+				rc:           -1,
+				cardSHA256:   hex.EncodeToString(cardHash[:]),
+				binarySHA256: binaryHash,
+				job:          jobDir,
+				wall:         "none",
+				configSHA:    configSHA,
+				tmp:          tmpDir,
+				end:          "stage-timeout",
+				wallSeconds:  time.Since(startTime).Seconds(),
+			}
+			return res, 1
+		}
+		// STAGE FAIL (issue #3050): see the timeout branch above for why this line has
+		// to be printed here rather than left to the caller's own NATIVE line.
+		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), oneline.Escape(stageErr.Error()))
+		refuseNative(errOut, stageErr.Error())
+		return nativeRunResult{}, 2
+	}
+	// STAGE OK (issue #3050): staging returned silently, so the rowan-tools #187 launcher
+	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
+	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
+	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
+		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
 
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
@@ -458,8 +682,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
 	// and one naming repos is refused, never unwalled. A machine with no wall binary at all
 	// refuses unless --no-wall owns every read and write the child makes.
-	runPath := bin
-	runArgv := []string{"run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card)}
+	runPath := launch[0]
+	runArgv := launch[1:]
 	wall := cfg.sandbox
 	if wall == "" && !cfg.noWall {
 		found, err := exec.LookPath(swarm.SandboxBinary)
@@ -476,7 +700,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		runPath = wall
-		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
+		runArgv = nativeSandboxArgv(launch, cfg, dataHome, jobDir, tmpDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -489,6 +713,20 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		secretEnv = cfg.worker.Secret
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
+	if cfg.root != "" {
+		id, err := swarm.LoadPoolIdentity(cfg.root)
+		if err != nil {
+			refuseNative(errOut, err.Error())
+			return nativeRunResult{}, 2
+		}
+		for _, kv := range swarm.StagingGitEnv(id) {
+			name, _, _ := strings.Cut(kv, "=")
+			childEnv = append(environWithoutName(childEnv, name), kv)
+		}
+	} else {
+		refuseNative(errOut, "missing configured root for pool identity; refusing to launch under nobody's name")
+		return nativeRunResult{}, 2
+	}
 	writeNativeArgvLog(cfg.slotDir, runPath, runArgv, childEnv)
 	devNull, err := os.Open(os.DevNull)
 	if err != nil {
@@ -543,19 +781,26 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// anything. It decides nothing on its own: a card that takes a refusal and goes on to
 	// publish is done, and this line having been printed takes nothing away from it.
 	reader := swarm.NewWallReader(cfg.label, func(line string) { fmt.Fprintln(errOut, line) })
-	capture := io.MultiWriter(log, harnessOut, timeline, reader)
+	// THE SHELL-DENIAL VERDICT IS TAKEN FROM THE PARENT'S OWN COPY (Johnny's hold on #1478,
+	// the #1892 class). `<job>/harness-output.log` is in the card's --write directory and is
+	// its cwd: a card can replace that name after it prints the denial, and a file read after
+	// Wait would then find nothing. This reader sees the bytes as they arrive, so no later
+	// rewrite, unlink or read error of that file can turn a denial into an OK.
+	denials := swarm.NewShellDenialReader()
+	capture := io.MultiWriter(log, harnessOut, timeline, reader, denials)
 
 	res := nativeRunResult{
 		rc:           -1,
 		cardSHA256:   hex.EncodeToString(cardHash[:]),
 		binarySHA256: binaryHash,
 		job:          jobDir,
+		root:         cfg.root,
 		wall:         "none",
 		configSHA:    configSHA,
 		tmp:          tmpDir,
 	}
 	if cfg.noWall {
-		res.wall = "none-by-flag"
+		res.wall = swarm.SandboxNoneByFlag
 	}
 	// THE LAUNCH GRACE (issue #900). A harness that dies inside this window with a
 	// provider server error in its own output is a launch that did not take: the provider
@@ -575,7 +820,58 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	}
 	termCh := nativeTermCh()
 	defer stopNativeTerm(termCh)
+	// A nil channel blocks forever in the select, which is no proxy: a card
+	// with no provider baseURL is not given a body deadline it cannot reach.
+	var bodyStall <-chan struct{}
+	if proxy != nil {
+		bodyStall = proxy.Stalled()
+	}
+	// Claim the run directory before any attempt writes into it. A second
+	// invocation of this label must not append onto the first run's usage or
+	// rename over its RESULT.md and report.
+	if cfg.resultsRoot != "" && safepath.NameOK(cfg.label) {
+		id, err := claimNativeResultsRun(cfg)
+		if err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: a results run directory could not be claimed under %s: %s\n", oneline.Field(cfg.resultsRoot), oneline.Escape(err.Error()))
+		} else {
+			cfg.runID = id
+		}
+	}
+	lastAttempt := 0
+
+	// THE LIVE SAMPLER (SPEC-SWARM rule 13d, issue #1545). It is started HERE, once for the
+	// whole job and not once per launch, because the budget it watches is the job's: "the
+	// observed sum is over the whole job, every launch counted from the first launch's
+	// start, so a retry begins with what the earlier launches spent and no retry resets
+	// anything". The data home is one per job, so a read of it is already the job's sum and
+	// this tool does no arithmetic across launches to get one.
+	//
+	// IT RUNS ONLY WHEN THERE IS SOMETHING TO WATCH. Under `--tokens unmetered` with no card
+	// budget "the deadline is the only stop", so a sample would open `sqlite3` every few
+	// seconds to answer a question nobody asked. That is a cost, not a behaviour: the
+	// NATIVE OK line's `budget=` comes from the FINAL read of each launch either way, which
+	// rule 13d is explicit about ("`<spent>` is the sum over every launch at the final read,
+	// never the sum at the stop").
+	//
+	// IT IS BESIDE THE SELECT BELOW AND NEVER INSIDE IT, so the deadline and a TERM end the
+	// card at their own instants whatever a read is doing (nativesample.go says why at
+	// length).
+	sampler := startLiveSampler("", 0, cfg, outLog)
+	if !cfg.unmetered && cfg.tokens > 0 || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
+	}
+	defer sampler.Stop()
+
+	// THE JOB'S OWN FIGURES, folded from each launch's FINAL read as the launches end.
+	// jobObserved stays false until some launch's read answered with a number, so a job
+	// nothing was ever observed for prints `budget=-/<n>` and is never reported as under
+	// budget.
+	jobSpent, jobObserved, jobPartial := 0, false, false
+	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
+	// no floor, which is what the first launch has.
+	var previousLaunchEnd time.Time
 	for attempt := 1; ; attempt++ {
+		lastAttempt = attempt
 		before := fileSize(outLog)
 		cmd := exec.Command(runPath, runArgv...)
 		ownChildGroup(cmd)
@@ -595,7 +891,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		deadline := time.NewTimer(cfg.deadline)
+		deadlineC, stopDeadline := nativeDeadline(cfg.deadline)
 		// THE IDLE WATCH (the wall-hang lane, 2026-09-19). `batch` has watched its cards
 		// for idleness since issue #593 -- log growth AND the process tree's CPU, so a
 		// `go test` that prints nothing for minutes is not mistaken for a dead card --
@@ -609,7 +905,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}, stopWatch)
 		select {
 		case runErr := <-done:
-			deadline.Stop()
+			stopDeadline()
 			switch ee := runErr.(type) {
 			case nil:
 				res.rc = 0
@@ -618,7 +914,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			default:
 				res.rc = -1
 			}
-		case <-deadline.C:
+		case <-deadlineC:
 			nativeKillGroup(pgid, started)
 			<-done
 			res.rc = -1
@@ -634,43 +930,167 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// below already Reaps, and an idle end is the same kind of ending -- the
 			// machinery stopping a card that is not going to finish -- so it gets the same
 			// grace. The kill still happens; it happens second.
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.idled, res.idleEnd = true, end
+		case <-bodyStall:
+			// Headers arrived and then the body went silent, or the request
+			// was written and no headers came back inside the proxy's header
+			// wait. The measured harness kept running after its own
+			// timeouts, so the run reaps the card instead of waiting for it
+			// to notice, and does not launch it again.
+			stopDeadline()
+			nativeReap(pgid, started, swarm.TerminateGrace)
+			<-done
+			res.rc = -1
+			res.lost = true
 		case <-termCh:
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.terminated = true
+		case word := <-sampler.Fired():
+			// THE BUDGET FIRED (SPEC-SWARM rule 13d). "When it is true `native` ends the
+			// card the way it ends one on a TERM from outside: a terminate to the card's
+			// whole process group, a wait, then a kill of the group, after which no process
+			// of that group is alive, grandchildren and a harness that ignores the
+			// terminate included." That is swarm.Reap, which is the TERM case's own call
+			// one line above and NOT the deadline's immediate KillGroup: the terminate
+			// exists so the card has its one moment to publish, and rule 13d keeps what it
+			// published byte for byte.
+			stopDeadline()
+			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			<-done
+			// `rc=-1` on the line, as it is for a deadline and for a TERM; the ROW's `rc`
+			// is a dash, which writeNativeUsage already writes for any rc below zero
+			// (rule 12's closed list, amended by decision 14).
+			res.rc = -1
+			res.stopped = word
 		}
 		close(stopWatch)
 		elapsed := time.Since(attemptStart)
 		res.wallSeconds += elapsed.Seconds()
-		// THE END WORD FOR THIS LAUNCH: the row names how the attempt ended, and the wall
-		// block below refines it to `wall` when the machinery, not the model, stopped the
-		// card (issue #644's follow-up).
+		tail := readSince(outLog, before)
+		// A response that sent headers and then no body bytes is UNKNOWN, whether
+		// the harness printed its own timeout words or the proxy closed the
+		// body. The usage row says so before anything else can call the
+		// attempt done or failed, and the run does not launch again.
+		// (stella-6b51d37c8d7d, stella-9eb933ee0205)
+		lost := swarm.LostResponse(tail) || res.lost
+		if proxy != nil && proxy.Lost() {
+			lost = true
+		}
 		res.end = swarm.EndDone
-		if res.rc != 0 {
+		if lost {
+			res.end = swarm.EndUnknown
+			res.lost = true
+		} else if res.rc != 0 {
 			res.end = swarm.EndFailed
+		}
+		// A LAUNCH A BUDGET ENDED SAYS SO IN ITS OWN ROW (rule 13d): `end=budget` for a
+		// budget that fired, and `end=budget-unverifiable` for a source the tool stopped
+		// being able to see. It is THIS launch's end, and only the stopping launch carries
+		// it -- an earlier launch that died on a provider 5xx keeps its own word.
+		if res.stopped != "" {
+			res.end = swarm.EndBudget
+			if res.stopped == stoppedUnverifiable {
+				res.end = swarm.EndUnverifiable
+			}
 		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
-		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
+		var launchUsage swarm.ProviderUsage
+		launchEnd := time.Now()
+		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
+		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
+		// so that adding a job's rows counts each launch once (rule 13d).
+		previousLaunchEnd = launchEnd
+		// THE LINE IS THE JOB'S: this launch's final read is ADDED to what the earlier
+		// launches were finally reported to have used. Rule 13d's worked example is two
+		// launches at 40 and 70 under `--tokens 100`: the rows keep 40 and 70, and the line
+		// prints 110/100. A launch whose read reported nothing adds nothing and leaves the
+		// job's `observed` where it was, because a zero here would be a measurement the
+		// harness never made.
+		if sum, seen, part := launchUsage.Budget(); seen > 0 {
+			jobSpent += sum
+			jobObserved = true
+			jobPartial = jobPartial || part
+		}
 		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
 		// the terminated reason is carried out on the OK line.
 		if res.terminated {
 			break
 		}
-		_, launchFailure := swarm.ProviderLaunchFailure(readSince(outLog, before))
+		if lost {
+			// The usage row has no end column. The marker is the handoff. If it
+			// cannot be written, the capture must carry the word. If neither
+			// file can be written, the run refuses: a quiet exit would be
+			// scored as an ordinary missing result and retried.
+			if err := persistUnknownFn(jobDir); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the acceptance could not be recorded: %s\n", oneline.Escape(err.Error()))
+				res.unrecorded = true
+			}
+			break
+		}
+		// AND A BUDGET STOP IS THE END (rule 13d): "Nothing is launched again, by `native`
+		// or by a batch, and running the card once more is a person's act with a number of
+		// their own." So it breaks out above the retry, terminally.
+		if res.stopped != "" {
+			break
+		}
+		// Inherited grace retry. The tail and the elapsed time do not prove the
+		// provider never accepted the request. A lost response does not take
+		// this path.
+		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): "The stop is rule 13's
+			// `spent >= n`, tested at every sample and once more before any relaunch."
+			// The first launch's spend is already in the job's data home, so a budget the
+			// earlier launches have ALREADY reached must not buy a third launch -- "a
+			// first launch that reached the budget alone is never launched again".
+			//
+			// THIS LAUNCH'S ROW IS ALREADY WRITTEN AND KEEPS ITS OWN WORD. This launch
+			// did not end on the budget -- it died on a provider 5xx -- so its row says
+			// what happened to it, and the `stopped=` on the LINE says why there is no
+			// launch after it. The two are different facts about different things, which
+			// is the whole of rule 13d's "the row is the launch's and the line is the
+			// job's".
+			// AND THE FINAL READS COUNT (stella's hold 6 on #1635): the job's spend just
+			// folded from this launch's final read is tested too, so a launch that died
+			// before its first sample cannot buy a relaunch past the budget.
+			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+				res.stopped = word
+				break
+			}
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}
 		break
 	}
+	// The card is over, so no further sample is wanted. Stop SIGNALS and never joins: a
+	// read in flight is abandoned where it stands (rule 13d).
+	sampler.Stop()
+	// WHAT THE LINE WILL PRINT. "Final" means the last thing the harness reported and
+	// nothing more: where every launch's final read answered, this is their sum; where one
+	// could not be made, that launch contributed nothing to it and the plus below says the
+	// figure is not the whole story.
+	res.spent, res.observed, res.partial = jobSpent, jobObserved, jobPartial
+	// AND WHERE NO FINAL READ ANSWERED AT ALL, the last sum a SAMPLE saw stands in, with
+	// the plus (rule 13d: "a final read that cannot be made leaves a dash in every column
+	// of the row it could not fill, the line then prints the last sum a sample saw with the
+	// plus, and nowhere does the tool say that all that was spent was seen"). A sample's
+	// figure is never allowed to pass for a final read, which is what the plus is for.
+	if !res.observed {
+		if spent, observed, _, _, _ := sampler.Observed(); observed {
+			res.spent, res.observed, res.partial = spent, true, true
+		}
+	}
+	// The PROMPT-DEFECT line the card budget owes, carried out to the caller to print after
+	// the NATIVE OK line.
+	res.defect = sampler.Defect()
 	log.Close()
 	harnessOut.Close()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
@@ -719,18 +1139,37 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 		}
 	}
-	res.end = swarm.EndDone
-	if res.rc != 0 {
-		res.end = swarm.EndFailed
+	// AND WHETHER THE CARD'S SHELL WAS DENIED SOMETHING NOBODY READ (issue #1465; Stella's
+	// HOLD on #1478). The two blocks above ask for the result FIRST, because a card that
+	// published despite a refusal routed around it and finished. This one does not, and that
+	// is the whole point: the card of #1465 published an honest RESULT.md saying its
+	// `go test` could not be built or run, the child exited 0, and the run said
+	// `NATIVE OK rc=0 harness=ok`. The published report is what made the denial invisible.
+	//
+	// WHAT IS CARRIED IS THE DENIAL, NOT A CAUSE. The line names a path and a refusal and not
+	// an operation; the refusal this feeds says so (internal/swarm/wall.go, ShellDenied).
+	//
+	// AND IT IS ASKED OF THE BYTES THE PARENT RECEIVED, never of the job's file by path: the
+	// card owns that directory and can rewrite the name after the parent closes its fd.
+	if sd, ok := denials.Denied(); ok {
+		res.shellDenial = sd
 	}
-	if (res.wallRefusal != swarm.WallRefusal{}) {
+	if res.lost {
+		res.end = swarm.EndUnknown
+	} else {
+		res.end = swarm.EndDone
+		if res.rc != 0 {
+			res.end = swarm.EndFailed
+		}
+	}
+	if !res.lost && ((res.wallRefusal != swarm.WallRefusal{}) || (res.shellDenial != swarm.ShellDenial{})) {
 		res.end = swarm.EndWall
 	}
 	// A CARD THE WATCH ENDED OWES A REPORT. The absence of a RESULT.md is scored
 	// `no-result` -- the token for a MODEL that chose to publish nothing -- and a card the
 	// machinery stopped never had the chance. One is written for it, naming what the watch
 	// saw, and it carries no findings head, so it can never be counted as work done.
-	if res.idled {
+	if !res.lost && res.idled {
 		res.end = swarm.EndWall
 		reason := fmt.Sprintf("the card's log and its process tree were both still for %.0fs; the run ended it rather than holding the slot to its deadline", res.idleEnd.Idle.Seconds())
 		if res.idleEnd.Refused {
@@ -744,6 +1183,43 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			res.blockedPath = path
 		}
 	}
+	// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S (issue #2916). Past the launch grace the
+	// provider's own `UnknownError` / `err_xxxxxxxx` was filed as the card's failure and
+	// re-dealt to the same route. The machinery's own ends come first; what is left, when
+	// the harness's last words are the provider's, is handed back to the next route in
+	// $NOVA_SWARM_ROUTES with the failed one named for the re-deal to avoid.
+	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
+		if raw, err := os.ReadFile(outLog); err == nil {
+			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
+				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
+			}
+		}
+	}
+	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT (issue #2548). `opencode run` is
+	// non-interactive: a final turn that is a question finishes the turn and exits 0 in
+	// seconds -- 5.22 s on hulk, 5.49 s on the Studio, measured 2026-09-22 -- so the run
+	// never holds its slot, and the end it gets today is a plain `no-result`, the token
+	// for a model that chose to publish nothing. The question is read out of the card's
+	// own capture and written into a report that SAYS it was a question, so a requeue can
+	// retry the card once on another route and the ledger can count the models that ask.
+	//
+	// THE MACHINERY'S OWN ENDS COME FIRST, and this is last of them: a card the watch
+	// ended, a card a manager terminated, a card the wall or the harness's own fence
+	// stopped is THAT end, whatever its last line happened to be. What is left is a child
+	// that ran to its own finish, exited clean, published nothing and committed nothing.
+	if !res.idled && !res.terminated && res.rc == 0 && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
+		if question, asked := swarm.AskedEnd(jobDir, res.rc); asked {
+			if path, wrote, err := swarm.WriteAskedResult(jobDir, cfg.label, question); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the asked report could not be written: %s\n", oneline.Escape(err.Error()))
+			} else if wrote {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the card ended its last turn with a question and published no report of its own; one naming the question was written to %s\n", oneline.Field(path))
+			}
+		}
+	}
+	// Publish after the blocked report and the asked report exist, and before any
+	// return that has finished the child: the sweep (and --sweep-now) run only once
+	// this dir is set.
+	res.resultsDir = publishNativeResults(cfg, jobDir, lastAttempt, errOut)
 
 	if wall != "" {
 		backend, cwd, reason := wallNamed(wallOut.String())
@@ -758,7 +1234,64 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 
+	if res.unrecorded {
+		return res, 2
+	}
+	// (6) THE SILENT HARNESS (issue #591). A harness that exits clean without writing its
+	// report -- the RESULT.md a card's answer lands in -- is not a pass. It is a harness that
+	// was blocked before it could answer: a keyless provider on a loopback the wall did not
+	// open exits 0 silently, leaving no report and no log. The run records that as a
+	// harness-silent note, never a NATIVE OK.
+	if res.rc == 0 {
+		if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
+			res.reason = "harness-silent"
+		}
+	}
+
 	return res, 0
+}
+
+// persistUnknownFn is the handoff writer. A test of a failed disk sets it
+// and puts it back. The production function is persistUnknown.
+var persistUnknownFn = persistUnknown
+
+// persistUnknown writes the handoff the next reader holds on. The marker is
+// first. The two logs are the fallback. A short write or a failed close is
+// not a successful record. If none of them can be written, the caller still
+// prints the unknown verdict and then refuses the run.
+func persistUnknown(jobDir string) error {
+	acc := filepath.Join(jobDir, "provider-acceptance")
+	if err := writeUnknownFile(acc, "unknown\n"); err == nil {
+		return nil
+	} else {
+		var failed []string
+		failed = append(failed, err.Error())
+		line := "why=unknown-acceptance\n"
+		for _, name := range []string{"harness-output.log", "harness.log"} {
+			if werr := writeUnknownFile(filepath.Join(jobDir, name), line); werr != nil {
+				failed = append(failed, werr.Error())
+				continue
+			}
+			return nil
+		}
+		return fmt.Errorf("%s", strings.Join(failed, "; "))
+	}
+}
+
+func writeUnknownFile(path, body string) error {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	n, werr := fmt.Fprintf(f, "%s", oneline.Escape(body))
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	if n != len(oneline.Escape(body)) {
+		return fmt.Errorf("%s: short write", path)
+	}
+	return cerr
 }
 
 // fileSize is a path's size, or 0 when it cannot be measured: the mark the retry loop reads
@@ -873,9 +1406,10 @@ func harnessSpoke(path string) bool {
 }
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test
-// harnessState applies to a result, so an empty RESULT.md is nothing published.
+// harnessState applies to a result, so an empty RESULT.md is nothing published. Lstat, not
+// Stat: a planted symlink is not a published result (issue #233).
 func wroteBytes(path string) bool {
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
@@ -898,13 +1432,14 @@ func sandboxHostRules(sandbox string) bool {
 }
 
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
-// harness verbatim (SPEC-SANDBOX rule 12). The job directory is the first --write and the
+// harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
 // temp directory is a --write so the child's TMPDIR is usable inside the wall; the
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
-func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+	bin := launch[0]
 	argv := []string{
 		"--read", cfg.slotDir,
 		"--write", jobDir,
@@ -923,6 +1458,11 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 		argv = append(argv, "--write", swarm.CacheRoot(cfg.root))
 	}
 	argv = append(argv, "--cwd", jobDir)
+	// The keyless provider's loopback address is opened back up by name, never by widening
+	// the wall's network promise (issue #591).
+	if cfg.netAllow != "" {
+		argv = append(argv, "--net-allow", cfg.netAllow)
+	}
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
 	// harness's libraries resolve inside the wall; the native path does the same (run 7).
 	// Without the harness directory the wall denies even the resolver's own files, and
@@ -968,7 +1508,7 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 		argv = append(argv, "--repo", r)
 	}
 	argv = append(argv, "--")
-	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
+	argv = append(argv, launch...)
 	return argv
 }
 
@@ -1032,7 +1572,10 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 			kept = append(kept, kv)
 		}
 	}
-	remove := []string{"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR"}
+	remove := []string{
+		"HOME", "XDG_DATA_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME", "NOVA_SWARM_JOB", "TMPDIR",
+		"GIT_CONFIG_GLOBAL", "GIT_CONFIG_NOSYSTEM",
+	}
 	if shimShell != "" {
 		remove = append(remove, "SHELL")
 	}
@@ -1042,6 +1585,9 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 	for _, name := range remove {
 		kept = environWithoutName(kept, name)
 	}
+	// Git config isolation is unconditionally enforced so the bench's own config
+	// cannot leak into what the worker commits.
+	kept = append(kept, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
 	out := append(kept,
 		"HOME="+dataHome,
 		"XDG_DATA_HOME="+dataHome,
@@ -1095,15 +1641,19 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 }
 
 // keepNativeEnv says whether one inherited name survives into the native child: the names a
-// program needs (PATH, LANG, TERM), the XDG_ and NOVA_SWARM_ families, and any provider
-// credential whose name carries KEY, TOKEN or SECRET. Everything else is the caller's own
-// noise and is dropped, so no path the caller happened to export reaches the child.
+// program needs (PATH, LANG, TERM), explicit Git pool identity variables (GIT_AUTHOR_NAME,
+// GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL), the XDG_ and NOVA_SWARM_ families,
+// any harness configuration whose name starts with OPENCODE_, and any provider credential whose
+// name carries KEY, TOKEN or SECRET. Everything else is the caller's own noise and is dropped,
+// so no path the caller happened to export reaches the child.
 func keepNativeEnv(name string) bool {
 	switch name {
 	case "PATH", "LANG", "TERM":
 		return true
+	case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL":
+		return true
 	}
-	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") {
+	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") || strings.HasPrefix(name, "OPENCODE_") {
 		return true
 	}
 	up := strings.ToUpper(name)
@@ -1261,8 +1811,16 @@ func sameDir(a, b string) bool {
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
 // ended -- done, failed, or wall (issue #644's follow-up).
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, endWord string, errOut io.Writer) (reason, path string) {
-	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
+// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"). It returns the usage it
+// finally read as well, because the JOB's figure on the NATIVE OK line is the sum of these
+// launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
+// launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
+// prints 110. The caller folds; this function never sees the job's running sum.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
+	// notBefore is the EARLIER launch's end, and it is the floor that keeps this row
+	// disjoint from that one: without it the window's five-second widening reaches back over
+	// the previous launch's rows and counts them twice (usagecard.go says what that cost).
+	usage, note, storePath, rr := swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -1282,17 +1840,172 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 	if err := swarm.AppendCardUsage(filepath.Join(jobDir, "usage.tsv"), row); err != nil {
 		fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 	}
+	// THE DURABLE COPY (issue #2632). The job file above is the working copy the
+	// batch still reads. The same row is also appended under this run's own
+	// attempt directory, so a later invocation cannot mix its usage into this
+	// one. An empty results root is the direct-test shape and writes nothing else.
+	if dir := nativeResultsAttemptDir(cfg, attempt); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the results directory %s could not be made: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+		} else if err := swarm.AppendCardUsage(filepath.Join(dir, "usage.tsv"), row); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+		}
+	}
 	_ = swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
 	if rr == "" {
-		return "", ""
+		return usage, "", "", row
 	}
 	if storePath == "" {
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
-	return rr, storePath
+	return usage, rr, storePath, row
+}
+
+// nativeRunSeq distinguishes invocations that share a process, which is what a
+// test does when it runs the same label twice. The stamp and the pid
+// distinguish every other pair. Together they are one path element.
+var nativeRunSeq uint64
+
+func newNativeRunID() string {
+	n := atomic.AddUint64(&nativeRunSeq, 1)
+	return fmt.Sprintf("%d-%d-%d", time.Now().UTC().UnixNano(), os.Getpid(), n)
+}
+
+// claimNativeResultsRun creates <results-root>/<label>/<runID> exclusively.
+// Mkdir fails if the name is taken, and the next id is a different sequence
+// value, so two invocations cannot publish into one directory.
+func claimNativeResultsRun(cfg nativeRunConfig) (string, error) {
+	labelDir := filepath.Join(cfg.resultsRoot, cfg.label)
+	if err := os.MkdirAll(labelDir, 0o755); err != nil {
+		return "", err
+	}
+	var last error
+	for i := 0; i < 8; i++ {
+		id := newNativeRunID()
+		if !safepath.NameOK(id) {
+			last = fmt.Errorf("run id %s is not a name", id)
+			continue
+		}
+		err := os.Mkdir(filepath.Join(labelDir, id), 0o755)
+		if err == nil {
+			return id, nil
+		}
+		last = err
+		if os.IsExist(err) {
+			continue
+		}
+		return "", err
+	}
+	if last == nil {
+		last = fmt.Errorf("no free run directory")
+	}
+	return "", last
+}
+
+// nativeResultsAttemptDir is <results-root>/<label>/<runID>/<attempt>, or ""
+// when this run is not publishing outside the job. The run id is claimed once
+// per invocation; the attempt is the decimal the launch loop counted, and it
+// restarts at 1 every invocation, which is why it is not the identity.
+func nativeResultsAttemptDir(cfg nativeRunConfig, attempt int) string {
+	if strings.TrimSpace(cfg.resultsRoot) == "" || !safepath.NameOK(cfg.label) || !safepath.NameOK(cfg.runID) || attempt < 1 {
+		return ""
+	}
+	attemptName := strconv.Itoa(attempt)
+	if !safepath.NameOK(attemptName) {
+		return ""
+	}
+	return filepath.Join(cfg.resultsRoot, cfg.label, cfg.runID, attemptName)
+}
+
+// publishNativeResults copies RESULT.md and the harness report into the attempt
+// directory usage.tsv was already appended to. It returns that directory only
+// when the copy landed, so a sweep that sees "" leaves the job in place rather
+// than deleting the only copy. A card that published nothing still publishes
+// usage.tsv and the report: the spend and the capture are what a sweep used to
+// eat with the working directory (issue #2632).
+func publishNativeResults(cfg nativeRunConfig, jobDir string, attempt int, errOut io.Writer) string {
+	dir := nativeResultsAttemptDir(cfg, attempt)
+	if dir == "" {
+		return ""
+	}
+	if within(jobDir, dir) {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the results directory %s is inside the job directory; not publishing there\n", oneline.Field(dir))
+		return ""
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the results directory %s could not be made: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+		return ""
+	}
+	// THE CAPTURE IS REQUIRED. A missing or unreadable harness-output.log is not
+	// an absent optional file: copying nothing and still reporting success is
+	// how --sweep-now deleted the only copy. Any error keeps the job.
+	reportFrom := filepath.Join(jobDir, "harness-output.log")
+	if err := copyRegularFile(reportFrom, filepath.Join(dir, "report")); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the report could not be published to %s: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+		return ""
+	}
+	if from, ok := swarm.FindCardResult(jobDir); ok {
+		if err := copyRegularFile(from, filepath.Join(dir, "RESULT.md")); err != nil {
+			fmt.Fprintf(errOut, "NATIVE NOTE: RESULT.md could not be published to %s: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+			return ""
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "usage.tsv")); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: usage.tsv was not published under %s\n", oneline.Field(dir))
+		return ""
+	}
+	return dir
+}
+
+// copyRegularFile copies one regular file by bytes and rename. A symlink or a
+// pipe is not a result: the same rule the gather uses, so a planted link cannot
+// be what gets published outside the job.
+func copyRegularFile(from, to string) error {
+	fi, err := os.Lstat(from)
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", from)
+	}
+	raw, err := os.ReadFile(from)
+	if err != nil {
+		return err
+	}
+	tmp := to + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, to)
+}
+
+// sweepNativeJob removes the job directory after its results have been
+// published. The path has to sit strictly below the swarm root; safepath is
+// the only removal.
+func sweepNativeJob(root, job string) error {
+	if strings.TrimSpace(root) == "" || strings.TrimSpace(job) == "" {
+		return fmt.Errorf("the job directory is not known")
+	}
+	return safepath.RemoveUnder(root, job)
+}
+
+// launchArgvFor is the one launcher, swarm.LaunchArgvFor: the providers table decides the
+// argv every native launch hands its harness. It is a variable only so a test can prove
+// that a launch asks it; nothing else ever assigns it.
+var launchArgvFor = swarm.LaunchArgvFor
+
+// nativeLaunchArgv is the harness argv of one native run, built by the one launcher from
+// the providers table (tools-48, #2646). The table's row for the route's provider gives the
+// shape -- the row swarm.DefaultLaunchRow when the table names no row of its own -- and
+// this run fills it: the binary resolved from --harness, the provider/model the run was
+// routed to, its label as the title, and the card text as the prompt.
+func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
+	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
+		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: string(cfg.card),
+	})
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
@@ -1372,6 +2085,41 @@ func copyAuth(src, provider, dataHome string) string {
 	return ""
 }
 
+// removeAuthCopy deletes the carried auth copy when the run ends and returns every copy
+// still on disk afterwards (nil when none is). It is deferred the moment copyAuth
+// succeeds, so every return path after it -- done, failed, wall, idle, terminated, or a
+// refusal between the copy and the child's start -- leaves no auth.json on the bench. The
+// two paths are exactly the two copyAuth writes, named rather than walked, and a file that
+// is already gone is not an error.
+//
+// THE CARD OWNS THE DATA HOME WHILE IT RUNS, so it can take the write bit off dataHome or
+// dataHome/opencode (chmod 0555) and an unlink there fails with permission denied. The
+// cleanup therefore gives each parent directory -- only a real directory, never through a
+// symlink the card planted -- its owner rwx back before the unlink. A copy that is still
+// there afterwards is returned: the caller fails the run on it, because a plaintext key
+// that outlives its card is the drift this cleanup exists to stop.
+func removeAuthCopy(dataHome string, errOut io.Writer) []string {
+	var left []string
+	for _, p := range []string{
+		filepath.Join(dataHome, "auth.json"),
+		filepath.Join(dataHome, "opencode", "auth.json"),
+	} {
+		dir := filepath.Dir(p)
+		if st, err := os.Lstat(dir); err == nil && st.IsDir() && st.Mode().Perm()&0o700 != 0o700 {
+			if err := os.Chmod(dir, st.Mode().Perm()|0o700); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the directory %s holding the auth copy could not be made writable again: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+			}
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the auth copy %s could not be removed at the run's end: %s\n", oneline.Field(p), oneline.Escape(err.Error()))
+		}
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			left = append(left, p)
+		}
+	}
+	return left
+}
+
 // writeJobConfig writes the ONE opencode.json the job's harness reads, beside the carried
 // auth copy in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line
 // names -- the sha8 OF THE BYTES THE CHILD SEES, which is the only config any later reader
@@ -1394,7 +2142,7 @@ func copyAuth(src, provider, dataHome string) string {
 // best-effort and the copy is not -- and then the fence cannot be merged into it, which is
 // said once on stderr as a NATIVE NOTE rather than refused: a run with an unparseable config
 // is a run the caller has already chosen, and it is better fenced-by-default than not run.
-func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (sha8, reason string) {
+func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, reads []string, notes io.Writer) (string, string, *swarm.ProviderProxy) {
 	var raw []byte
 	configPath := cfg.configFile
 	switch {
@@ -1404,27 +2152,62 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	case configPath != "":
 		body, err := os.ReadFile(configPath)
 		if err != nil {
-			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error()))
+			return "", fmt.Sprintf("the config file %s could not be read: %s", oneline.Field(configPath), oneline.Escape(err.Error())), nil
 		}
 		if modelProviderMissingAuth(body, cfg.authFile, provider) {
 			return "", fmt.Sprintf("the config file %s names provider %s, whose key is absent from the auth file %s; add it to --auth or drop the provider from --config",
-				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile)))
+				oneline.Field(configPath), oneline.Field(provider), oneline.Field(dash(cfg.authFile))), nil
 		}
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	var proxy *swarm.ProviderProxy
+	if merged {
+		// headerTimeout and chunkTimeout are written for a harness that honors
+		// them. They are not the deadline: the measured OpenCode did not end a
+		// stall on them. The deadline is the proxy below, and only when the
+		// provider has an http baseURL the proxy can stand in front of.
+		body = swarm.ApplyProviderReadDeadline(body, provider)
+		upstream := swarm.ProviderBaseURL(body, provider)
+		if swarm.ProviderProxyEligible(upstream) {
+			silence := cfg.bodySilence
+			if silence <= 0 {
+				silence = swarm.ProviderBodySilence
+			}
+			opened, err := swarm.ListenProviderProxy(swarm.ProviderProxyConfig{
+				Upstream: upstream, Silence: silence, After: cfg.bodyAfter,
+				HeaderWait: cfg.headerWait,
+			})
+			if err != nil {
+				return "", fmt.Sprintf("the provider read proxy could not listen: %s", oneline.Escape(err.Error())), nil
+			}
+			pointed, ok := swarm.PointProviderAtProxy(body, provider, opened.HarnessURL())
+			if !ok {
+				_ = opened.Close()
+				return "", fmt.Sprintf("the provider %s could not be pointed at the read-deadline proxy", oneline.Field(provider)), nil
+			}
+			body = pointed
+			proxy = opened
+		}
+	}
 	if !merged && notes != nil {
-		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
+		fmt.Fprintf(notes, "NATIVE NOTE: the config %s is not a JSON object this tool can read, so the job's fence rules were not written into it and the provider request was not pointed at the read-deadline proxy; the harness runs on its own defaults and a rejection is reported as fence=rejected\n", oneline.Field(dash(configPath)))
 	}
 	sum := sha256.Sum256(body)
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error()))
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
 	}
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
-		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error()))
+		if proxy != nil {
+			_ = proxy.Close()
+		}
+		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error())), nil
 	}
-	return hex.EncodeToString(sum[:])[:8], ""
+	return hex.EncodeToString(sum[:])[:8], "", proxy
 }
 
 // modelProviderMissingAuth reports whether the one provider this run will call -- the
@@ -1483,6 +2266,53 @@ func keylessProvider(v any) bool {
 	}
 	_, hasKey := opts["apiKey"]
 	return !hasKey
+}
+
+// providerLoopback reads the carried config and returns the loopback host:port the model's
+// provider's baseURL names, or "" when the provider carries no baseURL, names no loopback,
+// or the config cannot be read. The wall's --net-allow opens exactly that address back up
+// after a keyless provider on localhost (issue #591).
+func providerLoopback(cfgPath, provider string) string {
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil {
+		return ""
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, ok := providers[provider]
+	if !ok {
+		return ""
+	}
+	m, _ := entry.(map[string]any)
+	opts, _ := m["options"].(map[string]any)
+	base, _ := opts["baseURL"].(string)
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	if !loopbackHost(host) {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		return ""
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// loopbackHost reports whether a host names the machine's own loopback: localhost, an
+// IPv4 loopback (127/8) or IPv6's ::1. A keyless provider on such an address is not reached
+// by the wall's (allow network-outbound (remote ip)) and needs its own --net-allow grant.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

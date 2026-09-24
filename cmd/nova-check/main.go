@@ -49,6 +49,10 @@ usage:
     or located rather than extensioned (Makefile, .github/workflows/). The
     --deny-ext flags govern the EXTENSION list only; --allow is the escape
     for the name floor, and names where machinery may live.
+  nova-check nocode --staged --dir <repo>            advisory over the index: classify what
+                                                      is about to be committed, by the same
+                                                      rules the audit walks the tree with;
+                                                      --dir is the repository root, required
   nova-check floors --core <docs/SEED-CORE.md> --source <docs/SEED.md>
                                                      the door's floor set matches the seed's
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
@@ -75,6 +79,20 @@ usage:
                                                      exit 1 with the verbs no non-author has
                                                      run and the edges nobody has cleared;
                                                      the line the release lane calls
+  nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir>
+                         --retired <file> --since <RFC3339|24h>
+        [--bin <dir>] [--repo-dir <dir>] [--batch-logs <dir>] [--versions <tsv>]
+        [--certs <tsv>] [--state <file>] [--by <name>] [--json]
+                                                     are we converging: one line per stream,
+                                                     now against --since, with the ratio and
+                                                     the trend. Seven streams -- LANDING,
+                                                     CLASSES, SCRIPTS, PRS, EDGES, FLEET,
+                                                     LEDGER -- each from a real source, and
+                                                     a stream whose source was not named is
+                                                     ABSENT rather than zero. Exit 1 only
+                                                     when a stream has widened on two
+                                                     consecutive ticks, which is why the
+                                                     streak lives in --state.
 
   --fail-max <n>   on quickstart, attest, links, nocode and corpus: how many
                    FAIL lines to print before one MORE line stands for the
@@ -207,6 +225,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdHygiene(args[1:], stdout, stderr)
 	case "dogfood":
 		return cmdDogfood(args[1:], stdout, stderr)
+	case "convergence":
+		return cmdConvergence(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -517,6 +537,7 @@ func excludeFlags(exclude repeatable) []string {
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
 	dir := fs.String("dir", "", "self-repo directory to scan (required)")
+	staged := fs.Bool("staged", false, "advisory over the index: classify what is about to be committed, not the working tree (--dir is the repository root)")
 	denyExt := fs.String("deny-ext", "", "replace the floor EXTENSION list (not the name floor): comma list, or @file")
 	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor EXTENSION list (not the name floor): comma list, or @file")
 	printList := fs.Bool("print-deny-list", false, "print both floors in force (extensions and names) and exit 0")
@@ -575,6 +596,14 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		refuse(stderr, " nocode", "--dir is required; refusing to guess")
 		fmt.Fprint(stderr, hintFor("dir"))
 		return 2
+	}
+
+	// The staged advisory dispatches here, after the shared refusals above --
+	// the deny-list floors, the cap, the required --dir -- so it keeps every
+	// refusal the audit already makes, and it never sees a --dir it was
+	// willing to guess. The verb's own wiring is staged.go.
+	if *staged {
+		return stagedRun(*dir, allow, deny, source, *failMax, stdout, stderr)
 	}
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}

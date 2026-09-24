@@ -490,6 +490,18 @@ refused now.
 *Red test:* `worklang-acceptance-is-read-and-the-real-set-has-none`.
 *Kernel:* `jobs-a-unit-without-acceptance-is-refused-at-load`.
 
+*Amendment (#2664, 2026-09-22): `:landed`.* A unit's acceptance may also be `(:kind :landed :subject
+"pr:<owner/repo>#<n>" :predicate :merged-or-closed-in-base)` (`:landed-in` reads the same). It
+holds when the PR is merged, **or** closed with its content in the base by the lander's rule —
+`git merge-tree --write-tree <base> <head>` yields the base's own tree, so merging it changes
+nothing, which also holds for a PR the lander combined with another (#2544 with #2614, #2645 into
+#2670) although no single base commit carries its head's files — **or**, as `:subject
+"commit:<sha>"`, when that commit is reachable from the base. The base is `set check --base`, else the set's `:base`. `nova-work set check --evaluate`
+resolves `:landed` and `:merged :merged-at` through `gh` and derives each unit's done from them
+rather than from `:status`; `--write-status` writes the verdict back as `:status "landed"`. A PR
+the lander closed fails `:merged-at`, which is why the kind exists (#2614 #2607 #2625 #2631
+#2594 #2639 were all closed-as-landed on 2026-09-22).
+
 ### Worked example: three real units of the pit-stop set, rewritten
 
 Three units taken verbatim from `pitstop-2026-09-17.lisp`, then rewritten under the amendment.
@@ -565,9 +577,134 @@ intersection, A8's atomic and nested grant, and A9's barrier-free pass are green
 uncertain reservation, A10's tool key, A11's harvest, A12's warm split and A14's refusal
 at load are still red.
 
+### The writer: `nova-work attempt` and `nova-work next` *(Rowan's child, 2026-09-18)*
+
+A3 and A4 landed as READERS. The grammar knew what an attempt record is and what `uncertain` means,
+and the only way a real work set could grow an `:attempts` list was a person typing s-expressions
+into their own document by hand — where the first mis-nested paren costs the whole file, because the
+reader refuses a set whole rather than half-reading it. These two verbs are their write side.
+
+**`nova-work attempt record --file <set.lisp> --unit <id> --by <mind> --outcome ok|failed|uncertain
+--proof <path|sha|url> [--rung <name>] [--usage <tsv>] [--pr <n>] [--started <stamp>]`** files one
+attempt on one unit and moves its `:state`. It edits the document IN PLACE by splicing bytes: every
+byte outside the edited unit comes back identical, and inside the unit every byte outside the edited
+key does too. A work set is a person's document — its comments, its blank lines and the column its
+keys line up at are the document — so the writer never re-renders what it is not touching.
+`nova-work attempt list --file <set.lisp> --unit <id>` reads the records back, one line each.
+
+The state machine is A4's own closed set and gets no second vocabulary beside it. There is no
+`running` state and no `done` state, because the grammar already names those `live` and `closed`:
+
+| outcome | `:state` after | why |
+| --- | --- | --- |
+| `green` (`ok`) | `closed` | the unit is finished |
+| `red` (`failed`) | `open` | it re-enters the ladder; the ladder IS the retry policy |
+| `refused` | `refused` | the mind refused it |
+| `abandoned` | `abandoned` | nobody is coming back to it |
+| `uncertain` | `uncertain` | termination is unproved, and the reservation is KEPT (A4) |
+
+`ok` and `failed` are the spellings a caller reaches for and `green` and `red` are the ones A3
+fixed; both are accepted at the flag and only the grammar's is ever written, so the document holds
+one vocabulary. A3's door is held on the way IN as well as out: an outcome other than `uncertain`
+with no `--proof` is refused NAMING THE WORD to write instead, before a byte is written. So is an
+attempt on a unit already `closed`, `refused` or `abandoned` — a reopened piece of work is a new id
+carrying `:was` (A2). The proof's kind is READ off its value (a url has a scheme, a sha is 7 to 64
+hex digits, everything else is a path) rather than asked for a second time.
+
+**A try that started and then ended is ONE try.** Where the unit's last attempt is still open — an
+`:outcome :uncertain` with no `:proof`, taken by this same mind — `record` CLOSES that record rather
+than appending beside it, keeping its `:n`, its `:rung` and the instant it actually began. An
+attempt is a record and not a counter, and a counter is exactly what two records for one try would
+be.
+
+**`nova-work next --file <set.lisp> --for <mind> --lanes <lanes.tsv> [--machines <registry>]
+[--kind <kind>] [--floor <f>] [--jev|--no-jev] [--take]`** is the *what do I do next* verb, and the
+first place all three halves of this language answer one question together: the graph says whose
+needs are closed, the kernel (`internal/jobs`, SPEC-JOBS section 9) says whose resources are free,
+and nova-decide's ladder (SPEC-DECIDE) says which mind does it. Four gates, each one a reading
+rather than a judgment:
+
+1. **ready** — not done, every need done (`WorkSet.Ready`). A4's three terminal states count as done
+   here beside the older `:done` and `:status` spellings; `uncertain` deliberately does not, because
+   a unit holding its reservation is not a unit that is over.
+2. **owned** — A13. The `:owner` is this mind, or `all`, or — for a child of a coordinating window —
+   the generic child spelling or nothing at all. A friend's unit is never handed to another mind:
+   the machinery routes to friends, and a friend's work is an ask rather than a card.
+3. **free** — A4 through A9. Every unit already `:live` or `:uncertain` takes its reservation FIRST,
+   and the candidates are admitted against what is left. That is what A4 means in practice: the
+   clock never frees capacity, only an outcome does.
+4. **routed** — the ladder vetoes a unit whose last attempt has not proved it terminated (Stella's
+   lease rule: a rung that may still be running is not a rung to step off) and says with what
+   confidence its first attempt is right. The answer is the candidate with the highest confidence,
+   ties in the order the author wrote them, so one file and one mind always give one unit.
+
+One line out: `NEXT unit=<id> lane=<l> rung=<r> conf=<c> take=<n|-> reason=<text>`, or `NEXT NONE
+reason=<text>` naming the GATE that emptied the set rather than saying there is nothing to do.
+`--for` names the OWNER and `rung=` names the mind the ladder would put on the work: two axes, and
+the line carries both, because a child reading `rung=johnny` on a unit it owns has learned something
+a merged field would have hidden. `--take` makes the answer an action — the attempt is opened, the
+unit goes `:live`, the lane and the writes are charged to it from that instant — under the set's own
+lock, held across the read and the write so that the unit a mind is told to do and the unit it is
+recorded as doing are one decision. A lock already held is a REFUSAL naming the path, never a wait:
+a waiter here would be the barrier A9 removes.
+
+*Red tests:* `worklang-attempt-record-round-trips-every-byte-but-the-edited-unit`;
+`worklang-a-taken-unit-is-live-with-one-open-attempt`;
+`worklang-the-state-machine-is-a4s-closed-set`; `next-answers-one-unit-for-one-mind`;
+`next-taking-a-unit-holds-its-lane-until-the-attempt-is-recorded`;
+`next-never-dispatches-a-unit-the-ladder-is-waiting-on`.
+
 ### Rule numbering is pinned
 
 `internal/docs/worklang_amendment_test.go` pins this part: the rules are A1 to A14 in order, each
 one states its rule and names at least one red test, and the grammar block of each new key is
 present. A rule may be added only at the end, and a rule may not be renumbered — the numbers are
 referred to from cards, from `nova-work ask`, and from SPEC-JOBS section 9.
+
+## Tests this spec demands
+
+The parser/reader tests run against fixtures cut from the real work set under `testdata/` (never network, never a model call); the expander tests render cards into a `t.TempDir()` and assert byte-identical re-expansion; the kernel admission tests are in-memory and single-writer with no clock, file or network. Every test below was named in the spec as seen red first.
+
+1. `worklang-reader-refuses-a-dispatch-macro` — a `#.` anywhere is refused at exit 2 naming the byte offset.
+2. `worklang-reader-enforces-the-three-bounds` — input past `--max-bytes`, `--max-depth` or `--max-nodes` is refused naming the bound and the file, never truncated.
+3. `worklang-unknown-kind-is-a-refusal` — `:kind bogus` is refused naming the field; an unknown key beside it is preserved and ignored.
+4. `worklang-needs-absent-node-is-a-refusal` — a `:needs` naming an absent id is refused naming the field and the id.
+5. `worklang-needs-cycle-refuses-at-load` — a two-node cycle is refused by rule 3 before publication.
+6. `worklang-blocks-and-needs-are-one-edge` — `A :needs (B)` and `B :blocks (A)` expand to the same ready order.
+7. `worklang-derive-expands-to-one-node-per-issue` — the (a) sweep over 25 open no-PR issues yields exactly 25 nodes; a 26th issue with a PR yields none.
+8. `worklang-fold-expands-to-one-pr-node-over-n-branches` — (c) over N green siblings yields one fold node of the N branch artifacts; a non-green sibling is excluded.
+9. `worklang-duplicate-branch-name-refuses` — two nodes deriving the same `:branch` string is refused naming both, before any card is written.
+10. `worklang-expansion-is-deterministic-and-replayable` — the same plan and pinned facts expand twice to byte-identical cards; a re-expansion appends only the new card, minting no id.
+11. `worklang-ready-excludes-a-node-whose-need-is-open` — a node is printed but not pullable while a need is open, pullable once settled, and flagged `needs-broken` on revert.
+12. `worklang-card-carries-its-budget-and-floor` — a card carries minutes, tokens and model floor; a route below the floor is refused, never downgraded.
+13. `worklang-reads-the-real-work-set` — the `(work-set ... :units ...)` form a coordinator writes is a plan this reader reads.
+14. `worklang-node-accepts-the-amendment-keys` — the amendment keys are additive on a `:node` too, one grammar for both forms.
+15. `worklang-unit-id-is-stable-and-required` — no id, an empty id, or a duplicate id is refused naming the id.
+16. `worklang-attempt-without-a-termination-proof-is-uncertain` — an attempt whose non-`uncertain` outcome lacks a termination proof is refused naming `uncertain`.
+17. `worklang-uncertain-is-a-state` — `uncertain` is a state of its own, not a spelling of open or failed.
+18. `worklang-resources-are-a-vector-not-a-slot` — cpu/memory/disk/network/gpu/named classes are one vector; a non-list entry is refused.
+19. `worklang-lane-is-a-resource-of-capacity-one` — a lane is one vector entry of capacity 1; two lane entries is a refusal.
+20. `worklang-writes-are-paths-under-the-repo` — `:writes` is the closed list of repo-relative paths; absolute/escaping paths are refused.
+21. `worklang-tools-name-a-verb-and-a-version` — `:tools` names a verb at a version, with an optional semantic `:key`; a tool with no `:at` is refused.
+22. `worklang-a-collection-names-its-members-after-the-run` — `:collects` members are `:unknown-before-run`; a collection with no `:name` or `:under` is refused.
+23. `worklang-warm-state-is-retained-apart-from-active` — `:warm` splits retained from active; one half alone is refused.
+24. `worklang-owner-is-a-mind` — an `:owner` is one spelling for friend/child-rung/swarm/`all`; a non-string owner is refused.
+25. `worklang-acceptance-is-read-and-the-real-set-has-none` — `:acceptance` on a unit is the goal schema; the reader reports the units naming none.
+26. `jobs-admission-is-atomic-no-partial-grant` — a vector short on one dimension takes nothing, never a partial grant.
+27. `jobs-a-nested-grant-draws-from-its-parent` — a child's grant comes out of its parent's reservation and returns to it.
+28. `jobs-double-reservation-is-a-refusal-not-a-wait` — reserving the same capacity twice is a refusal, not a wait.
+29. `jobs-a-download-asks-for-network-and-no-cpu` — a unit asking for network and no cpu is not held by a full cpu.
+30. `jobs-one-live-unit-per-lane` — within a lane units are serial; capacity is always 1.
+31. `jobs-unrelated-lanes-scatter` — across lanes units scatter and gather.
+32. `jobs-intersecting-writes-serialize-across-lanes` — units whose `:writes` intersect serialize even when their lanes differ.
+33. `jobs-a-ready-unit-goes-with-no-global-barrier` — a unit goes when its own needs are closed and its own vector is free, no phase/round/wave.
+34. `jobs-done-when-is-a-report-not-a-gate` — a set's `:done-when` reports its finish line, never gates its members.
+35. `jobs-an-uncertain-attempt-is-never-re-granted-on-expiry` — expiry alone may never re-grant capacity until termination is proved.
+36. `jobs-uncertain-keeps-its-resources` — a unit in `uncertain` keeps its lane/vector/warm state until termination is proved or a fence is written.
+37. `jobs-a-tool-key-move-invalidates-the-unit` — a semantic tool key that moves invalidates the unit even when the version string did not.
+38. `jobs-a-unit-refuses-on-a-tool-below-its-version` — a unit refuses when a tool it names is below the pinned version.
+39. `jobs-a-collection-binds-its-members-at-harvest` — the harvester binds a collection's members to the unit's revision when the run ends.
+40. `jobs-retained-warm-state-is-not-charged-as-active` — retained warmth is never charged as running capacity, and running capacity is never freed as merely warm.
+41. `work-ask-reads-the-same-set-as-the-pull-worker` — `nova-work ask` and the pull worker read the same work-set form, one form two readers.
+42. `jobs-a-unit-without-acceptance-is-refused-at-load` — the kernel refuses a unit without acceptance at load once the set has been filled in.
+43. `TestWorklangAmendmentRuleNumbering` — rules A1–A14 are in order, never renumbered, each naming its red test and grammar block.

@@ -69,15 +69,17 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-windows lint test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout map
 
 help:
 	@echo "make help        this list"
 	@echo "make build       go build ./..."
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
+	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
+	@echo "make preflight   gofmt, go vet, and go test -count=1 (PKGS)"
 	@echo "make test        go test -count=1 PKGS plus the 60s slowtests budget (the fast tier)"
 	@echo "make test-full   go test -count=1 ./... (the whole tree)"
 	@echo "make test-short  go test -short -count=1 -timeout 12m PKGS"
@@ -87,6 +89,11 @@ help:
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
 	@echo "make clean       remove ./bin and ./scratch"
+	@echo "make map         regenerate AGENTS.md and per-directory maps"
+
+map:
+	$(GO) run ./tools/agentsmap
+
 
 build:
 	$(GO) build ./...
@@ -101,6 +108,20 @@ fmt:
 
 vet:
 	$(GO) vet $(PKGS)
+
+# THE VERB-LAW GUARD, its own target rather than folded into `vet` because
+# `vet` is also the SHARDED per-package leg (ci.yml's test-packages job calls
+# `make vet PKGS=<shard>` once per shard): vetlaw's checks are a whole-tree
+# analysis over the verbs, and folding it into `vet` would rebuild and
+# re-run it once per shard for no extra coverage. This runs once.
+#
+# ./cmd/..., not ./..., because tools/analyzers/fixtures deliberately trips
+# all three checks on purpose (read directly by tools/analyzers' own tests)
+# and is never meant to pass this gate.
+vet-laws:
+	@mkdir -p bin
+	$(GO) build -o bin/vetlaw ./tools/analyzers/cmd/vetlaw
+	$(GO) vet -vettool=$(CURDIR)/bin/vetlaw ./cmd/...
 
 # THE ONE WINDOWS GUARD ON THE CL PATH, since the native windows runners were
 # dropped (Glenn 2026-09-18: "drop the native windows CI runners. WSL only from
@@ -122,7 +143,16 @@ vet:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
-lint: fmt vet
+lint: fmt vet vet-laws
+
+# preflight is the standard check for swarm cards and developers (#2498 S4):
+# gofmt + go vet + go test -count=1
+# No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
+# target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
+# every studio shard of dev push run 35999520176 ran the whole tree instead of
+# its PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
+preflight:
+	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
 # The fast tier. The package set is the one ci.yml's test-packages job reads out
 # of the source with `go list ./cmd/... ./internal/...`, minus the darwin-only
@@ -141,12 +171,16 @@ lint: fmt vet
 # benches (about 3x slower per core than the Studio), where the alert still
 # prints every CI-SLOW line but the budget is 300 s. Dated exception,
 # 2026-09-18; remove with those cards.
+#
+# GOTEST_TIMEOUT is `go test -timeout` for this target; the default is Go's own
+# 10m. The workflow sets it per leg to fit the leg's job cap.
+GOTEST_TIMEOUT ?= 10m
 test: PKGS := $(CL_PKGS)
 test:
-	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
+	@bash -o pipefail -c 'budget=60; case "$$(uname -m)" in x86_64) [ "$$(uname -s)" = Darwin ] && budget=300;; esac; GOFLAGS=-json $(GO) test -count=1 $(PKGS) -timeout $(GOTEST_TIMEOUT) | tee "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; status=$${PIPESTATUS[0]}; $(GO) run ./cmd/nova-ci slowtests --budget "$$budget" < "$${RUNNER_TEMP:-$${TMPDIR:-/tmp}}/test.json"; exit $$status'
 
 test-full:
-	$(GO) test -count=1 $(PKGS)
+	$(GO) test -count=1 $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
 test-short:
 	$(GO) test -short -count=1 -timeout 12m $(PKGS)

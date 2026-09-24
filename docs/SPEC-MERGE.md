@@ -858,6 +858,44 @@ and never counts. This is the fourth race in **the races** below, and it is the
 one the prototype leaves open: an approve recorded at 12:31Z counted for a head
 pushed at 12:47Z.
 
+### The landing verb: the whole read, both times, in one command
+
+The read condition above is the law; **`nova-merge integrate` is the loop that obeys it
+end to end** (#1845, L6 of #1725). Until 2026-09-19 that loop was typed by hand: seven
+landing shifts ran it that day — sixteen times in land6's shift alone — and every run was
+the same eleven steps, each of them a place a tired hand skips a read.
+
+```
+nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... \
+                     --lane <dir> --reviewers <file> --on <bench> --name <name> \
+                     --root <dir> --basis <file> [--base <branch>] [--dry-run]
+```
+
+1. every member's head is exactly the sha the caller passed, and a moved head is refused
+   **by name**: the reads this landing folds were recorded at the head the caller named;
+2. the hold read, per member, **at that exact head** — the lane's read records, the
+   forge's reviews and comments, and the sensitive-prefix rule — through the verdict fold
+   of reading 3 and **never a second parser**;
+3. the grouping simulated onto the base **as it stands now**, refusing a member that
+   conflicts with the entries ahead and naming it;
+4. `batch --on <bench>`, whose own admission folds the holds again — **so a member is read
+   three times in one landing**, not two;
+5. the push of `rowan/<name>` under a **must-not-exist lease**: the remote is asked for the
+   ref first, a branch that exists is a refusal, the push is a plain one and never a force,
+   and the ref is read back;
+6. the pull request, carrying the `BATCH OK` receipt and the caller's basis sentence per
+   member;
+7. `ci-ok`, polled to a deadline, one typed line per state; **a red is terminal** and its
+   failing tests are named;
+8. the hold read **again, at the door**, which is reading 3's own rule;
+9. `land` — which stays the one caller of the one door;
+10. each member closed with the pointer comment;
+11. every remaining open pull request re-verified against the **new** base, as a table.
+
+`--dry-run` runs 1-3 and lands nothing. No flag in the verb lifts a hold, `--lane` is
+required, and every refusal names the member and the reason. The grammar and the flags are
+in [CLI.md](CLI.md).
+
 ## The local gate
 
 The local gate is the fast lane's **exact steps, run on our own hardware**. It
@@ -1567,17 +1605,23 @@ nova-merge queue audit --repo <owner>/<name> [--dry-run] [--timeout <seconds>]
 
 **The class rule.** `TestNoGhPrMergeSpellingInTheToolsGo` and `TestNoGhPrMergeSpellingUnderDotGithub` (internal/ci) refuse a `pr merge` argument list or an `--auto` flag in every non-test Go file under `cmd/` and `internal/` and in every file under `.github/`. The exceptions are a shrink-only list in `internal/ci/testdata/prmerge_allowlist.txt`, checked in both directions: the guard that names `--auto` in order to refuse it, the audit's `--disable-auto` (the one spelling that unmerges), and the secrets store's own squash merge in a repository that has no merge queue.
 
+## Sibling staging on a rebuilt root (2026-09-21)
+
+**The mistake it removes.** Schema's go tests resolve serialize runtimes as siblings of the checkout (`../serialize.go` from the job clone; nested packages walk further). `nova-merge batch` rebuilds `--root/<name>` every run, so those clones — and any watcher symlink the lane pinned beside `repo/` — vanish with the tree.
+
+**The flag.** `--sibling <name>=<url>@<ref>` (repeatable) clones that repository beside `repo/` at the named branch or tag, after the job clone and before the merges. `name` is one `safepath.NameOK` path element (`serialize.go` is legal); `repo` and `tmp` are reserved for the batch's own checkout and temp dir. The last `@` splits url from ref, so an ssh URL is `git@host:path.git@v1.16.2`. A clone that cannot be made is `BATCH REFUSED`. Tests stage a `file://` fixture; they do not clone the real serialize repositories (nova-tools #2499 item 2 / #2508).
+
 ## Lessons — the dogfood pass of 2026-09-18
 
 A non-author drove `nova-merge batch`, `nova-merge queue` and `nova-merge react` against this repository at `dev` 65e23fb0 and wrote down every edge they fell off. **A friend's first-run stumble is a gift, and the repair is the tool.** Sixteen of them are in this section by their own numbers, with the thing each one cost; every one has a test that was seen red before it was trusted.
 
-**The three that were verbs nobody had ever run.** **Edge 17**: `react` printed `REACT enqueue pr=<n>` at exit 0 and enqueued into `merge:queue`, a redis set NOTHING IN THE TREE READS — the reactor was handed a nil door and installed one of its own. The door is the caller's now, `--lane` is required, and react writes `<lane>/queue.json` through the same read-modify-write `queue skip` makes; `queue status` afterwards is the proof, and that is the test. It is the list the next batch is built from and it reaches no forge: the one entrance to the forge's merge queue is `Enqueuer`/`land` in the section above, which takes a batch and nothing else. **Edge 12**: `queue sweep` could never run against a real repository — `QueuePRs`, `PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so both type assertions missed and every real invocation answered `no host, no sweep`. THE FAKE WAS THE ONLY IMPLEMENTATION, and the whole verb passed its tests. **Edge 25** (batch 7, the same week): the gate runs on one operating system and CI runs on three, so three members green under the gate were red on CI's windows legs and the batch pull request went red after the gate said OK; a member whose own head has no green `ci-ok` is dropped before the merge, and `GOOS=windows go vet ./...` is a step. *A seam only the fake implements is a verb nobody has run. A gate that checks fewer platforms than the forge is a gate that says green about a thing it did not check.*
+**The three that were verbs nobody had ever run.** **Edge 17**: `react` printed `REACT enqueue pr=<n>` at exit 0 and enqueued into `merge:queue`, a redis set NOTHING IN THE TREE READS — the reactor was handed a nil door and installed one of its own. The door is the caller's now, `--lane` is required, and react writes `<lane>/queue.json` through the same read-modify-write `queue skip` makes; `queue status` afterwards is the proof, and that is the test. It is the list the next batch is built from and it reaches no forge: the one entrance to the forge's merge queue is `Enqueuer`/`land` in the section above, which takes a batch and nothing else. **Edge 12**: `queue sweep` could never run against a real repository — `QueuePRs`, `PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so both type assertions missed and every real invocation answered `no host, no sweep`. THE FAKE WAS THE ONLY IMPLEMENTATION, and the whole verb passed its tests. **Edge 25** (batch 7, the same week): the gate runs on one operating system and CI runs on three, so three members green under the gate were red on CI's windows legs and the batch pull request went red after the gate said OK; a member whose own head has no green required check is dropped before the merge, and `GOOS=windows go vet ./...` is a step. The check's name is `ci-ok` in this repository; `--check-name` or `.nova-merge` `required-check=` names it for a repo whose rollup is not that job (#2499), and `check=` is on `BATCH OK` and the check `BATCH DROP` so a lane script can parse it (#2508). *A seam only the fake implements is a verb nobody has run. A gate that checks fewer platforms than the forge is a gate that says green about a thing it did not check.*
 
 **The three that failed in the one direction a failure here must never fail.** **Edge 9**: `pass.go` swallowed `LoadQueue`'s error, leaving the walk order nil — and a nil order means "walk everything", so a `queue.json` that did not parse SILENTLY UN-SKIPPED every skip and every parked poison. It refuses at exit 2 naming the file. The same hole had a second mouth: `WalkOrder` returned nil when every pull request was skipped, which reached the same "walk everything" without corrupting anything. **Edge 6**: `dry-run` walked `p.State.Entries()` while the pass walked `p.ordered()`, so the verb whose whole job is to print what a pass would do listed a skipped pull request in its plan. **Edge 8**: `merge.ReadHold` was called in exactly ONE place, the sweep, so a hold stopped the enqueue and not the pass that lands what is already queued — which is the half a person holding a lane actually means. *A failure must fail towards refusing, never towards acting; and two code paths that must agree about an order must read the same one.*
 
 **The two about one mechanism wearing two names.** **Edge 18**: two hold mechanisms and two skip sets, the lane's files and redis's `enqueue:hold`/`enqueue:skip`, with the same words — a held lane with the pull request skipped still printed `REACT enqueue`, and only the redis key stopped it. ONE QUEUE, ONE HOLD, ONE SKIP SET; the redis pair is deleted. **Edge 10**: `front` reordered numbers in a file and asked the forge whether the pull request was open and green first, which made the one local verb of the family need a network, a `gh` and a token — over a judgement `run` makes again on every pass. *Two mechanisms with one name are one mechanism nobody can reason about; and a verb that writes only its own file asks nobody.*
 
-**The four about a line that told a reader the wrong thing.** **Edge 2**: `BATCH SKIP lisp` went to stderr and `BATCH OK` said nothing, so the one line a caller parses claimed a green gate over a suite that ran three of its four steps — `skipped=<list>` is on the verdict line, `--require-lisp` turns the skip into a FAIL, and a program off `PATH` is looked for under `~/sdk/<toolchain>/bin` first. **Edge 1**: an old `go` on `PATH` surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a PROGRESS NOTICE naming nothing to fix, picked only because it was the first line that said anything; the toolchain is checked against `go.mod` before the first merge, and a notice is never the news. **Edge 3**: the help said the test step runs `-timeout 5m` and it has not since integration-4. **Edge 7**: nothing named the hold or the skip set, so a lane standing still under a hold read exactly like a lane with nothing to do; `queue status` is that line. *Every line a caller parses carries what the tool did NOT do as well as what it did.*
+**The four about a line that told a reader the wrong thing.** **Edge 2**: `BATCH SKIP lisp` went to stderr and `BATCH OK` said nothing, so the one line a caller parses claimed a green gate over a suite that ran three of its four steps — `skipped=<list>` is on the verdict line, `--require-lisp` turns the skip into a FAIL, and a program off `PATH` is looked for under `~/sdk/<toolchain>/bin` first. **Edge 1**: an old `go` on `PATH` surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a PROGRESS NOTICE naming nothing to fix, picked only because it was the first line that said anything; the toolchain is checked against `go.mod` before the first merge, and a notice is never the news. The same first-line cut then kept only `# package` from a red `go build`, so a failure in `bench/tools/realpacket-gen` named the package and not `undefined: Foo` (#2499 item 3 / #2508); `BATCH FAIL reason=` now keeps the captured stderr after those notices, capped at `oneline.TailBytes` (500). **Edge 3**: the help said the test step runs `-timeout 5m` and it has not since integration-4. **Edge 7**: nothing named the hold or the skip set, so a lane standing still under a hold read exactly like a lane with nothing to do; `queue status` is that line. *Every line a caller parses carries what the tool did NOT do as well as what it did.*
 
 **The four about a tool that would not say no, or said too much.** **Edge 19**: `react` with neither `--once` nor `--deadline` ran a 60-second loop and exited 0 although its own help said one was required — refused by name, like `nova-work events`. **Edge 20**: one malformed payload killed the reactor at exit 1, although an unknown CHANNEL was already ignored; a payload that is not the JSON its channel promises is one `REACT DROP` line and a count on the closing line, and everything else still fails. **Edge 11**: `--who` on `queue hold` was undocumented and optional, and a hold without it said `by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release; it is required, because this binary reads no environment variable and `$USER` is the caller's to pass. **Edge 16**: five raw `redis: … pool.go` lines landed on stderr ahead of the verb's own one-line refusal; the library's diagnostics are not this tool's grammar, and the logger is silenced before the first dial. *Refuse by name, survive a stranger's typo, and never make a reader read the library instead of the tool.*
 

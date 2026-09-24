@@ -46,14 +46,40 @@ var snapshotChildTimeout = 30 * time.Second
 // per-run `--budget` -- that `check`, `report` and `watch` already take.
 var snapshotBudget = 60 * time.Second
 
+// snapshotAdoptedTimeout bounds one ADOPTED tool's identity read, the --file
+// shape of this verb. It is report's own per-tool read, so an entry whose
+// installed column records a version is known without starting a process; only
+// an installed argv is probed, and it gets this deadline and no more. The bound
+// is report's five-second default rather than the directory shape's thirty,
+// because a recorded version never pays a first-exec toll and the count is a
+// manifest of adopted tools, not a scan of freshly installed binaries (#890).
+var snapshotAdoptedTimeout = 5 * time.Second
+
 // snapshotHeader is the TSV shape `snapshot` writes and `diff` reads. It is one
 // string so the writer and the reader cannot drift.
 const snapshotHeader = "name\tstamp\trevision\tplatform"
 
 // row is one binary as its OWN `version` reported it. Name is the executable's
 // file name; stamp, revision and platform are read off the four-token line, so
-// a renamed stub cannot forge a row.
-type snapRow struct{ name, stamp, revision, platform string }
+// a renamed stub cannot forge a row. Source is the structured source metadata
+// the line carries (repository, revision, dirty flag, build host), and has
+// tells the mixed-source gate whether the line named source at all: a binary
+// that did not name source contributes no opinion to that gate, and a binary
+// that did is checked against every other binary that did (#2291,
+// SPEC-VERSION item 6).
+type snapRow struct {
+	name, stamp, revision, platform string
+	src                             buildinfo.Source
+	has                             bool
+}
+
+// sourceString is the one line a Source reads as on a refusal: every field
+// named, in the order internal/buildinfo writes them, so the reader of the
+// refusal can match it against a build's manifest without holding the
+// goroutine open.
+func sourceString(s buildinfo.Source) string {
+	return fmt.Sprintf("repo=%s revision=%s dirty=%t build_host=%s", s.Repository, s.Revision, s.Dirty, s.BuildHost)
+}
 
 // revisionOf is the twelve-hex commit the identity carries, or "-". The
 // toolchain's vcs stamp is <utc time>-<12 hex>[-dirty]; a release tag carries
@@ -81,28 +107,47 @@ func revisionOf(stamp string) string {
 // is a tool saying one more true thing about itself; every column this verb
 // writes is read out of the four tokens the whole set shares, so an extra
 // changes nothing here except that it is no longer a refusal.
-func parseVersionLine(s string) (stamp, revision, platform string, ok bool) {
+//
+// The structured source view -- repository, revision, dirty flag, build host
+// -- is read from the same line and returned separately. A line that does not
+// carry the four source keys (an old binary, a foreign tool, a `go install`
+// from a tag) returns src with has=false: the row is still recorded, and
+// "no source" is the honest answer rather than a refusal at this verb's
+// normal case. The mixed-source gate downstream compares only what the rows
+// carry (#2291, SPEC-VERSION item 6).
+func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo.Source, has bool, ok bool) {
 	f, ok := buildinfo.Parse(s)
 	if !ok {
-		return "", "", "", false
+		return "", "", "", buildinfo.Source{}, false, false
 	}
-	return f.Version, revisionOf(f.Version), f.Platform, true
+	src, has = f.FindSource()
+	return f.Version, revisionOf(f.Version), f.Platform, src, has, true
 }
 
-// snapshotVerb inventories a directory of binaries by running each one's own
-// `version`. Every path comes from a flag; neither the file's name nor PATH is
-// trusted for the reading.
+// snapshotVerb has two shapes. With --file <manifest> it scopes to the ADOPTED
+// rule-2 manifest (#622): it reads the manifest's entries the way report does
+// and reports how many answer -- the adopted sixteen -- never how many nova-*
+// executables sit in a bin directory or on PATH. With --bin/--out it inventories
+// a directory of binaries by running each one's own `version`. Every path comes
+// from a flag; neither the file's name nor PATH is trusted for the reading.
 func snapshotVerb(name string, args []string, out, errs io.Writer, env Environment) int {
 	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	var bin, outPath string
+	var bin, outPath, file string
 	timeout, budget := snapshotChildTimeout, snapshotBudget
 	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
 	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
+	fs.StringVar(&file, "file", "", "manifest of adopted tools")
 	fs.DurationVar(&timeout, "timeout", timeout, "one binary's read deadline")
 	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
 	if err := fs.Parse(interspersed(fs, args)); err != nil {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
+	}
+	if file != "" {
+		if len(fs.Args()) != 0 {
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
+		}
+		return snapshotAdopted(file, out, errs)
 	}
 	var missing []string
 	if bin == "" {
@@ -174,11 +219,11 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 			}
 			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (%s) (%s)", e.Name(), reason, remedy))
 		}
-		stamp, revision, platform, ok := parseVersionLine(p.Stdout)
+		stamp, revision, platform, src, has, ok := parseVersionLine(p.Stdout)
 		if !ok {
 			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (it printed no version line: want `<tool> <stamp> <goos>/<goarch> <go version>` and then any key=value extras) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
 		}
-		rows = append(rows, snapRow{e.Name(), stamp, revision, platform})
+		rows = append(rows, snapRow{e.Name(), stamp, revision, platform, src, has})
 	}
 	if len(rows) == 0 {
 		return refusal(errs, "SNAPSHOT", fmt.Errorf("--bin %s holds no nova-* regular file (supply a readable --bin: a directory of nova-* executables)", bin))
@@ -187,6 +232,34 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	for i := 1; i < len(rows); i++ {
 		if rows[i].stamp != rows[0].stamp {
 			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update apply --sha, or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
+		}
+	}
+	// SOURCE METADATA GATE (#2291, SPEC-VERSION item 6). The version stamp
+	// is one field a build can carry from a different checkout; the four
+	// source keys -- repository, revision, dirty flag, build host -- are
+	// the structured view of WHERE the build actually came from, and
+	// every stamp read at the gate checks it. A row that does not name
+	// source (an old binary, a foreign tool, a `go install` from a tag)
+	// contributes no opinion, so the existing tests' four-token stubs
+	// remain readable; a row that names source is checked against every
+	// other row that named source, and disagreement is refused. Missing
+	// in the strict sense ("a binary whose source metadata is missing")
+	// is the next issue's slice, once every stamp read across the tree
+	// can demand source without breaking the older binaries in the
+	// wild.
+	var firstSrc buildinfo.Source
+	var firstSrcName string
+	var firstSrcSet bool
+	for _, r := range rows {
+		if !r.has {
+			continue
+		}
+		if !firstSrcSet {
+			firstSrc, firstSrcName, firstSrcSet = r.src, r.name, true
+			continue
+		}
+		if r.src != firstSrc {
+			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update apply --sha, or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
 	var b strings.Builder
@@ -199,4 +272,40 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 	}
 	fmt.Fprintf(out, "SNAPSHOT OK bin=%s out=%s tools=%d stamp=%s\n", field(bin), field(outPath), len(rows), field(rows[0].stamp))
 	return 0
+}
+
+// snapshotAdopted counts how many of the adopted manifest's tools answer, and is
+// the --file shape of snapshotVerb (#622). It reads the rule-2 manifest --file
+// names and asks each entry its identity exactly as report does, so a recorded
+// installed version is known without a process and an installed argv is probed
+// once. The count is the manifest's own -- the adopted sixteen -- never the
+// thirty-two nova-* executables a bin directory or PATH might hold, and no file
+// is written: the manifest is adopted, not discovered. The verdict mirrors
+// report's: one count line, exit 0 when every adopted tool answers and exit 1
+// when any does not.
+func snapshotAdopted(file string, out, errs io.Writer) int {
+	f, err := os.Open(file)
+	if err != nil {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
+	}
+	entries, err := Load(f)
+	f.Close()
+	if err != nil {
+		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s: %w", file, err))
+	}
+	known := 0
+	for _, e := range entries {
+		ctx, cancel := context.WithTimeout(context.Background(), snapshotAdoptedTimeout)
+		r := Installed(ctx, e, snapshotAdoptedTimeout, true)
+		cancel()
+		if r.Known() {
+			known++
+		}
+	}
+	code, result, w := 0, "OK", out
+	if known != len(entries) {
+		code, result, w = 1, "FAIL", errs
+	}
+	fmt.Fprintf(w, "SNAPSHOT %s checked=%d known=%d unknown=%d file=%s\n", result, len(entries), known, len(entries)-known, field(file))
+	return code
 }

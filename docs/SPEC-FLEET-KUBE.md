@@ -90,7 +90,35 @@ Linux bench runs its own k3s and schedules only its own cards. The Studio is not
 `RESULT.md`, one `usage.tsv` row, one deadline, one clip — so one card gets one pod. The Job
 gives the card its own cgroup, its own env, its own log stream, its own `activeDeadlineSeconds`,
 and a failure whose effect is defined by the platform. It also makes the capacity line a
-*scheduler* fact rather than a number a person counts. **The pull is not replaced.** A per-bench
+*scheduler* fact rather than a number a person counts.
+
+```go
+// === internal/fleetkube: reference types for per-bench k3s and Job-per-card template ===
+
+// BenchNode declares one single-node k3s per bench. There is
+// no fleet-level cluster reference; the scheduler must never
+// move a card across benches, and the Studio is not a node.
+type BenchNode struct {
+	BenchName    string // nova.mas-bandwidth.com/bench=<name>
+	Kind         string // kind label(s): go, lisp, docs, schema-leg
+	K3sInstalled bool   // node runs its own single-node k3s, not a fleet cluster join
+}
+
+// CardJob is the template for one card: one Job, one pod,
+// never replicated or split across pods. The Job gives the
+// card its own cgroup, env, log stream, and
+// activeDeadlineSeconds.
+type CardJob struct {
+	CardName              string
+	Image                 string
+	CPU                   string
+	Memory                string
+	EphemeralStorage      string
+	ActiveDeadlineSeconds int
+}
+```
+
+**The pull is not replaced.** A per-bench
 puller (`nova-swarm pull --submit`, one replica) lists `queue/lanes/`, takes one card by
 `rename(<name>.card, taken/<worker>-<name>.card)` — atomic within the directory, as SPEC-JOBS
 rule 2 already says — and creates the Job for that card. The puller does not choose a worker or
@@ -142,7 +170,7 @@ The kernel's ready set is not a thing Kubernetes exposes and is not invented her
 *is* the ready set, and the take is its lock. A card whose Job dies is returned by the puller to
 the lane it came from; `taken/` is the only place a card waits on a lease.
 
-**Secrets: sealed, decrypted at apply, named key by key.** The store stays sops. At apply, the
+**Secrets: sealed, decrypted at apply, named key by key.** Seal secrets per kind and deliver only the named keys via secretKeyRef, never envFrom. The store stays sops. At apply, the
 plaintext is produced from the store and immediately sealed into a SealedSecret, so state and git
 hold only the ciphertext, and the sealed-secrets controller decrypts it in-cluster into an
 ordinary Secret. **That Secret holds only the keys one worker kind is entitled to, and no other
@@ -167,7 +195,11 @@ that `nova-swarm` already writes, on the shared volume, so `nova-pulse status` a
 read one schema and one file whether the card ran under the launcher or a pod. After each card
 the pod's last step is the clip — commit the card's branch, harvest its `RESULT.md`, reset the
 kept worktree to base — exactly SPEC-JOBS §6, so the next Job sees warmth and never another
-card's uncommitted diff.
+card's uncommitted diff. `internal/fleetkube` runs a pod in that order — harness, usage row,
+clip (`PodSteps`) — and a card that exits non-zero is accounted and clipped the same way.
+The Job's container `command` is one executable's argv, `/bin/sh -c <script> nova-pod <harness
+argv...>` (`JobCommand`): the script runs the harness, appends the usage row, runs `nova-work
+clip` last, and exits with the harness's code.
 
 ## Part 3 — What nova-sandbox still adds, and what the Studio keeps
 
@@ -240,3 +272,53 @@ Each test is red before the work and names what it proves.
 - `a-card-admitted-twice-is-refused-by-its-guid` — after a puller fails between the decrement and
   the Job, the retry charges one slot and not two, and a second take of the same `guid` already
   held is refused before a Job is created.
+- `a-puller-takes-one-card-by-atomic-rename-and-enforces-the-capacity-line` — `nova-swarm
+  pull --submit` (one replica) takes one card by atomic rename (`rename(<name>.card,
+  taken/<worker>-<name>.card)`), so two pullers cannot take one card because the rename decides;
+  each Job requests `cpu: 1`, `memory: 2Gi`, `ephemeral-storage: 2Gi` with `limits.memory: 2Gi`
+  against the 25 GiB reserved floor, and the puller declines to submit while
+  `cores*1.5 - load1 <= 0` (`nova-wake probe --here`); the test runs against a fake queue directory.
+
+## Tests this spec demands
+
+These tests run against fixtures and fakes in temp dirs — a fixture bench with a planted drift, a fake queue/`taken/` directory, a fake Job and admission file, a fake sealed-secrets controller — with no network, no real bench, no real cluster and no real secret; the native `nova-secrets exec --only/--require` path is already covered by its own spec, and each Kube test here is proven able to fail by a mutation before it is trusted.
+
+1. `TestFleetRootModuleAndOneModulePerRole` — `fleet/` holds `benches.auto.tfvars` naming each bench (address, `mac`, and a role `coordinator`/`heavy`/`medium`/`light`), and one `module "bench"` is instantiated per role; a role is a contract, not a copy — the heavy role's slice of disk, runner count and kind labels differ from the light role's in the module's variables.
+2. `TestRunnerServiceCarriesStandardStanzas` — the runner service `nova-runner-<i>.service` carries the `Environment=PATH`, `KillMode=control-group` and `TimeoutStopSec=30s` stanzas the standard already names.
+3. `TestEveryManagedFilePairedWithAReadEachPlanDataSource` — every managed file is paired with a `data "external" "file_state"` that runs `ssh <bench> 'sha256sum <path>'` (or reads the file back) and returns the observed hash, and the resource owning the file carries a `precondition`/`check` comparing observed against declared so a hand edit differs.
+4. `TestBenchStandardDataSourceFailsPlanOnDisagreement` — `data "external" "bench_standard"` runs `tools/bench-standard.sh` on the host each plan and parses its lines, and the precondition fails the plan when the script and the declaration disagree.
+5. `a-hand-edited-remote-file-is-shown-by-the-plan-not-by-the-declaration` — a fixture bench whose remote file is edited by hand while the declaration is unchanged plans that file, because the read-each-plan data source reports the observed hash and the resource's precondition fails; the same edit with only a `null_resource` trigger stays clean, proving the trigger is not the witness.
+6. `terraform-plan-on-a-fixture-shows-exactly-the-expected-drift` — a fixture bench whose state says one go version and whose declaration says another plans the one differing resource, and a clean fixture plans nothing.
+7. `TestDriftLineWhilePlanCleanIsRed` — a `DRIFT` line the standard prints while `plan` is clean is itself a red test; the two witnesses are not allowed to disagree silently.
+8. `TestNewBenchIsOneApply` — adding one entry to `benches.auto.tfvars` and running `terraform apply` installs packages, creates users, writes and starts the runner units, arms the timers, installs k3s, mounts the cache and mirror volumes and authorizes the seat public key.
+9. `TestBenchStandardStopsProvisioningKeepsWitness` — `bench-standard.sh` stops provisioning and stops being the only drift detector, and keeps its job as the in-sandbox network probe and the acceptance witness that runs after an apply.
+10. `TestApplyStillKillsStrayListenersAndNothingMore` — `--apply` still kills stray listeners and nothing more.
+11. `TestNoSecretValueInState` — no secret value, in any form, sits in state: the plaintext of a sealed yaml, an API key, a token, the sops age private key, or a `kubectl` credential that can read one.
+12. `TestSecretOutputOrLocalFileIsADefect` — a `terraform output` that is a secret is a defect, and so is a `local_file` that writes one.
+13. `TestOneSingleNodeK3sPerBench` — one single-node k3s runs per bench (not one fleet cluster), the scheduler never moves a card across benches, and the Studio is not a node.
+14. `TestOneCardOnePod` — one card gets one pod: the Job gives the card its own cgroup, its own env, its own log stream, its own `activeDeadlineSeconds`, and a failure whose effect is defined by the platform.
+15. `TestPullerTakesOneCardByAtomicRename` — `nova-swarm pull --submit` (one replica) lists `queue/lanes/`, takes one card by `rename(<name>.card, taken/<worker>-<name>.card)` — atomic within the directory — so two pullers cannot take one card because the rename decides.
+16. `TestJobRequestsAndLimitsAreTheCapacityLine` — each Job requests `cpu: 1`, `memory: 2Gi`, `ephemeral-storage: 2Gi` and sets `limits.memory: 2Gi`, and the node's kube-reserved/system-reserved reserves the fixed 25 GiB floor so `(free_gb-25)/2` and `memfree_gb/2` are enforced by the scheduler's admission of a 2 GiB request against allocatable.
+17. `TestPullerDeclinesBelowTheLoadLine` — the puller reads `load1` (`nova-wake probe --here`) and declines to submit while `cores*1.5 - load1 <= 0`.
+18. `TestPullWorkerIsTheAdmissionOwner` — the pull worker reads the capacity line, decrements it for the Job it is about to submit, and writes the decremented value to the bench's admission file under `taken/` before it creates the Job; the native launcher keeps no copy and consults that file.
+19. `TestAdmissionRetriedIsReconciled` — a puller that fails between writing the decrement and creating the Job leaves a slot charged to nothing; the retry completes the first admission rather than making a second.
+20. `a-card-admitted-twice-is-refused-by-its-guid` — the admission file records the card's `guid` against the slot, so a second take of a card already held is refused before a Job is created instead of charged twice; after a puller fails between the decrement and the Job, the retry charges one slot and not two.
+21. `TestSlotHeldWithNoJobIsTheReconciliationState` — a slot held with no Job is the state the reconciliation names, and the red test measures it.
+22. `TestNodeLabelsAndNodeSelectorPerKind` — each bench labels its node `nova.mas-bandwidth.com/bench=<name>` and one or more `nova.mas-bandwidth.com/kind=go|lisp|docs|schema-leg`, and a Job carries the kind of its card and selects it with `nodeSelector` so a lisp card is only ever placed where SBCL is warm.
+23. `TestWarmCachePreferredAffinityAndLocalHardPin` — warm caches are `preferredDuringSchedulingIgnoredDuringExecution` affinity to the repo/cache label, and the `local` volume pins placement hard when a card needs a specific checkout.
+24. `TestPersistentVolumesPerBench` — one `local` PersistentVolume for the fetch-only mirror (`ReadOnlyMany`, `volumeBindingMode: WaitForFirstConsumer`) and one for the shared Go cache and kept worktrees (`ReadWriteOnce`), both under `$HOME/nova-bench`, surviving a Job so a fresh pod resumes with the same module cache and mirror.
+25. `TestWorkQueueLayoutOnSharedVolume` — a directory on a shared volume holds `queue/lanes/{red,green,small,next}/` and `taken/`, the exact layout `nova-pulse cut` writes, with the atomic take above.
+26. `a-worker-that-dies-mid-card-returns-the-card-to-the-queue` — a Job killed before its clip is observed by the puller, and the card is back in its lane once and re-runnable, its partial `RESULT.md` kept as evidence.
+27. `TestSealedAtApplyDecryptedInCluster` — at apply the plaintext is produced from the store and immediately sealed into a SealedSecret, so state and git hold only the ciphertext, and the sealed-secrets controller decrypts it in-cluster into an ordinary Secret.
+28. `TestSecretHoldsOnlyTheKeysItsKindNames` — the Secret holds only the keys one worker kind is entitled to and no other key exists in it, generated per kind (`nova-secrets-<kind>`), not one fleet-wide Secret.
+29. `TestJobNeverUsesEnvFrom` — a Job never uses `envFrom`, because `envFrom` projects every key a Secret holds and cannot promise the subset this section makes.
+30. `a-job-gets-only-the-keys-its-kind-names` — each container names the exact keys it gets, one `valueFrom.secretKeyRef` per key (`go` gets `DEEPSEEK_API_KEY` and `GH_TOKEN`; `lisp`, `docs` and `schema-leg` get `ANTHROPIC_API_KEY` and `GH_TOKEN`), and the pod's environment holds exactly the named keys and nothing else; a pod built with `envFrom` projects an extra key and is the mutation.
+31. `TestExecOnlyRequireRefusesAShortSecret` — the container's command is the same `nova-secrets exec --only <those names> --require <the required one>` the native launcher runs, so `--require` refuses before the harness starts if the Secret is short.
+32. `TestSecretDeliveryIsEnvironmentOnly` — secrets arrive environment only, never a `volumeMount`, never an image layer, never a build argument; the exec-env rule of SPEC-SECRETS is the only delivery a process may have.
+33. `a-card-that-names-a-secret-path-is-refused` — a card mentioning a `.key`, the store path, `auth.json`, or a file-mounted secret is refused by the puller before a Job is created, and no pod ever starts.
+34. `a-job-with-the-fixture-card-produces-RESULT-md-and-a-usage-tsv` — the fixture card run as a Job lands a `RESULT.md` whose line 1 is the contract line and exactly one `usage.tsv` row, and the Job's start, end, exit and cost are appended to the same `usage.tsv` so `nova-swarm result` and `nova-pulse progress` read one schema unchanged.
+35. `TestClipIsThePodLastStep` — after each card the pod's last step is the clip — commit the card's branch, harvest its `RESULT.md`, reset the kept worktree to base — exactly SPEC-JOBS §6.
+36. `TestSandboxIsTheSecondWallInContainer` — inside the container `nova-sandbox` keeps its `--read`/`--write` lists and `--net-deny`, enforced by Landlock on Linux, so the wall inside the wall is the same binary and the same rules as on the Studio.
+37. `TestHomeIsStillTheJobDataHome` — `HOME` is still set to the job data home per sandbox rule 9, because a `HOME` outside the lists is still a refusal.
+38. `TestStudioKeepsRunningNatively` — the Studio (macOS, the coordinator's seat) has no k3s, no pods and no agent, and the same `nova-sandbox` binary carries the darwin wall.
+39. `TestSliceNumbersReadFromUsageTsvAndQueue` — each migration slice's number is read from `usage.tsv` and the queue, never from a report body.

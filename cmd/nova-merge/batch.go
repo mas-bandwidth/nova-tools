@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -64,24 +67,38 @@ type batchStep struct {
 	env []string
 }
 
+func (s batchStep) toMerge() merge.Step {
+	return merge.Step{
+		Name:    s.name,
+		Command: s.command,
+		Needs:   s.needs,
+		File:    s.file,
+		Stream:  s.stream,
+		Env:     s.env,
+	}
+}
+
+func fromMergeStep(s merge.Step) batchStep {
+	return batchStep{
+		name:    s.Name,
+		command: s.Command,
+		needs:   s.Needs,
+		file:    s.File,
+		stream:  s.Stream,
+		env:     s.Env,
+	}
+}
+
 // batchGate is the suite, in order. A step whose program or file is missing is SKIPPED
 // OUT LOUD: a gate that quietly ran three of its four steps and printed OK is a gate that
 // says green about a thing it did not check.
-var batchGate = []batchStep{
-	{name: "build", command: "go build ./...", needs: "go"},
-	{name: "vet", command: "go vet ./...", needs: "go"},
-	// EDGE 25, batch 7: THE GATE RUNS ON ONE OPERATING SYSTEM AND CI RUNS ON THREE.
-	// Three members went green under the gate on linux and red on CI's windows legs --
-	// cmd/nova-sandbox's path fixtures and internal/dogfood's exec-bit discovery -- and
-	// the batch pull request went red after the gate had said OK. A cross vet is cheap,
-	// needs no second machine, and catches the whole BUILD-level half of that class: a
-	// file that does not compile for windows, a syscall that is not there, a constant
-	// that is unix-only. It does not catch a windows-only TEST failure, which is what
-	// the forge's own windows leg is for; the gate says what it checked and no more.
-	{name: crossVetStep, command: "go vet ./...", needs: "go", env: []string{"GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}},
-	{name: "test", command: strings.Join(ciTestArgs(), " "), needs: "go", stream: true},
-	{name: "lisp", command: "sh tools/ci/lisp-test.sh", needs: "sbcl", file: "tools/ci/lisp-test.sh"},
-}
+var batchGate = func() []batchStep {
+	out := make([]batchStep, len(merge.FullClassSteps))
+	for i, s := range merge.FullClassSteps {
+		out[i] = fromMergeStep(s)
+	}
+	return out
+}()
 
 // crossVetStep is the cross vet's name, and it is a constant because it is THE ONE STEP A
 // UNIT TEST MUST NOT RUN.
@@ -208,9 +225,14 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	// to judge for the first time IN COMBINATION, which is the one thing a batch cannot
 	// do: it would report the batch red for a fault that is one member's alone.
 	noRequireChecks := f.fs.Bool("no-require-checks", false, "")
+	// --check-name is the GitHub check a member's own head must be green on when
+	// checks=required (nova-tools #2499). Default is ci-ok, this repository's rollup; a
+	// repo whose required check is named something else -- schema's tests -- passes the
+	// name here, or writes it in .nova-merge as required-check=<name>.
+	checkName := f.fs.String("check-name", "", "")
 	// --receipt-file carries the BATCH OK lines of batches ALREADY BUILT, so a member that
 	// is itself a gated tree is admitted on the gate's own evidence rather than on a
-	// `ci-ok` the forge has not finished running. It is the same receipt `nova-merge land`
+	// required check the forge has not finished running. It is the same receipt `nova-merge land`
 	// reads and the same parser (internal/merge.ParseBatchReceipt): one receipt, one
 	// meaning, wherever it is presented.
 	receiptFile := f.fs.String("receipt-file", "", "")
@@ -224,6 +246,16 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	reason := f.fs.String("reason", "", "")
 	untypedComments := f.fs.String("untyped-comments", "", "")
 	lane := f.fs.String("lane", "", "")
+	// --accept-control arms SPEC-TOOLWORK §6 rule 7's admission (#1661): the directory
+	// holding the accept gate's passing selftests, one file per control id. A swarm member
+	// is then admitted only with an ACCEPT OK for its current head whose control is here.
+	acceptControl := f.fs.String("accept-control", "", "")
+	// --sibling <name>=<url>@<ref> is repeatable. Schema's tests resolve
+	// serialize runtimes as siblings of the checkout; this verb rebuilds
+	// --root/<name> every run, so those clones have to be staged again beside
+	// repo/ (nova-tools #2499 item 2).
+	var siblingRaw siblingFlags
+	f.fs.Var(&siblingRaw, "sibling", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -280,6 +312,21 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *gomaxprocs < 0 {
 		f.problem(fmt.Sprintf("--gomaxprocs is the share of the machine this batch takes, the way CI divides its cores by the runners on it; 0 is all of them, and a negative one is a typo, got %d", *gomaxprocs))
 	}
+	resolvedCheck := strings.TrimSpace(*checkName)
+	if strings.TrimSpace(*checkName) != *checkName && resolvedCheck == "" {
+		f.problem("--check-name is the GitHub check a member's own head must be green on, like ci-ok or tests; a value of only whitespace is a name nobody can look up")
+	} else if err := validCheckName(resolvedCheck); err != nil && resolvedCheck != "" {
+		f.problem(fmt.Sprintf("--check-name: %s", oneline.Escape(err.Error())))
+	}
+	if s := strings.TrimSpace(*acceptControl); s != "" {
+		if info, err := os.Stat(s); err != nil || !info.IsDir() {
+			f.problem(fmt.Sprintf("--accept-control is the directory of the accept gate's passing selftests, one file per control id; %q is not a directory", s))
+		}
+	}
+	siblings, siblingErrs := parseSiblings(siblingRaw)
+	for _, e := range siblingErrs {
+		f.problem(e)
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -295,12 +342,15 @@ func cmdBatch(args []string, stdout, stderr io.Writer, deps Deps) int {
 		gomaxprocs:      *gomaxprocs,
 		requireLisp:     *requireLisp,
 		requireCheck:    !*noRequireChecks,
+		checkName:       resolvedCheck,
 		receiptFile:     strings.TrimSpace(*receiptFile),
 		reviewersFile:   strings.TrimSpace(*reviewersFile),
 		noRequireHolds:  *noRequireHolds,
 		reason:          strings.TrimSpace(*reason),
 		untypedComments: strings.TrimSpace(*untypedComments),
 		lane:            strings.TrimSpace(*lane),
+		siblings:        siblings,
+		acceptControl:   strings.TrimSpace(*acceptControl),
 	}, stdout, stderr, deps)
 }
 
@@ -321,6 +371,7 @@ type batchRun struct {
 	gomaxprocs      int
 	requireLisp     bool
 	requireCheck    bool
+	checkName       string
 	receiptFile     string
 	reviewersFile   string
 	noRequireHolds  bool
@@ -330,10 +381,120 @@ type batchRun struct {
 	holdsCount      int
 	dispositions    string
 	reviewersSHA    string
+	siblings        []siblingSpec
+	// acceptControl, identities and memberPaths are #1661's: the armed ACCEPT OK rule,
+	// the lane's identity set for hygiene (nil is off), and each swarm member's PATHS.
+	acceptControl string
+	identities    []hygiene.Identity
+	memberPaths   map[int][]string
+	clone         string
+	baseSHA       string
+}
+
+// siblingFlags is a repeatable --sibling <name>=<url>@<ref>.
+type siblingFlags []string
+
+func (s *siblingFlags) String() string { return strings.Join(*s, ",") }
+
+func (s *siblingFlags) Set(v string) error {
+	*s = append(*s, v)
+	return nil
+}
+
+// siblingSpec is one staged neighbour of the job clone: dest name under
+// --root/<batch>/, the git URL, and the branch or tag to check out.
+type siblingSpec struct {
+	Name string
+	URL  string
+	Ref  string
+}
+
+func parseSiblings(raw siblingFlags) ([]siblingSpec, []string) {
+	var out []siblingSpec
+	var errs []string
+	seen := map[string]bool{}
+	for _, v := range raw {
+		s, err := parseSibling(v)
+		if err != nil {
+			errs = append(errs, err.Error())
+			continue
+		}
+		if seen[s.Name] {
+			errs = append(errs, fmt.Sprintf("--sibling name %q is named more than once", s.Name))
+			continue
+		}
+		seen[s.Name] = true
+		out = append(out, s)
+	}
+	return out, errs
+}
+
+func parseSibling(v string) (siblingSpec, error) {
+	v = strings.TrimSpace(v)
+	name, rest, ok := strings.Cut(v, "=")
+	if !ok || name == "" || rest == "" {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q", v)
+	}
+	if !safepath.NameOK(name) {
+		return siblingSpec{}, fmt.Errorf("--sibling name is one path element of letters, digits, dot, dash and underscore, and never begins with a dash, got %q", name)
+	}
+	if name == "repo" || name == "tmp" {
+		return siblingSpec{}, fmt.Errorf("--sibling name %q is reserved for the batch's own checkout", name)
+	}
+	at := strings.LastIndex(rest, "@")
+	if at <= 0 || at == len(rest)-1 {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q", v)
+	}
+	url, ref := rest[:at], rest[at+1:]
+	// An ssh URL already holds user@host; forgetting @<ref> parses as url=git.
+	if url == "git" && strings.HasPrefix(rest, "git@") {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q (the last @ is the ref; an ssh URL is git@host:path.git@<ref>)", v)
+	}
+	if strings.TrimSpace(url) == "" || strings.TrimSpace(ref) == "" {
+		return siblingSpec{}, fmt.Errorf("--sibling wants <name>=<url>@<ref>, got %q", v)
+	}
+	if err := merge.ValidRefName(ref); err != nil {
+		return siblingSpec{}, fmt.Errorf("--sibling ref: %s", oneline.Escape(err.Error()))
+	}
+	return siblingSpec{Name: name, URL: url, Ref: ref}, nil
+}
+
+func cloneSiblings(work string, siblings []siblingSpec, timeout time.Duration, runner merge.Runner, stderr io.Writer, start time.Time) error {
+	if len(siblings) == 0 {
+		return nil
+	}
+	g := merge.NewGit(work, timeout, runner)
+	for _, s := range siblings {
+		dest := filepath.Join(work, s.Name)
+		fmt.Fprintf(stderr, "BATCH SIBLING name=%s ref=%s t=%.1fs\n",
+			oneline.Field(s.Name), oneline.Field(s.Ref), since(start))
+		args := []string{"clone", "--quiet", "--depth", "1", "--branch", s.Ref, "--", s.URL, dest}
+		if _, err := g.Run(args...); err != nil {
+			return fmt.Errorf("could not clone sibling %s at %s: %w", s.Name, s.Ref, err)
+		}
+	}
+	return nil
 }
 
 func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	start := time.Now()
+	// nova-tools #2167: THE REFERENCE IS CHECKED BEFORE ANYTHING IS TOUCHED. The working
+	// copy a dogfooder stands in is a shallow clone, and it is the --reference a person
+	// standing in the repository types. git refuses it as a reference repository with a
+	// sentence that names no remedy,
+	//
+	//	fatal: reference repository '<path>' is shallow
+	//
+	// and relayed as BATCH REFUSED that sent the caller to the network for a reason that
+	// was on their own bench all along. The shallowness of the caller's reference is a
+	// fact of the bench rather than of the tree, so the earliest point it can be known at
+	// is before the root is made at all: nothing is removed, nothing is cloned, and the
+	// remedy is on the refusal's own line.
+	if strings.TrimSpace(in.reference) != "" {
+		if err := checkReference(in.reference, in.timeout, deps.Runner); err != nil {
+			return batchRefused(stderr, err)
+		}
+	}
 	rootAbs, err := filepath.Abs(in.root)
 	if err != nil {
 		return batchRefused(stderr, err)
@@ -365,6 +526,9 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 	if _, err := merge.NewGit(work, in.timeout, deps.Runner).Run(cloneArgs...); err != nil {
 		return batchRefused(stderr, err)
 	}
+	if err := cloneSiblings(work, in.siblings, in.timeout, deps.Runner, stderr, start); err != nil {
+		return batchRefused(stderr, err)
+	}
 	g := merge.NewGit(clone, in.timeout, deps.Runner)
 	if _, err := g.Run("fetch", "--quiet", "origin", in.base); err != nil {
 		return batchRefused(stderr, fmt.Errorf("could not fetch origin/%s: %w", in.base, err))
@@ -390,11 +554,29 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		return code
 	}
 
+	if in.requireCheck {
+		name, err := resolveRequiredCheck(in.checkName, clone)
+		if err != nil {
+			return batchRefused(stderr, err)
+		}
+		in.checkName = name
+	}
+
 	prs, prechecked, code := admissible(&in, stdout, stderr, deps, start)
 	if code != 0 {
 		return code
 	}
-	members, dropped, code := mergeMembers(g, in, prs, stderr, start)
+	in.clone, in.baseSHA = clone, baseSHA
+	if code := laneIdentities(&in, stderr, start); code != 0 {
+		return code
+	}
+	prs, swarmDropped, code := swarmAdmission(&in, prs, stderr, deps, start)
+	if code != 0 {
+		return code
+	}
+	prechecked = append(prechecked, swarmDropped...)
+	heads := map[int]string{}
+	members, dropped, code := mergeMembers(g, in, prs, heads, stderr, start)
 	if code != 0 {
 		return code
 	}
@@ -435,22 +617,84 @@ func runBatch(in batchRun, stdout, stderr io.Writer, deps Deps) int {
 		skipped = append(skipped, step.name)
 		fmt.Fprintf(stderr, "BATCH SKIP %s reason=%q t=%.1fs\n", oneline.Field(step.name), why, since(start))
 	}
-	line := batchLine(in, baseSHA, headSHA, members, dropped, skipped)
-	for _, r := range plan {
-		step := r.step
-		fmt.Fprintf(stderr, "BATCH STEP %s command=%q t=%.1fs\n", oneline.Field(step.name), step.command, since(start))
-		out, err := runCheck(clone, step.command, in.timeout, append(withBin(env, r.bin), step.env...))
-		if err == nil {
-			continue
+	// THE BUILD IS BISECTED ONCE (#1661): a red build step names the member that turned
+	// it red, drops it, and the whole gate runs again on the tree without it.
+	bisected := false
+gate:
+	for {
+		line := batchLine(in, baseSHA, headSHA, members, dropped, skipped)
+		for _, r := range plan {
+			step := r.step
+			fmt.Fprintf(stderr, "BATCH STEP %s command=%q t=%.1fs\n", oneline.Field(step.name), step.command, since(start))
+			out, err := runCheck(clone, step.command, in.timeout, append(withBin(env, r.bin), step.env...))
+			// The test step's stream is kept whether the step passed or not. A green
+			// run is the same capture a later red will be, and a failure that could
+			// not be written is a failure: the gate must not say OK about a stream
+			// it did not keep (#2626).
+			var streamPath string
+			var streamErr error
+			if step.name == "test" {
+				streamPath, streamErr = writeTestStream(rootAbs, out)
+			}
+			if err == nil && streamErr == nil {
+				continue
+			}
+			if step.name == "build" && err != nil && !bisected && len(members) > 0 {
+				bisected = true
+				culprit, rest, more, newHead, code := bisectBuild(g, in, headSHA, members, heads, step, append(withBin(env, r.bin), step.env...), buildReason(out, err), stderr, start)
+				if code != 0 {
+					return code
+				}
+				if culprit != 0 {
+					members, headSHA = rest, newHead
+					dropped = append(append(dropped, culprit), more...)
+					continue gate
+				}
+			}
+			pkgs, tests, reason := []string(nil), []string(nil), ""
+			if err != nil {
+				pkgs, tests, reason = stepFailure(step, out, err)
+			}
+			switch {
+			case streamErr != nil && err != nil:
+				reason = "the test stream was not kept (" + streamErr.Error() + "); " + reason
+			case streamErr != nil:
+				reason = "the test stream was not kept: " + streamErr.Error()
+			case streamPath != "":
+				// The path is the front of the reason, ahead of anything Cap might
+				// cut: the one line a caller reads has to name the file.
+				reason = "stream=" + streamPath + "; " + reason
+			}
+			fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=%s tests=%s reason=%q\n",
+				line, oneline.Field(step.name), oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests)),
+				oneline.Cap(reason, stepReasonBytes))
+			return 1
 		}
-		pkgs, tests, reason := stepFailure(step, out, err)
-		fmt.Fprintf(stdout, "BATCH FAIL %s step=%s packages=%s tests=%s reason=%q\n",
-			line, oneline.Field(step.name), oneline.Field(numberOrNone(pkgs)), oneline.Field(numberOrNone(tests)),
-			oneline.Cap(reason, oneline.TailBytes))
-		return 1
+		fmt.Fprintf(stdout, "BATCH OK %s\n", line)
+		return 0
 	}
-	fmt.Fprintf(stdout, "BATCH OK %s\n", line)
-	return 0
+}
+
+// checkReference refuses a --reference that is a shallow repository, with the remedy on
+// the line (#2167). A shallow clone holds only the history its own checkout needed, so
+// it cannot be the local store a clone with --reference borrows its objects from, and
+// git refuses the clone rather than build one that can be missing commits it has not
+// fetched yet -- a refusal whose sentence names no remedy, which is why it is made here
+// instead, where the remedy can be said.
+//
+// A reference this cannot say anything about -- not a repository, not on this bench, a
+// git too old to know --is-shallow-repository -- is left to the clone, which names it in
+// git's own words: this check refuses what it KNOWS is wrong and never guesses, the same
+// law as checkToolchain's below it.
+func checkReference(reference string, timeout time.Duration, runner merge.Runner) error {
+	out, err := merge.NewGit(reference, timeout, runner).Out("rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return nil
+	}
+	if strings.TrimSpace(out) != "true" {
+		return nil
+	}
+	return fmt.Errorf("--reference %s is shallow: a shallow repository holds only part of the history, so it cannot be the local store the clone borrows its objects from; omit --reference and the batch makes an ordinary clone over the network, or name a full clone as --reference", reference)
 }
 
 // batchLine is the fields every verdict line carries, green or red.
@@ -459,6 +703,9 @@ func batchLine(in batchRun, baseSHA, headSHA string, members, dropped []int, ski
 		oneline.Field(in.name), oneline.Field(baseSHA), oneline.Field(headSHA),
 		oneline.Field(numberList(members)), oneline.Field(numberList(dropped)),
 		oneline.Field(numberOrNone(skipped)), oneline.Field(checksWord(in)))
+	if in.requireCheck {
+		line += " check=" + oneline.Field(in.checkName)
+	}
 
 	if in.noRequireHolds {
 		line += fmt.Sprintf(" holds=waived reason=%q", in.reason)
@@ -482,9 +729,92 @@ func checksWord(in batchRun) string {
 	return "waived"
 }
 
-// batchRequiredCheck is the check a member's own head must have gone green on before the
-// gate will merge it. It is CI's one rollup job, the same name the merge condition reads.
-const batchRequiredCheck = "ci-ok"
+// batchRequiredCheckDefault is the check a member's own head must have gone green on
+// before the gate will merge it, when the caller names none and the cloned tree holds no
+// .nova-merge. It is this repository's rollup job, the same name the merge condition
+// reads. A repo whose required check is named something else -- schema's tests -- sets
+// --check-name or writes required-check= in .nova-merge (#2499).
+const batchRequiredCheckDefault = "ci-ok"
+
+// novaMergeFile is the repo-root file that names nova-merge settings for that tree. The
+// one key this verb reads today is required-check=<GitHub check name>.
+const novaMergeFile = ".nova-merge"
+
+// resolveRequiredCheck is the name the gate looks for on each member's own head:
+// --check-name if the caller set it, else .nova-merge required-check= in the cloned
+// tree, else ci-ok. A missing file is the default, not a refusal; a file that names
+// the key and then fails to is a refusal, so a typo is not a silent ci-ok.
+func resolveRequiredCheck(flagName, clone string) (string, error) {
+	if name := strings.TrimSpace(flagName); name != "" {
+		if err := validCheckName(name); err != nil {
+			return "", fmt.Errorf("--check-name: %w", err)
+		}
+		return name, nil
+	}
+	raw, err := os.ReadFile(filepath.Join(clone, novaMergeFile))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return batchRequiredCheckDefault, nil
+		}
+		return "", fmt.Errorf("%s could not be read: %w", novaMergeFile, err)
+	}
+	name, err := requiredCheckFromNovaMerge(raw)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", novaMergeFile, err)
+	}
+	if name == "" {
+		return batchRequiredCheckDefault, nil
+	}
+	if err := validCheckName(name); err != nil {
+		return "", fmt.Errorf("%s required-check: %w", novaMergeFile, err)
+	}
+	return name, nil
+}
+
+// requiredCheckFromNovaMerge reads required-check= from a .nova-merge body. Unknown
+// keys are ignored so a later sibling list or verify target can land in the same file
+// (#2499 items 2 and 5) without this verb having to know them. A line that is not
+// key=value, a duplicate required-check, or an empty value is a refusal.
+func requiredCheckFromNovaMerge(raw []byte) (string, error) {
+	var found string
+	saw := false
+	for i, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return "", fmt.Errorf("line %d is not key=value", i+1)
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key != "required-check" {
+			continue
+		}
+		if saw {
+			return "", errors.New("required-check is set more than once")
+		}
+		saw = true
+		found = value
+	}
+	if saw && found == "" {
+		return "", errors.New("required-check is empty; give a GitHub check name like ci-ok or tests")
+	}
+	return found, nil
+}
+
+// validCheckName refuses a name that cannot be a GitHub check: empty, or holding a
+// newline that would break the receipt.
+func validCheckName(name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("the required check's name is empty; give a GitHub check name like ci-ok or tests")
+	}
+	if strings.ContainsAny(name, "\n\r") {
+		return errors.New("the required check's name is one line")
+	}
+	return nil
+}
 
 func getReviewersSHA(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
@@ -515,7 +845,7 @@ func getReviewersSHA(path string) (string, error) {
 }
 
 // admissible is edge 25's gate in front of the gate: every member whose OWN head has no
-// green ci-ok is dropped BEFORE the merge, by name and with the state it was in.
+// green required check is dropped BEFORE the merge, by name and with the state it was in.
 // In addition (#1572 / SPEC-DECIDE reading 3), it collects every hold on the member
 // and drops one carrying an unreleased HOLD or a pending comment.
 func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
@@ -571,14 +901,15 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 		forgeVs, err := host.Verdicts(n, opts)
 		if err != nil {
 			if !in.noRequireHolds {
-				return nil, nil, batchRefused(stderr, fmt.Errorf(
-					"pull request %d's comments and reviews could not be read, and the hold read is on: %w; pass --no-require-holds to merge it anyway and own that", n, err))
+				dropped = append(dropped, n)
+				fmt.Fprintf(stderr, "BATCH DROP #%d reason=\"comments could not be read: %s\"\n", n, oneline.Err(err))
+				continue
 			}
 		} else if !in.noRequireHolds {
 			vs = append(vs, forgeVs...)
 		}
 
-		holds := merge.UnliftedHolds(vs, pr.HeadOID, pr.Author, rs)
+		holds := merge.UnliftedHolds(vs, pr.HeadOID, merge.ReaderAuthor(pr, rs), rs)
 		if len(holds) > 0 {
 			dropped = append(dropped, n)
 			in.holdsCount++
@@ -619,7 +950,7 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
 				"pull request %d could not be read, and --require-checks is on, so this gate cannot tell whether its head has been green on its own: %w; pass --no-require-checks to merge it anyway and own that", n, err))
 		}
-		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO ci-ok. A batch's own branch --
+		// A MEMBER THAT IS ITSELF A GATED TREE NEEDS NO REQUIRED CHECK. A batch's own branch --
 		// rowan/integration-*, the shape this verb builds and nothing else does -- and a
 		// head named by a BATCH OK receipt the caller presented are both evidence the
 		// gate produced; requiring the forge's rollup on top of them would refuse a batch
@@ -643,14 +974,15 @@ func admissible(in *batchRun, stdout, stderr io.Writer, deps Deps, start time.Ti
 			return nil, nil, batchRefused(stderr, fmt.Errorf(
 				"pull request %d's checks could not be read, and --require-checks is on: %w; pass --no-require-checks to merge it anyway and own that", n, err))
 		}
-		state := checkState(checks.ForSHA(pr.HeadOID), batchRequiredCheck)
+		state := checkState(checks.ForSHA(pr.HeadOID), in.checkName)
 		if state == "green" {
 			keep = append(keep, n)
 			continue
 		}
 		dropped = append(dropped, n)
-		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n,
-			fmt.Sprintf("head %s has no green %s (state=%s)", oneline.Field(pr.HeadOID), batchRequiredCheck, oneline.Field(state)), since(start))
+		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q check=%s t=%.1fs\n", n,
+			fmt.Sprintf("head %s has no green %s (state=%s)", oneline.Field(pr.HeadOID), oneline.Field(in.checkName), oneline.Field(state)),
+			oneline.Field(in.checkName), since(start))
 	}
 	return keep, dropped, 0
 }
@@ -733,16 +1065,30 @@ func withBin(env []string, bin string) []string {
 // is the order they will land. A head that will not merge is dropped and said out loud,
 // and the members after it are still judged -- on the tree without it, which is the tree
 // that would land.
-func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
+//
+// heads records each member's fetched head. A member already in it -- the rebuild after
+// the build bisect -- is merged from that commit without a second fetch or hygiene run.
+func mergeMembers(g *merge.Git, in batchRun, prs []int, heads map[int]string, stderr io.Writer, start time.Time) (members, dropped []int, code int) {
 	for _, n := range prs {
-		if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
-			return nil, nil, batchRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
+		if heads[n] == "" {
+			if _, err := g.Run("fetch", "--quiet", "origin", "pull/"+strconv.Itoa(n)+"/head"); err != nil {
+				return nil, nil, batchRefused(stderr, fmt.Errorf("could not fetch pull/%d/head: %w", n, err))
+			}
+			head, err := g.Out("rev-parse", "FETCH_HEAD")
+			if err != nil {
+				return nil, nil, batchRefused(stderr, err)
+			}
+			heads[n] = head
+			if why := memberHygiene(in, n, head, stderr, start); why != "" {
+				dropped = append(dropped, n)
+				fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, why, since(start))
+				continue
+			}
 		}
 		// The merge writes a commit object, so it carries nova-merge's own identity: a CI
 		// runner has no git identity anywhere and `git merge --no-ff` there dies with
 		// "Committer identity unknown" (the Ubuntu leg of #57).
-		message := fmt.Sprintf("merge pull request #%d into %s", n, in.name)
-		_, err := g.Run(merge.Identity("merge", "--no-ff", "--no-edit", "-m", message, "FETCH_HEAD")...)
+		_, err := g.Run(merge.Identity("merge", "--no-ff", "--no-edit", "-m", memberMessage(n, in.name), heads[n])...)
 		if err == nil {
 			members = append(members, n)
 			fmt.Fprintf(stderr, "BATCH MERGED #%d t=%.1fs\n", n, since(start))
@@ -762,6 +1108,294 @@ func mergeMembers(g *merge.Git, in batchRun, prs []int, stderr io.Writer, start 
 		fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", n, "the merge conflicts with the members ahead", since(start))
 	}
 	return members, dropped, 0
+}
+
+// SWARM ADMISSION, HYGIENE AND THE NAMED BUILD BREAK (#1661, SPEC-TOOLWORK §6 rule 7).
+//
+// Three additions, each one conservative about what it refuses:
+//
+//   - A swarm member -- a pull request whose body's first line is the harvest's
+//     `RESULT` line or the accept gate's `ACCEPT` line -- is admitted only when that first
+//     line is an `ACCEPT OK` whose head= is the member's CURRENT head and whose control=
+//     is on file under --accept-control. The rule is armed by --accept-control and only
+//     by it: the accept gate is not yet harvest's default step, so arming it by default
+//     would drop every harvested member the lane lands today. Unarmed, every swarm member
+//     is named on a `BATCH NOTE #<n> accept=unchecked` line, never silently admitted.
+//   - internal/hygiene.Check runs over every member whatever its origin, against the
+//     lane's identities.tsv. With no such file the check is off and says so once
+//     (`BATCH NOTE hygiene=off`); a range checked against nobody would admit anybody.
+//   - When the merged tree does not build, the members are bisected ONCE and the first
+//     member whose merge turns the build red is dropped by name; the gate then runs again
+//     from its first step on the tree without it. A second red is the batch's.
+
+// acceptControlShape is a control id as `nova-pulse accept` prints it: twelve hex.
+var acceptControlShape = regexp.MustCompile(`^[0-9a-f]{12}$`)
+
+// sha12Shape is a head= as the ACCEPT line prints it: at least twelve hex.
+var sha12Shape = regexp.MustCompile(`^[0-9a-f]{12,40}$`)
+
+// identitiesFile is the lane's list of every identity that commits to this repository.
+const identitiesFile = "identities.tsv"
+
+// isSwarmBody reports whether a pull request body is a swarm member's: its first line
+// is the harvest's RESULT line or the accept gate's ACCEPT line.
+func isSwarmBody(body string) bool {
+	line := bodyFirstLine(body)
+	return strings.HasPrefix(line, "RESULT:") || strings.HasPrefix(line, "RESULT ") || strings.HasPrefix(line, "ACCEPT ")
+}
+
+func bodyFirstLine(body string) string {
+	line, _, _ := strings.Cut(strings.ReplaceAll(body, "\r\n", "\n"), "\n")
+	return strings.TrimSpace(line)
+}
+
+// bodyPaths is the card's PATHS line from a swarm member's body, `PATHS a, b` or
+// `PATHS: a, b`; nil when there is none.
+func bodyPaths(body string) []string {
+	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		rest, ok := strings.CutPrefix(line, "PATHS:")
+		if !ok {
+			rest, ok = strings.CutPrefix(line, "PATHS ")
+		}
+		if !ok {
+			continue
+		}
+		var out []string
+		for _, p := range strings.Split(rest, ",") {
+			if p = strings.TrimSpace(p); p != "" {
+				out = append(out, p)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// acceptOK says why a swarm member's first line is not an ACCEPT OK for this head with a
+// control on file, or "" when it is.
+func acceptOK(line, head, controlDir string) string {
+	fields := strings.Fields(line)
+	if len(fields) < 2 || fields[0] != "ACCEPT" || fields[1] != "OK" {
+		return "its first line is not an ACCEPT OK"
+	}
+	kv := map[string]string{}
+	for _, f := range fields[2:] {
+		if k, v, ok := strings.Cut(f, "="); ok {
+			kv[k] = v
+		}
+	}
+	h := strings.ToLower(kv["head"])
+	if !sha12Shape.MatchString(h) || !strings.HasPrefix(strings.ToLower(head), h) {
+		return "its ACCEPT OK names head=" + kv["head"] + ", not this head"
+	}
+	c := kv["control"]
+	if !acceptControlShape.MatchString(c) {
+		return "its ACCEPT OK carries no control id"
+	}
+	// One regular FILE per control id is the passing selftest on file; a directory (or a
+	// symlink to one) named with the id is not, so it is refused like an absent one.
+	if fi, err := os.Stat(filepath.Join(controlDir, c)); err != nil || !fi.Mode().IsRegular() {
+		return "control=" + c + " is not on file under " + controlDir
+	}
+	return ""
+}
+
+// swarmAdmission applies the ACCEPT OK rule to the members admissible kept, and reads
+// each swarm member's PATHS for hygiene. With neither the rule armed nor hygiene on it
+// refuses and drops nothing, so a caller who asked for neither sees the batch it always
+// did, with a NOTE naming each swarm member that went in unchecked.
+func swarmAdmission(in *batchRun, prs []int, stderr io.Writer, deps Deps, start time.Time) (keep, dropped []int, code int) {
+	armed := in.acceptControl != "" || in.identities != nil
+	host := deps.NewHost(in.repo, in.timeout)
+	in.memberPaths = map[int][]string{}
+	for _, n := range prs {
+		pr, err := host.PR(n)
+		if err != nil && !armed {
+			// Neither rule is armed, and the batch it always built is the answer: an
+			// unreadable body costs only the NOTE line, never a refusal.
+			keep = append(keep, n)
+			continue
+		}
+		if err != nil {
+			return nil, nil, batchRefused(stderr, fmt.Errorf(
+				"pull request %d could not be read, so this gate cannot tell whether it is a swarm's member: %w", n, err))
+		}
+		if !isSwarmBody(pr.Body) {
+			keep = append(keep, n)
+			continue
+		}
+		in.memberPaths[n] = bodyPaths(pr.Body)
+		if in.acceptControl == "" {
+			fmt.Fprintf(stderr, "BATCH NOTE #%d accept=unchecked reason=%q t=%.1fs\n", n,
+				"a swarm member, and --accept-control was not given", since(start))
+			keep = append(keep, n)
+			continue
+		}
+		if why := acceptOK(bodyFirstLine(pr.Body), pr.HeadOID, in.acceptControl); why != "" {
+			dropped = append(dropped, n)
+			fmt.Fprintf(stderr, "BATCH DROP #%d reason=\"no ACCEPT OK for head %s\" why=%q t=%.1fs\n",
+				n, oneline.Field(merge.Short(pr.HeadOID)), why, since(start))
+			continue
+		}
+		keep = append(keep, n)
+	}
+	return keep, dropped, 0
+}
+
+// laneIdentities reads the lane's identities.tsv into in.identities: one identity per
+// row, `name<TAB>email` or the pool's `owner<TAB>name<TAB>email`, a header row and `#`
+// lines skipped. No file is hygiene off, said once; a file that names nobody is a
+// refusal, since a range checked against nobody would admit anybody.
+func laneIdentities(in *batchRun, stderr io.Writer, start time.Time) int {
+	path := filepath.Join(in.lane, identitiesFile)
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(stderr, "BATCH NOTE hygiene=off reason=%q t=%.1fs\n",
+			"the lane holds no "+identitiesFile+", so internal/hygiene has no identity set to check members against", since(start))
+		return 0
+	}
+	if err != nil {
+		return batchRefused(stderr, fmt.Errorf("%s could not be read: %w", path, err))
+	}
+	var ids []hygiene.Identity
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
+			continue
+		}
+		cols := strings.Split(line, "\t")
+		if len(cols) < 2 || len(cols) > 3 {
+			return batchRefused(stderr, fmt.Errorf("%s: want name<TAB>email per row, got %q", path, oneline.Field(line)))
+		}
+		name, email := strings.TrimSpace(cols[len(cols)-2]), strings.TrimSpace(cols[len(cols)-1])
+		if name == "name" && email == "email" {
+			continue
+		}
+		if name == "" || email == "" {
+			return batchRefused(stderr, fmt.Errorf("%s: a row with an empty name or email: %q", path, oneline.Field(line)))
+		}
+		ids = append(ids, hygiene.Identity{Name: name, Email: email})
+	}
+	if len(ids) == 0 {
+		return batchRefused(stderr, fmt.Errorf("%s names no identity; a range checked against nobody would admit anybody", path))
+	}
+	in.identities = ids
+	return 0
+}
+
+// memberHygiene runs internal/hygiene.Check over one member's own range and answers the
+// drop reason, or "" when it is clean or hygiene is off. A check that could not run is a
+// drop too: an unchecked member is never admitted as a clean one.
+func memberHygiene(in batchRun, n int, head string, stderr io.Writer, start time.Time) string {
+	if in.identities == nil {
+		return ""
+	}
+	paths := in.memberPaths[n]
+	ctx, cancel := context.WithTimeout(context.Background(), in.timeout)
+	defer cancel()
+	findings, err := hygiene.Check(ctx, hygiene.Options{
+		Repo: in.clone, Base: in.baseSHA, Head: head, Paths: paths, Identities: in.identities,
+	})
+	if err != nil {
+		return "hygiene could not run: " + oneline.Escape(err.Error())
+	}
+	if len(findings) > 0 {
+		why := "hygiene: " + findings[0].String()
+		if len(findings) > 1 {
+			why += fmt.Sprintf(" (and %d more)", len(findings)-1)
+		}
+		return oneline.Cap(why, oneline.TailBytes)
+	}
+	shown := "-"
+	if len(paths) > 0 {
+		shown = strings.Join(paths, ",")
+	}
+	fmt.Fprintf(stderr, "BATCH HYGIENE #%d ok paths=%s t=%.1fs\n", n, oneline.Field(shown), since(start))
+	return ""
+}
+
+// memberMessage is the merge commit's message for one member.
+func memberMessage(n int, name string) string {
+	return fmt.Sprintf("merge pull request #%d into %s", n, name)
+}
+
+// buildReason is the first line of a red build that names the error: go prints a
+// `# <package>` header in front of it, which names where and not what.
+func buildReason(out string, err error) string {
+	for _, line := range strings.Split(dropGoNotices(out), "\n") {
+		if s := strings.TrimSpace(line); s != "" && !strings.HasPrefix(s, "# ") {
+			return s
+		}
+	}
+	return firstLine(out, err)
+}
+
+// bisectBuild names the member that turns the build red. The base must build, the whole
+// batch does not; it finds the shortest prefix of the members, in landing order, that
+// does not build, and its last member is the one. It then rebuilds the branch without
+// that member and answers the members that are left and the new head. culprit 0 is "no
+// member can be named" -- the base is red, or a prefix would not merge again -- and the
+// branch is put back where it was, so the caller fails the batch whole as before.
+func bisectBuild(g *merge.Git, in batchRun, headSHA string, members []int, heads map[int]string, step batchStep, env []string, first string, stderr io.Writer, start time.Time) (culprit int, rest, dropped []int, newHead string, code int) {
+	restore := func(why string) (int, []int, []int, string, int) {
+		fmt.Fprintf(stderr, "BATCH NOTE bisect=none reason=%q t=%.1fs\n", why, since(start))
+		if _, err := g.Run("reset", "--quiet", "--hard", headSHA); err != nil {
+			return 0, nil, nil, "", batchRefused(stderr, err)
+		}
+		return 0, nil, nil, "", 0
+	}
+	probe := func(k int) (green, ok bool) {
+		if _, err := g.Run("reset", "--quiet", "--hard", in.baseSHA); err != nil {
+			return false, false
+		}
+		for _, n := range members[:k] {
+			if _, err := g.Run(merge.Identity("merge", "--no-ff", "--no-edit", "-m", memberMessage(n, in.name), heads[n])...); err != nil {
+				_, _ = g.Run("merge", "--abort")
+				return false, false
+			}
+		}
+		fmt.Fprintf(stderr, "BATCH BISECT %s members=%s t=%.1fs\n", oneline.Field(step.name), oneline.Field(numberList(members[:k])), since(start))
+		_, err := runCheck(in.clone, step.command, in.timeout, env)
+		return err == nil, true
+	}
+	if green, ok := probe(0); !ok || !green {
+		return restore("the base does not build on its own, so no member broke it")
+	}
+	lo, hi := 0, len(members) // prefix lo builds, prefix hi does not
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		green, ok := probe(mid)
+		if !ok {
+			return restore("a prefix of the members would not merge again")
+		}
+		if green {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	culprit = members[hi-1]
+	fmt.Fprintf(stderr, "BATCH DROP #%d reason=%q t=%.1fs\n", culprit,
+		oneline.Cap(step.name+" red with this member merged: "+first, oneline.TailBytes), since(start))
+	if _, err := g.Run("reset", "--quiet", "--hard", in.baseSHA); err != nil {
+		return 0, nil, nil, "", batchRefused(stderr, err)
+	}
+	var without []int
+	for _, n := range members {
+		if n != culprit {
+			without = append(without, n)
+		}
+	}
+	rest, dropped, code = mergeMembers(g, in, without, heads, stderr, start)
+	if code != 0 {
+		return 0, nil, nil, "", code
+	}
+	newHead, err := g.Out("rev-parse", "HEAD")
+	if err != nil {
+		return 0, nil, nil, "", batchRefused(stderr, err)
+	}
+	return culprit, rest, dropped, newHead, 0
 }
 
 // goDirective matches the `go <version>` line of a go.mod.
@@ -840,21 +1474,7 @@ func batchRefused(stderr io.Writer, err error) int {
 // second answer is the directory the program was found in when it was found OFF PATH, so
 // the caller can put that directory in front of the step's own PATH.
 func stepUnavailable(step batchStep, clone string) (why, binDir string) {
-	if step.file != "" {
-		if _, err := os.Stat(filepath.Join(clone, filepath.FromSlash(step.file))); err != nil {
-			return "this checkout holds no " + step.file, ""
-		}
-	}
-	if step.needs != "" {
-		if _, err := exec.LookPath(step.needs); err == nil {
-			return "", ""
-		}
-		if dir := lookInSDK(step.needs); dir != "" {
-			return "", dir
-		}
-		return step.needs + " is not on this machine and is not under " + filepath.Join("~", sdkDir), ""
-	}
-	return "", ""
+	return merge.StepUnavailable(step.toMerge(), clone)
 }
 
 // lookInSDK is the one place off PATH this gate looks: `~/sdk/<anything>/bin/<program>`.
@@ -865,28 +1485,7 @@ func stepUnavailable(step batchStep, clone string) (why, binDir string) {
 // The newest match wins by name, which is how these directories sort: sbcl-2.5.8 after
 // sbcl-2.4.0. A directory that holds no such program is skipped rather than guessed at.
 func lookInSDK(program string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	entries, err := os.ReadDir(filepath.Join(home, sdkDir))
-	if err != nil {
-		return ""
-	}
-	found := ""
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		bin := filepath.Join(home, sdkDir, e.Name(), "bin")
-		for _, name := range []string{program, program + ".exe"} {
-			if info, err := os.Stat(filepath.Join(bin, name)); err == nil && !info.IsDir() {
-				found = bin
-				break
-			}
-		}
-	}
-	return found
+	return merge.LookInSDK(program)
 }
 
 // parsePRList reads the pull request numbers, separated by commas or spaces, in the
@@ -915,7 +1514,9 @@ func parsePRList(raw string) ([]int, error) {
 // ciTestEnv is the environment every step runs in: a temp directory inside the batch's
 // own working directory, and CI's fair share of the machine when the caller named one.
 // GOMAXPROCS is what ci.yml's fair-share step sets and the only environment variable that
-// step sets; a zero share is this process's own, which is every core.
+// step sets; a zero share is this process's own, which is every core. SHLVL=1 is the
+// floor a child bash -u needs so it is not a top-level shell under SSH_CLIENT (#2499
+// item 4); checkChildEnv applies the same floor on the simulate path.
 func ciTestEnv(tmp string, gomaxprocs int) []string {
 	// goenv.Clean FIRST: every step below is a go command whose output this verb
 	// parses into packages and test names, and a caller's GOFLAGS=-json -- which CI's
@@ -926,11 +1527,95 @@ func ciTestEnv(tmp string, gomaxprocs int) []string {
 	if gomaxprocs > 0 {
 		env = append(env, "GOMAXPROCS="+strconv.Itoa(gomaxprocs))
 	}
-	return env
+	return withSaneSHLVL(env)
 }
 
+// writeTestStream keeps the test step's whole captured output, the `go test -json`
+// stream with any notices that shared the pipe, at <root>/test-<round>.jsonl.
+//
+// Round is 1 the first time this root keeps a stream and the next free integer after
+// that. The working directory <root>/<name> is removed at the start of the next run;
+// this file is not inside it, so a re-run does not erase the stream the previous one
+// paid for.
+//
+// THE STREAM USED TO BE DISCARDED. The gate condensed it to one BATCH FAIL reason=
+// line and kept nothing, so a red whose assertion text was the only way to tell a
+// host fault from a tree fault left no --- FAIL block anywhere under the lane (#2626).
+func writeTestStream(root, out string) (string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", fmt.Errorf("the test stream could not be written under %s: %w", root, err)
+	}
+	highest := 0
+	for _, e := range entries {
+		if n, ok := testStreamRound(e.Name()); ok && n > highest {
+			highest = n
+		}
+	}
+	var last error
+	for n := highest + 1; n <= highest+testStreamTries; n++ {
+		path := filepath.Join(root, fmt.Sprintf("test-%d.jsonl", n))
+		// O_EXCL reserves the name. Two batches may share one --root and both
+		// pick test-1.jsonl; a stat and then a truncating write takes the file
+		// the other writer just created, and removing that path on a failed
+		// write deletes their stream. ErrExist is the only retry. The file is
+		// removed only when this call created it and the write or the close failed.
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if errors.Is(err, os.ErrExist) {
+				last = err
+				continue
+			}
+			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, err)
+		}
+		_, werr := io.Copy(f, strings.NewReader(out))
+		cerr := f.Close()
+		if werr != nil || cerr != nil {
+			_ = os.Remove(path)
+			if werr == nil {
+				werr = cerr
+			}
+			return "", fmt.Errorf("the test stream could not be written to %s: %w", path, werr)
+		}
+		return path, nil
+	}
+	if last == nil {
+		last = fmt.Errorf("no free test-<round>.jsonl")
+	}
+	return "", fmt.Errorf("the test stream could not be written under %s: %w", root, last)
+}
+
+// testStreamTries is how many exclusive creates writeTestStream will attempt.
+// One succeeds when this process is the only writer. The rest are ErrExist
+// retries: another batch in the same root took the name.
+const testStreamTries = 32
+
+// testStreamRound reads a round out of test-<round>.jsonl. A leading zero is not a
+// round this writer produces, and it is not one it will skip past.
+func testStreamRound(name string) (int, bool) {
+	rest, ok := strings.CutPrefix(name, "test-")
+	if !ok {
+		return 0, false
+	}
+	rest, ok = strings.CutSuffix(rest, ".jsonl")
+	if !ok || rest == "" || rest[0] == '0' {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	return n, true
+}
+
+// stepReasonBytes is how much of a red step's captured stdout+stderr the BATCH FAIL
+// reason keeps. It is oneline.TailBytes: 500 bytes is a go build's `# package` header
+// and the compiler lines under it, and the mark ...+<n>B says when more was dropped.
+// Named so a reader of the receipt can find the cap (#2499 item 3 / #2508).
+const stepReasonBytes = oneline.TailBytes
+
 // stepFailure is what a red step says: the failing packages, the failing tests, and the
-// one line a reader is pointed at.
+// diagnostic a reader is pointed at.
 //
 // A step whose output is a `go test -json` stream is read as one; a step whose output is
 // text is read as text. The fallback is not a nicety: a build failure writes plain text on
@@ -943,20 +1628,37 @@ func stepFailure(step batchStep, out string, err error) (pkgs, tests []string, r
 		}
 	}
 	pkgs, tests = failuresIn(out)
-	return pkgs, tests, firstLine(dropGoNotices(out), err)
+	return pkgs, tests, stepReason(out, err)
+}
+
+// stepReason is the diagnostic a red non-stream step quotes on BATCH FAIL.
+//
+// firstLine kept only `# package` from a go build, so a gate that failed in
+// bench/tools/realpacket-gen named the package and not `undefined: Foo`
+// (#2499 item 3 / #2508). The child's captured output stays, go notices
+// stripped, capped at stepReasonBytes.
+func stepReason(out string, err error) string {
+	body := strings.TrimSpace(dropGoNotices(out))
+	if body != "" {
+		return oneline.Cap(body, stepReasonBytes)
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return "(no output)"
 }
 
 // goNotice matches the lines the go command writes about ITSELF rather than about the
 // tree: `go: downloading go1.26 (linux/amd64)`, `go: downloading golang.org/x/...`.
 var goNotice = regexp.MustCompile(`^go: (downloading|finding|extracting|upgraded|added|toolchain)\b`)
 
-// dropGoNotices takes those lines off the front of a step's output, so the one line the
+// dropGoNotices takes those lines off the front of a step's output, so the stderr the
 // verdict quotes is THE ERROR and not the progress note in front of it.
 //
 // EDGE 1: a build that failed because the toolchain was too old reported
 // `reason="go: downloading go1.26 (linux/amd64)"`. That line is not a failure, it names
-// nothing to fix, and it was chosen for the verdict only because firstLine takes the
-// first line that says anything. A notice is not the news.
+// nothing to fix, and it was chosen for the verdict only because the first line that
+// said anything was a notice. A notice is not the news.
 func dropGoNotices(out string) string {
 	lines := strings.Split(out, "\n")
 	for i, line := range lines {

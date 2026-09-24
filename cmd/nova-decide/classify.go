@@ -41,6 +41,9 @@ func runClassify(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "classify") {
+			return 0
+		}
 		return refuse(stderr, "CLASSIFY", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {

@@ -79,11 +79,12 @@ jobs:
         run: go test -tags ${{ matrix.tag }} -count=1 ./...
 
   report:
-    # ONE ISSUE PER DAY, not one per leg. The `test` matrix job above is
-    # `failure()` if ANY leg failed, and this job then makes sure there is
-    # exactly one open issue whose title names today: create it if absent,
-    # add a comment pointing at this run if it is already there.
-    needs: test
+    # ONE ISSUE PER DAY, not one per leg. The matrix jobs above are `failure()`
+    # if ANY leg failed, and this job then makes sure there is exactly one open
+    # issue whose title names today: create it if absent, add a comment pointing
+    # at this run if it is already there. EVERY leg job is a `needs:` here — a
+    # leg missing from this list is a leg whose red night nobody reads.
+    needs: [test]
     if: failure()
     runs-on: ubuntu-latest
     timeout-minutes: 5

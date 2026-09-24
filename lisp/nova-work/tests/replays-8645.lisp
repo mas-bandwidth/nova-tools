@@ -326,6 +326,42 @@ a closed node D, under the coordinator scope \"coord\"."
           *intake-visits* (length wide)))))
 
 ;;; ------------------------------------------------------------------
+;;; E02-F03-03 "Never unlink another live process lock or endpoint"
+;;; (docs/roadmaps/nova-work.sexp:619) — docs/SPEC-WORK.md:166:
+;;; a start that cannot take the journal lock refuses and "never unlinks
+;;; another process's lock"; release keeps the `<journal>.lock` file too,
+;;; so a next taker can still name the holder and the file is never
+;;; removed under anyone (the endpoint half is SPEC-WORK.md:174-175,
+;;; where only a socket whose own lock is free and answers nothing is
+;;; unlinked).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F03NeverUnlinkAnotherLiveProcess" "docs/SPEC-WORK.md:166"
+    "expected=refused-taker-never-unlinks-the-lock-file;release-never-unlinks-it"
+  (let* ((path (test-journal-path "never-unlink"))
+         (lock-path (concatenate 'string path ".lock"))
+         (foreign-lock nil))
+    (unwind-protect
+         (progn
+           ;; A first holder takes the journal lock and its lock file appears.
+           (setf foreign-lock (take-journal-lock path :socket "holder.sock"))
+           (ok foreign-lock "a first holder takes the journal lock")
+           (ok (probe-file lock-path)
+               "the holder's lock file exists while the lock is held")
+           ;; A second, refused taker must not unlink the holder's lock file.
+           (ok (null (take-journal-lock path :socket "wanna-be.sock"))
+               "a second taker is refused the held lock")
+           (ok (probe-file lock-path)
+               "the refused taker left the holder's lock file in place")
+           ;; Releasing the lock leaves the file behind, never unlinks it.
+           (release-journal-lock foreign-lock)
+           (ok (probe-file lock-path)
+               "releasing the lock leaves the lock file (never unlinked)"))
+      (release-journal-lock foreign-lock)
+      (ignore-errors (delete-file path))
+      (ignore-errors (delete-file lock-path)))))
+
+;;; ------------------------------------------------------------------
 ;;; TestE01F04ValidateAcceptanceKindSubjectPredicate  docs/SPEC-WORK.md:930-943
 ;;;
 ;;; E01-F04 (ROADMAP.md:236): "Validate acceptance kind, subject, predicate and
@@ -385,6 +421,112 @@ a closed node D, under the coordinator scope \"coord\"."
                "an explicit true is admitted")
   (check-equal nil (nova-work::%seed-required '(:required nil))
                "an explicit nil is admitted")
-  (ok (handler-case (progn (nova-work::%seed-required '(:required :yes)) nil)
-        (error () t))
-      "a truthy non-boolean required flag is refused, never guessed"))
+   (ok (handler-case (progn (nova-work::%seed-required '(:required :yes)) nil)
+         (error () t))
+       "a truthy non-boolean required flag is refused, never guessed"))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02TrackPendingConfirmedAndFailed  docs/SPEC-WORK.md:7576-7581
+;;;
+;;; E09-F02-03 (ROADMAP.md:911): "Track pending, confirmed and failed
+;;; outbound actions with receipts". SPEC-WORK.md:7576-7581 fixes the
+;;; correspondence contract: every outbound action toward a public issue is
+;;; tracked as :pending, :confirmed or :failed under a stable request id and a
+;;; receipt; an uncertain action retried under the same request id is never
+;;; duplicated; and a reopened issue produces a reconciliation signal that
+;;; never erases earlier completion evidence.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE09F02TrackPendingConfirmedAndFailed" "docs/SPEC-WORK.md:7576-7581"
+    "expected=pending-confirmed-failed-with-request-id-and-receipt;idempotent-retry;reopen-reconciles-without-erasing"
+  (let ((l (make-correspondence-ledger)))
+    ;; A started outbound action is :pending, carries its request id, no receipt.
+    (let ((a (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close)))
+      (check-equal :pending (outbound-action-state a) "a started action is pending")
+      (check-equal "req-1" (outbound-action-request a) "the action carries its request id")
+      (ok (null (outbound-action-receipt a)) "a pending action carries no receipt"))
+    ;; Confirmation records the receipt.
+    (let ((a (confirm-outbound l "req-1" "close-receipt-7")))
+      (check-equal :confirmed (outbound-action-state a) "the confirmed close is :confirmed")
+      (check-equal "close-receipt-7" (outbound-action-receipt a)
+                   "the confirmation carries its receipt"))
+    ;; A failed outbound action is :failed with its failure receipt.
+    (start-outbound l :request "req-2" :issue "acme/work#8" :kind :report-fix)
+    (let ((a (fail-outbound l "req-2" "http-500")))
+      (check-equal :failed (outbound-action-state a) "a failed action is :failed")
+      (check-equal "http-500" (outbound-action-receipt a) "the failure carries its receipt"))
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the confirmed state is queryable by request id")
+    (check-equal :failed (outbound-state l "req-2")
+                 "the failed state is queryable by request id")
+    ;; Retrying an uncertain outbound action under the same request id is
+    ;; idempotent: no second entry is recorded.
+    (let ((n (length (correspondence-ledger-actions l))))
+      (start-outbound l :request "req-2" :issue "acme/work#8" :kind :report-fix)
+      (check-equal n (length (correspondence-ledger-actions l))
+                   "retrying an uncertain action writes no second entry"))
+    ;; A reopened issue reconciles: the earlier confirmed close and its receipt
+    ;; survive, and a new pending reconciliation signal is recorded.
+    (let ((r (reopen-ledger l :issue "acme/work#7" :request "req-3")))
+      (check-equal :pending (outbound-action-state r)
+                   "the reopen is a pending reconciliation signal")
+      (check-equal "req-3" (outbound-action-request r)
+                   "the reconciliation carries its own request id"))
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the earlier confirmed close is not erased by the reopen")
+    (check-equal "close-receipt-7" (outbound-receipt l "req-1")
+                 "the earlier completion receipt survives the reopen")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F02RefuseConflictingRequestReuse  docs/SPEC-WORK.md:7576-7581
+;;;
+;;; A retry under a request id is idempotent only when it is the SAME action:
+;;; reusing the id for a different issue, kind or payload is refused with
+;;; OUTBOUND-REQUEST-CONFLICT and records nothing. A terminal outcome is
+;;; immutable: fail after confirm (or a second, different receipt) is refused,
+;;; so the earlier completion evidence survives.
+;;; ------------------------------------------------------------------
+
+(defun %refuses-conflict-p (thunk)
+  (handler-case (progn (funcall thunk) nil)
+    (outbound-request-conflict () t)))
+
+(deftest "TestE09F02RefuseConflictingRequestReuse" "docs/SPEC-WORK.md:7576-7581"
+    "expected=conflicting-request-reuse-refused;terminal-outcome-immutable"
+  (let ((l (make-correspondence-ledger)))
+    (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close
+                      :payload "closing: fixed in abc123")
+    ;; The same action retried is idempotent.
+    (ok (not (%refuses-conflict-p
+              (lambda () (start-outbound l :request "req-1" :issue "acme/work#7"
+                                           :kind :close :payload "closing: fixed in abc123"))))
+        "an identical retry is idempotent, not refused")
+    ;; The same id reused for a different action is refused.
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#9" :kind :close
+                                      :payload "closing: fixed in abc123")))
+        "reusing a request id for a different issue is refused")
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#7" :kind :report-fix
+                                      :payload "closing: fixed in abc123")))
+        "reusing a request id for a different kind is refused")
+    (ok (%refuses-conflict-p
+         (lambda () (start-outbound l :request "req-1" :issue "acme/work#7" :kind :close
+                                      :payload "closing: wontfix")))
+        "reusing a request id for a different payload is refused")
+    (check-equal 1 (length (correspondence-ledger-actions l))
+                 "a refused reuse records nothing")
+    (check-equal "acme/work#7" (outbound-action-issue (first (correspondence-ledger-actions l)))
+                 "the first action is unchanged by a refused reuse")
+    ;; Confirm, then a fail on the same request is refused: the receipt stays.
+    (confirm-outbound l "req-1" "close-receipt-7")
+    (ok (not (%refuses-conflict-p (lambda () (confirm-outbound l "req-1" "close-receipt-7"))))
+        "repeating the same confirmation is idempotent")
+    (ok (%refuses-conflict-p (lambda () (fail-outbound l "req-1" "http-500")))
+        "fail after confirm is refused")
+    (ok (%refuses-conflict-p (lambda () (confirm-outbound l "req-1" "other-receipt")))
+        "a second confirmation with a different receipt is refused")
+    (check-equal :confirmed (outbound-state l "req-1")
+                 "the confirmed outcome survives a refused fail")
+    (check-equal "close-receipt-7" (outbound-receipt l "req-1")
+                 "the completion receipt survives a refused fail")))

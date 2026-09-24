@@ -142,6 +142,12 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	repo := f.fs.String("repo", "", "")
 	base := f.fs.String("base", "", "")
 	entriesPath := f.fs.String("entries", "", "")
+	// --prs is --entries for a caller who has the numbers rather than a file. It is the
+	// same list `batch --pr` takes, in the same order, and it exists because the one
+	// caller that composes this verb -- `integrate` -- would otherwise have to write a
+	// temporary file to say two numbers, and cmd/nova-merge writes no files but the
+	// lane's own (source_test.go).
+	prsRaw := f.fs.String("prs", "", "")
 	checksRaw := f.fs.String("checks", defaultChecks, "")
 	timeoutRaw := f.fs.String("timeout", "5m", "")
 	if !f.parse(args, stderr) {
@@ -155,6 +161,19 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		if err := merge.ValidRefName(*base); err != nil {
 			f.problem(fmt.Sprintf("--base: %s", oneline.Escape(err.Error())))
 		}
+	}
+	// TWO SPELLINGS OF ONE QUEUE IS TWO QUEUES, and a run that took the first would be a
+	// run whose order depends on which flag the caller believed.
+	var prs []int
+	if strings.TrimSpace(*prsRaw) != "" {
+		if strings.TrimSpace(*entriesPath) != "" {
+			f.problem("--entries and --prs are two spellings of one queue; give one")
+		}
+		list, perr := parsePRList(*prsRaw)
+		if perr != nil {
+			f.problem(oneline.Escape(perr.Error()))
+		}
+		prs = list
 	}
 	timeout, err := time.ParseDuration(*timeoutRaw)
 	if err != nil || timeout <= 0 {
@@ -176,7 +195,7 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if err != nil {
 		return simulateRefused(stderr, err)
 	}
-	entries, err := simulateEntries(*entriesPath, *base, repoAbs, timeout, deps)
+	entries, err := simulateEntries(*entriesPath, prs, *base, repoAbs, timeout, deps)
 	if err != nil {
 		return simulateRefused(stderr, err)
 	}
@@ -227,7 +246,7 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		}
 		poisonCheck := ""
 		for _, check := range checks {
-			out, err := runCheck(scratch, check, timeout, nil)
+			out, err := runCheckUntil(scratch, check, timeout, nil, deps.CheckDeadline)
 			if err != nil {
 				poisonCheck = check
 				fmt.Fprintf(stdout, "SIMULATE POISON #%d check=%q %s\n",
@@ -344,7 +363,10 @@ func gitDirOf(repo string, timeout time.Duration, deps Deps) (string, error) {
 
 // simulateEntries reads the queue: a file of numbers where --entries names one, and the
 // live merge queue through gh otherwise.
-func simulateEntries(entriesPath, base, repo string, timeout time.Duration, deps Deps) ([]int, error) {
+func simulateEntries(entriesPath string, prs []int, base, repo string, timeout time.Duration, deps Deps) ([]int, error) {
+	if len(prs) > 0 {
+		return prs, nil
+	}
 	if strings.TrimSpace(entriesPath) != "" {
 		return readEntryFile(entriesPath)
 	}
@@ -438,6 +460,13 @@ func firstLine(out string, err error) string {
 // goenv.Clean plus the credential names Clean still keeps, because the child runs
 // code from the tree under test (#1836).
 func runCheck(dir, check string, timeout time.Duration, env []string) (string, error) {
+	return runCheckUntil(dir, check, timeout, env, nil)
+}
+
+// runCheckUntil is runCheck on an injected clock: deadline is handed the --timeout once the
+// check has started and returns the channel that says it expired. A nil deadline is a real
+// timer of that length, which is every production caller (Deps.CheckDeadline).
+func runCheckUntil(dir, check string, timeout time.Duration, env []string, deadline func(time.Duration) <-chan time.Time) (string, error) {
 	name, args := shellCommand(check)
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
@@ -451,12 +480,18 @@ func runCheck(dir, check string, timeout time.Duration, env []string) (string, e
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+	var expired <-chan time.Time
+	if deadline != nil {
+		expired = deadline(timeout)
+	} else {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		expired = timer.C
+	}
 	select {
 	case err := <-done:
 		return buf.String(), err
-	case <-timer.C:
+	case <-expired:
 		killCheckProcess(cmd)
 		<-done
 		return buf.String(), fmt.Errorf("no answer within the %s --timeout", timeout)
@@ -468,12 +503,19 @@ func runCheck(dir, check string, timeout time.Duration, env []string) (string, e
 // carrying KEY, TOKEN or SECRET; this also drops PASSWORD and WEBHOOK, which are
 // credentials this tree holds (SMTP_PASSWORD, BSKY_APP_PASSWORD, DISCORD_*_WEBHOOK)
 // and which Clean still keeps. The drop is by NAME, never by value (#1836).
+//
+// SHLVL=1: a child bash -u that inherits SHLVL=0 is a top-level shell
+// (shell_level < 2). Under SSH_CLIENT, Debian/Ubuntu bash sources
+// /etc/bash.bashrc, which expands $PS1 under `set -u` and dies
+// (`PS1: unbound variable`). The coordinator exports SHLVL=1 before exec;
+// the tests this verb runs get the same floor. SSH_CLIENT is not stripped
+// (#2499 item 4).
 func checkChildEnv(env []string) []string {
 	if env == nil {
 		env = os.Environ()
 	}
 	cleaned := goenv.Clean(env)
-	out := make([]string, 0, len(cleaned))
+	out := make([]string, 0, len(cleaned)+1)
 	for _, entry := range cleaned {
 		name, _, ok := strings.Cut(entry, "=")
 		if ok && extraCheckSecret(name) {
@@ -481,7 +523,22 @@ func checkChildEnv(env []string) []string {
 		}
 		out = append(out, entry)
 	}
-	return out
+	return withSaneSHLVL(out)
+}
+
+// withSaneSHLVL returns env with exactly one SHLVL=1. A missing or zero SHLVL
+// makes a child bash -u a top-level shell; the coordinator's adopted fix is
+// SHLVL=1, not dropping SSH_CLIENT (#2499 item 4).
+func withSaneSHLVL(env []string) []string {
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, "SHLVL") {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, "SHLVL=1")
 }
 
 func extraCheckSecret(name string) bool {

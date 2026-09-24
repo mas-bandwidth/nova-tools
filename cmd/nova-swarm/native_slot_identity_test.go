@@ -124,8 +124,12 @@ func releaseBarrier(t *testing.T, slot string) {
 
 // nativeArgs is one native launch against a store, as every case here runs it.
 func nativeArgs(harness, card, slot, root, store, deadline string) []string {
-	return []string{"native", "--harness", harness, "--model", "fake/fake-model",
+	return []string{"native", "--tokens", "unmetered", "--harness", harness, "--model", "fake/fake-model",
 		"--label", "shared-label", "--card", card, "--slot", slot, "--root", root,
+		// A DEADLINE SHORTER THAN THE DEFAULT SAMPLE INTERVAL NAMES ITS OWN (rule 13d):
+		// `native` refuses an interval that is not shorter than the deadline, the default is
+		// 5s, and these cases run on deadlines of a second or two.
+		"--usage-interval", "1s",
 		"--deadline", deadline, "--no-wall",
 		"--slots-store", store, "--owner", identityOwner}
 }

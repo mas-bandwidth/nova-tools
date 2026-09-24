@@ -76,7 +76,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	harnessDir := filepath.Dir(bin)
 	if !hasFlagPair(argv, "--read", harnessDir) {
 		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
@@ -131,7 +131,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 		others = append(others, other)
 	}
 	cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}
-	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
 	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
 	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
@@ -181,7 +181,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	if err := os.MkdirAll(goBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv = nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv = nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, flag := range []string{"--read", "--read-noexec", "--write"} {
 		if hasFlagPair(argv, flag, goBin) {
 			t.Errorf("the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
@@ -224,7 +224,7 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "darwin"}
-	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, r := range system {
 		// Every darwin system root is a RUNTIME the card runs, so every one of them is the
 		// exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
@@ -262,7 +262,7 @@ func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir() // empty: not one root exists under it
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for i, a := range argv {
 		if a != "--read" && a != "--read-noexec" {
 			continue
@@ -304,6 +304,8 @@ func aSlot(t *testing.T) (root, slot string) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	return root, slot
 }
 
@@ -407,38 +409,37 @@ func TestNativeRunKillsAtDeadline(t *testing.T) {
 }
 
 // TestNativeRunAuthCopyIs0600: the named provider's entry is copied from the auth file into
-// the data home, mode 0600, and no other provider's entry travels with it.
+// the data home, mode 0600, and no other provider's entry travels with it. Asked of
+// copyAuth itself: the run that carries the copy removes it when the card ends, so after a
+// run there is nothing left to stat (TestNativeAuthCopyIsGoneAfterTheRun).
 func TestNativeRunAuthCopyIs0600(t *testing.T) {
 	windowsIsNotABench(t)
-	bin := nativeHarness(t)
-	root, slot := aSlot(t)
-	auth := filepath.Join(t.TempDir(), "auth.json")
-	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600); err != nil {
+	src := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(src, []byte(`{"fake":"the-fake-secret","other":"the-other-secret"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	var errOut bytes.Buffer
-	_, code := nativeRun(nativeRunConfig{
-		binary: bin, model: "fake/fake-model", label: "lbl",
-		card: []byte("a card\n"), slotDir: slot, root: root, authFile: auth, deadline: 30 * time.Second, noWall: true,
-	}, &errOut)
-	if code != 0 {
-		t.Fatalf("an 0600 auth copy runs, got exit %d:\n%s", code, errOut.String())
+	dataHome := t.TempDir()
+	if reason := copyAuth(src, "fake", dataHome); reason != "" {
+		t.Fatalf("an 0600 auth source copies, got the refusal: %s", reason)
 	}
-	copied := filepath.Join(slot, "data", "auth.json")
-	st, err := os.Stat(copied)
-	if err != nil {
-		t.Fatalf("the auth copy was not written: %v", err)
-	}
-	if st.Mode().Perm() != 0o600 {
-		t.Errorf("the auth copy is mode %04o, want 0600", st.Mode().Perm())
-	}
-	body, err := os.ReadFile(copied)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(body) != `{"fake":"the-fake-secret"}` {
-		t.Errorf("the copy holds only the named provider entry, got %s", body)
+	for _, copied := range []string{
+		filepath.Join(dataHome, "auth.json"),
+		filepath.Join(dataHome, "opencode", "auth.json"),
+	} {
+		st, err := os.Stat(copied)
+		if err != nil {
+			t.Fatalf("the auth copy was not written: %v", err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("the auth copy is mode %04o, want 0600", st.Mode().Perm())
+		}
+		body, err := os.ReadFile(copied)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(body) != `{"fake":"the-fake-secret"}` {
+			t.Errorf("the copy holds only the named provider entry, got %s", body)
+		}
 	}
 }
 
@@ -494,7 +495,7 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if code != 0 {
 			t.Fatalf("the run exits 0, got %d:\n%s", code, errOut.String())
 		}
-		assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+		assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
 		copied := filepath.Join(slot, "data", ".config", "opencode", "opencode.json")
 		st, err := os.Stat(copied)
 		if err != nil {
@@ -512,8 +513,11 @@ func TestNativeCarriesProviderConfig(t *testing.T) {
 		if res.configSHA != wantSHA {
 			t.Errorf("the run records the sha8 of the bytes the child saw: %q, want %q", res.configSHA, wantSHA)
 		}
-		if !strings.Contains(string(body), `"baseURL": "http://localhost:11434/v1"`) {
-			t.Errorf("the carried provider reaches the child:\n%s", body)
+		if !strings.Contains(string(body), `"baseURL": "http://127.0.0.1:`) {
+			t.Errorf("the child dials the read-deadline proxy, not the configured upstream:\n%s", body)
+		}
+		if strings.Contains(string(body), "localhost:11434") {
+			t.Errorf("the child still dials the upstream directly:\n%s", body)
 		}
 		if !strings.Contains(string(body), `"external_directory"`) {
 			t.Errorf("the job's fence rules are in the config the child reads:\n%s", body)
@@ -660,7 +664,10 @@ func TestNativeConfigKeylessProviderAdmitted(t *testing.T) {
 	if res.configSHA != wantSHA {
 		t.Errorf("the run records config sha8 %q, want %q", res.configSHA, wantSHA)
 	}
-	assertConfigRecord(t, slot, "0600", `"baseURL": "http://localhost:11434/v1"`)
+	assertConfigRecord(t, slot, "0600", `"baseURL": "http://127.0.0.1:`)
+	if strings.Contains(string(written), "localhost:11434") {
+		t.Errorf("the child still dials the upstream directly:\n%s", written)
+	}
 }
 
 // TestNativeOKNamesTheCarriedConfig: the NATIVE OK line itself names the config the CHILD
@@ -711,7 +718,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--config", cfgPath, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -744,7 +751,7 @@ func TestNativeOKNamesTheCarriedConfig(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--auth", auth, "--deadline", "30s", "--no-wall"},
 			strings.NewReader(""), &stdout, &stderr, time.Now())
@@ -807,6 +814,38 @@ func TestFriendSequenceLocalModelCard(t *testing.T) {
 	got := strings.TrimPrefix(strings.TrimSpace(string(raw)), "pwd=")
 	if !sameDir(got, jobDir) {
 		t.Errorf("the card's known answer is %q, want the job directory %q", got, jobDir)
+	}
+}
+
+// TestNativeAllowsProviderLoopback: a keyless provider (baseURL, no apiKey) whose baseURL
+// names a loopback host:port is carried into the wall as --net-allow <host:port>, so the
+// harness can reach the local model. The wall's nopromise grant (allow network-outbound
+// (remote ip)) does NOT cover 127.0.0.1, so a local-model card died silently without this
+// named grant (issue #591).
+func TestNativeAllowsProviderLoopback(t *testing.T) {
+	t.Setenv("NOVA_FAKE_SANDBOX", "pass")
+	bin := nativeHarness(t)
+	sandbox := nativeSandbox(t)
+	root, slot := aSlot(t)
+	const config = `{"provider":{"ollama":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}}}}` + "\n"
+	cfgPath := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(cfgPath, []byte(config), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	label := "a-label"
+
+	var errOut bytes.Buffer
+	_, code := nativeRun(nativeRunConfig{
+		binary: bin, model: "ollama/north-mini-code-32k", label: label,
+		card: []byte("a card\n"), slotDir: slot, root: root,
+		configFile: cfgPath, deadline: 30 * time.Second, sandbox: sandbox,
+	}, &errOut)
+	if code != 0 {
+		t.Fatalf("the keyless loopback provider runs walled, got exit %d:\n%s", code, errOut.String())
+	}
+	argv := sandboxArgv(t, filepath.Join(slot, "jobs", label))
+	if !strings.Contains(argv, "--net-allow 127.0.0.1:11434") {
+		t.Errorf("the wall argv does not carry the loopback allow rule:\n%s", argv)
 	}
 }
 
@@ -883,6 +922,7 @@ func TestCmdNativeCLI(t *testing.T) {
 	stderr.Reset()
 	args := []string{
 		"native",
+		"--tokens", "unmetered",
 		"--slots-store", nativeStore(t),
 		"--owner", "fake-1",
 		"--harness", bin,
@@ -1015,6 +1055,8 @@ func TestNativeWalledJobPathWithSpacesCompletes(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	label := "space-cwd"
 
 	var errOut bytes.Buffer
@@ -1062,7 +1104,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -1081,7 +1123,7 @@ func TestNativeOKNamesTheWall(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 			"--label", "lbl", "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -1616,6 +1658,8 @@ func TestNativeRelativeSlotIsAbsolutized(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	orig, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
@@ -1835,7 +1879,7 @@ func TestNativeSilentHarnessIsNotOK(t *testing.T) {
 			if err := os.WriteFile(cardPath, []byte(tc.card), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+			args := []string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 				"--label", label, "--card", cardPath, "--slot", slot, "--root", root,
 				"--deadline", "30s"}
 			if tc.walled {
@@ -1937,7 +1981,7 @@ func TestNativeRefusesAModelThatDiffersFromTheWorkerDescription(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/other-model",
+	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/other-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 2 {
@@ -1973,7 +2017,7 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 	t.Setenv("FAKE_KEY", fakeKey)
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -2007,7 +2051,8 @@ func TestNativeSecretWorkerWritesNoAuthFileAndTheHarnessSeesName(t *testing.T) {
 // ISSUE #881 (b), the legacy half: `--auth` with a `--worker` description whose key is a
 // key_file still copies the provider secret to the data home -- and says so in ONE NOTE
 // line, because a description that named "secret": "<NAME>" would keep the key in the
-// environment instead.
+// environment instead. The copy is the child's for the length of the run and no longer:
+// when the card ends, no auth.json exists on the bench.
 func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	bin := nativeHarness(t)
 	root, slot := aSlot(t)
@@ -2022,15 +2067,64 @@ func TestNativeAuthWithAWorkerNamesItsLegacyCopy(t *testing.T) {
 	desc := nativeWorkerDescription(t, "fake-model", "key_file")
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--worker", desc, "--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
 		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
 	}
 	mustContain(t, "the legacy note", stderr.String(), "NATIVE NOTE: --auth")
-	if _, err := os.Stat(filepath.Join(slot, "data", "auth.json")); err != nil {
-		t.Errorf("the legacy shape still copies the auth file to the data home: %v", err)
+	for _, p := range []string{
+		filepath.Join(slot, "data", "auth.json"),
+		filepath.Join(slot, "data", "opencode", "auth.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("the legacy copy dies with the card, but %s exists after the run", p)
+		}
+	}
+}
+
+// The legacy --auth copy is the child's for the length of the run and no longer: the
+// harness reads it while the card runs -- the capture carries the child's own read of it,
+// by length and never by value -- and when the run ends no auth.json exists on the bench
+// (the bench standard's plaintext-key rule, docs/SPEC-SECRETS.md's dogfooding ten).
+func TestNativeAuthCopyIsGoneAfterTheRun(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	carried := filepath.Join(slot, "data", "auth.json")
+	cardPath := filepath.Join(root, "card.md")
+	card := "a card\nFAKE-CAT " + carried + "\nFAKE-FINDINGS 0\n"
+	if err := os.WriteFile(cardPath, []byte(card), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+		"--auth", auth, "--card", cardPath, "--slot", slot, "--root", root,
+		"--tokens", "unmetered", "--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
+	if rc != 0 {
+		t.Fatalf("the legacy shape runs, exit %d:\n%s%s", rc, stdout.String(), stderr.String())
+	}
+	// THE CHILD READ THE COPY WHILE IT RAN: its own cat of the carried file is in the
+	// capture.
+	capture, err := os.ReadFile(filepath.Join(slot, "jobs", "card", "harness-output.log"))
+	if err != nil {
+		t.Fatalf("the run captured no harness output under the job: %v", err)
+	}
+	mustContain(t, "the harness capture", string(capture), "cat "+carried+": ok len=")
+	// AND NO AUTH.JSON EXISTS AFTER THE CARD: neither the carried copy nor the spelling
+	// beside it.
+	for _, p := range []string{
+		carried,
+		filepath.Join(slot, "data", "opencode", "auth.json"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("no auth.json exists on the bench after a card, but %s exists", p)
+		}
 	}
 }
 
@@ -2127,7 +2221,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/deepseek-v4-flash",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 0 {
@@ -2143,7 +2237,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 		}
 		desc := writeSecretOnly(t)
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/other",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "opencode/other",
 			"--worker", desc, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 2 {
@@ -2180,7 +2274,7 @@ func TestNativeWorkerModelGateComparesQualifiedName(t *testing.T) {
 			t.Fatal(err)
 		}
 		var stdout, stderr bytes.Buffer
-		rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "other/deepseek-v4-flash",
+		rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "other/deepseek-v4-flash",
 			"--worker", descPath, "--card", cardPath, "--slot", slot, "--root", root,
 			"--deadline", "10s", "--no-wall"}, strings.NewReader(""), &stdout, &stderr, time.Now())
 		if rc != 2 {
@@ -2237,13 +2331,15 @@ func TestNativeWalledJobPathWithSpace(t *testing.T) {
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	write(t, filepath.Join(root, "identity.tsv"),
+		"owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	cardPath := filepath.Join(root, "card.md")
 	if err := os.WriteFile(cardPath, []byte("FAKE-PWD\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
 	var stdout, stderr bytes.Buffer
-	rc := run([]string{"native", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
+	rc := run([]string{"native", "--tokens", "unmetered", "--slots-store", nativeStore(t), "--owner", "fake-1", "--harness", bin, "--model", "fake/fake-model",
 		"--label", "space-label", "--card", cardPath, "--slot", slot, "--root", root,
 		"--deadline", "30s", "--sandbox", sandbox}, strings.NewReader(""), &stdout, &stderr, time.Now())
 	if rc != 0 {
@@ -2296,4 +2392,63 @@ func TestNativeHoldsAJobLease(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(jobDir, swarm.JobLeaseName)); !os.IsNotExist(err) {
 		t.Errorf("the lease outlived the run (%v); a finished job must leave nothing that claims to be alive", err)
 	}
+}
+
+// codex-review's hold on #2806: the card owns the data home while it runs, so it can chmod
+// dataHome and dataHome/opencode 0555 and an unlink there fails. The cleanup takes the write
+// bit back and removes both copies; a copy it still cannot remove is returned, and the run
+// fails on it rather than printing a NOTE.
+func TestRemoveAuthCopySurvivesAReadOnlyDataHome(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory mode bits do not gate unlink on windows")
+	}
+	dataHome := t.TempDir()
+	auth := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(auth, []byte(`{"fake":"the-fake-secret"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if reason := copyAuth(auth, "fake", dataHome); reason != "" {
+		t.Fatalf("copyAuth refused: %s", reason)
+	}
+	oc := filepath.Join(dataHome, "opencode")
+	for _, d := range []string{oc, dataHome} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() { _ = os.Chmod(dataHome, 0o755); _ = os.Chmod(oc, 0o755) })
+	var errOut bytes.Buffer
+	if left := removeAuthCopy(dataHome, &errOut); len(left) != 0 {
+		t.Fatalf("a read-only data home kept the auth copy %v:\n%s", left, errOut.String())
+	}
+	for _, p := range []string{filepath.Join(dataHome, "auth.json"), filepath.Join(oc, "auth.json")} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("%s survived the cleanup of a read-only data home", p)
+		}
+	}
+}
+
+// A copy the cleanup cannot remove at all is named, never swallowed: here the card replaced
+// opencode/auth.json with a non-empty directory, which an unlink cannot take.
+func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
+	dataHome := t.TempDir()
+	stuck := filepath.Join(dataHome, "opencode", "auth.json")
+	if err := os.MkdirAll(stuck, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stuck, "key"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dataHome, "auth.json"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var errOut bytes.Buffer
+	left := removeAuthCopy(dataHome, &errOut)
+	if len(left) != 1 || left[0] != stuck {
+		t.Fatalf("the cleanup should name exactly %s as left, got %v", stuck, left)
+	}
+	if _, err := os.Lstat(filepath.Join(dataHome, "auth.json")); !os.IsNotExist(err) {
+		t.Errorf("the removable copy was left beside the stuck one")
+	}
+	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")
 }

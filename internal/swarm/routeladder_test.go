@@ -44,6 +44,21 @@ const routeTestRegistry = `{
   ]
 }`
 
+// routeCallRegistry is routeTestRegistry plus a spent sibling at the bottom
+// height of another lineage. A confirmed failure on that sibling restores the
+// two-rung offer (#1513) without burning low or high, so the four tests that
+// still need a provider call keep the same subject: follow-the-answer,
+// below-floor, provider-refuse, fill-path override.
+const routeCallRegistry = `{
+  "minds": [
+    {"name": "low", "lineage": "vendor", "height": 0, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "vendor/low-1"},
+    {"name": "spent", "lineage": "spent", "height": 0, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "vendor/spent-1"},
+    {"name": "high", "lineage": "vendor", "height": 1, "kinds": [], "lanes": [], "availability": "available", "ask": "card", "model": "vendor/high-1"},
+    {"name": "child", "lineage": "house", "height": 2, "kinds": [], "lanes": [], "availability": "available", "ask": "child"},
+    {"name": "guardian", "lineage": "house", "height": 3, "kinds": ["guard", "fresh-take"], "lanes": ["security"], "availability": "reserved", "ask": "bus"}
+  ]
+}`
+
 func routeTestReg(t *testing.T) *decide.Registry {
 	t.Helper()
 	reg, err := decide.ParseRegistry([]byte(routeTestRegistry))
@@ -53,13 +68,30 @@ func routeTestReg(t *testing.T) *decide.Registry {
 	return reg
 }
 
+func routeCallReg(t *testing.T) *decide.Registry {
+	t.Helper()
+	reg, err := decide.ParseRegistry([]byte(routeCallRegistry))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reg
+}
+
 func routeTestNow() time.Time { return time.Date(2026, 9, 19, 0, 0, 0, 0, time.UTC) }
 
-// routeTestUnit is one mechanical unit of work: the kind starts at the bottom
-// rung, so the offered set is the two card rungs and there is a decision to
-// make.
+// routeTestUnit is one mechanical unit of work with nothing confirmed-failed.
+// The kind starts at the bottom rung; with no confirmed failure the supported
+// rung is offered alone, so there is no decision to ask (#1513).
 func routeTestUnit(id string) decide.Unit {
 	return decide.Unit{ID: id, Kind: decide.KindRebase, Files: 4, Packages: 1, Lanes: 1}
+}
+
+// routeTestUnitAllowedToAsk is routeTestUnit after a confirmed failure on the
+// spent sibling. That restores the two-rung offer of low and high without
+// burning either, so a test that still needs a provider call has a subject
+// that is allowed to make one. The spent mind lives in routeCallRegistry.
+func routeTestUnitAllowedToAsk(id string) decide.Unit {
+	return AfterGateFailure(routeTestUnit(id), "spent", "the spent sibling missed it")
 }
 
 // jevFake is the provider, strict the way the real endpoint is: a POST with a
@@ -131,6 +163,63 @@ func canListen(t *testing.T) bool {
 	return true
 }
 
+// TestRouteCardOnAMechanicalKindMakesNoCallUntilAConfirmedFailure: #1513 at
+// the swarm fill seam. A mechanical unit with nothing confirmed-failed is
+// offered its supported rung alone, so RouteCard must not reach the provider;
+// a confirmed failure restores the two-rung offer and the call is made.
+func TestRouteCardOnAMechanicalKindMakesNoCallUntilAConfirmedFailure(t *testing.T) {
+	dir := t.TempDir()
+	usage := filepath.Join(dir, "usage.tsv")
+	calls := 0
+	in := RouteInput{
+		Registry: routeTestReg(t),
+		Floor:    0.9,
+		Log:      filepath.Join(dir, "decide.jsonl"),
+		Usage:    usage,
+		Now:      routeTestNow,
+		Decide: func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+			calls++
+			return nil, decide.Usage{}, fmt.Errorf("a mechanical kind with nothing confirmed-failed must not reach the provider")
+		},
+	}
+	got := RouteCard(context.Background(), in, routeTestUnit("card-mech"), "vendor/low-1")
+	if calls != 0 {
+		t.Fatalf("a mechanical kind with nothing confirmed-failed is offered its supported rung alone, so no decision is asked; the provider was called %d time(s)", calls)
+	}
+	if got.Model != "vendor/low-1" {
+		t.Fatalf("model %q; with no call the card keeps today's model", got.Model)
+	}
+	if _, err := os.Stat(usage); err == nil {
+		t.Fatal("a decision that made no call wrote a usage row; an empty row is a claim that a call was made")
+	}
+
+	// The other half: a confirmed failure restores the offer, and the provider
+	// is asked once. AfterGateFailure burns the bottom card rung; the call is
+	// the fact under test, not which remaining rung the fake names.
+	calls = 0
+	failed := AfterGateFailure(routeTestUnit("card-mech-failed"), "low", "the card rung missed it")
+	in.Decide = func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
+		calls++
+		q, ok := qs[decide.RungQuestion]
+		if !ok || q.Choice == nil {
+			return nil, decide.Usage{}, fmt.Errorf("the rung decision carries no rung question")
+		}
+		options := make([]string, 0, len(q.Choice))
+		for name := range q.Choice {
+			options = append(options, name)
+		}
+		return map[string]decide.Answer{decide.RungQuestion: {Type: "choice", Choice: lowestOption(options), Confidence: 0.97}},
+			decide.Usage{InputTokens: 900, HasInput: true, OutputTokens: 0, HasOutput: true}, nil
+	}
+	second := RouteCard(context.Background(), in, failed, "vendor/low-1")
+	if calls != 1 {
+		t.Fatalf("a confirmed failure restores the step-up offer; the provider was called %d time(s), want 1", calls)
+	}
+	if second.Source != decide.SourceJev {
+		t.Fatalf("source=%q, want %q once a confirmed failure has restored the offer", second.Source, decide.SourceJev)
+	}
+}
+
 // TestRouteCardFollowsTheAnswer: the model a card is dispatched with is the
 // one the ladder's answer names, not the one the fill script wrote in the TSV.
 func TestRouteCardFollowsTheAnswer(t *testing.T) {
@@ -149,14 +238,14 @@ func TestRouteCardFollowsTheAnswer(t *testing.T) {
 	}
 	dir := t.TempDir()
 	in := RouteInput{
-		Registry: routeTestReg(t),
+		Registry: routeCallReg(t),
 		Decide:   client.Decide,
 		Floor:    0.9,
 		Log:      filepath.Join(dir, "decide.jsonl"),
 		Usage:    filepath.Join(dir, "usage.tsv"),
 		Now:      routeTestNow,
 	}
-	got := RouteCard(context.Background(), in, routeTestUnit("card-1"), "vendor/low-1")
+	got := RouteCard(context.Background(), in, routeTestUnitAllowedToAsk("card-1"), "vendor/low-1")
 	if got.Model != "vendor/high-1" {
 		t.Fatalf("the card was dispatched with %q; the answer named the high rung, so the model must follow it", got.Model)
 	}
@@ -203,13 +292,13 @@ func TestRouteCardBelowTheFloorKeepsTodaysModel(t *testing.T) {
 	}
 	dir := t.TempDir()
 	got := RouteCard(context.Background(), RouteInput{
-		Registry: routeTestReg(t),
+		Registry: routeCallReg(t),
 		Decide:   client.Decide,
 		Floor:    0.9,
 		Log:      filepath.Join(dir, "decide.jsonl"),
 		Usage:    filepath.Join(dir, "usage.tsv"),
 		Now:      routeTestNow,
-	}, routeTestUnit("card-2"), "vendor/low-1")
+	}, routeTestUnitAllowedToAsk("card-2"), "vendor/low-1")
 	if got.Model != "vendor/low-1" {
 		t.Fatalf("model %q; below the floor the card keeps today's model", got.Model)
 	}
@@ -259,13 +348,13 @@ func TestRouteCardKeepsTodaysModelWhenTheProviderRefuses(t *testing.T) {
 	dir := t.TempDir()
 	usagePath := filepath.Join(dir, "usage.tsv")
 	got := RouteCard(context.Background(), RouteInput{
-		Registry: routeTestReg(t),
+		Registry: routeCallReg(t),
 		Decide:   client.Decide,
 		Floor:    0.9,
 		Log:      filepath.Join(dir, "decide.jsonl"),
 		Usage:    usagePath,
 		Now:      routeTestNow,
-	}, routeTestUnit("card-4"), "vendor/low-1")
+	}, routeTestUnitAllowedToAsk("card-4"), "vendor/low-1")
 	if got.Model != "vendor/low-1" {
 		t.Fatalf("model %q; a provider refusal leaves today's model standing", got.Model)
 	}
@@ -434,11 +523,15 @@ func TestRouteCardsOnTheFillPathOverridesTheTSVModel(t *testing.T) {
 	if cards[1].routable {
 		t.Fatalf("a card naming no kind was typed anyway: %+v", cards[1].unit)
 	}
+	// KIND: rebase is mechanical; a confirmed failure on the spent sibling
+	// restores the two-rung offer so this path can still prove the TSV is
+	// the fallback and the ladder's answer is the model (#1513).
+	cards[0].unit = AfterGateFailure(cards[0].unit, "spent", "the spent sibling missed it")
 	var stderr strings.Builder
 	in := BatchInput{
 		Stderr: &stderr,
 		Route: &RouteInput{
-			Registry: routeTestReg(t), Floor: 0.9, Now: routeTestNow,
+			Registry: routeCallReg(t), Floor: 0.9, Now: routeTestNow,
 			Log: filepath.Join(dir, "decide.jsonl"), Usage: filepath.Join(dir, "usage.tsv"),
 			Decide: func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
 				// What crosses the boundary is the bucketed projection and

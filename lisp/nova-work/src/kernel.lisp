@@ -21,7 +21,16 @@
 (in-package #:nova-work)
 
 (defstruct (kernel (:constructor %make-kernel))
-  state journal next-rev fleet routes allocations
+  state journal next-rev
+  ;; The CONFIG/ACTIVE registries are NOT kernel slots: they live on the state
+  ;; (src/state.lisp) so a `replay-journal` reconstruction of them is visible
+  ;; through the same readers after a restart (nova-tools#1695), and the
+  ;; kernel reads them through KERNEL-FLEET, KERNEL-ROUTES and
+  ;; KERNEL-ALLOCATIONS below.
+  ;; The read-time needs view the session installs: the evidence, generations,
+  ;; responsible rows and engaged ids rule 1/rule 5 read, which the tree itself
+  ;; does not hold (src/needs.lisp). NIL where no session has supplied one.
+  needs-view
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -38,7 +47,26 @@
   ;; The operator-configured verifiers, one per recipient identity. CONFIG the
   ;; session holds beside the fleet and the routes; a receipt is admitted only
   ;; after one of them vouches (SPEC-WORK.md:3859, src/receipt-admission.lisp).
-  verifiers)
+  verifiers
+  ;; The counter that names a CONFIG/ACTIVE request the caller did not name:
+  ;; request ids are the caller's (SPEC-WORK.md:315), and an unnamed one is
+  ;; still unique per run so two of them never collide as a reuse.
+  (config-seq 0))
+
+(defun kernel-fleet (kernel)
+  "The fleet section of CONFIG. It lives on the kernel's state, so the half a
+`replay-journal` reconstruction rebuilt is the half this reads
+(nova-tools#1695)."
+  (wstate-fleet (kernel-state kernel)))
+
+(defun kernel-routes (kernel)
+  "The model routes of CONFIG, held beside the fleet (SPEC-WORK.md:2289)."
+  (wstate-routes (kernel-state kernel)))
+
+(defun kernel-allocations (kernel)
+  "The fleet's ACTIVE half: the one allocator per physical machine and the
+allocations and observations it holds (SPEC-WORK.md:3592-3731)."
+  (wstate-allocations (kernel-state kernel)))
 
 (defvar *before-apply-hook* nil
   "A test seam. When bound, it is called with the envelope after the journal has
@@ -51,7 +79,7 @@ the answer back to the caller; BEFORE-APPLY-HOOK is the captured dynamic value
 of *BEFORE-APPLY-HOOK* at submit time, since special bindings are thread-local."
   request before-apply-hook results error done-p lock cvar)
 
-(defun make-kernel (&key state journal rev-base (friends '()))
+(defun make-kernel (&key state journal rev-base (friends '()) needs-view)
   "REV-BASE defaults to one past the state's own revision, so a kernel opened
 over a reconstructed state issues no id the history already holds
 (SPEC-WORK.md:1216-1218 keys a closed row <event-rev>:<id>; :1578 allows
@@ -62,19 +90,14 @@ below the state's revision is refused rather than silently reissued."
       (error 'unsupported-input
              :what (format nil "rev-base ~D is at or below the state's own revision ~D"
                            rev-base (state-revision state))))
+    ;; The CONFIG/ACTIVE registries come with the state (src/state.lisp); all
+    ;; make-kernel adds is the team's own `friends` list, the one CONFIG the
+    ;; session is opened with (SPEC-WORK.md:3459).
+    (setf (fleet-friends (wstate-fleet state)) (copy-list friends))
     (let ((k (%make-kernel :state state
                            :journal (or journal (make-ordering-journal))
                            :next-rev (or rev-base (1+ (state-revision state)))
-                           ;; The fleet is CONFIG supplied to the session, never a
-                           ;; constant in the tool; see src/fleet.lisp.
-                           :fleet (make-fleet :friends friends)
-                           ;; The model route registry is CONFIG supplied/held by
-                           ;; the session beside the fleet; see src/routes.lisp.
-                           :routes (make-route-registry)
-                           ;; The fleet's ACTIVE half: one authoritative allocator
-                           ;; per physical machine and the allocations it holds,
-                           ;; never CONFIG; see src/fleet.lisp.
-                           :allocations (make-fleet-registry)
+                           :needs-view needs-view
                            :controls (make-ctl)
                            ;; The operator-configured verifiers a receipt needs
                            ;; (SPEC-WORK.md:3859); see receipt-admission.lisp.
@@ -110,6 +133,19 @@ below the state's revision is refused rather than silently reissued."
                       :request :stamp :clock :generation-owner)
     (:node-remove :verb :node :by :reason :request :stamp :clock :generation-owner)
     (:event-cancel :verb :node :by :reason :request :stamp :clock :generation-owner)
+    ;; `dep --add`/`dep --remove` (SPEC-WORK.md:987, :2362): one `:structure`
+    ;; event whose `:add` or `:remove` names the edge (nova-tools#1673, #785).
+    (:dep :verb :node :by :add :remove :reason
+          :request :stamp :clock :generation-owner)
+    ;; The scope and ordering verbs (E03-F03, SPEC-WORK.md:2929): one event of
+    ;; their own kind each, see %scope-submit in node-verbs.lisp.
+    (:node-require :verb :node :by :to :reason
+                   :request :stamp :clock :generation-owner)
+    (:baseline :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:discovery :verb :node :by :members :reason
+                :request :stamp :clock :generation-owner)
+    (:prioritise :verb :node :by :change :context :rank :reason
+                 :request :stamp :clock :generation-owner)
     ;; The two receipt verbs (SPEC-WORK.md:2295-2296). :staged carries the
     ;; immutable stage the readers produced outside the mutation loop; :lease-by
     ;; and :lease-default are the CLI's --by and --default, renamed here because
@@ -219,13 +255,16 @@ reason or evidence; done/deferred leave only via reopen, never state.")
                     (not (and (stringp reason) (plusp (length reason))))
                     (or (absentp evidence) (null evidence)))
            (return-from %validate (values 10 "unknown to doing requires evidence or a reason"))))
-       ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
-       ;; dependent: a node with a need that is not terminal accepted cannot be
-       ;; taken into doing, and the refusal names the blocking node.
-       (let ((blocker (%dependency-blocker state id)))
-         (when blocker
-           (return-from %validate
-             (values 10 (format nil "~A needs ~A, which is not settled" id blocker))))))
+        ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
+        ;; dependent: a node with a need that is not terminal accepted cannot be
+        ;; taken into doing, and the refusal names the blocking node.
+        ;; SPEC-WORK.md:4869 (rule 3): the refusal says "unmet need <id> <reason>"
+        ;; with no rule number.
+        (multiple-value-bind (blocker reason) (%dependency-blocker-with-reason state id)
+          (when blocker
+            (return-from %validate
+              (values 0 (format nil "unmet need ~A ~A"
+                                blocker (string-downcase (symbol-name reason))))))))
       (:state-to-done
        (unless (eq :o (wnode-branch node))
          (return-from %validate (values 10 (format nil "~A is in C" id))))
@@ -358,30 +397,31 @@ command loop is a defect)."
     (:redo-plan (return-from %submit (%submit-redo-plan kernel request)))
     (:external-effect (return-from %submit (%submit-external kernel request)))
     (:node-remove (return-from %submit (%submit-terminal kernel request :node-remove :removed)))
-    (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled))))
+    (:event-cancel (return-from %submit (%submit-terminal kernel request :event-cancel :cancelled)))
+    ;; `dep` is a structure verb and a WRITER, not an admission verb
+    ;; (SPEC-WORK.md:2362): one journaled `:structure` event edits one `:deps`
+    ;; reference edge. See dep-verb.lisp.
+    (:dep (return-from %submit (%dep-submit kernel request)))
+    ;; The scope verbs and `prioritise` (E03-F03, SPEC-WORK.md:2929): WRITERS
+    ;; on this one thread, each a journaled event of its own kind that
+    ;; `apply-event` replays. See %scope-submit in node-verbs.lisp.
+    ((:node-require :baseline :discovery :prioritise)
+     (return-from %submit (%scope-submit kernel request))))
   (let ((verb (getf request :verb)))
-    ;; The one verb that configures the fleet (SPEC-WORK.md:3541) is CONFIG,
-    ;; not a work-tree transition: it shares `submit`'s answer shape but never
-    ;; touches the root, its counters or its history.
-    (when (eq verb :machine)
-      (return-from %submit (machine-submit kernel request)))
-    ;; The one verb that configures the model routes (SPEC-WORK.md:2289, *Model
-    ;; routes*) is CONFIG too: it writes a `:kind :route` member beside the
-    ;; fleet and never touches the root, its counters or its history.
-    (when (eq verb :route)
-      (return-from %submit (route-submit kernel request)))
-    ;; The fleet's ACTIVE half (SPEC-WORK.md:3592-3731): `take`, `heartbeat`,
-    ;; `release` and `probe` are verbs over the one allocator per machine. They
-    ;; write ACTIVE allocation records and observations, never CONFIG members
-    ;; and never the work tree.
-    (when (eq verb :take)
-      (return-from %submit (fleet-take-submit kernel request)))
-    (when (eq verb :heartbeat)
-      (return-from %submit (fleet-heartbeat-submit kernel request)))
-    (when (eq verb :release)
-      (return-from %submit (fleet-release-submit kernel request)))
-    (when (eq verb :probe)
-      (return-from %submit (fleet-probe-submit kernel request)))
+    ;; THE SIX CONFIG/ACTIVE VERBS (nova-tools#1695): the one verb that
+    ;; configures the fleet (SPEC-WORK.md:3541), the one verb that configures
+    ;; the model routes (SPEC-WORK.md:2289), and the fleet's ACTIVE half,
+    ;; `take`, `heartbeat`, `release` and `probe` (SPEC-WORK.md:3592-3731).
+    ;; They share `submit`'s answer shape, they are CONFIG and ACTIVE and
+    ;; never work -- no root, counter, roadmap or required set moves -- but
+    ;; they are MUTATIONS of the one writer all the same, and they go through
+    ;; the journal's dedup, acceptance and record like every other: on dev
+    ;; they returned here before all three, so nothing they wrote survived a
+    ;; restart and a retry was answered by a mutable precondition (`connect
+    ;; held by m1`) instead of the recorded disposition SPEC-WORK.md:315
+    ;; promises. See %submit-config.
+    (when (member verb '(:machine :route :take :heartbeat :release :probe))
+      (return-from %submit (%submit-config kernel request)))
     ;; The savepoint capture (SPEC-WORK.md:7161): a READ on the command thread.
     ;; It writes no event, appends nothing and moves no revision; it exists so
     ;; the image and the cut are taken at one revision under the single writer.
@@ -445,13 +485,17 @@ command loop is a defect)."
                  (values nil (format nil "~A FAIL request=~A: reused with a different payload"
                                      word rid)
                          1 nil))))))
-      ;; Validate against the current state as it would be with the event applied.
-      (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
-        (when rule
-          (return-from %submit
-            (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
-                                word (work-event-node requester) rule reason)
-                    1 nil))))
+       ;; Validate against the current state as it would be with the event applied.
+       (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
+         (when rule
+           (return-from %submit
+             (if (zerop rule)
+                 (values nil (format nil "~A FAIL node=~A: ~A"
+                                     word (work-event-node requester) reason)
+                         1 nil)
+                 (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
+                                     word (work-event-node requester) rule reason)
+                         1 nil)))))
       (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
              (session (unless (eq verb :state-to-doing)
                         (%session-event kernel verb requester)))
@@ -488,6 +532,206 @@ command loop is a defect)."
                   (list :verb verb :node (work-event-node requester)
                         :before-state before-state :request request))
             (values t line 0 envelope)))))))
+
+;;; ------------------------------------------------------------------
+;;; The six CONFIG/ACTIVE verbs on the journal (nova-tools#1695)
+;;; ------------------------------------------------------------------
+;;;
+;;; `machine`, `route`, `take`, `heartbeat`, `release` and `probe` used to
+;;; answer from six branches that returned before the dedup lookup, before
+;;; `journal-accept` and before `journal-record`, so nothing they mutated
+;;; reached the journal: nothing survived a restart, and a retry of the same
+;;; request id was answered by a mutable precondition -- `connect held by m1`
+;;; -- instead of the recorded disposition SPEC-WORK.md:315 promises. They run
+;;; through the same three doors as every other mutation now. The dedup is
+;;; asked FIRST, on the stable payload the event carries, before any mutable
+;;; precondition can be reached; acceptance is asked before the verb runs so a
+;;; journal that cannot record refuses before anything mutates; the record is
+;;; written once the verb answered OK, before the OK line leaves the writer.
+;;; The verbs' own bodies (src/fleet.lisp, src/routes.lisp) validate whole
+;;; before their first write, so a refusal mutates nothing and records
+;;; nothing. Their events are of kinds of their own field lists
+;;; (src/state.lisp), and the replay half that rebuilds the CONFIG and
+;;; ACTIVE halves from them lives with `apply-event` there.
+
+(defun %config-verb-word (verb)
+  "The leading word each of the six verbs prints, used by the journal-level
+refusals the verbs share with the work path's shape."
+  (ecase verb
+    (:machine "MACHINE")
+    (:route "ROUTE")
+    ((:take :heartbeat :release) "ALLOC")
+    (:probe "PROBE")))
+
+(defun %config-verb-kind (verb)
+  "The event kind each of the six verbs writes. :machine and :route are
+CONFIG members; :allocation and :probe are the ACTIVE half's records and
+observations."
+  (ecase verb
+    (:machine :machine)
+    (:route :route)
+    ((:take :heartbeat :release) :allocation)
+    (:probe :probe)))
+
+(defun %config-request-field (request field)
+  "The request's value for one event field. A boolean given as T is written
+:TRUE, the restricted-data boolean's own spelling (src/value.lisp), because T
+is not a value the journal's printer can write; every other value passes as
+given, and a field the caller did not give is `(:absent)`."
+  (let ((value (getf request field +absent+)))
+    (if (eq value t) :true value)))
+
+(defun %config-event (kernel request verb)
+  "One event of the verb's own kind, built from the request BEFORE anything is
+asked of the journal or mutated, so the two-part retry of SPEC-WORK.md:315
+reads a stable payload and not a mutable precondition. Its :rev is the state's
+current revision, so neither the live path nor a replay moves the work
+revision a CONFIG or ACTIVE event was never allowed to move. The request id is
+the caller's; an unnamed one is numbered per run so two of them never collide
+as a reuse."
+  (make-work-event
+   :kind (%config-verb-kind verb)
+   :node +absent+
+   :by (or (getf request :by) "rowan")
+   :fields (let ((fields (loop for field in (kind-fields (%config-verb-kind verb))
+                               append (list field
+                                            (%config-request-field request field)))))
+             ;; `take`, `heartbeat` and `release` are three verbs of the one
+             ;; :allocation kind: the change each performed is the verb itself,
+             ;; which no request carries as a field, so the event says it.
+             (when (member verb '(:take :heartbeat :release))
+               (setf (getf fields :change) verb))
+             fields)
+   :stamp (getf request :stamp)
+   :clock (getf request :clock)
+   :request (or (getf request :request)
+                (format nil "~A-~D" (%config-verb-word verb)
+                        (incf (kernel-config-seq kernel))))
+   :generation-owner (getf request :generation-owner)
+   :rev (state-revision (kernel-state kernel))
+   :session-written-p nil))
+
+(defun %submit-config (kernel request)
+  "One of the six CONFIG/ACTIVE verbs through the journal's dedup, acceptance
+and record (nova-tools#1695). Answers the verb's own values on every path, so
+the verb's contract with its callers is unchanged."
+  (let* ((verb (getf request :verb))
+         (word (%config-verb-word verb))
+         (event (%config-event kernel request verb))
+         (rid (work-event-request event))
+         (digest (payload-digest (list event)))
+         (journal (kernel-journal kernel)))
+    ;; The two-part dedup test (SPEC-WORK.md:315), asked of the journal before
+    ;; the verb runs, so no mutable precondition can answer a retry.
+    (multiple-value-bind (found recorded-digest recorded-line)
+        (journal-lookup journal rid)
+      (cond
+        ((eq found :unavailable)
+         (return-from %submit-config
+           (values nil (format nil "~A FAIL request=~A page=~A: dedup unavailable"
+                               word rid recorded-digest)
+                   1 nil)))
+        (found
+         (if (string= digest recorded-digest)
+             (return-from %submit-config
+               (values t recorded-line 0
+                       (list :request rid :digest digest :events '() :replayed t)))
+             (return-from %submit-config
+               (values nil (format nil "~A FAIL request=~A: reused with a different payload"
+                                   word rid)
+                       1 nil))))))
+    ;; Acceptance before anything mutates: a journal that cannot record this
+    ;; envelope refuses here, and the verb is never reached.
+    (multiple-value-bind (accepted refusal)
+        (journal-accept journal
+                         (list :request rid :digest digest :events (list event)))
+      (unless accepted
+        (return-from %submit-config
+          (values nil (format nil "~A FAIL request=~A: journal refused acceptance: ~A"
+                              word rid refusal)
+                  1 nil))))
+    ;; The verb runs on a STAGED copy of the three CONFIG/ACTIVE registries
+    ;; and the staged state is installed only once the record is durable
+    ;; (SPEC-WORK.md:307, the record-then-apply order the work path keeps
+    ;; above). The OK line the journal records is the verb's own answer, so
+    ;; the record cannot precede the verb; staging keeps the live state
+    ;; untouched until it has. A record that fails -- an append or a sync
+    ;; error -- or a verb that refuses or signals unwinds to the live state
+    ;; exactly as it was: no CONFIG member or ACTIVE allocation is ever live
+    ;; without its journaled event (#2880 HOLD).
+    (let ((live (kernel-state kernel))
+          (committed nil))
+      (unwind-protect
+           (progn
+             (setf (kernel-state kernel) (%stage-config-state live))
+             (multiple-value-bind (ok line code verb-event)
+                 (ecase verb
+                   (:machine (machine-submit kernel request))
+                   (:route (route-submit kernel request))
+                   (:take (fleet-take-submit kernel request))
+                   (:heartbeat (fleet-heartbeat-submit kernel request))
+                   (:release (fleet-release-submit kernel request))
+                   (:probe (fleet-probe-submit kernel request)))
+               (cond
+                 (ok
+                  ;; Durable first; only then does the staged state become
+                  ;; the live one and the OK line leave the writer.
+                  (journal-record journal rid digest line (work-event-rev event))
+                  (setf committed t)
+                  (values t line 0 verb-event))
+                 (t
+                  ;; Refused: the staged copy is dropped, the acceptance the
+                  ;; journal holds is dropped rather than recorded, and the
+                  ;; journal stays as it was.
+                  (when (typep journal 'file-journal)
+                    (setf (journal-pending-envelope journal) nil))
+                  (values nil line code nil)))))
+        (unless committed
+          (setf (kernel-state kernel) live))))))
+
+(defun %stage-copy (object seen)
+  "A deep copy of OBJECT for staging a CONFIG/ACTIVE verb: conses, hash tables
+and structure instances are copied, and everything else -- strings, numbers,
+symbols -- is shared, since no verb mutates one in place. SEEN maps each
+already-copied hash table and structure to its copy, so an object reached by
+two paths (an allocation record named from two places) stays one object in
+the copy."
+  (typecase object
+    (cons
+     (cons (%stage-copy (car object) seen)
+           (%stage-copy (cdr object) seen)))
+    (hash-table
+     (or (gethash object seen)
+         (let ((copy (make-hash-table :test (hash-table-test object)
+                                      :size (max 1 (hash-table-count object)))))
+           (setf (gethash object seen) copy)
+           (maphash (lambda (key value)
+                      (setf (gethash key copy) (%stage-copy value seen)))
+                    object)
+           copy)))
+    (structure-object
+     (or (gethash object seen)
+         (let ((copy (copy-structure object)))
+           (setf (gethash object seen) copy)
+           (dolist (slot (sb-mop:class-slots (class-of object)))
+             (let ((name (sb-mop:slot-definition-name slot)))
+               (setf (slot-value copy name)
+                     (%stage-copy (slot-value object name) seen))))
+           copy)))
+    (t object)))
+
+(defun %stage-config-state (state)
+  "A candidate state for one CONFIG/ACTIVE verb (#2880 HOLD): STATE's own
+work tree, carried as it is (no such verb touches it), beside deep copies of
+the fleet, the routes and the allocations, which are all the six verbs write.
+The verb mutates the copies; %submit-config installs the candidate only after
+the verb's record is durable, and otherwise keeps STATE, untouched."
+  (let ((staged (copy-wstate state))
+        (seen (make-hash-table :test #'eq)))
+    (setf (wstate-fleet staged) (%stage-copy (wstate-fleet state) seen)
+          (wstate-routes staged) (%stage-copy (wstate-routes state) seen)
+          (wstate-allocations staged) (%stage-copy (wstate-allocations state) seen))
+    staged))
 
 ;;; The counters, read.
 
@@ -560,7 +804,7 @@ rollup, no scan, no parse and no replay: nothing below touches a node."
     (let* ((state (kernel-state kernel))
            (open (wstate-root-open state))
            (scope (wstate-revision state))
-           (unit "items"))
+           (unit "leaves"))
       (values open unit scope
               ;; The two counts are what THIS ask measured, not a literal.
               (format nil "QUERY OK ask=size scope=~D unit=~A open=~D parses=~D replays=~D"
@@ -721,14 +965,18 @@ event kind, its ordered field list and its subject (SPEC-WORK.md:2960)."
 
 (defstruct (prompt-profile
              (:constructor make-prompt-profile
-                 (&key name pointer digest policy-version evidence expiry owner)))
+                 (&key name pointer digest policy-version evidence expiry owner
+                       model harness work-type)))
   name       ; display name, selected at start and never swapped mid-session
   pointer    ; a file path in the repository, never inline
   digest     ; the SHA-256 of the prompt content the path resolved to
   policy-version
   evidence   ; a dated measurement, or :UNKNOWN where none has been taken
   expiry     ; the date after which the profile is stale
-  owner)
+  owner
+  model      ; the manager model identity (e.g. "sonnet", "opus", "sol")
+  harness    ; the harness identity (e.g. "claude-cli", "codex-cli")
+  work-type) ; the work-type label (e.g. "task", "review")
 
 (defun prompt-profile-state (profile &key content-digest today)
   "The status line's `profile-state=`: absent when no profile is named, mismatch
@@ -765,5 +1013,132 @@ unknown bytes (SPEC-WORK.md:3366)."
               (format nil "SESSION FAIL session=~A profile=~A: digest mismatch"
                       (or session "-") (prompt-profile-name profile))
               1)
-      (values t "SESSION OK" 0)))
+       (values t "SESSION OK" 0)))
+
+;;; ------------------------------------------------------------------
+;;; prompt-profile unique-triple invariant and versioned edit grammar
+;;; (SPEC-WORK.md:3349-3376)
+;;; ------------------------------------------------------------------
+
+(defstruct (profile-registry
+             (:constructor make-profile-registry (&key (profiles nil) (journal nil))))
+  "A registry of prompt profiles keyed by name. No two profiles hold one
+model, harness and work-type triple (SPEC-WORK.md:3350-3353). The journal
+records every edit as a versioned event (SPEC-WORK.md:3372-3376)."
+  profiles
+  journal)
+
+(defstruct (profile-edit-record
+             (:constructor make-profile-edit-record
+                 (&key profile-name version fields by stamp)))
+  "One versioned record of a profile edit. The edit grammar is one new versioned
+record with :by, naming the profile and stating the fields it changes, never
+an in-place rewrite (SPEC-WORK.md:3372-3376)."
+  profile-name
+  version
+  fields
+  by
+  stamp)
+
+(defun profile-triple (profile)
+  "The (model, harness, work-type) identity triple of a profile."
+  (list (prompt-profile-model profile)
+        (prompt-profile-harness profile)
+        (prompt-profile-work-type profile)))
+
+(defun profile-registry-find-triple (registry triple)
+  "Find a profile in REGISTRY whose triple matches TRIPLE, or NIL."
+  (find-if (lambda (p) (equal (profile-triple p) triple))
+           (profile-registry-profiles registry)))
+
+(defun profile-registry-find (registry name)
+  "Find a profile in REGISTRY by NAME, or NIL."
+  (find name (profile-registry-profiles registry)
+        :key #'prompt-profile-name :test #'string=))
+
+(defun register-profile (registry profile &key (by "coordinator") (stamp ""))
+  "Register PROFILE in REGISTRY. Refuses if another profile already holds the
+same (model, harness, work-type) triple (SPEC-WORK.md:3350-3353)."
+  (let* ((triple (profile-triple profile))
+         (existing (profile-registry-find-triple registry triple)))
+    (if existing
+        (values nil
+                (format nil "PROFILE FAIL name=~A: triple ~S already held by ~A"
+                        (prompt-profile-name profile) triple
+                        (prompt-profile-name existing)))
+        (progn
+          (push profile (profile-registry-profiles registry))
+          (values t
+                  (format nil "PROFILE OK name=~A triple=~S by=~A"
+                          (prompt-profile-name profile) triple by))))))
+
+(defun profile-edit (registry profile-name &key pointer digest policy-version
+                      evidence expiry owner by stamp)
+  "Edit a profile in REGISTRY by creating one new versioned record with :by,
+stating the fields it changes. Never an in-place rewrite (SPEC-WORK.md:3372-3376)."
+  (let* ((profile (profile-registry-find registry profile-name)))
+    (unless profile
+      (return-from profile-edit
+        (values nil
+                (format nil "PROFILE EDIT FAIL name=~A: no such profile"
+                        profile-name)
+                nil)))
+    (let* ((prior-edits (count-if (lambda (r)
+                                    (string= (profile-edit-record-profile-name r)
+                                             profile-name))
+                                  (profile-registry-journal registry)))
+           (version (1+ prior-edits))
+           (changed-fields '()))
+      (when pointer
+        (push :pointer changed-fields) (push pointer changed-fields))
+      (when digest
+        (push :digest changed-fields) (push digest changed-fields))
+      (when policy-version
+        (push :policy-version changed-fields) (push policy-version changed-fields))
+      (when evidence
+        (push :evidence changed-fields) (push evidence changed-fields))
+      (when expiry
+        (push :expiry changed-fields) (push expiry changed-fields))
+      (when owner
+        (push :owner changed-fields) (push owner changed-fields))
+      (when (null changed-fields)
+        (return-from profile-edit
+          (values nil
+                  (format nil "PROFILE EDIT FAIL name=~A: no fields to change"
+                          profile-name)
+                  nil)))
+      (let ((updated (make-prompt-profile
+                      :name (prompt-profile-name profile)
+                      :pointer (or pointer (prompt-profile-pointer profile))
+                      :digest (or digest (prompt-profile-digest profile))
+                      :policy-version (or policy-version
+                                          (prompt-profile-policy-version profile))
+                      :evidence (or evidence (prompt-profile-evidence profile))
+                      :expiry (or expiry (prompt-profile-expiry profile))
+                      :owner (or owner (prompt-profile-owner profile))
+                      :model (prompt-profile-model profile)
+                      :harness (prompt-profile-harness profile)
+                      :work-type (prompt-profile-work-type profile))))
+        (setf (profile-registry-profiles registry)
+              (cons updated (remove-if (lambda (p)
+                                         (string= (prompt-profile-name p)
+                                                  profile-name))
+                                       (profile-registry-profiles registry))))
+        (let ((record (make-profile-edit-record
+                       :profile-name profile-name
+                       :version version
+                       :fields changed-fields
+                       :by (or by "coordinator")
+                       :stamp (or stamp ""))))
+          (push record (profile-registry-journal registry))
+          (values t record updated))))))
+
+(defun profile-edit-journal (registry &key profile-name)
+  "Return the edit journal, optionally filtered by PROFILE-NAME."
+  (if profile-name
+      (remove-if-not (lambda (r)
+                       (string= (profile-edit-record-profile-name r)
+                                profile-name))
+                     (profile-registry-journal registry))
+      (profile-registry-journal registry)))
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -49,7 +50,7 @@ flags:
   --pub <age1…>        the new seat's age public key, from its own keygen receipt (seat add only)
   --from <seat>        a seat this machine can open, whose values are re-sealed (seat add only)
   --stdin              read the value from stdin instead of the terminal (seal only)
-  --no-pr              stop after the commit; make no gh call (seal only)
+  --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal only)
   --gh <path>          path to the gh executable (seal only, default: gh)
   --git <path>         path to the git executable (seal only, default: git)
 
@@ -89,6 +90,16 @@ var disallowedVerbs = map[string]string{
 	"session":    "not supported. Every call opens the file again; a cached plaintext is a plaintext with a lifetime nobody is watching.",
 }
 
+// sopsIdentityEnv is every variable in sops' documented age identity lookup. None of
+// them reaches the command exec starts.
+var sopsIdentityEnv = []string{
+	"SOPS_AGE_KEY_FILE",
+	"SOPS_AGE_KEY",
+	"SOPS_AGE_KEY_CMD",
+	"SOPS_AGE_SSH_PRIVATE_KEY_FILE",
+	"SOPS_KEYSERVICE",
+}
+
 type stringSlice []string
 
 func (s *stringSlice) String() string {
@@ -98,6 +109,71 @@ func (s *stringSlice) String() string {
 func (s *stringSlice) Set(val string) error {
 	*s = append(*s, val)
 	return nil
+}
+
+// redisWidthWriteVerbs are the redis-cli spellings that write or remove a
+// string key. redis takes its command names in any case; the width key is a
+// string, so the hash and list writes are not this set.
+var redisWidthWriteVerbs = map[string]bool{
+	"set": true, "setnx": true, "setex": true, "psetex": true, "getset": true,
+	"mset": true, "msetnx": true, "del": true, "unlink": true,
+}
+
+// friendWidthName reports the friend a token names as its working column,
+// friend:<name>:width -- the sprint table's key -- or "" when it is not that
+// key (nova-tools#2676).
+func friendWidthName(tok string) string {
+	if !strings.HasPrefix(tok, "friend:") || !strings.HasSuffix(tok, ":width") {
+		return ""
+	}
+	name := strings.TrimSuffix(strings.TrimPrefix(tok, "friend:"), ":width")
+	if !secrets.IsValidAsName(name) {
+		return ""
+	}
+	return name
+}
+
+// refusedWidthHandWrite is the one command exec refuses for a reason that is
+// another tool's law (nova-tools#2676): redis-cli writing
+// friend:<name>:width, the sprint table's working column. That column is the
+// friend's own tool's to write -- nova-wake beat --width (#2673), the
+// coordinator's from the number of its live child agents -- and the hand-write
+// of it reached the store only because the store held REDISCLI_AUTH. Reads of
+// the key still run: the table's working column reads exactly that key.
+func refusedWidthHandWrite(cmdArgs []string) error {
+	base := filepath.Base(cmdArgs[0])
+	if base != "redis-cli" && base != "redis-cli.exe" {
+		return nil
+	}
+	writes, name, width := false, "", "<n>"
+	for i := 1; i < len(cmdArgs); i++ {
+		tok := cmdArgs[i]
+		if redisWidthWriteVerbs[strings.ToLower(tok)] {
+			writes = true
+		}
+		if n := friendWidthName(tok); n != "" {
+			name = n
+			if i+1 < len(cmdArgs) && allDigits(cmdArgs[i+1]) {
+				width = cmdArgs[i+1]
+			}
+		}
+	}
+	if !writes || name == "" {
+		return nil
+	}
+	return fmt.Errorf("redis-cli writing friend:%s:width is the sprint table's working column written by hand through nova-secrets exec; that key is the friend's own tool's to write, never a redis-cli line; run: nova-wake beat --width %s (nova-tools #2673)", name, width)
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func main() {
@@ -189,6 +265,14 @@ func runExecCLI(args []string) {
 		os.Exit(125)
 	}
 
+	// nova-tools#2676: the sprint table's working column is the friend's own
+	// tool's to write, never a redis-cli line through this exec; the
+	// hand-write of it went through because the store held REDISCLI_AUTH.
+	if err := refusedWidthHandWrite(cmdArgs); err != nil {
+		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL %s\n", oneline.Err(err))
+		os.Exit(125)
+	}
+
 	fs := flag.NewFlagSet("exec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
@@ -208,6 +292,26 @@ func runExecCLI(args []string) {
 	if len(fs.Args()) > 0 {
 		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: unexpected argument %q before '--'\n", oneline.Field(fs.Args()[0]))
 		os.Exit(125)
+	}
+
+	// A .git that is a FILE is a worktree or a submodule: its real repository lives
+	// elsewhere, so HEAD and the tracking ref read here would not be the store's. Refuse
+	// naming that fact, the sentence check prints, not "no .git directory" (SPEC-SECRETS
+	// test 20).
+	if *storeFlag != "" {
+		if fi, err := os.Lstat(*storeFlag + string(os.PathSeparator) + ".git"); err == nil && !fi.IsDir() {
+			fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL store %s: .git is a file (a worktree or submodule); expected a directory working copy\n", oneline.Escape(*storeFlag))
+			os.Exit(125)
+		}
+	}
+
+	// sops' identity lookup is defeated for the command as well as for the sops child:
+	// every variable in it is dropped from this process before anything runs, so the
+	// command, which this process becomes, never inherits a route to another key
+	// (SPEC-SECRETS test 2). The sops child's environment is built, not edited, inside
+	// the package.
+	for _, name := range sopsIdentityEnv {
+		_ = os.Unsetenv(name)
 	}
 
 	code, err := secrets.RunExec(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *onlyFlag, requireFlags, cmdArgs)
@@ -318,7 +422,11 @@ func runGateCLI(args []string) {
 		Head:         *headFlag,
 		MachinesPath: *machinesFlag,
 	})
-	fmt.Println(line)
+	if code != 0 {
+		fmt.Fprintln(os.Stderr, line)
+	} else {
+		fmt.Println(line)
+	}
 	os.Exit(code)
 }
 
@@ -508,7 +616,7 @@ func runSealCLI(args []string) {
 	ghFlag := fs.String("gh", "gh", "gh path")
 	gitFlag := fs.String("git", "git", "git path")
 	stdinFlag := fs.Bool("stdin", false, "read value from stdin")
-	noPRFlag := fs.Bool("no-pr", false, "stop after commit")
+	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
 
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))

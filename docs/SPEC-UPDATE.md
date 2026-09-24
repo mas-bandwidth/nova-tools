@@ -26,7 +26,7 @@ reads the counts in the morning; the tool has no clock of its own — no daemon,
 no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
-`nova-version snapshot --file <manifest>` reads the adopted rule-2 manifest and reports its entry count on a single `SNAPSHOT OK known=<n> file=<path>` line. A directory scan would count every `nova-*` executable found there — 32 where the person adopted 16 — so the verb reports the manifest, never a scan.
+`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the single `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, exit 1 when any adopted tool is unknown — the adopted 16, never how many `nova-*` executables sit on a bin dir or PATH (Stella, #622). A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4). The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
 
 ## The rules, numbered
 
@@ -395,10 +395,10 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
-nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--dry-run] [--timeout <d>]
-nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--timeout <d>]
+nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
+nova-update release build --version <v> --out <dir> --source <dir> [--platform <goos-goarch>,...] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--timeout <d>]
 nova-update release install --from <dir> --version <v> --bin <dir> [--retire <dir>] [--platform <goos-goarch>] [--timeout <d>]
-nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
+nova-update release adopt [--version <v>] --machines <file> --ssh <path> --from <dir|host:dir> --bin <dir> --dest <dir> [--stage <dir> --repo <owner/name> | --stage <dir> --expect-sums <sha256> | --stage <dir> --expect-sums-from <file>] [--retire <dir>] [--platform <goos-goarch>] (--certify <machines.tsv> --certs <file> --standard <file> | --no-certify) [--dry-run] [--timeout <d>]
 nova-update release pull --version <v> --out <dir> --changelog <path> [--machines <file> --ssh <path> --dest <dir>] [--reason <text>] [--platform <goos-goarch>] [--dry-run] [--timeout <d>]
 nova-update help
 ```
@@ -409,9 +409,11 @@ in the binary, so the spec and the help cannot drift apart; the five `release` l
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
-name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>` reports
-the adopted manifest, not every executable on PATH (the opening paragraph);
-its `help` prints those three lines the same way.
+name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>`
+counts the adopted tools the manifest names (the opening paragraph), while snapshot's
+`--bin/--out` shape inventories a directory and `diff` compares two inventories: its
+`help` prints those lines the same way, snapshot's `--file` reading the adopted manifest
+where report's `--snapshot <path>` option is the recovery state file.
 `nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
 Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
 
@@ -549,7 +551,12 @@ something it could have known, or hid what it was about to do:
   action=…` line each, nothing streamed and nothing installed. A plan composed without
   asking is a plan about a fleet somebody remembers rather than the one that exists.
 - **`adopt` streams only what a machine does not already have.** It reads that machine's
-  own `SHA256SUMS` first; if it matches, nothing is sent. The receipt carries `sent=yes|no`
+  own `SHA256SUMS` first and then verifies every named artifact against it. "Already holds"
+  prints the verified count (`22/22`), never an existence check: a directory whose checksum
+  file matches but that is missing a file, or carrying a corrupt one, is re-streamed. The
+  stream lands in `<version>.partial/` and is renamed into place only after that verify
+  passes, so a killed transfer cannot leave a final directory the next adopt would trust.
+  The receipt carries `sent=yes|no`
   **separately from** `skipped=`, because they are two different facts: `sent=` is the
   stream, `skipped=` is the tools. A machine can be `sent=no tools=0 skipped=21` — it had
   everything already — or `sent=yes tools=21`. The install runs either way: the bits being

@@ -111,6 +111,24 @@ func HarvestWorking(in HarvestInput) int {
 		if _, err := os.Stat(filepath.Join(j.dir, ".harvested")); err == nil {
 			continue
 		}
+		if in.Commit {
+			if _, err := CommitJob(CommitJobInput{
+				JobDir:       j.dir,
+				BranchPrefix: in.BranchPrefix,
+				DefaultBase:  in.Base,
+				MaxFileSize:  MaxChangedFileBytes,
+				Clones:       in.Clones,
+				Stdout:       in.Stdout,
+			}); err != nil {
+				if in.Stderr != nil {
+					fmt.Fprintf(in.Stderr, "HARVEST COMMIT ERROR label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
+				}
+				counts[classFailed]++
+				line := r.jobLine(j, classFailed, "-", "-", "-")
+				list.Line(line)
+				continue
+			}
+		}
 		out := r.one(j)
 		counts[out.class]++
 		pushed += out.pushed
@@ -182,7 +200,7 @@ func (out workingOutcome) with(class jobClass) workingOutcome {
 // one disposes exactly one job by its own two lines and the typed class.
 func (r *workingRun) one(j harvestJob) workingOutcome {
 	clone := cloneDir(j.dir)
-	body, err := os.ReadFile(filepath.Join(j.dir, "RESULT.md"))
+	body, err := readResult(filepath.Join(j.dir, "RESULT.md"))
 	if err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, "-", "-", "-")}
 	}
@@ -247,7 +265,12 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 	// is resolved on purpose: a job that leaks a key AND names a destination nobody
 	// dispatched must still be quarantined, and a refusal that returned first would have
 	// left the key where it was.
-	findings, scanErr := secretFindings(j.dir, clone, r.base12+"..HEAD", lines)
+	report := readJobReport(j.dir)
+	prov := extractProvenanceFromDir(j.dir, "", r.in.Bench, lines)
+	fullBody := constructPRBody(lines, report, prov)
+	bodyLines := strings.Split(fullBody, "\n")
+
+	findings, scanErr := secretFindings(j.dir, clone, r.base12+"..HEAD", bodyLines)
 	if scanErr != nil {
 		fmt.Fprintln(r.in.Stderr, secretScanRefusalLine("harvest-working", j.label, scanErr))
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
@@ -288,6 +311,14 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
 	if err := staleBaseRefusal(clone, dest.url, target, "HEAD", globs, declared); err != nil {
+		// Same typed remedy as Harvest and harvest --bench (#2648). The diff
+		// head is the checkout, so the refusal records Branch as HEAD. The
+		// bookkeeping ref the other paths drop is refs/harvest/<branch>, and
+		// that name is the BRANCH field already in hand, not the sentence.
+		if sb, ok := err.(*StaleBaseRefusal); ok && strings.TrimSpace(branch) != "" {
+			sb.Branch = branch
+		}
+		remedyStaleBase(err, j.label, []string{clone})
 		fmt.Fprintf(r.in.Stderr, "HARVEST REFUSED label=%s: %s\n", oneline.Field(j.label), oneline.Err(err))
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit)}
 	}
@@ -316,14 +347,15 @@ func (r *workingRun) one(j harvestJob) workingOutcome {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, dash(strconv.Itoa(pr.Number)), commit)}
 	}
 
+	prBody := boundPRBody(fullBody, r.in.MaxBodyBytes)
 	prNum := 0
 	if found {
-		if _, err := runChild(clone, nil, "gh", "pr", "edit", strconv.Itoa(pr.Number), "-R", dest.repo, "--body-file", "-"); err != nil {
+		if _, err := runChild(clone, strings.NewReader(prBody), "gh", "pr", "edit", strconv.Itoa(pr.Number), "-R", dest.repo, "--body-file", "-"); err != nil {
 			return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, strconv.Itoa(pr.Number), commit), pushed: 1}
 		}
 		prNum = pr.Number
 	} else {
-		out, err := runChild(clone, strings.NewReader(strings.Join(lines, "\n")), "gh", "pr", "create", "-R", dest.repo, "--draft", "--head", branch, "--title", j.label, "--body-file", "-")
+		out, err := runChild(clone, strings.NewReader(prBody), "gh", "pr", "create", "-R", dest.repo, "--draft", "--head", branch, "--title", j.label, "--body-file", "-")
 		if err != nil {
 			return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, branch, "-", commit), pushed: 1}
 		}

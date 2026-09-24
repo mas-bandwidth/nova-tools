@@ -111,6 +111,11 @@ func truthy(f Form) bool {
 // open, and --done can still name it.
 var doneWords = map[string]bool{"closed": true, "done": true, "landed": true, "merged": true}
 
+// doneStates are A4's three terminal states. They are the same three the
+// attempt writer refuses to file a further attempt under, named once so the two
+// answers cannot drift apart.
+var doneStates = map[string]bool{"closed": true, "refused": true, "abandoned": true}
+
 // Options is what Check needs from outside the language. Every one of them is
 // optional, and an absent one turns its rule OFF rather than inventing a default:
 // there is no default minds file, no default lanes file and no discovery.
@@ -128,6 +133,11 @@ type Options struct {
 	// Done names units that are done regardless of what the file says, for a
 	// caller that holds the settled facts the document does not.
 	Done map[string]bool
+	// Evidence is the verdict of a unit's evaluated :acceptance (set check
+	// --evaluate, #2664). A unit it names is done exactly when the value is true
+	// -- the criteria replace what :done and :status say -- and a unit it does
+	// not name keeps the document's own word. Done still adds on top.
+	Evidence map[string]bool
 }
 
 // Finding is one thing wrong with the CONTENT of a work set: the rule that caught
@@ -265,7 +275,7 @@ func (w *WorkSet) Check(opts Options) ([]Finding, Counts) {
 	}
 
 	counts := Counts{Units: len(w.Units)}
-	done := w.DoneSet(opts.Done)
+	done := w.Decided(opts)
 	for _, u := range w.Units {
 		if u.Owner() != "" {
 			counts.Owned++
@@ -289,16 +299,33 @@ func (w *WorkSet) Check(opts Options) ([]Finding, Counts) {
 // set is mechanical -- a function of the language and the settled facts, never of
 // anyone's judgment.
 func (w *WorkSet) DoneSet(extra map[string]bool) map[string]bool {
+	return w.Decided(Options{Done: extra})
+}
+
+// Decided is DoneSet with the evaluated evidence beside it: a unit Evidence names
+// is done when its criteria hold, whatever its :status says; every other unit is
+// done by its own word; opts.Done adds to both.
+func (w *WorkSet) Decided(opts Options) map[string]bool {
 	done := map[string]bool{}
 	for _, u := range w.Units {
 		if u.ID == "" {
 			continue
 		}
-		if u.Done() || doneWords[strings.ToLower(u.Status())] || extra[u.ID] {
+		// A4's three endings count as done beside the older :status and :done
+		// spellings. The amendment gave the language a :state, and a unit whose
+		// state says it is closed, refused or abandoned is finished in exactly
+		// the sense readiness means -- nothing may be pulled from it. `uncertain`
+		// is deliberately NOT one of them: it is a unit that is still holding
+		// its reservation, not a unit that is over.
+		said := u.Done() || doneWords[strings.ToLower(u.Status())] || doneStates[u.State()]
+		if held, evaluated := opts.Evidence[u.ID]; evaluated {
+			said = held
+		}
+		if said || opts.Done[u.ID] {
 			done[u.ID] = true
 		}
 	}
-	for id := range extra {
+	for id := range opts.Done {
 		done[id] = true
 	}
 	return done
@@ -320,7 +347,12 @@ func (w *WorkSet) unmet(u Unit, done map[string]bool) string {
 // need is done, in written order. It is what a coordinator asks the language for --
 // "what can be pulled right now" -- and it is derived, never maintained by hand.
 func (w *WorkSet) Ready(extra map[string]bool) []Unit {
-	done := w.DoneSet(extra)
+	return w.ReadyFrom(w.DoneSet(extra))
+}
+
+// ReadyFrom is Ready over a done set the caller already decided -- Decided's,
+// when the done set came from evidence rather than from the document's words.
+func (w *WorkSet) ReadyFrom(done map[string]bool) []Unit {
 	var out []Unit
 	for _, u := range w.Units {
 		if u.ID == "" || done[u.ID] {
