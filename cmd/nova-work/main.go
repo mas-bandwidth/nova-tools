@@ -468,6 +468,7 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"next":         cmdNext,
 	"ask":          cmdAsk,
 	"asks":         cmdAsks,
+	"proving-run":  cmdProvingRun,
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a
