@@ -24,7 +24,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye and wake a friend's presence; report a friend state, show friends, or run one ladder sweep",
+		Summary: "hello, bye, wake and roles for a friend; report a friend state, show friends, or run one ladder sweep",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -36,7 +36,7 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, wake, report, show, sweep, down or up")
+		return refuse(errOut, "friend", "want hello, bye, wake, roles, report, show, sweep, down or up")
 	}
 	switch args[0] {
 	case "hello":
@@ -45,6 +45,8 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFriendBye(ctx, args[1:], out, errOut)
 	case "wake":
 		return runFriendWake(ctx, args[1:], out, errOut)
+	case "roles":
+		return runFriendRoles(ctx, args[1:], out, errOut)
 	case "report":
 		return runFriendReport(ctx, args[1:], out, errOut)
 	case "show":
@@ -56,7 +58,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "up":
 		return runFriendDown(ctx, false, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, report, show, sweep, down or up", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, roles, report, show, sweep, down or up", args[0]))
 	}
 }
 

@@ -24,9 +24,9 @@
 --   DEDUP     the friend already holds the read identity (repo, PR, full
 --             head) or posted a typed line at that head (spec 5.7 (6))
 --
--- ns_redistribute_from is the reconciler's redistribution run by hand for one
+-- ns_redistribute_from is a hand redistribution for one
 -- friend f: args = f, reason, to ('' = route by kind), kinds (csv, '' = all),
--- may-hold readers (csv), builders (csv), coordinator, actor, idem. The same
+-- actor, idem. The role roster is read from Redis in this call. The same
 -- rd_route the tick uses moves each open task; every moved title carries
 -- `[moved from <f>: <reason>]`. f's leases are closed only when f is out of
 -- credits or has no beat (the tick's rule), never for an up friend. With
@@ -37,7 +37,9 @@
 
 local fs_clear = NS.friend.fs_clear
 local RD = NS.redistribute
-local RD_OUT, RD_WAKE_TTL_MS = RD.RD_OUT, RD.RD_WAKE_TTL_MS
+local RD_OUT = RD.RD_OUT
+local FR = NS.friend_roles
+local fr_actor, fr_has_role, fr_roster = FR.fr_actor, FR.fr_has_role, FR.fr_roster
 local rd_author, rd_caplog, rd_close_leases, rd_csv = RD.rd_author, RD.rd_caplog, RD.rd_close_leases, RD.rd_csv
 local rd_dedup, rd_free, rd_log, rd_mark = RD.rd_dedup, RD.rd_free, RD.rd_log, RD.rd_mark
 local rd_move_open, rd_note_held, rd_now_ms, rd_open_sprints = RD.rd_move_open, RD.rd_note_held, RD.rd_now_ms, RD.rd_open_sprints
@@ -50,7 +52,6 @@ local function ra_wake(woken, at, actor, idem, why)
     local wake = 'friend:' .. g .. ':wake'
     redis.call('LPUSH', wake, tostring(at) .. ':' .. why)
     redis.call('LTRIM', wake, 0, 0)
-    redis.call('PEXPIRE', wake, RD_WAKE_TTL_MS)
     rd_caplog('friend-wake', g, why, actor, idem, at)
   end
 end
@@ -76,6 +77,7 @@ local function ra_assign_one(ctx, id, g)
   local S = ctx.S
   local key = 's:' .. S .. ':task:' .. id
   local state = redis.call('HGET', key, 'state')
+  local kind = redis.call('HGET', key, 'kind') or 'work'
   local status, detail = nil, ''
   if not state then
     status = 'NOTFOUND'
@@ -85,6 +87,11 @@ local function ra_assign_one(ctx, id, g)
     status, detail = 'LIVE', 'owner=' .. (redis.call('HGET', key, 'owner') or '') .. ' needs assign --revoke'
   elseif state ~= 'open' then
     status, detail = 'CLOSED', 'state=' .. state
+  end
+  if not status then
+    local eligible = (kind == 'read' or kind == 'review') and fr_has_role(g, 'may-hold') or
+      ((kind ~= 'read' and kind ~= 'review') and (fr_has_role(g, 'builder') or fr_has_role(g, 'coordinator')))
+    if not eligible then status, detail = 'NOROUTE', 'target has no role for ' .. kind end
   end
   local from = nil
   local score = nil
@@ -100,7 +107,6 @@ local function ra_assign_one(ctx, id, g)
     status = 'DOWN'
   end
   if not status then
-    local kind = redis.call('HGET', key, 'kind') or 'work'
     if kind == 'read' or kind == 'review' then
       if rd_author(S, key) == g then
         status = 'AUTHOR'
@@ -141,6 +147,8 @@ end
 
 local function assign_batch(keys, args)
   local S, reason, actor, idem = args[1], args[2], args[3], args[4]
+  local actor_err = fr_actor(actor)
+  if actor_err then return actor_err end
   if not S or S == '' or (#args - 4) % 2 ~= 0 then
     return { 'INVALID' }
   end
@@ -148,6 +156,7 @@ local function assign_batch(keys, args)
   if sstatus ~= 'open' and sstatus ~= 'paused' then
     return { 'NOSPRINT' }
   end
+  if not fr_roster() then return redis.error_reply('ERR NOROSTER') end
   if not reason or reason == '' then
     reason = 'assign'
   end
@@ -172,8 +181,12 @@ end
 
 local function redistribute_from(keys, args)
   local f, reason, to, kinds_csv = args[1], args[2], args[3] or '', args[4] or ''
-  local mayhold, builders, coord = rd_csv(args[5]), rd_csv(args[6]), args[7] or ''
-  local actor, idem = args[8], args[9]
+  local actor, idem = args[5], args[6]
+  local actor_err = fr_actor(actor)
+  if actor_err then return actor_err end
+  local roster = fr_roster()
+  if not roster then return redis.error_reply('ERR NOROSTER') end
+  local mayhold, builders, coord = roster.mayhold, roster.builders, roster.coordinator
   if not f or f == '' or not reason or reason == '' or to == f then
     return { 'INVALID' }
   end
@@ -217,6 +230,7 @@ local function redistribute_from(keys, args)
     mayhold = mayhold, builders = builders, coord = coord, free = free, woken = {},
     sprints = sprints, actor = actor, idem = idem, at = at, held = {}, events = {},
     kinds = kinds, to = (to ~= '' and to or nil), to_list = (to ~= '' and { to } or nil),
+    log_kind = 'task assign',
     moved = 0, leases = 0, released = 0, unrouted = 0, kept = 0,
   }
   if state == RD_OUT or not up then

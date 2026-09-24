@@ -41,8 +41,8 @@
 
 local FS_AWAY, FS_IDLE, FS_UNDER = NS.friend.FS_AWAY, NS.friend.FS_IDLE, NS.friend.FS_UNDER
 local fs_blocks, fs_set, fs_clear = NS.friend.fs_blocks, NS.friend.fs_set, NS.friend.fs_clear
+local fr_has_role, fr_roster = NS.friend_roles.fr_has_role, NS.friend_roles.fr_roster
 
-local RD_WAKE_TTL_MS = 600000
 local RD_OUT = 'out-of-credits'
 local RD_DOWN = 'down'
 
@@ -353,7 +353,10 @@ local function rd_route(ctx, S, id, score, requeue)
   end
   local target
   if ctx.to then
-    if not exclude[ctx.to] and ctx.free[ctx.to] ~= nil then
+    local role_ok = (kind == 'read' or kind == 'review') and fr_has_role(ctx.to, 'may-hold') or
+      ((kind ~= 'read' and kind ~= 'review') and
+        (fr_has_role(ctx.to, 'builder') or fr_has_role(ctx.to, 'coordinator')))
+    if role_ok and not exclude[ctx.to] and ctx.free[ctx.to] ~= nil then
       target = ctx.to
     end
   else
@@ -372,7 +375,7 @@ local function rd_route(ctx, S, id, score, requeue)
   rd_place(S, id, score, target)
   redis.call('HSET', key, 'owner', '', 'moved_from', f,
     'title', rd_mark(redis.call('HGET', key, 'title') or '', ctx.marker))
-  rd_log(S, 'task move', id, 'open', 'open', redis.call('HGET', key, 'attempt') or '0', '', ctx.actor,
+  rd_log(S, ctx.log_kind or 'task move', id, 'open', 'open', redis.call('HGET', key, 'attempt') or '0', '', ctx.actor,
     ctx.marker, 'to=' .. (target or 'ready'), ctx.idem, ctx.at)
   rd_event(ctx, 'MOVED', id, target or 'ready', ctx.marker)
   if target then
@@ -432,12 +435,14 @@ local function rd_move_open(ctx)
   end
 end
 
--- ns_friend_redistribute: args = may-hold readers (csv), builders (csv),
--- coordinator, actor, idem. Returns, per friend in a state, the flat record
+-- ns_friend_redistribute: args = actor, idem. The routing roster is read from
+-- friend:<f>:roles for every member of friends in this same call.
 -- friend name state moved leases released unrouted pending.
 local function friend_redistribute(keys, args)
-  local mayhold, builders, coord = rd_csv(args[1]), rd_csv(args[2]), args[3] or ''
-  local actor, idem = args[4], args[5]
+  local actor, idem = args[1], args[2]
+  local roster = fr_roster()
+  if not roster then return redis.error_reply('ERR NOROSTER') end
+  local mayhold, builders, coord = roster.mayhold, roster.builders, roster.coordinator
   local at = rd_now_ms()
   local sprints = rd_open_sprints()
   local free = {}
@@ -511,7 +516,6 @@ local function friend_redistribute(keys, args)
     local wake = 'friend:' .. g .. ':wake'
     redis.call('LPUSH', wake, tostring(at) .. ':redistributed')
     redis.call('LTRIM', wake, 0, 0)
-    redis.call('PEXPIRE', wake, RD_WAKE_TTL_MS)
     rd_caplog('friend-wake', g, 'redistributed', actor, idem, at)
   end
   return out
@@ -522,9 +526,10 @@ redis.register_function('ns_friend_redistribute', friend_redistribute)
 -- The cross-file surface redistribute_assign.lua imports (loader.go: every
 -- file is its own do-block; NS is the one chunk-level local).
 NS.redistribute = {
-  RD_OUT = RD_OUT, RD_WAKE_TTL_MS = RD_WAKE_TTL_MS,
+  RD_OUT = RD_OUT,
   rd_author = rd_author, rd_caplog = rd_caplog, rd_close_leases = rd_close_leases,
   rd_csv = rd_csv, rd_dedup = rd_dedup, rd_free = rd_free, rd_log = rd_log,
   rd_mark = rd_mark, rd_move_open = rd_move_open, rd_note_held = rd_note_held,
   rd_now_ms = rd_now_ms, rd_open_sprints = rd_open_sprints,
+  rd_carried_hold = rd_carried_hold, rd_route = rd_route,
 }

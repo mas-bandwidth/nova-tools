@@ -8,7 +8,7 @@
 --   friends                     set of registered friend names
 --   friend:<f>:desired          hash (slots, machine, paused, at)
 --   friend:<f>:beat             hash (harness, host, session, at), TTL 5 s
---   friend:<f>:wake             list max 1, TTL 600 s
+--   friend:<f>:wake             list max 1, no TTL; stale values are discarded
 --   bench:<b>:beat              hash (host, user, load1, ssh, probe,
 --                                    launcher, live, why, build, at), TTL 5 s
 --   bench:<b>:live              set of card identities, TTL 5 s
@@ -21,7 +21,6 @@
 -- are concatenated into one chunk whose main function allows 200 locals.
 do
 local PL_BEAT_MS = 5000
-local PL_WAKE_TTL_MS = 600000
 local PL_LIVE_SEP = '\31'
 
 local function pl_now_ms()
@@ -156,7 +155,7 @@ local function friend_bye(keys, args)
 end
 
 -- friend_wake routes one wake for a friend: the list is capped at one entry
--- (max 1) and expires after 600 s. The harness consumes it at zero model
+-- (max 1) and has no TTL. The reader discards entries older than 600 s.
 -- tokens; this verb never calls the model.
 local function friend_wake(keys, args)
   local friend, reason, actor, idem = args[1], args[2], args[3], args[4]
@@ -170,7 +169,6 @@ local function friend_wake(keys, args)
   local wake = 'friend:' .. friend .. ':wake'
   redis.call('LPUSH', wake, tostring(at) .. ':' .. reason)
   redis.call('LTRIM', wake, 0, 0)
-  redis.call('PEXPIRE', wake, PL_WAKE_TTL_MS)
   pl_caplog('friend-wake', friend, reason, actor, idem, at)
   return { 'WAKE' }
 end
@@ -183,6 +181,13 @@ local function friend_poll_wake(keys, args)
   local wake = redis.call('RPOP', 'friend:' .. friend .. ':wake')
   if not wake then return { 'NONE' } end
   local at = pl_now_ms()
+  local wake_at = tonumber(string.match(wake, '^(%d+):'))
+  if not wake_at or at - wake_at > 600000 then
+    redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
+      'kind', 'friend-wake-consumed', 'subject', friend, 'reason', wake,
+      'actor', '', 'idem', '', 'at', tostring(at), 'stale', '1')
+    return { 'NONE', 'STALE' }
+  end
   pl_caplog('friend-wake-consumed', friend, wake, '', '', at)
   return { 'WAKE', wake }
 end
