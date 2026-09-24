@@ -236,6 +236,25 @@ local function land_storage_split(p)
   return false
 end
 
+-- land_lease_refusal (2.3): the writer and lease check every batcher and publisher write runs
+-- first. Returns nil when writer owner is nova-sprint, the lease key holds lease_val, and
+-- lease_val's gen is the writer gen; otherwise the refusal reason, and the caller writes nothing.
+local function land_lease_refusal(repo, base, lease_val)
+  local writer = redis.call('HMGET', 'land:' .. repo .. ':' .. base .. ':writer', 'gen', 'owner')
+  if writer[2] ~= 'nova-sprint' then
+    return 'writer owner not nova-sprint'
+  end
+  local lease = redis.call('GET', 'land:' .. repo .. ':' .. base .. ':lease')
+  if not lease_val or lease_val == '' or lease ~= lease_val then
+    return 'lease mismatch'
+  end
+  local gen = string.match(lease_val, '^([^:]+):')
+  if gen ~= writer[1] then
+    return 'lease gen mismatch'
+  end
+  return nil
+end
+
 -- ns_batch_plan (4.4): in one call checks writer gen and lease, chain below chain_max, a unit id on
 -- every member (L27), every member landable with an empty batch (L1, L7), PATHS disjoint (L3), one
 -- class and the roadmap rule (L3b), alone units alone, stack parents earlier (L24). A failed check
@@ -250,19 +269,9 @@ redis.register_function('ns_batch_plan', function(keys, args)
   class = (class and class ~= '') and class or 'go'
 
   -- 1. Writer and lease checks
-  local wkey = 'land:' .. repo .. ':' .. base .. ':writer'
-  local writer = redis.call('HMGET', wkey, 'gen', 'owner')
-  if writer[2] ~= 'nova-sprint' then
-    return { 'REFUSED', 'writer owner not nova-sprint' }
-  end
-  local lkey = 'land:' .. repo .. ':' .. base .. ':lease'
-  local lease = redis.call('GET', lkey)
-  if lease ~= lease_val then
-    return { 'REFUSED', 'lease mismatch' }
-  end
-  local gen = string.match(lease_val or '', '^([^:]+):')
-  if gen ~= writer[1] then
-    return { 'REFUSED', 'lease gen mismatch' }
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return { 'REFUSED', refusal }
   end
 
   -- 2. Chain limit check (chain_max starts at 4, 4.3)
@@ -410,9 +419,14 @@ end)
 
 -- ns_batch_bind (4.2): sets from_tip (and input_id) on a chain batch planned before its parent had a
 -- train head. Only an empty from_tip is bound, only to the parent's train_head, and only while the
--- batch is queued; anything else is STALE and writes nothing.
+-- batch is queued; anything else is STALE and writes nothing. Checks writer gen and lease first
+-- (REFUSED <reason>). args: repo base batch_id lease from_tip input_id.
 redis.register_function('ns_batch_bind', function(keys, args)
-  local repo, base, batch_id, from_tip, input_id = args[1], args[2], args[3], args[4], args[5]
+  local repo, base, batch_id, lease_val, from_tip, input_id = args[1], args[2], args[3], args[4], args[5], args[6]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return 'REFUSED ' .. refusal
+  end
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
   local b = redis.call('HMGET', bkey, 'state', 'from_tip', 'parent')
   if b[1] ~= 'queued' or (b[2] and b[2] ~= '') or not b[3] or b[3] == '' then
@@ -431,8 +445,13 @@ end)
 -- ns_unit_drop (4.1, L26): drops a unit at one head with a reason; an optional task kind (rebase)
 -- is queued once on q:<author>. A second drop at the same head is ALREADY and queues nothing; a
 -- drop naming a head the unit no longer has is STALE. ns_unit_eval re-offers it only on a new head.
+-- Checks writer gen and lease first (REFUSED <reason>). args: S unit repo base lease head reason task.
 redis.register_function('ns_unit_drop', function(keys, args)
-  local S, unit, repo, base, head, reason, task = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
+  local S, unit, repo, base, lease_val, head, reason, task = args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return 'REFUSED ' .. refusal
+  end
   local ukey = 's:' .. S .. ':u:' .. unit
   local u = redis.call('HMGET', ukey, 'state', 'head', 'drop_head', 'author', 'conflict_drops')
   if not u[1] then return 'NOTFOUND' end
@@ -616,9 +635,14 @@ end)
 
 -- ns_chain_void (4.3, L16): a red batch leaves the chain (its members stay batched for red-batch
 -- attribution, 6.1) and every batch behind it is voided in the same call, members back to landable
--- for a re-plan on the new base. Returns the voided ids in chain order.
+-- for a re-plan on the new base. Returns the voided ids in chain order. Checks writer gen and lease
+-- first ({REFUSED, reason}). args: S repo base batch_id lease reason.
 redis.register_function('ns_chain_void', function(keys, args)
-  local S, repo, base, batch_id, reason = args[1], args[2], args[3], args[4], args[5]
+  local S, repo, base, batch_id, lease_val, reason = args[1], args[2], args[3], args[4], args[5], args[6]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return { 'REFUSED', refusal }
+  end
   local chain_key = 'land:' .. repo .. ':' .. base .. ':chain'
   local seq = redis.call('ZSCORE', chain_key, batch_id)
   if not seq then return { 'NOTFOUND' } end

@@ -470,3 +470,137 @@ func TestGitMergeTree(t *testing.T) {
 		t.Fatalf("clean head: conflict=%v err=%v, want false", c, err)
 	}
 }
+
+// TestBatcherLeaseLost verifies HOLD 5 item 1 on #3533: ns_batch_bind, ns_unit_drop and
+// ns_chain_void check the writer gen and the publisher lease like ns_batch_plan. A batcher that
+// lost the lease (a new token, or a writer gen bump) cannot bind, drop or void; the chain, the
+// units and the author queues are unchanged, and the new lease holder does all three.
+func TestBatcherLeaseLost(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		lose         func(t *testing.T, f *landTestFixture) string // returns the new holder's lease
+	}{
+		{"token", "lease mismatch", func(t *testing.T, f *landTestFixture) string {
+			v := fmt.Sprintf("%d:lease-token-2", f.gen)
+			if err := f.client.Set(f.ctx, land.LeaseKey(f.repo, f.base), v, 0).Err(); err != nil {
+				t.Fatalf("new lease: %v", err)
+			}
+			return v
+		}},
+		{"gen", "lease gen mismatch", func(t *testing.T, f *landTestFixture) string {
+			// The writer gen moves on while the lease key still holds the stale batcher's value;
+			// the new holder's lease is set after the stale checks.
+			gen, err := land.CallWriter(f.ctx, f.client, f.repo, f.base, "nova-sprint", "takeover")
+			if err != nil {
+				t.Fatalf("writer: %v", err)
+			}
+			return fmt.Sprintf("%d:lease-token-1", gen)
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newLandFixture(t, "nova-tools", "dev")
+			for i := 0; i < 4; i++ {
+				n := 600 + i
+				addUnit(t, f, n, sha(n), fmt.Sprintf("internal/q%d/f.go", i), "", "emma")
+			}
+			b := newBatcher(f, nil)
+			b.BatchMax = 2
+			rep, err := b.Plan(f.ctx)
+			if err != nil || len(rep.Planned) != 2 {
+				t.Fatalf("plan: %+v %v", rep, err)
+			}
+			ids := []string{rep.Planned[0].ID, rep.Planned[1].ID}
+			t1 := sha(9600)
+			gate(t, f, ids[0], "GREEN", t1)
+			spare := addUnit(t, f, 610, sha(610), "internal/spare/f.go", "", "stella")
+
+			newLease := tc.lose(t, f)
+
+			// Bind: batch 2's parent has a train head, but the stale batcher may not bind it.
+			rep, err = b.Plan(f.ctx)
+			if err != nil {
+				t.Fatalf("stale plan: %v", err)
+			}
+			if len(rep.Bound) != 0 || len(rep.Planned) != 0 {
+				t.Fatalf("stale batcher bound %v planned %+v, want nothing", rep.Bound, rep.Planned)
+			}
+			if h := batchHash(t, f, ids[1]); h["from_tip"] != "" {
+				t.Fatalf("stale bind wrote from_tip %q", h["from_tip"])
+			}
+			// Drop: refused, the unit stays landable and no task is queued.
+			if ok, err := b.Drop(f.ctx, spare, sha(610), "conflict", "rebase"); err == nil || ok || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("stale drop: ok=%v err=%v, want REFUSED %s", ok, err, tc.reason)
+			}
+			if st := unitField(t, f, spare, "state"); st != "landable" {
+				t.Fatalf("stale drop left %s %q, want landable", spare, st)
+			}
+			if n, _ := f.client.XLen(f.ctx, "q:stella").Result(); n != 0 {
+				t.Fatalf("stale drop queued %d tasks", n)
+			}
+			// Void: refused, the chain keeps both batches.
+			if voided, err := b.VoidRed(f.ctx, ids[0]); err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("stale void: %v %v, want REFUSED %s", voided, err, tc.reason)
+			}
+			if chain, _ := f.client.ZRange(f.ctx, land.ChainKey(f.repo, f.base), 0, -1).Result(); strings.Join(chain, ",") != ids[0]+","+ids[1] {
+				t.Fatalf("chain after stale void %v, want %v", chain, ids)
+			}
+			if h := batchHash(t, f, ids[1]); h["state"] != "queued" {
+				t.Fatalf("batch %s state %q after stale void, want queued", ids[1], h["state"])
+			}
+
+			if tc.name == "gen" {
+				if err := f.client.Set(f.ctx, land.LeaseKey(f.repo, f.base), newLease, 0).Err(); err != nil {
+					t.Fatalf("lease: %v", err)
+				}
+			}
+			// The new holder drops, binds and voids.
+			nb := newBatcher(f, nil)
+			nb.BatchMax, nb.Lease = 2, newLease
+			if ok, err := nb.Drop(f.ctx, spare, sha(610), "conflict", "rebase"); err != nil || !ok {
+				t.Fatalf("holder drop: %v %v", ok, err)
+			}
+			if n, _ := f.client.XLen(f.ctx, "q:stella").Result(); n != 1 {
+				t.Fatalf("holder drop queued %d tasks, want 1", n)
+			}
+			rep, err = nb.Plan(f.ctx)
+			if err != nil || strings.Join(rep.Bound, ",") != ids[1] || len(rep.Planned) != 0 {
+				t.Fatalf("holder plan: bound %v planned %+v err %v, want bound [%s]", rep.Bound, rep.Planned, err, ids[1])
+			}
+			if voided, err := nb.VoidRed(f.ctx, ids[0]); err != nil || len(voided) != 1 || voided[0] != ids[1] {
+				t.Fatalf("holder void: %v %v, want [%s]", voided, err, ids[1])
+			}
+		})
+	}
+}
+
+// TestBatcherNoTip verifies HOLD 5 item 2 on #3533: with an empty chain and no tip record the
+// batcher plans nothing (a front batch with no from_tip and no parent could never be bound) and
+// reports the landable units waiting on "no tip"; once the tip is recorded it plans.
+func TestBatcherNoTip(t *testing.T) {
+	f := newLandFixture(t, "nova-tools", "dev")
+	if err := f.client.Del(f.ctx, land.TipKey(f.repo, f.base)).Err(); err != nil {
+		t.Fatalf("del tip: %v", err)
+	}
+	u := addUnit(t, f, 700, sha(700), "internal/t/f.go", "", "emma")
+	b := newBatcher(f, nil)
+	rep, err := b.Plan(f.ctx)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(rep.Planned) != 0 || gatesLen(t, f) != 0 {
+		t.Fatalf("planned %+v with no tip, want nothing", rep.Planned)
+	}
+	if strings.Join(rep.Waiting, ";") != u+" no tip" {
+		t.Fatalf("waiting %v, want [%s no tip]", rep.Waiting, u)
+	}
+	if st := unitField(t, f, u, "state"); st != "landable" {
+		t.Fatalf("unit state %q, want landable", st)
+	}
+	if err := f.client.HSet(f.ctx, land.TipKey(f.repo, f.base), "sha", b3Tip).Err(); err != nil {
+		t.Fatalf("set tip: %v", err)
+	}
+	rep, err = b.Plan(f.ctx)
+	if err != nil || len(rep.Planned) != 1 || rep.Planned[0].FromTip != b3Tip {
+		t.Fatalf("plan with tip: %+v %v", rep, err)
+	}
+}

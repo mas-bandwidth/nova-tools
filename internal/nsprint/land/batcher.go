@@ -81,7 +81,7 @@ type PlanReport struct {
 	Bound   []string // batch ids whose from_tip was bound to the parent's train head
 	Dropped []string // unit@head reason
 	Waiting []string // unit reason
-	Refused []string // PLAN REFUSED reason
+	Refused []string // PLAN, BIND or DROP REFUSED reason
 	Lines   []string
 }
 
@@ -203,9 +203,9 @@ func InputID(fromTip string, members []string, class, policyID, runnerID string)
 
 // Drop drops a unit at head with a reason; a non-empty task (rebase) is queued once on the
 // author's queue. It reports whether this call dropped it (false: already dropped at that head,
-// or the head moved on).
+// or the head moved on); a batcher that lost the lease gets a *RefusedError and nothing is written.
 func (b *Batcher) Drop(ctx context.Context, unit, head, reason, task string) (bool, error) {
-	r, err := CallUnitDrop(ctx, b.Client, b.Sprint, unit, b.Repo, b.Base, head, reason, task)
+	r, err := CallUnitDrop(ctx, b.Client, b.Sprint, unit, b.Repo, b.Base, b.Lease, head, reason, task)
 	if err != nil {
 		return false, err
 	}
@@ -219,9 +219,10 @@ func (b *Batcher) Drop(ctx context.Context, unit, head, reason, task string) (bo
 }
 
 // VoidRed takes a red batch out of the chain and voids every batch behind it (§4.3, L16); the
-// voided members are landable again and re-plan on the new base at the next tick.
+// voided members are landable again and re-plan on the new base at the next tick. A batcher that
+// lost the lease gets a *RefusedError and the chain is unchanged.
 func (b *Batcher) VoidRed(ctx context.Context, batchID string) ([]string, error) {
-	return CallChainVoid(ctx, b.Client, b.Sprint, b.Repo, b.Base, batchID, "")
+	return CallChainVoid(ctx, b.Client, b.Sprint, b.Repo, b.Base, batchID, b.Lease, "")
 }
 
 func (b *Batcher) loadChain(ctx context.Context) ([]chainBatch, error) {
@@ -251,6 +252,18 @@ func (b *Batcher) loadChain(ctx context.Context) ([]chainBatch, error) {
 		out[i] = chainBatch{id: id, state: s(0), fromTip: s(1), parent: s(2), trainHead: s(3), members: s(4), class: s(5)}
 	}
 	return out, nil
+}
+
+// refused ends a tick on a lease refusal (the batcher lost the lease; nothing was written) with the
+// reason in the report; any other error is returned.
+func (b *Batcher) refused(rep PlanReport, what string, err error) (PlanReport, error) {
+	var refused *RefusedError
+	if errors.As(err, &refused) {
+		rep.Refused = append(rep.Refused, refused.Reason)
+		rep.Lines = append(rep.Lines, what+" REFUSED "+refused.Reason)
+		return rep, nil
+	}
+	return rep, err
 }
 
 // Plan runs one batcher tick: bind from_tip on chain batches whose parent now has a train head,
@@ -294,9 +307,11 @@ func (b *Batcher) Plan(ctx context.Context) (PlanReport, error) {
 		if ph == "" {
 			continue
 		}
-		r, err := CallBatchBind(ctx, b.Client, b.Repo, b.Base, cb.id, ph, InputID(ph, splitCSV(cb.members), cb.class, policyID, runnerID))
+		r, err := CallBatchBind(ctx, b.Client, b.Repo, b.Base, cb.id, b.Lease, ph, InputID(ph, splitCSV(cb.members), cb.class, policyID, runnerID))
 		if err != nil {
-			return rep, fmt.Errorf("bind %s: %w", cb.id, err)
+			// A batcher without the lease writes nothing this tick: the plan below would be
+			// refused on the same check.
+			return b.refused(rep, "BIND "+cb.id, fmt.Errorf("bind %s: %w", cb.id, err))
 		}
 		if r == "OK" {
 			cb.fromTip = ph
@@ -327,6 +342,18 @@ func (b *Batcher) Plan(ctx context.Context) (PlanReport, error) {
 	ids, err := b.Client.ZRange(ctx, LandableKey(b.Sprint, b.Repo, b.Base), 0, -1).Result()
 	if err != nil {
 		return rep, fmt.Errorf("landable: %w", err)
+	}
+	// A front batch needs a from_tip: with an empty chain and no tip record it would be planned
+	// with no from_tip and no parent, and ns_batch_bind binds only a batch with a parent, so it
+	// could never gate. Wait for the tip record instead.
+	if len(chain) == 0 && tip == "" {
+		for _, id := range ids {
+			rep.Waiting = append(rep.Waiting, id+" no tip")
+		}
+		if len(ids) > 0 {
+			rep.Lines = append(rep.Lines, fmt.Sprintf("WAIT no tip units=%d", len(ids)))
+		}
+		return rep, nil
 	}
 	pipe := b.Client.Pipeline()
 	hs := make([]*redis.MapStringStringCmd, len(ids))
@@ -413,7 +440,7 @@ func (b *Batcher) Plan(ctx context.Context) (PlanReport, error) {
 			}
 			if mixed {
 				if _, err := b.Drop(ctx, u.id, u.head, "roadmap-mixed", "split"); err != nil {
-					return rep, err
+					return b.refused(rep, "DROP", err)
 				}
 				rep.Dropped = append(rep.Dropped, u.id+"@"+u.head+" roadmap-mixed")
 				rep.Lines = append(rep.Lines, fmt.Sprintf("DROP %s@%s roadmap-mixed", u.id, short(u.head)))
@@ -459,7 +486,7 @@ func (b *Batcher) Plan(ctx context.Context) (PlanReport, error) {
 				}
 				if c {
 					if _, err := b.Drop(ctx, u.id, u.head, "conflict", "rebase"); err != nil {
-						return rep, err
+						return b.refused(rep, "DROP", err)
 					}
 					rep.Dropped = append(rep.Dropped, u.id+"@"+u.head+" conflict")
 					rep.Lines = append(rep.Lines, fmt.Sprintf("DROP %s@%s conflict base=%s", u.id, short(u.head), short(tip)))

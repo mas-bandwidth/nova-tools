@@ -277,22 +277,48 @@ func CallPlan(ctx context.Context, c *redis.Client, p PlanParams) (batchID, toke
 	return fmt.Sprint(res[3]), fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
 }
 
-// CallBatchBind calls ns_batch_bind: OK or STALE.
-func CallBatchBind(ctx context.Context, c *redis.Client, repo, base, batchID, fromTip, inputID string) (string, error) {
-	return c.FCall(ctx, "ns_batch_bind", nil, repo, base, batchID, fromTip, inputID).Text()
+// RefusedError is a nova_sprint write function's refusal: the writer gen or the publisher lease
+// did not match (lease mismatch, lease gen mismatch, writer owner not nova-sprint), so it wrote
+// nothing.
+type RefusedError struct{ Fn, Reason string }
+
+func (e *RefusedError) Error() string { return e.Fn + " REFUSED " + e.Reason }
+
+func refusedText(fn, r string) (string, error) {
+	if reason, ok := strings.CutPrefix(r, "REFUSED "); ok {
+		return "", &RefusedError{Fn: fn, Reason: reason}
+	}
+	return r, nil
 }
 
-// CallUnitDrop calls ns_unit_drop: OK, ALREADY, STALE or NOTFOUND. A non-empty task queues one
-// task of that kind on q:<author>.
-func CallUnitDrop(ctx context.Context, c *redis.Client, sprint, unit, repo, base, head, reason, task string) (string, error) {
-	return c.FCall(ctx, "ns_unit_drop", nil, sprint, unit, repo, base, head, reason, task).Text()
+// CallBatchBind calls ns_batch_bind under the lease: OK or STALE; a lost lease is a *RefusedError.
+func CallBatchBind(ctx context.Context, c *redis.Client, repo, base, batchID, leaseVal, fromTip, inputID string) (string, error) {
+	r, err := c.FCall(ctx, "ns_batch_bind", nil, repo, base, batchID, leaseVal, fromTip, inputID).Text()
+	if err != nil {
+		return "", err
+	}
+	return refusedText("ns_batch_bind", r)
 }
 
-// CallChainVoid calls ns_chain_void; it returns the batches voided behind batchID, in chain order.
-func CallChainVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, reason string) ([]string, error) {
-	res, err := c.FCall(ctx, "ns_chain_void", nil, sprint, repo, base, batchID, reason).StringSlice()
+// CallUnitDrop calls ns_unit_drop under the lease: OK, ALREADY, STALE or NOTFOUND; a lost lease is a
+// *RefusedError. A non-empty task queues one task of that kind on q:<author>.
+func CallUnitDrop(ctx context.Context, c *redis.Client, sprint, unit, repo, base, leaseVal, head, reason, task string) (string, error) {
+	r, err := c.FCall(ctx, "ns_unit_drop", nil, sprint, unit, repo, base, leaseVal, head, reason, task).Text()
+	if err != nil {
+		return "", err
+	}
+	return refusedText("ns_unit_drop", r)
+}
+
+// CallChainVoid calls ns_chain_void under the lease; it returns the batches voided behind batchID,
+// in chain order. A lost lease is a *RefusedError.
+func CallChainVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, reason string) ([]string, error) {
+	res, err := c.FCall(ctx, "ns_chain_void", nil, sprint, repo, base, batchID, leaseVal, reason).StringSlice()
 	if err != nil {
 		return nil, err
+	}
+	if len(res) >= 2 && res[0] == "REFUSED" {
+		return nil, &RefusedError{Fn: "ns_chain_void", Reason: res[1]}
 	}
 	if len(res) == 0 || res[0] != "OK" {
 		return nil, fmt.Errorf("ns_chain_void %s: %v", batchID, res)
