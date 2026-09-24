@@ -8,6 +8,7 @@ package redisq_test
 
 import (
 	"context"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -20,8 +21,25 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisq"
 )
 
+// canListen reports whether this sandbox allows a listening socket, the way
+// internal/swarm's routeladder suite asks: miniredis stands in for the instance
+// over a loopback listener, and where one is forbidden the Redis-backed tests
+// skip rather than fail on the machine they run on.
+func canListen(t *testing.T) bool {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return false
+	}
+	_ = ln.Close()
+	return true
+}
+
 func newQueue(t *testing.T) (*miniredis.Miniredis, *redisq.Queue) {
 	t.Helper()
+	if !canListen(t) {
+		t.Skip("this sandbox forbids listening sockets; miniredis cannot stand in for the instance")
+	}
 	mr := miniredis.RunT(t)
 	q, err := redisq.Open(mr.Addr())
 	if err != nil {

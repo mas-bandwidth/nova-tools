@@ -178,6 +178,15 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	if _, err := gitOut(ctx, wt, "apply", "--cached", "--whitespace=nowarn", seedPath); err != nil {
 		return res, fmt.Errorf("could not stage the seeded worktree: %v", err)
 	}
+
+	// Build the seeded worktree before running tests. If the seed does not compile,
+	// refuse the mutate with a clear error and exit code 2.
+	cmd := exec.CommandContext(ctx, "go", "build", "./...")
+	cmd.Dir = wt
+	cmd.Env = goenv.Clean(os.Environ())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return nil, &SeedBuildError{Detail: firstCompilerLine(string(out))}
+	}
 	applied, err := gitOut(ctx, wt, "diff", "--cached", "--no-ext-diff", "--no-renames", "--numstat")
 	if err != nil {
 		return res, fmt.Errorf("could not read the applied seed: %v", err)

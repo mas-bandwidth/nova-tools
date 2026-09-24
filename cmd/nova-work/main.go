@@ -34,12 +34,13 @@
 // nova-work is also the work layer's event bridge. This binary's shipped verb, events,
 // turns the cards:done stream and the gh fallback poll into the pub/sub messages the
 // merge layer reacts to (docs/SPEC-JOBS.md, "Events, not ticks"). It makes no model call
-// and writes no record: every message is a signal, and git stays the record.
+// and writes no record: every message is a signal, and git stays the record. It announces
+// a card's END only: every other transition on cards:done (queued, a turn, a decide
+// event, ...) is acked and not re-announced, because the fold reads the stream itself.
 //
-// nova-work is also the durable card-result record of docs/SPEC-STATE.md. record consumes
-// the cards:done Redis stream and writes one row per result into Postgres, idempotent on
-// the stream id; results lists and filters those rows. The two record verbs are thin over
-// internal/record so the tests can put a fake store and a miniredis behind them.
+// The card-result record is the fold of cards:done (internal/events, `nova-pulse fold`).
+// The record and results verbs that wrote it into the card_results table are retired
+// with that table (nova-tools #2623).
 package main
 
 import (
@@ -58,7 +59,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/jobs"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/workclient"
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -314,11 +314,14 @@ its :status. Each question is asked once per run.
 --write-status (implies --evaluate) then rewrites :status "open" to "landed" for each unit
 whose criteria all hold, one SET WROTE line per unit, and changes no other byte.
 
-events publishes the family's three event channels from two sources: the cards:done
-stream (consumer group events) becomes card-done, and a poll of gh every --gh-poll
-becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a changed
-base head. The poll is the fallback heartbeat until the forge pushes a webhook; a quiet
-poll publishes nothing. Without --repo only the stream is bridged.
+events publishes the family's three event channels from two sources: a card's end on
+the cards:done stream (consumer group events) becomes card-done, and a poll of gh every
+--gh-poll becomes pr-checks-done on a changed check-suite conclusion and dev-moved on a
+changed base head. Only an ok or a fail entry is a card's end (or an entry with no event
+field, written before the field existed); every other transition on the stream -- queued,
+a turn, a decide event -- is acked and not re-announced. The poll is the fallback
+heartbeat until the forge pushes a webhook; a quiet poll publishes nothing. Without
+--repo only the stream is bridged.
 
 --once reads the stream and polls the forge once, then exits. The loop form requires
 --deadline and returns when it is reached.
@@ -434,24 +437,6 @@ example:
   nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
   nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
   nova-work events --redis 127.0.0.1:6379 --once
-
-nova-work is also the durable card-result record: Redis carries the result, Postgres keeps it.
-
-usage:
-  nova-work record  --postgres <dsn> --redis <addr> [--once] [--deadline 1h] [--migrate]
-  nova-work results --postgres <dsn> [--since 1h] [--bench b] [--failed] [--max 20]
-
-verbs:
-  record  consume cards:done and write one row per result into card_results, idempotent on
-          the stream id; --migrate applies the schema and exits; --once reads one pass
-  results one line per recorded result, newest first
-  help
-  version
-
-example:
-  nova-work record --migrate --postgres postgres://space/nova
-  nova-work record --once --redis 127.0.0.1:6379 --postgres postgres://space/nova
-  nova-work results --postgres postgres://space/nova --bench space --failed --max 5
 `
 
 // deps is the seam the tests replace: the store and consumer factories and the clock.
@@ -484,16 +469,11 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a
-// miniredis, a fake forge and a fake result store, and reach no network. The event
-// bridge's three fields and the record verbs' two are ONE seam rather than two: a second
-// seam beside it was what the two slices each grew on their own branch, and a reader of
-// this package should not have to learn which verb reads which of them.
+// miniredis and a fake forge, and reach no network.
 type Deps struct {
-	Now          func() time.Time
-	Dial         func(addr string) *redis.Client
-	Forge        func(repo, base string, timeout time.Duration) ci.Forge
-	OpenStore    func(dsn string) (record.Store, error)
-	OpenConsumer func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error)
+	Now   func() time.Time
+	Dial  func(addr string) *redis.Client
+	Forge func(repo, base string, timeout time.Duration) ci.Forge
 }
 
 func production() Deps {
@@ -503,17 +483,13 @@ func production() Deps {
 		Forge: func(repo, base string, timeout time.Duration) ci.Forge {
 			return ci.NewGHForge(repo, base, timeout)
 		},
-		OpenStore: func(dsn string) (record.Store, error) { return record.OpenPostgres(dsn) },
-		OpenConsumer: func(ctx context.Context, addr, stream, group, name string) (record.Consumer, error) {
-			return record.NewRedisConsumer(ctx, addr, stream, group, name)
-		},
 	}
 }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
 // run takes the version stamp (a string, for the version verb's tests) and the injected
-// Deps (for the events and record verbs' tests) as trailing options, so the socket
+// Deps (for the events verb's tests) as trailing options, so the socket
 // client's stamp and every outside edge reach the one entry point.
 func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	stamp := version
@@ -542,15 +518,6 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
 	verb, rest := args[0], args[1:]
-	// The record verbs read the deps seam, so they dispatch outside the socket-verb
-	// switch: the switch a reader (and the audit test) walks holds exactly the verbs
-	// the resident session answers.
-	if verb == "record" {
-		return cmdRecord(rest, stdout, stderr, deps)
-	}
-	if verb == "results" {
-		return cmdResults(rest, stdout, stderr, deps)
-	}
 	// attempt COLLIDES with the socket verb of the same name (see legacyVerbs): only
 	// its two known second tokens are this binary's own local verb; the bare word and
 	// anything else falls through to the socket switch below, which refuses rather
@@ -1334,52 +1301,4 @@ func benchName(flagValue string) string {
 		h = h[:i]
 	}
 	return strings.TrimSpace(h)
-}
-
-// ------------------------------------------------------------------------------- flags
-
-// flags is one verb's flag set with package flag's two mouths closed: its error text quotes
-// the argument it could not parse and its usage dump is discarded, so an argument beginning
-// with a dash cannot author a line of stderr before any code here runs.
-type flags struct {
-	verb     string
-	fs       *flag.FlagSet
-	problems []string
-}
-
-func newFlags(verb string) *flags {
-	fs := flag.NewFlagSet(verb, flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	return &flags{verb: verb, fs: fs}
-}
-
-func (f *flags) parse(args []string, stderr io.Writer) bool {
-	if err := f.fs.Parse(args); err != nil {
-		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
-		return false
-	}
-	if n := f.fs.NArg(); n > 0 {
-		fmt.Fprintf(stderr, "nova-work %s: takes no positional arguments, got %d (flags come before arguments)\n", oneline.Escape(f.verb), n)
-		return false
-	}
-	return true
-}
-
-// want records a missing required flag with what it WANTS, never only what was wrong.
-func (f *flags) want(value, name, wants string) {
-	if value == "" {
-		f.problems = append(f.problems, fmt.Sprintf("--%s is required; it wants %s; refusing to guess", oneline.Escape(name), oneline.Escape(wants)))
-	}
-}
-
-func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
-
-// refused prints every problem this run found, one line each, and reports whether there
-// were any.
-func (f *flags) refused(stderr io.Writer) bool {
-	for _, p := range f.problems {
-		fmt.Fprintf(stderr, "nova-work %s: %s\n", oneline.Escape(f.verb), oneline.Escape(p))
-	}
-	return len(f.problems) > 0
 }

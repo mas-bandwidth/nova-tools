@@ -27,6 +27,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -141,6 +142,22 @@ type HarvestEvidence struct {
 	// Requeued is the forge's own fact about this unit: it has been through
 	// rule 14's requeue path already. An answer cannot set it.
 	Requeued bool
+
+	// ExitStatus is the supervisor's own record of the job's exit status: a
+	// fact the card did not write. A negative value is its absence, never a
+	// guess. It is read by the bench-red rule below and is never framed for a
+	// provider.
+	ExitStatus int
+
+	// HarnessError is the supervisor's own harness-error line where it wrote
+	// one, "" where it did not. Nothing a card wrote is this field, and it is
+	// never framed for a provider.
+	HarnessError string
+
+	// BenchMoved is the forge's own fact about this unit: it has already been
+	// moved to another bench on the bench-red ground. An answer cannot set
+	// it, and the ground moves a unit at most once.
+	BenchMoved bool
 
 	// Prose is whatever the card wrote. NOTHING IN THIS PACKAGE READS IT. It is
 	// carried so that a caller cannot accidentally build state from it by
@@ -321,6 +338,71 @@ func (c Classification) LiftsHold() bool { return false }
 // it does not stand in for a reader.
 func (c Classification) SkipsRead() bool { return false }
 
+// missingExecutablePatterns is the closed table the supervisor's harness-error
+// line is matched against. Each row names an executable the bench did not
+// have, and captures that name: a line that says only "no such file or
+// directory" names a missing FILE, not a missing executable, so it matches no
+// row. "no such file or directory" counts only where the line says what was
+// being executed (fork/exec <path>, or exec: "<name>"). It is data, not
+// judgment, and it is matched against the supervisor's own line only -- never
+// against anything a card wrote.
+var missingExecutablePatterns = []*regexp.Regexp{
+	regexp.MustCompile(`exec: "([^"]+)": (?:executable file not found|command not found|no such file or directory)`),
+	regexp.MustCompile(`fork/exec ([^\s:]+): no such file or directory`),
+	regexp.MustCompile(`(?:^|[\s:])([^\s:"]+): command not found`),
+}
+
+// missingExecutable returns the executable the supervisor's harness-error line
+// names as missing, or "" where it names none. The fact is the NAME: a line
+// that matches a phrase but names no executable is not the fact.
+func missingExecutable(line string) string {
+	for _, re := range missingExecutablePatterns {
+		if m := re.FindStringSubmatch(line); m != nil {
+			if name := strings.TrimSpace(m[1]); name != "" {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+// namesMissingExecutable reports whether the supervisor's harness-error line
+// names a missing executable.
+func namesMissingExecutable(line string) bool {
+	return missingExecutable(line) != ""
+}
+
+// ChangesBench reports whether this classification moves the unit to another
+// bench on the bench-red ground (docs/SPEC-DECIDE.md:1175-1184, reading 2).
+// That is a loosening, so it rests on mechanical facts (S4) and on no answer:
+// the class must be the rule table's OWN toolchain row -- blocked-toolchain
+// answered by the rules, never a provider's label -- AND a fact the card did
+// not write (the job's exit status being 126 or 127, or the supervisor's own
+// harness-error line naming a missing executable), AND the unit must not have
+// moved on this ground before: a unit is moved to another bench on this
+// ground at most once. A provider's blocked-toolchain without those facts is
+// printed, is a label for the manager, and leaves the failure counted exactly
+// as today -- a bench with no compiler is not a rung that failed, and a red
+// the bench did not cause is not the bench's.
+func (c Classification) ChangesBench() bool {
+	if c.Class != ClassBlockedToolchain || c.Decider != DeciderRules {
+		return false
+	}
+	// The rules' toolchain row is the row keyed on the toolchain-missing
+	// reason token: a rules-decided blocked-toolchain paired with any other
+	// reason is not that row, and moves no bench.
+	if strings.ToLower(strings.TrimSpace(c.Evidence.Reason)) != "toolchain-missing" {
+		return false
+	}
+	if c.Evidence.BenchMoved {
+		return false
+	}
+	if c.Evidence.ExitStatus == 126 || c.Evidence.ExitStatus == 127 {
+		return true
+	}
+	return namesMissingExecutable(c.Evidence.HarnessError)
+}
+
 // AppendOutcomeRow appends one JSON line to outcomes.jsonl beside the route log
 // (§4 rule 5). class= and conf= are written back on every row, including the
 // unknown ones: a below-floor answer is logged as the absence it is, with its
@@ -345,6 +427,52 @@ func AppendOutcomeRow(path, unit string, c Classification) error {
 		"asked":    c.AskedProvider,
 		"requeued": c.RequeueOnce,
 	}
+	return appendOutcomeLine(path, row)
+}
+
+// The observed events a later harvest of the SAME unit on another bench
+// appends (D6, docs/SPEC-DECIDE.md:1186-1190, reading 2). Neither is truth: a
+// card that is clean elsewhere may have been racing a flaky fixture, and one
+// red elsewhere may have hit a second bench's second defect. Truth comes from
+// the escalated reader's --truth and the audit sample (D6).
+const (
+	EventRerunClean = "rerun-clean"
+	EventRerunRed   = "rerun-red"
+)
+
+// AppendObservedRow appends one OBSERVED row (D6) to outcomes.jsonl: a later
+// harvest of the same unit on another bench saw it rerun-clean or rerun-red,
+// with the bench in fields. An observed row is never truth: it carries no
+// class, no confidence and no verdict a floor could be tuned from -- only the
+// event, the unit and where it was seen.
+func AppendObservedRow(path, unit, event, bench string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("decide: no outcomes path; refusing to guess one")
+	}
+	if strings.TrimSpace(unit) == "" {
+		return fmt.Errorf("decide: an observed row with no unit is a row nobody can join to a decision")
+	}
+	switch event {
+	case EventRerunClean, EventRerunRed:
+	default:
+		return fmt.Errorf("decide: event %q is not one of %s, %s; the observed rerun rows are a closed set", event, EventRerunClean, EventRerunRed)
+	}
+	if strings.TrimSpace(bench) == "" {
+		return fmt.Errorf("decide: an observed rerun row names the bench it was seen on; refusing to guess one")
+	}
+	row := map[string]any{
+		"time":     time.Now().UTC().Format(time.RFC3339),
+		"unit":     unit,
+		"event":    event,
+		"fields":   map[string]any{"bench": bench},
+		"observed": true,
+	}
+	return appendOutcomeLine(path, row)
+}
+
+// appendOutcomeLine is the one append path every outcomes.jsonl row takes:
+// the file is the tool's own (0600) and is never rewritten.
+func appendOutcomeLine(path string, row map[string]any) error {
 	body, err := json.Marshal(row)
 	if err != nil {
 		return fmt.Errorf("decide: encode the outcome row: %w", err)

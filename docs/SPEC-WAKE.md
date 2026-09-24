@@ -3203,10 +3203,11 @@ were handed to a friend gone ten hours (last bus beat 05:28Z, noticed at
 friend's silence was diagnosed an hour after Glenn had seen it. Every fact
 existed; nothing surfaced them, and presence was reported from expectation.
 
-**The mechanism is two keys and no model.** A friend's harness startup runs
+**The mechanism is a beat and no model.** A friend's harness startup runs
 
 ```
 nova-wake beat --as <name> --store <host:port> [--every 30s] [--ttl 90s]
+        [--window <time>] [--width <n>]
 ```
 
 which every `--every` writes `friend:<name>` = the current time in RFC3339 UTC
@@ -3215,6 +3216,15 @@ reads nothing, watches nothing, and starts no turn: **a heartbeat that spends a
 token is a heartbeat somebody turns off**, which is why this is not a source of
 `watch` and never wakes anybody. `--once` writes one beat and returns, for a
 check or a test.
+
+**Two more keys, and only when the caller passes them.** `--window <time>`
+writes `friend:<name>:window` = that time, the cap's reset, and `--width <n>`
+writes `friend:<name>:width` = how many children are in use now. Both take the
+beat's TTL. The time is the caller's: the beat does not read a clock to invent
+a reset. A missing flag writes no key and does not fail the beat. Zero children
+is a real `--width` and is written. `presence` prints `window=<time>` and
+`width=<n>` on that friend's phrase when the keys are there, and prints neither
+when they are not.
 
 **The ending is the signal.** A window that exits, runs out of credit, is
 killed or loses its machine stops writing, and the key lapses inside the TTL.
@@ -3233,12 +3243,19 @@ nova-wake presence --store <host:port> (--bus <dir> | --participants <file> | --
 friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · freddy none
 ```
 
-One MGET over both keys of every friend, whatever the roster's length. `up` is
+One MGET over every friend's keys, whatever the roster's length. `up` is
 a beat inside the TTL with its age; `AWAY` is the key lapsed, with the age and
 clock time of the last beat; `none` is a friend who has never beaten. **The key's
 existence is the presence and its value only dates it**: a value this build
 cannot parse reads `up` with no age rather than away, because a friend running
 an older beat is still here.
+
+**A friend is present only while that beat key is alive** (#2675). `friend:<name>`
+with its TTL is the only evidence. A missing key is absent — `none` when the
+friend has never beaten, `AWAY` when only `friend:<name>:last` remains to date
+the silence — and a live key is present (`up`). The untimed key does not make
+them present, and nothing here reads a hand-written presence override. A friend
+who declines instrumentation is absent for exactly that reason: no beat key.
 
 **The roster is the bus's, never a copy.** `--bus <dir>` reads its
 `participants.json`, minus Glenn and Rowan; `--participants` names that file and
