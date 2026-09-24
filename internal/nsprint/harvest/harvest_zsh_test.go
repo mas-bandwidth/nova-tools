@@ -236,6 +236,7 @@ func newZshBench(t *testing.T, label string) *zshBench {
 	c.SAdd(ctx, "s:"+z.sprint+":idx:card:ended", label)
 	c.SAdd(ctx, "s:"+z.sprint+":bench:"+z.bench+":ended", label)
 	c.HSet(ctx, "bench:"+z.bench+":beat", "host", "superman.fixture", "user", "nova")
+	c.HSet(ctx, "bench:"+z.bench+":state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 
 	z.sshLog = filepath.Join(dir, "ssh.log")
 	z.ssh = writeFakeSSH(t, dir, z.sshLog)
@@ -548,6 +549,7 @@ func TestHarvestDueSkipsNoCommit(t *testing.T) {
 	st := store.New(c)
 	ctx := context.Background()
 	c.HSet(ctx, "bench:ctl-a:beat", "host", "ctl-a.fixture", "user", "nova")
+	c.HSet(ctx, "bench:ctl-a:state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	seedEnded(t, c, "ctl-a", "read-card", "model", "DONE", "-")
 	seedEnded(t, c, "ctl-a", "work-card", "model", "DONE", sha("work-card"))
 	rows, err := c.FCallRO(ctx, harvest.FunctionDue, nil, sprint, "ctl-a", 256).StringSlice()
@@ -580,6 +582,7 @@ func TestHarvestRelativeResultsRefused(t *testing.T) {
 	st := store.New(c)
 	ctx := context.Background()
 	c.HSet(ctx, "bench:ctl-a:beat", "host", "ctl-a.fixture", "user", "nova")
+	c.HSet(ctx, "bench:ctl-a:state", "state", "UP", "at", "1")             // #2046: UP is the fleet record
 	seedEnded(t, c, "ctl-a", "rel-card", "model", "DONE", sha("rel-card")) // results is the relative identity
 	dir := t.TempDir()
 	log := filepath.Join(dir, "ssh.log")
@@ -611,6 +614,7 @@ func TestHarvestLoopEveryOpenSprintEveryBench(t *testing.T) {
 	forge := newForge()
 	for _, b := range []string{"ctl-a", "ctl-b"} {
 		c.HSet(ctx, "bench:"+b+":beat", "host", b+".fixture", "user", "nova")
+		c.HSet(ctx, "bench:"+b+":state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	}
 	for _, s := range sprints {
 		for _, b := range []string{"ctl-a", "ctl-b", "ctl-nobeat"} {

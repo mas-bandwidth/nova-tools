@@ -10,13 +10,16 @@
 --   friend:<f>:beat             hash (harness, host, session, at), TTL 5 s
 --   friend:<f>:wake             list max 1, TTL 600 s
 --   bench:<b>:beat              hash (host, user, load1, ssh, probe,
---                                    launcher, live, why, at), TTL 5 s
+--                                    launcher, live, why, build, at), TTL 5 s
 --   bench:<b>:live              set of card identities, TTL 5 s
 --   bench:<b>:owner             fenced owner session, TTL 5 s (single
 --                                    instance; a different session is BUSY)
 --   machine:<m>:ceiling         hash with slots, shared with capacity friend
 --   cap:log                     presence-change stream
 
+-- The whole file is one block: none of its names is shared, and the files
+-- are concatenated into one chunk whose main function allows 200 locals.
+do
 local PL_BEAT_MS = 5000
 local PL_WAKE_TTL_MS = 600000
 local PL_LIVE_SEP = '\31'
@@ -198,6 +201,7 @@ local function bench_beat(keys, args)
   local ssh, probe, launcher = args[5], args[6], args[7]
   local live, why = args[8], args[9]
   local session, actor, idem = args[10], args[11], args[12]
+  local build = args[13]
   if not session or session == '' then
     session = actor or ''
   end
@@ -216,7 +220,7 @@ local function bench_beat(keys, args)
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
-    'live', '0', 'why', why or '', 'at', tostring(at))
+    'live', '0', 'why', why or '', 'build', build or '', 'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', PL_BEAT_MS)
   redis.call('SET', owner_key, session, 'PX', PL_BEAT_MS)
 
@@ -263,3 +267,4 @@ redis.register_function('ns_friend_wake', friend_wake)
 redis.register_function('ns_friend_poll_wake', friend_poll_wake)
 redis.register_function('ns_bench_beat', bench_beat)
 redis.register_function('ns_bench_release', bench_release)
+end

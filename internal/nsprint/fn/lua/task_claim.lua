@@ -4,6 +4,13 @@
 -- guard, moves the id between index sets, reads server TIME and appends one
 -- receipt, all atomically (spec #2756 2.1 rule 2, 3.1, 4.2).
 
+-- DEP is the DEPENDS-ON machinery of #3206 PR A (ruling nova-tools#3516:
+-- there is no blocked state; a task with an unmet dependency is waiting and
+-- never ready). It is declared here, in the first task file of the one
+-- library chunk, so push and done below can call it; task_queue.lua fills it
+-- in. Every call happens at run time, after the whole chunk has loaded.
+local DEP = {}
+
 local function now_ms()
   local t = redis.call('TIME')
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
@@ -45,10 +52,14 @@ local function task_push(keys, args)
   -- any other read, so a re-push of an existing id is refused too; it is only
   -- read, never written. The ready pool and harvest targets are not checked.
   if to ~= '' and string.sub(to, 1, 8) ~= 'harvest:' then
-    local down = redis.call('GET', 'friend:' .. to .. ':down')
+    local down = DEP.down(to)
     if down then
       return { 'DOWN', down }
     end
+  end
+  local conds, bad = DEP.parse(args[18] or '')
+  if bad then
+    return { 'INVALID', 'depends-on ' .. bad }
   end
 
   if est ~= '' then
@@ -102,17 +113,26 @@ local function task_push(keys, args)
   if needs ~= '' then
     redis.call('HSET', key, 'needs', needs)
   end
-  local score = priority
+  -- #3206 PR A: the queue a task was pushed to, its front flag and the
+  -- DEPENDS-ON list stay on the hash, so move, front and the dependency
+  -- release find the queue without a scan. Author is the read rule's field.
+  local front_text = '0'
   if front then
-    score = -priority
+    front_text = '1'
   end
-  if to ~= '' then
-    redis.call('ZADD', 's:' .. S .. ':open:' .. to, score, id)
-  else
-    redis.call('ZADD', 's:' .. S .. ':ready', score, id)
+  redis.call('HSET', key, 'dest', to, 'front', front_text,
+    'depends_on', table.concat(conds, ';'), 'author', args[19] or '')
+  local unmet = DEP.unmet(S, conds)
+  if #unmet > 0 then
+    DEP.wait(S, id, key, to, unmet, at)
+    receipt(S, 'task push', id, '', 'waiting', 0, '', actor, to, 'depends-on ' .. table.concat(unmet, ';'), '', idem, at)
+    return { 'CREATED', 'waiting', tostring(#unmet) }
   end
-  redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
+  DEP.enqueue(S, id, to, front, priority)
   receipt(S, 'task push', id, '', 'open', 0, '', actor, to, '', '', idem, at)
+  if #conds > 0 then
+    return { 'CREATED', 'on-met' }
+  end
   return { 'CREATED' }
 end
 
@@ -159,7 +179,11 @@ local function task_take(keys, args)
     end
   end
 
-  -- Presence and capacity are global, shared by every open sprint.
+  -- Presence and capacity are global, shared by every open sprint. A down
+  -- marker refuses the take like an absent beat (#3206 PR A).
+  if DEP.down(friend) then
+    return { 'DOWN' }
+  end
   if redis.call('SISMEMBER', 'friends', friend) == 0 or
       redis.call('EXISTS', 'friend:' .. friend .. ':beat') == 0 then
     return { 'DOWN' }
@@ -202,7 +226,7 @@ end
 -- match or the call refuses; a review task's evidence must name a verdict, a
 -- score and a head equal to the task head. A repeated identical done exits 0;
 -- different evidence on a closed task exits 4.
--- nova-tools #3092 rev 7: args 10-17 carry a typed DISPOSITION line parsed by
+-- nova-tools #3092 rev 7: args 11-18 carry a typed DISPOSITION line parsed by
 -- internal/nsprint/disposition (task done --body-file): type, who, url,
 -- comment_id, kind, derived kind, scope, reason. A review close with a typed
 -- line records it through HD.ingest (hold.lua, ns_ingest_disposition's body)
@@ -214,14 +238,23 @@ local function task_done(keys, args)
   local S, id, token = args[1], args[2], args[3]
   local evidence, verdict, score, head = args[4], args[5], args[6], args[7]
   local actor, idem = args[8], args[9]
-  local typ, who, url, comment_id = args[10] or '', args[11] or '', args[12] or '', args[13] or ''
-  local kind_explicit, kind_derived, scope, reason = args[14] or '', args[15] or '', args[16] or '', args[17] or ''
+  local as = args[10] or ''
+  local typ, who, url, comment_id = args[11] or '', args[12] or '', args[13] or '', args[14] or ''
+  local kind_explicit, kind_derived, scope, reason = args[15] or '', args[16] or '', args[17] or '', args[18] or ''
   local key = 's:' .. S .. ':task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
     return { 'NOTFOUND' }
   end
-  if redis.call('HGET', key, 'token') ~= token then
+  -- #3206 PR A: `done --as <f>` with no token is the friend-queue shape; it
+  -- is accepted only when f is the owner (the state rules below still hold,
+  -- so only a claimed or working lease closes). Anything else without the
+  -- stored token refuses FENCED.
+  if token == '' and as ~= '' then
+    if redis.call('HGET', key, 'owner') ~= as then
+      return { 'FENCED' }
+    end
+  elseif redis.call('HGET', key, 'token') ~= token then
     return { 'FENCED' }
   end
   local state = redis.call('HGET', key, 'state')
@@ -281,10 +314,11 @@ local function task_done(keys, args)
       friend .. '@' .. head, verdict .. ' ' .. score .. ' ' .. evidence)
   end
   receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', '', evidence, idem, at)
+  local ready = DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
   if record then
     return { 'DONE', unpack(record) }
   end
-  return { 'DONE' }
+  return { 'DONE', tostring(ready) }
 end
 
 -- task_take_denied: the receipt of a take refused by the CLI because --as is

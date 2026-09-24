@@ -89,6 +89,15 @@ do
       if S == '' or bench == '' or not limit or limit <= 0 then
         return { 'USAGE' }
       end
+      local bstate = redis.call('HGET', 'bench:' .. bench .. ':state', 'state')
+      if not bstate or bstate == '' then
+        bstate = 'down'
+      else
+        bstate = string.lower(bstate)
+      end
+      if bstate ~= 'up' then
+        return { 'NONE', bstate }
+      end
       local beat = 'bench:' .. bench .. ':beat'
       local out = { 'OK', hv_hget(beat, 'host'), hv_hget(beat, 'user') }
       local labels = redis.call('SINTER', 's:' .. S .. ':bench:' .. bench .. ':ended', 's:' .. S .. ':idx:card:ended')

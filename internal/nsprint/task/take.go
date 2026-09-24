@@ -270,6 +270,9 @@ type DoneRequest struct {
 	// score are the close's; ns_task_done records it through
 	// ns_ingest_disposition's body in the same atomic call as the close.
 	Typed *TypedLine
+	// As closes without a token when As owns the claimed or working lease
+	// (#3206 PR A, the friend-queue `done --as` shape).
+	As string
 }
 
 // TypedLine is one parsed typed line carried by a DoneRequest. The parser
@@ -368,7 +371,7 @@ func DoneTyped(ctx context.Context, st *store.Store, req DoneRequest) (DoneOutco
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDone, nil,
 		req.Sprint, req.ID, req.Token, req.Evidence, req.Verdict, req.Score,
-		req.Head, req.Actor, req.Idem,
+		req.Head, req.Actor, req.Idem, req.As,
 		ty.Type, ty.Who, ty.URL, ty.CommentID, ty.Kind, ty.KindDerived, ty.Scope, ty.Reason).Slice()
 	if err != nil {
 		return DoneOutcome{}, fmt.Errorf("task done %s: %w", req.ID, err)

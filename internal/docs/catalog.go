@@ -14,7 +14,7 @@ var DefaultCatalog = []Entry{
 	E(".github", "CI workflows and automation", "go test ./internal/ci", "make test"),
 	E("assets", "static assets and schemas", "none", "none"),
 	E("fleet", "fleet loop units and bench templates", "none", "none"),
-	Page("cmd", "25 nova command-line tools", "go test ./cmd/...", "make build"),
+	Page("cmd", "26 nova command-line tools", "go test ./cmd/...", "make build"),
 	Page("docs", "specs, guides, and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("infra", "runner images and scripts", "none", "none"),
 	Page("internal", "packages and libraries", "go test ./internal/...", "make test"),
@@ -144,4 +144,5 @@ var DefaultCatalog = []Entry{
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
 	E("tools/ci", "CI helper and build scripts", "go test ./internal/ci", "make test"),
 	E("tools/testdur", "test duration analyzer and budget checker", "go test ./tools/testdur", "go test ./tools/testdur"),
+	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

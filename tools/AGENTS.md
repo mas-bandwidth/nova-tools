@@ -8,3 +8,4 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `analyzers/` | vetlaw verb-law analyzers | `go test ./tools/analyzers/...` | `make vet-laws` |
 | `ci/` | CI helper and build scripts | `go test ./internal/ci` | `make test` |
 | `testdur/` | test duration analyzer and budget checker | `go test ./tools/testdur` | `go test ./tools/testdur` |
+| `testmanifest/` | exact named Go test manifest checker | `go test ./tools/testmanifest` | `go test ./tools/testmanifest` |

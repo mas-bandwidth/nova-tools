@@ -665,6 +665,8 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 ```
 nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                  [--down-store <host:port>] [--card <path> --allowed-routes <path>]
+                  [--jev] [--store-user <user>] [--store-password-env <NAME>]
                   [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                   [--registry <path>] [--floor 0.65] [--base-url <url>] [--key-env JEV_API_KEY]
                   (--usage and --log are REQUIRED whenever jev is asked)
@@ -808,10 +810,12 @@ nova-secrets exec --store ~/rowan-working/secrets --as studio \
 
 `--only JEV_API_KEY --require JEV_API_KEY` is the pair that matters: `--only` hands the child that one variable and nothing else, and `--require` refuses *before* the command runs if the store does not hold it, so a route never fails halfway with a key-shaped hole. The key is never an argument, never a file the tool reads and never a line it prints. `--usage` and `--log` are the accounting, required whenever jev is asked, and pointing every caller at **one** pair of paths is what makes the log a calibration record rather than a pile of them. Run several decisions under **one** `exec` — `... -- sh -c '<several nova-decide route lines>'` — rather than one decrypt per call.
 
+Friend presence is read from `--down-store`, default `NOVA_REDIS_ADDR`; `--store` also supplies that address and additionally writes the decision event. Presence keys name seats (`friend:stella:down` excludes Astra and `friend:rowan:down` excludes Fable). A configured presence store that cannot be read refuses the route with exit 2 and `reason=presence-unavailable`: a route does not select a friend while their seat's status is unknown. With no presence store the route prints `ROUTE NOTE down friends not checked (no store)` and its JSON row records `down_checked:false`.
+
 ### outcome — the other half of the row
 
 ```
-nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
+nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped [--of-time <RFC3339>]
 ```
 
 What **happened** to a unit a decision routed. Rule 8 asks for the decision to be logged beside the outcome it predicted, and this is the half nobody was writing: on 2026-09-18 the shared log held 78 rows, 73 escalations and **zero** successes, so `log --summary` had nothing to regenerate a starting rung from.
@@ -833,6 +837,8 @@ nova-decide review --repo <owner/name> --pr <n> [--card <file>]
                    [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
+                   [--base-url <url>] [--key-env <name>] [--gh <path>] [--stream <name>]
+                   [--store-user <user>] [--store-password-env <NAME>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
                    [--prompt <file|sha8>] [--conf <jev.conf>|none] [--pr-dir <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
@@ -3441,6 +3447,7 @@ nova-swarm note     --pool <dir> --task <id> --text <text>                      
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
+nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>                # exact reference checkout plus module, build, test-binary and Lisp caches
 ```
 
 ### The card lint
@@ -3970,14 +3977,35 @@ That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and 
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
-### Shared Go caches for native workers
+### Shared build caches and exact-tip prewarm
 
 `nova-swarm native` creates `<root>/cache/go-mod` and `<root>/cache/go-build`
-and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. Slots using the
-same `--root` share these caches. It also sets `GOTOOLCHAIN=local`, so the bench
+and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. It points ASDF
+at `<root>/cache/common-lisp/<tip>` for compiled FASLs without sharing the harness's
+general XDG cache or HOME. Slots using the same `--root` share these caches. It
+also sets `GOTOOLCHAIN=local`, so the bench
 must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
+
+After the bench mirror has fetched a new tip, run this command locally on each
+bench, using that mirror checkout as `--source`:
+
+```text
+nova-swarm bench prewarm --root /the/swarm/root --source /the/bench/mirror/nova-tools --repo mas-bandwidth/nova-tools --tip <full-40-character-tip>
+```
+
+It resolves the exact commit locally, prepares the reference checkout under
+`<root>/ref/mas-bandwidth/nova-tools@<tip>`, runs module download, `make build`,
+a compile-only Go test pass and `make test-lisp`, then writes a receipt under
+`<root>/prewarm/`. A failed phase publishes no reference checkout or receipt.
+The command does not install the binary, fetch the mirror, change permissions,
+start a service or run on another host.
+
+Fleet adoption needs one further measurement: start a fresh job pinned to the
+same tip on each intended bench, run `make test`, and retain its elapsed-time
+receipt. S3's threshold is under 60 seconds on every bench. The local PREWARM
+line proves the preparation completed; it does not claim the fleet ran it.
 
 ### The bench toolchain inside the wall
 
@@ -5325,6 +5353,49 @@ What a first run gets wrong, and what each one wants:
 There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
 
 **The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
+
+### lesson
+
+Every rendered build, fix, and read brief tells the card to read the repository's
+`docs/LESSONS.md` when present. It is reviewed data subordinate to the live
+brief and repository rules. The file is capped at 40 physical lines so a card
+can consume the whole active view. A read proposes the concrete failure and
+the action that would have prevented it; after the repository owner reviews
+the evidence, append the structured one-line row:
+
+```sh
+nova-sprint lesson append \
+  --repo ./nova-tools \
+  --id s9-001 \
+  --component brief \
+  --kind read \
+  --failure "card skipped repository lessons" \
+  --prevention "read the capped lessons file before review" \
+  --evidence "mas-bandwidth/nova-tools#2498" \
+  --status active \
+  --reviewed-by stella
+```
+
+The append verb never guesses a checkout or creates the active lessons file. Every field is
+required and must fit on one line without a Markdown table pipe. Lesson IDs
+are stable: an identical retry prints `LESSON UNCHANGED`; different content
+under an existing ID refuses. The append is published by atomic rename and
+refuses the 41st line. A holder-lifetime kernel lock (flock on Unix) on
+`nova-lessons.lock` in the checkout's git directory serializes the whole
+read/check/rename transaction, so concurrent successful appends cannot lose
+one another. The lock is never broken on age: a waiter queues behind a live
+holder for up to 30 seconds and then refuses as busy, and the kernel alone
+releases a holder that died. Append accepts `--status active`; retire a row with:
+
+```sh
+nova-sprint lesson supersede --repo ./nova-tools --id s9-001
+```
+
+Supersede first publishes the same row with status `superseded` to
+`docs/LESSONS-ARCHIVE.md`, then removes it from the capped active view. It
+creates the archive when needed; cards never load it. If interrupted between
+those writes, retry recognizes the archived row and finishes the removal.
+Archived IDs remain reserved, and an identical supersede retry is unchanged.
 
 ### xy
 
