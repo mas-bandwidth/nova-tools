@@ -287,7 +287,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		}
 		eventSink = opened
 
-		down, list, err := downFriendsOpener(context.Background(), *store, *storeUser, os.Getenv(*passwordEnv), reg)
+		down, list, err := downFriendsOpener(context.Background(), *store, storeUser, os.Getenv(passwordEnv), reg)
 		if err != nil {
 			if fileSink != nil {
 				fileSink.Close()
