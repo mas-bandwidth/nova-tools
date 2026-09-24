@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -121,34 +122,28 @@ func bashParity2674(t *testing.T) {
 	if got := sha256File(t, pipe); got != redisPipeSHA256 {
 		t.Fatalf("testdata/redis-pipe.bash sha256 %s, pinned %s", got, redisPipeSHA256)
 	}
-	server, cli, bash, perl := findTool("redis-server"), findTool("redis-cli"), findTool("bash"), findTool("perl")
-	if server == "" || cli == "" || bash == "" || perl == "" {
-		t.Skipf("the bash of record needs redis-server, redis-cli, bash and perl (have %q %q %q %q)", server, cli, bash, perl)
+	addr := testutil.Start(t)
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, bash, perl := findTool("redis-cli"), findTool("bash"), findTool("perl")
+	if cli == "" || bash == "" || perl == "" {
+		t.Skipf("the bash of record needs redis-cli, bash and perl (have %q %q %q)", cli, bash, perl)
 	}
 	if err := exec.Command("date", "-j", "-u", "-f", "%s", "0", "+%s").Run(); err != nil {
 		t.Skip("date is not BSD date: the bash of record's freshness checks need `date -j -f` (Studio only)")
 	}
 
-	port, work := freePort(t), t.TempDir()
-	srv := exec.Command(server, "--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--dir", work)
-	if err := srv.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = srv.Process.Kill(); _ = srv.Wait() })
-	admin := redis.NewClient(&redis.Options{Addr: "127.0.0.1:" + port})
+	admin := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = admin.Close() })
 	ctx := context.Background()
-	for deadline := time.Now().Add(testWait2674()); admin.Ping(ctx).Err() != nil; time.Sleep(20 * time.Millisecond) {
-		if time.Now().After(deadline) {
-			t.Fatal("throwaway redis-server did not start")
-		}
-	}
 	// The fleet's bench ACL user: the bash authenticates as bench; no KEYS.
 	const password = "control-2674"
 	if err := admin.Do(ctx, "ACL", "SETUSER", "bench", "on", ">"+password, "~*", "&*", "+@all", "-keys").Err(); err != nil {
 		t.Fatal(err)
 	}
-	bench := redis.NewClient(&redis.Options{Addr: "127.0.0.1:" + port, Username: "bench", Password: password})
+	bench := redis.NewClient(&redis.Options{Addr: addr, Username: "bench", Password: password})
 	t.Cleanup(func() { _ = bench.Close() })
 
 	for _, c := range cases2674() {
