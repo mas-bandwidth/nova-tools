@@ -167,7 +167,7 @@ func main() {
 	// never the contents of a module.
 	if _, ok := directive(prompt, "FAKE-RECORD-CACHES"); ok && job != "" {
 		var b strings.Builder
-		for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN"} {
+		for _, name := range []string{"GOMODCACHE", "GOCACHE", "GOTOOLCHAIN", "ASDF_OUTPUT_TRANSLATIONS"} {
 			fmt.Fprintf(&b, "%s=%s\n", name, os.Getenv(name))
 		}
 		for _, name := range []string{"GOMODCACHE", "GOCACHE"} {

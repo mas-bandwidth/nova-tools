@@ -9,7 +9,9 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
@@ -77,8 +79,10 @@ func StageJobTree(source, dest string, card []byte) error {
 	}
 
 	if !sparse || len(cones) == 0 {
-		_, err := sparseGit(dest, "checkout", "--quiet")
-		return err
+		if _, err := sparseGit(dest, "checkout", "--quiet"); err != nil {
+			return err
+		}
+		return normalizeTrackedTimes(dest)
 	}
 	if _, err := sparseGit(dest, "sparse-checkout", "init", "--cone"); err != nil {
 		return err
@@ -87,8 +91,54 @@ func StageJobTree(source, dest string, card []byte) error {
 	if _, err := sparseGit(dest, args...); err != nil {
 		return err
 	}
-	_, err := sparseGit(dest, "checkout", "--quiet")
-	return err
+	if _, err := sparseGit(dest, "checkout", "--quiet"); err != nil {
+		return err
+	}
+	return normalizeTrackedTimes(dest)
+}
+
+// normalizeTrackedTimes gives every materialized regular source file the tip commit's
+// timestamp. ASDF validates compiled output by source mtime and also keys its output by
+// translated source path. A fresh clone otherwise makes every source newer than a FASL
+// compiled moments earlier in the exact-tip reference checkout, defeating prewarm.
+// Symlinks are skipped: Chtimes follows them and must never touch a target outside the tree.
+func normalizeTrackedTimes(repo string) error {
+	rawStamp, err := sparseGit(repo, "show", "-s", "--format=%ct", "HEAD")
+	if err != nil {
+		return err
+	}
+	unix, err := strconv.ParseInt(strings.TrimSpace(rawStamp), 10, 64)
+	if err != nil {
+		return fmt.Errorf("git commit timestamp %q: %w", rawStamp, err)
+	}
+	cmd := exec.Command("git", "ls-files", "-z", "--")
+	cmd.Dir = repo
+	cmd.Env = append(goenv.WithoutSecrets(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+	raw, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("git ls-files: %w", err)
+	}
+	stamp := time.Unix(unix, 0)
+	for _, name := range bytes.Split(raw, []byte{0}) {
+		if len(name) == 0 {
+			continue
+		}
+		path := filepath.Join(repo, filepath.FromSlash(string(name)))
+		fi, err := os.Lstat(path)
+		if os.IsNotExist(err) { // sparse checkout: tracked outside the cone
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !fi.Mode().IsRegular() {
+			continue
+		}
+		if err := os.Chtimes(path, stamp, stamp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // cardPATHS reads the card's PATHS: line. declared is true when the line is
@@ -422,7 +472,7 @@ func sparseGit(dir string, args ...string) (string, error) {
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(goenv.WithoutSecrets(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",

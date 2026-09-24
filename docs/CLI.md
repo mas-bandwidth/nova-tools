@@ -3441,6 +3441,7 @@ nova-swarm note     --pool <dir> --task <id> --text <text>                      
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
+nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>                # exact reference checkout plus module, build, test-binary and Lisp caches
 ```
 
 ### The card lint
@@ -3970,14 +3971,35 @@ That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and 
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
-### Shared Go caches for native workers
+### Shared build caches and exact-tip prewarm
 
 `nova-swarm native` creates `<root>/cache/go-mod` and `<root>/cache/go-build`
-and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. Slots using the
-same `--root` share these caches. It also sets `GOTOOLCHAIN=local`, so the bench
+and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. It points ASDF
+at `<root>/cache/common-lisp/<tip>` for compiled FASLs without sharing the harness's
+general XDG cache or HOME. Slots using the same `--root` share these caches. It
+also sets `GOTOOLCHAIN=local`, so the bench
 must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
+
+After the bench mirror has fetched a new tip, run this command locally on each
+bench, using that mirror checkout as `--source`:
+
+```text
+nova-swarm bench prewarm --root /the/swarm/root --source /the/bench/mirror/nova-tools --repo mas-bandwidth/nova-tools --tip <full-40-character-tip>
+```
+
+It resolves the exact commit locally, prepares the reference checkout under
+`<root>/ref/mas-bandwidth/nova-tools@<tip>`, runs module download, `make build`,
+a compile-only Go test pass and `make test-lisp`, then writes a receipt under
+`<root>/prewarm/`. A failed phase publishes no reference checkout or receipt.
+The command does not install the binary, fetch the mirror, change permissions,
+start a service or run on another host.
+
+Fleet adoption needs one further measurement: start a fresh job pinned to the
+same tip on each intended bench, run `make test`, and retain its elapsed-time
+receipt. S3's threshold is under 60 seconds on every bench. The local PREWARM
+line proves the preparation completed; it does not claim the fleet ran it.
 
 ### The bench toolchain inside the wall
 
