@@ -690,22 +690,23 @@ func TestAppendLedgerCreatesParentDirectories(t *testing.T) {
 
 // TestJevLineGoldenFormat pins the shape of the JEV line and ledger row (#3394).
 // The JEV line carries:
-//   JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=... model=<model> cost=$x explain=<one line>
+//
+//	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=... model=<model> cost=$x explain=<one line>
 func TestJevLineGoldenFormat(t *testing.T) {
 	d := prereview.Disposition{
-		Who:      prereview.Who,
-		Repo:     repo,
-		PR:       1488,
-		Head:     "8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3",
-		Verdict:  prereview.Bounce,
-		Score:    6,
-		Conf:     0.21,
-		Rubric:   "816c4381",
-		Base:     "ok",
-		Checks:   "donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6",
-		Model:    "jev-latest",
-		Scored:   true,
-		Explain:  "claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod",
+		Who:     prereview.Who,
+		Repo:    repo,
+		PR:      1488,
+		Head:    "8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3",
+		Verdict: prereview.Bounce,
+		Score:   6,
+		Conf:    0.21,
+		Rubric:  "816c4381",
+		Base:    "ok",
+		Checks:  "donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6",
+		Model:   "jev-latest",
+		Scored:  true,
+		Explain: "claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod",
 	}
 
 	const want = "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6 model=jev-latest cost=$- explain=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod"
@@ -738,4 +739,3 @@ func TestJevLineGoldenFormat(t *testing.T) {
 		t.Errorf("ledger row base = %v, want ok", row["base"])
 	}
 }
-

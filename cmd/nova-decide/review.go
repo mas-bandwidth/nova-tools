@@ -293,7 +293,7 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 		base = string(prereview.BaseGateFromGH(pr.Mergeable, pr.MergeStateStatus))
 	}
 	d := prereview.Disposition{
-		Who: prereview.Who,
+		Who:  prereview.Who,
 		Repo: repo, PR: n, Head: pr.Head,
 		Rubric: prereview.RubricVersion(), Base: base,
 		Checks: checks.Field(), Reason: checks.Why(), Evidence: checks.Evidence(), Model: tune.Model,
@@ -349,11 +349,11 @@ type ghRunner struct{ path string }
 
 // prWire is the subset of `gh pr view --json` this pass reads.
 type prWire struct {
-	Number           int    `json:"number"`
-	HeadRefOid       string `json:"headRefOid"`
-	Title            string `json:"title"`
-	Body             string `json:"body"`
-	Files            []struct {
+	Number     int    `json:"number"`
+	HeadRefOid string `json:"headRefOid"`
+	Title      string `json:"title"`
+	Body       string `json:"body"`
+	Files      []struct {
 		Path string `json:"path"`
 	} `json:"files"`
 	Mergeable        string `json:"mergeable"`

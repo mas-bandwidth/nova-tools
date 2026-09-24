@@ -21,8 +21,9 @@ const (
 // mergeStateStatus values.
 //
 // In GitHub's API:
-//   mergeable: MERGEABLE, CONFLICTING, UNKNOWN
-//   mergeStateStatus: CLEAN, BEHIND, DIRTY, BLOCKED, HAS_HOOKS, UNKNOWN, UNSTABLE
+//
+//	mergeable: MERGEABLE, CONFLICTING, UNKNOWN
+//	mergeStateStatus: CLEAN, BEHIND, DIRTY, BLOCKED, HAS_HOOKS, UNKNOWN, UNSTABLE
 func BaseGateFromGH(mergeable, mergeStateStatus string) BaseGate {
 	m := strings.ToUpper(strings.TrimSpace(mergeable))
 	s := strings.ToUpper(strings.TrimSpace(mergeStateStatus))

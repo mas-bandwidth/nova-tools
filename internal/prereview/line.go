@@ -396,4 +396,3 @@ func (d *Disposition) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
-
