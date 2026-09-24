@@ -61,7 +61,8 @@
                (:file "src/replays-verdict-state")
                (:file "src/replays-notes")
                (:file "src/dedup-root")
-               (:file "src/execution-reconcile")))
+               (:file "src/execution-reconcile")
+               (:file "src/operation-records")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -108,4 +109,5 @@
                  (:file "tests/issue-1695")
                 (:file "tests/replays-e02-operations")
                 (:file "tests/criterion-e02-f04-01")
-                (:file "tests/replays-e02-cancel")))
+                (:file "tests/replays-e02-cancel")
+                (:file "tests/replays-operation-records")))
