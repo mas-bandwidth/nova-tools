@@ -15,52 +15,6 @@ import (
 // and native child execution boundaries to the worker harness, ensuring commits
 // made by a worker carry pool identity rather than any bench gitconfig.
 
-func TestSupervisorWorkerDeliversPoolIdentityToChild(t *testing.T) {
-	if testing.Short() {
-		t.Skip("this one runs a worker pool")
-	}
-
-	b := newBench(t)
-	// Overwrite pool identity with an explicit test identity.
-	write(t, filepath.Join(b.pool, "identity.tsv"),
-		"owner\tname\temail\npool-owner\tPool Worker Author\tpool-author@example.com\n")
-
-	// Hostile bench git config with a ghost user in the parent environment.
-	benchHome := t.TempDir()
-	benchConfig := filepath.Join(benchHome, ".gitconfig")
-	write(t, benchConfig, "[user]\n\tname = Hostile Ghost\n\temail = ghost@example.com\n")
-
-	b.extraEnv = []string{
-		"HOME=" + benchHome,
-		"GIT_CONFIG_GLOBAL=" + benchConfig,
-	}
-
-	// Task instructs fake harness to run git init + git commit.
-	taskID := b.add("task to test boundary identity delivery\nFAKE-GIT-COMMIT\nFAKE-FINDINGS 0\n")
-
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("b.run() exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
-	}
-
-	jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
-	commitIdentityPath := filepath.Join(jobDir, "commit-identity")
-	raw, err := os.ReadFile(commitIdentityPath)
-	if err != nil {
-		errRaw, _ := os.ReadFile(filepath.Join(jobDir, "commit-identity-err"))
-		t.Fatalf("failed to read commit-identity: %v; harness git err: %s", err, string(errRaw))
-	}
-
-	got := strings.TrimSpace(string(raw))
-	want := "Pool Worker Author <pool-author@example.com> Pool Worker Author <pool-author@example.com>"
-	if got != want {
-		t.Errorf("harness commit identity = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "Hostile Ghost") || strings.Contains(got, "ghost@example.com") {
-		t.Errorf("hostile bench gitconfig leaked into harness commit: %q", got)
-	}
-}
-
 func TestNativeDrainDeliversPoolIdentityToChild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("this one runs a native execution")
@@ -202,27 +156,6 @@ func TestBoundaryIdentityNegativeControlFallsBackToBenchConfigOrFails(t *testing
 	gotPos := strings.TrimSpace(string(outPos))
 	if gotPos != "Pool Identity <pool@example.com>" {
 		t.Fatalf("positive control expected pool identity %q, got %q", "Pool Identity <pool@example.com>", gotPos)
-	}
-}
-
-func TestRunRefusesPoolWithNoIdentity(t *testing.T) {
-	if testing.Short() {
-		t.Skip("this one runs a worker pool")
-	}
-
-	b := newBench(t)
-	// Remove identity.tsv to simulate an unidentified pool.
-	if err := os.Remove(filepath.Join(b.pool, "identity.tsv")); err != nil {
-		t.Fatal(err)
-	}
-
-	b.add("task on unidentified pool\nFAKE-FINDINGS 0\n")
-	exit, stdout, _ := b.run()
-	if exit == 0 {
-		t.Fatalf("run on pool without identity succeeded, want refusal;\nstdout:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "refusing to launch under nobody's name") {
-		t.Fatalf("stdout does not contain refusal message:\n%s", stdout)
 	}
 }
 

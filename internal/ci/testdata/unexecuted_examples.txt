@@ -109,10 +109,6 @@ example: nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min
 example: nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 example: nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 example: nova-check quickstart --dir ./self
-example: nova-ci failed --help
-example: nova-ci failed --repo owner/name --branch dev --job "test (3/4 studio)"
-example: nova-ci failed --repo owner/name --pr 1370 --merge-group
-example: nova-ci failed --repo owner/name --run 35375346271
 example: nova-ci help
 example: nova-ci slowtests --budget 60
 example: nova-ci version

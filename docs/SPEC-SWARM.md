@@ -1,5 +1,8 @@
 # nova-swarm — specification
 
+> **Retired 2026-09-24 (verb survey, del-swarm-ci-leftovers).** `add`, `run`, `supervise`, `requeue`, `verdict`, `cost`, `note`, `reclaim`, `bench`, `reap`, `publish`, `pull`, `pull-lanes` and `result-lint` are deleted: nothing called them, and card work runs through `nova-sprint card launch` and `nova-card`. The live surface is `slots`, `native`, `lint` and `batch`. Prose below that describes a deleted verb is historical until this section is rewritten.
+
+
 `nova-swarm` is one binary at the **worker layer**. It runs a pool of **one-task
 workers** — any provider, any model, through one harness — each with its own
 working directory, its own data home, its own job directory and its own deadline
@@ -997,33 +1000,20 @@ H4. **`MODE: script` is `--net-deny`.** MODE is read from the typed header
 ## The verbs
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
-nova-swarm bench    probe --benches <file> --bench <name>
-nova-swarm bench    size  --benches <file> --bench <name> [--max <n>]
-nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>
 nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
-nova-swarm reap     --root <dir> [--older <duration>] [--dry-run]
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--profiles <file>] [--bench <name>] [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
-nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
-nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--profiles <file> --profile <id>] [--model <id>] [--max-input <bytes>]
-nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
 nova-swarm template --name <read-pr|probe-row|fix-card|result|worker|profiles|setup|capacity|read|fix|text|replay|drift|tone|models.tsv>
-nova-swarm cost     --pool <dir> [--since <stamp>] [--by model|day|repo] [--summary-only] [--max <n>]
-nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
 nova-swarm version
-nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
 nova-swarm lint      --card <file> [--max <n>] | --rules
 nova-swarm quickstart --pool <dir>
 nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
-nova-swarm publish   --job <dir> --branch <name> --base main --title <t> --body-file <f> [--touched <list>]
 nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
 nova-swarm help
 ```
@@ -3685,7 +3675,6 @@ word of it is read.
 ## `requeue` — the same task, changed
 
 ```
-nova-swarm requeue --pool <dir> --task <id> --task-file <file> [--label <text>]
 ```
 
 `requeue` takes a finished task and queues a **new** task with **new text**,

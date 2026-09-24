@@ -3445,20 +3445,17 @@ the natural `&&` chain would file exactly the duplicates.
 
 ## nova-swarm
 
+> **Retired 2026-09-24 (verb survey, del-swarm-ci-leftovers).** `add`, `run`, `supervise`, `requeue`, `verdict`, `cost`, `note`, `reclaim`, `bench`, `reap`, `publish`, `pull`, `pull-lanes` and `result-lint` are deleted: nothing called them, and card work runs through `nova-sprint card launch` and `nova-card`. The live surface is `slots`, `native`, `lint` and `batch`. Prose below that describes a deleted verb is historical until this section is rewritten.
+
+
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--max-input <bytes>]   # queue one task from a file, never from an argument
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
 nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv   # the conditions, the forms, and the pulse card templates, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
-nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
-nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
-nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
-nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>                # exact reference checkout plus module, build, test-binary and Lisp caches
 ```
 
 ### The card lint
@@ -4003,7 +4000,6 @@ After the bench mirror has fetched a new tip, run this command locally on each
 bench, using that mirror checkout as `--source`:
 
 ```text
-nova-swarm bench prewarm --root /the/swarm/root --source /the/bench/mirror/nova-tools --repo mas-bandwidth/nova-tools --tip <full-40-character-tip>
 ```
 
 It resolves the exact commit locally, prepares the reference checkout under
@@ -4787,8 +4783,7 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget, and reads a CI run's failing jobs and reports the failing tests they
-held. It also reports its own build with `nova-ci version`.
+a budget. It also reports its own build with `nova-ci version`.
 
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
@@ -4801,73 +4796,6 @@ budget is 60 seconds per package; exit 2 means an over-budget package or unusabl
 input, and exit 0 means no package exceeded the budget. CI exceptions belong in
 the dated project policy, not in an assumed higher tool default.
 
-The `failed` verb reads the other end of the same run: it asks a forge, through
-`gh`, for the jobs of one run that did not succeed, and prints the failing tests
-those jobs held instead of their logs.
-
-```sh
-nova-ci failed --repo owner/name --run 35375346271
-nova-ci failed --repo owner/name --pr 1375 --merge-group
-nova-ci failed --repo owner/name --branch dev --job "test (3/4 studio)" --max-lines 4
-nova-ci failed --help
-```
-
-Name exactly one run: `--run <id>`, `--pr <n>` (the newest run of that pull
-request's head commit, or `--merge-group` for the newest merge-queue run of its
-queue branch) or `--branch <name>`. `--repo` is required and has no default.
-`--job <text>` keeps the jobs whose name contains that text and reads no other
-job's log, which is what turns a forty-leg matrix into one call; if it matches no
-failing job it refuses, naming the jobs that did fail, rather than printing a
-green report. `--max-lines`
-(default 8) bounds each test's own message lines and counts the rest; `--gh`
-names the executable and `--timeout` (default 2m) budgets one call to it.
-
-`--decide` reads the red rather than only listing it (SPEC-DECIDE.md, *6. The
-CI-red reading*): it classes the failure and appends ` red=<class>
-rerun=<licensed|no> finding=<yes|no> reruns=<n> attempt=<n|->` to the closing
-line. Any
-`--- FAIL` name makes the class `named-test`, or `known-flake` when every
-failing name is in the `--flakes <file>` table (a TSV of test, issue and an
-expiry `YYYY-MM-DD`, read against `--now`, default today, where an expired row
-matches nothing). No `--- FAIL` name and every failed job cancelled is
-`cancelled-leg`; no `--- FAIL` name and every failed job either timed out, had a
-`startup_failure` conclusion, or failed in a step named in `--infra-steps
-<file>` is `infra`. A red the table cannot place prints `red=unknown`. The
-licence is the table's alone: `rerun=licensed` needs a rerunnable class
-(`cancelled-leg`, `known-flake` or `infra`) with no rerun yet spent, and
-everything else is `finding=yes` — a named failing test is never licensed, and a
-second red at one sha is a finding. The reading never reruns anything.
-
-The spent count is the **forge's**, read from the same job listing the verb
-already fetches: the `run_attempt` of the red jobs at this `head_sha`, less one,
-printed as `attempt=<n>` beside `reruns=<n>`. It is not the caller's to set. A
-red job the forge gave no attempt or no sha for, and red jobs that disagree with
-each other about either, are a refusal on stderr at exit 2 and no licence at all,
-because a verb that cannot tell a first red from a second must not guess the
-first. `--reruns <n>` remains only as a FLOOR for a caller who knows of a rerun
-the forge cannot see: the reading takes the greater of it and the forge's count,
-so it can withhold a licence and can never grant one. Re-reading the same
-attempt is not a second red — the answer is advisory and identical each time —
-and the caller's own rerun is what makes the forge report attempt 2, which is
-where the licence stops.
-
-Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
-at=<file:line>` line with that test's own words indented under it; a cancelled
-step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
-than its log, and a timed-out package is `TIMEOUT job="<name>" pkg=<pkg>
-running=<tests>`. A job that went red with no test event in its log — a compiler
-error inside a `make test` step — is `NOTEST job="<name>" step="<name>"
-tests=none` with the lines the runner itself marked as errors under it, so every
-red job is named rather than only counted. A job whose log the forge will not hand
-over — a job cancelled while its run is still in progress, whose log blob answers
-404 — is `NOLOG job="<name>" reason="<why>"` and an `unread=<n>` in the closing
-count, so one missing log never sinks the other jobs' reds. The closing
-`FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n>` always prints,
-and its word is `OK` only when the run said nothing red. It is
-a reader, so exit 1 means the run said something red, exit 0 means it said
-nothing, and exit 2 is a refusal — a bad flag, no such run, a `gh` that could
-not answer, or, under `--decide`, an attempt count the forge would not give.
-It runs `gh` for reading only and never merges, enqueues or comments.
 See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work

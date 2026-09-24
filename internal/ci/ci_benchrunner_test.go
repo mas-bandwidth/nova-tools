@@ -24,7 +24,6 @@ var benchRunnerAtBase = []string{
 	"cmd/nova-pulse/fleet.go fleetSSHRunner.Run",
 	"cmd/nova-pulse/power.go powerSSHRunner.Run",
 	"cmd/nova-sprint/expire.go sshProber.Probe",
-	"cmd/nova-swarm/bench.go prober.remote",
 	"internal/nsprint/deal/ssh.go remoteSession.Run",
 	"internal/pulse/fleet.go FleetRebootInput.ssh",
 	"internal/pulse/fleet.go checkFleetSeat",

@@ -7,7 +7,6 @@ cmd/nova-pulse/fillstore.go storeProbeConfig.runProbeOverSSH	raw: -n, script as 
 cmd/nova-pulse/fleet.go fleetSSHRunner.Run	bash -s (one argv word "bash -s")	#3350
 cmd/nova-pulse/power.go powerSSHRunner.Run	bash -s	#3350
 cmd/nova-sprint/expire.go sshProber.Probe	raw: `exec bash -c '<script>'` as the remote command, parsed by the login shell first (#2930 rev 5, landed after the spec's 4e338a9b inventory)	#3350
-cmd/nova-swarm/bench.go prober.remote	raw argv	#3350
 internal/nsprint/deal/ssh.go remoteSession.Run	raw: DefaultRemote `exec bash -lc '...'`, parsed by the login shell first; batch on stdin	#3350
 internal/pulse/fleet.go FleetRebootInput.ssh	raw: script is the remote command, parsed by the login shell (#3291 class)	#3350
 internal/pulse/fleet.go checkFleetSeat	bash -s, no testguard.RefuseHosts	#3350
