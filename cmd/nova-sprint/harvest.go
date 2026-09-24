@@ -90,8 +90,10 @@ func runCardHarvest(ctx context.Context, args []string, out, errOut io.Writer) i
 	if *orphans {
 		return refuse(errOut, "card harvest", "--orphans is the C3 build (orphan-effect, #2756 3.2), not this one")
 	}
-	if *loop && *once {
-		return refuse(errOut, "card harvest", "wants --once or --loop, not both")
+	if *once == *loop {
+		// Neither or both: the mode is usage, refused before the store is opened,
+		// so a bare `card harvest` never runs a mutating pass.
+		return refuse(errOut, "card harvest", "wants exactly one of --once or --loop: (--once | --loop [--every 10s])")
 	}
 	if *loop && *every <= 0 {
 		return refuse(errOut, "card harvest", "--every must be positive")
