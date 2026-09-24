@@ -11,6 +11,9 @@ Regenerate it after any change to a test's cost:
     for p in $(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./...); do \
       go test -json -count=1 $p; done | go run ./tools/testdur
 
+`testdur` heads each table it prints with the `<goos>/<goarch>` the run was measured
+on, so a paste carries its platform and cannot land under another bench's heading.
+
 One package at a time: `./...` runs packages in parallel and the totals then measure
 the bench's contention rather than the package. Tests over five seconds are listed by
 name; a test whose cost cannot come down goes behind `//go:build slow`, which the PR
@@ -20,11 +23,27 @@ jobs do not build and `.github/workflows/nightly-slow.yml` does.
 Name the bench, its platform and its load when you regenerate: a recording is a fact
 about a machine under a load, and the 2026-09-15 recording on the same core with load
 15-18 beside it is the whole difference between `cmd/nova-bus` at 38.5 s and at 30.4 s.
-Only the `[budget]` bench's numbers are enforced. Every other bench is EVIDENCE --
-what a package costs where the system calls are dear, which packages are slow for a
-reason that is not the test, and what ratio to expect on the Windows bench when it
-arrives -- and enforcing a budget against it would make a change answerable for
-whichever machine somebody happened to measure on (`TestEveryRecordedBenchIsNamedAndHasRows`).
+
+**Every bench has a ceiling, and it is its own.** The `[budget]` bench's rows are
+judged at a plain 60 s wherever the suite runs -- that is the number CI's Linux legs
+run against, and the one a change is answerable for wherever it was written. A section
+may also state a `budget-factor:` in its heading, what the same suite costs there
+relative to the budget bench, and its rows are judged at `60 s x factor` when the suite
+is RUNNING on that platform. darwin/arm64's factor is 2.2, the whole-suite ratio
+measured below. A platform with no section of its own falls back to the budget bench's
+sixty, so a platform is never silently unbudgeted.
+
+This keeps the rule a second bench arrived with: a change is not answerable for another
+machine's ABSOLUTE seconds, only for its own platform's, and the factor is what makes
+the two comparable. What it ends is the state the darwin section was recorded in --
+`cmd/nova-wake` at 62.9 s, over a minute, with nothing reading the number at all. An
+unenforced number drifts. The sections are checked by `TestFastSuiteUnderOneMinute`
+and `TestEveryRecordedBenchIsNamedAndHasRows`; a `budget-factor:` that is not a
+positive number is a refusal, never a silent fallback.
+
+The package table for a bench is the one DIRECTLY UNDER its heading. A table under a
+`###` inside the section -- the tests over five seconds, the ratios against Space --
+is read as prose, not as a second measurement of the same packages.
 
 ## Bench: Space, linux/amd64, 16 cores [budget]
 
@@ -95,7 +114,7 @@ is a red a change can answer for.
 | internal/log | 0.0 | - |
 | tools/testdur | 0.0 | - |
 
-### Tests over five seconds
+### TESTS OVER FIVE SECONDS (linux/amd64)
 
 One test is over the line, and it is over it because it runs every tool binary in the
 repo for its version line: the cost is real `exec`, and it grows with the number of
@@ -109,7 +128,7 @@ have dropped off this list entirely.
 | --- | --- | --- |
 | internal/ci | TestEveryToolPrintsTheOneVersionLine | 5.3 |
 
-## Bench: the Air, darwin/arm64, 8 cores
+## Bench: the Air, darwin/arm64, 8 cores, budget-factor: 2.2
 
 MacBook Air (M-series, 8 cores, go1.27.1), one package at a time at `nice -n 10`, no
 pinning -- darwin has no `taskset` and the scheduler is the machine's -- 2026-09-18 at
@@ -208,7 +227,7 @@ to its Linux cost is compute, and one several times over is paying for process s
 `cmd/nova-pulse` is the outlier worth naming separately: 20.0 s here against 0.5 s on
 Space, a 40x ratio, almost all of it in `TestBenchStandardDriftNamesBinary` at 7.6 s.
 
-### Tests over five seconds
+### TESTS OVER FIVE SECONDS (darwin/arm64)
 
 Twenty-one on this bench against one on Space, and none of them is a wait: every one is
 a package that shells out. They are listed rather than tagged because the tag is a
