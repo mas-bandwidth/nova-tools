@@ -110,6 +110,8 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 		{"missing key", []string{"--was", wasA, "--url", url}},
 		{"positional", []string{"--key", keyA, "--was", wasA, "--url", url, "extra"}},
 		{"unknown flag", []string{"--key", keyA, "--was", wasA, "--url", url, "--force"}},
+		{"whitespace was", []string{"--key", keyA, "--was", "   ", "--url", url}},
+		{"whitespace url", []string{"--key", keyA, "--was", wasA, "--url", "   "}},
 	} {
 		code, out, errOut := resolve(c.args...)
 		refused(c.name, code, out, errOut)

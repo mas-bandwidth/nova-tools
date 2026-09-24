@@ -24,6 +24,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -62,23 +63,29 @@ func runIdemResolve(ctx context.Context, args []string, out, errOut io.Writer) i
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, verb, err.Error()+"; want "+idemResolveUsage)
 	}
+	redisStr := strings.TrimSpace(*redisAddr)
+	sprintStr := strings.TrimSpace(*sprint)
+	keyStr := strings.TrimSpace(*key)
+	whoStr := strings.TrimSpace(*who)
+	wasStr := strings.TrimSpace(*was)
+	urlStr := strings.TrimSpace(*url)
 	switch {
 	case fs.NArg() > 0:
 		return refuse(errOut, verb, "takes flags, not positional arguments: "+idemResolveUsage)
-	case *redisAddr == "" || *sprint == "" || *key == "" || *who == "":
+	case redisStr == "" || sprintStr == "" || keyStr == "" || whoStr == "":
 		return refuse(errOut, verb, "--redis, --sprint, --key and --who are required: "+idemResolveUsage)
-	case *was == "":
+	case wasStr == "":
 		return refuse(errOut, verb, "--was is required: the ambiguous:<who>:<at_ms> value a STATE line printed")
-	case (*url == "") == !*none:
+	case (urlStr == "") == !*none:
 		return refuse(errOut, verb, "want exactly one of --url <u> and --none")
 	}
-	st, err := store.Open(ctx, *redisAddr)
+	st, err := store.Open(ctx, redisStr)
 	if err != nil {
 		return refuse(errOut, verb, err.Error())
 	}
 	defer st.Close()
 	res, err := reconcile.ResolveIdem(ctx, st, reconcile.IdemResolveRequest{
-		Sprint: *sprint, Key: *key, Was: *was, URL: *url, None: *none, Who: *who,
+		Sprint: sprintStr, Key: keyStr, Was: wasStr, URL: urlStr, None: *none, Who: whoStr,
 	})
 	if err != nil {
 		return refuse(errOut, verb, err.Error())

@@ -508,6 +508,9 @@ func TestControl08NoSecondPR(t *testing.T) {
 			{"allowlisted_with_unknown", `{"message":"Validation Failed","errors":[` + base + `,` + unknown + `]}`, false},
 			{"base_other_code", `{"errors":[{"resource":"PullRequest","field":"base","code":"missing_field"}]}`, false},
 			{"head_other_resource", `{"errors":[{"resource":"Issue","field":"head","code":"invalid"}]}`, false},
+			{"conflict_top_level_wins", `{"message":"A pull request already exists for ctl-org:x.","errors":[` + base + `]}`, false},
+			{"conflict_whitespace", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"  A pull request already exists for ctl-org:x.  "}]}`, false},
+			{"no_commits_whitespace", `{"message":"Validation Failed","errors":[{"resource":"PullRequest","code":"custom","message":"  No commits between dev and x  "}]}`, true},
 		}
 		for i, row := range rows {
 			t.Run(row.name, func(t *testing.T) {
@@ -606,6 +609,28 @@ func TestControl08NoSecondPR(t *testing.T) {
 		}
 	})
 
+	t.Run("ensure_pr_validation", func(t *testing.T) {
+		for _, bad := range []struct {
+			name string
+			h    reconcile.PRHost
+			req  reconcile.PRRequest
+		}{
+			{"nil host", nil, request("head", "w")},
+			{"missing repo", host, reconcile.PRRequest{Sprint: sprint, Branch: "head", Who: "w"}},
+			{"missing branch", host, reconcile.PRRequest{Sprint: sprint, Repo: repo, Who: "w"}},
+			{"missing who", host, reconcile.PRRequest{Sprint: sprint, Repo: repo, Branch: "head"}},
+		} {
+			calls := forge.calls.Load()
+			_, err := reconcile.EnsurePR(ctx, st, bad.h, bad.req)
+			if err == nil || !strings.Contains(err.Error(), "host, repo, branch and who are required") {
+				t.Fatalf("%s: err = %v, want required error", bad.name, err)
+			}
+			if forge.calls.Load() != calls {
+				t.Fatalf("%s asked the forge", bad.name)
+			}
+		}
+	})
+
 	t.Run("stale_fence_writes_nothing", func(t *testing.T) {
 		d := head("c8d1")
 		g := head("c8g")
@@ -668,11 +693,15 @@ func TestNoForgeReadInReconcile(t *testing.T) {
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.SelectorExpr:
-				if id, ok := x.X.(*ast.Ident); ok && id.Name == "http" && x.Sel.Name == "MethodGet" {
-					t.Errorf("%s: http.MethodGet in the reconcile package (a forge read)", fset.Position(x.Pos()))
+				if id, ok := x.X.(*ast.Ident); ok && id.Name == "http" && (x.Sel.Name == "MethodGet" || x.Sel.Name == "MethodHead") {
+					t.Errorf("%s: http.%s in the reconcile package (a forge read)", fset.Position(x.Pos()), x.Sel.Name)
 				}
 				if x.Sel.Name == "FindOpen" {
 					t.Errorf("%s: FindOpen in the reconcile package (a forge read)", fset.Position(x.Pos()))
+				}
+			case *ast.BasicLit:
+				if x.Kind == token.STRING && (x.Value == `"GET"` || x.Value == `"HEAD"`) {
+					t.Errorf("%s: %s literal in the reconcile package (a forge read)", fset.Position(x.Pos()), x.Value)
 				}
 			case *ast.Ident:
 				if x.Name == "FindOpen" {
