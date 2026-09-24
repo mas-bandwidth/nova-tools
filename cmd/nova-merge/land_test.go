@@ -401,4 +401,3 @@ func TestL30(t *testing.T) {
 		t.Fatalf("expected 2 enqueued after rollback, got %d", len(q.enqueued))
 	}
 }
-
