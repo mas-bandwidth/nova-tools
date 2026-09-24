@@ -283,9 +283,9 @@ func (h *GH) gh(args ...string) (string, error) {
 	return out, nil
 }
 
-// ghWhole is gh without execOutputCap on a successful call: for the three captures a
-// parser reads whole rather than a person -- a pull request's own JSON, its comments,
-// its reviews -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
+// ghWhole is gh without execOutputCap on a successful call: for the captures on the
+// landing path a parser reads whole rather than a person -- a pull request's own JSON,
+// its comments, its reviews (#2455) -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
 // JSON it cannot parse at all (nova-tools #2522). See RunUncapped for the mechanism and
 // for what still happens to a FAILING call's captured output.
 func (h *GH) ghWhole(args ...string) (string, error) {
@@ -358,6 +358,33 @@ func decodePR(out string, n int, repo string) (PR, error) {
 		URL: raw.URL, Subject: raw.Title, Body: raw.Body,
 		Merged: merged, Closed: closed, MergeSHA: strings.TrimSpace(raw.MergeCommit.OID),
 	}, nil
+}
+
+// CreatePR opens the one pull request a fold lands (docs/SPEC-MERGE.md "The fold
+// (#1142)"). It is not part of the Host interface the lane's pass uses: the fold reaches
+// it through a narrower interface of its own, so the merge path has no way to open one.
+func (h *GH) CreatePR(head, base, title, body string) (int, error) {
+	out, err := h.gh("pr", "create", "--repo", h.Repo, "--head", head, "--base", base,
+		"--title", title, "--body", body)
+	if err != nil {
+		return 0, err
+	}
+	// gh prints the pull request's URL; the number is its last path segment. A URL
+	// with no readable number is refused rather than guessed: FOLD OK names the PR.
+	u := strings.TrimSpace(out)
+	u = strings.TrimSuffix(u, "/")
+	if i := strings.LastIndex(u, "/"); i >= 0 {
+		if n, err := strconv.Atoi(u[i+1:]); err == nil {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("gh pr create did not name the pull request's number: %s", oneLineOf(out))
+}
+
+// ClosePR closes one folded pull request as superseded by the squash.
+func (h *GH) ClosePR(n int) error {
+	_, err := h.gh("pr", "close", strconv.Itoa(n), "--repo", h.Repo)
+	return err
 }
 
 // BranchOID resolves a branch entry's head through the host, so that a read-only verb
@@ -478,12 +505,16 @@ func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 // comment or review capture that carries a typed disposition near the end of a long
 // thread is not evidence this tool may read a 64 KiB prefix of and call complete
 // (nova-tools #2522 measured one such capture at 63,499 bytes).
+// The body is projected and bounded via --jq (.body[:65536]) so that individual comment
+// payloads cannot cause unbounded memory consumption during capture and decoding.
 func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
-	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n))
+	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n),
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), created_at, user: {login: .user.login}}]", MaxCommentBodyBytes))
 	if err != nil {
 		return nil, err
 	}
-	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n))
+	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n),
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), state, submitted_at, commit_id, user: {login: .user.login}}]", MaxCommentBodyBytes))
 	if err != nil {
 		return nil, err
 	}

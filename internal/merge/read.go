@@ -128,6 +128,72 @@ func EvaluateReads(e *Entry, author string) Standing {
 	return st
 }
 
+// ReaderAuthor is the PERSON a read on pr is refused for -- the name EvaluateReads and
+// UnreleasedHolds compare a recorded who= against -- and never the forge login as such.
+//
+// Glenn's ruling of 2026-09-23 (4:05-4:12 PM EDT): the read rule exists only to put a
+// DIFFERENT AI PERSON on a DIFFERENT MODEL, with a different point of view, on the code.
+// The rowan-claude login is the mechanized harvest identity, not authorship. And his
+// correction at 4:50 PM: Stella has no GitHub id of her own -- her lines and pull requests
+// come through gafferongames OR rowan-claude -- so the person is keyed on the BRANCH and
+// BODY SHAPE, never on the pull request's author login:
+//
+//   - emma/*, stella/*, johnny/*, glenn/* are that friend's, whatever login opened them:
+//     stella/* refuses stella's read and takes rowan's;
+//   - a harvest-opened swarm card -- [rowan/]card-*, fix3-*, nx-*, e0*, probe-*, or a
+//     body carrying a "RESULT:" line (harvest opens it with the card's RESULT.md) -- was
+//     written by the swarm's model, so its author is "swarm" and rowan's typed APPROVE at
+//     head is a read;
+//   - rowan/<task-id> (a Rowan child, DONE-WHEN body) is rowan's own: her read is refused
+//     and a non-Rowan friend's is needed.
+//
+// Only a branch of none of these shapes falls back to the login: one the reviewer file
+// maps to a single friend is that friend, a login it maps to several (the shared
+// gafferongames) is "unknown", and an unmapped login is itself. Holds stay keyed by who=;
+// this only decides who "the author" is.
+func ReaderAuthor(pr PR, rs *ReviewerSet) string {
+	prefix := ""
+	if i := strings.Index(pr.HeadRef, "/"); i > 0 {
+		prefix = normWho(pr.HeadRef[:i])
+	}
+	switch prefix {
+	case "emma", "stella", "johnny", "glenn":
+		return prefix
+	}
+	if IsSwarmCard(pr.HeadRef, pr.Body) {
+		return "swarm"
+	}
+	if prefix == "rowan" {
+		return "rowan"
+	}
+	switch revs := rs.ReviewersForLogin(pr.Author); {
+	case len(revs) == 1:
+		return revs[0].Who
+	case len(revs) > 1:
+		return "unknown"
+	}
+	return normWho(pr.Author)
+}
+
+// IsSwarmCard says whether a pull request was opened by harvest for a swarm card: its
+// branch (with or without the rowan/ prefix) is card-*, fix3-*, nx-*, e0* or probe-*, or
+// its body carries a RESULT: line (harvest.sh, harvest-bench.sh and harvest-priority open
+// the pull request with the card's RESULT.md, fenced or not).
+func IsSwarmCard(headRef, body string) bool {
+	leaf := strings.TrimPrefix(headRef, "rowan/")
+	for _, p := range []string{"card-", "fix3-", "nx-", "e0", "probe-"} {
+		if strings.HasPrefix(leaf, p) {
+			return true
+		}
+	}
+	for _, l := range strings.Split(body, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(l, " \t`>"), "RESULT:") {
+			return true
+		}
+	}
+	return false
+}
+
 // sameLine resolves a recorded `who` against the entry's author. The resolution is by
 // name, case-folded, and by nothing the host says about identity: a host login is
 // evidence about an ACCOUNT, and `who` is a line at a keyboard.
