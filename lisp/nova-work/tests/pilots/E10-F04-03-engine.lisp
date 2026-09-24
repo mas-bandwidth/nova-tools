@@ -45,9 +45,10 @@
         :version (nova-work:sha256-hex text)))
 
 (defun loaded-state (export-dir into)
-  (multiple-value-bind (snap line) (nova-work:state-load :from export-dir :into into)
+  (multiple-value-bind (snap line) (nova-work:state-load :from export-dir :into into
+                                                          :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
     (unless snap (error "~A" line))
-    (values (nova-work:snapshot-state (nova-work:read-loaded-snapshot into)) line)))
+    (values (nova-work:snapshot-state (nova-work:read-loaded-snapshot into :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)) line)))
 
 (defun record-nodes (state repo)
   "The loaded record nodes, in seed order: (record-id kind mapping text version)."

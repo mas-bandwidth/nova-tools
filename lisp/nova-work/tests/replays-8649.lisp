@@ -392,12 +392,13 @@ work-set, each hashed here from the loaded bytes: receipt-shaped plists."
            (into (namestring (merge-pathnames "snap/" (test-temp-dir "e10-f04-03")))))
       (ok (equal "tests/pilots/E10-F04-03-export" (getf dest :retained))
           "the pilot's export is retained: ~S" (getf dest :retained))
-      (multiple-value-bind (snap line) (state-load :from from :into into :max-bytes 1000000)
+      (multiple-value-bind (snap line) (state-load :from from :into into
+                                                   :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)
         (ok snap "the retained export loads: ~A" line)
         (when snap
           (check-string= (getf imp :manifest-sha256) (snapshot-manifest-hash snap)
                          "the retained export is the one the pilot's import wrote")
-          (let* ((state (snapshot-state (read-loaded-snapshot into)))
+          (let* ((state (snapshot-state (read-loaded-snapshot into :max-bytes 1000000 :max-depth 1000 :max-nodes 1000000)))
                  (loaded (%pilot-loaded-records state)))
             (check-string= (getf imp :member-sha256)
                            (sha256-hex (canonical-string (state-canonical-form state)))
