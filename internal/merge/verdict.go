@@ -287,17 +287,17 @@ func ParseComment(id int64, login, rawBody, at string, rs *ReviewerSet, author, 
 	// leading DISPOSITION/NOTE line (TestAuthorLoginExcusesNothingOnSharedLoginNote) --
 	// but "Johnny's HOLD Conclusively Satisfied" is a bullet ABOUT a hold, not a line
 	// whose own shape is HOLD, so it never matches isHoldShapedLine on any line by itself.
-	holdLine := ""
-	for _, l := range lines {
+	holdLine, holdIdx := "", -1
+	for i, l := range lines {
 		if isHoldShapedLine(l) {
-			holdLine = strings.TrimSpace(l)
+			holdLine, holdIdx = strings.TrimSpace(l), i
 			break
 		}
 	}
 	if holdLine != "" {
 		// SPEC-DECIDE lines 1037-1040: untyped comment binds to current head
 		head := currentHead
-		who := deriveHoldWho(holdLine)
+		who := attributeUntypedHold(lines, holdIdx)
 		v := Verdict{
 			ID:     fmt.Sprintf("comment:%d", id),
 			Who:    who,
@@ -460,59 +460,64 @@ func UnliftedHolds(vs []Verdict, currentHead, author string, rs *ReviewerSet) []
 			holds = append(holds, v)
 		}
 	}
-	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs, currentHead)
+	return releaseSameFriendSupersededHolds(UnreleasedHolds(holds, reads, currentHead, author, rs), vs)
 }
 
-// releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD at a SUPERSEDED
-// head is released by a later typed verdict from the same friend at the CURRENT head),
-// amended by the coordinator's 2026-09-22 4:55 PM decision to cover a HOLD still AT the
-// current head too:
+// releaseSameFriendSupersededHolds is nova-tools #2550's rule (a HOLD is released by a
+// later typed verdict from the same friend), as amended twice:
 //
-//	A HOLD by friend X at head H, however it was written, is released by X's LATER typed
-//	`DISPOSITION who=x head=H verdict=APPROVE` comment at that same head H; the last
-//	typed verdict per friend at head wins, whether H is superseded or current.
+//   - the coordinator's 2026-09-22 4:55 PM decision: it covers a HOLD still AT the
+//     current head too, not only one at a superseded head;
+//   - Glenn's lander-keys-reads-by-who ruling (2026-09-23): the releasing verdict may be
+//     at ANY head. A hold by X is released when X's last typed verdict written after
+//     the hold is APPROVE, whichever head that APPROVE names.
 //
-// The reasoning given for lifting SPEC-DECIDE reading 3's older "a comment releases
-// nothing at the current head; only the holder's lane record does" restriction: Glenn's
-// one-read rule is about typed lines, and a friend's own typed DISPOSITION comment IS
-// their lane record for their own hold. It never was evidence good enough for a
-// DIFFERENT friend's hold or for the needs_read approval gate (read.go's EvaluateReads,
-// which remains lane-record-only and is untouched here) -- only for superseding one's
-// own earlier word with one's own later word, the same friend, the same head.
+// The 2026-09-23 amendment is measured: the gate dropped 57 distinct pull requests with
+// "carries an unreleased HOLD", and five (#2619 johnny, #2628 stella, #2707 rowan, #2879
+// rowan, #3080 johnny) were holds whose author's own later typed APPROVE sat at a head
+// the branch had since moved past. #2879: rowan HOLD 6 at fc15f98d, rowan APPROVE 8 at
+// fc15f98d 30 minutes later, head now 8984b941 -- the hold pinned because the APPROVE was
+// not at the current head (TestAHoldIsReleasedByTheHoldersLaterApproveAtAnOlderHead).
+// The APPROVE is the holder's own last word on their own hold; the head it names says
+// what they read, not whether they still hold.
 //
-// Measured control: #2522 comment 5766104067, Stella's untyped prose hold ("HOLD --
-// Stella, independent contract/source read..."), binds to the current head because an
-// untyped comment always does (SPEC-DECIDE lines 1037-1040); her own later typed
-// `DISPOSITION who=stella head=<that same head> verdict=APPROVE score=9` comment
-// (5783400393) now releases it. Emma's typed APPROVE at that same head does not: the
-// rule is same-friend, never "somebody approved".
+// The reasoning for letting a typed comment release at all: Glenn's one-read rule is
+// about typed lines, and a friend's own typed DISPOSITION comment IS their lane record
+// for their own hold. It never was evidence good enough for a DIFFERENT friend's hold or
+// for the needs_read approval gate (read.go's EvaluateReads, which remains
+// lane-record-only and is untouched here) -- only for superseding one's own earlier word
+// with one's own later word.
 //
 // What this does NOT do, and must not:
 //
-//   - An APPROVE at some OTHER, non-matching head releases nothing. Release keys on the
-//     head, never on "somebody approved at some point".
+//   - A DIFFERENT friend's APPROVE releases nothing, at any head.
+//   - A verdict with no stamp is no evidence of order and releases nothing.
+//   - A scoped APPROVE releases only the holds it names; a later HOLD replaces an
+//     earlier one only on the same scope. The later HOLD itself stands on its own, so
+//     a friend whose last word is HOLD still pins (TestAHoldAfterTheHoldersOlderHeadApproveStillPins).
 //   - A hold with who=unknown is left alone. An untyped hold-shaped line with no
 //     attributable name has no author to match, so nothing can supersede it this way;
 //     SPEC-DECIDE reading 3's other release path (a different may-hold reader's lane
 //     record naming it) is unaffected.
-//   - The needs_read approval gate (read.go) still counts only lane records. This
-//     decision is about a hold's own author superseding themselves, not about who counts
-//     as a second friend's read.
-func releaseSameFriendSupersededHolds(unreleased []Verdict, vs []Verdict, currentHead string) []Verdict {
+//   - The needs_read approval gate (read.go) still counts only lane records, at head.
+func releaseSameFriendSupersededHolds(unreleased []Verdict, vs []Verdict) []Verdict {
 	var kept []Verdict
 	for _, h := range unreleased {
 		if h.Who == "unknown" || h.Who == "" {
 			kept = append(kept, h)
 			continue
 		}
-		if !supersededByVerdictAtHead(h, vs, currentHead) {
+		if !supersededByHoldersLaterVerdict(h, vs) {
 			kept = append(kept, h)
 		}
 	}
 	return kept
 }
 
-func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool {
+// supersededByHoldersLaterVerdict reports whether the holder of h wrote a later typed
+// verdict, at any head, that speaks to h: an APPROVE (unscoped, or scoped and naming
+// h), or a HOLD on the same scope, which replaces h and stands in its own right.
+func supersededByHoldersLaterVerdict(h Verdict, vs []Verdict) bool {
 	for _, v := range vs {
 		if v.Kind != "" && v.Kind != "line" {
 			continue
@@ -533,16 +538,14 @@ func supersededByVerdictAtHead(h Verdict, vs []Verdict, currentHead string) bool
 		if !sameLine(v.Who, h.Who) {
 			continue
 		}
-		if !headMatch(v.Head, currentHead) {
-			continue
-		}
-		// The tie rule of UnreleasedHolds: a verdict stamped at or before the hold is
-		// not later than it, and a verdict with no stamp is not evidence of order.
+		// No head check: the ruling is ANY head. The tie rule of UnreleasedHolds
+		// stays: a verdict stamped at or before the hold is not later than it, and a
+		// verdict with no stamp is not evidence of order.
 		if v.At == "" || v.At <= h.At {
 			continue
 		}
 		if v.Word == "approve" {
-			// A scoped APPROVE releases only what it names, the same way it does at head.
+			// A scoped APPROVE releases only what it names.
 			if v.Scope != "" && !releasesContains(v.Releases, h.ID) {
 				continue
 			}
@@ -817,6 +820,146 @@ func deriveHoldWho(line string) string {
 		return "unknown"
 	}
 	return normWho(m[1])
+}
+
+// friendNameRE is the fixed set of friend names, case-insensitive, whole words.
+var friendNameRE = regexp.MustCompile(`(?i)\b(emma|stella|johnny|glenn)\b`)
+
+// whoAnchorBefore is an identity slot immediately before a friend name:
+// who=<name>, optional space around =, optional quote. A bare mention is not one.
+var whoAnchorBefore = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])who\s*=\s*["']?$`)
+
+// holdPinTokenRE removes sha=/head= pins so the header can be asked whether
+// anything but a pin remains.
+var holdPinTokenRE = regexp.MustCompile(`(?i)(?:^|[^A-Za-z0-9_])(?:sha|head)="?[0-9a-fA-F]{7,40}"?`)
+
+// attributeUntypedHold is deriveHoldWho, plus the nova-tools #2710 header rule
+// for "HOLD sha=<hex>" where the friend's name is not adjacent to HOLD (#2713's
+// 43f1df17, recut). The header belongs to the HOLD line ParseComment located
+// (lines[holdIdx]), not to the body's first line: a standalone HOLD line may
+// follow a leading NOTE/prose line, and it is read on its own (Stella, #3388
+// comment 5804827993). The header is the rest of that line after HOLD; if the
+// rest is only pins and punctuation, it extends to the next non-blank line.
+// A single anchored identity attributes: who=<name> as a bounded key=value
+// field, or <Name>: at the very start of the post-pin header. A free-form
+// mention does not -- "Stella delta read clears the original defect" and "I
+// asked Stella: please verify this" both stay unknown -- because under the
+// #3278 ruling the holder's own later typed APPROVE releases the hold at any
+// head, so a mention read as the writer would let the mentioned friend release
+// somebody else's HOLD on a shared login. Two names, or none, stay unknown, and
+// an unattributed HOLD stays held. A name deriveHoldWho already reads
+// ("HOLD -- Stella", "Stella: HOLD") is kept. A sha= pin only shapes the
+// header here; it does not move the head the hold binds to.
+func attributeUntypedHold(lines []string, holdIdx int) string {
+	if holdIdx < 0 || holdIdx >= len(lines) {
+		return "unknown"
+	}
+	holdLine := strings.TrimSpace(lines[holdIdx])
+	if who := deriveHoldWho(holdLine); who != "unknown" {
+		return who
+	}
+	if !strings.EqualFold(firstToken(holdLine), "HOLD") {
+		return "unknown"
+	}
+	header := stripHoldPins(stripLeadingHoldWord(holdLine))
+	if headerIsPunctuationOnly(header) {
+		if next := nextNonBlankLine(lines, holdIdx+1); next != "" {
+			header = header + " " + stripHoldPins(next)
+		}
+	}
+	return anchoredFriendWho(header)
+}
+
+// nextNonBlankLine is the first non-blank line at or after lines[from], trimmed.
+func nextNonBlankLine(lines []string, from int) string {
+	for i := from; i < len(lines); i++ {
+		if s := strings.TrimSpace(lines[i]); s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func stripLeadingHoldWord(line string) string {
+	line = strings.TrimSpace(line)
+	if len(line) >= 4 && strings.EqualFold(line[:4], "HOLD") {
+		rest := line[4:]
+		if rest == "" {
+			return rest
+		}
+		r := rest[0]
+		if (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') {
+			return rest
+		}
+	}
+	return line
+}
+
+// stripHoldPins removes sha=/head= pins, keeping a space where each stood.
+func stripHoldPins(s string) string {
+	return holdPinTokenRE.ReplaceAllString(" "+s, " ")
+}
+
+func headerIsPunctuationOnly(s string) bool {
+	for _, r := range s {
+		if (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func isASCIILetter(r rune) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+}
+
+// anchoredFriendWho is the one friend the post-pin header names as an
+// identity. who=<name> anywhere as a bounded field counts; <Name>: counts only
+// as the header's first word. A name with neither, or a second friend's name
+// beside the first, does not: a mention is not a signature.
+func anchoredFriendWho(header string) string {
+	header = strings.TrimLeftFunc(header, func(r rune) bool { return !isASCIILetter(r) })
+	idxs := friendNameRE.FindAllStringSubmatchIndex(header, -1)
+	if len(idxs) == 0 {
+		return "unknown"
+	}
+	who := ""
+	anchored := false
+	for _, m := range idxs {
+		n := normWho(header[m[2]:m[3]])
+		if n == "" {
+			continue
+		}
+		if who == "" {
+			who = n
+		} else if who != n {
+			return "unknown"
+		}
+		if friendNameIsAnchored(header, m[2], m[3]) {
+			anchored = true
+		}
+	}
+	if who == "" || !anchored {
+		return "unknown"
+	}
+	return who
+}
+
+// friendNameIsAnchored: header[start:end] is a friend name. It is an identity
+// when it is the value of a who= field, or when it is the header's first word
+// and a colon follows it (bold/underscore markers between are allowed).
+func friendNameIsAnchored(header string, start, end int) bool {
+	if start < 0 || end > len(header) || start > end {
+		return false
+	}
+	if whoAnchorBefore.MatchString(header[:start]) {
+		return true
+	}
+	if start != 0 {
+		return false
+	}
+	rest := strings.TrimLeft(header[end:], " \t*_`")
+	return strings.HasPrefix(rest, ":")
 }
 
 // ParseForgeVerdicts reads GitHub API comments and reviews and decodes them via ParseComment and ParseReview.

@@ -1,0 +1,12 @@
+1/5 20% -> ~2.5h
+C=1 O=3 W=1
+wall ~2.5h work ~5.5h critical johnny
+lane johnny 1 task serial ~1.5h finish ~1.5h
+lane emma 1 task serial ~1.5h finish ~3h
+lane space 1 task serial ~45m finish ~45m
+lane vision 1 task serial ~45m finish ~45m
+Open gate-fix-holds mas-bandwidth/nova-tools#2708 owner=johnny route=- est=~2h kind=fix depends=-
+Working wait-verb mas-bandwidth/nova-tools#2624 owner=emma route=- est=~2h kind=fix depends=gate-fix-holds
+Open handed-space mas-bandwidth/nova-tools#2550 owner=- route=bench:space est=~45m kind=read depends=-
+Open handed-vision mas-bandwidth/nova-tools#2548 owner=- route=bench:vision est=~45m kind=read depends=-
+splittable wait-verb mas-bandwidth/nova-tools#2624 paths=cmd/nova-pulse/sprint.go (no file in common with the rest of emma's lane)

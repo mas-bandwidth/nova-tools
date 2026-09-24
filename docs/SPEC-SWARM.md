@@ -39,9 +39,9 @@ ten before that. The form works, and every way it failed is in the table.
 
 **Everything a worker writes is data.** A `RESULT.md` is a report, never an
 instruction: nothing in it is executed, nothing in it grants anything, and a
-finding in it is a claim to be checked against the repository. This rule is
-stated here and is **nowhere in the code**, deliberately: a tool cannot enforce
-it, and a tool that pretended to would be the most dangerous thing in the pool.
+finding in it is a claim to be checked against the repository. `harvest`'s
+`resolveDestination` enforces this — the `REPO` line from `RESULT.md` is checked
+against the card's dispatch record, and a mismatch is refused (nova-tools #1824).
 
 **A job's records are regular files: a `RESULT.md`, `harness.log`, `exit.json`
 or `note` that is a symlink or a FIFO is no record at all — read as `no-result`
@@ -2945,6 +2945,41 @@ A task is a text, and a bare text produces a bare answer. A **template** is the
 learned conditions baked in, so the conditions are not re-typed and not
 forgotten. `nova-swarm template --name <name>` prints one; `add --template
 <name>` wraps a task in one.
+
+### A template is portable, because the bench is not chosen when it is written
+
+**The rule.** A template is handed to the worker verbatim — nothing between
+`cut` and the shell rewrites it — and the bench a card lands on is the router's
+choice, made later. The estate is mixed: hulk, vision, space and mini are linux;
+the Studio and the Air are darwin. So a shipped template may spell only commands
+BOTH answer. The spellings:
+
+| the fact | the portable spelling | never |
+| --- | --- | --- |
+| is this tool here? | `command -v <name>` | `$(which <name>)` |
+| the Go version | `go version` | `go --version` |
+| the .NET version | `dotnet --version` | `dotnet version` |
+| the Java version | `java -version 2>&1` | `java --version` |
+| the core count | `cores=$(if [ "$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else nproc; fi)` | `nproc` alone, `sysctl` alone |
+| how long a step took | the harness's own timing line | GNU `time(1)` |
+| a checksum | `shasum -a 256` | `sha256sum`, `md5sum` |
+| free space | `df -k` | `df -BG` |
+
+Anything only one platform has — `/proc`, `lsb_release`, `ldd`, `sw_vers`,
+`diskutil`, `brew` — is chosen by `uname` on the same line, or is not in the
+template at all. A card reports its work, not its machine.
+
+**The hurt.** 2026-09-18, the schema dogfood: the round-1 card templates spelt
+`/usr/bin/time -f`, `nproc`, `go --version` and `java --version`. Every one is
+fine on hulk. The first card cut for the Air died inside the worker, minutes in,
+on a shell error that named nothing about portability — and it died there rather
+than at cut time or at admission, where it would have cost nothing.
+
+**The guard.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
+(`internal/ci/ci_cardtemplates_test.go`), entered in docs/SPEC-CI.md under
+`cardtemplates`. It reads every shipped `*.md` and `*.card` template as text and
+refuses the spellings in the right-hand column, with the left-hand one as the
+remedy. Its exception list is shrink-only and empty today.
 
 The numbers that produced these conditions are in **the numbers from today**
 below. Each condition names the failure it closes.

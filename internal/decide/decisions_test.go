@@ -2,11 +2,12 @@ package decide
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
 // memoryDriver is the decisions table in memory: the fake the one-writer and
-// the read paths are tested against, so no test needs a Postgres on a bench.
+// the read paths are tested against, so no test writes a file it did not name.
 type memoryDriver struct{ rows []DecisionRow }
 
 func (m *memoryDriver) Append(row DecisionRow) error {
@@ -114,13 +115,17 @@ func TestDecisionsTSVRoundTrip(t *testing.T) {
 	}
 }
 
-// An empty DSN is a refusal, never a guess; a repo with no Postgres driver
-// linked refuses rather than opening nothing.
+// An empty value is a refusal, never a guess; a URL names a database, not the
+// TSV file the table is, and is refused without printing its password.
 func TestOpenDecisionsRefusesNoTable(t *testing.T) {
 	if _, err := OpenDecisions(""); err == nil {
 		t.Fatal("empty DSN must refuse")
 	}
-	if _, err := OpenDecisions("postgres://bench/decisions"); err == nil {
-		t.Fatal("a postgres DSN with no linked driver must refuse")
+	_, err := OpenDecisions("db://nova:hunter2@bench/decisions")
+	if err == nil {
+		t.Fatal("a URL is not a TSV path and must refuse")
+	}
+	if strings.Contains(err.Error(), "hunter2") {
+		t.Fatalf("the refusal printed the password: %v", err)
 	}
 }

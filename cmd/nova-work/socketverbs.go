@@ -35,8 +35,6 @@ import (
 //     client verbs: they take no --session, start no daemon and take no
 //     ownership ("isolated and read-only" on both lines). They belong to a
 //     reader this client does not yet carry.
-//   - `report` is SPEC-AHEAD (#854) and has no kernel symbol at all; building
-//     its client half first would be the spec growing a second time.
 //   - `clip` COLLIDES: the spec's `clip --session <path> --as <name>
 //     --git-timeout <seconds>` is a long operation on the resident session,
 //     and `nova-work clip --worktree <dir> --branch <name> --base <ref>
@@ -111,6 +109,7 @@ var socketVerbs = []string{
 	"state",
 	"correct",
 	"event",
+	"report",
 }
 
 func init() {
@@ -944,6 +943,21 @@ var moreVerbFlags = map[string][]flagSpec{
 		{name: "superseded-by"},
 		{name: "evidence"},
 	},
+	"report": {
+		{name: "session"},
+		{name: "as"},
+		{name: "request"},
+		{name: "expect"},
+		{name: "now"},
+		{name: "deadline"},
+		{name: "dry-run", bool: true},
+		{name: "act"},
+		{name: "subject"},
+		{name: "what"},
+		{name: "acted-at"},
+		{name: "instead-of"},
+		{name: "reason"},
+	},
 }
 
 // verbFamilies are the first words that take a sub-verb, mapped to the
@@ -1000,5 +1014,4 @@ func resolveSocketVerb(head string, rest []string) (verb string, args []string, 
 var notCarried = map[string]string{
 	"state load":        "`state load` reads an export directory into a new read-only session: it starts no daemon and takes no ownership, so it is a local reader and not a request to a session. This client does not carry it yet",
 	"savepoint restore": "`savepoint restore` opens a savepoint into a new read-only session: isolated, taking no ownership and dispatching nothing, so it is a local reader and not a request to a session. This client does not carry it yet",
-	"report":            "`report` is marked SPEC-AHEAD (nova-tools#854) in docs/SPEC-WORK.md and no session answers it yet",
 }

@@ -488,3 +488,19 @@ types:
     rung: flash
     add: [ocglmflash]
     why: "nx is the type where a flash model matches pro: glm-5.3-flash 5 of 6 at $0.29 per 8+"
+
+# An overrides row replaces a rung's list for one work type outright (unlike
+# a types row, which only widens it), and may name a route this table's rule
+# holds or drops -- the whole point of the escape hatch. It is a manual,
+# interim exception, not derived, and TestTheTableFollowsItsRule does not
+# check it: the rule above still governs every row's persisted state and the
+# default (type "") list per rung. An override is reconciled or removed at
+# the next full re-rank (memory: try-then-remove, continual-refinement-loop),
+# never left to drift. A benched or dead route is refused even when the
+# override names it (Check, not the list, has the last word).
+overrides:
+  - type: code
+    rung: pro
+    routes: [ocqwenplus, orhaiku, ordspro]
+    source: "rowan-new reports/fold-2026-09-22-landed-per-route.md, fold 2026-09-23: cost per LANDED code PR (v6 4.10), not this file's $-per-8+-scored ranking"
+    why: "interim: the only routes that landed code were ocqwenplus $5.08/landed, orhaiku $5.50/landed and ordspro $16.38/landed; the 2026-09-23 02:31Z route change dropped ordspro and orhaiku here on $ per 9+ though they land; orqwenplus (same model as ocqwenplus, via openrouter) cost $119.90/landed, orkimi3 $98/landed, orminimax $31.55/landed; ocglm53, orglm53, orkimicode and orgemini25pro spent $198.81 on 53 PRs and landed none; ocminimax and ormimopro have no landed-PR evidence either way and are left off pending it"
