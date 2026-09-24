@@ -26,6 +26,9 @@
 --                        spec:, node: -- met only by ns_task_resolve with
 --                        asserted=1 (the resolver duty reads the fact)
 
+-- DEP is task_claim.lua's table (it sorts first); the functions below fill it.
+local DEP = NS.DEP
+
 local function tq_now_ms()
   local t = redis.call('TIME')
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
