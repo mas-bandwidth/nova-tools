@@ -51,11 +51,10 @@ type Handler interface {
 }
 
 // PRToRead is the pr-to-read rule (#2756 4.5, 3.2 rows review-ready to
-// land-ready and landed; nova-tools #2941, Stella). It is not built yet: the
-// router takes any Handler under this name and the controls run a fake.
+// land-ready and landed; nova-tools #2941, prread.go).
 type PRToRead interface{ Handler }
 
-// HoldToFix is the hold-to-fix rule (#2756 4.5; nova-tools #2941, Stella):
+// HoldToFix is the hold-to-fix rule (#2756 4.5; nova-tools #3092):
 // a typed HOLD at head becomes one fix task per dedup key. Not built yet;
 // the controls run a fake.
 type HoldToFix interface{ Handler }

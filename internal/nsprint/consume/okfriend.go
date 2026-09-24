@@ -532,14 +532,11 @@ func (o *OkFriend) census(ctx context.Context) (*readerCensus, error) {
 // required is the policy readers, or readers_security when the card's paths
 // touch a security path.
 func (c *readerCensus) required(card map[string]string) int {
-	for _, p := range strings.Fields(card["paths"]) {
-		for _, prefix := range c.secPrefixes {
-			if strings.HasPrefix(p, prefix) {
-				return c.security
-			}
-		}
-	}
-	return c.readers
+	return RequiredReads(map[string]string{
+		"readers":          strconv.Itoa(c.readers),
+		"readers_security": strconv.Itoa(c.security),
+		"security_paths":   strings.Join(c.secPrefixes, ","),
+	}, card)
 }
 
 // pick returns up to n least-loaded eligible friends, never the author.
