@@ -112,4 +112,5 @@
                 (:file "tests/criterion-e02-f04-01")
                 (:file "tests/replays-e02-cancel")
                 (:file "tests/replays-operation-records")
-                (:file "tests/replays-e02-wait")))
+                (:file "tests/replays-e02-wait")
+                (:file "tests/replays-journal-frame-integrity")))
