@@ -142,6 +142,12 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	repo := f.fs.String("repo", "", "")
 	base := f.fs.String("base", "", "")
 	entriesPath := f.fs.String("entries", "", "")
+	// --prs is --entries for a caller who has the numbers rather than a file. It is the
+	// same list `batch --pr` takes, in the same order, and it exists because the one
+	// caller that composes this verb -- `integrate` -- would otherwise have to write a
+	// temporary file to say two numbers, and cmd/nova-merge writes no files but the
+	// lane's own (source_test.go).
+	prsRaw := f.fs.String("prs", "", "")
 	checksRaw := f.fs.String("checks", defaultChecks, "")
 	timeoutRaw := f.fs.String("timeout", "5m", "")
 	if !f.parse(args, stderr) {
@@ -155,6 +161,19 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		if err := merge.ValidRefName(*base); err != nil {
 			f.problem(fmt.Sprintf("--base: %s", oneline.Escape(err.Error())))
 		}
+	}
+	// TWO SPELLINGS OF ONE QUEUE IS TWO QUEUES, and a run that took the first would be a
+	// run whose order depends on which flag the caller believed.
+	var prs []int
+	if strings.TrimSpace(*prsRaw) != "" {
+		if strings.TrimSpace(*entriesPath) != "" {
+			f.problem("--entries and --prs are two spellings of one queue; give one")
+		}
+		list, perr := parsePRList(*prsRaw)
+		if perr != nil {
+			f.problem(oneline.Escape(perr.Error()))
+		}
+		prs = list
 	}
 	timeout, err := time.ParseDuration(*timeoutRaw)
 	if err != nil || timeout <= 0 {
@@ -176,7 +195,7 @@ func cmdSimulate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if err != nil {
 		return simulateRefused(stderr, err)
 	}
-	entries, err := simulateEntries(*entriesPath, *base, repoAbs, timeout, deps)
+	entries, err := simulateEntries(*entriesPath, prs, *base, repoAbs, timeout, deps)
 	if err != nil {
 		return simulateRefused(stderr, err)
 	}
@@ -344,7 +363,10 @@ func gitDirOf(repo string, timeout time.Duration, deps Deps) (string, error) {
 
 // simulateEntries reads the queue: a file of numbers where --entries names one, and the
 // live merge queue through gh otherwise.
-func simulateEntries(entriesPath, base, repo string, timeout time.Duration, deps Deps) ([]int, error) {
+func simulateEntries(entriesPath string, prs []int, base, repo string, timeout time.Duration, deps Deps) ([]int, error) {
+	if len(prs) > 0 {
+		return prs, nil
+	}
 	if strings.TrimSpace(entriesPath) != "" {
 		return readEntryFile(entriesPath)
 	}
