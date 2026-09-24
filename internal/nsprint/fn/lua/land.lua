@@ -287,7 +287,10 @@ end)
 -- bumps gen from land:<repo>:<base>:writer:seq and appends one WRITER event to
 -- land:<repo>:events. Cutover to nova-sprint is REFUSED while the old loop's
 -- inflight count (the inflight arg, or land:<repo>:<base>:inflight as a string,
--- set or zset) is nonzero.
+-- set or zset) is nonzero. Rollback to old-loop is REFUSED (REFUSED pub <batch>) while
+-- land:<repo>:<base>:pub:active names an intent not yet resolved (state other than dead),
+-- per 10.2 "bumps gen after resolving any pub:* by 7.2": ns_pub_state dead or ns_land
+-- clears it first.
 redis.register_function('ns_writer', function(keys, args)
   local repo, base, to_owner, by, inflight_arg = args[1], args[2], args[3], args[4], args[5]
   if not repo or repo == '' or not base or base == '' then
@@ -320,6 +323,15 @@ redis.register_function('ns_writer', function(keys, args)
     end
     if inf > 0 then
       return { 'REFUSED', 'inflight', tostring(inf) }
+    end
+  end
+  if to_owner == 'old-loop' then
+    local active_pub = redis.call('GET', 'land:' .. repo .. ':' .. base .. ':pub:active')
+    if active_pub and active_pub ~= '' then
+      local ap_st = redis.call('HGET', 'land:' .. repo .. ':' .. base .. ':pub:' .. active_pub, 'state')
+      if ap_st ~= 'dead' then
+        return { 'REFUSED', 'pub', active_pub }
+      end
     end
   end
   local gen = redis.call('INCR', 'land:' .. repo .. ':' .. base .. ':writer:seq')

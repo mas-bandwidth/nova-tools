@@ -164,23 +164,14 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	if base == "" {
 		base = "dev"
 	}
-	if in.redis != "" {
-		silenceRedis()
-		if rdb := dialLandRedis(in.redis, deps); rdb != nil {
-			defer rdb.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			defer cancel()
-			writerKey := "land:" + in.repo + ":" + base + ":writer"
-			vals, err := rdb.HGetAll(ctx, writerKey).Result()
-			if err == nil && len(vals) > 0 {
-				owner := vals["owner"]
-				gen := vals["gen"]
-				if owner != "" && owner != "old-loop" {
-					fmt.Fprintf(stderr, "LAND REFUSED writer gen=%s owner=%s\n", oneline.Field(gen), oneline.Field(owner))
-					return 1
-				}
-			}
-		}
+	// #3139 B0: THE WRITER FENCE IS READ ON EVERY LAND, BEFORE ANY WRITE. The owner of
+	// land:<repo>:<base>:writer is resolved from --redis, else the normal configuration
+	// (NOVA_REDIS_ADDR, else NOVA_REDIS_HOST:NOVA_REDIS_PORT). A land that cannot resolve it
+	// is refused, never waved through: an optional fence is a fence the default invocation
+	// bypasses (#3485 holds). A missing key is the initial owner, old-loop; a read that
+	// fails (store down, NOPERM, WRONGTYPE) is not a missing key and refuses.
+	if code := landWriterFence(in, base, stderr, deps); code != 0 {
+		return code
 	}
 	// THE PULL REQUEST'S OWN CHECKS, read on its head. A batch that went green on a bench
 	// and red on the forge is a batch that does not land -- and a pull request with no
@@ -404,6 +395,63 @@ func receiptMembers(receipt string) string {
 		return "-"
 	}
 	return rec.Members
+}
+
+// landWriterAddr resolves the writer store's address: the flag, else NOVA_REDIS_ADDR, else
+// NOVA_REDIS_HOST:NOVA_REDIS_PORT (the same order internal/events resolves), read through
+// deps.Getenv, the package's one environment read (source_test.go storeEnvAllowance). A host
+// with no port, or no environment, resolves to nothing rather than to a guessed address.
+func landWriterAddr(flag string, getenv func(string) string) string {
+	if v := strings.TrimSpace(flag); v != "" {
+		return v
+	}
+	if getenv == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(getenv("NOVA_REDIS_ADDR")); v != "" {
+		return v
+	}
+	host := strings.TrimSpace(getenv("NOVA_REDIS_HOST"))
+	port := strings.TrimSpace(getenv("NOVA_REDIS_PORT"))
+	if host == "" || port == "" {
+		return ""
+	}
+	return host + ":" + port
+}
+
+// landWriterFence reads land:<repo>:<base>:writer and returns 0 when the old loop owns the
+// base (the key missing, or owner=old-loop) and 1, with one LAND REFUSED line, otherwise.
+func landWriterFence(in landRun, base string, stderr io.Writer, deps Deps) int {
+	addr := landWriterAddr(in.redis, deps.Getenv)
+	if addr == "" {
+		fmt.Fprintf(stderr, "LAND REFUSED writer unresolved: no --redis and no NOVA_REDIS_ADDR (or NOVA_REDIS_HOST and NOVA_REDIS_PORT); the writer owner of %s is read before every enqueue (#3139 B0)\n",
+			oneline.Field(in.repo+":"+base))
+		return 1
+	}
+	silenceRedis()
+	rdb := dialLandRedis(addr, deps)
+	defer rdb.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	writerKey := "land:" + in.repo + ":" + base + ":writer"
+	vals, err := rdb.HGetAll(ctx, writerKey).Result()
+	if err != nil && err != redis.Nil {
+		fmt.Fprintf(stderr, "LAND REFUSED writer unreadable addr=%s: %s\n", oneline.Field(addr), oneline.Err(err))
+		return 1
+	}
+	if len(vals) == 0 {
+		return 0 // no key: the initial owner, old-loop
+	}
+	owner := vals["owner"]
+	gen := vals["gen"]
+	if owner != "old-loop" {
+		if owner == "" {
+			owner = "-"
+		}
+		fmt.Fprintf(stderr, "LAND REFUSED writer gen=%s owner=%s\n", oneline.Field(gen), oneline.Field(owner))
+		return 1
+	}
+	return 0
 }
 
 func dialLandRedis(addr string, deps Deps) *redis.Client {

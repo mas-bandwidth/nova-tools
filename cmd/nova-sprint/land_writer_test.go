@@ -106,6 +106,32 @@ func TestLandWriterCutoverAndRollback(t *testing.T) {
 		t.Fatalf("query after cutover: code=%d out=%q want=%q err=%q", code, out, wantCutover, errOut)
 	}
 
+	// 5b. #3485 rowan hold item 3 (#3139 10.2 "bumps gen after resolving any pub:* by 7.2"):
+	// rollback is REFUSED while pub:active names an intent that is not resolved, and the
+	// writer hash is unchanged; once the intent is dead the rollback goes through.
+	pubActive := "land:" + repo + ":" + base + ":pub:active"
+	pubB1 := "land:" + repo + ":" + base + ":pub:b1"
+	if err := client.Set(ctx, pubActive, "b1", 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.HSet(ctx, pubB1, "state", "intent").Err(); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "old-loop", "--redis", addr, "--by", "emma")
+	if code != 2 || out != "" || !strings.Contains(errOut, "REFUSED pub=b1 ") {
+		t.Fatalf("rollback with unresolved intent: code=%d out=%q err=%q", code, out, errOut)
+	}
+	vals, err = client.HGetAll(ctx, writerKey).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vals["gen"] != "1" || vals["owner"] != "nova-sprint" {
+		t.Fatalf("refused rollback wrote the writer hash: %+v", vals)
+	}
+	if err := client.HSet(ctx, pubB1, "state", "dead").Err(); err != nil {
+		t.Fatal(err)
+	}
+
 	// 6. Rollback to old-loop succeeds and bumps gen
 	code, out, errOut = runSprint("land", "writer", "--repo", repo, "--base", base, "--to", "old-loop", "--redis", addr, "--by", "emma")
 	if code != 0 {

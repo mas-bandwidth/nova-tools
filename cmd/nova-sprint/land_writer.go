@@ -17,7 +17,8 @@ import (
 //
 // Cutover: land writer --repo <r> --base <b> --to nova-sprint bumps gen; refuses while
 // old loop's inflight count in Redis is nonzero.
-// Rollback: land writer --repo <r> --base <b> --to old-loop bumps gen after resolving pub:*.
+// Rollback: land writer --repo <r> --base <b> --to old-loop bumps gen; ns_writer refuses it
+// (REFUSED pub=<batch>) while land:<repo>:<base>:pub:active names an unresolved intent.
 func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("land writer")
 	repo := fs.String("repo", "", "")
@@ -96,6 +97,10 @@ func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) in
 		detail := ""
 		if len(res) > 2 {
 			detail = fmt.Sprint(res[2])
+		}
+		if reason == "pub" {
+			fmt.Fprintf(errOut, "REFUSED pub=%s remedy=resolve the publisher's intent (ns_pub_state dead, or ns_land) before rollback\n", oneline.Field(detail))
+			return 2
 		}
 		fmt.Fprintf(errOut, "REFUSED %s count=%s remedy=drain the old loop before cutover\n", oneline.Field(reason), oneline.Field(detail))
 		return 2
