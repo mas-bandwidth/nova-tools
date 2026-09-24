@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Provenance holds the execution metadata for a harvested job.
@@ -43,85 +45,7 @@ func (p Provenance) Table() string {
 // and the verbatim red and green lines, followed by any remaining result lines.
 // If red: or green: lines are missing from resultLines, they are looked for in report.
 func cleanResultSection(resultLines []string, report string) []string {
-	if len(resultLines) == 0 {
-		return nil
-	}
-	var out []string
-	line1 := strings.TrimSpace(firstNonEmpty(resultLines))
-	out = append(out, line1)
-
-	var remaining []string
-	foundLine1 := false
-	for _, l := range resultLines {
-		t := strings.TrimSpace(l)
-		if !foundLine1 && t == line1 {
-			foundLine1 = true
-			continue
-		}
-		remaining = append(remaining, l)
-	}
-
-	doneLine := ""
-	var rest []string
-	for i, l := range remaining {
-		t := strings.TrimSpace(l)
-		if i == 0 && (strings.HasPrefix(t, "DONE") || strings.HasPrefix(t, "done")) {
-			doneLine = t
-			continue
-		}
-		if t == "DONE" && doneLine == "" {
-			doneLine = t
-			continue
-		}
-		rest = append(rest, l)
-	}
-	if doneLine != "" {
-		out = append(out, doneLine)
-	} else if len(remaining) > 0 && strings.TrimSpace(remaining[0]) == "DONE" {
-		out = append(out, "DONE")
-		rest = remaining[1:]
-	}
-
-	var headers []string
-	var redLines []string
-	var greenLines []string
-	var others []string
-
-	for _, l := range rest {
-		t := strings.TrimSpace(l)
-		lower := strings.ToLower(t)
-		switch {
-		case strings.HasPrefix(t, "BRANCH ") || strings.HasPrefix(t, "BRANCH:"):
-			headers = append(headers, l)
-		case strings.HasPrefix(t, "REPO ") || strings.HasPrefix(t, "REPO:"):
-			headers = append(headers, l)
-		case strings.HasPrefix(lower, "prior:") || strings.HasPrefix(lower, "prior "):
-			headers = append(headers, l)
-		case strings.HasPrefix(lower, "red:") || strings.HasPrefix(lower, "red "):
-			redLines = append(redLines, l)
-		case strings.HasPrefix(lower, "green:") || strings.HasPrefix(lower, "green "):
-			greenLines = append(greenLines, l)
-		default:
-			others = append(others, l)
-		}
-	}
-
-	if len(redLines) == 0 {
-		if r := findRedLine(nil, report); r != "" {
-			redLines = append(redLines, r)
-		}
-	}
-	if len(greenLines) == 0 {
-		if g := findGreenLine(nil, report); g != "" {
-			greenLines = append(greenLines, g)
-		}
-	}
-
-	out = append(out, headers...)
-	out = append(out, redLines...)
-	out = append(out, greenLines...)
-	out = append(out, others...)
-	return out
+	return typedrec.CleanResultSection(resultLines, report)
 }
 
 // findRedLine finds a red line in resultLines or report.

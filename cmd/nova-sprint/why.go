@@ -103,6 +103,9 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if args[0] == "eval" {
 		return runLandEval(ctx, args[1:], out, errOut)
 	}
+	if args[0] == "worker" {
+		return runLandWorker(ctx, args[1:], out, errOut)
+	}
 	if args[0] == "flaky" {
 		return runLandFlaky(ctx, args[1:], out, errOut)
 	}

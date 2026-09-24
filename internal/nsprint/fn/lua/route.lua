@@ -226,4 +226,20 @@ do
   redis.register_function('ns_okfriend_review', okfriend_review)
   redis.register_function('ns_okfriend_skip', okfriend_skip)
   redis.register_function('ns_okfriend_pass', okfriend_pass)
+
+  -- ns_read_evidence S repo pr label head suggest findings floor
+  -- Writes swarm read evidence into s:<S>:readev:<repo>:<pr>
+  redis.register_function('ns_read_evidence', function(keys, args)
+    local S, repo, pr = args[1] or '', args[2] or '', args[3] or ''
+    local label, head = args[4] or '', args[5] or ''
+    local suggest, findings, floor = args[6] or '', args[7] or '', args[8] or ''
+    if S == '' or repo == '' or pr == '' or label == '' or head == '' then
+      return 'USAGE'
+    end
+    local key = 's:' .. S .. ':readev:' .. repo .. ':' .. pr
+    local field = label .. '@' .. head
+    local val = string.format('%s %s %s authority=swarm counted=0', suggest, findings, floor)
+    redis.call('HSET', key, field, val)
+    return 'OK'
+  end)
 end

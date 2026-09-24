@@ -37,10 +37,10 @@ func WidthFrom(desired, starting, living int) Width {
 // writer, the capacity function).
 func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	if st == nil {
-		return Width{}, fmt.Errorf("task width: nil store")
+		return Width{}, fmt.Errorf("width: nil store")
 	}
 	if as == "" {
-		return Width{}, fmt.Errorf("task width: as is required")
+		return Width{}, fmt.Errorf("width: as is required")
 	}
 	client := st.Client()
 	pipe := client.Pipeline()
@@ -48,11 +48,11 @@ func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
 	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
 	if _, err := pipe.Exec(ctx); err != nil {
-		return Width{}, fmt.Errorf("task width: friend %s has no desired slots: %w", as, err)
+		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
 	desired, err := desiredCmd.Int()
 	if err != nil {
-		return Width{}, fmt.Errorf("task width: friend %s has no desired slots: %w", as, err)
+		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
 	return WidthFrom(desired, int(startingCmd.Val()), int(livingCmd.Val())), nil
 }

@@ -264,9 +264,32 @@ type DoneRequest struct {
 	// Cost, when set, is appended to Evidence as its cost clause (#3105).
 	// A read done without one is unmetered in the fold, never $0.
 	Cost *Cost
+	// Typed, when set, is the review's typed DISPOSITION line as the shared
+	// parser (internal/nsprint/disposition) read it from the posted comment
+	// (task done --body-file, nova-tools #3092 rev 7). Its head, verdict and
+	// score are the close's; ns_task_done records it through
+	// ns_ingest_disposition's body in the same atomic call as the close.
+	Typed *TypedLine
 	// As closes without a token when As owns the claimed or working lease
 	// (#3206 PR A, the friend-queue `done --as` shape).
 	As string
+}
+
+// TypedLine is one parsed typed line carried by a DoneRequest. The parser
+// lives in internal/nsprint/disposition, which imports this package, so the
+// caller converts its Line into this shape.
+type TypedLine struct {
+	Type        string // DISPOSITION (a REPAIR refuses a review close)
+	Who         string
+	Head        string // 40 hex
+	Verdict     string // APPROVE | HOLD
+	Score       string // 1-10
+	Kind        string // explicit kind=, or empty
+	KindDerived string // the classifier's kind for a HOLD with no kind=
+	Scope       string
+	Reason      string
+	URL         string // the comment as posted
+	CommentID   string
 }
 
 // DoneStatus is the outcome of one done.
@@ -285,7 +308,19 @@ const (
 	DoneNoEvidence DoneStatus = "NOEVIDENCE"
 	// DoneInvalid refuses a review done without verdict, score or head.
 	DoneInvalid DoneStatus = "INVALID"
+	// DoneRefused refuses a typed close: the line is not a DISPOSITION, its
+	// who is not the task owner, or ns_ingest_disposition refused it (the
+	// reason is DoneOutcome.Why). Nothing is written (exit 2).
+	DoneRefused DoneStatus = "REFUSED"
 )
+
+// DoneOutcome is one done with its typed record: Why on REFUSED, Record the
+// ingest reply after RECORD on a typed close.
+type DoneOutcome struct {
+	Status DoneStatus
+	Why    string
+	Record []string
+}
 
 // ExitCode maps a done outcome to its CLI exit code (spec 4.2, 2.1 rule 8).
 func (s DoneStatus) ExitCode() int {
@@ -294,7 +329,7 @@ func (s DoneStatus) ExitCode() int {
 		return 3
 	case DoneConflict:
 		return 4
-	case DoneNoEvidence, DoneInvalid:
+	case DoneNoEvidence, DoneInvalid, DoneRefused:
 		return 2
 	default:
 		return 0
@@ -304,32 +339,62 @@ func (s DoneStatus) ExitCode() int {
 // Done closes a claimed or working task. The token check, the evidence check,
 // the disposition write, the index move and the one receipt are atomic.
 func Done(ctx context.Context, st *store.Store, req DoneRequest) (DoneStatus, error) {
+	out, err := DoneTyped(ctx, st, req)
+	return out.Status, err
+}
+
+// DoneTyped is Done with the typed record: a request with Typed set closes a
+// review only when its line is recorded in the same call.
+func DoneTyped(ctx context.Context, st *store.Store, req DoneRequest) (DoneOutcome, error) {
 	if st == nil {
-		return "", fmt.Errorf("task done: nil store")
+		return DoneOutcome{}, fmt.Errorf("task done: nil store")
 	}
 	if req.Sprint == "" || req.ID == "" {
-		return "", fmt.Errorf("task done: sprint and id are required")
+		return DoneOutcome{}, fmt.Errorf("task done: sprint and id are required")
 	}
 	if req.Cost != nil {
 		req.Evidence = WithCost(req.Evidence, *req.Cost)
 	}
 	if _, _, err := ParseCost(req.Evidence); err != nil {
-		return "", fmt.Errorf("task done %s: evidence cost: %w", req.ID, err)
+		return DoneOutcome{}, fmt.Errorf("task done %s: evidence cost: %w", req.ID, err)
+	}
+	var ty TypedLine
+	if req.Typed != nil {
+		if req.Verdict != "" || req.Score != "" || req.Head != "" {
+			return DoneOutcome{}, fmt.Errorf("task done %s: a typed line carries verdict, score and head; the flags are not also given", req.ID)
+		}
+		ty = *req.Typed
+		if ty.Type == "" {
+			return DoneOutcome{}, fmt.Errorf("task done %s: typed line without a type", req.ID)
+		}
+		req.Verdict, req.Score, req.Head = ty.Verdict, ty.Score, ty.Head
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDone, nil,
 		req.Sprint, req.ID, req.Token, req.Evidence, req.Verdict, req.Score,
-		req.Head, req.Actor, req.Idem, req.As).Result()
+		req.Head, req.Actor, req.Idem, req.As,
+		ty.Type, ty.Who, ty.URL, ty.CommentID, ty.Kind, ty.KindDerived, ty.Scope, ty.Reason).Slice()
 	if err != nil {
-		return "", fmt.Errorf("task done %s: %w", req.ID, err)
+		return DoneOutcome{}, fmt.Errorf("task done %s: %w", req.ID, err)
 	}
-	status, err := firstString(reply)
-	if err != nil {
-		return "", fmt.Errorf("task done %s: %w", req.ID, err)
+	if len(reply) == 0 {
+		return DoneOutcome{}, fmt.Errorf("task done %s: empty reply", req.ID)
 	}
-	switch DoneStatus(status) {
-	case DoneClosed, DoneRepeat, DoneFenced, DoneConflict, DoneNoEvidence, DoneInvalid:
-		return DoneStatus(status), nil
+	words := make([]string, len(reply))
+	for i, v := range reply {
+		words[i] = fmt.Sprint(v)
+	}
+	switch st := DoneStatus(words[0]); st {
+	case DoneClosed:
+		out := DoneOutcome{Status: st}
+		if len(words) > 2 && words[1] == "RECORD" {
+			out.Record = words[2:]
+		}
+		return out, nil
+	case DoneRefused:
+		return DoneOutcome{Status: st, Why: strings.Join(words[1:], " ")}, nil
+	case DoneRepeat, DoneFenced, DoneConflict, DoneNoEvidence, DoneInvalid:
+		return DoneOutcome{Status: st}, nil
 	default:
-		return "", fmt.Errorf("task done %s: unexpected status %q", req.ID, status)
+		return DoneOutcome{}, fmt.Errorf("task done %s: unexpected status %q", req.ID, words[0])
 	}
 }
