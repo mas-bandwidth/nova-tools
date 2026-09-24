@@ -368,6 +368,10 @@ func TestTheAgentSocketIsUnreachable(t *testing.T) {
 // socket is bound by a relative name from its own cwd and a test must not chdir.
 const unixListenerVerb = "test-unix-listener"
 
+// unixListenerNameEnv carries the socket's relative name to the listener child. It is an
+// environment field, not a positional argument: argv carries only the verb (law #2583).
+const unixListenerNameEnv = "NOVA_SANDBOX_TEST_UNIX_NAME"
+
 // startUnixListener runs the listener in dir and returns its stdout lines: READY once
 // bound and listening (or LISTEN-ERROR), then ACCEPT <tag> per connection, in order.
 func startUnixListener(t *testing.T, dir, name string) <-chan string {
@@ -380,7 +384,8 @@ func startUnixListener(t *testing.T, dir, name string) <-chan string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(self, unixListenerVerb, name)
+	cmd := exec.Command(self, unixListenerVerb)
+	cmd.Env = append(os.Environ(), unixListenerNameEnv+"="+name)
 	cmd.Dir = dir
 	cmd.Stdout = pw
 	if err := cmd.Start(); err != nil {
@@ -827,8 +832,8 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "probe-step" {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
 	}
-	if len(os.Args) == 3 && os.Args[1] == unixListenerVerb {
-		os.Exit(serveUnixForTest(os.Args[2]))
+	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb {
+		os.Exit(serveUnixForTest(os.Getenv(unixListenerNameEnv)))
 	}
 	os.Exit(m.Run())
 }
