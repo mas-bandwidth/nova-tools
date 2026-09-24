@@ -26,6 +26,7 @@ import (
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
 // routeNotWired names the rules the router does not run yet and the issue
@@ -70,10 +71,7 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	ok := &consume.OkFriend{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	report := &consume.Report{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	read := &consume.PRRead{Store: st, Sprint: *sprint, Consumer: instance, Instance: instance, Actor: *actor, Remote: consumePRReadRemote}
-	// An adoption cuts its ci card at the PR head (ns_ci_cut); a base tip the
-	// lander has not recorded prints CUT-SKIP and cut=0, never a stop.
-	runner := &consume.PRToReadRule{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor, Out: out,
-		CICut: consume.StoreCICut(st, *actor)}
+	runner := routePRToRead(st, *sprint, instance, *actor, out)
 	pr := consume.JoinPRToRead(read, runner)
 	router := &consume.Router{
 		Store: st, Sprint: *sprint, Instance: instance, Host: host,
@@ -94,4 +92,14 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	fmt.Fprintf(out, "ROUTE STOPPED sprint=%s instance=%s lease released\n", *sprint, instance)
 	return 0
+}
+
+// routePRToRead is the pr-to-read rule exactly as runRoute wires it (the
+// route control TestRoutePRToReadCutsCI builds it here): an adoption cuts its
+// ci card at the PR head (ns_ci_cut) before its reads; a base tip the lander
+// has not recorded prints `WAIT <id> no base tip` and adopts nothing, never a
+// stop.
+func routePRToRead(st *store.Store, sprint, instance, actor string, out io.Writer) *consume.PRToReadRule {
+	return &consume.PRToReadRule{Store: st, Sprint: sprint, Consumer: instance, Actor: actor, Out: out,
+		CICut: consume.StoreCICut(st, actor)}
 }

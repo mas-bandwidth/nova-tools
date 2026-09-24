@@ -548,10 +548,11 @@ func TestJoinPRToRead(t *testing.T) {
 	}
 }
 
-// TestStoreCICut: the cut route wires (Stella's hold 5 on #3532). A branch
-// base resolves through land:<repo>:<base>:tip; with no tip the adoption
-// still sends its reads with cut=0 and a CUT-SKIP line; a CREATED cut keeps
-// the runner rows already on ci:<repo>:<head>.
+// TestStoreCICut: the cut route wires (Stella's hold 5 on #3532, Rowan's
+// hold 4 item 2). A branch base resolves through land:<repo>:<base>:tip; with
+// no tip the adoption WAITs (no tasks, no adopt record), so the same head
+// adopts with cut=1 once the tip is recorded; a CREATED cut keeps the runner
+// rows already on ci:<repo>:<head>.
 func TestStoreCICut(t *testing.T) {
 	f := newC33(t)
 	f.rule.CICut = StoreCICut(f.rule.Store, "route")
@@ -559,30 +560,94 @@ func TestStoreCICut(t *testing.T) {
 	must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":policy", "readers", "1").Err())
 
 	head := f.seedPR(7, "ctl-a", "false", "opened")
-	out := f.pass()
-	if !strings.Contains(out, fmt.Sprintf("CUT-SKIP %s#7@%s", c33Short, head[:12])) ||
-		!strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=0", c33Short, head[:12])) {
-		t.Fatalf("no tip: pass printed %q, want CUT-SKIP and ADOPT cut=0", out)
+	akey := "s:" + c33Sprint + ":adopt:" + c33Short + ":7"
+	for i := 0; i < 2; i++ {
+		out := f.pass()
+		if !strings.Contains(out, fmt.Sprintf("WAIT %s#7 no base tip", c33Short)) || strings.Contains(out, "ADOPT") {
+			t.Fatalf("no tip, pass %d printed %q, want WAIT no base tip and no ADOPT", i, out)
+		}
+		if n := len(f.tasks()); n != 0 {
+			t.Fatalf("no tip, pass %d: %d tasks, want 0", i, n)
+		}
+		if ex, err := f.client.Exists(f.ctx, akey).Result(); err != nil || ex != 0 {
+			t.Fatalf("no tip, pass %d: %s exists=%d err=%v, want no adopt record", i, akey, ex, err)
+		}
 	}
 
 	tip := strings.Repeat("b", 40)
 	must(t, f.client.HSet(f.ctx, "land:"+c33Short+":dev:tip", "sha", tip).Err())
-	newHead := strings.Repeat("c", 40)
-	rec := "ci:" + c33Short + ":" + newHead
+	rec := "ci:" + c33Short + ":" + head
 	must(t, f.client.HSet(f.ctx, rec, "runner:windows", `{"status":"completed"}`).Err())
-	must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":pr:"+c33Short+":7", "head", newHead).Err())
-	out = f.pass()
-	if !strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=1", c33Short, newHead[:12])) || strings.Contains(out, "CUT-SKIP") {
-		t.Fatalf("tip set: pass printed %q, want ADOPT cut=1", out)
+	out := f.pass()
+	if !strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=1", c33Short, head[:12])) || strings.Contains(out, "WAIT") {
+		t.Fatalf("tip set: pass printed %q, want ADOPT cut=1 at the same head", out)
 	}
 	got, err := f.client.HGetAll(f.ctx, rec).Result()
 	must(t, err)
 	if got["verdict"] != "PENDING" || got["base"] != tip || got["runner:windows"] != `{"status":"completed"}` {
 		t.Fatalf("ci record %v, want PENDING at base %s with runner:windows kept", got, tip)
 	}
-	card, err := f.client.HGet(f.ctx, "s:"+c33Sprint+":card:ci-7-"+newHead[:8], "state").Result()
+	card, err := f.client.HGet(f.ctx, "s:"+c33Sprint+":card:ci-7-"+head[:8], "state").Result()
 	must(t, err)
 	if card != "queued" {
 		t.Fatalf("ci card state %q, want queued", card)
+	}
+	if cutAt, err := f.client.HGet(f.ctx, akey, "cut_at").Result(); err != nil || cutAt == "" {
+		t.Fatalf("adopt record cut_at %q err %v, want set", cutAt, err)
+	}
+}
+
+// TestPRToReadAdoptRechecksLive: Stella's hold 5 item 2 on #3532. The rule
+// reads the PR record, card and holds, then calls ns_prtoread_adopt; the
+// Function rechecks them atomically with its writes, so a head that moved or
+// a card, hold, draft or close that landed in between writes no review task
+// and no adopt record.
+func TestPRToReadAdoptRechecksLive(t *testing.T) {
+	f := newC33(t)
+	head := f.seedPR(8, "ctl-a", "false", "opened")
+	pkey := "s:" + c33Sprint + ":pr:" + c33Short + ":8"
+	hkey := "s:" + c33Sprint + ":hold:" + c33Short + ":8"
+	adopt := func() []string {
+		t.Helper()
+		id := task.ReviewID(c33Short, 8, head, "ctl-b")
+		reply, err := f.client.FCall(f.ctx, FunctionPRToReadAdopt, nil, c33Sprint, c33Short, "8", head, "route", "1", "1",
+			id, "ctl-b", "read", "0", "sha-"+id, c33Short+"#8").StringSlice()
+		must(t, err)
+		return reply
+	}
+	for _, c := range []struct {
+		name  string
+		set   func()
+		reset func()
+		want  string
+	}{
+		{"head moved", func() { must(t, f.client.HSet(f.ctx, pkey, "head", strings.Repeat("d", 40)).Err()) },
+			func() { must(t, f.client.HSet(f.ctx, pkey, "head", head).Err()) }, "WAIT head moved"},
+		{"closed", func() { must(t, f.client.HSet(f.ctx, pkey, "state", "closed").Err()) },
+			func() { must(t, f.client.HSet(f.ctx, pkey, "state", "opened").Err()) }, "WAIT state closed"},
+		{"draft", func() { must(t, f.client.HSet(f.ctx, pkey, "draft", "true").Err()) },
+			func() { must(t, f.client.HSet(f.ctx, pkey, "draft", "false").Err()) }, "WAIT draft"},
+		{"card", func() { must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":prcard", c33Short+"#8", "c-8").Err()) },
+			func() { must(t, f.client.HDel(f.ctx, "s:"+c33Sprint+":prcard", c33Short+"#8").Err()) }, "WAIT card c-8"},
+		{"open hold", func() { must(t, f.client.HSet(f.ctx, hkey, "ctl-c", `{"holder":"ctl-c","head":"x"}`).Err()) },
+			func() { must(t, f.client.Del(f.ctx, hkey).Err()) }, "WAIT hold"},
+		{"unreadable hold", func() { must(t, f.client.HSet(f.ctx, hkey, "ctl-c", `not json`).Err()) },
+			func() { must(t, f.client.Del(f.ctx, hkey).Err()) }, "WAIT hold"},
+	} {
+		c.set()
+		if got := strings.Join(adopt(), " "); got != c.want {
+			t.Fatalf("%s: reply %q, want %q", c.name, got, c.want)
+		}
+		if n := len(f.tasks()); n != 0 {
+			t.Fatalf("%s: %d tasks written, want 0", c.name, n)
+		}
+		c.reset()
+	}
+	must(t, f.client.HSet(f.ctx, hkey, "ctl-c", `{"holder":"ctl-c","head":"x","released_by":"ctl-c"}`).Err())
+	if got := adopt(); len(got) == 0 || got[0] != "OK" {
+		t.Fatalf("live record unchanged, released hold: reply %v, want OK", got)
+	}
+	if n := len(f.tasks()); n != 1 {
+		t.Fatalf("after OK: %d tasks, want 1", n)
 	}
 }

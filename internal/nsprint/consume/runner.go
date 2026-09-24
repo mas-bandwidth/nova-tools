@@ -134,11 +134,17 @@ func shortRepo(repo string) string {
 }
 
 // ErrCutSkipped is what a CICut returns when the cut cannot be made from
-// Redis alone (no base tip sha recorded yet, a head that is not a full sha, or
-// ns_ci_cut answered other than CREATED/EXISTS). The adoption goes ahead with
-// cut=0 and a CUT-SKIP line, as with a nil CICut, instead of stopping the
-// router: a missing cut is visible, never a routing outage.
+// Redis alone yet (no base tip sha recorded, a head that is not a full sha, or
+// ns_ci_cut answered other than CREATED/EXISTS). The adoption WAITs (#3040
+// adoption step 1: the cut, then the Function): it prints one WAIT line,
+// writes no adopt record and is retried on the next pass, instead of stopping
+// the router or adopting with cut=0.
 var ErrCutSkipped = errors.New("ci cut skipped")
+
+// ErrNoBaseTip is the ErrCutSkipped of a branch base whose
+// land:<repo>:<base>:tip has no sha yet; the adoption prints
+// `WAIT <id> no base tip`.
+var ErrNoBaseTip = fmt.Errorf("%w: no base tip", ErrCutSkipped)
 
 // StoreCICut is the CICut `nova-sprint route` wires (#3040 rev 4, adoption
 // "gets its ci cut"): one ci.Cut per adopted head, against the base tip sha.
@@ -172,7 +178,7 @@ func StoreCICut(st *store.Store, actor string) func(context.Context, CICut) erro
 		if tipCmd != nil {
 			base = tipCmd.Val()
 			if !fullSHA(base) {
-				return fmt.Errorf("%w: no tip sha in %s", ErrCutSkipped, tipKey)
+				return fmt.Errorf("%w: no tip sha in %s", ErrNoBaseTip, tipKey)
 			}
 		}
 		rows := []any{}
@@ -218,7 +224,9 @@ type PRToReadRule struct {
 	Actor    string    // receipt actor
 	Out      io.Writer // one line per action; nil discards
 	// CICut is called once per adoption before its review tasks; the cut is
-	// idempotent per head and base. nil skips the cut (cut=0 on the line).
+	// idempotent per head and base. An ErrCutSkipped answer WAITs the
+	// adoption; nil skips the cut (cut=0 on the line, controls only: route
+	// wires StoreCICut).
 	CICut func(context.Context, CICut) error
 	Count int64 // entries per read; 0 means 100
 	// Block is the block of the first new-entry read; 0 means 1 s and a
