@@ -68,7 +68,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -173,7 +173,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -228,7 +228,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -305,7 +305,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -493,7 +493,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -554,7 +554,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -665,7 +665,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		sprint := "s1"
 		client.SAdd(ctx, "sprints", sprint)
@@ -746,7 +746,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		timeVal, err := client.Time(ctx).Result()
 		if err != nil {
@@ -828,7 +828,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st.Close()
+		defer func() { _ = st.Close() }()
 
 		lease1, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c9-1"})
 		if err != nil {
@@ -887,7 +887,7 @@ func TestWidthControls(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer st8.Close()
+		defer func() { _ = st8.Close() }()
 
 		lease8, err := reconcile.Acquire(ctx, st8, reconcile.AcquireOptions{Host: "test", Instance: "c9-8"})
 		if err != nil {
@@ -939,7 +939,7 @@ func TestWidthMoveRequiresFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	// Calling ns_width_move with an empty fence string must return FENCED, not skip the check.
 	res, err := client.FCall(ctx, "ns_width_move", nil, "", "fromF", "toF", "s1", "30000", "width", "").Result()
@@ -994,7 +994,7 @@ func TestWidthDutySurfacesMoveRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	sprint := "s1"
 	client.SAdd(ctx, "sprints", sprint)
@@ -1102,7 +1102,7 @@ func TestWidthReadBoundFencedAtomic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 
 	sprint := "s1"
 	client.SAdd(ctx, "sprints", sprint)
@@ -1242,7 +1242,7 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	client.HSet(ctx, "s:s1", "status", "open")
 	client.SAdd(ctx, "sprints", "s1")
 	client.SAdd(ctx, "friends", "f1")
@@ -1262,36 +1262,22 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 		t.Fatalf("after refused fill, open = %d; want 65", n)
 	}
 
-	res, err := task.Fill(ctx, st, "f1", "s1", 0, "f1", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.N != len(res.Tasks) || res.N > 64 || res.N == 0 {
-		t.Fatalf("fill n=%d tasks=%d; want 1..64 claims, one per random part", res.N, len(res.Tasks))
-	}
-	for i, tk := range res.Tasks {
-		parts := strings.SplitN(tk.Token, ".", 2)
-		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
-			t.Fatalf("claim %d token %q: want <attempt>.<32 hex>", i+1, tk.Token)
-		}
-	}
-	// Top the parts up past 64 directly: claim 65 gets a 32-hex part too.
+	// Fail closed: an unbounded call with 3 parts over 65 ready claims 3.
 	args := []any{"f1", "s1", "0", "f1", ""}
-	left := 65 - res.N
-	for i := 0; i < left; i++ {
+	for i := 0; i < 3; i++ {
 		p, err := task.RandomToken()
 		if err != nil {
 			t.Fatal(err)
 		}
 		args = append(args, p)
 	}
-	r2, err := client.FCall(ctx, "ns_width_fill", nil, args...).Result()
+	r1, err := client.FCall(ctx, "ns_width_fill", nil, args...).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := r2.([]any)
-	if fmt.Sprint(v[1]) != strconv.Itoa(left) {
-		t.Fatalf("second fill claimed %v; want %d", v[1], left)
+	v := r1.([]any)
+	if fmt.Sprint(v[1]) != "3" {
+		t.Fatalf("fill with 3 parts claimed %v; want 3 (no claim without a part)", v[1])
 	}
 	for i := 3; i+3 < len(v); i += 4 {
 		tok := fmt.Sprint(v[i+3])
@@ -1300,7 +1286,83 @@ func TestWidthFillNoPredictableToken(t *testing.T) {
 			t.Fatalf("claim token %q: want <attempt>.<32 hex>", tok)
 		}
 	}
+
+	// task.Fill supplies one part per claim: the other 62 all claim.
+	res, err := task.Fill(ctx, st, "f1", "s1", 0, "f1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.N != 62 || len(res.Tasks) != 62 {
+		t.Fatalf("fill n=%d tasks=%d; want the remaining 62", res.N, len(res.Tasks))
+	}
+	for i, tk := range res.Tasks {
+		parts := strings.SplitN(tk.Token, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim %d token %q: want <attempt>.<32 hex>", i+1, tk.Token)
+		}
+	}
 	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 0 {
 		t.Fatalf("after 65 claims, open = %d; want 0", n)
+	}
+}
+
+// TestWidthFillSizesPartsToClaims is the recut-3071 fill control: task.Fill
+// sizes its random parts to the claim count (min(slots, max)), so an
+// unbounded fill of 65 ready tasks claims all 65, not 64, and every claim's
+// suffix is a distinct 32-hex part. A bounded fill supplies max parts.
+func TestWidthFillSizesPartsToClaims(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+	client.HSet(ctx, "s:s1", "status", "open")
+	client.SAdd(ctx, "sprints", "s1")
+	for _, f := range []string{"f1", "f2"} {
+		client.SAdd(ctx, "friends", f)
+		client.HSet(ctx, "friend:"+f+":desired", "slots", "70")
+		client.HSet(ctx, "friend:"+f+":beat", "at", "1")
+		for i := 0; i < 65; i++ {
+			id := fmt.Sprintf("%s-t%02d", f, i)
+			client.HSet(ctx, "s:s1:task:"+id, "state", "open", "kind", "work", "owner", f)
+			client.ZAdd(ctx, "s:s1:open:"+f, redis.Z{Score: float64(i), Member: id})
+		}
+	}
+
+	res, err := task.Fill(ctx, st, "f1", "s1", 0, "f1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.N != 65 || len(res.Tasks) != 65 {
+		t.Fatalf("unbounded fill of 65: n=%d tasks=%d; want 65 claims", res.N, len(res.Tasks))
+	}
+	seen := map[string]bool{}
+	for i, tk := range res.Tasks {
+		parts := strings.SplitN(tk.Token, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim %d token %q: want <attempt>.<32 hex>", i+1, tk.Token)
+		}
+		if seen[parts[1]] {
+			t.Fatalf("claim %d reuses random part %s", i+1, parts[1])
+		}
+		seen[parts[1]] = true
+	}
+	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 0 {
+		t.Fatalf("after unbounded fill, f1 open = %d; want 0", n)
+	}
+
+	bounded, err := task.Fill(ctx, st, "f2", "s1", 3, "f2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounded.N != 3 || len(bounded.Tasks) != 3 {
+		t.Fatalf("fill --max 3: n=%d tasks=%d; want 3", bounded.N, len(bounded.Tasks))
 	}
 }

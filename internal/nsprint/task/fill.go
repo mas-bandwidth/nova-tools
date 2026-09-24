@@ -2,10 +2,12 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // FunctionFill is the Redis Function name for ns_width_fill.
@@ -42,13 +44,26 @@ func Fill(ctx context.Context, st *store.Store, as, sprint string, max int, acto
 	if client.Exists(ctx, "friend:"+as+":desired").Val() == 0 {
 		return FillResult{}, fmt.Errorf("task fill: friend %s has no desired slots", as)
 	}
-
-	numTokens := 64
-	if max > numTokens {
-		numTokens = max
+	slotsStr, err := client.HGet(ctx, "friend:"+as+":desired", "slots").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return FillResult{}, fmt.Errorf("task fill: read slots: %w", err)
 	}
-	randoms := make([]any, numTokens)
-	for i := 0; i < numTokens; i++ {
+
+	// One random part per possible claim. ns_width_fill claims at most
+	// min(deficit, max) and fails closed when the parts run out, and
+	// deficit <= slots, so min(slots, max) parts never cap a fill below what
+	// the Lua would claim (an unbounded fill of 65 claims 65). A slots value
+	// the Lua reads as 0 gets no parts; a slots raise racing this read only
+	// makes the fill claim fewer, never mint a token without a part.
+	numParts, _ := strconv.Atoi(slotsStr)
+	if numParts < 0 {
+		numParts = 0
+	}
+	if max > 0 && max < numParts {
+		numParts = max
+	}
+	randoms := make([]any, numParts)
+	for i := 0; i < numParts; i++ {
 		tok, err := RandomToken()
 		if err != nil {
 			return FillResult{}, fmt.Errorf("task fill: random token: %w", err)
