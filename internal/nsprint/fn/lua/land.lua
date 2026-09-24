@@ -8,6 +8,10 @@ do
 -- Keys 2.2, fences and intent cut 2.3, events 2.2/7.7.
 -- Every lua/ file shares one chunk, so locals carry a land_ prefix.
 
+-- cap_budget_take and cap_budget_give are capacity.lua's (it sorts before
+-- this file), handed over through NS.capacity.
+local cap_budget_take, cap_budget_give = NS.capacity.cap_budget_take, NS.capacity.cap_budget_give
+
 local function land_now_ms()
   local t = redis.call('TIME')
   return string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
