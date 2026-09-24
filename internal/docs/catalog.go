@@ -44,7 +44,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-secrets", "zero-leak secrets store CLI", "go test ./cmd/nova-secrets", "go test ./cmd/nova-secrets"),
 	E("cmd/nova-self-talk", "internal dialogue recording CLI", "go test ./cmd/nova-self-talk", "go test ./cmd/nova-self-talk"),
 	E("cmd/nova-sprint", "sprint dealer, table, and CI-card CLI", "go test ./cmd/nova-sprint", "go test ./cmd/nova-sprint"),
-	E("cmd/nova-swarm", "multi-agent worker pool CLI", "go test ./cmd/nova-swarm", "go test ./cmd/nova-swarm"),
+	E("cmd/nova-swarm", "native card runner, bench slot leases and card lint CLI", "go test ./cmd/nova-swarm", "go test ./cmd/nova-swarm"),
 	E("cmd/nova-test", "validation-layer run store and status CLI", "go test ./cmd/nova-test", "go test ./cmd/nova-test"),
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),

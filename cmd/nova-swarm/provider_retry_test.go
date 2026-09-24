@@ -56,64 +56,6 @@ func sidecarIn(t *testing.T, pool, dir, id string) map[string]any {
 	return sc
 }
 
-// TestReactingToAProvider5xx: three fast provider 5xx failures retry twice and then file the
-// task `end=provider`, with the provider's ref on the report line. Each launch's usage row
-// carries its attempt number, for the one task.
-func TestProvider5xxRetriesTwiceThenEndsProvider(t *testing.T) {
-	if testing.Short() {
-		t.Skip("this one runs a worker pool")
-	}
-	b := newBench(t)
-	b.extraEnv = []string{"NOVA_SWARM_PROVIDER_BACKOFF=0s"}
-	id := b.add("a card that dies at request start\nFAKE-LAUNCHES\nFAKE-5XX\n")
-
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	if n := strings.Count(stdout, "RUN PROVIDER id="); n != 3 {
-		t.Fatalf("a fast 5xx wants three launches (the first and its two retries), got %d:\n%s", n, stdout)
-	}
-	mustContain(t, "the final failure", stdout, "provider=err_fake_5xx")
-	mustContain(t, "the final failure", stdout, "dest=failed")
-	mustContain(t, "the final failure", stdout, "attempts=3")
-
-	// The lineage: the first attempt is the task the person added; each retry carries
-	// from= the attempt before and its own attempt number. The final one is filed.
-	ids := []string{id}
-	for {
-		last := ids[len(ids)-1]
-		sc := sidecarIn(t, b.pool, "failed", last)
-		next, _ := sc["replaced_by"].(string)
-		_ = next
-		// The retry is a NEW id carrying from=last; find it by scanning failed/ and done/.
-		nextID := findRetry(t, b.pool, last)
-		if nextID == "" {
-			break
-		}
-		ids = append(ids, nextID)
-		if len(ids) > 4 {
-			t.Fatal("the retry chain did not end")
-		}
-	}
-	if len(ids) != 3 {
-		t.Fatalf("a task wants three attempts before it is filed, got %d: %v", len(ids), ids)
-	}
-	for i, attemptID := range ids {
-		row := poolUsageRow(t, b.pool, attemptID)
-		if want := []string{"1", "2", "3"}[i]; row["attempt"] != want {
-			t.Errorf("attempt %d of the task carries attempt=%s, want %s", i+1, row["attempt"], want)
-		}
-	}
-	final := sidecarIn(t, b.pool, "failed", ids[2])
-	if final["end"] != "provider" {
-		t.Errorf("the filed task ends %v, want provider", final["end"])
-	}
-	if final["provider_ref"] != "err_fake_5xx" {
-		t.Errorf("the filed task carries provider_ref=%v, want err_fake_5xx", final["provider_ref"])
-	}
-}
-
 // findRetry returns the id of the task that names from=id, under failed/ or done/.
 func findRetry(t *testing.T, pool, id string) string {
 	t.Helper()
@@ -139,33 +81,6 @@ func findRetry(t *testing.T, pool, id string) string {
 		}
 	}
 	return ""
-}
-
-// TestAProvider5xxPastTheGraceIsNotRetried: a failure that takes longer than the launch
-// grace is a real run that failed, not a launch, and gets exactly one launch.
-func TestProvider5xxPastTheGraceIsNotRetried(t *testing.T) {
-	if testing.Short() {
-		t.Skip("this one runs a worker pool")
-	}
-	b := newBench(t)
-	b.rewriteWorker(func(d map[string]any) { d["launch_grace"] = "1s" })
-	b.extraEnv = []string{"NOVA_SWARM_PROVIDER_BACKOFF=0s"}
-	id := b.add("a card that fails slowly\nFAKE-LAUNCHES\nFAKE-5XX-SLOW 2\n")
-
-	exit, stdout, stderr := b.run()
-	if exit != 0 {
-		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
-	}
-	if n := strings.Count(stdout, "RUN PROVIDER id="); n != 0 {
-		t.Errorf("a slow failure is not a launch failure and earns no RUN PROVIDER line, got %d:\n%s", n, stdout)
-	}
-	if n := strings.Count(stdout, "RUN DONE id="); n != 1 {
-		t.Errorf("a slow failure is not retried: one RUN DONE wanted, got %d:\n%s", n, stdout)
-	}
-	launches := b.jobFile(id, "launches")
-	if n := strings.Count(strings.TrimRight(launches, "\n"), "\n") + 1; n != 1 {
-		t.Errorf("a slow failure launched %d times, want 1", n)
-	}
 }
 
 // TestNativeRetriesAProvider5xxLaunch: the native path retries a launch that dies inside the
