@@ -33,8 +33,14 @@ func TestFleetKeeperRunsThroughCommandLine(t *testing.T) {
 	fleetNow = func() time.Time { return now }
 	defer func() { fleetNow = oldNow }()
 
+	// The base check runs git against --repo and --base; a repository of the test's own
+	// keeps it off the checkout, whose refs (origin/dev) a CI checkout does not carry.
+	repo := t.TempDir()
+	git(t, repo, "init", "-q")
+	git(t, repo, "commit", "-q", "--allow-empty", "-m", "base")
+
 	var out, errb bytes.Buffer
-	code := run([]string{"fleet", "keeper", "--queue", qDir}, &out, &errb, now)
+	code := run([]string{"fleet", "keeper", "--queue", qDir, "--repo", repo, "--base", "HEAD"}, &out, &errb, now)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout:%s\nstderr:%s", code, out.String(), errb.String())
 	}
