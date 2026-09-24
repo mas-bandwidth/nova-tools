@@ -97,6 +97,9 @@ local function card_deal(keys, args)
   if redis.call('SISMEMBER', 'benches', bench) == 0 then
     return { 'NONE', 'unregistered' }
   end
+  if redis.call('EXISTS', 'bench:' .. bench .. ':reset') == 1 then
+    return { 'NONE', 'resetting' }
+  end
   if redis.call('EXISTS', 'bench:' .. bench .. ':beat') == 0 then
     return { 'NONE', 'down' }
   end

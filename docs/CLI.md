@@ -5348,3 +5348,11 @@ the same rule (so nothing is written), and harvest refuses it before ssh. `nova-
 `<results>/repo` on the bench as read from that field; there is no
 `--results-root` (it is refused as an unknown flag that names the field),
 because no worker needs to know a bench's layout (#3329).
+
+### `nova-sprint bench reset`
+
+`nova-sprint bench reset --bench <bench> [--keep-queue] [--grace 5s] [--redis <addr>] [--actor <seat>] [--idem <key>]` stops the bench's in-flight card process groups in one SSH session and returns stopped attempts to their sprint pools without charging a retry. A persistent reset record blocks the dealer until every process is gone. An SSH refusal or surviving process leaves the record held and the command exits 1.
+
+Recover by rerunning the command, or clear a held record with an operator receipt: `nova-sprint bench reset --bench <bench> --clear --why '<reason>' [--actor <seat>]`. A fresh running reset cannot be cleared. Reset does not restart services, modify fleet UP/DOWN state, or delete job storage.
+
+The bench-side command is `nova-sprint card stop --stdin --grace <duration>`. Its input is one `<sprint> <label> <attempt>` per line. It prints `STOPPED`, `GONE`, or `ALIVE` for the exact `nova-card <sprint>/<label>/<attempt>` process group.
