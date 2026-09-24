@@ -58,13 +58,13 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	ghPath := fs.String("gh", "gh", "the gh executable")
 	table := fs.Bool("table", false, "also print one table row per pull request")
 	def := prereview.DefaultTuning()
-	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS")
+	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS; when absent, the prompt's own threshold (the default prompt's is jevcalib.DefaultPassAbove, 8), else 7")
 	bounceBelow := fs.Int("bounce-below", def.BounceBelow, "a score strictly below this BOUNCEs")
 	checksList := fs.String("checks", strings.Join(prereview.DefaultChecks, ","), "the checks that may decide (checks_enabled): donewhen,selfcheck,paths,claims,score; name ci to require ci-ok at the exact head")
 	inRate := fs.Float64("usd-per-mtok-in", 0, "the provider's input rate, US dollars per million tokens; 0 is unknown and prints cost=$-")
 	outRate := fs.Float64("usd-per-mtok-out", 0, "the provider's output rate, US dollars per million tokens; 0 is unknown")
 	promptRef := fs.String("prompt", "", "the score question's prompt: a file path or an embedded sha8 (internal/jevcalib/prompts); default: prompt= in --conf, else the embedded default")
-	confPath := fs.String("conf", defaultJevConf(), "the jev.conf whose prompt= key names the prompt when --prompt is absent (env JEV_CONF; none disables)")
+	confPath := fs.String("conf", defaultJevConf(), "the jev.conf whose prompt= key names the prompt when --prompt is absent (default $NOVA_JEV_CONF, e.g. ~/rowan-working/etc/jev.conf; unset or none reads no conf)")
 	prDir := fs.String("pr-dir", "", "read each pull request from <dir>/<n>/ (view.json in the gh pr view --json shape, diff.txt, optional check-runs.json) instead of gh: the calibration dry run, no GitHub call; refused with --post")
 	skipHeads := fs.String("skip-heads", "", "a file of head shas already posted on; a pull request at one of them is skipped before any call")
 	fs.SetOutput(io.Discard)
@@ -109,14 +109,6 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--checks: "+oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	if *bounceBelow > *passAbove+1 {
-		return refuse(stderr, "REVIEW", "bad-arguments", fmt.Sprintf("--bounce-below %d is above --pass-above %d plus one; a score could both PASS and BOUNCE", *bounceBelow, *passAbove))
-	}
-	tune := prereview.Tuning{PassAbove: *passAbove, BounceBelow: *bounceBelow, Enabled: enabled,
-		Model: decide.DefaultModel, USDPerMTokIn: *inRate, USDPerMTokOut: *outRate}
-	if *noJev {
-		tune.Model = "none"
-	}
 	skip, err := readHeads(*skipHeads)
 	if err != nil {
 		return refuse(stderr, "REVIEW", "bad-arguments", "--skip-heads: "+oneline.Cap(err.Error(), oneline.TailBytes))
@@ -125,6 +117,23 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	prompt, err := reviewPrompt(*promptRef, *confPath)
 	if err != nil {
 		return refuse(stderr, "REVIEW", "bad-prompt", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	// A prompt and its pass threshold are tuned together (#2536): the default
+	// prompt passes only above jevcalib.DefaultPassAbove, because at 7 it
+	// passed 13 of the 128 heads the friends held (10.2%). An explicit
+	// --pass-above always wins.
+	explicit := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
+	if !explicit["pass-above"] {
+		*passAbove = jevcalib.PassAboveFor(prompt, def.PassAbove)
+	}
+	if *bounceBelow > *passAbove+1 {
+		return refuse(stderr, "REVIEW", "bad-arguments", fmt.Sprintf("--bounce-below %d is above --pass-above %d plus one; a score could both PASS and BOUNCE", *bounceBelow, *passAbove))
+	}
+	tune := prereview.Tuning{PassAbove: *passAbove, BounceBelow: *bounceBelow, Enabled: enabled,
+		Model: decide.DefaultModel, USDPerMTokIn: *inRate, USDPerMTokOut: *outRate}
+	if *noJev {
+		tune.Model = "none"
 	}
 
 	numbers, err := reviewTargets(*pr, *batch)
@@ -235,17 +244,13 @@ func streamJevLine(em events.Emitter, d prereview.Disposition) error {
 }
 
 // defaultJevConf is the conf review reads prompt= from when --conf is absent:
-// $JEV_CONF, else the path bin/jev-loop reads its own tuning from, so the loop
-// and the verb it calls read one file and jev-loop needs no new flag.
+// $NOVA_JEV_CONF (on the Studio, ~/rowan-working/etc/jev.conf, the file
+// bin/jev-loop is tuned by), else none. The verb never assumes a home layout.
 func defaultJevConf() string {
-	if v := strings.TrimSpace(os.Getenv("JEV_CONF")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("NOVA_JEV_CONF")); v != "" {
 		return v
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "none"
-	}
-	return filepath.Join(home, "rowan-working", "etc", "jev.conf")
+	return "none"
 }
 
 // reviewPrompt is the prompt the score question is asked with: --prompt, else

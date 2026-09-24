@@ -13,10 +13,10 @@ import (
 )
 
 // TestMain keeps every review test off the machine's own jev.conf: the verb
-// reads prompt= from $JEV_CONF (else ~/rowan-working/etc/jev.conf), and a test
-// must not score with whatever prompt the bench it runs on is tuned to.
+// reads prompt= from $NOVA_JEV_CONF, and a test must not score with whatever
+// prompt the bench it runs on is tuned to.
 func TestMain(m *testing.M) {
-	os.Setenv("JEV_CONF", "none")
+	os.Setenv("NOVA_JEV_CONF", "none")
 	os.Exit(m.Run())
 }
 
@@ -132,7 +132,7 @@ func TestReviewPromptFromConf(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if c.name == "env" {
-				t.Setenv("JEV_CONF", conf)
+				t.Setenv("NOVA_JEV_CONF", conf)
 			}
 			prDir, replay := cachedPR(t, "dev", "success")
 			ledger := filepath.Join(t.TempDir(), "ledger.jsonl")
@@ -149,5 +149,34 @@ func TestReviewPromptFromConf(t *testing.T) {
 	code := run([]string{"review", "--repo", "mas-bandwidth/nova-tools", "--pr", "7", "--pr-dir", prDir, "--replay", replay, "--conf", bad}, &out, &errb)
 	if code != 2 || !strings.Contains(errb.String(), "bad-prompt") {
 		t.Fatalf("an unresolvable prompt=: exit=%d stderr=%q, want REVIEW REFUSED reason=bad-prompt", code, errb.String())
+	}
+}
+
+// TestReviewDefaultPromptCarriesItsThreshold: the default prompt passes only
+// above 8 (the threshold it was tuned with); another prompt keeps 7; an
+// explicit --pass-above wins either way.
+func TestReviewDefaultPromptCarriesItsThreshold(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		args    []string
+		verdict string
+	}{
+		{"default-prompt", nil, "UNSURE"},
+		{"default-prompt-explicit-7", []string{"--pass-above", "7"}, "PASS"},
+		{"seed-prompt", []string{"--prompt", jevcalib.SeedSha8}, "PASS"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			prDir, replay := cachedPR(t, "dev", "success")
+			if err := prereview.RecordFixture(replay, "mas-bandwidth/nova-tools", 7, 8, 0.8); err != nil {
+				t.Fatal(err)
+			}
+			var out, errb bytes.Buffer
+			args := append([]string{"review", "--repo", "mas-bandwidth/nova-tools", "--pr", "7", "--pr-dir", prDir, "--replay", replay,
+				"--ledger-path", filepath.Join(t.TempDir(), "l.jsonl")}, c.args...)
+			run(args, &out, &errb)
+			if !strings.Contains(out.String(), "verdict="+c.verdict+" score=8 ") {
+				t.Fatalf("stdout=%q stderr=%q, want verdict=%s at score 8", out.String(), errb.String(), c.verdict)
+			}
+		})
 	}
 }

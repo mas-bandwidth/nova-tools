@@ -36,6 +36,22 @@ const SeedSha8 = "fd94795e"
 // its scores beside the friends' lines).
 const DefaultSha8 = "6b7343c3"
 
+// DefaultPassAbove is the default prompt's pass threshold: a score strictly
+// above it can PASS. The prompt and the threshold were tuned together
+// (iteration 7: at 7 this prompt passed 13 of 128 friend holds, 10.2%; at 8,
+// none), so review applies it whenever the default prompt asks and no
+// --pass-above is given.
+const DefaultPassAbove = 8
+
+// PassAboveFor is the pass threshold a prompt was tuned with: DefaultPassAbove
+// for the default prompt, else fallback (prereview's default).
+func PassAboveFor(p Prompt, fallback int) int {
+	if p.Sha8 == DefaultSha8 {
+		return DefaultPassAbove
+	}
+	return fallback
+}
+
 // Prompt is one parsed prompt file.
 type Prompt struct {
 	// Sha8 is the first 8 hex of sha256 over the file bytes exactly as stored.
