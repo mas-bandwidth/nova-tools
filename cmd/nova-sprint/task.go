@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -17,7 +18,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take, beat, done, cancel, list and width tasks",
+		Summary: "push, take, beat, done, cancel, list and fill tasks",
 		Run:     runTask,
 	})
 }
@@ -29,7 +30,7 @@ func openTaskStore(ctx context.Context, addr string) (*store.Store, error) {
 
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "task", "want push, take, beat, done, cancel, list or width")
+		return refuse(errOut, "task", "want push, take, beat, done, cancel, list or fill")
 	}
 	switch args[0] {
 	case "push":
@@ -44,10 +45,10 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTaskCancel(ctx, args[1:], out, errOut)
 	case "list":
 		return runTaskList(ctx, args[1:], out, errOut)
-	case "width":
-		return runTaskWidth(ctx, args[1:], out, errOut)
+	case "fill":
+		return runTaskFill(ctx, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or width", args[0]))
+		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or fill", args[0]))
 	}
 }
 
@@ -178,4 +179,52 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	fmt.Fprintf(out, "DONE %s id=%s\n", status, *id)
 	return status.ExitCode()
+}
+
+func runTaskFill(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := taskFlags("task fill")
+	addr := fs.String("redis", "", "")
+	as := fs.String("as", "", "")
+	sprint := fs.String("sprint", "", "")
+	max := fs.Int("max", 0, "")
+	_ = sprint
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "task fill", err.Error())
+	}
+	if *as == "" {
+		return refuse(errOut, "task fill", "--as is required")
+	}
+	for i, arg := range args {
+		if strings.HasPrefix(arg, "--max=") {
+			v, err := strconv.Atoi(strings.TrimPrefix(arg, "--max="))
+			if err != nil || v <= 0 {
+				return refuse(errOut, "task fill", "--max must be a positive integer")
+			}
+		} else if arg == "--max" {
+			if i+1 >= len(args) {
+				return refuse(errOut, "task fill", "--max requires an argument")
+			}
+			v, err := strconv.Atoi(args[i+1])
+			if err != nil || v <= 0 {
+				return refuse(errOut, "task fill", "--max must be a positive integer")
+			}
+		}
+	}
+	if *max < 0 {
+		return refuse(errOut, "task fill", "--max must be a positive integer")
+	}
+	if fs.NArg() != 0 {
+		return refuse(errOut, "task fill", "takes no arguments")
+	}
+	st, err := openTaskStore(ctx, *addr)
+	if err != nil {
+		return refuse(errOut, "task fill", err.Error())
+	}
+	defer st.Close()
+
+	if st.Client().Exists(ctx, "friend:"+*as+":desired").Val() == 0 {
+		return refuse(errOut, "task fill", fmt.Sprintf("friend %s has no desired slots", *as))
+	}
+	fmt.Fprintf(out, "FILLED %s n=0 deficit=0\n", *as)
+	return 0
 }

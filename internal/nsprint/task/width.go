@@ -37,23 +37,23 @@ func WidthFrom(desired, starting, living int) Width {
 // writer, the capacity function).
 func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 	if st == nil {
-		return Width{}, fmt.Errorf("task width: nil store")
+		return Width{}, fmt.Errorf("width: nil store")
 	}
 	if as == "" {
-		return Width{}, fmt.Errorf("task width: as is required")
+		return Width{}, fmt.Errorf("width: as is required")
 	}
 	client := st.Client()
 	desired, err := client.HGet(ctx, "friend:"+as+":desired", "slots").Int()
 	if err != nil {
-		return Width{}, fmt.Errorf("task width: friend %s has no desired slots: %w", as, err)
+		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
 	starting, err := client.ZCard(ctx, "friend:"+as+":starting").Result()
 	if err != nil {
-		return Width{}, fmt.Errorf("task width: friend %s starting: %w", as, err)
+		return Width{}, fmt.Errorf("width: friend %s starting: %w", as, err)
 	}
 	living, err := client.ZCard(ctx, "friend:"+as+":living").Result()
 	if err != nil {
-		return Width{}, fmt.Errorf("task width: friend %s living: %w", as, err)
+		return Width{}, fmt.Errorf("width: friend %s living: %w", as, err)
 	}
 	return WidthFrom(desired, int(starting), int(living)), nil
 }
