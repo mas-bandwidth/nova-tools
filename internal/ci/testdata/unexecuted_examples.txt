@@ -33,7 +33,6 @@ $ nova-decide classify --question harvest --evidence ./result.txt --pointer card
 $ nova-decide help --hours 3 --retries-on-rung 2 --landing-moved
 $ nova-decide help --state ; echo "exit=$?"
 $ nova-decide log --log ./decide.jsonl --summary
-$ nova-decide log --log postgres --summary   # with the DSN in the environment
 $ nova-decide outcome --log ~/rowan-working/queue/decide/route.jsonl --unit-id row-card-9 --result green
 $ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
 $ nova-decide route --unit-id <id> --kind <kind> --files <n> --packages <n> \
@@ -63,13 +62,14 @@ $ nova-merge status --lane ./lane
 $ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
 $ nova-play read --source story.txt
 $ nova-play reply --source story.txt --id f24beb35f0df --author Stella --body "Ship's brass, probably 70/30."
+$ nova-pulse fold --db ./ev.sqlite --report
 $ nova-sandbox check
 $ nova-sandbox reap
 $ nova-sandbox reap --dry-run
 $ nova-sandbox run --name j1 --scratch C:\nova --timeout 30m --memory 4g --cpu 50 -- cmd.exe /c "go build ./..."
 $ nova-sandbox run --name j1 --size 8g --out ./handoff \
 $ nova-sandbox run --name j1 --size 8g --timeout 30m --read /opt/homebrew -- /bin/sh -c 'echo hi > out'
-$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_DECIDE_LOG_DSN -- \
+$ nova-secrets exec --store ~/nova-bench/secrets --as swarm-hulk --only NOVA_REDIS_BENCH_PASSWORD -- \
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
 $ nova-self-talk ./pages/journal.md
 $ nova-swarm quickstart --pool ./pool
@@ -80,3 +80,4 @@ $ nova-wake probe --here
 $ nova-wake quickstart --state ./wake.state --reports ./reports
 $ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
 $ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+$ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt

@@ -1,0 +1,14 @@
+# The pasted examples that ARE executed by a test through the comparator
+# (onboarding.Compare, directly or via onboarding.Execute), per SPEC-TOOLWORK §7
+# rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`.
+#
+# TestIssue2218 checks every entry: the $ line is a real pasted example, the
+# named file declares the named test, and that file reaches the comparator and
+# reads the doc the line is pasted in. An example is in this file or in
+# unexecuted_examples.txt, never both. Moving a line from unexecuted_examples.txt
+# to here is how that list shrinks.
+
+cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once
+cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once --out sprint-table.txt
+cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --check
+cmd/nova-wake/presence_test.go:TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints $ nova-wake presence --store 100.115.99.19:6380 --bus ./bus
