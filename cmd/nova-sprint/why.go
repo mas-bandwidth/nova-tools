@@ -97,6 +97,9 @@ func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) > 0 && args[0] == "worker" {
+		return runLandWorker(ctx, args[1:], out, errOut)
+	}
 	if len(args) == 0 || args[0] != "status" {
 		return refuse(errOut, "land", "want status (sprint land is the lander's verb, #2942)")
 	}
