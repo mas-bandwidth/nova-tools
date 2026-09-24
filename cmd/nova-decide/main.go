@@ -79,6 +79,7 @@ usage:
                      [--store-user <user>] [--store-password-env <NAME>] [--skip-heads <file>]
                      [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>]
                      [--no-jev] [--table] [--record <dir>] [--replay <dir>]
+                     [--prompt <file|sha8>] [--conf <jev.conf>] [--pr-dir <dir>]
   nova-decide review --repo <owner/name> --batch <file of pull request numbers>
                     (the Jev FIRST PASS, nova-tools #2565: mechanical checks in
                      Go with no model -- donewhen, selfcheck, paths, claims --
