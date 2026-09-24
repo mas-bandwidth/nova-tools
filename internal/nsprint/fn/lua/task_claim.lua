@@ -13,6 +13,10 @@
 local DEP = {}
 NS.DEP = DEP
 
+-- HD is hold.lua's table (it sorts before this file); ns_task_done calls
+-- HD.ingest, HD.resolve_who and HD.write_disp at run time.
+local HD = NS.HD
+
 local function now_ms()
   local t = redis.call('TIME')
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
