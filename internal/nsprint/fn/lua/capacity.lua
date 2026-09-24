@@ -79,11 +79,16 @@ end
 -- cap:log receipt. capacity_desired and ns_sprint_plan both call it. It does no
 -- ceiling check and registers no name: each caller has already checked
 -- everything, so a write phase built from it cannot refuse part way.
-local function write_desired(kind, name, slots, machine, actor, idem, at)
+local function write_desired(kind, name, slots, machine, actor, idem, at, set_paused)
   local key = desired_key(kind, name)
   local paused = redis.call('HGET', key, 'paused')
   if not paused then
     paused = '0'
+  end
+  -- #3206 PR A: capacity_desired's optional paused arg; nil keeps the stored
+  -- value, as every other caller does.
+  if set_paused == '0' or set_paused == '1' then
+    paused = set_paused
   end
   redis.call('HSET', key,
     'slots', tostring(slots), 'machine', machine, 'paused', paused, 'at', tostring(at))
@@ -91,16 +96,24 @@ local function write_desired(kind, name, slots, machine, actor, idem, at)
 end
 
 -- capacity_desired: set friend:<f>:desired or bench:<b>:desired under the
--- machine ceiling. args = kind, name, slots, machine, actor, idem.
+-- machine ceiling. args = kind, name, slots, machine, actor, idem, and (#3206
+-- rev 4 PR A, both optional so six-arg callers are unchanged) paused ('' keeps
+-- the stored value, '0' or '1' sets it) and register ('1' adds a friend to
+-- `friends` in the same call; no beat is written). The same slots, machine
+-- and paused as stored return SAME and write nothing.
 local function capacity_desired(keys, args)
   local kind, name = args[1], args[2]
   local slots, machine = tonumber(args[3]), args[4]
   local actor, idem = args[5], args[6]
+  local set_paused, register = args[7] or '', args[8] == '1'
 
   if kind ~= 'friend' and kind ~= 'bench' then
     return { 'INVALID', machine, '0', '0' }
   end
-  if kind == 'friend' and redis.call('SISMEMBER', 'friends', name) == 0 then
+  if set_paused ~= '' and set_paused ~= '0' and set_paused ~= '1' then
+    return { 'INVALID', machine, '0', '0' }
+  end
+  if kind == 'friend' and not register and redis.call('SISMEMBER', 'friends', name) == 0 then
     return { 'UNREGISTERED', machine, '0', '0' }
   end
   if not slots or slots < 0 then
@@ -117,11 +130,22 @@ local function capacity_desired(keys, args)
     return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
   end
 
+  local key = desired_key(kind, name)
+  local stored = redis.call('HMGET', key, 'slots', 'machine', 'paused')
+  local want_paused = set_paused
+  if want_paused == '' then
+    want_paused = stored[3] or '0'
+  end
+  if stored[1] == tostring(slots) and stored[2] == machine and (stored[3] or '0') == want_paused and
+      redis.call('SISMEMBER', registry_set(kind), name) == 1 then
+    return { 'SAME', machine, tostring(sum), tostring(ceiling) }
+  end
+
   local at = now_ms()
-  if kind == 'bench' then
+  if kind == 'bench' or register then
     redis.call('SADD', registry_set(kind), name)
   end
-  write_desired(kind, name, slots, machine, actor, idem, at)
+  write_desired(kind, name, slots, machine, actor, idem, at, set_paused)
   return { 'SET', machine, tostring(sum), tostring(ceiling) }
 end
 
