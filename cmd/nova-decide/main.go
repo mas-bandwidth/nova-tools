@@ -794,4 +794,3 @@ func isJSONState(s string) bool {
 	}
 	return false
 }
-

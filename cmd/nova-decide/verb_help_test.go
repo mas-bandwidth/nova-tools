@@ -119,4 +119,3 @@ func TestRedisFlagsUnification(t *testing.T) {
 		})
 	}
 }
-
