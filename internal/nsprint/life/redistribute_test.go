@@ -2,10 +2,6 @@ package life_test
 
 import (
 	"context"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/table"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -24,43 +21,11 @@ import (
 // life_test without a clash.
 func rdRedis(t *testing.T) (*store.Store, *redis.Client) {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable; run this control on a Redis bench: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	logf, err := os.Create(filepath.Join(dir, "redis.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = logf.Close() })
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", strings.TrimPrefix(addr, "127.0.0.1:"),
-		"--save", "", "--appendonly", "no", "--dir", dir)
-	cmd.Stdout, cmd.Stderr = logf, logf
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
+	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
-	deadline := time.Now().Add(30 * time.Second)
-	for client.Ping(context.Background()).Err() != nil {
-		if time.Now().After(deadline) {
-			t.Fatal("throwaway redis did not start")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if err := fn.Load(context.Background(), client); err != nil {
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
 		t.Fatalf("load nova_sprint library: %v", err)
 	}
 	return store.New(client), client

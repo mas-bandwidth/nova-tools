@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -91,6 +92,19 @@ type HarvestInput struct {
 	// accept each verify the card fence epoch and a separate RUN action token
 	// at the effect owner's linearization. Nil keeps today's harvest.
 	Effect *HarvestEffect
+
+	// THE HARVEST'S TWO EVENTS (nova-tools #2563 item 1). A bench harvest is the one
+	// place that knows a card's branch actually reached the forge, so it writes
+	// `harvested` when the push lands and `pr` when it OPENS a pull request -- opens,
+	// not finds: a PR that already existed was opened by an earlier pass that already
+	// said so, and saying it twice would count one card's PR twice in the fold.
+	//
+	// Events is the store, resolved from --events-store and the environment. It is
+	// OPTIONAL in every sense: no address or no password is silence, and a store that
+	// is down costs one line on stderr. AN EMIT MAY NEVER FAIL A HARVEST -- the branch
+	// is pushed and the pull request is open whatever the stream says, so
+	// events.Writer has no error to return (internal/events/writer.go).
+	Events *events.Writer
 }
 
 // HarvestEffect is the harvest-side fence and token check. The owner does not

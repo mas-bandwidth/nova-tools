@@ -56,7 +56,7 @@ of these whenever `unmet=` is above zero, and nothing else ever.")
 
 (defstruct (needs-view
             (:constructor make-needs-view
-                (&key session evidence generations responsible)))
+                (&key session evidence generations responsible engaged)))
   "The read-time facts rule 1 needs and the tree does not hold.
 
 SESSION is a VERIFICATION-SESSION: its cache holds the raw resolutions `verify`
@@ -67,8 +67,11 @@ EVIDENCE is ((node-id record ...) ...): the VERIFY-EVIDENCE records the node's
 standing `:to :done` names. GENERATIONS is ((node-id . generation) ...): a
 `correct` bumps a node's generation, and evidence of an older generation
 qualifies nothing (:4835). RESPONSIBLE is ((node-id . name) ...), read for the
-resolver column of rule 2's table."
-  session evidence generations responsible)
+resolver column of rule 2's table. ENGAGED is the list of node ids a session
+holds busy by something the tree does not carry -- a pending or accepted offer,
+a live allocation, an :attempt, a launch report -- added to the two facts the
+tree itself holds when rule 5 reads *engaged*."
+  session evidence generations responsible engaged)
 
 (defun needs-view-node-evidence (view id)
   "The evidence records VIEW names for ID, or NIL where it names none."
@@ -277,3 +280,46 @@ were its own gate (:4755). This reads and writes nothing."
 (defun node-needs-met-p (state id &key view)
   "True when every need of ID is met, so a node with no `:deps` is needs-met."
   (zerop (node-needs-status state id :view view)))
+
+;;; ------------------------------------------------------------------
+;;; rule 5: *engaged* and the derived `needs-broken`   SPEC-WORK.md:4765
+;;; ------------------------------------------------------------------
+;;;
+;;; `needs-broken` is DERIVED (:4972), so there is no slot the write path
+;;; maintains: it reads true when a node has an unmet need and at least one of
+;;; three things is true -- it is engaged, it is in C, or the reason of one of
+;;; its unmet needs is `need-reverted`. It goes one edge and no further: a
+;;; dependent of a `needs-broken` node that is itself still settled and met is
+;;; not flagged.
+
+(defun node-engaged-p (state id &key view)
+  "Rule 5's *engaged* (SPEC-WORK.md:4765): a node holding a live lease, or whose
+state is `:doing` or `:review`. A VIEW, when its ENGAGED entry is present, adds
+the ids a session holds busy by something the tree does not hold."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (or (and (wnode-holder n) t)
+             (member (wnode-state n) '(:doing :review))
+             (and view (member id (needs-view-engaged view) :test #'equal)))
+         t)))
+
+(defun node-needs-broken (state id &key view)
+  "Rule 5's reading, derived at read time from the node's CURRENT needs. The
+write path's cached `wnode-needs-broken` bit is not read here: a bit raised for
+a reverted need that has since been removed or settled again must not keep an
+unengaged node in O whose only remaining reason is `need-open` flagged
+(SPEC-WORK.md:4765, :4972)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (multiple-value-bind (unmet need reason) (node-needs-status state id :view view)
+      (declare (ignore need))
+      (and (plusp unmet)
+           (or (node-engaged-p state id :view view)
+               (eq :c (wnode-branch n))
+               (eq :need-reverted reason)
+               (some (lambda (dep)
+                       (multiple-value-bind (met r)
+                           (need-met-p state dep :view view :dependent id)
+                         (and (not met) (eq :need-reverted r))))
+                     (wnode-deps n)))
+           t))))
