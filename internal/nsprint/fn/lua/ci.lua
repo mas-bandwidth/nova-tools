@@ -67,7 +67,7 @@ local function ci_carries(bench, leg)
 end
 
 local function ci_healthy(bench, leg)
-  if redis.call('EXISTS', 'bench:' .. bench .. ':beat') == 0 then return false end
+  if redis.call('HGET', 'bench:' .. bench .. ':state', 'state') ~= 'UP' then return false end
   local paused = ci_hget('bench:' .. bench .. ':desired', 'paused')
   if paused == '1' or paused == 'true' then return false end
   return ci_carries(bench, leg)
