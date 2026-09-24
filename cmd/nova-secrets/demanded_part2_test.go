@@ -3,9 +3,14 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // Test 6: TestSopsErrorsAreNeverPassedThroughRaw
@@ -193,6 +198,128 @@ func TestTheVersionProbeMakesNoNetworkCall(t *testing.T) {
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", nonExecSops)
 	if code != 2 || !strings.Contains(errOut, "absent or not executable") {
 		t.Errorf("expected absent or not executable refusal: %s", errOut)
+	}
+
+	// 4. The probe itself: every call of sops' version probe carries
+	// --disable-version-check (sops otherwise asks GitHub for the latest release) and an
+	// environment holding no proxy or egress helper.
+	sopsPath := findSops(t)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_123\n")
+	commitAndPush(t, storeDir)
+	probeLog := filepath.Join(td, "probe.log")
+	recording := filepath.Join(td, "recording-sops")
+	_ = os.WriteFile(recording, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo \"ARGS $*\" >> '"+probeLog+"'; env | sed 's/^/ENV /' >> '"+probeLog+"'; fi\nexec '"+sopsPath+"' \"$@\"\n"), 0755)
+	callerEnv := append(os.Environ(), "HTTPS_PROXY=http://proxy.invalid:3128", "ALL_PROXY=socks5://proxy.invalid:1080")
+	for _, verb := range [][]string{
+		{"check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", recording},
+		{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", recording, "--only", "all", "--", "true"},
+	} {
+		_ = os.Remove(probeLog)
+		_, errOut, code, _ := runWithEnv(bin, callerEnv, verb...)
+		if code != 0 {
+			t.Fatalf("%s through the recording sops: exit %d: %s", verb[0], code, errOut)
+		}
+		logged, err := os.ReadFile(probeLog)
+		if err != nil {
+			t.Fatalf("%s ran no version probe: %v", verb[0], err)
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(logged)), "\n") {
+			if strings.HasPrefix(line, "ARGS ") && !strings.Contains(line, "--disable-version-check") {
+				t.Errorf("%s: the version probe can reach the network: %s", verb[0], line)
+			}
+			if strings.HasPrefix(line, "ENV ") && strings.Contains(strings.ToUpper(line), "PROXY") {
+				t.Errorf("%s: the version probe inherited an egress helper: %s", verb[0], line)
+			}
+		}
+	}
+
+	// 5. With egress blocked by the OS, every verb is green: no line of this tool opens
+	// a socket. The wall is nova-sandbox --net-deny, which refuses rather than pretends
+	// where it cannot enforce the denial; that refusal is this half's stated skip.
+	sb := buildNovaSandbox(t)
+	home := filepath.Join(td, "home")
+	_ = os.MkdirAll(home, 0700)
+	reads := []string{filepath.Dir(bin), storeDir, filepath.Dir(keyA.privPath), filepath.Dir(sopsPath)}
+	if real, err := filepath.EvalSymlinks(sopsPath); err == nil {
+		reads = append(reads, filepath.Dir(real))
+	}
+	requireWall(t, sb, home)
+	for _, verb := range [][]string{
+		{"version"},
+		{"names", "--store", storeDir, "--as", "rowan"},
+		{"check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath},
+		{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true"},
+	} {
+		out, errOut, code := inWall(sb, home, reads, true, append([]string{bin}, verb...)...)
+		if code != 0 {
+			t.Errorf("%s with egress blocked: exit %d, want 0\nstdout: %s\nstderr: %s", verb[0], code, out, errOut)
+		}
+	}
+}
+
+var (
+	sandboxOnce sync.Once
+	sandboxBin  string
+	sandboxErr  error
+	sandboxOut  []byte
+)
+
+// buildNovaSandbox builds this repository's nova-sandbox once per run, beside the
+// nova-secrets binary: the wall under test is the one at this commit, not whatever a
+// bench has on PATH.
+func buildNovaSandbox(t *testing.T) string {
+	t.Helper()
+	secretsBin := buildNovaSecrets(t)
+	sandboxOnce.Do(func() {
+		sandboxBin = filepath.Join(filepath.Dir(secretsBin), "nova-sandbox")
+		if runtime.GOOS == "windows" {
+			sandboxBin += ".exe"
+		}
+		build := exec.Command("go", "build", "-o", sandboxBin, "../nova-sandbox")
+		build.Env = goenv.Clean(os.Environ())
+		sandboxOut, sandboxErr = build.CombinedOutput()
+	})
+	if sandboxErr != nil {
+		t.Fatalf("failed to build nova-sandbox: %v, out: %s", sandboxErr, sandboxOut)
+	}
+	return sandboxBin
+}
+
+// wallReads are the system directories a command needs to start at all; the ones this
+// machine does not have are left out.
+func wallReads() []string {
+	var reads []string
+	for _, d := range []string{"/usr", "/bin", "/lib", "/lib64", "/etc", "/System/Library", "/Library/Developer/CommandLineTools"} {
+		if _, err := os.Stat(d); err == nil {
+			reads = append(reads, d)
+		}
+	}
+	return reads
+}
+
+// inWall runs argv under nova-sandbox with home as the only write set and HOME, the given
+// read sets plus wallReads, and egress denied when netDeny is set.
+func inWall(sb, home string, reads []string, netDeny bool, argv ...string) (stdout, stderr string, code int) {
+	args := []string{"--write", home}
+	for _, r := range append(wallReads(), reads...) {
+		args = append(args, "--read", r)
+	}
+	if netDeny {
+		args = append(args, "--net-deny")
+	}
+	args = append(append(args, "--"), argv...)
+	env := []string{"PATH=/usr/bin:/bin", "HOME=" + home}
+	out, errOut, code, _ := runWithEnv(sb, env, args...)
+	return out, errOut, code
+}
+
+// requireWall skips, naming the reason nova-sandbox gave, when this machine cannot build
+// an enforced wall with egress denied. It never lets a test pass without one.
+func requireWall(t *testing.T, sb, home string) {
+	t.Helper()
+	_, errOut, code := inWall(sb, home, nil, true, "/bin/sh", "-c", "exit 0")
+	if code != 0 {
+		t.Skipf("nova-sandbox cannot wall this machine with egress denied (exit %d): %s", code, strings.TrimSpace(errOut))
 	}
 }
 

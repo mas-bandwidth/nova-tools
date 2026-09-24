@@ -234,9 +234,14 @@ func TestInboxDecideEmptyInboxMakesNoProviderCalls(t *testing.T) {
 	}
 }
 
-// A bus with no .public marker is refused by name, and --allow-private is the
-// only way past it.
-func TestInboxDecideRefusesPrivateBusByName(t *testing.T) {
+// A bus with no .public marker never sends a note to a provider, and no argv changes it.
+//
+// This test used to assert the other half too: that `--allow-private` let the decision
+// through. That flag is gone (Stella, 2026-09-19T23:13Z, settling #1644 -- "under this
+// ruling private evidence is not allowed out"), and what a private bus does INSTEAD of
+// refusing outright is one test per clause in cmd/nova-bus/private_test.go. What is kept
+// here is the half the ruling also keeps: a private bus makes zero provider calls.
+func TestInboxDecideNeverSendsAPrivateBusToAProvider(t *testing.T) {
 	checkout, _ := busDir(t)
 	addDecideNote(t, checkout, "from-bo/note.md", "bo-777777777777", "Please start the batch", "start it")
 	f, url := startFakeJev(t)
@@ -244,16 +249,16 @@ func TestInboxDecideRefusesPrivateBusByName(t *testing.T) {
 	t.Setenv("TYPESAFE_API_KEY", "")
 
 	r := invoke(t, "", decideArgs(checkout, url)...).mustCode(t, 2)
-	if !strings.Contains(r.stderr, ".public") || !strings.Contains(r.stderr, checkout) {
-		t.Fatalf("private-bus refusal did not name the bus and its marker:\n%s", r.stderr)
+	if !strings.Contains(r.stderr, ".public") || !strings.Contains(r.stderr, "why=private-evidence") {
+		t.Fatalf("the private-bus refusal is not the typed one:\n%s", r.stderr)
 	}
 	if f.calls.Load() != 0 {
 		t.Fatalf("a refused private bus still called the provider %d times", f.calls.Load())
 	}
 
-	r = invoke(t, "", decideArgs(checkout, url, "--allow-private")...).mustCode(t, 0)
-	if f.calls.Load() == 0 {
-		t.Fatalf("--allow-private did not let the decision through:\n%s", r.stdout)
+	invoke(t, "", decideArgs(checkout, url, "--allow-private")...).mustCode(t, 2)
+	if f.calls.Load() != 0 {
+		t.Fatalf("--allow-private still let a private bus reach the provider (%d calls)", f.calls.Load())
 	}
 }
 

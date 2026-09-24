@@ -50,6 +50,37 @@ var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.
 // number: `timeout-minutes: ${{ matrix.leg.timeout }}`.
 var perLegTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.leg\.timeout\s*\}\}\s*$`)
 
+// pushStudioTimeoutRe matches the sharded test job's ceiling: a larger cap for
+// the studio shards of a PUSH run only (the whole tree, dev and main), the CL
+// cap for every leg a pull request or merge group can start. Group 1 is the
+// push-studio cap, group 2 the CL cap. No pull request can reach group 1, so
+// the CL-path check reads group 2; TestPushStudioShardsCarryTheirOwnCeiling
+// pins group 1.
+var pushStudioTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.entry\.group == 'macOS' && github\.event_name == 'push' && (\d+) \|\| (\d+)\s*\}\}\s*$`)
+
+// pushStudioCeiling is the push run's studio-shard cap, and its reason: on
+// 2026-09-24 dev push run 35950929169 (attempt 2, Studio load 3.5) ran sixteen
+// whole-tree studio shards at once and all sixteen were cancelled at twelve
+// minutes, 1/16 still testing after 6,252 passes in 75 packages. The push leg
+// now deals eight shards (one wave on eight runners) under this cap.
+const pushStudioCeiling = 20
+
+func TestPushStudioShardsCarryTheirOwnCeiling(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	for _, line := range strings.Split(jobBody(src, "test"), "\n") {
+		m := pushStudioTimeoutRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if push, _ := strconv.Atoi(m[1]); push != pushStudioCeiling {
+			t.Errorf("the test job's push studio cap = %d, want %d", push, pushStudioCeiling)
+		}
+		return
+	}
+	t.Error("the test job declares no push-only studio cap; the whole-tree studio shards of run 35950929169 were all cancelled at the CL cap")
+}
+
 // legNameRe and legTimeoutRe read a matrix leg's name and its own ceiling.
 var (
 	legNameRe    = regexp.MustCompile(`^-\s*name:\s*(\S+)$`)
@@ -506,6 +537,13 @@ func jobTimeouts(src string) map[string]int {
 		if m := timeoutRe.FindStringSubmatch(line); m != nil {
 			n, err := strconv.Atoi(m[1])
 			if err == nil {
+				out[cur] = n
+			}
+			continue
+		}
+		if m := pushStudioTimeoutRe.FindStringSubmatch(line); m != nil {
+			// The CL cap: the only branch a pull request or merge group reaches.
+			if n, err := strconv.Atoi(m[2]); err == nil {
 				out[cur] = n
 			}
 			continue

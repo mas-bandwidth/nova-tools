@@ -21,14 +21,17 @@
 (defun dedup-root-entries (scan)
   "One entry per accepted record of SCAN, ordered by :sequence so the bytes a
 caller writes are deterministic: the request id, its payload digest, its
-accepted record's sequence and its accepted record's hash. This is the dedup
-root's content (SPEC-WORK.md:7155-7164)."
+accepted record's sequence, its accepted record's hash and the revision it was
+applied at. This is the dedup root's content (SPEC-WORK.md:7155-7164). The
+revision is carried so a retry whose id the index holds names the revision in
+its refusal (SPEC-WORK.md:366)."
   (loop for record in (sort (copy-list (journal-scan-records scan))
                             #'< :key (lambda (record) (getf record :sequence)))
         collect (list :request (getf record :request)
                       :payload-sha256 (getf record :payload-sha256)
                       :sequence (getf record :sequence)
-                      :record-sha256 (getf record :record-sha256))))
+                      :record-sha256 (getf record :record-sha256)
+                      :rev (getf record :rev))))
 
 (defun write-dedup-root (path entries)
   "Write ENTRIES to PATH as the restricted s-expressions they are, one entry
@@ -66,3 +69,17 @@ never read as `nothing was ever applied` (SPEC-WORK.md:7155-7164)."
 savepoint's own content reference is checked (SPEC-WORK.md:7155-7164)."
   (and (probe-file path)
        (equal digest (sha256-hex (%savepoint-read-object path)))))
+
+(defun dedup-root-lookup (entries request digest)
+  "The two-part dedup test the dedup index makes over ENTRIES (SPEC-WORK.md:329-335,
+365-368). Answers (values FOUND-P RESULT REV) where FOUND-P is T when REQUEST is
+in the index, RESULT is :already-applied when the payload digest matches or
+:conflict when it differs, and REV is the revision it was applied at (named in
+the refusal so the requester re-reads). Where the digest differs, the requester
+changed its payload under an id this session already applied and must re-read."
+  (let ((entry (find request entries :key (lambda (e) (getf e :request)) :test #'equal)))
+    (cond
+      ((null entry) (values nil nil nil))
+      ((string= digest (getf entry :payload-sha256))
+       (values t :already-applied (getf entry :rev)))
+      (t (values t :conflict nil)))))

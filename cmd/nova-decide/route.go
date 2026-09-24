@@ -83,12 +83,29 @@ var deciderOpener = func(baseURL, keyEnv string) (decide.Decider, error) {
 	return client, nil
 }
 
-// logSinkOpener opens the decision log --log names: a path (JSON lines) or the
-// table beside the card results. It is the seam a test replaces with an
-// in-memory sink, so no unit test opens a socket to Postgres.
-var logSinkOpener = func(name, dsnEnv string) (decide.LogSink, error) {
-	return decide.OpenLogSink(name, dsnEnv)
+// logSinkOpener opens the JSON lines log --log names. It is the seam a test
+// replaces with an in-memory sink.
+var logSinkOpener = func(path string) (decide.LogSink, error) {
+	return decide.OpenLogSink(path)
 }
+
+// eventSinkOpener dials the fleet store --store names and returns the sink that
+// writes each decision as one decide event on cards:done (#2623). The password
+// is read from the environment variable --password-env names, never from argv.
+var eventSinkOpener = func(addr, user, password string) (decide.LogSink, error) {
+	return decide.OpenEventSink(addr, user, password, "")
+}
+
+// downFriendsOpener reads which friends are marked down in the fleet store (#3397).
+// It is the seam a test replaces with a fake or miniredis check.
+var downFriendsOpener = func(ctx context.Context, addr, user, password string, reg *decide.Registry) (map[string]bool, []string, error) {
+	return decide.DownFriends(ctx, addr, user, password, reg)
+}
+
+// defaultPasswordEnv is the variable `nova-secrets exec --only
+// NOVA_REDIS_BENCH_PASSWORD` leaves the fleet store's password in, the same one
+// nova-pulse event reads.
+const defaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
 
 // now is a var so a test can pin the log's timestamp.
 var now = time.Now
@@ -113,8 +130,14 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nova-decide route", flag.ContinueOnError)
 	unitPath := fs.String("unit", "", "a JSON file (or inline JSON) holding the unit of work's evidence")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
-	logPath := fs.String("log", "", "append the decision to this log: a path (JSON lines) or "+decide.PostgresLog+" (the table beside the card results)")
-	dsnEnv := fs.String("dsn-env", "", "with --log "+decide.PostgresLog+": the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
+	logPath := fs.String("log", "", "append the decision to this JSON lines log")
+	store := fs.String("store", "", "the fleet Redis as host:port: write the decision as one decide event on cards:done, which the fold keeps in its decisions table")
+	var storeUser string
+	fs.StringVar(&storeUser, "user", "", "with --store: the ACL user")
+	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
+	var passwordEnv string
+	fs.StringVar(&passwordEnv, "password-env", defaultPasswordEnv, "with --store: the environment variable the password arrives in; never the password itself")
+	fs.StringVar(&passwordEnv, "store-password-env", defaultPasswordEnv, "alias for --password-env")
 	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung. Absent, the registry's floor for this unit's KIND answers, and the built-in default only where the kind has none")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
@@ -135,6 +158,8 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	secrets := fs.Bool("secrets", false, "secrets are touched")
 	freshTake := fs.Bool("fresh-take", false, "this wants a fresh take: a design with one author")
 	deadline := fs.String("deadline", "", "the deadline, as a duration such as 45m")
+	cardPath := fs.String("card", "", "the card file: its work type is classified (the rules first, Jev only where no rule fires) and WORKTYPE: and ROUTE: jev= are written onto it")
+	allowedPath := fs.String("allowed-routes", "", "with --card: allowed_routes, a JSON object of work type to route list; the selected rung (by name or model id) must be in allowed_routes[type], and a card whose type produces a branch is refused without it")
 	attempts := &stringList{}
 	fs.Var(attempts, "attempt", "a prior attempt as rung:outcome[:reason]; outcome is "+strings.Join(attemptOutcomes(), " | ")+"; repeatable, in order")
 	touches := &stringList{}
@@ -191,6 +216,27 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 				strings.Join(missing, " and "), remedyFor(missing)))
 		}
 	}
+	// The card is read and allowed_routes loaded BEFORE any call: a card that
+	// cannot be read or stamped is refused with nothing spent on it.
+	var card string
+	var allowed decide.WorkTypeRoutes
+	if set["allowed-routes"] && !set["card"] {
+		return refuse(stderr, "ROUTE", "bad-flags", "--allowed-routes is read for a card's work type; pass --card, or drop --allowed-routes")
+	}
+	if set["card"] {
+		raw, err := os.ReadFile(*cardPath)
+		if err != nil {
+			return refuse(stderr, "ROUTE", "bad-card", fmt.Sprintf("cannot read the card: %s", oneline.Err(err)))
+		}
+		card = string(raw)
+		if set["allowed-routes"] {
+			loaded, err := decide.LoadWorkTypeRoutes(*allowedPath)
+			if err != nil {
+				return refuse(stderr, "ROUTE", "bad-allowed-routes", oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+			allowed = loaded
+		}
+	}
 	unit, code := buildUnit(*unitPath, set, stderr, decide.Unit{
 		ID: *id, Kind: *kind, Files: *files, Packages: *packages, Lanes: *lanes,
 		LaneOwner: *laneOwner, Platform: *platform, Guard: *guard, Secrets: *secrets,
@@ -210,21 +256,53 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	// the table does not know -- and every line says which it was.
 	effectiveFloor, floorFrom := decide.ResolveFloor(reg, unit.Kind, *floor, set["floor"])
 	ask := *useJev && !*noJev
-	// The log is OPENED before the call, not after it. --log names a path or the
-	// table, and a table that will not open is nowhere to record the decision:
-	// the rule of #1327 is that a jev call with nowhere to record it is refused
-	// BEFORE it is made, and a DSN that is not there is exactly that case.
-	var sink decide.LogSink
-	if strings.TrimSpace(*logPath) != "" {
-		opened, err := logSinkOpener(*logPath, *dsnEnv)
-		if err != nil {
-			reason := "bad-log"
-			if ask {
-				reason = "no-accounting"
-			}
-			return refuse(stderr, "ROUTE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
+	// The log and the stream are OPENED before the call, not after it. A sink
+	// that will not open is nowhere to record the decision: the rule of #1327 is
+	// that a jev call with nowhere to record it is refused BEFORE it is made,
+	// and a store that does not answer is exactly that case.
+	var fileSink, eventSink decide.LogSink
+	openFailed := func(err error) int {
+		reason := "bad-log"
+		if ask {
+			reason = "no-accounting"
 		}
-		sink = opened
+		return refuse(stderr, "ROUTE", reason, oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if strings.TrimSpace(*logPath) != "" {
+		opened, err := logSinkOpener(*logPath)
+		if err != nil {
+			return openFailed(err)
+		}
+		fileSink = opened
+	}
+	var downExcluded map[string]bool
+	var downList []string
+	if strings.TrimSpace(*store) != "" {
+		opened, err := eventSinkOpener(*store, storeUser, os.Getenv(passwordEnv))
+		if err != nil {
+			if fileSink != nil {
+				fileSink.Close()
+			}
+			return openFailed(err)
+		}
+		eventSink = opened
+
+		down, list, err := downFriendsOpener(context.Background(), *store, storeUser, os.Getenv(passwordEnv), reg)
+		if err != nil {
+			if fileSink != nil {
+				fileSink.Close()
+			}
+			if eventSink != nil {
+				eventSink.Close()
+			}
+			return openFailed(err)
+		}
+		downExcluded = down
+		downList = list
+	}
+	var sink decide.LogSink
+	if fileSink != nil || eventSink != nil {
+		sink = decide.Tee(fileSink, eventSink)
 		defer sink.Close()
 	}
 	var res decide.RouteResult
@@ -240,18 +318,43 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-decide route: asking jev about unit %s (kind %s, floor %.2f from %s)\n",
 			oneline.Field(unit.ID), oneline.Field(unit.Kind), effectiveFloor, oneline.Field(floorFrom))
 	}
+	// THE WORK TYPE ON THE CARD (#2943), classified BEFORE the route is chosen.
+	// The rules read the card with no call; Jev is asked only where no rule
+	// fires, and that call is accounted for like the route's own. A card whose
+	// type produces a branch is refused here, before any route call, when no
+	// allowed_routes table was given: for a coding card that table is the gate.
+	var wt decide.WorkTypeResult
+	if set["card"] {
+		var d decide.Decider
+		if ask {
+			d = client
+		}
+		classified, err := decide.ClassifyWorkType(context.Background(), d, card)
+		if err != nil {
+			return refuse(stderr, "ROUTE", "bad-card", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		wt = classified
+		if wt.Usage.Calls > 0 && strings.TrimSpace(*usagePath) != "" {
+			if err := appendUsage(*usagePath, decide.RouteResult{Unit: unit.ID, Usage: wt.Usage}, unit, reg, stderr); err != nil {
+				return refuse(stderr, "ROUTE", "bad-record", "usage: "+oneline.Cap(err.Error(), oneline.TailBytes))
+			}
+		}
+		if err := allowed.RequireTable(wt.Type); err != nil {
+			return refuse(stderr, "ROUTE", "no-allowed-routes", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+	}
 	switch {
 	case *stepUp:
 		// The step-up is a SEQUENCE of decisions, and the caller gets all of
 		// them: the last is the answer, and every one of them is a row.
-		steps, routeErr = decide.RouteStepUp(context.Background(), client, reg, unit, effectiveFloor, *maxSteps)
+		steps, routeErr = decide.RouteStepUpExcluded(context.Background(), client, reg, unit, effectiveFloor, *maxSteps, downExcluded, downList)
 		if len(steps) > 0 {
 			res = steps[len(steps)-1]
 		}
 	case ask:
-		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, effectiveFloor)
+		res, routeErr = decide.RouteJevExcluded(context.Background(), client, reg, unit, effectiveFloor, downExcluded, downList)
 	default:
-		res, routeErr = decide.RouteRules(reg, unit, effectiveFloor)
+		res, routeErr = decide.RouteRulesExcluded(reg, unit, effectiveFloor, downExcluded, downList)
 	}
 	// Where the floor came from is the decision's own fact, and it travels with
 	// it onto the line and into every log row -- including the steps, each of
@@ -296,7 +399,24 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	if persisted != nil {
 		return refuse(stderr, "ROUTE", "bad-record", oneline.Cap(persisted.Error(), oneline.TailBytes))
 	}
+	// THE ALLOWED_ROUTES GATE ON THE SELECTED ROUTE (#2943, Stella's read at
+	// afd3efb0). The rung just chosen must be one of allowed_routes[type]; a
+	// rung the table forbids is refused and the card is not stamped, so no
+	// card carries a stamp for a route it may not run on.
+	var cardLines []string
+	if set["card"] {
+		if err := allowed.Admit(wt.Type, res, reg); err != nil {
+			return refuse(stderr, "ROUTE", "route-not-allowed", oneline.Cap(err.Error(), oneline.TailBytes))
+		}
+		cardLines = decide.WorkTypeCardLines(wt, res, reg, allowed)
+		if err := os.WriteFile(*cardPath, []byte(decide.StampCard(card, cardLines)), 0o644); err != nil {
+			return refuse(stderr, "ROUTE", "bad-card", fmt.Sprintf("cannot write the card: %s", oneline.Err(err)))
+		}
+	}
 	fmt.Fprintln(stdout, res.Line())
+	for _, line := range cardLines {
+		fmt.Fprintln(stdout, line)
+	}
 	// THE COORDINATOR'S LINE (Glenn 2026-09-19). The decision line above is
 	// the machine's, with every field a gate needs on it. This one is for a
 	// person -- or for the coordinator about to spawn a child -- and it says
@@ -578,12 +698,8 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 // runLog is the log verb: the escalation counts per kind and the starting rung
 // regenerated from the rows.
 func runLog(args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "migrate" {
-		return runLogMigrate(args[1:], stdout, stderr)
-	}
 	fs := flag.NewFlagSet("nova-decide log", flag.ContinueOnError)
-	logPath := fs.String("log", "", "the escalation log to read: a path (JSON lines) or "+decide.PostgresLog+" (the table)")
-	dsnEnv := fs.String("dsn-env", "", "with --log "+decide.PostgresLog+": the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
+	logPath := fs.String("log", "", "the escalation log to read: a JSON lines path")
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	summary := fs.Bool("summary", false, "print the per-kind escalation counts and the regenerated starting rung")
 	fs.SetOutput(io.Discard)
@@ -598,7 +714,7 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "LOG", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if strings.TrimSpace(*logPath) == "" {
-		return refuse(stderr, "LOG", "bad-arguments", "--log is required; refusing to guess the log's path. Pass a path, or "+decide.PostgresLog+" for the table")
+		return refuse(stderr, "LOG", "bad-arguments", "--log is required; refusing to guess the log's path. Pass the JSON lines log's path; the fleet's decisions are in the fold: nova-pulse fold --db <file> --report")
 	}
 	if !*summary {
 		return refuse(stderr, "LOG", "bad-arguments", "--summary is the read this verb offers; pass it")
@@ -607,9 +723,8 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-registry", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	// One read for both sinks: the rows are the record and the summary is a
-	// projection of them, so the file and the table print the same lines.
-	sink, err := logSinkOpener(*logPath, *dsnEnv)
+	// The rows are the record and the summary is a projection of them.
+	sink, err := logSinkOpener(*logPath)
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -618,6 +733,10 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	// A voided outcome row is in the log but is no outcome of a decision:
+	// drop it before folding so the funnel never counts a row the manager
+	// retracted (SPEC-PULSE rule 18, nova-tools #2034).
+	entries = excludeVoidedOutcomes(entries)
 	sum, err := decide.Summarize(reg, entries)
 	if err != nil {
 		return refuse(stderr, "LOG", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -626,52 +745,57 @@ func runLog(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// migrator is what a sink that has a schema offers: the table's migration,
-// applied from the files in internal/decide/migrations. A file sink has no
-// schema and does not satisfy it, which is how `log migrate` knows it was
-// pointed at a file.
-type migrator interface {
-	Migrate(ctx context.Context) error
+// excludeVoidedOutcomes drops from a list of entries the one OUTCOME row each
+// void record retracts, and drops the void records themselves. The summary
+// then never sees a mistake: every stage's count reflects only the rows still
+// standing (SPEC-PULSE rule 18, #2034).
+//
+// A void is keyed by unit AND Time stamp, and each distinct key removes at
+// most one outcome row (the earliest match): the stamp has second precision,
+// so another unit's outcome in the same second, or a later row of the same
+// unit, is never swept up with the one the manager retracted (Stella's hold
+// on #2850). Void records are gathered in a pre-pass so a void's position in
+// the log relative to its target does not matter.
+func excludeVoidedOutcomes(entries []decide.Entry) []decide.Entry {
+	type voidKey struct{ unit, time string }
+	pending := map[voidKey]bool{}
+	for _, e := range entries {
+		if strings.TrimSpace(e.Source) != sourceVoid {
+			continue
+		}
+		key := voidKey{unit: outcomeUnit(e), time: voidTargetFromReason(e.Reason)}
+		if key.unit != "" && key.time != "" {
+			pending[key] = true
+		}
+	}
+	kept := make([]decide.Entry, 0, len(entries))
+	for _, e := range entries {
+		if strings.TrimSpace(e.Source) == sourceVoid {
+			continue
+		}
+		if strings.TrimSpace(e.Source) == decide.SourceOutcome {
+			key := voidKey{unit: outcomeUnit(e), time: strings.TrimSpace(e.Time)}
+			if pending[key] {
+				delete(pending, key) // one void key retracts one row
+				continue
+			}
+		}
+		kept = append(kept, e)
+	}
+	return kept
 }
 
-// runLogMigrate installs the decision log's table. It is always the table's
-// verb: there is no path to migrate, and the DSN arrives in the environment
-// under the name --dsn-env gives, put there by nova-secrets exec.
-func runLogMigrate(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("nova-decide log migrate", flag.ContinueOnError)
-	dsnEnv := fs.String("dsn-env", "", "the environment variable the DSN arrives in (default "+decide.LogDSNEnv+"); never the DSN itself")
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "MIGRATE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
+// voidTargetFromReason reads the Time stamp a void record's Reason fields,
+// returning it for the exclude step. A Reason that does not start with the
+// void prefix is not a void we recognise; return empty so the row stands.
+func voidTargetFromReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if !strings.HasPrefix(reason, voidPrefix) {
+		return ""
 	}
-	if fs.NArg() > 0 {
-		return refuse(stderr, "MIGRATE", "bad-flags", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+	key := strings.TrimSpace(strings.TrimPrefix(reason, voidPrefix))
+	if key == "" {
+		return ""
 	}
-	sink, err := logSinkOpener(decide.PostgresLog, *dsnEnv)
-	if err != nil {
-		return refuse(stderr, "MIGRATE", "bad-log", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	defer sink.Close()
-	m, ok := sink.(migrator)
-	if !ok {
-		return refuse(stderr, "MIGRATE", "bad-migration",
-			fmt.Sprintf("%T has no schema to install; migrate is the table's verb and the JSON lines log has none", sink))
-	}
-	fmt.Fprintln(stderr, "nova-decide log migrate: applying the decision log's migrations")
-	if err := m.Migrate(context.Background()); err != nil {
-		return refuse(stderr, "MIGRATE", "bad-migration", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	fmt.Fprintf(stdout, "MIGRATE OK table=decide_log version=%d dsn_env=%s\n",
-		decide.LogSchemaVersion, oneline.Field(dsnEnvName(*dsnEnv)))
-	return 0
-}
-
-// dsnEnvName is the variable the DSN came from, for the line that says what was
-// done. The name is not a secret; the value never appears.
-func dsnEnvName(dsnEnv string) string {
-	if s := strings.TrimSpace(dsnEnv); s != "" {
-		return s
-	}
-	return decide.LogDSNEnv
+	return key
 }

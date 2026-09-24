@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // THE FAKE RUNNER IS AN EXECUTABLE, NOT A SHELL SCRIPT (windows leg, 2026-09-15).
@@ -113,9 +114,9 @@ func TestMain(m *testing.M) {
 }
 
 // runnerDoing returns the path of a fake runner, under `name` in `dir`, that does `steps`.
-// The binary is a copy of the one built for this package and the steps are a JSON file
-// beside it, so the fixture is a real executable on every platform -- which is what
-// `--runner <cmd>` names.
+// The binary is a link to the one built for this package -- a copy only where a link is
+// impossible -- and the steps are a JSON file beside it, so the fixture is a real executable
+// on every platform, which is what `--runner <cmd>` names.
 func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 	t.Helper()
 	src := builtFakeRunner(t)
@@ -123,10 +124,6 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 		name += ".exe"
 	}
 	path := filepath.Join(dir, name)
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatalf("reading the fake runner: %v", err)
-	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -136,12 +133,10 @@ func runnerDoing(t *testing.T, dir, name string, steps ...runnerStep) string {
 	// queue behind the scanner for longer than a test will wait (batman and the Studio,
 	// 2026-09-17: result-after-deadline timed out at 30 s only in the full package run).
 	// A link shares the inode the scanner has already passed. The copy stays as the
-	// fallback for a temp directory on another filesystem, and for Windows.
-	_ = os.Remove(path)
-	if runtime.GOOS == "windows" || os.Link(src, path) != nil {
-		if err := os.WriteFile(path, raw, 0o755); err != nil {
-			t.Fatalf("placing the fake runner at %s: %v", path, err)
-		}
+	// fallback for a temp directory on another filesystem, and for Windows. testbin.Place
+	// is that shared helper, so every fixture here links instead of copying.
+	if err := testbin.Place(src, path); err != nil {
+		t.Fatalf("placing the fake runner at %s: %v", path, err)
 	}
 	if steps == nil {
 		steps = []runnerStep{}

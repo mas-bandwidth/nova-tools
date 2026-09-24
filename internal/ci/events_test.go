@@ -130,6 +130,50 @@ func TestProducerPublishesCardDoneFromTheStream(t *testing.T) {
 	}
 }
 
+// 1b. Only a card's END is re-announced. The stream carries every transition (#2563) and
+// the decide events (#2623); a queued entry and a decide entry are acked and publish
+// nothing, an ok entry publishes one card-done, and the group owes no ack afterwards.
+func TestProducerAnnouncesOnlyACardsEnd(t *testing.T) {
+	_, rdb, ctx := newBus(t)
+	sub := subscribe(t, rdb, ctx, ChannelCardDone)
+
+	p := NewProducer(rdb, &fakeForge{}, "events", nil)
+	if _, err := p.PublishCardsDone(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for _, values := range []map[string]interface{}{
+		{"label": "card-41", "event": "queued"},
+		{"label": "card-41", "event": "decide", "unit_id": "card-41", "kind": "rebase", "rung_tried": "flash"},
+		{"label": "card-41", "event": "ok", "card": "card-41"},
+	} {
+		if err := rdb.XAdd(ctx, &redis.XAddArgs{Stream: StreamCardsDone, Values: values}).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := p.PublishCardsDone(ctx)
+	if err != nil {
+		t.Fatalf("PublishCardsDone: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("published %d card-done messages for one card end, want 1", n)
+	}
+	var got CardDone
+	if err := json.Unmarshal([]byte(recvBy(t, sub.Channel(), ChannelCardDone)), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Card != "card-41" {
+		t.Errorf("card-done card = %q, want card-41", got.Card)
+	}
+	noMessage(t, sub.Channel(), ChannelCardDone)
+	pending, err := rdb.XPending(ctx, StreamCardsDone, GroupEvents).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Count != 0 {
+		t.Fatalf("the events group still owes %d acks; every entry read is acked", pending.Count)
+	}
+}
+
 // 2. A completed check suite is published once and only once: a second poll with the same
 // conclusion publishes nothing.
 func TestProducerPublishesPRChecksDoneOnlyOnChange(t *testing.T) {

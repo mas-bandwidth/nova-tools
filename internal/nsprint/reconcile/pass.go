@@ -58,8 +58,13 @@ type Loop struct {
 // and no duty runs), run every duty with the token, then write the pass age
 // and counts to proc:reconciler in one fenced call that also renews the lease.
 // A duty error that is not a fence is recorded and does not stop the loop.
+//
+// The pass is timed on the lease clock (#3322), the clock its bench sessions
+// are bounded by, so took_ms and the session bound are one measurement: a
+// pass that recorded itself took under the lease TTL on the clock the lease
+// deadline is kept on.
 func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
-	start := time.Now()
+	start := lp.Lease.now()
 	if err := lp.Lease.Renew(ctx); err != nil {
 		return PassResult{}, err
 	}
@@ -75,13 +80,16 @@ func (lp *Loop) Pass(ctx context.Context) (PassResult, error) {
 		}
 		res.Counts.add(c)
 	}
-	res.Took = time.Since(start)
+	res.Took = lp.Lease.now().Sub(start)
 	res.Err = strings.Join(errs, "; ")
+	sent := lp.Lease.now()
 	reply, err := lp.Lease.call(ctx, fnPass, lp.Lease.token, lp.Lease.ttl.Milliseconds(),
 		res.Took.Milliseconds(), res.Counts.Dealt, res.Counts.Routed, res.Counts.Expired, res.Err)
 	if err != nil {
 		return PassResult{}, err
 	}
+	// ns_reconciler_pass renewed the lease to its TTL.
+	lp.Lease.renewedAt(sent)
 	if len(reply) < 2 {
 		return PassResult{}, fmt.Errorf("reconcile pass: unexpected reply %q", reply)
 	}

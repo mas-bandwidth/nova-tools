@@ -78,6 +78,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	payloadSHA := fs.String("payload-sha", "", "")
 	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")
+	est := fs.String("est", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task push", err.Error())
 	}
@@ -94,6 +95,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		Effects: task.Effects(*effects), Repo: *repo, PR: *pr, Head: *head,
 		Ref: *ref, To: *to, Front: *front, Priority: *priority,
 		PayloadSHA: *payloadSHA, Actor: *actor, Idem: *idem,
+		Est: *est, ErrOut: errOut,
 	})
 	if err != nil {
 		return refuse(errOut, "task push", err.Error())
@@ -102,6 +104,12 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		// #3067: both ids on one line, on stdout like every PUSH word.
 		fmt.Fprintf(out, "PUSH %s %s\n", res.Status, res.Overlap)
 		return res.Status.ExitCode()
+	}
+	if res.Status == task.PushInvalid {
+		if *est != "" && !task.IsValidEst(*est) {
+			fmt.Fprintf(out, "INVALID est=%s: whole minutes 1..10080\n", *est)
+			return res.Status.ExitCode()
+		}
 	}
 	fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, *id)
 	return res.Status.ExitCode()

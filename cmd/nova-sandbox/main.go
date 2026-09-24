@@ -40,7 +40,7 @@ const usage = `nova-sandbox: one command, contained by the OS (see docs/SPEC-SAN
 
 usage:
   nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny]
-               [--net-listen] [--cwd <dir>]
+               [--net-listen] [--net-allow <host:port>] [--cwd <dir>]
                [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
@@ -86,6 +86,9 @@ usage:
                   net=nopromise.
   --net-listen    grant INBOUND ip as well; without it a job that does not
                   listen cannot be listened to. Never with --net-deny.
+  --net-allow <host:port>  open the loopback host:port named, back up, by name;
+                  the keyless local provider (ollama) that (remote ip) does not
+                  reach. Repeatable.
   --gpu <n|m>     the explicit local GPU capability: none (default) or metal.
                   Opt-in only; metal records intent and never widens
                   mach-lookup or grants blanket device access (#230).
@@ -216,6 +219,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 // because the split at -- must be exact: everything after it is the command, verbatim.
 type flags struct {
 	reads, readsNoExec, writes  []string
+	netAllow                    []string
 	cwd, tmp, name, secret, acl string
 	gpu                         string
 	netDeny, netListen          bool
@@ -281,6 +285,9 @@ func parse(args []string) flags {
 			f.netDeny = true
 		case "--net-listen":
 			f.netListen = true
+		case "--net-allow":
+			v, i = want(i, "--net-allow")
+			f.netAllow = append(f.netAllow, v)
 		case "--max":
 			v, i = want(i, "--max")
 			n := 0
@@ -346,7 +353,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, ReadsNoExec: f.readsNoExec, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, Argv: f.argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, NetAllow: f.netAllow, Argv: f.argv, Home: homeOf(env),
 		GPU: f.gpu,
 	})
 	if len(bad) > 0 {
@@ -924,7 +931,7 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, ReadsNoExec: f.readsNoExec, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, Argv: argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, NetAllow: f.netAllow, Argv: argv, Home: homeOf(env),
 		GPU: f.gpu,
 	})
 	if len(bad) > 0 {

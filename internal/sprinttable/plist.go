@@ -1,3 +1,8 @@
+// Package sprinttable is what keeps the sprint table's refresh alive across
+// a unit restart: ApplyOwnSession puts the refresh in its own session, and
+// AbandonProcessGroup checks the loop plist stops launchd signalling the
+// unit's process group. The table itself is read from Redis and written
+// nowhere (#3326); there is no published file to keep.
 package sprinttable
 
 import "strings"

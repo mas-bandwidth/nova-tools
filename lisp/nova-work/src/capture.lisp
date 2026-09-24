@@ -27,25 +27,84 @@ limits; a queue that would grow past one refuses rather than growing
 
 (defstruct (capture-input (:constructor make-capture-input
                              (&key id kind expected-revision bytes records
-                                   source-pin)))
+                                   source-pin provider repository issue url
+                                   remote-revision)))
   id
   kind
   expected-revision
   bytes
   records
-  source-pin)
+  source-pin
+  provider
+  repository
+  issue
+  url
+  remote-revision)
 
 (defstruct (capture-stage (:constructor %make-capture-stage))
   registry
   (inputs '())
   (results '())
-  (limits *capture-stage-limits*))
+  (limits *capture-stage-limits*)
+  (absorb-allowed nil)
+  (intake-mode :link)
+  (absorb-repositories '())
+  (absorb-authors '())
+  (absorb-authority nil))
 
-(defun make-capture-stage (&key registry (limits *capture-stage-limits*))
+(defun %non-empty-string-list-p (x)
+  (and (consp x)
+       (every (lambda (s) (and (stringp s) (plusp (length s)))) x)))
+
+(defun validate-absorb-selection (absorb-allowed intake-mode repositories
+                                  authors authority)
+  "Signal an error unless the intake selection is one SPEC-WORK.md:7586-7617
+permits. The intake mode is :LINK (the default) or :ABSORB. Absorb is separate
+from link: :ABSORB-ALLOWED T needs the explicit :ABSORB intake mode, a non-empty
+scope of applicable repositories and participating authors, and a named grant
+AUTHORITY (its source reference, recorded as provenance). The :ABSORB mode
+without :ABSORB-ALLOWED T is refused, as is a scope given to a link stage.
+Author identity alone never selects absorption."
+  (unless (member intake-mode '(:link :absorb))
+    (error "capture intake mode ~S is not :link or :absorb" intake-mode))
+  (cond
+    (absorb-allowed
+     (unless (eq intake-mode :absorb)
+       (error "absorb allowed but intake mode is ~S; absorb needs explicit :absorb"
+              intake-mode))
+     (unless (%non-empty-string-list-p repositories)
+       (error "absorb needs a selected scope: :absorb-repositories is ~S"
+              repositories))
+     (unless (%non-empty-string-list-p authors)
+       (error "absorb needs a selected scope: :absorb-authors is ~S" authors))
+     (unless (and (stringp authority) (plusp (length authority)))
+       (error "absorb needs a selected authority: :absorb-authority is ~S"
+              authority)))
+    ((eq intake-mode :absorb)
+     (error "intake mode :absorb requires :absorb-allowed t"))
+    ((or repositories authors authority)
+     (error "absorb scope/authority given to a link stage (absorb not allowed)")))
+  t)
+
+(defun make-capture-stage (&key registry (limits *capture-stage-limits*)
+                              (absorb-allowed nil) (intake-mode :link)
+                              absorb-repositories absorb-authors
+                              absorb-authority)
   "The in-process staging area over the operation registry. When no registry is
-given the scheduler's in-process durable-accept journal is used."
+given the scheduler's in-process durable-accept journal is used.
+By default, absorb is disabled and link is the default mode (SPEC-WORK.md:7614).
+Absorb is enabled only with :ABSORB-ALLOWED T, :INTAKE-MODE :ABSORB and a
+selected scope (:ABSORB-REPOSITORIES, :ABSORB-AUTHORS) and authority
+(:ABSORB-AUTHORITY); see VALIDATE-ABSORB-SELECTION."
+  (validate-absorb-selection absorb-allowed intake-mode absorb-repositories
+                             absorb-authors absorb-authority)
   (%make-capture-stage :registry (or registry (make-operation-registry))
-                       :inputs '() :results '() :limits limits))
+                       :inputs '() :results '() :limits limits
+                       :absorb-allowed (and absorb-allowed t)
+                       :intake-mode intake-mode
+                       :absorb-repositories (copy-list absorb-repositories)
+                       :absorb-authors (copy-list absorb-authors)
+                       :absorb-authority absorb-authority))
 
 (defun capture-wire-op (kind)
   "The wire operation name a long source operation reports
@@ -97,13 +156,48 @@ journal and made durable, then OPERATION OK is answered (SPEC-WORK.md:2721-2730)
   (reduce #'+ (capture-stage-inputs stage) :key #'capture-input-bytes
           :initial-value 0))
 
+(defun capture-issue-key (provider repository issue)
+  "The stable provider/repository/issue identity a capture stages and admits.
+The triple survives intake: repeated intake updates the existing correspondence
+instead of duplicating the work (SPEC-WORK.md:7569)."
+  (format nil "~A/~A#~A" provider repository issue))
+
+(defun capture-input-identity (input)
+  "The stable provider/repository/issue identity of a staged INPUT, or NIL when
+the input carries no issue triple."
+  (when (and (capture-input-provider input)
+             (capture-input-repository input)
+             (capture-input-issue input))
+    (capture-issue-key (capture-input-provider input)
+                       (capture-input-repository input)
+                       (capture-input-issue input))))
+
 (defun capture-stage-input (stage &key id kind (expected-revision 0)
-                                      (bytes 0) (records 1) source-pin)
+                                      (bytes 0) (records 1) source-pin
+                                      provider repository issue url
+                                      remote-revision)
   "Stage one source record, read outside the mutation loop. The staged input set
 and the staged-byte sum are bounded by the declared limits; a breach refuses
-and stages nothing (SPEC-WORK.md:2748-2753)."
-  (let ((limits (capture-stage-limits stage)))
+and stages nothing (SPEC-WORK.md:2748-2753). A staged issue keeps its stable
+provider/repository/issue identity with its current URL and last observed
+remote revision; repeated intake of the same identity updates the existing
+staged input instead of duplicating it (SPEC-WORK.md:7569). Identity is
+checked before the capacity and byte limits: re-intake of an identity already
+staged adds no new input and no new bytes, so it must never be refused by a
+stage that is merely full (SPEC-WORK.md:7569)."
+  (let* ((limits (capture-stage-limits stage))
+         (key (when (and provider repository issue)
+                (capture-issue-key provider repository issue)))
+         (prior (when key
+                  (find key (capture-stage-inputs stage)
+                        :key #'capture-input-identity :test #'equal))))
     (cond
+      (prior
+       (setf (capture-input-expected-revision prior) expected-revision
+             (capture-input-url prior) url
+             (capture-input-remote-revision prior) remote-revision)
+       (values t (format nil "STAGE OK id=~A revision=~D identity=~A"
+                         id expected-revision key)))
       ((>= (capture-input-count stage) (getf limits :staged-inputs))
        (values nil (format nil "STAGE FAIL: staged inputs at the bound ~D"
                            (getf limits :staged-inputs))))
@@ -114,9 +208,16 @@ and stages nothing (SPEC-WORK.md:2748-2753)."
        (push (make-capture-input :id id :kind kind
                                  :expected-revision expected-revision
                                  :bytes bytes :records records
-                                 :source-pin source-pin)
+                                 :source-pin source-pin
+                                 :provider provider :repository repository
+                                 :issue issue :url url
+                                 :remote-revision remote-revision)
              (capture-stage-inputs stage))
-       (values t (format nil "STAGE OK id=~A revision=~D" id expected-revision))))))
+       (values t (if key
+                     (format nil "STAGE OK id=~A revision=~D identity=~A"
+                             id expected-revision key)
+                     (format nil "STAGE OK id=~A revision=~D"
+                             id expected-revision)))))))
 
 ;;; ------------------------------------------------------------------
 ;;; Admitting a validated result at an expected revision
@@ -141,9 +242,41 @@ writer. Retained results are bounded (SPEC-WORK.md:2748-2750, :2753)."
        (values nil "ADMIT FAIL: retained results at the bound"))
       (t
        (push (list :id id :revision current-revision :result result
-                   :source-pin (capture-input-source-pin input))
+                   :source-pin (capture-input-source-pin input)
+                   :provider (capture-input-provider input)
+                   :repository (capture-input-repository input)
+                   :issue (capture-input-issue input)
+                   :url (capture-input-url input)
+                   :remote-revision (capture-input-remote-revision input))
              (capture-stage-results stage))
        (values t (format nil "ADMIT OK id=~A revision=~D" id current-revision))))))
+
+(defun capture-result-identity (row)
+  "The stable provider/repository/issue identity a retained ROW was admitted
+with, or NIL when the row carries no issue triple (SPEC-WORK.md:7569)."
+  (when (and (getf row :provider) (getf row :repository) (getf row :issue))
+    (capture-issue-key (getf row :provider)
+                       (getf row :repository)
+                       (getf row :issue))))
+
+(defun capture-result-url (row)
+  "The current URL a retained ROW was admitted with."
+  (getf row :url))
+
+(defun capture-result-remote-revision (row)
+  "The last observed remote revision a retained ROW was admitted with."
+  (getf row :remote-revision))
+(defun capture-absorb-allowed-p (stage)
+  "Absorb is disabled by default; link is the default mode. Absorb requires
+explicit scope and authority selection (SPEC-WORK.md:7586-7617, E09-F04-01):
+true only for a stage whose absorb intake mode, repositories, authors and
+authority were all selected."
+  (and (capture-stage-absorb-allowed stage)
+       (eq (capture-stage-intake-mode stage) :absorb)
+       (consp (capture-stage-absorb-repositories stage))
+       (consp (capture-stage-absorb-authors stage))
+       (stringp (capture-stage-absorb-authority stage))
+       t))
 
 (defun capture-result-of (stage id)
   "The retained result for ID, or NIL."

@@ -8,7 +8,8 @@
 #
 # This file is the FAST TIER: the checks a change is required to pass in two
 # minutes, ideally one. It runs gofmt, build, vet, and the unit tests sharded
-# across parallel jobs, without the race detector. Everything that cannot fit
+# across parallel jobs, without the race detector — with ONE exception,
+# test-race-queue below. Everything that cannot fit
 # that budget — the whole-tree `-race` run, Windows build/vet and per-package
 # tests, the three-OS smoke, the release dry-run, and the nightly perf wall
 # clock — lives in .github/workflows/certification.yml, under the same job
@@ -47,6 +48,15 @@
 # certification tier's `test` and `test-windows` jobs. The CL tier's sharded
 # tests are the same tests without `-race`, so a data race on a CL is caught by
 # certification rather than by the CL itself. That is the budget, not a skip.
+# THE ONE EXCEPTION is test-race-queue below: the queue and lease package
+# (internal/redisq) runs under `-race` as a required check on every CL event.
+# Its tests are the concurrent shape a data race hides in — 200 admissions
+# through one Lua script, a card pulled by one bench and reclaimed by another —
+# and a data race seeded there is invisible to the no-race shards (measured
+# 2026-09-22: a seeded increment in Queue.Admit passed `make test` green), while
+# the -race detector names it at once. Waiting a day for certification to name
+# it is not the budget for the one package the merge gate lands cards through;
+# one small -race leg on the CL path is.
 
 name: ci
 
@@ -79,6 +89,11 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # #3113: nova-sprint controls that need redis-server fail instead of skipping.
+  # The install step puts the binary on PATH; a green run executed the store.
+  NOVA_CI: "1"
 
 concurrency:
   # THE INTEGRATION BRANCHES ARE ONE LIST, and this `fromJSON` is it. Adding a
@@ -378,7 +393,7 @@ jobs:
           # measured at over eleven minutes in run 35018437149 for a tier whose
           # budget is two.
           SPACE_SHARDS=8
-          STUDIO_SHARDS=16 # two waves on eight studio runners, each shard inside the 6-minute cap on a loaded Studio; eight studio runners since 05:0xZ 2026-09-16; four shards of double size hit the 6-minute job timeout on a loaded Studio (main runs 35055138586, 35057357169: test (2/4 studio) and (4/4 studio) cancelled at 6 min, twice each)
+          STUDIO_SHARDS=8 # push to dev: ONE wave on the eight studio runners, each shard under the test job's 20-minute push cap; 2026-09-24 run 35950929169 (attempt 2, Studio load 3.5, 16 runners registered) ran all sixteen shards at once and every one was cancelled at the 12-minute cap, 1/16 still testing at 12:06 after 6,252 passes in 75 packages (139 test binaries built under 16-way contention), while 1/8 space finished its 14 packages in under two minutes; was 16 (two waves on eight runners, each inside the old 6-minute cap)
           darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
 
           is_darwin_only() {
@@ -451,7 +466,7 @@ jobs:
           # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
           # 15 packages that import them); every other package runs on Linux
           # only, the shape the merge_group run below has used since 2026-09-16.
-          # The whole tree still runs on macOS on every push to dev (16 studio
+          # The whole tree still runs on macOS on every push to dev (8 studio
           # shards) and in certification's `test` job, so nothing leaves the
           # macOS evidence; it leaves the PR feedback path. If `go list` fails,
           # every touched package keeps its macOS leg (the old shape).
@@ -569,7 +584,8 @@ jobs:
     # carrying ten runners while the Studio is an M3 Ultra: one ceiling over a
     # 2x spread censors the slower machine. The reason lives beside the number
     # in internal/ci/ci_budget_test.go.
-    timeout-minutes: 12
+    # PUSH STUDIO SHARDS get 20 (2026-09-24, run 35950929169: all sixteen whole-tree studio shards cancelled at 12); PR, merge-group and space legs keep 12.
+    timeout-minutes: ${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && 20 || 12 }}
     steps:
       - name: nothing to test for this change
         # test-packages emits one leg with an empty package list when the change
@@ -710,6 +726,14 @@ jobs:
         if: matrix.entry.packages != ''
         run: make vet PKGS="${{ matrix.entry.packages }}"
 
+      - name: install redis-server
+        if: matrix.entry.packages != ''
+        # #3113. The controls spawn a throwaway redis-server. Self-hosted rows
+        # (Studio, hulk) also get the binary from rowan-tools fleet/bench.yml;
+        # this step is what a runner has before that playbook has converged,
+        # and what the hosted rows run below. It does not dial the fleet store.
+        run: bash .github/scripts/install-redis-server.sh
+
       - name: test
         if: matrix.entry.packages != ''
         # The default bash flags on a `run:` step are `-eo pipefail`, so a
@@ -730,6 +754,65 @@ jobs:
         # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
         # exactly as the inline command here did.
         run: make test PKGS="${{ matrix.entry.packages }}"
+
+  test-race-queue:
+    # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race
+    # detector is required on the CL path (see the header's THE ONE EXCEPTION).
+    # internal/redisq is the card queue and the slot leases both: the DirQueue
+    # whose pull is an atomic rename two pullers race for, the Redis queue whose
+    # card reaches exactly one consumer, the fenced lease whose renew and
+    # release are a Lua compare-and-release, and the cap admission 200 callers
+    # run through one script. Those are the shapes a data race hides in, and the
+    # sharded `test` job cannot see one — it runs the same tests without -race.
+    # The whole-tree -race run stays in the certification tier, a release
+    # blocker and never a CL one; this job is the narrow leg that IS a CL one,
+    # aggregated by ci-ok, so a seeded data race fails the merge gate instead of
+    # landing on dev green. One package, one runner, inside the two-minute
+    # budget (measured 2026-09-22: `make test-race PKGS=./internal/redisq`
+    # passes in seconds warm and 54 s cold, cap 2 min).
+    if: vars.NOVA_CI_CARDS != 'on' && (github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: [self-hosted, linux, x64, space]
+    timeout-minutes: 2
+    steps:
+      - name: remove stale build dirs from the shared runner
+        # The self-hosted runners reuse the _work directory across jobs; a tree left
+        # by an aborted or overlapping run makes checkout fail. Start from clean.
+        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
+        # ever runs on a directory this repository has checked out: an empty
+        # variable is refused, a workspace that does not exist yet is the normal
+        # first-run state (#1751), and a workspace with no `.git` is not ours to
+        # empty — actions/checkout clears a non-repository workspace itself.
+        shell: bash
+        run: |
+          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
+          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
+          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
+          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path (hulk: /usr/bin/go 1.22
+          # shadowed ~/go/bin 1.26.5 and every PR job died downloading a toolchain, 2026-09-17)
+          # newest Go under ~/sdk first (the Mac benches: batman and superman keep 1.27 there, and
+          # batman also carries a stale root-owned /usr/local/go 1.22 that won this loop, 2026-09-18)
+          sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+
+      - name: the queue and lease package, with -race
+        # make test-race carries the -race flag (Makefile: the one entry); PKGS
+        # narrows it to the queue and lease package, so the leg stays inside the
+        # two-minute budget the whole-tree run cannot.
+        run: make test-race PKGS="./internal/redisq"
 
   test-hosted:
     # THE FULL SUITE on the GitHub-hosted runners — ubuntu-latest and
@@ -799,6 +882,12 @@ jobs:
 
       - name: vet
         run: make vet
+
+      - name: install redis-server
+        # #3113, the hosted row. ubuntu-latest has no redis-server until apt
+        # installs it; macos-latest uses Homebrew. A service container would
+        # not put the binary on PATH, and the controls spawn their own server.
+        run: bash .github/scripts/install-redis-server.sh
 
       - name: test (shard ${{ matrix.shard }} of 4)
         # Four shards per OS, dealt by package order (stable: go list sorts), so a
@@ -1039,6 +1128,12 @@ jobs:
           esac
           echo "merge_group: full hosted on:${pkgs}"
           echo "pkgs=$pkgs" >> "$GITHUB_OUTPUT"
+
+      - name: install redis-server
+        # #3113. The merge gate runs the changed packages in full, including a
+        # nova-sprint control when the group touches one. Same installer as the
+        # hosted row: apt on Linux, Homebrew on the Studio.
+        run: bash .github/scripts/install-redis-server.sh
 
       - name: test (full, the packages this group changes, shard ${{ matrix.shard }} of ${{ needs.plan-merge.outputs.slots }})
         # NOT -short: the group commit must answer the hosted-only tests the
@@ -1654,7 +1749,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge]
+    needs: [lint, test, test-race-queue, e2e, lisp, test-hosted, test-hosted-pr, test-hosted-merge]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1673,6 +1768,7 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
+            "test-race-queue:${{ needs.test-race-queue.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "test-hosted-pr:${{ needs.test-hosted-pr.result }}" \
@@ -1692,7 +1788,7 @@ jobs:
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
             # NOVA_CI_CARDS=on (#2925): these rows run as ci cards and the lander reads ci:<repo>:<sha> (#2842, #2924), so Actions skipping them is the design.
-            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|e2e|test-hosted-merge) continue ;; esac; fi
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|test-race-queue|e2e|test-hosted-merge) continue ;; esac; fi
             [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
             # test-windows-pr was aggregated here until 2026-09-18, when the
@@ -1713,6 +1809,7 @@ jobs:
           for pair in \
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
+            "test-race-queue:${{ needs.test-race-queue.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "lisp:${{ needs.lisp.result }}" \
             "test-hosted:${{ needs.test-hosted.result }}"
@@ -1723,7 +1820,7 @@ jobs:
             # docs/SPEC-WORK.md did not move; a skipped lisp is a pass. A red
             # lisp still blocks the merge.
             if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
-            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|e2e|test-hosted) continue ;; esac; fi
+            if [ "$cards" = on ] && [ "$result" = skipped ]; then case "$job" in test|test-race-queue|e2e|test-hosted) continue ;; esac; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

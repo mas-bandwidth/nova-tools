@@ -49,6 +49,12 @@ func runCard(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			return cardUsage(stderr, "unknown flag --"+name, want)
 		}
 	}
+	if sub == "end" && !card.AbsResults(flags["results"]) {
+		// #3329: results is the card hash field harvest pushes from; it is
+		// absolute so no reader needs a root typed on its argv.
+		return cardUsage(stderr, "--results "+flags["results"]+" is relative or not a Unix path",
+			"results must be a Unix absolute path on the bench (leading /, no //, no backslash, no ..; the card hash field s:<S>:card:<label> results); "+want)
+	}
 	st, err := store.Open(ctx, flags["redis"])
 	if err != nil {
 		fmt.Fprintln(stdout, (card.Result{Code: 6, Verb: "card " + sub, ID: label, Reason: "REDIS"}).Line())

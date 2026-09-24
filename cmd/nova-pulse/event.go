@@ -23,7 +23,7 @@ import (
 
 // defaultPasswordEnv is the variable `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD`
 // leaves the fleet store's password in.
-const defaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
+const defaultPasswordEnv = events.DefaultPasswordEnv
 
 func cmdEvent(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("event")

@@ -43,22 +43,27 @@ const SourceSkipped = "skipped"
 
 // Entry is one row of the escalation log.
 type Entry struct {
-	Time          string  `json:"time"`
-	Unit          string  `json:"unit"`
-	Kind          string  `json:"kind"`
-	Evidence      Unit    `json:"evidence"`
-	RungTried     string  `json:"rung_tried"`
-	Height        int     `json:"height"`
-	Confidence    float64 `json:"confidence"`
-	Floor         float64 `json:"floor"`
-	SteppedUp     bool    `json:"stepped_up"`
-	Escalated     bool    `json:"escalated"`
-	Designated    bool    `json:"designated,omitempty"`
-	Source        string  `json:"source"`
-	RowanPick     string  `json:"rowan_pick"`
-	Reason        string  `json:"reason,omitempty"`
-	Outcome       string  `json:"outcome,omitempty"`
-	RungSucceeded string  `json:"rung_succeeded,omitempty"`
+	Time      string `json:"time"`
+	Unit      string `json:"unit"`
+	Kind      string `json:"kind"`
+	Evidence  Unit   `json:"evidence"`
+	RungTried string `json:"rung_tried"`
+	Height    int    `json:"height"`
+	// Confidence and Floor are ABSENT rather than zero where the row did not
+	// carry them, by the same presence rule as the counters below: a row read
+	// back from a log line that omitted either keeps it nil, and the decide
+	// event it becomes leaves the field off, so the fold stores NULL, never a
+	// 0 nobody measured (Stella, HOLD 7 on #2628).
+	Confidence    *float64 `json:"confidence,omitempty"`
+	Floor         *float64 `json:"floor,omitempty"`
+	SteppedUp     bool     `json:"stepped_up"`
+	Escalated     bool     `json:"escalated"`
+	Designated    bool     `json:"designated,omitempty"`
+	Source        string   `json:"source"`
+	RowanPick     string   `json:"rowan_pick"`
+	Reason        string   `json:"reason,omitempty"`
+	Outcome       string   `json:"outcome,omitempty"`
+	RungSucceeded string   `json:"rung_succeeded,omitempty"`
 
 	// Wait is the typed action beside the rung: "-" for a decision the caller
 	// may act on, awaiting_termination for one it may not.
@@ -90,6 +95,9 @@ type Entry struct {
 	TokensOut   *int `json:"tokens_out,omitempty"`
 	UsageFailed bool `json:"usage_failed,omitempty"`
 
+	// Excluded is the set of down friend rungs excluded from routing (#3397).
+	Excluded string `json:"excluded,omitempty"`
+
 	// Ms is the provider round trip in milliseconds, measured by the caller
 	// on a monotonic clock around the call alone; WallMs is the verb's start
 	// to its line. Each is ABSENT, never zero, where there was no call or no
@@ -103,6 +111,10 @@ type Entry struct {
 // succeeded are filled in later, by the caller that watched the work: a
 // decision never writes them for itself.
 func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
+	var excludedStr string
+	if len(res.Excluded) > 0 {
+		excludedStr = strings.Join(res.Excluded, ",")
+	}
 	return Entry{
 		Time:       now.UTC().Format(time.RFC3339),
 		Unit:       res.Unit,
@@ -110,8 +122,8 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 		Evidence:   u,
 		RungTried:  res.Rung.Name,
 		Height:     res.Rung.Height,
-		Confidence: res.Confidence,
-		Floor:      res.Floor,
+		Confidence: measured(res.Confidence),
+		Floor:      measured(res.Floor),
 		SteppedUp:  res.SteppedUp,
 		Escalated:  res.Escalated,
 		Designated: res.Designated,
@@ -124,6 +136,7 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 		FloorFrom:           res.FloorFrom,
 		AwaitingTermination: res.AwaitingTermination(),
 		Refusal:             res.Refusal,
+		Excluded:            excludedStr,
 		Calls:               res.Usage.Calls,
 		TokensIn:            tokens(res.Usage.HasInput, res.Usage.InputTokens),
 		TokensOut:           tokens(res.Usage.HasOutput, res.Usage.OutputTokens),
@@ -164,6 +177,10 @@ func millis(has bool, n int) *int {
 	v := n
 	return &v
 }
+
+// measured is a confidence or a floor a route decision computed: a route
+// always applies a floor to a number, so its row always carries both.
+func measured(v float64) *float64 { return &v }
 
 // OutcomeEntry is the row that records what happened to a unit a decision
 // routed: the rung that ran it and how it ended. It is a row of its own because
@@ -466,8 +483,8 @@ func Summarize(reg *Registry, entries []Entry) (Summary, error) {
 				c.escalations++
 			}
 		}
-		if e.Source == SourceJev {
-			c.provider = append(c.provider, e.Confidence)
+		if e.Source == SourceJev && e.Confidence != nil {
+			c.provider = append(c.provider, *e.Confidence)
 		}
 		for _, a := range e.Evidence.Attempts {
 			if m, ok := reg.ByName(a.Rung); ok && a.Failed() {
