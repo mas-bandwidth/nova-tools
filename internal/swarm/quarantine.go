@@ -46,14 +46,14 @@ const (
 
 // QuarantineRecord describes a quarantined card's metadata.
 type QuarantineRecord struct {
-	CardID       string      `json:"card_id"`
-	Reason       string      `json:"reason"`
-	FailureKind  FailureKind `json:"failure_kind"`
-	Attempts     int         `json:"attempts"`
-	QuarantinedAt string     `json:"quarantined_at"`
-	Worker       string      `json:"worker,omitempty"`
-	OriginalPath string      `json:"original_path,omitempty"`
-	Details      string      `json:"details,omitempty"`
+	CardID        string      `json:"card_id"`
+	Reason        string      `json:"reason"`
+	FailureKind   FailureKind `json:"failure_kind"`
+	Attempts      int         `json:"attempts"`
+	QuarantinedAt string      `json:"quarantined_at"`
+	Worker        string      `json:"worker,omitempty"`
+	OriginalPath  string      `json:"original_path,omitempty"`
+	Details       string      `json:"details,omitempty"`
 }
 
 // QuarantineDir returns the quarantine root: <queue>/quarantine.
@@ -222,20 +222,20 @@ const (
 
 // TriageRouteResult holds the result of triage routing.
 type TriageRouteResult struct {
-	CardID       string       `json:"card_id"`
-	Action       TriageAction `json:"action"`
-	Reason       string       `json:"reason"`
-	FailureKind  FailureKind  `json:"failure_kind"`
-	Attempts     int          `json:"attempts"`
-	TargetDir    string       `json:"target_dir,omitempty"`
-	Message      string       `json:"message"`
+	CardID      string       `json:"card_id"`
+	Action      TriageAction `json:"action"`
+	Reason      string       `json:"reason"`
+	FailureKind FailureKind  `json:"failure_kind"`
+	Attempts    int          `json:"attempts"`
+	TargetDir   string       `json:"target_dir,omitempty"`
+	Message     string       `json:"message"`
 }
 
 // RouteFailure routes a failed card according to the failure taxonomy:
-//  - CardDefect -> immediately quarantined under queue/quarantine/<reason>/<card-id>
-//  - TransientProvider -> retried if attempts < maxAttempts; quarantined if attempts >= maxAttempts
-//  - InfraCrash -> retried if transient, quarantined if exhausted/recurrent
-//  - TestFailure -> marked fail
+//   - CardDefect -> immediately quarantined under queue/quarantine/<reason>/<card-id>
+//   - TransientProvider -> retried if attempts < maxAttempts; quarantined if attempts >= maxAttempts
+//   - InfraCrash -> retried if transient, quarantined if exhausted/recurrent
+//   - TestFailure -> marked fail
 func RouteFailure(queueDir, cardID string, cardContent []byte, attempts, maxAttempts int, fc FailureClassification) (TriageRouteResult, error) {
 	if maxAttempts <= 0 {
 		maxAttempts = MaxProviderAttempts
@@ -571,4 +571,3 @@ func QuarantineGC(queueDir string, maxAttempts int) ([]ReconcileRecord, error) {
 
 	return records, nil
 }
-
