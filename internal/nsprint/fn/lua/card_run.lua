@@ -199,7 +199,7 @@ redis.register_function('ns_card_end', function(keys, args)
   end
 
   local id_sprint, id_label, id_base, id_bench, id_attempt = identity_parts(identity)
-  if not id_sprint or id_sprint ~= sprint or id_label ~= label or id_base ~= hget(card_key, 'base_sha') or id_bench ~= bench or id_attempt ~= attempt then
+  if not id_sprint or id_sprint ~= sprint or id_label ~= label or id_base ~= string.sub(hget(card_key, 'base_sha'), 1, 8) or id_bench ~= bench or id_attempt ~= attempt then
     return reply(4, 'CONFLICT', attempt, '')
   end
 
