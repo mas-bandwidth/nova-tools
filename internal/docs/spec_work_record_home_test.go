@@ -71,3 +71,61 @@ func TestSpecWorkRecordLivesInTheWorkRepo(t *testing.T) {
 		}
 	}
 }
+
+// specWorkSection returns the text of the "### <n>." section of the ingest
+// chapter, up to the next "### " heading, or "" when the heading is absent.
+func specWorkSection(text, n string) string {
+	start := strings.Index(text, "\n### "+n+". ")
+	if start < 0 {
+		return ""
+	}
+	rest := text[start+1:]
+	if end := strings.Index(rest[4:], "\n### "); end >= 0 {
+		return rest[:end+4]
+	}
+	return rest
+}
+
+// TestSpecWorkNamesTheWorkRepo pins the fold of Glenn's evening ruling into
+// section 2's home line and #3168's five-path refusal into section 5. The
+// manifest is work.sexp, named for the repo and not the tool; section 2 says
+// which ruling it supersedes (the 3:58 PM comment 5801899651, which had put the
+// record under nova-tools docs/roadmaps/); section 5 quotes #3168's five
+// storage-split paths and its two LAND REFUSED lines, rooted at the work repo.
+func TestSpecWorkNamesTheWorkRepo(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(specWorkRecordHomePath)
+	if err != nil {
+		t.Fatalf("read %s: %v", specWorkRecordHomePath, err)
+	}
+	text := string(data)
+
+	home := specWorkSection(text, "2")
+	for _, want := range []string{
+		"**The whole record has one home: the work repo, the private repository `mas-bandwidth/work`; its manifest is `work.sexp`; the tool stays `cmd/nova-work` in nova-tools.**",
+		"comment 5801899651",
+		"the manifest `work.sexp`",
+	} {
+		if !strings.Contains(home, want) {
+			t.Errorf("%s section 2 lacks %q", specWorkRecordHomePath, want)
+		}
+	}
+	if strings.Contains(home, "keeps the name `nova-work.sexp`") {
+		t.Errorf("%s section 2 still names the record's manifest after the tool", specWorkRecordHomePath)
+	}
+
+	checkin := specWorkSection(text, "5")
+	for _, want := range []string{
+		"#3168",
+		"`docs/roadmaps/nova-work.sexp`, `docs/roadmaps/work/<repo>.sexp`, `docs/roadmaps/work/<repo>.closed.sexp`, `docs/roadmaps/blobs/**` and `docs/roadmaps/ingest-map.sexp`",
+		"`work.sexp`, `work/<repo>.sexp`, `work/<repo>.closed.sexp`, `blobs/**` and `ingest-map.sexp`",
+		"`LAND REFUSED batch=roadmap path=<p>: not a roadmap path`",
+		"`LAND REFUSED path=<p>: written outside the nova-work writer`",
+		"`docs/roadmaps/sprint-fixes-2026-09-22.sexp`",
+	} {
+		if !strings.Contains(checkin, want) {
+			t.Errorf("%s section 5 lacks %q", specWorkRecordHomePath, want)
+		}
+	}
+}

@@ -62,19 +62,53 @@ func readProvidersTable() (map[string]providerEntry, error) {
 	return out, nil
 }
 
+// DefaultLaunchRow names the providers-table row a route launches with when its provider
+// has no row of its own. It is declared in the table like every other row, so a route the
+// table does not name still launches through the one launcher and its one argv shape --
+// never through a guessed argv or a per-provider script.
+const DefaultLaunchRow = "*"
+
+// LaunchRow is the table row a provider launches with: its own row when the table names
+// it, and DefaultLaunchRow otherwise. A table that cannot be read answers the provider
+// itself, so the caller's LaunchArgvFor reports the read error.
+func LaunchRow(provider string) string {
+	table, err := readProvidersTable()
+	if err != nil {
+		return provider
+	}
+	if _, ok := table[provider]; ok {
+		return provider
+	}
+	return DefaultLaunchRow
+}
+
+// LaunchRequest is what one run hands the one launcher beyond the table. Every field is
+// optional: an empty one takes the table's value (Harness: the row's column for goos;
+// Model: the row's model; Title: the provider name; Prompt: the literal "PROMPT.md").
+type LaunchRequest struct {
+	Harness string // the resolved harness binary the caller runs
+	Model   string // the provider/model the caller routed this run to
+	Title   string // the run's label, the harness's --title
+	Prompt  string // the prompt argument the harness is handed
+}
+
 // LaunchArgv returns the argv for launching a provider on the given OS. The argv
 // is the harness binary followed by the expanded harness arguments: {model} is
-// replaced with the provider's model from the table, and {prompt} with the
-// literal "PROMPT.md". Unknown providers return an error rather than a guessed
-// argv — a launcher that guesses is a bespoke launcher with extra steps.
-//
-// Scope: this is the table-and-API precursor only. LaunchArgv has no
-// production caller yet (only providers_test.go calls it), so no current
-// provider launch goes through it and no per-provider bench script is retired
-// by this file. Wiring it into cmd/nova-swarm's launch path is a separate
-// card. The table declares OS-specific columns (linuxHarness, darwinHarness)
-// and LaunchArgv reads only those; no per-provider script is ever named.
+// replaced with the provider's model from the table, {title} with the provider
+// name, and {prompt} with the literal "PROMPT.md". Unknown providers return an
+// error rather than a guessed argv -- a launcher that guesses is a bespoke
+// launcher with extra steps.
 func LaunchArgv(provider, goos string) ([]string, error) {
+	return LaunchArgvFor(provider, goos, LaunchRequest{})
+}
+
+// LaunchArgvFor is LaunchArgv for one run: the table's row for provider gives the
+// argv shape, and the request's non-empty fields fill it. This is the one launcher:
+// `nova-swarm native` builds every harness argv here (cmd/nova-swarm nativeLaunchArgv),
+// so the table, not a per-provider script and not a literal in the caller, decides the
+// shape a provider is launched with. The table declares OS-specific columns
+// (linuxHarness, darwinHarness) and only those differ between the two OSes.
+func LaunchArgvFor(provider, goos string, req LaunchRequest) ([]string, error) {
 	table, err := readProvidersTable()
 	if err != nil {
 		return nil, fmt.Errorf("read providers table: %w", err)
@@ -93,12 +127,28 @@ func LaunchArgv(provider, goos string) ([]string, error) {
 	default:
 		return nil, fmt.Errorf("unsupported GOOS %q", goos)
 	}
+	if req.Harness != "" {
+		harness = req.Harness
+	}
+	model := entry.Model
+	if req.Model != "" {
+		model = req.Model
+	}
+	title := provider
+	if req.Title != "" {
+		title = req.Title
+	}
+	prompt := "PROMPT.md"
+	if req.Prompt != "" {
+		prompt = req.Prompt
+	}
 
+	// One pass over each template argument, so a value that itself spells a placeholder
+	// (a card that mentions {model}) is handed to the harness verbatim.
+	fill := strings.NewReplacer("{model}", model, "{title}", title, "{prompt}", prompt)
 	argv := make([]string, len(entry.HarnessArgs))
 	for i, a := range entry.HarnessArgs {
-		a = strings.ReplaceAll(a, "{model}", entry.Model)
-		a = strings.ReplaceAll(a, "{prompt}", "PROMPT.md")
-		argv[i] = a
+		argv[i] = fill.Replace(a)
 	}
 	return append([]string{harness}, argv...), nil
 }
