@@ -464,16 +464,25 @@ func TestRefillBlockWakesOnEvent(t *testing.T) {
 	if cnt, err := rf.Run(ctx, l); err != nil || cnt.Dealt != 2 {
 		t.Fatalf("restart refill: dealt %d err %v, want 2", cnt.Dealt, err)
 	}
+	// The deal writes its own no-wake receipts. Drain them without blocking so
+	// the next pass has no event available before it enters XREADGROUP.
+	rf.Block = 0
+	if cnt, err := rf.Run(ctx, l); err != nil || cnt.Dealt != 0 {
+		t.Fatalf("drain refill receipts: dealt %d err %v, want 0", cnt.Dealt, err)
+	}
+	rf.Block = 30 * time.Second
 	type out struct {
 		c   reconcile.Counts
 		err error
 	}
 	done := make(chan out, 1)
+	member := starting(t, c, bench)[0]
 	go func() {
 		cnt, err := rf.Run(ctx, l)
 		done <- out{cnt, err}
 	}()
-	childDone(t, c, bench, starting(t, c, bench)[0])
+	waitBlockedXReadGroup(t, c)
+	childDone(t, c, bench, member)
 	got := <-done
 	if got.err != nil || got.c.Dealt != 1 {
 		t.Fatalf("blocked refill after one completion: dealt %d err %v, want 1", got.c.Dealt, got.err)
@@ -481,6 +490,40 @@ func TestRefillBlockWakesOnEvent(t *testing.T) {
 	if n := leased(t, c, bench); n != 2 {
 		t.Fatalf("working %d, want min(slots 2, 1 + open 1) = 2", n)
 	}
+}
+
+// waitBlockedXReadGroup proves the refill connection is inside Redis's
+// blocking XREADGROUP before the test writes the event that must wake it.
+// CLIENT LIST is an observed server state, not a scheduler or sleep proxy.
+func waitBlockedXReadGroup(t *testing.T, c *redis.Client) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	tick := time.NewTicker(5 * time.Millisecond)
+	defer tick.Stop()
+	var last string
+	for time.Now().Before(deadline) {
+		list, err := c.ClientList(context.Background()).Result()
+		if err != nil {
+			t.Fatalf("client list: %v", err)
+		}
+		last = list
+		for _, line := range strings.Split(list, "\n") {
+			var blocked, reading bool
+			for _, field := range strings.Fields(line) {
+				if strings.HasPrefix(field, "flags=") && strings.Contains(strings.TrimPrefix(field, "flags="), "b") {
+					blocked = true
+				}
+				if field == "cmd=xreadgroup" {
+					reading = true
+				}
+			}
+			if blocked && reading {
+				return
+			}
+		}
+		<-tick.C
+	}
+	t.Fatalf("refill never blocked in XREADGROUP; CLIENT LIST:\n%s", last)
 }
 
 // routeEvent writes one task event on the sprint log: a route wake.
