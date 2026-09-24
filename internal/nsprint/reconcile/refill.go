@@ -391,18 +391,18 @@ func (r *Refill) claim(ctx context.Context, streams []string, consumer string) (
 	return n, nil
 }
 
-// benchReturns reads each registered bench's beat presence in one round and
-// names the benches whose beat is present after it was absent at the last
-// pass. The first pass records presence only (it deals anyway).
+// benchReturns reads each registered bench's state in one round and
+// names the benches whose state changed to UP since the last pass.
+// The first pass records presence only (it deals anyway).
 func (r *Refill) benchReturns(ctx context.Context, benches []string) ([]string, error) {
 	if len(benches) == 0 {
 		r.up = map[string]bool{}
 		return nil, nil
 	}
 	pipe := r.Client.Pipeline()
-	cmds := make([]*redis.IntCmd, len(benches))
+	cmds := make([]*redis.StringCmd, len(benches))
 	for i, b := range benches {
-		cmds[i] = pipe.Exists(ctx, "bench:"+b+":beat")
+		cmds[i] = pipe.HGet(ctx, "bench:"+b+":state", "state")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return nil, err
@@ -410,7 +410,7 @@ func (r *Refill) benchReturns(ctx context.Context, benches []string) ([]string, 
 	up := make(map[string]bool, len(benches))
 	var returned []string
 	for i, b := range benches {
-		up[b] = cmds[i].Val() > 0
+		up[b] = cmds[i].Val() == "UP"
 		if up[b] && r.up != nil && !r.up[b] {
 			returned = append(returned, b)
 		}

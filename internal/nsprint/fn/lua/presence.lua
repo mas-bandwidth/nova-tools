@@ -10,13 +10,16 @@
 --   friend:<f>:beat             hash (harness, host, session, at), TTL 5 s
 --   friend:<f>:wake             list max 1, TTL 600 s
 --   bench:<b>:beat              hash (host, user, load1, ssh, probe,
---                                    launcher, live, why, at), TTL 5 s
+--                                    launcher, live, why, build, at), TTL 5 s
 --   bench:<b>:live              set of card identities, TTL 5 s
 --   bench:<b>:owner             fenced owner session, TTL 5 s (single
 --                                    instance; a different session is BUSY)
 --   machine:<m>:ceiling         hash with slots, shared with capacity friend
 --   cap:log                     presence-change stream
 
+-- The whole file is one block: none of its names is shared, and the files
+-- are concatenated into one chunk whose main function allows 200 locals.
+do
 local PL_BEAT_MS = 5000
 local PL_WAKE_TTL_MS = 600000
 local PL_LIVE_SEP = '\31'
@@ -44,6 +47,11 @@ local function friend_hello(keys, args)
       not host or host == '' or not session or session == '' then
     return { 'INVALID' }
   end
+  -- NAME-IS-LOGIN (#3092 rev 6) comes before UNREGISTERED: a mapped login
+  -- is refused by name on every hello, never reported as merely unknown.
+  if redis.call('HEXISTS', 'friends:login', friend) == 1 then
+    return { 'NAME-IS-LOGIN', friend }
+  end
   if redis.call('SISMEMBER', 'friends', friend) == 0 then
     return { 'UNREGISTERED' }
   end
@@ -61,8 +69,38 @@ local function friend_hello(keys, args)
   if machine_hint ~= '' and machine ~= machine_hint then
     return { 'MACHINE' }
   end
+  -- Login aliases (#3092 rev 6): args[9..] are `--login` values. This is the
+  -- only writer of friends:login; every alias is checked before any write.
+  -- NAME-IS-LOGIN holds on every hello, with or without aliases: a name
+  -- that is a mapped login never registers as a friend. Aliases repeated in
+  -- one request are written (and receipted) once.
+  local logins = {}
+  local seen = {}
+  for i = 9, #args do
+    local alias = args[i]
+    if not seen[alias] then
+      seen[alias] = true
+      if not string.match(alias, '^[A-Za-z0-9][A-Za-z0-9-]*$') then
+        return { 'INVALID', alias }
+      end
+      if alias == friend or redis.call('SISMEMBER', 'friends', alias) == 1 then
+        return { 'LOGIN-IS-FRIEND', alias }
+      end
+      local mapped = redis.call('HGET', 'friends:login', alias)
+      if mapped and mapped ~= friend then
+        return { 'LOGIN-TAKEN', alias, mapped }
+      end
+      if not mapped then
+        logins[#logins + 1] = alias
+      end
+    end
+  end
   local at = pl_now_ms()
   local was_up = redis.call('EXISTS', beat_key)
+  for _, alias in ipairs(logins) do
+    redis.call('HSET', 'friends:login', alias, friend)
+    pl_caplog('friend-login', friend, alias, actor, idem, at)
+  end
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host, 'session', session,
     'at', tostring(at))
@@ -163,6 +201,7 @@ local function bench_beat(keys, args)
   local ssh, probe, launcher = args[5], args[6], args[7]
   local live, why = args[8], args[9]
   local session, actor, idem = args[10], args[11], args[12]
+  local build = args[13]
   if not session or session == '' then
     session = actor or ''
   end
@@ -181,7 +220,7 @@ local function bench_beat(keys, args)
   redis.call('HSET', 'bench:' .. bench .. ':beat',
     'host', host or '', 'user', user or '', 'load1', load1 or '',
     'ssh', ssh or '', 'probe', probe or '', 'launcher', launcher or '',
-    'live', '0', 'why', why or '', 'at', tostring(at))
+    'live', '0', 'why', why or '', 'build', build or '', 'at', tostring(at))
   redis.call('PEXPIRE', 'bench:' .. bench .. ':beat', PL_BEAT_MS)
   redis.call('SET', owner_key, session, 'PX', PL_BEAT_MS)
 
@@ -228,3 +267,4 @@ redis.register_function('ns_friend_wake', friend_wake)
 redis.register_function('ns_friend_poll_wake', friend_poll_wake)
 redis.register_function('ns_bench_beat', bench_beat)
 redis.register_function('ns_bench_release', bench_release)
+end

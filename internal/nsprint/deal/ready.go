@@ -117,8 +117,12 @@ func noDeps(deps []string) bool {
 	return true
 }
 
-// parseRef splits `<owner>/<repo>#<n>`; ok is false for anything else, which
+// ParseRef splits `<owner>/<repo>#<n>`; ok is false for anything else, which
 // the gate reads as a card id.
+func ParseRef(entry string) (repo string, n int, ok bool) {
+	return parseRef(entry)
+}
+
 func parseRef(entry string) (repo string, n int, ok bool) {
 	i := strings.LastIndexByte(entry, '#')
 	if i <= 0 || !strings.Contains(entry[:i], "/") {
@@ -186,6 +190,11 @@ func (r *resolver) ref(ctx context.Context, repo string, n int) (Ref, error) {
 	}
 	r.cache[k] = a
 	return a.ref, a.err
+}
+
+// LandedPR says whether a PR answer is landed on base; why is empty when it is.
+func LandedPR(ref Ref, err error, name, base string) string {
+	return landedPR(ref, err, name, base)
 }
 
 // landedPR says whether a PR answer is landed on base; why is empty when it is.

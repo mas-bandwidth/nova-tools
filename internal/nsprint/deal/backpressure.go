@@ -145,7 +145,7 @@ func EvaluateBackpressure(hash map[string]string, policy string, nowMs int64) (V
 		return fallback(SourceStale, age), nil
 	}
 	v := Verdict{Source: SourceHash, Policy: policy, State: state, Debt: atoiOr(hash["debt"], -1), Cap: atoiOr(hash["cap"], -1), Age: age}
-	v.Blocked = state == "ON"
+	v.Blocked = state == "ON" || hash["read_bound"] == "1"
 	return v, nil
 }
 

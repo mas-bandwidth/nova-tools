@@ -43,7 +43,8 @@ func cmdClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if st == nil {
 		return code
 	}
-	mr, err := deps.NewHost(st.Repo, f.dur()).MergeGroupRun(int(*run))
+	host := deps.NewHost(st.Repo, f.dur())
+	mr, err := host.MergeGroupRun(int(*run))
 	if err != nil {
 		fmt.Fprintf(stderr, "CLASSIFY REFUSED run=%d: %s\n", *run, oneline.Err(err))
 		return 2
@@ -59,7 +60,45 @@ func cmdClassify(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 	fmt.Fprintln(stdout, classifyLine(mr, answers, classifyFloor))
+	failures, changed := classifyEvidence(host, mr)
+	if _, err := merge.RecordGroupVerdict(*f.lane, st.Base, mr, failures, changed,
+		classifyKind(answers, classifyFloor), deps.Now(), merge.DefaultEvents); err != nil {
+		fmt.Fprintf(stderr, "CLASSIFY FAIL run=%d record=false: %s\n", *run, oneline.Err(err))
+		return 1
+	}
 	return 0
+}
+
+// classifyEvidence is what the poison detector reads for the run's pull request: its
+// failing tests (when the host carries the poison seam) and the packages it changed, from
+// the host and from the run's own jobs. A host without the seam gives no failures, so
+// nothing arms and nothing parks.
+func classifyEvidence(host any, mr merge.MergeRun) ([]merge.Failure, map[string]bool) {
+	changed := map[string]bool{}
+	for _, j := range mr.Jobs {
+		if j.Changed && j.Package != "" {
+			changed[j.Package] = true
+		}
+	}
+	ph, ok := host.(poisonHost)
+	if !ok || mr.PR < 1 {
+		return nil, changed
+	}
+	for _, p := range ph.ChangedPackages(mr.PR) {
+		changed[p] = true
+	}
+	return ph.PoisonFailures(mr.PR), changed
+}
+
+// classifyKind is the decision the group verdict records: the typed choice when it clears
+// the floor and is one of the three classes, else "" (no verdict, so nothing parks).
+func classifyKind(answers map[string]decide.Answer, floor float64) string {
+	a := answers["kind"]
+	raw := strings.TrimSpace(a.Choice)
+	if a.Confidence < floor || !merge.ValidClass(raw) {
+		return ""
+	}
+	return raw
 }
 
 // classifyState is the bounded, public evidence the decision reads: the run and its

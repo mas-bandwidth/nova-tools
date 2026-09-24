@@ -52,6 +52,7 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 	specLines := f.fs.String("spec-lines", "", "")
 	out := f.fs.String("out", "", "")
 	queue := f.fs.String("queue", "", "")
+	index := f.fs.String("index", "", "")
 
 	// v2 flags
 	v2 := f.fs.Bool("v2", false, "")
@@ -84,7 +85,7 @@ func cmdCutKind(args []string, stdout, stderr io.Writer) int {
 		BodyFile: *bodyFile, DiffFile: effectiveDiffFile, Dir: effectiveDir, HoldFile: *holdFile,
 		Paths: *paths, TestName: *test,
 		Prior: *prior, Names: *names, SpecLines: *specLines,
-		Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
+		Index: *index, Out: *out, Queue: *queue, Stdout: stdout, Stderr: stderr,
 		V2: *v2, Location: *location, TestPackage: *testPkg, TestFunction: *testFunc,
 		TestCommand: *testCmd, ReviewerLine: *reviewerLine,
 		PriorDiff: *priorDiff, FailingOutput: *failingOutput, PreflightCmd: *preflightCmd,

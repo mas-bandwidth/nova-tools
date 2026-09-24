@@ -74,11 +74,22 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	fs.StringVar(actor, "as", "", "")
 	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
+	// #3206 rev 4 PR A: --paused 0|1 sets the paused flag (omitted keeps it)
+	// and --register is accepted and implied (#2934: every capacity friend
+	// write adds the friend to `friends`).
+	paused := fs.String("paused", "", "")
+	register := fs.Bool("register", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "capacity "+kind, err.Error())
 	}
 	if *actor == "" {
 		return refuse(errOut, "capacity "+kind, "--as actor is required")
+	}
+	if *paused != "" && *paused != "0" && *paused != "1" {
+		return refuse(errOut, "capacity "+kind, "--paused wants 0 or 1")
+	}
+	if kind == capacity.KindBench && (*paused != "" || *register) {
+		return refuse(errOut, "capacity "+kind, "--paused and --register are friend flags")
 	}
 	rest := fs.Args()
 	if len(rest) != 2 {
@@ -107,13 +118,18 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	if kind == capacity.KindBench {
 		result, err = capacity.SetBench(ctx, st, name, resolved, slots, *actor, *idem)
 	} else {
-		result, err = capacity.SetFriend(ctx, st, name, resolved, slots, *actor, *idem)
+		result, err = capacity.SetFriendWith(ctx, st, name, resolved, slots, *actor, *idem,
+			capacity.DesiredOpts{Paused: *paused, Register: *register})
 	}
 	if err != nil {
 		return refuseCapacity(errOut, "capacity "+kind, err)
 	}
-	fmt.Fprintf(out, "SET %s %s machine=%s slots=%d desired=%d/%d\n",
-		kind, name, resolved, result.Slots, result.Sum, result.Ceiling)
+	status := result.Status
+	if status == "" {
+		status = "SET"
+	}
+	_, _ = fmt.Fprintf(out, "%s %s %s machine=%s slots=%d desired=%d/%d\n",
+		status, kind, name, resolved, result.Slots, result.Sum, result.Ceiling)
 	return 0
 }
 

@@ -1,0 +1,8 @@
+# at	event	card	attempt	model	bench	verdict	spend	detail
+2026-09-22T00:00:01Z	ADMIT	c1	1	fable	studio	-	-	-
+2026-09-22T00:00:02Z	ADMIT	c2	1	fable	studio	-	-	-
+2026-09-22T00:00:03Z	ADMIT	c3	1	fable	studio	-	-	-
+2026-09-22T00:10:01Z	HARVEST	c1	1	fable	studio	OK	2.0000	-
+2026-09-22T00:10:02Z	HARVEST	c2	1	fable	studio	OK	3.0000	-
+2026-09-22T00:10:03Z	HARVEST	c3	1	fable	studio	OK	1.0000	-
+2026-09-22T00:20:01Z	LAND	c1	1	fable	studio	MERGED	-	-
