@@ -73,6 +73,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	resultsDir := f.fs.String("results", "", "")
 	repo := f.fs.String("repo", ".", "")
 	base := f.fs.String("base", "dev", "")
+	fillCap := f.fs.Int("fill-cap", pulse.FillCap, "")
 	var benches benchFlag
 	var only benchFlag
 	var localBenches benchFlag
@@ -155,6 +156,7 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Now:        func() time.Time { return now },
 		Capacity:   reader,
 		Launcher:   flashLauncher{bin: *launcher, deadline: *deadline, grace: wait, note: stderr},
+		FillCap:    *fillCap,
 	})
 }
 

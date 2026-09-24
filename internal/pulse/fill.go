@@ -69,8 +69,10 @@ import (
 )
 
 // FillCap is the most cards one bench may take in a tick: fill-loop.sh holds this reserve
-// back so a filling bench never eats the machine its own CI needs.
-const FillCap = 30
+// back so a filling bench never eats the machine its own CI needs. It is the one number:
+// the live loop uses it (#1483), the verb's --fill-cap flag defaults to it, and an unset
+// FillInput.FillCap takes it (#2908).
+const FillCap = 60
 
 // FillInterval is how often the loop ticks when --once is absent (fill-loop.sh's sleep 300).
 const FillInterval = 300 * time.Second
@@ -243,8 +245,12 @@ type FillInput struct {
 	Sleep      func(time.Duration)
 	Launcher   CardLauncher
 	Capacity   Capacity
+	// FillCap is the most cards one bench may take in a tick; 0 takes the FillCap constant.
+	// The --fill-cap flag defaults to the FillCap constant, so the verb, the loop and an
+	// unset field agree on one number (#1483, #2908).
+	FillCap int
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
-	// `loop` verb), so it takes none of its own.
+	// `loop` verb, so it takes none of its own.
 	Locked bool
 }
 
@@ -420,6 +426,11 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 	// ONE capacity read per bench per tick, before any card is dealt: the probe is an ssh
 	// to the machine, so a read inside the round-robin would multiply the calls by the
 	// pool. want[i] is bench i's remaining cards, clamped by FillCap and at zero.
+	fillCap := in.FillCap
+	if fillCap <= 0 {
+		fillCap = FillCap
+	}
+
 	want := make([]int, len(in.Benches))
 	capacityFailed := make([]bool, len(in.Benches))
 	for i, bench := range in.Benches {
@@ -437,8 +448,8 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 		} else {
 			want[i] = n
 		}
-		if want[i] > FillCap {
-			want[i] = FillCap
+		if want[i] > fillCap {
+			want[i] = fillCap
 		}
 		if want[i] < 0 {
 			want[i] = 0

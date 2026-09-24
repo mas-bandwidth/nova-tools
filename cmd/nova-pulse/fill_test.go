@@ -107,12 +107,12 @@ func TestFillLaunchesCapacityPerBench(t *testing.T) {
 	}
 }
 
-// TestFillCapsAtThirty: a bench whose formula allows one hundred cards never takes more
-// than thirty in a tick -- the CI reserve fill-loop.sh holds back.
-func TestFillCapsAtThirty(t *testing.T) {
+// TestFillCapsAtFillCap: a bench whose formula allows one hundred cards never takes more
+// than the fill cap in a tick -- the CI reserve the loop and the verb agree on.
+func TestFillCapsAtFillCap(t *testing.T) {
 	dir := t.TempDir()
 	ready, launched := filepath.Join(dir, "ready"), filepath.Join(dir, "launched")
-	fillReady(t, ready, 40)
+	fillReady(t, ready, 70)
 	l := &fillLaunchStub{}
 	var out, errb bytes.Buffer
 	code := pulse.Fill(pulse.FillInput{
@@ -124,15 +124,16 @@ func TestFillCapsAtThirty(t *testing.T) {
 		Stderr:   &errb,
 		Capacity: fillCapStub{"bench-x": 100},
 		Launcher: l,
+		FillCap:  60,
 	})
 	if code != 0 {
 		t.Fatalf("fill exit = %d, want 0; stderr=%q", code, errb.String())
 	}
-	if len(l.calls) != 30 {
-		t.Fatalf("launcher calls = %d, want 30 (the cap)", len(l.calls))
+	if len(l.calls) != 60 {
+		t.Fatalf("launcher calls = %d, want 60 (the cap)", len(l.calls))
 	}
 	line := strings.TrimSpace(out.String())
-	want := "FILL tick=1 bench-x:launched=30,failed=0 ready=10"
+	want := "FILL tick=1 bench-x:launched=60,failed=0 ready=10"
 	if line != want {
 		t.Fatalf("FILL line = %q, want %q", line, want)
 	}
