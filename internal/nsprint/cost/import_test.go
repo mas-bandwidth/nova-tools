@@ -530,8 +530,10 @@ func TestCostImportWriteOutcomes(t *testing.T) {
 			return err
 		}
 		res := r.run(t, "anthropic", file, t0)
-		if res.code != cost.ExitUnknown {
-			t.Fatalf("exit %d, want 8\n%s%s", res.code, res.out, res.errOut)
+		// The literal 8, not cost.ExitUnknown: the exit number is the contract, so a
+		// change to the constant must fail here.
+		if res.code != 8 {
+			t.Fatalf("exit %d, want 8 (outcome unknown; rev 7: exits are scoped per verb)\n%s%s", res.code, res.out, res.errOut)
 		}
 		if strings.Count(res.out, "state=unknown") != 2 {
 			t.Fatalf("want state=unknown on both changed days:\n%s", res.out)
