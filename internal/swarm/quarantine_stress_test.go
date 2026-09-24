@@ -20,16 +20,8 @@ import (
 // 3. Verify all failed cards transition to quarantine/ without leaving orphan locks or leaked limbo slots.
 // 4. Verify quarantine metadata files are well-formed JSON.
 func TestLimboLeakAndQuarantineGCStress(t *testing.T) {
-	// 1. Scratch directory setup outside /tmp (Rule 1: drafts/scratch outside bus)
-	scratchRoot := "/Users/glenn/emma-working/scratch/stress-2061-test"
-	_ = os.RemoveAll(scratchRoot)
-	if err := os.MkdirAll(scratchRoot, 0o755); err != nil {
-		t.Fatalf("mkdir scratchRoot %s: %v", scratchRoot, err)
-	}
-	defer func() {
-		// Clean up on completion
-		_ = os.RemoveAll(scratchRoot)
-	}()
+	// 1. Scratch directory: the test's own temp dir, removed by the testing package.
+	scratchRoot := t.TempDir()
 
 	benchDir := filepath.Join(scratchRoot, "bench")
 	queueDir := filepath.Join(benchDir, QueueName) // bench/queue
@@ -136,7 +128,7 @@ func TestLimboLeakAndQuarantineGCStress(t *testing.T) {
 				reason:   "provider-network",
 				kind:     FailureTransientProvider,
 				attempts: 3,
-				log:      "post https://api.deepseek.com/v1: connection reset by peer",
+				log:      "post https://api.provider.invalid/v1: connection reset by peer",
 				content:  fmt.Sprintf(":kind test\n:card-id %s\n:attempts 3\nNetwork connection reset exhausted.", cardID),
 				limboWay: "route",
 			}

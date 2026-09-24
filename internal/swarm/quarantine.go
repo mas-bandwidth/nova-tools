@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 )
 
 // Automatic queue quarantine & limbo resolution (Sprint Row 10, #2061).
@@ -198,8 +200,8 @@ func ReleaseQuarantined(queueDir, reason, cardID string) (string, error) {
 		return "", fmt.Errorf("release quarantine: restore card to %s: %w", destPath, err)
 	}
 
-	// Clean up quarantine entry.
-	_ = os.RemoveAll(qDir)
+	// Clean up quarantine entry, only ever below the quarantine root.
+	_ = safepath.RemoveUnder(QuarantineDir(queueDir), qDir)
 	// Clean up reason dir if empty.
 	_ = os.Remove(QuarantineReasonDir(queueDir, reason))
 

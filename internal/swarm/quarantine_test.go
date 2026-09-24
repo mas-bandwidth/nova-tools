@@ -61,7 +61,7 @@ func TestFailureTaxonomy(t *testing.T) {
 		},
 		{
 			name:           "provider connection reset network error",
-			err:            errors.New("post https://api.deepseek.com/v1: connection reset by peer"),
+			err:            errors.New("post https://api.provider.invalid/v1: connection reset by peer"),
 			wantKind:       FailureTransientProvider,
 			wantReason:     "provider-network",
 			wantRetriable:  true,
