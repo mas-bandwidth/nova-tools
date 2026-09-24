@@ -195,7 +195,7 @@ func TestTheShippedFloorsAreWhatTuneProposesFromTheDaysLog(t *testing.T) {
 // and the note says how many rows there were.
 func TestOneAnswerIsNotAQuartile(t *testing.T) {
 	reg := testRegistry(t)
-	entries := []Entry{{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.61, RungTried: "emma", Outcome: OutcomeOK}}
+	entries := []Entry{{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.61), RungTried: "emma", Outcome: OutcomeOK}}
 	proposals, err := ProposeFloors(reg, entries)
 	if err != nil {
 		t.Fatal(err)
@@ -220,11 +220,11 @@ func TestOneAnswerIsNotAQuartile(t *testing.T) {
 func TestAFailedDecisionDoesNotSetTheFloor(t *testing.T) {
 	reg := testRegistry(t)
 	entries := []Entry{
-		{Unit: "a", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.40, Outcome: OutcomeFailed},
-		{Unit: "b", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80, Outcome: OutcomeOK},
-		{Unit: "c", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90, Outcome: OutcomeOK},
+		{Unit: "a", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.40), Outcome: OutcomeFailed},
+		{Unit: "b", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.80), Outcome: OutcomeOK},
+		{Unit: "c", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.90), Outcome: OutcomeOK},
 		// Not a provider answer at all: the machinery's own number.
-		{Unit: "d", Kind: KindNewVerb, Source: SourceRules, Confidence: 1.00},
+		{Unit: "d", Kind: KindNewVerb, Source: SourceRules, Confidence: measured(1.00)},
 	}
 	proposals, err := ProposeFloors(reg, entries)
 	if err != nil {
@@ -244,9 +244,9 @@ func TestAFailedDecisionDoesNotSetTheFloor(t *testing.T) {
 func TestBlankOrPendingOutcomesDoNotCountAsStood(t *testing.T) {
 	reg := testRegistry(t)
 	entries := []Entry{
-		{Unit: "pending-1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.85},
-		{Unit: "pending-2", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.88, Outcome: ""},
-		{Unit: "pending-3", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90, Outcome: "   "},
+		{Unit: "pending-1", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.85)},
+		{Unit: "pending-2", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.88), Outcome: ""},
+		{Unit: "pending-3", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.90), Outcome: "   "},
 	}
 	proposals, err := ProposeFloors(reg, entries)
 	if err != nil {
@@ -271,21 +271,21 @@ func TestSeparateOutcomeRowsDriveStoodAndFailed(t *testing.T) {
 	reg := testRegistry(t)
 	entries := []Entry{
 		// u1: stood via outcome row
-		{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.75},
+		{Unit: "u1", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.75)},
 		{Unit: "u1", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
 		// u2: failed via outcome row
-		{Unit: "u2", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.70},
+		{Unit: "u2", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.70)},
 		{Unit: "u2", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeFailed},
 		// u3: stood via outcome row
-		{Unit: "u3", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80},
+		{Unit: "u3", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.80)},
 		{Unit: "u3", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
 		// u4: stood via outcome row
-		{Unit: "u4", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.85},
+		{Unit: "u4", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.85)},
 		{Unit: "u4", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
 		// u5: pending (no outcome row)
-		{Unit: "u5", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.90},
+		{Unit: "u5", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.90)},
 		// u6: skipped via precondition skip
-		{Unit: "u6", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.60},
+		{Unit: "u6", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.60)},
 		{Unit: "u6", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeSkipped},
 	}
 	proposals, err := ProposeFloors(reg, entries)
@@ -316,7 +316,7 @@ func TestSeparateOutcomeRowsDriveStoodAndFailed(t *testing.T) {
 func TestLaterHoldCostsRouteItsFloorEvenIfEarlierGreen(t *testing.T) {
 	reg := testRegistry(t)
 	entries := []Entry{
-		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceJev, Confidence: 0.80},
+		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceJev, Confidence: measured(0.80)},
 		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeOK},
 		{Unit: "u-hold", Kind: KindNewVerb, Source: SourceOutcome, Outcome: OutcomeFailed},
 	}

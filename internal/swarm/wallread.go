@@ -269,14 +269,25 @@ const BlockedResultName = "RESULT.md"
 // It REFUSES to overwrite a result that exists -- a card that published owns its report --
 // and it says who wrote it on its own line, because a reader must never have to guess
 // whether a worker or the machinery wrote what they are reading.
+//
+// When kind is empty (idle end with no refusal), the report uses CardIdleLine.
+// When kind is set (idle end after a refusal), the report uses WallRefusedLine.
 func WriteBlockedResult(jobDir, task, kind, path, step, reason string) (string, bool, error) {
 	if _, found := FindCardResult(jobDir); found {
 		return "", false, nil
 	}
 	dest := filepath.Join(jobDir, BlockedResultName)
+	var statusLine string
+	if kind == "" {
+		// Idle end with no refusal: use CARD IDLE line
+		statusLine = CardIdleLine(task, IdleEnd{Step: step})
+	} else {
+		// Idle end with a refusal: use WALL REFUSED line
+		statusLine = WallRefusedLine(task, kind, path, step)
+	}
 	body := strings.Join([]string{
 		"RESULT: BLOCKED " + oneline.Field(task),
-		WallRefusedLine(task, kind, path, step),
+		statusLine,
 		"blocked: " + oneline.Escape(reason),
 		"written-by: nova-swarm native (the card published no report of its own)",
 		"",

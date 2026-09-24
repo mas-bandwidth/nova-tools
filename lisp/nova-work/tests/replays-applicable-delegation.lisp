@@ -162,6 +162,57 @@
                    "both note ids are named in the exclusion"))))
 
 ;;; ------------------------------------------------------------------
+;;; E10-F05-02 lease-only who and unsupported number  SPEC-WORK.md:7890-7891
+;;; ------------------------------------------------------------------
+;;;
+;;; The "measurement that decides" (SPEC-WORK.md:7889-7891) fixes two facts the
+;;; Fixed Tables go/no-go gate must observe before it is built: whether "who is
+;;; on the C leg" is answerable from leases alone without reading the bus, and
+;;; whether a reader of the generated table can find a number the source did not
+;;; support. Both are kernel facts, pinned here:
+;;;
+;;;   * a task has no stored worker (SPEC-WORK.md:950); who is working on it is
+;;;     answered from the live lease only -- `holder` = the lease's holder or
+;;;     un-owned, and the read-time disposition is derived from that same lease;
+;;;   * an unsupported number resolves to :unknown and is never fabricated as
+;;;     zero (SPEC-WORK.md:4640), so a reader of the table finds the gap instead
+;;;     of an invented figure.
+
+(deftest "TestE10F05TestLeaseOnlyAnswerFor"
+    "docs/SPEC-WORK.md:7890-7891,950,4640"
+    "expected=who-is-working-answered-from-leases-only;unsupported-number-resolves-unknown-not-zero"
+  ;; Lease-only "who": no stored worker, so the answer comes and goes with the
+  ;; lease and reads un-owned before a take and after a release.
+  (let* ((k (fresh))
+         (node "acme/work/f1/t1"))
+    (check-equal nil (node-holder (kernel-state k) node)
+                 "no lease: holder reads un-owned")
+    (check-equal :pending (node-disposition (kernel-state k) node)
+                 "no lease: the read-time disposition is pending")
+    (check-equal "emma" (take-lease k node "emma")
+                 "the take names its holder")
+    (check-equal "emma" (node-holder (kernel-state k) node)
+                 "who is working is the live lease's holder and nothing else")
+    (check-equal :working (node-disposition (kernel-state k) node)
+                 "a live lease reads as working")
+    (check-equal "emma" (release-lease k node "emma")
+                 "the release ends the claim")
+    (check-equal nil (node-holder (kernel-state k) node)
+                 "after release the holder reads un-owned again")
+    (check-equal :pending (node-disposition (kernel-state k) node)
+                 "after release the disposition is pending again"))
+  ;; Unsupported-number detection: a supported number is kept, an unsupported one
+  ;; is detected as :unknown and never invented as zero.
+  (check-equal 7 (resolved-price 7)
+               "a value the source supports keeps its number")
+  (check-equal :unknown (resolved-price nil)
+               "a missing value resolves to :unknown, not a number")
+  (check-equal :unknown (resolved-price :unsupported)
+               "an unsupported value resolves to :unknown")
+  (ok (not (eql 0 (resolved-price :unsupported)))
+      "an unsupported value is never read as zero"))
+
+;;; ------------------------------------------------------------------
 ;;; delegation-admission-gates                 SPEC-WORK.md:4378
 ;;; ------------------------------------------------------------------
 

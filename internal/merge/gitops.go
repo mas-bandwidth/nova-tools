@@ -200,8 +200,8 @@ func runUncapped(ctx context.Context, runner Runner, dir, name string, args ...s
 // This is an in-memory capture, on purpose and not by oversight: rule 13 (see source_test
 // on this package) is that nothing this tool runs reaches /tmp or a path outside --lane,
 // so the unboundedness this trades for a whole parse lives in this process's own memory,
-// never on disk, and only the three call sites host.go names reach it -- a known, small
-// set of hosted answers, not every subprocess this tool starts.
+// never on disk, and only the call sites host.go names reach it (PR, comments, reviews:
+// #2455) -- a known, small set of hosted answers, not every subprocess this tool starts.
 //
 // "Uncapped" is not "unbounded": that was Stella's HOLD on #2663. The first cut here kept
 // every byte of stdout AND stderr in one growing bytes.Buffer for the whole life of the

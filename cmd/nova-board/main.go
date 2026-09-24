@@ -14,6 +14,7 @@
 //	add         files a card: a deadline and a default are required, and the id is a draw
 //	take        claims one, and refuses over another line's live take
 //	close       closed, landed or probed, and refuses over another line's live take
+//	control     interrupts distributed work: priority, correct, pause, cancel or stop, with its reason in the log
 //	check       EXIT 1 WHEN IT MATCHES, so it can guard an add in one line of shell
 //	quickstart  the board, and the check-then-add pair with this board's values in it
 //
@@ -54,6 +55,7 @@ usage:
         [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
   nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
   nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+  nova-board control (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> --kind <priority|correct|pause|cancel|stop> --reason <text> [--anyway]
   nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
   nova-board quickstart (--issue ... | --dir ...) --stale <duration>
   nova-board version                 which build this is: <version> <goos>/<goarch> <go version>
@@ -142,6 +144,8 @@ const (
 	idHint        = "--id wants the thirty-two hex id an earlier add printed, and is the retry after an append whose outcome you do not know"
 	maxHint       = "--max is a ceiling on printed lines: 0 means all, and a negative one is a typo with two readings"
 	ghTimeoutHint = "--gh-timeout is required under --issue and wants how many SECONDS one gh call may take, as in --gh-timeout 60; there is no default duration here, and a subprocess budget nobody chose is a tool that hangs for a minute a reader never agreed to; refusing to guess"
+	kindHint      = "--kind is required and wants which control event this is: priority, correct, pause, cancel or stop; what a worker does next depends on which one landed, so the five are distinguished and nothing else is a control this tool will write"
+	reasonHint    = "--reason is required and wants one line saying why the work is being interrupted, as in --reason \"the release is cut; stop the migration\"; a control with no reason is an interruption nobody can audit"
 	remedyMore    = "--max 0 shows all"
 )
 
@@ -169,6 +173,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reader) 
 		return cmdTake(rest, stdout, stderr, now, rnd)
 	case "close":
 		return cmdClose(rest, stdout, stderr, now, rnd)
+	case "control":
+		return cmdControl(rest, stdout, stderr, now, rnd)
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
 	case "quickstart":
@@ -696,6 +702,113 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 		oneline.Field(card), oneline.Field(event.Verb), oneline.Field(where),
 		oneline.Field(board.Stamp(now)), oneline.Field(owner), oneline.Field(yesNo(event.Override)))
 	return 0
+}
+
+// cmdControl is the coordinator's interruption of work already distributed
+// (nova-tools #179): a reprioritization, a correction, a pause, a cancellation or an
+// emergency stop, recorded AGAINST THE CARD THE WORK STANDS ON. A new chat message alone
+// does not prove a running descendant received or applied the change; this event is the
+// durable record, carrying a stable id (ev=), the target scope (the card), the task
+// revision the controller saw (after=), the kind and the reason.
+//
+// THE WIRE FORMAT HAS ONE APPEND THAT CARRIES A REASON, and it is the closing event, so
+// a control closes the revision it names: a stopped or cancelled card is not open work,
+// and a corrected or reprioritized one is superseded — its replacement is a NEW card
+// whose text names the old id, the board's standing rule (there is no edit and no
+// reopen). That is also the resume rule the issue asks for: no timeout, stale take or
+// late result resumes a paused card, because resuming is a deliberate new filing and
+// nothing else. The tail begins `control kind=<kind> reason=`, so the log distinguishes
+// interrupted work from work that was DONE — a plain close reads as done, and a count
+// that fell because work was stopped must say so.
+//
+// The fences are the board's own. A control over another line's LIVE take is refused
+// without --anyway, and --anyway records override=true: stopping work a worker holds is
+// the authorized interruption, and the log says it out loud rather than letting it pass
+// as an ordinary close. A control over a CLOSED card is a NO — there is nothing running
+// left to interrupt. A row of the owed ledger is closed only by --probed: a control
+// stops the work on a row, it cannot mark one done, so control refuses a row rather
+// than guess.
+func cmdControl(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reader) int {
+	f := newFlags("control")
+	var as, card, staleFlag, kind, reason string
+	var anyway bool
+	f.fs.StringVar(&as, "as", "", "")
+	f.fs.StringVar(&card, "card", "", "")
+	f.fs.StringVar(&staleFlag, "stale", "", "")
+	f.fs.StringVar(&kind, "kind", "", "")
+	f.fs.StringVar(&reason, "reason", "", "")
+	f.fs.BoolVar(&anyway, "anyway", false, "")
+	if !f.parse(args, stderr) {
+		return 2
+	}
+	backend, backendKind, source := f.backend()
+	f.need(as, asHint)
+	f.need(card, cardHint)
+	stale := f.duration(staleFlag, staleHint)
+	if !controlKind(kind) {
+		f.want(kindHint)
+	}
+	f.need(reason, reasonHint)
+	if len(f.problems) > 0 {
+		return f.refused(stderr)
+	}
+	b, target, code := find(backend, source, card, now, stale, stderr)
+	if target == nil {
+		counts(stdout, b, backendKind, source)
+		return code
+	}
+	if !target.Open() {
+		fmt.Fprintf(stderr, "CONTROL REFUSED: %s is CLOSED (by %s at %s); there is nothing running left to interrupt — a card closed in error is a NEW card whose text names this id\n",
+			oneline.Field(card), oneline.Field(closedBy(target)), oneline.Field(closedAt(target)))
+		counts(stdout, b, backendKind, source)
+		return 1
+	}
+	if target.Row {
+		fmt.Fprintf(stderr, "CONTROL REFUSED: %s is a row of the owed ledger (thing=%s leg=%s) and a row is closed only by --probed <evidence>; a control stops the work on a row, it cannot mark one done\n",
+			oneline.Field(card), oneline.Field(target.Thing), oneline.Field(target.Leg))
+		counts(stdout, b, backendKind, source)
+		return 1
+	}
+	// A CONTROL OVER ANOTHER LINE'S LIVE TAKE IS REFUSED WITHOUT --anyway: that is the
+	// close rule, and a stop that went over a worker's live take without saying so would
+	// read as an ordinary close. --anyway interrupts it and records override=true.
+	if target.HasTake && target.Owner != as && !target.Stale && !anyway {
+		fmt.Fprintf(stderr, "CONTROL REFUSED: %s is held by %s, taken %s ago and not yet stale at %s; --anyway interrupts it and records override=true in the log\n",
+			oneline.Field(card), oneline.Field(target.Owner), oneline.Field(board.Dur(now.Sub(target.TakenAt))), oneline.Field(stale.String()))
+		counts(stdout, b, backendKind, source)
+		return 1
+	}
+	override := anyway && target.HasTake && target.Owner != as && !target.Stale
+	// The two halves of the tail are escaped BEFORE the join and board.Tail's escape is
+	// a fixed point over already-escaped text (it never escapes a backslash), so the
+	// kind and the reason are escaped exactly once whichever pass a reader counts.
+	event := board.Event{
+		Verb: "closed", ID: card, As: as, At: now, Override: override,
+		Tail: board.Tail(fmt.Sprintf("control kind=%s reason=%s", oneline.Escape(kind), oneline.Escape(reason))),
+	}
+	if code := appendEvent(backend, target, event, rnd, stderr, "CONTROL"); code != 0 {
+		counts(stdout, b, backendKind, source)
+		return code
+	}
+	owner := "-"
+	if target.HasTake {
+		owner = target.Owner
+	}
+	fmt.Fprintf(stdout, "CONTROL OK id=%s kind=%s at=%s owner=%s override=%s\n",
+		oneline.Field(card), oneline.Field(kind), oneline.Field(board.Stamp(now)),
+		oneline.Field(owner), oneline.Field(yesNo(override)))
+	return 0
+}
+
+// controlKind reports whether --kind names one of the five control events the issue
+// distinguishes: a priority change, a correction, a pause, a cancellation or an
+// emergency stop.
+func controlKind(kind string) bool {
+	switch kind {
+	case "priority", "correct", "pause", "cancel", "stop":
+		return true
+	}
+	return false
 }
 
 // cmdQuickstart is the natural first run, and it is THE ONE VERB HERE THAT MAKES ITS

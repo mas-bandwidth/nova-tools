@@ -113,6 +113,11 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// carve-out is by FILE and by NAME, so a second writer appearing in that package
 		// is still a red run here.
 		"internal/worklang/expand.go": {"os.WriteFile("},
+		// AcceptFile, nova-work accept --graph's writer (#1796/#3229): it rewrites the job graph
+		// file the caller named, after reading and validating it. nova-tokens reaches
+		// internal/jobs only through internal/worklang's imports and calls AcceptFile from no
+		// code path in this binary; the carve-out is by FILE and by NAME, as for expand.go.
+		"internal/jobs/jobs.go": {"os.WriteFile("},
 		// In package staging, the publisher's own-run temporary marker batch.json.tmp
 		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
 		"internal/tokens/package.go": {"syscall.Unlink("},

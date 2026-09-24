@@ -55,12 +55,25 @@ local function card_keys_ok(keys, sprint, label)
     and keys[3] == 's:' .. sprint .. ':idem'
 end
 
--- results is the canonical attempt directory, or that relative path under a root.
+-- results is a Unix absolute path on the bench (#3329, #3336): a leading '/',
+-- not '//' (a network share), no backslash, no CR/LF, no '..' segment. A drive
+-- root ('C:\x', 'C:/x') or a scheme ('file:///x') has no leading '/' and is refused.
+-- card.AbsResults is the same rule on the Go side. The card hash field is read
+-- by harvest with no root to join it to.
+local function results_absolute(results)
+  if string.sub(results, 1, 1) ~= '/' or string.sub(results, 2, 2) == '/' then return false end
+  if string.find(results, '[\\\r\n]') then return false end
+  for seg in string.gmatch(results, '[^/]+') do
+    if seg == '..' then return false end
+  end
+  return true
+end
+
+-- results is the canonical attempt directory under an absolute root.
 local function results_bound(results, identity)
   local sprint, label, base, bench, attempt = identity_parts(identity)
   if not sprint or results == '' then return false end
   local want = sprint .. '/' .. label .. '/' .. base .. '/' .. bench .. '/' .. attempt
-  if results == want then return true end
   local suffix = '/' .. want
   if #results < #suffix then return false end
   return string.sub(results, -#suffix) == suffix
@@ -153,6 +166,7 @@ redis.register_function('ns_card_end', function(keys, args)
   local claim_outcome = args[12] or ''
   local claim_reason = args[13] or ''
   if mode ~= 'token' and mode ~= 'record' then return reply(2, 'STATE', '', '') end
+  if not results_absolute(results) then return reply(1, 'USAGE', '', '') end
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
   local card_key, log_key, idem_key = keys[1], keys[2], keys[3]
   local state = hget(card_key, 'state')

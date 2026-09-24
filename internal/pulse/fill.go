@@ -40,6 +40,13 @@ package pulse
 // launch goes through a wrapper that asks the registry again -- so a bench name that arrives
 // by some other road later still cannot reach a runner host.
 //
+// THE SEAT COMES FROM THE ROW (#2014). The launcher's second argument is the bench's
+// nova-secrets seat from the machines registry, not `swarm-<bench>`. The Studio's seat is
+// `studio` and the Air's is `air`; inventing `swarm-studio` killed every card on the
+// strongest bench (SECRETS EXEC FAIL, exit 125) and bounced them back. A bench whose row
+// names no seat, or a seat that is not one plain name, is refused once by name at the loop
+// and dropped from the pool; a fill left with no seated bench refuses with exit 2.
+//
 // The two things that touch the world -- the capacity formula on a bench and the per-card
 // launch -- are injected seams (Capacity and CardLauncher), so a test drives the whole
 // tick against a fake ready directory, a fake clock and a fake launcher. No test opens an
@@ -55,8 +62,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -70,8 +79,12 @@ const FillInterval = 300 * time.Second
 // CardLauncher launches one card that Fill has already moved into --launched. It is the
 // per-card seam of the launch verb (internal/pulse/launch.go): one call, in order, one
 // card. The real one shells flash-native-bench.sh on the bench; tests inject a recorder.
+//
+// seat is the bench's nova-secrets seat, read from the machines registry's seat column
+// (#2014). It is passed rather than derived: `swarm-`+bench was right for six benches out of
+// nine and wrong for the two that mattered most.
 type CardLauncher interface {
-	Launch(bench, card string) error
+	Launch(bench, seat, card string) error
 }
 
 // Capacity answers how many cards the named bench can take this tick -- card 9316's
@@ -79,6 +92,14 @@ type CardLauncher interface {
 // inject a fixed number.
 type Capacity interface {
 	Capacity(bench string) (int, error)
+}
+
+// BuildReader answers what build is installed on a machine. It is half of what makes a
+// certificate current -- `nova-update release adopt` changes it, and a certificate written
+// before an adopt must not survive it -- so the fill READS it rather than assuming, once per
+// machine per tick. The real one is one ssh; tests inject a table.
+type BuildReader interface {
+	Build(machine string) (string, error)
 }
 
 // refuseNonBenches holds every named bench against the registry BEFORE the first tick, so
@@ -150,11 +171,60 @@ type guardedLauncher struct {
 	next CardLauncher
 }
 
-func (g guardedLauncher) Launch(bench, card string) error {
+func (g guardedLauncher) Launch(bench, seat, card string) error {
 	if err := g.reg.RequireBench(bench); err != nil {
 		return err
 	}
-	return g.next.Launch(bench, card)
+	return g.next.Launch(bench, seat, card)
+}
+
+// benchSeats resolves every named bench's seat from the registry ONCE, before the first card
+// is dealt (#2014). A bench whose row names no seat is refused by name and dropped from the
+// pool: its neighbours keep working, because one incomplete row is not a reason to stop a
+// fleet, and the refusal is printed here -- once -- rather than once per card.
+func benchSeats(stderr io.Writer, reg *fleet.Registry, benches []string) (map[string]string, []string) {
+	seats := make(map[string]string, len(benches))
+	kept := make([]string, 0, len(benches))
+	for _, bench := range benches {
+		seat := ""
+		if m, ok := reg.Lookup(bench); ok {
+			seat = strings.TrimSpace(m.Seat)
+		}
+		if seat == "" {
+			fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=no-seat remedy=%q\n",
+				field(bench), fmt.Sprintf(
+					"write the machine's nova-secrets seat into the seat column of %s; a card runs under a seat and fill will not invent one (swarm-<bench> is a guess, and it is the guess that killed every card on the Studio)",
+					reg.Path()))
+			continue
+		}
+		// The registry validates every other column and not this one, and the seat becomes
+		// a filename in the secrets store (<seat>.yaml, <seat>.key) and an argument to the
+		// launcher. A row that names something else is refused here rather than passed on.
+		if !plainSeat(seat) {
+			fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=seat-not-a-name seat=%s remedy=%q\n",
+				field(bench), field(seat), fmt.Sprintf(
+					"a seat is one plain name -- no space, no path separator, not `.` or `..` -- because it names a file in the secrets store; fix the seat column of %s",
+					reg.Path()))
+			continue
+		}
+		seats[bench] = seat
+		kept = append(kept, bench)
+	}
+	return seats, kept
+}
+
+// plainSeat says whether a seat is one plain name: the stem of a file in the secrets store,
+// and nothing that could reach out of it or split into two arguments.
+func plainSeat(s string) bool {
+	if s == "" || s == "." || s == ".." {
+		return false
+	}
+	if strings.ContainsAny(s, `/\`) {
+		return false
+	}
+	return !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsSpace(r) || unicode.IsControl(r)
+	})
 }
 
 // FillInput is the fill verb apart from flag parsing, so a test drives one tick with fake
@@ -182,9 +252,22 @@ type FillInput struct {
 	Sleep      func(time.Duration)
 	Launcher   CardLauncher
 	Capacity   Capacity
+	// Metrics receives the fill's queue depth, launched cards and launcher latency each
+	// tick (nx-g61); nil exports nothing.
+	Metrics *metrics.Set
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
 	// `loop` verb), so it takes none of its own.
 	Locked bool
+	// CERTIFICATION. Certs names the certificates file `nova-pulse fleet certify` writes,
+	// Hash is the standard hash the fleet is held to now, and Build reads what each machine
+	// is running. With all three, a card whose workload class has no current certificate on
+	// the bench it was dealt is REFUSED and stays ready. Without them the gate is off, which
+	// is the documented narrowing for a loop that has not adopted certification yet -- and
+	// exactly the state hulk was in when its first Go card of 2026-09-18 died inside the
+	// wall on a toolchain the wall could not read.
+	Certs string
+	Hash  string
+	Build BuildReader
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -252,6 +335,14 @@ func Fill(in FillInput) int {
 			"%s names no certified bench, so the fill pool is empty; certify the bench and write the day into its notes (`certified=<YYYY-MM-DD> <the report it was certified by>`), or name one with --bench",
 			in.Machines))
 	}
+	// THE SEAT COMES FROM THE ROW (#2014), resolved once, here, before a card moves.
+	seats, seated := benchSeats(in.Stderr, reg, in.Benches)
+	if len(seated) == 0 {
+		return refusal(in.Stderr, "FILL", fmt.Errorf(
+			"no named bench carries a seat in %s, so there is nothing to fill; every bench a card may run on needs its nova-secrets seat in the registry's seat column",
+			oneline.Field(in.Machines)))
+	}
+	in.Benches = seated
 	// Belt and braces: even a bench that passed the list check is asked again at the
 	// moment the card, or the capacity probe, would reach the machine.
 	in.Capacity = guardedCapacity{reg: reg, next: in.Capacity}
@@ -283,7 +374,7 @@ func Fill(in FillInput) int {
 			return 0
 		}
 		printDisabledLock(in.Stderr, reg)
-		lines, res := fillTick(in, tick)
+		lines, res := fillTick(in, seats, tick)
 		for _, line := range lines {
 			fmt.Fprintln(in.Stdout, line)
 		}
@@ -324,11 +415,12 @@ func (r tickResult) allBenchesFailed() bool { return r.benches > 0 && r.failed =
 // launched twice; a launcher that fails moves its card back and releases its lane. It
 // returns the FILL line first, then one FILL HELD line per held card, then the FILL REAPED
 // line when the tick took stale markers away.
-func fillTick(in FillInput, tick int) ([]string, tickResult) {
+func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickResult) {
 	reaped := reapMarkers(in)
 	cards := SortQueueCards(selectedCards(readyCards(in.Ready), in.Only))
 	lanes := laneTable(in.Lanes)
 	live := liveLanes(in.Launched)
+	gate := newCertifyGate(in)
 	idx := 0
 	res := tickResult{benches: len(in.Benches)}
 	var held []string
@@ -407,6 +499,12 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 					continue
 				}
 			}
+			// A card goes to a machine that has PROVED it can do that kind of work, or it
+			// does not go. The card stays READY, so the remedy is run and the same card is
+			// dealt again rather than lost.
+			if !gate.allows(in.Stderr, bench, card) {
+				continue
+			}
 			base := filepath.Base(card)
 			moved := filepath.Join(in.Launched, base)
 			if err := os.Rename(card, moved); err != nil {
@@ -419,7 +517,11 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 				live[lane] = base
 			}
 			want[i]--
-			if err := in.Launcher.Launch(bench, moved); err != nil {
+			// Wall time, not in.Now: the command line pins Now to the moment it started.
+			start := time.Now()
+			err := in.Launcher.Launch(bench, seats[bench], moved)
+			in.Metrics.ProviderLatency(metrics.Fill, bench, time.Since(start))
+			if err != nil {
 				failed[i]++
 				failLaunch(in, moved, base, lane, live, err)
 				if res.err == nil {
@@ -454,8 +556,11 @@ func fillTick(in FillInput, tick int) ([]string, tickResult) {
 	}
 	// ready= is CARDS, never files: the directory holds card-<n>.md and the markers live
 	// somewhere else, so the depth a reader acts on is the depth of the queue (#2013).
+	depth := len(readyCards(in.Ready))
+	in.Metrics.QueueDepth(metrics.Fill, depth)
+	in.Metrics.LeasesHeld(metrics.Fill, len(readyCards(in.Launched)))
 	b.WriteString(" ready=")
-	b.WriteString(strconv.Itoa(len(readyCards(in.Ready))))
+	b.WriteString(strconv.Itoa(depth))
 	lines := append([]string{b.String()}, held...)
 	if reaped > 0 {
 		lines = append(lines, fmt.Sprintf("FILL REAPED tick=%d markers=%d dir=%s note=%q",
@@ -630,6 +735,122 @@ func lanesStamp(path string) int64 {
 		return 0
 	}
 	return info.ModTime().Unix()
+}
+
+// certifyGate is the fill's half of Glenn's certification directive of 2026-09-18: a card
+// may not be launched onto a machine that has not proved it can do that kind of work.
+//
+// It is built once per tick and answers per card. The machine's build is read at most once
+// per tick per machine, and the certificates file at most once per tick, because the gate
+// must cost one ssh and one read whatever the queue's depth is.
+type certifyGate struct {
+	certs  []fleet.Certificate
+	hash   string
+	build  BuildReader
+	on     bool
+	err    error
+	builds map[string]string
+	said   map[string]bool
+}
+
+func newCertifyGate(in FillInput) *certifyGate {
+	g := &certifyGate{
+		hash: in.Hash, build: in.Build,
+		builds: map[string]string{}, said: map[string]bool{},
+	}
+	if strings.TrimSpace(in.Certs) == "" || in.Build == nil || strings.TrimSpace(in.Hash) == "" {
+		return g
+	}
+	g.on = true
+	g.certs, g.err = fleet.ReadCertificates(in.Certs)
+	return g
+}
+
+// allows answers whether this card may be launched on this machine, and prints the refusal
+// once per machine and class -- a queue of forty Go cards against an uncertified bench is
+// one line, not forty.
+func (g *certifyGate) allows(stderr io.Writer, machine, card string) bool {
+	if !g.on {
+		return true
+	}
+	class := cardWorkload(card)
+	if g.certified(machine, class) {
+		return true
+	}
+	key := machine + "\x00" + class
+	if !g.said[key] {
+		g.said[key] = true
+		fmt.Fprintf(stderr, "FILL REFUSED bench=%s reason=uncertified workload=%s remedy=%s\n",
+			oneline.Field(machine), oneline.Field(class),
+			oneline.Quote("nova-pulse fleet certify --machine "+machine))
+	}
+	return false
+}
+
+func (g *certifyGate) certified(machine, class string) bool {
+	if g.err != nil {
+		return false
+	}
+	build, read := g.builds[machine]
+	if !read {
+		b, err := g.build.Build(machine)
+		if err != nil {
+			b = ""
+		}
+		g.builds[machine] = b
+		build = b
+	}
+	if build == "" {
+		return false
+	}
+	return fleet.Certified(g.certs, machine, class, build, g.hash)
+}
+
+// cardWorkload is the workload class a card's work belongs to. The card may say so itself
+// with `workload: <class>`; otherwise it is decided by the language the card names, and a
+// card that names no language at all is Go, which is what all but a handful of them are.
+func cardWorkload(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return DefaultWorkload
+	}
+	lang := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		t := strings.TrimSpace(line)
+		if v, ok := strings.CutPrefix(t, "workload:"); ok {
+			if class := strings.TrimSpace(v); class != "" {
+				return class
+			}
+		}
+		if lang != "" {
+			continue
+		}
+		for _, key := range []string{"LANG:", "LEG:"} {
+			if v, ok := strings.CutPrefix(t, key); ok {
+				lang = strings.ToLower(strings.TrimSpace(v))
+			}
+		}
+	}
+	if class, ok := workloadByLanguage[lang]; ok {
+		return class
+	}
+	return DefaultWorkload
+}
+
+// DefaultWorkload is the class a card with no `workload:` and no language line belongs to.
+const DefaultWorkload = "go-test"
+
+// workloadByLanguage maps a card's LANG or LEG line to the workload class that certifies a
+// bench for it. A language with no entry falls back to DefaultWorkload rather than to no
+// gate at all: an unknown language on an uncertified bench is still an uncertified bench.
+var workloadByLanguage = map[string]string{
+	"go":     "go-test",
+	"golang": "go-test",
+	"c":      "c-build",
+	"cpp":    "cpp-build",
+	"c++":    "cpp-build",
+	"lisp":   "sbcl",
+	"sbcl":   "sbcl",
 }
 
 // cardLane reads a card's `LANE: <name>` line, or "" when it names none. Only the exact

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,7 +26,7 @@ func (f fillCapStub) Capacity(bench string) (int, error) { return f[bench], nil 
 // fillLaunchStub records one line per launched card, bench then card.
 type fillLaunchStub struct{ calls []string }
 
-func (l *fillLaunchStub) Launch(bench, card string) error {
+func (l *fillLaunchStub) Launch(bench, seat, card string) error {
 	l.calls = append(l.calls, bench+" "+card)
 	return nil
 }
@@ -271,10 +272,10 @@ func TestLaunchDoesNotWaitForTheCardToRun(t *testing.T) {
 	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
 	card := filepath.Join(t.TempDir(), "card-001.md")
 
-	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", card); err != nil {
+	if err := (flashLauncher{bin: bin, grace: time.Millisecond}).Launch("bench-a", "swarm-bench-a", card); err != nil {
 		t.Fatalf("a launcher still running at the grace answered an error: %v", err)
 	}
-	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", card)
+	err := flashLauncher{bin: bin, grace: 0}.Launch("bench-a", "swarm-bench-a", card)
 	if err == nil {
 		t.Fatal("with no grace the launcher is waited for; its failure was not seen")
 	}
@@ -289,7 +290,7 @@ func TestLaunchStillCatchesAFailureInTheGrace(t *testing.T) {
 	specs := fakePATH(t)
 	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{Stderr: "no such bench", Exit: 7}})
 	l := flashLauncher{bin: filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix()), grace: 10 * time.Second}
-	err := l.Launch("bench-a", filepath.Join(t.TempDir(), "card-001.md"))
+	err := l.Launch("bench-a", "swarm-bench-a", filepath.Join(t.TempDir(), "card-001.md"))
 	if err == nil {
 		t.Fatal("an exit-7 launcher answered no error")
 	}
@@ -326,5 +327,57 @@ func TestLaunchPassesTheDeadlineFlag(t *testing.T) {
 	}
 	if strings.Contains(string(raw), " 2400") {
 		t.Fatalf("the launcher was given the hardcoded deadline: %q", raw)
+	}
+}
+
+// TestLaunchSlotsRefusedMakesLauncherExitNonZero (issue #2882): when the bench is full
+// and the launcher prints SLOTS REFUSED, even if the launcher script exits 0, flashLauncher
+// must return an error so the fill loop fails the launch and does not count it as launched.
+func TestLaunchSlotsRefusedMakesLauncherExitNonZero(t *testing.T) {
+	specs := fakePATH(t)
+	fakeTool(t, specs, "nova-swarm", fakeSpec{Default: fakeRule{
+		Stdout: "hulk card-001 attempt=1 wall=0s SLOTS REFUSED owner=swarm-hulk want=1 held=64 share=64",
+		Exit:   0,
+	}})
+	bin := filepath.Join(fakeBins(t), "nova-swarm"+exeSuffix())
+	card := filepath.Join(t.TempDir(), "card-001.md")
+	writeMainFile(t, filepath.Dir(card), filepath.Base(card), "a card\n")
+
+	l := flashLauncher{bin: bin, grace: 10 * time.Second}
+	err := l.Launch("bench-a", "swarm-bench-a", card)
+	if err == nil {
+		t.Fatal("flashLauncher.Launch succeeded despite SLOTS REFUSED output and exit 0")
+	}
+	if !strings.Contains(err.Error(), "slots refused") {
+		t.Fatalf("expected error mentioning slots refused, got %v", err)
+	}
+}
+
+// TestTailReadsWhileTheChildWrites (johnny's read of #3050): on the grace path Launch reads
+// the tail while the child is still running and writing to it. Run under -race, a tail
+// whose Write and refused/lastLine do not share a lock fails here; without -race it still
+// checks that the refusal is seen once written.
+func TestTailReadsWhileTheChildWrites(t *testing.T) {
+	said := &tail{}
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			fmt.Fprintf(said, "line %d\n", i)
+		}
+		fmt.Fprintln(said, "hulk card-001 SLOTS REFUSED held=64")
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 500; i++ {
+			said.refused()
+			said.lastLine()
+		}
+	}()
+	wg.Wait()
+	line, refused := said.refused()
+	if !refused || !strings.Contains(line, "SLOTS REFUSED") {
+		t.Fatalf("refused() = %q, %v after the child printed SLOTS REFUSED", line, refused)
 	}
 }

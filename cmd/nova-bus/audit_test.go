@@ -140,6 +140,10 @@ var messageBusAudit = audit.Config{
 		// only bytes it touches are the HTTP request body, and every value this package
 		// prints from an answer goes through oneline.Field or is numeric.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
+		// questions is S7's shared redaction (Redact, SecretShaped): pure string
+		// functions over the provider-bound state. It holds no writer and reaches no
+		// stream; nothing it returns is printed.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide/questions"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at
