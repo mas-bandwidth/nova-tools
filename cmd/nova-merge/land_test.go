@@ -275,7 +275,7 @@ func (r *landCIRunner) Run(ctx context.Context, dir, name string, args ...string
 type landCISource map[string]string
 
 func (s landCISource) Read(repo, sha string) (string, bool, error) {
-	v, ok := s[merge.CIKey(repo, sha)]
+	v, ok := s[merge.CIKey(repo, sha, "")]
 	return v, ok, nil
 }
 
@@ -293,7 +293,7 @@ func TestLandReadsCIRecordThenFallsBackToGitHub(t *testing.T) {
 		ghCalls   int
 		stderrHas string
 	}{
-		{"record OK lands", landCISource{merge.CIKey("o/n", head): "OK"}, red, 0, 1, 0, ""},
+		{"record OK lands", landCISource{merge.CIKey("o/n", head, ""): "OK"}, red, 0, 1, 0, ""},
 		{"absent record and green forge lands from-github", landCISource{}, green, 0, 1, 1, "ci: from-github"},
 		{"absent record and red forge is refused", landCISource{}, red, 1, 0, 1, "LAND REFUSED"},
 		{"absent record and no check-runs is MISSING", landCISource{}, "", 2, 0, 1, "ci: MISSING"},

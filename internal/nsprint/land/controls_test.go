@@ -744,20 +744,20 @@ func TestL31c(t *testing.T) {
 }
 
 // TestL31d verifies control L31d (Issue #3139 rev 7 §11):
-// - ns_ci_cut then ns_ci_end DONE OK on head H for base dev at current policy:
-//   ci:<repo>:H:<gid> exists, H is landable with no lander gate queued, and civerdict,
-//   ci.LandReady and why all read OK.
-// - ns_ci_cut and ns_ci_rerun write no ci: key.
-// - A second end for the same gid returns ALREADY.
-// - An end on another base_sha leaves H ci stale and queues one single.
-// - FAIL then rerun FAIL on same test: one FAIL receipt, none after first end.
-// - FAIL then OK: no receipt until disposition rerun, whose OK writes OK.
-// - An end with no policy record returns NOPOLICY and writes no ci: key.
-// - ci cut without --base-ref exits 2.
-// - With ci_reruns 2, FAIL, rerun FAIL writes nothing and second rerun FAIL writes FAIL.
-// - A harvested card's CICut carries its branch.
-// - Preflight 7.16 is green on a gid source.
-// - sprintci.Bench.Run writes no Redis key.
+//   - ns_ci_cut then ns_ci_end DONE OK on head H for base dev at current policy:
+//     ci:<repo>:H:<gid> exists, H is landable with no lander gate queued, and civerdict,
+//     ci.LandReady and why all read OK.
+//   - ns_ci_cut and ns_ci_rerun write no ci: key.
+//   - A second end for the same gid returns ALREADY.
+//   - An end on another base_sha leaves H ci stale and queues one single.
+//   - FAIL then rerun FAIL on same test: one FAIL receipt, none after first end.
+//   - FAIL then OK: no receipt until disposition rerun, whose OK writes OK.
+//   - An end with no policy record returns NOPOLICY and writes no ci: key.
+//   - ci cut without --base-ref exits 2.
+//   - With ci_reruns 2, FAIL, rerun FAIL writes nothing and second rerun FAIL writes FAIL.
+//   - A harvested card's CICut carries its branch.
+//   - Preflight 7.16 is green on a gid source.
+//   - sprintci.Bench.Run writes no Redis key.
 func TestL31d(t *testing.T) {
 	t.Run("ns_ci_cut then ns_ci_end DONE OK creates receipt and makes head landable", func(t *testing.T) {
 		f := newLandFixture(t, "nova-tools", "dev")
@@ -1258,4 +1258,3 @@ func TestL31d(t *testing.T) {
 		}
 	})
 }
-

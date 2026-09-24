@@ -92,7 +92,6 @@ func Read(path string) (CutCard, error) {
 	return parseCard(string(raw))
 }
 
-
 // Run starts the card's script on this bench only when the dealer has dealt
 // the card's slot here. Otherwise it does not start: no checkout, no script,
 // no Redis write. A start checks the mirror out of the bench mirror at the
@@ -323,7 +322,6 @@ func checkMirror(mirror string) error {
 	}
 	return nil
 }
-
 
 func parseResult(line string) (string, error) {
 	const prefix = "RESULT: "
