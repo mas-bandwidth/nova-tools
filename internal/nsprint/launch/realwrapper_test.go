@@ -5,7 +5,6 @@ package launch
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -229,41 +229,5 @@ func buildRealWrapper(t *testing.T) string {
 // startLaunchRedis starts a throwaway redis-server on a free local port.
 func startLaunchRedis(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable; run this integration control on a Redis bench: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", strings.TrimPrefix(addr, "127.0.0.1:"),
-		"--save", "", "--appendonly", "no", "--dir", dir)
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	client := redis.NewClient(&redis.Options{Addr: addr})
-	defer client.Close()
-	until := time.Now().Add(testWait())
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), testWait())
-		err := client.Ping(ctx).Err()
-		cancel()
-		if err == nil {
-			return addr
-		}
-		if time.Now().After(until) {
-			t.Fatalf("throwaway redis did not start: %v", err)
-		}
-		// Waits only for the next readiness probe, never as the assertion.
-		time.Sleep(10 * time.Millisecond)
-	}
+	return testutil.Start(t)
 }
