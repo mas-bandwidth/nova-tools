@@ -86,6 +86,46 @@ func TestRouteReadsSeatPresenceWithoutWritingEvent(t *testing.T) {
 	}
 }
 
+func TestRouteWithoutPresenceStoreNotesAndLogsUncheckedBusRung(t *testing.T) {
+	t.Setenv("NOVA_REDIS_ADDR", "")
+	log := filepath.Join(t.TempDir(), "decide.jsonl")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"route", "--unit-id", "unchecked", "--kind", "spec", "--no-jev", "--log", log}, &stdout, &stderr)
+	if code != 0 && code != 3 {
+		t.Fatalf("exit=%d stderr=%q", code, stderr.String())
+	}
+	const note = "ROUTE NOTE down friends not checked (no store)\n"
+	if stderr.String() != note {
+		t.Fatalf("stderr=%q want exact presence note %q", stderr.String(), note)
+	}
+
+	raw, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var entry decide.Entry
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &entry); err != nil {
+		t.Fatalf("unmarshal log row: %v", err)
+	}
+	if entry.DownChecked {
+		t.Fatalf("down_checked=true without a presence store: %s", raw)
+	}
+	reg, err := decide.DefaultRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	busRung := false
+	for _, mind := range reg.Minds {
+		if mind.Name == entry.RungTried && mind.Ask == decide.AskBus {
+			busRung = true
+			break
+		}
+	}
+	if !busRung {
+		t.Fatalf("rung_tried=%q is not a bus rung; route=%s", entry.RungTried, stdout.String())
+	}
+}
+
 type recordingDecider struct {
 	conf      float64
 	questions map[string]decide.Question
