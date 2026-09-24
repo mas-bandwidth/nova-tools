@@ -15,7 +15,7 @@ import (
 // Function environment, the Lua builtins the library uses, and NS, the
 // prelude table every file shares (loader.go Prelude).
 var allowedGlobals = map[string]bool{
-	"redis": true, "cjson": true, "KEYS": true, "ARGV": true,
+	"redis": true, "cjson": true, "bit": true, "KEYS": true, "ARGV": true,
 	"string": true, "table": true, "math": true,
 	"tonumber": true, "tostring": true, "type": true, "pairs": true, "ipairs": true,
 	"next": true, "select": true, "unpack": true, "error": true, "pcall": true, "assert": true,

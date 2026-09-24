@@ -54,13 +54,31 @@ var tempEnvAllowance = struct{ file, line string }{
 	line: `var batchTempVars = []string{"TMPDIR", "GOTMPDIR", "LISP_TEST_TMPROOT", "TMP", "TEMP"}`,
 }
 
+// storeEnvAllowance is the ONE environment read in this package, and it reads an address,
+// never a path: production()'s Deps.Getenv, through which `land` resolves the writer
+// store (#3139 B0) when --redis is absent, the same NOVA_REDIS_ADDR the fleet's launcher
+// sets. An optional fence was a fence the normal invocation bypassed (#3485). ONE EXACT
+// LINE, matched exactly once, like tempEnvAllowance.
+var storeEnvAllowance = struct{ file, line string }{
+	file: "main.go",
+	line: `Getenv:   os.Getenv, // the writer store's address for land (#3139 B0), never a path`,
+}
+
 // Rule 13: nothing under /tmp, and the tool never matches a process by its own command
 // line. Every path this binary writes is under --lane or --root, which a person gave it.
 func TestTheBinaryReachesNoTmpAndNoProcessTable(t *testing.T) {
 	t.Parallel()
 	allowed := 0
+	envAllowed := 0
 	for name, src := range mainPackageSource(t) {
-		if strings.Contains(src, "os.Getenv") {
+		for _, line := range strings.Split(src, "\n") {
+			if !strings.Contains(line, "os.Getenv") {
+				continue
+			}
+			if name == storeEnvAllowance.file && strings.TrimSpace(line) == storeEnvAllowance.line {
+				envAllowed++
+				continue
+			}
 			t.Errorf("%s reads the environment; every path this tool writes comes from a flag a person gave it, never from a variable the shell happened to carry", name)
 		}
 		for i, line := range strings.Split(src, "\n") {
@@ -77,6 +95,9 @@ func TestTheBinaryReachesNoTmpAndNoProcessTable(t *testing.T) {
 	}
 	if allowed != 1 {
 		t.Errorf("the temp-variable allowance matched %d lines of %s, want exactly one; a stale allowance is a claim nothing checks and it would cover the next site written in its place", allowed, tempEnvAllowance.file)
+	}
+	if envAllowed != 1 {
+		t.Errorf("the store-address allowance matched %d lines of %s, want exactly one", envAllowed, storeEnvAllowance.file)
 	}
 }
 

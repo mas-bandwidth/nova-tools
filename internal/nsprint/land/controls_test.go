@@ -9,7 +9,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintci"
 )
 
 // TestL1 verifies control L1 (Issue #3139 rev 7 §11):
@@ -735,4 +741,660 @@ func TestL31c(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestL31d verifies control L31d (Issue #3139 rev 7 §11):
+//   - ns_ci_cut then ns_ci_end DONE OK on head H for base dev at current policy:
+//     ci:<repo>:H:<gid> exists, H is landable with no lander gate queued, and civerdict,
+//     ci.LandReady and why all read OK.
+//   - ns_ci_cut and ns_ci_rerun write no ci: key.
+//   - A second end for the same gid returns ALREADY.
+//   - An end on another base_sha leaves H ci stale and queues one single.
+//   - The gate's receipt kind follows the batch shape the selector makes: a
+//     full batch of one member writes kind=single, a full batch with no
+//     members (a tip gate) writes kind=tip at the tip and in the tip family,
+//     and a full train of two writes no gid receipt.
+//   - FAIL then rerun FAIL on same test: one FAIL receipt, none after first end.
+//   - FAIL then OK: no receipt until disposition rerun, whose OK writes OK.
+//   - An end with no policy record returns NOPOLICY and writes no ci: key.
+//   - ci cut without --base-ref exits 2.
+//   - With ci_reruns 2, FAIL, rerun FAIL writes nothing and second rerun FAIL writes FAIL.
+//   - A harvested card's CICut carries its branch.
+//   - Preflight 7.16 is green on a gid source.
+//   - sprintci.Bench.Run writes no Redis key.
+func TestL31d(t *testing.T) {
+	t.Run("ns_ci_cut then ns_ci_end DONE OK creates receipt and makes head landable", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		f.client.SAdd(f.ctx, "benches", "bench-1")
+		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+
+		headH := "aaaa111122223333444455556666777788889999"
+		tipSHA := "1111111111111111111111111111111111111111"
+		unitID := "gh/mas-bandwidth/nova-tools/101"
+
+		_, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "feat-101", Head: headH, BaseSHA: tipSHA, PR: "101",
+		})
+		if err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+
+		res, err := ci.Cut(f.ctx, st, ci.CutRequest{
+			Sprint: f.sprint, Repo: f.repo, PR: 101, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl",
+		})
+		if err != nil || res.Status != "CREATED" {
+			t.Fatalf("ci cut: %v, %v", res, err)
+		}
+		label := ci.Label(101, headH)
+
+		key := "s:" + f.sprint + ":card:" + label
+		vals, err := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		if err != nil || vals[0] != "queued" {
+			t.Fatalf("deal state: %v, %v", vals, err)
+		}
+		attempt := vals[1].(string)
+		identity := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals[2], attempt)
+		token := attempt + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+
+		endRes, err := ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
+			Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper",
+		})
+		if err != nil || endRes.Status != "ENDED" || endRes.Detail != "OK" {
+			t.Fatalf("ci end: %v, %v", endRes, err)
+		}
+
+		expGID, err := civerdict.Expected(f.ctx, f.client, f.repo, f.base, tipSHA)
+		if err != nil {
+			t.Fatalf("expected GID: %v", err)
+		}
+		ckey := civerdict.Key(f.repo, headH, expGID)
+		n, err := f.client.Exists(f.ctx, ckey).Result()
+		if err != nil || n != 1 {
+			t.Fatalf("ci:<repo>:H:<gid> key %s exists=%d, want 1", ckey, n)
+		}
+
+		rec, err := civerdict.Read(f.ctx, f.client, f.repo, headH, expGID)
+		if err != nil || rec["verdict"] != "OK" {
+			t.Fatalf("civerdict.Read: %v, %v", rec, err)
+		}
+		hRec, err := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if err != nil || hRec["verdict"] != "OK" {
+			t.Fatalf("civerdict.ReadHead: %v, %v", hRec, err)
+		}
+		ready, whyReady, err := ci.LandReady(f.ctx, st, f.repo, headH, f.base)
+		if err != nil || !ready || whyReady != "ci: OK" {
+			t.Fatalf("ci.LandReady: ready=%v, why=%s, err=%v", ready, whyReady, err)
+		}
+
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+		uState, _ := f.client.HGet(f.ctx, land.UnitKey(f.sprint, unitID), "state").Result()
+		if uState != "landable" {
+			t.Fatalf("unit state=%q, want landable", uState)
+		}
+		gatesLen, _ := f.client.XLen(f.ctx, "land:"+f.repo+":gates").Result()
+		if gatesLen != 0 {
+			t.Fatalf("lander gates queued = %d, want 0", gatesLen)
+		}
+
+		p := &land.PR{
+			ID:     land.ID{Repo: f.repo, N: 101},
+			Fields: map[string]string{"head": headH, "draft": "false"},
+			CI:     rec,
+			CIGIDs: []string{expGID},
+		}
+		whyLines := land.Why(p, time.Now())
+		if len(whyLines) == 0 || !strings.Contains(whyLines[0], "ci OK@") {
+			t.Fatalf("why lines: %v; want ci OK@", whyLines)
+		}
+	})
+
+	t.Run("ns_ci_cut and ns_ci_rerun write no ci: key", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
+		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+
+		headH2 := "bbbb111122223333444455556666777788889999"
+		tipSHA := "1111111111111111111111111111111111111111"
+
+		res, err := ci.Cut(f.ctx, st, ci.CutRequest{
+			Sprint: f.sprint, Repo: f.repo, PR: 102, Head: headH2, Base: tipSHA, BaseRef: f.base, Actor: "ctl",
+		})
+		if err != nil || res.Status != "CREATED" {
+			t.Fatalf("cut: %v, %v", res, err)
+		}
+		rec, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH2)
+		if len(rec) != 0 {
+			t.Fatalf("cut wrote ci: key: %v", rec)
+		}
+
+		label := ci.Label(102, headH2)
+		key := "s:" + f.sprint + ":card:" + label
+		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		attempt := vals[1].(string)
+		identity := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals[2], attempt)
+		token := attempt + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "pkg1", Test: "Test1", Actor: "wrapper",
+		})
+
+		rRes, err := ci.Rerun(f.ctx, st, f.sprint, label, "actor", "rerun-1")
+		if err != nil || rRes.Status != "RERUN" {
+			t.Fatalf("rerun: %v, %v", rRes, err)
+		}
+		rec, _ = civerdict.ReadHead(f.ctx, f.client, f.repo, headH2)
+		if len(rec) != 0 {
+			t.Fatalf("rerun wrote ci: key: %v", rec)
+		}
+	})
+
+	t.Run("second end for same gid returns ALREADY", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		headH := "cccc111122223333444455556666777788889999"
+		tipSHA := "1111111111111111111111111111111111111111"
+		gid, _ := civerdict.Expected(f.ctx, f.client, f.repo, f.base, tipSHA)
+
+		unitID := "gh/mas-bandwidth/nova-tools/103"
+		if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "card-103", Head: headH, BaseSHA: tipSHA,
+		}); err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+
+		batchID := "batch-c1"
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unitID+"@"+headH, "", land.ClassFull, tipSHA, "in-c1")
+		if err != nil {
+			t.Fatalf("batch plan: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "bench-1", "slot-1"); err != nil {
+			t.Fatalf("gate claim: %v", err)
+		}
+		res1, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "GREEN", "bench-1", "worker-1", headH, "tree-1", "in-c1", "", "", "", "", "10")
+		if err != nil || res1 != "OK" {
+			t.Fatalf("first receipt write: %s, %v", res1, err)
+		}
+		ckey := civerdict.Key(f.repo, headH, gid)
+		if n, _ := f.client.Exists(f.ctx, ckey).Result(); n != 1 {
+			t.Fatalf("single gate receipt %s exists = %d, want 1", ckey, n)
+		}
+		rec, _ := civerdict.Read(f.ctx, f.client, f.repo, headH, gid)
+		if rec["verdict"] != "OK" || rec["kind"] != "single" {
+			t.Fatalf("single gate receipt = %+v, want OK single", rec)
+		}
+		if isMem, _ := f.client.SIsMember(f.ctx, civerdict.GIDsKey(f.repo, headH), gid).Result(); !isMem {
+			t.Fatalf("gid %s not in %s", gid, civerdict.GIDsKey(f.repo, headH))
+		}
+
+		res2, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "GREEN", "bench-1", "worker-1", headH, "tree-1", "in-c1", "", "", "", "", "10")
+		if err != nil || res2 != "ALREADY" {
+			t.Fatalf("second receipt write: %s, %v; want ALREADY", res2, err)
+		}
+	})
+
+	t.Run("end on another base_sha leaves H ci stale and queues one single", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		headH := "dddd111122223333444455556666777788889999"
+		oldTipSHA := "9999999999999999999999999999999999999999"
+		currTipSHA := "1111111111111111111111111111111111111111"
+
+		gidOld, _ := civerdict.Expected(f.ctx, f.client, f.repo, f.base, oldTipSHA)
+		unitID := "gh/mas-bandwidth/nova-tools/104"
+		if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "card-104", Head: headH, BaseSHA: oldTipSHA,
+		}); err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+		batchOld := "batch-old"
+		tokOld, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchOld, f.lease, unitID+"@"+headH, "", land.ClassFull, oldTipSHA, "in-old")
+		if err != nil {
+			t.Fatalf("batch plan: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, batchOld, 1, tokOld, "bench-1", "slot-1"); err != nil {
+			t.Fatalf("gate claim: %v", err)
+		}
+		res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchOld, 1, tokOld, "GREEN", "bench-1", "worker-1", headH, "tree-1", "in-old", "", "", "", "", "10")
+		if err != nil || res != "OK" {
+			t.Fatalf("write receipt: %s, %v", res, err)
+		}
+
+		unitID = "gh/mas-bandwidth/nova-tools/104"
+		_, err = land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
+			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
+			Branch: "feat-104", Head: headH, BaseSHA: currTipSHA, PR: "104",
+		})
+		if err != nil {
+			t.Fatalf("unit head: %v", err)
+		}
+		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
+			t.Fatalf("unit eval: %v", err)
+		}
+
+		gidCurr, _ := civerdict.Expected(f.ctx, f.client, f.repo, f.base, currTipSHA)
+		if gidCurr == gidOld {
+			t.Fatalf("expected gids to differ: both %s", gidCurr)
+		}
+
+		p := &land.PR{
+			ID:     land.ID{Repo: f.repo, N: 104},
+			Fields: map[string]string{"head": headH, "draft": "false"},
+			CI:     nil,
+			CIGIDs: []string{gidOld},
+		}
+		whyLines := land.Why(p, time.Now())
+		if len(whyLines) == 0 || !strings.Contains(whyLines[0], "ci stale@") {
+			t.Fatalf("why lines: %v; want ci stale@", whyLines)
+		}
+
+		batchID := "batch-single-1"
+		membersCSV := fmt.Sprintf("%s@%s", unitID, headH)
+		_, _, err = land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, membersCSV, "", land.ClassFull, currTipSHA, "in-single")
+		if err != nil {
+			t.Fatalf("batch plan single: %v", err)
+		}
+		bState, _ := f.client.HGet(f.ctx, land.BatchKey(f.repo, f.base, batchID), "class").Result()
+		if bState != land.ClassFull {
+			t.Fatalf("batch class: %s, want %s (the selector's class for a ci single)", bState, land.ClassFull)
+		}
+	})
+
+	// Rowan's hold 5 item 3 on #3495: the selector emits only go, +vetwin,
+	// lisp and full, so a ci single is a full batch with one member and a tip
+	// gate is a full batch with no members. The gid receipt's kind follows
+	// that shape; a multi-member full batch writes no gid receipt.
+	t.Run("gate kind follows the batch shape: full single, full tip, full train", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		tipSHA := "2222222222222222222222222222222222222222"
+		pol, err := f.client.HMGet(f.ctx, civerdict.PolicyKey(f.repo, f.base), "policy_id", "required_set_id", "runner_id").Result()
+		if err != nil {
+			t.Fatalf("policy: %v", err)
+		}
+		polID, reqID, runID := pol[0].(string), pol[1].(string), pol[2].(string)
+
+		// A tip gate: class full, no members, gating from_tip itself.
+		tipBatch := "batch-tip-1"
+		if err := f.client.HSet(f.ctx, land.BatchKey(f.repo, f.base, tipBatch), "attempt", "1", "token", "71",
+			"state", "claimed", "from_tip", tipSHA, "class", land.ClassFull, "members", "").Err(); err != nil {
+			t.Fatalf("seed tip batch: %v", err)
+		}
+		res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, tipBatch, 1, "71", "GREEN", "bench-1", "worker-1", tipSHA, "tree-t", "in-tip", "", "", "", "", "10")
+		if err != nil || res != "OK" {
+			t.Fatalf("tip gate receipt: %s, %v", res, err)
+		}
+		tipGID := civerdict.GID("tip", f.base, tipSHA, reqID, polID, runID)
+		tipKey := "ci:" + f.repo + ":" + f.base + ":tip:" + tipSHA + ":" + tipGID
+		if rec, _ := f.client.HGetAll(f.ctx, tipKey).Result(); rec["kind"] != "tip" || rec["verdict"] != "OK" || rec["base_sha"] != tipSHA {
+			t.Fatalf("tip receipt %s = %v, want kind tip verdict OK base_sha %s", tipKey, rec, tipSHA)
+		}
+		if rec, _ := civerdict.Read(f.ctx, f.client, f.repo, tipSHA, tipGID); rec["kind"] != "tip" || rec["verdict"] != "OK" {
+			t.Fatalf("tip gate head receipt %s = %v, want kind tip verdict OK", civerdict.Key(f.repo, tipSHA, tipGID), rec)
+		}
+		if res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, tipBatch, 1, "71", "GREEN", "bench-1", "worker-1", tipSHA, "tree-t", "in-tip", "", "", "", "", "10"); err != nil || res != "ALREADY" {
+			t.Fatalf("second tip gate receipt: %s, %v; want ALREADY", res, err)
+		}
+		singleGID := civerdict.GID("single", f.base, tipSHA, reqID, polID, runID)
+		if n, _ := f.client.Exists(f.ctx, civerdict.Key(f.repo, tipSHA, singleGID)).Result(); n != 0 {
+			t.Fatalf("a tip gate wrote a kind=single receipt at %s", civerdict.Key(f.repo, tipSHA, singleGID))
+		}
+		if gids, _ := f.client.SMembers(f.ctx, civerdict.GIDsKey(f.repo, tipSHA)).Result(); len(gids) != 1 || gids[0] != tipGID {
+			t.Fatalf("gids for the tip = %v, want [%s]", gids, tipGID)
+		}
+
+		// A full batch of two members is a train: no gid receipt at either head.
+		headA := "eeee111122223333444455556666777788889999"
+		headB := "ffff111122223333444455556666777788889999"
+		for i, h := range []string{headA, headB} {
+			unit := fmt.Sprintf("gh/mas-bandwidth/nova-tools/%d", 120+i)
+			if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{Sprint: f.sprint, Unit: unit, Repo: f.repo,
+				Base: f.base, Branch: fmt.Sprintf("card-%d", 120+i), Head: h, BaseSHA: tipSHA}); err != nil {
+				t.Fatalf("unit head: %v", err)
+			}
+			if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unit, f.repo, f.base, 0); err != nil {
+				t.Fatalf("unit eval: %v", err)
+			}
+			if err := f.client.HSet(f.ctx, land.UnitKey(f.sprint, unit), "state", "landable", "files", fmt.Sprintf("p%d.go", i)).Err(); err != nil {
+				t.Fatalf("seed unit: %v", err)
+			}
+		}
+		train := "batch-train-1"
+		members := "gh/mas-bandwidth/nova-tools/120@" + headA + ",gh/mas-bandwidth/nova-tools/121@" + headB
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, train, f.lease, members, "", land.ClassFull, tipSHA, "in-train")
+		if err != nil {
+			t.Fatalf("batch plan train: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, train, 1, tok, "bench-1", "slot-2"); err != nil {
+			t.Fatalf("gate claim train: %v", err)
+		}
+		if res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, train, 1, tok, "GREEN", "bench-1", "worker-1", headB, "tree-2", "in-train", "", "", "", "", "10"); err != nil || res != "OK" {
+			t.Fatalf("train receipt: %s, %v", res, err)
+		}
+		for _, h := range []string{headA, headB} {
+			if n, _ := f.client.Exists(f.ctx, civerdict.GIDsKey(f.repo, h)).Result(); n != 0 {
+				t.Fatalf("a two-member full train wrote a gid receipt for %s", h)
+			}
+		}
+	})
+
+	t.Run("FAIL then rerun FAIL on same test: one FAIL receipt, none after first end", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
+		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+
+		headH := "eeee111122223333444455556666777788889999"
+		tipSHA := "1111111111111111111111111111111111111111"
+		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 105, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl"})
+		label := ci.Label(105, headH)
+
+		key := "s:" + f.sprint + ":card:" + label
+		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals[2], vals[1])
+		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "pkgX", Test: "TestX", Actor: "wrapper",
+		})
+		rec1, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if len(rec1) != 0 {
+			t.Fatalf("first FAIL wrote receipt: %v, want none until rerun budget spent", rec1)
+		}
+
+		ci.Rerun(f.ctx, st, f.sprint, label, "actor", "rerun-1")
+		vals2, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity2 := fmt.Sprintf("%s/%s/%s/bench-2/%s", f.sprint, label, vals2[2], vals2[1])
+		token2 := vals2[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-2", "identity", identity2, "token", token2, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token2, Identity: identity2,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "pkgX", Test: "TestX", Actor: "wrapper",
+		})
+
+		rec2, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if rec2["verdict"] != "FAIL" {
+			t.Fatalf("second FAIL verdict: %s, want FAIL", rec2["verdict"])
+		}
+		gids, _ := f.client.SMembers(f.ctx, civerdict.GIDsKey(f.repo, headH)).Result()
+		if len(gids) != 1 {
+			t.Fatalf("expected exactly 1 gid, got %d", len(gids))
+		}
+	})
+
+	t.Run("FAIL then OK: no receipt until disposition rerun, whose OK writes OK", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
+		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+
+		headH := "ffff111122223333444455556666777788889999"
+		tipSHA := "1111111111111111111111111111111111111111"
+		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 106, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl"})
+		label := ci.Label(106, headH)
+
+		key := "s:" + f.sprint + ":card:" + label
+		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals[2], vals[1])
+		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "pkgA", Test: "TestA", Actor: "wrapper",
+		})
+		rec1, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if len(rec1) != 0 {
+			t.Fatalf("receipt written after first FAIL")
+		}
+
+		ci.Rerun(f.ctx, st, f.sprint, label, "actor", "rerun-1")
+		vals2, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity2 := fmt.Sprintf("%s/%s/%s/bench-2/%s", f.sprint, label, vals2[2], vals2[1])
+		token2 := vals2[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-2", "identity", identity2, "token", token2, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		rEnd2, _ := ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token2, Identity: identity2,
+			Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper",
+		})
+		if rEnd2.Detail != "FLAKY" {
+			t.Fatalf("end2 detail: %s, want FLAKY", rEnd2.Detail)
+		}
+		rec2, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if len(rec2) != 0 {
+			t.Fatalf("receipt written after FLAKY")
+		}
+
+		rDisp, err := ci.Dispose(f.ctx, st, f.sprint, f.repo, headH, "APPROVE", "friend1", "https://example.test/disp")
+		if err != nil || rDisp.Status != "APPROVE" {
+			t.Fatalf("dispose: %v, %v", rDisp, err)
+		}
+
+		vals3, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity3 := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals3[2], vals3[1])
+		token3 := vals3[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity3, "token", token3, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		rEnd3, _ := ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token3, Identity: identity3,
+			Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper",
+		})
+		if rEnd3.Detail != "OK" {
+			t.Fatalf("disposition end detail: %s, want OK", rEnd3.Detail)
+		}
+		rec3, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if rec3["verdict"] != "OK" {
+			t.Fatalf("receipt after disposition rerun: %v, want OK", rec3)
+		}
+	})
+
+	t.Run("end with no policy record returns NOPOLICY and writes no ci: key", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		f.client.SAdd(f.ctx, "benches", "bench-1")
+		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+
+		headH := "1212121212121212121212121212121212121212"
+		tipSHA := "1111111111111111111111111111111111111111"
+		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 107, Head: headH, Base: tipSHA, BaseRef: "other-branch", Actor: "ctl"})
+		label := ci.Label(107, headH)
+
+		key := "s:" + f.sprint + ":card:" + label
+		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals[2], vals[1])
+		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+
+		r, err := ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
+			Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper",
+		})
+		if err != nil || r.Status != "NOPOLICY" {
+			t.Fatalf("end with no policy: %v, %v, want NOPOLICY", r, err)
+		}
+		rec, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if len(rec) != 0 {
+			t.Fatalf("NOPOLICY wrote receipt: %v", rec)
+		}
+	})
+
+	t.Run("ci cut without base-ref exits 2", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		headH := "3434343434343434343434343434343434343434"
+		tipSHA := "1111111111111111111111111111111111111111"
+		_, err := ci.Cut(f.ctx, st, ci.CutRequest{
+			Sprint: f.sprint, Repo: f.repo, PR: 108, Head: headH, Base: tipSHA, BaseRef: "", Actor: "ctl",
+		})
+		if err == nil {
+			t.Fatal("expected error for missing base-ref")
+		}
+	})
+
+	t.Run("with ci_reruns 2, FAIL, rerun FAIL writes nothing and second rerun FAIL writes FAIL", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		st := store.New(f.client)
+		f.client.HSet(f.ctx, "s:"+f.sprint, "status", "open")
+		f.client.HSet(f.ctx, "s:"+f.sprint+":policy", "ci_reruns", "2")
+		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
+		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
+		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
+
+		headH := "5656565656565656565656565656565656565656"
+		tipSHA := "1111111111111111111111111111111111111111"
+		ci.Cut(f.ctx, st, ci.CutRequest{Sprint: f.sprint, Repo: f.repo, PR: 109, Head: headH, Base: tipSHA, BaseRef: f.base, Actor: "ctl"})
+		label := ci.Label(109, headH)
+
+		key := "s:" + f.sprint + ":card:" + label
+		vals, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals[2], vals[1])
+		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "p", Test: "t", Actor: "wrapper",
+		})
+		rec1, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if len(rec1) != 0 {
+			t.Fatalf("first FAIL wrote receipt with budget 2: %v", rec1)
+		}
+
+		ci.Rerun(f.ctx, st, f.sprint, label, "actor", "rerun-1")
+		vals2, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity2 := fmt.Sprintf("%s/%s/%s/bench-2/%s", f.sprint, label, vals2[2], vals2[1])
+		token2 := vals2[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-2", "identity", identity2, "token", token2, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token2, Identity: identity2,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "p", Test: "t", Actor: "wrapper",
+		})
+		rec2, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if len(rec2) != 0 {
+			t.Fatalf("second FAIL wrote receipt with budget 2: %v", rec2)
+		}
+
+		ci.Rerun(f.ctx, st, f.sprint, label, "actor", "rerun-2")
+		vals3, _ := f.client.HMGet(f.ctx, key, "state", "attempt", "base_sha", "bench").Result()
+		identity3 := fmt.Sprintf("%s/%s/%s/bench-1/%s", f.sprint, label, vals3[2], vals3[1])
+		token3 := vals3[1].(string) + ".0123456789abcdef0123456789abcdef"
+		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity3, "token", token3, "token_sha", "abcdefabcdef")
+		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		ci.End(f.ctx, st, ci.EndRecord{
+			Sprint: f.sprint, Label: label, Token: token3, Identity: identity3,
+			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "p", Test: "t", Actor: "wrapper",
+		})
+		rec3, _ := civerdict.ReadHead(f.ctx, f.client, f.repo, headH)
+		if rec3["verdict"] != "FAIL" {
+			t.Fatalf("third FAIL verdict: %s, want FAIL", rec3["verdict"])
+		}
+	})
+
+	t.Run("harvested card CICut carries its branch", func(t *testing.T) {
+		c := map[string]string{
+			"repo":     "nova-tools",
+			"pr":       "201",
+			"head":     "7878787878787878787878787878787878787878",
+			"base":     "feature/branch-x",
+			"base_sha": "1111111111111111111111111111111111111111",
+		}
+		cutReq := consume.CICut{
+			Repo:    c["repo"],
+			Head:    c["head"],
+			Base:    c["base_sha"],
+			BaseRef: c["base"],
+		}
+		if cutReq.BaseRef != "feature/branch-x" {
+			t.Fatalf("CICut.BaseRef: got %q, want feature/branch-x", cutReq.BaseRef)
+		}
+	})
+
+	t.Run("preflight 7.16 is green on a gid source", func(t *testing.T) {
+		in := preflight.FleetInput{
+			Loaded: preflight.Loaded{Profiles: true, Workflows: true, ReviewReady: true, LandReady: true},
+			Profiles: []preflight.BenchProfile{
+				{Bench: "ctl-hulk", OS: "linux", Legs: []string{"go"}},
+			},
+			ReviewReady: []preflight.HeadRecord{{Repo: "nova-tools", PR: 10, Head: "4567def", RunnerOnly: true}},
+			LandReady:   []preflight.LandReceipt{{Repo: "nova-tools", PR: 10, Head: "4567def", Source: "ci:nova-tools:4567def:gid1"}},
+		}
+		line := preflight.CheckTwoSchedulers(in)
+		if line.Red {
+			t.Fatalf("preflight 7.16 is red on gid source: %s", line)
+		}
+	})
+
+	t.Run("sprintci.Bench.Run writes no Redis key", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		dealer, err := sprintci.New(4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := &sprintci.Bench{
+			Name:   "bench-1",
+			Dealer: dealer,
+			Redis:  f.client.Options().Addr,
+		}
+		keysBefore, _ := f.client.Keys(f.ctx, "*").Result()
+		card := sprintci.Card{Repo: "nova-tools", PR: 1, SHA: "1111111111111111111111111111111111111111"}
+		dealer.Deal("bench-1", card)
+
+		b.Run(f.ctx, "nonexistent-card")
+		keysAfter, _ := f.client.Keys(f.ctx, "*").Result()
+		if len(keysBefore) != len(keysAfter) {
+			t.Fatalf("keys before=%d, after=%d; sprintci.Bench.Run wrote keys", len(keysBefore), len(keysAfter))
+		}
+	})
 }

@@ -1,5 +1,5 @@
 // Package ci is the nova-sprint CI verbs (#2756 section 10, nova-tools
-// #2936): a CI pass is a script card, and ci:<repo>:<sha> is the one verdict
+// #2936): a CI pass is a script card, and ci:<repo>:<head>:<gid> is the one verdict
 // record every reader consults.
 //
 // Every state change is one call into the nova_sprint function library
@@ -55,21 +55,23 @@ func Label(pr int, head string) string {
 	return fmt.Sprintf("ci-%d-%s", pr, head[:8])
 }
 
-// RecordKey is the global verdict key for one head (2.2, 10.3).
-func RecordKey(repo, head string) string { return "ci:" + repo + ":" + head }
+// WaitingKey is the waiting tasks set for one head: ci:<repo>:<head>:waiting.
+func WaitingKey(repo, head string) string { return "ci:" + repo + ":" + head + ":waiting" }
 
 // CutRequest cuts the ci card for one PR head. Head and Base are full shas;
-// the caller has verified by REST that Head is the PR's head (4.8).
+// BaseRef is the branch name (e.g. "dev").
+// The caller has verified by REST that Head is the PR's head (4.8).
 type CutRequest struct {
-	Sprint string
-	Repo   string
-	PR     int
-	Head   string
-	Base   string
-	Leg    string // toolchain leg a bench must carry; default "go"
-	Paths  string // the work card's PATHS, a hint unioned in (10.2 item 2)
-	Actor  string
-	Idem   string
+	Sprint  string
+	Repo    string
+	PR      int
+	Head    string
+	Base    string // full 40-hex tip sha
+	BaseRef string // branch name e.g. "dev"
+	Leg     string // toolchain leg a bench must carry; default "go"
+	Paths   string // the work card's PATHS, a hint unioned in (10.2 item 2)
+	Actor   string
+	Idem    string
 }
 
 // Result is one function reply: the status word and its exit code.
@@ -82,7 +84,7 @@ type Result struct {
 // ExitCode maps a status word to the verb's exit code.
 func (r Result) ExitCode() int {
 	switch r.Status {
-	case "CREATED", "EXISTS", "ENDED", "RERUN", "APPROVE", "HOLD":
+	case "CREATED", "EXISTS", "ENDED", "RERUN", "APPROVE", "HOLD", "NOPOLICY", "ALREADY":
 		return ExitOK
 	case "FENCED":
 		return ExitFenced
@@ -120,13 +122,16 @@ func validate(sprint, repo, head string) error {
 }
 
 // Cut cuts ci-<pr>-<sha8> into the sprint's pool at the front tier and sets
-// the record PENDING in the same call.
+// the card PENDING in the same call.
 func Cut(ctx context.Context, st *store.Store, req CutRequest) (Result, error) {
 	if err := validate(req.Sprint, req.Repo, req.Head); err != nil {
 		return Result{}, err
 	}
 	if !shaRx.MatchString(req.Base) {
 		return Result{}, fmt.Errorf("base %q is not a full 40-hex sha", req.Base)
+	}
+	if req.BaseRef == "" {
+		return Result{}, fmt.Errorf("base-ref required")
 	}
 	if req.PR <= 0 {
 		return Result{}, fmt.Errorf("pr must be positive")
@@ -139,7 +144,7 @@ func Cut(ctx context.Context, st *store.Store, req CutRequest) (Result, error) {
 		req.Idem = "ci-cut:" + req.Sprint + "/" + label
 	}
 	return call(ctx, st, FunctionCut, req.Sprint, label, req.Repo, strconv.Itoa(req.PR),
-		req.Head, req.Base, req.Leg, req.Paths, req.Actor, req.Idem)
+		req.Head, req.BaseRef, req.Base, req.Leg, req.Paths, req.Actor, req.Idem)
 }
 
 // EndRecord is what the ci card's wrapper writes at its end (10.2 item 3,

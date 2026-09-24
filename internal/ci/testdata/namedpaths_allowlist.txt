@@ -34,7 +34,6 @@ internal/chat/standing.go SPEC-CHAT's plan, item 6: rule 9's three conditions
 internal/chat/state.go SPEC-CHAT's plan, item 3: session ids, cursors, the turn states
 internal/chat/transport.go SPEC-CHAT's plan, item 4: the six-capability adapter interface
 internal/chat/ws SPEC-CHAT's plan, item 11: the gateway, explicitly not v1
-internal/ci/testdata/unexecuted_examples.txt SPEC-TOOLWORK §7's planned fixture of the executed-example list, not yet written
 internal/intake/github SPEC-WORK's plan: the GitHub intake adapter's package, not yet written
 internal/intake/github/ SPEC-WORK's plan table: the same package directory, spelled with its slash
 internal/local/box.go SPEC-LOCAL's plan: the box

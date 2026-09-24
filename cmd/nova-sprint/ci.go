@@ -16,7 +16,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "ci",
-		Summary: "cut, show, rerun, dispose, status and parity of ci cards and the ci:<repo>:<sha> verdict",
+		Summary: "cut, show, rerun, dispose, status and parity of ci cards and the ci verdict",
 		Run:     runCI,
 	})
 }
@@ -70,14 +70,15 @@ func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	pr := fs.Int("pr", 0, "")
 	sha := fs.String("sha", "", "")
 	base := fs.String("base", "", "")
+	baseRef := fs.String("base-ref", "", "")
 	leg := fs.String("leg", "go", "")
 	paths := fs.String("paths", "", "")
 	actor := fs.String("actor", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "ci cut", err.Error())
 	}
-	if *sha == "" || *base == "" {
-		return refuse(errOut, "ci cut", "needs --sha and --base: the head and base tip read by REST for the PR")
+	if *sha == "" || *base == "" || *baseRef == "" {
+		return refuse(errOut, "ci cut", "needs --sha, --base and --base-ref: the head and base tip read by REST for the PR")
 	}
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
@@ -85,7 +86,7 @@ func runCICut(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	defer st.Close()
 	r, err := ci.Cut(ctx, st, ci.CutRequest{Sprint: *sprint, Repo: *repo, PR: *pr, Head: *sha,
-		Base: *base, Leg: *leg, Paths: *paths, Actor: *actor})
+		Base: *base, BaseRef: *baseRef, Leg: *leg, Paths: *paths, Actor: *actor})
 	if err != nil {
 		return refuse(errOut, "ci cut", err.Error())
 	}
@@ -209,7 +210,7 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 
 // runCIParity is #3041 (#2756 10.8.1): every head of a sprint PR that
 // Actions passed (completed workflow_run entries on ev:github) must be OK on
-// ci:<repo>:<sha>. It prints PARITY FAIL <head> per miss, then PARITY n/m,
+// ci:<repo>:<head>:<gid>. It prints PARITY FAIL <head> per miss, then PARITY n/m,
 // and exits 1 on a miss or under --min heads (the gate is n/n, n >= 20).
 func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ci parity")

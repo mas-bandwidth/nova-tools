@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
 // CICost is the sprint's ci cost line (#2756 10.4 item 5, 10.3 item 4,
@@ -70,36 +72,19 @@ func readCI(ctx context.Context, client *redis.Client, sprint string, labels []s
 		}
 	}
 
-	// One record per head: the key is ci:<repo>:<head> (10.3).
+	// Records per head, read through civerdict.
 	records := map[string]map[string]string{}
-	var heads []string
 	for _, k := range ci {
 		if k.repo == "" || k.head == "" {
 			continue
 		}
-		rk := "ci:" + k.repo + ":" + k.head
+		rk := k.repo + ":" + k.head
 		if _, ok := records[rk]; !ok {
-			records[rk] = nil
-			heads = append(heads, rk)
-		}
-	}
-	if len(heads) > 0 {
-		pipe := client.Pipeline()
-		cmds := make([]*redis.SliceCmd, len(heads))
-		for i, rk := range heads {
-			cmds[i] = pipe.HMGet(ctx, rk, ciRecordFields...)
-		}
-		if _, err := pipe.Exec(ctx); err != nil {
-			return c, fmt.Errorf("read the ci records of %s: %w", key, err)
-		}
-		for i, cmd := range cmds {
-			rec := map[string]string{}
-			for j, v := range cmd.Val() {
-				if s, ok := v.(string); ok {
-					rec[ciRecordFields[j]] = s
-				}
+			rec, err := civerdict.ReadHead(ctx, client, k.repo, k.head)
+			if err != nil {
+				return c, fmt.Errorf("read the ci records of %s: %w", key, err)
 			}
-			records[heads[i]] = rec
+			records[rk] = rec
 		}
 	}
 
@@ -118,7 +103,7 @@ func readCI(ctx context.Context, client *redis.Client, sprint string, labels []s
 		}
 		seen[p] = true
 		c.Heads++
-		rec := records["ci:"+k.repo+":"+k.head]
+		rec := records[k.repo+":"+k.head]
 		if rec["verdict"] == "OK" && rec["base"] == k.base {
 			c.OK++
 		}
@@ -141,7 +126,7 @@ func readCI(ctx context.Context, client *redis.Client, sprint string, labels []s
 					continue
 				}
 				c.Attempts++
-				if w, ok := attemptWall(m.Values, records["ci:"+k.repo+":"+k.head], sprint+"/"+k.label); ok {
+				if w, ok := attemptWall(m.Values, records[k.repo+":"+k.head], sprint+"/"+k.label); ok {
 					c.BenchS += w
 				} else {
 					c.Unmeasured++
@@ -155,7 +140,7 @@ func readCI(ctx context.Context, client *redis.Client, sprint string, labels []s
 	}
 
 	// Wall per landed PR: the landed head's record, cut -> final verdict,
-	// only when the shared ci:<repo>:<head> record's own base matches the
+	// only when the shared ci record's own base matches the
 	// ci card cut for this landed PR (Stella's HOLD 7 on nova-tools #3060).
 	// The record is keyed by head alone, so a later cut of the same head
 	// against another base overwrites it; a card whose base the record no
@@ -167,7 +152,7 @@ func readCI(ctx context.Context, client *redis.Client, sprint string, labels []s
 			if k.repo != p.repo || k.pr != p.pr || !sameSHA(k.head, p.head) {
 				continue
 			}
-			rec := records["ci:"+k.repo+":"+k.head]
+			rec := records[k.repo+":"+k.head]
 			if rec["base"] != k.base {
 				continue
 			}

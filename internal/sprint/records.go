@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // DONE FLIPS ONLY FROM A PRIMARY RECORD. Not from a bus note, not from a friend saying so,
@@ -202,10 +203,11 @@ func (g *GH) typedLine(ctx context.Context, r Ref, t Task) (Record, error) {
 	for _, c := range pr.Comments {
 		body := merge.StripQuotedAndCode(c.Body)
 		for _, line := range strings.Split(body, "\n") {
-			who, at, verdict, _, ok := merge.ParseDispositionLine(line)
-			if !ok || verdict == "" {
+			claim, ok := typedrec.ParseDisposition(line)
+			if !ok || claim.Verdict == "" {
 				continue
 			}
+			who, at, verdict := claim.Who, claim.Head, claim.Verdict
 			if head != "" && strings.ToLower(at) != head {
 				continue // carried from an older head: no evidence about this one
 			}

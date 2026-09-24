@@ -10,8 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/redis/go-redis/v9"
 )
 
 // ErrCutExists means this head's card is already in the front tier. Cut does
@@ -94,13 +92,6 @@ func Read(path string) (CutCard, error) {
 	return parseCard(string(raw))
 }
 
-// VerdictKey is the Redis key ci:<repo>:<sha> for this exact head. It is
-// the card id. PR 1 is only so the head can be checked: the pull request
-// number is not part of the key.
-func VerdictKey(repo, sha string) (string, error) {
-	return Card{Repo: repo, PR: 1, SHA: sha}.ID()
-}
-
 // Run starts the card's script on this bench only when the dealer has dealt
 // the card's slot here. Otherwise it does not start: no checkout, no script,
 // no Redis write. A start checks the mirror out of the bench mirror at the
@@ -152,11 +143,7 @@ func (b *Bench) Run(ctx context.Context, cardPath string) (Result, error) {
 		}
 		return Result{Started: true}, fmt.Errorf("script wrote no RESULT.md: %s", tail(out))
 	}
-	key, value, err := writeVerdict(ctx, b.Redis, cut.Card.Repo, cut.Card.SHA, result)
-	if err != nil {
-		return Result{Started: true}, err
-	}
-	return Result{Started: true, Key: key, Value: value}, nil
+	return Result{Started: true}, nil
 }
 
 func render(in CutInput) (body, name string, err error) {
@@ -201,7 +188,7 @@ func render(in CutInput) (body, name string, err error) {
 }
 
 // jobSegment is the card id as one directory under the bench root. The id
-// is ci:<repo>:<sha>, and a repository name contains a slash. That slash is
+// is cicard:<repo>:<sha>, and a repository name contains a slash. That slash is
 // not a path separator here, or the job can leave Root.
 func jobSegment(id string) string {
 	return strings.NewReplacer("/", "_", "\\", "_").Replace(id)
@@ -334,37 +321,6 @@ func checkMirror(mirror string) error {
 		return fmt.Errorf("refusing a clone from GitHub; the bench checks out the mirror")
 	}
 	return nil
-}
-
-func writeVerdict(ctx context.Context, addr, repo, sha, resultPath string) (key, value string, err error) {
-	if strings.TrimSpace(addr) == "" {
-		return "", "", fmt.Errorf("redis address is required")
-	}
-	raw, err := os.ReadFile(resultPath)
-	if err != nil {
-		return "", "", fmt.Errorf("RESULT.md: %w", err)
-	}
-	line, _, _ := strings.Cut(string(raw), "\n")
-	line = strings.TrimRight(line, "\r")
-	value, err = parseResult(line)
-	if err != nil {
-		return "", "", err
-	}
-	key, err = VerdictKey(repo, sha)
-	if err != nil {
-		return "", "", err
-	}
-	rdb := redis.NewClient(&redis.Options{
-		Addr:         addr,
-		DialTimeout:  2 * time.Second,
-		ReadTimeout:  2 * time.Second,
-		WriteTimeout: 2 * time.Second,
-	})
-	defer rdb.Close()
-	if err := rdb.Set(ctx, key, value, 0).Err(); err != nil {
-		return "", "", fmt.Errorf("redis %s: %w", key, err)
-	}
-	return key, value, nil
 }
 
 func parseResult(line string) (string, error) {

@@ -32,7 +32,7 @@ func TestCIPassIsACardUnderSlotAccounting(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if want := "ci:" + c.Repo + ":" + c.SHA; id != want {
+		if want := "cicard:" + c.Repo + ":" + c.SHA; id != want {
 			t.Fatalf("card id = %s, want %s", id, want)
 		}
 		ran, reason := d.RunCI(c)
@@ -185,7 +185,7 @@ func shaN(n int) string {
 
 // TestCardsThatShareSha8DoNotShareAnID is the regression for an id of
 // ci-<pr>-<sha8>. That string drops the repository and keeps eight hex
-// digits, so two cards share it. The id is the Redis key, ci:<repo>:<sha>.
+// digits, so two cards share it. The id is the Redis key, cicard:<repo>:<sha>.
 func TestCardsThatShareSha8DoNotShareAnID(t *testing.T) {
 	t.Parallel()
 	const pr = 2842
@@ -214,12 +214,8 @@ func TestCardsThatShareSha8DoNotShareAnID(t *testing.T) {
 	if idNova == idHead {
 		t.Fatalf("two full shas that share eight hex digits share an id %s", idNova)
 	}
-	key, err := VerdictKey(nova.Repo, nova.SHA)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if idNova != key {
-		t.Fatalf("card id %s, redis key %s", idNova, key)
+	if want := "cicard:" + nova.Repo + ":" + nova.SHA; idNova != want {
+		t.Fatalf("card id %s, want %s", idNova, want)
 	}
 	if shaA[:8] != shaB[:8] || shaA == shaB {
 		t.Fatalf("fixture shas are not a shared prefix: %s %s", shaA, shaB)

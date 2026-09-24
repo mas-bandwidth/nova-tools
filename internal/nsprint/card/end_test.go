@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
@@ -608,6 +609,11 @@ func newSprint(t *testing.T) (*store.Store, *redis.Client) {
 	addr := startRedis(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
+	// The owner converges the server, as ns-deploy does on the fleet: the
+	// card path never loads the library itself (#3551).
+	if err := fn.Load(context.Background(), client); err != nil {
+		t.Fatal(err)
+	}
 	return store.New(client), client
 }
 

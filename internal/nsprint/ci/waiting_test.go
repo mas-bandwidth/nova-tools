@@ -25,7 +25,7 @@ func (f *fixture) waitOn(sprint, id, to, h string) {
 		f.t.Fatal(err)
 	}
 	f.client.SAdd(f.ctx, "s:"+sprint+":idx:task:waiting-ci", id)
-	f.client.SAdd(f.ctx, ci.RecordKey(repo, h)+":waiting", sprint+"/"+id)
+	f.client.SAdd(f.ctx, ci.WaitingKey(repo, h), sprint+"/"+id)
 }
 
 // waitOnScored is waitOn for a task whose queue score is the point: the
@@ -147,7 +147,7 @@ func TestCiEndReleasesWaitingTasksAndOwnsTheFailItem(t *testing.T) {
 				t.Errorf("%s/%s waiting-ci -> open receipts = %d; want 1", c.sprint, c.id, n)
 			}
 		}
-		if n, _ := f.client.SCard(f.ctx, ci.RecordKey(repo, head)+":waiting").Result(); n != 0 {
+		if n, _ := f.client.SCard(f.ctx, ci.WaitingKey(repo, head)).Result(); n != 0 {
 			t.Errorf("waiting set for the OK head holds %d; want empty", n)
 		}
 		if task := f.task(f.sprint, "read-other"); task["state"] != "waiting-ci" || f.queued("s:"+f.sprint+":open:stella", "read-other") {

@@ -59,6 +59,14 @@ func asFixture(t *testing.T, st *store.Store, client *redis.Client, n int) {
 		must(t, client.SAdd(ctx, "friends", name).Err())
 		must(t, client.HSet(ctx, "friend:"+name+":desired", "slots", "8", "paused", "0").Err())
 		must(t, client.HSet(ctx, "friend:"+name+":beat", "host", "studio", "at", "1").Err())
+		roles := "may-hold"
+		if name == "johnny" {
+			roles += ",builder"
+		}
+		if name == "rowan" {
+			roles += ",coordinator"
+		}
+		must(t, client.HSet(ctx, "friend:"+name+":roles", "roles", roles).Err())
 	}
 	for i := 1; i <= n; i++ {
 		author := "johnny"

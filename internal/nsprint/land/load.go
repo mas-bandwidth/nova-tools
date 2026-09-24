@@ -71,8 +71,28 @@ func LoadPR(ctx context.Context, c *redis.Client, sprint string, id ID) (*PR, er
 
 	pipe = c.Pipeline()
 	var ciCmd, parentCmd *redis.MapStringStringCmd
+	var gidsCmd *redis.StringSliceCmd
 	if head := fields["head"]; head != "" {
-		ciCmd = pipe.HGetAll(ctx, civerdict.Key(id.Repo, head))
+		base := fields["base"]
+		if base == "" {
+			base = "dev"
+		}
+		baseSHA := fields["base_sha"]
+		if baseSHA == "" {
+			var err error
+			baseSHA, err = c.HGet(ctx, "land:"+id.Repo+":"+base+":tip", "sha").Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return nil, fmt.Errorf("read land:%s:%s:tip: %w", id.Repo, base, err)
+			}
+		}
+		gid, err := civerdict.Expected(ctx, c, id.Repo, base, baseSHA)
+		if err != nil && !errors.Is(err, civerdict.ErrNoPolicy) && !errors.Is(err, civerdict.ErrNoTip) {
+			return nil, fmt.Errorf("read %s: %w", civerdict.PolicyKey(id.Repo, base), err)
+		}
+		if gid != "" {
+			ciCmd = pipe.HGetAll(ctx, civerdict.Key(id.Repo, head, gid))
+		}
+		gidsCmd = pipe.SMembers(ctx, civerdict.GIDsKey(id.Repo, head))
 	}
 	if p.Parent != nil {
 		parentCmd = pipe.HGetAll(ctx, p.Parent.Key(sprint))
@@ -83,7 +103,7 @@ func LoadPR(ctx context.Context, c *redis.Client, sprint string, id ID) (*PR, er
 			friendCmds[h.Holder] = pipe.HGetAll(ctx, "friend:"+h.Holder+":state")
 		}
 	}
-	if ciCmd == nil && parentCmd == nil && len(friendCmds) == 0 {
+	if ciCmd == nil && gidsCmd == nil && parentCmd == nil && len(friendCmds) == 0 {
 		return p, nil
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -91,6 +111,9 @@ func LoadPR(ctx context.Context, c *redis.Client, sprint string, id ID) (*PR, er
 	}
 	if ciCmd != nil {
 		p.CI = ciCmd.Val()
+	}
+	if gidsCmd != nil {
+		p.CIGIDs = gidsCmd.Val()
 	}
 	if parentCmd != nil {
 		p.ParentRec = parentCmd.Val()

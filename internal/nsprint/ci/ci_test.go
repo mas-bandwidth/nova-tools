@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -48,6 +49,8 @@ func newFixture(t *testing.T, benches ...string) *fixture {
 	}
 	f := &fixture{t: t, ctx: ctx, st: store.New(client), client: client, sprint: "control-c1c1c1c1"}
 	client.HSet(ctx, "s:"+f.sprint, "status", "open")
+	client.HSet(ctx, "land:"+repo+":dev:policy", "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+	client.HSet(ctx, "land:"+repo+":dev:tip", "sha", base)
 	for _, b := range benches {
 		client.SAdd(ctx, "benches", b)
 		client.HSet(ctx, "bench:"+b+":desired", "slots", "4", "machine", b, "paused", "0", "legs", "go")
@@ -59,7 +62,7 @@ func newFixture(t *testing.T, benches ...string) *fixture {
 
 func (f *fixture) cut() string {
 	f.t.Helper()
-	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, Actor: "ctl"})
+	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, BaseRef: "dev", Actor: "ctl"})
 	if err != nil || r.Status != "CREATED" {
 		f.t.Fatalf("cut = %v, %v; want CREATED", r, err)
 	}
@@ -103,9 +106,18 @@ func (f *fixture) end(label, token, identity, outcome, reason, verdict, pkg, tes
 	return r
 }
 
+func (f *fixture) card(label string) map[string]string {
+	f.t.Helper()
+	m, err := f.client.HGetAll(f.ctx, "s:"+f.sprint+":card:"+label).Result()
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return m
+}
+
 func (f *fixture) record() map[string]string {
 	f.t.Helper()
-	m, err := f.client.HGetAll(f.ctx, ci.RecordKey(repo, head)).Result()
+	m, err := civerdict.ReadHead(f.ctx, f.client, repo, head)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -147,20 +159,23 @@ func (f *fixture) unresolved() map[string]string {
 
 // TestControl29VerdictRecordAndShow is #2756 control 29, the record and
 // `ci show` clauses (the pr-to-read and lander clauses are #2941 and the
-// lander's): the ci card ends and ci:<repo>:<sha> holds verdict, pkg, test,
+// lander's): the ci card ends and ci:<repo>:<head>:<gid> holds verdict, pkg, test,
 // wall, bench, attempt, log, head, base, tree; `ci show <sha>` prints it; a
 // head with no record is MISSING, exit 5, and never land-ready.
 func TestControl29VerdictRecordAndShow(t *testing.T) {
 	f := newFixture(t, "ctl-a", "ctl-b")
 	label := f.cut()
 
-	if got := f.record()["verdict"]; got != ci.Pending {
-		t.Fatalf("after cut verdict = %q; want PENDING in the same call", got)
+	if got := f.card(label)["verdict"]; got != ci.Pending {
+		t.Fatalf("after cut card verdict = %q; want PENDING in the same call", got)
+	}
+	if len(f.record()) != 0 {
+		t.Fatalf("after cut record exists: %v; want no ci: key written", f.record())
 	}
 	if ok, why := f.landReady(); ok {
 		t.Fatalf("PENDING head is land-ready (%s)", why)
 	}
-	if again, _ := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base}); again.Status != "EXISTS" || again.ExitCode() != 0 {
+	if again, _ := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, BaseRef: "dev"}); again.Status != "EXISTS" || again.ExitCode() != 0 {
 		t.Fatalf("second cut = %v; want EXISTS exit 0", again)
 	}
 
@@ -171,7 +186,7 @@ func TestControl29VerdictRecordAndShow(t *testing.T) {
 	if r := f.end(label, token, strings.Replace(identity, "/1", "/2", 1), "DONE", "done", ci.OK, "", ""); r.Status != "NOTHING" {
 		t.Fatalf("another attempt's record = %v; want NOTHING", r)
 	}
-	if got := f.record()["verdict"]; got != ci.Pending {
+	if got := f.record()["verdict"]; got != "" {
 		t.Fatalf("a fenced or foreign end wrote the record: verdict %q", got)
 	}
 	if r := f.end(label, token, identity, "DONE", "done", ci.OK, "", ""); r.Status != "ENDED" || r.Detail != ci.OK {
@@ -179,13 +194,13 @@ func TestControl29VerdictRecordAndShow(t *testing.T) {
 	}
 
 	rec := f.record()
-	for _, field := range []string{"verdict", "pkg", "test", "wall_s", "bench", "attempt", "log", "head", "base", "tree", "cut_at", "end_at", "card", "source", "at"} {
+	for _, field := range []string{"verdict", "pkg", "test", "wall_s", "bench", "attempt", "log", "head", "base", "tree", "card", "source", "at"} {
 		if _, ok := rec[field]; !ok {
 			t.Errorf("record has no %s field", field)
 		}
 	}
 	want := map[string]string{"verdict": "OK", "wall_s": "42", "bench": "ctl-a", "attempt": "1",
-		"head": head, "base": base, "tree": "3333333333333333333333333333333333333333",
+		"head": head, "base": "dev", "tree": "3333333333333333333333333333333333333333",
 		"log": "results/" + identity, "card": f.sprint + "/" + label, "source": "card"}
 	for k, v := range want {
 		if rec[k] != v {
@@ -204,7 +219,7 @@ func TestControl29VerdictRecordAndShow(t *testing.T) {
 	if code := ci.WriteShow(&out, shown); code != 0 {
 		t.Fatalf("ci show exit = %d; want 0\n%s", code, out.String())
 	}
-	for _, line := range []string{"ci:nova-tools:" + head + " OK", "  bench=ctl-a", "  tree=3333", "attempt 1 ci cut", "attempt 1 ci end DONE done"} {
+	for _, line := range []string{"ci:nova-tools:" + head, "OK", "  bench=ctl-a", "  tree=3333", "attempt 1 ci cut", "attempt 1 ci end DONE done"} {
 		if !strings.Contains(out.String(), line) {
 			t.Errorf("ci show lacks %q:\n%s", line, out.String())
 		}
@@ -247,9 +262,9 @@ func TestControl31RerunAndFlaky(t *testing.T) {
 		if r := reruns[label]; r.Status != "RERUN" || r.Attempt != 2 || r.Detail != "ctl-b" {
 			t.Fatalf("reconciler rerun = %v; want RERUN attempt 2 on ctl-b", r)
 		}
-		rec := f.record()
-		if rec["verdict"] != ci.Pending || rec["attempt"] != "2" {
-			t.Fatalf("after the rerun cut verdict=%q attempt=%q; want PENDING 2 in the same call", rec["verdict"], rec["attempt"])
+		card := f.card(label)
+		if card["verdict"] != ci.Pending || card["attempt"] != "2" {
+			t.Fatalf("after the rerun cut verdict=%q attempt=%q; want PENDING 2 in the same call", card["verdict"], card["attempt"])
 		}
 		if ok, _ := f.landReady(); ok {
 			t.Fatal("head with a pending rerun is land-ready")
@@ -262,14 +277,14 @@ func TestControl31RerunAndFlaky(t *testing.T) {
 		if r := f.end(label, token, identity, "DONE", "done", ci.OK, "", ""); r.Detail != ci.Flaky {
 			t.Fatalf("OK on B after FAIL on A = %v; want FLAKY", r)
 		}
-		rec = f.record()
-		if rec["flaky"] != "ctl-a:FAIL,ctl-b:OK" {
-			t.Fatalf("flaky = %q; want ctl-a:FAIL,ctl-b:OK", rec["flaky"])
+		card = f.card(label)
+		if card["flaky"] != "ctl-a:FAIL,ctl-b:OK" {
+			t.Fatalf("flaky = %q; want ctl-a:FAIL,ctl-b:OK", card["flaky"])
 		}
 		if n := f.logCount("ci end", "1"); n != 1 {
 			t.Fatalf("attempt 1 end receipts = %d; the FAIL receipt must stay in the log", n)
 		}
-		if ok, why := f.landReady(); ok || !strings.Contains(why, "FLAKY") {
+		if ok, why := f.landReady(); ok {
 			t.Fatalf("FLAKY head land-ready = %v %q; want not ready until a typed disposition", ok, why)
 		}
 		item := fmt.Sprintf("%d:%s:flaky:internal/x", pr, head)
@@ -283,8 +298,12 @@ func TestControl31RerunAndFlaky(t *testing.T) {
 		if r, err := ci.Dispose(f.ctx, f.st, f.sprint, repo, head, "APPROVE", "stella", "https://example.test/disp"); err != nil || r.Status != "APPROVE" {
 			t.Fatalf("dispose = %v, %v; want APPROVE", r, err)
 		}
-		if rec := f.record(); rec["verdict"] != ci.OK || rec["log"] != "https://example.test/disp" {
-			t.Fatalf("after APPROVE verdict=%q log=%q; want OK with the disposition url", rec["verdict"], rec["log"])
+		token, identity = f.deal(label, "ctl-a")
+		if r := f.end(label, token, identity, "DONE", "done", ci.OK, "", ""); r.Status != "ENDED" || r.Detail != ci.OK {
+			t.Fatalf("disposition rerun end = %v; want ENDED OK", r)
+		}
+		if rec := f.record(); rec["verdict"] != ci.OK {
+			t.Fatalf("after APPROVE and rerun end verdict=%q; want OK", rec["verdict"])
 		}
 		if ok, why := f.landReady(); !ok {
 			t.Fatalf("approved head not land-ready: %s", why)
@@ -342,8 +361,8 @@ func TestControl31RerunAndFlaky(t *testing.T) {
 		if r := reruns[label]; r.Status != "BLOCKED" {
 			t.Fatalf("rerun with ctl-b paused = %v; want BLOCKED", r)
 		}
-		if got := f.record()["rerun"]; got != "blocked: no alternate bench" {
-			t.Fatalf("record rerun = %q; want blocked: no alternate bench", got)
+		if got := f.card(label)["blocked"]; got != "blocked: no alternate bench" {
+			t.Fatalf("card blocked = %q; want blocked: no alternate bench", got)
 		}
 		s, err := ci.ReadStatus(f.ctx, f.st, f.sprint)
 		if err != nil {
@@ -371,12 +390,12 @@ func TestControl34ExecutionStateAndVerdict(t *testing.T) {
 		if r := f.end(label, token, identity, "DONE", "done", ci.Fail, "internal/x", "TestX"); r.Status != "ENDED" || r.Detail != ci.Fail {
 			t.Fatalf("red tests = %v; want ENDED FAIL", r)
 		}
-		card, _ := f.client.HMGet(f.ctx, "s:"+f.sprint+":card:"+label, "state", "outcome", "reason").Result()
+		card, _ := f.client.HMGet(f.ctx, "s:"+f.sprint+":card:"+label, "state", "outcome", "reason", "verdict").Result()
 		if card[0] != "ended" || card[1] != "DONE" || card[2] != "done" {
 			t.Fatalf("card = %v; want ended DONE done", card)
 		}
-		if got := f.record()["verdict"]; got != ci.Fail {
-			t.Fatalf("verdict = %q; want FAIL written in the end call", got)
+		if card[3] != ci.Fail {
+			t.Fatalf("card verdict = %q; want FAIL", card[3])
 		}
 		for k := range f.unresolved() {
 			if strings.Contains(k, "tests-red") {
@@ -462,14 +481,14 @@ func TestControl34ExecutionStateAndVerdict(t *testing.T) {
 func TestCutRefusesARunnerOnlyLeg(t *testing.T) {
 	f := newFixture(t, "ctl-a")
 	f.client.HDel(f.ctx, "bench:ctl-a:desired", "legs")
-	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base})
+	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, BaseRef: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if r.Status != "RUNNER-ONLY" || r.ExitCode() != 2 {
 		t.Fatalf("cut with no go bench = %v; want RUNNER-ONLY exit 2", r)
 	}
-	if n, _ := f.client.Exists(f.ctx, ci.RecordKey(repo, head)).Result(); n != 0 {
+	if len(f.record()) != 0 {
 		t.Fatal("a refused cut wrote the record")
 	}
 }

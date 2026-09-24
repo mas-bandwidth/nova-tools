@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
@@ -35,7 +36,7 @@ type ParityHead struct {
 	Repo    string
 	PR      int
 	Head    string
-	Verdict string // the ci:<repo>:<sha> verdict, MISSING when absent
+	Verdict string // the ci:<repo>:<head>:<gid> verdict, MISSING when absent
 }
 
 // Parity is the measurement: every head of a sprint PR that Actions passed,
@@ -97,18 +98,13 @@ func ReadParity(ctx context.Context, st *store.Store, req ParityRequest) (Parity
 		}
 	}
 	sort.Strings(keys)
-	reads := make([]store.HashRead, len(keys))
-	for i, k := range keys {
+	for _, k := range keys {
 		h := runs[k]
-		reads[i] = store.HashRead{Key: RecordKey(h.repo, h.head), Fields: []string{"verdict"}}
-	}
-	vals, err := st.PipelineHMGet(ctx, reads)
-	if err != nil {
-		return p, err
-	}
-	for i, k := range keys {
-		h := runs[k]
-		v := str(vals[i][0])
+		fields, err := civerdict.ReadHead(ctx, st.Client(), h.repo, h.head)
+		if err != nil {
+			return p, err
+		}
+		v := fields["verdict"]
 		if v == "" {
 			v = Missing
 		}

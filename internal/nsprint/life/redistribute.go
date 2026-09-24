@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -106,20 +105,11 @@ func (m Move) Line() string {
 
 // Redistribute runs one tick over every registered friend. It is idempotent:
 // a friend with nothing left to move reports zeros.
-func Redistribute(ctx context.Context, st *store.Store, roster Roster, actor, idem string) ([]Move, error) {
+func Redistribute(ctx context.Context, st *store.Store, _ Roster, actor, idem string) ([]Move, error) {
 	if st == nil {
 		return nil, fmt.Errorf("redistribute: nil store")
 	}
-	for _, list := range [][]string{roster.MayHold, roster.Builders, {roster.Coordinator}} {
-		for _, name := range list {
-			if strings.Contains(name, ",") {
-				return nil, fmt.Errorf("redistribute: friend name %q contains a comma", name)
-			}
-		}
-	}
-	reply, err := st.Client().FCall(ctx, FunctionRedistribute, nil,
-		strings.Join(roster.MayHold, ","), strings.Join(roster.Builders, ","),
-		roster.Coordinator, actor, idem).Result()
+	reply, err := st.Client().FCall(ctx, FunctionRedistribute, nil, actor, idem).Result()
 	if err != nil {
 		return nil, fmt.Errorf("redistribute: %w", err)
 	}
