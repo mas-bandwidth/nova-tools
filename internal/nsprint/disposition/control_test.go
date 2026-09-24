@@ -30,6 +30,10 @@ func TestControl39(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	c.HSet(ctx, "machine:ctl:ceiling", "slots", 64)
 	for _, f := range []string{"stella", "johnny", "rowan"} {
+		// #2934: capacity is the one registration writer; hello only beats.
+		if r, err := c.FCall(ctx, "ns_capacity_desired", nil, "friend", f, 0, "ctl", "config", "").StringSlice(); err != nil || len(r) == 0 || r[0] != "SET" {
+			t.Fatalf("capacity friend %s: %v %v", f, r, err)
+		}
 		if _, err := life.Hello(ctx, store.New(c), life.HelloRequest{As: f, Actor: f, Slots: -1, Host: "ctl", Session: "ctl-" + f}); err != nil {
 			t.Fatal(err)
 		}

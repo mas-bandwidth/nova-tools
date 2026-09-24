@@ -119,6 +119,10 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	if *as == "" {
 		return refuse(errOut, "friend hello", "--as is required")
 	}
+	if *slots != -1 {
+		fmt.Fprintf(errOut, "FRIEND CAPACITY %s: use nova-sprint capacity friend --as <actor> --machine <m> %s <slots>\n", *as, *as)
+		return 1
+	}
 	// #2929 rev 4: hello is a take and obeys the seat contract. Both refusals
 	// come before openLifeStore: no dial, no UP write, no beat, no receipt.
 	initiator := os.Getenv(seatEnv)

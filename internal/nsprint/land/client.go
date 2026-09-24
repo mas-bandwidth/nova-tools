@@ -276,14 +276,18 @@ func CallRequeue(ctx context.Context, c *redis.Client, repo, base, batchID strin
 	return fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
 }
 
-// CallBatchVoid calls ns_batch_void.
-func CallBatchVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, reason string) error {
-	res, err := c.FCall(ctx, "ns_batch_void", nil, sprint, repo, base, batchID, reason).Text()
+// CallBatchVoid calls ns_batch_void (lease-fenced like every batcher write, 2.3): a stale caller
+// gets a *RefusedError and nothing is written.
+func CallBatchVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, reason string) error {
+	res, err := c.FCall(ctx, "ns_batch_void", nil, sprint, repo, base, batchID, leaseVal, reason).StringSlice()
 	if err != nil {
 		return err
 	}
-	if res != "OK" {
-		return fmt.Errorf("ns_batch_void failed: %s", res)
+	if len(res) >= 2 && res[0] == "REFUSED" {
+		return &RefusedError{Fn: "ns_batch_void", Reason: res[1]}
+	}
+	if len(res) == 0 || res[0] != "OK" {
+		return fmt.Errorf("ns_batch_void %s: %v", batchID, res)
 	}
 	return nil
 }
@@ -325,4 +329,89 @@ func CallPubState(ctx context.Context, c *redis.Client, repo, base, batchID, sta
 // CallLand calls ns_land.
 func CallLand(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, trainHead, mergeSHAsCSV, landCycle string) (string, error) {
 	return c.FCall(ctx, "ns_land", nil, sprint, repo, base, batchID, leaseVal, trainHead, mergeSHAsCSV, landCycle).Text()
+}
+
+// PlanParams names one ns_batch_plan call (4.4). An empty BatchID is minted as b<seq>; ChainMax 0
+// means the spec's starting depth, 4.
+type PlanParams struct {
+	Sprint, Repo, Base, BatchID, Lease string
+	Members                            []string // ordered unit@head
+	Paths                              []string
+	Class, FromTip, InputID, Parent    string
+	ChainMax                           int
+}
+
+// PlanRefusedError is ns_batch_plan's refusal; Reason is the PLAN REFUSED text (overlap=<path>,
+// roadmap-path=<p>, stack-parent=<u>, no unit, chain_max, ...).
+type PlanRefusedError struct{ Reason string }
+
+func (e *PlanRefusedError) Error() string { return "REFUSED " + e.Reason }
+
+// CallPlan calls ns_batch_plan with the parent and chain depth; it returns the batch id it wrote.
+func CallPlan(ctx context.Context, c *redis.Client, p PlanParams) (batchID, token, entryID string, err error) {
+	chainMax := ""
+	if p.ChainMax > 0 {
+		chainMax = strconv.Itoa(p.ChainMax)
+	}
+	res, err := c.FCall(ctx, "ns_batch_plan", nil, p.Sprint, p.Repo, p.Base, p.BatchID, p.Lease,
+		strings.Join(p.Members, ","), strings.Join(p.Paths, ","), p.Class, p.FromTip, p.InputID, p.Parent, chainMax).Slice()
+	if err != nil {
+		return "", "", "", err
+	}
+	if len(res) >= 2 && res[0] == "REFUSED" {
+		return "", "", "", &PlanRefusedError{Reason: fmt.Sprint(res[1])}
+	}
+	if len(res) < 4 || res[0] != "OK" {
+		return "", "", "", fmt.Errorf("ns_batch_plan failed: %v", res)
+	}
+	return fmt.Sprint(res[3]), fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
+}
+
+// RefusedError is a nova_sprint write function's refusal: the writer gen or the publisher lease
+// did not match (lease mismatch, lease gen mismatch, writer owner not nova-sprint), so it wrote
+// nothing.
+type RefusedError struct{ Fn, Reason string }
+
+func (e *RefusedError) Error() string { return e.Fn + " REFUSED " + e.Reason }
+
+func refusedText(fn, r string) (string, error) {
+	if reason, ok := strings.CutPrefix(r, "REFUSED "); ok {
+		return "", &RefusedError{Fn: fn, Reason: reason}
+	}
+	return r, nil
+}
+
+// CallBatchBind calls ns_batch_bind under the lease: OK or STALE; a lost lease is a *RefusedError.
+func CallBatchBind(ctx context.Context, c *redis.Client, repo, base, batchID, leaseVal, fromTip, inputID string) (string, error) {
+	r, err := c.FCall(ctx, "ns_batch_bind", nil, repo, base, batchID, leaseVal, fromTip, inputID).Text()
+	if err != nil {
+		return "", err
+	}
+	return refusedText("ns_batch_bind", r)
+}
+
+// CallUnitDrop calls ns_unit_drop under the lease: OK, ALREADY, STALE or NOTFOUND; a lost lease is a
+// *RefusedError. A non-empty task queues one task of that kind on q:<author>.
+func CallUnitDrop(ctx context.Context, c *redis.Client, sprint, unit, repo, base, leaseVal, head, reason, task string) (string, error) {
+	r, err := c.FCall(ctx, "ns_unit_drop", nil, sprint, unit, repo, base, leaseVal, head, reason, task).Text()
+	if err != nil {
+		return "", err
+	}
+	return refusedText("ns_unit_drop", r)
+}
+
+// CallChainVoid calls ns_chain_void under the lease; it returns the batches voided behind batchID,
+// in chain order. A lost lease is a *RefusedError.
+func CallChainVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, reason string) ([]string, error) {
+	res, err := c.FCall(ctx, "ns_chain_void", nil, sprint, repo, base, batchID, leaseVal, reason).StringSlice()
+	if err != nil {
+		return nil, err
+	}
+	if len(res) >= 2 && res[0] == "REFUSED" {
+		return nil, &RefusedError{Fn: "ns_chain_void", Reason: res[1]}
+	}
+	if len(res) == 0 || res[0] != "OK" {
+		return nil, fmt.Errorf("ns_chain_void %s: %v", batchID, res)
+	}
+	return res[1:], nil
 }

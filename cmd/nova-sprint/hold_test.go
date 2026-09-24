@@ -68,7 +68,21 @@ func (e *holdEnv) run(args ...string) (int, string, string) {
 	return code, out.String(), errb.String()
 }
 
-// friends registers each friend through the real writer, friend hello.
+// register writes a friend's desired capacity through the one width writer,
+// `capacity friend` (#2934); friend hello never registers or sets slots.
+func (e *holdEnv) register(f string, slots int) {
+	e.t.Helper()
+	if err := e.c.HSetNX(context.Background(), "machine:ctl:ceiling", "slots", 64).Err(); err != nil {
+		e.t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if code := run([]string{"capacity", "friend", "--redis", e.addr, "--as", "config", "--machine", "ctl", f, strconv.Itoa(slots)}, &out, &errb); code != 0 {
+		e.t.Fatalf("capacity friend %s %d: exit %d %s", f, slots, code, errb.String())
+	}
+}
+
+// friends registers each friend through the real writers: capacity friend,
+// then friend hello.
 func (e *holdEnv) friends(names ...string) {
 	e.t.Helper()
 	ctx := context.Background()
@@ -76,6 +90,7 @@ func (e *holdEnv) friends(names ...string) {
 		e.t.Fatal(err)
 	}
 	for _, f := range names {
+		e.register(f, 0)
 		if code, _, errOut := e.run("friend", "hello", "--as", f, "--once", "--host", "ctl", "--session", "ctl-"+f); code != 0 {
 			e.t.Fatalf("hello %s: exit %d %s", f, code, errOut)
 		}
@@ -258,7 +273,8 @@ func TestIngestDeployedLines(t *testing.T) {
 		t.Fatalf("friends or friends:login present at start (%d)", n)
 	}
 	e.friends("stella", "johnny")
-	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--slots", "32", "--login", "rowan-claude",
+	e.register("rowan", 32)
+	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--login", "rowan-claude",
 		"--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
 		t.Fatalf("hello rowan --login: %d %s", code, errOut)
 	}
@@ -384,7 +400,8 @@ func TestIngestDeployedLines(t *testing.T) {
 	e2 := newHoldEnv(t, "s-contrast")
 	e2.policy("rowan", "stella")
 	e2.c.HSet(ctx, "machine:ctl:ceiling", "slots", 64)
-	hello := []string{"friend", "hello", "--as", "rowan", "--slots", "32", "--once", "--host", "ctl", "--session", "ctl-rowan"}
+	e2.register("rowan", 32)
+	hello := []string{"friend", "hello", "--as", "rowan", "--once", "--host", "ctl", "--session", "ctl-rowan"}
 	if code, _, errOut := e2.run(hello...); code != 0 {
 		t.Fatalf("contrast hello: %s", errOut)
 	}
@@ -430,6 +447,7 @@ func TestControl40(t *testing.T) {
 	ctx := context.Background()
 	e := newHoldEnv(t, "s40")
 	e.friends("stella", "johnny")
+	e.register("rowan", 0)
 	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--login", "rowan-claude", "--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
 		t.Fatal(errOut)
 	}
@@ -528,8 +546,9 @@ func TestHoldRouteOneOwner(t *testing.T) {
 	if err := e.c.HSet(ctx, "s:"+e.S, "status", "open").Err(); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--slots", "4", "--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
-		t.Fatalf("hello rowan --slots 4: %s", errOut)
+	e.register("rowan", 4)
+	if code, _, errOut := e.run("friend", "hello", "--as", "rowan", "--once", "--host", "ctl", "--session", "ctl-rowan"); code != 0 {
+		t.Fatalf("hello rowan (4 slots): %s", errOut)
 	}
 	claims, err := task.TakeAvailable(ctx, st, "rowan", e.S, fix6, 1, "rowan", "take-fix6")
 	if err != nil || len(claims) != 1 {
@@ -1042,8 +1061,9 @@ func (e *holdEnv) reviewTask(pr int, head, f string) (string, string) {
 	if err := e.c.HSet(ctx, "s:"+e.S, "status", "open").Err(); err != nil {
 		e.t.Fatal(err)
 	}
-	if code, _, errOut := e.run("friend", "hello", "--as", f, "--slots", "8", "--once", "--host", "ctl", "--session", "ctl-"+f); code != 0 {
-		e.t.Fatalf("hello %s --slots 8: %s", f, errOut)
+	e.register(f, 8)
+	if code, _, errOut := e.run("friend", "hello", "--as", f, "--once", "--host", "ctl", "--session", "ctl-"+f); code != 0 {
+		e.t.Fatalf("hello %s (8 slots): %s", f, errOut)
 	}
 	claims, err := task.TakeAvailable(ctx, st, f, e.S, id, 1, f, "take-"+id)
 	if err != nil || len(claims) != 1 {

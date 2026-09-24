@@ -32,16 +32,25 @@ local function pl_caplog(kind, subject, reason, actor, idem, at)
     'actor', actor or '', 'idem', idem or '', 'at', tostring(at))
 end
 
--- friend_hello registers on the first call and refreshes the beat. A slot
--- change obeys the same machine-wide ceiling as capacity friend. The friend
--- registry is durable across bye: assigned work can still target a down friend.
+-- friend_hello refreshes presence for a friend already registered by
+-- ns_capacity_desired. It never registers a friend or writes desired capacity.
+-- The registry is durable across bye: assigned work can still target a down friend.
 local function friend_hello(keys, args)
-  local friend, slots = args[1], tonumber(args[2])
+  local friend = args[1]
+  local slots = tonumber(args[2]) -- compatibility argument; deliberately ignored
   local harness, host, session = args[3], args[4], args[5]
   local machine_hint, actor, idem = args[6], args[7], args[8]
-  if not friend or friend == '' or not slots or slots < -1 or
+  if not friend or friend == '' or
       not host or host == '' or not session or session == '' then
     return { 'INVALID' }
+  end
+  -- NAME-IS-LOGIN (#3092 rev 6) comes before UNREGISTERED: a mapped login
+  -- is refused by name on every hello, never reported as merely unknown.
+  if redis.call('HEXISTS', 'friends:login', friend) == 1 then
+    return { 'NAME-IS-LOGIN', friend }
+  end
+  if redis.call('SISMEMBER', 'friends', friend) == 0 then
+    return { 'UNREGISTERED' }
   end
   local beat_key = 'friend:' .. friend .. ':beat'
   local current_session = redis.call('HGET', beat_key, 'session')
@@ -50,30 +59,12 @@ local function friend_hello(keys, args)
   end
   local desired_key = 'friend:' .. friend .. ':desired'
   local machine = redis.call('HGET', desired_key, 'machine')
-  if not machine or machine == '' then
-    machine = machine_hint ~= '' and machine_hint or host
-  elseif machine_hint ~= '' and machine ~= machine_hint then
+  local current_slots = tonumber(redis.call('HGET', desired_key, 'slots') or '')
+  if not machine or machine == '' or not current_slots then
+    return { 'UNREGISTERED' }
+  end
+  if machine_hint ~= '' and machine ~= machine_hint then
     return { 'MACHINE' }
-  end
-  local current_slots = tonumber(redis.call('HGET', desired_key, 'slots') or '0')
-  if slots == -1 then slots = current_slots end
-  local ceiling = tonumber(redis.call('HGET', 'machine:' .. machine .. ':ceiling', 'slots') or '')
-  if not ceiling then
-    return { 'NOCEILING' }
-  end
-  local sum = slots
-  for _, other in ipairs(redis.call('SMEMBERS', 'friends')) do
-    if other ~= friend and redis.call('HGET', 'friend:' .. other .. ':desired', 'machine') == machine then
-      sum = sum + tonumber(redis.call('HGET', 'friend:' .. other .. ':desired', 'slots') or '0')
-    end
-  end
-  for _, bench in ipairs(redis.call('SMEMBERS', 'benches')) do
-    if redis.call('HGET', 'bench:' .. bench .. ':desired', 'machine') == machine then
-      sum = sum + tonumber(redis.call('HGET', 'bench:' .. bench .. ':desired', 'slots') or '0')
-    end
-  end
-  if sum > ceiling then
-    return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
   end
   -- Login aliases (#3092 rev 6): args[9..] are `--login` values. This is the
   -- only writer of friends:login; every alias is checked before any write.
@@ -82,9 +73,6 @@ local function friend_hello(keys, args)
   -- one request are written (and receipted) once.
   local logins = {}
   local seen = {}
-  if redis.call('HEXISTS', 'friends:login', friend) == 1 then
-    return { 'NAME-IS-LOGIN', friend }
-  end
   for i = 9, #args do
     local alias = args[i]
     if not seen[alias] then
@@ -106,15 +94,10 @@ local function friend_hello(keys, args)
   end
   local at = pl_now_ms()
   local was_up = redis.call('EXISTS', beat_key)
-  redis.call('SADD', 'friends', friend)
   for _, alias in ipairs(logins) do
     redis.call('HSET', 'friends:login', alias, friend)
     pl_caplog('friend-login', friend, alias, actor, idem, at)
   end
-  local paused = redis.call('HGET', desired_key, 'paused') or '0'
-  redis.call('HSET', desired_key,
-    'slots', tostring(slots), 'machine', machine, 'paused', paused,
-    'at', tostring(at))
   redis.call('HSET', beat_key,
     'harness', harness or '', 'host', host, 'session', session,
     'at', tostring(at))
@@ -122,7 +105,7 @@ local function friend_hello(keys, args)
   if was_up == 0 then
     pl_caplog('friend-up', friend, '', actor, idem, at)
   end
-  return { 'UP', tostring(slots), tostring(was_up) }
+  return { 'UP', tostring(current_slots), tostring(was_up) }
 end
 
 -- friend_beat refreshes one live friend's beat. A friend that is not
