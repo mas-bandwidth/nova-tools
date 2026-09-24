@@ -113,16 +113,17 @@ func TestPullRequestCheckRunAndDispositionEachBecomeOneEntry(t *testing.T) {
 			event: "check_run",
 			file:  "check_run.json",
 			want: map[string]string{
-				"repo":         "mas-bandwidth/nova-tools",
-				"kind":         "check_run",
-				"number":       "42",
-				"head":         "2222222222222222222222222222222222222222",
-				"action":       "completed",
-				"at":           "2026-09-22T16:46:02Z",
-				"sender":       "octocat",
-				"comment_id":   "",
+				"repo":       "mas-bandwidth/nova-tools",
+				"kind":       "check_run",
+				"number":     "42",
+				"head":       "2222222222222222222222222222222222222222",
+				"action":     "completed",
+				"at":         "2026-09-22T16:46:02Z",
+				"sender":     "octocat",
+				"comment_id": "",
+				// check_run adds its check name, id, status and conclusion (#3040).
 				"check":        "windows",
-				"check_run_id": "100",
+				"check_run_id": "4100000100",
 				"status":       "completed",
 				"conclusion":   "success",
 			},
@@ -492,88 +493,44 @@ func TestACarriedEventWithBadJSONWritesNothing(t *testing.T) {
 	}
 }
 
+// A check_run entry names its check, its id, its status and its conclusion
+// (nova-tools #3040 rev 4 gap 7): pr-to-read keys runner rows by the check
+// name and orders attempts by (gen, check_run_id, status rank, at). A
+// rerequested delivery carries the old completed/success payload under the
+// same id, with at = its completed_at, per applyCheck.
 func TestCheckRunEntryCarriesNameIDStatus(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name       string
-		file       string
-		wantAction string
-		wantCheck  string
-		wantID     string
-		wantStatus string
-		wantConcl  string
-		wantAt     string
+	for _, tc := range []struct {
+		file   string
+		action string
 	}{
-		{
-			name:       "completed",
-			file:       "check_run.json",
-			wantAction: "completed",
-			wantCheck:  "windows",
-			wantID:     "100",
-			wantStatus: "completed",
-			wantConcl:  "success",
-			wantAt:     "2026-09-22T16:46:02Z",
-		},
-		{
-			name:       "rerequested",
-			file:       "check_run_rerequested.json",
-			wantAction: "rerequested",
-			wantCheck:  "windows",
-			wantID:     "100",
-			wantStatus: "completed",
-			wantConcl:  "success",
-			wantAt:     "2026-09-22T16:46:02Z",
-		},
-	}
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
+		{"check_run.json", "completed"},
+		{"check_run_rerequested.json", "rerequested"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
 			t.Parallel()
-			b := fixture(t, tc.file)
-			e, err := Decode("check_run", b)
+			e, err := Decode("check_run", fixture(t, tc.file))
 			if err != nil {
-				t.Fatalf("Decode: %v", err)
+				t.Fatal(err)
 			}
-			if e.Action != tc.wantAction {
-				t.Errorf("Action = %q, want %q", e.Action, tc.wantAction)
+			if e.Check != "windows" || e.CheckRunID != "4100000100" || e.Status != "completed" ||
+				e.Conclusion != "success" || e.At != "2026-09-22T16:46:02Z" || e.Action != tc.action {
+				t.Fatalf("entry = check %q id %q status %q conclusion %q at %q action %q; want windows 4100000100 completed success 2026-09-22T16:46:02Z %s",
+					e.Check, e.CheckRunID, e.Status, e.Conclusion, e.At, e.Action, tc.action)
 			}
-			if e.Check != tc.wantCheck {
-				t.Errorf("Check = %q, want %q", e.Check, tc.wantCheck)
-			}
-			if e.CheckRunID != tc.wantID {
-				t.Errorf("CheckRunID = %q, want %q", e.CheckRunID, tc.wantID)
-			}
-			if e.Status != tc.wantStatus {
-				t.Errorf("Status = %q, want %q", e.Status, tc.wantStatus)
-			}
-			if e.Conclusion != tc.wantConcl {
-				t.Errorf("Conclusion = %q, want %q", e.Conclusion, tc.wantConcl)
-			}
-			if e.At != tc.wantAt {
-				t.Errorf("At = %q, want %q", e.At, tc.wantAt)
-			}
-			fields, err := Fields(e)
+			v, err := Fields(e)
 			if err != nil {
-				t.Fatalf("Fields: %v", err)
+				t.Fatal(err)
 			}
-			for _, k := range []string{"check", "check_run_id", "status", "conclusion"} {
-				if _, ok := fields[k]; !ok {
-					t.Errorf("Fields missing key %q", k)
+			for k, want := range map[string]string{"check": "windows", "check_run_id": "4100000100",
+				"status": "completed", "conclusion": "success", "action": tc.action} {
+				if got, _ := v[k].(string); got != want {
+					t.Errorf("Fields[%s] = %q, want %q", k, got, want)
 				}
 			}
-			if fields["check"] != tc.wantCheck {
-				t.Errorf("fields[check] = %q, want %q", fields["check"], tc.wantCheck)
-			}
-			if fields["check_run_id"] != tc.wantID {
-				t.Errorf("fields[check_run_id] = %q, want %q", fields["check_run_id"], tc.wantID)
-			}
-			if fields["status"] != tc.wantStatus {
-				t.Errorf("fields[status] = %q, want %q", fields["status"], tc.wantStatus)
-			}
-			if fields["conclusion"] != tc.wantConcl {
-				t.Errorf("fields[conclusion] = %q, want %q", fields["conclusion"], tc.wantConcl)
+			if len(v) != 12 {
+				t.Errorf("Fields has %d keys, want the 8 common and check, check_run_id, status, conclusion: %v", len(v), v)
 			}
 		})
 	}
 }
-

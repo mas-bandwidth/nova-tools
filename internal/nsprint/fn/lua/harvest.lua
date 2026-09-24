@@ -177,6 +177,7 @@ do
     redis.call('HSET', 's:' .. S .. ':prcard', repo .. '#' .. pr, label)
     redis.call('SREM', 's:' .. S .. ':idx:card:ended', label)
     redis.call('SADD', 's:' .. S .. ':idx:card:harvested', label)
+    redis.call('HSET', 's:' .. S .. ':prcard', repo .. '#' .. pr, label) -- pr-to-read skips card PRs (#3040)
     redis.call('HSET', idem_key, idem, receipt)
     return 'OK|' .. receipt
   end)

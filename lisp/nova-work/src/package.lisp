@@ -30,12 +30,13 @@
    #:journal-uncertain-write-reason
    #:journal-held
    #:journal-held-path
-   ;; restricted data and canonical serialization
-   #:+absent+
-   #:absentp
-   #:canonical-string
-   #:canonical-print
-   #:read-restricted
+;; restricted data and canonical serialization
+    #:+absent+
+    #:absentp
+    #:canonical-string
+    #:canonical-print
+    #:read-restricted
+    #:roadmap-bug-counts
    ;; digest
    #:sha256-hex
    ;; events
@@ -311,6 +312,8 @@
     #:fetch-link
     #:*link-fetch-count*
     #:node-add
+    #:decompose-node
+    #:%bug-child-id-p
     #:node-repo
     #:repo-holder
     #:node-type
@@ -324,6 +327,15 @@
     #:dep-edit
     #:%dep-submit
     #:node-structure-log
+    ;; the scope and ordering verbs (E03-F03, SPEC-WORK.md:2929)
+    #:node-require
+    #:baseline
+    #:discovery
+    #:prioritise
+    #:%scope-submit
+    #:node-required-p
+    #:node-baseline
+    #:node-priority
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note
@@ -1421,6 +1433,7 @@
     #:archive-capture-gaps
     #:archive-gaps-explicit-p
     #:archive-absorbable-p
+    #:archive-deletion-gate
     #:author-retains-source-p
     ;; replays-8642: bounds-are-not-prompts
     #:launcher #:make-launcher
@@ -1590,6 +1603,17 @@
    #:capture-consistent-claim
    #:source-version-value
    #:source-capture-reconciled-p
+   ;; E07-F04-01 imported baseline (SPEC-WORK.md:7785-7786,7826-7827)
+   #:baseline-import-refused
+   #:import-baseline
+   #:imported-baseline-source-revision
+   #:imported-baseline-completion-unit
+   #:imported-baseline-members
+   #:imported-baseline-supersessions
+   #:baseline-provenance
+   #:baseline-supersede
+   #:baseline-add-report
+   #:baseline-accounting
    #:make-dispatch-packet
    #:make-dispatch-route
    #:dispatch-gates
@@ -1891,9 +1915,27 @@
     #:prompt-profile-evidence
     #:prompt-profile-expiry
     #:prompt-profile-owner
+    #:prompt-profile-model
+    #:prompt-profile-harness
+    #:prompt-profile-work-type
     #:prompt-profile-state
     #:prompt-profile-status-line
     #:prompt-profile-invocation
+    #:make-profile-registry
+    #:profile-registry-profiles
+    #:profile-registry-journal
+    #:profile-triple
+    #:profile-registry-find
+    #:profile-registry-find-triple
+    #:register-profile
+    #:make-profile-edit-record
+    #:profile-edit-record-profile-name
+    #:profile-edit-record-version
+    #:profile-edit-record-fields
+    #:profile-edit-record-by
+    #:profile-edit-record-stamp
+    #:profile-edit
+    #:profile-edit-journal
     #:make-machine-record
     #:machine-record-id
     #:machine-record-name
@@ -2242,6 +2284,15 @@
     #:staged-bytes-on-disk
     #:reconcile-capture-stage
     #:admit-staged-result
+    ;; E09-F04-01 link versus absorb (SPEC-WORK.md:7586-7617): link is the
+    ;; default; absorb needs its explicit mode, scope and authority.
+    #:capture-stage-absorb-allowed
+    #:capture-stage-intake-mode
+    #:capture-stage-absorb-repositories
+    #:capture-stage-absorb-authors
+    #:capture-stage-absorb-authority
+    #:validate-absorb-selection
+    #:capture-absorb-allowed-p
     ;; E02 `session export --state --at` (SPEC-WORK.md:3197-3223): the flag
     ;; validation, the pinned revision, the resident one-long-operation form and
     ;; the offline snapshot form.

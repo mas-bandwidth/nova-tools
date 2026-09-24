@@ -359,6 +359,8 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
 nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
+nova-memory view   [--exclude <glob>]... [--max <n>] <file>...
+                                                                        the companion view: a chronological timeline of shared moments, sources never rewritten
 ```
 
 ### First run
@@ -840,7 +842,7 @@ Every harvested pull request, before any friend sees it (#2565). It fetches the 
 **The line starts `JEV`, never `DISPOSITION`, and carries neither APPROVE nor HOLD.** Its verdict is `PASS`, `BOUNCE` or `UNSURE`. Both landers read a verdict by its *shape* from any scanned account — the bash lander's `verdict_of`/`scan_body` and the Go gate's `ParseComment` (`internal/merge/verdict.go`) take a `DISPOSITION ... verdict=HOLD` line from `rowan-claude` as a hold, and `bin/land-loop-schema` counts any `verdict=APPROVE ... score=N/10` line from a FRIENDS login — so the earlier `DISPOSITION who=jev ... verdict=HOLD` shape, posted from `rowan-claude`, would have been read as a HOLD on every pull request it held. Every body line is defanged the same way: upper-case verdict words are lowered, and no line starts with `DISPOSITION`, `HOLD` or `#`, or carries bold.
 
 ```
-JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
+JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
 ```
 
 The body under it is one line per check with its evidence, the token counts, and a sentence saying it lands nothing.
@@ -859,7 +861,7 @@ A check with nothing to decide on answers **`missing`, never `fail`** — an abs
 
 ```
 $ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
-JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6 model=jev-latest cost=$- explain=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod
+JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6 model=jev-latest cost=$- explain=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod
 ```
 
 **The symbol check is two-sided, and one side alone gets it wrong.** "Does the file mention a generated symbol" says *yes* to schema#1459, which calls the real `tableFixedSelect` for half its assertions and writes `// Simulate exactly what FixedLoad does` for the other half. So the check asks for a generated symbol **and** the absence of a self-check tell, and every tell cites the pull request a friend read it out of. That is also its honest limit: it is calibrated on 122 cells of one repository's conformance legs, and a tell is a string a future card can avoid writing while doing the same thing. It bounces a card to a recut; it lands nothing.
@@ -868,7 +870,9 @@ JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=
 
 **One question, one call, one price.** `ScoreLevels` is ten levels in a fixed order: Jev is order-sensitive, so the same ten shuffled are a different question and a score from one ordering cannot be compared with one from another. A test pins the ordering by hash. The raw provider answer travels into the ledger beside the 1-10 that was printed, so that if the provider ever answers in level *indexes* rather than in the numbering the levels carry, both numbers are on the record and somebody can tell.
 
-`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). `--ledger redis` (or `--ledger file,redis`) writes one `kind=jev` entry on `cards:done` (the fleet Redis `--store`, default `NOVA_REDIS_ADDR`), with `--user` (alias `--store-user`) and `--password-env` (alias `--store-password-env`, default `NOVA_REDIS_BENCH_PASSWORD`).
+**Confidence, rubric version, and base gate on every line.** `conf=` is the provider's reported confidence (or `-` when unscored). `rubric=` is the 8-character sha256 prefix of `ScoreLevels` (`816c4381`), pinning which question levels produced the score. `base=ok|behind|conflict` is the base gate, derived from GitHub PR mergeability (`mergeable`, `mergeStateStatus`) or `git merge-tree` / `git merge-base`.
+
+`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). The ledger row carries `who=jev`, `conf`, `rubric`, `base`, and both raw and mapped scores. `--ledger redis` (or `--ledger file,redis`) writes one `kind=jev` entry on `cards:done` (the fleet Redis `--store`, default `NOVA_REDIS_ADDR`), with `--user` (alias `--store-user`) and `--password-env` (alias `--store-password-env`, default `NOVA_REDIS_BENCH_PASSWORD`).
 
 `--no-jev` runs the mechanical checks alone: no key is read, nothing is dialled, and the line prints `score=-` rather than a zero nobody gave, with `model=none cost=$0.0000`. `--record` writes each provider answer as a fixture and `--replay` reads them back, which is how the tests run: a Jev call costs money, so the 122-cell pass ran **once** (`internal/prereview/testdata/jev-2026-09-22/RUN.md` is that run's receipt) and everything since replays it.
 
@@ -3716,6 +3720,14 @@ entire tree the card started — grandchildren included, never just the leader �
 `usage.tsv` from what it had up to the kill, so the spend is known. A `SIGTERM` from outside
 (the manager) is handled the same way: the tree is reaped, `usage.tsv` is written, and the
 `NATIVE OK` line carries `reason=terminated` instead of a silent exit.
+
+**A launch that started always prints a verdict, and `native` never exits 255 (#2058).**
+The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and `NATIVE REFUSED`. A darwin
+OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md` and exited 255
+prints exactly one `NATIVE INCOMPLETE` with `rc=255` and `why=rc`, never OK or REFUSED.
+Passing 255 through made a fill loop retry a finished card. Local ssh(1) exits 255 for
+any error; that is not proof the remote command never started, so the outcome is
+potentially UNKNOWN and a retry waits on reconciliation. The process exits 1.
 
 ### First run
 

@@ -67,24 +67,38 @@ type batchStep struct {
 	env []string
 }
 
+func (s batchStep) toMerge() merge.Step {
+	return merge.Step{
+		Name:    s.name,
+		Command: s.command,
+		Needs:   s.needs,
+		File:    s.file,
+		Stream:  s.stream,
+		Env:     s.env,
+	}
+}
+
+func fromMergeStep(s merge.Step) batchStep {
+	return batchStep{
+		name:    s.Name,
+		command: s.Command,
+		needs:   s.Needs,
+		file:    s.File,
+		stream:  s.Stream,
+		env:     s.Env,
+	}
+}
+
 // batchGate is the suite, in order. A step whose program or file is missing is SKIPPED
 // OUT LOUD: a gate that quietly ran three of its four steps and printed OK is a gate that
 // says green about a thing it did not check.
-var batchGate = []batchStep{
-	{name: "build", command: "go build ./...", needs: "go"},
-	{name: "vet", command: "go vet ./...", needs: "go"},
-	// EDGE 25, batch 7: THE GATE RUNS ON ONE OPERATING SYSTEM AND CI RUNS ON THREE.
-	// Three members went green under the gate on linux and red on CI's windows legs --
-	// cmd/nova-sandbox's path fixtures and internal/dogfood's exec-bit discovery -- and
-	// the batch pull request went red after the gate had said OK. A cross vet is cheap,
-	// needs no second machine, and catches the whole BUILD-level half of that class: a
-	// file that does not compile for windows, a syscall that is not there, a constant
-	// that is unix-only. It does not catch a windows-only TEST failure, which is what
-	// the forge's own windows leg is for; the gate says what it checked and no more.
-	{name: crossVetStep, command: "go vet ./...", needs: "go", env: []string{"GOOS=windows", "GOARCH=amd64", "CGO_ENABLED=0"}},
-	{name: "test", command: strings.Join(ciTestArgs(), " "), needs: "go", stream: true},
-	{name: "lisp", command: "sh tools/ci/lisp-test.sh", needs: "sbcl", file: "tools/ci/lisp-test.sh"},
-}
+var batchGate = func() []batchStep {
+	out := make([]batchStep, len(merge.FullClassSteps))
+	for i, s := range merge.FullClassSteps {
+		out[i] = fromMergeStep(s)
+	}
+	return out
+}()
 
 // crossVetStep is the cross vet's name, and it is a constant because it is THE ONE STEP A
 // UNIT TEST MUST NOT RUN.
@@ -1460,21 +1474,7 @@ func batchRefused(stderr io.Writer, err error) int {
 // second answer is the directory the program was found in when it was found OFF PATH, so
 // the caller can put that directory in front of the step's own PATH.
 func stepUnavailable(step batchStep, clone string) (why, binDir string) {
-	if step.file != "" {
-		if _, err := os.Stat(filepath.Join(clone, filepath.FromSlash(step.file))); err != nil {
-			return "this checkout holds no " + step.file, ""
-		}
-	}
-	if step.needs != "" {
-		if _, err := exec.LookPath(step.needs); err == nil {
-			return "", ""
-		}
-		if dir := lookInSDK(step.needs); dir != "" {
-			return "", dir
-		}
-		return step.needs + " is not on this machine and is not under " + filepath.Join("~", sdkDir), ""
-	}
-	return "", ""
+	return merge.StepUnavailable(step.toMerge(), clone)
 }
 
 // lookInSDK is the one place off PATH this gate looks: `~/sdk/<anything>/bin/<program>`.
@@ -1485,28 +1485,7 @@ func stepUnavailable(step batchStep, clone string) (why, binDir string) {
 // The newest match wins by name, which is how these directories sort: sbcl-2.5.8 after
 // sbcl-2.4.0. A directory that holds no such program is skipped rather than guessed at.
 func lookInSDK(program string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	entries, err := os.ReadDir(filepath.Join(home, sdkDir))
-	if err != nil {
-		return ""
-	}
-	found := ""
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		bin := filepath.Join(home, sdkDir, e.Name(), "bin")
-		for _, name := range []string{program, program + ".exe"} {
-			if info, err := os.Stat(filepath.Join(bin, name)); err == nil && !info.IsDir() {
-				found = bin
-				break
-			}
-		}
-	}
-	return found
+	return merge.LookInSDK(program)
 }
 
 // parsePRList reads the pull request numbers, separated by commas or spaces, in the

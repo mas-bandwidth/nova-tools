@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,6 +69,9 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
+	// (issue #591).
+	netAllow string
 	// bodySilence is the gap, after response headers, with no body bytes, that
 	// ends the attempt UNKNOWN. Zero means ProviderBodySilence (45s). Production
 	// leaves it zero. A test may set a shorter gap so the suite does not wait 45s.
@@ -134,6 +139,7 @@ type nativeRunResult struct {
 	harness      string            // ok | silent: silent when the capture holds no words of the child's and no result was found
 	fence        string            // the first path the harness's own fence auto-rejected, "" when it rejected nothing
 	wallReport   string            // the WALL report line when the fence stopped the card and it published nothing (issue #918)
+	reason       string            // harness-silent when the child exited 0 but wrote no report, "" otherwise
 	wallRefusal  swarm.WallRefusal // the path and step a wall refused, zero when it refused nothing
 	shellDenial  swarm.ShellDenial // a denial the card's own shell reported, zero when it reported none (issue #1465)
 	end          string            // the end the usage row records: done, failed, wall, or unknown
@@ -208,7 +214,7 @@ var (
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
-func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code int) {
 	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
@@ -502,13 +508,33 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
 	// this step is skipped entirely for one. When a description IS given and --auth is
 	// used, the copy is the legacy path and one NOTE line says so.
+	//
+	// AND THE COPY DIES WITH THE CARD. The child reads the copy for as long as it runs
+	// -- every launch of a retried card included -- and when the run returns by any path
+	// the copy is removed: a plaintext key file that outlives its card is the bench
+	// standard's plaintext-key drift (docs/SPEC-SECRETS.md, the dogfooding ten), left
+	// in a data home the hygiene reap may not visit for days. The secret shape still
+	// writes nothing at all.
 	if cfg.authFile != "" {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
 		}
+		// A copy the cleanup could not remove is not a NOTE: the card had write access to
+		// the data home and may have made it read-only to keep the key (a chmod 0555 of
+		// dataHome or dataHome/opencode). removeAuthCopy takes the write bit back before it
+		// unlinks, and any copy still on disk after that fails the run with one REFUSED
+		// line naming it, so a plaintext key never outlives its card silently.
+		defer func() {
+			if left := removeAuthCopy(dataHome, errOut); len(left) > 0 {
+				refuseNative(errOut, fmt.Sprintf("the auth copy outlived the card: %s is still on disk after the run's cleanup", oneline.Field(strings.Join(left, ","))))
+				if code == 0 {
+					code = 2
+				}
+			}
+		}()
 		if cfg.worker != nil {
-			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
+			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600, and the copy is removed when the run ends; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
 				oneline.Field(cfg.authFile))
 		}
 	}
@@ -569,6 +595,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		if cfg.onProxy != nil {
 			cfg.onProxy(proxy)
 		}
+	}
+	// The keyless provider's loopback host:port travels to the wall as --net-allow
+	// (issue #591): (allow network-outbound (remote ip)) does not reach 127.0.0.1, so a
+	// local-model card runs and dies silently without the named grant.
+	if cfg.configFile != "" {
+		cfg.netAllow = providerLoopback(cfg.configFile, provider)
 	}
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
@@ -1205,6 +1237,17 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	if res.unrecorded {
 		return res, 2
 	}
+	// (6) THE SILENT HARNESS (issue #591). A harness that exits clean without writing its
+	// report -- the RESULT.md a card's answer lands in -- is not a pass. It is a harness that
+	// was blocked before it could answer: a keyless provider on a loopback the wall did not
+	// open exits 0 silently, leaving no report and no log. The run records that as a
+	// harness-silent note, never a NATIVE OK.
+	if res.rc == 0 {
+		if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
+			res.reason = "harness-silent"
+		}
+	}
+
 	return res, 0
 }
 
@@ -1363,9 +1406,10 @@ func harnessSpoke(path string) bool {
 }
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test
-// harnessState applies to a result, so an empty RESULT.md is nothing published.
+// harnessState applies to a result, so an empty RESULT.md is nothing published. Lstat, not
+// Stat: a planted symlink is not a published result (issue #233).
 func wroteBytes(path string) bool {
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
@@ -1414,6 +1458,11 @@ func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, t
 		argv = append(argv, "--write", swarm.CacheRoot(cfg.root))
 	}
 	argv = append(argv, "--cwd", jobDir)
+	// The keyless provider's loopback address is opened back up by name, never by widening
+	// the wall's network promise (issue #591).
+	if cfg.netAllow != "" {
+		argv = append(argv, "--net-allow", cfg.netAllow)
+	}
 	// The shell launcher read the harness's own directory and /opt/homebrew so git and the
 	// harness's libraries resolve inside the wall; the native path does the same (run 7).
 	// Without the harness directory the wall denies even the resolver's own files, and
@@ -2036,6 +2085,41 @@ func copyAuth(src, provider, dataHome string) string {
 	return ""
 }
 
+// removeAuthCopy deletes the carried auth copy when the run ends and returns every copy
+// still on disk afterwards (nil when none is). It is deferred the moment copyAuth
+// succeeds, so every return path after it -- done, failed, wall, idle, terminated, or a
+// refusal between the copy and the child's start -- leaves no auth.json on the bench. The
+// two paths are exactly the two copyAuth writes, named rather than walked, and a file that
+// is already gone is not an error.
+//
+// THE CARD OWNS THE DATA HOME WHILE IT RUNS, so it can take the write bit off dataHome or
+// dataHome/opencode (chmod 0555) and an unlink there fails with permission denied. The
+// cleanup therefore gives each parent directory -- only a real directory, never through a
+// symlink the card planted -- its owner rwx back before the unlink. A copy that is still
+// there afterwards is returned: the caller fails the run on it, because a plaintext key
+// that outlives its card is the drift this cleanup exists to stop.
+func removeAuthCopy(dataHome string, errOut io.Writer) []string {
+	var left []string
+	for _, p := range []string{
+		filepath.Join(dataHome, "auth.json"),
+		filepath.Join(dataHome, "opencode", "auth.json"),
+	} {
+		dir := filepath.Dir(p)
+		if st, err := os.Lstat(dir); err == nil && st.IsDir() && st.Mode().Perm()&0o700 != 0o700 {
+			if err := os.Chmod(dir, st.Mode().Perm()|0o700); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the directory %s holding the auth copy could not be made writable again: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+			}
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the auth copy %s could not be removed at the run's end: %s\n", oneline.Field(p), oneline.Escape(err.Error()))
+		}
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			left = append(left, p)
+		}
+	}
+	return left
+}
+
 // writeJobConfig writes the ONE opencode.json the job's harness reads, beside the carried
 // auth copy in the job's own data home, mode 0600, and returns the sha8 the NATIVE OK line
 // names -- the sha8 OF THE BYTES THE CHILD SEES, which is the only config any later reader
@@ -2182,6 +2266,53 @@ func keylessProvider(v any) bool {
 	}
 	_, hasKey := opts["apiKey"]
 	return !hasKey
+}
+
+// providerLoopback reads the carried config and returns the loopback host:port the model's
+// provider's baseURL names, or "" when the provider carries no baseURL, names no loopback,
+// or the config cannot be read. The wall's --net-allow opens exactly that address back up
+// after a keyless provider on localhost (issue #591).
+func providerLoopback(cfgPath, provider string) string {
+	raw, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]any
+	if json.Unmarshal(raw, &cfg) != nil {
+		return ""
+	}
+	providers, _ := cfg["provider"].(map[string]any)
+	entry, ok := providers[provider]
+	if !ok {
+		return ""
+	}
+	m, _ := entry.(map[string]any)
+	opts, _ := m["options"].(map[string]any)
+	base, _ := opts["baseURL"].(string)
+	u, err := url.Parse(base)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	host := u.Hostname()
+	if !loopbackHost(host) {
+		return ""
+	}
+	port := u.Port()
+	if port == "" {
+		return ""
+	}
+	return net.JoinHostPort(host, port)
+}
+
+// loopbackHost reports whether a host names the machine's own loopback: localhost, an
+// IPv4 loopback (127/8) or IPv6's ::1. A keyless provider on such an address is not reached
+// by the wall's (allow network-outbound (remote ip)) and needs its own --net-allow grant.
+func loopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // fileSHA256 returns the lowercase hex sha256 of a file's bytes.

@@ -162,6 +162,10 @@ type PR struct {
 	Body   string
 	Files  []string
 	Diff   string
+	// Base is the base gate status: ok, behind, or conflict.
+	Base             string
+	Mergeable        string
+	MergeStateStatus string
 	// Checks is the rollup read at Head. A run whose HeadSHA is not Head is
 	// not this head's evidence.
 	Checks []CheckRun

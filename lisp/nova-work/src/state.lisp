@@ -27,6 +27,14 @@
   deps dependents
   ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
   needs-broken
+  ;; SPEC-WORK.md:1096-1100 -- the required-set membership the node's last
+  ;; `:baseline` event recorded, member by member, or NIL while none has. It is
+  ;; the scope snapshot rule 11 compares the live set against, and it is moved
+  ;; only by that event, so a replay rebuilds it.
+  baseline
+  ;; SPEC-WORK.md:3167 -- `:priority (:self <rank|absent> :subtree
+  ;; <rank|absent>)`, ordering intent only, moved only by a `:prioritise` event.
+  (priority (list :self +absent+ :subtree +absent+))
   ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
   ;; They live on the node like every other value and move on write. :repo is
   ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
@@ -379,6 +387,26 @@ coordination tree's edge (SPEC-WORK.md:4256), independent of the containment
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-coordinator n)))
 
+(defun node-required-p (state id)
+  "True when ID is in its containment parent's required set (SPEC-WORK.md:1147):
+the boolean `required` flag, distinct from the counts it feeds."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (and (wnode-required n) t)))
+
+(defun node-baseline (state id)
+  "The required-set membership ID's last `:baseline` event recorded, member by
+member, or NIL while none has (SPEC-WORK.md:1096-1100)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-baseline n))))
+
+(defun node-priority (state id)
+  "ID's `:priority (:self .. :subtree ..)` field (SPEC-WORK.md:3167)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-priority n))))
+
 (defun node-required-count (state id)
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
@@ -658,7 +686,15 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                   :request-ref :batch :holder :parent :now :deadline :fenced
                   :stop-observed :not-started)
                  (:probe      ; the fleet's `probe` verb (SPEC-WORK.md:3691)
-                  :machine :slot :source :fact :at)))
+                  :machine :slot :source :fact :at)
+                 ;; The scope and ordering verbs (E03-F03, SPEC-WORK.md:2929):
+                 ;; each scope kind's own fields in digest order
+                 ;; (SPEC-WORK.md:1096-1100) and `:prioritise`'s (:1011).
+                 ;; Named here beside the apply-event branches that replay them.
+                 (:require :to :reason)
+                 (:baseline :members :reason)
+                 (:discovery :members :reason)
+                 (:prioritise :change :context :rank :reason)))
     (pushnew row *kind-field-order* :test #'equal)))
 
 (defun %config-field (fields key)
@@ -973,6 +1009,29 @@ its own mutation."
                      :stamp (work-event-stamp event)
                      :rev (work-event-rev event))
                (wnode-meta-log node))))
+      ;; The scope verbs (E03-F03, SPEC-WORK.md:1096-1100, :2929). Each moves
+      ;; the required set by its own stated delta and nothing else, here, on
+      ;; the one path the live verb and the replay share.
+      (:require
+       (%scope-set-required state node (eq :true (getf (work-event-fields event) :to)))
+       (%scope-log node event))
+      (:baseline
+       (setf (wnode-baseline node)
+             (copy-list (getf (work-event-fields event) :members)))
+       (%scope-log node event))
+      (:discovery
+       (dolist (m (getf (work-event-fields event) :members))
+         (let ((mn (%node-quiet state m)))
+           (when mn (%scope-set-required state mn t))))
+       (%scope-log node event))
+      ;; `prioritise` moves the one slot and nothing else (SPEC-WORK.md:3167).
+      (:prioritise
+       (let* ((fields (work-event-fields event))
+              (new (copy-list (wnode-priority node))))
+         (setf (getf new (getf fields :context))
+               (if (eq :set (getf fields :change)) (getf fields :rank) +absent+))
+         (setf (wnode-priority node) new)
+         (%scope-log node event)))
       (:edit
        ;; The five permitted metadata fields, each a tagged patch.
        (dolist (field *metadata-fields*)
@@ -1052,6 +1111,29 @@ its own mutation."
              (wstate-rows state))))
     (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
     state))
+
+(defun %scope-set-required (state node to)
+  "Move NODE into (TO true) or out of its containment parent's required set,
+keeping the parent's two counters on write. It detaches nothing: the node stays
+in the parent's :children either way (SPEC-WORK.md:1147)."
+  (let ((was (and (wnode-required node) t))
+        (to (and to t)))
+    (unless (eq was to)
+      (setf (wnode-required node) to)
+      (let ((parent (and (wnode-parent node) (%node-quiet state (wnode-parent node))))
+            (delta (if to 1 -1)))
+        (when parent
+          (incf (wnode-required-count parent) delta)
+          (when (eq :o (wnode-branch node))
+            (incf (wnode-required-open parent) delta)))))))
+
+(defun %scope-log (node event)
+  "Append the event to the node's append-only meta log, newest first."
+  (push (list* :op :scope :kind (work-event-kind event) :node (wnode-id node)
+               :by (work-event-by event) :request (work-event-request event)
+               :stamp (work-event-stamp event) :rev (work-event-rev event)
+               (copy-list (work-event-fields event)))
+        (wnode-meta-log node)))
 
 (defun apply-envelope (state envelope)
   "Pure: STATE is never touched. The candidate is built whole and returned, so

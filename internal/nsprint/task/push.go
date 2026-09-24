@@ -8,12 +8,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // Function names registered by internal/nsprint/fn/lua/task_claim.lua. The
@@ -22,9 +26,53 @@ const (
 	FunctionPush = "ns_task_push"
 	FunctionTake = "ns_task_take"
 	FunctionDone = "ns_task_done"
+	// FunctionTakeDenied writes the one receipt of a take the CLI refused
+	// because --as is not the initiator (#2929 rev 6). It touches no task key.
+	FunctionTakeDenied = "ns_task_take_denied"
 )
 
-var sprintNameRx = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+// ErrNotFriend is an initiator (or a take's --as) that is not a member of
+// `friends` (#2929 rev 6). The CLI maps it to exit 2 `want NOVA_FRIEND in
+// friends`; nothing is written and no receipt is made.
+var ErrNotFriend = errors.New("want NOVA_FRIEND in friends")
+
+// ErrNoSprint is a verb run with no --sprint while sprint:order is empty.
+var ErrNoSprint = errors.New("no --sprint and sprint:order is empty")
+
+var (
+	sprintNameRx = regexp.MustCompile(`^[a-z0-9-]{1,40}$`)
+	estRx        = regexp.MustCompile(`^[1-9][0-9]{0,4}$`)
+	titleEstRx   = regexp.MustCompile(`(?i)\best:\s*(\S+)\s*mins?\b`)
+)
+
+// IsValidEst reports whether s is a valid task estimate: a whole number of
+// minutes 1..10080 (at most one week), matching ^[1-9][0-9]{0,4}$ as text.
+func IsValidEst(s string) bool {
+	if !estRx.MatchString(s) {
+		return false
+	}
+	n, err := strconv.Atoi(s)
+	return err == nil && n >= 1 && n <= 10080
+}
+
+// ParseTitleEst extracts an estimate from a task title in the form `est: <v> min`.
+// If found and in-domain, it returns the estimate string.
+// If found but outside the domain 1..10080, it writes a warning to errOut and returns "".
+// If not found, it returns "".
+func ParseTitleEst(title string, errOut io.Writer) string {
+	matches := titleEstRx.FindStringSubmatch(title)
+	if len(matches) < 2 {
+		return ""
+	}
+	v := matches[1]
+	if IsValidEst(v) {
+		return v
+	}
+	if errOut != nil {
+		fmt.Fprintf(errOut, "WARN est: title value %s outside 1..10080, stored empty\n", v)
+	}
+	return ""
+}
 
 // Kind is a task kind (spec 4.2: read, review, harvest, fix, work).
 type Kind string
@@ -65,6 +113,18 @@ type PushRequest struct {
 	PayloadSHA string
 	Actor      string
 	Idem       string
+	Est        string
+	// Needs are the ids in Sprint that must be closed before this task can
+	// be claimed (#2939). Empty needs leave PayloadSHA as it was.
+	Needs  []string
+	ErrOut io.Writer
+	// Initiator is the seat running the verb ($NOVA_FRIEND). Only
+	// cmd/nova-sprint sets it: when set, PushChecked reads its `friends`
+	// membership in its first round trip and returns ErrNotFriend on a 0,
+	// before any write (#2929 rev 6). With Sprint empty, the same round trip
+	// reads the default sprint (lowest-score member of sprint:order). A library
+	// caller leaves it empty and keeps dev's behaviour.
+	Initiator string
 }
 
 // PushStatus is the outcome of one push.
@@ -85,12 +145,22 @@ const (
 	// PushOverlap is a build task whose PATHS intersect a live build task's
 	// PATHS outside a DEPENDS-ON chain; nothing was written (#3067, exit 5).
 	PushOverlap PushStatus = "OVERLAP"
+	// PushDown is a push to a friend whose friend:<to>:down marker is set;
+	// nothing was written and no receipt was made (#2929 rev 5, exit 7).
+	PushDown PushStatus = "DOWN"
 )
 
 // PushResult is a push outcome with the colliding task when it is OVERLAP.
 type PushResult struct {
 	Status  PushStatus
 	Overlap *Overlap
+	// Down is the friend:<to>:down marker value when Status is DOWN.
+	Down string
+	// Reason is the function's reason word on INVALID, when it gave one
+	// (`unknown friend` for a --to not in friends).
+	Reason string
+	// Sprint is the sprint the push went to (the default when none was given).
+	Sprint string
 }
 
 // ExitCode maps a push outcome to its CLI exit code (spec 4.2).
@@ -104,6 +174,9 @@ func (s PushStatus) ExitCode() int {
 	if s == PushOverlap {
 		return 5
 	}
+	if s == PushDown {
+		return 7
+	}
 	return 0
 }
 
@@ -115,6 +188,10 @@ func PayloadSHA(req PushRequest) string {
 		string(req.Kind), req.Repo, req.Ref, strconv.Itoa(req.PR),
 		req.Head, req.Title, string(req.Effects), req.To,
 		strconv.FormatBool(req.Front), strconv.Itoa(req.Priority),
+		req.Est,
+	}
+	if len(req.Needs) > 0 {
+		parts = append(parts, "needs="+strings.Join(req.Needs, " "))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])
@@ -145,6 +222,13 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	if st == nil {
 		return PushResult{}, fmt.Errorf("task push: nil store")
 	}
+	if req.Initiator != "" {
+		sprint, err := seatRead(ctx, st.Client(), req.Initiator, req.Sprint)
+		if err != nil {
+			return PushResult{}, err
+		}
+		req.Sprint = sprint
+	}
 	if req.Sprint == "" || req.ID == "" {
 		return PushResult{}, fmt.Errorf("task push: sprint and id are required")
 	}
@@ -167,6 +251,21 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	default:
 		return PushResult{}, fmt.Errorf("task push: invalid effects %q", req.Effects)
 	}
+	errOut := req.ErrOut
+	if errOut == nil {
+		errOut = os.Stderr
+	}
+	if req.Est != "" {
+		if !IsValidEst(req.Est) {
+			fmt.Fprintf(errOut, "INVALID est=%s: whole minutes 1..10080\n", req.Est)
+			return PushResult{Status: PushInvalid}, nil
+		}
+	} else {
+		req.Est = ParseTitleEst(req.Title, errOut)
+	}
+	if req.Front && req.Priority == 0 {
+		req.Priority = 1
+	}
 	if req.PayloadSHA == "" {
 		req.PayloadSHA = PayloadSHA(req)
 	}
@@ -184,7 +283,7 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	reply, err := st.Client().FCall(ctx, FunctionPush, nil,
 		req.Sprint, req.ID, string(req.Kind), req.Title, string(req.Effects),
 		req.Repo, strconv.Itoa(req.PR), req.Head, req.Ref, req.To, front,
-		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem).Result()
+		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est, strings.Join(req.Needs, " ")).Result()
 	if err != nil {
 		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}
@@ -192,12 +291,46 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	if err != nil {
 		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}
+	second := ""
+	if values, _ := reply.([]any); len(values) > 1 {
+		second = fmt.Sprint(values[1])
+	}
 	switch PushStatus(status) {
-	case PushCreated, PushExists, PushClosed, PushConflict, PushInvalid:
-		return PushResult{Status: PushStatus(status)}, nil
+	case PushCreated, PushExists, PushClosed, PushConflict:
+		return PushResult{Status: PushStatus(status), Sprint: req.Sprint}, nil
+	case PushInvalid:
+		return PushResult{Status: PushInvalid, Reason: second, Sprint: req.Sprint}, nil
+	case PushDown:
+		return PushResult{Status: PushDown, Down: second, Sprint: req.Sprint}, nil
 	default:
 		return PushResult{}, fmt.Errorf("task push %s: unexpected status %q", req.ID, status)
 	}
+}
+
+// seatRead is the CLI initiator's first round trip (#2929 rev 6): one
+// pipeline of SISMEMBER friends <initiator> and, when sprint is empty, the
+// lowest-score member of sprint:order. It returns ErrNotFriend on a 0 and
+// ErrNoSprint when no sprint is given and sprint:order is empty.
+func seatRead(ctx context.Context, client *redis.Client, initiator, sprint string) (string, error) {
+	pipe := client.Pipeline()
+	member := pipe.SIsMember(ctx, "friends", initiator)
+	var order *redis.StringSliceCmd
+	if sprint == "" {
+		order = pipe.ZRange(ctx, "sprint:order", 0, 0)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return "", fmt.Errorf("read initiator %s: %w", initiator, err)
+	}
+	if !member.Val() {
+		return "", ErrNotFriend
+	}
+	if order != nil {
+		if len(order.Val()) == 0 || order.Val()[0] == "" {
+			return "", ErrNoSprint
+		}
+		sprint = order.Val()[0]
+	}
+	return sprint, nil
 }
 
 // firstString reads the status word the function returns first in its reply.

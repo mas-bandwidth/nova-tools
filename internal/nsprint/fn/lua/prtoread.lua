@@ -1,200 +1,225 @@
--- pr-to-read rule functions for nova-sprint (#2756 10.7, 10.8.3, control 33; nova-tools #3040).
--- No shebang: loader.go prepends the library header.
+-- pr-to-read rule of `nova-sprint route` (#2756 10.7, 10.8.3, control 33;
+-- nova-tools #3040 rev 4). No shebang: loader.go prepends the single library
+-- header. The file is one do-block so its locals never add to the shared
+-- chunk's local count.
+--
+-- ns_prtoread_runner keeps, in ci:<repo>:<sha> field runner:<row>, the
+-- attempt with the highest key (gen, check_run_id, status_rank, at), whatever
+-- its conclusion; status_rank is rerequested=-1 < queued=0 < in_progress=1 <
+-- completed=2. A rerequested entry opens a new generation (the sentinel
+-- status rerequested, rank -1) unless it is a redelivery or a rerequest of an
+-- attempt a newer id already superseded. The compare and the write are one
+-- call, so a redelivered entry is a no-op (KEPT).
+--
+-- ns_prtoread_adopt gives a sprint PR no card produced its review tasks at
+-- its head, create-only, and records s:<S>:adopt:<repo>:<n>; a head already
+-- adopted is a NOOP.
 do
   local function now_ms()
     local t = redis.call('TIME')
     return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   end
 
-  local function receipt(S, kind, id, from_state, to_state, attempt, actor, reason, evidence, idem, at)
-    redis.call('XADD', 's:' .. S .. ':log', '*',
-      'kind', kind, 'id', id, 'from', from_state, 'to', to_state,
-      'attempt', tostring(attempt or 0), 'token_sha', '',
-      'actor', actor or '', 'reason', reason or '', 'evidence', evidence or '',
-      'idem', idem or '', 'at', tostring(at))
-  end
+  local RANK = { queued = 0, in_progress = 1, completed = 2 }
 
-  local function create_task(S, id, kind, title, effects, repo, pr, head, ref, to, front, priority, payload_sha, actor, idem, at)
-    local key = 's:' .. S .. ':task:' .. id
-    local existing = redis.call('HGET', key, 'payload_sha')
-    if existing then
-      if existing ~= payload_sha then
-        return 'CONFLICT'
-      end
-      local state = redis.call('HGET', key, 'state')
-      if state == 'closed' or state == 'cancelled' then
-        return 'CLOSED'
-      end
-      return 'EXISTS'
-    end
-    redis.call('HSET', key,
-      'kind', kind, 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
-      'title', title, 'effects', effects, 'owner', '', 'priority', tostring(priority),
-      'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
-      'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
-      'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
-    local score = tonumber(priority)
-    if front then
-      score = -score
-    end
-    redis.call('ZADD', 's:' .. S .. ':open:' .. to, score, id)
-    redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-    receipt(S, 'task push', id, '', 'open', 0, actor, 'pr-to-read', '', idem, at)
-    return 'CREATED'
-  end
-
-  local function status_rank(st)
-    if st == 'rerequested' then
+  local function status_rank(status)
+    if status == 'rerequested' then
       return -1
-    elseif st == 'queued' or st == 'created' then
-      return 0
-    elseif st == 'in_progress' then
-      return 1
-    elseif st == 'completed' then
-      return 2
     end
+    return RANK[status] or 0
+  end
+
+  local function cmp_str(a, b)
+    if a < b then return -1 elseif a > b then return 1 end
     return 0
   end
 
-  -- ns_prtoread_runner(key, row, attempt_json)
-  -- Stores the highest attempt key (gen, check_run_id, status_rank, at) into
-  -- ci:<repo>:<sha> field runner:<row>.
-  local function prtoread_runner(keys, args)
-    local key, row, attempt_json = args[1], args[2], args[3]
-    if not key or not row or not attempt_json then
-      return { 'USAGE' }
+  -- cmp_id orders check_run ids numerically; a non-numeric id falls back to
+  -- length then bytes, which is the numeric order for decimal strings.
+  local function cmp_id(a, b)
+    a, b = tostring(a or ''), tostring(b or '')
+    local x, y = tonumber(a), tonumber(b)
+    if x and y then
+      if x < y then return -1 elseif x > y then return 1 end
+      return 0
     end
-    local entry = cjson.decode(attempt_json)
-    local action = entry.action or ''
-    local entry_id = tonumber(entry.check_run_id) or 0
-    local status = entry.status or ''
-    if action == 'rerequested' then
-      status = 'rerequested'
-    elseif status == '' or status == 'created' then
-      if action == 'created' or action == 'queued' then
-        status = 'queued'
-      end
+    if #a ~= #b then
+      return #a < #b and -1 or 1
     end
-    local conclusion = entry.conclusion or ''
-    local at = entry.at or ''
-
-    local raw = redis.call('HGET', key, 'runner:' .. row)
-    local stored = nil
-    if raw and raw ~= '' then
-      stored = cjson.decode(raw)
-      stored.gen = tonumber(stored.gen) or 0
-      stored.check_run_id = tonumber(stored.check_run_id) or 0
-      stored.rereq_id = tonumber(stored.rereq_id) or 0
-      stored.rereq_at = stored.rereq_at or ''
-    end
-
-    if action == 'rerequested' then
-      if stored then
-        if entry_id < stored.check_run_id then
-          return { 'KEPT', tostring(stored.gen), tostring(entry_id), status, conclusion }
-        end
-        if entry_id == stored.rereq_id and at == stored.rereq_at then
-          return { 'KEPT', tostring(stored.gen), tostring(entry_id), status, conclusion }
-        end
-      end
-      local new_gen = 1
-      if stored then
-        new_gen = stored.gen + 1
-      end
-      local new_stored = {
-        gen = new_gen,
-        check_run_id = entry_id,
-        rereq_id = entry_id,
-        rereq_at = at,
-        status = 'rerequested',
-        conclusion = '',
-        source = 'runner:' .. row,
-        at = at,
-      }
-      redis.call('HSET', key, 'runner:' .. row, cjson.encode(new_stored))
-      return { 'RERUN', tostring(new_gen), tostring(entry_id), 'rerequested', '' }
-    end
-
-    -- Every other entry is placed in a generation before the compare
-    local entry_gen = 0
-    if stored then
-      if stored.rereq_id and stored.rereq_id > 0 then
-        if entry_id > stored.rereq_id or (entry_id == stored.rereq_id and at > stored.rereq_at) then
-          entry_gen = stored.gen
-        else
-          entry_gen = stored.gen - 1
-        end
-      else
-        entry_gen = stored.gen
-      end
-    end
-
-    if stored then
-      if entry_gen < stored.gen then
-        return { 'KEPT', tostring(entry_gen), tostring(entry_id), status, conclusion }
-      end
-
-      -- entry_gen == stored.gen: compare (gen, check_run_id, status_rank, at)
-      if entry_id < stored.check_run_id then
-        return { 'KEPT', tostring(entry_gen), tostring(entry_id), status, conclusion }
-      elseif entry_id == stored.check_run_id then
-        local e_rank = status_rank(status)
-        local s_rank = status_rank(stored.status)
-        if e_rank < s_rank then
-          return { 'KEPT', tostring(entry_gen), tostring(entry_id), status, conclusion }
-        elseif e_rank == s_rank then
-          if at <= (stored.at or '') then
-            return { 'KEPT', tostring(entry_gen), tostring(entry_id), status, conclusion }
-          end
-        end
-      end
-    end
-
-    local to_store = {
-      gen = entry_gen,
-      check_run_id = entry_id,
-      status = status,
-      conclusion = conclusion,
-      source = 'runner:' .. row,
-      at = at,
-    }
-    if stored and stored.rereq_id and stored.rereq_id > 0 then
-      to_store.rereq_id = stored.rereq_id
-      to_store.rereq_at = stored.rereq_at
-    end
-    redis.call('HSET', key, 'runner:' .. row, cjson.encode(to_store))
-    return { 'REPLACED', tostring(entry_gen), tostring(entry_id), status, conclusion }
+    return cmp_str(a, b)
   end
 
-  -- ns_prtoread_adopt S repo pr head readers_str cut_at actor n [id friend title priority payload_sha]...
-  local function prtoread_adopt(keys, args)
-    local S, repo, pr, head, readers_str, cut_at, actor = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
-    local n = tonumber(args[8]) or 0
-    if not S or not repo or not pr or not head then
-      return { 'USAGE' }
+  local function cmp_key(g1, id1, r1, at1, g2, id2, r2, at2)
+    if g1 ~= g2 then
+      return g1 < g2 and -1 or 1
     end
-    local adopt_key = 's:' .. S .. ':adopt:' .. repo .. ':' .. pr
-    local existing_head = redis.call('HGET', adopt_key, 'head')
-    if existing_head == head then
-      return { 'NOOP' }
+    local c = cmp_id(id1, id2)
+    if c ~= 0 then
+      return c
+    end
+    if r1 ~= r2 then
+      return r1 < r2 and -1 or 1
+    end
+    return cmp_str(at1, at2)
+  end
+
+  local function str(v)
+    if v == nil or v == cjson.null then
+      return ''
+    end
+    return tostring(v)
+  end
+
+  -- ns_prtoread_runner KEYS[1]=ci:<repo>:<sha> ARGV row attempt_json
+  -- attempt_json: {check_run_id, action, status, conclusion, at}.
+  -- Reply: { verdict, gen, check_run_id, status, conclusion } where verdict is
+  -- REPLACED, RERUN or KEPT; for a KEPT entry the gen is the one it was
+  -- placed in and the rest are the entry's own.
+  local function prtoread_runner(keys, args)
+    local key, row, raw = keys[1] or '', args[1] or '', args[2] or ''
+    local ok, e = pcall(cjson.decode, raw)
+    if key == '' or row == '' or not ok or type(e) ~= 'table' then
+      return redis.error_reply('ERR ns_prtoread_runner: usage key row attempt_json')
+    end
+    local id, action, status = str(e.check_run_id), str(e.action), str(e.status)
+    local conclusion, at = str(e.conclusion), str(e.at)
+    if id == '' then
+      return redis.error_reply('ERR ns_prtoread_runner: attempt has no check_run_id')
+    end
+    local field = 'runner:' .. row
+    local s = nil
+    local cur = redis.call('HGET', key, field)
+    if cur then
+      local ok2, v = pcall(cjson.decode, cur)
+      if ok2 and type(v) == 'table' then
+        s = v
+      end
+    end
+    local sgen = s and (tonumber(s.gen) or 0) or 0
+    local sid = s and str(s.check_run_id) or ''
+    local srid, srat = s and str(s.rereq_id) or '', s and str(s.rereq_at) or ''
+
+    local function write(gen, rid, rat, st, concl)
+      redis.call('HSET', key, field, cjson.encode({
+        gen = gen, check_run_id = id, status = st, conclusion = concl,
+        rereq_id = rid, rereq_at = rat, source = 'runner:' .. row, at = at,
+      }))
     end
 
-    local at = now_ms()
-    local at_str = tostring(at)
-    local idem = 'adopt:' .. repo .. ':' .. pr .. ':' .. head
-    local base = 9
-    local ids = {}
+    if action == 'rerequested' then
+      -- A redelivery of the rerequest that opened this generation, or a
+      -- rerequest of an attempt a newer id superseded: nothing moves.
+      if s and ((srid == id and srat == at) or cmp_id(id, sid) < 0) then
+        return { 'KEPT', tostring(sgen), id, 'rerequested', '' }
+      end
+      local gen = sgen + 1
+      write(gen, id, at, 'rerequested', '')
+      return { 'RERUN', tostring(gen), id, 'rerequested', '' }
+    end
+
+    if not s then
+      write(0, '', '', status, conclusion)
+      return { 'REPLACED', '0', id, status, conclusion }
+    end
+    -- Place the entry in a generation: the current one when it is newer than
+    -- the rerequest that opened it, the one before otherwise.
+    local egen = sgen
+    if srid ~= '' then
+      local c = cmp_id(id, srid)
+      if not (c > 0 or (c == 0 and at > srat)) then
+        egen = sgen - 1
+      end
+    end
+    if cmp_key(egen, id, status_rank(status), at, sgen, sid, status_rank(str(s.status)), str(s.at)) > 0 then
+      write(sgen, srid, srat, status, conclusion)
+      return { 'REPLACED', tostring(sgen), id, status, conclusion }
+    end
+    return { 'KEPT', tostring(egen), id, status, conclusion }
+  end
+
+  local function receipt(S, id, actor, idem, at)
+    redis.call('XADD', 's:' .. S .. ':log', '*',
+      'kind', 'task push', 'id', id, 'from', '', 'to', 'open',
+      'attempt', '0', 'token_sha', '', 'actor', actor or '', 'reason', 'pr-to-read',
+      'evidence', '', 'idem', idem or '', 'at', tostring(at))
+  end
+
+  -- ns_prtoread_adopt S repo pr head actor cut n (id friend title priority
+  -- payload_sha ref)*n
+  -- The review tasks of one no-card PR at its head, with route.lua's
+  -- create_task semantics (create-only; same payload EXISTS or CLOSED), at
+  -- the front of each reader's queue, and s:<S>:adopt:<repo>:<pr>. Any id taken
+  -- by another payload, or cancelled, refuses the whole call with BLOCKED and
+  -- writes only one unresolved item naming it. An unregistered reader
+  -- refuses with RETRY and writes nothing.
+  local function prtoread_adopt(keys, args)
+    local S, repo, pr, head, actor, cut = args[1], args[2], args[3], args[4], args[5], args[6]
+    local n = tonumber(args[7])
+    if not S or S == '' or not repo or repo == '' or not pr or pr == '' or not head or head == '' then
+      return redis.error_reply('ERR ns_prtoread_adopt: usage S repo pr head actor cut n ...')
+    end
+    local akey = 's:' .. S .. ':adopt:' .. repo .. ':' .. pr
+    if redis.call('HGET', akey, 'head') == head then
+      return { 'NOOP', head }
+    end
+    if n == nil or n < 1 then
+      return { 'RETRY', 'no readers' }
+    end
+    local base, width = 8, 6
     for i = 0, n - 1 do
-      local id = args[base + i * 5]
-      local friend = args[base + i * 5 + 1]
-      local title = args[base + i * 5 + 2]
-      local priority = args[base + i * 5 + 3]
-      local payload_sha = args[base + i * 5 + 4]
-      local status = create_task(S, id, 'review', title, 'none', repo, pr, head, '',
-        friend, true, priority, payload_sha, actor, idem, at_str)
+      local friend = args[base + i * width + 1]
+      if redis.call('SISMEMBER', 'friends', friend) == 0 then
+        return { 'RETRY', 'unregistered ' .. tostring(friend) }
+      end
+    end
+    for i = 0, n - 1 do
+      local id, payload_sha = args[base + i * width], args[base + i * width + 4]
+      local tkey = 's:' .. S .. ':task:' .. id
+      local existing = redis.call('HGET', tkey, 'payload_sha')
+      local why = nil
+      if existing and existing ~= payload_sha then
+        why = 'conflict'
+      elseif existing and redis.call('HGET', tkey, 'state') == 'cancelled' then
+        why = 'cancelled'
+      end
+      if why then
+        redis.call('HSETNX', 's:' .. S .. ':unresolved', repo .. '#' .. pr .. ':review-' .. why .. ':' .. id, head)
+        return { 'BLOCKED', why .. ' ' .. id }
+      end
+    end
+    local at = now_ms()
+    local idem = 'pr-to-read:adopt:' .. repo .. ':' .. pr .. ':' .. head
+    local ids, readers = {}, {}
+    for i = 0, n - 1 do
+      local o = base + i * width
+      local id, friend, title, priority = args[o], args[o + 1], args[o + 2], args[o + 3]
+      local payload_sha, ref = args[o + 4], args[o + 5]
+      readers[#readers + 1] = friend
+      local tkey = 's:' .. S .. ':task:' .. id
+      local status = 'EXISTS'
+      if not redis.call('HGET', tkey, 'payload_sha') then
+        redis.call('HSET', tkey,
+          'kind', 'review', 'repo', repo, 'ref', ref, 'pr', pr, 'head', head,
+          'title', title, 'effects', 'none', 'owner', '', 'priority', tostring(priority),
+          'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
+          'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
+          'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '')
+        -- The front of open:<friend> is negative (classify.lua pool_score).
+        redis.call('ZADD', 's:' .. S .. ':open:' .. friend, -math.abs(tonumber(priority) or 0) - 1, id)
+        redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
+        receipt(S, id, actor, idem, at)
+        status = 'CREATED'
+      elseif redis.call('HGET', tkey, 'state') == 'closed' then
+        status = 'CLOSED'
+      end
       ids[#ids + 1] = status .. ' ' .. id
     end
-    redis.call('HSET', adopt_key, 'head', head, 'readers', readers_str, 'cut_at', cut_at, 'at', at_str)
+    local cut_at = ''
+    if cut == '1' then
+      cut_at = tostring(at)
+    end
+    redis.call('HSET', akey, 'head', head, 'readers', table.concat(readers, ','),
+      'cut_at', cut_at, 'at', tostring(at))
     return { 'OK', table.concat(ids, ',') }
   end
 

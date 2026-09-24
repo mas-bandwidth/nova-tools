@@ -57,6 +57,8 @@
   :discovered-features 12
   :current-features 63
   :current-acceptance-items 231
+  :current-bugs (0 0)
+  :bugs ()
   :verification (    :measured-at "2026-09-19"
     :revision "4c793b55a30160e5fe1ed45e25928f2c85dcfe5c"
     :branch "dev"
@@ -766,6 +768,7 @@
       :source "ideas-780"))
   :epics (    (      :id "E01"
       :title "Canonical work data and restricted representation"
+      :bugs ()
       :features (        (          :id "E01-F01"
           :title "Restricted Lisp reader and safe syntax"
           :subfeatures (            "Accept only lists, keywords, strings, integers and comments"
@@ -775,6 +778,7 @@
           :source-sections (            "The data"
             "Hostile data and limits")
           :state "partial"
+          :bugs ()
           :evidence ("PR300@d21d65f0: restricted reader and refusal regressions; full production syntax surface remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E01-F02"
           :title "Uniform read bounds and schema validation"

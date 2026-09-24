@@ -334,7 +334,7 @@
                         :generation-owner "gen-1"))
       (check-equal nil okp "the invalid suggestion to start ws/d is refused")
       (check-equal 1 code "the refusal is exit 1")
-      (ok (search "needs ws/n" line) "the refusal names the blocking need: ~A" line))
+      (ok (search "unmet need ws/n" line) "the refusal names the blocking need: ~A" line))
     (check-equal rev-before (state-revision (kernel-state k))
                  "the refused suggestion wrote nothing")
     (check-equal :todo (node-state (kernel-state k) "ws/d")

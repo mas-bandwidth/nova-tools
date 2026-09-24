@@ -46,9 +46,11 @@ const (
 // consumeNotBuilt names each consumer whose handler is not on dev yet and the
 // issue that builds it.
 var consumeNotBuilt = map[string]string{
-	groupPRToRead:  "#2941",
-	groupHoldToFix: "#2941",
+	groupHoldToFix: "#3092",
 }
+
+// consumePRReadRemote is the remote seam for pr-to-read, swapped in tests.
+var consumePRReadRemote consume.Remote = consume.GitRemote
 
 // consumeHarvestSeams are the harvest's two host seams: GitHub by `gh api`
 // REST and the push over ssh from the bench. A test swaps in fixtures
@@ -60,7 +62,7 @@ var consumeHarvestSeams = func() (harvest.Forge, harvest.Pusher) {
 func init() {
 	register(Verb{
 		Name:    "consume",
-		Summary: "run one consumer (ok-to-friend, harvest; pr-to-read and hold-to-fix once #2941 lands): consume <group> once|run --redis <addr>, or consume list",
+		Summary: "run one consumer (ok-to-friend, harvest, pr-to-read; hold-to-fix once #3092 lands): consume <group> once|run --redis <addr>, or consume list",
 		Run:     runConsume,
 	})
 	registerReconcileDuty(consume.GroupOkFriend, func(st *store.Store) (reconcileDuty, error) {
@@ -83,7 +85,8 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if group == "list" {
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:%s\n", consume.GroupOkFriend, consume.GroupOkFriend)
 		fmt.Fprintf(out, "%s duty=reconcile verb=consume proc=proc:harvest:<bench>\n", groupHarvest)
-		for _, g := range []string{groupPRToRead, groupHoldToFix} {
+		fmt.Fprintf(out, "%s duty=route verb=consume-once proc=proc:%s\n", groupPRToRead, groupPRToRead)
+		for _, g := range []string{groupHoldToFix} {
 			fmt.Fprintf(out, "%s not-built=%s\n", g, consumeNotBuilt[g])
 		}
 		return 0
@@ -91,7 +94,7 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if issue, ok := consumeNotBuilt[group]; ok {
 		return refuse(errOut, "consume", fmt.Sprintf("%s is not built on dev (its handler is %s); nothing runs under this name yet", group, issue))
 	}
-	if group != consume.GroupOkFriend && group != groupHarvest {
+	if group != consume.GroupOkFriend && group != groupHarvest && group != groupPRToRead {
 		return refuse(errOut, "consume", "unknown group "+group+"; want ok-to-friend, harvest, pr-to-read or hold-to-fix")
 	}
 	if len(args) < 2 || (args[1] != "once" && args[1] != "run") {
@@ -115,6 +118,14 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if *every <= 0 {
 		return refuse(errOut, "consume "+group, "--every must be above zero")
 	}
+	if group == groupPRToRead {
+		if *sprint == "" {
+			return refuse(errOut, "consume "+group, "--sprint is required")
+		}
+		if mode == "run" {
+			return refuse(errOut, "consume "+group+" run", "pr-to-read runs under nova-sprint route --sprint <S>; consume pr-to-read takes once")
+		}
+	}
 	if *consumer == "" {
 		host, _ := os.Hostname()
 		*consumer = fmt.Sprintf("%s-%d", host, os.Getpid())
@@ -127,6 +138,28 @@ func runConsume(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return 6
 	}
 	defer st.Close()
+
+	if group == groupPRToRead {
+		pr := &consume.PRRead{
+			Store:    st,
+			Sprint:   *sprint,
+			Consumer: *consumer,
+			Actor:    *actor,
+			Remote:   consumePRReadRemote,
+		}
+		err := pr.Once(ctx)
+		var held *consume.LeaseHeldError
+		switch {
+		case errors.As(err, &held):
+			fmt.Fprintf(errOut, "REFUSED pr-to-read sprint=%s %s held by %s at %s\n", *sprint, consume.LeaseKey(*sprint), held.Holder, held.At)
+			return 1
+		case err != nil:
+			fmt.Fprintf(errOut, "nova-sprint consume %s: %v\n", group, err)
+			return 1
+		}
+		fmt.Fprintf(out, "CONSUMED pr-to-read sprint=%s\n", *sprint)
+		return 0
+	}
 
 	var pass func(ctx context.Context, quiet bool) int
 	switch group {

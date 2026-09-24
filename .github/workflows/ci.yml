@@ -393,7 +393,7 @@ jobs:
           # measured at over eleven minutes in run 35018437149 for a tier whose
           # budget is two.
           SPACE_SHARDS=8
-          STUDIO_SHARDS=16 # two waves on eight studio runners, each shard inside the 6-minute cap on a loaded Studio; eight studio runners since 05:0xZ 2026-09-16; four shards of double size hit the 6-minute job timeout on a loaded Studio (main runs 35055138586, 35057357169: test (2/4 studio) and (4/4 studio) cancelled at 6 min, twice each)
+          STUDIO_SHARDS=8 # push to dev: ONE wave on the eight studio runners, each shard under the test job's 20-minute push cap; 2026-09-24 run 35950929169 (attempt 2, Studio load 3.5, 16 runners registered) ran all sixteen shards at once and every one was cancelled at the 12-minute cap, 1/16 still testing at 12:06 after 6,252 passes in 75 packages (139 test binaries built under 16-way contention), while 1/8 space finished its 14 packages in under two minutes; was 16 (two waves on eight runners, each inside the old 6-minute cap)
           darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
 
           is_darwin_only() {
@@ -466,7 +466,7 @@ jobs:
           # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
           # 15 packages that import them); every other package runs on Linux
           # only, the shape the merge_group run below has used since 2026-09-16.
-          # The whole tree still runs on macOS on every push to dev (16 studio
+          # The whole tree still runs on macOS on every push to dev (8 studio
           # shards) and in certification's `test` job, so nothing leaves the
           # macOS evidence; it leaves the PR feedback path. If `go list` fails,
           # every touched package keeps its macOS leg (the old shape).
@@ -525,7 +525,8 @@ jobs:
             [ -n "${studio_grp[$g]:-}" ] || continue
             packages="${studio_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"macOS\",\"group\":\"macOS\"}")
+            # ARM64 ONLY (2026-09-24, dev push run 35999520176 at 7ce5488f): `self-hosted,macOS` also matched batman and superman (Intel iMac Pros, about 3x slower per core); 7/8 whole-tree shards were dealt there and cancelled at the 20-minute cap, the one on studio-nova-13 finished in 16 minutes. internal/ci: TestWholeTreeMacOSShardsRunOnARM64.
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"ARM64\",\"group\":\"macOS\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -584,7 +585,8 @@ jobs:
     # carrying ten runners while the Studio is an M3 Ultra: one ceiling over a
     # 2x spread censors the slower machine. The reason lives beside the number
     # in internal/ci/ci_budget_test.go.
-    timeout-minutes: 12
+    # PUSH STUDIO SHARDS get 20 (2026-09-24, run 35950929169: all sixteen whole-tree studio shards cancelled at 12); PR, merge-group and space legs keep 12.
+    timeout-minutes: ${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && 20 || 12 }}
     steps:
       - name: nothing to test for this change
         # test-packages emits one leg with an empty package list when the change
@@ -752,7 +754,8 @@ jobs:
         # one entry for the CL test, and the shard travels in PKGS; the target tees
         # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
         # exactly as the inline command here did.
-        run: make test PKGS="${{ matrix.entry.packages }}"
+        # GOTEST_TIMEOUT: run 35999520176's studio-nova-13 shard failed only on Go's default 10m (cmd/nova-bus 600.3 s, cmd/nova-merge 600.5 s, 9,916 passes, 0 failing tests), so studio legs get 18m under the 20-minute push cap and 11m under the 12-minute PR/merge-group cap; space keeps Go's default 10m. internal/ci: TestShardGoTestTimeoutFitsTheJobCap.
+        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && '18m' || matrix.entry.group == 'macOS' && '11m' || '10m' }}"
 
   test-race-queue:
     # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race
@@ -1547,7 +1550,8 @@ jobs:
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on
     # any failing case, so the exit code is the product here. It is in the CL
-    # tier because it finishes in seconds, well inside the two-minute budget.
+    # tier, but no longer inside two minutes: the 579-case suite alone takes
+    # 62-110 s, and the cap is lispCeiling in internal/ci/ci_budget_test.go.
     # It runs on BOTH self-hosted platforms — the Linux space runners and the
     # macOS studio runners — because a failure that is really about SBCL or the
     # platform (journal fsync differs between Darwin and Linux) must be caught
@@ -1567,7 +1571,8 @@ jobs:
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    timeout-minutes: 2
+    # 6 = 2x the measured max lisp job, 158 s (studio, run 36007928793, 2026-09-24; suite 62-77 s studio, 66-110+ s space)
+    timeout-minutes: 6
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -1651,7 +1656,7 @@ jobs:
       - name: nova-work acceptance
         # Loads the system from the checkout with the ASDF SBCL bundles — no
         # quicklisp, no download — and runs every acceptance case; the script
-        # exits non-zero on any failure. The 120 s budget is the job's
+        # exits non-zero on any failure. The budget is the job's
         # timeout-minutes above.
         run: make test-lisp
 

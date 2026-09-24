@@ -137,6 +137,15 @@ below the state's revision is refused rather than silently reissued."
     ;; event whose `:add` or `:remove` names the edge (nova-tools#1673, #785).
     (:dep :verb :node :by :add :remove :reason
           :request :stamp :clock :generation-owner)
+    ;; The scope and ordering verbs (E03-F03, SPEC-WORK.md:2929): one event of
+    ;; their own kind each, see %scope-submit in node-verbs.lisp.
+    (:node-require :verb :node :by :to :reason
+                   :request :stamp :clock :generation-owner)
+    (:baseline :verb :node :by :reason :request :stamp :clock :generation-owner)
+    (:discovery :verb :node :by :members :reason
+                :request :stamp :clock :generation-owner)
+    (:prioritise :verb :node :by :change :context :rank :reason
+                 :request :stamp :clock :generation-owner)
     ;; The two receipt verbs (SPEC-WORK.md:2295-2296). :staged carries the
     ;; immutable stage the readers produced outside the mutation loop; :lease-by
     ;; and :lease-default are the CLI's --by and --default, renamed here because
@@ -246,13 +255,16 @@ reason or evidence; done/deferred leave only via reopen, never state.")
                     (not (and (stringp reason) (plusp (length reason))))
                     (or (absentp evidence) (null evidence)))
            (return-from %validate (values 10 "unknown to doing requires evidence or a reason"))))
-       ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
-       ;; dependent: a node with a need that is not terminal accepted cannot be
-       ;; taken into doing, and the refusal names the blocking node.
-       (let ((blocker (%dependency-blocker state id)))
-         (when blocker
-           (return-from %validate
-             (values 10 (format nil "~A needs ~A, which is not settled" id blocker))))))
+        ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
+        ;; dependent: a node with a need that is not terminal accepted cannot be
+        ;; taken into doing, and the refusal names the blocking node.
+        ;; SPEC-WORK.md:4869 (rule 3): the refusal says "unmet need <id> <reason>"
+        ;; with no rule number.
+        (multiple-value-bind (blocker reason) (%dependency-blocker-with-reason state id)
+          (when blocker
+            (return-from %validate
+              (values 0 (format nil "unmet need ~A ~A"
+                                blocker (string-downcase (symbol-name reason))))))))
       (:state-to-done
        (unless (eq :o (wnode-branch node))
          (return-from %validate (values 10 (format nil "~A is in C" id))))
@@ -389,7 +401,12 @@ command loop is a defect)."
     ;; `dep` is a structure verb and a WRITER, not an admission verb
     ;; (SPEC-WORK.md:2362): one journaled `:structure` event edits one `:deps`
     ;; reference edge. See dep-verb.lisp.
-    (:dep (return-from %submit (%dep-submit kernel request))))
+    (:dep (return-from %submit (%dep-submit kernel request)))
+    ;; The scope verbs and `prioritise` (E03-F03, SPEC-WORK.md:2929): WRITERS
+    ;; on this one thread, each a journaled event of its own kind that
+    ;; `apply-event` replays. See %scope-submit in node-verbs.lisp.
+    ((:node-require :baseline :discovery :prioritise)
+     (return-from %submit (%scope-submit kernel request))))
   (let ((verb (getf request :verb)))
     ;; THE SIX CONFIG/ACTIVE VERBS (nova-tools#1695): the one verb that
     ;; configures the fleet (SPEC-WORK.md:3541), the one verb that configures
@@ -468,13 +485,17 @@ command loop is a defect)."
                  (values nil (format nil "~A FAIL request=~A: reused with a different payload"
                                      word rid)
                          1 nil))))))
-      ;; Validate against the current state as it would be with the event applied.
-      (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
-        (when rule
-          (return-from %submit
-            (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
-                                word (work-event-node requester) rule reason)
-                    1 nil))))
+       ;; Validate against the current state as it would be with the event applied.
+       (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
+         (when rule
+           (return-from %submit
+             (if (zerop rule)
+                 (values nil (format nil "~A FAIL node=~A: ~A"
+                                     word (work-event-node requester) reason)
+                         1 nil)
+                 (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
+                                     word (work-event-node requester) rule reason)
+                         1 nil)))))
       (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
              (session (unless (eq verb :state-to-doing)
                         (%session-event kernel verb requester)))
@@ -944,14 +965,18 @@ event kind, its ordered field list and its subject (SPEC-WORK.md:2960)."
 
 (defstruct (prompt-profile
              (:constructor make-prompt-profile
-                 (&key name pointer digest policy-version evidence expiry owner)))
+                 (&key name pointer digest policy-version evidence expiry owner
+                       model harness work-type)))
   name       ; display name, selected at start and never swapped mid-session
   pointer    ; a file path in the repository, never inline
   digest     ; the SHA-256 of the prompt content the path resolved to
   policy-version
   evidence   ; a dated measurement, or :UNKNOWN where none has been taken
   expiry     ; the date after which the profile is stale
-  owner)
+  owner
+  model      ; the manager model identity (e.g. "sonnet", "opus", "sol")
+  harness    ; the harness identity (e.g. "claude-cli", "codex-cli")
+  work-type) ; the work-type label (e.g. "task", "review")
 
 (defun prompt-profile-state (profile &key content-digest today)
   "The status line's `profile-state=`: absent when no profile is named, mismatch
@@ -988,5 +1013,132 @@ unknown bytes (SPEC-WORK.md:3366)."
               (format nil "SESSION FAIL session=~A profile=~A: digest mismatch"
                       (or session "-") (prompt-profile-name profile))
               1)
-      (values t "SESSION OK" 0)))
+       (values t "SESSION OK" 0)))
+
+;;; ------------------------------------------------------------------
+;;; prompt-profile unique-triple invariant and versioned edit grammar
+;;; (SPEC-WORK.md:3349-3376)
+;;; ------------------------------------------------------------------
+
+(defstruct (profile-registry
+             (:constructor make-profile-registry (&key (profiles nil) (journal nil))))
+  "A registry of prompt profiles keyed by name. No two profiles hold one
+model, harness and work-type triple (SPEC-WORK.md:3350-3353). The journal
+records every edit as a versioned event (SPEC-WORK.md:3372-3376)."
+  profiles
+  journal)
+
+(defstruct (profile-edit-record
+             (:constructor make-profile-edit-record
+                 (&key profile-name version fields by stamp)))
+  "One versioned record of a profile edit. The edit grammar is one new versioned
+record with :by, naming the profile and stating the fields it changes, never
+an in-place rewrite (SPEC-WORK.md:3372-3376)."
+  profile-name
+  version
+  fields
+  by
+  stamp)
+
+(defun profile-triple (profile)
+  "The (model, harness, work-type) identity triple of a profile."
+  (list (prompt-profile-model profile)
+        (prompt-profile-harness profile)
+        (prompt-profile-work-type profile)))
+
+(defun profile-registry-find-triple (registry triple)
+  "Find a profile in REGISTRY whose triple matches TRIPLE, or NIL."
+  (find-if (lambda (p) (equal (profile-triple p) triple))
+           (profile-registry-profiles registry)))
+
+(defun profile-registry-find (registry name)
+  "Find a profile in REGISTRY by NAME, or NIL."
+  (find name (profile-registry-profiles registry)
+        :key #'prompt-profile-name :test #'string=))
+
+(defun register-profile (registry profile &key (by "coordinator") (stamp ""))
+  "Register PROFILE in REGISTRY. Refuses if another profile already holds the
+same (model, harness, work-type) triple (SPEC-WORK.md:3350-3353)."
+  (let* ((triple (profile-triple profile))
+         (existing (profile-registry-find-triple registry triple)))
+    (if existing
+        (values nil
+                (format nil "PROFILE FAIL name=~A: triple ~S already held by ~A"
+                        (prompt-profile-name profile) triple
+                        (prompt-profile-name existing)))
+        (progn
+          (push profile (profile-registry-profiles registry))
+          (values t
+                  (format nil "PROFILE OK name=~A triple=~S by=~A"
+                          (prompt-profile-name profile) triple by))))))
+
+(defun profile-edit (registry profile-name &key pointer digest policy-version
+                      evidence expiry owner by stamp)
+  "Edit a profile in REGISTRY by creating one new versioned record with :by,
+stating the fields it changes. Never an in-place rewrite (SPEC-WORK.md:3372-3376)."
+  (let* ((profile (profile-registry-find registry profile-name)))
+    (unless profile
+      (return-from profile-edit
+        (values nil
+                (format nil "PROFILE EDIT FAIL name=~A: no such profile"
+                        profile-name)
+                nil)))
+    (let* ((prior-edits (count-if (lambda (r)
+                                    (string= (profile-edit-record-profile-name r)
+                                             profile-name))
+                                  (profile-registry-journal registry)))
+           (version (1+ prior-edits))
+           (changed-fields '()))
+      (when pointer
+        (push :pointer changed-fields) (push pointer changed-fields))
+      (when digest
+        (push :digest changed-fields) (push digest changed-fields))
+      (when policy-version
+        (push :policy-version changed-fields) (push policy-version changed-fields))
+      (when evidence
+        (push :evidence changed-fields) (push evidence changed-fields))
+      (when expiry
+        (push :expiry changed-fields) (push expiry changed-fields))
+      (when owner
+        (push :owner changed-fields) (push owner changed-fields))
+      (when (null changed-fields)
+        (return-from profile-edit
+          (values nil
+                  (format nil "PROFILE EDIT FAIL name=~A: no fields to change"
+                          profile-name)
+                  nil)))
+      (let ((updated (make-prompt-profile
+                      :name (prompt-profile-name profile)
+                      :pointer (or pointer (prompt-profile-pointer profile))
+                      :digest (or digest (prompt-profile-digest profile))
+                      :policy-version (or policy-version
+                                          (prompt-profile-policy-version profile))
+                      :evidence (or evidence (prompt-profile-evidence profile))
+                      :expiry (or expiry (prompt-profile-expiry profile))
+                      :owner (or owner (prompt-profile-owner profile))
+                      :model (prompt-profile-model profile)
+                      :harness (prompt-profile-harness profile)
+                      :work-type (prompt-profile-work-type profile))))
+        (setf (profile-registry-profiles registry)
+              (cons updated (remove-if (lambda (p)
+                                         (string= (prompt-profile-name p)
+                                                  profile-name))
+                                       (profile-registry-profiles registry))))
+        (let ((record (make-profile-edit-record
+                       :profile-name profile-name
+                       :version version
+                       :fields changed-fields
+                       :by (or by "coordinator")
+                       :stamp (or stamp ""))))
+          (push record (profile-registry-journal registry))
+          (values t record updated))))))
+
+(defun profile-edit-journal (registry &key profile-name)
+  "Return the edit journal, optionally filtered by PROFILE-NAME."
+  (if profile-name
+      (remove-if-not (lambda (r)
+                       (string= (profile-edit-record-profile-name r)
+                                profile-name))
+                     (profile-registry-journal registry))
+      (profile-registry-journal registry)))
 
