@@ -343,12 +343,12 @@ func TestCardTemplateV2A7ResultTemplateAndExemplar(t *testing.T) {
 			t.Errorf("kind %s missing separate typed check conclusion (CHECK: pass):\n%s", k, card)
 		}
 
-		// Verify space-delimited wire shape in template: BRANCH <branch>, REPO <repo>
-		if !strings.Contains(card, "BRANCH <working branch>") {
-			t.Errorf("kind %s does not use wire-compatible BRANCH <working branch>:\n%s", k, card)
+		// Verify colon-delimited shape in template: REPO: <owner>/<name>
+		if k != "read" && !strings.Contains(card, "BRANCH: <branch>") {
+			t.Errorf("kind %s does not use BRANCH: <branch>:\n%s", k, card)
 		}
-		if !strings.Contains(card, "REPO <owner>/<name>") {
-			t.Errorf("kind %s does not use wire-compatible REPO <owner>/<name>:\n%s", k, card)
+		if !strings.Contains(card, "REPO: <owner>/<name>") {
+			t.Errorf("kind %s does not use REPO: <owner>/<name>:\n%s", k, card)
 		}
 
 		// Line 1 in skeleton must not prepend duplicate RESULT

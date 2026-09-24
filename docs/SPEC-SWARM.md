@@ -3259,6 +3259,50 @@ tool's to salvage, because a tool that quoted half a malformed report into a
 page would be choosing which half, and a report with no head at all is
 `plan-only` (rule 8), never `malformed`.
 
+## Typed records
+
+<!-- typedrec:begin -->
+| field | type | fix | recut | port | docs-guard | report | read |
+|---|---|---|---|---|---|---|---|
+| line 1 | card line 1 verbatim (else contradictory) | R | R | R | R | R | R |
+| line 2 | `DONE` \| `ABSTAIN <why>` \| `BLOCKED <why>`; why is 1-512 B | R | R | R | R | R | R |
+| SCHEMA | literal `v2` | R | R | R | R | R | R |
+| KIND | enum of the 6; must equal the card's KIND | R | R | R | R | R | R |
+| ATTEMPT | int 1-99; must equal the card's attempt | R | R | R | R | R | R |
+| CHECK | `pass` \| `fail` \| `not-run` | R | R | R | R | R | R |
+| REPO | `owner/name`, `^[a-z0-9-]+/[a-z0-9._-]+$`; must equal the card's repo | R | R | R | R | R | R |
+| BRANCH | git ref (check-ref-format), ≤200 B; must equal the card's branch when it has one | D | D | D | D | O | - |
+| PATHS | 1-256 space-separated repo-relative paths; no `..`, no leading `/`, no duplicates | D | D | D | D | O | - |
+| RED | text 1-4096 B | D | D | D | - | - | - |
+| GREEN | text 1-4096 B | P | P | P | - | - | - |
+| PRIOR | `#<int> @<hex12>` | - | D | - | - | - | - |
+| PR | int | - | - | - | - | - | D |
+| HEAD | hex40; must equal the card's `pr_head` | - | - | - | - | - | D |
+| FINDINGS | int 0-999; must equal the number of `## Findings` rows | - | - | - | - | - | D |
+| FLOOR | `HIGH` \| `MEDIUM` \| `LOW` \| `NONE`; `NONE` iff FINDINGS=0 | - | - | - | - | - | D |
+| SUGGEST | `APPROVE` \| `HOLD`: a suggestion, never a disposition | - | - | - | - | - | D |
+| PROBES | int ≥1; must equal the number of `## Probes` rows | - | - | - | - | D | - |
+| sections | required `## ` headings, each with at least one row | Gates, Left owed | Gates, Left owed | Gates, Left owed | Verification, Gates | Probes, Summary | Findings (rows = FINDINGS, the one zero-row case) |
+
+Key: R = required. D = required when the status is DONE (and the `sections` row applies only on DONE). P = required when DONE and CHECK=pass, optional otherwise. O = optional, and type-checked when present. `-` = unknown for this kind, so the file is refused. On ABSTAIN or BLOCKED only the R rows are required; any other field present is still type-checked. A DONE with CHECK=fail is a valid Returned attempt that stays unverified.
+
+### Evidence rows
+
+This one grammar covers every section in every kind.
+- **Lines.** The evidence region is split on `\n`.
+- **Fences.** A fence is a line that starts with three backticks, and each one toggles the fenced state. Fence lines and every line inside a fence are neither rows nor headings.
+- **Headings.** A heading is any line starting `## ` outside a fence.
+- **Sections.** A section is the lines after its heading, up to the next heading or the end of the file. A heading is a contract section only when the whole line is exactly `## <Name>`, byte for byte. So `## Findings` counts, while `## findings`, `##Findings`, `## Findings:` and `## Findings ` (trailing space) do not.
+- **Other headings.** Any other heading, such as `## Notes`, is evidence. It ends the section above it and is otherwise ignored. A `### ` line does not start with `## `, so it neither ends a section nor counts as a row.
+- **Rows.** A row is a section line that starts at column 0 with `- ` (hyphen, space) and then has at least one byte that is not a space or tab. Nothing else is a row: blank lines, prose, indented lines (nested bullets, continuations), `* ` and `+ ` bullets, numbered items, table lines, `### ` subheadings, `-x` and a bare `- `. They all stay in the file as evidence and are never counted.
+- **General rule.** Every section named in the kind's `sections` cell must be present exactly once and must have at least one row. There is exactly one exception. On kind=read, `## Findings` must have exactly FINDINGS rows, so FINDINGS=0 means the heading is present with zero rows. Prose such as "none" is allowed there, and any row is `contradictory`. FINDINGS and PROBES each equal the row count of their section.
+- **Section defects,** each named by field:
+  - A heading that is absent gives `field=## <Name> defect=missing line=0`.
+  - A heading with zero rows, outside the exception, gives `field=## <Name> defect=missing line=<heading line>`.
+  - A second identical heading gives `defect=duplicate line=<second heading line>`.
+  - A count that differs from its rows gives `field=FINDINGS|PROBES defect=contradictory line=<field line>`.
+<!-- typedrec:end -->
+
 ## The `setup` agreement form (issue #184)
 
 Printed by `nova-swarm template --name setup` and refused by `add --template`,
