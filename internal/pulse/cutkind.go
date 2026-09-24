@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/lanes"
@@ -38,21 +39,39 @@ import (
 // CutKinds are the kinds this cutter knows, in the order help prints them.
 var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "recut", "port", "docs-guard", "report"}
 
-// cardExemplars is #2498 S6's reviewed-PR catalog at the generation boundary.
-// Keeping the mapping here makes every real card carry its matching example;
-// docs/EXEMPLARS.md explains why each one was selected.
-var cardExemplars = map[string]string{
-	"read":       "https://github.com/mas-bandwidth/nova-tools/pull/3483",
-	"fix":        "https://github.com/mas-bandwidth/nova-tools/pull/3061",
-	"replay":     "https://github.com/mas-bandwidth/nova-tools/pull/2792",
-	"spec":       "https://github.com/mas-bandwidth/nova-tools/pull/3162",
-	"rebase":     "https://github.com/mas-bandwidth/nova-tools/pull/2794",
-	"guard":      "https://github.com/mas-bandwidth/nova-tools/pull/2543",
-	"recut":      "https://github.com/mas-bandwidth/nova-tools/pull/2918",
-	"port":       "https://github.com/mas-bandwidth/nova-tools/pull/2751",
-	"docs-guard": "https://github.com/mas-bandwidth/nova-tools/pull/3140",
-	"report":     "https://github.com/mas-bandwidth/nova-tools/pull/3337",
+// exemplarPRPrefix is the one place the reviewed-exemplar URL is spelled;
+// tests build every expected link from it instead of writing literal hosts
+// (TestNoRealNetworkHostsOnTheCIPath).
+const exemplarPRPrefix = "https://github.com/mas-bandwidth/nova-tools/pull/"
+
+// cardExemplarPRs is #2498 S6's reviewed-PR catalog at the generation boundary,
+// keyed by kind to the exemplar's nova-tools PR number. Keeping the mapping here
+// makes every real card carry its matching example; docs/EXEMPLARS.md explains
+// why each one was selected.
+var cardExemplarPRs = map[string]int{
+	"read":       3483,
+	"fix":        3061,
+	"replay":     2792,
+	"spec":       3162,
+	"rebase":     2794,
+	"guard":      2543,
+	"recut":      2918,
+	"port":       2751,
+	"docs-guard": 3140,
+	"report":     3337,
 }
+
+// exemplarURL is the link a card carries for a reviewed exemplar PR.
+func exemplarURL(pr int) string { return exemplarPRPrefix + strconv.Itoa(pr) }
+
+// cardExemplars maps each kind to its full exemplar link, built from cardExemplarPRs.
+var cardExemplars = func() map[string]string {
+	m := make(map[string]string, len(cardExemplarPRs))
+	for kind, pr := range cardExemplarPRs {
+		m[kind] = exemplarURL(pr)
+	}
+	return m
+}()
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {

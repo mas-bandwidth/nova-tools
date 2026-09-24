@@ -32,17 +32,21 @@ func cutKind(t *testing.T, in CutKindInput) (int, string, string, string) {
 // generated card; a catalog that only tells a human to add the link is not the
 // card-linked contract.
 func TestEveryCutKindCarriesItsReviewedExemplar(t *testing.T) {
-	exemplars := map[string]string{
-		"read":       "https://github.com/mas-bandwidth/nova-tools/pull/3483",
-		"fix":        "https://github.com/mas-bandwidth/nova-tools/pull/3061",
-		"replay":     "https://github.com/mas-bandwidth/nova-tools/pull/2792",
-		"spec":       "https://github.com/mas-bandwidth/nova-tools/pull/3162",
-		"rebase":     "https://github.com/mas-bandwidth/nova-tools/pull/2794",
-		"guard":      "https://github.com/mas-bandwidth/nova-tools/pull/2543",
-		"recut":      "https://github.com/mas-bandwidth/nova-tools/pull/2918",
-		"port":       "https://github.com/mas-bandwidth/nova-tools/pull/2751",
-		"docs-guard": "https://github.com/mas-bandwidth/nova-tools/pull/3140",
-		"report":     "https://github.com/mas-bandwidth/nova-tools/pull/3337",
+	exemplarPRs := map[string]int{
+		"read":       3483,
+		"fix":        3061,
+		"replay":     2792,
+		"spec":       3162,
+		"rebase":     2794,
+		"guard":      2543,
+		"recut":      2918,
+		"port":       2751,
+		"docs-guard": 3140,
+		"report":     3337,
+	}
+	exemplars := make(map[string]string, len(exemplarPRs))
+	for kind, pr := range exemplarPRs {
+		exemplars[kind] = exemplarURL(pr)
 	}
 	v2 := map[string]bool{"recut": true, "fix": true, "port": true, "docs-guard": true, "report": true, "read": true}
 	if len(exemplars) != len(CutKinds) || len(cardExemplars) != len(CutKinds) {
