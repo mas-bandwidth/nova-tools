@@ -706,15 +706,16 @@ func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
 	}
 }
 
-// studioEntryRe matches the test-packages line that emits a whole-tree Go shard
-// for macOS (the studio legs); group 1 is its arch label.
+// studioEntryRe matches the test-packages line that emits a Go shard for macOS
+// (once the studio legs, now darwin-x64); group 1 is its arch label.
 var studioEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"arch\\":\\"([^"\\]+)\\"`)
 
-// TestWholeTreeMacOSShardsRunOnARM64: dev push run 35999520176 (2026-09-24)
-// dealt 7/8 studio shards selected by `self-hosted,macOS` onto the Intel iMac
-// Pros (batman, superman), all cancelled at the 20-minute cap; the one on the
-// Studio finished in 16. A whole-tree Go shard on macOS carries ARM64.
-func TestWholeTreeMacOSShardsRunOnARM64(t *testing.T) {
+// TestMacOSShardsLeaveTheStudio: Glenn 2026-09-24 7:25 PM ET (nova-tools#3634),
+// "No CI, and no swarm on the studio. It's for friends." The Studio's runners
+// are the only ARM64 macOS runners, so a macOS Go shard carries X64 and lands
+// on batman or superman. (Run 35999520176's Intel cancellations predate #3492,
+// when every shard ran the whole tree.)
+func TestMacOSShardsLeaveTheStudio(t *testing.T) {
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
 	found := 0
 	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
@@ -723,15 +724,18 @@ func TestWholeTreeMacOSShardsRunOnARM64(t *testing.T) {
 			continue
 		}
 		found++
-		if m[1] != "ARM64" {
-			t.Errorf("a macOS test shard selects arch %q, want ARM64 (run 35999520176: Intel Macs cancelled 7/8 shards): %s", m[1], strings.TrimSpace(line))
+		if m[1] != "X64" {
+			t.Errorf("a macOS test shard selects arch %q, want X64 (nova-tools#3634: no CI on the Studio): %s", m[1], strings.TrimSpace(line))
+		}
+		if strings.Contains(line, "studio\\\"") {
+			t.Errorf("a macOS test shard is still named for the Studio: %s", strings.TrimSpace(line))
 		}
 	}
 	if found == 0 {
 		t.Error("test-packages emits no macOS shard entry this test can read")
 	}
 	if !strings.Contains(jobBody(src, "test"), `"${{ matrix.entry.arch }}"`) {
-		t.Error("the test job's runs-on does not carry matrix.entry.arch, so the ARM64 label selects nothing")
+		t.Error("the test job's runs-on does not carry matrix.entry.arch, so the X64 label selects nothing and a shard could land on the Studio")
 	}
 }
 
