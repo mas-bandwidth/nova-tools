@@ -36,7 +36,7 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, wake, report, show or sweep")
+		return refuse(errOut, "friend", "want hello, bye, wake, report, show, sweep, down or up")
 	}
 	switch args[0] {
 	case "hello":
@@ -51,8 +51,12 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFriendShow(ctx, args[1:], out, errOut)
 	case "sweep":
 		return runFriendSweep(ctx, args[1:], out, errOut)
+	case "down":
+		return runFriendDown(ctx, true, args[1:], out, errOut)
+	case "up":
+		return runFriendDown(ctx, false, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, report, show or sweep", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, report, show, sweep, down or up", args[0]))
 	}
 }
 
