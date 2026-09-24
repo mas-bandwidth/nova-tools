@@ -3,7 +3,9 @@ package ci
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -30,9 +32,15 @@ func TestIssue2218(t *testing.T) {
 	t.Run("unexecuted_examples_only_shrink", func(t *testing.T) {
 		root := repoRoot(t)
 
-		examples, err := PastedDocExamples(root)
+		docExamples, err := PastedDocExamplesByDoc(root)
 		if err != nil {
 			t.Fatal(err)
+		}
+		examples := make([]string, 0, len(docExamples))
+		docsOf := make(map[string][]string)
+		for _, e := range docExamples {
+			examples = append(examples, e.Line)
+			docsOf[e.Line] = append(docsOf[e.Line], e.Doc)
 		}
 
 		listPath := filepath.Join("testdata", "unexecuted_examples.txt")
@@ -52,7 +60,7 @@ func TestIssue2218(t *testing.T) {
 			if allow[ex] {
 				t.Errorf("%q is in both %s and %s; a compared example leaves the unexecuted list", ex, comparedPath, listPath)
 			}
-			if problem := comparatorTestProblem(root, c); problem != "" {
+			if problem := comparatorTestProblem(root, c, docsOf[ex]); problem != "" {
 				t.Errorf("%s:%d: %s", comparedPath, c.line, problem)
 			}
 		}
@@ -107,6 +115,7 @@ type comparedExample struct {
 	file string // test file, relative to the repo root
 	test string // test function name
 	line int    // line in compared_examples.txt
+	ex   string // the pasted example, exactly as in the doc
 }
 
 // readCompared reads testdata/compared_examples.txt: one
@@ -134,36 +143,48 @@ func readCompared(t *testing.T, path string) map[string]comparedExample {
 			t.Errorf("%s:%d: %q is already listed at line %d", path, i+1, ex, prev.line)
 			continue
 		}
-		out[ex] = comparedExample{file: file, test: test, line: i + 1}
+		out[ex] = comparedExample{file: file, test: test, line: i + 1, ex: ex}
 	}
 	return out
 }
 
 // comparatorTestProblem says why a compared_examples.txt entry does not name a
-// real comparator test, or "" when it does: the file must declare the test,
-// reach the comparator (onboarding.Compare, or onboarding.Execute which calls
-// it), and read one of the docs PastedDocExamples scans.
-func comparatorTestProblem(root string, c comparedExample) string {
+// real comparator test FOR ITS EXAMPLE, or "" when it does: the file is a
+// _test.go file in the example's tool's package (cmd/<tool>/), it reaches the
+// comparator (onboarding.Compare, or onboarding.Execute which calls it), it
+// declares the named test, and that test's own body reads one of docs, the
+// docs the example is pasted in.
+func comparatorTestProblem(root string, c comparedExample, docs []string) string {
 	if !strings.HasSuffix(c.file, "_test.go") {
 		return fmt.Sprintf("%s is not a _test.go file", c.file)
+	}
+	fields := strings.Fields(strings.TrimPrefix(c.ex, "$ "))
+	if len(fields) == 0 {
+		return fmt.Sprintf("%q names no command", c.ex)
+	}
+	if dir := "cmd/" + fields[0] + "/"; !strings.HasPrefix(c.file, dir) {
+		return fmt.Sprintf("%q runs %s, but %s is not in %s, so %s cannot be the test that executes it", c.ex, fields[0], c.file, dir, c.test)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(c.file)))
 	if err != nil {
 		return fmt.Sprintf("cannot read %s: %v", c.file, err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, "func "+c.test+"(t *testing.T)") {
-		return fmt.Sprintf("%s declares no func %s(t *testing.T)", c.file, c.test)
-	}
 	if !strings.Contains(src, "onboarding.Compare(") && !strings.Contains(src, "onboarding.Execute(") {
 		return fmt.Sprintf("%s never calls onboarding.Compare or onboarding.Execute, so %s is not a comparator test", c.file, c.test)
 	}
-	for _, doc := range []string{`"README.md"`, `"USAGE.md"`, `"CLI.md"`, `"nova-swarm-quickstart.md"`} {
-		if strings.Contains(src, doc) {
+	decl := "func " + c.test + "(t *testing.T) {"
+	_, body, found := strings.Cut(src, decl)
+	if !found {
+		return fmt.Sprintf("%s declares no func %s(t *testing.T)", c.file, c.test)
+	}
+	body, _, _ = strings.Cut(body, "\n}\n")
+	for _, doc := range docs {
+		if strings.Contains(body, strconv.Quote(path.Base(doc))) {
 			return ""
 		}
 	}
-	return fmt.Sprintf("%s reads none of README.md, docs/USAGE.md, docs/CLI.md, docs/nova-swarm-quickstart.md", c.file)
+	return fmt.Sprintf("%s's body reads none of %v, the docs %q is pasted in", c.test, docs, c.ex)
 }
 
 func mapKeysSorted(m map[string]bool) []string {

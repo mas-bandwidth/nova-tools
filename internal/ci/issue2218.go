@@ -1,9 +1,11 @@
 package ci
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
@@ -89,37 +91,70 @@ func toolSectionBodies(md string) []string {
 
 var knownGOOS = []string{"linux", "darwin", "windows", "freebsd", "netbsd", "openbsd", "plan9", "solaris", "aix", "android", "illumos", "ios", "js", "wasip1"}
 
+// goosValues returns the known GOOS values the line names as whole words:
+// "(darwin)" names darwin, "json" does not name js and "ratios" does not name
+// ios.
 func goosValues(line string) []string {
+	words := make(map[string]bool)
+	for _, w := range strings.FieldsFunc(line, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
+		words[w] = true
+	}
 	var vals []string
 	for _, g := range knownGOOS {
-		if strings.Contains(line, g) {
+		if words[g] {
 			vals = append(vals, g)
 		}
 	}
 	return vals
 }
 
-// PastedDocExamples reads the named docs and returns every $  line inside a
-// fenced code block (```-delimited). The docs are README.md, docs/USAGE.md,
-// docs/CLI.md and docs/nova-swarm-quickstart.md, per SPEC-TOOLWORK §7 rule 7.
+// PastedDocs are the documents a stranger pastes from, per SPEC-TOOLWORK §7
+// rule 7, relative to the repo root.
+var PastedDocs = []string{
+	"README.md",
+	filepath.Join("docs", "USAGE.md"),
+	filepath.Join("docs", "CLI.md"),
+	filepath.Join("docs", "nova-swarm-quickstart.md"),
+}
+
+// DocExample is one pasted example and the doc it is pasted in.
+type DocExample struct {
+	Doc  string // relative to the repo root, as in PastedDocs
+	Line string // "$ ..." or "example: ..."
+}
+
+// PastedDocExamples returns every pasted example of the PastedDocs: each $
+// line inside a fenced code block, and each line of a help banner's
+// `example:` block pasted inside one (as "example: <line>"). A missing doc is
+// an error naming it, so the scan never silently covers fewer documents.
 func PastedDocExamples(root string) ([]string, error) {
-	files := []string{
-		"README.md",
-		filepath.Join("docs", "USAGE.md"),
-		filepath.Join("docs", "CLI.md"),
-		filepath.Join("docs", "nova-swarm-quickstart.md"),
+	docExamples, err := PastedDocExamplesByDoc(root)
+	if err != nil {
+		return nil, err
 	}
-	var examples []string
-	for _, f := range files {
-		path := filepath.Join(root, f)
-		raw, err := os.ReadFile(path)
+	examples := make([]string, 0, len(docExamples))
+	for _, e := range docExamples {
+		examples = append(examples, e.Line)
+	}
+	return examples, nil
+}
+
+// PastedDocExamplesByDoc is PastedDocExamples with the doc each example is
+// pasted in.
+func PastedDocExamplesByDoc(root string) ([]DocExample, error) {
+	var examples []DocExample
+	for _, f := range PastedDocs {
+		raw, err := os.ReadFile(filepath.Join(root, f))
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
+			return nil, fmt.Errorf("pasted-example doc %s: %w", filepath.ToSlash(f), err)
 		}
-		examples = append(examples, shellLinesInFencedBlocks(string(raw))...)
+		lines, err := pastedLinesInFencedBlocks(string(raw))
+		if err != nil {
+			return nil, fmt.Errorf("pasted-example doc %s: %w", filepath.ToSlash(f), err)
+		}
+		for _, l := range lines {
+			examples = append(examples, DocExample{Doc: filepath.ToSlash(f), Line: l})
+		}
 	}
 	return examples, nil
 }
@@ -140,8 +175,60 @@ func shellLinesInFencedBlocks(md string) []string {
 	return examples
 }
 
-// HelpExampleLines wraps onboarding.ExampleLines so the unexecuted-examples
-// scanner has one entry point for `example:` lines a tool's help prints.
+// pastedLinesInFencedBlocks returns the $ lines of every fenced block and, for
+// a block that is a pasted help banner, its `example:` lines through
+// HelpExampleLines.
+func pastedLinesInFencedBlocks(md string) ([]string, error) {
+	examples := shellLinesInFencedBlocks(md)
+	var block []string
+	inFence := false
+	for _, line := range strings.Split(md, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			if inFence {
+				lines, err := blockHelpExamples(strings.Join(block, "\n"))
+				if err != nil {
+					return nil, err
+				}
+				examples = append(examples, lines...)
+				block = block[:0]
+			}
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			block = append(block, line)
+		}
+	}
+	return examples, nil
+}
+
+// blockHelpExamples returns a fenced block's `example:` lines, prefixed
+// "example: ", or none when the block carries no `example:` heading. The tool
+// is the first word of the first line under the heading.
+func blockHelpExamples(block string) ([]string, error) {
+	banner := "\n" + block + "\n"
+	_, tail, found := strings.Cut(banner, "\nexample:\n")
+	if !found {
+		return nil, nil
+	}
+	first, _, _ := strings.Cut(strings.TrimSpace(tail), "\n")
+	fields := strings.Fields(first)
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("an `example:` block with no command under it")
+	}
+	lines, err := HelpExampleLines(banner, fields[0])
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		out = append(out, "example: "+l)
+	}
+	return out, nil
+}
+
+// HelpExampleLines wraps onboarding.ExampleLines: the `example:` lines of a
+// help banner pasted in one of the PastedDocs are pasted examples too.
 func HelpExampleLines(usage, tool string) ([]string, error) {
 	return onboarding.ExampleLines(usage, tool)
 }

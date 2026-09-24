@@ -2,8 +2,10 @@
 # not yet executed by a test through the comparator (SPEC-TOOLWORK §7 rule 7).
 #
 # Every $  line in a fenced block of README.md, docs/USAGE.md, docs/CLI.md and
-# docs/nova-swarm-quickstart.md, and every example: line of every `help`, is
-# either executed by a test through onboarding.CompareTranscript or listed here.
+# docs/nova-swarm-quickstart.md, and every example: line of a `help` banner
+# pasted in a fenced block of those docs (listed as `example: <line>`), is
+# either executed by a test through the comparator (compared_examples.txt) or
+# listed here.
 # The list only shrinks: a new entry fails the class test on the PR.
 # Remove an entry when a test exercising it through the comparator lands.
 #
@@ -81,3 +83,11 @@ $ nova-wake quickstart --state ./wake.state --reports ./reports
 $ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
 $ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
 $ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
+example: nova-work dependencies --graph ./deps.json --node b
+example: nova-work dependencies --graph ./deps.json --node a --needs b
+example: nova-work ready --node a --graph ./deps.json
+example: nova-work plan check --file ./work.work --max-bytes 65536
+example: nova-work set check --file ./work-set.lisp --ready
+example: nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
+example: nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
+example: nova-work events --redis 127.0.0.1:6379 --once
