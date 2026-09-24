@@ -40,7 +40,7 @@ func TestCmdProvingRunCLI(t *testing.T) {
 				Revision:     "rev-1945",
 				CommentCount: 3,
 				Labels:       []string{"fill", "landed"},
-				URL:          "https://github.com/mas-bandwidth/nova-tools/issues/1945",
+				URL:          "https://forge.test/mas-bandwidth/nova-tools/issues/1945",
 			},
 			{
 				Provider:     "github",
@@ -51,7 +51,7 @@ func TestCmdProvingRunCLI(t *testing.T) {
 				Revision:     "rev-2029",
 				CommentCount: 1,
 				Labels:       []string{"dealer"},
-				URL:          "https://github.com/mas-bandwidth/nova-tools/issues/2029",
+				URL:          "https://forge.test/mas-bandwidth/nova-tools/issues/2029",
 			},
 		},
 	}

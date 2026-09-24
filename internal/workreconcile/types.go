@@ -120,12 +120,12 @@ func MintUID() (string, error) {
 
 // Store holds the imported work nodes, two-way correspondence index, and checkpoints.
 type Store struct {
-	mu            sync.RWMutex
-	nodes         map[string]*WorkNode           // uid -> node
-	byRepoAndNum  map[string]map[int]*WorkNode   // repo -> number -> node
-	forwardIndex  map[string][]string            // node uid -> []external keys
-	reverseIndex  map[string][]string            // external key -> []node uids
-	checkpoints   map[string]*Checkpoint         // repo -> checkpoint
+	mu           sync.RWMutex
+	nodes        map[string]*WorkNode         // uid -> node
+	byRepoAndNum map[string]map[int]*WorkNode // repo -> number -> node
+	forwardIndex map[string][]string          // node uid -> []external keys
+	reverseIndex map[string][]string          // external key -> []node uids
+	checkpoints  map[string]*Checkpoint       // repo -> checkpoint
 }
 
 // NewStore initializes a new empty work store.

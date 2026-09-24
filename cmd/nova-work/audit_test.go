@@ -26,6 +26,11 @@ var workAudit = audit.Config{
 	// same shape. It cannot return an unescaped string, so the tripwire counts it.
 	Escapers: []string{"oneline.Quote", "field"},
 	Imports: []string{
+		// bounded is the capped line writer the dogfood report (#2762) and visualize
+		// (#2883) print through: every line it takes is already escaped by the caller,
+		// and it escapes the remedy it writes. Listed before #2623 removed its last
+		// caller; restored with these two.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		// buildinfo answers which build this is; its Line renders every field through
 		// oneline.Field itself, and the version print site wraps the result in
 		// oneline.Escape so the tripwire sees the escape.
