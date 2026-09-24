@@ -396,12 +396,11 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (copy-list (wnode-deps n))))
 
-(defun node-needs-broken (state id)
-  "True when a need of this node was reverted after this node landed
-(SPEC-WORK.md:2110, the `needs-broken` flag)."
-  (let ((n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (wnode-needs-broken n)))
+;;; `node-needs-broken` is DERIVED (SPEC-WORK.md:4972), so it no longer lives
+;;; here as a slot reader: it moved to src/needs.lisp beside the other readings
+;;; of rule 5. The slot stays as `ready-p`'s cache of one reason (a remaining
+;;; reverted need, `%needs-broken-by-a-revert-p`); the derived reading never
+;;; reads it, so a stale bit cannot outlive the edge it was raised for.
 
 ;;; ------------------------------------------------------------------
 ;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
@@ -518,16 +517,34 @@ nodes and mutates none."
   (loop for id in (wstate-order state)
         when (ready-p state id) collect id))
 
+(defun %needs-broken-by-a-revert-p (state id)
+  "True while one of ID's REMAINING needs is still a reverted one: in O, with a
+`:revive` on its closed index, and not closed-unaccepted (rule 2 row 2,
+SPEC-WORK.md:4820). This is the only reason the write path's cached
+`needs-broken` bit stands for; the rest of rule 5 (engaged, in C) is read at
+read time (src/needs.lisp). An edge that is gone, or a need that settled again,
+leaves no bit behind (SPEC-WORK.md:4972: the flag is derived)."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (some (lambda (dep)
+                 (let ((d (%node-quiet state dep)))
+                   (and d
+                        (eq :o (wnode-branch d))
+                        (not (%need-closed-unaccepted-p state dep))
+                        (%need-revived-p state dep))))
+               (wnode-deps n))
+         t)))
+
 (defun %recheck-needs-broken (state id settled-p)
-  "Re-evaluate the dependents of ID after it settled (SETTLED-P true, clear the
-flag where every need is terminal again) or was reverted (false, raise it)."
+  "Re-evaluate the dependents of ID after it settled (SETTLED-P true: the bit
+stands only while another remaining need is still reverted) or was reverted
+(false, raise it)."
   (dolist (dependent (wnode-dependents (%node-quiet state id)))
     (let ((d (%node-quiet state dependent)))
       (when d
         (setf (wnode-needs-broken d)
               (if settled-p
-                  (not (every (lambda (dep) (%need-terminal-p state dep))
-                              (wnode-deps d)))
+                  (%needs-broken-by-a-revert-p state dependent)
                   t))))))
 (defun node-estimate (state id)
   "The node's estimate record, or +ABSENT+ when it carries none. A node with an
@@ -941,13 +958,14 @@ its own mutation."
              (when target
                (setf (wnode-dependents target)
                      (remove id (wnode-dependents target) :test #'equal)))))
-         ;; Removing the need that raised a `needs-broken` clears it again when
-         ;; every remaining need is terminal. Adding one never raises it: a
-         ;; fresh unmet need is simply not ready (`ready-p`), not broken.
-         (when (and (eq verb :dep) (wnode-needs-broken node))
-           (setf (wnode-needs-broken node)
-                 (not (every (lambda (dep) (%need-terminal-p state dep))
-                             (wnode-deps node)))))
+         ;; The cached `needs-broken` bit is recomputed from the needs that
+         ;; REMAIN: it stands only while one of them is still a reverted need.
+         ;; Removing the reverted edge clears it even when another need is
+         ;; still open, since `need-open` alone never breaks an unengaged node
+         ;; in O (SPEC-WORK.md:4765; stella's hold at 3a71ee48). Adding an edge
+         ;; to an already reverted need raises it for the same reason.
+         (when (eq verb :dep)
+           (setf (wnode-needs-broken node) (%needs-broken-by-a-revert-p state id)))
          (push (list :op :structure :kind :structure :verb verb
                      :node id :add add :remove remove
                      :by (work-event-by event) :reason reason

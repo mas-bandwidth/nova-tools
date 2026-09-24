@@ -319,6 +319,14 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 				}
 				continue
 			}
+			// THE PROVIDER-BEAT SIGNAL (feature 87). Touch the provider-beat file so the
+			// lease heartbeat knows provider bytes have arrived. A hung socket never lands
+			// here, so the beat file never moves and the lease expires by age.
+			// The first observed sample always beats (creating the file), whatever its
+			// turn count; later samples beat only when turns advanced.
+			if !observed || usage.Turns > seen.Turns {
+				_ = touchProviderBeat(jobDir, in.Now())
+			}
 			seen = usage
 			sum, seenCols, part := seen.Budget()
 			spent, partial, observed = sum, part, seenCols > 0
