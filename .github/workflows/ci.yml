@@ -1550,7 +1550,8 @@ jobs:
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on
     # any failing case, so the exit code is the product here. It is in the CL
-    # tier because it finishes in seconds, well inside the two-minute budget.
+    # tier, but no longer inside two minutes: the 579-case suite alone takes
+    # 62-110 s, and the cap is lispCeiling in internal/ci/ci_budget_test.go.
     # It runs on BOTH self-hosted platforms — the Linux space runners and the
     # macOS studio runners — because a failure that is really about SBCL or the
     # platform (journal fsync differs between Darwin and Linux) must be caught
@@ -1570,7 +1571,8 @@ jobs:
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    timeout-minutes: 2
+    # 6 = 2x the measured max lisp job, 158 s (studio, run 36007928793, 2026-09-24; suite 62-77 s studio, 66-110+ s space)
+    timeout-minutes: 6
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -1654,7 +1656,7 @@ jobs:
       - name: nova-work acceptance
         # Loads the system from the checkout with the ASDF SBCL bundles — no
         # quicklisp, no download — and runs every acceptance case; the script
-        # exits non-zero on any failure. The 120 s budget is the job's
+        # exits non-zero on any failure. The budget is the job's
         # timeout-minutes above.
         run: make test-lisp
 
