@@ -84,15 +84,9 @@ func ParseSection(raw string) (*Section, error) {
 	return s, nil
 }
 
-var (
-	fieldResult = "RESULT"
-	fieldKind   = "KIND"
-	fieldSchema = "SCHEMA"
-)
-
 // RequiredFields returns the set of fields that must be present.
 func RequiredFields() []string {
-	return []string{fieldResult, fieldKind, fieldSchema}
+	return []string{"RESULT", "KIND", "SCHEMA"}
 }
 
 // Validate checks that all required fields are present.

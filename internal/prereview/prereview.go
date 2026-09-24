@@ -37,6 +37,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Result is one check's answer. Yes and No are decided; Missing is the answer
@@ -328,13 +329,11 @@ func doneCheck(pr PR, card Card) Check {
 	if card.Path == "" && !hasResultLine(pr.Body) {
 		return Check{Missing, "the body has no line starting RESULT, so there is no DONE line to read (not a harvested card)"}
 	}
-	text := resultText(pr, card)
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	if len(lines) < 2 {
+	got, present, done := typedrec.LineTwo(resultText(pr, card))
+	if !present {
 		return Check{Missing, "the RESULT has no second line"}
 	}
-	got := strings.TrimSpace(lines[1])
-	if got == "DONE" {
+	if done {
 		return Check{Yes, "RESULT line 2 is bare DONE"}
 	}
 	return Check{No, "RESULT line 2 is \"" + oneline.Escape(oneline.Cap(got, 80)) + "\", not bare DONE"}

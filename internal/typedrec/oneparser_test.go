@@ -35,9 +35,16 @@ type allowlistEntry struct {
 	fn     string
 	record string
 	partB  bool
+	// since and reason are set on drift entries only: the dev commit that
+	// added the hit after the spec's measurement, and why it is not a RESULT
+	// parser that part A moves into typedrec.
+	since  string
+	reason string
 }
 
-var allowlist = []allowlistEntry{
+// specAllowlist is the spec's list (#2506 rev 3/4, "Allowlist"): 23 entries,
+// the two part=B entries included. B deletes those two and leaves 21.
+var specAllowlist = []allowlistEntry{
 	// Card header (SPEC-CARD)
 	{file: "internal/pulse/cut_template.go", fn: "ValidateCardV2", record: "SPEC-CARD"},
 	{file: "internal/pulse/cut_template.go", fn: "ApplyDependsOn", record: "SPEC-CARD"},
@@ -49,7 +56,6 @@ var allowlist = []allowlistEntry{
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
 	{file: "internal/nsprint/card/lint.go", fn: "requiredKeys", record: "SPEC-CARD"},
 	{file: "internal/prereview/prereview.go", fn: "ParseCard", record: "SPEC-CARD"},
-	{file: "internal/prereview/prereview.go", fn: "doneCheck", record: "SPEC-CARD"},
 
 	// Issue-body card keys
 	{file: "internal/nsprint/file/file.go", fn: "requiredKeys", record: "Issue-body"},
@@ -65,15 +71,38 @@ var allowlist = []allowlistEntry{
 	{file: "internal/secrets/seal.go", fn: "RunSeal", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
-	{file: "cmd/nova-merge/batch.go", fn: "bodyPaths", record: "SPEC-CARD"},
-	{file: "cmd/nova-merge/integrate.go", fn: "integrateSteps", record: "integrate-steps"},
-	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict"},
-	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD"},
 
 	// part=B
 	{file: "internal/merge/verdict.go", fn: "ParseDispositionLine", record: "disposition", partB: true},
 	{file: "internal/merge/verdict.go", fn: "dispositionWholeLine", record: "disposition", partB: true},
 }
+
+// driftAllowlist holds hits that dev gained after the spec's measurement at
+// 24f0e1d7 (none of these functions exists there). Each reads a record other
+// than RESULT, sits outside part A's PATHS, and carries the commit that added
+// it and the reason it stays. A new hit on dev lands here only with both.
+var driftAllowlist = []allowlistEntry{
+	{file: "cmd/nova-merge/batch.go", fn: "bodyPaths", record: "SPEC-CARD", since: "92251bcc",
+		reason: "the card's PATHS header line in a swarm member's PR body, not a RESULT field"},
+	{file: "cmd/nova-merge/integrate.go", fn: "integrateSteps", record: "integrate-steps", since: "21f69fa8",
+		reason: "nova-merge's own step names (HEADS ... PR CI ... REVERIFY); PR is a step word, not the RESULT key"},
+	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
+		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
+	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
+		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
+	{file: "internal/nsprint/brief/lint.go", fn: "briefPaths", record: "brief", since: "1db79631",
+		reason: "the child brief's PATHS: line, compared with the task title's PATHS (#3154)"},
+	{file: "internal/nsprint/ready/ready.go", fn: "entryBlocker", record: "Redis-outcome", since: "26a5ddb0",
+		reason: "the Redis card hash outcome field, the same typed value as nsprint/deal/ready.go entryWhy"},
+	{file: "internal/post/issue/issue.go", fn: "RequiredFields", record: "card-schema-section", since: "1e58a3b0",
+		reason: "the key names a v2 card-schema section must carry when filed as an issue, not a RESULT parse"},
+	{file: "internal/sprintline/line.go", fn: "ParseSuggest", record: "calibration", since: "0c89f897",
+		reason: "the KIND report lines of nova-pulse sprint calibration stdout"},
+	{file: "internal/sprintline/line.go", fn: "suggestOf", record: "calibration", since: "0c89f897",
+		reason: "the SUGGEST lines of nova-pulse sprint calibration stdout"},
+}
+
+var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
 
 type parserChecker struct {
 	keys     []string
@@ -167,6 +196,53 @@ func (pc *parserChecker) scanFile(p, rel string) ([]hit, error) {
 		}
 		return true
 	})
+
+	// A package-level var bound to a constant string and never assigned in the
+	// file (no =, no &x, no ++) is a constant in all but name, so it folds too:
+	// moving a literal into such a var must not hide a parser (cold HOLD on
+	// #3497, item 2; fixture var-shadow).
+	assigned := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		switch y := n.(type) {
+		case *ast.AssignStmt:
+			for _, l := range y.Lhs {
+				if id, ok := l.(*ast.Ident); ok {
+					assigned[id.Name] = true
+				}
+			}
+		case *ast.UnaryExpr:
+			if y.Op == token.AND {
+				if id, ok := y.X.(*ast.Ident); ok {
+					assigned[id.Name] = true
+				}
+			}
+		case *ast.IncDecStmt:
+			if id, ok := y.X.(*ast.Ident); ok {
+				assigned[id.Name] = true
+			}
+		}
+		return true
+	})
+	for _, d := range f.Decls {
+		g, ok := d.(*ast.GenDecl)
+		if !ok || g.Tok != token.VAR {
+			continue
+		}
+		for _, sp := range g.Specs {
+			vs := sp.(*ast.ValueSpec)
+			for i, nm := range vs.Names {
+				if i >= len(vs.Values) || assigned[nm.Name] {
+					continue
+				}
+				if _, isConst := consts[nm.Name]; isConst {
+					continue
+				}
+				if v, ok := fold(vs.Values[i]); ok {
+					consts[nm.Name] = v
+				}
+			}
+		}
+	}
 
 	var hits []hit
 	report := func(e ast.Expr, fnName, shape string) {
@@ -437,6 +513,12 @@ func TestOneTypedParser(t *testing.T) {
 			t.Errorf("fixture 6 prefix-table: got %v, err %v", hits6, err)
 		}
 
+		// 8. var-shadow: a never-assigned package var holding "HEAD:" folds like a const.
+		hits8, err := pc.scanFile(filepath.Join(fixDir, "var-shadow.go"), "var-shadow.go")
+		if err != nil || len(hits8) != 1 || hits8[0].tok != "HEAD" {
+			t.Errorf("fixture 8 var-shadow: got %v, err %v", hits8, err)
+		}
+
 		// 7. clean
 		hits7, err := pc.scanFile(filepath.Join(fixDir, "clean.go"), "clean.go")
 		if err != nil || len(hits7) != 0 {
@@ -584,9 +666,21 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// Verify that there are exactly 28 allowlist entries
-		if len(allowlist) != 28 {
-			t.Errorf("expected 28 allowlist entries, got %d", len(allowlist))
+		// The spec's list is 23 entries with exactly two part=B (B leaves 21).
+		partB := 0
+		for _, a := range specAllowlist {
+			if a.partB {
+				partB++
+			}
+		}
+		if len(specAllowlist) != 23 || partB != 2 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 23 and 2", len(specAllowlist), partB)
+		}
+		// Every drift entry names the commit that added it and why it stays.
+		for _, a := range driftAllowlist {
+			if a.since == "" || a.reason == "" || a.partB {
+				t.Errorf("drift allowlist entry %s %s needs since and reason and no part=B", a.file, a.fn)
+			}
 		}
 	})
 }

@@ -634,3 +634,16 @@ func parseDispositionKV(s string) (map[string]string, bool) {
 	}
 	return fields, whole
 }
+
+// LineTwo is prereview's DONE rule over a RESULT text (#2506 part A moved it
+// here from prereview.doneCheck): line 2, CRLF normalised and trimmed, must be
+// the bare word DONE. Not "DONE." and not "DONE (with notes)". present is false
+// when the text has no second line; line2 is the trimmed line as written.
+func LineTwo(text string) (line2 string, present, done bool) {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	if len(lines) < 2 {
+		return "", false, false
+	}
+	line2 = strings.TrimSpace(lines[1])
+	return line2, true, line2 == StatusDone
+}

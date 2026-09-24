@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -311,12 +310,6 @@ func (o *observed) Beat(ctx context.Context) (int, error) {
 	return code, err
 }
 
-func (o *observed) Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error) {
-	code, err := o.inner.Result(ctx, res, resultsDir)
-	o.events <- "result"
-	return code, err
-}
-
 func (o *observed) End(ctx context.Context, end card.WrapperEnd) (int, error) {
 	code, err := o.inner.End(ctx, end)
 	o.events <- "end"
@@ -584,10 +577,6 @@ func (r *racer) Launched(ctx context.Context, branch, job string) (int, error) {
 }
 
 func (r *racer) Beat(ctx context.Context) (int, error) { return r.inner.Beat(ctx) }
-
-func (r *racer) Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error) {
-	return r.inner.Result(ctx, res, resultsDir)
-}
 
 func (r *racer) End(ctx context.Context, end card.WrapperEnd) (int, error) {
 	return r.inner.End(ctx, end)

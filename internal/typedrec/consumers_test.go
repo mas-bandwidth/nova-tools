@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
@@ -226,11 +227,13 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 		if err := fn.Load(ctx, client); err != nil {
 			t.Fatalf("load fn: %v", err)
 		}
+		st := store.New(client)
 
 		sprint := "s1"
+		validLabel := "c-report-valid"
 		label := "c-report"
 
-		// Create report result without PROBES:
+		// A valid report exemplar and the same record without PROBES:.
 		reportEx := typedrec.Exemplar("report")
 		var lines []string
 		for _, l := range strings.Split(reportEx, "\n") {
@@ -239,21 +242,58 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 			}
 			lines = append(lines, l)
 		}
-		doc := strings.Join(lines, "\n")
-		res := typedrec.ParseResult([]byte(doc))
-		if res.Valid {
-			t.Fatal("expected invalid report result without PROBES")
-		}
-		if res.Field != "PROBES" || res.Defect != "missing" {
-			t.Fatalf("got field=%s defect=%s, want PROBES missing", res.Field, res.Defect)
+		docs := map[string]string{validLabel: reportEx, label: strings.Join(lines, "\n")}
+
+		// The consumer under test is the card wrapper's end step: it reads
+		// RESULT.md from the results dir, parses it with typedrec and records
+		// it through ns_card_result. The test writes only the card hash and the
+		// raw file; the result hash is the consumer's own write.
+		resDirs := map[string]string{}
+		for _, l := range []string{validLabel, label} {
+			dir := filepath.Join(t.TempDir(), l)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "RESULT.md"), []byte(docs[l]), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			resDirs[l] = dir
+			if err := client.HSet(ctx, "s:"+sprint+":card:"+l,
+				"state", "running", "kind", "report", "bench", "b1", "attempt", "1",
+				"repo", "mas-bandwidth/nova-tools", "token", "tok-"+l,
+				"identity", sprint+"/"+l+"/09fbedc9/b1/1").Err(); err != nil {
+				t.Fatal(err)
+			}
 		}
 
-		// Write to Redis result hash
-		_ = client.HSet(ctx, "s:"+sprint+":card:"+label, "state", "ended", "attempt", "1").Err()
-		resKey := "s:" + sprint + ":card:" + label + ":result:a1"
-		_ = client.HSet(ctx, resKey, "valid", "0", "field", "PROBES", "defect", "missing", "line", strconv.Itoa(res.Line)).Err()
+		record := func(l string) typedrec.Result {
+			t.Helper()
+			ledger := &card.RedisLedger{Store: st, Sprint: sprint, Label: l, Token: "tok-" + l}
+			res, found, code, err := card.RecordResult(ctx, ledger, resDirs[l], 1)
+			if err != nil || !found || code != 0 {
+				t.Fatalf("RecordResult %s: found=%v code=%d err=%v", l, found, code, err)
+			}
+			return res
+		}
+		if res := record(validLabel); !res.Valid {
+			t.Fatalf("valid report exemplar parsed invalid: field=%s defect=%s", res.Field, res.Defect)
+		}
+		res := record(label)
+		if res.Valid || res.Field != "PROBES" || res.Defect != "missing" {
+			t.Fatalf("got valid=%v field=%s defect=%s, want PROBES missing", res.Valid, res.Field, res.Defect)
+		}
+		for l, want := range map[string]string{validLabel: "1", label: "0"} {
+			h, err := client.HGetAll(ctx, "s:"+sprint+":card:"+l+":result:a1").Result()
+			if err != nil || h["valid"] != want || h["by"] != "card-wrapper" {
+				t.Fatalf("%s result hash = %v (err %v), want valid=%s by=card-wrapper", l, h, err, want)
+			}
+		}
 
-		// Run result show (build and execute nova-sprint binary)
+		// The raw file goes; the typed record in Redis is what show reads.
+		if err := os.Remove(filepath.Join(resDirs[label], "RESULT.md")); err != nil {
+			t.Fatal(err)
+		}
+
 		root := findRoot(t)
 		bin := filepath.Join(t.TempDir(), "nova-sprint")
 		cmdBuild := exec.Command("go", "build", "-o", bin, "./cmd/nova-sprint")
@@ -268,10 +308,9 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 		if err != nil {
 			t.Fatalf("result show failed: %v\n%s", err, out)
 		}
-		outStr := string(out)
 		want := "valid=0 field=PROBES defect=missing"
-		if !strings.Contains(outStr, want) {
-			t.Fatalf("result show output %q does not contain %q", outStr, want)
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("result show output %q does not contain %q", out, want)
 		}
 	})
 
