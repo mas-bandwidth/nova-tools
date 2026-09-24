@@ -15,9 +15,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
-// THE BASE CHECKS: FOUR RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636).
+// THE BASE CHECKS: FIVE RULES A CODING CARD IS HELD TO BEFORE IT IS DEALT (#2636, #3083).
 //
-// Each rule is one class of the 2026-09-22 sprint's failed cards (rowan-new
+// The first four are each one class of the 2026-09-22 sprint's failed cards (rowan-new
 // reports/failed-cards-2026-09-22.md), and each needs evidence the card text alone
 // does not hold, so they run only under `nova-swarm lint --base-check`:
 //
@@ -32,6 +32,11 @@ import (
 //	               `lisp`, the fleet's leg is `sbcl`.
 //	deadline-p95   DEADLINE is at or above the measured p95 wall of the card's KIND.
 //	               Class 11: 27 cards died at 1526 s against a 1500 s DEADLINE.
+//	donewhen-test-name  DONE-WHEN names a test runner and a literal test that is
+//	               absent at base-sha, so it can be red there (#3083, Jev's insertion
+//	               2). 321 of 543 post-tune ledger rows read `donewhen missing`: the
+//	               card never named a control a test could fail. "applied cleanly" and
+//	               "make preflight" are English outcomes, not controls.
 //
 // NO EVIDENCE IS NOT NEGATIVE EVIDENCE. A check whose evidence was not handed over
 // (no repository, a base-sha the repository does not hold, no leg table, no p95
@@ -39,7 +44,7 @@ import (
 // excerpt, naming what to hand over. `--base-check` is the ask for these checks,
 // and a check that could not run is not a check that passed.
 
-// BaseCheck is the evidence the four checks read. A nil table or an empty Repo
+// BaseCheck is the evidence the five checks read. A nil table or an empty Repo
 // means that evidence was not handed over.
 type BaseCheck struct {
 	Repo string    // a git repository holding the card's base-sha
@@ -56,10 +61,11 @@ type KindP95 map[string]int
 // CardBaseRemedies is what each base token wants, in the table shape of
 // CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest.
 var CardBaseRemedies = map[string]string{
-	"paths-at-base": "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>` (failed-cards-2026-09-22 class 9, nx-f19)",
-	"no-push-steps": "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the harvest pushes and comments; say `no gh, no push` in RULES, never as a STEP command (failed-cards-2026-09-22 class 8, holdfix and nx-r repair cards)",
-	"leg-in-fleet":  "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>` (failed-cards-2026-09-22 LEG row, #2728)",
-	"deadline-p95":  "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first (failed-cards-2026-09-22 class 11)",
+	"paths-at-base":      "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>` (failed-cards-2026-09-22 class 9, nx-f19)",
+	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the harvest pushes and comments; say `no gh, no push` in RULES, never as a STEP command (failed-cards-2026-09-22 class 8, holdfix and nx-r repair cards)",
+	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>` (failed-cards-2026-09-22 LEG row, #2728)",
+	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>` (#3083, the-control-is-the-sentence)",
+	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first (failed-cards-2026-09-22 class 11)",
 }
 
 // LintCardBase returns the base-check findings for one card, in the order the
@@ -186,7 +192,333 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			add("deadline-p95", dl.line, fmt.Sprintf("DEADLINE %d s is below the p95 wall %d s of KIND %q (row %s)", secs, p95, kind.value, from))
 		}
 	}
+
+	// 5. donewhen-test-name.
+	dwLine, dw, dwFound := doneWhenValue(raw, h)
+	switch {
+	case !dwFound:
+		add("donewhen-test-name", 1, "no DONE-WHEN: line; a card names the test that is red at base-sha and green when the work is done")
+	default:
+		tests, why := doneWhenTests(dw)
+		if len(tests) == 0 {
+			add("donewhen-test-name", dwLine, fmt.Sprintf("DONE-WHEN %q %s; an English outcome is not a control", oneLineCap(dw, 120), why))
+			break
+		}
+		base, baseLine := h["base-sha"].value, h["base-sha"].line
+		if base == "" {
+			base, baseLine = contractSha(firstLine(raw)), 1
+		}
+		switch {
+		case bc.Repo == "":
+			add("donewhen-test-name", dwLine, "MISSING: no repository handed over (--repo <dir>), so the DONE-WHEN test was not looked up at base-sha")
+		case base == "":
+			add("donewhen-test-name", dwLine, "MISSING: the card names no base-sha (no `base-sha:` line, no `sha=` on the contract line), so the DONE-WHEN test was not looked up")
+		default:
+			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", base+"^{commit}")
+			if err != nil || full == "" {
+				add("donewhen-test-name", baseLine, fmt.Sprintf("MISSING: base-sha %s is not a commit in %s; fetch it, then lint again", base, bc.Repo))
+				break
+			}
+			var present []string
+			for _, tn := range tests {
+				at, err := testDefinedAt(bc.Repo, full, tn)
+				if err != nil {
+					add("donewhen-test-name", dwLine, fmt.Sprintf("MISSING: could not search the tree at %s for %s: %v", short12(full), tn.name, err))
+					return out
+				}
+				if at {
+					present = append(present, tn.name)
+				}
+			}
+			if len(present) == len(tests) {
+				add("donewhen-test-name", dwLine, fmt.Sprintf("DONE-WHEN test %s exists at base-sha %s, so it cannot be red there; name the new test the card adds", quoteDepends(present), short12(full)))
+			}
+		}
+	}
 	return out
+}
+
+// doneWhenValue is the card's DONE-WHEN: the header line when the header carries one,
+// else the first `DONE-WHEN:` line anywhere in the card (a bullet or bold key allowed),
+// which is where a card cut from an issue body carries it.
+func doneWhenValue(raw []byte, h map[string]headerField) (int, string, bool) {
+	if f := h["DONE-WHEN"]; f.found {
+		return f.line, f.value, true
+	}
+	for i, line := range strings.Split(string(raw), "\n") {
+		if m := doneWhenBodyRE.FindStringSubmatch(strings.TrimRight(line, "\r")); m != nil {
+			return i + 1, strings.TrimSpace(m[1]), true
+		}
+	}
+	return 0, "", false
+}
+
+var doneWhenBodyRE = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?\**DONE-WHEN:?\**:?[ \t]*(.*)$`)
+
+// doneTest is one literal test a DONE-WHEN names, and the runner that names it.
+type doneTest struct {
+	runner string // go, pytest, cargo
+	name   string
+	// scope is the command's own targets, as written: go packages (`./internal/decide`,
+	// `./x/...`, `<module>/x`), pytest files or directories (`tests/test_x.py`, `tests`).
+	// The lookup searches only there, so a same-named test in another package or file
+	// does not count as present. Empty is the whole repository (no target named).
+	scope []string
+}
+
+var (
+	goTestRunRE  = regexp.MustCompile(`\bgo[ \t]+test\b[^` + "`" + `]*?[ \t]-(?:test\.)?run(?:=|[ \t]+)("[^"]*"|'[^']*'|[^ \t` + "`" + `]+)`)
+	goTestRE     = regexp.MustCompile(`\bgo[ \t]+test\b`)
+	goTestSegRE  = regexp.MustCompile(`\bgo[ \t]+test\b[^` + "`" + `;&\n]*`)
+	pytestSegRE  = regexp.MustCompile(`\bpytest\b[^` + "`" + `;&\n]*`)
+	pytestNodeRE = regexp.MustCompile(`\bpytest\b[^` + "`" + `;&\n]*?[ \t]["']?([^ \t"'` + "`" + `;&:]+)::([A-Za-z_][A-Za-z0-9_]*)`)
+	pytestKRE    = regexp.MustCompile(`\bpytest\b[^` + "`" + `]*?[ \t]-k(?:=|[ \t]+)["']?([A-Za-z_][A-Za-z0-9_]*)["']?(?:[ \t` + "`" + `]|$)`)
+	cargoTestRE  = regexp.MustCompile(`\bcargo[ \t]+test\b((?:[ \t]+-{1,2}[A-Za-z-]+(?:[ \t]+[^-\s` + "`" + `]\S*)?)*)[ \t]+([A-Za-z_][A-Za-z0-9_:]*)`)
+	pyTestNameRE = regexp.MustCompile(`^test[A-Za-z0-9_]*$`)
+)
+
+// doneWhenTests is every literal test the DONE-WHEN names, or nil and why not. A go
+// `-run` pattern is split on `|`, stripped of `^`/`$` anchors and of a `/subtest`,
+// and each piece must then be a literal `Test...` name: a regex that is no name
+// (`TestDecide.*`) names no test a lookup can find.
+func doneWhenTests(v string) ([]doneTest, string) {
+	var out []doneTest
+	for _, seg := range goTestSegRE.FindAllString(v, -1) {
+		scope := goTestTargets(seg)
+		for _, m := range goTestRunRE.FindAllStringSubmatch(seg, -1) {
+			pat := strings.Trim(m[1], `"'`)
+			for _, p := range strings.Split(pat, "|") {
+				p = strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(p), "^"), "$")
+				if i := strings.Index(p, "/"); i >= 0 {
+					p = p[:i]
+				}
+				if !goTestNameRE.MatchString(p) {
+					return nil, fmt.Sprintf("runs `-run %s`, a pattern that is no literal test name", pat)
+				}
+				out = append(out, doneTest{runner: "go", name: p, scope: scope})
+			}
+		}
+	}
+	for _, seg := range pytestSegRE.FindAllString(v, -1) {
+		for _, m := range pytestNodeRE.FindAllStringSubmatch(seg, -1) {
+			if pyTestNameRE.MatchString(m[2]) {
+				out = append(out, doneTest{runner: "pytest", name: m[2], scope: []string{m[1]}})
+			}
+		}
+		for _, m := range pytestKRE.FindAllStringSubmatch(seg, -1) {
+			if pyTestNameRE.MatchString(m[1]) {
+				out = append(out, doneTest{runner: "pytest", name: m[1], scope: pytestTargets(seg)})
+			}
+		}
+	}
+	for _, m := range cargoTestRE.FindAllStringSubmatch(v, -1) {
+		name := m[2]
+		if i := strings.LastIndex(name, "::"); i >= 0 {
+			name = name[i+2:]
+		}
+		if name != "" {
+			out = append(out, doneTest{runner: "cargo", name: name})
+		}
+	}
+	if len(out) > 0 {
+		return out, ""
+	}
+	if goTestRE.MatchString(v) {
+		return nil, "runs `go test` with no `-run <TestName>`, so no test is named that could be red"
+	}
+	return nil, "names no test runner and no test"
+}
+
+// testDefinedAt says whether the tree at sha defines the test, by its runner's
+// definition shape: `func Name(` in a `_test.go` file, `def name(` in a Python file,
+// `fn name(` in a Rust file. `git grep` exits 1 on no match, which is an answer
+// (absent), not an error.
+func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
+	var pat string
+	var specs []string
+	switch tn.runner {
+	case "go":
+		pat, specs = `^func[ \t]+`+tn.name+`[ \t]*\(`, goTestPathspecs(repo, sha, tn.scope)
+	case "pytest":
+		pat, specs = `^[ \t]*(async[ \t]+)?def[ \t]+`+tn.name+`[ \t]*\(`, pytestPathspecs(repo, sha, tn.scope)
+	default:
+		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
+	}
+	args := append([]string{"-C", repo, "grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
+	cmd := exec.Command("git", args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 && strings.TrimSpace(stderr.String()) == "" {
+		return false, nil
+	}
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		return false, fmt.Errorf("%v: %s", err, msg)
+	}
+	return false, err
+}
+
+// goTestTargets is the package arguments of one `go test` command: `.`, `./x`,
+// `./x/...`, `../x`, or an import path (`github.com/org/repo/x`). A flag value
+// (`-count 1`, `-timeout 60s`) is no package and is left out.
+func goTestTargets(seg string) []string {
+	var out []string
+	for _, f := range strings.Fields(seg) {
+		f = strings.Trim(f, `"'`)
+		switch {
+		case f == ".", f == "...", strings.HasPrefix(f, "./"), strings.HasPrefix(f, "../"):
+			out = append(out, f)
+		case !strings.HasPrefix(f, "-") && strings.Contains(f, "/") && strings.Contains(strings.SplitN(f, "/", 2)[0], "."):
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// pytestValueOptions is the pytest options (core, pytest-cov, -xdist, -timeout,
+// -html, -randomly, -rerunfailures, -repeat, hypothesis, -asyncio, -django) whose
+// required value is the next word when no `=` joins it (options whose value is
+// optional, like --cov, are left out): `--rootdir tests` names a directory
+// to root at, not a directory of tests to run.
+var pytestValueOptions = map[string]bool{}
+
+func init() {
+	for _, o := range []string{
+		"-k", "-m", "-p", "-c", "-o", "-r", "-W", "-n", "--rootdir", "--confcutdir",
+		"--basetemp", "--config-file", "--inifile", "--ignore", "--ignore-glob", "--deselect",
+		"--override-ini", "--pythonwarnings", "--maxfail", "--tb", "--durations",
+		"--durations-min", "--capture", "--import-mode", "--junitxml", "--junit-xml",
+		"--junit-prefix", "--log-level", "--log-file", "--log-file-level", "--log-format",
+		"--log-date-format", "--log-cli-level", "--log-cli-format", "--log-cli-date-format",
+		"--show-capture", "--doctest-glob", "--color", "--code-highlight", "--pdbcls",
+		"--last-failed-no-failures", "--lfnf", "--cov-report", "--cov-config",
+		"--cov-fail-under", "--numprocesses", "--maxprocesses", "--dist", "--timeout",
+		"--timeout-method", "--html", "--randomly-seed", "--reruns", "--reruns-delay",
+		"--count", "--hypothesis-profile", "--hypothesis-seed", "--asyncio-mode", "--ds",
+	} {
+		pytestValueOptions[o] = true
+	}
+}
+
+// pytestTakesValue says whether a pytest option word is followed by its value: a
+// short value flag (`-k expr`), or a long option from pytestValueOptions written
+// without `=` (`--rootdir tests`). `--opt=value` and attached short values
+// (`-ktest_x`) carry their value in the same word.
+func pytestTakesValue(f string) bool {
+	if strings.Contains(f, "=") {
+		return false
+	}
+	if !strings.HasPrefix(f, "--") && len(f) > 2 {
+		return false
+	}
+	return pytestValueOptions[f]
+}
+
+// pytestTargets is the file and directory arguments of one pytest command: every
+// word that is no flag, no flag's value (`-k x`, `--rootdir tests`) and no node id.
+func pytestTargets(seg string) []string {
+	var out []string
+	fs := strings.Fields(seg)
+	for i := 1; i < len(fs); i++ {
+		f := strings.Trim(fs[i], `"'`)
+		switch {
+		case strings.HasPrefix(f, "-"):
+			if pytestTakesValue(f) {
+				i++ // an option whose value is the next word, never a target
+			}
+		case strings.Contains(f, "::"):
+		case f != "":
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// goTestPathspecs is the `*_test.go` pathspecs of the named packages at sha: a
+// package is its own directory, `/...` adds every directory under it, and an import
+// path is read against the module line of go.mod at sha. No package that resolves
+// in this repository means the whole repository (the command's cwd is unknown).
+func goTestPathspecs(repo, sha string, scope []string) []string {
+	module := ""
+	if len(scope) > 0 {
+		if gm, err := baseGit(repo, "show", sha+":go.mod"); err == nil {
+			for _, l := range strings.Split(gm, "\n") {
+				if v, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok {
+					module = strings.Trim(strings.TrimSpace(v), `"`)
+					break
+				}
+			}
+		}
+	}
+	var specs []string
+	for _, t := range scope {
+		recursive := t == "..." || strings.HasSuffix(t, "/...")
+		t = strings.TrimSuffix(strings.TrimSuffix(t, "..."), "/")
+		switch {
+		case strings.HasPrefix(t, "../"):
+			continue
+		case t == "." || t == "":
+			t = ""
+		case strings.HasPrefix(t, "./"):
+			t = strings.TrimPrefix(t, "./")
+		case module != "" && t == module:
+			t = ""
+		case module != "" && strings.HasPrefix(t, module+"/"):
+			t = strings.TrimPrefix(t, module+"/")
+		default:
+			continue
+		}
+		specs = append(specs, globSpec(t, recursive, "*_test.go"))
+	}
+	if len(specs) == 0 {
+		return []string{"*_test.go"}
+	}
+	return specs
+}
+
+// pytestPathspecs is the pathspecs of the named pytest targets at sha: a node id's
+// or argument's `.py` file as written (absent at base is an answer: no test there),
+// a directory as every `*.py` under it. No target means the whole repository.
+func pytestPathspecs(repo, sha string, scope []string) []string {
+	var specs []string
+	for _, t := range scope {
+		t = strings.TrimSuffix(strings.TrimPrefix(t, "./"), "/")
+		if strings.HasSuffix(t, ".py") {
+			specs = append(specs, ":(literal)"+t)
+			continue
+		}
+		if typ, err := baseGit(repo, "cat-file", "-t", sha+":"+t); err == nil && strings.TrimSpace(typ) == "tree" {
+			specs = append(specs, globSpec(t, true, "*.py"))
+		}
+	}
+	if len(specs) == 0 {
+		return []string{"*.py"}
+	}
+	return specs
+}
+
+// globSpec is a `:(glob)` pathspec for files named like base in dir, and in every
+// directory under it when recursive; dir "" is the repository root.
+func globSpec(dir string, recursive bool, base string) string {
+	p := ":(glob)"
+	if dir != "" {
+		p += dir + "/"
+	}
+	if recursive {
+		p += "**/"
+	}
+	return p + base
+}
+
+// oneLineCap is v with its length capped at n bytes, for an excerpt.
+func oneLineCap(v string, n int) string {
+	if len(v) > n {
+		return v[:n] + "..."
+	}
+	return v
 }
 
 // contractSha is the `sha=<hex>` on the contract line, or "".
