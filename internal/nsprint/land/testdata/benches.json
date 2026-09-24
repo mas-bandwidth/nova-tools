@@ -1,0 +1,9 @@
+[
+  {"name": "hulk", "cores": 64},
+  {"name": "vision", "cores": 64},
+  {"name": "superman", "cores": 36},
+  {"name": "space", "cores": 32},
+  {"name": "studio", "cores": 32},
+  {"name": "hetzner", "cores": 16},
+  {"name": "batman", "cores": 16}
+]

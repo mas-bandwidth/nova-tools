@@ -263,9 +263,13 @@ func setDesired(ctx context.Context, st *store.Store, kind, name, machine string
 	return parseDesiredReply(reply, kind, name, machine, slots)
 }
 
-// SetMachine writes machine:<m>:ceiling, refusing a drop below the slots
-// already desired on that machine so the invariant is never broken by config.
+// SetMachine writes machine:<m>:ceiling and sets budget if resources are provided.
 func SetMachine(ctx context.Context, st *store.Store, machine string, slots, cores, memGB int, actor, idem string) (Result, error) {
+	return SetMachineBudget(ctx, st, machine, slots, cores, memGB, 0, 0, actor, idem)
+}
+
+// SetMachineBudget writes machine:<m>:ceiling and machine:<m>:budget (spec 5.1).
+func SetMachineBudget(ctx context.Context, st *store.Store, machine string, slots, cores, memGB, cpuMilli, memMB int, actor, idem string) (Result, error) {
 	if st == nil {
 		return Result{}, fmt.Errorf("capacity machine: nil store")
 	}
@@ -275,8 +279,8 @@ func SetMachine(ctx context.Context, st *store.Store, machine string, slots, cor
 	if slots < 0 {
 		return Result{}, fmt.Errorf("capacity machine: slots must be nonnegative")
 	}
-	if cores < 0 || memGB < 0 {
-		return Result{}, fmt.Errorf("capacity machine: cores and mem_gb must be nonnegative")
+	if cores < 0 || memGB < 0 || cpuMilli < 0 || memMB < 0 {
+		return Result{}, fmt.Errorf("capacity machine: resources must be nonnegative")
 	}
 	consumers, err := RedisReader{Store: st}.Consumers(ctx)
 	if err != nil {
@@ -292,7 +296,8 @@ func SetMachine(ctx context.Context, st *store.Store, machine string, slots, cor
 		return Result{}, &CeilingError{Machine: machine, Sum: sum, Ceiling: slots}
 	}
 	reply, err := st.Client().FCall(ctx, FunctionMachine, nil,
-		machine, strconv.Itoa(slots), optionalPositive(cores), optionalPositive(memGB), actor, idem).Result()
+		machine, strconv.Itoa(slots), optionalPositive(cores), optionalPositive(memGB),
+		actor, idem, optionalPositive(cpuMilli), optionalPositive(memMB)).Result()
 	if err != nil {
 		return Result{}, fmt.Errorf("capacity machine %s: %w", machine, err)
 	}

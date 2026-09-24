@@ -222,7 +222,17 @@ func SaveQueue(lane string, q *Queue) error {
 
 // UpdateQueue is the one read-modify-write of the queue, under the lane's state lock and
 // through a fixed temp name (rule 1).
+//
+// Every park the change writes (a record that was not in queue.json before it) is told to
+// DefaultEvents once the queue is saved: one `park` line with the reason and the age. That
+// is where production parks land -- the queue sweep's poison detector writes q.Parked
+// inside this change -- so the line needs no wiring at the call site.
 func UpdateQueue(lane string, s *State, wait time.Duration, change func(*Queue) error) (*Queue, error) {
+	return updateQueue(lane, s, wait, change, time.Now().UTC(), DefaultEvents)
+}
+
+// updateQueue is UpdateQueue with the clock and the sink named.
+func updateQueue(lane string, s *State, wait time.Duration, change func(*Queue) error, now time.Time, ev *Events) (*Queue, error) {
 	release, err := Lock(filepath.Join(lane, StateLock), wait)
 	if err != nil {
 		return nil, err
@@ -232,30 +242,102 @@ func UpdateQueue(lane string, s *State, wait time.Duration, change func(*Queue) 
 	if err != nil {
 		return nil, err
 	}
+	before := append([]Park(nil), q.Parked...)
 	if err := change(q); err != nil {
 		return nil, err
 	}
 	if err := SaveQueue(lane, q); err != nil {
 		return nil, err
 	}
+	for _, p := range q.Parked {
+		if hasPark(before, p) {
+			continue
+		}
+		ev.Park(ParkReason(p), parkAge(standingPark(before, p), now))
+	}
 	return q, nil
 }
 
+// hasPark reports whether list holds exactly p: a record already in queue.json is not
+// a new park and writes no line.
+func hasPark(list []Park, p Park) bool {
+	for _, old := range list {
+		if old == p {
+			return true
+		}
+	}
+	return false
+}
+
+// standingPark is the record a park's age runs from: the PR's standing park record
+// when it has one with an instant (a re-park: how long it has stood set aside), else
+// the new record itself.
+func standingPark(before []Park, p Park) Park {
+	since := p
+	for _, old := range before {
+		if old.PR == p.PR && strings.TrimSpace(old.At) != "" {
+			since = old
+		}
+	}
+	return since
+}
+
 // PutPark records one poison decision in the queue under the state lock. It is the sweep's
-// own write; the caller has already decided.
+// own write; the caller has already decided. The park line goes to DefaultEvents.
 func PutPark(lane string, p Park) error {
+	return PutParkWithEvents(lane, p, time.Now().UTC(), DefaultEvents)
+}
+
+// PutParkWithEvents records one poison decision in the queue under the state
+// lock and logs the park event beside it: the reason and the age. The queue
+// stays the durable store; the line points at it. A nil Events writes no
+// line, so this is PutPark with a sink.
+func PutParkWithEvents(lane string, p Park, now time.Time, ev *Events) error {
 	s, err := Load(lane)
 	if err != nil {
 		return err
 	}
-	_, err = UpdateQueue(lane, s, LockWait, func(q *Queue) error {
+	_, err = updateQueue(lane, s, LockWait, func(q *Queue) error {
 		q.DropPark(p.PR)
 		q.Parked = append(q.Parked, p)
 		q.Skipped = append(q.Skipped, p.PR)
 		q.Queued = QueueRemove(q.Queued, p.PR)
 		return nil
-	})
+	}, now, ev)
 	return err
+}
+
+// ParkReason is the sentence a park event carries: the poison verdict in the
+// words the sweep's own QUEUE PARK line uses -- the test, the package it
+// lives in, and how many runs it failed in.
+func ParkReason(p Park) string {
+	test, pkg := p.Test, p.Package
+	if strings.TrimSpace(test) == "" {
+		test = "-"
+	}
+	if strings.TrimSpace(pkg) == "" {
+		pkg = "-"
+	}
+	return fmt.Sprintf("poison %s in %s failed %d runs", test, pkg, p.Runs)
+}
+
+// parkAge is how long the park record has stood: now minus the record's own
+// instant, or "-" when the record names none. updateQueue hands it the PR's
+// standing park record on a re-park, so the age is the time set aside.
+func parkAge(p Park, now time.Time) string {
+	at := strings.TrimSpace(p.At)
+	if at == "" {
+		return "-"
+	}
+	stand, err := time.Parse(Stamp, at)
+	if err != nil {
+		return "-"
+	}
+	d := now.Sub(stand)
+	if d < 0 {
+		d = 0
+	}
+	return d.String()
 }
 
 // Hold is the state of <lane>/hold: its first line is the reason.

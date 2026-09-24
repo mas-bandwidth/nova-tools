@@ -166,6 +166,12 @@ usage:
   nova-work set check --file <path.lisp> [--minds <file>] [--lanes <file.tsv>] [--done <id>[,<id>...]] [--ready]
                       [--evaluate] [--base <branch>] [--cache <dir>] [--write-status]
                       [--max-bytes <n>] [--max-depth <n>] [--max-nodes <n>]
+  nova-work attempt record --file <path.lisp> --unit <id> --by <mind> --outcome ok|failed|uncertain [--proof <path|sha|url>]
+                      [--rung <name>] [--usage <file.tsv>] [--pr <n>] [--started <stamp>]
+  nova-work attempt list   --file <path.lisp> --unit <id>
+  nova-work next      --file <path.lisp> --for <mind> --lanes <file.tsv> [--machines <registry>] [--done <id>[,<id>...]]
+                      [--kind <kind>] [--floor <0..1>] [--jev | --no-jev] [--usage <file.tsv>] [--log <file>]
+                      [--take [--by <mind>] [--started <stamp>]]
   nova-work ask  --owner <friend> --unit <id> --units <file> --bus <dir> --as <name>
                  [--deadline <stamp>] [--kind work|read] [--cc <names>] [--record <file.json>]
                  [--reply-branch <name>] [--remote <name>] [--branch <name>]
@@ -173,6 +179,7 @@ usage:
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
   nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
+  nova-work push --stream <kind> --lane <red|green|small|next> --card <file> (--redis <addr> | --dir <root>) [--priority <n>] [--needs <id>[,<id>...]]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -195,6 +202,9 @@ verbs:
   nova-work plan check     reads a .work plan as data and closes its needs/blocks graph, never as a program
   nova-work plan expand    writes one card directory per hand-written :node, refusing a cycle or an absent need
   nova-work set check      reads the (work-set ...) form a coordinator writes and validates it whole
+  nova-work attempt record files ONE attempt on ONE unit and moves its :state (A3, A4)
+  nova-work attempt list   the unit's attempts, in order, with their termination proofs
+  nova-work next           the ONE unit this mind does next: ready, owned, admitted, routed
   nova-work ask            delivers ONE unit to the FRIEND who owns it, as a bus note
   nova-work asks           the open asks, oldest first, with their age and their deadline
   nova-work events         bridges the events, not ticks (cards:done stream + gh fallback poll)
@@ -253,6 +263,39 @@ hand: a unit is done when it says so (:done, or a :status of closed, done, lande
 merged) or when --done names it, and ready when it is not done and every need is done.
 Without --minds and without --lanes those two rules are OFF rather than run against a
 guessed file: there is no default registry and no discovery.
+
+attempt and next are the WRITE side of SPEC-WORKLANG's amendment. A3 made an attempt a
+RECORD with a termination proof and A4 made uncertain a state that keeps its reservation,
+and both landed as readers: the only way a real work set could grow an :attempts list was
+a person typing s-expressions into their own document by hand.
+
+attempt record files one attempt on one unit and edits the file IN PLACE by splicing
+bytes: every byte outside the edited unit comes back identical, and inside the unit every
+byte outside the edited key does too. A work set is a person's document -- its comments,
+its blank lines and the column its keys line up at are the document -- so the writer never
+re-renders what it is not touching. An outcome that claims to have ended without proving
+it is refused NAMING THE WORD to write instead (uncertain), and a unit already closed,
+refused or abandoned takes no further attempt: a reopened piece of work is a new id
+carrying :was (A2). The state machine is A4's own closed set and gets no second vocabulary
+beside it -- green closes the unit, red leaves it OPEN because the ladder is the retry
+policy, refused and abandoned are themselves, and uncertain keeps the reservation.
+
+A try that started and then ended is ONE try. Where the unit's last attempt is still open
+-- an :outcome :uncertain with no :proof, taken by this same mind -- record CLOSES that
+record rather than appending beside it, keeping its :n, its :rung and the instant it
+actually began. An open attempt under ANOTHER mind is refused, never appended beside:
+its state and its reservation stand until its own owner records the outcome.
+
+next is the what-do-I-do-next verb, and the first place all three halves of the work
+language answer one question together: the graph says whose needs are closed, the kernel
+(internal/jobs) says whose resources are free, and nova-decide's ladder says which mind
+does it. Four gates, each a reading rather than a judgment -- ready, owned, free, routed
+-- and ONE line out: NEXT unit= lane= rung= conf= take= reason=, or NEXT NONE naming the
+gate that emptied the set. Everything already :live or :uncertain holds its reservation
+BEFORE anything is admitted against what is left, which is what A4 means: the clock never
+frees capacity, only an outcome does. And a unit the ladder is waiting on is never
+dispatched (Stella's lease rule: a rung that may still be running is not a rung to step
+off).
 
 --evaluate derives done from each unit's :acceptance instead of its :status, through gh
 (nova-tools #2664). Two criteria are evaluable: (:kind :landed :subject "pr:<o/r>#<n>"
@@ -316,6 +359,31 @@ flags:
   --ready         set check: also print one SET READY line per unit of the ready set,
                   each carrying its admission verdict (admit=go, or admit=held with the
                   dimension or path that held it and the unit holding it).
+  --unit <id>     attempt record and attempt list: the unit, by the stable id A2 mints.
+  --by <mind>     attempt record: the mind the attempt is filed under. next --take: the
+                  mind the opened attempt is filed under; --for when absent.
+  --outcome <o>   attempt record: ok | failed | uncertain, and the grammar's own green,
+                  red, refused and abandoned. Every outcome but uncertain owes --proof.
+  --proof <p>     attempt record: the termination proof (A3). A url, a sha or a path,
+                  and which of the three is READ off the value rather than asked for.
+  --pr <n>        attempt record: the PR this attempt produced, written onto the record.
+  --for <mind>    next: the mind asking. It is the OWNER the unit must belong to, not
+                  the rung: rung= on the NEXT line is the ladder's answer, a different
+                  axis, and the line carries both.
+  --machines <f>  next: the registry of minds the ladder routes over; the embedded one
+                  when absent, exactly as nova-decide route reads it.
+  --kind <kind>   next: the decide kind a unit carrying no :kind of its own is routed
+                  as. The default is new-verb: a unit of a pit-stop set is a verb to
+                  build unless its author says otherwise.
+  --jev/--no-jev  next: ask Jev among the eligible rungs, or answer by the rules alone
+                  with no key and no network. Asking requires --usage and --log, because
+                  a call nobody can account for is refused rather than made: both are
+                  probed before the first call, every decision is appended to --log
+                  and every provider call's spend to --usage.
+  --take          next: open the attempt on the unit chosen -- :state :live, the lane
+                  and the writes charged to it from that instant -- under the set's own
+                  lock, so the unit a mind is told to do and the unit it is recorded as
+                  doing are one decision.
   --evaluate      set check: derive done from :acceptance through gh (:landed, :merged).
   --base <branch> set check: the branch :landed means; default the set's :base.
   --cache <dir>   set check: where --evaluate keeps one blobless bare repository per
@@ -367,6 +435,8 @@ example:
   nova-work ready --node a --graph ./deps.json
   nova-work plan check --file ./work.work --max-bytes 65536
   nova-work set check --file ./work-set.lisp --ready
+  nova-work next --file ./units.lisp --for rowan-child --lanes ./lanes.tsv --no-jev --take
+  nova-work attempt record --file ./units.lisp --unit certify:verb --by rowan-child --outcome ok --proof 8a132e77 --pr 1369
   nova-work events --redis 127.0.0.1:6379 --once
 `
 
@@ -382,14 +452,24 @@ func refused(stderr io.Writer, what string) int {
 // legacyVerbs are the in-process graph and plan verbs, dispatched without a switch so
 // that the verb switch a reader (and TestHelpListsEveryVerbTheSwitchAccepts) walks holds
 // exactly the socket verbs.
+//
+// `attempt` COLLIDES: the spec's `attempt --session <path> ... --result <pointer>` is a
+// write the resident session answers, and `attempt record`/`attempt list` are this
+// binary's own local verbs over a work set file. Same word, two verbs, so `attempt` is
+// dispatched by its second token (below, beside `record`/`results`) instead of living in
+// this table: the bare word and every other second token still reach the socket switch.
 var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"dependencies": cmdDependencies,
 	"ready":        cmdReady,
 	"clip":         cmdClip,
 	"plan":         cmdPlan,
+	"push":         cmdPushNow,
 	"set":          cmdSet,
+	"next":         cmdNext,
 	"ask":          cmdAsk,
 	"asks":         cmdAsks,
+	"proving-run":  cmdProvingRun,
+	"dogfood":      cmdDogfood,
 }
 
 // Deps is everything this binary reaches outside itself, injected so the tests drive a
@@ -409,6 +489,28 @@ func production() Deps {
 		},
 	}
 }
+
+// absorbDecision is the decision record of nova-tools#2090, in the issue's own
+// terms, carried as the one line this binary answers `absorb` with. It is a
+// record for later, not a promise: nothing in it is work to start, and the
+// three E09-F04 criteria it names stay unverified on purpose until one of the
+// named triggers reopens the issue. Before it lived here the caller who asked
+// was told `unknown verb`, a sentence that says nobody decided -- which is
+// false: the decision is made, it is just NO, and Glenn's rulings of 2026-09-20
+// (link mode today; absorb only if radically cheaper or a second tracker
+// arrives, never to answer sync pain with a cleverer sync; and if one side
+// must be primary, "the internal lisp data structure representation would
+// win") are the reasoning this line keeps from having to be reconstructed.
+const absorbDecision = "absorb is not scheduled (the decision record of nova-tools#2090, E09-F04): " +
+	"link is the intake mode today and GitHub stays the source of truth for issues; " +
+	"it reopens only on one of three triggers -- a radical saving in tokens and wall clock shown by the dogfood tables (#2089), " +
+	"a second issue tracker beside GitHub, or sync pain, drift that needs a person or a decision made on a stale copy; " +
+	"which side wins is already decided: if one side must be primary it is nova-work's Lisp data structure, " +
+	"and the GitHub copy is what stops being maintained; " +
+	"and before it is built all three E09-F04 criteria must be verified: " +
+	"absorb separate from the default link with selected scope and authority, " +
+	"source identity, provenance and content archived before removal with the deletion outcome receipt appended, " +
+	"and deletion left pending on missing content, a source change or an uncertain network result"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, production(), version)) }
 
@@ -438,10 +540,28 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 	if h, ok := legacyVerbs[args[0]]; ok {
 		return h(args[1:], stdout, stderr)
 	}
+	// accept is also a resident-session socket verb (accept --session ...). The
+	// in-process graph form is the one that names --graph, and only that form is
+	// taken here; every other accept line falls through to the socket verb table.
+	if args[0] == "accept" && jobs.NamesGraphFlag(args[1:]) {
+		return cmdAccept(args[1:], stdout, stderr)
+	}
 	if args[0] == "events" {
 		return cmdEvents(args[1:], stdout, stderr, deps)
 	}
 	verb, rest := args[0], args[1:]
+	// attempt COLLIDES with the socket verb of the same name (see legacyVerbs): only
+	// its two known second tokens are this binary's own local verb; the bare word and
+	// anything else falls through to the socket switch below, which refuses rather
+	// than guesses.
+	if verb == "attempt" && len(rest) > 0 && (rest[0] == "record" || rest[0] == "list") {
+		return cmdAttempt(rest, stdout, stderr)
+	}
+	// visualize reads one record the caller names and reaches nothing outside the
+	// process, so it dispatches the same way, outside the socket-verb switch.
+	if verb == "visualize" {
+		return cmdVisualize(rest, stdout, stderr)
+	}
 	switch verb {
 	case "help", "--help", "-h":
 		if len(rest) != 0 {
@@ -457,6 +577,13 @@ func run(args []string, stdout, stderr io.Writer, opts ...any) int {
 		return 0
 	case "query":
 		return queryVerb(rest, stdout, stderr)
+	}
+	// absorb is the one name answered with a decision record rather than a
+	// verb or an "unknown verb": the roadmap holds it as E09-F04 and the
+	// 2026-09-20 ruling left it not scheduled (nova-tools#2090), so the caller
+	// who asks is owed the record, said in one line.
+	if verb == "absorb" {
+		return refused(stderr, absorbDecision)
 	}
 	// Every other verb the spec addresses to a session is a row of verbFlags
 	// and no case of its own: see socketverbs.go. The block's lines this
@@ -568,16 +695,34 @@ func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 }
 
 // addNeeds writes a needs edge to the named node, creating the node when the graph does
-// not hold it yet. The blocks edge is the same insert's inverse, so it is never written
-// separately.
+// not hold it yet. Needs are a set (#1788): a need named twice in one --needs list, a
+// need re-sent by a re-run and a copy the file already holds are each written once, so a
+// re-run leaves the file as it found it rather than a copy longer. The blocks edge is the
+// same insert's inverse, so it is never written separately.
 func addNeeds(nodes []jobs.Node, id string, needs []string) []jobs.Node {
 	for i := range nodes {
 		if nodes[i].ID == id {
-			nodes[i].Needs = append(nodes[i].Needs, needs...)
+			nodes[i].Needs = needsOnce(nodes[i].Needs, needs)
 			return nodes
 		}
 	}
-	return append(nodes, jobs.Node{ID: id, Needs: needs})
+	return append(nodes, jobs.Node{ID: id, Needs: needsOnce(nil, needs)})
+}
+
+// needsOnce returns the needs in held and then want with every id once, first occurrence
+// first. The file the verb writes holds each edge once, because the ready set counts
+// unmet needs and a duplicated edge is never decremented to zero.
+func needsOnce(held, want []string) []string {
+	seen := make(map[string]bool, len(held)+len(want))
+	var out []string
+	for _, dep := range append(append([]string(nil), held...), want...) {
+		if seen[dep] {
+			continue
+		}
+		seen[dep] = true
+		out = append(out, dep)
+	}
+	return out
 }
 
 func splitNeeds(list string) []string {
@@ -642,6 +787,17 @@ func writeRow(stdout io.Writer, n jobs.Node, g *jobs.Graph) {
 		fmt.Fprintf(stdout, " state=%s blocker=- resolver=-", oneline.Field(n.State()))
 	}
 	fmt.Fprintln(stdout)
+}
+
+// cmdAccept is the in-process graph form of accept. jobs.AcceptArgs parses the line
+// and accepts the node, so the tested argv boundary is the one this verb ships.
+func cmdAccept(args []string, stdout, stderr io.Writer) int {
+	id, err := jobs.AcceptArgs(args)
+	if err != nil {
+		return refuse(stderr, " accept", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	fmt.Fprintf(stdout, "ACCEPT OK node=%s\n", oneline.Field(id))
+	return 0
 }
 
 func cmdPlan(args []string, stdout, stderr io.Writer) int {
@@ -785,6 +941,12 @@ var verbFlags = map[string][]flagSpec{
 		{name: "max"},
 		{name: "now"},
 	},
+	// session status is a verb of the session's one request schema,
+	// *REQUEST-SCHEMA* in lisp/nova-work/src/request-line.lisp (E08-F01-01):
+	// this row is its flags, name for name, and
+	// lisp/nova-work/tests/criterion-e08-f01-01.lisp reads it from here and sends
+	// every flag this client admits or refuses over a real socket, so a row that
+	// drifts from the schema, or a wire that disagrees with it, is a red test.
 	"session status": {
 		{name: "session"},
 	},
@@ -907,7 +1069,47 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	if verb == "session start" {
+		if journal := *strs["journal"]; journal != "" {
+			if pid, held := checkJournalHeld(journal); held {
+				fmt.Fprintf(stderr, "SESSION REFUSED session=%s: journal held by pid %s on %s\n", oneline.Field(socket), oneline.Field(pid), oneline.Field(journal))
+				return 1
+			}
+		}
+		if pid, held := checkSocketLocked(socket); held {
+			fmt.Fprintf(stderr, "SESSION FAIL session=%s: socket held by pid %s\n", oneline.Field(socket), oneline.Field(pid))
+			return 1
+		}
+	}
 	return ask(socket, b.String(), frameFor(verb, specs, strs, bools, mults), within, stdout, stderr)
+}
+
+// checkJournalHeld reports the pid a journal's .lock file names, raw; the caller
+// escapes it at the print site.
+func checkJournalHeld(journal string) (pid string, held bool) {
+	return lockPid(journal + ".lock")
+}
+
+// checkSocketLocked reports the pid a socket's .lock file names, raw; the caller
+// escapes it at the print site.
+func checkSocketLocked(socket string) (pid string, held bool) {
+	return lockPid(socket + ".lock")
+}
+
+// lockPid returns the first pid= value in a lock file (the first space-separated
+// token after "pid="), or held=false when the file is absent or names no pid.
+func lockPid(path string) (pid string, held bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "pid="); ok {
+			pid, _, _ = strings.Cut(rest, " ")
+			return pid, true
+		}
+	}
+	return "", false
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable

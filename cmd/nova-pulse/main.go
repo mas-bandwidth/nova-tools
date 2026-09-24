@@ -29,7 +29,7 @@ nova-pulse cut     --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <d
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--commit]
-nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>] [--commit] [--batch [--store <host:port>] [--store-user <name>] [--password-env <NAME>]]
+nova-pulse harvest --bench <name> --root <bench root>[,<root>] --clone [<o/n>=]<dir>... [--machines <file>] [--session <id>] [--branch-prefix rowan/] [--base <branch>] [--since <d>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--ssh <path>] [--max <n>] [--events-store <host:port>] [--commit] [--batch [--store <host:port>] [--store-user <name>] [--password-env <NAME>]]
 nova-pulse harvest --working <dir> [--roots <dirs>] [--base <ref>] [--since <stamp>] [--timer install] [--max <n>] [--commit]
 nova-pulse beat    --queue <dir> --cairn <file> --title <text> [--resume <text>]
 nova-pulse watch --queue <dir> --bus <dir> --jobs <root> --until <event> --cap <duration>
@@ -50,7 +50,6 @@ nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|as
 nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
 nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
 nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
-nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
 nova-pulse hygiene run --home <dir> [--dry-run] [--hostname <name>] [--diag-days <n>] [--diag-max-bytes <n>]
 nova-pulse hygiene reap <slot> --home <dir>
 nova-pulse hygiene delete-job <slot> <job> --home <dir>

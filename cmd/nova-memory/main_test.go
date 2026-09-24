@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -737,6 +738,62 @@ func TestEvalOnTheShippedExampleGold(t *testing.T) {
 	}
 	if n := strings.Count(stdout, "\n"); n != 1 {
 		t.Errorf("a clean seven-row eval printed %d lines, want 1:\n%s", n, stdout)
+	}
+}
+
+// TestExampleGoldHeaderCommentMatchesRowCount asserts that the header comment
+// stating the evaluation row count matches the actual count of evaluation rows
+// in testdata/example-gold.tsv (7 rows), so any future discrepancy fails.
+func TestExampleGoldHeaderCommentMatchesRowCount(t *testing.T) {
+	raw, err := os.ReadFile(exampleGold)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := readGold(exampleGold)
+	if err != nil {
+		t.Fatalf("readGold: %v", err)
+	}
+	actualCount := len(rows)
+	if actualCount != 7 {
+		t.Fatalf("actual evaluation rows = %d, want 7", actualCount)
+	}
+
+	wordToNum := map[string]int{
+		"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+		"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+	}
+
+	found := false
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if idx := strings.Index(trimmed, "benchmark:"); idx != -1 {
+			rest := strings.TrimSpace(trimmed[idx+len("benchmark:"):])
+			fields := strings.Fields(rest)
+			if len(fields) >= 2 && strings.HasPrefix(fields[1], "row") {
+				found = true
+				word := strings.ToLower(fields[0])
+				statedCount, ok := wordToNum[word]
+				if !ok {
+					if n, err := strconv.Atoi(word); err == nil {
+						statedCount = n
+						ok = true
+					}
+				}
+				if !ok {
+					t.Fatalf("could not parse number of rows from word %q in header comment: %s", fields[0], trimmed)
+				}
+				if statedCount != actualCount {
+					t.Errorf("header comment states %d rows (%q), but file contains %d evaluation rows: %s",
+						statedCount, word, actualCount, trimmed)
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("did not find '# benchmark: <N> rows' comment in header of %s", exampleGold)
 	}
 }
 

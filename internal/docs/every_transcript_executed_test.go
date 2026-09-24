@@ -22,7 +22,6 @@ const testsMDPath = "../../docs/TESTS.md"
 var notYetExecuted = map[string]string{
 	"nova-bus":     "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",
 	"nova-play":    "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",
-	"nova-post":    "#1631: the section is documented as not runnable until posting credentials resolve; TestTESTSFirstRunIsNotRunnableUntil1631 pins that",
 	"nova-sandbox": "#1652 (T7): firstrun_test.go checks field names, not the transcript line for line",
 	"nova-secrets": "#1652 (T7): no firstrun_test.go",
 	"nova-sprint":  "#1652 (T7): firstrun_test.go reads the section by hand, not through onboarding.Execute",

@@ -27,6 +27,14 @@
   deps dependents
   ;; The flag a revert of a need raises on its dependents (SPEC-WORK.md:2110).
   needs-broken
+  ;; SPEC-WORK.md:1096-1100 -- the required-set membership the node's last
+  ;; `:baseline` event recorded, member by member, or NIL while none has. It is
+  ;; the scope snapshot rule 11 compares the live set against, and it is moved
+  ;; only by that event, so a replay rebuilds it.
+  baseline
+  ;; SPEC-WORK.md:3167 -- `:priority (:self <rank|absent> :subtree
+  ;; <rank|absent>)`, ordering intent only, moved only by a `:prioritise` event.
+  (priority (list :self +absent+ :subtree +absent+))
   ;; SPEC-WORK.md:3001 -- `node edit` owns exactly these five metadata fields.
   ;; They live on the node like every other value and move on write. :repo is
   ;; the `--repo` a root work-set may hold (SPEC-WORK.md:2846); :view is the
@@ -379,6 +387,26 @@ coordination tree's edge (SPEC-WORK.md:4256), independent of the containment
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (wnode-coordinator n)))
 
+(defun node-required-p (state id)
+  "True when ID is in its containment parent's required set (SPEC-WORK.md:1147):
+the boolean `required` flag, distinct from the counts it feeds."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (and (wnode-required n) t)))
+
+(defun node-baseline (state id)
+  "The required-set membership ID's last `:baseline` event recorded, member by
+member, or NIL while none has (SPEC-WORK.md:1096-1100)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-baseline n))))
+
+(defun node-priority (state id)
+  "ID's `:priority (:self .. :subtree ..)` field (SPEC-WORK.md:3167)."
+  (let ((n (%node state id)))
+    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
+    (copy-list (wnode-priority n))))
+
 (defun node-required-count (state id)
   (let ((n (%node state id)))
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
@@ -396,12 +424,11 @@ it carries no count and is not a containment."
     (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
     (copy-list (wnode-deps n))))
 
-(defun node-needs-broken (state id)
-  "True when a need of this node was reverted after this node landed
-(SPEC-WORK.md:2110, the `needs-broken` flag)."
-  (let ((n (%node state id)))
-    (unless n (error 'unsupported-input :what (format nil "rule 2: no such node ~A" id)))
-    (wnode-needs-broken n)))
+;;; `node-needs-broken` is DERIVED (SPEC-WORK.md:4972), so it no longer lives
+;;; here as a slot reader: it moved to src/needs.lisp beside the other readings
+;;; of rule 5. The slot stays as `ready-p`'s cache of one reason (a remaining
+;;; reverted need, `%needs-broken-by-a-revert-p`); the derived reading never
+;;; reads it, so a stale bit cannot outlive the edge it was raised for.
 
 ;;; ------------------------------------------------------------------
 ;;; the recorded half of rule 1 (SPEC-WORK.md:4780-4867, nova-tools #785)
@@ -518,16 +545,34 @@ nodes and mutates none."
   (loop for id in (wstate-order state)
         when (ready-p state id) collect id))
 
+(defun %needs-broken-by-a-revert-p (state id)
+  "True while one of ID's REMAINING needs is still a reverted one: in O, with a
+`:revive` on its closed index, and not closed-unaccepted (rule 2 row 2,
+SPEC-WORK.md:4820). This is the only reason the write path's cached
+`needs-broken` bit stands for; the rest of rule 5 (engaged, in C) is read at
+read time (src/needs.lisp). An edge that is gone, or a need that settled again,
+leaves no bit behind (SPEC-WORK.md:4972: the flag is derived)."
+  (let ((n (%node-quiet state id)))
+    (and n
+         (some (lambda (dep)
+                 (let ((d (%node-quiet state dep)))
+                   (and d
+                        (eq :o (wnode-branch d))
+                        (not (%need-closed-unaccepted-p state dep))
+                        (%need-revived-p state dep))))
+               (wnode-deps n))
+         t)))
+
 (defun %recheck-needs-broken (state id settled-p)
-  "Re-evaluate the dependents of ID after it settled (SETTLED-P true, clear the
-flag where every need is terminal again) or was reverted (false, raise it)."
+  "Re-evaluate the dependents of ID after it settled (SETTLED-P true: the bit
+stands only while another remaining need is still reverted) or was reverted
+(false, raise it)."
   (dolist (dependent (wnode-dependents (%node-quiet state id)))
     (let ((d (%node-quiet state dependent)))
       (when d
         (setf (wnode-needs-broken d)
               (if settled-p
-                  (not (every (lambda (dep) (%need-terminal-p state dep))
-                              (wnode-deps d)))
+                  (%needs-broken-by-a-revert-p state dependent)
                   t))))))
 (defun node-estimate (state id)
   "The node's estimate record, or +ABSENT+ when it carries none. A node with an
@@ -641,7 +686,15 @@ rather than zero. A view: it never writes, and a closed node is not in it."
                   :request-ref :batch :holder :parent :now :deadline :fenced
                   :stop-observed :not-started)
                  (:probe      ; the fleet's `probe` verb (SPEC-WORK.md:3691)
-                  :machine :slot :source :fact :at)))
+                  :machine :slot :source :fact :at)
+                 ;; The scope and ordering verbs (E03-F03, SPEC-WORK.md:2929):
+                 ;; each scope kind's own fields in digest order
+                 ;; (SPEC-WORK.md:1096-1100) and `:prioritise`'s (:1011).
+                 ;; Named here beside the apply-event branches that replay them.
+                 (:require :to :reason)
+                 (:baseline :members :reason)
+                 (:discovery :members :reason)
+                 (:prioritise :change :context :rank :reason)))
     (pushnew row *kind-field-order* :test #'equal)))
 
 (defun %config-field (fields key)
@@ -941,13 +994,14 @@ its own mutation."
              (when target
                (setf (wnode-dependents target)
                      (remove id (wnode-dependents target) :test #'equal)))))
-         ;; Removing the need that raised a `needs-broken` clears it again when
-         ;; every remaining need is terminal. Adding one never raises it: a
-         ;; fresh unmet need is simply not ready (`ready-p`), not broken.
-         (when (and (eq verb :dep) (wnode-needs-broken node))
-           (setf (wnode-needs-broken node)
-                 (not (every (lambda (dep) (%need-terminal-p state dep))
-                             (wnode-deps node)))))
+         ;; The cached `needs-broken` bit is recomputed from the needs that
+         ;; REMAIN: it stands only while one of them is still a reverted need.
+         ;; Removing the reverted edge clears it even when another need is
+         ;; still open, since `need-open` alone never breaks an unengaged node
+         ;; in O (SPEC-WORK.md:4765; stella's hold at 3a71ee48). Adding an edge
+         ;; to an already reverted need raises it for the same reason.
+         (when (eq verb :dep)
+           (setf (wnode-needs-broken node) (%needs-broken-by-a-revert-p state id)))
          (push (list :op :structure :kind :structure :verb verb
                      :node id :add add :remove remove
                      :by (work-event-by event) :reason reason
@@ -955,6 +1009,29 @@ its own mutation."
                      :stamp (work-event-stamp event)
                      :rev (work-event-rev event))
                (wnode-meta-log node))))
+      ;; The scope verbs (E03-F03, SPEC-WORK.md:1096-1100, :2929). Each moves
+      ;; the required set by its own stated delta and nothing else, here, on
+      ;; the one path the live verb and the replay share.
+      (:require
+       (%scope-set-required state node (eq :true (getf (work-event-fields event) :to)))
+       (%scope-log node event))
+      (:baseline
+       (setf (wnode-baseline node)
+             (copy-list (getf (work-event-fields event) :members)))
+       (%scope-log node event))
+      (:discovery
+       (dolist (m (getf (work-event-fields event) :members))
+         (let ((mn (%node-quiet state m)))
+           (when mn (%scope-set-required state mn t))))
+       (%scope-log node event))
+      ;; `prioritise` moves the one slot and nothing else (SPEC-WORK.md:3167).
+      (:prioritise
+       (let* ((fields (work-event-fields event))
+              (new (copy-list (wnode-priority node))))
+         (setf (getf new (getf fields :context))
+               (if (eq :set (getf fields :change)) (getf fields :rank) +absent+))
+         (setf (wnode-priority node) new)
+         (%scope-log node event)))
       (:edit
        ;; The five permitted metadata fields, each a tagged patch.
        (dolist (field *metadata-fields*)
@@ -1034,6 +1111,29 @@ its own mutation."
              (wstate-rows state))))
     (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
     state))
+
+(defun %scope-set-required (state node to)
+  "Move NODE into (TO true) or out of its containment parent's required set,
+keeping the parent's two counters on write. It detaches nothing: the node stays
+in the parent's :children either way (SPEC-WORK.md:1147)."
+  (let ((was (and (wnode-required node) t))
+        (to (and to t)))
+    (unless (eq was to)
+      (setf (wnode-required node) to)
+      (let ((parent (and (wnode-parent node) (%node-quiet state (wnode-parent node))))
+            (delta (if to 1 -1)))
+        (when parent
+          (incf (wnode-required-count parent) delta)
+          (when (eq :o (wnode-branch node))
+            (incf (wnode-required-open parent) delta)))))))
+
+(defun %scope-log (node event)
+  "Append the event to the node's append-only meta log, newest first."
+  (push (list* :op :scope :kind (work-event-kind event) :node (wnode-id node)
+               :by (work-event-by event) :request (work-event-request event)
+               :stamp (work-event-stamp event) :rev (work-event-rev event)
+               (copy-list (work-event-fields event)))
+        (wnode-meta-log node)))
 
 (defun apply-envelope (state envelope)
   "Pure: STATE is never touched. The candidate is built whole and returned, so

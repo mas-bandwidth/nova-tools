@@ -37,6 +37,21 @@ const firstRunSet = `(work-set "first-run"
           (unit "u1" :needs ("u0") :owner "Rowan" :title "the unit that is ready")))
 `
 
+// firstRunUnits is the set the attempt and next examples read and WRITE: one
+// ready unit in one lane, owned by the coordinator's child, so `next --take`
+// has exactly one answer and the `attempt record` line after it closes the very
+// attempt that take opened. The two lines are a sequence, like the graph lines
+// above them, and they run in the order the banner writes them.
+const firstRunUnits = `(work-set "first-run-units"
+  :title "the smallest set a mind can be handed work from"
+  :units ((unit "certify:verb" :lane "pulse" :owner "rowan-child" :needs ()
+            :title "the one ready unit")))
+`
+
+// firstRunLanes is the lanes table those units name: a lane is a resource of
+// capacity 1 over an area of the tree, and the file is the map (A6).
+const firstRunLanes = "pulse\tcmd/nova-pulse internal/pulse\n"
+
 func runCLI(t *testing.T, args ...string) (int, string, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
@@ -56,6 +71,12 @@ func firstRunDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(dir, "work-set.lisp"), []byte(firstRunSet), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "units.lisp"), []byte(firstRunUnits), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "lanes.tsv"), []byte(firstRunLanes), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return dir

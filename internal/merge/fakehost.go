@@ -25,6 +25,13 @@ type FakeHost struct {
 	Atomic       bool
 	Merges       []string
 	Err          error
+	// CreatePR and ClosePR are the fold verb's forge operations (docs/SPEC-MERGE.md
+	// "The fold (#1142)"). Created is one line per opened pull request and Closed is
+	// the numbers closed as superseded by a squash; nextPR hands out numbers so a fold
+	// reads one back on its FOLD OK line.
+	Created []string
+	Closed  []int
+	nextPR  int
 	// OnPR, when set, answers PR reads per poll so a test can script a PR that
 	// merges on the second poll. It receives the PR number and the 1-based call
 	// count; returning ok=false falls through to the PRs map. OnChecks does the
@@ -53,8 +60,12 @@ type FakeHost struct {
 	Issues    map[int]string
 	// Reads is the verdicts the forge carries for a pull request (#1572): the HOLDs and
 	// APPROVEs its readers posted as comments or reviews. VerdictErr is the read failing.
-	Reads            map[int][]Verdict
-	VerdictErr       error
+	Reads       map[int][]Verdict
+	VerdictErr  error
+	VerdictErrs map[int]error
+	// OnVerdicts and VerdictCalls are the per-call seam: see Verdicts.
+	OnVerdicts       func(n, call int) ([]Verdict, bool)
+	VerdictCalls     map[int]int
 	RawComments      map[int]string
 	RawReviews       map[int]string
 	DispositionsTime string
@@ -80,7 +91,7 @@ func (f *FakeHost) IssueFor(pr int) string { return f.Issues[pr] }
 
 // NewFakeHost returns an empty one.
 func NewFakeHost() *FakeHost {
-	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}}
+	return &FakeHost{PRs: map[int]PR{}, Branches: map[string]string{}, ChecksBy: map[string]Checks{}, MergeGroupRuns: map[int64]MergeRun{}, VerdictErrs: map[int]error{}}
 }
 
 func (f *FakeHost) PR(n int) (PR, error) {
@@ -178,6 +189,34 @@ func (f *FakeHost) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	return nil
 }
 
+// CreatePR records one opened pull request and hands back a fresh number. It is the
+// fold verb's forge side (docs/SPEC-MERGE.md "The fold (#1142)").
+func (f *FakeHost) CreatePR(head, base, title, body string) (int, error) {
+	if f.Err != nil {
+		return 0, f.Err
+	}
+	if f.nextPR == 0 {
+		f.nextPR = 900
+	}
+	f.nextPR++
+	n := f.nextPR
+	f.Created = append(f.Created, fmt.Sprintf("head=%s base=%s title=%s body=%s", head, base, title, body))
+	if f.PRs == nil {
+		f.PRs = map[int]PR{}
+	}
+	f.PRs[n] = PR{Number: n, Base: base, HeadRef: head, Body: body}
+	return n, nil
+}
+
+// ClosePR records a folded pull request closed as superseded by the squash.
+func (f *FakeHost) ClosePR(n int) error {
+	if f.Err != nil {
+		return f.Err
+	}
+	f.Closed = append(f.Closed, n)
+	return nil
+}
+
 // SetChecks is the shorthand a test uses to say what a commit's evidence is.
 func (f *FakeHost) SetChecks(oid string, green, pending int, red ...string) {
 	c := Checks{Green: green, Pending: pending, Red: len(red), RedNames: red}
@@ -223,8 +262,24 @@ func (f *FakeHost) SetCheckRuns(oid string, details ...CheckDetail) {
 // Verdicts is the reads a test says this pull request carries (#1572). A host with no
 // entry for a pull request carries none, which is the ordinary case.
 func (f *FakeHost) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	if f.VerdictErrs != nil && f.VerdictErrs[n] != nil {
+		return nil, f.VerdictErrs[n]
+	}
 	if f.VerdictErr != nil {
 		return nil, f.VerdictErr
+	}
+	// OnVerdicts answers PER CALL, so a test can script a forge that says nothing at
+	// admission and carries a HOLD at the door -- which is #1572's own timeline and the
+	// whole reason a landing reads twice. It receives the pull request and the 1-based
+	// call count for that pull request; ok=false falls through to Reads.
+	if f.OnVerdicts != nil {
+		if f.VerdictCalls == nil {
+			f.VerdictCalls = map[int]int{}
+		}
+		f.VerdictCalls[n]++
+		if vs, ok := f.OnVerdicts(n, f.VerdictCalls[n]); ok {
+			return vs, nil
+		}
 	}
 	if f.RawComments != nil && f.RawReviews != nil {
 		c := f.RawComments[n]
@@ -273,4 +328,12 @@ func (f *FakeHost) SetVerdicts(n int, vs ...Verdict) {
 		f.Reads = map[int][]Verdict{}
 	}
 	f.Reads[n] = append(f.Reads[n], vs...)
+}
+
+// SetVerdictErr records an error returning verdicts for pull request n.
+func (f *FakeHost) SetVerdictErr(n int, err error) {
+	if f.VerdictErrs == nil {
+		f.VerdictErrs = map[int]error{}
+	}
+	f.VerdictErrs[n] = err
 }
