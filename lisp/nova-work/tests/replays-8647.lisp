@@ -314,3 +314,182 @@
                                        :role-limits '(:coordinator 1 :worker 2))))
     (check-equal nil (fallback-eligible-p approved-wide trial)
                  "a fallback exceeding the role limit was called eligible")))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F04AdmitEachRequestAgainstUntil (roadmap nova-work.sexp
+;;; E02-F04-02: "Admit each request against until and fence on expiry or
+;;; divergence"). SPEC-WORK.md:250-252 states admission is checked per
+;;; request, "a request that arrives after `until` is refused `fenced`";
+;;; SPEC-WORK.md:419-421 states a session whose clip is refused by
+;;; divergence is fenced (here the reconfirm RACED path).
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F04AdmitEachRequestAgainstUntil" "docs/SPEC-WORK.md:250-252,419-421"
+    "expected=live-session-admits-up-to-until;post-until-write-refused-fenced-exit-1;diverged-tip-reconfirm-fences-session-raced"
+  ;; Expiry: a live session admits every request right up to `until`; the
+  ;; first request to arrive after `until` is refused `fenced` at exit 1 and
+  ;; the session self-fences.
+  (let ((sess (make-session :owner "emma" :generation 3 :token "tok-3"
+                            :until "2026-09-14T12:01:00Z" :base "abc123"
+                            :state :live :every "30s")))
+    (multiple-value-bind (admitted reason code)
+        (session-check-admission sess :state-to-doing :now "2026-09-14T12:00:59Z")
+      (declare (ignore reason))
+      (ok admitted "a request before `until` was refused")
+      (check-equal 0 code "a pre-`until` request did not exit 0")
+      (check-equal :live (session-state sess)
+                   "a pre-`until` request fenced the session"))
+    (multiple-value-bind (admitted reason code)
+        (session-check-admission sess :state-to-doing :now "2026-09-14T12:01:01Z")
+      (check-equal nil admitted "a request after `until` was admitted")
+      (check-equal 1 code "the post-`until` refusal is not exit 1")
+      (ok (search "fenced" reason) "the refusal does not name the fence: ~A" reason)
+      (check-equal :fenced (session-state sess)
+                   "a post-`until` request did not fence the session")))
+  ;; Divergence: a reconfirm whose tip moved off the session's base fences the
+  ;; session and reports the race.
+  (let ((sess (make-session :owner "emma" :generation 4 :token "tok-4"
+                            :until "2026-09-14T12:02:00Z" :base "abc123"
+                            :state :live :every "30s")))
+    (multiple-value-bind (okp line code)
+        (session-reconfirm sess "def456" :now "2026-09-14T12:01:00Z")
+      (check-equal nil okp "a diverged tip reconfirmed")
+      (check-equal 1 code "the divergence refusal is not exit 1")
+      (ok (search "SESSION RACED" line) "the divergence does not say RACED: ~A" line)
+      (check-equal :fenced (session-state sess)
+                   "the divergence did not fence the session"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE08F03RepresentChildrenSwarmCapabilitiesLocal (roadmap
+;;; nova-work.sexp E08-F03-05: "Represent children, swarm capabilities,
+;;; local runs and one-shots separately from friend identity; agreed
+;;; concurrency limits apply"). SPEC-WORK.md:3396-3410 makes configured
+;;; capability, observed fact and current free capacity three fields and
+;;; never one, and names the four execution capability groups;
+;;; SPEC-WORK.md:3385-3386 makes an agreed limit never cancelled or
+;;; raised by a model capability.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE08F03RepresentChildrenSwarmCapabilitiesLocal"
+    "docs/SPEC-WORK.md:3396-3410,3385-3393"
+    "expected=four-groups-not-friends;constraints-carry-agreed-limit;three-fields-never-collapse;agreed-limit-ignores-model-capability"
+  ;; Children, swarm capabilities, local models and one-shots are four
+  ;; distinct execution capability groups, each a catalog entry of its own and
+  ;; never a friend identity.
+  (check-equal '(:child-agents :swarms :local-models :one-shots)
+               *capability-group-kinds*
+               "the four execution capability groups")
+  ;; Each entry is identified by its own stable capability id, and its agreed
+  ;; concurrency limit lives in a separate constraints slot, never folded into
+  ;; the identity or the three support/verification/capacity fields.
+  (dolist (kind *capability-group-kinds*)
+    (let ((g (make-capability-group
+              :id (format nil "cap-~(~A~)" kind) :kind kind :source "CONFIG"
+              :last-verified "2026-09-15T00:00:00Z" :availability :available
+              :constraints (list :concurrent 4))))
+      (ok (stringp (capability-group-id g)) "~A lacks a stable capability id" kind)
+      (check-string= "CONFIG" (capability-group-source g)
+                     "the group's source is not CONFIG")
+      (ok (eql 4 (getf (capability-group-constraints g) :concurrent))
+          "the agreed concurrency limit was not carried on ~A" kind)))
+  ;; Configured capability (declared support), observed fact (runtime
+  ;; verification) and current free capacity are three fields and never one: a
+  ;; catalog entry is not evidence of a live child or of free credits.
+  (let ((g (make-capability-group
+            :id "cap-1" :kind :child-agents :source "CONFIG"
+            :last-verified "2026-09-15T00:00:00Z" :availability :available
+            :constraints '(:concurrent 4)
+            :declared-support t :runtime-verified nil :free-capacity nil)))
+    (check-equal t (capability-declared-support-p g) "declared support is not true")
+    (check-equal nil (capability-runtime-verified-p g)
+                 "runtime verification was inferred from declared support")
+    (check-equal :unknown (capability-free-capacity g)
+                 "free capacity was not unknown")
+    (check-equal nil (capability-fields-collapse-p g)
+                 "declared support, runtime verification and free capacity collapsed into one"))
+  ;; Agreed concurrency limits apply: the limit is read from CONFIG and a model
+  ;; capability never cancels or raises it, and never infers a role.
+  (let* ((config (make-role-config
+                  :roles (list (make-role-record :id "worker" :source "CONFIG"
+                                                 :limit 2)))))
+    (check-equal 2 (agreed-limit-for config "worker" '(:capability "unlimited"))
+                 "the agreed concurrency limit was not applied")
+    (check-equal nil (role-inferred-from-model-p "worker")
+                 "a model capability inferred a role")))
+
+;;; TestE05F05RetainFixturesRevisionsFaultPoints
+;;;   criterion E05-F05-02; docs/SPEC-WORK.md:7057-7059
+;;;   "Every test retains its input fixtures, its deterministic seed, the
+;;;    engine, client and schema versions, its fault point, its invocation,
+;;;    its captured revision, its expected-against-actual reconciliation
+;;;    and its result."
+;;; ------------------------------------------------------------------
+
+(deftest "TestE05F05RetainFixturesRevisionsFaultPoints" "docs/SPEC-WORK.md:7057-7059"
+    "expected=fixtures+revision+fault-point-retained;expected-against-actual-reconciliation;missing-field-incomplete"
+  ;; A complete record retains every named artifact: fixtures, seed, the three
+  ;; version strings, fault point, invocation, captured revision, expected,
+  ;; actual and result.
+  (let* ((r (make-regression-retention
+             :fixtures '("fixture-a" "fixture-b")
+             :seed 42
+             :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+             :fault-point "journal-append at step 3"
+             :invocation "config --intake policy-1"
+             :captured-revision "rev 42"
+             :expected 9 :actual 9 :result "pass"))
+         (rec (reconcile-retention r)))
+    ;; Retention is observable through the reconciliation: the verdict, the
+    ;; fixtures, the captured revision and the fault point all come back out.
+    (check-equal :reconciled (getf rec :verdict)
+                 "a matching expected/actual did not reconcile")
+    (check-equal '("fixture-a" "fixture-b") (getf rec :fixtures)
+                 "the input fixtures were not retained")
+    (check-equal "rev 42" (getf rec :revision)
+                 "the captured revision was not retained")
+    (check-equal "journal-append at step 3" (getf rec :fault-point)
+                 "the fault point was not retained")
+    (check-equal "pass" (getf rec :result)
+                 "the result was not retained")
+    (check-equal t (retention-complete-p r)
+                 "a fully retained record is not complete"))
+  ;; A divergence between expected and actual is reconciled as :diverged,
+  ;; keeping both sides and the fault point visible rather than a silent green.
+  (let* ((r (make-regression-retention
+             :fixtures '("fixture-a")
+             :seed 7
+             :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+             :fault-point "journal-append at step 3"
+             :invocation "config --intake policy-1"
+             :captured-revision "rev 42"
+             :expected 9 :actual 11 :result "fail"))
+         (rec (reconcile-retention r)))
+    (check-equal :diverged (getf rec :verdict)
+                 "a mismatched expected/actual reconciled as matched")
+    (check-equal 9 (getf rec :expected) "a divergence dropped the expected value")
+    (check-equal 11 (getf rec :actual) "a divergence dropped the actual value")
+    (check-equal "journal-append at step 3" (getf rec :fault-point)
+                 "a divergence dropped the fault point"))
+  ;; A record that drops any retained artifact — here the fault point, and
+  ;; separately the fixtures — is not complete, so a test that fails to retain
+  ;; its evidence is detected rather than silently counted as retained.
+  (let* ((no-fault (make-regression-retention
+                    :fixtures '("fixture-a")
+                    :seed 7
+                    :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+                    :fault-point nil
+                    :invocation "config --intake policy-1"
+                    :captured-revision "rev 42"
+                    :expected 9 :actual 9 :result "pass"))
+         (no-fixture (make-regression-retention
+                      :fixtures nil
+                      :seed 7
+                      :engine-version "work-v1" :client-version "cli-v3" :schema-version "sch-v7"
+                      :fault-point "journal-append at step 3"
+                      :invocation "config --intake policy-1"
+                      :captured-revision "rev 42"
+                      :expected 9 :actual 9 :result "pass")))
+    (check-equal nil (retention-complete-p no-fault)
+                 "a record missing its fault point is called complete")
+    (check-equal nil (retention-complete-p no-fixture)
+                 "a record missing its fixtures is called complete")))

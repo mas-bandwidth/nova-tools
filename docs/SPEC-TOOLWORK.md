@@ -947,6 +947,14 @@ paragraphs of reading 3 that hold each sentence, so that an implementer of T16 o
    — the rule added here is that the failing member is **named** by bisecting the
    members once (`BATCH DROP #<n> reason="build red with this member merged: <first
    line>"`) instead of failing the batch whole.
+   *As built (#1661):* a swarm member is one whose body's first line is the harvest's
+   `RESULT` line or the gate's `ACCEPT` line. The `ACCEPT OK` admission is armed by
+   `--accept-control <dir>` (the accept gate's `<root>/accept/control`) and only by it,
+   because `accept` is not yet `harvest`'s default step; unarmed, each swarm member is
+   named on `BATCH NOTE #<n> accept=unchecked`. Hygiene reads `<lane>/identities.tsv`
+   (`name<TAB>email`); with no such file it is off and says `BATCH NOTE hygiene=off`,
+   and a swarm member's `PATHS` line bounds its `out-of-path`. The bisect runs once;
+   a red build after the named member is dropped fails the batch whole.
 8. **A mechanical accept is never a read.** `ACCEPT OK` satisfies nothing in the read
    condition; `needs_read` stands for every swarm PR that changes code, on trial or trusted
    (the eligibility rule, 3), and the reader

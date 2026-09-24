@@ -1,0 +1,5 @@
+provider	linuxHarness	darwinHarness	harnessArgs	envVar	model	base_url
+deepseek	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--","{prompt}"]	DEEPSEEK_API_KEY	deepseek/deepseek-chat
+opencode	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--","{prompt}"]	OPENCODE_API_KEY	opencode/deepseek-v4-flash
+inception	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--","{prompt}"]	INCEPTION_API_KEY	inception/mercury-2.5
+ollama	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--","{prompt}"]	OLLAMA_API_KEY	ollama/north-mini-code-32k	http://127.0.0.1:11434
