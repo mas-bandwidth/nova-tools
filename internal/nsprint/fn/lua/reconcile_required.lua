@@ -233,9 +233,13 @@ end)
 -- (HSETNX) and one receipt written. was, when given, must equal the stored
 -- pending value. A replay on the ambiguous key returns the first receipt;
 -- a URL or an absent key is 2 STATE with no write.
--- args: sprint, key, reconciler token, [was]
+-- before_ms, when given (the expire sweep: Redis TIME minus open_ms), must be
+-- at or after the pending value's at_ms: a key begun again since the sweep
+-- read the pending index is a live open and is 2 STATE with no write.
+-- args: sprint, key, reconciler token, [was], [before_ms]
 redis.register_function('ns_idem_ambiguous', function(keys, args)
   local S, key, rtoken, was = args[1], args[2] or '', args[3] or '', args[4] or ''
+  local before = tonumber(args[5] or '')
   if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
   if key == '' then return rr_reply(1, 'USAGE', '', '') end
   local idem = 's:' .. S .. ':idem'
@@ -245,6 +249,10 @@ redis.register_function('ns_idem_ambiguous', function(keys, args)
   end
   if string.sub(prev, 1, 8) ~= 'pending:' or (was ~= '' and was ~= prev) then
     return rr_reply(2, 'STATE', '', prev)
+  end
+  if before then
+    local began = tonumber(string.match(prev, ':(%d+)$') or '')
+    if began and began > before then return rr_reply(2, 'STATE', '', prev) end
   end
   local now = rr_now()
   local v = 'ambiguous:' .. rr_pending_who(prev) .. ':' .. tostring(now)
@@ -322,6 +330,61 @@ redis.register_function('ns_idem_resolve', function(keys, args)
   redis.call('HDEL', 's:' .. S .. ':unresolved', rr_unresolved_field(key))
   redis.call('ZREM', rr_pending_idx(S), key)
   return rr_reply(0, 'RESOLVED', '', r)
+end)
+
+-- ns_card_retry: feed a crashed card back once (#2930 rev 5, replaces
+-- rowan-tools bin/sprint-requeue). It acts only on a card that is ended with
+-- outcome FAILED, reason idle-killed or crash with exit -1, no pushed sha, and
+-- retries below retry_max: the child died before it could leave any effect,
+-- so a new attempt cannot make a second one. The card goes back to the pool
+-- (queued, reason retry:<reason>; the next deal takes attempt+1), with
+-- retry_of=<attempt>, one receipt and the idem key retry:<S>/<label>/<attempt>.
+-- A replay returns the first receipt. Any other card is NOTHING, no write.
+-- The end fields stay the card wrapper's: this function never writes them.
+-- args: sprint, label, reconciler token, retry_max
+redis.register_function('ns_card_retry', function(keys, args)
+  local S, label, rtoken = args[1], args[2] or '', args[3] or ''
+  local retry_max = tonumber(args[4] or '')
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
+  if label == '' or not retry_max or retry_max < 0 then return rr_reply(1, 'USAGE', '', '') end
+  local card = 's:' .. S .. ':card:' .. label
+  local state = rr_get(card, 'state')
+  if state == '' then return rr_reply(5, 'NOTFOUND', '', '') end
+  local attempt = rr_get(card, 'attempt')
+  local idem = 'retry:' .. S .. '/' .. label .. '/' .. attempt
+  local prev = rr_get('s:' .. S .. ':idem', idem)
+  if prev ~= '' then return rr_reply(0, 'OK', attempt, prev) end
+  if state ~= 'ended' or rr_get(card, 'outcome') ~= 'FAILED' or rr_get(card, 'pushed_sha') ~= '' then
+    return rr_reply(0, 'NOTHING', attempt, '')
+  end
+  local reason = rr_get(card, 'reason')
+  if not (reason == 'idle-killed' or (reason == 'crash' and rr_get(card, 'exit') == '-1')) then
+    return rr_reply(0, 'NOTHING', attempt, '')
+  end
+  if (tonumber(rr_get(card, 'retries')) or 0) >= retry_max then
+    return rr_reply(0, 'NOTHING', attempt, '')
+  end
+  local now = rr_now()
+  local bench = rr_get(card, 'bench')
+  redis.call('SREM', 's:' .. S .. ':bench:' .. bench .. ':ended', label)
+  local res = rr_requeue(S, label, card, bench, S .. '/' .. label .. '/' .. attempt,
+    'ended', 'retry:' .. reason, '-', idem, now)
+  redis.call('HSET', card, 'retry_of', attempt, 'retried_at', tostring(now))
+  return res
+end)
+
+-- ns_expire_stamp: the one writer of proc:reconciler expire_at:<S>, the Redis
+-- TIME ms of the last expire sweep of sprint S (the sweep's self-gate against
+-- s:<S>:policy expire_every_ms). Fenced: a deposed instance stamps nothing, so
+-- it cannot delay the holder's next sweep.
+-- args: reconciler token, sprint
+redis.register_function('ns_expire_stamp', function(keys, args)
+  local rtoken, S = args[1] or '', args[2] or ''
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
+  if S == '' then return rr_reply(1, 'USAGE', '', '') end
+  local now = rr_now()
+  redis.call('HSET', 'proc:reconciler', 'expire_at:' .. S, tostring(now))
+  return rr_reply(0, 'STAMPED', '', tostring(now))
 end)
 
 -- ns_task_assign: route one ready task to one consumer (5.2 sweep, 5.3).

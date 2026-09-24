@@ -5,10 +5,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -25,6 +28,36 @@ func init() {
 // openTaskStore uses the address the caller supplied for this invocation.
 func openTaskStore(ctx context.Context, addr string) (*store.Store, error) {
 	return store.Open(ctx, addr)
+}
+
+// seatEnv names the seat's friend (#2929): the initiator of every task push and
+// take. bin/friend-harness exports it; a shell outside a harness has none and
+// is refused, never defaulted.
+const seatEnv = "NOVA_FRIEND"
+
+// wantFriend is the one refusal for an empty or unregistered initiator.
+const wantFriend = "want NOVA_FRIEND in friends"
+
+// taskAddr is the Redis address of a seat verb: --redis, else
+// NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR, else empty, which store.Open
+// refuses (never a localhost default on a mutating verb).
+func taskAddr(flagAddr string) string {
+	if flagAddr != "" {
+		return flagAddr
+	}
+	if v := os.Getenv("NOVA_SPRINT_REDIS"); v != "" {
+		return v
+	}
+	return os.Getenv("NOVA_REDIS_ADDR")
+}
+
+// refuseSeat maps the seat errors to their one line: ErrNotFriend is
+// `want NOVA_FRIEND in friends (NOVA_FRIEND=<i>)`, exit 2.
+func refuseSeat(errOut io.Writer, verb, initiator string, err error) int {
+	if errors.Is(err, task.ErrNotFriend) {
+		return refuse(errOut, verb, fmt.Sprintf("%s (%s=%s)", wantFriend, seatEnv, initiator))
+	}
+	return refuse(errOut, verb, err.Error())
 }
 
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -76,7 +109,6 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	front := fs.Bool("front", false, "")
 	priority := fs.Int("priority", 0, "")
 	payloadSHA := fs.String("payload-sha", "", "")
-	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")
 	est := fs.String("est", "", "")
 	if err := fs.Parse(args); err != nil {
@@ -85,7 +117,15 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task push", "takes flags, not positional arguments")
 	}
-	st, err := openTaskStore(ctx, *redisAddr)
+	// #2929: the initiator is the seat, read before any dial; --actor is gone.
+	initiator := os.Getenv(seatEnv)
+	if initiator == "" {
+		return refuse(errOut, "task push", wantFriend+" ("+seatEnv+" is empty)")
+	}
+	if *kind == "build" {
+		return refuse(errOut, "task push", "--kind build: want work")
+	}
+	st, err := openTaskStore(ctx, taskAddr(*redisAddr))
 	if err != nil {
 		return refuse(errOut, "task push", err.Error())
 	}
@@ -94,11 +134,20 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		Sprint: *sprint, ID: *id, Kind: task.Kind(*kind), Title: *title,
 		Effects: task.Effects(*effects), Repo: *repo, PR: *pr, Head: *head,
 		Ref: *ref, To: *to, Front: *front, Priority: *priority,
-		PayloadSHA: *payloadSHA, Actor: *actor, Idem: *idem,
-		Est: *est, ErrOut: errOut,
+		PayloadSHA: *payloadSHA, Actor: initiator, Idem: *idem,
+		Est: *est, ErrOut: errOut, Initiator: initiator,
 	})
 	if err != nil {
-		return refuse(errOut, "task push", err.Error())
+		return refuseSeat(errOut, "task push", initiator, err)
+	}
+	if res.Status == task.PushDown {
+		// #2929 rev 5: exit 7 means only DOWN, so a router can tell "pick
+		// another friend" from "fix the call".
+		_, _ = fmt.Fprintf(out, "PUSH DOWN id=%s to=%s down=%s\n", *id, *to, res.Down)
+		return res.Status.ExitCode()
+	}
+	if res.Status == task.PushInvalid && res.Reason != "" {
+		_, _ = fmt.Fprintf(errOut, "nova-sprint task push: %s %s\n", res.Reason, *to)
 	}
 	if res.Overlap != nil {
 		// #3067: both ids on one line, on stdout like every PUSH word.
@@ -122,7 +171,6 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	id := fs.String("id", "", "")
 	as := fs.String("as", "", "")
 	n := fs.Int("n", 0, "")
-	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task take", err.Error())
@@ -130,14 +178,35 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task take", "takes flags, not positional arguments")
 	}
-	st, err := openTaskStore(ctx, *redisAddr)
+	// #2929: only --as equal to the initiator takes; --actor is gone.
+	initiator := os.Getenv(seatEnv)
+	if initiator == "" {
+		return refuse(errOut, "task take", wantFriend+" ("+seatEnv+" is empty)")
+	}
+	if *as == "" {
+		return refuse(errOut, "task take", "--as is required")
+	}
+	st, err := openTaskStore(ctx, taskAddr(*redisAddr))
 	if err != nil {
 		return refuse(errOut, "task take", err.Error())
 	}
 	defer st.Close()
-	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, *actor, *idem)
+	if *as != initiator {
+		if _, err := task.DenyTake(ctx, st, initiator, *as, *sprint, *id, *idem); err != nil {
+			return refuseSeat(errOut, "task take", initiator, err)
+		}
+		_, _ = fmt.Fprintf(out, "TAKE DENIED id=%s as=%s initiator=%s\n", *id, *as, initiator)
+		return 6
+	}
+	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
+	var blocked *task.BlockedError
+	if errors.As(err, &blocked) {
+		// #2939: exit 7, new because 3-6 are taken.
+		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
+		return 7
+	}
 	if err != nil {
-		return refuse(errOut, "task take", err.Error())
+		return refuseSeat(errOut, "task take", initiator, err)
 	}
 	if len(claims) == 0 {
 		fmt.Fprintln(out, "NONE")
@@ -146,6 +215,8 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	for _, claim := range claims {
 		fmt.Fprintf(out, "CLAIMED %s/%s attempt=%d token=%s\n",
 			claim.Sprint, claim.ID, claim.Attempt, claim.Token)
+		_, _ = fmt.Fprintf(out, "TASK %s kind=%s ref=%s title=%s\n",
+			claim.ID, claim.Kind, claim.Ref, strconv.Quote(claim.Title))
 	}
 	return 0
 }
