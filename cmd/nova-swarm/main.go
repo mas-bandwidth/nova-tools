@@ -2054,13 +2054,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if code != 0 {
 		return code
 	}
-	if res.rc != 0 {
-		if res.rc > 0 {
-			return res.rc
-		}
-		return 1
-	}
-	return 0
+	return nativeProcessExit(res.rc)
 }
 
 // nativeEventTimeout bounds the card-end emit. It is short on purpose: the card is already
@@ -2157,6 +2151,23 @@ func resultsRootOf(flag, root string) string {
 		return ""
 	}
 	return filepath.Join(root, "results")
+}
+
+// nativeProcessExit is the process exit after a launch that started. The child's
+// code is already on the verdict line as rc=<n>. Passing 255 through made a fill
+// loop treat a finished card as a transport failure and retry it (nova-tools
+// #2058). Local ssh(1) exits 255 for any error; that is not proof the remote
+// command never started, so the outcome is potentially UNKNOWN and a retry
+// waits on reconciliation. A negative rc is a kill (deadline or TERM) and is
+// already exit 1.
+func nativeProcessExit(childRC int) int {
+	if childRC == 0 {
+		return 0
+	}
+	if childRC < 0 || childRC == 255 {
+		return 1
+	}
+	return childRC
 }
 
 // nativeLeftAResult reports whether the run left the one artefact a card exists to produce:
