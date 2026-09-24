@@ -37,6 +37,15 @@ func writeQuestions(t *testing.T, v any) string {
 	return p
 }
 
+func writeState(t *testing.T, s string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "state.txt")
+	if err := os.WriteFile(p, []byte(s), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func choiceQuestions() map[string]any {
 	return map[string]any{
 		"gate": map[string]any{"type": "choice", "instructions": "go?", "criteria": map[string]string{"go": "proceed", "wait": "hold"}},
@@ -52,9 +61,10 @@ func TestVerbExits3BelowFloor(t *testing.T) {
 	defer srv.Close()
 
 	q := writeQuestions(t, choiceQuestions())
+	s := writeState(t, "gate: go\n")
 	t.Setenv("CARD8331_JEV_KEY", "sekret")
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--questions", q, "--state", q, "--floor", "0.9", "--base-url", srv.URL, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
+	code := run([]string{"--questions", q, "--state", s, "--floor", "0.9", "--base-url", srv.URL, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
 	if code != 3 {
 		t.Fatalf("exit = %d, want 3 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
 	}
@@ -75,9 +85,10 @@ func TestVerbExits2On500(t *testing.T) {
 	defer srv.Close()
 
 	q := writeQuestions(t, choiceQuestions())
+	s := writeState(t, "gate: go\n")
 	t.Setenv("CARD8331_JEV_KEY", "sekret")
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--questions", q, "--state", q, "--base-url", srv.URL, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
+	code := run([]string{"--questions", q, "--state", s, "--base-url", srv.URL, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
 	}
@@ -90,10 +101,11 @@ func TestVerbExits2On500(t *testing.T) {
 // No key is a refusal naming the variable, never printing the key.
 func TestVerbExits2WithoutKey(t *testing.T) {
 	q := writeQuestions(t, choiceQuestions())
+	s := writeState(t, "gate: go\n")
 	t.Setenv("CARD8331_JEV_KEY", "")
 	t.Setenv("TYPESAFE_API_KEY", "")
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--questions", q, "--state", q, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
+	code := run([]string{"--questions", q, "--state", s, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
 	}
@@ -111,9 +123,10 @@ func TestVerbExits2OnBadQuestions(t *testing.T) {
 	q := writeQuestions(t, map[string]any{
 		"gate": map[string]any{"type": "vote", "instructions": "go?"},
 	})
+	s := writeState(t, "gate: go\n")
 	t.Setenv("CARD8331_JEV_KEY", "sekret")
 	var stdout, stderr bytes.Buffer
-	code := run([]string{"--questions", q, "--state", q, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
+	code := run([]string{"--questions", q, "--state", s, "--key-env", "CARD8331_JEV_KEY"}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2 (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())
 	}

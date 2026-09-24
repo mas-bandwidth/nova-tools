@@ -70,7 +70,8 @@ usage:
   nova-decide log --log <path> --summary [--registry <path>]
 
   nova-decide review --repo <owner/name> --pr <n> [--card <file>]
-                     [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>] [--ledger-path <jsonl>]
+                     [--post|--dry-run] [--ledger file|redis|file,redis] [--store <host:port>]
+                     [--user <user>] [--password-env <NAME>] [--ledger-path <jsonl>]
                      [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                      [--no-jev] [--table] [--record <dir>] [--replay <dir>]
   nova-decide review --repo <owner/name> --batch <file of pull request numbers>
@@ -289,6 +290,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprint(stdout, usage)
+			return 0
+		}
 		return refuse(stderr, "DECIDE", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -326,11 +331,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		state = string(b)
 	default:
+		if isJSONState(*stateFile) {
+			return refuse(stderr, *prefix, "bad-state-format", "state must be key: value lines, not JSON; JSON state is not accepted")
+		}
 		b, err := os.ReadFile(*stateFile)
 		if err != nil {
 			return refuse(stderr, *prefix, "bad-state", fmt.Sprintf("cannot read state: %s", oneline.Err(err)))
 		}
 		state = string(b)
+	}
+	if isJSONState(state) {
+		return refuse(stderr, *prefix, "bad-state-format", "state must be key: value lines, not JSON; JSON state is not accepted")
 	}
 	payload, err := qf.Payload(state)
 	if err != nil {
@@ -765,4 +776,21 @@ func refuseWrite(stderr io.Writer, prefix, what string, err error) int {
 func refuse(stderr io.Writer, prefix, reason, detail string) int {
 	fmt.Fprintf(stderr, "%s REFUSED reason=%s %s; run: nova-decide help\n", oneline.Field(prefix), oneline.Field(reason), oneline.Escape(oneline.Cap(detail, oneline.TailBytes)))
 	return 2
+}
+
+// isJSONState reports whether a state string looks like JSON (starts with '{'
+// or '[', or is JSON-shaped) rather than key: value lines.
+func isJSONState(s string) bool {
+	trimmed := strings.TrimSpace(s)
+	if strings.HasPrefix(trimmed, "{") || strings.HasPrefix(trimmed, "[") {
+		return true
+	}
+	for _, line := range strings.Split(s, "\n") {
+		l := strings.TrimSpace(line)
+		if l == "" || strings.HasPrefix(l, "#") || strings.HasPrefix(l, "//") {
+			continue
+		}
+		return strings.HasPrefix(l, "{") || strings.HasPrefix(l, "[")
+	}
+	return false
 }

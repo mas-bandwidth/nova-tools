@@ -41,8 +41,12 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	dryRun := fs.Bool("dry-run", false, "print the typed line and post nothing (the default)")
 	ledger := fs.String("ledger", "file", "where the verdict is written: file | redis | file,redis (redis is one kind=jev entry on cards:done per JEV line)")
 	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the fleet Redis host:port, for --ledger redis (env NOVA_REDIS_ADDR)")
-	storeUser := fs.String("store-user", "", "the Redis ACL user, for --ledger redis")
-	storePasswordEnv := fs.String("store-password-env", "NOVA_REDIS_BENCH_PASSWORD", "the environment variable holding the Redis password; the password is never a flag")
+	var storeUser string
+	fs.StringVar(&storeUser, "user", "", "the Redis ACL user, for --ledger redis")
+	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
+	var storePasswordEnv string
+	fs.StringVar(&storePasswordEnv, "password-env", "NOVA_REDIS_BENCH_PASSWORD", "the environment variable holding the Redis password; the password is never a flag")
+	fs.StringVar(&storePasswordEnv, "store-password-env", "NOVA_REDIS_BENCH_PASSWORD", "alias for --password-env")
 	stream := fs.String("stream", events.Stream, "the stream the Jev entries go to")
 	ledgerPath := fs.String("ledger-path", defaultLedgerPath(), "the JSONL ledger, for --ledger file")
 	noJev := fs.Bool("no-jev", false, "run the four mechanical checks only; ask no provider and spend nothing")
@@ -62,6 +66,9 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "review") {
+			return 0
+		}
 		return refuse(stderr, "REVIEW", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -131,8 +138,8 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	var jevStream events.Emitter
 	if toRedis {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		em, closeStream, err := dialJevStream(ctx, events.Dial{Addr: *store, Username: *storeUser,
-			Password: os.Getenv(*storePasswordEnv), Stream: *stream})
+		em, closeStream, err := dialJevStream(ctx, events.Dial{Addr: *store, Username: storeUser,
+			Password: os.Getenv(storePasswordEnv), Stream: *stream})
 		cancel()
 		if err != nil {
 			return refuse(stderr, "REVIEW", "no-ledger", "--ledger redis: "+oneline.Cap(err.Error(), oneline.TailBytes))

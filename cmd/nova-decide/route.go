@@ -132,8 +132,12 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	logPath := fs.String("log", "", "append the decision to this JSON lines log")
 	store := fs.String("store", "", "the fleet Redis as host:port: write the decision as one decide event on cards:done, which the fold keeps in its decisions table")
-	storeUser := fs.String("user", "", "with --store: the ACL user")
-	passwordEnv := fs.String("password-env", defaultPasswordEnv, "with --store: the environment variable the password arrives in; never the password itself")
+	var storeUser string
+	fs.StringVar(&storeUser, "user", "", "with --store: the ACL user")
+	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
+	var passwordEnv string
+	fs.StringVar(&passwordEnv, "password-env", defaultPasswordEnv, "with --store: the environment variable the password arrives in; never the password itself")
+	fs.StringVar(&passwordEnv, "store-password-env", defaultPasswordEnv, "alias for --password-env")
 	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung. Absent, the registry's floor for this unit's KIND answers, and the built-in default only where the kind has none")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
@@ -274,7 +278,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	var downExcluded map[string]bool
 	var downList []string
 	if strings.TrimSpace(*store) != "" {
-		opened, err := eventSinkOpener(*store, *storeUser, os.Getenv(*passwordEnv))
+		opened, err := eventSinkOpener(*store, storeUser, os.Getenv(passwordEnv))
 		if err != nil {
 			if fileSink != nil {
 				fileSink.Close()
@@ -283,7 +287,7 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		}
 		eventSink = opened
 
-		down, list, err := downFriendsOpener(context.Background(), *store, *storeUser, os.Getenv(*passwordEnv), reg)
+		down, list, err := downFriendsOpener(context.Background(), *store, storeUser, os.Getenv(passwordEnv), reg)
 		if err != nil {
 			if fileSink != nil {
 				fileSink.Close()
