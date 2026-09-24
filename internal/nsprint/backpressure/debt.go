@@ -1,10 +1,14 @@
 // Package backpressure is the land-rate gate (nova-sprint #3095, #2756 v6
 // spec 4.10, control 48).
 //
-// land_debt is how many of the sprint's PRs are in reading or landable: the
-// cardinality of the union of s:<S>:idx:pr:reading and s:<S>:landable. #3091
-// writes s:<S>:landable; a PR whose state is reading is a member of the
-// reading set. This package reads those sets and does not write them.
+// land_debt is how many of the sprint's units are waiting to be read or
+// landed, counted from the unit records of the #3139 contract (2.2, 2.4):
+// the index s:<S>:units and each s:<S>:u:<unit> state (nova-tools#3491). A
+// unit in opened, reading, landable, batched, gating, green, or landing is
+// debt; landed is terminal and dropped and settled are exits. The retired PR
+// keys s:<S>:idx:pr:reading and the global s:<S>:landable are not read: after
+// #3139 B1 nothing writes them. This package reads the unit records and does
+// not write them.
 // land_cap is land_rate_per_h times land_horizon_h on s:<S>:policy. With the
 // lines absent the interim is 5/h times 4h, which is 20. While land_debt is
 // above that cap, only a ci, fix, rebase, or front card flows. A bulk card,
@@ -19,9 +23,11 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -60,13 +66,7 @@ var tokenRx = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
 // PolicyKey is s:<S>:policy.
 func PolicyKey(sprint string) string { return "s:" + sprint + ":policy" }
 
-// ReadingKey is the set of PR ids whose state is reading.
-func ReadingKey(sprint string) string { return "s:" + sprint + ":idx:pr:reading" }
-
-// LandableKey is s:<S>:landable, the set #3091 maintains.
-func LandableKey(sprint string) string { return "s:" + sprint + ":landable" }
-
-// PRID is the member id of one sprint PR in the reading and landable sets.
+// PRID is the member id of one sprint PR in the type gate sets (cut.go).
 func PRID(repo string, n int) (string, error) {
 	if !tokenRx.MatchString(repo) || n < 1 {
 		return "", fmt.Errorf("backpressure: pr id repo %q number %d", repo, n)
@@ -111,8 +111,25 @@ func Flows(debt, cap int, c Card) bool {
 	return strings.HasPrefix(c.Label, "ci-")
 }
 
-// Measure reads land_debt and land_cap in one pipeline. Clients do not supply
-// the counts. A PR that sits in both sets counts once.
+// Unit states (#3139 2.4) and whether a unit in that state is land debt.
+// A state outside this table is refused, never guessed.
+var unitStateDebt = map[string]bool{
+	"opened": true, "reading": true, "landable": true, "batched": true,
+	"gating": true, "green": true, "landing": true,
+	"landed": false, "dropped": false, "settled": false,
+}
+
+// IsDebtState reports whether a unit in state counts toward land_debt, and
+// whether the state is one the unit contract names at all.
+func IsDebtState(state string) (debt, known bool) {
+	debt, known = unitStateDebt[state]
+	return debt, known
+}
+
+// Measure reads land_debt and land_cap. Clients do not supply the counts.
+// Two pipelined round trips: the unit index with the policy, then every
+// indexed unit's state. An indexed unit with no state, or a state outside the
+// contract, is an error naming the unit: a gap is not zero debt.
 func Measure(ctx context.Context, st *store.Store, sprint string) (Pressure, error) {
 	client, err := redisClient(st)
 	if err != nil {
@@ -122,14 +139,14 @@ func Measure(ctx context.Context, st *store.Store, sprint string) (Pressure, err
 		return Pressure{}, err
 	}
 	pipe := client.Pipeline()
-	members := pipe.SUnion(ctx, ReadingKey(sprint), LandableKey(sprint))
+	members := pipe.SMembers(ctx, land.UnitsSetKey(sprint))
 	policy := pipe.HGetAll(ctx, PolicyKey(sprint))
 	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
 		return Pressure{}, fmt.Errorf("backpressure: measure %s: %w", sprint, err)
 	}
-	ids, err := members.Result()
+	units, err := members.Result()
 	if err != nil && err != redis.Nil {
-		return Pressure{}, fmt.Errorf("backpressure: land_debt %s: %w", sprint, err)
+		return Pressure{}, fmt.Errorf("backpressure: units %s: %w", sprint, err)
 	}
 	fields, err := policy.Result()
 	if err != nil && err != redis.Nil {
@@ -143,7 +160,46 @@ func Measure(ctx context.Context, st *store.Store, sprint string) (Pressure, err
 	if err != nil {
 		return Pressure{}, err
 	}
-	return Pressure{Debt: len(ids), Cap: cap, RatePerHour: rate, HorizonHours: horizon}, nil
+	debt, err := unitDebt(ctx, client, sprint, units)
+	if err != nil {
+		return Pressure{}, err
+	}
+	return Pressure{Debt: debt, Cap: cap, RatePerHour: rate, HorizonHours: horizon}, nil
+}
+
+// unitDebt reads every unit's state in one pipeline and counts the debt.
+func unitDebt(ctx context.Context, client *redis.Client, sprint string, units []string) (int, error) {
+	if len(units) == 0 {
+		return 0, nil
+	}
+	sort.Strings(units)
+	pipe := client.Pipeline()
+	states := make([]*redis.StringCmd, len(units))
+	for i, u := range units {
+		states[i] = pipe.HGet(ctx, land.UnitKey(sprint, u), "state")
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return 0, fmt.Errorf("backpressure: unit states %s: %w", sprint, err)
+	}
+	debt := 0
+	for i, u := range units {
+		state, err := states[i].Result()
+		if err == redis.Nil || (err == nil && state == "") {
+			return 0, fmt.Errorf("backpressure: land_debt %s: unit %s is indexed in %s with no state in %s",
+				sprint, u, land.UnitsSetKey(sprint), land.UnitKey(sprint, u))
+		}
+		if err != nil {
+			return 0, fmt.Errorf("backpressure: unit %s state: %w", u, err)
+		}
+		isDebt, known := IsDebtState(state)
+		if !known {
+			return 0, fmt.Errorf("backpressure: land_debt %s: unit %s state %q is not a unit state (#3139 2.4)", sprint, u, state)
+		}
+		if isDebt {
+			debt++
+		}
+	}
+	return debt, nil
 }
 
 func rateHorizon(fields map[string]string) (int, int, error) {
