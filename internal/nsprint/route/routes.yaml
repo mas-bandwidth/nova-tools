@@ -183,9 +183,10 @@ routes:
     state: held
     flag: benched
     why: "not in the ranking; datacenter only; ROUTE-BENCHED flag (#2895)"
+  # api.deepseek.com /models lists deepseek-flash (DeepSeek-V4.1-Flash), not deepseek-v4-flash, which failed PROVIDER-5XX in 6 s (measured 2026-09-24 23:47Z)
   - route: dsflash
     rung: flash
-    model: deepseek-v4-flash
+    model: deepseek-flash
     via: deepseek
     state: held
     why: "not in the ranking; DeepSeek direct (api.deepseek.com), the swarm spread's deepseek flash provider (Glenn 2026-09-24 7:10 PM ET)"

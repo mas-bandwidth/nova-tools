@@ -68,7 +68,7 @@ func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 			"mercury inception/mercury-2.5",
 			"orqwen38 openrouter/qwen/qwen3.8-flash",
 			"ocglmflash opencode/glm-5.3-flash",
-			"dsflash deepseek/deepseek-v4-flash",
+			"dsflash deepseek/deepseek-flash",
 		},
 		"pro": {
 			"ormimo26pro openrouter/xiaomi/mimo-v2.6-pro",
