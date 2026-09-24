@@ -96,6 +96,12 @@ var eventSinkOpener = func(addr, user, password string) (decide.LogSink, error) 
 	return decide.OpenEventSink(addr, user, password, "")
 }
 
+// downFriendsOpener reads which friends are marked down in the fleet store (#3397).
+// It is the seam a test replaces with a fake or miniredis check.
+var downFriendsOpener = func(ctx context.Context, addr, user, password string, reg *decide.Registry) (map[string]bool, []string, error) {
+	return decide.DownFriends(ctx, addr, user, password, reg)
+}
+
 // defaultPasswordEnv is the variable `nova-secrets exec --only
 // NOVA_REDIS_BENCH_PASSWORD` leaves the fleet store's password in, the same one
 // nova-pulse event reads.
@@ -265,6 +271,8 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		}
 		fileSink = opened
 	}
+	var downExcluded map[string]bool
+	var downList []string
 	if strings.TrimSpace(*store) != "" {
 		opened, err := eventSinkOpener(*store, *storeUser, os.Getenv(*passwordEnv))
 		if err != nil {
@@ -274,6 +282,19 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 			return openFailed(err)
 		}
 		eventSink = opened
+
+		down, list, err := downFriendsOpener(context.Background(), *store, *storeUser, os.Getenv(*passwordEnv), reg)
+		if err != nil {
+			if fileSink != nil {
+				fileSink.Close()
+			}
+			if eventSink != nil {
+				eventSink.Close()
+			}
+			return openFailed(err)
+		}
+		downExcluded = down
+		downList = list
 	}
 	var sink decide.LogSink
 	if fileSink != nil || eventSink != nil {
@@ -322,14 +343,14 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	case *stepUp:
 		// The step-up is a SEQUENCE of decisions, and the caller gets all of
 		// them: the last is the answer, and every one of them is a row.
-		steps, routeErr = decide.RouteStepUp(context.Background(), client, reg, unit, effectiveFloor, *maxSteps)
+		steps, routeErr = decide.RouteStepUpExcluded(context.Background(), client, reg, unit, effectiveFloor, *maxSteps, downExcluded, downList)
 		if len(steps) > 0 {
 			res = steps[len(steps)-1]
 		}
 	case ask:
-		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, effectiveFloor)
+		res, routeErr = decide.RouteJevExcluded(context.Background(), client, reg, unit, effectiveFloor, downExcluded, downList)
 	default:
-		res, routeErr = decide.RouteRules(reg, unit, effectiveFloor)
+		res, routeErr = decide.RouteRulesExcluded(reg, unit, effectiveFloor, downExcluded, downList)
 	}
 	// Where the floor came from is the decision's own fact, and it travels with
 	// it onto the line and into every log row -- including the steps, each of
