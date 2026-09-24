@@ -577,6 +577,107 @@ supplied by hand is the very thing that hid the defect."
     ;; 8. a node with NO standing done cannot be proved by this route
     (let* ((k (gate-kernel))
            (view (session-needs-view k)))
-      (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
-        (ok (not met) "an open node is not met")
-        (check-equal :need-open reason "by rule 2 row 1, before evidence is read at all")))))
+       (multiple-value-bind (met reason) (need-met-p (kernel-state k) "acme/work/n" :view view)
+         (ok (not met) "an open node is not met")
+         (check-equal :need-open reason "by rule 2 row 1, before evidence is read at all")))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F04RepresentWorkSetFeatureRoadmap     SPEC-WORK.md:888
+;;; ------------------------------------------------------------------
+
+(defparameter *kinds-seed*
+  '((:id "ws"     :type :work-set :parent nil    :state :unknown)
+    (:id "ws/f"   :type :feature  :parent "ws"   :state :unknown)
+    (:id "ws/f/t" :type :task     :parent "ws/f" :state :todo))
+  "One work-set with a feature and a leaf task beneath it, to exercise the
+three node kinds the criterion names beside the roadmap, the lease and the
+event.")
+
+(deftest "TestE01F04RepresentWorkSetFeatureRoadmap" "docs/SPEC-WORK.md:888"
+    "expected=work-set-feature-and-task-are-node-types;roadmap-is-a-node-type-made-by-its-one-creator;a-lease-names-a-holder-and-is-a-lease-event-kind;an-event-carries-a-kind"
+  (let ((k (gate-kernel *kinds-seed*)))
+    ;; work-set, feature and task are node types (SPEC-WORK.md:891, :894, :930).
+    (check-equal :work-set (node-type (kernel-state k) "ws") "a work-set is a node type")
+    (check-equal :feature (node-type (kernel-state k) "ws/f") "a feature is a node type")
+    (check-equal :task (node-type (kernel-state k) "ws/f/t") "a task is a node type")
+    ;; roadmap is a node type, and only its one creator makes one (:891-903).
+    (multiple-value-bind (okp line)
+        (roadmap-create k :id "ws/r" :parent "ws" :title "plan")
+      (ok okp "roadmap create refused: ~A" line)
+      (check-equal :roadmap (node-type (kernel-state k) "ws/r") "a roadmap is a node type"))
+    ;; lease: one live holder named by the take, and a :lease event kind (:955).
+    (check-equal "emma" (take-lease k "ws/f/t" "emma") "a lease names its holder")
+    (check-equal "emma" (node-holder (kernel-state k) "ws/f/t") "the node is held")
+    (check-equal '(:change :holder) (kind-fields :lease)
+                 "lease is an event kind with its own field list")
+    ;; event: the log, and every event carries a :kind (:956). The take above
+    ;; is one :lease event in the history; read the newest record's events.
+    (let ((record (first (state-history (kernel-state k)))))
+      (ok (getf record :events) "the take wrote no event record")
+      (check-equal :lease (getf (first (getf record :events)) :kind)
+                   "an event carries its kind"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F02VerifyGenerationFencingUnderPartitions
+;;;
+;;; Criterion E02-F02-04 (docs/roadmaps/nova-work.sexp): "Verify generation
+;;; fencing under partitions and clock skew; reject unsafe takeover rather than
+;;; relying on PID locks alone".
+;;;   docs/SPEC-WORK.md:244-246 — the partitioned owner fences at `until` with
+;;;   no network at all, and a takeover is refused until `until` plus `--skew`
+;;;   has passed on the taker's clock;
+;;;   docs/SPEC-WORK.md:7671 — a local PID/file lock alone only protects one
+;;;   host, so the fence is the lease's generation and clock, never a pid.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE02F02VerifyGenerationFencingUnderPartitions"
+    "docs/SPEC-WORK.md:244-246"
+    "expected=live-lease-refuses-a-competing-taker-naming-holder-generation-and-until;takeover-still-refused-within-until-plus-skew;an-expired-lease-is-taken-at-the-next-generation-with-a-fresh-token"
+  ;; A live lease -- the old owner partitioned away, its process unreachable and
+  ;; its PID useless as any signal -- still refuses a competing taker: the
+  ;; claim fences and names holder, generation and `until`. The fence is the
+  ;; lease's generation and clock, not a PID lock two processes could both hold.
+  (let ((live (make-ownership-record :owner "emma" :generation 3 :token "tok-emma"
+                                     :stamp "2026-09-14T11:59:00Z"
+                                     :until "2026-09-14T12:01:00Z" :bench "bench-a")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim live "stella" :now "2026-09-14T12:00:30Z"
+                                  :every "30s" :skew "5s" :token "tok-stella"
+                                  :my-bench "bench-b")
+      (declare (ignore record))
+      (check-equal :fenced action "a live lease was taken by a competing taker")
+      (check-equal 1 exit-code "the competing take did not refuse")
+      (ok (search "SESSION FAIL" line) "the refusal is not a SESSION FAIL: ~A" line)
+      (ok (search "owner=emma" line) "the refusal does not name the holder: ~A" line)
+      (ok (search "generation=3" line) "the refusal does not name the held generation: ~A" line)
+      (ok (search "held" line) "the refusal does not say held: ~A" line)))
+  ;; Clock skew: `until` has passed but `until + --skew` has not, so the takeover
+  ;; stays refused on the taker's clock (SPEC-WORK.md:245-246).
+  (let ((near (make-ownership-record :owner "emma" :generation 3 :token "tok-emma"
+                                     :stamp "2026-09-14T11:59:00Z"
+                                     :until "2026-09-14T12:01:00Z" :bench "bench-a")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim near "stella" :now "2026-09-14T12:01:03Z"
+                                  :every "30s" :skew "5s" :token "tok-stella"
+                                  :my-bench "bench-b")
+      (declare (ignore record))
+      (check-equal :fenced action "a takeover within --skew was admitted")
+      (check-equal 1 exit-code "the within-skew takeover did not refuse")
+      (ok (search "held" line) "the within-skew refusal does not say held: ~A" line)))
+  ;; Partition with no network at all: once `until + --skew` is in the past on
+  ;; the taker's clock the take succeeds, and the generation is fenced forward
+  ;; to the next one with a fresh token -- a take, never a resume (SPEC-WORK.md:244-246).
+  (let ((expired (make-ownership-record :owner "emma" :generation 3 :token "tok-emma"
+                                        :stamp "2026-09-14T11:59:00Z"
+                                        :until "2026-09-14T12:01:00Z" :bench "bench-a")))
+    (multiple-value-bind (action record line exit-code)
+        (evaluate-ownership-claim expired "stella" :now "2026-09-14T12:01:30Z"
+                                  :every "30s" :skew "5s" :token "tok-stella"
+                                  :my-bench "bench-b")
+      (check-equal :take action "an expired lease was not taken after until+skew")
+      (check-equal 0 exit-code "the take is not green")
+      (check-equal 4 (owner-generation record) "the generation was not fenced to the next one")
+      (check-string= "stella" (owner-owner record) "the taker does not own the new generation")
+      (check-string= "tok-stella" (owner-token record) "a take did not mint a fresh token")
+      (check-string= "bench-b" (owner-bench record) "the taker's bench was not recorded")
+      (ok (search "generation=4" line) "SESSION OK does not name the new generation: ~A" line))))

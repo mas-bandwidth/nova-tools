@@ -111,6 +111,11 @@ func truthy(f Form) bool {
 // open, and --done can still name it.
 var doneWords = map[string]bool{"closed": true, "done": true, "landed": true, "merged": true}
 
+// doneStates are A4's three terminal states. They are the same three the
+// attempt writer refuses to file a further attempt under, named once so the two
+// answers cannot drift apart.
+var doneStates = map[string]bool{"closed": true, "refused": true, "abandoned": true}
+
 // Options is what Check needs from outside the language. Every one of them is
 // optional, and an absent one turns its rule OFF rather than inventing a default:
 // there is no default minds file, no default lanes file and no discovery.
@@ -306,7 +311,13 @@ func (w *WorkSet) Decided(opts Options) map[string]bool {
 		if u.ID == "" {
 			continue
 		}
-		said := u.Done() || doneWords[strings.ToLower(u.Status())]
+		// A4's three endings count as done beside the older :status and :done
+		// spellings. The amendment gave the language a :state, and a unit whose
+		// state says it is closed, refused or abandoned is finished in exactly
+		// the sense readiness means -- nothing may be pulled from it. `uncertain`
+		// is deliberately NOT one of them: it is a unit that is still holding
+		// its reservation, not a unit that is over.
+		said := u.Done() || doneWords[strings.ToLower(u.Status())] || doneStates[u.State()]
 		if held, evaluated := opts.Evidence[u.ID]; evaluated {
 			said = held
 		}
