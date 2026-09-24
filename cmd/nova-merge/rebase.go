@@ -88,7 +88,7 @@ func cmdRebase(args []string, stdout, stderr io.Writer, deps Deps) int {
 	return merge.Rebase(merge.RebaseInput{
 		Markers: *markers, Out: *out, List: list, Cut: cut, Launch: deps.Launcher,
 		PlanOnly: planOnly, PlanLabel: planLabel, PlanCode: planCode,
-		LaunchPlan: "flash-native-bench.sh space <card> <card-name> 900",
+		LaunchPlan: (merge.BenchLauncher{}).LaunchCommand("<card>", "<card-name>"),
 		Stdout:     stdout, Stderr: stderr,
 	})
 }

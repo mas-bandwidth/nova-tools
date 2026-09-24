@@ -118,8 +118,9 @@ func TestRebasePlansWithoutFilesystemOrProcessEffects(t *testing.T) {
 			if exit != tc.wantExit {
 				t.Fatalf("exit %d, want %d\nstdout=%s\nstderr=%s", exit, tc.wantExit, stdout, stderr)
 			}
-			if !strings.Contains(stdout, "REBASE PLAN PR #1723 branch=rowan/live") || !strings.Contains(stdout, "flash-native-bench.sh") || !strings.HasSuffix(stdout, tc.wantTail) {
-				t.Fatalf("plan does not name the PR, launch command, and summary: %q", stdout)
+			wantPlan := "REBASE PLAN PR #1723 branch=rowan/live launch=flash-native-bench.sh\\x20space\\x20swarm-space\\x20<card>\\x20<card-name>\\x20900\n"
+			if stdout != wantPlan+tc.wantTail {
+				t.Fatalf("plan does not exactly name the PR, production launch command, and summary:\n got %q\nwant %q", stdout, wantPlan+tc.wantTail)
 			}
 			if tc.flag == "" && (!strings.Contains(stderr, "pass --yes") || !strings.Contains(stderr, "--dry-run")) {
 				t.Fatalf("unconfirmed plan gives no explicit next choice: %q", stderr)

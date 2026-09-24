@@ -199,10 +199,22 @@ func (b BenchLauncher) timeout() time.Duration {
 	return 15 * time.Minute
 }
 
+// LaunchCommand is the production launcher's exact command shape. The rebase
+// confirmation plan uses this same builder with placeholders, so the command a
+// person approves cannot drift from the argv Launch executes.
+func (b BenchLauncher) LaunchCommand(card, name string) string {
+	command, args := b.launchShape(card, name)
+	return strings.Join(append([]string{command}, args...), " ")
+}
+
+func (b BenchLauncher) launchShape(card, name string) (string, []string) {
+	return b.command(), []string{b.bench(), b.runner(), card, name, b.deadline()}
+}
+
 // Launch starts one card and returns the launcher's own refusal, so a pass can note it.
 func (b BenchLauncher) Launch(card string) error {
 	name := strings.TrimSuffix(filepath.Base(card), filepath.Ext(card))
-	args := []string{b.bench(), b.runner(), card, name, b.deadline()}
+	command, args := b.launchShape(card, name)
 	if err := guard(args, ""); err != nil {
 		return err
 	}
@@ -212,8 +224,8 @@ func (b BenchLauncher) Launch(card string) error {
 	}
 	ctx, cancel := contextWithTimeout(b.timeout())
 	defer cancel()
-	if _, err := runner.Run(ctx, "", b.command(), args...); err != nil {
-		return fmt.Errorf("%s %s: %w", b.command(), strings.Join(args, " "), err)
+	if _, err := runner.Run(ctx, "", command, args...); err != nil {
+		return fmt.Errorf("%s %s: %w", command, strings.Join(args, " "), err)
 	}
 	return nil
 }
