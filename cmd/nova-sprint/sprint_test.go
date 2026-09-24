@@ -184,7 +184,7 @@ func unit(id, owner, extra string) string {
 		id, owner, id, id, extra)
 }
 
-func writeSet(t *testing.T, name string, units ...string) string {
+func writeWorkSet(t *testing.T, name string, units ...string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".lisp")
 	body := fmt.Sprintf("(work-set %q :title \"fixture\" :units (\n  %s))\n", name, strings.Join(units, "\n  "))
@@ -292,7 +292,7 @@ func TestControl19(t *testing.T) {
 	refused := func(name, want string, units ...string) {
 		t.Helper()
 		before := dbsize(t, c)
-		from := writeSet(t, name, units...)
+		from := writeWorkSet(t, name, units...)
 		code, out, errOut := runSprint(openArgs(addr, s, from)...)
 		if code != 1 {
 			t.Fatalf("%s: code=%d out=%q stderr=%q; want exit 1", name, code, out, errOut)
@@ -329,7 +329,7 @@ func TestControl19(t *testing.T) {
 		{"empty-owner", `(unit "u7" :kind work :owner "" :title "u7 title" :done-when "u7 passes")`},
 		{"owner-all", unit("u7", "all", "")},
 	} {
-		_, out, _ := runSprint(openArgs(addr, s, writeSet(t, tc.name+"-7", tc.unit))...)
+		_, out, _ := runSprint(openArgs(addr, s, writeWorkSet(t, tc.name+"-7", tc.unit))...)
 		if !strings.Contains(out, "u7") {
 			t.Fatalf("%s: out=%q does not name the unit", tc.name, out)
 		}
@@ -340,7 +340,7 @@ func TestControl19(t *testing.T) {
 		return false, "LINEUP RED fixture: probe card not landed"
 	})
 	before := dbsize(t, c)
-	code, out, errOut := runSprint(openArgs(addr, s, writeSet(t, "clean", unit("u1", fxFriend, "")))...)
+	code, out, errOut := runSprint(openArgs(addr, s, writeWorkSet(t, "clean", unit("u1", fxFriend, "")))...)
 	if code != 1 || out != "" || !strings.Contains(errOut, "LINEUP RED fixture: probe card not landed") {
 		t.Fatalf("gate RED: code=%d out=%q stderr=%q; want exit 1 and the seam's reason on stderr", code, out, errOut)
 	}
@@ -354,7 +354,7 @@ func TestControl20(t *testing.T) {
 	addr, c := openFixture(t)
 	ctx := context.Background()
 	const s = "control-20"
-	from := writeSet(t, "five", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""),
+	from := writeWorkSet(t, "five", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""),
 		unit("u3", fxFriend, ""), unit("u4", fxFriend, ""), unit("u5", fxFriend, ""))
 
 	killPushesAfter(t, 2)
@@ -417,7 +417,7 @@ func TestControl20(t *testing.T) {
 func TestControl22(t *testing.T) {
 	addr, c := openFixture(t)
 	const s = "control-22"
-	from := writeSet(t, "needs", unit("a", fxFriend, ""), unit("b", fxFriend, `:needs ("a")`))
+	from := writeWorkSet(t, "needs", unit("a", fxFriend, ""), unit("b", fxFriend, `:needs ("a")`))
 	expect(t, 0, "OPEN "+s+" units=2 pushed=2 existed=0 closed=0 skipped_done=0\n", openArgs(addr, s, from)...)
 	if got := hget(t, c, "s:"+s+":task:b", "needs"); got != "a" {
 		t.Fatalf("s:%s:task:b needs=%q want a", s, got)
@@ -441,7 +441,7 @@ func TestControl22(t *testing.T) {
 
 	// A need on a unit done in the file does not block.
 	const s2 = "control-22-done"
-	from2 := writeSet(t, "done-need", unit("a", fxFriend, ":done t"), unit("b", fxFriend, `:needs ("a")`))
+	from2 := writeWorkSet(t, "done-need", unit("a", fxFriend, ":done t"), unit("b", fxFriend, `:needs ("a")`))
 	expect(t, 0, "OPEN "+s2+" units=2 pushed=1 existed=0 closed=0 skipped_done=1\n", openArgs(addr, s2, from2)...)
 	if exists(t, c, "s:"+s2+":task:a") {
 		t.Fatalf("s:%s:task:a exists; a done unit is never pushed", s2)
@@ -458,9 +458,9 @@ func TestControl22(t *testing.T) {
 func TestSprintStatusOpenOnly(t *testing.T) {
 	addr, _ := openFixture(t)
 	expect(t, 0, "OPEN status-open units=1 pushed=1 existed=0 closed=0 skipped_done=0\n",
-		openArgs(addr, "status-open", writeSet(t, "one", unit("u1", fxFriend, "")))...)
+		openArgs(addr, "status-open", writeWorkSet(t, "one", unit("u1", fxFriend, "")))...)
 	expect(t, 0, "OPEN status-closed units=1 pushed=1 existed=0 closed=0 skipped_done=0\n",
-		openArgs(addr, "status-closed", writeSet(t, "two", unit("v1", fxFriend, "")))...)
+		openArgs(addr, "status-closed", writeWorkSet(t, "two", unit("v1", fxFriend, "")))...)
 	expect(t, 0, "status-closed status=closed\n", "sprint", "close", "--redis", addr, "--sprint", "status-closed", "--now", fxNow)
 	expect(t, 0, "status-open open 0/1 0% -> eta ?\n", "sprint", "status", "--redis", addr, "--now", fxLater)
 }
@@ -470,7 +470,7 @@ func TestSprintOpenReplay(t *testing.T) {
 	sha8 := func(t *testing.T, p string) string { return fileSHA(t, p)[:8] }
 	setup := func(t *testing.T, s string) (string, *redis.Client, string) {
 		addr, c := openFixture(t)
-		a := writeSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""))
+		a := writeWorkSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""))
 		return addr, c, a
 	}
 	t.Run("SameSourceOpen", func(t *testing.T) {
@@ -492,7 +492,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		const s = "replay-changed"
 		addr, c, a := setup(t, s)
 		expect(t, 0, "OPEN "+s+" units=2 pushed=2 existed=0 closed=0 skipped_done=0\n", openArgs(addr, s, a)...)
-		b := writeSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""), unit("u3", fxFriend, ""))
+		b := writeWorkSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""), unit("u3", fxFriend, ""))
 		before := dbsize(t, c)
 		expect(t, 1, "REFUSED "+s+" from_sha "+sha8(t, a)+" != "+sha8(t, b)+"\n", openArgs(addr, s, b)...)
 		if after := dbsize(t, c); after != before {
@@ -525,7 +525,7 @@ func TestSprintOpenReplay(t *testing.T) {
 		if !exists(t, c, "s:"+s+":task:u1") {
 			t.Fatal("u1 was not pushed before the kill")
 		}
-		b := writeSet(t, "B", unit("u1", fxFriend, ""), unit("u3", fxFriend, ""))
+		b := writeWorkSet(t, "B", unit("u1", fxFriend, ""), unit("u3", fxFriend, ""))
 		before := dbsize(t, c)
 		expect(t, 1, "REFUSED "+s+" from_sha "+sha8(t, a)+" != "+sha8(t, b)+"\n", openArgs(addr, s, b)...)
 		if after := dbsize(t, c); after != before {
@@ -585,7 +585,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 	conflict := func(t *testing.T, s string) (string, *redis.Client, string) {
 		t.Helper()
 		addr, c := openFixture(t)
-		a := writeSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""))
+		a := writeWorkSet(t, "A", unit("u1", fxFriend, ""), unit("u2", fxFriend, ""))
 		expect(t, 0, "PUSH CREATED id=u2\n", "task", "push", "--redis", addr, "--sprint", s, "--id", "u2",
 			"--to", fxFriend, "--title", "another title")
 		expect(t, 1, "CONFLICT "+s+" u2: id held by another payload; remedy: sprint close --sprint "+s+
@@ -653,7 +653,7 @@ func TestSprintOpenPushRefused(t *testing.T) {
 		c.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: "t-overlap"})
 		expect(t, 0, "PUSH CREATED id=x1\n", "task", "push", "--redis", addr, "--sprint", "t-overlap", "--id", "x1",
 			"--to", fxFriend, "--title", "x work | PATHS: internal/x/")
-		a := writeSet(t, "A", unit("u1", fxFriend, ""),
+		a := writeWorkSet(t, "A", unit("u1", fxFriend, ""),
 			`(unit "u2" :kind work :owner "stella" :title "u2 title | PATHS: internal/x/y.go" :done-when "u2 passes")`)
 		code, out, errOut := runSprint(openArgs(addr, s, a)...)
 		lines := strings.Split(strings.TrimSuffix(out, "\n"), "\n")

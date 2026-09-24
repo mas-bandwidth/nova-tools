@@ -33,6 +33,9 @@ local function task_push(keys, args)
   local priority, payload_sha = tonumber(args[12]), args[13]
   local actor, idem = args[14], args[15]
   local est = args[16] or ''
+  -- needs (#2939): space-separated ids in <S> that must be closed before
+  -- this task can be claimed; written only when non-empty.
+  local needs = args[17] or ''
   local key = 's:' .. S .. ':task:' .. id
 
   if est ~= '' then
@@ -83,6 +86,9 @@ local function task_push(keys, args)
     'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
     'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
     'est', est, 'pushed_at', tostring(at))
+  if needs ~= '' then
+    redis.call('HSET', key, 'needs', needs)
+  end
   local score = priority
   if front then
     score = -priority
@@ -123,6 +129,21 @@ local function task_take(keys, args)
   local in_open = redis.call('ZSCORE', 's:' .. S .. ':open:' .. friend, id)
   if not in_open then
     return { 'NONE' }
+  end
+
+  -- A task whose needs are not all closed is passed over (#2939): the reply
+  -- names the unmet ids and nothing is written.
+  local needs = redis.call('HGET', key, 'needs')
+  if needs and needs ~= '' then
+    local unmet = {}
+    for need in string.gmatch(needs, '%S+') do
+      if redis.call('SISMEMBER', 's:' .. S .. ':idx:task:closed', need) == 0 then
+        unmet[#unmet + 1] = need
+      end
+    end
+    if #unmet > 0 then
+      return { 'BLOCKED', table.concat(unmet, ' ') }
+    end
   end
 
   -- Presence and capacity are global, shared by every open sprint.

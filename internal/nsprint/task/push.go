@@ -101,7 +101,10 @@ type PushRequest struct {
 	Actor      string
 	Idem       string
 	Est        string
-	ErrOut     io.Writer
+	// Needs are the ids in Sprint that must be closed before this task can
+	// be claimed (#2939). Empty needs leave PayloadSHA as it was.
+	Needs  []string
+	ErrOut io.Writer
 }
 
 // PushStatus is the outcome of one push.
@@ -153,6 +156,9 @@ func PayloadSHA(req PushRequest) string {
 		req.Head, req.Title, string(req.Effects), req.To,
 		strconv.FormatBool(req.Front), strconv.Itoa(req.Priority),
 		req.Est,
+	}
+	if len(req.Needs) > 0 {
+		parts = append(parts, "needs="+strings.Join(req.Needs, " "))
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])
@@ -237,7 +243,7 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	reply, err := st.Client().FCall(ctx, FunctionPush, nil,
 		req.Sprint, req.ID, string(req.Kind), req.Title, string(req.Effects),
 		req.Repo, strconv.Itoa(req.PR), req.Head, req.Ref, req.To, front,
-		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est).Result()
+		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est, strings.Join(req.Needs, " ")).Result()
 	if err != nil {
 		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}

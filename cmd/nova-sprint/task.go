@@ -5,10 +5,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -136,6 +138,12 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	defer st.Close()
 	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, *actor, *idem)
+	var blocked *task.BlockedError
+	if errors.As(err, &blocked) {
+		// #2939: exit 7, new because 3-6 are taken.
+		fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
+		return 7
+	}
 	if err != nil {
 		return refuse(errOut, "task take", err.Error())
 	}
