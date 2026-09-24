@@ -69,6 +69,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	skipHeads := fs.String("skip-heads", "", "a file of head shas already posted on; a pull request at one of them is skipped before any call")
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	observeVerbFlags("review", fs)
 	if err := fs.Parse(args); err != nil {
 		if answerHelp(err, stdout, "review") {
 			return 0

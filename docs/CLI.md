@@ -665,6 +665,8 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 ```
 nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                  [--down-store <host:port>] [--card <path> --allowed-routes <path>]
+                  [--jev] [--store-user <user>] [--store-password-env <NAME>]
                   [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                   [--registry <path>] [--floor 0.65] [--base-url <url>] [--key-env JEV_API_KEY]
                   (--usage and --log are REQUIRED whenever jev is asked)
@@ -808,10 +810,12 @@ nova-secrets exec --store ~/rowan-working/secrets --as studio \
 
 `--only JEV_API_KEY --require JEV_API_KEY` is the pair that matters: `--only` hands the child that one variable and nothing else, and `--require` refuses *before* the command runs if the store does not hold it, so a route never fails halfway with a key-shaped hole. The key is never an argument, never a file the tool reads and never a line it prints. `--usage` and `--log` are the accounting, required whenever jev is asked, and pointing every caller at **one** pair of paths is what makes the log a calibration record rather than a pile of them. Run several decisions under **one** `exec` — `... -- sh -c '<several nova-decide route lines>'` — rather than one decrypt per call.
 
+Friend presence is read from `--down-store`, default `NOVA_REDIS_ADDR`; `--store` also supplies that address and additionally writes the decision event. Presence keys name seats (`friend:stella:down` excludes Astra and `friend:rowan:down` excludes Fable). A configured presence store that cannot be read refuses the route with exit 2 and `reason=presence-unavailable`: a route does not select a friend while their seat's status is unknown. With no presence store the route prints `ROUTE NOTE down friends not checked (no store)` and its JSON row records `down_checked:false`.
+
 ### outcome — the other half of the row
 
 ```
-nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
+nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped [--of-time <RFC3339>]
 ```
 
 What **happened** to a unit a decision routed. Rule 8 asks for the decision to be logged beside the outcome it predicted, and this is the half nobody was writing: on 2026-09-18 the shared log held 78 rows, 73 escalations and **zero** successes, so `log --summary` had nothing to regenerate a starting rung from.
@@ -833,6 +837,8 @@ nova-decide review --repo <owner/name> --pr <n> [--card <file>]
                    [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
+                   [--base-url <url>] [--key-env <name>] [--gh <path>] [--stream <name>]
+                   [--store-user <user>] [--store-password-env <NAME>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
                    [--prompt <file|sha8>] [--conf <jev.conf>|none] [--pr-dir <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
