@@ -1,0 +1,442 @@
+package merge
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
+
+// 1. EvaluateVerdicts strictly requires record provenance (v.Source == "record").
+// Forge claims (comments or reviews) claiming APPROVE are never counted.
+func TestEvaluateVerdicts_RequiresRecordProvenance(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	// Case A: Forge comments/reviews claiming APPROVE must NOT count as approvals
+	forgeClaims := []Verdict{
+		{ID: "comment:1", Who: "stella", Head: head, Word: "approve", At: "2026-09-19T10:00:00Z", Source: "comment-rule"},
+		{ID: "review:2", Who: "johnny", Head: head, Word: "approve", At: "2026-09-19T10:05:00Z", Source: "review"},
+	}
+	stA := EvaluateVerdicts(forgeClaims, head, author, rs)
+	if stA.Approves != 0 || len(stA.Approvers) != 0 {
+		t.Fatalf("forge claims without record provenance must not be counted as approvals, got %+v", stA)
+	}
+
+	// Case B: Real lane records (Source == "record") count properly
+	recordVerdicts := []Verdict{
+		// Valid record approve from stella
+		{ID: "record:1", Who: "stella", Head: head, Word: "approve", At: "2026-09-19T10:00:00Z", Source: "record"},
+		// Duplicate record approve from stella
+		{ID: "record:2", Who: "stella", Head: head, Word: "approve", At: "2026-09-19T10:05:00Z", Source: "record"},
+		// Author rowan self-approval - MUST BE EXCLUDED
+		{ID: "record:3", Who: "rowan", Head: head, Word: "approve", At: "2026-09-19T10:10:00Z", Source: "record"},
+		// Unauthorized reviewer bot - MUST BE EXCLUDED
+		{ID: "record:4", Who: "bot", Head: head, Word: "approve", At: "2026-09-19T10:15:00Z", Source: "record"},
+		// Stale head approve - MUST BE EXCLUDED
+		{ID: "record:5", Who: "johnny", Head: strings.Repeat("b", 40), Word: "approve", At: "2026-09-19T10:20:00Z", Source: "record"},
+		// Scoped approve - MUST NOT count for unscoped gate
+		{ID: "record:6", Who: "johnny", Head: head, Word: "approve", At: "2026-09-19T10:25:00Z", Scope: "parser", Source: "record"},
+	}
+
+	got := CountTypedApproves(recordVerdicts, head, author, rs)
+	if got != 1 {
+		t.Fatalf("expected exactly 1 approve (stella), got %d", got)
+	}
+
+	stB := EvaluateVerdicts(recordVerdicts, head, author, rs)
+	if stB.Approves != 1 || len(stB.Approvers) != 1 || stB.Approvers[0] != "stella" {
+		t.Fatalf("unexpected standing: %+v", stB)
+	}
+	if stB.Held || !stB.Satisfied {
+		t.Fatalf("expected not held and satisfied, got %+v", stB)
+	}
+}
+
+// 2. Active holders cannot approve.
+func TestEvaluateVerdicts_ActiveHolderCannotApprove(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	verdicts := []Verdict{
+		// Active hold by stella
+		{ID: "comment:10", Who: "stella", Head: head, Word: "hold", At: "2026-09-19T10:00:00Z", Source: "comment-rule"},
+		// stella also has a record approve (e.g. from earlier or invalid sequence)
+		{ID: "record:11", Who: "stella", Head: head, Word: "approve", At: "2026-09-19T09:00:00Z", Source: "record"},
+		// johnny has a clean record approve
+		{ID: "record:12", Who: "johnny", Head: head, Word: "approve", At: "2026-09-19T10:30:00Z", Source: "record"},
+	}
+
+	st := EvaluateVerdicts(verdicts, head, author, rs)
+	if !st.Held || st.Holds != 1 {
+		t.Fatalf("expected 1 active hold, got %+v", st)
+	}
+	// stella is active holder, so only johnny's approval counts
+	if st.Approves != 1 || len(st.Approvers) != 1 || st.Approvers[0] != "johnny" {
+		t.Fatalf("expected 1 approval from johnny (excluding active holder stella), got %+v", st)
+	}
+	if st.Satisfied {
+		t.Fatalf("gate must not be satisfied when held")
+	}
+}
+
+// 3. Comment promotion is refused; missing head in ParseComment does not supply current head.
+func TestCommentPromotionRefusedAndNoMissingHeadDefault(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+
+	// Case A: Typed APPROVE in comment must NOT produce approval standing in EvaluateVerdicts
+	bodyApprove := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM"
+	vApprove, okApprove := ParseComment(101, "stella-astra", bodyApprove, "2026-09-19T10:00:00Z", rs, "author", head, false)
+	if !okApprove || vApprove.Source == "record" {
+		t.Fatalf("typed comment must not have record provenance, got: %+v", vApprove)
+	}
+	st := EvaluateVerdicts([]Verdict{vApprove}, head, "author", rs)
+	if st.Approves != 0 || st.Satisfied {
+		t.Fatalf("comment must NOT be promoted to APPROVE standing, got %+v", st)
+	}
+
+	// Case B: Typed HOLD without explicit head must NOT supply currentHead
+	bodyHoldNoHead := "DISPOSITION who=stella verdict=HOLD scope=\"perf\"\nBlocking this change."
+	vHold, okHold := ParseComment(102, "stella-astra", bodyHoldNoHead, "2026-09-19T10:00:00Z", rs, "author", head, false)
+	if !okHold {
+		t.Fatalf("expected typed HOLD to be parsed")
+	}
+	if vHold.Head == head {
+		t.Fatalf("ParseComment must NOT supply currentHead when head is absent on typed disposition, got head=%q", vHold.Head)
+	}
+	if vHold.Head != "" {
+		t.Fatalf("expected empty head on typed disposition without head, got %q", vHold.Head)
+	}
+}
+
+// 4. Untyped comments and review bodies are ignored with ignoreUntyped=true.
+func TestUntypedCommentsIgnoredWithFlag(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+
+	untypedBody := "I looked over the docs changes, they seem reasonable."
+
+	// Test ParseComment with ignoreUntyped=false -> pending hold
+	vCommentFalse, okCommentFalse := ParseComment(201, "stella-astra", untypedBody, "2026-09-19T10:00:00Z", rs, "author", head, false)
+	if !okCommentFalse || vCommentFalse.Word != "pending" || vCommentFalse.Source != "comment-pending" {
+		t.Fatalf("untyped comment without ignoreUntyped must be pending, got %+v", vCommentFalse)
+	}
+
+	// Test ParseComment with ignoreUntyped=true -> ignored
+	_, okCommentTrue := ParseComment(202, "stella-astra", untypedBody, "2026-09-19T10:00:00Z", rs, "author", head, true)
+	if okCommentTrue {
+		t.Fatalf("untyped comment with ignoreUntyped=true must be ignored")
+	}
+
+	// Test ParseReview (COMMENTED) with ignoreUntyped=false -> pending
+	vReviewFalse, okReviewFalse := ParseReview(301, "stella-astra", untypedBody, "COMMENTED", head, "2026-09-19T10:00:00Z", rs, "author", head, false)
+	if !okReviewFalse || vReviewFalse.Word != "pending" {
+		t.Fatalf("COMMENTED review without ignoreUntyped must be pending, got %+v", vReviewFalse)
+	}
+
+	// Test ParseReview (COMMENTED) with ignoreUntyped=true -> ignored
+	_, okReviewTrue := ParseReview(302, "stella-astra", untypedBody, "COMMENTED", head, "2026-09-19T10:00:00Z", rs, "author", head, true)
+	if okReviewTrue {
+		t.Fatalf("COMMENTED review with ignoreUntyped=true must be ignored")
+	}
+}
+
+// 5. Releases are partitioned by who=, not by the surface a line arrived on (owner ruling
+// 2026-09-23 7:05 PM ET; Glenn 12:55 AM and #3278: a hold is released by the HOLDER's later
+// typed line). A bare number and a review:<id> still name nothing but themselves, but the
+// holder's typed comment:<id> release clears the same holder's review:<id> hold (#3226). A
+// different who= releases nothing, whichever surface the id names.
+func TestDistinctNamespacesStrictlyPartitioned(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	// Case A: Hold is comment:123
+	holdComment := Verdict{
+		ID:     "comment:123",
+		Who:    "stella",
+		Head:   head,
+		Word:   "hold",
+		At:     "2026-09-19T10:00:00Z",
+		Source: "comment-rule",
+	}
+
+	// Record naming review:123 does NOT release comment:123
+	readWrongPrefix := Read{
+		Who:      "stella",
+		Verdict:  "approve",
+		Head:     head,
+		At:       "2026-09-19T11:00:00Z",
+		Scope:    "parser",
+		Releases: []string{"review:123"},
+	}
+	remainingA := UnreleasedHolds([]Verdict{holdComment}, []Read{readWrongPrefix}, head, author, rs)
+	if len(remainingA) != 1 || remainingA[0].ID != "comment:123" {
+		t.Fatalf("review:123 must not release comment:123; remaining: %v", remainingA)
+	}
+
+	// Record naming bare 123 does NOT release comment:123
+	readBare := Read{
+		Who:      "stella",
+		Verdict:  "approve",
+		Head:     head,
+		At:       "2026-09-19T11:00:00Z",
+		Scope:    "parser",
+		Releases: []string{"123"},
+	}
+	remainingB := UnreleasedHolds([]Verdict{holdComment}, []Read{readBare}, head, author, rs)
+	if len(remainingB) != 1 || remainingB[0].ID != "comment:123" {
+		t.Fatalf("bare 123 must not release comment:123; remaining: %v", remainingB)
+	}
+
+	// Record naming exact typed comment:123 DOES release it
+	readExact := Read{
+		Who:      "stella",
+		Verdict:  "approve",
+		Head:     head,
+		At:       "2026-09-19T11:00:00Z",
+		Scope:    "parser",
+		Releases: []string{"comment:123"},
+	}
+	remainingC := UnreleasedHolds([]Verdict{holdComment}, []Read{readExact}, head, author, rs)
+	if len(remainingC) != 0 {
+		t.Fatalf("exact typed comment:123 must release hold, got %v", remainingC)
+	}
+
+	// Case B: Colliding numbers: comment:123 and review:123 both active from stella.
+	// Stella's own typed release naming comment:123 clears both: the hold is keyed by
+	// who=stella, and the surface her release arrived on does not partition it (#3226).
+	holdReview := Verdict{
+		ID:     "review:123",
+		Who:    "stella",
+		Head:   head,
+		Word:   "hold",
+		At:     "2026-09-19T10:05:00Z",
+		Source: "review",
+	}
+	colliding := UnreleasedHolds([]Verdict{holdComment, holdReview}, []Read{readExact}, head, author, rs)
+	if len(colliding) != 0 {
+		t.Fatalf("stella's typed comment:123 release must clear stella's own review:123 hold too; got: %v", colliding)
+	}
+
+	// Case C: the partition is by who=. Johnny's typed release naming comment:123 (or
+	// review:123) releases neither of stella's holds.
+	for _, rel := range []string{"comment:123", "review:123"} {
+		readOther := Read{
+			Who:      "johnny",
+			Verdict:  "approve",
+			Head:     head,
+			At:       "2026-09-19T11:00:00Z",
+			Scope:    "parser",
+			Releases: []string{rel},
+		}
+		other := UnreleasedHolds([]Verdict{holdComment, holdReview}, []Read{readOther}, head, author, rs)
+		if len(other) != 2 {
+			t.Fatalf("johnny's release %s must not clear stella's holds; remaining: %v", rel, other)
+		}
+	}
+}
+
+// 6. When explicit release IDs are supplied, an unscoped or scoped approve does NOT
+// release all of the author's holds; it only releases the explicitly named IDs.
+func TestExplicitReleasesDoesNotReleaseAllHolds(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	holds := []Verdict{
+		{ID: "comment:101", Who: "stella", Head: head, Word: "hold", At: "2026-09-19T10:00:00Z", Source: "comment-rule"},
+		{ID: "comment:102", Who: "stella", Head: head, Word: "hold", At: "2026-09-19T10:05:00Z", Source: "comment-rule"},
+	}
+
+	// An approval record with Scope: "" (unscoped) but with explicit Releases: ["comment:101"]
+	read := Read{
+		Who:      "stella",
+		Verdict:  "approve",
+		Head:     head,
+		At:       "2026-09-19T11:00:00Z",
+		Scope:    "", // even if scope is empty
+		Releases: []string{"comment:101"},
+	}
+
+	unlifted := UnreleasedHolds(holds, []Read{read}, head, author, rs)
+	if len(unlifted) != 1 || unlifted[0].ID != "comment:102" {
+		t.Fatalf("explicit release list must only release comment:101 and NOT comment:102; got: %v", unlifted)
+	}
+}
+
+// 7. Pure typed or explicit first-line APPROVE comments are inert: they do not
+// grant approval (v.Source == "record" required) and do not fall through to comment-pending (#2454).
+// Quoted holds or holds in code blocks within approval comments are stripped and do not falsely hold.
+func TestPureApproveCommentsAreInert(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	// Case A: Pure typed DISPOSITION verdict=APPROVE must not produce hold or pending, and cannot grant approval standing
+	bodyTypedApprove := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM\nEverything looks great."
+	vTyped, okTyped := ParseComment(201, "stella-astra", bodyTypedApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okTyped && (vTyped.Word == "hold" || vTyped.Word == "pending") {
+		t.Fatalf("typed APPROVE must not produce a hold or pending verdict, got: %+v", vTyped)
+	}
+	st := EvaluateVerdicts([]Verdict{vTyped}, head, author, rs)
+	if st.Approves != 0 || st.Satisfied {
+		t.Fatalf("typed APPROVE comment must not grant approval standing, got: %+v", st)
+	}
+
+	// Case B: Pure explicit first-line APPROVE with ignoreUntyped=true
+	bodyExplicitApprove := "APPROVE at " + head + "\nLGTM\nAll checks green."
+	vExplicit, okExplicit := ParseComment(202, "stella-astra", bodyExplicitApprove, "2026-09-19T10:00:00Z", rs, author, head, true)
+	if okExplicit {
+		t.Fatalf("explicit first-line APPROVE must be inert, got: %+v", vExplicit)
+	}
+
+	// Case C: Pure explicit first-line APPROVE with ignoreUntyped=false (must not fall through to pending)
+	vExplicitNotIgnored, okExplicitNotIgnored := ParseComment(203, "stella-astra", bodyExplicitApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okExplicitNotIgnored {
+		t.Fatalf("explicit first-line APPROVE must not fall through to pending, got: %+v", vExplicitNotIgnored)
+	}
+
+	// Case D: APPROVE quoting a past hold (stripped mechanically -> no false hold)
+	bodyQuotedHold := "APPROVE at " + head + "\nLGTM\n> ### HOLD previous issue from yesterday\nResolved in latest commit."
+	vQuoted, okQuoted := ParseComment(204, "stella-astra", bodyQuotedHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okQuoted {
+		t.Fatalf("quoted hold inside APPROVE comment must be stripped and inert, got: %+v", vQuoted)
+	}
+
+	// Case E: APPROVE with fenced code block containing hold (stripped mechanically -> no false hold)
+	bodyCodeHold := "APPROVE at " + head + "\n```\n# HOLD in code block\n```\nLGTM."
+	vCode, okCode := ParseComment(205, "stella-astra", bodyCodeHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if okCode {
+		t.Fatalf("fenced hold inside APPROVE comment must be stripped and inert, got: %+v", vCode)
+	}
+}
+
+// 8. Mixed-message comments preserve independently recognized HOLD evidence:
+// A typed or explicit APPROVE never suppresses a first-line plain HOLD, unquoted HOLD heading,
+// or bold HOLD.
+func TestMixedMessageCommentsPreserveHold(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	staleHead := strings.Repeat("b", 40)
+	author := "rowan"
+
+	// Case A: First-line plain HOLD followed by typed DISPOSITION APPROVE at stale head
+	bodyFirstLineHoldStaleApprove := "HOLD unresolved capture boundary\nDISPOSITION who=stella head=" + staleHead + " verdict=APPROVE\nDetails on capture boundary."
+	vA, okA := ParseComment(401, "stella-astra", bodyFirstLineHoldStaleApprove, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okA || vA.Word != "hold" || vA.Source != "comment-rule" {
+		t.Fatalf("first-line HOLD must be preserved even if typed APPROVE follows; got ok=%v, verdict=%+v", okA, vA)
+	}
+
+	// Case B: First-line plain APPROVE followed by unquoted HOLD heading
+	bodyApproveWithHoldHeading := "APPROVE scope=\"docs\"\nLGTM on documentation.\n\n### HOLD unresolved capture boundary\nNeed teeth in negative control."
+	vB, okB := ParseComment(402, "stella-astra", bodyApproveWithHoldHeading, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okB || vB.Word != "hold" || vB.Source != "comment-rule" {
+		t.Fatalf("unquoted HOLD heading must be preserved when preceded by first-line APPROVE; got ok=%v, verdict=%+v", okB, vB)
+	}
+
+	// Case C: Typed DISPOSITION APPROVE followed by bold HOLD
+	bodyTypedApproveWithBoldHold := "DISPOSITION who=stella head=" + head + " verdict=APPROVE\nLGTM on diff, but **HOLD** on this edge case until tested."
+	vC, okC := ParseComment(403, "stella-astra", bodyTypedApproveWithBoldHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okC || vC.Word != "hold" || vC.Source != "comment-rule" {
+		t.Fatalf("bold HOLD must be preserved when accompanied by typed APPROVE; got ok=%v, verdict=%+v", okC, vC)
+	}
+}
+
+// 9. TestACommentNeverReleasesAnything driven from ParseComment output.
+func TestACommentNeverReleasesAnything_DrivenFromParseComment(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	// alice had recorded a hold in the lane
+	hold := Verdict{
+		ID:     "record:at1",
+		Who:    "stella",
+		Head:   head,
+		Word:   "hold",
+		At:     "2026-09-19T01:00:00Z",
+		Source: "record",
+	}
+
+	// A different friend (johnny) posts a comment claiming APPROVE
+	commentBody := "DISPOSITION who=johnny head=" + head + " verdict=APPROVE\nLGTM"
+	vComment, okComment := ParseComment(301, "johnny-login", commentBody, "2026-09-19T02:00:00Z", rs, author, head, false)
+
+	vs := []Verdict{hold}
+	if okComment {
+		vs = append(vs, vComment)
+	}
+
+	// The hold must still be unlifted (different friend's comment cannot release stella's hold)
+	unlifted := UnliftedHolds(vs, head, author, rs)
+	if len(unlifted) != 1 || unlifted[0].ID != "record:at1" {
+		t.Fatalf("a different friend's comment claiming approve must never release a hold, got: %v", unlifted)
+	}
+}
+
+// 10. Comment and review bodies are bounded to MaxCommentBodyBytes (64 KiB) during
+// projection and decoding (#2512): an oversized remote payload is safely clamped,
+// preventing unbounded heap allocation, while valid short comments pass without truncation.
+func TestCommentBodyProjectionAndDecodingIsBounded(t *testing.T) {
+	t.Parallel()
+	rs := sampleReviewers()
+	head := strings.Repeat("a", 40)
+	author := "rowan"
+
+	// A: Valid short comment passes untouched
+	shortBody := "DISPOSITION who=stella head=" + head + " verdict=HOLD\nmissing unit test for bounds"
+	vShort, okShort := ParseComment(501, "stella-astra", shortBody, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okShort || vShort.Word != "hold" || vShort.Who != "stella" {
+		t.Fatalf("valid short comment must parse cleanly, got: ok=%v verdict=%+v", okShort, vShort)
+	}
+
+	// B: Oversized comment body (128 KiB) passed to ParseComment is clamped to MaxCommentBodyBytes
+	// If a hold is at the beginning, it is recognized even though the body is huge.
+	oversizedBodyWithHold := "DISPOSITION who=stella head=" + head + " verdict=HOLD\nmemory cap issue\n" + strings.Repeat("x", 128*1024)
+	vOver, okOver := ParseComment(502, "stella-astra", oversizedBodyWithHold, "2026-09-19T10:00:00Z", rs, author, head, false)
+	if !okOver || vOver.Word != "hold" || vOver.Who != "stella" {
+		t.Fatalf("oversized comment with leading hold must be parsed, got: ok=%v verdict=%+v", okOver, vOver)
+	}
+
+	// C: Hold marker placed beyond MaxCommentBodyBytes is truncated and NOT recognized
+	fillerBeforeHold := strings.Repeat("z\n", (MaxCommentBodyBytes/2)+10) // exceeds 64 KiB
+	bodyHoldBeyondCap := fillerBeforeHold + "DISPOSITION who=stella head=" + head + " verdict=HOLD\nhidden beyond cap"
+	vBeyond, okBeyond := ParseComment(503, "stella-astra", bodyHoldBeyondCap, "2026-09-19T10:00:00Z", rs, author, head, true)
+	if okBeyond && vBeyond.Word == "hold" {
+		t.Fatalf("hold token beyond MaxCommentBodyBytes must be truncated and not recognized as hold, got: %+v", vBeyond)
+	}
+
+	// D: ParseForgeVerdicts decodes oversized comments JSON safely via boundedBody
+	oversizedJSONComment := fmt.Sprintf(`[{"id":504,"user":{"login":"stella-astra"},"body":%q,"created_at":"2026-09-19T10:00:00Z"}]`,
+		"DISPOSITION who=stella head="+head+" verdict=HOLD\nin oversized json\n"+strings.Repeat("a", 100*1024))
+	vsComments, err := ParseForgeVerdicts(oversizedJSONComment, "[]", 123, rs, author, head, false)
+	if err != nil {
+		t.Fatalf("ParseForgeVerdicts must decode oversized comment JSON without error, got: %v", err)
+	}
+	if len(vsComments) != 1 || vsComments[0].Word != "hold" || vsComments[0].Who != "stella" {
+		t.Fatalf("expected 1 hold verdict from oversized comment JSON, got: %+v", vsComments)
+	}
+
+	// E: ParseForgeVerdicts decodes oversized reviews JSON safely via boundedBody
+	oversizedJSONReview := fmt.Sprintf(`[{"id":505,"user":{"login":"stella-astra"},"body":%q,"state":"CHANGES_REQUESTED","submitted_at":"2026-09-19T10:00:00Z","commit_id":%q}]`,
+		"DISPOSITION who=stella head="+head+" verdict=HOLD\nReview comments...\n"+strings.Repeat("b", 100*1024), head)
+	vsReviews, err := ParseForgeVerdicts("[]", oversizedJSONReview, 123, rs, author, head, false)
+	if err != nil {
+		t.Fatalf("ParseForgeVerdicts must decode oversized review JSON without error, got: %v", err)
+	}
+	if len(vsReviews) != 1 || vsReviews[0].Word != "hold" || vsReviews[0].Who != "stella" {
+		t.Fatalf("expected 1 hold verdict from oversized review JSON, got: %+v", vsReviews)
+	}
+}
