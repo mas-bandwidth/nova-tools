@@ -22,12 +22,15 @@ local function now_s()
 end
 
 -- keys: card, pool, waiting, log, idx queued, then one card hash per dependency
--- args: label, payload_sha, priority, base, base_sha, paths, repo, kind, depends_on
+-- args: label, payload_sha, priority, base, base_sha, paths, repo, kind, depends_on,
+-- card_type (the optional TYPE: line, nova-tools#3091; empty: not stored)
+-- The card also gets cut_at, Redis TIME seconds at this push (nova-tools#3091).
 redis.register_function('ns_card_push', function(keys, args)
   local card, pool, waiting, log, idx = keys[1], keys[2], keys[3], keys[4], keys[5]
   local label, payload, priority = args[1], args[2], args[3]
   local base, base_sha, paths = args[4], args[5], args[6]
   local repo, kind, depends_on = args[7], args[8], args[9]
+  local card_type = args[10]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -56,7 +59,7 @@ redis.register_function('ns_card_push', function(keys, args)
   if ready then
     place = 'pool'
   end
-  redis.call('HSET', card,
+  local fields = {
     'label', label,
     'kind', kind,
     'repo', repo,
@@ -66,7 +69,13 @@ redis.register_function('ns_card_push', function(keys, args)
     'depends_on', depends_on,
     'priority', priority,
     'payload_sha', payload,
-    'state', 'queued')
+    'state', 'queued',
+    'cut_at', now_s()}
+  if type(card_type) == 'string' and card_type ~= '' then
+    table.insert(fields, 'card_type')
+    table.insert(fields, card_type)
+  end
+  redis.call('HSET', card, unpack(fields))
   redis.call('SADD', idx, label)
   if place == 'pool' then
     redis.call('ZADD', pool, priority, label)

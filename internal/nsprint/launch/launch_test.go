@@ -401,8 +401,54 @@ func TestLaunchRefusesAMissingWrapper(t *testing.T) {
 	}
 }
 
+// TestLaunchSharesOneBudgetAcrossAcknowledgements is the regression for the
+// per-child acknowledgement wait renewing the whole batch budget. The fake
+// starter consumes three seconds for each child without sleeping: the first
+// child fits, while the second gets only the two seconds still left and must
+// time out without launching.
+func TestLaunchSharesOneBudgetAcrossAcknowledgements(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := fixtureLines(2)
+	var in strings.Builder
+	for _, l := range lines {
+		in.WriteString(l.String() + "\n")
+	}
+	clock := time.Unix(1_800_000_000, 0)
+	batchDeadline := clock.Add(5 * time.Second)
+	var deadlines []time.Time
+	start := func(_ string, _ Line, deadline time.Time) (int, string, error) {
+		deadlines = append(deadlines, deadline)
+		const ack = 3 * time.Second
+		if left := deadline.Sub(clock); left < ack {
+			clock = deadline
+			return 0, "", fmt.Errorf("wrapper acknowledgement timed out")
+		}
+		clock = clock.Add(ack)
+		return len(deadlines), "LAUNCHED", nil
+	}
+	var out strings.Builder
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{
+		Wrapper: exe,
+		Budget:  5 * time.Second,
+		Now:     func() time.Time { return clock },
+		start:   start,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Started != 1 || res.Refused != 1 || res.Overran {
+		t.Fatalf("Launch = %+v, want started=1 refused=1 overran=false; output %q", res, out.String())
+	}
+	if len(deadlines) != 2 || !deadlines[0].Equal(batchDeadline) || !deadlines[1].Equal(batchDeadline) {
+		t.Fatalf("ack deadlines = %v, want the one batch deadline %s", deadlines, batchDeadline)
+	}
+}
+
 // The budget is the verb's own clock: on a clock that moves one second per
-// read, the lines reached after five seconds are REFUSED timeout and never
+// read, the lines reached at or after five seconds are REFUSED timeout and never
 // started, and the verb still returns.
 func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 	exe, err := os.Executable()
@@ -415,7 +461,7 @@ func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 	for _, l := range fixtureLines(8) {
 		in.WriteString(l.String() + "\n")
 	}
-	clock := time.Unix(1_800_000_000, 0)
+	clock := time.Now()
 	tick := func() time.Time { clock = clock.Add(time.Second); return clock }
 	var out strings.Builder
 	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe, Budget: DefaultBudget, Now: tick})
@@ -426,11 +472,11 @@ func TestLaunchRefusesLinesPastTheBudget(t *testing.T) {
 			pids[f[1]], _ = strconv.Atoi(strings.TrimPrefix(f[2], "pid="))
 		}
 	}
-	if err != nil || res.Started != 5 || res.Refused != 3 || !res.Overran || len(pids) != 5 {
+	if err != nil || res.Started != 4 || res.Refused != 4 || !res.Overran || len(pids) != 4 {
 		t.Fatalf("Launch = %+v, %v; output %q", res, err, out.String())
 	}
-	waitReady(t, dir, fixtureLines(5))
-	for _, w := range []string{"REFUSED line=6 timeout s-launch/card-06/", "REFUSED line=8 timeout ", "LAUNCH started=5 refused=3 ms=9000 over=true"} {
+	waitReady(t, dir, fixtureLines(4))
+	for _, w := range []string{"REFUSED line=5 timeout s-launch/card-05/", "REFUSED line=8 timeout ", "LAUNCH started=4 refused=4 ms=9000 over=true"} {
 		if !strings.Contains(out.String(), w) {
 			t.Errorf("output %q lacks %q", out.String(), w)
 		}
@@ -459,7 +505,7 @@ func TestLaunchOverrunsWithNothingRefused(t *testing.T) {
 	for _, l := range lines {
 		in.WriteString(l.String() + "\n")
 	}
-	clock := time.Unix(1_800_000_000, 0)
+	clock := time.Now()
 	// calls: began (+0), then one pre-start check per line (+1s each, well
 	// inside the 5s budget), then the post-loop elapsed check (+3s more,
 	// total 6s: past budget though no per-line check ever saw it).

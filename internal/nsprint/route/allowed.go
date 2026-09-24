@@ -60,6 +60,11 @@ type Row struct {
 	Flag                    string   // "", benched or dead
 	Numbers                 *Numbers // nil when the route is not in the ranking
 	Why                     string
+	// Faults are the attribution's fault classes the route's preamble is
+	// built from (#2498 S8), and FaultsFrom says whose they are: model or
+	// rung. Both empty is a route with no preamble.
+	Faults     []string
+	FaultsFrom string
 }
 
 // TypeRow widens one rung for one work type by held routes.
@@ -242,6 +247,11 @@ func (t *Table) Render() string {
 		}
 		fmt.Fprintf(&b, "TYPE %s %s %s  %s\n", tr.Type, tr.Rung, strings.Join(adds, " "), tr.Why)
 	}
+	for _, r := range t.rows {
+		if len(r.Faults) > 0 {
+			fmt.Fprintf(&b, "PREAMBLE %s from=%s %s\n", r.Route, r.FaultsFrom, strings.Join(r.Faults, ","))
+		}
+	}
 	for _, o := range t.overrides {
 		fmt.Fprintf(&b, "OVERRIDE %s %s %s  source=%q  %s\n", o.Type, o.Rung, strings.Join(o.Routes, " "), o.Source, o.Why)
 	}
@@ -412,6 +422,10 @@ func (t *Table) addRow(it map[string]string) error {
 			case "why":
 				r.Why = s
 			}
+		case "faults":
+			r.Faults, err = parseFaults(raw)
+		case "faults_from":
+			r.FaultsFrom, err = scalar(raw)
 		case "run", "scored", "u8", "u9", "wall_s":
 			var v int
 			if v, err = strconv.Atoi(raw); err != nil || v < 0 {
@@ -471,6 +485,12 @@ func (t *Table) addRow(it map[string]string) error {
 	}
 	if r.State != Allowed && r.Why == "" {
 		return fmt.Errorf("route %s is %s without a why", r.Route, r.State)
+	}
+	switch {
+	case len(r.Faults) > 0 && r.FaultsFrom == "", len(r.Faults) == 0 && r.FaultsFrom != "":
+		return fmt.Errorf("route %s: faults and faults_from go together", r.Route)
+	case r.FaultsFrom != "" && r.FaultsFrom != FromModel && r.FaultsFrom != FromRung:
+		return fmt.Errorf("route %s: faults_from %q, want model or rung", r.Route, r.FaultsFrom)
 	}
 	switch have {
 	case 0:
