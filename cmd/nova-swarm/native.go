@@ -1057,6 +1057,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			res.blockedPath = path
 		}
 	}
+	// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S (issue #2916). Past the launch grace the
+	// provider's own `UnknownError` / `err_xxxxxxxx` was filed as the card's failure and
+	// re-dealt to the same route. The machinery's own ends come first; what is left, when
+	// the harness's last words are the provider's, is handed back to the next route in
+	// $NOVA_SWARM_ROUTES with the failed one named for the re-deal to avoid.
+	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
+		if raw, err := os.ReadFile(outLog); err == nil {
+			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
+				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
+			}
+		}
+	}
 	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT (issue #2548). `opencode run` is
 	// non-interactive: a final turn that is a question finishes the turn and exits 0 in
 	// seconds -- 5.22 s on hulk, 5.49 s on the Studio, measured 2026-09-22 -- so the run
