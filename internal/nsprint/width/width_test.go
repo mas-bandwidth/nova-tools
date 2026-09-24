@@ -5,10 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
 	"github.com/redis/go-redis/v9"
 )
@@ -26,49 +23,7 @@ import (
 // package's controls: skip with the reason when the binary is absent.
 func startRedis(t *testing.T) string {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable; run this control on a Redis bench: %v", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	dir := t.TempDir()
-	log, err := os.Create(filepath.Join(dir, "redis.log"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = log.Close() })
-	port := strings.TrimPrefix(addr, "127.0.0.1:")
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", port,
-		"--save", "", "--appendonly", "no", "--dir", dir)
-	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	})
-	client := redis.NewClient(&redis.Options{Addr: addr})
-	t.Cleanup(func() { _ = client.Close() })
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		err := client.Ping(ctx).Err()
-		cancel()
-		if err == nil {
-			return addr
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("throwaway redis did not start: %v", err)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return testutil.Start(t)
 }
 
 const sprint = "control-width"
