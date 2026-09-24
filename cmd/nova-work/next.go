@@ -76,11 +76,11 @@ var router = func(ctx context.Context, reg *decide.Registry, u decide.Unit, floo
 	return decide.RouteJev(ctx, client, reg, u, floor)
 }
 
-// openDecisionLog opens the decision log --log names: a path (JSON lines) or
-// the table, exactly as nova-decide route opens it. It is a seam so a test can
+// openDecisionLog opens the decision log --log names: a path (JSON lines),
+// exactly as nova-decide route opens it. It is a seam so a test can
 // hand in an in-memory sink.
 var openDecisionLog = func(name string) (decide.LogSink, error) {
-	return decide.OpenLogSink(name, "")
+	return decide.OpenLogSink(name)
 }
 
 // defaultKind is the decide kind a unit of a work set is routed as when it
@@ -175,9 +175,6 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 	if ask {
 		for _, probe := range [][2]string{{"--usage", *usagePath}, {"--log", *logPath}} {
 			flagName, path := probe[0], probe[1]
-			if flagName == "--log" && strings.TrimSpace(path) == decide.PostgresLog {
-				continue // opened above: the table is its own probe
-			}
 			if err := appendable(path); err != nil {
 				return refuse(stderr, " next", fmt.Sprintf(
 					"a jev call must be accounted for: %s %s cannot be appended to (%s); refusing before the call is made",
