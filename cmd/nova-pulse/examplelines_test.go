@@ -116,6 +116,12 @@ var leftOwedExampleLines = map[string]string{
 	// why: survey runs tools/bench-standard.sh over ssh on every bench in
 	// ./fleet.tsv; the file does not exist and no test may reach a machine.
 	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
+	// why: the pitstop examples read and write the fleet Redis at 100.115.99.19:6380;
+	// the test's sandbox has no route to that address, so the verb exits 3 before any
+	// answer prints, and no fixture stands behind a real store.
+	"nova-pulse pitstop set --state pause --except harvest --store 100.115.99.19:6380": "the pitstop set examples read and write the fleet Redis at 100.115.99.19:6380; the test's sandbox has no route to that address and a fixture cannot stand behind a real store",
+	"nova-pulse pitstop set --state resume --store 100.115.99.19:6380":                 "the pitstop set examples read and write the fleet Redis at 100.115.99.19:6380; the test's sandbox has no route to that address and a fixture cannot stand behind a real store",
+	"nova-pulse pitstop check launch --store 100.115.99.19:6380":                       "the pitstop check examples read the fleet Redis at 100.115.99.19:6380; the test's sandbox has no route to that address and a fixture cannot stand behind a real store",
 }
 
 // exampleBlockLines returns every command under an `example:` heading in a
