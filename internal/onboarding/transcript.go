@@ -427,8 +427,9 @@ type Norm struct {
 	// boundaries.
 	run bool
 	// path says the literal names a directory and may be replaced only at the end
-	// of a token or before `/`, so descendants are covered without swallowing a
-	// longer neighbouring path that merely shares the prefix.
+	// of a token, before `/`, or before the comma used around a path in prose, so
+	// descendants are covered without swallowing a longer neighbouring path that
+	// merely shares the prefix.
 	path bool
 }
 
@@ -465,15 +466,16 @@ func (n Norm) apply(line string) string {
 	return out.String()
 }
 
-// applyPath replaces the declared directory only where it is a complete path
-// component: at the end of a token, or before a slash that begins a descendant.
-// A longer neighbouring path such as /tmp/run-next is kept as written.
+// applyPath replaces the declared directory only where it is a complete path:
+// at the end of a token, before a slash that begins a descendant, or before the
+// comma used when output places a path in prose. A longer neighbouring path such
+// as /tmp/run-next is kept as written.
 func (n Norm) applyPath(line string) string {
 	var out strings.Builder
 	last := 0
 	for _, m := range n.Re.FindAllStringIndex(line, -1) {
 		end := m[1]
-		if end < len(line) && line[end] != '/' && line[end] != ' ' && line[end] != '\t' {
+		if end < len(line) && line[end] != '/' && line[end] != ' ' && line[end] != '\t' && line[end] != ',' {
 			continue
 		}
 		out.WriteString(line[last:m[0]])

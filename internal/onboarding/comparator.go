@@ -99,8 +99,9 @@ type VolatileField struct {
 // a table away from being caught.
 //
 // `tmpdir` is the exception and is sound without a field: Path replaces its
-// literal absolute directory only at the end of a token or before `/`, so it
-// covers descendants without swallowing a longer path that shares the prefix.
+// literal absolute directory only at the end of a token, before `/`, or before
+// the comma used around a path in prose, so it covers descendants without
+// swallowing a longer path that shares the prefix.
 var Volatile = []VolatileField{
 	{
 		Name: "at",
