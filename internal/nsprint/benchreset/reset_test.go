@@ -269,15 +269,34 @@ func mustReply(t *testing.T, cmd *redis.Cmd, want string) []string {
 	return reply
 }
 
-// fakeProgram writes an executable bash script into a temp dir; RemoteStopper
-// runs it in place of ssh (testguard accepts a program under a temp dir).
-func fakeProgram(t *testing.T, body string) string {
+// fakeBench is a fake ssh Program for RemoteStopper (testguard accepts a
+// program under a temp dir). It runs the remote command word benchsh sends
+// (`bash -s -- <quoted args>`, the stop script on stdin) as the bench would,
+// with a HOME whose .bash_profile puts a fake nova-sprint (novaSprint, a bash
+// body) first on the login PATH the script's `bash -lc` reads.
+func fakeBench(t *testing.T, novaSprint string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-ssh")
-	if err := os.WriteFile(path, []byte("#!/bin/bash\n"+body), 0o755); err != nil {
-		t.Fatal(err)
+	dir := t.TempDir()
+	bin, home := filepath.Join(dir, "bin"), filepath.Join(dir, "home")
+	for _, d := range []string{bin, home} {
+		if err := os.Mkdir(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return path
+	files := []struct {
+		path, body string
+		mode       os.FileMode
+	}{
+		{filepath.Join(bin, "nova-sprint"), "#!/bin/bash\n" + novaSprint, 0o755},
+		{filepath.Join(home, ".bash_profile"), fmt.Sprintf("PATH=%q:\"$PATH\"\n", bin), 0o644},
+		{filepath.Join(dir, "fake-ssh"), fmt.Sprintf("#!/bin/bash\nexport HOME=%q\neval \"${@: -1}\"\n", home), 0o755},
+	}
+	for _, f := range files {
+		if err := os.WriteFile(f.path, []byte(f.body), f.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return filepath.Join(dir, "fake-ssh")
 }
 
 // TestRemoteStopperDrivesRealCardStop runs the built `nova-sprint card stop`
@@ -292,12 +311,11 @@ func TestRemoteStopperDrivesRealCardStop(t *testing.T) {
 		t.Fatalf("go build nova-sprint: %v\n%s", err, out)
 	}
 	errFile := filepath.Join(t.TempDir(), "stderr")
-	program := fakeProgram(t, fmt.Sprintf(`last="${@: -1}"
-case "$last" in
-  *"nova-sprint card stop --stdin --grace "*) ;;
-  *) echo "unexpected remote command: $last" >&2; exit 97 ;;
+	program := fakeBench(t, fmt.Sprintf(`case "$*" in
+  "card stop --stdin --grace 10ms") ;;
+  *) echo "unexpected nova-sprint args: $*" >&2; exit 97 ;;
 esac
-exec %q card stop --stdin --grace 10ms 2>%q
+exec %q "$@" 2>%q
 `, bin, errFile))
 	cards := []Card{
 		{Sprint: "s-rstop-3589", Label: "card-a", Attempt: 1},
@@ -333,7 +351,7 @@ func TestBenchResetAliveRequeuesSiblings(t *testing.T) {
 	c := resetRedis(t)
 	cards := seedResetCards(t, c, "running", "running")
 	ctx := context.Background()
-	program := fakeProgram(t, `n=0
+	program := fakeBench(t, `n=0
 while read -r s l a; do
   [ -z "$s" ] && continue
   if [ "$n" -eq 0 ]; then echo "STOPPED $s/$l/$a"; else echo "ALIVE $s/$l/$a"; fi

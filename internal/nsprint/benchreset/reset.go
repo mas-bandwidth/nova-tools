@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,8 +19,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/benchsh"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 const (
@@ -427,24 +426,39 @@ type stopSession struct {
 	stdout  []byte
 }
 
+// stopReplyMarker opens the bench-side stop reply in the run's output: what
+// ssh itself prints before the script runs (a host-key warning) stays above it.
+const stopReplyMarker = "STOP-REPLY"
+
+// stopScript runs through internal/benchsh (`bash -s --`, script on stdin;
+// #2932 TestCIOneBenchRunner): $1 is the grace, $2 the card lines the stop
+// protocol reads on stdin. `bash -lc` keeps the login PATH that finds
+// nova-sprint on the bench. The reply is stdout only: card stop's stderr
+// summary is printed after the reply only when it fails, for the error.
+const stopScript = `printf '%s\n' ` + stopReplyMarker + `
+exec 3>&1
+err=$(printf '%s' "$2" | bash -lc 'exec nova-sprint card stop --stdin --grace "$1"' bash "$1" 2>&1 >&3)
+rc=$?
+[ "$rc" -eq 0 ] || printf '%s\n' "$err"
+exit "$rc"
+`
+
 func (s *stopSession) Run(ctx context.Context, stdin []byte) error {
-	program := s.program
-	if program == "" {
-		program = "ssh"
+	host := s.bench.Host
+	if host == "" {
+		host = s.bench.Name
 	}
-	command := fmt.Sprintf("exec bash -lc 'exec nova-sprint card stop --stdin --grace %s'", s.grace.String())
-	args := []string{"-o", "BatchMode=yes", "-o", "ConnectTimeout=5", s.bench.Target(), command}
-	testguard.RefuseHosts(program, args...)
+	t := benchsh.Target{Host: host, User: s.bench.User, SSH: s.program}
 	runCtx, cancel := context.WithTimeout(ctx, s.grace+30*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(runCtx, program, args...)
-	cmd.Stdin = bytes.NewReader(stdin)
-	var out, stderr bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	res, err := benchsh.Run(runCtx, t, stopScript, s.grace.String(), string(stdin))
+	if err != nil {
+		return err
 	}
-	s.stdout = append([]byte(nil), out.Bytes()...)
+	i := strings.Index(res.Output, stopReplyMarker+"\n")
+	if i < 0 {
+		return fmt.Errorf("ssh %s: no %s line in %q", t.Dest(), stopReplyMarker, res.Output)
+	}
+	s.stdout = []byte(res.Output[i+len(stopReplyMarker)+1:])
 	return nil
 }
