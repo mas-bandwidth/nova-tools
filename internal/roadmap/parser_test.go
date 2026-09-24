@@ -83,13 +83,13 @@ func TestParseNovaWorkSexp(t *testing.T) {
 			verified++
 		}
 	}
-	if verified != 155 {
-		t.Errorf("expected 155 verified criteria, got %d", verified)
+	if verified != 157 {
+		t.Errorf("expected 157 verified criteria, got %d", verified)
 	}
 
 	unverified := len(prodCriteria) - verified
-	if unverified != 76 {
-		t.Errorf("expected 76 unverified criteria, got %d", unverified)
+	if unverified != 74 {
+		t.Errorf("expected 74 unverified criteria, got %d", unverified)
 	}
 
 	// Verify dependencies on E01-F02
