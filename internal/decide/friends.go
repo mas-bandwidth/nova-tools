@@ -1,6 +1,6 @@
 // Package decide handles mind routing decisions across the ladder.
 //
-// friends.go reads friend presence keys (friend:<name>:down) from the fleet
+// friends.go reads friend presence keys (friend:<lineage>:down) from the fleet
 // store so that route never sends work to a friend who is down (#3397).
 package decide
 
@@ -31,8 +31,9 @@ func (r *Registry) FriendRungs() []Mind {
 }
 
 // ReadDownFriends checks Redis for friend:<seat>:down for every friend rung in
-// the registry in one pipeline. It returns the set of down friend names (e.g.
-// "emma" -> true) and the sorted list of exclusion tokens (e.g. ["emma:down"]).
+// the registry in one pipeline. It returns the set of down rung names (e.g.
+// "astra" -> true for the stella lineage) and the sorted list of seat-lineage
+// exclusion tokens (e.g. ["stella:down"]).
 func ReadDownFriends(ctx context.Context, client redis.Cmdable, reg *Registry) (map[string]bool, []string, error) {
 	if client == nil || reg == nil {
 		return nil, nil, nil
@@ -76,7 +77,7 @@ func ReadDownFriends(ctx context.Context, client redis.Cmdable, reg *Registry) (
 	return downSet, downList, nil
 }
 
-// DownFriends connects to Redis at addr and reads friend:<name>:down for every
+// DownFriends connects to Redis at addr and reads friend:<lineage>:down for every
 // friend rung in one pipeline.
 func DownFriends(ctx context.Context, addr, user, password string, reg *Registry) (map[string]bool, []string, error) {
 	if strings.TrimSpace(addr) == "" {
