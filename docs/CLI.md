@@ -5342,9 +5342,12 @@ The append verb never guesses a checkout or creates the active lessons file. Eve
 required and must fit on one line without a Markdown table pipe. Lesson IDs
 are stable: an identical retry prints `LESSON UNCHANGED`; different content
 under an existing ID refuses. The append is published by atomic rename and
-refuses the 41st line. A repository-local lock serializes the whole
+refuses the 41st line. A holder-lifetime kernel lock (flock on Unix) on
+`nova-lessons.lock` in the checkout's git directory serializes the whole
 read/check/rename transaction, so concurrent successful appends cannot lose
-one another. Append accepts `--status active`; retire a row with:
+one another. The lock is never broken on age: a waiter queues behind a live
+holder for up to 30 seconds and then refuses as busy, and the kernel alone
+releases a holder that died. Append accepts `--status active`; retire a row with:
 
 ```sh
 nova-sprint lesson supersede --repo ./nova-tools --id s9-001

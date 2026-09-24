@@ -4,8 +4,6 @@ package lessons
 
 import (
 	"bytes"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -13,14 +11,22 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 const (
 	RelativePath        = "docs/LESSONS.md"
 	ArchiveRelativePath = "docs/LESSONS-ARCHIVE.md"
 	MaxLines            = 40
-	lockWait            = 5 * time.Second
-	lockStaleAfter      = 30 * time.Second
+	// lockWait bounds how long a writer queues behind a live holder. Nothing is
+	// ever broken on age: the kernel releases the lock only when its holder
+	// unlocks or dies, so a paused holder keeps it and a waiter refuses instead.
+	lockWait = 30 * time.Second
+	// lockName is the lock file inside the checkout's git directory, so the
+	// persistent lock file never shows up as an untracked file beside the view.
+	lockName = "nova-lessons.lock"
+	lockPoll = 20 * time.Millisecond
 )
 
 const archiveHeader = `# Superseded operational lessons
@@ -68,7 +74,7 @@ func Append(repo string, lesson Lesson) (Result, error) {
 	}
 	path := filepath.Join(filepath.Clean(repo), filepath.FromSlash(RelativePath))
 	var result Result
-	err := withLock(path, func() error {
+	err := withLock(repo, lesson.ID, func() error {
 		r, err := appendLocked(path, lesson)
 		result = r
 		return err
@@ -131,7 +137,7 @@ func Supersede(repo, id string) (SupersedeResult, error) {
 	}
 	path := filepath.Join(filepath.Clean(repo), filepath.FromSlash(RelativePath))
 	var result SupersedeResult
-	err := withLock(path, func() error {
+	err := withLock(repo, id, func() error {
 		r, err := supersedeLocked(path, id)
 		result = r
 		return err
@@ -269,59 +275,56 @@ func lineCount(raw []byte) int {
 	return bytes.Count(raw, []byte{'\n'})
 }
 
-// withLock serializes the read-modify-write transaction across processes. The
-// owner token keeps a stale process from deleting a successor's lock.
-func withLock(path string, fn func() error) error {
-	lock := path + ".lock"
-	token, err := randomToken()
+// withLock serializes the read-modify-write transaction across processes and
+// goroutines with a holder-lifetime kernel lock (flock on Unix, via
+// bus.LockFile). There is no stale-lock break: a check-then-act break let two
+// waiters both move an old lock aside, and let a paused holder write over its
+// successor. The kernel is the only party that releases a dead holder's lock.
+func withLock(repo, who string, fn func() error) error {
+	release, err := acquireLock(repo, who)
 	if err != nil {
-		return fmt.Errorf("lesson lock token: %w", err)
+		return err
 	}
+	defer release()
+	return fn()
+}
+
+// lockBusy is a test seam: it is told each time who found the lock held and
+// is about to wait for it.
+var lockBusy = func(who string) {}
+
+// acquireLock takes the lock, queueing behind a live holder for up to
+// lockWait. A refusal after the wait writes nothing.
+func acquireLock(repo, who string) (func(), error) {
+	path := lockPath(repo)
 	deadline := time.Now().Add(lockWait)
 	for {
-		if err := os.Mkdir(lock, 0o700); err == nil {
-			owner := filepath.Join(lock, "owner")
-			if err := os.WriteFile(owner, []byte(token), 0o600); err != nil {
-				_ = os.Remove(owner)
-				_ = os.Remove(lock)
-				return fmt.Errorf("write lesson lock: %w", err)
-			}
-			defer releaseLock(lock, token)
-			return fn()
-		} else if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("acquire lesson lock: %w", err)
+		release, err := bus.LockFile(path, 0)
+		if err == nil {
+			return release, nil
 		}
-		if info, err := os.Stat(lock); err == nil && time.Since(info.ModTime()) > lockStaleAfter {
-			stale := lock + ".stale-" + token
-			if os.Rename(lock, stale) == nil {
-				_ = os.Remove(filepath.Join(stale, "owner"))
-				_ = os.Remove(stale)
-				continue
-			}
+		if !errors.Is(err, bus.ErrLockHeld) {
+			return nil, fmt.Errorf("acquire lesson lock: %w", err)
 		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("lesson file is busy: %s", lock)
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("lesson file is busy after %s: %w", lockWait, err)
 		}
-		time.Sleep(10 * time.Millisecond)
+		lockBusy(who)
+		time.Sleep(lockPoll)
 	}
 }
 
-func releaseLock(lock, token string) {
-	owner := filepath.Join(lock, "owner")
-	got, err := os.ReadFile(owner)
-	if err != nil || string(got) != token {
-		return
+// lockPath is the one lock file every writer of repo's lessons agrees on: inside
+// the git directory of a checkout (a linked worktree resolves to its own), or
+// beside docs/LESSONS.md when repo is not a git checkout.
+func lockPath(repo string) string {
+	repo = filepath.Clean(repo)
+	if _, err := os.Stat(filepath.Join(repo, ".git")); err == nil {
+		if gd, err := bus.GitDir(repo); err == nil {
+			return filepath.Join(gd, lockName)
+		}
 	}
-	_ = os.Remove(owner)
-	_ = os.Remove(lock)
-}
-
-func randomToken() (string, error) {
-	var raw [16]byte
-	if _, err := rand.Read(raw[:]); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(raw[:]), nil
+	return filepath.Join(repo, filepath.FromSlash(RelativePath)) + ".lock"
 }
 
 func atomicWrite(path string, body []byte) error {
