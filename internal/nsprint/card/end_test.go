@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -14,6 +15,35 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
+
+// TestLaunchedRefusesAnExpiredBatchDeadline proves the final Redis transition,
+// not only the parent wait, fences a child that reaches launch after its one
+// batch deadline. The dealt card and event log remain untouched.
+func TestLaunchedRefusesAnExpiredBatchDeadline(t *testing.T) {
+	ctx := context.Background()
+	st, client := newSprint(t)
+	id := card.Identity{Sprint: "deadline", Label: "expired", BaseSHA: "0123abcd", Bench: "ctl-bench", Attempt: 1}
+	token := attemptToken(1, "0123456789abcdef0123456789abcdef")
+	seedCard(t, ctx, client, id, "dealt", token)
+
+	got, err := card.Launched(ctx, st, card.LaunchRequest{
+		Sprint: id.Sprint, Label: id.Label, Token: token,
+		Branch: "nova/deadline/expired-a1", JobDir: "/jobs/deadline/expired/1",
+		Deadline: time.Now().Add(-time.Second),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Code != 2 || got.Reason != "TIMEOUT" || got.Resolved {
+		t.Fatalf("expired launch = %+v, want code=2 TIMEOUT unresolved", got)
+	}
+	if state := stateOf(t, ctx, client, id.Sprint, id.Label); state != "dealt" {
+		t.Fatalf("expired launch moved card to %q", state)
+	}
+	if n := xlen(t, ctx, client, id.Sprint); n != 0 {
+		t.Fatalf("expired launch wrote %d log entries", n)
+	}
+}
 
 func TestEndRecordIsTheOnlyEnd(t *testing.T) {
 	ctx := context.Background()

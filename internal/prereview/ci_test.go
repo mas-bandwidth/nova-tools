@@ -232,7 +232,7 @@ func TestCIIsKnownAndOffByDefault(t *testing.T) {
 	for _, e := range (Checks{}).named() {
 		got = append(got, e.name)
 	}
-	want := []string{"donewhen", "selfcheck", "paths", "claims", "ci"}
+	want := []string{"donewhen", "selfcheck", "paths", "claims", "ci", "base"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("named = %v, want %v", got, want)
 	}

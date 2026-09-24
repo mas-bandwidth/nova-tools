@@ -27,6 +27,86 @@ func cutKind(t *testing.T, in CutKindInput) (int, string, string, string) {
 	return code, out.String(), errs.String(), card
 }
 
+// TestEveryCutKindCarriesItsReviewedExemplar holds #2498 S6 at the real cutter
+// boundary. Both renderer families must put the one matching reviewed PR in the
+// generated card; a catalog that only tells a human to add the link is not the
+// card-linked contract.
+func TestEveryCutKindCarriesItsReviewedExemplar(t *testing.T) {
+	exemplarPRs := map[string]int{
+		"read":       3483,
+		"fix":        3061,
+		"replay":     2792,
+		"spec":       3162,
+		"rebase":     2794,
+		"guard":      2543,
+		"recut":      2918,
+		"port":       2751,
+		"docs-guard": 3140,
+		"report":     3337,
+	}
+	exemplars := make(map[string]string, len(exemplarPRs))
+	for kind, pr := range exemplarPRs {
+		exemplars[kind] = exemplarURL(pr)
+	}
+	v2 := map[string]bool{"recut": true, "fix": true, "port": true, "docs-guard": true, "report": true, "read": true}
+	if len(exemplars) != len(CutKinds) || len(cardExemplars) != len(CutKinds) {
+		t.Fatalf("exemplar coverage: test=%d source=%d kinds=%d", len(exemplars), len(cardExemplars), len(CutKinds))
+	}
+
+	for _, kind := range CutKinds {
+		t.Run(kind, func(t *testing.T) {
+			exemplar, ok := exemplars[kind]
+			if !ok || exemplar == "" {
+				t.Fatalf("CutKinds entry %q has no reviewed exemplar", kind)
+			}
+			dir := t.TempDir()
+			in := CutKindInput{
+				Kind: kind, Repo: "mas-bandwidth/nova-tools", Title: "exemplar contract",
+				Out: filepath.Join(dir, "pending"), Queue: filepath.Join(dir, "queue"),
+			}
+			switch kind {
+			case "read":
+				in.PR, in.Head = 3553, "cf0e6d6765d4"
+			case "fix":
+				in.Issue = 2498
+			case "replay":
+				in.Names, in.SpecLines = "exemplar-link", "1-2"
+			case "rebase":
+				in.PR, in.Branch, in.Base = 3553, "stella/example", "dev"
+			case "guard":
+				in.Head = "cf0e6d6765d4"
+			case "recut":
+				in.ReviewerLine = "DISPOSITION who=reader verdict=HOLD reason=missing-link"
+			}
+			if v2[kind] {
+				in.V2 = true
+				in.Location = "internal/pulse/cutkind.go:1"
+				in.TestPackage = "./internal/pulse"
+				in.TestFunction = "TestEveryCutKindCarriesItsReviewedExemplar"
+				in.TestCommand = "go test ./internal/pulse -run TestEveryCutKindCarriesItsReviewedExemplar"
+				in.Paths = "internal/pulse/cutkind.go internal/pulse/cutkind_test.go"
+				in.PreflightCmd = "make preflight"
+				in.Symbol = "CutKind"
+				in.RedWhen = "the generated card omits or mismatches Example to follow"
+			}
+
+			code, _, errs, card := cutKind(t, in)
+			if code != 0 {
+				t.Fatalf("cut %s: exit=%d stderr=%s", kind, code, errs)
+			}
+			want := "Example to follow: " + exemplar
+			if strings.Count(card, want) != 1 {
+				t.Fatalf("%s card has %d matching exemplar lines, want 1:\n%s", kind, strings.Count(card, want), card)
+			}
+			for otherKind, otherURL := range exemplars {
+				if otherKind != kind && strings.Contains(card, "Example to follow: "+otherURL) {
+					t.Fatalf("%s card carries %s exemplar:\n%s", kind, otherKind, card)
+				}
+			}
+		})
+	}
+}
+
 // cut-kind-read-line-one: a read card's line 1 is the contract the harvest matches, and its
 // number comes from the queue's state file, never from a hand (issue #828, classes B and F).
 func TestCutKindReadWritesTheContractLine(t *testing.T) {

@@ -39,7 +39,7 @@ func TestRebaseCutsOneCardPerDirtyUnmarkedPR(t *testing.T) {
 		{Number: 13, HeadRef: "codex/three", Title: "three", MergeState: "DIRTY"},
 		{Number: 14, HeadRef: "rowan/replays-four", Title: "four", MergeState: "DIRTY"},
 	}
-	args := []string{"rebase", "--once", "--repo", "mas-bandwidth/nova-tools", "--markers", markers, "--out", out, "--queue", queue}
+	args := []string{"rebase", "--once", "--yes", "--repo", "mas-bandwidth/nova-tools", "--markers", markers, "--out", out, "--queue", queue}
 
 	exit, stdout, stderr := l.run(args...)
 	if exit != 0 {
@@ -85,5 +85,54 @@ func TestRebaseCutsOneCardPerDirtyUnmarkedPR(t *testing.T) {
 	}
 	if len(l.launcher.cards) != 1 {
 		t.Errorf("second pass launched again: %v", l.launcher.cards)
+	}
+}
+
+// #3515: listing a live repository is a read. Neither the default plan nor
+// --dry-run may turn that read into a card, marker, queue write, or launch.
+// A person must pass --yes before any of those effects are reachable.
+func TestRebasePlansWithoutFilesystemOrProcessEffects(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		flag     string
+		wantExit int
+		wantTail string
+	}{
+		{name: "dry-run", flag: "--dry-run", wantExit: 0, wantTail: "REBASE dry-run cards=1\n"},
+		{name: "unconfirmed", wantExit: 2, wantTail: "REBASE plan cards=1\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := newLab(t)
+			dir := t.TempDir()
+			markers := filepath.Join(dir, "markers")
+			out := filepath.Join(dir, "out")
+			queue := filepath.Join(dir, "queue")
+			l.host.Open = []merge.RebasePR{{Number: 1723, HeadRef: "rowan/live", Title: "live", MergeState: "DIRTY"}}
+			args := []string{"rebase", "--once", "--repo", "mas-bandwidth/nova-tools", "--markers", markers, "--out", out, "--queue", queue}
+			if tc.flag != "" {
+				args = append(args, tc.flag)
+			}
+
+			exit, stdout, stderr := l.run(args...)
+			if exit != tc.wantExit {
+				t.Fatalf("exit %d, want %d\nstdout=%s\nstderr=%s", exit, tc.wantExit, stdout, stderr)
+			}
+			wantPlan := "REBASE PLAN PR #1723 branch=rowan/live launch=flash-native-bench.sh\\x20space\\x20swarm-space\\x20<card>\\x20<card-name>\\x20900\n"
+			if stdout != wantPlan+tc.wantTail {
+				t.Fatalf("plan does not exactly name the PR, production launch command, and summary:\n got %q\nwant %q", stdout, wantPlan+tc.wantTail)
+			}
+			if tc.flag == "" && (!strings.Contains(stderr, "pass --yes") || !strings.Contains(stderr, "--dry-run")) {
+				t.Fatalf("unconfirmed plan gives no explicit next choice: %q", stderr)
+			}
+			for _, path := range []string{markers, out, queue} {
+				if _, err := os.Stat(path); !os.IsNotExist(err) {
+					t.Fatalf("read-only plan changed %s: %v", path, err)
+				}
+			}
+			if len(l.launcher.cards) != 0 {
+				t.Fatalf("read-only plan launched %v", l.launcher.cards)
+			}
+		})
 	}
 }

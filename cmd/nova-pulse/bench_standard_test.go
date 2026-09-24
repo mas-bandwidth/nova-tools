@@ -100,6 +100,13 @@ func benchStandardHome(t *testing.T, want, goVer string) (home, bin string) {
 
 func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int) {
 	t.Helper()
+	return runBenchStandardEnv(t, home, bin, want, goVer)
+}
+
+// runBenchStandardEnv is runBenchStandard with extra KEY=VALUE lines appended to the
+// script's environment (a later line wins, as exec does with duplicates).
+func runBenchStandardEnv(t *testing.T, home, bin, want, goVer string, extra ...string) (string, int) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("bench-standard.sh is a bash script for linux benches; skipping on windows")
 	}
@@ -120,7 +127,14 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		// under go.mod's go line would download a toolchain into HOME's read-only
 		// module cache and fail t.TempDir cleanup (hulk runners, stream/nova-decide).
 		"GOTOOLCHAIN=local",
+		// The disk floor is the HOST's, not the fixture's: `df` on a t.TempDir()
+		// answers for whatever disk the runner is on (21G on the Studio on
+		// 2026-09-24, dev run 36012558540), so a real floor made this test a
+		// probe of the runner. 0 keeps the row running and never drifting here;
+		// TestBenchStandardDiskFloorDrifts holds the row itself.
+		"NOVA_MIN_FREE_G=0",
 	)
+	cmd.Env = append(cmd.Env, extra...)
 	raw, err := cmd.CombinedOutput()
 	code := 0
 	if err != nil {
@@ -131,6 +145,22 @@ func runBenchStandard(t *testing.T, home, bin, want, goVer string) (string, int)
 		}
 	}
 	return string(raw), code
+}
+
+// The disk-floor row, hermetic: a floor no disk can meet is a drift on every host, and
+// the line names the floor and the directories under HOME, whatever the runner's
+// own free space is.
+func TestBenchStandardDiskFloorDrifts(t *testing.T) {
+	want := "v9.9.9-bench-test"
+	goVer := "go1.26.5"
+	home, bin := benchStandardHome(t, want, goVer)
+	out, code := runBenchStandardEnv(t, home, bin, want, goVer, "NOVA_MIN_FREE_G=999999999")
+	if code == 0 {
+		t.Fatalf("bench-standard exit 0 under a floor no disk meets, want a drift\n%s", out)
+	}
+	if !strings.Contains(out, "want>=999999999G") || !strings.Contains(out, "largest under "+home) {
+		t.Fatalf("no disk-floor drift naming the floor and HOME's largest directories:\n%s", out)
+	}
 }
 
 func TestBenchStandardOK(t *testing.T) {
