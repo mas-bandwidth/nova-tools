@@ -132,6 +132,7 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 
 	tree := t.TempDir()
 	_ = os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module test"), 0o644)
+	writeTool(t, tree, "nova-ci")
 
 	// Rule
 	writtenRule, err := Rule(tree, "sample")
@@ -149,5 +150,72 @@ func TestScaffoldRuleAndVerbBasic(t *testing.T) {
 	}
 	if len(writtenVerb) != 4 {
 		t.Fatalf("Verb wrote %d files, want 4", len(writtenVerb))
+	}
+}
+
+// writeTool lays down cmd/<tool>/main.go with a func main, the least a tool
+// needs before new-verb may add a verb to it.
+func writeTool(t *testing.T, tree, tool string) {
+	t.Helper()
+	dir := filepath.Join(tree, "cmd", tool)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A verb scaffolded into a directory with no func main is a package main with
+// no entry point, so the tree stops building (rowan hold 6 on #3616, item 1):
+// Verb refuses, and writes nothing, for a missing tool, a tool whose only
+// main is in a _test.go file, a library package, and a method named main.
+func TestVerbRefusesAToolWithNoMain(t *testing.T) {
+	t.Parallel()
+
+	for name, files := range map[string]map[string]string{
+		"missing":   nil,
+		"test-only": {"x_test.go": "package main\n\nfunc main() {}\n"},
+		"library":   {"lib.go": "package lib\n\nfunc main() {}\n"},
+		"method":    {"m.go": "package main\n\ntype T struct{}\n\nfunc (T) main() {}\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tree := t.TempDir()
+			_ = os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module test"), 0o644)
+			for f, src := range files {
+				_ = os.MkdirAll(filepath.Join(tree, "cmd", "tool"), 0o755)
+				_ = os.WriteFile(filepath.Join(tree, "cmd", "tool", f), []byte(src), 0o644)
+			}
+			written, err := Verb(tree, "tool", "probe")
+			if err == nil || !strings.Contains(err.Error(), "no func main") {
+				t.Fatalf("Verb into a tool with no func main: err %v, want a no-func-main refusal", err)
+			}
+			if len(written) != 0 {
+				t.Fatalf("Verb wrote %v despite refusing", written)
+			}
+			if _, err := os.Stat(filepath.Join(tree, "cmd", "tool", "probe.go")); err == nil {
+				t.Fatalf("cmd/tool/probe.go was written despite the refusal")
+			}
+		})
+	}
+}
+
+// new-verb never edits the tool's dispatch switch; it prints the exact case to
+// add (rowan hold 6 on #3616, item 4). The case calls the function the verb
+// template declares.
+func TestDispatchIsTheCaseTheScaffoldedVerbNeeds(t *testing.T) {
+	t.Parallel()
+
+	want := "case \"my-verb\":\n\treturn cmdMyVerb(args[1:], stdout, stderr)"
+	if got := Dispatch("my-verb"); got != want {
+		t.Fatalf("Dispatch(my-verb) =\n%s\nwant\n%s", got, want)
+	}
+	src, err := Render(verbTemplates, "templates/verb/verb.go.tmpl", verbData{Tool: "t", Verb: "my-verb", CamelVerb: toCamel("my-verb")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "func cmdMyVerb(args []string, stdout, stderr io.Writer) int") {
+		t.Fatalf("the verb template no longer declares the function the dispatch case calls:\n%s", src)
 	}
 }

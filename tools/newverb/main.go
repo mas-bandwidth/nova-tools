@@ -34,4 +34,5 @@ func main() {
 	for _, p := range written {
 		fmt.Println("wrote " + p)
 	}
+	fmt.Print(scaffold.DispatchNote(fs.Arg(0), fs.Arg(1)))
 }

@@ -19,6 +19,8 @@ func TestNewVerbScaffoldValidatesInput(t *testing.T) {
 
 	// Create dummy go.mod
 	_ = os.WriteFile(filepath.Join(tree, "go.mod"), []byte("module test"), 0o644)
+	_ = os.MkdirAll(filepath.Join(tree, "cmd", "nova-ci"), 0o755)
+	_ = os.WriteFile(filepath.Join(tree, "cmd", "nova-ci", "main.go"), []byte("package main\n\nfunc main() {}\n"), 0o644)
 
 	// Invalid tool / verb names
 	for _, bad := range []string{"123num", "BadName", "rule with spaces", "for", "type"} {

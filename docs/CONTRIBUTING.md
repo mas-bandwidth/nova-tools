@@ -279,7 +279,7 @@ names before you call anything green.
 **Scaffolding verbs (nova-tools#2498 S5).** Lay down skeletons with files, makefile, harness,
 and a passing fixture under write confinement:
 - `nova-ci new-rule <name>` (or `make new-rule ARGS=<name>`): lays down a new class rule skeleton (`internal/ci/<name>_class_test.go`, fixture, `make/rule_<name>.mk`).
-- `nova-ci new-verb <tool> <verb>` (or `make new-verb ARGS='<tool> <verb>'`): lays down a new CLI verb skeleton (`cmd/<tool>/<verb>.go`, test, fixture, `make/verb_<tool>_<verb>.mk`).
+- `nova-ci new-verb <tool> <verb>` (or `make new-verb ARGS='<tool> <verb>'`): lays down a new CLI verb skeleton (`cmd/<tool>/<verb>.go`, test, fixture, `make/verb_<tool>_<verb>.mk`) into a tool that already has a `func main` (it refuses otherwise), and prints the exact `case` line to add to the tool's dispatch switch; it never edits the switch itself.
 
 ## How work lands
 

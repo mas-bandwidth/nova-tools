@@ -32,5 +32,6 @@ func cmdNewVerb(args []string, stdout, stderr io.Writer) int {
 	for _, p := range written {
 		fmt.Fprintln(stdout, "wrote "+p)
 	}
+	fmt.Fprint(stdout, scaffold.DispatchNote(fs.Arg(0), fs.Arg(1)))
 	return 0
 }
