@@ -176,7 +176,7 @@ type nativeRunResult struct {
 // 16an on hulk while its own ci-ok was green, because ci.yml's CL tier shards only the
 // touched packages and never puts the machine under that load.
 //
-// These three vars are the whole fix on the production side. They are the real functions,
+// These vars are the whole fix on the production side. They are the real functions,
 // byte for byte, and nothing about the run's behaviour is decided by them being variables:
 // no call site changed except the name it is reached through, and no test sets them in a
 // run that is not testing the wait itself. A test may now hand the wait an idle end
@@ -187,6 +187,16 @@ var (
 	nativeWatchIdle = swarm.WatchIdle
 	nativeReap      = swarm.Reap
 	nativeKillGroup = swarm.KillGroup
+	// nativeDeadline is the fourth event the wait can be told about (issue #2993). The
+	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
+	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
+	// and 6.13 s at 2a43d771 (3.04 s on the Studio) with the kill unchanged. The binary
+	// gets the real timer, byte for byte; a test hands the wait a deadline that fires when
+	// the tree it means to kill is actually there.
+	nativeDeadline = func(d time.Duration) (fire <-chan time.Time, stop func() bool) {
+		t := time.NewTimer(d)
+		return t.C, t.Stop
+	}
 )
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -765,7 +775,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		deadline := time.NewTimer(cfg.deadline)
+		deadlineC, stopDeadline := nativeDeadline(cfg.deadline)
 		// THE IDLE WATCH (the wall-hang lane, 2026-09-19). `batch` has watched its cards
 		// for idleness since issue #593 -- log growth AND the process tree's CPU, so a
 		// `go test` that prints nothing for minutes is not mistaken for a dead card --
@@ -779,7 +789,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}, stopWatch)
 		select {
 		case runErr := <-done:
-			deadline.Stop()
+			stopDeadline()
 			switch ee := runErr.(type) {
 			case nil:
 				res.rc = 0
@@ -788,7 +798,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			default:
 				res.rc = -1
 			}
-		case <-deadline.C:
+		case <-deadlineC:
 			nativeKillGroup(pgid, started)
 			<-done
 			res.rc = -1
@@ -804,7 +814,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// below already Reaps, and an idle end is the same kind of ending -- the
 			// machinery stopping a card that is not going to finish -- so it gets the same
 			// grace. The kill still happens; it happens second.
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
@@ -815,13 +825,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// wait. The measured harness kept running after its own
 			// timeouts, so the run reaps the card instead of waiting for it
 			// to notice, and does not launch it again.
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.lost = true
 		case <-termCh:
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
@@ -835,7 +845,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// one line above and NOT the deadline's immediate KillGroup: the terminate
 			// exists so the card has its one moment to publish, and rule 13d keeps what it
 			// published byte for byte.
-			deadline.Stop()
+			stopDeadline()
 			swarm.Reap(pgid, started, swarm.TerminateGrace)
 			<-done
 			// `rc=-1` on the line, as it is for a deadline and for a TERM; the ROW's `rc`

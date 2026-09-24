@@ -41,11 +41,16 @@ func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 		first <- outcome{code: code, err: errOut.String()}
 	}()
 
-	// A is running the moment its JOB lease is on disk. That is the readiness signal
-	// that exists on BOTH sides of this repair, so a run without the slot lease reaches
-	// the assertions below rather than waiting out the clock for a file the hole means
-	// is never written.
-	awaitLease(t, filepath.Join(slot, "jobs", "card-a", swarm.JobLeaseName))
+	// A is running the moment its HARNESS is: the fake writes its argv first thing, and
+	// the harness starts only after the run has taken both of its leases. That readiness
+	// signal exists on BOTH sides of this repair, so a run without the slot lease reaches
+	// the assertions below rather than waiting for a file the hole means is never written.
+	//
+	// IT USED TO BE A's JOB LEASE (issue #2993), and the job lease is taken BEFORE the
+	// slot lease: B could be admitted into that gap, take the slot itself, and A was the
+	// one refused -- `a second run in a live slot exits 2, got 0` and `the live run holds
+	// no slot lease`, both at once, in 0.07 s on hosted macOS at 2a43d771.
+	awaitNativeFile(t, filepath.Join(slot, "jobs", "card-a", "argv"))
 	slotLease := filepath.Join(slot, swarm.SlotLeaseName)
 
 	// B: the same slot, a DIFFERENT label. Different job directory, same data home.
@@ -100,4 +105,60 @@ func TestASecondNativeInOneSlotUnderAnotherLabelIsRefused(t *testing.T) {
 	if codeC != 0 {
 		t.Fatalf("a freed slot did not take a new run: exit %d\n%s", codeC, errC.String())
 	}
+}
+
+// TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted is the control for the
+// test above (issue #2993): the same two runs, with the live holder's slot lease taken
+// away once it is running -- the refusal removed, from B's side. B must then be ADMITTED
+// and run its harness against A's data home, which is exactly the assertions above
+// failing. Nothing here waits on a clock; each step waits on the file that says it
+// happened.
+func TestASecondNativeInOneSlotControlWithoutTheSlotLeaseIsAdmitted(t *testing.T) {
+	bin := nativeHarness(t)
+	root, slot := aSlot(t)
+
+	first := make(chan int, 1)
+	go func() {
+		var errOut bytes.Buffer
+		_, code := nativeRun(nativeRunConfig{
+			binary: bin, model: "fake/fake-model", label: "card-a",
+			card:    []byte("FAKE-AWAIT-NOTE 120\n"),
+			slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
+		}, &errOut)
+		first <- code
+	}()
+	awaitNativeFile(t, filepath.Join(slot, "jobs", "card-a", "argv"))
+	if err := os.Remove(filepath.Join(slot, swarm.SlotLeaseName)); err != nil {
+		t.Fatalf("the running holder had no slot lease to take away: %v", err)
+	}
+
+	var errB bytes.Buffer
+	_, codeB := nativeRun(nativeRunConfig{
+		binary: bin, model: "fake/fake-model", label: "card-b",
+		card:    []byte("a second card\n"),
+		slotDir: slot, root: root, deadline: 2 * time.Minute, noWall: true,
+	}, &errB)
+	if err := os.WriteFile(filepath.Join(slot, "jobs", "card-a", "note"), []byte("go on\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	<-first
+
+	if codeB == 2 || strings.Contains(errB.String(), "NATIVE REFUSED") {
+		t.Fatalf("with the holder's slot lease gone, B was refused anyway -- the test above cannot tell the refusal from its absence:\n%s", errB.String())
+	}
+	if _, err := os.Stat(filepath.Join(slot, "jobs", "card-b", "argv")); err != nil {
+		t.Fatalf("with the holder's slot lease gone, B's harness never ran: %v\n%s", err, errB.String())
+	}
+}
+
+// awaitNativeFile waits for a file a run is expected to write. The bound is a safety net
+// for a run that never gets there; the assertion is the file.
+func awaitNativeFile(t *testing.T, path string) {
+	t.Helper()
+	for end := time.Now().Add(60 * time.Second); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		if raw, err := os.ReadFile(path); err == nil && len(raw) > 0 {
+			return
+		}
+	}
+	t.Fatalf("%s never appeared: the first run's harness never started", path)
 }
