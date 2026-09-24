@@ -214,7 +214,7 @@ var (
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
-func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code int) {
 	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
@@ -508,13 +508,33 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// "secret": "<NAME>" takes the key from the environment and writes no auth file, so
 	// this step is skipped entirely for one. When a description IS given and --auth is
 	// used, the copy is the legacy path and one NOTE line says so.
+	//
+	// AND THE COPY DIES WITH THE CARD. The child reads the copy for as long as it runs
+	// -- every launch of a retried card included -- and when the run returns by any path
+	// the copy is removed: a plaintext key file that outlives its card is the bench
+	// standard's plaintext-key drift (docs/SPEC-SECRETS.md, the dogfooding ten), left
+	// in a data home the hygiene reap may not visit for days. The secret shape still
+	// writes nothing at all.
 	if cfg.authFile != "" {
 		if reason := copyAuth(cfg.authFile, provider, dataHome); reason != "" {
 			refuseNative(errOut, reason)
 			return nativeRunResult{}, 2
 		}
+		// A copy the cleanup could not remove is not a NOTE: the card had write access to
+		// the data home and may have made it read-only to keep the key (a chmod 0555 of
+		// dataHome or dataHome/opencode). removeAuthCopy takes the write bit back before it
+		// unlinks, and any copy still on disk after that fails the run with one REFUSED
+		// line naming it, so a plaintext key never outlives its card silently.
+		defer func() {
+			if left := removeAuthCopy(dataHome, errOut); len(left) > 0 {
+				refuseNative(errOut, fmt.Sprintf("the auth copy outlived the card: %s is still on disk after the run's cleanup", oneline.Field(strings.Join(left, ","))))
+				if code == 0 {
+					code = 2
+				}
+			}
+		}()
 		if cfg.worker != nil {
-			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
+			fmt.Fprintf(errOut, "NATIVE NOTE: --auth %s copies the provider secret into the job's data home on disk, mode 0600, and the copy is removed when the run ends; the legacy shape -- a description naming \"secret\": \"<NAME>\" would keep the key in the environment and write no auth file\n",
 				oneline.Field(cfg.authFile))
 		}
 	}
@@ -2063,6 +2083,41 @@ func copyAuth(src, provider, dataHome string) string {
 		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
 	}
 	return ""
+}
+
+// removeAuthCopy deletes the carried auth copy when the run ends and returns every copy
+// still on disk afterwards (nil when none is). It is deferred the moment copyAuth
+// succeeds, so every return path after it -- done, failed, wall, idle, terminated, or a
+// refusal between the copy and the child's start -- leaves no auth.json on the bench. The
+// two paths are exactly the two copyAuth writes, named rather than walked, and a file that
+// is already gone is not an error.
+//
+// THE CARD OWNS THE DATA HOME WHILE IT RUNS, so it can take the write bit off dataHome or
+// dataHome/opencode (chmod 0555) and an unlink there fails with permission denied. The
+// cleanup therefore gives each parent directory -- only a real directory, never through a
+// symlink the card planted -- its owner rwx back before the unlink. A copy that is still
+// there afterwards is returned: the caller fails the run on it, because a plaintext key
+// that outlives its card is the drift this cleanup exists to stop.
+func removeAuthCopy(dataHome string, errOut io.Writer) []string {
+	var left []string
+	for _, p := range []string{
+		filepath.Join(dataHome, "auth.json"),
+		filepath.Join(dataHome, "opencode", "auth.json"),
+	} {
+		dir := filepath.Dir(p)
+		if st, err := os.Lstat(dir); err == nil && st.IsDir() && st.Mode().Perm()&0o700 != 0o700 {
+			if err := os.Chmod(dir, st.Mode().Perm()|0o700); err != nil {
+				fmt.Fprintf(errOut, "NATIVE NOTE: the directory %s holding the auth copy could not be made writable again: %s\n", oneline.Field(dir), oneline.Escape(err.Error()))
+			}
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			fmt.Fprintf(errOut, "NATIVE NOTE: the auth copy %s could not be removed at the run's end: %s\n", oneline.Field(p), oneline.Escape(err.Error()))
+		}
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			left = append(left, p)
+		}
+	}
+	return left
 }
 
 // writeJobConfig writes the ONE opencode.json the job's harness reads, beside the carried
