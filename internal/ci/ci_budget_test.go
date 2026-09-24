@@ -781,16 +781,18 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 }
 
 // lispMeasuredMaxSecs is the slowest lisp job wall clock measured on
-// 2026-09-24, set-up to Complete job: `lisp (studio)` in run 36007928793 was
-// cancelled at 158 s with the 579-case suite still running (the suite itself
-// took 62-77 s on the studio runners and 72 s on the Studio at load 69, 66 to
-// 110+ s on space, where run 36006767411's leg was cancelled mid-suite). The
-// two-minute cap cancelled the lisp job on dev tip ce8631be and on #3238/#3233.
-const lispMeasuredMaxSecs = 158
+// 2026-09-24, set-up to Complete job. The first measurement, 158 s (studio, run
+// 36007928793), set the cap at 6; both studio legs on the next two runs
+// (36011449625 on studio-nova-15, 36011918432 on studio-nova-16) were then
+// cancelled at 6:40 with the suite unfinished, because at Studio load 50-70 the
+// sweep took 42-90 s and checkout 107-157 s (14 s at 13:38Z): 265-293 s before
+// the suite starts. 430 s = 293 s to reach the suite + 110 s, the slowest suite
+// seen (space, run 36006767411) + 27 s teardown. Space legs ran 82-107 s.
+const lispMeasuredMaxSecs = 430
 
 // lispCeiling is the lisp job's cap in minutes: twice the measured max, rounded
 // up to a whole minute.
-const lispCeiling = 6
+const lispCeiling = 15
 
 // TestLispCapIsAboveTheMeasuredFloor: the lisp job's timeout-minutes must be at
 // least twice the slowest measured lisp job, so the cap is a hang detector and

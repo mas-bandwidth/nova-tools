@@ -110,6 +110,8 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 		{"missing key", []string{"--was", wasA, "--url", url}},
 		{"positional", []string{"--key", keyA, "--was", wasA, "--url", url, "extra"}},
 		{"unknown flag", []string{"--key", keyA, "--was", wasA, "--url", url, "--force"}},
+		{"whitespace was", []string{"--key", keyA, "--was", "   ", "--url", url}},
+		{"whitespace url", []string{"--key", keyA, "--was", wasA, "--url", "   "}},
 	} {
 		code, out, errOut := resolve(c.args...)
 		refused(c.name, code, out, errOut)
@@ -138,6 +140,84 @@ func TestIdemResolveLinesAndExits(t *testing.T) {
 	refused("library not loaded", code, out, errOut)
 	if got, _ := client.HGet(ctx, idem, keyB).Result(); got != wasB {
 		t.Fatalf("library not loaded changed the key: %q", got)
+	}
+}
+
+// TestIdemResolvePaddedValidInputs verifies that flags with leading/trailing
+// whitespace are trimmed and that stdout prints normalized values for
+// RESOLVED (both --url and --none) and STATE lines.
+func TestIdemResolvePaddedValidInputs(t *testing.T) {
+	addr, client := sprintRedis(t)
+	ctx := context.Background()
+	const s = "control-idem-pad01"
+	idem, unresolved := "s:"+s+":idem", "s:"+s+":unresolved"
+	keyA, keyB := "pr:ctl-org/ctl-repo:nova/"+s+"/a-a1", "pr:ctl-org/ctl-repo:nova/"+s+"/b-a1"
+	wasA, wasB := "ambiguous:harvest-a:1000", "ambiguous:harvest-b:2000"
+	idemMust(t, client.HSet(ctx, idem, keyA, wasA, keyB, wasB).Err())
+	idemMust(t, client.HSet(ctx, unresolved, "pr-ambiguous:ctl-org/ctl-repo:nova/"+s+"/a-a1", "1-0",
+		"pr-ambiguous:ctl-org/ctl-repo:nova/"+s+"/b-a1", "2-0").Err())
+	const url = "https://github.test/ctl-org/ctl-repo/pull/42"
+
+	resolve := func(args ...string) (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := run(append([]string{"idem", "resolve"}, args...), &out, &errOut)
+		return code, out.String(), errOut.String()
+	}
+
+	// 1. Padded RESOLVED with --url: normalized sprint, key, url in output.
+	code, out, errOut := resolve(
+		"--redis", "  "+addr+"  ",
+		"--sprint", "  "+s+"  ",
+		"--key", "  "+keyA+"  ",
+		"--who", "  ctl-friend  ",
+		"--was", "  "+wasA+"  ",
+		"--url", "  "+url+"  ",
+	)
+	if code != 0 || errOut != "" {
+		t.Fatalf("resolve padded --url failed: exit %d stderr %q", code, errOut)
+	}
+	wantResolved := regexp.MustCompile(`^RESOLVED sprint=` + regexp.QuoteMeta(s) +
+		` key=` + regexp.QuoteMeta(keyA) +
+		` url=` + regexp.QuoteMeta(url) +
+		` receipt=[0-9]+-[0-9]+\n$`)
+	if !wantResolved.MatchString(out) {
+		t.Fatalf("resolve padded --url stdout = %q, want matching %s", out, wantResolved)
+	}
+
+	// 2. Padded STATE (replay/stale was): normalized sprint, key in output.
+	code, out, errOut = resolve(
+		"--redis", "  "+addr+"  ",
+		"--sprint", "  "+s+"  ",
+		"--key", "  "+keyA+"  ",
+		"--who", "  ctl-friend  ",
+		"--was", "  stale-was  ",
+		"--url", "  "+url+"  ",
+	)
+	if code != 1 || errOut != "" {
+		t.Fatalf("resolve padded STATE failed: exit %d stderr %q", code, errOut)
+	}
+	wantState := "STATE sprint=" + s + " key=" + keyA + " value=" + url + "\n"
+	if out != wantState {
+		t.Fatalf("resolve padded STATE stdout = %q, want %q", out, wantState)
+	}
+
+	// 3. Padded RESOLVED with --none: normalized sprint, key in output.
+	code, out, errOut = resolve(
+		"--redis", "  "+addr+"  ",
+		"--sprint", "  "+s+"  ",
+		"--key", "  "+keyB+"  ",
+		"--who", "  ctl-friend  ",
+		"--was", "  "+wasB+"  ",
+		"--none",
+	)
+	if code != 0 || errOut != "" {
+		t.Fatalf("resolve padded --none failed: exit %d stderr %q", code, errOut)
+	}
+	wantNone := regexp.MustCompile(`^RESOLVED sprint=` + regexp.QuoteMeta(s) +
+		` key=` + regexp.QuoteMeta(keyB) +
+		` url=none receipt=[0-9]+-[0-9]+\n$`)
+	if !wantNone.MatchString(out) {
+		t.Fatalf("resolve padded --none stdout = %q, want matching %s", out, wantNone)
 	}
 }
 
