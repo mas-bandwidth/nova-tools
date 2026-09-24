@@ -1158,3 +1158,22 @@ The first is the deleted file cut: `--out` (like `--fixture` and `--refresh`)
 is an unknown flag. The second and third name the server the table is read
 from. `TestTableWritesNoFile` renders from a throwaway server twice (a second
 start) and checks the directory stays empty.
+
+## nova-test
+
+The fixture is `cmd/nova-test/testdata/runs`: five runs at varied states, one
+queued before the boundary. The clock comes from `--now` because a transcript
+must read the same twice; a stranger's first run omits it and the real clock
+answers. Plain files only: no runner, no network. `cmd/nova-test/firstrun_test.go`
+runs the `$` line and compares every line printed.
+
+### First run
+
+```text
+$ nova-test status --store cmd/nova-test/testdata/runs --since 2026-09-23T00:00:00Z --now 2026-09-23T10:30:00Z
+STATUS RUN id=done state=completed queued=2026-09-23T10:00:00Z queue=30s drain=- exec=2m0s e2e=2m30s attempts=done.a1 prior_failures=-
+STATUS RUN id=cancel state=cancelled queued=2026-09-23T10:05:00Z queue=5s drain=45s exec=1m40s e2e=1m45s attempts=cancel.a1 prior_failures=-
+STATUS RUN id=retry state=completed queued=2026-09-23T10:10:00Z queue=20s drain=- exec=4m0s e2e=4m20s attempts=retry.a1,retry.a2 prior_failures=retry.a1:lint
+STATUS RUN id=waiting state=queued queued=2026-09-23T10:20:00Z queue=10m0s+ drain=- exec=- e2e=10m0s+ attempts=- prior_failures=-
+STATUS OK store=cmd/nova-test/testdata/runs since=2026-09-23T00:00:00Z now=2026-09-23T10:30:00Z runs=4 shown=4 older=1
+```
