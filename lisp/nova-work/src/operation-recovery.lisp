@@ -39,16 +39,38 @@ accepted first. This is the set the restart reconciliation walks
 (defmethod operation-journal-ids ((journal file-journal))
   (journal-order journal))
 
+(defun cancel-record-p (record)
+  "True when RECORD is a cancellation and not an operation accept. One journal
+carries both, so the reconciliation has to tell them apart."
+  (and record (eq :cancel (getf record :record))))
+
+(defun registry-apply-cancel-record (registry record)
+  "Install the disposition a durable cancel record carries onto the operation it
+names. Answer the operation cell, or NIL when the journal holds a cancel for an
+operation it does not hold."
+  (let ((cell (assoc (getf record :operation)
+                     (operation-registry-operations registry) :test #'equal)))
+    (when cell
+      (setf (getf (cdr cell) :state) (getf record :disposition)))
+    cell))
+
 (defun reconcile-operation-registry (registry)
   "Register every operation id the durable journal holds that this process does
-not know about, as the restart does before anything is retried. Answer the ids
-recovered, oldest first; answer NIL when there was nothing to recover, so a
-second pass over an already reconciled registry recovers nothing and registers
-no duplicate (SPEC-WORK.md:2759-2760)."
-  (let ((journal (operation-registry-journal registry)))
-    (loop for id in (operation-journal-ids journal)
-          unless (assoc id (operation-registry-operations registry) :test #'equal)
-            collect (progn (recover-operation registry id) id))))
+not know about, and replay onto it every cancellation the journal holds, as the
+restart does before anything is retried. Answer the operation ids recovered,
+oldest first; answer NIL when there was nothing to recover, so a second pass
+over an already reconciled registry recovers nothing and registers no duplicate
+(SPEC-WORK.md:2759-2760, :2740-2743)."
+  (let ((journal (operation-registry-journal registry))
+        (recovered (list)))
+    (dolist (id (operation-journal-ids journal) (nreverse recovered))
+      (let ((record (accept-record-of journal id)))
+        (cond
+          ((null record))
+          ((cancel-record-p record) (registry-apply-cancel-record registry record))
+          ((assoc id (operation-registry-operations registry) :test #'equal))
+          (t (recover-operation registry id)
+             (push id recovered)))))))
 
 (defun open-durable-operation-registry (path &key (capacity 64))
   "Open the local recovery journal at PATH and answer an operation registry
@@ -70,3 +92,98 @@ cancellation: the accept records stay on disk and the next open reconciles them
     (when (typep journal 'file-journal)
       (close-file-journal journal))
     t))
+
+;;; ------------------------------------------------------------------
+;;; The cancellation: a request of its own, deduplicated on the same
+;;; durable journal (SPEC-WORK.md:2717-2720, :2740-2744)
+;;; ------------------------------------------------------------------
+;;;
+;;; "A cancellation is a request with its own acknowledgement and its own final
+;;; disposition ... deduplicated by the same predicate, and a cancel replayed
+;;; twice cancels once" (:2740-2743). The predicate is the journal's, and the
+;;; paragraph above it says what it may not be: "never by an unbounded resident
+;;; map of request ids" (:2719-2720). src/operations.lisp's pure model keeps the
+;;; cancellations in exactly such a map, which is also why a cancellation there
+;;; does not survive the process. Here the cancel rides the recovery journal
+;;; under its own request id, is durable before it is acknowledged, and is
+;;; replayed out of the journal by the restart.
+;;;
+;;; A cancel record is told from an accept record by its :record tag, so the
+;;; reconciliation can walk one journal and tell the two apart.
+
+(defun make-cancel-record (&key request operation author stamp disposition)
+  "The durable cancel record. Its :id is the cancel's own request id, because
+that is what the dedup predicate is keyed by; :operation names the operation it
+acknowledges (SPEC-WORK.md:2740-2743)."
+  (list :id request :record :cancel :operation operation
+        :author author :stamp stamp :disposition disposition))
+
+(defun registry-cancellation-of (registry request)
+  "The durable cancel record recorded under REQUEST, or NIL. The journal is the
+only place asked (SPEC-WORK.md:2719-2720)."
+  (let ((record (accept-record-of (operation-registry-journal registry) request)))
+    (when (cancel-record-p record) record)))
+
+(defun registry-operation-cancel (registry id &key request author stamp
+                                                (external-effect :none))
+  "Cancel the operation ID under the cancel's own REQUEST id.
+
+Answers (values DISPOSITION LINE CODE REPLAYED-P): a plist disposition and code
+0, or NIL, a refusal line and code 2. The record is appended to the recovery
+journal and made durable before the acknowledgement, exactly as the accept
+record is; a replay of the same request id answers the recorded disposition and
+changes nothing, and a different request id is a fresh acknowledgement of the
+operation's final disposition. A cancellation erases no accepted mutation: the
+operation's accept record stays on the journal. An uncertain external effect is
+never claimed cancelled (SPEC-WORK.md:2740-2744)."
+  ;; Every record under this id is asked, not only the cancels: a request id
+  ;; that collides with another record KIND on the same journal is a conflict,
+  ;; not a free id to write a cancel under (Stella's ruling on #1676).
+  (let ((recorded (accept-record-of (operation-registry-journal registry) request)))
+    (when recorded
+      (return-from registry-operation-cancel
+        ;; The identical-body predicate, with its compared fields named: the
+        ;; target operation and the author. A later observation timestamp is
+        ;; not a new payload, so :stamp is deliberately not compared.
+        (if (and (cancel-record-p recorded)
+                 (equal id (getf recorded :operation))
+                 (equal author (getf recorded :author)))
+            (values (list :id id :state (getf recorded :disposition) :request request)
+                    nil 0 t)
+            ;; The same request id with a different semantic payload. The
+            ;; reason is the kernel's own, byte for byte -- the spelling
+            ;; src/node-verbs.lisp:478 and src/fleet.lisp:1210 already use --
+            ;; carried inside the operation grammar's refusal line.
+            (values nil
+                    (format nil "OPERATION FAIL id=~A op=- state=-: reused with a different payload"
+                            id)
+                    2 nil)))))
+  ;; An id no journal holds has a line of its own, and nothing is written for it
+  ;; (SPEC-WORK.md:2733-2735, :5982).
+  (let ((cell (or (assoc id (operation-registry-operations registry) :test #'equal)
+                  (progn (recover-operation registry id)
+                         (assoc id (operation-registry-operations registry)
+                                :test #'equal)))))
+    (if (null cell)
+        (values nil
+                (format nil "OPERATION FAIL id=~A op=- state=-: no such operation" id)
+                2 nil)
+        (let* ((state (getf (cdr cell) :state))
+               (disposition
+                 (cond
+                   ;; An external effect that may already have happened is
+                   ;; reported uncertain, never claimed cancelled (:2743-2744).
+                   ((eq external-effect :uncertain) :uncertain)
+                   ;; Already settled: a different request id is a fresh
+                   ;; acknowledgement of the final disposition, not a second
+                   ;; cancellation.
+                   ((member state '(:cancelled :uncertain :done)) state)
+                   (t :cancelled))))
+          (durable-accept-record (operation-registry-journal registry)
+                                 (make-cancel-record :request request
+                                                     :operation id
+                                                     :author author
+                                                     :stamp stamp
+                                                     :disposition disposition))
+          (setf (getf (cdr cell) :state) disposition)
+          (values (list :id id :state disposition :request request) nil 0 nil)))))
