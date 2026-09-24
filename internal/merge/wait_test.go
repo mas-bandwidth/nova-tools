@@ -53,8 +53,8 @@ func TestWaitFailingCheckPrintsRedWithCheckName(t *testing.T) {
 	nowFn, sleepFn, _ := waitClock(start)
 	var out bytes.Buffer
 	exit := Wait(host, 7, 5*time.Minute, time.Millisecond, nowFn, sleepFn, &out)
-	if exit != 2 {
-		t.Fatalf("red wait wants exit 2, got %d in %q", exit, out.String())
+	if exit != 1 {
+		t.Fatalf("red wait wants exit 1, got %d in %q", exit, out.String())
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "MERGE WAIT RED pr=7 ") {
@@ -126,8 +126,8 @@ func TestWaitFailedCheckOnHeadSHAIsRed(t *testing.T) {
 	nowFn, sleepFn, _ := waitClock(start)
 	var out bytes.Buffer
 	exit := Wait(host, 7, 5*time.Minute, time.Millisecond, nowFn, sleepFn, &out)
-	if exit != 2 {
-		t.Fatalf("a failure on the head sha wants exit 2, got %d in %q", exit, out.String())
+	if exit != 1 {
+		t.Fatalf("a failure on the head sha wants exit 1, got %d in %q", exit, out.String())
 	}
 	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "MERGE WAIT RED pr=7 ") {
