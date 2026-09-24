@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -53,6 +54,11 @@ func GIDsKey(repo, head string) string {
 // PolicyKey is where the base policy record lives: land:<repo>:<base>:policy.
 func PolicyKey(repo, base string) string {
 	return "land:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(base) + ":policy"
+}
+
+// TipKey is where the base tip record lives: land:<repo>:<base>:tip.
+func TipKey(repo, base string) string {
+	return "land:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(base) + ":tip"
 }
 
 // Expected reads the land:<repo>:<base>:policy record from Redis and returns the expected GID for base and baseSHA.
@@ -102,8 +108,11 @@ func Read(ctx context.Context, c redis.Cmdable, repo, head, gid string) (map[str
 }
 
 // ReadHead reads all receipts for a head using ci:<repo>:<head>:gids.
-// If any receipt is Green, it returns that record. Otherwise it returns the latest or first record.
-func ReadHead(ctx context.Context, c redis.Cmdable, repo, head string) (map[string]string, error) {
+// It returns a receipt only if its GID matches Expected(base, base_sha, policy),
+// where base_sha is the current base tip from land:<repo>:<base>:tip (or the receipt's base_sha).
+// If base is provided via the optional base argument, only receipts for that base are considered.
+// Green receipts on a moved base tip or obsolete policy are rejected as stale.
+func ReadHead(ctx context.Context, c redis.Cmdable, repo, head string, base ...string) (map[string]string, error) {
 	if c == nil {
 		return map[string]string{}, nil
 	}
@@ -114,21 +123,58 @@ func ReadHead(ctx context.Context, c redis.Cmdable, repo, head string) (map[stri
 	if len(gids) == 0 {
 		return map[string]string{}, nil
 	}
-	var last map[string]string
+	reqBase := ""
+	if len(base) > 0 {
+		reqBase = strings.TrimSpace(base[0])
+	}
+	var best map[string]string
+	var bestAt int64 = -1
 	for _, gid := range gids {
 		rec, err := Read(ctx, c, repo, head, gid)
 		if err != nil {
 			return nil, err
 		}
-		if len(rec) > 0 {
-			if Green(Of(rec)) {
-				return rec, nil
+		if len(rec) == 0 {
+			continue
+		}
+		recBase := rec["base"]
+		if recBase == "" {
+			recBase = "dev"
+		}
+		if reqBase != "" && recBase != reqBase {
+			continue
+		}
+		tipSHA, err := c.HGet(ctx, TipKey(repo, recBase), "sha").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return nil, err
+		}
+		if tipSHA == "" {
+			tipSHA = rec["base_sha"]
+		}
+		if tipSHA == "" {
+			continue
+		}
+		expGID, err := Expected(ctx, c, repo, recBase, tipSHA)
+		if err != nil {
+			if errors.Is(err, ErrNoPolicy) {
+				continue
 			}
-			last = rec
+			return nil, err
+		}
+		if gid != expGID {
+			continue
+		}
+		at, _ := strconv.ParseInt(rec["at"], 10, 64)
+		if at == 0 {
+			at, _ = strconv.ParseInt(rec["end_at"], 10, 64)
+		}
+		if best == nil || at >= bestAt {
+			best = rec
+			bestAt = at
 		}
 	}
-	if last != nil {
-		return last, nil
+	if best != nil {
+		return best, nil
 	}
 	return map[string]string{}, nil
 }

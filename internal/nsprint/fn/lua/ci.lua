@@ -427,7 +427,7 @@ local function ci_end(keys, args)
       return { 'ALREADY', attempt }
     end
     local ckey = 'ci:' .. repo .. ':' .. head .. ':' .. gid
-    redis.call('HSET', ckey, 'card', S .. '/' .. label, 'attempt', tostring(attempt or '1'), 'log', log, 'tree', tree, 'wall_s', tostring(wall_s or ''), 'pr', tostring(pr or ''), 'source', 'card')
+    redis.call('HSET', ckey, 'card', S .. '/' .. label, 'attempt', tostring(attempt or '1'), 'log', log, 'tree', tree, 'wall_s', tostring(wall_s or ''), 'pr', tostring(pr or ''), 'source', 'card', 'cut_at', ci_hget(card_key, 'cut_at'), 'end_at', tostring(at))
   end
 
   local evidence = repo .. '@' .. head .. ' ' .. (final ~= '' and final or (verdict ~= '' and verdict or 'MISSING')) ..

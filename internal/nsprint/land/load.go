@@ -79,9 +79,16 @@ func LoadPR(ctx context.Context, c *redis.Client, sprint string, id ID) (*PR, er
 		}
 		baseSHA := fields["base_sha"]
 		if baseSHA == "" {
-			baseSHA, _ = c.HGet(ctx, "land:"+id.Repo+":"+base+":tip", "sha").Result()
+			var err error
+			baseSHA, err = c.HGet(ctx, "land:"+id.Repo+":"+base+":tip", "sha").Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return nil, fmt.Errorf("read land:%s:%s:tip: %w", id.Repo, base, err)
+			}
 		}
-		gid, _ := civerdict.Expected(ctx, c, id.Repo, base, baseSHA)
+		gid, err := civerdict.Expected(ctx, c, id.Repo, base, baseSHA)
+		if err != nil && !errors.Is(err, civerdict.ErrNoPolicy) {
+			return nil, fmt.Errorf("read %s: %w", civerdict.PolicyKey(id.Repo, base), err)
+		}
 		if gid != "" {
 			ciCmd = pipe.HGetAll(ctx, civerdict.Key(id.Repo, head, gid))
 		}

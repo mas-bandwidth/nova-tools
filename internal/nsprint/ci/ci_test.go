@@ -50,6 +50,7 @@ func newFixture(t *testing.T, benches ...string) *fixture {
 	f := &fixture{t: t, ctx: ctx, st: store.New(client), client: client, sprint: "control-c1c1c1c1"}
 	client.HSet(ctx, "s:"+f.sprint, "status", "open")
 	client.HSet(ctx, "land:"+repo+":dev:policy", "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+	client.HSet(ctx, "land:"+repo+":dev:tip", "sha", base)
 	for _, b := range benches {
 		client.SAdd(ctx, "benches", b)
 		client.HSet(ctx, "bench:"+b+":desired", "slots", "4", "machine", b, "paused", "0", "legs", "go")

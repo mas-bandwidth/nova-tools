@@ -103,8 +103,11 @@ func TestParityCountsEveryActionsPassedHead(t *testing.T) {
 	// The same sprint at parity: the missing head is cut and passes, and the
 	// failed head's key reads OK (what a typed APPROVE on a FLAKY record writes).
 	f.cutEnd(101, headA2, ci.OK)
-	f.client.HSet(f.ctx, civerdict.Key(repo, headB, "gidB"), "verdict", ci.OK)
-	f.client.SAdd(f.ctx, civerdict.GIDsKey(repo, headB), "gidB")
+	gidB, err := civerdict.Expected(f.ctx, f.client, repo, "dev", base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.client.HSet(f.ctx, civerdict.Key(repo, headB, gidB), "verdict", ci.OK)
 	out, code = f.parity(3)
 	if code != 0 || !strings.Contains(out, "PARITY 3/3") || strings.Contains(out, "PARITY FAIL") {
 		t.Fatalf("at parity: exit %d; want 0 and PARITY 3/3\n%s", code, out)

@@ -185,17 +185,24 @@ func TestChecksReadsTheRecordThenFallsBackToGitHub(t *testing.T) {
 // forge answers -- never ci: MISSING.
 func TestRedisCISourceReadsTheHashLandReads(t *testing.T) {
 	const repo, sha = "owner/repo", "deadbeef"
-	const gid = "1234567890abcdef"
+	const base, tip = "dev", "tip1"
+	gid := civerdict.GID("single", base, tip, "req1", "pol1", "run1")
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
 	src := &RedisCISource{Client: client}
 	key := CIKey(repo, sha, gid)
 
+	seedPolicy := func() {
+		mr.HSet(civerdict.PolicyKey(repo, base), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+		mr.HSet(civerdict.TipKey(repo, base), "sha", tip)
+	}
+
 	t.Run("hash verdict OK lands from redis", func(t *testing.T) {
 		mr.FlushAll()
+		seedPolicy()
 		mr.SAdd(civerdict.GIDsKey(repo, sha), gid)
-		mr.HSet(key, civerdict.Field, "OK")
+		mr.HSet(key, civerdict.Field, "OK", "base", base, "base_sha", tip, "gid", gid)
 		runner := &ciFakeRunner{out: ghRed}
 		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
 		if err != nil || c.Verdict() != "GREEN" || c.Source != CIFromRedis || runner.calls != 0 {
@@ -203,10 +210,25 @@ func TestRedisCISourceReadsTheHashLandReads(t *testing.T) {
 		}
 	})
 
+	t.Run("stale base tip falls back to from-github", func(t *testing.T) {
+		mr.FlushAll()
+		seedPolicy()
+		mr.SAdd(civerdict.GIDsKey(repo, sha), gid)
+		mr.HSet(key, civerdict.Field, "OK", "base", base, "base_sha", tip, "gid", gid)
+		// Move the base tip in redis
+		mr.HSet(civerdict.TipKey(repo, base), "sha", "tip2")
+		runner := &ciFakeRunner{out: ghGreen}
+		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
+		if err != nil || c.Source != CIFromGitHub || c.Verdict() != "GREEN" {
+			t.Fatalf("Checks = %s/%q, %v; want fallback to GREEN from-github on stale base tip", c.Verdict(), c.Source, err)
+		}
+	})
+
 	t.Run("hash without a verdict falls back", func(t *testing.T) {
 		mr.FlushAll()
+		seedPolicy()
 		mr.SAdd(civerdict.GIDsKey(repo, sha), gid)
-		mr.HSet(key, "bench", "studio")
+		mr.HSet(key, "bench", "studio", "base", base, "base_sha", tip, "gid", gid)
 		runner := &ciFakeRunner{out: ghGreen}
 		c, err := NewGH(repo, time.Second, runner, WithCISource(src)).Checks(sha)
 		if err != nil || c.Source != CIFromGitHub || c.Verdict() != "GREEN" {
@@ -216,6 +238,7 @@ func TestRedisCISourceReadsTheHashLandReads(t *testing.T) {
 
 	t.Run("WRONGTYPE falls back to from-github", func(t *testing.T) {
 		mr.FlushAll()
+		seedPolicy()
 		mr.SAdd(civerdict.GIDsKey(repo, sha), gid)
 		if err := mr.Set(key, "OK"); err != nil {
 			t.Fatal(err)
