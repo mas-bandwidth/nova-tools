@@ -641,6 +641,12 @@ func parseDispositionKV(s string) (map[string]string, bool) {
 // when the text has no second line; line2 is the trimmed line as written.
 func LineTwo(text string) (line2 string, present, done bool) {
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+	// A blank line under line 1 is formatting, not a missing line 2 (dev's
+	// prereview rule, 2026-09-24): line 2 is the first non-blank line after
+	// line 1, unless nothing follows the blanks.
+	for len(lines) > 2 && strings.TrimSpace(lines[1]) == "" {
+		lines = append(lines[:1], lines[2:]...)
+	}
 	if len(lines) < 2 {
 		return "", false, false
 	}

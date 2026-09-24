@@ -30,6 +30,13 @@ do
       and hv_hget(key, 'instance') == instance and hv_hget(key, 'token') == token
   end
 
+  -- The durable harvest steps (#2932 rev 2): a card on its way to harvested
+  -- moves forward only, absent -> pushed -> intent -> published -> harvested.
+  -- pushed and intent are ns_harvest_step's; published is ns_harvest_pr's
+  -- (with the verified reservation, same call); harvested is
+  -- ns_card_harvested's (with the receipt).
+  local hv_rank = { [''] = 0, pushed = 1, intent = 2, published = 3, harvested = 4 }
+
   -- ns_harvest_lease bench instance token ttl_ms
   -- TAKEN on a free lease, RENEWED for the holder, HELD|<instance> otherwise.
   redis.register_function('ns_harvest_lease', function(keys, args)
@@ -69,7 +76,8 @@ do
 
   -- ns_harvest_due S bench limit (read only)
   -- The bench's ended(DONE) cards with a commit, oldest label order, as rows
-  -- of 9: label repo base attempt pushed_sha identity results branch pr_idem.
+  -- of 10: label repo base attempt pushed_sha identity results branch pr_idem
+  -- harvest_step.
   -- A ci card (kind script) and a card with no pushed_sha have nothing to
   -- harvest; ok-to-friend classifies them (3.2). The bench's host and user
   -- from its beat come first so the worker needs no second read.
@@ -81,6 +89,15 @@ do
       if S == '' or bench == '' or not limit or limit <= 0 then
         return { 'USAGE' }
       end
+      local bstate = redis.call('HGET', 'bench:' .. bench .. ':state', 'state')
+      if not bstate or bstate == '' then
+        bstate = 'down'
+      else
+        bstate = string.lower(bstate)
+      end
+      if bstate ~= 'up' then
+        return { 'NONE', bstate }
+      end
       local beat = 'bench:' .. bench .. ':beat'
       local out = { 'OK', hv_hget(beat, 'host'), hv_hget(beat, 'user') }
       local labels = redis.call('SINTER', 's:' .. S .. ':bench:' .. bench .. ':ended', 's:' .. S .. ':idx:card:ended')
@@ -89,13 +106,17 @@ do
       for _, label in ipairs(labels) do
         local key = 's:' .. S .. ':card:' .. label
         local f = redis.call('HMGET', key, 'state', 'outcome', 'kind', 'bench', 'repo', 'base',
-          'attempt', 'pushed_sha', 'identity', 'results')
+          'attempt', 'pushed_sha', 'identity', 'results', 'harvest_step')
         local state, outcome, kind, cbench = f[1] or '', f[2] or '', f[3] or '', f[4] or ''
         local pushed = f[8] or ''
         local repo, attempt = f[5] or '', f[7] or ''
         local res_key = 's:' .. S .. ':card:' .. label .. ':result:a' .. attempt
         local valid = hv_hget(res_key, 'valid')
-        if (valid == '1' or valid == '') and state == 'ended' and outcome == 'DONE' and kind ~= 'script' and cbench == bench and pushed ~= '' then
+        -- pushed_sha '-' is a card that committed nothing (a read card, a
+        -- probe, NO-COMMIT or OVERSIZE): it never belongs to harvest; its
+        -- friend read is #3036's report rule (#2932 rev 4).
+        if (valid == '1' or valid == '') and state == 'ended' and outcome == 'DONE' and kind ~= 'script'
+          and cbench == bench and pushed ~= '' and pushed ~= '-' then
           if rows >= limit then break end
           local branch = hv_branch(S, label, attempt)
           out[#out + 1] = label
@@ -107,6 +128,7 @@ do
           out[#out + 1] = f[10] or ''
           out[#out + 1] = branch
           out[#out + 1] = hv_hget('s:' .. S .. ':idem', 'pr:' .. repo .. ':' .. branch)
+          out[#out + 1] = f[11] or ''
           rows = rows + 1
         end
       end
@@ -114,23 +136,79 @@ do
     end,
   }
 
-  -- ns_harvest_pr S bench instance token repo branch pr
-  -- Records the PR under its idempotency key once. A key that already names
-  -- another PR is returned unchanged (the caller reports CONFLICT and opens
-  -- nothing): one branch, one PR, never a second (5.4 "PR open").
-  redis.register_function('ns_harvest_pr', function(keys, args)
+  -- ns_harvest_step S bench instance token label step
+  -- The lease holder's durable step before the PR exists: pushed (once
+  -- ls-remote on the bench shows the branch tip == pushed_sha) and intent
+  -- (right before the REST create POST). Forward only: the same step again is
+  -- a no-op (OK, nothing written), a step behind the card's is BACKWARD, and
+  -- published and harvested are REFUSED here (they have their own writers).
+  redis.register_function('ns_harvest_step', function(keys, args)
     local S, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
-    local repo, branch, pr = args[5] or '', args[6] or '', args[7] or ''
-    if S == '' or repo == '' or branch == '' or not string.match(pr, '^[1-9][0-9]*$') then
-      return 'USAGE'
+    local label, step = args[5] or '', args[6] or ''
+    if S == '' or bench == '' or label == '' or step == '' then
+      return 'USAGE|'
+    end
+    if step ~= 'pushed' and step ~= 'intent' then
+      return 'REFUSED|' .. step
     end
     if not hv_lease_ok(bench, instance, token) then
-      return 'FENCED'
+      return 'FENCED|'
+    end
+    local key = 's:' .. S .. ':card:' .. label
+    local f = redis.call('HMGET', key, 'state', 'outcome', 'bench', 'harvest_step')
+    local state, outcome, cbench, cur = f[1] or '', f[2] or '', f[3] or '', f[4] or ''
+    if state == '' then return 'NOTFOUND|' end
+    if state ~= 'ended' or outcome ~= 'DONE' then return 'STATE|' .. state end
+    if cbench ~= bench then return 'CONFLICT|' .. cbench end
+    local have, want = hv_rank[cur] or 0, hv_rank[step]
+    if want < have then return 'BACKWARD|' .. cur end
+    if want == have then return 'OK|' .. cur end
+    local at = hv_now_ms()
+    if step == 'intent' then
+      redis.call('HSET', key, 'harvest_step', step, 'harvest_step_at', at, 'harvest_intent_at', at)
+    else
+      redis.call('HSET', key, 'harvest_step', step, 'harvest_step_at', at)
+    end
+    return 'OK|' .. step
+  end)
+
+  -- ns_harvest_pr S bench instance token label repo branch pr
+  -- The reservation comes after the PR (#2932 rule 1): the caller passes only
+  -- a number GitHub returned whose head.ref and head.sha a REST response
+  -- verified. HSETNX pr:<repo>:<branch>; when the key then names this PR the
+  -- card moves to published in the same call. A key that already names
+  -- another PR is returned unchanged and nothing is written (the caller
+  -- reports it and opens nothing). A card with no harvest_step (never pushed)
+  -- or one past published is refused (STEP), and a fenced caller writes
+  -- nothing.
+  redis.register_function('ns_harvest_pr', function(keys, args)
+    local S, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
+    local label, repo, branch, pr = args[5] or '', args[6] or '', args[7] or '', args[8] or ''
+    if S == '' or label == '' or repo == '' or branch == '' or not string.match(pr, '^[1-9][0-9]*$') then
+      return 'USAGE|'
+    end
+    if not hv_lease_ok(bench, instance, token) then
+      return 'FENCED|'
+    end
+    local key = 's:' .. S .. ':card:' .. label
+    local f = redis.call('HMGET', key, 'state', 'bench', 'attempt', 'repo', 'harvest_step')
+    local state, cbench, attempt, crepo, cur = f[1] or '', f[2] or '', f[3] or '', f[4] or '', f[5] or ''
+    if state == '' then return 'NOTFOUND|' end
+    if cbench ~= bench or crepo ~= repo or hv_branch(S, label, attempt) ~= branch then
+      return 'CONFLICT|'
+    end
+    if cur ~= 'pushed' and cur ~= 'intent' and cur ~= 'published' then
+      return 'STEP|' .. cur
     end
     local idem = 's:' .. S .. ':idem'
-    local key = 'pr:' .. repo .. ':' .. branch
-    redis.call('HSETNX', idem, key, pr)
-    return 'PR|' .. hv_hget(idem, key)
+    local ikey = 'pr:' .. repo .. ':' .. branch
+    redis.call('HSETNX', idem, ikey, pr)
+    local stored = hv_hget(idem, ikey)
+    if stored == pr and cur ~= 'published' then
+      local at = hv_now_ms()
+      redis.call('HSET', key, 'harvest_step', 'published', 'harvest_step_at', at)
+    end
+    return 'PR|' .. stored
   end)
 
   -- ns_card_harvested S label bench instance token pr head actor
@@ -175,7 +253,8 @@ do
       'evidence', 'pr=' .. pr .. ' head=' .. head .. ' branch=' .. branch,
       'idem', idem, 'at', at)
     redis.call('HSET', key, 'state', 'harvested', 'pr', pr, 'head', head,
-      'harvested_at', at, 'harvest_receipt', receipt)
+      'harvested_at', at, 'harvest_receipt', receipt,
+      'harvest_step', 'harvested', 'harvest_step_at', at)
     redis.call('SREM', 's:' .. S .. ':idx:card:ended', label)
     redis.call('SADD', 's:' .. S .. ':idx:card:harvested', label)
     redis.call('HSET', 's:' .. S .. ':prcard', repo .. '#' .. pr, label) -- pr-to-read skips card PRs (#3040)

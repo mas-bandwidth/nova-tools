@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -74,6 +76,11 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		}
 		for _, taskID := range ids {
 			claim, ok, err := Take(ctx, st, TakeRequest{Sprint: name, ID: taskID, As: as, Actor: actor, Idem: idem})
+			var blocked *BlockedError
+			if id == "" && errors.As(err, &blocked) {
+				// Without --id a task with unmet needs is passed over.
+				continue
+			}
 			if err != nil {
 				return claims, err
 			}
@@ -189,6 +196,12 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	switch status {
 	case "NONE", "NOTFOUND":
 		return Claim{}, false, nil
+	case TakeBlocked:
+		needs := ""
+		if len(values) > 1 {
+			needs = fmt.Sprint(values[1])
+		}
+		return Claim{}, false, &BlockedError{Sprint: req.Sprint, ID: req.ID, Needs: strings.Fields(needs)}
 	case "DOWN", "FULL":
 		return Claim{}, false, fmt.Errorf("task take %s: friend %s is %s", req.ID, req.As, status)
 	case TakeClaimed:
@@ -219,7 +232,22 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 // TakeStatus words returned by ns_task_take.
 const (
 	TakeClaimed = "CLAIMED"
+	// TakeBlocked is a task whose needs are not all closed (#2939).
+	TakeBlocked = "BLOCKED"
 )
+
+// BlockedError is a take refused because the task needs ids that are not
+// closed yet (#2939). `task take --id` prints it as BLOCKED needs <ids> and
+// exits 7; a take without --id passes over the task.
+type BlockedError struct {
+	Sprint string
+	ID     string
+	Needs  []string
+}
+
+func (e *BlockedError) Error() string {
+	return fmt.Sprintf("task take %s/%s: blocked, needs %s", e.Sprint, e.ID, strings.Join(e.Needs, " "))
+}
 
 // DoneRequest is one task done (spec 4.2). A review task's Evidence must name
 // a verdict, a score and a head equal to the task head.
@@ -236,6 +264,9 @@ type DoneRequest struct {
 	// Cost, when set, is appended to Evidence as its cost clause (#3105).
 	// A read done without one is unmetered in the fold, never $0.
 	Cost *Cost
+	// As closes without a token when As owns the claimed or working lease
+	// (#3206 PR A, the friend-queue `done --as` shape).
+	As string
 }
 
 // DoneStatus is the outcome of one done.
@@ -287,7 +318,7 @@ func Done(ctx context.Context, st *store.Store, req DoneRequest) (DoneStatus, er
 	}
 	reply, err := st.Client().FCall(ctx, FunctionDone, nil,
 		req.Sprint, req.ID, req.Token, req.Evidence, req.Verdict, req.Score,
-		req.Head, req.Actor, req.Idem).Result()
+		req.Head, req.Actor, req.Idem, req.As).Result()
 	if err != nil {
 		return "", fmt.Errorf("task done %s: %w", req.ID, err)
 	}

@@ -101,6 +101,7 @@ func TestReconcileVerbDealsOnEvent(t *testing.T) {
 	pipe.SAdd(ctx, "benches", bench)
 	pipe.HSet(ctx, "bench:"+bench+":desired", "slots", strconv.Itoa(slots))
 	pipe.HSet(ctx, "bench:"+bench+":beat", "host", bench, "at", "1")
+	pipe.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	pipe.SAdd(ctx, "sprints", S)
 	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
 	pipe.HSet(ctx, "s:"+S, "status", "open")
@@ -296,6 +297,7 @@ func TestReconcileVerbServesDealerMetrics(t *testing.T) {
 	pipe.SAdd(ctx, "benches", bench)
 	pipe.HSet(ctx, "bench:"+bench+":desired", "slots", strconv.Itoa(slots))
 	pipe.HSet(ctx, "bench:"+bench+":beat", "host", bench, "at", "1")
+	pipe.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1") // #2046: UP is the fleet record
 	pipe.SAdd(ctx, "sprints", S)
 	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: S})
 	pipe.HSet(ctx, "s:"+S, "status", "open")

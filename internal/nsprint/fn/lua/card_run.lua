@@ -6,16 +6,21 @@
 -- A record whose identity is not this attempt returns NOTHING and writes nothing.
 -- Branch names are not read here.
 
-local function reply(code, status, attempt, receipt)
-  if attempt == nil then attempt = '' end
-  if receipt == nil then receipt = '' end
-  return tostring(code) .. '|' .. tostring(status) .. '|' .. tostring(attempt) .. '|' .. tostring(receipt)
-end
-
 local function now_ms()
   local t = redis.call('TIME')
   local ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   return string.format('%.0f', ms)
+end
+
+-- now_ms stays in the shared chunk: classify, prtoread, report, review, route
+-- and route_lease read it as an upvalue. Everything else in this file is one
+-- do-block (like harvest.lua), so its locals never add to the library's
+-- 200-local main-function limit (dev crossed it at 6bf01359, #3487).
+do
+local function reply(code, status, attempt, receipt)
+  if attempt == nil then attempt = '' end
+  if receipt == nil then receipt = '' end
+  return tostring(code) .. '|' .. tostring(status) .. '|' .. tostring(attempt) .. '|' .. tostring(receipt)
 end
 
 local function hget(key, field)
@@ -96,6 +101,7 @@ end
 
 redis.register_function('ns_card_launched', function(keys, args)
   local sprint, label, token, branch, jobdir = args[1], args[2], args[3] or '', args[4] or '', args[5] or ''
+  local deadline = args[6] or ''
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
   local card_key, log_key, idem_key = keys[1], keys[2], keys[3]
   local state = hget(card_key, 'state')
@@ -116,6 +122,11 @@ redis.register_function('ns_card_launched', function(keys, args)
   end
   if state ~= 'dealt' then return reply(2, 'STATE', attempt, '') end
   local at = now_ms()
+  if deadline ~= '' then
+    local deadline_ms = tonumber(deadline)
+    if not deadline_ms or deadline_ms < 1 then return reply(2, 'STATE', attempt, '') end
+    if tonumber(at) >= deadline_ms then return reply(2, 'TIMEOUT', attempt, '') end
+  end
   local receipt = xadd(log_key, label, 'dealt', 'launched', attempt, hget(card_key, 'token_sha'), 'card-launched', 'launched', branch, idem, at)
   redis.call('HSET', card_key, 'state', 'launched', 'branch', branch, 'jobdir', jobdir, 'launched_at', at, 'launched_receipt', receipt)
   redis.call('SREM', 's:' .. sprint .. ':idx:card:dealt', label)
@@ -199,7 +210,7 @@ redis.register_function('ns_card_end', function(keys, args)
   end
 
   local id_sprint, id_label, id_base, id_bench, id_attempt = identity_parts(identity)
-  if not id_sprint or id_sprint ~= sprint or id_label ~= label or id_base ~= hget(card_key, 'base_sha') or id_bench ~= bench or id_attempt ~= attempt then
+  if not id_sprint or id_sprint ~= sprint or id_label ~= label or id_base ~= string.sub(hget(card_key, 'base_sha'), 1, 8) or id_bench ~= bench or id_attempt ~= attempt then
     return reply(4, 'CONFLICT', attempt, '')
   end
 
@@ -375,4 +386,4 @@ redis.register_function('ns_card_result', function(keys, args)
   redis.call('HSET', unpack(hset_args))
   return reply(0, 'OK', attempt, '')
 end)
-
+end

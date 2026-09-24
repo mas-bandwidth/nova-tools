@@ -83,6 +83,10 @@ const (
 	KindHarvest Kind = "harvest"
 	KindFix     Kind = "fix"
 	KindWork    Kind = "work"
+	// KindRebase and KindRecut are the rebalance kinds added by #3206 PR A
+	// (only read, fix, rebase and recut move between friends).
+	KindRebase Kind = "rebase"
+	KindRecut  Kind = "recut"
 )
 
 // Effects is a task's effect class (spec 4.2: none, idempotent, external).
@@ -114,7 +118,16 @@ type PushRequest struct {
 	Actor      string
 	Idem       string
 	Est        string
-	ErrOut     io.Writer
+	// Needs are the ids in Sprint that must be closed before this task can
+	// be claimed (#2939). Empty needs leave PayloadSHA as it was.
+	Needs []string
+	// DependsOn is the task's DEPENDS-ON list (#3206 PR A, ruling #3516):
+	// conditions joined by ';' ("none" or empty for none). While any is
+	// unmet the task is waiting and in no ready queue.
+	DependsOn string
+	// Author is the read rule's author (rebalance never moves a read to it).
+	Author string
+	ErrOut io.Writer
 	// Initiator is the seat running the verb ($NOVA_FRIEND). Only
 	// cmd/nova-sprint sets it: when set, PushChecked reads its `friends`
 	// membership in its first round trip and returns ErrNotFriend on a 0,
@@ -158,6 +171,11 @@ type PushResult struct {
 	Reason string
 	// Sprint is the sprint the push went to (the default when none was given).
 	Sprint string
+	// Waiting is the number of unmet DEPENDS-ON conditions of a CREATED task
+	// that is waiting; 0 when it is ready.
+	Waiting int
+	// OnMet is a CREATED task whose DEPENDS-ON conditions all held at push.
+	OnMet bool
 }
 
 // ExitCode maps a push outcome to its CLI exit code (spec 4.2).
@@ -186,6 +204,17 @@ func PayloadSHA(req PushRequest) string {
 		req.Head, req.Title, string(req.Effects), req.To,
 		strconv.FormatBool(req.Front), strconv.Itoa(req.Priority),
 		req.Est,
+	}
+	if len(req.Needs) > 0 {
+		parts = append(parts, "needs="+strings.Join(req.Needs, " "))
+	}
+	// #3206 PR A: appended only when set, so every payload without
+	// dependencies keeps its identity from before the field existed.
+	if d := normalizeDepends(req.DependsOn); d != "" {
+		parts = append(parts, "depends-on="+d)
+	}
+	if req.Author != "" {
+		parts = append(parts, "author="+req.Author)
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x1f")))
 	return hex.EncodeToString(sum[:])
@@ -233,7 +262,7 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 		req.Kind = KindWork
 	}
 	switch req.Kind {
-	case KindRead, KindReview, KindHarvest, KindFix, KindWork:
+	case KindRead, KindReview, KindHarvest, KindFix, KindWork, KindRebase, KindRecut:
 	default:
 		return PushResult{}, fmt.Errorf("task push: invalid kind %q", req.Kind)
 	}
@@ -277,7 +306,8 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	reply, err := st.Client().FCall(ctx, FunctionPush, nil,
 		req.Sprint, req.ID, string(req.Kind), req.Title, string(req.Effects),
 		req.Repo, strconv.Itoa(req.PR), req.Head, req.Ref, req.To, front,
-		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est).Result()
+		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est, strings.Join(req.Needs, " "),
+		normalizeDepends(req.DependsOn), req.Author).Result()
 	if err != nil {
 		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
 	}
@@ -290,7 +320,14 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 		second = fmt.Sprint(values[1])
 	}
 	switch PushStatus(status) {
-	case PushCreated, PushExists, PushClosed, PushConflict:
+	case PushCreated:
+		res := PushResult{Status: PushCreated, Sprint: req.Sprint}
+		if values, _ := reply.([]any); len(values) > 2 && second == "waiting" {
+			res.Waiting, _ = strconv.Atoi(fmt.Sprint(values[2]))
+		}
+		res.OnMet = second == "on-met"
+		return res, nil
+	case PushExists, PushClosed, PushConflict:
 		return PushResult{Status: PushStatus(status), Sprint: req.Sprint}, nil
 	case PushInvalid:
 		return PushResult{Status: PushInvalid, Reason: second, Sprint: req.Sprint}, nil
@@ -338,4 +375,20 @@ func firstString(reply any) (string, error) {
 		return "", fmt.Errorf("unexpected function status %T", values[0])
 	}
 	return status, nil
+}
+
+// normalizeDepends is the stored form of a DEPENDS-ON list: conditions
+// trimmed and joined by ';', "none" and empty as "".
+func normalizeDepends(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" || text == "none" {
+		return ""
+	}
+	var out []string
+	for _, part := range strings.FieldsFunc(text, func(r rune) bool { return r == ';' || r == ',' }) {
+		if c := strings.TrimSpace(part); c != "" {
+			out = append(out, c)
+		}
+	}
+	return strings.Join(out, ";")
 }

@@ -53,7 +53,7 @@ type Tuning struct {
 // CheckNames are the checks in print order. ci reads the rollup at the exact
 // head (nova-tools #2704). It is a known name, so checks_enabled can turn it
 // on; a default run does not.
-var CheckNames = []string{"donewhen", "selfcheck", "paths", "claims", "ci", "score"}
+var CheckNames = []string{"donewhen", "selfcheck", "paths", "claims", "ci", "base", "score"}
 
 // DefaultChecks are the checks a default run enables. ci is left out: schema
 // has no ci-ok job, and enabling ci by default bounced every schema pull
@@ -104,9 +104,12 @@ type Disposition struct {
 	RawScore float64 `json:"raw_score"`
 	Conf     float64 `json:"conf"`
 	Rubric   string  `json:"rubric"`
-	Base     string  `json:"base"`
-	Checks   string  `json:"checks"`
-	Reason   string  `json:"reason"`
+	// Prompt is the sha8 of the prompt file the score question was asked
+	// with (internal/jevcalib), so a ledger row says which prompt scored it.
+	Prompt string `json:"prompt8,omitempty"`
+	Base   string `json:"base"`
+	Checks string `json:"checks"`
+	Reason string `json:"reason"`
 	// Explain is the one line the verdict rests on.
 	Explain string `json:"explain"`
 	// Evidence is one line per check, in CheckNames order.
@@ -151,6 +154,18 @@ func ScoreFromAnswer(raw float64) int {
 		n = 10
 	}
 	return n
+}
+
+// GateCap is the read rubric's cap: an enabled gate (ci, base) that answered
+// no caps the score at 7, whatever the question answered, because a gate
+// failure is never an 8. It returns the score unchanged otherwise.
+func (t Tuning) GateCap(c Checks, score int) int {
+	for _, e := range c.named() {
+		if (e.name == "ci" || e.name == "base") && t.Enabled[e.name] && e.c.Result == No && score > 7 {
+			return 7
+		}
+	}
+	return score
 }
 
 // Decide is the verdict rule under a tuning, and the one line it rests on:

@@ -100,6 +100,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the KIND report lines of nova-pulse sprint calibration stdout"},
 	{file: "internal/sprintline/line.go", fn: "suggestOf", record: "calibration", since: "0c89f897",
 		reason: "the SUGGEST lines of nova-pulse sprint calibration stdout"},
+	{file: "internal/nsprint/task/take.go", fn: "Take", record: "task-take-status", since: "7aebc02f",
+		reason: "task take status BLOCKED, the ns task-take function's reply word, not a RESULT field"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

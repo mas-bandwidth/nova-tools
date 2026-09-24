@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -19,7 +20,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "task",
-		Summary: "push, take, beat, done, cancel, list and width tasks",
+		Summary: "push, take, beat, done, cancel, list, width, move, close, front, depends, resolve, fill, counts, owners and rebalance tasks",
 		Run:     runTask,
 	})
 }
@@ -28,6 +29,9 @@ func init() {
 func openTaskStore(ctx context.Context, addr string) (*store.Store, error) {
 	return store.Open(ctx, addr)
 }
+
+// queueSubs are the one task store's subverbs (#3206 PR A, task_queue.go).
+const queueSubs = "move, close, front, depends, resolve, fill, counts, owners or rebalance"
 
 // seatEnv names the seat's friend (#2929): the initiator of every task push and
 // take. bin/friend-harness exports it; a shell outside a harness has none and
@@ -61,7 +65,7 @@ func refuseSeat(errOut io.Writer, verb, initiator string, err error) int {
 
 func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "task", "want push, take, beat, done, cancel, list or width")
+		return refuse(errOut, "task", "want push, take, beat, done, cancel, list, width, "+queueSubs)
 	}
 	switch args[0] {
 	case "push":
@@ -78,8 +82,11 @@ func runTask(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runTaskList(ctx, args[1:], out, errOut)
 	case "width":
 		return runTaskWidth(ctx, args[1:], out, errOut)
+	case "move", "close", "front", "depends", "resolve", "fill", "counts", "owners", "rebalance":
+		// #3206 PR A: the one task store's subverbs (task_queue.go).
+		return runTaskQueueSub(ctx, args[0], args[1:], out, errOut)
 	default:
-		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list or width", args[0]))
+		return refuse(errOut, "task", fmt.Sprintf("unknown subverb %s; want push, take, beat, done, cancel, list, width, %s", args[0], queueSubs))
 	}
 }
 
@@ -110,8 +117,18 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 	payloadSHA := fs.String("payload-sha", "", "")
 	idem := fs.String("idem", "", "")
 	est := fs.String("est", "", "")
+	// #3206 PR A: DEPENDS-ON (--on is friend-queue's spelling), the read
+	// rule's author, and push --move (re-own an existing task).
+	dependsOn := fs.String("depends-on", "", "")
+	fs.StringVar(dependsOn, "on", "", "")
+	author := fs.String("author", "", "")
+	move := fs.Bool("move", false, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task push", err.Error())
+	}
+	if *move {
+		moveArgs := []string{"--id", *id, "--to", *to, "--sprint", *sprint, "--redis", *redisAddr, "--idem", *idem}
+		return runTaskQueueSub(ctx, "move", moveArgs, out, errOut)
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task push", "takes flags, not positional arguments")
@@ -135,6 +152,7 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 		Ref: *ref, To: *to, Front: *front, Priority: *priority,
 		PayloadSHA: *payloadSHA, Actor: initiator, Idem: *idem,
 		Est: *est, ErrOut: errOut, Initiator: initiator,
+		DependsOn: *dependsOn, Author: *author,
 	})
 	if err != nil {
 		return refuseSeat(errOut, "task push", initiator, err)
@@ -159,7 +177,14 @@ func runTaskPush(ctx context.Context, args []string, out, errOut io.Writer) int 
 			return res.Status.ExitCode()
 		}
 	}
-	fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, *id)
+	switch {
+	case res.Status == task.PushCreated && res.Waiting > 0:
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s waiting=%d\n", res.Status, *id, res.Waiting)
+	case res.Status == task.PushCreated && res.OnMet:
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s on-met\n", res.Status, *id)
+	default:
+		_, _ = fmt.Fprintf(out, "PUSH %s id=%s\n", res.Status, *id)
+	}
 	return res.Status.ExitCode()
 }
 
@@ -198,6 +223,12 @@ func runTaskTake(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return 6
 	}
 	claims, err := task.TakeAvailable(ctx, st, *as, *sprint, *id, *n, initiator, *idem)
+	var blocked *task.BlockedError
+	if errors.As(err, &blocked) {
+		// #2939: exit 7, new because 3-6 are taken.
+		_, _ = fmt.Fprintf(out, "BLOCKED needs %s\n", strings.Join(blocked.Needs, " "))
+		return 7
+	}
 	if err != nil {
 		return refuseSeat(errOut, "task take", initiator, err)
 	}
@@ -226,6 +257,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	head := fs.String("head", "", "")
 	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")
+	as := fs.String("as", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
@@ -243,7 +275,7 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	status, err := task.Done(ctx, st, task.DoneRequest{
 		Sprint: *sprint, ID: *id, Token: *token, Evidence: *evidence,
-		Verdict: *verdict, Score: scoreText, Head: *head, Actor: *actor, Idem: *idem,
+		Verdict: *verdict, Score: scoreText, Head: *head, Actor: *actor, Idem: *idem, As: *as,
 	})
 	if err != nil {
 		return refuse(errOut, "task done", err.Error())

@@ -106,6 +106,11 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 		if err := client.HSet(ctx, "bench:"+bench+":beat", "host", "localhost", "user", "glenn").Err(); err != nil {
 			t.Fatalf("set beat: %v", err)
 		}
+		// ns_harvest_due offers cards only on an UP bench (#3487, #2046: UP is
+		// the fleet record).
+		if err := client.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1").Err(); err != nil {
+			t.Fatalf("set bench state: %v", err)
+		}
 
 		tmpDir := t.TempDir()
 		validResDir := filepath.Join(tmpDir, "valid-res")
@@ -687,6 +692,10 @@ func TestWrapperRecordFailureIsNotHarvestDue(t *testing.T) {
 	st, client := resultRedis(t)
 	ctx := context.Background()
 	const sprint, bench = "s-wrap", "wrap-bench"
+	// ns_harvest_due offers cards only on an UP bench (#3487, #2046).
+	if err := client.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1").Err(); err != nil {
+		t.Fatalf("set bench state: %v", err)
+	}
 
 	root := t.TempDir()
 	harness := filepath.Join(root, "harness.sh")
