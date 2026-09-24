@@ -18,25 +18,36 @@ import (
 
 // TakeAvailable claims assigned work in sprint order, with front items first
 // within each sprint. A zero limit means all currently free friend slots.
-// Every individual claim still happens in the guarded Redis Function.
+// Every individual claim still happens in the guarded Redis Function. actor is
+// recorded on each take receipt as given (the CLI passes the initiator); as is
+// the receipt's `for`. The first round trip is one pipeline of the desired
+// slots, starting, living, sprint:order and `friends` membership of as; a
+// non-member returns ErrNotFriend before any claim (#2929 rev 6).
 func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, limit int, actor, idem string) ([]Claim, error) {
 	if st == nil || as == "" || limit < 0 {
 		return nil, fmt.Errorf("task take: store, as and nonnegative n are required")
 	}
 	client := st.Client()
-	desired, err := client.HGet(ctx, "friend:"+as+":desired", "slots").Int()
+	pipe := client.Pipeline()
+	member := pipe.SIsMember(ctx, "friends", as)
+	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
+	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
+	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
+	var orderCmd *redis.StringSliceCmd
+	if sprint == "" {
+		orderCmd = pipe.ZRange(ctx, "sprint:order", 0, -1)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+		return nil, fmt.Errorf("task take: read friend %s: %w", as, err)
+	}
+	if !member.Val() {
+		return nil, ErrNotFriend
+	}
+	desired, err := desiredCmd.Int()
 	if err != nil {
 		return nil, fmt.Errorf("task take: friend %s has no desired slots: %w", as, err)
 	}
-	starting, err := client.ZCard(ctx, "friend:"+as+":starting").Result()
-	if err != nil {
-		return nil, err
-	}
-	living, err := client.ZCard(ctx, "friend:"+as+":living").Result()
-	if err != nil {
-		return nil, err
-	}
-	free := desired - int(starting+living)
+	free := desired - int(startingCmd.Val()+livingCmd.Val())
 	if free <= 0 {
 		return []Claim{}, nil
 	}
@@ -44,11 +55,8 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		limit = free
 	}
 	sprints := []string{sprint}
-	if sprint == "" {
-		sprints, err = client.ZRange(ctx, "sprint:order", 0, -1).Result()
-		if err != nil {
-			return nil, fmt.Errorf("task take: sprint order: %w", err)
-		}
+	if orderCmd != nil {
+		sprints = orderCmd.Val()
 	}
 	claims := make([]Claim, 0, limit)
 	for _, name := range sprints {
@@ -104,6 +112,31 @@ type Claim struct {
 	ID      string
 	Attempt int
 	Token   string
+	// Kind, Ref and Title come from the claim reply itself, so the CLI's
+	// TASK line costs no extra round trip (#2929).
+	Kind  string
+	Ref   string
+	Title string
+}
+
+// DenyTake records a take the CLI refused because --as is not the initiator
+// (#2929 rev 6): one pipeline reads the initiator's `friends` membership (and
+// the default sprint when sprint is empty), then ns_task_take_denied writes
+// exactly one receipt `kind=task take denied actor=<initiator> for=<as>
+// reason=as-not-initiator`. The task is untouched. A non-member initiator
+// returns ErrNotFriend with no receipt. It returns the sprint it wrote to.
+func DenyTake(ctx context.Context, st *store.Store, initiator, as, sprint, id, idem string) (string, error) {
+	if st == nil || initiator == "" || as == "" {
+		return "", fmt.Errorf("task take denied: store, initiator and as are required")
+	}
+	sprint, err := seatRead(ctx, st.Client(), initiator, sprint)
+	if err != nil {
+		return "", err
+	}
+	if _, err := st.Client().FCall(ctx, FunctionTakeDenied, nil, sprint, id, initiator, as, idem).Result(); err != nil {
+		return "", fmt.Errorf("task take denied %s: %w", id, err)
+	}
+	return sprint, nil
 }
 
 // RandomToken returns the 128 random bits of a fence token as 32 lowercase
@@ -184,12 +217,16 @@ func Take(ctx context.Context, st *store.Store, req TakeRequest) (Claim, bool, e
 	if err != nil {
 		return Claim{}, false, fmt.Errorf("task take %s: attempt %v: %w", req.ID, values[3], err)
 	}
-	return Claim{
+	claim := Claim{
 		Sprint:  fmt.Sprint(values[1]),
 		ID:      fmt.Sprint(values[2]),
 		Attempt: attempt,
 		Token:   fmt.Sprint(values[4]),
-	}, true, nil
+	}
+	if len(values) >= 8 {
+		claim.Kind, claim.Ref, claim.Title = fmt.Sprint(values[5]), fmt.Sprint(values[6]), fmt.Sprint(values[7])
+	}
+	return claim, true, nil
 }
 
 // TakeStatus words returned by ns_task_take.

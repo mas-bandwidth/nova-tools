@@ -9,11 +9,14 @@ local function now_ms()
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
 
-local function receipt(S, kind, id, from_state, to_state, attempt, token_sha, actor, reason, evidence, idem, at)
+-- for_friend is the effective friend of the transition (#2929): --to on a
+-- push, --as on a take and a denied take. actor is recorded as given and never
+-- judged here; the CLI verbs own the initiator rule.
+local function receipt(S, kind, id, from_state, to_state, attempt, token_sha, actor, for_friend, reason, evidence, idem, at)
   redis.call('XADD', 's:' .. S .. ':log', '*',
     'kind', kind, 'id', id, 'from', from_state, 'to', to_state,
     'attempt', tostring(attempt or 0), 'token_sha', token_sha or '',
-    'actor', actor or '', 'reason', reason or '', 'evidence', evidence or '',
+    'actor', actor or '', 'for', for_friend or '', 'reason', reason or '', 'evidence', evidence or '',
     'idem', idem or '', 'at', tostring(at))
 end
 
@@ -37,6 +40,16 @@ local function task_push(keys, args)
   -- this task can be claimed; written only when non-empty.
   local needs = args[17] or ''
   local key = 's:' .. S .. ':task:' .. id
+
+  -- #2929 rev 5: a down friend gets nothing. The marker is read first, before
+  -- any other read, so a re-push of an existing id is refused too; it is only
+  -- read, never written. The ready pool and harvest targets are not checked.
+  if to ~= '' and string.sub(to, 1, 8) ~= 'harvest:' then
+    local down = redis.call('GET', 'friend:' .. to .. ':down')
+    if down then
+      return { 'DOWN', down }
+    end
+  end
 
   if est ~= '' then
     if not string.match(est, '^[1-9]%d*$') or #est > 5 or tonumber(est) > 10080 then
@@ -70,7 +83,7 @@ local function task_push(keys, args)
       registered = redis.call('SISMEMBER', 'friends', to)
     end
     if registered == 0 then
-      return { 'INVALID' }
+      return { 'INVALID', 'unknown friend' }
     end
   end
 
@@ -85,7 +98,7 @@ local function task_push(keys, args)
     'state', 'open', 'attempt', '0', 'token', '0', 'payload_sha', payload_sha,
     'reason', '', 'evidence', '', 'claimed_at', '', 'started_at', '',
     'beat_at', '', 'closed_at', '', 'verdict', '', 'score', '',
-    'est', est, 'pushed_at', tostring(at))
+    'est', est, 'pushed_at', tostring(at), 'pushed_by', actor or '')
   if needs ~= '' then
     redis.call('HSET', key, 'needs', needs)
   end
@@ -99,7 +112,7 @@ local function task_push(keys, args)
     redis.call('ZADD', 's:' .. S .. ':ready', score, id)
   end
   redis.call('SADD', 's:' .. S .. ':idx:task:open', id)
-  receipt(S, 'task push', id, '', 'open', 0, '', actor, '', '', idem, at)
+  receipt(S, 'task push', id, '', 'open', 0, '', actor, to, '', '', idem, at)
   return { 'CREATED' }
 end
 
@@ -179,8 +192,10 @@ local function task_take(keys, args)
   redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
   redis.call('SADD', 's:' .. S .. ':idx:task:claimed', id)
   redis.call('ZADD', 'friend:' .. friend .. ':starting', at, S .. '/' .. id .. '/' .. attempt)
-  receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, '', '', idem, at)
-  return { 'CLAIMED', S, id, tostring(attempt), token }
+  receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, friend, '', '', idem, at)
+  return { 'CLAIMED', S, id, tostring(attempt), token,
+    redis.call('HGET', key, 'kind') or '', redis.call('HGET', key, 'ref') or '',
+    redis.call('HGET', key, 'title') or '' }
 end
 
 -- task_done: claimed/working -> closed (spec 3.1 row 7, 4.2). The token must
@@ -240,10 +255,20 @@ local function task_done(keys, args)
     redis.call('HSET', 's:' .. S .. ':disp:' .. repo .. ':' .. pr,
       friend .. '@' .. head, verdict .. ' ' .. score .. ' ' .. evidence)
   end
-  receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', evidence, idem, at)
+  receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', '', evidence, idem, at)
   return { 'DONE' }
+end
+
+-- task_take_denied: the receipt of a take refused by the CLI because --as is
+-- not the initiator (#2929 rev 6). It writes exactly one receipt and touches
+-- no other key; the task is unchanged. The library's Take never calls it.
+local function task_take_denied(keys, args)
+  local S, id, actor, for_friend, idem = args[1], args[2], args[3], args[4], args[5]
+  receipt(S, 'task take denied', id, '', '', 0, '', actor, for_friend, 'as-not-initiator', '', idem, now_ms())
+  return { 'DENIED' }
 end
 
 redis.register_function('ns_task_push', task_push)
 redis.register_function('ns_task_take', task_take)
 redis.register_function('ns_task_done', task_done)
+redis.register_function('ns_task_take_denied', task_take_denied)

@@ -39,6 +39,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	addr, client := sprintRedis(t)
 	ctx := context.Background()
 	const s = "control-2939"
+	t.Setenv("NOVA_FRIEND", "ctl-open") // #2929: push and take run from a seat
 	client.SAdd(ctx, "friends", "ctl-open")
 	client.HSet(ctx, "friend:ctl-open:desired", "slots", 2, "paused", "0")
 	client.HSet(ctx, "friend:ctl-open:beat", "host", "fixture")
@@ -104,11 +105,15 @@ const (
 )
 
 // openFixture is the loopback redis with friend f (stella) registered in
-// friends with a beat and two slots, and the gate seam GREEN.
+// friends with a beat and two slots, seated as NOVA_FRIEND, and the gate
+// seam GREEN.
 func openFixture(t *testing.T) (string, *redis.Client) {
 	t.Helper()
 	addr, c := sprintRedis(t)
 	registerFriend(t, c, fxFriend, 2)
+	// #2929 rev 6: task push and take run from the seat, and take --as must
+	// equal it, so the fixture's seat is the friend the units name.
+	t.Setenv("NOVA_FRIEND", fxFriend)
 	setGate(t, nil)
 	return addr, c
 }
@@ -424,7 +429,9 @@ func TestControl22(t *testing.T) {
 	}
 
 	code, out, errOut := runSprint("task", "take", "--redis", addr, "--sprint", s, "--as", fxFriend)
-	if code != 0 || strings.Count(out, "\n") != 1 || !strings.HasPrefix(out, "CLAIMED "+s+"/a attempt=1 ") {
+	// #2929 rev 6: a claim prints its CLAIMED line and one TASK line.
+	if code != 0 || strings.Count(out, "\n") != 2 || !strings.HasPrefix(out, "CLAIMED "+s+"/a attempt=1 ") ||
+		!strings.Contains(out, "\nTASK a ") {
 		t.Fatalf("take: code=%d out=%q stderr=%q; want a claimed and b passed over", code, out, errOut)
 	}
 	var token string
