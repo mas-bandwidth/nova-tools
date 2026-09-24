@@ -107,13 +107,20 @@ func luaRefusals(src string) []string {
 		if e == "refusal" {
 			continue
 		}
+		// A multi-value return ({ 'REFUSED', 'inflight', tostring(inf) }, ns_writer) is one
+		// reason: its values joined by a space (no REFUSED literal carries a comma).
 		var b strings.Builder
-		for _, part := range strings.Split(e, "..") {
-			part = strings.TrimSpace(part)
-			if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") && len(part) >= 2 {
-				b.WriteString(part[1 : len(part)-1])
-			} else {
-				b.WriteString("x1")
+		for i, elem := range strings.Split(e, ",") {
+			if i > 0 {
+				b.WriteString(" ")
+			}
+			for _, part := range strings.Split(elem, "..") {
+				part = strings.TrimSpace(part)
+				if strings.HasPrefix(part, "'") && strings.HasSuffix(part, "'") && len(part) >= 2 {
+					b.WriteString(part[1 : len(part)-1])
+				} else {
+					b.WriteString("x1")
+				}
 			}
 		}
 		out = append(out, b.String())

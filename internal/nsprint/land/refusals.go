@@ -46,6 +46,14 @@ var refusalTable = []Refusal{
 	// ns_unit_eval
 	row("unit-landed", `landed`, "nova-sprint why <unit>", "landed"),
 	row("unit-dropped-at-head", `dropped at head`, "nova-sprint why <unit>", "dropped at head"),
+	// ns_release: who may release a hold (#3139 3.4, 3.5, B2)
+	row("release-superseded", `superseded only by the holder`, "nova-sprint why <unit>", "superseded only by the holder"),
+	row("release-repair-scoped", `repair-scoped needs done_when`, "nova-sprint why <unit>", "repair-scoped needs done_when"),
+	row("release-holder-up", `holder not down`, "nova-sprint why <unit>", "holder not down"),
+	row("release-not-may-hold", `releaser not may-hold`, remedyStatus, "releaser not may-hold"),
+	// ns_writer cutover and rollback (§10.2, B0); land writer prints inflight count=N and pub=B
+	row("writer-inflight", `inflight(?: count=| )(\S+)`, remedyStatus, "inflight 3"),
+	row("writer-pub", `pub[= ](\S+)`, remedyStatus, "pub b9"),
 	// ns_batch_plan shape (§4, L3, L24, L27)
 	row("chain-max", `chain_max`, remedyStatus, "chain_max"),
 	row("parent-not-in-chain", `parent=(\S+) not in chain`, remedyStatus, "parent=b7 not in chain"),
