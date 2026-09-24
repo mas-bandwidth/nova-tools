@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/redis/go-redis/v9"
 )
 
 // `land` IS THE ONE CALLER OF THE ONE DOOR (Glenn, 2026-09-18: nothing reaches the dev
@@ -322,3 +325,80 @@ func TestLandReadsCIRecordThenFallsBackToGitHub(t *testing.T) {
 		})
 	}
 }
+
+// TestL30 is the Section 10.2 / 11 control: after cutover the old loop's
+// nova-merge land is refused with dev unchanged; after rollback the new
+// publisher's intent is refused (two writers on one base).
+func TestL30(t *testing.T) {
+	addr := testutil.Start(t)
+	ctx := context.Background()
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatalf("load nova_sprint functions: %v", err)
+	}
+
+	repo := "mas-bandwidth/nova-tools"
+	head := strings.Repeat("e", 40)
+	base := strings.Repeat("d", 40)
+	receipt := "BATCH OK name=integration-6 base=" + base + " head=" + head + " members=1341 dropped=none"
+
+	fake := greenBatchPR(t, 1341, head)
+	q := &fakeLandEnqueue{}
+
+	// 1. Before cutover (no writer key or owner=old-loop): land succeeds and enqueues.
+	exit, out, errb := runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 0 {
+		t.Fatalf("land before cutover: exit=%d out=%q err=%q", exit, out, errb)
+	}
+	if len(q.enqueued) != 1 {
+		t.Fatalf("expected 1 enqueued before cutover, got %d", len(q.enqueued))
+	}
+
+	// 2. Cutover to nova-sprint: calls ns_writer
+	keys := []string{"land:" + repo + ":dev:writer", "land:" + repo + ":events"}
+	res, err := client.FCall(ctx, "ns_writer", keys, "nova-sprint", "stella").Slice()
+	if err != nil {
+		t.Fatalf("ns_writer cutover: %v", err)
+	}
+	if len(res) < 3 || res[0] != "OK" || res[1] != "1" || res[2] != "nova-sprint" {
+		t.Fatalf("unexpected cutover reply: %v", res)
+	}
+
+	// 3. After cutover: nova-merge land is REFUSED with exit 1 and dev unchanged.
+	exit, out, errb = runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 1 {
+		t.Fatalf("land after cutover: exit=%d (want 1) out=%q err=%q", exit, out, errb)
+	}
+	wantRefusal := "LAND REFUSED writer gen=1 owner=nova-sprint\n"
+	if errb != wantRefusal {
+		t.Fatalf("stderr got %q, want %q", errb, wantRefusal)
+	}
+	// dev unchanged: queue still has only the 1 pre-cutover enqueue
+	if len(q.enqueued) != 1 {
+		t.Fatalf("dev changed after cutover refusal: enqueued count=%d (want 1)", len(q.enqueued))
+	}
+
+	// 4. Rollback to old-loop: calls ns_writer
+	res, err = client.FCall(ctx, "ns_writer", keys, "old-loop", "emma").Slice()
+	if err != nil {
+		t.Fatalf("ns_writer rollback: %v", err)
+	}
+	if len(res) < 3 || res[0] != "OK" || res[1] != "2" || res[2] != "old-loop" {
+		t.Fatalf("unexpected rollback reply: %v", res)
+	}
+
+	// 5. After rollback: nova-merge land succeeds again.
+	exit, out, errb = runLand(t, fake, q, "land", "--repo", repo, "--pr", "1341", "--receipt", receipt,
+		"--redis", addr)
+	if exit != 0 {
+		t.Fatalf("land after rollback: exit=%d out=%q err=%q", exit, out, errb)
+	}
+	if len(q.enqueued) != 2 {
+		t.Fatalf("expected 2 enqueued after rollback, got %d", len(q.enqueued))
+	}
+}
+

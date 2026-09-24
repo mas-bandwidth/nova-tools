@@ -97,8 +97,11 @@ func runWhy(ctx context.Context, args []string, out, errOut io.Writer) int {
 }
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) > 0 && args[0] == "writer" {
+		return runLandWriter(ctx, args[1:], out, errOut)
+	}
 	if len(args) == 0 || args[0] != "status" {
-		return refuse(errOut, "land", "want status (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or writer (sprint land is the lander's verb, #2942)")
 	}
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])
 	if err != nil {

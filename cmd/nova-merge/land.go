@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/redis/go-redis/v9"
 )
 
 // THE ONE CALLER OF THE ONE DOOR.
@@ -52,6 +53,7 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	noRequireHolds := f.fs.Bool("no-require-holds", false, "")
 	reason := f.fs.String("reason", "", "")
 	untypedComments := f.fs.String("untyped-comments", "", "")
+	redisAddr := f.fs.String("redis", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -114,6 +116,7 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 		noRequireHolds:  *noRequireHolds,
 		reason:          strings.TrimSpace(*reason),
 		untypedComments: strings.TrimSpace(*untypedComments),
+		redis:           strings.TrimSpace(*redisAddr),
 	}, stdout, stderr, deps)
 }
 
@@ -129,6 +132,7 @@ type landRun struct {
 	noRequireHolds  bool
 	reason          string
 	untypedComments string
+	redis           string
 }
 
 func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
@@ -142,6 +146,29 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	}
 	if strings.EqualFold(strings.TrimSpace(data.Mergeable), "CONFLICTING") {
 		return landRefused(stderr, fmt.Sprintf("pull request %d conflicts with its base; build the batch again on the base as it stands: nova-merge batch --name <name> --pr <list>", in.pr))
+	}
+
+	base := data.Base
+	if base == "" {
+		base = "dev"
+	}
+	if in.redis != "" {
+		silenceRedis()
+		if rdb := dialLandRedis(in.redis, deps); rdb != nil {
+			defer rdb.Close()
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			writerKey := "land:" + in.repo + ":" + base + ":writer"
+			vals, err := rdb.HGetAll(ctx, writerKey).Result()
+			if err == nil && len(vals) > 0 {
+				owner := vals["owner"]
+				gen := vals["gen"]
+				if owner != "" && owner != "old-loop" {
+					fmt.Fprintf(stderr, "LAND REFUSED writer gen=%s owner=%s\n", oneline.Field(gen), oneline.Field(owner))
+					return 1
+				}
+			}
+		}
 	}
 	// THE PULL REQUEST'S OWN CHECKS, read on its head. A batch that went green on a bench
 	// and red on the forge is a batch that does not land -- and a pull request with no
@@ -347,4 +374,16 @@ func receiptMembers(receipt string) string {
 		return "-"
 	}
 	return rec.Members
+}
+
+func dialLandRedis(addr string, deps Deps) *redis.Client {
+	if addr == "" {
+		return nil
+	}
+	if deps.Dial != nil {
+		return deps.Dial(addr)
+	}
+	return redis.NewClient(&redis.Options{
+		Addr: addr,
+	})
 }
