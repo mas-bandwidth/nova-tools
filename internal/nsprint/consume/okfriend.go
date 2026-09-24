@@ -56,8 +56,11 @@ type OkFriend struct {
 	Sprint   string
 	Consumer string // this process instance's consumer name
 	Actor    string
-	Count    int64         // events per read; 0 means 100
-	Block    time.Duration // block of the first new-event read; 0 means 1 s
+	Count    int64 // events per read; 0 means 100
+	// Block is the block of the first new-event read; 0 means 1 s and a
+	// negative Block never blocks (a reconcile duty passes inside its 1 s
+	// tick, #3323).
+	Block time.Duration
 	// RetryWait is Run's pause after a pass that left an event pending on a
 	// retryable error (ErrNoReaders, ErrReviewBlocked); it doubles on each
 	// consecutive retryable pass up to RetryMax and resets on a clean pass.
@@ -214,7 +217,7 @@ func (o *OkFriend) pass(ctx context.Context) (int, error) {
 		count = 100
 	}
 	block := o.Block
-	if block <= 0 {
+	if block == 0 {
 		block = time.Second
 	}
 	handled := 0
@@ -366,7 +369,8 @@ func isCICard(label string, card map[string]string) bool {
 }
 
 // onEnded: ended DONE creates the harvest task; a ci card, a card that did
-// not end DONE, or a stale attempt is acked with no transition.
+// not end DONE, a card that committed nothing (report-to-read's), or a stale
+// attempt is acked with no transition.
 func (o *OkFriend) onEnded(ctx context.Context, e *okEvent) error {
 	c := e.card
 	switch {
@@ -378,6 +382,10 @@ func (o *OkFriend) onEnded(ctx context.Context, e *okEvent) error {
 		return o.skip(ctx, e, "not-done", "")
 	case isCICard(e.label, c):
 		return o.skip(ctx, e, "ci-card", "")
+	case NoCommit(c):
+		// Nothing to harvest: the report-to-read rule (report.go) gives it
+		// its one report read (#3036).
+		return o.skip(ctx, e, "no-commit", "")
 	}
 	priority, _ := strconv.Atoi(c["priority"])
 	req := task.PushRequest{

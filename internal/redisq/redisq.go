@@ -325,6 +325,122 @@ func (q *Queue) LeaseCount(ctx context.Context) (int, error) {
 	}
 }
 
+// --------------------------------------------------------------------- fence
+
+// The targets of the guarded writes the fence gates, beside the lease keys: the
+// channel a landed RESULT.md is published to, and the stream a gathered result
+// is pushed to. Both are named by SPEC-STATE (Events, and "The record: card
+// results"), not invented here.
+const (
+	// EventsJobChannel is the doorbell that says a RESULT.md landed: pub/sub is
+	// a doorbell, never the record.
+	EventsJobChannel = "nova:events:job"
+	// DoneStream is the stream the harvest push appends the card's timeline row
+	// to, the one nova-work record reads.
+	DoneStream = "cards:done"
+)
+
+// fencedScript is the fence itself: the one token-compare every guarded write
+// reads first (SPEC-STATE, "Every write a lease guards is fenced"). It answers
+// whether the write is still this holder's to make; the guarded writes whose
+// target is a file or Postgres -- the clip, whose target is the journal, and
+// the timeline row -- gate on it and are idempotent, so a fence that passed is
+// safe to repeat. A bare EXPIRE (or DEL) without this check is not allowed.
+var fencedScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+  return 1
+end
+return 0
+`)
+
+// fencedAckScript is the fence and the XACK in one atomic script: the target is
+// Redis, so the check and the write are the same script, never a check followed
+// by a separate write.
+var fencedAckScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('XACK', KEYS[2], ARGV[2], ARGV[3])
+return 1
+`)
+
+// fencedPublishScript is the fence and the RESULT publish in one atomic script.
+var fencedPublishScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('PUBLISH', ARGV[2], ARGV[3])
+return 1
+`)
+
+// fencedPushScript is the fence and the harvest push in one atomic script: the
+// card's timeline row is appended to the done stream only behind the token.
+var fencedPushScript = redis.NewScript(`
+if redis.call('GET', KEYS[1]) ~= ARGV[1] then
+  return 0
+end
+redis.call('XADD', KEYS[2], '*', 'card', ARGV[2], 'row', ARGV[3])
+return 1
+`)
+
+// Fenced reports whether the guarded write is still this holder's to make: the
+// gate the clip reads before it accepts the node. The token is compared first
+// and a mismatch refuses the write, so a worker whose lease lapsed and was
+// retaken cannot clip; the fence covers the work, not only the slot.
+func (q *Queue) Fenced(ctx context.Context, l *Lease) (bool, error) {
+	if l == nil {
+		return false, nil
+	}
+	n, err := fencedScript.Run(ctx, q.rdb, []string{l.Key}, l.Token).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// FencedAck is the guarded XACK: the card is acknowledged on the queue stream
+// only while the caller's token still holds the lease, so a worker that lost
+// its lease to XAUTOCLAIM cannot ack the new holder's card. It reports whether
+// the ack was made.
+func (q *Queue) FencedAck(ctx context.Context, l *Lease, stream, id string) (bool, error) {
+	if l == nil {
+		return false, nil
+	}
+	n, err := fencedAckScript.Run(ctx, q.rdb, []string{l.Key, stream}, l.Token, Group, id).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// FencedPublish is the guarded RESULT publish: the payload is published to
+// channel only while the caller's token holds the lease. The publish is the
+// doorbell after the file lands; the fence keeps it the holder's to ring.
+func (q *Queue) FencedPublish(ctx context.Context, l *Lease, channel, payload string) (bool, error) {
+	if l == nil {
+		return false, nil
+	}
+	n, err := fencedPublishScript.Run(ctx, q.rdb, []string{l.Key}, l.Token, channel, payload).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// FencedPush is the guarded harvest push: the card's timeline row is appended
+// to the done stream only while the caller's token holds the lease, so a paused
+// old worker cannot push a harvest for a card it no longer holds.
+func (q *Queue) FencedPush(ctx context.Context, l *Lease, card, row string) (bool, error) {
+	if l == nil {
+		return false, nil
+	}
+	n, err := fencedPushScript.Run(ctx, q.rdb, []string{l.Key, DoneStream}, l.Token, card, row).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
 func mintToken() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -459,4 +575,86 @@ func (q *Queue) Admit(ctx context.Context, provider, model string, capN int, dea
 // next admission reaps them in the script.
 func (q *Queue) Inflight(ctx context.Context, provider, model string) (int64, error) {
 	return q.rdb.ZCard(ctx, q.CapKey(provider, model)).Result()
+}
+
+// ------------------------------------------------------- the cap reservation
+
+// capScopeKey is the sorted set of one scope of the reservation: provider,
+// model or key (SPEC-STATE, "In-flight caps -- one atomic reservation over
+// provider, model and key"). The three are their own sets, distinct from the
+// single-set admission counter CapKey keeps.
+func capScopeKey(scope, name string) string {
+	return CapPrefix + scope + ":" + name
+}
+
+// reserveScript is the spec's three-set reservation, one atomic script: each
+// scope is reaped past the bound and counted, and a full one refuses the call
+// with none of the three written -- never a ZCARD read followed by separate
+// ZADD writes, never two scopes reserved and the third refused. The score is
+// the call's hard bound, not its deadline, so a call is not reaped the moment
+// its deadline lapses.
+var reserveScript = redis.NewScript(`
+for i = 1, 3 do
+  redis.call('ZREMRANGEBYSCORE', KEYS[i], '-inf', '(' .. ARGV[6])
+  if redis.call('ZCARD', KEYS[i]) >= tonumber(ARGV[i]) then
+    return 0
+  end
+end
+for i = 1, 3 do
+  redis.call('ZADD', KEYS[i], tonumber(ARGV[4]), ARGV[5])
+end
+return 1
+`)
+
+// capReleaseScript is the mirror: the three sets are released together, so a
+// seat never lingers in one set after it left the others.
+var capReleaseScript = redis.NewScript(`
+for i = 1, 3 do
+  redis.call('ZREM', KEYS[i], ARGV[1])
+end
+return 1
+`)
+
+// Reserve asks the three scopes for one seat for callID: the provider, model
+// and key sets together, all or nothing. bound is the call's hard bound, the
+// score its seat lapses at. It returns true when the call holds all three
+// seats, and false when any scope is full, with none of the three written.
+func (q *Queue) Reserve(ctx context.Context, provider, model, key string, capProvider, capModel, capKey int, bound time.Time, callID string) (bool, error) {
+	n, err := reserveScript.Run(ctx, q.rdb,
+		[]string{capScopeKey("provider", provider), capScopeKey("model", model), capScopeKey("key", key)},
+		capProvider, capModel, capKey, bound.UnixMilli(), callID, q.now().UnixMilli()).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// Release frees the seats callID holds in the provider, model and key sets
+// together.
+func (q *Queue) Release(ctx context.Context, provider, model, key, callID string) (bool, error) {
+	n, err := capReleaseScript.Run(ctx, q.rdb,
+		[]string{capScopeKey("provider", provider), capScopeKey("model", model), capScopeKey("key", key)},
+		callID).Int64()
+	if err != nil {
+		return false, err
+	}
+	return n == 1, nil
+}
+
+// InflightProvider is the number of calls currently holding a seat in the
+// provider scope of the reservation.
+func (q *Queue) InflightProvider(ctx context.Context, provider string) (int64, error) {
+	return q.rdb.ZCard(ctx, capScopeKey("provider", provider)).Result()
+}
+
+// InflightModel is the number of calls currently holding a seat in the model
+// scope of the reservation.
+func (q *Queue) InflightModel(ctx context.Context, model string) (int64, error) {
+	return q.rdb.ZCard(ctx, capScopeKey("model", model)).Result()
+}
+
+// InflightKey is the number of calls currently holding a seat in the key scope
+// of the reservation.
+func (q *Queue) InflightKey(ctx context.Context, key string) (int64, error) {
+	return q.rdb.ZCard(ctx, capScopeKey("key", key)).Result()
 }

@@ -1201,7 +1201,11 @@ friends: johnny up 12s · stella up 4s · emma AWAY 1h12m (last 09:41Z) · fredd
 
 `up` is a beat inside the TTL, with the age of it; `AWAY` is the key lapsed,
 with the age of the last beat and its clock time, both from the untimed key;
-`none` is a friend who has never beaten. When `friend:<name>:window` or
+`none` is a friend who has never beaten. A friend is present only while
+`friend:<name>` itself is alive: a missing key is absent (`none`, or `AWAY`
+when only `friend:<name>:last` remains), and a live key is present (`up`).
+The untimed key is not presence, and this verb reads no hand-written override.
+When `friend:<name>:window` or
 `friend:<name>:width` is present, that friend's phrase also carries
 `window=<time>` and `width=<n>`; a key that is absent adds nothing. `AWAY` is the only word in capitals
 because it is the only one that changes what the reader does next. The roster is the bus's —
@@ -5073,6 +5077,17 @@ kill it. The unit plist `fleet/templates/nova-loop.plist.j2`, which
 `fleet/loops.yml` renders for every loop, sets `AbandonProcessGroup` so launchd
 itself signals only the unit's pid.
 
+`table --layout live --redis <addr> --sprint <name> --friends <a,b,...>` is
+Glenn's live sprint table, ported from rowan-tools `bin/sprint-table-redis`
+(#2674). It reads only the keys that script reads (`friend:<f>` and
+`friend:<f>:down`, `sprint:<name>:xy` and `:landed`, `ZCARD q:blocked`, and
+every `bench:*` hash found by SCAN) in one pipeline after the SCAN, and prints
+the same bytes. Like every table mode it is written nowhere (#3326): `--loop`
+prints a table once a second; a failed read keeps the last good friend rows
+and adds a `stale:` line.
+`table --compare <file>` (same flags) waits for the file's next publish,
+renders from Redis, and prints `MATCH` or a unified diff and exits 1.
+
 ### First run
 
 Run the three lines in an empty directory. They are the three file-shaped
@@ -5097,4 +5112,39 @@ What a first run gets wrong, and what each one wants:
 - **`nova-sprint table` without `--redis`.** It wants the server address. There is no default address and no default loop.
 - **`--check` without `--redis`.** It wants a throwaway server; it seeds nothing, so load the fixture keyspace first.
 
-There is **no `quickstart` verb**. A one-word first run would have to invent a server address. The three lines above are the first run, in an empty directory that stays empty.
+There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
+
+**The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
+
+### xy
+
+The one line under the sprint table, `x/y z% -> ~eta`. It does not render the table.
+
+x, y and the percent are the stdout of `nova-work set check --evaluate`: `SET OK units=<y>` and `SET DONE done=<x> percent=<p>`. The percent is printed as that tool printed it. A `:status "done"` or `:status "landed"` in the work-set is not counted; those are the hand-marked receipts the old sprint-xy bash grepped.
+
+eta is the sprint verb's wall. `nova-pulse sprint calibration` prints `SUGGEST <kind> <n>m`, the mean lease-to-done actual for that kind, and each still-open task is charged that instead of its stored estimate when the task names a kind. The wall is one lane per owner, or per the route's consumer when the owner is clear, with real dependencies waited on. It is not the sum of the work, and it is not `open * 10/3 + 12`. `nova-pulse sprint status --verbose` prints C/O/W rows (`Open` or `Working`, `owner=`, `route=`, `est=` as `~Nh` or `~Nm`, `kind=`, `depends=`), not `TASK` lines. `depends=-` is no edge. A row without `kind=` or `depends=` is a refusal: the printed estimate alone is not the calibrated wall.
+
+Run from the repo root. The three files are captured tool output and the open tasks. `--set` is a work-set whose receipts are already marked done; the line does not move.
+
+```text
+nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibration-out cmd/nova-sprint/testdata/calibration.txt --open cmd/nova-sprint/testdata/open.tsv --set cmd/nova-sprint/testdata/set.sexp
+# prints
+26/42 61% -> ~3h
+```
+
+**Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
+
+**What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
+
+### Where a card's results live
+
+`nova-sprint card end --results <dir>` writes `<dir>` once into the card hash
+`s:<S>:card:<label>` field `results` (single writer `ns_card_end`, stamped
+`ended_at` from Redis TIME). The dir is always a Unix absolute path on the
+bench: a leading `/`, not `//` (a network share), no backslash, no `..`
+segment; a drive root (`C:\x`, `C:/x`) or a scheme is refused. `card end`
+exits 1 (USAGE) on anything else before it opens Redis, `ns_card_end` applies
+the same rule (so nothing is written), and harvest refuses it before ssh. `nova-sprint card harvest` pushes from
+`<results>/repo` on the bench as read from that field; there is no
+`--results-root` (it is refused as an unknown flag that names the field),
+because no worker needs to know a bench's layout (#3329).
