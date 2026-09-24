@@ -892,6 +892,8 @@
     ;; the roadmap verbs (E04 slice 1: create / configure, src/roadmap.lisp)
     #:roadmap-configure
     #:roadmap-configure-undo
+    #:roadmap-row-undo
+    #:roadmap-projection-undo
     #:roadmap-structure-events
     #:roadmap-view-revision
     #:roadmap-view-aggregation

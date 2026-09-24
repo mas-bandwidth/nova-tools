@@ -65,7 +65,9 @@
                (:file "src/replays-notes")
                (:file "src/dedup-root")
                (:file "src/execution-reconcile")
-               (:file "src/operation-records")))
+               (:file "src/operation-records")
+               (:file "src/undo-roadmap")
+               (:file "src/undo-roadmap-rows")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -117,4 +119,6 @@
                 (:file "tests/replays-e02-wait")
                 (:file "tests/replays-journal-frame-integrity")
                 (:file "tests/replays-e02-staging")
-                (:file "tests/replays-e02-clip")))
+                (:file "tests/replays-e02-clip")
+                (:file "tests/replays-undo-roadmap")
+                (:file "tests/replays-undo-roadmap-rows")))
