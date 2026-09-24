@@ -1,710 +1,1368 @@
-package width_test
+package width
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
+	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
 	"github.com/redis/go-redis/v9"
 )
 
-// startRedis starts a throwaway redis-server, the same shape as the task
-// package's controls: skip with the reason when the binary is absent.
-func startRedis(t *testing.T) string {
-	t.Helper()
-	return testutil.Start(t)
+type cmdHook struct {
+	trips            int
+	tripsBeforeWrite int
+	unpipelinedHGet  int
+	unpipelinedZCard int
 }
 
-const sprint = "control-width"
+func (h *cmdHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 
-func controlRedis(t *testing.T) (*store.Store, *redis.Client) {
-	t.Helper()
-	addr := startRedis(t)
+func (h *cmdHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		name := strings.ToLower(cmd.Name())
+		if name == "fcall" {
+			args := cmd.Args()
+			if len(args) > 1 && fmt.Sprint(args[1]) == FunctionWrite {
+				h.tripsBeforeWrite = h.trips
+			}
+		}
+		if name == "hget" {
+			h.unpipelinedHGet++
+		}
+		if name == "zcard" {
+			h.unpipelinedZCard++
+		}
+		h.trips++
+		return next(ctx, cmd)
+	}
+}
+
+func (h *cmdHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		h.trips++
+		return next(ctx, cmds)
+	}
+}
+
+func TestWidthControls(t *testing.T) {
+	t.Run("C1", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "f1")
+		client.HSet(ctx, "friend:f1:desired", "slots", "8")
+		client.HSet(ctx, "friend:f1:beat", "at", "1")
+
+		for i := 1; i <= 20; i++ {
+			id := fmt.Sprintf("t%d", i)
+			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
+			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+		}
+
+		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
+		if err != nil {
+			t.Fatalf("task.WidthFill failed: %v", err)
+		}
+		if res.N != 8 || len(res.Tasks) != 8 {
+			t.Fatalf("res.N=%d, len(res.Tasks)=%d; want 8", res.N, len(res.Tasks))
+		}
+		if res.Deficit != 0 {
+			t.Fatalf("res.Deficit=%d; want 0", res.Deficit)
+		}
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		duty := &Duty{Store: st}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		fs, ok, err := ReadFillstate(ctx, st, "f1")
+		if err != nil || !ok {
+			t.Fatalf("read fillstate: ok=%v err=%v", ok, err)
+		}
+		if fs.Working != 0 {
+			t.Fatalf("fs.Working = %d; want 0 until beats", fs.Working)
+		}
+		if fs.Deficit != 0 {
+			t.Fatalf("fs.Deficit = %d; want 0", fs.Deficit)
+		}
+
+		for _, tk := range res.Tasks {
+			reply, err := client.FCall(ctx, "ns_task_beat", nil, sprint, tk.ID, tk.Token, "f1", "").Result()
+			if err != nil {
+				t.Fatalf("beat %s failed: %v", tk.ID, err)
+			}
+			vals := reply.([]any)
+			if vals[0] != "WORKING" {
+				t.Fatalf("beat %s = %v; want WORKING", tk.ID, vals)
+			}
+		}
+
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		fs, _, _ = ReadFillstate(ctx, st, "f1")
+		if fs.Working != 8 {
+			t.Fatalf("after beats working = %d; want 8", fs.Working)
+		}
+		if fs.Deficit != 0 {
+			t.Fatalf("after beats deficit = %d; want 0", fs.Deficit)
+		}
+
+		doneTask := res.Tasks[0]
+		_, err = client.FCall(ctx, "ns_task_done", nil, sprint, doneTask.ID, doneTask.Token, "success", "f1", "").Result()
+		if err != nil {
+			t.Fatalf("done failed: %v", err)
+		}
+
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		fs, _, _ = ReadFillstate(ctx, st, "f1")
+		if fs.Deficit != 1 {
+			t.Fatalf("after done deficit = %d; want 1", fs.Deficit)
+		}
+
+		res2, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
+		if err != nil {
+			t.Fatalf("fill 2 failed: %v", err)
+		}
+		if res2.N != 1 || len(res2.Tasks) != 1 {
+			t.Fatalf("fill 2 res.N=%d, len=%d; want exactly 1", res2.N, len(res2.Tasks))
+		}
+	})
+
+	t.Run("C2", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "f1")
+		client.HSet(ctx, "friend:f1:desired", "slots", "1")
+		client.HSet(ctx, "friend:f1:beat", "at", "1")
+
+		for i := 1; i <= 5; i++ {
+			id := fmt.Sprintf("t%d", i)
+			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
+			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+		}
+
+		type fillOut struct {
+			res task.FillResult
+			err error
+		}
+		ch := make(chan fillOut, 2)
+		for i := 0; i < 2; i++ {
+			go func() {
+				r, e := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
+				ch <- fillOut{res: r, err: e}
+			}()
+		}
+		o1 := <-ch
+		o2 := <-ch
+		if o1.err != nil || o2.err != nil {
+			t.Fatalf("concurrent fill error: o1=%v o2=%v", o1.err, o2.err)
+		}
+		totalClaimed := o1.res.N + o2.res.N
+		if totalClaimed != 1 {
+			t.Fatalf("total claimed = %d; want 1", totalClaimed)
+		}
+		if (o1.res.N == 1 && o2.res.N != 0) || (o2.res.N == 1 && o1.res.N != 0) {
+			t.Fatalf("want one winner (n=1) and one loser (n=0): o1.N=%d o2.N=%d", o1.res.N, o2.res.N)
+		}
+	})
+
+	t.Run("C3", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "f1")
+		client.HSet(ctx, "friend:f1:desired", "slots", "4")
+		client.HSet(ctx, "friend:f1:beat", "at", "1")
+
+		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t1"})
+		client.HSet(ctx, "s:"+sprint+":task:t1", "state", "open", "kind", "work", "ref", "t1")
+
+		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
+		if err != nil || res.N != 1 {
+			t.Fatalf("fill: res=%+v err=%v", res, err)
+		}
+
+		timeVal, err := client.Time(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		nowMs := timeVal.UnixMilli()
+
+		client.HSet(ctx, "s:"+sprint+":task:t1", "claimed_at", strconv.FormatInt(nowMs-61000, 10))
+
+		reply, err := client.FCall(ctx, "ns_task_expire", nil, sprint, "t1", "reconciler", "").Result()
+		if err != nil {
+			t.Fatalf("expire failed: %v", err)
+		}
+		vals := reply.([]any)
+		if vals[0] != "REOPENED" {
+			t.Fatalf("expire reply = %v; want REOPENED", vals)
+		}
+
+		state := client.HGet(ctx, "s:"+sprint+":task:t1", "state").Val()
+		if state != "open" {
+			t.Fatalf("state = %q; want open", state)
+		}
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c3"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		duty := &Duty{Store: st}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		fs, ok, err := ReadFillstate(ctx, st, "f1")
+		if err != nil || !ok {
+			t.Fatalf("read fillstate: ok=%v err=%v", ok, err)
+		}
+		if fs.Leased != 0 {
+			t.Fatalf("fs.Leased = %d; want 0", fs.Leased)
+		}
+		if fs.Deficit != 4 {
+			t.Fatalf("fs.Deficit = %d; want 4", fs.Deficit)
+		}
+		if fs.Working != 0 {
+			t.Fatalf("fs.Working = %d; want 0", fs.Working)
+		}
+	})
+
+	t.Run("C4", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "A")
+		client.HSet(ctx, "friend:A:desired", "slots", "16")
+		client.HSet(ctx, "friend:A:beat", "at", "1")
+
+		timeVal, err := client.Time(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		nowMs := timeVal.UnixMilli()
+
+		// 2 working (living members with beat inside 60s)
+		client.ZAdd(ctx, "friend:A:living",
+			redis.Z{Score: float64(nowMs), Member: sprint + "/live1/1"},
+			redis.Z{Score: float64(nowMs), Member: sprint + "/live2/1"},
+		)
+
+		rebalAfter := 30 * time.Second
+		unfilledSince := nowMs - int64((rebalAfter + time.Second).Milliseconds())
+		client.HSet(ctx, "friend:A:fillstate",
+			"peak", "16",
+			"peak_at", strconv.FormatInt(nowMs-10000, 10),
+			"unfilled_since", strconv.FormatInt(unfilledSince, 10),
+		)
+
+		// 12 open tasks: 2 eligible, 10 deps-blocked
+		client.ZAdd(ctx, "s:"+sprint+":open:A",
+			redis.Z{Score: 1, Member: "e1"},
+			redis.Z{Score: 2, Member: "e2"},
+		)
+		client.HSet(ctx, "s:"+sprint+":task:e1", "state", "open", "depends_on", "")
+		client.HSet(ctx, "s:"+sprint+":task:e2", "state", "open", "depends_on", "")
+
+		for i := 1; i <= 10; i++ {
+			id := fmt.Sprintf("d%d", i)
+			client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: float64(i + 2), Member: id})
+			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "depends_on", "dep_task")
+		}
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c4"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		duty := &Duty{Store: st, RebalanceAfter: rebalAfter}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+
+		fs, ok, err := ReadFillstate(ctx, st, "A")
+		if err != nil || !ok {
+			t.Fatalf("read fillstate failed: ok=%v err=%v", ok, err)
+		}
+
+		// Width writes deficit=14 eligible=2 idle_deps=10 idle_no_ready=2 idle_unfilled=2; slots stays 16.
+		if fs.Slots != 16 {
+			t.Errorf("slots = %d; want 16", fs.Slots)
+		}
+		if fs.Deficit != 14 {
+			t.Errorf("deficit = %d; want 14", fs.Deficit)
+		}
+		if fs.Eligible != 2 {
+			t.Errorf("eligible = %d; want 2", fs.Eligible)
+		}
+		if fs.IdleDeps != 10 {
+			t.Errorf("idle_deps = %d; want 10", fs.IdleDeps)
+		}
+		if fs.IdleNoReady != 2 {
+			t.Errorf("idle_no_ready = %d; want 2", fs.IdleNoReady)
+		}
+		if fs.IdleUnfilled != 2 {
+			t.Errorf("idle_unfilled = %d; want 2", fs.IdleUnfilled)
+		}
+		if fs.Peak != 16 {
+			t.Errorf("peak = %d; want 16", fs.Peak)
+		}
+
+		// (a) B absent: no task moves.
+		openA, _ := client.ZRange(ctx, "s:"+sprint+":open:A", 0, -1).Result()
+		if len(openA) != 12 {
+			t.Fatalf("C4(a): open:A = %d; want 12", len(openA))
+		}
+
+		// (b) B positive: friend:B:beat present, B slots 4, leased 0, 0 eligible (deficit 4 > eligible 0, spare 4),
+		// fill_at written 5 s ago with fill_n 1: exactly A's 2 eligible move to B with 2 width move receipts,
+		// 10 deps tasks stay on A.
+		client.SAdd(ctx, "friends", "B")
+		client.HSet(ctx, "friend:B:desired", "slots", "4")
+		client.HSet(ctx, "friend:B:beat", "at", "1")
+		client.HSet(ctx, "friend:B:fillstate", "fill_at", strconv.FormatInt(nowMs-5000, 10), "fill_n", "1")
+
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openA, _ = client.ZRange(ctx, "s:"+sprint+":open:A", 0, -1).Result()
+		openB, _ := client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 2 || len(openA) != 10 {
+			t.Fatalf("C4(b): open:B=%d (want 2), open:A=%d (want 10)", len(openB), len(openA))
+		}
+		msgs, _ := client.XRange(ctx, "s:"+sprint+":log", "-", "+").Result()
+		moveCount := 0
+		for _, m := range msgs {
+			if m.Values["kind"] == "width move" {
+				moveCount++
+			}
+		}
+		if moveCount != 2 {
+			t.Fatalf("C4(b): move receipts = %d, want 2", moveCount)
+		}
+
+		// (c) same B but fill_at written rebalance_after+1 s ago (no fresh fill): 0 moves.
+		// Move tasks back to A first
+		client.Del(ctx, "s:"+sprint+":open:B")
+		client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "e1"}, redis.Z{Score: 2, Member: "e2"})
+		client.HSet(ctx, "s:"+sprint+":task:e1", "owner", "A")
+		client.HSet(ctx, "s:"+sprint+":task:e2", "owner", "A")
+		client.HSet(ctx, "friend:B:fillstate", "fill_at", strconv.FormatInt(nowMs-int64((rebalAfter+time.Second).Milliseconds()), 10))
+
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ = client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 0 {
+			t.Fatalf("C4(c): stale fill_at, open:B=%d; want 0", len(openB))
+		}
+
+		// (d) same B but no friend:B:beat key: 0 moves.
+		client.HSet(ctx, "friend:B:fillstate", "fill_at", strconv.FormatInt(nowMs-5000, 10))
+		client.Del(ctx, "friend:B:beat")
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ = client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 0 {
+			t.Fatalf("C4(d): no beat, open:B=%d; want 0", len(openB))
+		}
+
+		// (e) same B but 4 eligible of its own (deficit 4 = eligible 4): 0 moves.
+		client.HSet(ctx, "friend:B:beat", "at", "1")
+		for i := 1; i <= 4; i++ {
+			id := fmt.Sprintf("be%d", i)
+			client.ZAdd(ctx, "s:"+sprint+":open:B", redis.Z{Score: float64(i), Member: id})
+			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "depends_on", "")
+		}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ = client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 4 {
+			t.Fatalf("C4(e): deficit == eligible, open:B=%d; want 4", len(openB))
+		}
+
+		// (f) B spare 1 (slots 1, leased 0, eligible 0, fresh fill_at, up): exactly 1 moves.
+		for i := 1; i <= 4; i++ {
+			id := fmt.Sprintf("be%d", i)
+			client.Del(ctx, "s:"+sprint+":task:"+id)
+		}
+		client.Del(ctx, "s:"+sprint+":open:B")
+		client.HSet(ctx, "friend:B:desired", "slots", "1")
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ = client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		openA, _ = client.ZRange(ctx, "s:"+sprint+":open:A", 0, -1).Result()
+		if len(openB) != 1 || len(openA) != 11 {
+			t.Fatalf("C4(f): B spare 1, open:B=%d (want 1), open:A=%d (want 11)", len(openB), len(openA))
+		}
+	})
+
+	t.Run("C5", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "f1")
+		client.HSet(ctx, "friend:f1:desired", "slots", "4")
+		client.HSet(ctx, "friend:f1:beat", "at", "1")
+
+		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t-deps"})
+		client.HSet(ctx, "s:"+sprint+":task:t-deps",
+			"state", "open",
+			"kind", "work",
+			"depends_on", "mas-bandwidth/nova-tools#100",
+			"ref", "t-deps",
+		)
+		client.HSet(ctx, "s:"+sprint+":pr:mas-bandwidth/nova-tools:100", "merged", "0", "base", "dev")
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c5"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		duty := &Duty{Store: st}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		fs, ok, err := ReadFillstate(ctx, st, "f1")
+		if err != nil || !ok {
+			t.Fatalf("read fillstate: ok=%v err=%v", ok, err)
+		}
+		if fs.Eligible != 0 {
+			t.Fatalf("fs.Eligible = %d; want 0", fs.Eligible)
+		}
+		if fs.IdleDeps != 1 {
+			t.Fatalf("fs.IdleDeps = %d; want 1", fs.IdleDeps)
+		}
+
+		res, err := task.WidthFill(ctx, st, "f1", sprint, 0, "f1", "")
+		if err != nil {
+			t.Fatalf("task.WidthFill failed: %v", err)
+		}
+		if res.N != 0 {
+			t.Fatalf("claimed N = %d; want 0", res.N)
+		}
+	})
+
+	t.Run("C6", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "A", "B")
+		client.HSet(ctx, "friend:A:desired", "slots", "8")
+		client.HSet(ctx, "friend:A:beat", "at", "1")
+		client.HSet(ctx, "friend:B:desired", "slots", "8")
+		client.HSet(ctx, "friend:B:beat", "at", "1")
+
+		timeVal, err := client.Time(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		nowMs := timeVal.UnixMilli()
+
+		rebalAfter := 30 * time.Second
+		unfilledSince := nowMs - int64((rebalAfter + time.Second).Milliseconds())
+
+		client.HSet(ctx, "friend:A:fillstate",
+			"unfilled_since", strconv.FormatInt(unfilledSince, 10),
+			"idle_unfilled", "1",
+			"deficit", "8",
+			"eligible", "1",
+		)
+		client.HSet(ctx, "friend:B:fillstate",
+			"fill_at", strconv.FormatInt(nowMs-5000, 10),
+			"fill_n", "1",
+			"deficit", "8",
+			"eligible", "0",
+		)
+
+		repo := "mas-bandwidth/nova-tools"
+		pr := "3073"
+		head := "4139b79f"
+
+		client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "task-move"})
+		client.HSet(ctx, "s:"+sprint+":task:task-move",
+			"state", "open", "kind", "work", "repo", repo, "pr", pr, "head", head, "depends_on", "")
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c6"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Case 1: B holds closed task for same (repo, PR, head)
+		client.SAdd(ctx, "s:"+sprint+":done:B", "task-closed")
+		client.HSet(ctx, "s:"+sprint+":task:task-closed",
+			"state", "closed", "kind", "work", "repo", repo, "pr", pr, "head", head)
+
+		duty := &Duty{Store: st, RebalanceAfter: rebalAfter}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ := client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 0 {
+			t.Fatalf("closed dedup failed: task moved to B: %v", openB)
+		}
+
+		client.SRem(ctx, "s:"+sprint+":done:B", "task-closed")
+
+		// Case 2: B holds working task for same (repo, PR, head)
+		client.ZAdd(ctx, "friend:B:living", redis.Z{Score: float64(nowMs), Member: sprint + "/task-working/1"})
+		client.HSet(ctx, "s:"+sprint+":task:task-working",
+			"state", "working", "kind", "work", "repo", repo, "pr", pr, "head", head)
+
+		client.HSet(ctx, "friend:A:fillstate",
+			"unfilled_since", strconv.FormatInt(unfilledSince, 10),
+			"idle_unfilled", "1",
+		)
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ = client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 0 {
+			t.Fatalf("working dedup failed: task moved to B: %v", openB)
+		}
+
+		client.Del(ctx, "friend:B:living")
+
+		// Case 3: Read task is never moved
+		client.HSet(ctx, "s:"+sprint+":task:task-move", "kind", "read")
+		client.HSet(ctx, "friend:A:fillstate",
+			"unfilled_since", strconv.FormatInt(unfilledSince, 10),
+			"idle_unfilled", "1",
+		)
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+		openB, _ = client.ZRange(ctx, "s:"+sprint+":open:B", 0, -1).Result()
+		if len(openB) != 0 {
+			t.Fatalf("read task should never move to B: %v", openB)
+		}
+	})
+
+	t.Run("C7", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+		client.HSet(ctx, "s:"+sprint+":policy", "share", "1", "backpressure_missing", "open")
+
+		client.SAdd(ctx, "friends", "r1")
+		client.HSet(ctx, "friend:r1:desired", "slots", "2")
+		client.HSet(ctx, "friend:r1:beat", "at", "1")
+
+		timeVal, err := client.Time(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		nowMs := timeVal.UnixMilli()
+
+		client.ZAdd(ctx, "friend:r1:living",
+			redis.Z{Score: float64(nowMs), Member: sprint + "/r-live1/1"},
+			redis.Z{Score: float64(nowMs), Member: sprint + "/r-live2/1"},
+		)
+
+		client.ZAdd(ctx, "s:"+sprint+":open:r1", redis.Z{Score: 1, Member: "read-task"})
+		client.HSet(ctx, "s:"+sprint+":task:read-task",
+			"state", "open", "kind", "read", "repo", "nova-tools", "pr", "10", "head", "abcdef")
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c7"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		duty := &Duty{Store: st, Policy: Policy{Readers: []string{"r1"}}}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+
+		v, err := deal.ReadBackpressure(ctx, st, sprint)
+		if err != nil {
+			t.Fatalf("ReadBackpressure failed: %v", err)
+		}
+		if !v.Blocked {
+			t.Fatalf("ReadBackpressure Blocked = false; want true (READ-BOUND)")
+		}
+
+		client.HSet(ctx, "s:"+sprint+":card:card-bulk",
+			"state", "queued", "priority", "1", "tier", deal.TierBulk,
+			"repo", "nova-tools", "pr", "10", "base_sha", "12345678",
+		)
+		client.ZAdd(ctx, "s:"+sprint+":pool", redis.Z{Score: 1, Member: "card-bulk"})
+		client.SAdd(ctx, "s:"+sprint+":idx:card:queued", "card-bulk")
+
+		in, err := (&deal.RedisSource{Client: client}).Read(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(in.Sprints) != 1 || !in.Sprints[0].Backpressure {
+			t.Fatalf("sprint Backpressure = %v; want true", in.Sprints[0].Backpressure)
+		}
+		batches := deal.Plan(in, 100)
+		for _, b := range batches {
+			for _, c := range b.Cards {
+				if c.Tier != deal.TierPriority {
+					t.Fatalf("deal pass cut bulk card %+v while READ-BOUND", c)
+				}
+			}
+		}
+	})
+
+	t.Run("C8", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		timeVal, err := client.Time(ctx).Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		nowMs := timeVal.UnixMilli()
+
+		// Some friends working, one friend with slots 8 and leased 0: fleet deficit counts its 8
+		client.SAdd(ctx, "friends", "w1", "free1")
+		client.HSet(ctx, "friend:w1:desired", "slots", "4")
+		client.HSet(ctx, "friend:free1:desired", "slots", "8")
+		for i := 1; i <= 4; i++ {
+			client.ZAdd(ctx, "friend:w1:living", redis.Z{Score: float64(nowMs), Member: fmt.Sprintf("m%d", i)})
+		}
+
+		lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		duty := &Duty{Store: st}
+		if _, err := duty.Run(ctx, lease); err != nil {
+			t.Fatal(err)
+		}
+
+		fsW1, _, _ := ReadFillstate(ctx, st, "w1")
+		fsFree1, _, _ := ReadFillstate(ctx, st, "free1")
+		if fsW1.Deficit != 0 {
+			t.Errorf("w1 deficit = %d; want 0", fsW1.Deficit)
+		}
+		if fsFree1.Deficit != 8 {
+			t.Errorf("free1 deficit = %d; want 8", fsFree1.Deficit)
+		}
+		fleetDeficit := fsW1.Deficit + fsFree1.Deficit
+		if fleetDeficit != 8 {
+			t.Errorf("fleet deficit = %d; want 8", fleetDeficit)
+		}
+
+		// width on a fillstate hash 4 s old prints ?
+		staleFS := Fillstate{
+			Friend: "stale_friend",
+			Slots:  8,
+			At:     nowMs - 4000,
+		}
+		line := staleFS.Line(nowMs)
+		want := "WIDTH stale_friend slots=? starting=? living=? leased=? working=? deficit=? eligible=? idle=? peak=?@? at=?"
+		if line != want {
+			t.Errorf("stale line = %q; want %q", line, want)
+		}
+	})
+
+	t.Run("C9", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		// 1 friend fixture
+		client.SAdd(ctx, "friends", "f1")
+		client.HSet(ctx, "friend:f1:desired", "slots", "10")
+		client.HSet(ctx, "friend:f1:beat", "at", "1")
+		client.ZAdd(ctx, "friend:f1:starting", redis.Z{Score: 1, Member: "start1"})
+		client.ZAdd(ctx, "friend:f1:living", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live1"})
+		client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: 1, Member: "t1"})
+		client.HSet(ctx, "s:"+sprint+":task:t1", "state", "open")
+
+		hook := &cmdHook{}
+		client.AddHook(hook)
+
+		st, err := store.Open(ctx, addr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st.Close() }()
+
+		lease1, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c9-1"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		duty := &Duty{Store: st}
+		if _, err := duty.Run(ctx, lease1); err != nil {
+			t.Fatal(err)
+		}
+
+		trips1 := hook.tripsBeforeWrite
+		if trips1 > 3 {
+			t.Fatalf("1 friend round trips before write = %d; want at most 3", trips1)
+		}
+		if hook.unpipelinedHGet != 0 || hook.unpipelinedZCard != 0 {
+			t.Fatalf("unpipelined calls for 1 friend: HGET=%d ZCARD=%d; want 0", hook.unpipelinedHGet, hook.unpipelinedZCard)
+		}
+
+		gw1, err := task.GetWidth(ctx, st, "f1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fs1, _, _ := ReadFillstate(ctx, st, "f1")
+		if fs1.Slots != gw1.Desired || fs1.Starting != gw1.Starting || fs1.Living != gw1.Living || fs1.Leased != gw1.Leased || fs1.Deficit != gw1.Free {
+			t.Fatalf("f1 fillstate %+v != GetWidth %+v", fs1, gw1)
+		}
+
+		// 8 friends fixture on fresh redis instance
+		addr8 := testutil.Start(t)
+		client8 := redis.NewClient(&redis.Options{Addr: addr8})
+		t.Cleanup(func() { _ = client8.Close() })
+		if err := fn.Load(ctx, client8); err != nil {
+			t.Fatal(err)
+		}
+
+		client8.SAdd(ctx, "sprints", sprint)
+		client8.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client8.HSet(ctx, "s:"+sprint, "status", "open")
+
+		for i := 1; i <= 8; i++ {
+			f := fmt.Sprintf("friend%d", i)
+			client8.SAdd(ctx, "friends", f)
+			client8.HSet(ctx, "friend:"+f+":desired", "slots", strconv.Itoa(i*2))
+			client8.HSet(ctx, "friend:"+f+":beat", "at", "1")
+			client8.ZAdd(ctx, "friend:"+f+":starting", redis.Z{Score: 1, Member: "start_" + f})
+			client8.ZAdd(ctx, "friend:"+f+":living", redis.Z{Score: float64(time.Now().UnixMilli()), Member: "live_" + f})
+			client8.ZAdd(ctx, "s:"+sprint+":open:"+f, redis.Z{Score: 1, Member: "task_" + f})
+			client8.HSet(ctx, "s:"+sprint+":task:task_"+f, "state", "open")
+		}
+
+		hook8 := &cmdHook{}
+		client8.AddHook(hook8)
+
+		st8, err := store.Open(ctx, addr8)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = st8.Close() }()
+
+		lease8, err := reconcile.Acquire(ctx, st8, reconcile.AcquireOptions{Host: "test", Instance: "c9-8"})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		duty8 := &Duty{Store: st8}
+		if _, err := duty8.Run(ctx, lease8); err != nil {
+			t.Fatal(err)
+		}
+
+		trips8 := hook8.tripsBeforeWrite
+		if trips8 != trips1 {
+			t.Fatalf("8 friends round trips before write = %d; want %d (same as 1 friend)", trips8, trips1)
+		}
+		if trips8 > 3 {
+			t.Fatalf("8 friends round trips before write = %d; want at most 3", trips8)
+		}
+		if hook8.unpipelinedHGet != 0 || hook8.unpipelinedZCard != 0 {
+			t.Fatalf("unpipelined calls for 8 friends: HGET=%d ZCARD=%d; want 0", hook8.unpipelinedHGet, hook8.unpipelinedZCard)
+		}
+
+		for i := 1; i <= 8; i++ {
+			f := fmt.Sprintf("friend%d", i)
+			gw, err := task.GetWidth(ctx, st8, f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fs, _, _ := ReadFillstate(ctx, st8, f)
+			if fs.Slots != gw.Desired || fs.Starting != gw.Starting || fs.Living != gw.Living || fs.Leased != gw.Leased || fs.Deficit != gw.Free {
+				t.Fatalf("%s fillstate %+v != GetWidth %+v", f, fs, gw)
+			}
+		}
+	})
+}
+
+// TestWidthMoveRequiresFence tests Defect 1:
+// ns_width_move must require the fence token even when empty (""), failing closed with FENCED.
+func TestWidthMoveRequiresFence(t *testing.T) {
+	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
 	ctx := context.Background()
 	if err := fn.Load(ctx, client); err != nil {
-		t.Fatalf("load nova_sprint library: %v", err)
+		t.Fatal(err)
 	}
-	client.HSet(ctx, "s:"+sprint, "status", "open")
+
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+
+	// Calling ns_width_move with an empty fence string must return FENCED, not skip the check.
+	res, err := client.FCall(ctx, "ns_width_move", nil, "", "fromF", "toF", "s1", "30000", "width", "").Result()
+	if err != nil {
+		t.Fatalf("ns_width_move unexpected error: %v", err)
+	}
+	slice, ok := res.([]any)
+	if !ok || len(slice) == 0 || slice[0] != "FENCED" {
+		t.Fatalf("ns_width_move with empty fence returned %v; want FENCED", res)
+	}
+}
+
+type moveRefusalHook struct {
+	client *redis.Client
+}
+
+func (h *moveRefusalHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *moveRefusalHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		name := strings.ToLower(cmd.Name())
+		if name == "fcall" {
+			args := cmd.Args()
+			if len(args) > 1 && fmt.Sprint(args[1]) == FunctionWrite {
+				defer func() {
+					_ = h.client.HSet(ctx, "lease:reconciler", "token", "stolen-lease-token").Err()
+				}()
+			}
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (h *moveRefusalHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		return next(ctx, cmds)
+	}
+}
+
+// TestWidthDutySurfacesMoveRefusal tests Defect 2:
+// width duty must not drop the move reply; it must return ErrFenced on FENCED from ns_width_move.
+func TestWidthDutySurfacesMoveRefusal(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = st.Close() }()
+
+	sprint := "s1"
+	client.SAdd(ctx, "sprints", sprint)
 	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
-	return store.New(client), client
-}
+	client.HSet(ctx, "s:"+sprint, "status", "open")
 
-func seedFriend(t *testing.T, client *redis.Client, friend string, slots int) {
-	t.Helper()
-	ctx := context.Background()
-	if err := client.SAdd(ctx, "friends", friend).Err(); err != nil {
+	timeVal, err := client.Time(ctx).Result()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.HSet(ctx, "friend:"+friend+":desired", "slots", slots, "paused", "0").Err(); err != nil {
+	nowMs := timeVal.UnixMilli()
+	rebalAfter := 30 * time.Second
+
+	client.SAdd(ctx, "friends", "A", "B")
+	client.HSet(ctx, "friend:A:desired", "slots", "8")
+	client.HSet(ctx, "friend:A:beat", "at", "1")
+	client.HSet(ctx, "friend:B:desired", "slots", "8")
+	client.HSet(ctx, "friend:B:beat", "at", "1")
+	client.HSet(ctx, "friend:B:fillstate", "fill_at", strconv.FormatInt(nowMs-5000, 10), "fill_n", "1")
+
+	unfilledSince := nowMs - int64((rebalAfter + time.Second).Milliseconds())
+	client.HSet(ctx, "friend:A:fillstate",
+		"unfilled_since", strconv.FormatInt(unfilledSince, 10),
+		"idle_unfilled", "2",
+	)
+	client.ZAdd(ctx, "s:"+sprint+":open:A", redis.Z{Score: 1, Member: "e1"})
+	client.HSet(ctx, "s:"+sprint+":task:e1", "state", "open", "kind", "work", "depends_on", "")
+
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c-move-fenced"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := client.HSet(ctx, "friend:"+friend+":beat", "host", "fixture").Err(); err != nil {
-		t.Fatal(err)
+
+	// Install hook to mutate lease token after FunctionWrite completes, causing ns_width_move to receive FENCED
+	st.Client().AddHook(&moveRefusalHook{client: client})
+
+	duty := &Duty{Store: st, RebalanceAfter: rebalAfter}
+	_, err = duty.Run(ctx, lease)
+	if !errors.Is(err, reconcile.ErrFenced) {
+		t.Fatalf("duty.Run returned err = %v; want ErrFenced", err)
 	}
 }
 
-func push(t *testing.T, st *store.Store, to, id string, kind task.Kind) {
-	t.Helper()
-	req := task.PushRequest{Sprint: sprint, ID: id, Kind: kind, Title: "task " + id,
-		Effects: task.EffectsNone, To: to, Ref: "briefs/" + id + ".md"}
-	if kind == task.KindRead {
-		req.Repo, req.PR, req.Head = "nova-tools", 9001, strings.Repeat("a", 40)
-		if err := st.Client().HSet(context.Background(), "s:"+sprint+":pr:nova-tools:9001", "head", req.Head).Err(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if got, err := task.Push(context.Background(), st, req); err != nil || got != task.PushCreated {
-		t.Fatalf("push %s = %s, %v; want CREATED", id, got, err)
-	}
+type unfencedHook struct {
+	unfencedWrites int
 }
 
-func pushN(t *testing.T, st *store.Store, to, prefix string, n int) []string {
-	t.Helper()
-	ids := make([]string, n)
-	for i := range ids {
-		ids[i] = fmt.Sprintf("%s%02d", prefix, i+1)
-		push(t, st, to, ids[i], task.KindWork)
-	}
-	return ids
-}
+func (h *unfencedHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 
-// leases holds each control store's lease:reconciler: the tick is fenced, so
-// a control ticks as the reconciler would, with the holder's token.
-var leases sync.Map // *store.Store -> *reconcile.Lease
-
-func lease(t *testing.T, st *store.Store) *reconcile.Lease {
-	t.Helper()
-	if l, ok := leases.Load(st); ok {
-		return l.(*reconcile.Lease)
-	}
-	l, err := reconcile.Acquire(context.Background(), st, reconcile.AcquireOptions{Host: "fixture", TTL: time.Minute})
-	if err != nil {
-		t.Fatalf("acquire lease:reconciler: %v", err)
-	}
-	leases.Store(st, l)
-	t.Cleanup(func() { leases.Delete(st) })
-	return l
-}
-
-func tick(t *testing.T, st *store.Store, p width.Policy) width.Result {
-	t.Helper()
-	res, err := width.Tick(context.Background(), st, p, lease(t, st).Token(), "control", "")
-	if err != nil {
-		t.Fatalf("tick: %v", err)
-	}
-	return res
-}
-
-func row(t *testing.T, res width.Result, friend string) width.Row {
-	t.Helper()
-	for _, r := range res.Rows {
-		if r.Friend == friend {
-			return r
-		}
-	}
-	t.Fatalf("no width row for %s in %+v", friend, res.Rows)
-	return width.Row{}
-}
-
-// ackLauncher is a harness whose child ACKs at once: Launch sends the
-// child's first beat (claimed -> working).
-type ackLauncher struct {
-	st        *store.Store
-	preflight error
-	mu        sync.Mutex
-	live      map[string]width.Reserved
-}
-
-func newAck(st *store.Store) *ackLauncher {
-	return &ackLauncher{st: st, live: map[string]width.Reserved{}}
-}
-
-func (l *ackLauncher) Preflight(context.Context) error { return l.preflight }
-
-func (l *ackLauncher) Launch(ctx context.Context, r width.Reserved) error {
-	got, err := task.Beat(ctx, l.st, task.BeatRequest{Sprint: r.Sprint, ID: r.ID, Token: r.Claim.Token, Actor: "child"})
-	if err != nil || got != task.BeatWorking {
-		return fmt.Errorf("child ack %s = %s, %v", r.ID, got, err)
-	}
-	l.mu.Lock()
-	l.live[r.ID] = r
-	l.mu.Unlock()
-	return nil
-}
-
-// finish closes n live children (a child completion) in id order.
-func (l *ackLauncher) finish(t *testing.T, n int) {
-	t.Helper()
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	ids := make([]string, 0, len(l.live))
-	for id := range l.live {
-		ids = append(ids, id)
-	}
-	sortStrings(ids)
-	for _, id := range ids[:n] {
-		r := l.live[id]
-		got, err := task.Done(context.Background(), l.st, task.DoneRequest{
-			Sprint: r.Sprint, ID: r.ID, Token: r.Claim.Token, Evidence: "https://example.test/" + r.ID,
-		})
-		if err != nil || got != task.DoneClosed {
-			t.Fatalf("done %s = %s, %v", id, got, err)
-		}
-		delete(l.live, id)
-	}
-}
-
-func sortStrings(s []string) {
-	for i := 1; i < len(s); i++ {
-		for j := i; j > 0 && s[j] < s[j-1]; j-- {
-			s[j], s[j-1] = s[j-1], s[j]
-		}
-	}
-}
-
-func refill(t *testing.T, st *store.Store, friend string, l width.Launcher) width.RefillResult {
-	t.Helper()
-	res, err := width.Refill(context.Background(), st, friend, l, "harness", "")
-	if err != nil {
-		t.Fatalf("refill %s: %v", friend, err)
-	}
-	return res
-}
-
-// TestControlA_RefillReachesSlotsInTwoTicksAndHolds is #3071 control (a):
-// slots 8, 20 open ready tasks, a harness that takes: working reaches 8
-// within 2 ticks and stays 8 until the remaining work is under 8.
-func TestControlA_RefillReachesSlotsInTwoTicksAndHolds(t *testing.T) {
-	st, client := controlRedis(t)
-	seedFriend(t, client, "fa", 8)
-	pushN(t, st, "fa", "a", 20)
-	h := newAck(st)
-	p := width.Policy{RebalanceTicks: 3}
-
-	// Tick 1 sees the deficit and the harness takes; by tick 2 the children
-	// have ACKed and working is 8.
-	if r := row(t, tick(t, st, p), "fa"); r.Working != 0 || r.Deficit != 8 {
-		t.Fatalf("tick 1: %s; want 0/8 deficit 8", r.Line())
-	}
-	refill(t, st, "fa", h)
-	if r := row(t, tick(t, st, p), "fa"); r.Working != 8 || r.Desired != 8 {
-		t.Fatalf("tick 2: working = %d; want 8 (%s)", r.Working, r.Line())
-	}
-
-	remaining := 20
-	for remaining > 0 {
-		h.finish(t, 1)
-		remaining--
-		refill(t, st, "fa", h)
-		r := row(t, tick(t, st, p), "fa")
-		want := 8
-		if remaining < 8 {
-			want = remaining
-		}
-		if r.Working != want {
-			t.Fatalf("remaining %d: working = %d; want %d (%s)", remaining, r.Working, want, r.Line())
-		}
-	}
-}
-
-// cappedHarness takes and ACKs up to max children, never more, whatever the
-// declared slots say (Johnny's grok harness at 8, Stella's ChatGPT at 2).
-func cappedTake(t *testing.T, st *store.Store, friend string, max int, h *ackLauncher) {
-	t.Helper()
-	ctx := context.Background()
-	for {
-		h.mu.Lock()
-		n := len(h.live)
-		h.mu.Unlock()
-		if n >= max {
-			return
-		}
-		gen, _, ids, err := width.ReadyIDs(ctx, st, friend)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(ids) == 0 {
-			return
-		}
-		claim, _, err := width.Reserve(ctx, st, ids[0], friend, gen, "harness", "")
-		if err != nil {
-			t.Fatalf("capped harness reserve: %v", err)
-		}
-		if err := h.Launch(ctx, width.Reserved{Ready: ids[0], Claim: claim}); err != nil {
-			t.Fatal(err)
-		}
-	}
-}
-
-// TestControlB_CapAndUnderfullRebalance is #3071 control (b): a harness that
-// never exceeds 3: after rebalance_ticks slots=3 is written, and 5 of the
-// builds move to the friend with free width with [moved from f: underfull].
-// The read on f's queue stays, and f's WORKING tasks never move (Stella:
-// transfer during WORKING).
-func TestControlB_CapAndUnderfullRebalance(t *testing.T) {
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "fb", 8)
-	seedFriend(t, client, "gb", 8)
-	builds := pushN(t, st, "fb", "b", 8)
-	push(t, st, "fb", "zread", task.KindRead)
-	h := newAck(st)
-	p := width.Policy{RebalanceTicks: 2}
-
-	var events []string
-	var capTick int
-	for i := 1; i <= 6 && capTick == 0; i++ {
-		cappedTake(t, st, "fb", 3, h)
-		res := tick(t, st, p)
-		events = append(events, res.Events...)
-		for _, e := range res.Events {
-			if strings.HasPrefix(e, "CAP fb") {
-				capTick = i
+func (h *unfencedHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		name := strings.ToLower(cmd.Name())
+		args := cmd.Args()
+		if len(args) > 1 {
+			key := fmt.Sprint(args[1])
+			if name == "sadd" && key == "width:readers" {
+				h.unfencedWrites++
+			}
+			if (name == "hset" || name == "hsetnx") && strings.HasSuffix(key, ":backpressure") {
+				h.unfencedWrites++
+			}
+			if name == "set" && key == "sprint:read_bound" {
+				h.unfencedWrites++
 			}
 		}
+		return next(ctx, cmd)
 	}
-	if capTick == 0 {
-		t.Fatalf("no CAP within 6 ticks; events %q", events)
-	}
-	if !contains(events, "CAP fb slots=3 measured=3") {
-		t.Fatalf("events %q; want CAP fb slots=3 measured=3", events)
-	}
-	if got, _ := client.HGet(ctx, width.Key("fb"), "slots").Result(); got != "3" {
-		t.Fatalf("friend:fb:width slots = %q; want 3", got)
-	}
-	moves := 0
-	for _, e := range events {
-		if strings.HasPrefix(e, "MOVE ") {
-			moves++
-			if !strings.HasSuffix(e, "from=fb to=gb reason=underfull") {
-				t.Fatalf("move %q; want from=fb to=gb reason=underfull", e)
+}
+
+func (h *unfencedHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		for _, cmd := range cmds {
+			name := strings.ToLower(cmd.Name())
+			args := cmd.Args()
+			if len(args) > 1 {
+				key := fmt.Sprint(args[1])
+				if name == "sadd" && key == "width:readers" {
+					h.unfencedWrites++
+				}
+				if (name == "hset" || name == "hsetnx") && strings.HasSuffix(key, ":backpressure") {
+					h.unfencedWrites++
+				}
+				if name == "set" && key == "sprint:read_bound" {
+					h.unfencedWrites++
+				}
 			}
 		}
-	}
-	if moves != 5 {
-		t.Fatalf("moves = %d; want 5 (events %q)", moves, events)
-	}
-	onG, _ := client.ZRange(ctx, "s:"+sprint+":open:gb", 0, -1).Result()
-	if len(onG) != 5 {
-		t.Fatalf("gb queue = %v; want 5 builds", onG)
-	}
-	for _, id := range onG {
-		title, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "title").Result()
-		if !strings.Contains(title, "[moved from fb: underfull]") {
-			t.Fatalf("moved %s title %q lacks the marker", id, title)
-		}
-		if id == "zread" {
-			t.Fatal("a read moved; reads stay with their readers")
-		}
-	}
-	// The three WORKING builds stay with fb, leases intact.
-	for _, id := range builds[:3] {
-		state, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "state").Result()
-		owner, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "owner").Result()
-		if state != "working" || owner != "fb" {
-			t.Fatalf("%s state=%s owner=%s; want working on fb", id, state, owner)
-		}
-	}
-	if n, _ := client.ZCard(ctx, "friend:fb:living").Result(); n != 3 {
-		t.Fatalf("fb living = %d; want 3", n)
-	}
-	onF, _ := client.ZRange(ctx, "s:"+sprint+":open:fb", 0, -1).Result()
-	if len(onF) != 1 || onF[0] != "zread" {
-		t.Fatalf("fb queue after rebalance = %v; want only zread", onF)
-	}
-	r := row(t, tick(t, st, p), "fb")
-	if r.Slots != 3 || r.Working != 3 || r.Deficit != 0 || !strings.Contains(r.Idle, "capped=5") {
-		t.Fatalf("fb after cap: %s; want 3/3 slots=3 deficit=0 capped=5", r.Line())
+		return next(ctx, cmds)
 	}
 }
 
-func contains(list []string, s string) bool {
-	for _, v := range list {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-// holdReaders puts every reader at its slots with ACKed read work of its own.
-func holdReaders(t *testing.T, st *store.Store, client *redis.Client, readers ...string) {
-	t.Helper()
-	for _, r := range readers {
-		seedFriend(t, client, r, 1)
-		push(t, st, r, "hold-"+r, task.KindWork)
-		refill(t, st, r, newAck(st))
-	}
-}
-
-// TestControlC_ReadBoundDealsNoPRProducingCard is #3071 control (c): all
-// readers at cap: READ-BOUND is printed and no PR-producing card is dealt.
-func TestControlC_ReadBoundDealsNoPRProducingCard(t *testing.T) {
-	st, client := controlRedis(t)
+// TestWidthReadBoundFencedAtomic tests Defect 3:
+// READ-BOUND state must NOT be written outside the fenced Function.
+// Unfenced plain client writes to width:readers, s:<S>:backpressure, sprint:read_bound are forbidden.
+func TestWidthReadBoundFencedAtomic(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
 	ctx := context.Background()
-	holdReaders(t, st, client, "r1", "r2")
-	seedFriend(t, client, "rowan", 4)
-	pushN(t, st, "rowan", "c", 2)
-	push(t, st, "rowan", "cread", task.KindRead)
-	p := width.Policy{RebalanceTicks: 2, Readers: []string{"r1", "r2"}, Coordinator: "rowan"}
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
 
-	res := tick(t, st, p)
-	if !res.ReadBound() || !contains(res.Events, "READ-BOUND readers=2") {
-		t.Fatalf("events %q; want READ-BOUND readers=2", res.Events)
-	}
-	if got, _ := client.HGet(ctx, width.FleetKey, "read_bound").Result(); got != "1" {
-		t.Fatalf("sprint:width read_bound = %q; want 1", got)
-	}
-	got, err := width.Fill(ctx, st, "rowan", "rowan", "")
+	st, err := store.Open(ctx, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ID != "cread" {
-		t.Fatalf("fill while READ-BOUND = %+v; want only the read", got)
-	}
-	for _, id := range []string{"c01", "c02"} {
-		if state, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "state").Result(); state != "open" {
-			t.Fatalf("PR-producing %s dealt while READ-BOUND: state %s", id, state)
-		}
-	}
-	// A direct reservation of a build refuses READBOUND too.
-	gen, _ := client.HGet(ctx, width.Key("rowan"), "gen").Result()
-	if gen == "" {
-		gen = "0"
-	}
-	if _, _, err := width.Reserve(ctx, st, width.Ready{Sprint: sprint, ID: "c01"}, "rowan", gen, "rowan", ""); !errors.Is(err, width.ErrReadBound) {
-		t.Fatalf("reserve build while READ-BOUND = %v; want READBOUND", err)
-	}
+	defer func() { _ = st.Close() }()
 
-	// One reader frees a slot: the bound lifts and builds are dealt again.
-	client.ZRemRangeByRank(ctx, "friend:r1:living", 0, -1)
-	if res := tick(t, st, p); res.ReadBound() {
-		t.Fatalf("still READ-BOUND with a free reader: %q", res.Events)
-	}
-	if got, err := width.Fill(ctx, st, "rowan", "rowan", ""); err != nil || len(got) != 2 {
-		t.Fatalf("fill after the bound lifts = %+v, %v; want the two builds", got, err)
-	}
-}
+	sprint := "s1"
+	client.SAdd(ctx, "sprints", sprint)
+	client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+	client.HSet(ctx, "s:"+sprint, "status", "open")
 
-// TestControlD_CoordinatorWakeCarriesDeficitFillPrintsThatMany is #3071
-// control (d): a coordinator wake carries the deficit and `sprint fill`
-// prints exactly that many ready ids. Tasks whose DEPENDS-ON is not merged
-// are not ready (#3066) and are neither counted nor printed.
-func TestControlD_CoordinatorWakeCarriesDeficitFillPrintsThatMany(t *testing.T) {
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "rowan", 5)
-	pushN(t, st, "rowan", "d", 3)
-	// dep is closed with an open PR; two tasks depend on it.
-	push(t, st, "", "dep", task.KindWork)
-	client.HSet(ctx, "s:"+sprint+":task:dep", "state", "closed", "repo", "nova-tools", "pr", "7001")
-	for _, id := range []string{"x1", "x2"} {
-		push(t, st, "rowan", id, task.KindWork)
-		client.HSet(ctx, "s:"+sprint+":task:"+id, "depends_on", "dep")
-	}
-	p := width.Policy{RebalanceTicks: 2, Coordinator: "rowan"}
+	client.SAdd(ctx, "friends", "r1")
+	client.HSet(ctx, "friend:r1:desired", "slots", "2")
+	client.HSet(ctx, "friend:r1:beat", "at", "1")
 
-	res := tick(t, st, p)
-	r := row(t, res, "rowan")
-	if r.Deficit != 3 || r.Fillable != 3 || r.ReadyOpen != 3 || !strings.Contains(r.Idle, "deps=2") {
-		t.Fatalf("rowan row %s; want deficit 3, ready 3, deps=2", r.Line())
-	}
-	if !contains(res.Events, "UNDERFULL rowan deficit=3 spawn=3") {
-		t.Fatalf("events %q; want UNDERFULL rowan deficit=3 spawn=3", res.Events)
-	}
-	wakes, err := client.XRange(ctx, width.WakeKey("rowan"), "-", "+").Result()
-	if err != nil || len(wakes) != 1 || wakes[0].Values["deficit"] != "3" || wakes[0].Values["spawn"] != "3" {
-		t.Fatalf("wake stream = %v, %v; want one underfull wake with deficit 3", wakes, err)
-	}
-	// A repeated tick with the same deficit does not wake again.
-	tick(t, st, p)
-	if n, _ := client.XLen(ctx, width.WakeKey("rowan")).Result(); n != 1 {
-		t.Fatalf("wakes after a repeat tick = %d; want 1", n)
-	}
-
-	got, err := width.Fill(ctx, st, "rowan", "rowan", "")
+	timeVal, err := client.Time(ctx).Result()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("fill printed %d ids; want exactly the wake's 3: %+v", len(got), got)
-	}
-	for i, g := range got {
-		if want := fmt.Sprintf("d%02d", i+1); g.ID != want || !strings.HasPrefix(g.Line(), want+" briefs/"+want+".md sprint="+sprint) {
-			t.Fatalf("fill line %d = %q; want %s with its brief", i, g.Line(), want)
-		}
+	nowMs := timeVal.UnixMilli()
+
+	client.ZAdd(ctx, "friend:r1:living",
+		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live1/1"},
+		redis.Z{Score: float64(nowMs), Member: sprint + "/r-live2/1"},
+	)
+	client.ZAdd(ctx, "s:"+sprint+":open:r1", redis.Z{Score: 1, Member: "read-task"})
+	client.HSet(ctx, "s:"+sprint+":task:read-task",
+		"state", "open", "kind", "read", "repo", "nova-tools", "pr", "10", "head", "abcdef")
+
+	hook := &unfencedHook{}
+	st.Client().AddHook(hook)
+
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "c-atomic"})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Merge dep's PR: x1 and x2 become ready on the next tick.
-	client.HSet(ctx, "s:"+sprint+":pr:nova-tools:7001", "merged", "1")
-	if r := row(t, tick(t, st, p), "rowan"); r.ReadyOpen != 2 || r.Deficit != 5 {
-		t.Fatalf("after merge: %s; want ready 2 deficit 5 (3 starting + 2)", r.Line())
+	duty := &Duty{Store: st, Policy: Policy{Readers: []string{"r1"}}}
+	if _, err := duty.Run(ctx, lease); err != nil {
+		t.Fatal(err)
+	}
+
+	// Must have 0 unfenced writes outside the function
+	if hook.unfencedWrites != 0 {
+		t.Fatalf("unfenced plain writes = %d; want 0 (must be written inside ns_width_write under the fence)", hook.unfencedWrites)
+	}
+
+	// Verify state was correctly written
+	isMember, _ := client.SIsMember(ctx, "width:readers", "r1").Result()
+	if !isMember {
+		t.Fatalf("width:readers missing r1")
+	}
+	bp, _ := client.HGetAll(ctx, "s:"+sprint+":backpressure").Result()
+	if bp["read_bound"] != "1" {
+		t.Fatalf("s:%s:backpressure read_bound = %q; want 1", sprint, bp["read_bound"])
+	}
+	rb, _ := client.Get(ctx, "sprint:read_bound").Result()
+	if rb != "1" {
+		t.Fatalf("sprint:read_bound = %q; want 1", rb)
 	}
 }
 
-// TestControlE_UtilisationEqualsLeaseSecondsOverDesired is #3071 control
-// (e): utilisation in the fold equals the sum of lease seconds over desired
-// seconds within 1%.
-func TestControlE_UtilisationEqualsLeaseSecondsOverDesired(t *testing.T) {
-	leases := []width.Lease{{Start: 0, End: 100_000}, {Start: 0, End: 50_400}, {Start: 20_600, End: 80_250}, {Start: 90_100, End: 99_900}}
-	const desired = 4
-	var samples []width.Sample
-	for at := int64(0); at <= 100_000; at += 1000 {
-		w := 0
-		for _, l := range leases {
-			if l.Start <= at && at < l.End {
-				w++
-			}
+// TestWidthMoveConsumesSpare is the #3484 hold 1 control: sequential
+// ns_width_move calls in one pass (two senders, two sprints) never move more
+// tasks to a recipient than its original spare (deficit - eligible).
+func TestWidthMoveConsumesSpare(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	tv, err := client.Time(ctx).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := tv.UnixMilli()
+	client.HSet(ctx, "lease:reconciler", "token", "tok")
+	for _, s := range []string{"s1", "s2"} {
+		client.SAdd(ctx, "sprints", s)
+		client.HSet(ctx, "s:"+s, "status", "open")
+	}
+	for _, f := range []string{"A", "B", "C"} {
+		client.SAdd(ctx, "friends", f)
+		client.HSet(ctx, "friend:"+f+":beat", "at", "1")
+	}
+	for _, f := range []string{"A", "C"} {
+		client.HSet(ctx, "friend:"+f+":fillstate", "idle_unfilled", "5", "unfilled_since", strconv.FormatInt(now-60000, 10))
+	}
+	// B: deficit 3, eligible 1 -> spare 2.
+	client.HSet(ctx, "friend:B:fillstate", "deficit", "3", "eligible", "1", "fill_at", strconv.FormatInt(now, 10))
+	seed := func(s, f string, n int) {
+		for i := 0; i < n; i++ {
+			id := fmt.Sprintf("%s-%s-%d", f, s, i)
+			client.HSet(ctx, "s:"+s+":task:"+id, "state", "open", "kind", "work", "owner", f)
+			client.ZAdd(ctx, "s:"+s+":open:"+f, redis.Z{Score: float64(i), Member: id})
 		}
-		samples = append(samples, width.Sample{At: at, Working: w, Desired: desired})
 	}
-	workingMS, desiredMS, ratio := width.Utilisation(samples)
-	leaseMS := width.LeaseMS(leases)
-	want := float64(leaseMS) / float64(desiredMS)
-	if desiredMS != desired*100_000 {
-		t.Fatalf("desired ms = %d; want %d", desiredMS, desired*100_000)
-	}
-	if math.Abs(ratio-want)/want > 0.01 {
-		t.Fatalf("utilisation %.4f (working %d ms); lease seconds over desired %.4f (%d ms): off by more than 1%%", ratio, workingMS, want, leaseMS)
-	}
+	seed("s1", "A", 2)
+	seed("s2", "A", 2)
+	seed("s1", "C", 2)
 
-	// The tick's own accumulator and the fold over width:log agree.
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "fe", 4)
-	pushN(t, st, "fe", "e", 2)
-	p := width.Policy{RebalanceTicks: 2}
-	h := newAck(st)
-	for i := 0; i < 4; i++ {
-		tick(t, st, p)
-		refill(t, st, "fe", h)
-	}
-	tick(t, st, p)
-	samplesRedis, err := width.ReadSamples(ctx, st, "fe")
-	if err != nil || len(samplesRedis) != 5 {
-		t.Fatalf("samples = %d, %v; want 5", len(samplesRedis), err)
-	}
-	w, d, _ := width.Utilisation(samplesRedis)
-	hw, _ := client.HGet(ctx, width.Key("fe"), "working_ms").Int64()
-	hd, _ := client.HGet(ctx, width.Key("fe"), "desired_ms").Int64()
-	if w != hw || d != hd {
-		t.Fatalf("fold %d/%d ms; tick accumulator %d/%d ms; want equal", w, d, hw, hd)
-	}
-}
-
-// TestStella1_TwoDispatchersOneFreeSlot: two dispatchers compete for one
-// free slot; exactly one reservation is made, and a reservation at a stale
-// slot generation refuses STALE.
-func TestStella1_TwoDispatchersOneFreeSlot(t *testing.T) {
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "f1", 1)
-	pushN(t, st, "f1", "s", 3)
-
-	var wg sync.WaitGroup
-	got := make(chan int, 2)
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			res, err := width.Fill(ctx, st, "f1", "dispatcher", "")
-			if err != nil {
-				t.Error(err)
-			}
-			got <- len(res)
-		}()
-	}
-	wg.Wait()
-	close(got)
 	total := 0
-	for n := range got {
+	for _, c := range [][2]string{{"A", "s1"}, {"A", "s2"}, {"C", "s1"}} {
+		res, err := client.FCall(ctx, "ns_width_move", nil, "tok", c[0], "B", c[1], "30000", "width", "").Result()
+		if err != nil {
+			t.Fatalf("move %s->B %s: %v", c[0], c[1], err)
+		}
+		sl, ok := res.([]any)
+		if !ok || len(sl) < 2 || sl[0] != "OK" {
+			t.Fatalf("move %s->B %s: reply %v", c[0], c[1], res)
+		}
+		n, _ := strconv.Atoi(fmt.Sprint(sl[1]))
 		total += n
 	}
-	if total != 1 {
-		t.Fatalf("reservations = %d; want exactly 1 for one free slot", total)
+	got := int(client.ZCard(ctx, "s:s1:open:B").Val() + client.ZCard(ctx, "s:s2:open:B").Val())
+	if total != 2 || got != 2 {
+		t.Fatalf("recipient spare 2: moves reported %d, B holds %d; want 2 and 2", total, got)
 	}
-	if n, _ := client.ZCard(ctx, "friend:f1:starting").Result(); n != 1 {
-		t.Fatalf("starting = %d; want 1", n)
+	if e := client.HGet(ctx, "friend:B:fillstate", "eligible").Val(); e != "3" {
+		t.Fatalf("B eligible after moves = %q; want 3 (1 + 2 received)", e)
 	}
-
-	seedFriend(t, client, "f1", 3)
-	gen, _, ids, err := width.ReadyIDs(ctx, st, "f1")
-	if err != nil || len(ids) != 2 {
-		t.Fatalf("ready = %v, %v; want 2", ids, err)
-	}
-	if _, _, err := width.Reserve(ctx, st, ids[0], "f1", gen, "d1", ""); err != nil {
-		t.Fatalf("first reserve: %v", err)
-	}
-	if _, _, err := width.Reserve(ctx, st, ids[1], "f1", gen, "d2", ""); !errors.Is(err, width.ErrStale) {
-		t.Fatalf("reserve at the old generation = %v; want STALE", err)
+	if u := client.HGet(ctx, "friend:A:fillstate", "idle_unfilled").Val(); u != "3" {
+		t.Fatalf("A idle_unfilled after giving 2 = %q; want 3", u)
 	}
 }
 
-// TestStella2_TakeWithNoChildACKIsNotWorking: a reservation with no child
-// ACK stays starting; working rises only on the first beat.
-func TestStella2_TakeWithNoChildACKIsNotWorking(t *testing.T) {
-	st, client := controlRedis(t)
+// TestWidthFillNoPredictableToken is the #3484 hold 2 control: an unbounded
+// fill over 65 ready tasks never mints a token from time/index/slots/deficit.
+// Every claim's suffix is 32 hex from the caller's random parts; a claim with
+// no random part left is not made; a malformed part refuses the call.
+func TestWidthFillNoPredictableToken(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
 	ctx := context.Background()
-	seedFriend(t, client, "f2", 4)
-	pushN(t, st, "f2", "n", 2)
-	res, err := width.Fill(ctx, st, "f2", "harness", "")
-	if err != nil || len(res) != 2 {
-		t.Fatalf("fill = %+v, %v", res, err)
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
 	}
-	p := width.Policy{RebalanceTicks: 2}
-	r := row(t, tick(t, st, p), "f2")
-	if r.Working != 0 || r.Starting != 2 || r.Deficit != 2 || !strings.Contains(r.Idle, "starting=2") {
-		t.Fatalf("no ACK: %s; want working 0 starting 2 deficit 2", r.Line())
-	}
-	if state, _ := client.HGet(ctx, "s:"+sprint+":task:n01", "state").Result(); state != "claimed" {
-		t.Fatalf("n01 state %s; want claimed until the ACK", state)
-	}
-	if got, err := task.Beat(ctx, st, task.BeatRequest{Sprint: sprint, ID: res[0].ID, Token: res[0].Claim.Token}); err != nil || got != task.BeatWorking {
-		t.Fatalf("ack = %s, %v", got, err)
-	}
-	r = row(t, tick(t, st, p), "f2")
-	if r.Working != 1 || r.Starting != 1 || r.Deficit != 1 {
-		t.Fatalf("after one ACK: %s; want working 1 starting 1 deficit 1", r.Line())
-	}
-}
-
-// TestStella3_TransferDuringWorkingNeverMoves: an underfull rebalance moves
-// only open tasks; a WORKING task keeps its owner and lease.
-func TestStella3_TransferDuringWorkingNeverMoves(t *testing.T) {
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "f3", 4)
-	seedFriend(t, client, "g3", 4)
-	ids := pushN(t, st, "f3", "w", 6)
-	h := newAck(st)
-	cappedTake(t, st, "f3", 1, h) // the harness starts one and then stalls
-	p := width.Policy{RebalanceTicks: 2}
-	var moved []string
-	for i := 0; i < 2; i++ {
-		for _, e := range tick(t, st, p).Events {
-			if strings.HasPrefix(e, "MOVE ") {
-				moved = append(moved, strings.Fields(e)[1])
-			}
-		}
-	}
-	if len(moved) != 2 {
-		t.Fatalf("moved %v; want the 2 ready tasks beyond f3's free width", moved)
-	}
-	if contains(moved, ids[0]) {
-		t.Fatalf("the WORKING task %s moved", ids[0])
-	}
-	state, _ := client.HGet(ctx, "s:"+sprint+":task:"+ids[0], "state").Result()
-	owner, _ := client.HGet(ctx, "s:"+sprint+":task:"+ids[0], "owner").Result()
-	if state != "working" || owner != "f3" {
-		t.Fatalf("%s state=%s owner=%s; want working on f3", ids[0], state, owner)
-	}
-}
-
-// TestStella4_SixSlotsTenReadyOneForOne: six slots, ten ready; then each
-// completion is replaced one for one.
-func TestStella4_SixSlotsTenReadyOneForOne(t *testing.T) {
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "f4", 6)
-	pushN(t, st, "f4", "k", 10)
-	h := newAck(st)
-	if res := refill(t, st, "f4", h); len(res.Launched) != 6 {
-		t.Fatalf("first refill launched %d; want 6", len(res.Launched))
-	}
-	for _, n := range []int{1, 2, 1} {
-		h.finish(t, n)
-		if res := refill(t, st, "f4", h); len(res.Launched) != n {
-			t.Fatalf("after %d completions refill launched %d; want %d", n, len(res.Launched), n)
-		}
-		if live, _ := client.ZCard(ctx, "friend:f4:living").Result(); live != 6 {
-			t.Fatalf("living = %d; want 6", live)
-		}
-	}
-}
-
-// TestStella5_WrapperExit125MutatesNothing: a pre-mutation wrapper failure
-// (nova-secrets exec exit 125) leaves every task OPEN and writes nothing.
-func TestStella5_WrapperExit125MutatesNothing(t *testing.T) {
-	st, client := controlRedis(t)
-	ctx := context.Background()
-	seedFriend(t, client, "f5", 4)
-	ids := pushN(t, st, "f5", "p", 3)
-	before, _ := client.XLen(ctx, "s:"+sprint+":log").Result()
-	h := newAck(st)
-	h.preflight = &width.ExitError{Code: 125, Err: errors.New("nova-secrets exec: sealed branch unavailable")}
-	res, err := width.Refill(ctx, st, "f5", h, "harness", "")
-	var exit *width.ExitError
-	if !errors.As(err, &exit) || exit.Code != 125 || res.Reason != width.IdleWrapper {
-		t.Fatalf("refill = %+v, %v; want exit 125 and reason wrapper", res, err)
-	}
-	after, _ := client.XLen(ctx, "s:"+sprint+":log").Result()
-	if after != before {
-		t.Fatalf("receipts %d -> %d; want zero mutation", before, after)
-	}
-	for _, id := range ids {
-		if state, _ := client.HGet(ctx, "s:"+sprint+":task:"+id, "state").Result(); state != "open" {
-			t.Fatalf("%s state %s; want open", id, state)
-		}
-	}
-	if n, _ := client.ZCard(ctx, "friend:f5:starting").Result(); n != 0 {
-		t.Fatalf("starting = %d; want 0", n)
-	}
-}
-
-// failLauncher fails every launch after its reservation.
-type failLauncher struct{}
-
-func (failLauncher) Preflight(context.Context) error { return nil }
-func (failLauncher) Launch(context.Context, width.Reserved) error {
-	return errors.New("spawn refused")
-}
-
-// TestStella5b_LaunchFailureGivesBackAndReadsBack: a launch that fails after
-// its reservation gives the task back and reports the read-back state.
-func TestStella5b_LaunchFailureGivesBackAndReadsBack(t *testing.T) {
-	st, client := controlRedis(t)
-	seedFriend(t, client, "f5b", 2)
-	pushN(t, st, "f5b", "q", 1)
-	res, err := width.Refill(context.Background(), st, "f5b", failLauncher{}, "harness", "")
+	st, err := store.Open(ctx, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Returned["q01"] != "open" || len(res.Launched) != 0 {
-		t.Fatalf("refill = %+v; want q01 given back and read back open", res)
+	defer func() { _ = st.Close() }()
+	client.HSet(ctx, "s:s1", "status", "open")
+	client.SAdd(ctx, "sprints", "s1")
+	client.SAdd(ctx, "friends", "f1")
+	client.HSet(ctx, "friend:f1:desired", "slots", "70")
+	client.HSet(ctx, "friend:f1:beat", "at", "1")
+	for i := 0; i < 65; i++ {
+		id := fmt.Sprintf("t%02d", i)
+		client.HSet(ctx, "s:s1:task:"+id, "state", "open", "kind", "work", "owner", "f1")
+		client.ZAdd(ctx, "s:s1:open:f1", redis.Z{Score: float64(i), Member: id})
+	}
+
+	// Malformed part: refused before any write.
+	if _, err := client.FCall(ctx, "ns_width_fill", nil, "f1", "s1", "0", "f1", "", "0000000000000001").Result(); err == nil {
+		t.Fatal("fill with a 16-hex part: want an error, got none")
+	}
+	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 65 {
+		t.Fatalf("after refused fill, open = %d; want 65", n)
+	}
+
+	// Fail closed: an unbounded call with 3 parts over 65 ready claims 3.
+	args := []any{"f1", "s1", "0", "f1", ""}
+	for i := 0; i < 3; i++ {
+		p, err := task.RandomToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, p)
+	}
+	r1, err := client.FCall(ctx, "ns_width_fill", nil, args...).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := r1.([]any)
+	if fmt.Sprint(v[1]) != "3" {
+		t.Fatalf("fill with 3 parts claimed %v; want 3 (no claim without a part)", v[1])
+	}
+	for i := 3; i+3 < len(v); i += 4 {
+		tok := fmt.Sprint(v[i+3])
+		parts := strings.SplitN(tok, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim token %q: want <attempt>.<32 hex>", tok)
+		}
+	}
+
+	// task.WidthFill supplies one part per claim: the other 62 all claim.
+	res, err := task.WidthFill(ctx, st, "f1", "s1", 0, "f1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.N != 62 || len(res.Tasks) != 62 {
+		t.Fatalf("fill n=%d tasks=%d; want the remaining 62", res.N, len(res.Tasks))
+	}
+	for i, tk := range res.Tasks {
+		parts := strings.SplitN(tk.Token, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim %d token %q: want <attempt>.<32 hex>", i+1, tk.Token)
+		}
+	}
+	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 0 {
+		t.Fatalf("after 65 claims, open = %d; want 0", n)
 	}
 }
 
-// TestStella6_SomeWorkingDoesNotMaskUnfilledSlots: with two WORKING and four
-// ready on six slots, the deficit is 4 (from slots), not 0 (from "any
-// WORKING"), and the fleet line prints working/desired.
-func TestStella6_SomeWorkingDoesNotMaskUnfilledSlots(t *testing.T) {
-	st, client := controlRedis(t)
-	seedFriend(t, client, "f6", 6)
-	pushN(t, st, "f6", "m", 6)
-	h := newAck(st)
-	cappedTake(t, st, "f6", 2, h)
-	res := tick(t, st, width.Policy{RebalanceTicks: 5})
-	r := row(t, res, "f6")
-	if r.Working != 2 || r.Desired != 6 || r.Deficit != 4 || r.Fillable != 4 {
-		t.Fatalf("row %s; want 2/6 deficit 4 fillable 4", r.Line())
+// TestWidthFillSizesPartsToClaims is the recut-3071 fill control: task.WidthFill
+// sizes its random parts to the claim count (min(slots, max)), so an
+// unbounded fill of 65 ready tasks claims all 65, not 64, and every claim's
+// suffix is a distinct 32-hex part. A bounded fill supplies max parts.
+func TestWidthFillSizesPartsToClaims(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
 	}
-	if !strings.HasPrefix(r.Line(), "WIDTH f6 2/6 slots=6") || !strings.Contains(r.Line(), "idle=fillable=4") {
-		t.Fatalf("line %q", r.Line())
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if res.Fleet() != "width 2/6" {
-		t.Fatalf("fleet %q; want width 2/6", res.Fleet())
+	defer func() { _ = st.Close() }()
+	client.HSet(ctx, "s:s1", "status", "open")
+	client.SAdd(ctx, "sprints", "s1")
+	for _, f := range []string{"f1", "f2"} {
+		client.SAdd(ctx, "friends", f)
+		client.HSet(ctx, "friend:"+f+":desired", "slots", "70")
+		client.HSet(ctx, "friend:"+f+":beat", "at", "1")
+		for i := 0; i < 65; i++ {
+			id := fmt.Sprintf("%s-t%02d", f, i)
+			client.HSet(ctx, "s:s1:task:"+id, "state", "open", "kind", "work", "owner", f)
+			client.ZAdd(ctx, "s:s1:open:"+f, redis.Z{Score: float64(i), Member: id})
+		}
+	}
+
+	res, err := task.WidthFill(ctx, st, "f1", "s1", 0, "f1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.N != 65 || len(res.Tasks) != 65 {
+		t.Fatalf("unbounded fill of 65: n=%d tasks=%d; want 65 claims", res.N, len(res.Tasks))
+	}
+	seen := map[string]bool{}
+	for i, tk := range res.Tasks {
+		parts := strings.SplitN(tk.Token, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim %d token %q: want <attempt>.<32 hex>", i+1, tk.Token)
+		}
+		if seen[parts[1]] {
+			t.Fatalf("claim %d reuses random part %s", i+1, parts[1])
+		}
+		seen[parts[1]] = true
+	}
+	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 0 {
+		t.Fatalf("after unbounded fill, f1 open = %d; want 0", n)
+	}
+
+	bounded, err := task.WidthFill(ctx, st, "f2", "s1", 3, "f2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bounded.N != 3 || len(bounded.Tasks) != 3 {
+		t.Fatalf("fill --max 3: n=%d tasks=%d; want 3", bounded.N, len(bounded.Tasks))
 	}
 }
