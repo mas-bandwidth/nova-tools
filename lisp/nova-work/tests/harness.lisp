@@ -418,7 +418,9 @@ with the selected deftests and any registered case names no deftest carries."
 
 (defun run-lane (lane-name)
   "Run every suite of LANE-NAME (\"per-change\" or \"nightly\"). Owed suites are
-named on the summary line, never counted as passed."
+named on the summary line, never counted as passed. Exit code 0 green, 1 a
+failure or a registered case missing (whether or not a suite is owed), 2 an
+unknown lane, 3 every case passed but a suite is owed."
   (let ((lane (cond ((string= lane-name "per-change") :per-change)
                     ((string= lane-name "nightly") :nightly-pre-release))))
     (if (null lane)
@@ -431,9 +433,13 @@ named on the summary line, never counted as passed."
             (let ((code (run-tests tests (format nil "NOVA-WORK LANE ~(~A~) suites=~D owed=~D~@[ (~{~A~^ ~})~]"
                                                  lane (length suites) (length owed) owed))))
               (dolist (m missing) (format t "LANE ~(~A~) MISSING case ~A~%" lane m))
+              ;; a failure outranks owed: 1 for a failing or missing case
+              ;; even when the lane also owes a suite, 3 only for a lane whose
+              ;; every selected case passed and that still owes a suite
               (cond (missing 1)
+                    ((/= code 0) code)
                     (owed 3)
-                    (t code))))))))
+                    (t 0))))))))
 
 (defun main (&key suite lane)
   ;; Cleanup on exit, on both paths: the unwind-protect covers the normal one

@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp test-lisp-lane check clean darwin-timeout
 
 help:
 	@echo "make help        this list"
@@ -87,6 +87,7 @@ help:
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
+	@echo "make test-lisp-lane  the per-change lane (run-tests.sh --lane per-change; owed warns, a failure fails)"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
 	@echo "make clean       remove ./bin and ./scratch"
 
@@ -207,9 +208,22 @@ test-e2e:
 test-lisp:
 	./lisp/nova-work/run-tests.sh
 
+# The per-change CI lane as its own command (E10-F03-03, SPEC-WORK.md:7239-7240,
+# nova-tools#3238). run-tests.sh exits 3 when every selected case passed and a
+# suite is owed (no case yet, SPEC-WORK.md:7098): that raises a warning naming
+# the lane, never a pass for the owed suite. A failure outranks owed (exit 1),
+# and any exit but 0 or 3 fails the target.
+test-lisp-lane:
+	@./lisp/nova-work/run-tests.sh --lane per-change; code=$$?; \
+	case "$$code" in \
+	  0) ;; \
+	  3) echo "::warning title=nova-work per-change lane owes a suite::every per-change case passed; the owed suites named on the LANE line have no case yet (docs/SPEC-WORK.md:7098)" ;; \
+	  *) exit "$$code" ;; \
+	esac
+
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the nova-work acceptance suite.
-check: build lint test test-e2e test-lisp
+check: build lint test test-e2e test-lisp test-lisp-lane
 
 # An explicit list, never a computed path: clean removes the two directories a
 # local build and a worker's notes land in, and nothing else.

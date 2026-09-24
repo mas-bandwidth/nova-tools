@@ -6,7 +6,9 @@
 # (suites, owners, lanes and cases: *suite-registry* in src/control.lisp,
 # SPEC-WORK.md:7064-7107, :7235-7240)
 # Exit 0 when every selected case passes, 1 when any fails, 2 on a bad
-# argument or unknown suite/lane, 3 for a suite with no case yet (owed).
+# argument or unknown suite/lane, 3 for a suite with no case yet (owed). A
+# failure outranks owed: a lane with a failing case exits 1 even when it also
+# owes a suite, so exit 3 always means "every selected case passed".
 #
 # WHAT IS MUFFLED, AND WHY NOT MORE (nova-tools #1612). This loaded under
 # `(handler-bind ((warning #'muffle-warning)) ...)` -- EVERY warning, blanket --

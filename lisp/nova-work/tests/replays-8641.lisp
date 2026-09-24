@@ -491,6 +491,23 @@
           (*problems* '()))
       (check-equal 3 (run-lane "per-change")
                    "an owed suite makes its lane nonzero"))
+    ;; a real failure outranks an owed suite: a lane that owes a suite AND has
+    ;; a failing case exits 1 (failed), never 3 (owed), so a caller that
+    ;; tolerates owed never tolerates a failure hiding behind it
+    (let ((*suite-registry*
+            (list (find-acceptance-suite "retry-protocol")
+                  (nova-work::%make-acceptance-suite
+                   "failing-probe" "stella" "docs/SPEC-WORK.md:7045"
+                   '("failing-probe-case"))))
+          (*per-change-suites* '("retry-protocol" "failing-probe"))
+          (*tests* (list (list "failing-probe-case" "E10-F03-03" "fails on purpose"
+                               (lambda () (error "the probe case fails")))))
+          (*pass* 0)
+          (*fail* 0)
+          (*problems* '())
+          (*standard-output* (make-broadcast-stream)))
+      (check-equal 1 (run-lane "per-change")
+                   "a failure in a lane with an owed suite exits 1, not 3"))
     (check-equal :unknown (plan-suite "no-such-suite") "an unknown suite is refused")
     (check-equal t (suite-owed-p "retry-protocol")
                  "a suite with no case yet is owed, not passed")))

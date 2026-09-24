@@ -1658,6 +1658,17 @@ jobs:
         # timeout-minutes above.
         run: make test-lisp
 
+      - name: nova-work per-change lane
+        # The per-change CI lane as its own command (E10-F03-03,
+        # docs/SPEC-WORK.md:7239-7240, nova-tools#3238): the suites
+        # *suite-registry* puts in the per-change lane, selected by the same
+        # `run-tests.sh --lane per-change` a friend runs. Green is exit 0. An
+        # owed suite (no case yet, SPEC-WORK.md:7098) with every case passing
+        # is exit 3, which the target turns into a warning naming the lane,
+        # never a pass for that suite. A failure outranks owed (exit 1) and
+        # fails the job.
+        run: make test-lisp-lane
+
   # fleet-probe: prove a bench's runners BEFORE the loop trusts them (Glenn, 2026-09-16:
   # "run some tests to make sure that hulk and vision actually work, before trusting them";
   # the pattern was new things thrown into the work loop and trusted while not working).
