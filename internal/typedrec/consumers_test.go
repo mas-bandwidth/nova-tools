@@ -3,6 +3,7 @@ package typedrec_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
@@ -500,4 +502,267 @@ type mockPusher struct{}
 
 func (p *mockPusher) Push(ctx context.Context, bench harvest.BenchInfo, card harvest.Card) error {
 	return nil
+}
+
+// resultRedis is a Redis with the nsprint functions loaded.
+func resultRedis(t *testing.T) (*store.Store, *redis.Client) {
+	t.Helper()
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	if err := fn.Load(context.Background(), client); err != nil {
+		t.Fatalf("load fn: %v", err)
+	}
+	return store.New(client), client
+}
+
+// withLine1 is doc with its line 1 replaced.
+func withLine1(doc, line1 string) string {
+	_, rest, _ := strings.Cut(doc, "\n")
+	return line1 + "\n" + rest
+}
+
+func line1Of(doc string) string {
+	l, _, _ := strings.Cut(doc, "\n")
+	return l
+}
+
+// TestUnknownKindRefusedOnEveryPath is #3497 Stella 4 item 1 (KIND): every
+// reader of a card or RESULT KIND checks it against the declared six. An
+// unknown KIND is refused by the parser (in the file and as the card's
+// expectation), by ValidateResultV2, by the cutter lint, and by
+// ns_card_result even when the caller's parse claims valid.
+func TestUnknownKindRefusedOnEveryPath(t *testing.T) {
+	report := typedrec.Exemplar(typedrec.KindReport)
+	bogus := strings.Replace(report, "KIND: report", "KIND: bogus", 1)
+	if bogus == report {
+		t.Fatal("report exemplar has no KIND: report line")
+	}
+
+	if res := typedrec.ParseResult([]byte(bogus)); res.Valid || res.Field != "KIND" || res.Defect != typedrec.DefectMalformed {
+		t.Fatalf("ParseResult KIND: bogus: valid=%v field=%s defect=%s, want KIND malformed", res.Valid, res.Field, res.Defect)
+	}
+	if res := typedrec.ParseResult([]byte(report), typedrec.ParseOptions{ExpectedKind: "bogus"}); res.Valid || res.Field != "KIND" || res.Defect != typedrec.DefectMalformed {
+		t.Fatalf("ParseResult expected kind bogus: valid=%v field=%s defect=%s, want KIND malformed", res.Valid, res.Field, res.Defect)
+	}
+	if _, err := typedrec.ValidateResultV2(bogus, ""); err == nil || !strings.Contains(err.Error(), "KIND") {
+		t.Fatalf("ValidateResultV2 KIND: bogus: err=%v, want a KIND refusal", err)
+	}
+	if _, err := typedrec.ValidateResultV2(report, "bogus"); err == nil || !strings.Contains(err.Error(), "KIND") {
+		t.Fatalf("ValidateResultV2 card kind bogus: err=%v, want a KIND refusal", err)
+	}
+	if _, err := typedrec.ValidateResultV2(typedrec.Exemplar(typedrec.KindFix), typedrec.KindReport); err == nil || !strings.Contains(err.Error(), "KIND") {
+		t.Fatalf("ValidateResultV2 fix record on a report card: err=%v, want a KIND contradiction", err)
+	}
+
+	cardText, err := pulse.RenderCardV2(pulse.CardV2Input{
+		Kind: typedrec.KindFix, Number: 401, Repo: "mas-bandwidth/nova-tools", Title: "kind card",
+		Branch: "worker/kind", Base: "dev", Location: "foo.go:1", TestPackage: "./pkg",
+		TestFunction: "TestFoo", TestCommand: "go test ./pkg -run TestFoo", Paths: "foo.go",
+		Symbol: "TestFoo", RedWhen: "fails",
+	})
+	if err != nil {
+		t.Fatalf("RenderCardV2: %v", err)
+	}
+	if err := pulse.ValidateCardV2(cardText); err != nil {
+		t.Fatalf("control: ValidateCardV2 refused the rendered fix card: %v", err)
+	}
+	badCard := strings.Replace(cardText, "KIND: fix", "KIND: bogus", -1)
+	if err := pulse.ValidateCardV2(badCard); err == nil || !strings.Contains(err.Error(), "KIND") {
+		t.Fatalf("ValidateCardV2 KIND: bogus: err=%v, want a KIND refusal", err)
+	}
+
+	// ns_card_result judges KIND itself: a caller claiming valid with a kind
+	// outside the six is persisted invalid.
+	st, client := resultRedis(t)
+	ctx := context.Background()
+	const sprint, label = "s1", "k-bogus"
+	if err := client.HSet(ctx, "s:"+sprint+":card:"+label, "state", "running", "kind", "model",
+		"attempt", "1", "token", "tok").Err(); err != nil {
+		t.Fatal(err)
+	}
+	ledger := &card.RedisLedger{Store: st, Sprint: sprint, Label: label, Token: "tok"}
+	forged := typedrec.ParseResult([]byte(report))
+	forged.Kind = "bogus"
+	if code, err := ledger.Result(ctx, forged, t.TempDir()); err != nil || code != 0 {
+		t.Fatalf("Result: code=%d err=%v", code, err)
+	}
+	h := client.HGetAll(ctx, "s:"+sprint+":card:"+label+":result:a1").Val()
+	if h["valid"] != "0" || h["field"] != "KIND" || h["defect"] != "malformed" {
+		t.Fatalf("result hash %v, want valid=0 field=KIND defect=malformed", h)
+	}
+}
+
+// TestRecordResultEnforcesCardKindAndLine1 is #3497 Stella 4 item 1: the
+// production record path (card.RecordResult, what the wrapper's finish
+// calls) parses against the card's trusted KIND and contract line, and
+// ns_card_result cross-checks both in Redis. A different-kind result and a
+// line 1 with a forged suffix are each persisted invalid with the
+// contradictory field named; the exact report record stays valid.
+func TestRecordResultEnforcesCardKindAndLine1(t *testing.T) {
+	st, client := resultRedis(t)
+	ctx := context.Background()
+	const sprint = "s1"
+	report := typedrec.Exemplar(typedrec.KindReport)
+	contract := line1Of(report)
+	seed := func(label string) {
+		t.Helper()
+		if err := client.HSet(ctx, "s:"+sprint+":card:"+label, "state", "running", "kind", typedrec.KindReport,
+			"contract", contract, "attempt", "1", "token", "tok-"+label).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	hashOf := func(label string) map[string]string {
+		return client.HGetAll(ctx, "s:"+sprint+":card:"+label+":result:a1").Val()
+	}
+
+	cases := []struct {
+		label, doc, field, defect string
+	}{
+		{"k-ok", report, "", ""},
+		{"k-other-kind", withLine1(typedrec.Exemplar(typedrec.KindFix), contract), "KIND", typedrec.DefectContradictory},
+		{"k-line1-suffix", withLine1(report, contract+" forged"), "line 1", typedrec.DefectContradictory},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			seed(tc.label)
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "RESULT.md"), []byte(tc.doc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ledger := &card.RedisLedger{Store: st, Sprint: sprint, Label: tc.label, Token: "tok-" + tc.label}
+			res, found, code, err := card.RecordResult(ctx, ledger, dir, 1)
+			if err != nil || !found || code != 0 {
+				t.Fatalf("RecordResult: found=%v code=%d err=%v", found, code, err)
+			}
+			h := hashOf(tc.label)
+			if tc.field == "" {
+				if !res.Valid || h["valid"] != "1" {
+					t.Fatalf("control: parse valid=%v field=%s defect=%s, hash %v; want valid", res.Valid, res.Field, res.Defect, h)
+				}
+				return
+			}
+			if res.Valid || res.Field != tc.field || res.Defect != tc.defect {
+				t.Fatalf("parse valid=%v field=%s defect=%s, want %s %s", res.Valid, res.Field, res.Defect, tc.field, tc.defect)
+			}
+			if h["valid"] != "0" || h["field"] != tc.field || h["defect"] != tc.defect {
+				t.Fatalf("result hash %v, want valid=0 field=%s defect=%s", h, tc.field, tc.defect)
+			}
+		})
+	}
+
+	// Redis alone: a caller that skips the trusted facts and claims valid is
+	// still judged against the card hash.
+	for _, tc := range []struct {
+		label, kind, line1, field string
+	}{
+		{"r-other-kind", typedrec.KindFix, contract, "KIND"},
+		{"r-line1-suffix", typedrec.KindReport, contract + " forged", "line 1"},
+	} {
+		seed(tc.label)
+		forged := typedrec.ParseResult([]byte(report))
+		forged.Kind, forged.Line1 = tc.kind, tc.line1
+		ledger := &card.RedisLedger{Store: st, Sprint: sprint, Label: tc.label, Token: "tok-" + tc.label}
+		if code, err := ledger.Result(ctx, forged, t.TempDir()); err != nil || code != 0 {
+			t.Fatalf("%s: Result code=%d err=%v", tc.label, code, err)
+		}
+		if h := hashOf(tc.label); h["valid"] != "0" || h["field"] != tc.field || h["defect"] != "contradictory" {
+			t.Fatalf("%s: result hash %v, want valid=0 field=%s defect=contradictory", tc.label, h, tc.field)
+		}
+	}
+}
+
+// failingRecorder is a Redis ledger whose result record fails.
+type failingRecorder struct{ *card.RedisLedger }
+
+func (failingRecorder) Result(context.Context, typedrec.Result, string) (int, error) {
+	return card.WrapperExitRedis, errors.New("record failed")
+}
+
+// TestWrapperRecordFailureIsNotHarvestDue is #3497 Stella 4 item 2: a
+// harness that exits 0 with an unreadable RESULT.md, or whose result record
+// fails, ends FAILED other and is never offered by ns_harvest_due; the same
+// run with a readable, recorded RESULT.md ends DONE and is due.
+func TestWrapperRecordFailureIsNotHarvestDue(t *testing.T) {
+	st, client := resultRedis(t)
+	ctx := context.Background()
+	const sprint, bench = "s-wrap", "wrap-bench"
+
+	root := t.TempDir()
+	harness := filepath.Join(root, "harness.sh")
+	script := "#!/bin/sh\nif [ \"$TYPEDREC_HARNESS\" = unreadable ]; then mkdir -p \"$NOVA_CARD_OUT/RESULT.md\"; else cp \"$TYPEDREC_RESULT\" \"$NOVA_CARD_OUT/RESULT.md\"; fi\n"
+	if err := os.WriteFile(harness, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	never := make(chan time.Time)
+	cases := []struct {
+		mode    string
+		outcome string
+		due     bool
+	}{
+		{"valid", "DONE", true},
+		{"unreadable", "FAILED", false},
+		{"recorder-fails", "FAILED", false},
+	}
+	for i, tc := range cases {
+		label := "card-" + tc.mode
+		id := card.Identity{Sprint: sprint, Label: label, BaseSHA: "0123abcd", Bench: bench, Attempt: 1}
+		token := fmt.Sprintf("1.%032x", i+1)
+		if err := client.HSet(ctx, card.CardKey(sprint, label), map[string]string{
+			"state": "dealt", "attempt": "1", "token": token, "token_sha": card.TokenSHA(token),
+			"identity": id.String(), "bench": bench, "base_sha": id.BaseSHA, "kind": typedrec.KindReport,
+		}).Err(); err != nil {
+			t.Fatal(err)
+		}
+		// The report record names the attempt's own branch, so the only
+		// thing that can keep the valid case from harvest is the record path.
+		report := strings.Replace(typedrec.Exemplar(typedrec.KindReport), "BRANCH: worker/report-throughput",
+			"BRANCH: "+card.WrapperBranch(sprint, label, 1), 1)
+		resultFile := filepath.Join(root, label+".RESULT.md")
+		if err := os.WriteFile(resultFile, []byte(report), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("TYPEDREC_RESULT", resultFile)
+		t.Setenv("TYPEDREC_HARNESS", tc.mode)
+		cfg := card.WrapperConfig{
+			Sprint: sprint, Label: label, Attempt: 1, Bench: bench, Harness: harness,
+			JobsRoot: filepath.Join(root, "jobs"), ResultsRoot: filepath.Join(root, "results"),
+			Clock: 45 * time.Minute, BeatEvery: time.Minute,
+			After: func(time.Duration) <-chan time.Time { return never },
+			Tick:  func(time.Duration) (<-chan time.Time, func()) { return never, func() {} },
+		}
+		var ledger card.WrapperLedger = &card.RedisLedger{Store: st, Sprint: sprint, Label: label, Token: token}
+		if tc.mode == "recorder-fails" {
+			ledger = failingRecorder{ledger.(*card.RedisLedger)}
+		}
+		rep := card.RunWrapper(ctx, cfg, ledger)
+		if rep.Code != card.WrapperExitEnded || rep.Outcome != tc.outcome {
+			t.Fatalf("%s: %s why=%q; want outcome=%s code=0", tc.mode, rep.Line(), rep.Why, tc.outcome)
+		}
+		if tc.outcome == "FAILED" && (rep.Reason != "other" || !strings.Contains(rep.Why, "result not recorded")) {
+			t.Fatalf("%s: reason=%s why=%q; want other and the record failure named", tc.mode, rep.Reason, rep.Why)
+		}
+		if h := client.HGetAll(ctx, card.CardKey(sprint, label)+":result:a1").Val(); (h["valid"] == "1") != tc.due {
+			t.Fatalf("%s: result hash valid=%q field=%s defect=%s, want a validated hash only for the recorded case", tc.mode, h["valid"], h["field"], h["defect"])
+		}
+		// The branch was pushed: only the result gate stands between the card and harvest.
+		if err := client.HSet(ctx, card.CardKey(sprint, label), "pushed_sha", strings.Repeat("ab", 20)).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := client.FCallRO(ctx, "ns_harvest_due", nil, sprint, bench, "256").StringSlice()
+	if err != nil || len(out) < 3 || out[0] != "OK" {
+		t.Fatalf("ns_harvest_due: %v %v", out, err)
+	}
+	due := map[string]bool{}
+	for i := 3; i+8 < len(out); i += 9 {
+		due[out[i]] = true
+	}
+	for _, tc := range cases {
+		if due["card-"+tc.mode] != tc.due {
+			t.Fatalf("%s: harvest due=%v, want %v (due rows %v)", tc.mode, due["card-"+tc.mode], tc.due, due)
+		}
+	}
 }

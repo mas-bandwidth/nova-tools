@@ -251,6 +251,11 @@ redis.register_function('ns_card_end', function(keys, args)
   return reply(0, 'OK', attempt, receipt)
 end)
 
+-- The six typed-record card kinds (typedrec.Kinds). A card hash kind outside
+-- this set (model, script) is a runner kind and sets no RESULT expectation.
+local RESULT_KINDS = { ['fix'] = true, ['recut'] = true, ['port'] = true,
+  ['docs-guard'] = true, ['report'] = true, ['read'] = true }
+
 redis.register_function('ns_card_result', function(keys, args)
   local sprint = args[1]
   local label = args[2]
@@ -283,6 +288,8 @@ redis.register_function('ns_card_result', function(keys, args)
   end
 
   local v_repo = hget(card_key, 'repo')
+  local v_kind = hget(card_key, 'kind')
+  local v_contract = hget(card_key, 'contract')
   local v_base_sha = hget(card_key, 'base_sha')
   local v_bench = hget(card_key, 'bench')
   local v_attempt = hget(card_key, 'attempt')
@@ -314,6 +321,21 @@ redis.register_function('ns_card_result', function(keys, args)
     'v_pr_head', v_pr_head,
   }
 
+  -- KIND is checked against the declared set and the card's own KIND here,
+  -- whatever the caller's parse said: a valid=1 claim with a kind outside the
+  -- six, or a kind other than a typed card's, is persisted invalid.
+  if valid == '1' then
+    if not RESULT_KINDS[kind] then
+      valid = '0'
+      field = 'KIND'
+      defect = 'malformed'
+    elseif RESULT_KINDS[v_kind] and kind ~= v_kind then
+      valid = '0'
+      field = 'KIND'
+      defect = 'contradictory'
+    end
+  end
+
   for i = 14, #args, 2 do
     local k = args[i]
     local v = args[i+1] or ''
@@ -321,7 +343,11 @@ redis.register_function('ns_card_result', function(keys, args)
       table.insert(hset_args, k)
       table.insert(hset_args, v)
       if valid == '1' then
-        if k == 'c_repo' and v ~= '' and v_repo ~= '' and v ~= v_repo then
+        if k == 'line1' and v_contract ~= '' and v ~= v_contract then
+          valid = '0'
+          field = 'line 1'
+          defect = 'contradictory'
+        elseif k == 'c_repo' and v ~= '' and v_repo ~= '' and v ~= v_repo then
           valid = '0'
           field = 'REPO'
           defect = 'contradictory'

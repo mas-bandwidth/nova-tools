@@ -27,6 +27,10 @@ const (
 // Kinds is the list of all 6 valid card kinds in canonical order.
 var Kinds = []string{KindFix, KindRecut, KindPort, KindDocsGuard, KindReport, KindRead}
 
+// IsKind reports whether k is one of the declared Kinds. Every reader of a
+// card or RESULT KIND checks it here before using it as a key.
+func IsKind(k string) bool { return isValidKind(k) }
+
 // FieldEntry specifies one row of the contract table.
 type FieldEntry struct {
 	Field     string

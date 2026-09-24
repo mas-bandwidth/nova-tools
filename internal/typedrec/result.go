@@ -149,8 +149,8 @@ func ParseResult(raw []byte, opts ...ParseOptions) Result {
 	if opt.ContractLine != "" {
 		want := strings.TrimRight(opt.ContractLine, " \t\r\n")
 		got := strings.TrimRight(res.Line1, " \t\r\n")
-		// Pulse legacy allows contract prefix match, but v2 requires exact contract match
-		if got != want && !strings.HasPrefix(got, want) {
+		// v2 requires the card's line 1 verbatim: a suffix is a forgery, not a match.
+		if got != want {
 			return fail("line 1", DefectContradictory, 1)
 		}
 	}
@@ -249,8 +249,12 @@ func ParseResult(raw []byte, opts ...ParseOptions) Result {
 		res.Claims[key] = val
 	}
 
-	// Determine KIND
+	// Determine KIND. The trusted card KIND is itself checked against the
+	// declared set: an unknown expected kind is never a key into Contract.
 	kind := opt.ExpectedKind
+	if kind != "" && !isValidKind(kind) {
+		return fail("KIND", DefectMalformed, 0)
+	}
 	var kindToken *fieldToken
 	for i := range typedFields {
 		if typedFields[i].key == "KIND" {
@@ -673,6 +677,9 @@ var KnownResultV2Headers = map[string]bool{
 func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 	var env ResultEnvelopeV2
 	env.Fields = make(map[string]string)
+	if kind != "" && !isValidKind(kind) {
+		return env, fmt.Errorf("card KIND %q is not one of %s", kind, strings.Join(Kinds, ", "))
+	}
 
 	if len(raw) > MaxFileSize {
 		return env, fmt.Errorf("RESULT.md exceeds maximum size limit of %d bytes (got %d)", MaxFileSize, len(raw))
@@ -745,6 +752,9 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 		if !KnownResultV2Headers[key] {
 			return env, fmt.Errorf("unknown header field %q at line %d", key, i+1)
 		}
+		if key == "KIND" && !isValidKind(val) {
+			return env, fmt.Errorf("KIND %q at line %d is not one of %s", val, i+1, strings.Join(Kinds, ", "))
+		}
 
 		if seenKeys[key] {
 			return env, fmt.Errorf("duplicate field %q at line %d", key, i+1)
@@ -771,6 +781,9 @@ func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
 		}
 	}
 
+	if got, ok := env.Fields["KIND"]; ok && kind != "" && got != kind {
+		return env, fmt.Errorf("KIND %q contradicts the card's KIND %q", got, kind)
+	}
 	if env.Schema == "" {
 		return env, fmt.Errorf("RESULT.md v2 requires a typed `SCHEMA: v2` line")
 	}

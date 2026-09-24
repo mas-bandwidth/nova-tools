@@ -472,6 +472,9 @@ func ValidateCardV2(cardText string) error {
 				break
 			}
 		}
+		if kind != "" && !typedrec.IsKind(kind) {
+			return fmt.Errorf("cutter lint: card RESULT template KIND %q is not one of %s", kind, strings.Join(typedrec.Kinds, ", "))
+		}
 		if kind != "" {
 			for _, f := range typedrec.Fields(kind) {
 				key, _, _ := strings.Cut(f, ":")
