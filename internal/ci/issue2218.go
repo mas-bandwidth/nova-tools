@@ -1,10 +1,20 @@
 package ci
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
@@ -222,4 +232,431 @@ func blockHelpExamples(block string) ([]string, error) {
 // help banner pasted in one of the PastedDocs are pasted examples too.
 func HelpExampleLines(usage, tool string) ([]string, error) {
 	return onboarding.ExampleLines(usage, tool)
+}
+
+// HelpBannerExamples returns every `example:` line of every `help` banner a
+// tool under root/cmd carries, keyed "example: <line>" and mapped to the
+// source file that carries it, per SPEC-TOOLWORK §7 rule 7 ("every `example:`
+// line of every `help`"). A banner is a string literal (or a `+` chain of
+// them) in a non-test .go file of cmd/<tool>/ holding the `\nexample:\n`
+// heading; its lines are read through HelpExampleLines, exactly as the tool's
+// own banner tests read them, for the program the block's first line runs. A literal that is only the heading (a splice
+// point such as nova-sprint's registry.go) carries no lines; any other banner
+// whose example block holds no command is an error naming its file, so a
+// banner is never silently left out of the count.
+func HelpBannerExamples(root string) (map[string]string, error) {
+	dirs, err := os.ReadDir(filepath.Join(root, "cmd"))
+	if err != nil {
+		return nil, fmt.Errorf("help banners: %w", err)
+	}
+	out := make(map[string]string)
+	for _, d := range dirs {
+		if !d.IsDir() {
+			continue
+		}
+		tool := d.Name()
+		files, err := filepath.Glob(filepath.Join(root, "cmd", tool, "*.go"))
+		if err != nil {
+			return nil, err
+		}
+		sort.Strings(files)
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			rel := filepath.ToSlash(strings.TrimPrefix(f, root+string(filepath.Separator)))
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
+			if err != nil {
+				return nil, fmt.Errorf("help banners: %w", err)
+			}
+			for _, banner := range stringConstants(file) {
+				_, tail, found := strings.Cut(banner, onboarding.ExampleHeading)
+				if !found || strings.TrimSpace(tail) == "" {
+					continue
+				}
+				// The banner's own program is the first word under the
+				// heading: the tool itself, or `go` for a `go run` helper
+				// such as cmd/nova-ci/timing.go.
+				first, _, _ := strings.Cut(strings.TrimSpace(tail), "\n")
+				prog := tool
+				if f := strings.Fields(first); len(f) > 0 && f[0] != tool {
+					prog = f[0]
+				}
+				lines, err := HelpExampleLines(banner, prog)
+				if err != nil {
+					return nil, fmt.Errorf("help banner in %s: %w", rel, err)
+				}
+				for _, l := range lines {
+					if _, dup := out["example: "+l]; !dup {
+						out["example: "+l] = rel
+					}
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// stringConstants returns every string literal of a file and every `+` chain
+// made only of string literals, folded, so a banner split across lines with +
+// is read whole.
+func stringConstants(file *ast.File) []string {
+	var out []string
+	var fold func(e ast.Expr) (string, bool)
+	fold = func(e ast.Expr) (string, bool) {
+		switch x := e.(type) {
+		case *ast.BasicLit:
+			if x.Kind != token.STRING {
+				return "", false
+			}
+			s, err := strconv.Unquote(x.Value)
+			return s, err == nil
+		case *ast.ParenExpr:
+			return fold(x.X)
+		case *ast.BinaryExpr:
+			if x.Op != token.ADD {
+				return "", false
+			}
+			l, ok := fold(x.X)
+			if !ok {
+				return "", false
+			}
+			r, ok := fold(x.Y)
+			return l + r, ok
+		}
+		return "", false
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.BasicLit, *ast.BinaryExpr:
+			if s, ok := fold(x.(ast.Expr)); ok {
+				out = append(out, s)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// ListRows returns the entries of a one-entry-per-line list (blank lines and
+// '#' lines skipped, each entry trimmed), in order, without repeats.
+func ListRows(list string) []string {
+	var rows []string
+	seen := make(map[string]bool)
+	for _, line := range strings.Split(list, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || seen[line] {
+			continue
+		}
+		seen[line] = true
+		rows = append(rows, line)
+	}
+	return rows
+}
+
+// AddedListRows returns the rows of head that base does not carry: for a
+// shrink-only list, every one is a row the change adds, and each fails the
+// class test (SPEC-TOOLWORK §7 rule 7, "a new unexecuted example fails the
+// class test on the PR that adds it").
+func AddedListRows(base, head string) []string {
+	had := make(map[string]bool)
+	for _, r := range ListRows(base) {
+		had[r] = true
+	}
+	var added []string
+	for _, r := range ListRows(head) {
+		if !had[r] {
+			added = append(added, r)
+		}
+	}
+	return added
+}
+
+// UnexecutedListPath is the shrink-only list, relative to the repo root.
+const UnexecutedListPath = "internal/ci/testdata/unexecuted_examples.txt"
+
+// ChangeBase returns the commit a change is compared against: in a GitHub
+// Actions run, the event's own base (pull_request.base.sha, merge_group's
+// base_sha, a push's before); otherwise the merge base of HEAD and
+// origin/<GITHUB_BASE_REF> (dev when unset), falling back to the local
+// branch of that name. The commit is fetched once from origin when the clone
+// lacks it (a --depth=1 checkout).
+func ChangeBase(root string, getenv func(string) string) (string, error) {
+	sha := ""
+	if p := getenv("GITHUB_EVENT_PATH"); p != "" {
+		if raw, err := os.ReadFile(p); err == nil {
+			var ev struct {
+				PullRequest struct {
+					Base struct {
+						SHA string `json:"sha"`
+					} `json:"base"`
+				} `json:"pull_request"`
+				MergeGroup struct {
+					BaseSHA string `json:"base_sha"`
+				} `json:"merge_group"`
+				Before string `json:"before"`
+			}
+			if json.Unmarshal(raw, &ev) == nil {
+				for _, s := range []string{ev.PullRequest.Base.SHA, ev.MergeGroup.BaseSHA, ev.Before} {
+					if s != "" && strings.Trim(s, "0") != "" {
+						sha = s
+						break
+					}
+				}
+			}
+		}
+	}
+	if sha == "" {
+		ref := getenv("GITHUB_BASE_REF")
+		if ref == "" {
+			ref = "dev"
+		}
+		var errs []string
+		for _, r := range []string{"origin/" + ref, ref} {
+			out, err := gitOut(root, "merge-base", "HEAD", r)
+			if err == nil {
+				sha = strings.TrimSpace(out)
+				break
+			}
+			errs = append(errs, fmt.Sprintf("merge-base HEAD %s: %v", r, err))
+		}
+		if sha == "" {
+			return "", fmt.Errorf("no base commit: %s", strings.Join(errs, "; "))
+		}
+	}
+	if _, err := gitOut(root, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		if _, ferr := gitOut(root, "fetch", "--no-tags", "--depth=1", "origin", sha); ferr != nil {
+			return "", fmt.Errorf("base %s is not in the clone and could not be fetched: %v", sha, ferr)
+		}
+	}
+	return sha, nil
+}
+
+// ListAtCommit returns the file at rel as it stands at commit, and false when
+// the commit does not carry it (the change introduces it).
+func ListAtCommit(root, commit, rel string) (string, bool, error) {
+	out, err := gitOut(root, "ls-tree", "--name-only", commit, "--", rel)
+	if err != nil {
+		return "", false, err
+	}
+	if strings.TrimSpace(out) == "" {
+		return "", false, nil
+	}
+	body, err := gitOut(root, "show", commit+":"+rel)
+	if err != nil {
+		return "", false, err
+	}
+	return body, true, nil
+}
+
+func gitOut(root string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+	}
+	return string(out), nil
+}
+
+// ComparedEntry is one entry of testdata/compared_examples.txt: the test that
+// executes a pasted example through the comparator.
+type ComparedEntry struct {
+	File string // test file, relative to the repo root
+	Test string // test function name
+	Ex   string // the example, exactly as listed: "$ ..." or "example: ..."
+}
+
+// testReach is what a test reaches: its own body and, transitively, every
+// function declared in a _test.go file of its package that it calls or
+// passes. Production code is not followed, so a usage banner the tool
+// carries never counts as the test naming an example.
+type testReach struct {
+	comparator  bool     // calls onboarding.Compare, Execute or ExecuteWith
+	literals    []string // every string literal
+	transcripts [][2]string
+}
+
+func reachOf(pkgDir, test string) (testReach, bool, error) {
+	var r testReach
+	files, err := filepath.Glob(filepath.Join(pkgDir, "*_test.go"))
+	if err != nil {
+		return r, false, err
+	}
+	funcs := make(map[string]*ast.FuncDecl)
+	fset := token.NewFileSet()
+	for _, f := range files {
+		file, err := parser.ParseFile(fset, f, nil, parser.SkipObjectResolution)
+		if err != nil {
+			return r, false, err
+		}
+		for _, d := range file.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Recv == nil && fd.Body != nil {
+				funcs[fd.Name.Name] = fd
+			}
+		}
+	}
+	if _, ok := funcs[test]; !ok {
+		return r, false, nil
+	}
+	seen := map[string]bool{test: true}
+	queue := []string{test}
+	for len(queue) > 0 {
+		fd := funcs[queue[0]]
+		queue = queue[1:]
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.BasicLit:
+				if x.Kind == token.STRING {
+					if s, err := strconv.Unquote(x.Value); err == nil {
+						r.literals = append(r.literals, s)
+					}
+				}
+			case *ast.Ident:
+				if _, ok := funcs[x.Name]; ok && !seen[x.Name] {
+					seen[x.Name] = true
+					queue = append(queue, x.Name)
+				}
+			case *ast.CallExpr:
+				sel, ok := x.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkg, ok := sel.X.(*ast.Ident)
+				if !ok || pkg.Name != "onboarding" {
+					return true
+				}
+				switch sel.Sel.Name {
+				case "Compare", "Execute", "ExecuteWith":
+					r.comparator = true
+				case "FirstRun", "Transcript":
+					if len(x.Args) < 2 {
+						return true
+					}
+					tool, ok := x.Args[1].(*ast.BasicLit)
+					if !ok || tool.Kind != token.STRING {
+						return true
+					}
+					t, _ := strconv.Unquote(tool.Value)
+					heading := strings.TrimPrefix(onboarding.FirstRunHeading, "### ")
+					if sel.Sel.Name == "Transcript" {
+						if len(x.Args) < 3 {
+							return true
+						}
+						h, ok := x.Args[2].(*ast.BasicLit)
+						if !ok || h.Kind != token.STRING {
+							return true
+						}
+						heading, _ = strconv.Unquote(h.Value)
+					}
+					r.transcripts = append(r.transcripts, [2]string{t, heading})
+				}
+			}
+			return true
+		})
+	}
+	return r, true, nil
+}
+
+// commandText is an example with its "$ " or "example: " marker removed and
+// its whitespace collapsed.
+func commandText(ex string) string {
+	for _, p := range []string{"$ ", "example: "} {
+		if rest, ok := strings.CutPrefix(ex, p); ok {
+			ex = rest
+			break
+		}
+	}
+	return strings.Join(strings.Fields(ex), " ")
+}
+
+// ComparedEntryProblem says why a compared_examples.txt entry is not a
+// comparator test FOR ITS EXAMPLE, or "" when it is. docs are the docs the
+// example is pasted in (none for a help-only example). The test must:
+//   - be declared in a _test.go file of the example's tool's package, cmd/<tool>/;
+//   - reach the comparator (onboarding.Compare, Execute or ExecuteWith) from its
+//     own body or a test helper it calls;
+//   - carry the example's command text: a string literal naming at least the
+//     tool and its verb that the example is, word for word, or begins with
+//     (`"$ nova-wake presence "` names `$ nova-wake presence --store ...`), or,
+//     for a $ line, an onboarding.FirstRun/Transcript of that tool whose
+//     transcript in a doc the test reads holds that exact line;
+//   - for an example pasted in a doc, read one of those docs.
+func ComparedEntryProblem(root string, c ComparedEntry, docs []string) string {
+	if !strings.HasSuffix(c.File, "_test.go") {
+		return fmt.Sprintf("%s is not a _test.go file", c.File)
+	}
+	cmdText := commandText(c.Ex)
+	fields := strings.Fields(cmdText)
+	if len(fields) == 0 {
+		return fmt.Sprintf("%q names no command", c.Ex)
+	}
+	tool := fields[0]
+	if dir := "cmd/" + tool + "/"; !strings.HasPrefix(c.File, dir) || strings.Contains(strings.TrimPrefix(c.File, dir), "/") {
+		return fmt.Sprintf("%q runs %s, but %s is not in %s, so %s cannot be the test that executes it", c.Ex, tool, c.File, dir, c.Test)
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(c.File))); err != nil {
+		return fmt.Sprintf("cannot read %s: %v", c.File, err)
+	}
+	reach, found, err := reachOf(filepath.Join(root, "cmd", tool), c.Test)
+	if err != nil {
+		return fmt.Sprintf("cannot parse cmd/%s's tests: %v", tool, err)
+	}
+	if !found {
+		return fmt.Sprintf("cmd/%s declares no func %s", tool, c.Test)
+	}
+	if !reach.comparator {
+		return fmt.Sprintf("%s never reaches onboarding.Compare or onboarding.Execute, so it is not a comparator test", c.Test)
+	}
+	readsDoc := func(doc string) bool {
+		for _, l := range reach.literals {
+			if l == path.Base(doc) || l == doc {
+				return true
+			}
+		}
+		return false
+	}
+	var readDocs []string
+	for _, d := range docs {
+		if readsDoc(d) {
+			readDocs = append(readDocs, d)
+		}
+	}
+	if len(docs) > 0 && len(readDocs) == 0 {
+		return fmt.Sprintf("%s reads none of %v, the docs %q is pasted in", c.Test, docs, c.Ex)
+	}
+	for _, l := range reach.literals {
+		name := commandText(strings.TrimSpace(l))
+		nf := strings.Fields(name)
+		if len(nf) >= 2 && nf[0] == tool && (cmdText == name || strings.HasPrefix(cmdText, name+" ")) {
+			return ""
+		}
+	}
+	if strings.HasPrefix(c.Ex, "$ ") {
+		for _, tr := range reach.transcripts {
+			if tr[0] != tool {
+				continue
+			}
+			for _, d := range readDocs {
+				raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(d)))
+				if err != nil {
+					continue
+				}
+				lines, err := onboarding.Transcript(string(raw), tool, tr[1])
+				if err != nil {
+					continue
+				}
+				for _, l := range lines {
+					if strings.TrimSpace(l) == c.Ex {
+						return ""
+					}
+				}
+			}
+		}
+	}
+	return fmt.Sprintf("%s never names %q: no string literal it reaches is that command (tool and verb at least), and no transcript it runs holds the line", c.Test, c.Ex)
 }

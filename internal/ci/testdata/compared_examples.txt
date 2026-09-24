@@ -1,12 +1,17 @@
 # The pasted examples that ARE executed by a test through the comparator
 # (onboarding.Compare, directly or via onboarding.Execute), per SPEC-TOOLWORK §7
-# rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`.
+# rule 7. One per line: `<test file>:<TestName> <the $ line, exactly as pasted>`
+# or `<test file>:<TestName> example: <a help banner's example line>`.
 #
-# TestIssue2218 checks every entry: the $ line is a real pasted example, the
-# named file declares the named test, and that file reaches the comparator and
-# reads the doc the line is pasted in. An example is in this file or in
-# unexecuted_examples.txt, never both. Moving a line from unexecuted_examples.txt
-# to here is how that list shrinks.
+# TestIssue2218 checks every entry: the example is a real pasted or help example;
+# the named test is declared in a _test.go file of the example's tool's package;
+# the test, or a test helper it calls, reaches the comparator; it carries the
+# example's own command text (a string literal the example is, or begins with,
+# naming at least the tool and its verb) or executes the tool's transcript of a
+# doc it reads that holds the exact line; and it reads a doc the example is
+# pasted in. An example is in this file or in unexecuted_examples.txt, never
+# both. Moving a line from unexecuted_examples.txt to here is how that list
+# shrinks.
 
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once --out sprint-table.txt
