@@ -376,3 +376,85 @@ func TestStatusOnelineTwoThousandJobRootIsFast(t *testing.T) {
 		t.Errorf("warm status must answer from the index (spend=2.0000):\n%s", out)
 	}
 }
+
+// publishResult writes one attempt the way nova-swarm native publishes it (#2632):
+// <results-root>/<label>/<runID>/<attempt>/usage.tsv beside RESULT.md, outside any job.
+func publishResult(t *testing.T, resultsRoot, label, runID, day, usd string, mod time.Time) {
+	t.Helper()
+	dir := filepath.Join(resultsRoot, label, runID, "1")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAt(t, filepath.Join(dir, "RESULT.md"), "RESULT: "+label+" done\nDONE\n", mod)
+	writeAt(t, filepath.Join(dir, "usage.tsv"),
+		"job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\n"+
+			label+"\t1\t"+day+"T09:00:00Z\t"+day+"T09:10:00Z\t0\t-\tgo\t-\t-\t-\t-\t-\t"+usd+"\n", mod)
+}
+
+// TestStatusResultsRootSeesAPublishAfterTheIndex is the follow-up to #2658, found on the
+// Studio at v0.16.0-dev.3403baa7: the first `status --results-root` tick writes the index,
+// and every card nova-swarm native published after it was invisible, because the warm tick
+// only re-stats the jobs it already knew and native appends to no index. The spend stayed
+// at the first tick's number. A publish after the index must be folded on the next tick,
+// and a tick with nothing new must still open no file and leave the index alone.
+func TestStatusResultsRootSeesAPublishAfterTheIndex(t *testing.T) {
+	const day = "2026-09-16"
+	resultsRoot := filepath.Join(t.TempDir(), "results")
+	bench := filepath.Join(t.TempDir(), "bench")
+	if err := os.MkdirAll(bench, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	queue := bigStatusQueue(t)
+	tick := func() string {
+		t.Helper()
+		var out, errs bytes.Buffer
+		code := StatusLine(StatusInput{
+			Queue: queue, Roots: bench, ResultsRoot: resultsRoot, Day: day,
+			Stdout: &out, Stderr: &errs,
+			Now: func() time.Time { return time.Date(2026, 9, 16, 18, 0, 0, 0, time.UTC) },
+		})
+		if code != 0 {
+			t.Fatalf("status exit = %d: %s%s", code, out.String(), errs.String())
+		}
+		return out.String()
+	}
+
+	publishResult(t, resultsRoot, "card-a", "run-1", day, "0.5000", fixtureBase)
+	if out := tick(); !strings.Contains(out, "spend=0.5000") {
+		t.Fatalf("the first tick must fold the first publish (spend=0.5000):\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(resultsRoot, statusIndexName)); err != nil {
+		t.Fatalf("the first tick must write %s: %v", statusIndexName, err)
+	}
+
+	// A second card, and a second run of the first label, publish after the index exists.
+	publishResult(t, resultsRoot, "card-b", "run-1", day, "0.2500", fixtureBase.Add(time.Minute))
+	publishResult(t, resultsRoot, "card-a", "run-2", day, "0.1250", fixtureBase.Add(2*time.Minute))
+	atomic.StoreInt64(&statusIndexReads, 0)
+	if out := tick(); !strings.Contains(out, "spend=0.8750") {
+		t.Fatalf("a publish after the index must be folded on the next tick (0.5000 + 0.2500 + 0.1250 = 0.8750):\n%s", out)
+	}
+	if got := atomic.LoadInt64(&statusIndexReads); got != 2 {
+		t.Fatalf("the tick after two publishes opened %d usage files, want 2 (only the new ones)", got)
+	}
+
+	// Nothing new: the index answers, no file is opened and the index is not rewritten.
+	before, err := os.Stat(filepath.Join(resultsRoot, statusIndexName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	atomic.StoreInt64(&statusIndexReads, 0)
+	if out := tick(); !strings.Contains(out, "spend=0.8750") {
+		t.Fatalf("a warm tick must answer from the index (spend=0.8750):\n%s", out)
+	}
+	if got := atomic.LoadInt64(&statusIndexReads); got != 0 {
+		t.Fatalf("a warm tick with nothing published opened %d usage files, want 0", got)
+	}
+	after, err := os.Stat(filepath.Join(resultsRoot, statusIndexName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Errorf("a warm tick with nothing published rewrote %s", statusIndexName)
+	}
+}
