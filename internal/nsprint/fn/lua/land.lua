@@ -152,6 +152,15 @@ end)
 -- ns_release: releases a hold. Decrements holds_open only when post_land was 0.
 redis.register_function('ns_release', function(keys, args)
   local S, unit, holder, released_by, release_kind, release_reason, release_url = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
+  if released_by ~= holder and release_kind ~= 'superseded' then
+    if not string.find(holder, '^login:') then
+      local is_down = redis.call('EXISTS', 'friend:' .. holder .. ':down')
+      if is_down ~= 1 then
+        return { 'REFUSED', 'holder not down' }
+      end
+    end
+  end
+
   local seq = redis.call('INCR', 'rec:seq')
   local hkey = 's:' .. S .. ':hold:' .. unit .. ':' .. holder
   local held = redis.call('HMGET', hkey, 'released_by', 'post_land')

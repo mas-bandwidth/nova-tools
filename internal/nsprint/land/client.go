@@ -90,7 +90,13 @@ func CallRelease(ctx context.Context, c *redis.Client, sprint, unit, holder, rel
 	if err != nil {
 		return 0, err
 	}
-	if len(res) < 2 || res[0] != "OK" {
+	if len(res) < 2 {
+		return 0, fmt.Errorf("unexpected ns_release reply: %v", res)
+	}
+	if res[0] == "REFUSED" {
+		return 0, fmt.Errorf("REFUSED %v", res[1])
+	}
+	if res[0] != "OK" {
 		return 0, fmt.Errorf("ns_release failed: %v", res)
 	}
 	seq, err := strconv.ParseInt(fmt.Sprint(res[1]), 10, 64)
