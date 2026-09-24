@@ -21,11 +21,11 @@ func TestAdmissionRefusesAFourthCallWithoutExplore(t *testing.T) {
 	if !strings.Contains(why, "a card is a pipeline") {
 		t.Fatalf("the remedy names the rule, got %q", why)
 	}
-	// The same card with `MODE: explore` is admitted: the loop is the exception,
-	// and the exception is a word the card says.
-	explore := "MODE: explore\n" + four
+	// The same card with `MODE: explore` and a turn budget is admitted; the
+	// loop is the exception, and the budget bounds it (issue #2035).
+	explore := "MODE: explore\nTURNS: 10\n" + four
 	if why := admitWhyOf(t, t.TempDir(), "p5", "opencode/deepseek-v4-flash", explore); why != "" {
-		t.Fatalf("an explore card is admitted, got %q", why)
+		t.Fatalf("an explore card with TURNS: is admitted, got %q", why)
 	}
 }
 

@@ -405,7 +405,7 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 						if err != nil {
 							return fmt.Errorf("lane read records for pull request %d could not be read: %w", pr.Number, err)
 						}
-						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, pr.Author, nil)) > 0 {
+						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, merge.ReaderAuthor(pr, nil), nil)) > 0 {
 							continue
 						}
 						green++
@@ -419,7 +419,7 @@ func cmdQueueSweep(lane string, opts map[string]string, st *merge.State, timeout
 						if err != nil {
 							return fmt.Errorf("lane read records for pull request %d could not be read: %w", pr.Number, err)
 						}
-						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, pr.Author, nil)) > 0 {
+						if len(merge.UnliftedHolds(laneVs, pr.HeadOID, merge.ReaderAuthor(pr, nil), nil)) > 0 {
 							continue
 						}
 						q.Queued = append(q.Queued, pr.Number)

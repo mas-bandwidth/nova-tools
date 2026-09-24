@@ -134,6 +134,31 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 	}
 }
 
+// TestIssue2238 asserts that a Batch with no SlotsStore/SlotOwner refuses before
+// any worker starts, citing the missing lease (docs/SPEC-JOBS.md:76).
+func TestIssue2238(t *testing.T) {
+	root := t.TempDir()
+	// Create a fake harness so we get past the harness check
+	harness := filepath.Join(root, "harness")
+	if err := os.WriteFile(harness, []byte("#!/bin/sh\necho OK\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cards := writeCards(t, root, [][2]string{{"c1", "RESULT: test\nDONE"}})
+	var errb strings.Builder
+	code := Batch(BatchInput{
+		ID: "B1", Deadline: time.Minute, Cards: cards, Root: root,
+		Runner: "", Harness: harness, SlotsStore: "", SlotOwner: "",
+		Stdout: &strings.Builder{}, Stderr: &errb,
+	})
+	if code != 2 {
+		t.Fatalf("Batch without SlotsStore/SlotOwner must refuse with exit 2, got %d", code)
+	}
+	got := errb.String()
+	if !strings.Contains(got, NoSlotsStoreRefusal) {
+		t.Fatalf("refusal must cite %q, got %q", NoSlotsStoreRefusal, got)
+	}
+}
+
 // aBenchSlotStore is a store with room, for a test whose batch launches `nova-swarm
 // native`. Since nova-tools#1546 a launch without a lease is REFUSED, so a Batch with no
 // --runner of its own needs SlotsStore and SlotOwner or it never reaches the card.
