@@ -9,6 +9,7 @@ package pulse
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -61,7 +62,7 @@ func (d *simulatedDay) Gate(tick int) (bool, string, error) {
 	return false, "success", nil
 }
 
-func (d *simulatedDay) Harvest(tick int) (int, []Undecided, error) {
+func (d *simulatedDay) Harvest(tick int, events io.Writer) (int, []Undecided, error) {
 	n := 0
 	for n < d.perTick && d.harvested < len(d.cards) {
 		d.harvested++
@@ -98,7 +99,7 @@ func (d *simulatedDay) openCards() []Undecided {
 	return out
 }
 
-func (d *simulatedDay) Sweep(tick int) (int, error) {
+func (d *simulatedDay) Sweep(tick int, events io.Writer) (int, error) {
 	if d.swept < len(d.prs) {
 		d.swept++
 		return 1, nil
@@ -116,7 +117,7 @@ func (d *simulatedDay) Reap(tick int) (int, int, []Undecided, error) {
 	return 0, 0, nil, nil
 }
 
-func (d *simulatedDay) Refill(tick int) (int, error) {
+func (d *simulatedDay) Refill(tick int, events io.Writer) (int, error) {
 	d.refilled++
 	return 1, nil
 }

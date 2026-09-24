@@ -64,13 +64,13 @@ type Gater interface {
 // Harvester folds every card whose job has written a RESULT.md. Seam: the shipped
 // `nova-pulse harvest` verb, driven per pulse id.
 type Harvester interface {
-	Harvest(tick int) (done int, undecided []Undecided, err error)
+	Harvest(tick int, events io.Writer) (done int, undecided []Undecided, err error)
 }
 
 // Sweeper retires what is finished: merged PRs, closed issues, stale job directories.
 // Seam: rowan/pulse-ledger-reap-cut.
 type Sweeper interface {
-	Sweep(tick int) (swept int, err error)
+	Sweep(tick int, events io.Writer) (swept int, err error)
 }
 
 // Reaper requeues or fails a card whose slot went quiet. Seam: rowan/pulse-ledger-reap-cut.
@@ -82,7 +82,7 @@ type Reaper interface {
 // Refiller tops the queue up to its floor from the declared sources. Seam:
 // rowan/pulse-config-gate-admission (the policy's floor and scope live with the config).
 type Refiller interface {
-	Refill(tick int) (added int, err error)
+	Refill(tick int, events io.Writer) (added int, err error)
 }
 
 // Launcher fills every free slot on every bench. Seam: the shipped `nova-pulse launch`.
@@ -263,7 +263,7 @@ func (r *runner) tick() {
 	if !stopped {
 		// 2. Harvest.
 		if h := r.in.Harvest; h != nil {
-			done, u, err := h.Harvest(r.ticks)
+			done, u, err := h.Harvest(r.ticks, r.in.Stdout)
 			t.harvested = done
 			undecided = append(undecided, u...)
 			r.stepErr("harvest", err)
@@ -276,7 +276,7 @@ func (r *runner) tick() {
 		r.foldLedgers()
 		// 3. Sweep.
 		if s := r.in.Sweep; s != nil {
-			n, err := s.Sweep(r.ticks)
+			n, err := s.Sweep(r.ticks, r.in.Stdout)
 			t.swept = n
 			r.stepErr("sweep", err)
 		} else {
@@ -293,7 +293,7 @@ func (r *runner) tick() {
 		}
 		// 5. Refill.
 		if s := r.in.Refill; s != nil {
-			n, err := s.Refill(r.ticks)
+			n, err := s.Refill(r.ticks, r.in.Stdout)
 			t.refilled = n
 			r.stepErr("refill", err)
 		} else {

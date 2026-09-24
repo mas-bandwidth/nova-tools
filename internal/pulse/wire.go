@@ -229,7 +229,7 @@ func (w *Wiring) Gate(tick int) (bool, string, error) {
 
 // Harvest folds every bench that has cards in flight. A root with no cards.tsv has never
 // launched anything and is skipped rather than refused.
-func (w *Wiring) Harvest(tick int) (int, []Undecided, error) {
+func (w *Wiring) Harvest(tick int, events io.Writer) (int, []Undecided, error) {
 	done := 0
 	var undecided []Undecided
 	for _, root := range w.roots {
@@ -246,7 +246,13 @@ func (w *Wiring) Harvest(tick int) (int, []Undecided, error) {
 		for _, l := range strings.Split(out.String(), "\n") {
 			switch {
 			case strings.HasPrefix(l, "HARVEST OK "), strings.HasPrefix(l, "HARVEST INCOMPLETE "):
-				done += atoiField(l, "done=")
+				d := atoiField(l, "done=")
+				if d > 0 && events != nil {
+					for i := 0; i < d; i++ {
+						fmt.Fprintf(events, "coordinator harvest tick=%d msg=%q\n", tick, fmt.Sprintf("disposed RESULT.md in %s", root))
+					}
+				}
+				done += d
 			case strings.HasPrefix(l, "HARVEST RETRY "):
 				// A card that came back without its contract line is a case for a rule, and
 				// the refusal line is the whole evidence of it.
@@ -292,7 +298,7 @@ func (w *Wiring) decideSeam() swarm.DecideFunc {
 // Sweep walks the approvals ledger: green, undrafted, unheld approvals are enqueued once,
 // a moved head is marked stale, and a merged PR closes its row and writes the MERGED record
 // `status --oneline` counts.
-func (w *Wiring) Sweep(tick int) (int, error) {
+func (w *Wiring) Sweep(tick int, events io.Writer) (int, error) {
 	var out, errs bytes.Buffer
 	code := Sweep(SweepInput{
 		Repo: w.in.Repo, Queue: w.in.Queue, Source: w.in.PRs, Enqueuer: w.in.Enqueuer,
@@ -304,7 +310,11 @@ func (w *Wiring) Sweep(tick int) (int, error) {
 		return 0, fmt.Errorf("%s", oneline.Escape(firstOf(errs.String())))
 	}
 	line := strings.TrimSpace(out.String())
-	return atoiField(line, "enqueued=") + atoiField(line, "stale=") + atoiField(line, "closed="), nil
+	swept := atoiField(line, "enqueued=") + atoiField(line, "stale=") + atoiField(line, "closed=")
+	if swept > 0 && events != nil {
+		fmt.Fprintf(events, "coordinator sweep tick=%d msg=%q\n", tick, fmt.Sprintf("folded pool %s enqueued=%d stale=%d closed=%d", w.in.Repo, atoiField(line, "enqueued="), atoiField(line, "stale="), atoiField(line, "closed=")))
+	}
+	return swept, nil
 }
 
 // ------------------------------------------------------------------------------ 4. reap
@@ -341,7 +351,7 @@ func (w *Wiring) Reap(tick int) (int, int, []Undecided, error) {
 // went stale before it ran. WORKSET is the whole admission: an issue outside it is work
 // nobody asked for (bug: 25 reads refused by mistake at 15:20Z, and the answer was the
 // WORKSET, not a wider net).
-func (w *Wiring) Refill(tick int) (int, error) {
+func (w *Wiring) Refill(tick int, events io.Writer) (int, error) {
 	cfg := w.in.Config()
 	state, err := LoadState(w.in.Queue)
 	if err != nil {
@@ -374,7 +384,7 @@ func (w *Wiring) Refill(tick int) (int, error) {
 		return 0, nil
 	}
 
-	reads, fixes := w.refillReads(workset), w.refillFixes(workset)
+	reads, fixes := w.refillReads(workset, tick, events), w.refillFixes(workset, tick, events)
 	w.log(fmt.Sprintf("REFILL reads=%d fixes=%d pending=%d floor=%d", reads, fixes,
 		len(cardsIn(filepath.Join(w.in.Queue, "pending"))), floor))
 	return reads + fixes, nil
@@ -383,7 +393,7 @@ func (w *Wiring) Refill(tick int) (int, error) {
 // refillReads cuts one read card per open non-draft PR in the workset that has no card at
 // its current head. The head is in the card's line 1, so a PR that moved is read again and
 // a PR that did not is never read twice.
-func (w *Wiring) refillReads(workset map[int]bool) int {
+func (w *Wiring) refillReads(workset map[int]bool, tick int, events io.Writer) int {
 	prs, err := w.in.Work.OpenPRs(w.in.Repo)
 	if err != nil {
 		w.log("REFILL NOTE the open pull requests could not be read: " + oneline.Err(err))
@@ -395,7 +405,12 @@ func (w *Wiring) refillReads(workset map[int]bool) int {
 			continue
 		}
 		head := shortHead(pr.Head)
-		if w.cardExists(fmt.Sprintf("PR%d at %s", pr.Number, head), "pending", "launched", "done") {
+		mark := fmt.Sprintf("PR%d at %s", pr.Number, head)
+		source := fmt.Sprintf("%s#%d", repoShort(w.in.Repo), pr.Number)
+		if w.cardExists(mark, "pending", "launched", "done") {
+			if events != nil {
+				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, fmt.Sprintf("dedup: %s already has a card", strings.TrimSpace(mark)))
+			}
 			continue
 		}
 		if w.cutKind(CutKindInput{
@@ -403,6 +418,11 @@ func (w *Wiring) refillReads(workset map[int]bool) int {
 			Out: filepath.Join(w.in.Queue, "pending"), Queue: w.in.Queue,
 		}) {
 			cut++
+			if events != nil {
+				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, "cut")
+			}
+		} else if events != nil {
+			fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, "refused")
 		}
 	}
 	return cut
@@ -412,7 +432,7 @@ func (w *Wiring) refillReads(workset map[int]bool) int {
 // flight for it. A card in done/ or failed/ is history and never a block -- 22 admitted
 // issues sat uncut behind old cards on 2026-09-16 -- but it IS named on the new card, with
 // what became of it, so the worker fixes the prompt rather than repeating it.
-func (w *Wiring) refillFixes(workset map[int]bool) int {
+func (w *Wiring) refillFixes(workset map[int]bool, tick int, events io.Writer) int {
 	issues, err := w.in.Work.OpenIssues(w.in.Repo)
 	if err != nil {
 		w.log("REFILL NOTE the open issues could not be read: " + oneline.Err(err))
@@ -435,7 +455,11 @@ func (w *Wiring) refillFixes(workset map[int]bool) int {
 			continue
 		}
 		mark := fmt.Sprintf("%s #%d ", repoShort(w.in.Repo), issue.Number)
+		source := fmt.Sprintf("%s#%d", repoShort(w.in.Repo), issue.Number)
 		if w.cardExists(mark, "pending", "launched") {
+			if events != nil {
+				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, fmt.Sprintf("dedup: %s already has a card", strings.TrimSpace(mark)))
+			}
 			continue
 		}
 		body := ""
@@ -452,6 +476,11 @@ func (w *Wiring) refillFixes(workset map[int]bool) int {
 			Out: filepath.Join(w.in.Queue, "pending"), Queue: w.in.Queue,
 		}) {
 			cut++
+			if events != nil {
+				fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, "cut")
+			}
+		} else if events != nil {
+			fmt.Fprintf(events, "coordinator fill tick=%d source=%s msg=%q\n", tick, source, "refused")
 		}
 	}
 	return cut
