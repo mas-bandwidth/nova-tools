@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // ReplayClass is one results bundle's class in the #2634 part 3 report.
@@ -173,14 +174,10 @@ func bundleVerdict(dir string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
-	lines := strings.Split(strings.ReplaceAll(raw, "\r\n", "\n"), "\n")
-	if len(lines) <= 1 {
-		return "", nil
-	}
-	switch line2 := strings.TrimSpace(lines[1]); {
-	case strings.HasPrefix(line2, "ABSTAIN"), strings.HasPrefix(line2, "BLOCKED"):
+	switch typedrec.Status([]byte(raw)) {
+	case typedrec.StatusAbstain, typedrec.StatusBlocked:
 		return "card", nil
-	case strings.HasPrefix(line2, "DONE"):
+	case typedrec.StatusDone:
 		return "done", nil
 	}
 	return "", nil

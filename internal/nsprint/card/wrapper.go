@@ -40,11 +40,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Wrapper exit codes. They follow the card verb's codes where one exists.
@@ -93,6 +95,121 @@ type WrapperLedger interface {
 	Launched(ctx context.Context, branch, jobDir string) (int, error)
 	Beat(ctx context.Context) (int, error)
 	End(ctx context.Context, end WrapperEnd) (int, error)
+}
+
+// ResultRecorder is the ledger side of the #2506 producer: it records one
+// parsed RESULT envelope (ns_card_result writes the write-once result hash).
+// It is a separate interface so a ledger that records no result (a test
+// double) still satisfies WrapperLedger; RedisLedger implements both.
+type ResultRecorder interface {
+	Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error)
+}
+
+// ResultFacts is the trusted card side of a RESULT parse: the card's KIND
+// and its contract line (line 1), read from the card, never from the file
+// being judged. RedisLedger implements it from the card hash.
+type ResultFacts interface {
+	ResultFacts(ctx context.Context) (typedrec.ParseOptions, error)
+}
+
+var (
+	_ ResultRecorder = (*RedisLedger)(nil)
+	_ ResultFacts    = (*RedisLedger)(nil)
+)
+
+// ResultFacts reads the card hash's kind and contract fields. kind is a
+// typed-record expectation only when it is one of typedrec.Kinds: the hash
+// also carries runner kinds (model, script) that say nothing about RESULT.
+// contract, when the card carries it, is line 1 verbatim.
+func (l *RedisLedger) ResultFacts(ctx context.Context) (typedrec.ParseOptions, error) {
+	if l.Store == nil || l.Store.Client() == nil {
+		return typedrec.ParseOptions{}, errors.New("no store")
+	}
+	vals, err := l.Store.Client().HMGet(ctx, CardKey(l.Sprint, l.Label), "kind", "contract").Result()
+	if err != nil {
+		return typedrec.ParseOptions{}, err
+	}
+	kind, _ := vals[0].(string)
+	contract, _ := vals[1].(string)
+	var opt typedrec.ParseOptions
+	if typedrec.IsKind(kind) {
+		opt.ExpectedKind = kind
+	}
+	opt.ContractLine = contract
+	return opt, nil
+}
+
+// RecordResult is what the wrapper does with a card's RESULT.md at end: read
+// <resultsDir>/RESULT.md, parse it with typedrec.ParseResult (the one parser)
+// against the card's trusted facts (attempt, and KIND and line 1 when rec
+// knows them), and hand the parse to rec. A card that wrote no RESULT.md
+// (fs.ErrNotExist) records nothing and returns found=false, err=nil; any other
+// read error, or a failure reading the card's facts, is returned as err with
+// nothing recorded. The returned code is ns_card_result's reply code.
+func RecordResult(ctx context.Context, rec ResultRecorder, resultsDir string, attempt int) (res typedrec.Result, found bool, code int, err error) {
+	data, rerr := os.ReadFile(filepath.Join(resultsDir, "RESULT.md"))
+	if errors.Is(rerr, fs.ErrNotExist) {
+		return typedrec.Result{}, false, 0, nil
+	}
+	if rerr != nil {
+		return typedrec.Result{}, false, 0, fmt.Errorf("read RESULT.md: %w", rerr)
+	}
+	var opt typedrec.ParseOptions
+	if f, ok := rec.(ResultFacts); ok {
+		if opt, err = f.ResultFacts(ctx); err != nil {
+			return typedrec.Result{}, true, WrapperExitRedis, fmt.Errorf("card facts: %w", err)
+		}
+	}
+	opt.ExpectedAttempt = attempt
+	res = typedrec.ParseResult(data, opt)
+	code, err = rec.Result(ctx, res, resultsDir)
+	return res, true, code, err
+}
+
+// Result calls ns_card_result (#2506) to record the parsed RESULT envelope:
+// schema, kind, valid, field, defect, line, the raw bytes and their sha256,
+// and one c_<field> claim per typed field. The hash is write-once per attempt.
+func (l *RedisLedger) Result(ctx context.Context, res typedrec.Result, resultsDir string) (int, error) {
+	const verb = "card result"
+	if l.Store == nil || l.Store.Client() == nil || !validSprintLabel(l.Sprint, l.Label) || l.Token == "" {
+		return usage(verb, l.Label).Code, nil
+	}
+	c, err := l.Card(ctx)
+	if err != nil {
+		return WrapperExitRedis, err
+	}
+	attemptStr := strconv.Itoa(c.Attempt)
+	if c.Attempt < 1 && res.Attempt > 0 {
+		attemptStr = strconv.Itoa(res.Attempt)
+	}
+	validStr := "0"
+	if res.Valid {
+		validStr = "1"
+	}
+	args := []any{
+		l.Sprint, l.Label, attemptStr, l.Token,
+		res.Schema, res.Kind, validStr, res.Field, res.Defect, strconv.Itoa(res.Line),
+		res.RawSHA256, string(res.RawBytes), resultsDir,
+		// line1 is the file's line 1 as read; ns_card_result checks it against
+		// the card's contract field in Redis, independent of the parse.
+		"line1", res.Line1,
+	}
+	claimKeys := make([]string, 0, len(res.Claims))
+	for k := range res.Claims {
+		claimKeys = append(claimKeys, k)
+	}
+	sort.Strings(claimKeys)
+	for _, k := range claimKeys {
+		args = append(args, "c_"+strings.ToLower(k), res.Claims[k])
+	}
+	reply, err := fcall(ctx, l.Store, "ns_card_result", cardKeys(l.Sprint, l.Label), args...)
+	if err != nil {
+		if r, down := redisDown(verb, l.Label, err); down {
+			return r.Code, nil
+		}
+		return 0, err
+	}
+	return reply.Code, nil
 }
 
 // WrapperConfig is one wrapper run. Everything but Now, After and Tick is
@@ -417,6 +534,24 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 		// The job dir is kept: its results are the only copy.
 		rep.Code, rep.Why = WrapperExitCouldNot, "copy out: "+err.Error()
 		return *rep
+	}
+	// The RESULT record comes before the end: a DONE whose RESULT.md could
+	// not be read (other than absent) or whose record was refused ends FAILED
+	// other, so ns_harvest_due (ended DONE only) never offers an attempt that
+	// has no validated result hash behind it.
+	if rec, ok := ledger.(ResultRecorder); ok {
+		if _, _, rcode, rerr := RecordResult(ctx, rec, results, cfg.Attempt); rerr != nil || rcode != 0 {
+			rwhy := fmt.Sprintf("result not recorded code=%d%s", rcode, errSuffix(rerr))
+			if end.Outcome == "DONE" {
+				end.Outcome, end.Reason = "FAILED", "other"
+				rep.Outcome, rep.Reason = end.Outcome, end.Reason
+			}
+			if rep.Why == "" {
+				rep.Why = rwhy
+			} else {
+				rep.Why += "; " + rwhy
+			}
+		}
 	}
 	writeWrapperLine(results, cfg, end, rep.Beats, wall)
 	code, err := ledger.End(ctx, end)

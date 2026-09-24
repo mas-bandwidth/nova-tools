@@ -40,6 +40,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // NoBatchTokensRefusal is the ONE line a batch of cards prints when it was given no budget
@@ -1342,8 +1343,16 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	lines := strings.Split(string(raw), "\n")
 	one := strings.TrimSpace(first(lines))
 	two := strings.TrimRight(second(lines), "\r\n")
-	if strings.HasPrefix(one, "ABSTAIN") {
-		return "abstain", "card-abstain", "", ""
+	st := typedrec.Status(raw)
+	if st == typedrec.StatusAbstain {
+		cardLine := strings.TrimSpace(c.contract)
+		if len(one) >= len(cardLine) && strings.EqualFold(one[:len(cardLine)], cardLine) {
+			return "abstain", "card-abstain", "", ""
+		}
+		if !strings.HasPrefix(one, "RESULT ") {
+			return "abstain", "card-abstain", "", ""
+		}
+		return "abstain", "line1-mismatch", "", ""
 	}
 	// A card whose line 1 is a prefix of the RESULT line 1 is still this card: the card
 	// generator truncates the issue title, so the worker's fuller first line begins with the
@@ -1354,9 +1363,6 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	cardLine := strings.TrimSpace(c.contract)
 	if len(one) < len(cardLine) || !strings.EqualFold(one[:len(cardLine)], cardLine) {
 		return "abstain", "line1-mismatch", "", ""
-	}
-	if strings.HasPrefix(strings.TrimSpace(two), "ABSTAIN") {
-		return "abstain", "card-abstain", "", ""
 	}
 	// A matching result is done whatever the harness exit code was -- but one that only
 	// arrived because the deadline fired is named for that timing, not scored done and not

@@ -6,16 +6,21 @@
 -- A record whose identity is not this attempt returns NOTHING and writes nothing.
 -- Branch names are not read here.
 
-local function reply(code, status, attempt, receipt)
-  if attempt == nil then attempt = '' end
-  if receipt == nil then receipt = '' end
-  return tostring(code) .. '|' .. tostring(status) .. '|' .. tostring(attempt) .. '|' .. tostring(receipt)
-end
-
 local function now_ms()
   local t = redis.call('TIME')
   local ms = tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
   return string.format('%.0f', ms)
+end
+
+-- now_ms stays in the shared chunk: classify, prtoread, report, review, route
+-- and route_lease read it as an upvalue. Everything else in this file is one
+-- do-block (like harvest.lua), so its locals never add to the library's
+-- 200-local main-function limit (dev crossed it at 6bf01359, #3487).
+do
+local function reply(code, status, attempt, receipt)
+  if attempt == nil then attempt = '' end
+  if receipt == nil then receipt = '' end
+  return tostring(code) .. '|' .. tostring(status) .. '|' .. tostring(attempt) .. '|' .. tostring(receipt)
 end
 
 local function hget(key, field)
@@ -286,3 +291,129 @@ redis.register_function('ns_card_end', function(keys, args)
   redis.call('HSET', idem_key, idem, receipt)
   return reply(0, 'OK', attempt, receipt)
 end)
+
+-- The six typed-record card kinds (typedrec.Kinds). A card hash kind outside
+-- this set (model, script) is a runner kind and sets no RESULT expectation.
+local RESULT_KINDS = { ['fix'] = true, ['recut'] = true, ['port'] = true,
+  ['docs-guard'] = true, ['report'] = true, ['read'] = true }
+
+redis.register_function('ns_card_result', function(keys, args)
+  local sprint = args[1]
+  local label = args[2]
+  local attempt = args[3]
+  local token = args[4] or ''
+  local schema = args[5] or ''
+  local kind = args[6] or ''
+  local valid = args[7] or '0'
+  local field = args[8] or ''
+  local defect = args[9] or ''
+  local line = args[10] or '0'
+  local raw_sha256 = args[11] or ''
+  local raw_bytes = args[12] or ''
+  local results = args[13] or ''
+
+  local card_key = 's:' .. sprint .. ':card:' .. label
+  local state = hget(card_key, 'state')
+  if state == '' then return reply(5, 'NOTFOUND', attempt, '') end
+  if token == '' or token ~= hget(card_key, 'token') then
+    return reply(3, 'FENCED', attempt, '')
+  end
+
+  local res_key = 's:' .. sprint .. ':card:' .. label .. ':result:a' .. attempt
+  if redis.call('EXISTS', res_key) == 1 then
+    local prev_sha = redis.call('HGET', res_key, 'raw_sha256')
+    if prev_sha == raw_sha256 then
+      return reply(0, 'OK', attempt, '')
+    end
+    return reply(4, 'CONFLICT', attempt, '')
+  end
+
+  local v_repo = hget(card_key, 'repo')
+  local v_kind = hget(card_key, 'kind')
+  local v_contract = hget(card_key, 'contract')
+  local v_base_sha = hget(card_key, 'base_sha')
+  local v_bench = hget(card_key, 'bench')
+  local v_attempt = hget(card_key, 'attempt')
+  local v_branch = hget(card_key, 'branch')
+  local v_pr_head = hget(card_key, 'pushed_sha')
+  if v_pr_head == '' then
+    v_pr_head = hget(card_key, 'head')
+  end
+
+  local at = now_ms()
+  local hset_args = {
+    res_key,
+    'schema', schema,
+    'kind', kind,
+    'valid', valid,
+    'field', field,
+    'defect', defect,
+    'line', line,
+    'raw_sha256', raw_sha256,
+    'raw_bytes', raw_bytes,
+    'results', results,
+    'by', 'card-wrapper',
+    'at', at,
+    'v_repo', v_repo,
+    'v_base_sha', v_base_sha,
+    'v_bench', v_bench,
+    'v_attempt', v_attempt,
+    'v_branch', v_branch,
+    'v_pr_head', v_pr_head,
+  }
+
+  -- KIND is checked against the declared set and the card's own KIND here,
+  -- whatever the caller's parse said: a valid=1 claim with a kind outside the
+  -- six, or a kind other than a typed card's, is persisted invalid.
+  if valid == '1' then
+    if not RESULT_KINDS[kind] then
+      valid = '0'
+      field = 'KIND'
+      defect = 'malformed'
+    elseif RESULT_KINDS[v_kind] and kind ~= v_kind then
+      valid = '0'
+      field = 'KIND'
+      defect = 'contradictory'
+    end
+  end
+
+  for i = 14, #args, 2 do
+    local k = args[i]
+    local v = args[i+1] or ''
+    if k and k ~= '' then
+      table.insert(hset_args, k)
+      table.insert(hset_args, v)
+      if valid == '1' then
+        if k == 'line1' and v_contract ~= '' and v ~= v_contract then
+          valid = '0'
+          field = 'line 1'
+          defect = 'contradictory'
+        elseif k == 'c_repo' and v ~= '' and v_repo ~= '' and v ~= v_repo then
+          valid = '0'
+          field = 'REPO'
+          defect = 'contradictory'
+        elseif k == 'c_branch' and v ~= '' and v_branch ~= '' and v ~= v_branch then
+          valid = '0'
+          field = 'BRANCH'
+          defect = 'contradictory'
+        elseif k == 'c_attempt' and v ~= '' and v_attempt ~= '' and v ~= v_attempt then
+          valid = '0'
+          field = 'ATTEMPT'
+          defect = 'contradictory'
+        elseif k == 'c_head' and v ~= '' and v_pr_head ~= '' and v ~= v_pr_head then
+          valid = '0'
+          field = 'HEAD'
+          defect = 'contradictory'
+        end
+      end
+    end
+  end
+
+  hset_args[7] = valid
+  hset_args[9] = field
+  hset_args[11] = defect
+
+  redis.call('HSET', unpack(hset_args))
+  return reply(0, 'OK', attempt, '')
+end)
+end

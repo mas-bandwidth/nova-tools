@@ -10,6 +10,7 @@ import (
 	// Aliased: `hygiene` is already a type in this package (hygiene.go:94).
 	pathglob "github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // StaleBaseRefusal is the typed stale-base decision (#2648). Error's sentence is
@@ -177,7 +178,8 @@ func harvestTargetName(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "refs/heads/")
 	s = strings.TrimPrefix(s, "origin/")
-	if s == "" || s == "HEAD" || isHex(s) {
+	detachedHead := "HEAD"
+	if s == "" || s == detachedHead || isHex(s) {
 		return ""
 	}
 	if strings.ContainsAny(s, " \t\n\\:") || strings.Contains(s, "..") {
@@ -269,28 +271,7 @@ func launchedCardFor(launched, label string) string {
 }
 
 func parsePATHS(text string) (globs []string, declared bool) {
-	for _, line := range strings.Split(text, "\n") {
-		t := strings.TrimSpace(line)
-		var rest string
-		switch {
-		case strings.HasPrefix(t, "PATHS:"):
-			rest = strings.TrimSpace(strings.TrimPrefix(t, "PATHS:"))
-		case strings.HasPrefix(t, "PATHS "):
-			rest = strings.TrimSpace(strings.TrimPrefix(t, "PATHS "))
-		default:
-			continue
-		}
-		if rest == "" || rest == "none" {
-			return nil, true
-		}
-		for _, g := range splitDeclared(rest) {
-			if g != "none" {
-				globs = append(globs, g)
-			}
-		}
-		return globs, true
-	}
-	return nil, false
+	return typedrec.ParsePaths(text)
 }
 
 // splitDeclared cuts a PATHS: value into entries on COMMAS AND WHITESPACE BOTH
