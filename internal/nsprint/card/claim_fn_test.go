@@ -2,6 +2,7 @@ package card_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,21 +15,40 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// benchUser is the bench's Redis permission shape for scripting (#3551):
-// every command but the @scripting category, with FCALL and FCALL_RO added
-// back. EVAL, EVALSHA, SCRIPT and every FUNCTION subcommand (LOAD, LIST,
-// DELETE, ...) are NOPERM, so FCALL of a function the owner already loaded is
-// the only way this user runs server-side code. A card path that reaches for
-// EVALSHA, or loads the library from the bench, gets NOPERM.
+// The bench's Redis user is the fleet's own bench seat (#3551): the rule
+// string is the bench line of internal/nsprint/sprint/testdata/plan/acl.txt,
+// copied verbatim from the fleet ACL (redis.yml in rowan-tools). That seat may FCALL and
+// may not EVAL, EVALSHA or SCRIPT, but its +@write lets FUNCTION LOAD through
+// (-@dangerous does not cover it). So the card path must never load the
+// library itself: only the owner (ns-deploy) loads, and the controls below
+// count every FUNCTION call from any client.
 const (
-	benchUser     = "bench-fcall-only"
-	benchPassword = "bench-fcall-only-pw"
+	fleetACL      = "../sprint/testdata/plan/acl.txt"
+	benchPassword = "bench-fleet-pw"
 )
 
-// fcallOnlySprint starts a throwaway Redis, adds the FCALL-only bench user,
-// and returns a store dialled as that user plus an admin client for seeding
-// and inspection. With loaded, the admin (the library's owner) loads the
-// nova_sprint library first, the way the coordinator converges the fleet's
+// fleetBenchRule reads the bench line of the fleet ACL copy: its user name
+// and its rule words, exactly as ACL SETUSER takes them.
+func fleetBenchRule(t *testing.T) (string, []string) {
+	t.Helper()
+	body, err := os.ReadFile(fleetACL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(body), "\n") {
+		name, rules, ok := strings.Cut(line, "\t")
+		if ok && name == "bench" {
+			return name, strings.Fields(rules)
+		}
+	}
+	t.Fatalf("%s has no bench line", fleetACL)
+	return "", nil
+}
+
+// fcallOnlySprint starts a throwaway Redis, adds the fleet bench user from
+// acl.txt, and returns a store dialled as that user plus an admin client for
+// seeding and inspection. With loaded, the admin (the library's owner) loads
+// the nova_sprint library first, the way ns-deploy converges the fleet's
 // server; the bench never loads it. Command counters start from zero after
 // the fixture's own probes.
 func fcallOnlySprint(t *testing.T, loaded bool) (*store.Store, *redis.Client) {
@@ -37,8 +57,12 @@ func fcallOnlySprint(t *testing.T, loaded bool) (*store.Store, *redis.Client) {
 	addr := startRedis(t)
 	admin := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = admin.Close() })
-	if err := admin.Do(ctx, "ACL", "SETUSER", benchUser, "reset", "on", ">"+benchPassword, "~*", "&*",
-		"+@all", "-@scripting", "+fcall", "+fcall_ro").Err(); err != nil {
+	benchUser, rules := fleetBenchRule(t)
+	setuser := []any{"ACL", "SETUSER", benchUser, "reset", "on", ">" + benchPassword}
+	for _, r := range rules {
+		setuser = append(setuser, r)
+	}
+	if err := admin.Do(ctx, setuser...).Err(); err != nil {
 		t.Fatal(err)
 	}
 	if loaded {
@@ -48,22 +72,21 @@ func fcallOnlySprint(t *testing.T, loaded bool) (*store.Store, *redis.Client) {
 	}
 	bench := redis.NewClient(&redis.Options{Addr: addr, Username: benchUser, Password: benchPassword})
 	t.Cleanup(func() { _ = bench.Close() })
-	source, err := fn.Source()
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, probe := range [][]any{
 		{"EVAL", "return 1", "0"},
 		{"EVALSHA", "0000000000000000000000000000000000000000", "0"},
 		{"SCRIPT", "LOAD", "return 1"},
-		{"FUNCTION", "LOAD", "REPLACE", source},
-		{"FUNCTION", "LIST"},
 	} {
 		if err := bench.Do(ctx, probe...).Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-			t.Fatalf("bench user ran %v (err %v); the control needs FCALL only, no EVAL and no FUNCTION", probe[:2], err)
+			t.Fatalf("fleet bench seat ran %v (err %v); the control needs a seat with no EVAL and no SCRIPT", probe[:2], err)
 		}
 	}
-	// The refused probes above are counted; start the counters from zero.
+	// Whether the seat may FUNCTION LOAD is the fleet ACL's business
+	// (rowan-tools: add -function to the bench rule); the card path must not
+	// load either way, so this is logged, not required.
+	dry, err := admin.Do(ctx, "ACL", "DRYRUN", benchUser, "FUNCTION", "LOAD", "REPLACE", "#!lua name=probe\nredis.register_function('p', function() return 1 end)").Text()
+	t.Logf("ACL DRYRUN %s FUNCTION LOAD REPLACE = %q, %v", benchUser, dry, err)
+	// The probes above are counted; start the counters from zero.
 	if err := admin.ConfigResetStat(ctx).Err(); err != nil {
 		t.Fatal(err)
 	}
@@ -92,8 +115,8 @@ func scriptingCalls(t *testing.T, ctx context.Context, admin *redis.Client) []st
 
 // TestCardClaimIsAFunction is the first DONE-WHEN control of #3551: the
 // attempt claim is ns_card_claim in the nova_sprint library, and RedisLedger
-// claims through it as a bench user that may FCALL but not EVAL/EVALSHA and
-// not FUNCTION (LOAD included): the owner loaded the library, the bench only
+// claims through it as the fleet bench seat, which may FCALL but not
+// EVAL/EVALSHA, and sends no FUNCTION call: the owner loaded the library, the bench only
 // calls it.
 func TestCardClaimIsAFunction(t *testing.T) {
 	ctx := context.Background()
@@ -154,21 +177,31 @@ func TestCardClaimIsAFunction(t *testing.T) {
 		t.Fatalf("the claim reached for scripting or FUNCTION: %v", hits)
 	}
 
-	// The same bench seat on a server whose owner never loaded the library
-	// cannot load it either: the claim is an error naming the function and
-	// the refused load, never a claim. This is what makes the controls above
-	// prove the bench used the owner's library without loading its own.
+	// The same fleet bench seat on a server whose owner never loaded the
+	// library: the claim is ErrFunctionNotLoaded naming ns_card_claim, never a
+	// claim, and the card path sends no FUNCTION call even though this seat's
+	// ACL would let FUNCTION LOAD through. The library stays unloaded.
 	bare, bareAdmin := fcallOnlySprint(t, false)
 	seedCard(t, ctx, bareAdmin, id, "dealt", token)
-	if _, err := (&card.RedisLedger{Store: bare, Sprint: id.Sprint, Label: id.Label, Token: token}).Claim(ctx, "nonce-f"); err == nil ||
-		!strings.Contains(err.Error(), "ns_card_claim is not loaded") || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("claim on a server without the library = %v; want an error naming ns_card_claim and the refused load", err)
+	if _, err := (&card.RedisLedger{Store: bare, Sprint: id.Sprint, Label: id.Label, Token: token}).Claim(ctx, "nonce-f"); !errors.Is(err, card.ErrFunctionNotLoaded) ||
+		!strings.Contains(err.Error(), "ns_card_claim") {
+		t.Fatalf("claim on a server without the library = %v; want ErrFunctionNotLoaded naming ns_card_claim", err)
+	}
+	if hits := scriptingCalls(t, ctx, bareAdmin); len(hits) != 0 {
+		t.Fatalf("the claim on a server without the library reached for scripting or FUNCTION: %v", hits)
+	}
+	libs, err = bareAdmin.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: fn.Library}).Result()
+	if err != nil || len(libs) != 0 {
+		t.Fatalf("library after a bench claim on a bare server = %v, %v; want none loaded", libs, err)
+	}
+	if hash := hashOf(t, ctx, bareAdmin, id.Sprint, id.Label); hash["claim"] != "" {
+		t.Fatalf("bare server card hash %v; want no claim", hash)
 	}
 }
 
 // TestCardPathMakesNoEvalCall is the second DONE-WHEN control of #3551: a
-// card dealt to a bench whose Redis user may FCALL but not EVAL/EVALSHA and
-// not FUNCTION runs through the whole wrapper path (claim, launched, beat,
+// card dealt to the fleet bench seat (FCALL, no EVAL/EVALSHA, and a FUNCTION
+// LOAD it must never send) runs through the whole wrapper path (claim, launched, beat,
 // end) to DONE on the owner's loaded library, and the server counts no EVAL,
 // EVALSHA, SCRIPT or FUNCTION call from any client.
 func TestCardPathMakesNoEvalCall(t *testing.T) {

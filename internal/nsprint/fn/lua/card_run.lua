@@ -100,7 +100,8 @@ end
 -- claim_at (Redis TIME, ms), fields only this function writes. A claim whose
 -- token_sha is not the card's current one belongs to an earlier attempt and is
 -- replaced. Codes: 0 claimed (or this nonce's own retry), 2 not dealt,
--- 3 fenced, 4 another wrapper holds the attempt, 5 no card.
+-- 3 fenced, 4 another wrapper holds the attempt (checked before the state),
+-- 5 no card.
 redis.register_function('ns_card_claim', function(keys, args)
   local sprint, label, token, nonce = args[1], args[2], args[3] or '', args[4] or ''
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
@@ -114,8 +115,11 @@ redis.register_function('ns_card_claim', function(keys, args)
   local mine = tsha .. ':' .. nonce
   local held = hget(card_key, 'claim')
   if held == mine then return reply(0, 'OK', attempt, '') end
-  if state ~= 'dealt' then return reply(2, 'STATE', attempt, '') end
+  -- Another wrapper's claim on this attempt is 4 whatever the state: the
+  -- winner may already have moved the card past dealt (ns_card_launched)
+  -- before the loser's claim lands, and the loser must still read CONFLICT.
   if held ~= '' and string.sub(held, 1, #tsha + 1) == tsha .. ':' then return reply(4, 'CONFLICT', attempt, '') end
+  if state ~= 'dealt' then return reply(2, 'STATE', attempt, '') end
   redis.call('HSET', card_key, 'claim', mine, 'claim_at', now_ms())
   return reply(0, 'OK', attempt, '')
 end)

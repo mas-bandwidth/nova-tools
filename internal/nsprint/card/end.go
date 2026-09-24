@@ -338,20 +338,24 @@ func cardKeys(sprint, label string) []string {
 	return []string{CardKey(sprint, label), LogKey(sprint), IdemKey(sprint)}
 }
 
+// ErrFunctionNotLoaded is fcall's answer when the server has no loaded
+// function by that name: the library's owner has not converged this server
+// (nova-sprint fn load, as the owner). errors.Is matches it.
+var ErrFunctionNotLoaded = errors.New("sprint function not loaded")
+
 // fcall calls a nova_sprint function that the library's owner has already
-// loaded. It sends FUNCTION LOAD only when the server answers that the
-// function is missing, then retries once (#3551): a bench seat may FCALL but
-// not FUNCTION, so the card path on a converged server never loads, and a
-// bench binary never REPLACEs the fleet's library with its own copy. On a
-// seat that may not load, a missing library is an error that names the
-// function and the converge (nova-sprint fn load, as the owner).
+// loaded. It never loads the library itself, not even when the function is
+// missing (#3551): the fleet ACL (redis.yml in rowan-tools, line 3) makes
+// ns-deploy the only seat that loads, yet the fleet bench seat's rule
+// (+@write, -@dangerous) lets FUNCTION LOAD through until rowan-tools#330
+// adds -function. A card path that loaded on "Function not found" would let
+// any bench binary with version skew REPLACE the fleet's library with its own
+// copy. A missing function is ErrFunctionNotLoaded, naming the function and
+// the converge.
 func fcall(ctx context.Context, st *store.Store, name string, keys []string, args ...any) (fnReply, error) {
 	raw, err := st.Client().FCall(ctx, name, keys, args...).Text()
 	if err != nil && functionMissing(err) {
-		if lerr := fn.Load(ctx, st.Client()); lerr != nil {
-			return fnReply{}, fmt.Errorf("%s is not loaded and this seat cannot load %s (converge it as the owner: nova-sprint fn load): %w", name, fn.Library, lerr)
-		}
-		raw, err = st.Client().FCall(ctx, name, keys, args...).Text()
+		return fnReply{}, fmt.Errorf("%s: %w in %s; the card path never loads it (converge it as the owner: nova-sprint fn load): %v", name, ErrFunctionNotLoaded, fn.Library, err)
 	}
 	if err != nil {
 		return fnReply{}, err
