@@ -1593,6 +1593,17 @@
    #:capture-consistent-claim
    #:source-version-value
    #:source-capture-reconciled-p
+   ;; E07-F04-01 imported baseline (SPEC-WORK.md:7785-7786,7826-7827)
+   #:baseline-import-refused
+   #:import-baseline
+   #:imported-baseline-source-revision
+   #:imported-baseline-completion-unit
+   #:imported-baseline-members
+   #:imported-baseline-supersessions
+   #:baseline-provenance
+   #:baseline-supersede
+   #:baseline-add-report
+   #:baseline-accounting
    #:make-dispatch-packet
    #:make-dispatch-route
    #:dispatch-gates
