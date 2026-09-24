@@ -94,6 +94,32 @@ local function xadd(log_key, id, from, to, attempt, token_sha, actor, reason, ev
     'at', at)
 end
 
+-- ns_card_claim is the attempt claim (#3328), a Function since #3551: the
+-- bench's Redis user may FCALL only, never EVAL/EVALSHA. Fenced on the token
+-- and on state dealt; writes claim (<token_sha>:<nonce>, never the token) and
+-- claim_at (Redis TIME, ms), fields only this function writes. A claim whose
+-- token_sha is not the card's current one belongs to an earlier attempt and is
+-- replaced. Codes: 0 claimed (or this nonce's own retry), 2 not dealt,
+-- 3 fenced, 4 another wrapper holds the attempt, 5 no card.
+redis.register_function('ns_card_claim', function(keys, args)
+  local sprint, label, token, nonce = args[1], args[2], args[3] or '', args[4] or ''
+  if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
+  local card_key = keys[1]
+  local state = hget(card_key, 'state')
+  if state == '' then return reply(5, 'NOTFOUND', '', '') end
+  local attempt = hget(card_key, 'attempt')
+  if token == '' or token ~= hget(card_key, 'token') then return reply(3, 'FENCED', attempt, '') end
+  if nonce == '' then return reply(2, 'STATE', attempt, '') end
+  local tsha = hget(card_key, 'token_sha')
+  local mine = tsha .. ':' .. nonce
+  local held = hget(card_key, 'claim')
+  if held == mine then return reply(0, 'OK', attempt, '') end
+  if state ~= 'dealt' then return reply(2, 'STATE', attempt, '') end
+  if held ~= '' and string.sub(held, 1, #tsha + 1) == tsha .. ':' then return reply(4, 'CONFLICT', attempt, '') end
+  redis.call('HSET', card_key, 'claim', mine, 'claim_at', now_ms())
+  return reply(0, 'OK', attempt, '')
+end)
+
 redis.register_function('ns_card_launched', function(keys, args)
   local sprint, label, token, branch, jobdir = args[1], args[2], args[3] or '', args[4] or '', args[5] or ''
   if not card_keys_ok(keys, sprint, label) then return reply(4, 'CONFLICT', '', '') end
