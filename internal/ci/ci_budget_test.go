@@ -491,6 +491,9 @@ var clTierCeilings = map[string]int{
 	// the label by machine class is the real repair and wants its own change;
 	// twelve is the honest ceiling until then.
 	"test": 12,
+
+	// The lisp tier on both SBCL platforms; lispCeiling carries its receipts.
+	"lisp": lispCeiling,
 }
 
 func jobNames(src string) []string {
@@ -774,5 +777,34 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
 	if m := re.FindString(src); m != "" {
 		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
+	}
+}
+
+// lispMeasuredMaxSecs is the slowest lisp job wall clock measured on
+// 2026-09-24, set-up to Complete job: `lisp (studio)` in run 36007928793 was
+// cancelled at 158 s with the 579-case suite still running (the suite itself
+// took 62-77 s on the studio runners and 72 s on the Studio at load 69, 66 to
+// 110+ s on space, where run 36006767411's leg was cancelled mid-suite). The
+// two-minute cap cancelled the lisp job on dev tip ce8631be and on #3238/#3233.
+const lispMeasuredMaxSecs = 158
+
+// lispCeiling is the lisp job's cap in minutes: twice the measured max, rounded
+// up to a whole minute.
+const lispCeiling = 6
+
+// TestLispCapIsAboveTheMeasuredFloor: the lisp job's timeout-minutes must be at
+// least twice the slowest measured lisp job, so the cap is a hang detector and
+// not a coin flip on the load of the minute.
+func TestLispCapIsAboveTheMeasuredFloor(t *testing.T) {
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	mins, ok := jobTimeouts(src)["lisp"]
+	if !ok {
+		t.Fatal("the lisp job declares no timeout-minutes")
+	}
+	if mins*60 < 2*lispMeasuredMaxSecs {
+		t.Errorf("lisp timeout-minutes = %d (%d s), want >= 2 x the measured %d s job wall clock", mins, mins*60, lispMeasuredMaxSecs)
+	}
+	if mins != lispCeiling {
+		t.Errorf("lisp timeout-minutes = %d, want lispCeiling %d (change both with a new measurement)", mins, lispCeiling)
 	}
 }

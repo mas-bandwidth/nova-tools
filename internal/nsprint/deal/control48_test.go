@@ -3,13 +3,15 @@ package deal_test
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/backpressure"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,7 +23,7 @@ import (
 // Antecedent: 285 PRs in about 8h against a land rate of about 5/h, then a
 // recut of 471 cards that opened 54 PRs of which none landed.
 func TestControl48(t *testing.T) {
-	st, client := miniStore48(t)
+	st, client := redisStore48(t)
 	ctx := context.Background()
 	const sprint = "control-00000030"
 	// More free slots than exempt cards, so a held card is the gate and not a full bench.
@@ -77,9 +79,10 @@ func TestControl48(t *testing.T) {
 		t.Fatalf("2 PRs is under the interim gate of 40: %v", err)
 	}
 
-	// 11 reading + 10 landable = 21. One id in both sets still counts once.
-	sadd(t, ctx, client, backpressure.ReadingKey(sprint), prIDs(t, 1, 11)...)
-	sadd(t, ctx, client, backpressure.LandableKey(sprint), prIDs(t, 12, 21)...)
+	// Debt is counted from the unit records (#3139 2.2, nova-tools#3491):
+	// 11 units reading + 10 landable = 21.
+	unitStates(t, ctx, client, sprint, "reading", unitIDs(1, 11)...)
+	unitStates(t, ctx, client, sprint, "landable", unitIDs(12, 21)...)
 	debt, err := backpressure.Measure(ctx, st, sprint)
 	if err != nil {
 		t.Fatal(err)
@@ -87,15 +90,13 @@ func TestControl48(t *testing.T) {
 	if debt.Debt != 21 || debt.Cap != 20 || !debt.Above() {
 		t.Fatalf("debt = %+v; want 21 > 20", debt)
 	}
-	overlap, err := backpressure.PRID("nova-tools", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sadd(t, ctx, client, backpressure.LandableKey(sprint), overlap)
+	// A unit is one record with one state: reading -> landable moves it, it
+	// does not count it twice.
+	unitStates(t, ctx, client, sprint, "landable", unitIDs(1, 1)...)
 	if again, err := backpressure.Measure(ctx, st, sprint); err != nil || again.Debt != 21 {
-		t.Fatalf("overlap debt = %+v, %v; a PR in both sets counts once", again, err)
+		t.Fatalf("moved debt = %+v, %v; a unit that moves state counts once", again, err)
 	}
-	srem(t, ctx, client, backpressure.LandableKey(sprint), overlap)
+	unitStates(t, ctx, client, sprint, "reading", unitIDs(1, 1)...)
 
 	// nx-bulk is first on purpose: queue position is not the front flag, and a
 	// held card does not take the slot the fix and ci cards need.
@@ -131,8 +132,7 @@ func TestControl48(t *testing.T) {
 
 	// Two landings take debt from 21 to 19. The bulk card is still queued.
 	// The next pass is a new call; this pass does not change its mind.
-	landed := prIDs(t, 1, 2)
-	srem(t, ctx, client, backpressure.ReadingKey(sprint), landed...)
+	unitStates(t, ctx, client, sprint, "landed", unitIDs(1, 2)...)
 	next, err := deal.LandPass(ctx, st, sprint, slots, first.Waiting)
 	if err != nil {
 		t.Fatal(err)
@@ -166,12 +166,34 @@ func TestControl48(t *testing.T) {
 	}
 }
 
-func miniStore48(t *testing.T) (*store.Store, *redis.Client) {
+// redisStore48 is the throwaway redis-server control 48 runs on (testutil.Start).
+func redisStore48(t *testing.T) (*store.Store, *redis.Client) {
 	t.Helper()
-	m := miniredis.RunT(t)
-	c := redis.NewClient(&redis.Options{Addr: m.Addr()})
+	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = c.Close() })
 	return store.New(c), c
+}
+
+func unitIDs(from, to int) []string {
+	out := make([]string, 0, to-from+1)
+	for n := from; n <= to; n++ {
+		out = append(out, "u-"+strconv.Itoa(n))
+	}
+	return out
+}
+
+// unitStates writes each unit's record state and indexes it in s:<S>:units,
+// the two keys ns_unit_head writes.
+func unitStates(t *testing.T, ctx context.Context, c *redis.Client, sprint, state string, units ...string) {
+	t.Helper()
+	for _, u := range units {
+		if err := c.HSet(ctx, land.UnitKey(sprint, u), "repo", "nova-tools", "base", "dev", "state", state).Err(); err != nil {
+			t.Fatalf("HSET %s: %v", land.UnitKey(sprint, u), err)
+		}
+		if err := c.SAdd(ctx, land.UnitsSetKey(sprint), u).Err(); err != nil {
+			t.Fatalf("SADD %s: %v", land.UnitsSetKey(sprint), err)
+		}
+	}
 }
 
 func prIDs(t *testing.T, from, to int) []string {
@@ -195,17 +217,6 @@ func sadd(t *testing.T, ctx context.Context, c *redis.Client, key string, member
 	}
 	if err := c.SAdd(ctx, key, args...).Err(); err != nil {
 		t.Fatalf("SADD %s: %v", key, err)
-	}
-}
-
-func srem(t *testing.T, ctx context.Context, c *redis.Client, key string, members ...string) {
-	t.Helper()
-	args := make([]any, len(members))
-	for i, m := range members {
-		args[i] = m
-	}
-	if err := c.SRem(ctx, key, args...).Err(); err != nil {
-		t.Fatalf("SREM %s: %v", key, err)
 	}
 }
 
