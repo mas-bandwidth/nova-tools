@@ -75,9 +75,35 @@ local function friend_hello(keys, args)
   if sum > ceiling then
     return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
   end
+  -- Login aliases (#3092 rev 6): args[9..] are `--login` values. This is the
+  -- only writer of friends:login; every alias is checked before any write.
+  local logins = {}
+  if redis.call('HEXISTS', 'friends:login', friend) == 1 and #args > 8 then
+    return { 'NAME-IS-LOGIN', friend }
+  end
+  for i = 9, #args do
+    local alias = args[i]
+    if not string.match(alias, '^[A-Za-z0-9][A-Za-z0-9-]*$') then
+      return { 'INVALID', alias }
+    end
+    if alias == friend or redis.call('SISMEMBER', 'friends', alias) == 1 then
+      return { 'LOGIN-IS-FRIEND', alias }
+    end
+    local mapped = redis.call('HGET', 'friends:login', alias)
+    if mapped and mapped ~= friend then
+      return { 'LOGIN-TAKEN', alias, mapped }
+    end
+    if not mapped then
+      logins[#logins + 1] = alias
+    end
+  end
   local at = pl_now_ms()
   local was_up = redis.call('EXISTS', beat_key)
   redis.call('SADD', 'friends', friend)
+  for _, alias in ipairs(logins) do
+    redis.call('HSET', 'friends:login', alias, friend)
+    pl_caplog('friend-login', friend, alias, actor, idem, at)
+  end
   local paused = redis.call('HGET', desired_key, 'paused') or '0'
   redis.call('HSET', desired_key,
     'slots', tostring(slots), 'machine', machine, 'paused', paused,

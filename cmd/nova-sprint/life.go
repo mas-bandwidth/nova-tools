@@ -108,6 +108,8 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	machine := fs.String("machine", "", "configured capacity machine, if different from host")
 	session := fs.String("session", "", "presence session identity")
 	once := fs.Bool("once", false, "register once and return without the 1 s loop")
+	var logins loginFlags
+	fs.Var(&logins, "login", "a login alias for this friend (repeatable; #3092)")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "friend hello", err.Error())
 	}
@@ -140,6 +142,7 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	res, err := life.Hello(ctx, st, life.HelloRequest{
 		Sprint: *sprint, As: *as, Slots: *slots, Harness: *harness,
 		Host: *host, Machine: *machine, Session: *session, Actor: "friend", Idem: "",
+		Logins: logins,
 	})
 	if err != nil {
 		return refuse(errOut, "friend hello", err.Error())
@@ -368,4 +371,14 @@ func splitLive(live string) []string {
 		}
 	}
 	return out
+}
+
+// loginFlags is the repeatable `friend hello --login <alias>`.
+type loginFlags []string
+
+func (l *loginFlags) String() string { return strings.Join(*l, ",") }
+
+func (l *loginFlags) Set(v string) error {
+	*l = append(*l, v)
+	return nil
 }
