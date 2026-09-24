@@ -2,7 +2,12 @@ package land
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -11,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/capacity"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -219,7 +225,7 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 
 	// 2. Read batch info
 	bkey := BatchKey(repo, base, batchID)
-	bvals, err := w.cfg.Client.HMGet(ctx, bkey, "from_tip", "members", "class", "created_at", "input_id").Result()
+	bvals, err := w.cfg.Client.HMGet(ctx, bkey, "from_tip", "members", "class", "created_at", "input_id", "paths").Result()
 	if err != nil || len(bvals) < 5 {
 		return
 	}
@@ -239,6 +245,47 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 			}
 		}
 	}
+	if len(bvals) > 5 && bvals[5] != nil {
+		if pathsCSV, ok := bvals[5].(string); ok && pathsCSV != "" {
+			for _, p := range strings.Split(pathsCSV, ",") {
+				p = strings.TrimSpace(p)
+				if p != "" {
+					changedFiles = append(changedFiles, p)
+				}
+			}
+		}
+	}
+
+	// Read base policy for GID receipt (spec 3.7, 5.5)
+	var gidParams *GateReceiptGIDParams
+	pkey := PolicyKey(repo, base)
+	pvals, err := w.cfg.Client.HMGet(ctx, pkey, "policy_id", "required_set_id", "runner_id").Result()
+	if err == nil && len(pvals) >= 3 && pvals[0] != nil {
+		policyID, _ := pvals[0].(string)
+		requiredSetID, _ := pvals[1].(string)
+		runnerID, _ := pvals[2].(string)
+		if policyID != "" || requiredSetID != "" || runnerID != "" {
+			kind := "full"
+			head := fromTip
+			if len(memberHeads) == 1 {
+				kind = "single"
+				head = memberHeads[0]
+			} else if len(memberHeads) == 0 {
+				kind = "tip"
+				head = fromTip
+			}
+			gid := GID(kind, base, fromTip, requiredSetID, policyID, runnerID)
+			gidParams = &GateReceiptGIDParams{
+				GID:           gid,
+				Kind:          kind,
+				Head:          head,
+				BaseSHA:       fromTip,
+				RequiredSetID: requiredSetID,
+				PolicyID:      policyID,
+				RunnerID:      runnerID,
+			}
+		}
+	}
 
 	// 3. Build deterministic train (spec 5.3)
 	trainHead := fromTip
@@ -253,26 +300,123 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 		})
 		if err != nil {
 			verdict := "ERROR"
-			if strings.Contains(err.Error(), "conflict") || strings.Contains(err.Error(), "CONFLICT") {
+			var conflictErr *MergeConflictError
+			if errors.As(err, &conflictErr) || strings.Contains(err.Error(), "conflict") || strings.Contains(err.Error(), "CONFLICT") {
 				verdict = "CONFLICT"
 			}
-			_, _ = CallGateReceipt(ctx, w.cfg.Client, repo, base, batchID, attempt, token, verdict, w.cfg.Bench, "worker-"+slot, trainHead, trainTree, inputID, "", "", "", "", "0")
+			_, _ = CallGateReceiptWithGID(ctx, w.cfg.Client, repo, base, batchID, attempt, token, verdict, w.cfg.Bench, "worker-"+slot, trainHead, trainTree, inputID, "", "", "", "", "0", gidParams)
 			return
 		}
 		trainHead = tr.TrainHead
 		trainTree = tr.TrainTree
 	}
+	if gidParams != nil && gidParams.Kind == "full" {
+		gidParams.Head = trainHead
+	}
+
+	if w.cfg.MirrorDir != "" && fromTip != "" && trainHead != "" && fromTip != trainHead {
+		cmd := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "diff", "--name-only", fromTip, trainHead)
+		if out, err := cmd.Output(); err == nil {
+			for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					changedFiles = append(changedFiles, line)
+				}
+			}
+		}
+	}
+	changedFiles = dedupeAndSort(changedFiles)
+
+	// Create disposable worktree at train head for testing (spec 5.3)
+	var wtDir string
+	if w.cfg.MirrorDir != "" && trainHead != "" {
+		tempRoot := os.TempDir()
+		if eval, err := filepath.EvalSymlinks(tempRoot); err == nil {
+			tempRoot = eval
+		}
+		tmpDir, err := os.MkdirTemp(tempRoot, "land-wt-*")
+		if err == nil {
+			if eval, err := filepath.EvalSymlinks(tmpDir); err == nil {
+				tmpDir = eval
+			}
+			cmd := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "worktree", "add", "--detach", tmpDir, trainHead)
+			if err := cmd.Run(); err == nil {
+				wtDir = tmpDir
+				defer func() {
+					_ = exec.Command("git", "-C", w.cfg.MirrorDir, "worktree", "remove", "--force", wtDir).Run()
+					_ = safepath.RemoveUnder(tempRoot, wtDir)
+				}()
+			} else {
+				_ = safepath.RemoveUnder(tempRoot, tmpDir)
+			}
+		}
+	}
+
+	if trainTree == "" && trainHead != "" && w.cfg.MirrorDir != "" {
+		if out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "rev-parse", trainHead+"^{tree}").Output(); err == nil {
+			trainTree = strings.TrimSpace(string(out))
+		}
+	}
+	baseTree := ""
+	if fromTip != "" && w.cfg.MirrorDir != "" {
+		if out, err := exec.CommandContext(ctx, "git", "-C", w.cfg.MirrorDir, "rev-parse", fromTip+"^{tree}").Output(); err == nil {
+			baseTree = strings.TrimSpace(string(out))
+		}
+	}
 
 	// 4. Test selection (spec 5.4, B4)
-	sel := Select(changedFiles, nil)
+	goos := runtime.GOOS
+	cfgHash := ConfigHash(nil, runtime.Version(), "", "")
+	var baseGraph *Graph
+	if baseTree != "" {
+		if revs, found, _ := SelGet(ctx, w.cfg.Client, repo, baseTree, goos, cfgHash); found {
+			baseGraph = &Graph{
+				Tree:        baseTree,
+				GOOS:        goos,
+				ReverseDeps: revs,
+			}
+		}
+	}
+
+	var trainGraph *Graph
+	targetDir := wtDir
+	if targetDir == "" {
+		targetDir = w.cfg.MirrorDir
+	}
+	if targetDir != "" {
+		if tg, err := LoadLiveGraph(ctx, targetDir, goos, nil); err == nil {
+			trainGraph = tg
+			trainGraph.Tree = trainTree
+			if trainTree != "" {
+				_, _ = SelPut(ctx, w.cfg.Client, repo, trainTree, goos, cfgHash, time.Now().UnixMilli(), trainGraph.ReverseDeps)
+			}
+		}
+	}
+	if trainGraph == nil && trainTree != "" {
+		if revs, found, _ := SelGet(ctx, w.cfg.Client, repo, trainTree, goos, cfgHash); found {
+			trainGraph = &Graph{
+				Tree:        trainTree,
+				GOOS:        goos,
+				ReverseDeps: revs,
+			}
+		}
+	}
+
+	sel := SelectUnion(changedFiles, baseGraph, trainGraph)
 	steps := merge.StepsFor(merge.Selection{Class: class, Packages: sel.Packages})
 
-	// 5. Run steps (spec 5, B5)
+	// 5. Run steps in worktree (spec 5, B5)
+	stepDir := wtDir
+	if stepDir == "" {
+		stepDir = w.cfg.MirrorDir
+	}
 	runner := &merge.StepRunner{
-		Dir:     w.cfg.MirrorDir,
+		Dir:     stepDir,
 		Timeout: 5 * time.Minute,
 	}
+	startTime := time.Now()
 	results := runner.Run(steps)
+	elapsed := time.Since(startTime)
 
 	verdict := "GREEN"
 	failing := ""
@@ -284,6 +428,15 @@ func (w *Worker) executeGate(ctx context.Context, repo, base, batchID string, at
 		}
 	}
 
+	var totalCoreSec float64
+	for _, res := range results {
+		totalCoreSec += res.Duration.Seconds()
+	}
+	if totalCoreSec == 0 {
+		totalCoreSec = elapsed.Seconds()
+	}
+	coreS := fmt.Sprintf("%.2f", totalCoreSec)
+
 	// 6. Write receipt with atomic ack (spec 5.5, L31)
-	_, _ = CallGateReceipt(ctx, w.cfg.Client, repo, base, batchID, attempt, token, verdict, w.cfg.Bench, "worker-"+slot, trainHead, trainTree, inputID, sel.Checks, "", failing, "", "10")
+	_, _ = CallGateReceiptWithGID(ctx, w.cfg.Client, repo, base, batchID, attempt, token, verdict, w.cfg.Bench, "worker-"+slot, trainHead, trainTree, inputID, sel.Checks, "", failing, "", coreS, gidParams)
 }

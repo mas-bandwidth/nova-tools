@@ -373,17 +373,14 @@ redis.register_function('ns_batch_plan', function(keys, args)
 end)
 
 -- ns_gate_take: atomic budget debit, delivery, and claim (spec 5.2, control L2/L2c).
--- args: repo, bench, slot, class[, req_cpu, req_mem] OR bench, slot, class[, req_cpu, req_mem]
+-- args: repo, bench, slot, class[, req_cpu, req_mem]
 redis.register_function('ns_gate_take', function(keys, args)
-  local repo, bench, slot, class, req_cpu_arg, req_mem_arg
-  if #args >= 4 and not string.find(args[1], ':') and (args[4] == 'go' or args[4] == '+vetwin' or args[4] == 'lisp' or args[4] == 'full' or #args >= 4) and args[1] ~= 'studio' and args[1] ~= 'hetzner' and args[1] ~= 'macbook' and args[1] ~= 'superman' and args[1] ~= 'space' and args[1] ~= 'spacegame' and args[1] ~= 'hulk' and args[1] ~= 'vision' and not string.find(args[1], 'bench') then
-    repo, bench, slot, class = args[1], args[2], args[3], args[4]
-    req_cpu_arg, req_mem_arg = args[5], args[6]
-  else
-    bench, slot, class = args[1], args[2], args[3]
-    repo = 'nova-tools'
-    req_cpu_arg, req_mem_arg = args[4], args[5]
-  end
+  local repo = args[1]
+  local bench = args[2]
+  local slot = args[3]
+  local class = args[4]
+  local req_cpu_arg = args[5]
+  local req_mem_arg = args[6]
 
   local machine = redis.call('HGET', 'bench:' .. bench .. ':desired', 'machine')
   if not machine or machine == '' then

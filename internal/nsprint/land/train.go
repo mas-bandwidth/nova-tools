@@ -5,8 +5,37 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
+
+// MergeConflictError indicates that git merge-tree encountered merge conflicts.
+type MergeConflictError struct {
+	CurrentHead string
+	MemberHead  string
+	Stdout      string
+	Stderr      string
+}
+
+func (e *MergeConflictError) Error() string {
+	return fmt.Sprintf("merge conflict between %s and %s: %s", e.CurrentHead, e.MemberHead, e.Stdout)
+}
+
+func formatCommitDate(raw string) string {
+	if raw == "" {
+		return "@1790252098 +0000"
+	}
+	if strings.HasPrefix(raw, "@") {
+		return raw
+	}
+	if n, err := strconv.ParseInt(raw, 10, 64); err == nil {
+		if n > 100000000000 { // milliseconds timestamp
+			n = n / 1000
+		}
+		return fmt.Sprintf("@%d +0000", n)
+	}
+	return raw
+}
 
 // TrainParams holds inputs for deterministic train construction (spec 5.3).
 type TrainParams struct {
@@ -48,7 +77,18 @@ func BuildTrain(ctx context.Context, p TrainParams) (*TrainResult, error) {
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
-			return nil, fmt.Errorf("merge-tree %s %s: %w (stderr: %s)", currentHead, memberHead, err, stderr.String())
+			outStr := stdout.String()
+			errStr := stderr.String()
+			if strings.Contains(outStr, "CONFLICT") || strings.Contains(errStr, "CONFLICT") ||
+				strings.Contains(outStr, "conflict") || strings.Contains(errStr, "conflict") {
+				return nil, &MergeConflictError{
+					CurrentHead: currentHead,
+					MemberHead:  memberHead,
+					Stdout:      outStr,
+					Stderr:      errStr,
+				}
+			}
+			return nil, fmt.Errorf("merge-tree %s %s: %w (stdout: %s, stderr: %s)", currentHead, memberHead, err, outStr, errStr)
 		}
 		lines := strings.Split(strings.TrimSpace(stdout.String()), "\n")
 		if len(lines) == 0 || len(lines[0]) != 40 {
@@ -64,10 +104,7 @@ func BuildTrain(ctx context.Context, p TrainParams) (*TrainResult, error) {
 		if p.GitDir != "" {
 			commitCmd.Dir = p.GitDir
 		}
-		date := p.CreatedAt
-		if date == "" {
-			date = "1790252098"
-		}
+		date := formatCommitDate(p.CreatedAt)
 		commitCmd.Env = append(cmd.Environ(),
 			"GIT_AUTHOR_NAME=nova-sprint",
 			"GIT_AUTHOR_EMAIL=nova-sprint@mas-bandwidth.com",
