@@ -26,10 +26,8 @@ func TestIssue1835(t *testing.T) {
 		verb string
 		flag string
 	}{
-		{"simulate", "--repo"},
-		{"simulate", "--base"},
 		{"batch", "--repo"},
-		{"land", "--repo"},
+		{"batch", "--base"},
 	}
 	var named []string
 	for _, c := range cases {
@@ -49,7 +47,7 @@ func TestIssue1835(t *testing.T) {
 		t.Errorf("help banner's prose contradicts its usage block: it claims `No other verb takes --repo` while %s already takes --repo per the usage block above. nova-tools #1835", strings.Join(named, ", "))
 	}
 	if strings.Contains(helpText, "No other verb takes --base") {
-		t.Errorf("help banner's prose contradicts its usage block: it claims `No other verb takes --base` while simulate takes --base per the usage block above. nova-tools #1835")
+		t.Errorf("help banner's prose contradicts its usage block: it claims `No other verb takes --base` while batch takes --base per the usage block above. nova-tools #1835")
 	}
 }
 

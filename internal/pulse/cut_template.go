@@ -47,16 +47,6 @@ const OperativeRegionContract = "This card's one operative region is the fenced 
 // not a natural-language blacklist and not a shell parser.
 var broadStagingSpellings = []string{"git add -A", "git add --all", "git add ."}
 
-// IsV2Kind reports whether a kind is one of the Card Template v2 kinds.
-func IsV2Kind(kind string) bool {
-	for _, k := range CardV2Kinds {
-		if k == kind {
-			return true
-		}
-	}
-	return false
-}
-
 // TurnBudgetV2 returns the turn budget per kind (A4).
 func TurnBudgetV2(kind string) int {
 	switch kind {
@@ -689,27 +679,6 @@ type ResultEnvelopeV2 struct {
 
 // KnownResultV2Headers defines the allowed typed headers before markdown sections.
 var KnownResultV2Headers = typedrec.KnownResultV2Headers
-
-// ValidateResultV2 parses and strictly validates a RESULT.md against v2 envelope rules.
-func ValidateResultV2(raw string, kind string) (ResultEnvelopeV2, error) {
-	env, err := typedrec.ValidateResultV2(raw, kind)
-	if err != nil {
-		return ResultEnvelopeV2{}, err
-	}
-	return ResultEnvelopeV2{
-		ContractLine:     env.ContractLine,
-		Status:           env.Status,
-		Schema:           env.Schema,
-		Attempt:          env.Attempt,
-		Check:            env.Check,
-		Branch:           env.Branch,
-		Repo:             env.Repo,
-		Paths:            env.Paths,
-		IsFriendApproval: env.IsFriendApproval,
-		Fields:           env.Fields,
-		Body:             env.Body,
-	}, nil
-}
 
 var cardHeaderKeyRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9-]*:`)
 

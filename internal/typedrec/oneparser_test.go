@@ -50,7 +50,6 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/pulse/cut_template.go", fn: "ApplyDependsOn", record: "SPEC-CARD"},
 	{file: "internal/pulse/harvest.go", fn: "isV2CardContent", record: "SPEC-CARD"},
 	{file: "internal/pulse/manager.go", fn: "attemptOf", record: "SPEC-CARD"},
-	{file: "internal/pulse/manager.go", fn: "reissue", record: "SPEC-CARD"},
 	{file: "internal/pulse/harvestguard.go", fn: "cardRepo", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardKeyCheck", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
@@ -62,8 +61,6 @@ var specAllowlist = []allowlistEntry{
 	{file: "internal/nsprint/file/file.go", fn: "TaskTitle", record: "Issue-body"},
 
 	// Other records
-	{file: "internal/pulse/fleetstandard.go", fn: "fleetStandardValues", record: "fleet-standard"},
-	{file: "internal/pulse/manager.go", fn: "handleNotes", record: "bus-note"},
 	{file: "internal/nsprint/consume/okfriend.go", fn: "onHarvested", record: "Lua-reply"},
 	{file: "internal/nsprint/harvest/harvest.go", fn: "recordPR", record: "Lua-reply"},
 	{file: "internal/wake/bus.go", fn: "waitBookkeeping", record: "wake-bus"},
@@ -83,8 +80,6 @@ var specAllowlist = []allowlistEntry{
 var driftAllowlist = []allowlistEntry{
 	{file: "cmd/nova-merge/batch.go", fn: "bodyPaths", record: "SPEC-CARD", since: "92251bcc",
 		reason: "the card's PATHS header line in a swarm member's PR body, not a RESULT field"},
-	{file: "cmd/nova-merge/integrate.go", fn: "integrateSteps", record: "integrate-steps", since: "21f69fa8",
-		reason: "nova-merge's own step names (HEADS ... PR CI ... REVERIFY); PR is a step word, not the RESULT key"},
 	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
 		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
@@ -680,8 +675,8 @@ func TestOneTypedParser(t *testing.T) {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 21 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 21 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 18 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 18 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

@@ -73,6 +73,7 @@ internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pu
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
+cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
 docs/FIXED-FORM-OWED-ROWS.md SPEC-BOARD.md cites it in the SCHEMA repository, not here
 docs/PORTING.md the file `nova-review port` reads out of the pull request's own head, not out of this tree
 docs/SPEC-DELEGATION.md the draft SPEC-WORK folded in on 2026-09-15; the draft itself is gone
@@ -82,15 +83,29 @@ docs/SPEC-WORK-VALIDATION.md the same: a named commit on codex/, not in this tre
 docs/coordination/card-contract-2608-proposal.md SPEC-CARD.md's lineage cites it in mas-bandwidth/stella-tools@2fb4393, not here
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
 docs/roadmaps/sprint-x.sexp SPEC-WORK's example batch path on mas-bandwidth/work, another repository
-docs/spec-pulse/10 SPEC-TOOLWORK.md cites a retired spec-pulse chapter at line 4 as it stood before that draft; the chapter files now carry names
-fleet/authorized_keys the fleet's public keys live in the self repository; there is no fleet/ here
 fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
-fleet/macos/provision-mac-bench.sh the Mac provisioning script lives in the self repository; there is no fleet/ here
 internal/decide/questions/security.txt a retired phrase-table file: replaced whole by `--security-phrases <file>`
 internal/decide/questions/tamper.txt a retired phrase-table file: replaced by `--tamper <file>`
 internal/swarm/routehealth PR #2718's package, named by internal/nsprint/route/health.go as where the rules were proved; not on dev
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
-scripts/coordination/fleet-wake.sh SPEC-PULSE.md names the retired script the Go power verbs replaced
 testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175
 tools/deploy/ a prefix in SPEC-SPRINT.md's live-or-security path list, kept in the list though no tools/deploy/ is in this tree
+cmd/nova-pulse/fleet_verbs.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+cmd/nova-pulse/sprint.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/deal deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/deal/deal.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/hygiene.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/ledger.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/run.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/sprint/redis.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/sprint/refill.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+internal/pulse/layout560_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
+docs/spec-pulse/02-the-rules-numbered.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
+docs/spec-pulse/03-fleet.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
+docs/spec-pulse/10 history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history

@@ -739,6 +739,4 @@ Timing-sensitive tests run separately with
 **Development branch:** `nova-ci` is not part of `v0.15.2`.
 `nova-ci slowtests --budget <seconds>` accepts a whole number at least 1. Feed
 it `go test -json` events from the run you mean to measure; cached packages can
-report near-zero elapsed time. `nova-ci failed` handles the other question by
-reading a named run, pull request, merge-group run or branch through `gh` and
-printing the failing tests and locations instead of the full logs.
+report near-zero elapsed time.

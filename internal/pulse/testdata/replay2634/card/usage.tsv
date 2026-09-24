@@ -1,2 +1,0 @@
-job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
-card-fail	1	2026-09-21T01:00:00Z	2026-09-21T01:02:00Z	0	openrouter	gemini-2.5-pro	100	20	-	-	-	0.0100

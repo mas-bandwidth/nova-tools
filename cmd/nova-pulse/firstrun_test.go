@@ -34,11 +34,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
-// pulseID is the id a launch invents: a UTC stamp and six hex of the launch.
-// It reproduces on no second run, and is the only field of a PULSE OK line that
-// does not.
-var pulseID = mustElide("id= (the pulse this run launched)", `id=[0-9]{8}T[0-9]{6}Z-pulse-[0-9a-f]{6}`, "id=<the pulse this run launched>")
-
 // pulseTook is how long the run took. It is `0s` on every bench measured so
 // far and is still the run's, not the document's.
 var pulseTook = mustElide("took= (how long this run took)", `took=[0-9]+(\.[0-9]+)?[a-z]+`, "took=<how long this run took>")
@@ -51,30 +46,26 @@ func mustElide(name, pattern, as string) onboarding.Norm {
 	return norm
 }
 
-// TestTESTSFirstRunIsWhatTheToolPrints runs the three launches of the first
-// sitting in a copy of the fixture the section names, with the fixture's own
-// stub `nova-swarm` on PATH -- so no model is called and no card is dispatched.
-func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
-	doc := transcriptDoc(t)
-	dir := t.TempDir()
-	copyTree(t, filepath.Join("testdata", "example-pulse"), dir)
-	t.Setenv("PATH", filepath.Join(dir, "bin")+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Chdir(dir)
-	executeTranscript(t, doc, "First run", pulseID)
-}
-
-// TestTESTSCutAndPoolAreWhatTheToolPrints runs the other block. Its commands
+// TestTESTSFirstRunIsWhatTheToolPrints runs the first-run cut. Its commands
 // name the fixture from the root of the checkout, which is where a reader
 // typing them stands, so the fixture is copied to that same relative path in a
 // directory of this test's own rather than the paths being rewritten: a
 // rewritten path is no longer the line the document promised, and `out=` prints
 // the path back.
-func TestTESTSCutAndPoolAreWhatTheToolPrints(t *testing.T) {
+func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	doc := transcriptDoc(t)
+	// The help banner's example and this transcript are one command, pasted in both places.
+	const firstRun = "nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root"
+	if !strings.Contains(usage, "  "+firstRun+"\n") {
+		t.Errorf("the help banner's example is not %q", firstRun)
+	}
+	if !strings.Contains(doc, "$ "+firstRun+"\n") {
+		t.Errorf("docs/TESTS.md's nova-pulse first run is not %q", firstRun)
+	}
 	dir := t.TempDir()
 	copyTree(t, "testdata", filepath.Join(dir, "cmd", "nova-pulse", "testdata"))
 	t.Chdir(dir)
-	executeTranscript(t, doc, "Cutting cards, and the pool", pulseTook)
+	executeTranscript(t, doc, "First run", pulseTook)
 }
 
 func executeTranscript(t *testing.T, doc, heading string, norms ...onboarding.Norm) {

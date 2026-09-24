@@ -10,27 +10,13 @@ import (
 
 // TestFirstRunTranscriptsMatchInstalledBuild re-runs the four first-run
 // transcript lines that drifted from the installed build and slipped past the
-// per-binary shape tests, which is nova-tools#1506: nova-pulse pool, the three
+// per-binary shape tests, which is nova-tools#1506 (nova-pulse pool went with the frozen verbs): the three
 // nova-decide route lines, nova-work's no-verb refusal and nova-review's
 // version line. Each subtest builds the tool, runs the transcript's command,
 // and compares what the transcript line promises against what the tool printed.
 func TestFirstRunTranscriptsMatchInstalledBuild(t *testing.T) {
 	root := repoRoot(t)
 	md := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
-
-	t.Run("nova-pulse-pool", func(t *testing.T) {
-		bin := buildTool(t, root, "nova-pulse")
-		transcript, found := outputAfterCommand(md, "nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root")
-		if !found {
-			t.Fatalf("TESTS.md missing command %q", "nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root")
-		}
-		if len(transcript) == 0 {
-			t.Fatalf("TESTS.md has empty transcript for nova-pulse pool")
-		}
-		_, stdout, stderr := runBare(t, root, "nova-pulse", bin,
-			[]string{"pool", "--sources", "cmd/nova-pulse/testdata/sources.tsv", "--root", t.TempDir()})
-		assertShape(t, "nova-pulse pool", transcript, stdout, stderr)
-	})
 
 	t.Run("nova-decide-route", func(t *testing.T) {
 		bin := buildTool(t, root, "nova-decide")

@@ -30,19 +30,6 @@ func (a *argLog) Run(ctx context.Context, dir, name string, args ...string) (str
 	return a.inner.Run(ctx, dir, name, args...)
 }
 
-func (a *argLog) pushesTo(ref string) [][]string {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	var out [][]string
-	for _, call := range a.args {
-		joined := strings.Join(call, " ")
-		if strings.Contains(joined, " push ") && strings.Contains(joined, ref) {
-			out = append(out, call)
-		}
-	}
-	return out
-}
-
 func (a *argLog) all() [][]string {
 	a.mu.Lock()
 	defer a.mu.Unlock()

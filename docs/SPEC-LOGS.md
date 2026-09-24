@@ -17,7 +17,7 @@ reading, shipping and alerting are open-source programs. Related: [SPEC.md](SPEC
 exactly one line), [../internal/oneline](../internal/oneline/oneline.go) (the one escape),
 [SPEC-STATE.md](SPEC-STATE.md) (the `cards:done` stream and its fold are the durable record; **logs are not the record**),
 [SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md),
-[SPEC-PULSE.md](SPEC-PULSE.md) (the loops), [SPEC-SWARM.md](SPEC-SWARM.md) (the harness),
+SPEC-PULSE.md (the loops), [SPEC-SWARM.md](SPEC-SWARM.md) (the harness),
 [SPEC-MERGE.md](SPEC-MERGE.md) (the queue).
 
 ## Part 1 — the choice, and why

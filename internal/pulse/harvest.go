@@ -620,11 +620,6 @@ func discoverRootCards(root string) []CardRow {
 	return out
 }
 
-// jobDir is a card's job directory under the root: <root>/<slot>/jobs/<label>.
-func jobDir(root, slot, label string) string {
-	return namedJobDir(root, slot, label)
-}
-
 // resolveJobDir is the --then harvest lookup (issue #1907). A named slot is
 // that path. Slot `-` (what launch writes) has no allocated identity, so a
 // RESULT.md whose line 1 matches the current card contract is used when it is
@@ -698,21 +693,6 @@ func cardContract(cardPath string) string {
 		return ""
 	}
 	return strings.TrimSpace(firstNonEmpty(strings.Split(string(raw), "\n")))
-}
-
-// kindFromContract extracts the card kind from line 1 of the card contract if recognizable.
-func kindFromContract(contract string) string {
-	parts := strings.Fields(contract)
-	for i, p := range parts {
-		clean := strings.TrimSuffix(p, ":")
-		if IsV2Kind(clean) {
-			return clean
-		}
-		if i > 5 {
-			break
-		}
-	}
-	return ""
 }
 
 // cardExpected binds expected schema version and attempt identity from the trusted card record.
@@ -880,16 +860,6 @@ func poolPushDir(pool, state, id string) string {
 		}
 	}
 	return filepath.Join(pool, "reports", id)
-}
-
-func hasRedLine(lines []string) bool {
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "red:") || strings.HasPrefix(t, "red ") {
-			return true
-		}
-	}
-	return false
 }
 
 func firstNonEmpty(lines []string) string {

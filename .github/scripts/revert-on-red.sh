@@ -102,7 +102,7 @@ else
   # four of them walked into the dev merge queue on their own (Glenn: nothing reaches the
   # dev merge queue but a batch). CI lands nothing by itself; a person or a batch lands
   # this, and the notice says so loudly enough to act on.
-  notice "revert PR #$pr_number is OPEN on $branch and lands nothing by itself: main is red until somebody lands it -- nova-merge land --repo $repo --pr $pr_number, or merge it by hand."
+  notice "revert PR #$pr_number is OPEN on $branch and lands nothing by itself: main is red until somebody lands it -- merge it by hand."
 fi
 
 # --- ONE comment on the merged PR (found by the commit's PR association) ---

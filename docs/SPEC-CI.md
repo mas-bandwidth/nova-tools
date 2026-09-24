@@ -54,7 +54,7 @@ clock if the code needs one"`. A new line in the allowlist —
 the line, so the queue’s PR comment is the whole diagnosis.
 
 **The mistake it removes.** A card cut waits to make a suite fit the two-minute
-gate, which made `TestTheLaunchIsATransaction` flaky under load and dropped three
+gate, which made the launch-transaction test (deleted with `nova-swarm run`, 2026-09-24) flaky under load and dropped three
 innocent PRs from the queue in one hour — the same class hit twice in one night.
 
 **Red tests.**
@@ -289,6 +289,8 @@ verb end to end:
    that does not depend on map iteration.
 ## The failing tests of a run
 
+> **Retired 2026-09-24.** The `nova-ci failed` verb is deleted (the verb survey found no caller); the engine in `internal/ci` stays. What follows is the verb as it was specified.
+
 **The verb.** The second verb of `cmd/nova-ci` is `failed`:
 
 ```
@@ -434,7 +436,7 @@ their timestamps, ANSI and CRLF intact — `windows-sandbox.log` (job
 frames), `merge-darwin-timeout.log` (job 105698657603 of run 35375346271, the
 `1m40s` timeout) and `inline-gate-werror.log` (job 105551505883 of run
 35329874611 of `mas-bandwidth/schema`, a `-Werror` compiler error inside
-`make test` and no test event at all). `cmd/nova-ci/failed_test.go` runs the verb
+`make test` and no test event at all). the verb's end-to-end test (deleted with the verb, 2026-09-24) runs the verb
 over them through a fake forge:
 
 1. The plain log yields five failing tests, each with its package from the `FAIL`
@@ -642,7 +644,7 @@ is read as coverage.
 context or timer bound under ten seconds used as a pass/fail condition, or an
 assertion on elapsed time; it polls for the event up to `NOVA_TEST_WAIT`
 (default `30s`) or injects a fake clock.
-**The hurt.** A card cut waits to fit the two-minute gate, `TestTheLaunchIsATransaction`
+**The hurt.** A card cut waits to fit the two-minute gate, the launch-transaction test (deleted with `nova-swarm run`, 2026-09-24)
 went flaky under load and dropped three innocent PRs from the queue in one hour;
 the same class then refused `#1099` out of a merge group (ledger item 9).
 **The test.** `TestNoFixedWaitsOnTheCIPath` (`internal/ci/ci_waits_test.go`),
@@ -803,6 +805,9 @@ each with its own ceiling, checked by `tools/testdur`'s own tests against
 
 ### `failed` — a run's failing tests, not its log
 
+> **Retired 2026-09-24.** The `nova-ci failed` verb is deleted (the verb survey found no caller); the engine in `internal/ci` stays. What follows is the verb as it was specified.
+
+
 **The rule.** A red run is read as the failing tests it holds — job, package,
 test, `file:line` and the test's own words — never as four megabytes of log
 scrolled by eye.
@@ -829,7 +834,7 @@ cancelled sibling as silence.
 `TestTheSummarySplitsARealRedFromItsCancelledSiblings` and
 `TestACancelledOnlyRunStaysExitOne` (`internal/ci/failed_test.go`), over five
 real job logs in `internal/ci/testdata/failed/`, with the verb run end to end in
-`cmd/nova-ci/failed_test.go`.
+the verb's end-to-end test (deleted with the verb, 2026-09-24).
 **Its allowlist.** None: it reports what a run said, and there is nothing to
 excuse.
 **Its remedy lines.** None; its refusals are the verb's own, each naming what the
@@ -943,10 +948,9 @@ the table that pins the name heuristic against the three false positives its
 first sweep had (`IsSHA`, `HarnessSHA256`, `hasShebang`). The guard itself is
 `internal/testguard`, held by `TestUnsetGuardLetsTheSeamRun`,
 `TestArmedGuardNamesTheCommandAndTheRemedy`, `TestAFakeOnPATHIsNotAHost` and
-`TestAllowHostsIsScopedAndNests`; the fake-less red that bought the rule is
-`TestTheRealSSHRunnerPanicsUnderTheGuard`
-(`internal/pulse/hostguard_test.go`), which constructs the real `SSHRunner`,
-injects nothing, and ran a child `ssh` before the guard existed.
+`TestAllowHostsIsScopedAndNests`. The fake-less red that bought the rule
+constructed nova-pulse's real `SSHRunner`, injected nothing, and ran a child
+`ssh` before the guard existed; it went with the frozen nova-pulse fleet verbs.
 **Its allowlist.** `internal/ci/testdata/hostseam_allowlist.txt`, one
 `file:function  # reason` per row — six today, every one a function that reaches
 its host through another function in the tree that DOES call the guard (the

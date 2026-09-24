@@ -13,54 +13,6 @@ import (
 	"time"
 )
 
-// Table-driven tests for RESULT.md line 2 DONE prefix matching.
-func TestIsDoneLineTable(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		line  string
-		match bool
-	}{
-		// Positive controls
-		{"exact DONE", "DONE", true},
-		{"DONE with spaces", "   DONE   ", true},
-		{"DONE paren message", "DONE (both runs green)", true},
-		{"DONE colon message", "DONE: all tests pass", true},
-		{"DONE tab message", "DONE\tboth passed", true},
-		{"DONE bracket message", "DONE [all green]", true},
-		{"DONE semicolon message", "DONE; tests passed", true},
-		{"DONE hyphen message", "DONE - green", true},
-		{"DONE with lowercase details", "DONE (run 1 ok, run 2 ok)", true},
-
-		// Negative controls
-		{"DONEish suffix", "DONEish", false},
-		{"DONE_NOT suffix", "DONE_NOT", false},
-		{"DONENESS suffix", "DONENESS", false},
-		{"DONE123 suffix", "DONE123", false},
-		{"ABSTAIN exact", "ABSTAIN", false},
-		{"ABSTAIN timeout", "ABSTAIN (timeout on suite)", false},
-		{"BLOCKED exact", "BLOCKED", false},
-		{"BLOCKED dependency", "BLOCKED (need pr #100)", false},
-		{"empty line", "", false},
-		{"only whitespace", "    \t   ", false},
-		{"not done prefix", "NOT DONE", false},
-		{"lowercase done", "done", false},
-		{"random text", "fixed the bug", false},
-	}
-
-	for _, tc := range tests {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := IsDoneLine(tc.line)
-			if got != tc.match {
-				t.Errorf("IsDoneLine(%q) = %v, want %v", tc.line, got, tc.match)
-			}
-		})
-	}
-}
-
 // Table-driven tests for draft-only card label detection.
 func TestIsDraftOnlyTable(t *testing.T) {
 	t.Parallel()
@@ -1063,75 +1015,6 @@ func TestCommitJobDraftOnlyAndReadCard(t *testing.T) {
 	})
 }
 
-// Verify CommitStep directory traversal, discovery and all verdicts preserved.
-func TestCommitStepTraversalAndVerdicts(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-
-	// 1. A valid DONE job under card-1/jobs/fix-1
-	j1 := filepath.Join(root, "card-1", "jobs", "fix-1")
-	r1 := filepath.Join(j1, "repo")
-	if err := os.MkdirAll(r1, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initTestGitRepo(t, r1)
-	if err := os.WriteFile(filepath.Join(r1, "fix.go"), []byte("fix\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(j1, "RESULT.md"), []byte("RESULT fix-1 sha=012345678901\nDONE (both runs green)\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 2. An ABSTAIN job under card-2/jobs/fix-2
-	j2 := filepath.Join(root, "card-2", "jobs", "fix-2")
-	r2 := filepath.Join(j2, "repo")
-	if err := os.MkdirAll(r2, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initTestGitRepo(t, r2)
-	if err := os.WriteFile(filepath.Join(j2, "RESULT.md"), []byte("RESULT fix-2 sha=012345678901\nABSTAIN (timeout)\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	// 3. A read card under card-3/jobs/read-review
-	j3 := filepath.Join(root, "card-3", "jobs", "read-review")
-	if err := os.MkdirAll(j3, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(j3, "RESULT.md"), []byte("RESULT read sha=012345678901\nDONE\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	var stdout bytes.Buffer
-	lines, err := CommitStep(CommitStepInput{
-		Dir:    root,
-		Stdout: &stdout,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	joined := strings.Join(lines, "\n")
-	// Must contain all verdicts, including SKIP lines
-	if !strings.Contains(joined, "COMMITTED fix-1 rowan/fix-1") {
-		t.Errorf("missing COMMITTED fix-1 in:\n%s", joined)
-	}
-	if !strings.Contains(joined, `SKIP fix-2 reason=not-done line2="ABSTAIN (timeout)"`) {
-		t.Errorf("missing SKIP fix-2 not-done in:\n%s", joined)
-	}
-	if !strings.Contains(joined, "SKIP read-review reason=read-card") {
-		t.Errorf("missing SKIP read-review in:\n%s", joined)
-	}
-
-	// Verify stdout matches returned lines
-	stdoutLines := strings.TrimSpace(stdout.String())
-	returnedLines := strings.TrimSpace(strings.Join(lines, "\n"))
-	if stdoutLines != returnedLines {
-		t.Fatalf("stdout does not match returned lines:\nstdout:\n%s\nreturned:\n%s", stdoutLines, returnedLines)
-	}
-}
-
 // Verify that HarvestWorking with Commit: true runs the commit step on an uncommitted DONE job.
 func TestHarvestWorkingWithCommitStep(t *testing.T) {
 	t.Parallel()
@@ -1663,52 +1546,6 @@ func TestCommitJobCleanTreeRenameErrorPropagation(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	if strings.Contains(joined, "RENAMED") {
 		t.Fatalf("RENAMED unexpectedly emitted on failure:\n%s", joined)
-	}
-}
-
-// Test CommitStep error propagation when a job fails (Finding 3).
-func TestCommitStepErrorPropagation(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	j1 := filepath.Join(root, "card-1", "jobs", "fix-1")
-	r1 := filepath.Join(j1, "repo")
-	if err := os.MkdirAll(r1, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	initTestGitRepo(t, r1)
-	if err := os.WriteFile(filepath.Join(r1, "work.txt"), []byte("work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(j1, "RESULT.md"), []byte("RESULT fix-1 sha=012345678901\nDONE\nBRANCH rowan/fix-1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	runner := mockFailingRunner{
-		failOnSubstr: "commit",
-		failErr:      errors.New("injected commit crash"),
-	}
-
-	var stdout, stderr bytes.Buffer
-	lines, err := CommitStep(CommitStepInput{
-		Dir:    root,
-		Runner: runner,
-		Stdout: &stdout,
-		Stderr: &stderr,
-	})
-
-	if err == nil {
-		t.Fatalf("expected error from CommitStep, got nil")
-	}
-	if !strings.Contains(err.Error(), "git commit") {
-		t.Errorf("expected error to mention git commit, got %v", err)
-	}
-	joined := strings.Join(lines, "\n")
-	if strings.Contains(joined, "COMMITTED fix-1") {
-		t.Fatalf("COMMITTED emitted despite failure:\n%s", joined)
-	}
-	if !strings.Contains(stderr.String(), "git commit") {
-		t.Errorf("stderr does not contain error: %s", stderr.String())
 	}
 }
 

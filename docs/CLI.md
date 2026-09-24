@@ -1395,239 +1395,59 @@ mail*).
 
 ## nova-merge
 
-`nova-merge` lands an **ordered lane** of entries — pull requests, or branches
-with no pull request at all — onto one base branch, one at a time, and it refuses
-to land anything whose evidence it cannot name. Its contract is
-[docs/SPEC-MERGE.md](SPEC-MERGE.md), which is normative; this section is the
-door.
+`nova-merge` keeps the **evidence a stream lands on**: a typed read at a head, a
+local gate's verdict for a merge, a typed classification of a failed merge-group
+run, a batch gate that merges N heads onto a base and runs the tests, and a fold of
+branches onto a base into one out-branch. Its contract is
+[docs/SPEC-MERGE.md](SPEC-MERGE.md), which is normative; this section is the door.
 
-A lane in this shape landed 30-odd pull requests onto one base in a morning, and
-failed in every way a shell loop around `gh pr merge` fails. The tool is those
-failures closed, one rule each: `--auto` and every force-push refused in the one
-function that runs a mutating command; a merge that rests on **one predicate** —
-the newest gate record for `(the entry's head, the base sha read this pass)` being
-green, for an **integration commit this tool built and publishes unchanged**; a
-compare-and-swap push whose lease is the expected base, so a base that moved is
-`MERGE RACED` *before* anything lands; reads and gates as **immutable files in the
-lane's own branch**, so a reader on another machine records a verdict where every
-lane folds it; a conflict that is `BLOCKED` with its file list and the exact hand
-command, because the lane never edits an entry's content.
-
-### First run
-
-Make a lane, queue an entry, and look at it. Every path is a flag; there is no
-default lane, no default repository and no default base.
-
-**The first run pushes, and this is the line that says so.** `init` — and so
-`quickstart`, which is `init` and then `status` — creates the lane's **record
-branch**, the name given to `--lane-branch`, and when the repository does not have
-that branch already it **pushes it to `origin`** of the repository `--repo` names:
-one commit holding `.gitignore`, subject `nova-merge: the lane's record branch`,
-author and committer **`nova-merge <nova-merge@localhost>`** — the tool's own
-placeholder identity, not a person and not an account anywhere, so a commit on
-that branch says the lane made it wherever the lane ran. That push is not a side
-effect to be tidied up later — the record branch is where every read and gate
-lives, so that a reader on another machine records a verdict where every lane
-folds it ([SPEC-MERGE.md](SPEC-MERGE.md) rule 22). `joined=false` on the
-`INIT OK` line says this lane created that branch and pushed it; `joined=true`
-says the branch was already there and nothing was created or pushed.
-
-So the line below, pasted as it stands, writes a ref to
-`mas-bandwidth/nova-tools`. **Rehearse against a bare repository of your own
-first.** `--remote <url>` is the URL this lane clones from and pushes to, and
-with a local bare repository the whole first run reaches no forge:
-
-```sh
-git init -q --bare ./rehearsal.git
-nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main \
-           --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
-```
-
-Both paths are deliberate. `--remote` is handed to git **inside the lane's own
-directory**, so it wants an absolute path or a URL — `"$PWD/rehearsal.git"` is
-that, and a relative `./rehearsal.git` resolves against the lane and is refused
-with git's own sentence and nothing left behind. And the rehearsal gets a lane of
-its own, because `init` creates a lane once: rehearsing into the directory the
-live line then uses is `INIT REFUSED` on the next command. The push, the clone
-and the record branch all land in `./rehearsal.git`; a rehearsal repository with
-no `--base` branch in it prints one `STATUS NOTE` and `base_state=UNKNOWN` at
-exit 0, which is the rehearsal saying it has no base to read rather than a
-failure. The corresponding transcripts in [TESTS.md](TESTS.md) are executed by
-tests; selected flags and warning phrases on this page are checked too.
-
-Then the live form, whose first line creates and pushes `nova-merge/main` in
-`mas-bandwidth/nova-tools`:
+The per-PR lander role is **retired** (stream is the unit, 2026-09-24): `init`,
+`quickstart`, `add`, `add-branch`, `run`, `status`, `dry-run`, `packet`, `stop`,
+`queue` (and `queue audit`), `wait`, `sweep`, `simulate`, `rebase`, `react`,
+`land`, `integrate`, `stack` and `receipt` are gone, and each is now an unknown
+subcommand at exit 2. A stream lands onto dev by hand until the stream-lander spec
+names the verb that does it.
 
 ```
-$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
-INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
-STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
-
-$ nova-merge add --lane ./lane --pr 949 --needs-read
-ADD OK kind=pr entry=949 needs_read=yes lane=1/0
-
-$ nova-merge status --lane ./lane
-STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
-STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+nova-merge version
+nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
+nova-merge gate     --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
+nova-merge fold     --branches <file> --onto <base> --out <branch> --lane <dir>
+nova-merge fold     --close-folded --pr <n>
+nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
 
-The lane is created once, with its repository, its base and the branch its
-records live in, and no other verb takes those three. A second lane on the same
-branch — a reader on another machine — joins it: `joined=true`, and it creates
-and pushes nothing.
+`batch` has its own section below, with its full flag list.
 
-Reading that status: `state=PENDING` is an entry **waiting**, which is not a
-failure and exits 0. `checks=g4/p1/r0` counts green, pending and red **separately**
-— zero red is not the same news as zero pending, and the merge condition wants
-zero of both. `gate=-` means no gate record; `head` means one for this head against
-an older base (a candidate); `merge` means one for this head against the base as it
-is now, which is the only thing that merges. `read=0a/0h` are approves and holds
-for **this** head, and `stale=` counts the verdicts recorded for a head that has
-since moved: kept, counted, and authorizing nothing.
+### read and gate
 
-The things a first run gets wrong, and what each one wants:
+A read and a gate are each **one immutable file in the lane's branch**, written to a
+durable outbox first and pushed in a compare-and-swap loop, so a reader on another
+machine records a verdict where every lane on that branch folds it
+([SPEC-MERGE.md](SPEC-MERGE.md), *The read condition* and *The local gate*). The lane
+directory is an existing one; the verbs that made lanes left with the lander role,
+and the stream-lander spec says where these records live next (Redis, per the
+"GitHub is a git remote only" ruling).
 
-- **pasting the live line to see what the tool does** — the record branch is
-  created and pushed to `--repo` before there is any output to read, and a
-  throwaway `--lane-branch` is still a ref in a shared repository (Johnny,
-  nova-tools #116, who deleted the one his first run left). Rehearse with
-  `--remote "$PWD/rehearsal.git"` first; the live line is for the lane you mean
-  to keep.
-- **`add --base main`** — exit 2. The base is a property of the lane, written by
-  `init`; a `--base` on a queueing verb would let two invocations disagree about
-  where the lane lands.
 - **`gate --base <sha>`** — exit 2, naming `--base-sha`. The lane's branch and the
   base **sha** a gate was taken against are different words on purpose.
 - **`read` with no `--head`** — exit 2. A verdict binds to the sha the reader had
   open, never to whatever the entry's head is when the verb runs: an approve
   recorded a minute after the author pushed is an approve for code nobody read.
-- **`run --loop 5m` with no `--hours`** — exit 2. Every loop ends on its own.
-- **a verb on a directory that is not a lane** — exit 2, with the whole `init`
-  command in the refusal, and nothing written on the way past.
+- **a verb on a directory that is not a lane** — exit 2, and nothing written on the
+  way past.
 
-### simulate
+### fold
 
-```
-nova-merge simulate --repo <path> --base <branch> [--entries <file> | --prs <list>] [--checks "<a>,<b>"] [--timeout <duration>]
-```
+`fold --branches <file> --onto <base> --out <branch> --lane <dir>` merges the
+listed branches in the file's order onto `--onto` in a scratch clone of the lane's
+repository, drops a branch whose conflict it may not resolve or that stays red
+after three tries, squashes the rest to one commit on `--out` and opens it as one
+pull request — card PRs into a stream branch. `fold --close-folded --pr <n>`
+closes the member pull requests a merged fold carried. See
+[SPEC-MERGE.md](SPEC-MERGE.md), *The fold (#1142)*.
 
-`simulate` checks a queue as a growing batch. It fetches `origin/<base>`, makes a
-scratch worktree under the repository's own `.git` — never the system temp
-directory — squash-merges each entry's `pull/<n>/head` in queue order, and runs
-every check after each successful merge. A conflicting entry is reported and
-skipped. The pass stops at the first step whose configured checks fail; it does
-not separately prove that entry green on its own or identify a unique culprit.
-
-`--repo` is a local clone whose origin holds the queue's heads. `--entries` is a
-file of pull request numbers, one per line; **`--prs`** is the same queue as a list —
-`1749,1753,1754` — for a caller who has the numbers rather than a file, and giving both
-is refused because two spellings of one queue are two queues. With neither, the queue
-itself is read, one `gh api graphql` naming the base branch's merge queue. `--checks` is a
-comma-separated list of commands and defaults to
-`go build ./...,go test ./internal/ci/`, which is the hand loop this verb replaces,
-written out as it was run. `--timeout` is a duration **per check**, default `5m`.
-The scratch worktree is removed on the way out — **the directory and git's own entry
-for it under `.git/worktrees/`** — and a removal that could not happen is one
-`SIMULATE NOTE` rather than a silence. A pass leaves the repository as it found it:
-`git worktree list` says afterwards exactly what it said before, and there is nothing
-for `git worktree prune` to find.
-
-Four lines, one per entry and one at the end:
-
-```
-SIMULATE OK #<n>
-SIMULATE CONFLICT #<n> with the entries ahead
-SIMULATE POISON #<n> check="<command>" <the check's first line>
-SIMULATE DONE entries=<n> ok=<n> conflicts=<n> poison=<#n|none>
-```
-
-A conflict is counted, the worktree is reset and the pass carries on, because an
-entry that will not merge is not the entry that turns the base red.
-
-Exit 0 means no configured check failed; conflicts, reported separately, do not
-change that result. Exit 2 means either a configured check failed or the invocation
-was invalid. Exit 1 is a preparation or runtime refusal. Read the `SIMULATE` output
-with the exit code to distinguish these cases; the code alone is not the whole
-result.
-
-**Invalid invocation** is the invocation naming something this verb cannot use: a
-missing or malformed flag, an empty `--checks`, a `--repo` that is not a git
-repository, an `--entries` file that cannot be read or that holds a line which is
-not a pull request number, a `--base` the origin does not have, and an entry whose
-`pull/<n>/head` the origin does not have. **Preparation or runtime refusal** is
-everything after that: a scratch worktree that could not be made, a squash-merge that
-failed for a reason other than a conflict, a commit or a reset the work tree refused,
-a `gh` read of the live queue that did not answer.
-
-### rebase, react and classify — the lane's three ticks
-
-```
-nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>] [--dry-run|--yes]
-nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
-nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
-```
-
-**These three land with batch 3 (nova-tools #1308) and are not on `dev` yet.** The
-lines below are read off their source and are what the verbs print; until that batch
-merges, this section describes a binary your bench does not have.
-
-`rebase --once` is the hand rebase loop's tick as a verb: one pass over the
-repository's open pull requests, and for each one the host calls `DIRTY` whose head
-branch is `rowan/<something>` — `rowan/replays-*` excluded, it has its own verb — a
-plan names the pull request and launch command. The default writes nothing and exits 2
-asking for `--yes` or `--dry-run`; `--dry-run` prints the same plan and exits 0. Only
-`--yes` cuts and launches a card, unless `--markers` already holds a file for that number.
-`--markers` is the whole memory of the pass, so a pull request is carded once and not
-once per tick; `--out` is where the cards go; `--queue` is the queue whose state file
-numbers them, under its lock, so two cutters never share a number. `--base` is `dev`
-by default and `--timeout` is 120 seconds. **`--once` is required**: this pass cuts
-what it finds now and never loops on its own. One line, and exit 0 whether it cut
-nothing or many:
-
-```
-REBASE tick cards=<n>
-REBASE NOTE PR #<n> card=<name> is cut and marked and was not launched: <reason>; launch it by hand, the marker stops a second cut
-```
-
-`react` is the lane's subscriber, and it holds no timer of its own: it blocks on the
-pub/sub channels until a message lands or `--deadline` is reached, and acts once per
-message. A `pr-checks-done` that succeeded **enqueues the pull request into
-`<lane>/queue.json`** — the one queue this tree has, the one `nova-merge queue` writes
-and `nova-merge run` walks — unless that queue's skip set or `<lane>/hold` stops it; a
-`dev-moved` asks for a rebase unit for every pull request the move made `DIRTY`; a
-`card-done` does nothing, because the recorder and the harvester read the stream
-themselves.
-
-**`--lane` is required, and it is the queue.** It used to be optional, and without it
-the reactor enqueued into a redis set called `merge:queue` that nothing in this tree
-ever read: `REACT enqueue pr=<n>`, exit 0, and nothing reachable afterwards. There is
-**one hold and one skip set**, the lane's; the redis `enqueue:hold` and `enqueue:skip`
-are gone, because two mechanisms wearing the same words are one mechanism nobody can
-reason about — a held lane with the pull request skipped still printed `REACT enqueue`.
-
-**`--once` or `--deadline <seconds>` is required.** The loop form with neither ran a
-60-second loop and exited 0 although the help said one was required; it is now refused
-by name, like `nova-work events`. `--once` with no `--deadline` waits 60 seconds for
-its one message.
-
-```
-REACT enqueue pr=<n> head=<sha>
-REACT skip pr=<n> head=<sha> reason=queue-skip
-REACT hold pr=<n> head=<sha> reason=<the hold's own reason>
-REACT rebase-wanted pr=<n> head=<sha> base=<sha>
-REACT DROP channel=<name> reason=<why the payload could not be read>
-REACT OK once=true dropped=<n>
-REACT OK once=false deadline=<n>s dropped=<n>
-```
-
-**Returning at the deadline is the design and not a failure**, so a window in which
-nothing was published is still `REACT OK`, exit 0; `REACT FAIL` on stderr, exit 1, is
-the reactor that could not read its channels. **One malformed payload is one message
-dropped**, said on a `REACT DROP` line and counted in `dropped=<n>` on the closing
-line — it used to kill the whole reactor at exit 1, although an unknown channel was
-already ignored. go-redis's own connection-pool chatter is silenced before the first
-dial, so a bus this verb cannot reach is one `REACT FAIL` line and not five `redis:
-… pool.go` lines in front of it.
+### classify
 
 `classify` asks one typed decision about **one failed merge-group run**: was the
 failure flaky under the queue's load, the environment, or the pull request's own
@@ -1647,59 +1467,6 @@ are the decide route's, as everywhere else; a run the host cannot read, a route 
 will not answer, or a `--run` that is not a positive number is `CLASSIFY REFUSED`,
 exit 2. See [SPEC-DECIDE.md](SPEC-DECIDE.md), *Git and GitHub — classify, order,
 risk; never a merge*.
-
-### queue
-
-```
-nova-merge queue --lane <dir> (status | hold "<reason>" --who <name> | release | skip <pr>... | unskip <pr>... | front <pr> | sweep --window <duration>) [--timeout <seconds>] [--max <n>]
-nova-merge queue classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--head <sha>] [--pr <n>|--branch <name>] [--test <name>] [--note <text>] [--who <name>]
-```
-
-`queue` is the mechanical hand that keeps the lane's order. One queue
-(`<lane>/queue.json`: `queued`, `skipped`, `parked`), one hold (`<lane>/hold`), one
-order — the order `run` walks. Every write is a read-modify-write under the lane's own
-lock through a fixed temp name.
-
-**`status`** reads the two files and nothing else — no forge, no clone, no lock — so it
-runs on a bench with no `gh` and no token:
-
-```
-QUEUE ENTRY pos=<n> entry=<pr> state=queued
-QUEUE ENTRY pos=- entry=<pr> state=skipped|parked
-QUEUE STATUS lane=<dir> queued=<n> skipped=<n> parked=<n> hold=<reason|-> by=<who|->
-```
-
-Before it existed there was no way to see the queue at all: a lane standing still under
-a hold read exactly like a lane with nothing to do, and a skipped pull request read
-exactly like one nobody had queued.
-
-**`hold "<reason>" --who <name>`** writes the reason into `<lane>/hold`. **`--who` is
-required**: it was undocumented and optional, and a hold written without it said
-`by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release. This
-tool reads no environment variable, so `$USER` is the caller's to pass. While a hold
-stands, the sweep refuses, `front` and every enqueue refuse, **`run` refuses** —
-`RUN REFUSED: a hold is standing (<reason>) by <who>` at exit 2, read at the top of
-every pass so a hold written during a `--loop` stops the next one — and `react` prints
-`REACT hold` instead of enqueueing. **`release`** removes the file and prints how long
-it stood.
-
-**`skip`/`unskip`/`front`** are **local**: they reorder numbers in a file and reach no
-forge. `front` used to read the pull request and its checks from the host first, which
-made the one local verb of the family need a network, a `gh` and a token, over a
-judgement `run` makes again on every pass anyway; the one thing it still checks is that
-the entry is in this lane.
-
-**`sweep --window <duration>`** walks the open pull requests the host reports inside the
-session window and enqueues each that is green, not skipped, not parked, not dirty and
-not already queued. It **runs against a real repository now**: `QueuePRs`,
-`PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so
-every real invocation answered `QUEUE REFUSED: this host cannot list open pull requests
-… no host, no sweep` — the verb passed its tests and had never once run.
-
-**A `queue.json` that does not parse is `QUEUE REFUSED` / `RUN REFUSED` at exit 2 naming
-the file.** The error used to be swallowed, which left the walk order empty — and an
-empty walk order meant "walk everything", so a corrupt file **silently un-skipped every
-skip and every parked poison**.
 
 ### batch
 
@@ -1778,7 +1545,7 @@ the gate had said OK. A member that has not been green on its own is a member no
 has judged on every platform, and putting it in a batch asks this gate a question it
 cannot answer. A member whose head is **a batch's own branch** (`rowan/integration-*`) or is named by a
 `BATCH OK` line in **`--receipt-file`** is admitted on the gate's own evidence instead of
-the forge's rollup — that is the same receipt `nova-merge land` takes, read by the same
+the forge's rollup, read by the same
 parser — so a batch pull request whose own CI is still running is never refused as a
 member of the next one. `--no-require-checks` waives the whole check and says so on
 `BATCH NOTE` and on the verdict line. The `vet-windows` step (`GOOS=windows go vet ./...`) catches the
@@ -1797,133 +1564,12 @@ The last `@` splits url from ref, so an ssh URL is
 not a red test. Tests stage a `file://` fixture; they do not clone the real
 serialize runtimes.
 
-### land
-
-```
-nova-merge land --repo <owner>/<name> --pr <n> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--untyped-comments ignore] [--receipt "<BATCH OK line>"|--receipt-file <path>] [--no-jump] [--timeout <seconds>] [--loop <duration>] [--allowed-red <check>[,<check>...]] [--friends <names>] [--redis <addr>]
-```
-
-`land` is the ONE caller of the one door that admits anything to a merge queue. `batch`
-builds the integration branch, tests it the way CI tests, prints `BATCH OK` and **pushes
-nothing**; a person pushes that branch and opens the pull request, because that is the step
-that needs somebody who knows this is the batch they wanted. `land` is everything after: it
-reads the pull request back from the forge, refuses it unless its head is a batch's — or
-unless a `BATCH OK` receipt given with `--receipt` or `--receipt-file` says this very commit
-is one — refuses it unless the pull request's **own** checks are green, and enqueues it at
-the front unless `--no-jump`.
-
-**Two green-nesses are two questions and both are asked.** The gate's green is a bench's:
-this tree builds, vets, tests and runs the lisp suite. CI's green is the forge's, on the
-commit the queue will take. `integration-4` went green on a bench under a plain
-`go test ./...` and three CI legs then failed; a lander that trusted the receipt alone
-would have queued it.
-
-The hold flags are `batch`'s, with the same meanings and the same refusals: exactly one of
-`--reviewers <file>` and `--no-require-holds --reason <text>` is required, `--lane <dir>` is
-required under `--reviewers` and may not be the literal `none`, and
-`--untyped-comments ignore` demands its own `--reason`. `--receipt` and `--receipt-file` are
-two spellings of one receipt and giving both is exit 2.
-
-Every `land` reads the lander's writer generation (#3139 B0) before any write, from
-`--redis <addr>`, else `NOVA_REDIS_ADDR`, else `NOVA_REDIS_HOST:NOVA_REDIS_PORT`. With no
-address it refuses with `LAND REFUSED writer unresolved` and exit 1; a read that fails
-(store down, NOPERM, WRONGTYPE) refuses with `LAND REFUSED writer unreadable`. A missing
-`land:<repo>:<base>:writer` is the initial owner, `old-loop`; when it names any other
-owner, the old loop no longer writes, and `land` refuses with
-`LAND REFUSED writer gen=<g> owner=<owner>` and exit 1.
-`nova-sprint land writer --repo <r> --base <b> [--to old-loop|nova-sprint]` reads or moves
-that generation through `ns_writer`, its one writer; rollback to `old-loop` is refused
-(`REFUSED pub=<batch>`) while an intent in `pub:active` is unresolved.
-
-```
-LAND OK      pr=<n> head=<sha> branch=<ref> checks=<required|waived> members=<list> jump=<true|false>
-LAND REFUSED reason=held member=#<n> who=<name> hold=<id> source=<source> held_at=<stamp> carried=<yes|no> at=<stamp> conf=<n>
-LAND REFUSED: <what was wrong>
-```
-
-### integrate
-
-```
-nova-merge integrate --repo <owner>/<name> --local <path> --members <n>@<sha>,... --lane <dir> --reviewers <file> --on <bench> --name <name> --root <dir> --basis <file> [--base <branch>] [--dry-run] [--sensitive <file> --designated <who>] [--checks "<a>,<b>"] [--reference <mirror>] [--ci-timeout <duration>] [--ci-interval <duration>] [--title <text>] [--no-draft] [--gomaxprocs <n>] [--timeout <duration>] [--untyped-comments ignore --reason <text>]
-```
-
-`integrate` is **the landing verb**: the integration batch, which seven landing shifts ran
-by hand on 2026-09-19 — sixteen times in one shift — as ONE verb. Issue #1845, L6 of
-#1725. It **composes and duplicates nothing**: steps 3, 4 and 9 below are `simulate`,
-`batch` and `land` run with the arguments a hand would have typed; the hold read is
-`internal/merge`'s verdict fold (#1572), the same one `batch` and `land` use, and there is
-no second parser for a `DISPOSITION` line in it; a red is named through the same engine
-`nova-ci failed` prints.
-
-The eleven steps, each one typed line, in order:
-
-```
-INTEGRATE START     name=<name> base=<branch> members=<#n@sha,...> lane=<dir> on=<bench> dry_run=<bool> steps=11
-INTEGRATE HEADS     ok=<n> moved=none members=<list>                       1 the heads are the CALLER'S
-INTEGRATE HOLD      pass=1 member=#<n> head=<sha> verdict=clear verdicts=<n> sensitive=<who|none|unchecked>
-INTEGRATE SIMULATE  entries=<n> conflicts=none base=<branch>               3 onto the base AS IT STANDS
-INTEGRATE BATCH     on=<bench> head=<sha> members=<list> dropped=none      4 the gate
-INTEGRATE PUSH      branch=<b> head=<sha> lease=must-not-exist existed=0 readback=<sha> forced=no
-INTEGRATE PR        number=<n> url=<url> draft=<bool> receipt=in-body basis=<file>
-INTEGRATE CI        pr=<n> head=<sha> check=ci-ok state=<pending|green|failure|timeout>
-INTEGRATE HOLD      pass=2 ...                                             8 the read AT THE DOOR
-INTEGRATE LAND      pr=<n> head=<sha> members=<list>                       9 `land`, the one door
-INTEGRATE CLOSE     member=#<n> head=<sha> pointer=batch-<n> verdict=closed
-INTEGRATE REVERIFY  pr=#<n> base=<branch> mergeable=<state>               11 what the move left behind
-INTEGRATE DONE      name=<name> pr=<n> head=<sha> members=<list> closed=<n> steps=11/11
-INTEGRATE FAIL      pr=<n> run=<id> test=<name> pkg=<pkg> job=<job> at=<file:line>
-INTEGRATE REFUSED   step=<step> member=#<n> reason="<what it was>"
-```
-
-**`--members` takes the head and will not guess one** — `1749@4f7092ad,1753@9589cc26`. A
-member whose head the forge now reports differently is refused by name and nothing is
-gated: every read this landing folds was recorded at the head the caller named, and a
-verb that read the head off the forge at the moment of the merge would fold a read of a
-commit nobody looked at.
-
-**The hold is read twice by this verb and once more by the gate**, so a member is read
-three times: at admission, inside `batch`'s own reading-3 fold, and at the door
-immediately before `land`. `--lane` is required — reading 3 makes the lane's own records
-half the evidence — and **no flag here lifts a hold**.
-
-**The push is a must-not-exist lease and never a force.** `origin` is asked for the ref
-first and a branch that already exists is a refusal; the push itself is a plain one,
-which creates a branch and cannot overwrite one, and the ref is read back and compared.
-The gated object lives only in the gate's own clone (`batch` pushes nothing), so it is
-fetched from `<root>/<name>/repo` and checked against the receipt's head before the push.
-
-**`--dry-run` runs steps 1-3 and nothing else**: it gates nothing, pushes nothing, opens
-nothing and queues nothing, and its `INTEGRATE DONE` says `steps=3/11 landed=none`.
-
-**A red is terminal and nothing is retried.** `ci-ok` is polled to `--ci-timeout`; a red
-is read through `nova-ci failed`'s engine and every failing test is named on its own
-`INTEGRATE FAIL` line. A named failing test is a finding, never a rerun. The
-runner-cleanup shape of #1751 is **not** special-cased: it was repaired on dev by #1779,
-and a verb carrying a permanent exemption for a fault that has been fixed is a verb that
-will one day swallow a real red wearing the same clothes.
-
-**`--sensitive <file> --designated <who>`** is `docs/SPEC-TOOLWORK.md` eligibility rule 13:
-a member whose diff touches one of the named path prefixes has one reader, and only that
-mind's APPROVE **at this head** admits it. With no `--sensitive` file the rule is
-`sensitive=unchecked` on the line rather than silently passed — the same discipline
-hygiene's `paths=-` keeps.
-
-Exit 0 is a landing; 1 is the verb saying NO; 2 is an unusable invocation or something
-outside the decision that could not run.
-
 ## nova-pulse
 
-One tool for parallel work: enumerate bounded work, cut cards, admit them
-through `nova-swarm batch`, and fold what comes back. It makes no model call.
-`pool`, `cut`, `launch`, `harvest` and `manager` are the working verbs;
-`status` below is the one-verb answer to the all-day questions. `width`, the
-drift alarm rule 16 of [SPEC-PULSE.md](SPEC-PULSE.md) names, is planned but
-not shipped, and `nova-pulse help` says so on its own line — a verb the help
-lists as available must run, or be marked (issue #515):
-
-```
-nova-pulse width   --root <dir> --pool <pool.tsv>  (not yet implemented)
-```
+Frozen: superseded by `nova-sprint`. Three verbs remain: `status` (the status
+page the launchd status-page agent renders), `cut` (card cutting until
+`nova-sprint` cuts cards) and `harvest`. It makes no model call. `nova-pulse
+help` lists exactly those three; `version` prints the build.
 
 ### version
 
@@ -1939,85 +1585,6 @@ is one, the module version the toolchain recorded when there is not, then the
 vcs stamp `<utc revision time>-<12 hex of the revision>[-dirty]`, and the word
 `devel` for a build with none of those. It takes no flags and no arguments and
 refuses, exit 2, when given any.
-
-### launch
-
-```
-nova-pulse launch --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
-```
-
-`launch` reads `cards.tsv` (`label<TAB>slot<TAB>model<TAB>card`), counts the
-free slots under `<root>` (`<root>/pool/slots/<n>.json` absent or `state=free`,
-never a log age — the binary agreed with this sentence only from issue #1822 on,
-having until then also refused any slot whose `native.log` was under 120 s old), fills every free slot in `cards.tsv` order, and queues the
-rest under `<root>/queue.tsv` when `--queue` is set. The admitted cards are
-written as their own TSV under `<root>/cards/<id>/cards.tsv` and handed to
-`nova-swarm batch` in its **card form** — the only form that runs a card:
-
-```
-nova-swarm batch --id <pulse> --cards <root>/cards/<id>/cards.tsv --deadline <s> --runner <runner> --root <root> --files <n> --then "nova-pulse harvest --id <id> --root <root>"
-```
-
-`--benches <file>` and `--bench <names>` are handed to that `nova-swarm batch` call
-unchanged, and only when they are given: one pulse fills every bench the caller names
-— the Studio and the Space in one tick, as SPEC-SWARM's **Benches** section allows —
-instead of a pulse being one bench (issue #637). Whatever `nova-swarm batch` refuses,
-it refuses with its own line.
-
-**`--machines` holds every `--bench` name against the machines registry before the
-batch is admitted.** A launch reaches every bench it names over `ssh`, and runner
-hosts are CI-only, so the NAMES are resolved at the verb's edge: an unknown machine,
-a runner host, the coordination bench or a services host is refused with
-`PULSE REFUSED bench=... reason=... remedy="..."` and no batch is admitted. Naming a
-bench without the registry is refused outright — without it the verb cannot tell a
-bench from a CI runner host, and the one thing it must never do is guess that; a
-launch with no `--bench` names nothing and runs on this machine exactly as before.
-
-The pool form (`--pool --tasks --label`) wants `--files` and `--tokens`, which
-no launch flag supplies, so launch never calls it (issue #630). The one batch is
-recorded in `<root>/pulses/<id>.tsv`.
-
-**`--runner <path>` is this deployment's native runner**, and without it launch
-passes the bare name `nova-native-runner.sh` for `nova-swarm batch` to find on
-PATH. A deployment whose runner is not on PATH used to have no remedy inside the
-verb at all, and the only remedy left — putting the runner's directory in front
-of PATH — could put a **stale `nova-swarm` sitting beside it** in front of the
-current one, whose refusal then reads like launch building a bad call. It is not:
-it is a different binary answering (issue #1760). A `--runner` given as a path is
-checked here and passed absolute, so PATH need not be touched.
-
-**`--swarm <path>` names the `nova-swarm` binary launch drives**, and without it
-launch looks it up on PATH. Either way, **whichever binary answers is asked
-`nova-swarm version` before the batch**: launch drives that binary's own flag
-contract, so the two are one build or neither. A binary too old to answer
-`version` at all, one that answers something that is not a version, or one whose
-version differs from this `nova-pulse`'s own, is refused by name —
-`PULSE REFUSED SWARM-VERSION: <path> is nova-swarm <theirs> and this is
-nova-pulse <mine> …` — instead of failing later with a puzzling flag error. The
-comparison is skipped when either side is an unstamped build (`devel`, or a vcs
-stamp), which is not a release for a comparison to mean anything about.
-
-**A refusal names the card, not just an exit code.** When the batch fails after
-the job tree exists, the one line carries what the layers underneath already
-wrote to `<root>/<slot>/jobs/<label>/`: the label, the runner's `rc`, the wall
-clock, the `reason` token and the first telling line of the harness capture, plus
-the job directory to read the whole of it in (issue #1761). Before that — a
-refusal with no job tree — the swarm's own line is relayed unchanged.
-
-**`--max <n>` bounds what this invocation considers** (default 20, `0` all, the repo's own
-convention). It was on this synopsis, was parsed, and was then ignored — `--max 1` admitted
-three cards (issue #1821). The rows beyond it stay in the caller's `cards.tsv`, and a
-truncated pulse says so on a `PULSE NOTE max=` line.
-
-**`--attempts <n>` bounds the start-time retry** (default 3, `1` is no retry).
-A batch that fails within 15 seconds with a provider start failure in the harness
-capture (`Unexpected server error`, `Internal server error`, `Service
-Unavailable`, an `err_xxxxxxxx` reference) is retried with a backoff of 15s then
-25s, printing one `PULSE RETRY` line per attempt. Each attempt is its own batch
-with its own id, and the failed attempt's job directory is **moved** to
-`<job>.attempt<n>`, never deleted, so the evidence of why it was retried outlives
-the retry. A dead API key is deliberately **not** in that signature: it is dead on
-the third call too.
 
 ### cut
 
@@ -2199,362 +1766,6 @@ CUT OK cards=<n> from=<issue|rows|branch-from> skipped=<n> out=<dir>
 Exit 0 when every candidate was cut, 1 when any was skipped, 2 on a refusal, for
 both forms.
 
-### fill
-
-```
-nova-pulse fill --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
-```
-
-`fill` is the tick that keeps the benches fed: it reads each bench's capacity over
-`ssh`, pops that many `card-<n>.md` from `--ready` in filename order, moves them into
-`--launched` and hands each to the per-card launcher. The move out of `--ready` is
-the claim, so a card another hand already took is skipped rather than launched
-twice. **With no `--bench` the pool is the registry's**, not a list in the tool: every
-machine in `--machines` whose roles carry `bench` and whose notes carry
-`certified=<YYYY-MM-DD>` is filled, in file order, so a bench certified tonight is
-filled tonight without a code change or a release. A registry naming no certified
-bench is a refusal (exit 2) with the remedy on it rather than a tick that fills
-nothing. `--bench` narrows to the names it carries -- it is resolved through the
-registry's role guard exactly as before, so an uncertified bench can still be named
-by hand while it is being proven. The per-card launcher's second argument is the
-bench's seat from the machines registry, not `swarm-<bench>` (#2014): the Studio's
-seat is `studio` and the Air's is `air`. A bench whose row names no seat, or a seat
-that is not one plain name, is refused once by name at the loop and dropped from the
-pool; a fill left with no seated bench refuses with exit 2:
-
-```
-FILL REFUSED bench=<name> reason=no-seat remedy="..."
-FILL REFUSED bench=<name> reason=seat-not-a-name seat=<seat> remedy="..."
-```
-
-`--once` runs exactly one tick, and without it the loop runs until it is killed or
-`--stop` says so. One line per tick:
-
-```
-FILL tick=<n> <bench>:launched=<n>,failed=<n> ... ready=<n>
-```
-
-**A poisoned registry row does not stop the fleet (#2031).** A line that is both
-`runner` and `bench` without `allow-shared=<YYYY-MM-DD> <why>` disables **that**
-bench only. Each tick names it; every other bench deals:
-
-```
-FILL DISABLED bench=hetzner reason=shared-without-note remedy="..."
-```
-
-An unknown role, a name twice, a missing column or cores that are not a number still
-refuses the whole file — that line is not a machine. Naming a CI-only runner host as
-`--bench` still refuses the fill (exit 2, nothing launched).
-
-**`--interval <d>` is how long a resident tick waits, `5m` by default.** There was no
-flag at all until #1915, so a freed slot waited up to five minutes for the next tick
-and that was the floor on "a machine replaces a finished card right away". Ten
-seconds is what the fleet runs at: a card dropped into `--ready` is dealt in two to
-six seconds. A value the flag cannot read is a refusal naming it, never a silent five
-minutes.
-
-**`--stop <file>` takes a resident fill off the fleet without killing anything.**
-Touch the file: the tick in flight finishes -- a kill lands between the move out of
-`--ready` and the launcher, leaving a card under `--launched` that nobody started --
-and the next tick claims no card, launches nothing, leaves every live card running
-and returns 0:
-
-```
-FILL STOP tick=<n> file=<path> live=<n> note="no new launches; the live cards are untouched and nothing was killed"
-```
-
-**THE CAPACITY IS THE BENCH'S OWN SLOT STORE, AND THE LOAD IS ONLY A BRAKE (#1914).**
-`fill`'s capacity used to be the load formula below, and a bench earns load precisely
-by running the cards it was dealt: measured on 2026-09-19, a bench at load1 45 on 32
-cores answered **-1** -- clamped to zero, dealt nothing -- with **52 free slots in its
-own store**. The harder the fleet worked the less it was fed. The store is the bench's
-own answer to "how many more cards may I take", and it is the same number
-`nova-swarm native --slots-store --owner` enforces at launch:
-
-```
-free = <store>/shares.tsv's <owner> row  -  that owner's held leases (live or DRIFT)
-```
-
-`--slots-store <path>` is the store on the bench, `$HOME/nova-bench/slots` by default
-and expanded by the bench's own shell; `--slots-owner <name>` is the row, `swarm-<bench>`
-by default; `--slots-bin <path>` is the
-`nova-swarm` that lists the leases, `$HOME/.local/bin/nova-swarm` by default, because
-a non-login `ssh` does not always carry `~/.local/bin` and a probe that quietly found
-no `nova-swarm` would read zero leases and call a full bench empty.
-
-**`--max-load-per-core <f>` is the brake, `1.5` by default, `0` for none.** A bench
-whose `load1/cores` is above it is dealt nothing this tick and says so by name, with
-the free count it did not fill and the leases it is holding on the line:
-
-```
-FILL BRAKE bench=<name> load1=<f> cores=<n> per-core=<f> max=<f> free=<n> held=<n> remedy="..."
-```
-
-A braked bench is **not** a failed bench -- the tick carries on and the exit is 0 --
-and the brake never shrinks a bench below the leases it already holds: the live cards
-are running, and the one thing a capacity number may never do is ask for them back.
-A machine whose load is made by something other than its own leases wants `0` here.
-`--max-load-per-core` must be a **finite** number: `NaN` and `Inf` compare false
-against every bench, so a threshold nothing can exceed is a brake that is silently
-off, and both are refusals (exit 2) naming the flag. With the brake on, a bench that
-cannot count its cores is refused rather than filled unbraked.
-
-**FAIL CLOSED: every probe or parse failure is `free=0` on that bench, said by name.**
-A bench is the least trusted thing on this wire — it cannot make the coordinator run
-anything, but it can make it *believe* a free count, and every soft edge read HIGH. So
-a failure is never a deal and never a silent fall-through. The bench is dealt nothing,
-one line names it and the reason, and a tick where every bench failed exits 1:
-
-```
-FILL UNREADABLE bench=<name> free=0 reason=<what went wrong>
-```
-
-Every failing bench gets its own line, not just the first. These are the refusals:
-
-| what happened | why it is not zero-free |
-|---|---|
-| `slots list` could not run, or exited non-zero | a full bench would read `held=0` and be dealt its whole share |
-| a row of the listing is not a lease, or has no `owner=`/`state=`, or a `state=` this fill does not know | noise is not the same fact as an empty store |
-| `shares.tsv` is there and cannot be read, or its share is not a whole number | the store exists and its answer is unknown |
-| the owner holds more leases than its share | an owner cannot hold more than its share, so the reading went wrong |
-| the header does not parse: a negative count, a `cores=` or `load1=` that is not a number or not finite, a missing field, a field said twice, or a field this answer has no business carrying | a reading nobody can read one way is not a reading to act on |
-| the bench answered more than 64 KiB | an answer with no end is not an answer |
-| no reader on the bench could measure its **load**, or its **cores**, while the brake is on | a measurement nobody took is not a zero, and `load1=0` passes every brake |
-| a bench with no store row whose disk, memory, load or formula result could not be read | the formula stands on those measurements, and an empty reading is a zero to shell arithmetic |
-
-**A measurement nobody took is not a zero.** The probe reports `cores=unreadable` and
-`load1=unreadable` rather than substituting `0`, and that word travels all the way to
-the brake. With the brake on, an unreadable load or an unreadable core count holds the
-bench at `free=0` — a bench whose load nothing can read is a bench nobody can brake.
-With `--max-load-per-core 0` the caller has said there is no brake, so it does not hold
-the bench, and the unread measurement is still printed:
-
-```
-FILL UNMEASURED bench=<name> cores=<n|unreadable> load1=<unreadable> note="..."
-```
-
-The load formula's own terms are Linux — `/proc/meminfo` and `df -BG` — so on a bench
-where they cannot be measured, a bench with no store row is a **named refusal** rather
-than a formula computed over readings nobody took. The number such a bench answered
-before was zero anyway; it is loud now. Give that bench a share and it is sized by its
-store like any other.
-
-The only number the probe still floors is the load formula's own result, which is
-computed rather than measured: a formula that comes out negative is a bench with no
-room, and that was always its meaning. The swarm root still falls back to `$HOME`, which
-is a documented path and not a measurement.
-
-**The lease read's exit status is the READ's, and the counting is Go's.** It was
-`slots list ... | grep -c`, whose status belongs to grep: a missing `nova-swarm`
-printed nothing, grep counted `0`, the script exited 0, and a bench with every slot
-leased answered `held=0`. The listing now comes back verbatim and `fill` counts it,
-holding every row to `slots list`'s own contract. **A `DRIFT` lease counts as held** —
-expired by the clock with its process still alive — because that is what
-`nova-swarm native` counts when it grants, and a probe that counts fewer deals cards
-the bench then refuses.
-
-An **empty** lease list is not a failure: a store whose owner holds nothing is a bench
-with its whole share free, and it fills.
-
-**The one fall-through to the load formula is positively detected and never silent.**
-It is a bench with no store row — no `shares.tsv` at all, or a readable `shares.tsv`
-with no row for this owner **and a lease read that succeeded** — and it says so:
-
-```
-FILL FORMULA bench=<name> why=<no-shares-file|no-row-for-owner> capacity=<n> note="..."
-```
-
-**`--local-bench <name>` is a bench that is this machine.** Its store is read by this
-machine's own shell and no `ssh` is opened: there is no `ssh` from the Studio to the
-Studio, and there should not be. A `--local-bench` that is not one of the benches this
-run fills is a refusal, because a typo there means a bench read over an `ssh` that
-cannot work.
-
-**The load formula is what a bench with no store still answers.** The three terms are
-core headroom (`cores*1.5 - load1 - cores/8`, a CI reserve), memory headroom
-(`memavail_gb/2`) and disk headroom (`(free_gb-25)/2`), and the disk term reads the
-**swarm root's** volume: `--swarm-root` (default `$HOME/rowan-swarm-root`, expanded
-by the bench's own shell) is resolved through its symlinks and that path is what
-`df` is given. A bench whose swarm root is a link onto a second disk -- antman's
-`~/rowan-swarm-root -> /data/swarm` -- used to answer for the volume its home sits
-on, which is not the one the cards fill. A swarm root that is not configured, or is
-configured and not there, falls back to `$HOME`. A bench whose `--slots-store` holds
-no row for the owner falls back to this number on its own, so adopting the store is
-not a flag day; `--slots-store ""` asks for it and nothing else.
-
-**A launcher that fails is not a card that ran.** The card goes back to `--ready`,
-its lane is released, the tick counts it under `failed=` and never under `launched=`,
-and a marker in the directory beside the queue (`<ready>-markers`) carries the
-attempt and the reason:
-
-```
-<ready>-markers/card-<n>.md.failed-<attempt>
-```
-
-A ready directory holds cards (#2013). Markers written into `--ready` before this
-rule are moved out on the next tick; a marker is taken when its card relaunches;
-a marker whose card has left `--ready` is reaped at the top of the tick:
-
-```
-FILL REAPED tick=<n> markers=<n> dir=<dir> note="..."
-```
-
-The card is ready again on the next tick and the markers are the count of how often
-it has failed. An exit-7 launcher used to leave its card under `--launched` holding
-its lane forever while the line read `launched=1` (dogfood, 2026-09-18). The
-launcher's own last line of stderr is kept, bounded, and joined to its exit status
-in one note, so `exit status 255` says why:
-
-```
-FILL NOTE tick=<n>: capacity on <bench>: exit status 255: ssh: connect to host <bench> port 22: Connection refused
-```
-
-Exit is 0, or **1 when every named bench failed the tick** — a bench whose capacity
-could not be read, or whose every launch failed. A whole tick of `exit status 255`
-answering 0 is a fleet nobody can see.
-
-**A card may name a lane, and a lane is a serial queue over one area of the
-codebase.** The line is `LANE: <name>` in the card's own text — the exact field
-prefix and nothing else, so a `LANES:` line is prose — and at most one card per lane
-is live at a time. A ready card whose lane already has a live card under
-`--launched` waits its turn, in order, and stays ready. **Both cards are named the
-same way**, by the filename the queue holds:
-
-```
-FILL HELD card=card-<n>.md lane=<name> live=<the card holding it>
-```
-
-`--lanes` names the lanes file, `queue/control/lanes.tsv` by default: one
-`<name><TAB><path prefixes>` per line, `#` a comment, blank lines skipped. The name
-is what `fill` matches; the prefixes are the area the lane serializes. **A lane the
-file does not name is a refusal, not a guess**, and the refusal carries the remedy:
-
-```
-FILL REFUSED card=card-<n>.md lane=<name> remedy="add the lane to <file> or drop the LANE line"
-```
-
-It is printed **once per card per lanes-file mtime**, remembered by a marker in the
-markers directory (`<ready>-markers/card-<n>.md.refused-<mtime>`), the way
-`nova-merge rebase --markers` remembers: a refusal that reprints every five minutes
-is noise nobody reads, and editing the lanes file is a new answer, so every refusal
-speaks again and the stale marker goes. A missing lanes file is an empty table, so every card naming a lane is
-refused by name — the file saying it has not been written yet, rather than a fill
-that serializes nothing. A card with no `LANE:` line is launched exactly as before.
-
-**`card-<n>.md` is the contract, and a ready directory holding anything else is a
-refusal**, one line per tick naming the first and counting the rest:
-
-```
-FILL REFUSED ready=<dir> file=<name> more=<n> remedy="fill reads card-<n>.md and nothing else; rename it, or cut it with nova-pulse cut"
-```
-
-One bench takes at most 30 cards in a tick, whatever its capacity says, because the
-rest of the machine is not the fill's to spend.
-
-**`--only <glob>` is the whitelist of cards this run may launch**, repeatable and
-comma-separated, matched against the card's filename with or without the `card-`
-prefix and the `.md` suffix — `--only 96*`, `--only card-9601.md` and `--only 9601`
-all name the same card. A ready directory is shared, and a fill with no filter
-launched another line's cards on its own benches. A card nobody selected is left in
-`--ready`, untouched and unrefused: it is not this run's to judge.
-
-**`--deadline <s>`** is the card's deadline handed to the launcher, 2400 by default —
-it was a number hardcoded in the script. **`--launch-grace <d>`** is how long `fill`
-waits on a launcher before taking the card as launched, `10s` by default and `0` to
-wait for the launcher to finish. Launching used to wait for the whole card: one tick
-launched three cards one after another and blocked for nine minutes. A launcher that
-fails, fails at once — a missing binary, a refused ssh, a bad argument — so the grace
-catches the failure without waiting for the work, and the child is waited on in the
-background rather than left a zombie. What happens to a card after that is the
-bench's, and draining `--launched` when it finishes is `manager`'s.
-
-**`--capacity <n>` and `--launcher <path>` make the tick runnable without a bench.**
-`--capacity` is a fixed capacity for every bench and no `ssh` at all; `--launcher` is
-the program each card is handed to, `flash-native-bench.sh` when it is left out. A
-dry run over a directory of cards exercises the whole tick, lanes included:
-
-```
-nova-pulse fill --ready ./queue/ready --launched ./queue/launched --lanes ./queue/control/lanes.tsv --bench bench-a --capacity 2 --launcher ./bin/echo-card --once
-```
-
-`--capacity` is the one thing that beats the slot store: it is a fixed number for
-every bench and reads nothing. It is a dry run's flag, not a fleet's — a single
-number cannot be four benches' free counts.
-
-**The resident form is the whole of it**: one process per launcher, ticking in
-seconds, sized by each bench's own store, braked on load and stopped by a file.
-
-```
-nova-pulse fill --ready ./queue/pull/ready --launched ./queue/pull/launched \
-  --machines ./queue/control/machines.tsv --lanes ./queue/control/lanes.tsv \
-  --launcher ~/bin/flash-native-bench.sh --session <id> \
-  --interval 10s --launch-grace 3s --deadline 1800 \
-  --slots-store '$HOME/nova-bench/slots' --max-load-per-core 1.5 \
-  --stop ./STOP
-```
-
-**`--session <id>` is stamped into every launched card's marker.** When `fill` moves a
-card into `--launched` it writes `<card>.launched` beside it — `lane`, `bench`, `label`,
-`session`, `card`, `at` — and that marker, not the card's own text, is what holds the
-lane. A live card whose text a worker rewrote still holds the lane it took, and a
-launcher that fails takes its marker with the card back to `--ready`. `harvest` reads
-the marker to release the lane and to know whose job it is looking at.
-
-### fleet registry
-
-```
-nova-pulse fleet registry --machines <file> [--role bench|runner|coordination|services] [--max <n>]
-```
-
-The machines registry says what each machine in the fleet **is**, and therefore what may
-be placed on it. It is one tab-separated file kept in git beside the lanes file:
-
-```
-name<TAB>ssh<TAB>os/arch<TAB>roles<TAB>seat<TAB>cores<TAB>notes
-```
-
-`roles` is a **set** from `{bench, runner, coordination, services}`: `bench` means cards,
-probes and load may be placed there; `runner` means the machine serves the merge group's CI
-shards; `coordination` means a friend's own window lives there; `services` means the stack
-does (Loki, Grafana, Redis). `seat` is the machine's nova-secrets seat, or `-`.
-
-**The lock (Glenn, 2026-09-18): runner hosts are CI-only.** No card, no probe and no load
-goes on a machine that serves the merge group's shards — a card and a shard on one host make
-the shard slow, the gate red and the queue stop. So `nova-pulse fill`, and every fleet verb
-that acts on a machine, resolve `--bench` through this file and refuse a machine whose roles
-lack `bench`, **by name and before any ssh**:
-
-```
-FILL REFUSED bench=batman reason=runner-host remedy="batman is runner in queue/control/machines.tsv and may take no card, probe or load; name a bench: hulk, vision, threadripper-wsl, space"
-```
-
-The reason is one of `runner-host`, `coordination-host`, `services-host`, `not-a-bench`,
-`unknown-machine` or `shared-without-note`. A machine that is **both** `runner` and `bench`
-is the exception and must say so in its notes, with the day it was made:
-`allow-shared=<YYYY-MM-DD> <why>`. hulk, vision and threadripper-wsl carry one today because
-the pull worker still runs a card in the bench's own home; when it runs cards in containers
-the runner role comes off those lines and the exception goes with it. There is **no
-`windows` line** and there is not meant to be (Glenn 2026-09-18: "drop the native windows CI
-runners. WSL only from now on."): the Threadripper Pro joins as `threadripper-wsl`, a
-`linux/x64` machine under WSL2 with CI runners labelled `linux,X64,threadripper`, and
-`internal/fleet`'s example test refuses any machine whose `os` is `windows`. A shared line
-without the dated note **disables that bench only** (`FILL DISABLED
-reason=shared-without-note` each tick; neighbours still fill). An unknown role, a name
-twice, a missing column or cores that are not a number still refuses the whole file —
-that line is not a machine, and the half that parsed is the half that would let a card
-through.
-
-`fleet registry` prints one line per machine, in file order:
-
-```
-MACHINE hulk ssh=hulk os=linux/x64 roles=bench,runner seat=swarm-hulk cores=64 notes="allow-shared=2026-09-18 ..."
-```
-
-`--role <r>` lists only the machines carrying that role; a role no machine carries is a
-refusal, because it is far more likely a typo than a fleet fact. The example registry is
-`internal/fleet/testdata/machines.tsv`, and the fleet's own lives at
-`queue/control/machines.tsv`.
-
 ### harvest
 
 ```
@@ -2694,299 +1905,6 @@ found, with one `HARVEST LEFT reason=<r> cards=<n>` line per reason. A `--root` 
 not resolve on the bench is `HARVEST REFUSED` before anything moves — a quoted `'~/…'` is
 not expanded by this verb.
 
-### fleet add
-
-```
-nova-pulse fleet add <bench> --queue <dir> --roots <dirs> [--probe <file>]
-```
-
-`fleet add` is the one verb that admits a bench to the loop, and it admits it **only
-on a fully green fleet-probe record**. It reads the probe read-back, and unless
-every runner name in it is green it refuses, naming the runner that is not and the
-run it read:
-
-```
-FLEET REFUSED bench=<name> runner=<name> run=<id>: the fleet-probe is not all green (green=<n> of <n>)
-```
-
-On green it writes `PULSE_ROOTS` and the runner labels under `--queue`, and no other
-verb writes those two:
-
-```
-FLEET ADD bench=<name> run=<id> runners=<n>
-```
-
-The bench label is a bare argument and there is no default: `fleet add` with no
-label is exit 2 and refuses to guess, and so is a missing `--queue` or `--roots`.
-An unreadable probe record is `FLEET REFUSED bench=<name>: the fleet-probe record is
-unreadable`, which is the verb saying it has no evidence rather than admitting a
-bench on none (nova-tools #875).
-
-### fleet standard / mirror / join / sleep
-
-```
-nova-pulse fleet standard --benches <file> --bench <name> [--machines <file>] [--want <stamp>] [--go <ver>] [--os linux|darwin] [--min-free <gb>] [--ssh <path>] [--timeout <s>] [--max <n>]
-nova-pulse fleet mirror   --benches <file> --bench <name> [--machines <file>] --repo <url> --path <remote path> [--ssh <path>] [--timeout <s>]
-nova-pulse fleet join     --benches <file> --bench <name> [--machines <file>] --tailscale <path> --authkey-env <NAME> [--ssh <path>] [--timeout <s>]
-nova-pulse fleet sleep    --benches <file> --bench <name> [--machines <file>] [--ssh <path>] [--if-idle] [--force] [--timeout <s>] [--max <n>]
-```
-
-The four verbs that retire the last four hand-run bench scripts (#1142):
-`bench-standard.sh`, `bench-mirror.sh`, `ts-join-one.sh` and the Linux half of
-`fleet-sleep.sh`. Each acts on ONE bench of `--benches`, takes every path from a flag,
-runs one bounded remote script through `ssh <target> bash -s` (`--ssh`, so a test fakes
-it), refuses `studio` and a name the file does not carry **before any ssh**, and exits
-0 ok / 2 refused-or-drift / 3 unreachable with one remedy line per refusal. With
-`--machines` they also refuse a machine the registry does not call a bench, with the lock's
-reason and remedy on the line; without it they keep their older guard and nothing more.
-
-`fleet standard` holds a bench against the provisioning standard and prints one line per
-check and a verdict:
-
-```
-STANDARD <bench> <check> OK got=<value>
-STANDARD <bench> <check> DRIFT want=<match>:<want> got=<value>
-FLEET <bench> STANDARD OK checks=<n>
-FLEET <bench> STANDARD DRIFT drift=<k>/<n>
-```
-
-The checks are **data, one table per operating system** (`pulse.FleetStandardChecks`), so
-the standard is read rather than traced through a shell script. Linux: the Go toolchain at
-`--go` (default the tree's `go.mod` `go` line; `--go` is an explicit override), `sbcl`, the `safe-rm` helper, the nova stamp at `--want`, one
-seat key, and free space at `--min-free` (default 25 GB). darwin: the Go SDK and `sbcl`
-under `~/sdk`, real git ahead of the Xcode shim, and every runner's `.path` carrying it,
-with the stamp, seat and space checks shared. Left out, `--os` is asked of the bench with
-`uname -s`. With no `--want` the stamp check reports what the bench has instead of
-demanding one.
-
-The on-host witness, `tools/bench-standard.sh`, asks the space question **with the same
-probe and the same floor** — `df -Pk "$HOME"` in gigabytes against `NOVA_MIN_FREE_G`
-(default 25) — and names the three largest directories under `$HOME` when it drifts, so the
-line says where the space went rather than only that there is none (#1048):
-
-```
-DRIFT disk free=3G want>=25G (both launchers refuse below it); largest under /home/rowan: /home/rowan/rowan-swarm-root 53G; /home/rowan/go 8G; /home/rowan/nova-bench 2G
-```
-
-25 GB is not a round number chosen here: it is a term of the launcher's own capacity
-formula, `allowed = min(cores*1.5 - load - 8, (free_gb - 25)/2, memfree_gb/2)`, so a bench
-below it is a bench nothing will be launched onto — which is a drift however clean the rest
-of the standard finds it. A Go card costs 5–7 GB in its own slot against 330 MB for a Lisp
-card, which is how two benches reached 100% under 120 cards and lost their runners. The
-`du` runs only on the failing path: a green run never pays for a walk of the whole home.
-
-`fleet mirror` creates the bare mirror a card clones from, or fetches the one already
-there, and **deletes nothing**:
-
-```
-FLEET <bench> MIRROR <path> created|refreshed head=<sha> size=<n>K
-```
-
-`--repo` must be an https remote and `--path` an absolute clean path, both free of shell
-metacharacters — the two are pasted into a remote command line, so a guessed one is a
-bench cloning something nobody named.
-
-`fleet join` joins a bench to the tailnet: `FLEET <bench> JOINED ip=<addr>`. **The auth key
-is never a flag value.** It reaches the process only through the environment variable
-`--authkey-env` names, and the bench only on the remote shell's stdin, piped into
-`tailscale up --auth-key=file:/dev/stdin`, so it is in no argv on either machine and
-nothing prints it:
-
-```
-nova-secrets exec --as rowan -- nova-pulse fleet join --benches ./fleet.tsv --bench vision \
-  --tailscale /usr/bin/tailscale --authkey-env TAILSCALE_AUTH_KEY
-```
-
-`fleet sleep` puts one bench to sleep and is `fleet suspend` over one name — the same busy
-rule, decided in one place: a lease or a job directory with a live pid under either swarm
-root, or a `Runner.Worker`, is `FLEET <bench> BUSY <what>`, exit 2, and is never suspended
-(`--force` overrides, `--if-idle` skips instead of refusing). An idle bench runs
-`sudo systemctl suspend` and prints `FLEET <bench> SUSPENDED`.
-
-Each verb narrates on stderr while it waits on a machine (`STANDARD WALK bench=… checks=…`,
-`STANDARD DONE … elapsed=…`), so a step over a tenth of a second says what it is doing; the
-bench lines themselves stay on stdout.
-
-### hygiene
-
-```
-nova-pulse hygiene run                      --home <dir> [--dry-run] [--hostname <name>]
-                                            [--diag-days <n>] [--diag-max-bytes <n>]
-nova-pulse hygiene reap <slot>              --home <dir>
-nova-pulse hygiene delete-job <slot> <job>  --home <dir>
-nova-pulse hygiene delete-slot <slot>       --home <dir>
-nova-pulse hygiene drop-cache               --home <dir>
-nova-pulse hygiene log [n]                  --home <dir>
-nova-pulse hygiene --lane-dirs <root>       [--dry-run] [--older-than <n>d] [--max <n>]
-```
-
-`run` is the timer's verb — the ten-minute `nova-hygiene.timer` on every bench — and prints
-one line, every field named:
-
-```
-HYGIENE <host> slots=<n> reaped=<n> jobs-deleted=<n> slots-deleted=<n> diag-deleted=<n> diag-freed=<bytes> cache=<kept|dropped>(<n>G) free <a> -> <b>
-```
-
-Every deletion, whatever the verb, is one line in `<home>/hygiene.log`
-(`<utc> <verb> <path>`) and goes through `internal/safepath`: the path is the join of a
-literal root and a name matching `[A-Za-z0-9._-]+`, resolved, refused if it is a symlink, and
-refused unless it sits strictly below its root. `--dry-run` prints one `WOULD <verb> <path>`
-per deletion it would make, deletes nothing and writes no log line.
-
-**The runner `_diag` prune** (`diag-deleted`, `diag-freed`) bounds each
-`<home>/runner-*/_diag` by **two** rules, because one is not enough:
-
-| flag | default | what it does |
-| --- | --- | --- |
-| `--diag-days <n>` | `2` | delete the files whose mtime is older than `n` days |
-| `--diag-max-bytes <n>` | `2147483648` (2 GiB) | then, while the directory is over `n` bytes, delete the oldest file |
-
-The cap is **per runner directory**, not per bench, because a runner is what writes into its
-own `_diag`. The **newest file of a runner is never deleted** by either rule: the runner
-process holds it open. Only regular files directly inside `_diag` are considered — a symlink
-is skipped by the `Lstat`, never followed, never counted and never removed — and each deletion
-is `delete-diag <path>` in the action log.
-
-The mistake it removes, measured on hulk on 2026-09-18: 24 runner directories held **3.5 GB**
-of `_diag` between them, 18,296 files, and the **oldest file on the whole bench was two days
-old**. A runner rolls its own diagnostics at a rate nobody chose, so neither rule alone is a
-bound. The seven-day window the bench ran with took nothing, ever. The two rules divide the
-job: on a busy bench the **window** is what bites, day by day — a `--dry-run` on hulk at
-`--diag-days 1` selects 10,391 files and 1.95 GB — while the **cap** is the backstop that
-holds a burst, or a runner that starts writing faster than anyone watches. A `--dry-run` at
-`--diag-max-bytes 104857600` selects 6,374 files and 1.198 GB, oldest first, starting at the
-oldest file on the bench. The shipped 2 GiB over hulk's 24 runners is a 48 GiB ceiling on a
-1.8 TB disk, and today it takes nothing, because no runner directory there is over 220 MB. A
-ceiling that is never reached is the point of a ceiling.
-
-Both flags refuse a value that is not a whole number of at least 1 — exit 2, naming the flag.
-A prune never runs on a guess.
-
-**The lane-clone sweep** (`--lane-dirs <root>`) is the one flag-form mode: no subcommand, and
-`--home` means nothing to it. It walks the **immediate children** of `<root>` — one level, never
-recursively — and removes the lane clones whose work is finished and elsewhere. A child is a
-candidate when it holds a `.git` entry, or when exactly one directory inside it does
-(`<root>/lane-foo/repo`, which is the shape today's lane workers write); a child holding **more
-than one** checkout is kept, because two checkouts are two branches and it would have to remove
-both to remove either. A `.git` file counts as much as a `.git` directory, so a worktree is a
-candidate too.
-
-A clone goes only when **all four** questions answer yes, asked in this order:
-
-| # | question | how |
-| --- | --- | --- |
-| 1 | does the path stay inside the root? | `internal/safepath`: strictly below the resolved `<root>`, never a symlink |
-| 2 | is the checkout clean? | `git status --porcelain` says nothing |
-| 3 | is every commit somewhere else? | `git rev-list --branches --not --remotes` says nothing |
-| 4 | is the pull request settled? | the PR whose head is the checked-out branch is `MERGED` or `CLOSED` |
-
-Anything else is one `HYGIENE KEEP dir=<d> reason=<token>` line, and **a read that failed is a
-keep**: this verb never removes on a guess, and the git reads come before the forge read so a
-merged pull request cannot talk it past an uncommitted file. The reasons are
-`unsafe` (left the root), `many-checkouts`, `fresh` (inside the `--older-than` window), `dirty`,
-`unpushed`, `detached` (no branch, so no PR to ask about), `git` and `forge` (a read failed),
-`no-pr`, `open`, and `unknown-state`.
-
-Each clone it acts on is one line, and then one summary:
-
-```
-HYGIENE LANE dir=<d> pr=<n> state=<MERGED|CLOSED> removed=<yes|no>
-HYGIENE LANES root=<r> candidates=<n> remove=<n> removed=<n> kept=<n> dry-run=<yes|no>
-```
-
-`remove` is what it decided to take and `removed` is what actually went, so a `--dry-run` — which
-prints the **same** lines with `removed=no` and touches nothing — reads `remove=3 removed=0`.
-Dry run is **off** by default: a plain invocation really removes. `--older-than` has one
-spelling, a whole number of days with a `d` suffix (`--older-than 2d`), and refuses anything else
-— hours, weeks, a bare number — exit 2, naming the flag; the age read is the candidate's own
-mtime, the directory the verb would remove. `--max` caps the per-candidate lines at 20 by
-default and `0` prints them all; `--older-than` and `--max` outside `--lane-dirs` are refused
-rather than ignored. The sweep writes **no** action log — it has no `--home` — so its record is
-the lines above.
-
-The mistake it removes, measured on the Studio on 2026-09-18: **92** `lane-*` and `dogfood-*`
-clone directories under `~/rowan-working/tmp`, one per lane worker of the day, and nothing in the
-fleet that ever took one away. `hygiene run` does not: those are swarm slots, with a jobs
-directory and a liveness rule, and a lane clone is neither. Nor can a lane clone be swept the way
-scratch is swept, by age or by name — it holds a branch, and a branch may be the only copy of
-somebody's work. That is why the rule is the narrowest one still worth having.
-
-### wait
-
-```
-nova-pulse wait --until <cond> [args...] [--every <d>] [--timeout <d>] [--bus <clone>] [--store <host:port>] [--store-user <name>] [--password-env <NAME>] [-- <cmd>...]
-```
-
-`wait` is the one waiter: poll until a condition holds, then act. It replaces
-`bin/wait-for` and the ad-hoc waiters typed into a tool shell — a dozen on
-2026-09-21, four of which broke on zsh word splitting, globs or `$(...)`
-quoting, and one of which silently never fired (#2546).
-
-Six conditions:
-
-| `--until` | holds when |
-| --- | --- |
-| `process-gone <pattern>` | no process the pattern names is running |
-| `file-has <path> <regex>` | a line of the file matches the regex |
-| `file-exists <path>` | the path is there — **an empty file counts** |
-| `pr-check <repo> <n> <state>` | the PR's checks are `green`, `red`, `pending` or `none`, or the PR itself is `merged` or `closed` (one `gh pr view` per poll) |
-| `redis-key <key> <value>` | the store's key carries the value; `*` asks only that the key exist (needs `--store`) |
-| `bus-note <id>` | somebody other than the sender has **replied** to the note (needs `--bus`) |
-
-`--every` and `--timeout` take a bare whole number of seconds — the shape
-`bin/wait-for --every 20` took — or a duration (`1s`, `500ms`, `2m`). They
-default to `20s` and `30m`. Exit **0** when the condition held, **2** on
-timeout and **2** on a refusal, with ONE receipt line either way: `WAIT HELD`
-on stdout, `WAIT TIMEOUT` on stderr, each carrying the condition, the spend,
-the poll count and the evidence — the matched line, the live process, the
-answering note, the value read.
-
-```
-WAIT HELD until=file-has args="./harvest.log LANDED #[0-9]+" spent=40s polls=3 evidence="LANDED #1234 head=5f544272a1b0"
-WAIT TIMEOUT until=pr-check args="mas-bandwidth/nova-tools 2546 green" timeout=30m spent=30m polls=91 last="state=OPEN checks=pending"
-```
-
-Everything after a bare `--` is a command run once the condition holds. Its
-argv is passed through untouched — no shell — and **its exit status becomes the
-verb's**: a harvest that failed must not read as a wait that succeeded.
-
-The arguments are parsed by hand rather than by Go's `flag`, because `--until`
-takes a condition *and its arguments* and `flag` stops at the first non-flag
-word: `--until file-has ./log 'RE' --every 5s` would have left `--every` as a
-positional argument nobody read, and a verb that silently ignores the interval
-it was given is the same class of bug as the zsh one-liners. An unknown flag is
-refused by name.
-
-**`process-gone` matches argv[0] and argv[1] only**, whole and by basename, and
-excludes this process, its ancestors and its descendants. Both halves are
-load-bearing and both come from measured hangs: a waiter carries the pattern it
-waits on as an argument, so `pgrep -f` found *itself*; bash forks an identical
-copy of a script for each pipeline stage, so the waiter found its own child
-(darwin, 2026-09-22); and procps matches an ancestor of the `pgrep` process
-where the BSD `pgrep` does not, which is the self-match that killed the
-coordinator's shell four times on 2026-09-21. The `wait-for.bats` controls for
-both are ported to Go tests over a written process table, so each platform's
-shape is asserted on every platform.
-
-**`file-exists` holds on an empty file and `bin/wait-for file` did not.** The
-old mode wanted a *non-empty* path, because the thing it waited on was a
-`RESULT.md` a card creates and then writes. Porting a `wait-for file X` line
-wants `--until file-has X .` — any byte.
-
-**`redis-key` polls.** Redis has no blocking read for a string key: `BLPOP` and
-`XREAD BLOCK` are the list and stream forms, and blocking on a `GET` would need
-keyspace notifications this instance does not have. The blocking read belongs to
-the event stream (#2563), where the store really does allow one. The password
-comes from `$NOVA_REDIS_BENCH_PASSWORD` (`--password-env` names another
-variable), the way `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD` supplies
-it; it is never a flag, never a file and never on a receipt.
-
-**On the bus, heard is not answered.** A receipt in another lane says the note
-was read; the wait goes on, and the timeout receipt says `heard by <lane>` so an
-expired wait on an acknowledged note does not read like a note nobody opened. A
-reply in the sender's own lane is not an answer either — the bus's answered rule
-is per reader, and asking the sender's lane would make every note self-answering.
-
 ### status
 
 ```
@@ -3070,155 +1988,6 @@ and failing that the origin of the clone the queue sits in, named on a
 `STATUS NOTE` line. With neither there is nobody to ask and the page says so;
 with a repo that did not answer it says that instead — they are different
 facts, and the page used to print the first for both.
-
-### event and fold
-
-The card event stream and its record (nova-tools #2563). Every card transition
-XADDs one entry to `cards:done` on the fleet Redis; one consumer folds the stream
-into a SQLite file, and that file — not a `find` over job directories — is where
-`done`, `ok`, `fail` and the money come from.
-
-```
-nova-pulse event   --label <card> --event <queued|leased|started|turn|ok|fail|asked|harvested|pr|read|landed|jev> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--attempt <n>] [--bench <name>] [--model <name>] [--route <name>] [--tokens-in <n>] [--tokens-out <n>] [--usd <f>] [--pr <n>] [--head <sha>] [--at <RFC3339>] [--timeout <s>] [--print]
-nova-pulse fold    --db <file> [--store <host:port>] [--user <name>] [--password-env <NAME>] [--stream <name>] [--group <name>] [--consumer <name>] [--interval <d>] [--count <n>] [--timeout <s>] [--max <n>] [--once] [--rebuild] [--init] [--report] [--dump]
-```
-
-**What rides the stream.** `label`, `attempt`, `bench`, `model`, `route`,
-`event`, `tokens_in`, `tokens_out`, `usd`, `pr`, `head`, `at` — ids and counts,
-nothing else. **There is one stream.** These are fields added to `cards:done`,
-the stream `nova-work events` already reads under its own group (and re-announces
-only a card's end, an `ok` or a `fail`); the fold reads it under `fold`, and its SQLite file is a view of that
-stream that `--rebuild` recomputes, never a second record. **An absent cost stays
-absent**: a `--tokens-in`, `--tokens-out` or `--usd` that is not given is not
-written, the fold stores NULL, and the report prints a dash, because a writer
-that did not know the cost has not reported a zero. An entry written before the
-fields were added carries no `event`; the fold counts it as skipped rather than
-guessing it into `ok` or `fail`. The diff, the test, the prompt, the transcript and the disposition
-stay in git, and a field over 200 bytes or carrying a control character is
-**refused at the door** rather than trusted to the writer. That is Johnny's rule
-in `reports/redis-for-nova-tools-2026-09-21.md` section 8, made mechanical: core
-Redis types only (XADD, XREADGROUP, XAUTOCLAIM, XACK, XRANGE), every query in the
-fold, so the hot store never becomes the database and Valkey stays a drop-in.
-
-**The password is never a flag.** `--password-env` names the variable it is
-already in, which on the fleet is what `nova-secrets exec --only` leaves behind.
-Nothing prints it, and it never reaches an argv a `ps` can read.
-
-```
-nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
-  nova-pulse event --store <host:port> --user bench --label card-42 --event ok \
-    --bench studio --model fable --route studio --tokens-in 12000 --tokens-out 900 --usd 0.11
-nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- \
-  nova-pulse fold --store <host:port> --user bench --db ~/nova-fold/ev.sqlite --interval 1s
-```
-
-`event` is the line today's bash writers each emit until they are Go: the
-launcher writes `queued`, `leased` and `started`; `nova-swarm` writes `ok`,
-`fail` and `asked` with `usage.tsv`'s row; harvest writes `harvested` and `pr`;
-the lander writes `landed`. `--print` renders the entry and writes nothing,
-which is how a writer is debugged with no store in the room.
-
-`fold` holds the loop: `--interval 1s` between passes, `--once` for a single
-one. Each pass reclaims what the group holds unacked (XAUTOCLAIM, so a fold that
-was killed and restarted under a new consumer name takes its predecessor's work
-back), then takes new entries, writes them in ONE transaction, and XACKs **only
-after the transaction commits**. The event id is the primary key of every table,
-so a redelivery is a no-op: kill the fold half way through a hundred DONEs,
-restart it, and the count is a hundred.
-
-`--rebuild` replays the whole stream from its first entry into a file that does
-not exist yet, reading the stream itself and never the group, so a rebuild never
-consumes what the running fold has not folded. No row carries a fold timestamp,
-which is why a rebuild's rows are the incremental fold's rows byte for byte.
-
-`--init`, `--report` and `--dump` read the file with no store at all: the schema,
-the views as TSV blocks, and every row deterministically ordered.
-
-The tables are `attempts` (the card's own life), `reads` (a friend's read of a
-PR) and `landings` (the lander's merge). The views are `by_model_route` (rows,
-ok, fail, done, usd, **usd_per_ok**, landed, **usd_per_landed**), `by_bench`,
-`by_day`, `by_label` and `totals`. `usd_per_landed` is the score that matters:
-cost per USEFUL card, so a dearer model that lands beats a cheap one that does
-not.
-
-### sprint
-
-A SPRINT is any current bounded set of tasks toward a goal — friends, friends
-and swarm, or swarm only — and `sprint` answers the four questions asked of one:
-how far along it is, how long it still takes, where each task goes, and how good
-the estimates were. The normative document is
-[SPEC-SPRINT.md](SPEC-SPRINT.md); the store is the fleet Redis, core types only.
-
-```
-nova-pulse sprint open   --name <id> --goal <text> --store <host:port> [--store-user <name>] [--store-password-env <VAR>] [--planned-close <RFC3339>]
-nova-pulse sprint add    --name <id> --ref <ref> --kind <kind> --store <host:port> [--owner <name>] [--est <minutes>] [--paths <a,b>] [--depends-on <ids>] [--leg <name>] [--locality house|datacenter|any] [--isolation net|nonet] [--routes <a,b>] [--repo <o/n>] [--base <branch>] [--reader <name>] [--priority] [--id <id>] [--leased-at <RFC3339>]
-nova-pulse sprint status --store <host:port> [--name <id>] [--verbose] [--flip [--friends <a,b>]]
-nova-pulse sprint route  --store <host:port> (--task <id> | --name <id>) (--machines <file> | --friends <a,b> | --bus <dir>) [--apply] [--hand-over]
-nova-pulse sprint split  --store <host:port> --task <id> [--name <id>] [--apply]
-nova-pulse sprint refill --store <host:port> [--name <id>] (--machines <file> | --friends <a,b> | --bus <dir>) [--low-water <n>] [--dry-run]
-nova-pulse sprint wall   --store <host:port> [--name <id>] [--move <ids>] [--to <consumer>]
-nova-pulse sprint calibration --store <host:port> [--name <id>]
-nova-pulse sprint close  --store <host:port> --name <id> [--task <id> --evidence <text>] [--at <RFC3339>]
-```
-
-Every verb reaches the store through `--store <host:port>`, `--store-user`
-(default `bench`) and `--store-password-env` (default
-`NOVA_REDIS_BENCH_PASSWORD`): the password is read from the NAMED ENVIRONMENT
-VARIABLE and never from a flag, because a flag is in the process table. Run the
-verb under `nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- …`, the way
-`bench-row` does, and the secret reaches this process and nothing else.
-
-**`status` is the line.** One active sprint prints exactly
-
-```
-14/23 61% -> ~4h
-```
-
-— the fraction, the percent, then the WALL: the longest lane under the
-dependency edges, never the sum of the work. More than one active sprint prints
-a table with the sprint name as the leftmost column. `--verbose` adds the COWS
-counts (`C=14 O=9 W=0`), the open items by owner and route, each item's `kind=`
-and `depends=` (`depends=-` when it waits on nothing), the critical lane and
-the tasks on it that could move. `--flip` asks the primary records — a pull
-request merged, an issue closed, a friend's typed line at head, a card landed on
-`ev:cards` — and closes what they say is closed, with the record as the
-evidence; nothing else ever closes a task.
-
-**`route` is the rule table**, applied mechanically and recorded with its
-reason: a live or security path goes to a friend; a read, a decision, a review
-or a ruling goes to a friend; anything else is matched field by field against
-the consumers table. A task whose paths span more than one package comes back
-`SPLIT-FIRST` with its seams named by file and is not routed until it is split.
-`--hand-over` is what an owner's yes looks like: the owner becomes the required
-READER and the router places the task on the emptiest consumer that can take it,
-so the typing moves and the verdict does not.
-
-**`refill`** tops every consumer's queue that has dropped below the low water
-mark (two) to its width — four for a friend, the bench's own number otherwise —
-from the sprint's open list, ownership first then age. It is the dealer's rule
-(`internal/deal`), the same one the card dealer calls, and a consumer whose
-heartbeat is not fresh takes nothing.
-
-**`wall`** prints the lanes and the Amdahl bound, and `--move <ids>` answers
-"what would the wall be if these moved?" without writing anything — the number
-to put in front of the owner before asking. **`calibration`** prints the
-estimator's error by kind and by owner over the closed tasks, with the estimate
-each kind's measurement argues for beside today's default.
-
-The consumers table is not a new file: a bench's capabilities are `key=value`
-tokens in its row's notes in the machines registry (`--machines`), and the
-friends are the bus roster (`--bus`) or a list of names (`--friends`).
-
-### sprint funnel
-
-```
-nova-pulse sprint funnel --queue <dir> [--oneline] [--json] [--record --event <e> --card <c>] [--void --card <c>]
-```
-
-`sprint funnel` maintains an append-only accounting log under `<queue>/funnel/events.tsv` tracking card lifecycle events: `ADMIT`, `LAUNCH`, `HARVEST`, `GATE`, `LAND`, `VOID` (Essential 9, #2380).
-- `VOID` records mark abandoned or retried attempts without rewriting history.
-- Unmeasured spend is recorded strictly as `-`, never manufactured zeros.
-- Calculates conversion rates across stages, measured spend, and cost per landed card.
 
 ## nova-review
 
@@ -3445,20 +2214,17 @@ the natural `&&` chain would file exactly the duplicates.
 
 ## nova-swarm
 
+> **Retired 2026-09-24 (verb survey, del-swarm-ci-leftovers).** `add`, `run`, `supervise`, `requeue`, `verdict`, `cost`, `note`, `reclaim`, `bench`, `reap`, `publish`, `pull`, `pull-lanes` and `result-lint` are deleted: nothing called them, and card work runs through `nova-sprint card launch` and `nova-card`. The live surface is `slots`, `native`, `lint` and `batch`. Prose below that describes a deleted verb is historical until this section is rewritten.
+
+
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--max-input <bytes>]   # queue one task from a file, never from an argument
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
 nova-swarm template --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv   # the conditions, the forms, and the pulse card templates, baked in, so they are not retyped and not forgotten; setup is #184's agreement form and capacity is #176's offer-and-routing form, neither is a task template
-nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
-nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
-nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
-nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>                # exact reference checkout plus module, build, test-binary and Lisp caches
 ```
 
 ### The card lint
@@ -4003,7 +2769,6 @@ After the bench mirror has fetched a new tip, run this command locally on each
 bench, using that mirror checkout as `--source`:
 
 ```text
-nova-swarm bench prewarm --root /the/swarm/root --source /the/bench/mirror/nova-tools --repo mas-bandwidth/nova-tools --tip <full-40-character-tip>
 ```
 
 It resolves the exact commit locally, prepares the reference checkout under
@@ -4787,8 +3552,7 @@ through the child environment. Drafting and showing do not authorize a send.
 ## nova-ci
 
 Reads Go test events and reports packages whose accumulated elapsed time exceeds
-a budget, and reads a CI run's failing jobs and reports the failing tests they
-held. It also reports its own build with `nova-ci version`.
+a budget. It also reports its own build with `nova-ci version`.
 
 ```sh
 nova-ci slowtests --budget 60 < ./test-events.jsonl
@@ -4801,73 +3565,6 @@ budget is 60 seconds per package; exit 2 means an over-budget package or unusabl
 input, and exit 0 means no package exceeded the budget. CI exceptions belong in
 the dated project policy, not in an assumed higher tool default.
 
-The `failed` verb reads the other end of the same run: it asks a forge, through
-`gh`, for the jobs of one run that did not succeed, and prints the failing tests
-those jobs held instead of their logs.
-
-```sh
-nova-ci failed --repo owner/name --run 35375346271
-nova-ci failed --repo owner/name --pr 1375 --merge-group
-nova-ci failed --repo owner/name --branch dev --job "test (3/4 studio)" --max-lines 4
-nova-ci failed --help
-```
-
-Name exactly one run: `--run <id>`, `--pr <n>` (the newest run of that pull
-request's head commit, or `--merge-group` for the newest merge-queue run of its
-queue branch) or `--branch <name>`. `--repo` is required and has no default.
-`--job <text>` keeps the jobs whose name contains that text and reads no other
-job's log, which is what turns a forty-leg matrix into one call; if it matches no
-failing job it refuses, naming the jobs that did fail, rather than printing a
-green report. `--max-lines`
-(default 8) bounds each test's own message lines and counts the rest; `--gh`
-names the executable and `--timeout` (default 2m) budgets one call to it.
-
-`--decide` reads the red rather than only listing it (SPEC-DECIDE.md, *6. The
-CI-red reading*): it classes the failure and appends ` red=<class>
-rerun=<licensed|no> finding=<yes|no> reruns=<n> attempt=<n|->` to the closing
-line. Any
-`--- FAIL` name makes the class `named-test`, or `known-flake` when every
-failing name is in the `--flakes <file>` table (a TSV of test, issue and an
-expiry `YYYY-MM-DD`, read against `--now`, default today, where an expired row
-matches nothing). No `--- FAIL` name and every failed job cancelled is
-`cancelled-leg`; no `--- FAIL` name and every failed job either timed out, had a
-`startup_failure` conclusion, or failed in a step named in `--infra-steps
-<file>` is `infra`. A red the table cannot place prints `red=unknown`. The
-licence is the table's alone: `rerun=licensed` needs a rerunnable class
-(`cancelled-leg`, `known-flake` or `infra`) with no rerun yet spent, and
-everything else is `finding=yes` — a named failing test is never licensed, and a
-second red at one sha is a finding. The reading never reruns anything.
-
-The spent count is the **forge's**, read from the same job listing the verb
-already fetches: the `run_attempt` of the red jobs at this `head_sha`, less one,
-printed as `attempt=<n>` beside `reruns=<n>`. It is not the caller's to set. A
-red job the forge gave no attempt or no sha for, and red jobs that disagree with
-each other about either, are a refusal on stderr at exit 2 and no licence at all,
-because a verb that cannot tell a first red from a second must not guess the
-first. `--reruns <n>` remains only as a FLOOR for a caller who knows of a rerun
-the forge cannot see: the reading takes the greater of it and the forge's count,
-so it can withhold a licence and can never grant one. Re-reading the same
-attempt is not a second red — the answer is advisory and identical each time —
-and the caller's own rerun is what makes the forge report attempt 2, which is
-where the licence stops.
-
-Each failing test is one `FAILED job="<name>" pkg=<pkg> test=<Test>
-at=<file:line>` line with that test's own words indented under it; a cancelled
-step is `CANCELLED job="<name>" step="<name>" after=<d>`, read off the job rather
-than its log, and a timed-out package is `TIMEOUT job="<name>" pkg=<pkg>
-running=<tests>`. A job that went red with no test event in its log — a compiler
-error inside a `make test` step — is `NOTEST job="<name>" step="<name>"
-tests=none` with the lines the runner itself marked as errors under it, so every
-red job is named rather than only counted. A job whose log the forge will not hand
-over — a job cancelled while its run is still in progress, whose log blob answers
-404 — is `NOLOG job="<name>" reason="<why>"` and an `unread=<n>` in the closing
-count, so one missing log never sinks the other jobs' reds. The closing
-`FAILED (OK|RED) jobs=<n> [failed=<n>] [cancelled=<n>] tests=<n>` always prints,
-and its word is `OK` only when the run said nothing red. It is
-a reader, so exit 1 means the run said something red, exit 0 means it said
-nothing, and exit 2 is a refusal — a bad flag, no such run, a `gh` that could
-not answer, or, under `--decide`, an attempt count the forge would not give.
-It runs `gh` for reading only and never merges, enqueues or comments.
 See [SPEC-CI.md](SPEC-CI.md).
 
 ## nova-work

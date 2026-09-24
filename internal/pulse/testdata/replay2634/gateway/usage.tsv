@@ -1,2 +1,0 @@
-job	attempt	started	ended	rc	provider	model	tokens_in	tokens_out	cache_write	cache_read	reasoning	usd
-card-gw	1	2026-09-21T00:50:08Z	2026-09-21T00:50:10Z	1	inception	mercury-2.5	-	-	-	-	-	0.0000

@@ -82,9 +82,9 @@ func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
 	if len(readers) == 0 {
 		t.Fatal("no file in this tree was found reading nova-bus's output; this test is then holding nothing, and the pattern it looks for has moved")
 	}
-	if len(discarders) == 0 {
-		t.Fatal("no file was found starting nova-bus and discarding its output; the exemption this test grants is then untested, and a reader misread as a discarder would go unheld")
-	}
+	// No discarder is required: the frozen nova-pulse manager was the one file that
+	// started nova-bus and discarded its output, and it went with the frozen verbs.
+	_ = discarders
 	for _, rel := range missing {
 		t.Errorf("%s reads nova-bus's output and nothing in its package reaches internal/bus.IsProgress; a progress line on stderr will be parsed as protocol, which is the 2026-09-18 defect -- drop progress through the registry, or read stdout alone", rel)
 	}

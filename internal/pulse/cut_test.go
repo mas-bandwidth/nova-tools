@@ -85,12 +85,6 @@ func runCutAt(t *testing.T, td, benches string, templates map[string]string, poo
 	return code, stdout.String(), stderr.String(), out, root
 }
 
-func cutLine1(t *testing.T, cards string) string {
-	t.Helper()
-	lines := strings.SplitN(cards, "\n", 2)
-	return lines[0]
-}
-
 // cut-line1-is-contract: every card written has line 1 RESULT <label> sha=<sha12> with the
 // hash equal to SHA-256 of the bytes below line 1, and STEP 1 carrying mkdir -p scratch,
 // an https:// clone and checkout -b; a template whose rendered line 1 is prose, or

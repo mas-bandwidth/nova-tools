@@ -19,7 +19,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `control/` | fleet control desired state, lock, and acks | `go test ./internal/control` | `go test ./internal/control` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
 | `ctxindex/` | per-repo spec, test and symbol index for cards | `go test ./internal/ctxindex` | `go test ./internal/ctxindex` |
-| `deal/` | the dealer's rule for every work consumer | `go test ./internal/deal` | `go test ./internal/deal` |
 | `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
 | `dispatch/` | command dispatch and runner interface | `go test ./internal/dispatch` | `go test ./internal/dispatch` |
 | `docs/` | documentation guards and map generator | `go test ./internal/docs` | `go test ./internal/docs` |
@@ -55,7 +54,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `post/` | GitHub PR and issue client | `go test ./internal/post` | `go test ./internal/post` |
 | `prereview/` | mechanical first pass over one pull request | `go test ./internal/prereview` | `go test ./internal/prereview` |
 | `presence/` | friend heartbeat keys with a TTL | `go test ./internal/presence` | `go test ./internal/presence` |
-| `pulse/` | pulse telemetry engine and keeper | `go test ./internal/pulse` | `go test ./internal/pulse` |
+| `pulse/` | status, cut and harvest engine for nova-pulse | `go test ./internal/pulse` | `go test ./internal/pulse` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
 | `redisq/` | Redis transport queue | `go test ./internal/redisq` | `go test ./internal/redisq` |
@@ -68,8 +67,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `secrets/` | zero-leak memory and file vault | `go test ./internal/secrets` | `go test ./internal/secrets` |
 | `selftalk/` | agent self-talk journal stream | `go test ./internal/selftalk` | `go test ./internal/selftalk` |
 | `specwork/` | worklang spec compliance checks | `go test ./internal/specwork` | `go test ./internal/specwork` |
-| `sprint/` | sprint progress, wall, router, and calibration | `go test ./internal/sprint` | `go test ./internal/sprint` |
-| `sprintci/` | CI pass as a card per PR head | `go test ./internal/sprintci` | `go test ./internal/sprintci` |
 | `sprintcol/` | one column of the unified sprint table | `go test ./internal/sprintcol` | `go test ./internal/sprintcol` |
 | `sprintline/` | sprint x/y z% -> eta line | `go test ./internal/sprintline` | `go test ./internal/sprintline` |
 | `sprinttable/` | sprint table publish and restart behaviour | `go test ./internal/sprinttable` | `go test ./internal/sprinttable` |

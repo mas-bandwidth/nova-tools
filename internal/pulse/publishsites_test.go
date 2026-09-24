@@ -320,7 +320,7 @@ func TestTheGuardsErrorPathIsTerminal(t *testing.T) {
 			}
 		}
 	}
-	if checked < 4 {
-		t.Fatalf("only %d guarded functions were checked; there are four publish paths", checked)
+	if checked < 3 {
+		t.Fatalf("only %d guarded functions were checked; there are three publish paths (the frozen manager's fourth went with it)", checked)
 	}
 }
