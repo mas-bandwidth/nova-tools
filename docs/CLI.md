@@ -665,6 +665,8 @@ DECIDE gate=go conf=0.93 risk=2.50 conf=0.81 floor=0.90 below=-
 
 ```
 nova-decide route --unit <json file|inline json> --usage <path> --log <path>
+                  [--down-store <host:port>] [--card <path> --allowed-routes <path>]
+                  [--jev] [--store-user <user>] [--store-password-env <NAME>]
                   [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                   [--registry <path>] [--floor 0.65] [--base-url <url>] [--key-env JEV_API_KEY]
                   (--usage and --log are REQUIRED whenever jev is asked)
@@ -808,10 +810,12 @@ nova-secrets exec --store ~/rowan-working/secrets --as studio \
 
 `--only JEV_API_KEY --require JEV_API_KEY` is the pair that matters: `--only` hands the child that one variable and nothing else, and `--require` refuses *before* the command runs if the store does not hold it, so a route never fails halfway with a key-shaped hole. The key is never an argument, never a file the tool reads and never a line it prints. `--usage` and `--log` are the accounting, required whenever jev is asked, and pointing every caller at **one** pair of paths is what makes the log a calibration record rather than a pile of them. Run several decisions under **one** `exec` — `... -- sh -c '<several nova-decide route lines>'` — rather than one decrypt per call.
 
+Friend presence is read from `--down-store`, default `NOVA_REDIS_ADDR`; `--store` also supplies that address and additionally writes the decision event. Presence keys name seats (`friend:stella:down` excludes Astra and `friend:rowan:down` excludes Fable). A configured presence store that cannot be read refuses the route with exit 2 and `reason=presence-unavailable`: a route does not select a friend while their seat's status is unknown. With no presence store the route prints `ROUTE NOTE down friends not checked (no store)` and its JSON row records `down_checked:false`.
+
 ### outcome — the other half of the row
 
 ```
-nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped
+nova-decide outcome --log <path> --unit-id <id> --result green|red|blocked|skipped [--of-time <RFC3339>]
 ```
 
 What **happened** to a unit a decision routed. Rule 8 asks for the decision to be logged beside the outcome it predicted, and this is the half nobody was writing: on 2026-09-18 the shared log held 78 rows, 73 escalations and **zero** successes, so `log --summary` had nothing to regenerate a starting rung from.
@@ -833,6 +837,8 @@ nova-decide review --repo <owner/name> --pr <n> [--card <file>]
                    [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
+                   [--base-url <url>] [--key-env <name>] [--gh <path>] [--stream <name>]
+                   [--store-user <user>] [--store-password-env <NAME>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
                    [--prompt <file|sha8>] [--conf <jev.conf>|none] [--pr-dir <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
@@ -5410,6 +5416,59 @@ nova-sprint xy --evaluate-out cmd/nova-sprint/testdata/evaluate.txt --calibratio
 **Reading it.** `26/42` is `SET DONE done=26` over `SET OK units=42`. `61%` is the tool's `percent=`, not a recomputation. `~3h` is two open `fix` tasks on different owners, one depending on the other, each charged the calibrated 90 minutes rather than the stored 120. `evaluate.txt` also has a criterion `holds=yes`; that is not the count. `set.sexp` marks three receipts done or landed; that is not the count either.
 
 **What a first run gets wrong.** Leaving the flags off is one refusal that names each missing source. Pointing `--set` at a sexp full of `:status "done"` and reading those marks as x is the old count; this line will not do it. Omitting `--store` when the live sprint verb has to be run is a refusal, not a guessed Redis address. A `nova-pulse sprint status` that prints a fraction and no open row is a refusal: that fraction is the sprint store's own x/y, and eta reads the verbose rows.
+
+### cost import
+
+`nova-sprint cost import --provider <anthropic|openrouter|oc> --file <export.csv> --redis <addr>`
+imports one provider usage export (#3159). It runs from any seat: no home path,
+no `--as`, no friend name; the file is the only input, with zero REST calls
+and zero model tokens. Redis auth comes from the environment, as for every
+nova-sprint verb.
+
+The CSV's header is matched case-insensitively by alias: day (`date`, `day`,
+`usage_date`, `created_at`; the first ten characters, a UTC `YYYY-MM-DD`),
+cost (`cost_usd`, `usd`, `cost`, `total_cost`; dollars, >= 0), model
+(`model`, `model_name`, `model_permaslug`) and the optional project
+(`workspace`, `workspace_name`, `api_key_name`, `key_name`, `project`; `-`
+when absent). A row whose day cell is `total` is the export's own total,
+allowed only in a single-day file. Each row goes to the field
+`<project>|<route>`: the routes.yaml route with `via: openrouter` (for
+`openrouter`) or `via: opencode` (for `oc`) and the same model, else
+`model:<model>` (every `anthropic` row), counted in `unrouted_rows`.
+
+Each day is reconciled in integer micro-dollars before anything is written:
+the fields sum to the day's rows and a `total` row equals them, within $0.01.
+The day is written whole as the hash `cost:<provider>:<day>` (the fields,
+`total`, `rows`, `unrouted_rows`, `source_sha256`, `source_name`, `writer`,
+`at` in epoch ms UTC) with member `<provider>:<day>` in the zset `cost:idx`,
+score `YYYYMMDD`; neither key has a TTL. A clean import is two round trips: one
+pipeline reads what is stored, one MULTI/EXEC writes each changed day (DEL,
+HSET, ZADD). A day is `same` (not written, `at` kept) only when its stored hash
+without `at` and its index score both match; the same file with either half
+missing is `repaired`; a different file is `replaced` whole.
+
+```text
+COST IMPORT provider=<p> day=<d> rows=<n> total=<usd> fields=<n> unrouted_rows=<n> source=<sha8> state=new|same|replaced|repaired[ recovered=1]
+COST IMPORT DONE provider=<p> days=<n> written=<n> same=<n> repaired=<n> recovered=<n>
+```
+
+EXEC is not a rollback, so after a command error or a lost EXEC reply the verb
+reads each day back, retries the days not written once, and reads back again
+(at most five round trips). A Redis error reply in a read-back is a reply:
+the day is `partial`. Only a read-back with no reply makes a day `unknown`.
+
+| exit | meaning |
+|---|---|
+| 0 | imported (every day `same` included); a day recovered by the read-back adds `recovered=1` |
+| 2 | could not run: a flag, an unknown provider, no `--file` or `--redis` |
+| 3 | bad export: unreadable, no header, a required column missing (named), a day or cost that does not parse, a negative cost, a `\|` in a project or model, a `total` row in a multi-day file |
+| 4 | does not reconcile; nothing written |
+| 6 | Redis failed before the write (dial, AUTH, the read pipeline, `cost:idx` not a zset, EXECABORT); `nothing written`, proven |
+| 7 | written in part: every reply received, and after one retry a day is not written; days print `state=written\|unchanged\|partial` and stderr names each failing command and its reply |
+| 8 | outcome unknown: a read-back got no reply; each such day prints `state=unknown`; re-run the same import (it is idempotent) |
+
+Exit codes are scoped per verb: `task push`'s DOWN 7 (#2929) does not alter this
+verb's 7. Exits 7 and 8 never print `nothing written`.
 
 ### Where a card's results live
 

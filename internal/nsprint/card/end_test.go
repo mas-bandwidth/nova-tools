@@ -286,6 +286,9 @@ func TestEndAfterPushAndDealRecordsEnded(t *testing.T) {
 	if err := client.HSet(ctx, "bench:"+bench+":beat", "host", "bench.invalid", "user", "worker").Err(); err != nil {
 		t.Fatal(err)
 	}
+	if err := client.HSet(ctx, "bench:"+bench+":state", "state", "UP").Err(); err != nil {
+		t.Fatal(err)
+	}
 	if err := client.HSet(ctx, "bench:"+bench+":desired", "slots", "1", "paused", "0").Err(); err != nil {
 		t.Fatal(err)
 	}

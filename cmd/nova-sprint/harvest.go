@@ -160,6 +160,29 @@ func cardHarvestPass(ctx context.Context, st *store.Store, sprint string, benche
 	for _, b := range plan.NoBeat {
 		_, _ = fmt.Fprintf(out, "HARVEST SKIP bench=%s reason=no-beat\n", b)
 	}
+	if len(benches) > 0 && len(plan.Benches) > 0 {
+		reads := make([]store.HashRead, len(plan.Benches))
+		for i, b := range plan.Benches {
+			reads[i] = store.HashRead{Key: "bench:" + b + ":state", Fields: []string{"state"}}
+		}
+		vals, err := st.PipelineHMGet(ctx, reads)
+		if err != nil {
+			return refuse(errOut, "card harvest", err.Error())
+		}
+		var up []string
+		for i, b := range plan.Benches {
+			state, _ := vals[i][0].(string)
+			if state == "" {
+				state = "DOWN"
+			}
+			if state != "UP" {
+				_, _ = fmt.Fprintf(out, "bench %s skipped: %s\n", b, strings.ToLower(state))
+				continue
+			}
+			up = append(up, b)
+		}
+		plan.Benches = up
+	}
 	code := 0
 	for _, s := range plan.Sprints {
 		results := harvest.Run(ctx, st, harvest.Options{

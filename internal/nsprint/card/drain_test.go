@@ -64,6 +64,12 @@ func TestDrainReleasesAndImportsOnce(t *testing.T) {
 	// Four card files in a retired queue dir. They depend on a card that has
 	// not landed, so they import into waiting and the pool holds exactly the
 	// five released and resumed cards.
+	later := validCard(repo)
+	later.label = "later-3035"
+	mustPush(t, ctx, client, later.render(), "pool")
+	if err := client.ZRem(ctx, keyPool(), later.label).Err(); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	var imported []string
 	for _, l := range []string{"queued-a-3035", "queued-b-3035", "queued-c-3035", "queued-d-3035"} {

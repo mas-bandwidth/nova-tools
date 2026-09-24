@@ -8,7 +8,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/width"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -70,15 +73,33 @@ func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
 		t.Fatalf("refused hello changed desired=%q", got)
 	}
 
-	out.Reset()
-	errOut.Reset()
-	if code := runTaskWidth(ctx, []string{"--redis", addr, "--as", "f"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "desired=32") {
-		t.Fatalf("task width code=%d out=%q err=%q", code, out.String(), errOut.String())
+	// Reader: the width duty folds friend:f:desired into the fillstate and the
+	// read-only width verb prints it; capacity is the one writer (#3591).
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	lease, err := reconcile.Acquire(ctx, st, reconcile.AcquireOptions{Host: "test", Instance: "capacity"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (&width.Duty{Store: st}).Run(ctx, lease); err != nil {
+		t.Fatal(err)
 	}
 	out.Reset()
 	errOut.Reset()
-	if code := runTaskWidth(ctx, []string{"--redis", addr, "--as", "f", "33"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "CEILING m 41/40") {
-		t.Fatalf("task width 33 code=%d out=%q err=%q", code, out.String(), errOut.String())
+	if code := runWidth(ctx, []string{"--redis", addr, "--as", "f"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "WIDTH f slots=32 ") {
+		t.Fatalf("width code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+	// Setter: a 33 through capacity friend is refused at the machine ceiling.
+	out.Reset()
+	errOut.Reset()
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "f", "33"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "CEILING m 41/40") {
+		t.Fatalf("capacity friend 33 code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
+		t.Fatalf("refused capacity friend 33 changed desired=%q", got)
 	}
 }
 

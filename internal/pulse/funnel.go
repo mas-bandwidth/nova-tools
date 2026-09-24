@@ -67,7 +67,26 @@ type FunnelSummary struct {
 	HasMeasuredSpend bool    `json:"has_measured_spend"`
 	UnmeasuredEvents int     `json:"unmeasured_events"`
 	SpendOverflow    bool    `json:"spend_overflow"`
-	CostPerLanded    string  `json:"cost_per_landed"`
+	// PricedCards is the admitted cards with at least one record carrying a measured
+	// spend (#3159). Below AdmittedCards, CostPerLanded is a lower bound.
+	PricedCards   int    `json:"priced_cards"`
+	CostPerLanded string `json:"cost_per_landed"`
+}
+
+// CostPerLandedFigure is cost_per_landed as the lines print it after the name (#3159): the
+// number is exact only when every admitted card is priced, `=<x> coverage=100.00% (<n>/<n>)`;
+// below that it is a lower bound, `>=<x> coverage=<p>% (<priced>/<cards>)`. The dash stays
+// `=-`, with no coverage, because there is nothing to bound.
+func (s FunnelSummary) CostPerLandedFigure() string {
+	if s.CostPerLanded == "" || s.CostPerLanded == "-" || s.AdmittedCards == 0 {
+		return "=-"
+	}
+	op := ">="
+	if s.PricedCards == s.AdmittedCards {
+		op = "="
+	}
+	return fmt.Sprintf("%s%s coverage=%.2f%% (%d/%d)", op, s.CostPerLanded,
+		100*float64(s.PricedCards)/float64(s.AdmittedCards), s.PricedCards, s.AdmittedCards)
 }
 
 // OneLine formats the funnel summary into the standard one-line console reading.
@@ -76,12 +95,8 @@ func (s FunnelSummary) OneLine() string {
 	if s.HasMeasuredSpend {
 		spendStr = fmt.Sprintf("%.4f", s.MeasuredSpend)
 	}
-	costStr := s.CostPerLanded
-	if costStr == "" {
-		costStr = "-"
-	}
-	line := fmt.Sprintf("FUNNEL admit=%d launch=%d harvest=%d gate=%d land=%d void=%d spend=%s cost_per_landed=%s",
-		s.AdmittedCards, s.LaunchedCards, s.HarvestedCards, s.GatedCards, s.LandedCards, s.VoidedCards, spendStr, costStr)
+	line := fmt.Sprintf("FUNNEL admit=%d launch=%d harvest=%d gate=%d land=%d void=%d spend=%s cost_per_landed%s",
+		s.AdmittedCards, s.LaunchedCards, s.HarvestedCards, s.GatedCards, s.LandedCards, s.VoidedCards, spendStr, s.CostPerLandedFigure())
 	if s.SpendOverflow {
 		line += " spend_overflow=true"
 	}
@@ -247,6 +262,7 @@ func ComputeFunnelSummary(records []FunnelRecord) FunnelSummary {
 	gatedCards := make(map[string]bool)
 	landedCards := make(map[string]bool)
 	voidedCards := make(map[string]bool)
+	pricedCards := make(map[string]bool)
 
 	for _, r := range records {
 		card := r.Card
@@ -295,6 +311,7 @@ func ComputeFunnelSummary(records []FunnelRecord) FunnelSummary {
 				} else {
 					summary.MeasuredSpend = next
 					summary.HasMeasuredSpend = true
+					pricedCards[card] = true
 				}
 			} else {
 				summary.UnmeasuredEvents++
@@ -310,6 +327,11 @@ func ComputeFunnelSummary(records []FunnelRecord) FunnelSummary {
 	summary.GatedCards = len(gatedCards)
 	summary.LandedCards = len(landedCards)
 	summary.VoidedCards = len(voidedCards)
+	for card := range pricedCards {
+		if admittedCards[card] {
+			summary.PricedCards++
+		}
+	}
 
 	if summary.LandedCards > 0 && summary.HasMeasuredSpend {
 		summary.CostPerLanded = fmt.Sprintf("%.4f", summary.MeasuredSpend/float64(summary.LandedCards))
@@ -487,7 +509,7 @@ func SprintFunnel(in SprintFunnelInput) int {
 			fmt.Fprintf(in.Stdout, "  Spend Overflow:      true (one or more finite records exceeded float64 range on accumulation; excluded, counted as unmeasured)\n")
 		}
 		if summary.CostPerLanded != "-" {
-			fmt.Fprintf(in.Stdout, "  Cost / Landed Card:  $%s\n", summary.CostPerLanded)
+			fmt.Fprintf(in.Stdout, "  Cost / Landed Card:  %s\n", summary.CostPerLandedFigure())
 		} else {
 			fmt.Fprintf(in.Stdout, "  Cost / Landed Card:  -\n")
 		}
