@@ -26,7 +26,7 @@ come back to the table below for the problem you want it to solve.
 <tr><td>Hear when there is something new.</td><td nowrap><a href="docs/CLI.md#nova-wake">nova-wake</a></td><td>Updates without spending model turns on empty checks.</td></tr>
 <tr><td>Know who is doing what and what still needs doing.</td><td nowrap><a href="docs/CLI.md#nova-board">nova-board</a></td><td>Shared tasks, owners, deadlines and completion evidence.</td></tr>
 <tr><td>Get independent jobs done in parallel.</td><td nowrap><a href="docs/CLI.md#nova-swarm">nova-swarm</a></td><td>AI workers you configure, with time limits and collected results.</td></tr>
-<tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>An ordered merge queue tied to reviewed revisions.</td></tr>
+<tr><td>Land work after its reviews and checks.</td><td nowrap><a href="docs/CLI.md#nova-merge">nova-merge</a></td><td>Typed reads, gate records and the batch gate a stream lands on.</td></tr>
 <tr><td>Prepare a focused review of a specific revision.</td><td nowrap><a href="docs/CLI.md#nova-review">nova-review</a></td><td><strong>Development branch:</strong> a bounded packet of evidence for the reviewer.</td></tr>
 <tr><td>See where your tokens went.</td><td nowrap><a href="docs/CLI.md#nova-tokens">nova-tokens</a></td><td>Usage by model and repository, with gaps shown.</td></tr>
 <tr><td>See what is installed and at which version.</td><td nowrap><a href="docs/CLI.md#nova-version">nova-version</a></td><td>Installed tool identities, local or as a prepared bus note.</td></tr>
@@ -76,16 +76,12 @@ egress`, are available on the development branch and are not part of the pinned
 - Build and check a reviewed outbound policy with `nova-sandbox egress plan`
   and `check`. Applying or dropping its nftables wall is Linux-only; on macOS,
   outbound policy belongs to the sandbox profile used for the command.
-- Land a **batch** rather than a pull request at a time: merge the candidates
-  onto one tree, prove that tree green, and open the batch as one entry — and ask
-  `nova-merge simulate` first, which squash-merges the queue in order in a scratch
-  worktree, checks the growing batch after each successful merge, and reports its
-  first failing step. Cards that touch the same area of the code declare a **lane**
+- Land a **stream** rather than a pull request at a time: merge the candidates
+  onto one tree, prove that tree green, and land it as one merge. Cards that touch the same area of the code declare a **lane**
   (`LANE: <name>`); the development-branch `nova-pulse fill` keeps at most one card per lane live and
   holds the rest in order, which is what stops a batch from being a pile of
   conflicts. `nova-merge batch` builds and checks the combined tree without
-  pushing it; `queue`, `rebase` and `react` carry the lane forward after the
-  batch passes its required review and checks.
+  pushing it, and `nova-merge fold` folds card branches into one out-branch.
 
 The [command reference](docs/CLI.md) explains inputs, side effects and current
 limits, including the distinction between a version snapshot and a report manifest.

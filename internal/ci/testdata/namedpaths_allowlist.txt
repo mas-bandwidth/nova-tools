@@ -73,6 +73,8 @@ internal/swarm/pull SPEC-WORKLANG's example test subject `test:internal/swarm/pu
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
+cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
+docs/EVAL-MERGE-QUEUE.md retired with the per-PR lander on 2026-09-24; internal/pulse/harveststale.go cites it as a historical stale-base example
 docs/FIXED-FORM-OWED-ROWS.md SPEC-BOARD.md cites it in the SCHEMA repository, not here
 docs/PORTING.md the file `nova-review port` reads out of the pull request's own head, not out of this tree
 docs/SPEC-DELEGATION.md the draft SPEC-WORK folded in on 2026-09-15; the draft itself is gone
@@ -87,6 +89,7 @@ fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nspri
 fleet/launchd/com.rowan.fleet-certify.plist the launchd plist lives in the self repository; there is no fleet/ here
 internal/decide/questions/security.txt a retired phrase-table file: replaced whole by `--security-phrases <file>`
 internal/decide/questions/tamper.txt a retired phrase-table file: replaced by `--tamper <file>`
+internal/docs/eval_merge_queue_test.go retired with docs/EVAL-MERGE-QUEUE.md on 2026-09-24; cited by the same internal/pulse/harveststale.go example
 internal/swarm/routehealth PR #2718's package, named by internal/nsprint/route/health.go as where the rules were proved; not on dev
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 testdata/ci/package-sizes-windows.tsv retired with the native Windows legs on 2026-09-18; the measurements are in git at dev 65e86175
