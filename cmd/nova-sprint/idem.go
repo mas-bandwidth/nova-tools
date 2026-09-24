@@ -92,18 +92,18 @@ func runIdemResolve(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	switch res.Status {
 	case "RESOLVED":
-		shown := *url
+		shown := urlStr
 		if *none {
 			shown = "none"
 		}
-		fmt.Fprintf(out, "RESOLVED sprint=%s key=%s url=%s receipt=%s\n", *sprint, *key, shown, res.Receipt)
+		fmt.Fprintf(out, "RESOLVED sprint=%s key=%s url=%s receipt=%s\n", sprintStr, keyStr, shown, res.Receipt)
 		return 0
 	case "STATE":
 		value := res.Value
 		if value == "" {
 			value = "absent"
 		}
-		fmt.Fprintf(out, "STATE sprint=%s key=%s value=%s\n", *sprint, *key, value)
+		fmt.Fprintf(out, "STATE sprint=%s key=%s value=%s\n", sprintStr, keyStr, value)
 		return 1
 	default:
 		return refuse(errOut, verb, fmt.Sprintf("unexpected reply %s code=%d", res.Status, res.Code))
