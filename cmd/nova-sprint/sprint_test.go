@@ -33,6 +33,7 @@ func TestSprintOpenLetsTaskTakeClaim(t *testing.T) {
 	addr, client := sprintRedis(t)
 	ctx := context.Background()
 	const s = "control-2939"
+	t.Setenv("NOVA_FRIEND", "ctl-open") // #2929: push and take run from a seat
 	client.SAdd(ctx, "friends", "ctl-open")
 	client.HSet(ctx, "friend:ctl-open:desired", "slots", 2, "paused", "0")
 	client.HSet(ctx, "friend:ctl-open:beat", "host", "fixture")
