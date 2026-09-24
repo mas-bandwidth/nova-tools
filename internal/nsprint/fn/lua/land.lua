@@ -104,6 +104,12 @@ redis.register_function('ns_unit_eval', function(keys, args)
   if st == 'landed' then
     return { 'REFUSED', 'landed' }
   end
+  if st == 'dropped' then
+    local d = redis.call('HMGET', ukey, 'head', 'drop_head')
+    if d[1] and d[1] == d[2] then
+      return { 'REFUSED', 'dropped at head' }
+    end
+  end
   redis.call('HSET', ukey, 'state', 'landable')
   local seq = tonumber(redis.call('HGET', ukey, 'seq') or 0)
   local score = tier * 1000000000000 + seq
@@ -222,11 +228,26 @@ redis.register_function('ns_writer', function(keys, args)
   return { 'OK', tostring(gen) }
 end)
 
--- ns_batch_plan: checks fences, membership, landed status, chain limit;
--- writes batch, sets members batched, enqueues gate, writes PLAN event.
+-- land_storage_split: the five storage-split paths under docs/roadmaps/ (4.1, amendment 5802461060).
+local function land_storage_split(p)
+  if p == 'docs/roadmaps/nova-work.sexp' or p == 'docs/roadmaps/ingest-map.sexp' then return true end
+  if string.match(p, '^docs/roadmaps/work/[^/]+%.sexp$') then return true end
+  if string.sub(p, 1, 20) == 'docs/roadmaps/blobs/' then return true end
+  return false
+end
+
+-- ns_batch_plan (4.4): in one call checks writer gen and lease, chain below chain_max, a unit id on
+-- every member (L27), every member landable with an empty batch (L1, L7), PATHS disjoint (L3), one
+-- class and the roadmap rule (L3b), alone units alone, stack parents earlier (L24). A failed check
+-- writes nothing. Then writes the batch (parent, from_tip, input_id), sets members batched, appends
+-- to the chain, XADDs the gate and a PLAN event. args: S repo base batch_id lease members_csv
+-- paths_csv class from_tip input_id [parent] [chain_max]; an empty batch_id is minted as b<seq>.
 redis.register_function('ns_batch_plan', function(keys, args)
   local S, repo, base, batch_id, lease_val, members_csv, paths_csv, class, from_tip, input_id =
     args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]
+  local parent = args[11] or ''
+  local chain_max = tonumber(args[12] or '') or 4
+  class = (class and class ~= '') and class or 'go'
 
   -- 1. Writer and lease checks
   local wkey = 'land:' .. repo .. ':' .. base .. ':writer'
@@ -244,11 +265,14 @@ redis.register_function('ns_batch_plan', function(keys, args)
     return { 'REFUSED', 'lease gen mismatch' }
   end
 
-  -- 2. Chain limit check (chain_max starts at 4)
+  -- 2. Chain limit check (chain_max starts at 4, 4.3)
   local chain_key = 'land:' .. repo .. ':' .. base .. ':chain'
   local chain_len = redis.call('ZCARD', chain_key)
-  if chain_len >= 4 then
+  if chain_len >= chain_max then
     return { 'REFUSED', 'chain_max' }
+  end
+  if parent ~= '' and not redis.call('ZSCORE', chain_key, parent) then
+    return { 'REFUSED', 'parent=' .. parent .. ' not in chain' }
   end
 
   -- 3. Parse and check members
@@ -256,10 +280,12 @@ redis.register_function('ns_batch_plan', function(keys, args)
     return { 'REFUSED', 'no members' }
   end
 
+  local units_key = 's:' .. S .. ':units'
   local members = {}
+  local pos = {}
   for m in string.gmatch(members_csv, '[^,]+') do
     local unit, head = string.match(m, '^([^@]+)@(.+)$')
-    if not unit or unit == '' or not head or head == '' then
+    if not unit or unit == '' or not head or head == '' or redis.call('SISMEMBER', units_key, unit) == 0 then
       return { 'REFUSED', 'member=' .. m .. ' no unit' }
     end
     -- Refuse if already landed (L7)
@@ -267,7 +293,7 @@ redis.register_function('ns_batch_plan', function(keys, args)
       return { 'REFUSED', 'member=' .. m .. ' already landed' }
     end
     local ukey = 's:' .. S .. ':u:' .. unit
-    local udata = redis.call('HMGET', ukey, 'state', 'batch', 'landed_head')
+    local udata = redis.call('HMGET', ukey, 'state', 'batch', 'landed_head', 'files', 'class', 'alone', 'stack_parent')
     if udata[1] == 'landed' or udata[3] == head then
       return { 'REFUSED', 'member=' .. m .. ' already landed' }
     end
@@ -277,22 +303,75 @@ redis.register_function('ns_batch_plan', function(keys, args)
     if udata[1] ~= 'landable' then
       return { 'REFUSED', 'member=' .. unit .. ' not landable' }
     end
-    table.insert(members, { unit = unit, head = head })
+    if pos[unit] then
+      return { 'REFUSED', 'member=' .. unit .. ' twice' }
+    end
+    table.insert(members, { unit = unit, head = head, files = udata[4] or '', class = udata[5] or '', alone = udata[6] or '', parent = udata[7] or '' })
+    pos[unit] = #members
   end
 
-  -- 4. Mint token and seq
+  -- 4. Shape: one class, disjoint PATHS, the roadmap rule, alone units alone, stack parents earlier.
+  local seen = {}
+  local paths = {}
+  for i, m in ipairs(members) do
+    if m.class ~= '' and m.class ~= class then
+      return { 'REFUSED', 'class=' .. m.unit .. ' ' .. m.class .. '!=' .. class }
+    end
+    if m.alone == '1' and #members > 1 then
+      return { 'REFUSED', 'alone=' .. m.unit }
+    end
+    for p in string.gmatch(m.files, '[^,]+') do
+      if seen[p] then
+        return { 'REFUSED', 'overlap=' .. p }
+      end
+      seen[p] = m.unit
+      table.insert(paths, p)
+      if class == 'roadmap' then
+        if string.sub(p, 1, 14) ~= 'docs/roadmaps/' then
+          return { 'REFUSED', 'roadmap-class=' .. p }
+        end
+      elseif land_storage_split(p) then
+        return { 'REFUSED', 'roadmap-path=' .. p }
+      end
+    end
+    local sp = m.parent
+    if sp ~= '' and sp ~= 'none' then
+      local ok = false
+      if pos[sp] and pos[sp] < i then
+        ok = true
+      elseif not pos[sp] then
+        local pdata = redis.call('HMGET', 's:' .. S .. ':u:' .. sp, 'state', 'batch')
+        if pdata[1] == 'landed' then
+          ok = true
+        elseif pdata[2] and pdata[2] ~= '' and redis.call('ZSCORE', chain_key, pdata[2]) then
+          ok = true
+        end
+      end
+      if not ok then
+        return { 'REFUSED', 'stack-parent=' .. sp .. ' member=' .. m.unit }
+      end
+    end
+  end
+  if (not paths_csv or paths_csv == '') and #paths > 0 then
+    paths_csv = table.concat(paths, ',')
+  end
+
+  -- 5. Mint token and seq
   local seq = redis.call('INCR', 'land:' .. repo .. ':' .. base .. ':batch:seq')
   local token = redis.call('INCR', 'land:' .. repo .. ':tok')
   local now = land_now_ms()
+  if not batch_id or batch_id == '' then
+    batch_id = 'b' .. tostring(seq)
+  end
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
 
   redis.call('HSET', bkey,
     'seq', tostring(seq),
-    'parent', '',
+    'parent', parent,
     'from_tip', from_tip or '',
     'members', members_csv,
     'paths', paths_csv or '',
-    'class', class or 'go',
+    'class', class,
     'state', 'queued',
     'attempt', '1',
     'token', tostring(token),
@@ -321,11 +400,63 @@ redis.register_function('ns_batch_plan', function(keys, args)
     'base', base,
     'batch', batch_id,
     'seq', tostring(seq),
+    'parent', parent,
     'token', tostring(token),
     'at', tostring(now)
   )
 
-  return { 'OK', tostring(token), entry_id }
+  return { 'OK', tostring(token), entry_id, batch_id }
+end)
+
+-- ns_batch_bind (4.2): sets from_tip (and input_id) on a chain batch planned before its parent had a
+-- train head. Only an empty from_tip is bound, only to the parent's train_head, and only while the
+-- batch is queued; anything else is STALE and writes nothing.
+redis.register_function('ns_batch_bind', function(keys, args)
+  local repo, base, batch_id, from_tip, input_id = args[1], args[2], args[3], args[4], args[5]
+  local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
+  local b = redis.call('HMGET', bkey, 'state', 'from_tip', 'parent')
+  if b[1] ~= 'queued' or (b[2] and b[2] ~= '') or not b[3] or b[3] == '' then
+    return 'STALE'
+  end
+  local pb = redis.call('HMGET', 'land:' .. repo .. ':' .. base .. ':batch:' .. b[3], 'state', 'train_head')
+  if (pb[1] ~= 'green' and pb[1] ~= 'landed') or not pb[2] or pb[2] == '' or pb[2] ~= from_tip then
+    return 'STALE'
+  end
+  redis.call('HSET', bkey, 'from_tip', from_tip, 'input_id', input_id or '')
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'BIND', 'repo', repo, 'base', base, 'batch', batch_id, 'from_tip', from_tip, 'at', land_now_ms())
+  return 'OK'
+end)
+
+-- ns_unit_drop (4.1, L26): drops a unit at one head with a reason; an optional task kind (rebase)
+-- is queued once on q:<author>. A second drop at the same head is ALREADY and queues nothing; a
+-- drop naming a head the unit no longer has is STALE. ns_unit_eval re-offers it only on a new head.
+redis.register_function('ns_unit_drop', function(keys, args)
+  local S, unit, repo, base, head, reason, task = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
+  local ukey = 's:' .. S .. ':u:' .. unit
+  local u = redis.call('HMGET', ukey, 'state', 'head', 'drop_head', 'author', 'conflict_drops')
+  if not u[1] then return 'NOTFOUND' end
+  if u[1] == 'dropped' and u[3] == head then return 'ALREADY' end
+  if u[2] ~= head or u[1] == 'landed' or u[1] == 'landing' then return 'STALE' end
+  local seq = redis.call('INCR', 'rec:seq')
+  local now = land_now_ms()
+  local h8 = string.sub(head, 1, 8)
+  redis.call('HSET', ukey, 'state', 'dropped', 'drop_head', head, 'drop_key', h8 .. ':' .. tostring(seq),
+    'drop_reason', reason or '', 'batch', '')
+  if reason == 'conflict' then
+    local prev = u[5] or ''
+    local last = string.match(prev, '([^,]+)$') or ''
+    local cd = (last ~= '') and (last .. ',' .. now) or now
+    redis.call('HSET', ukey, 'conflict_drops', cd)
+  end
+  redis.call('ZREM', 's:' .. S .. ':landable:' .. repo .. ':' .. base, unit)
+  if task and task ~= '' and u[4] and u[4] ~= '' then
+    redis.call('XADD', 'q:' .. u[4], '*', 'kind', task, 'unit', unit, 'head', head, 'reason', reason or '',
+      'drop_key', h8 .. ':' .. tostring(seq))
+  end
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'DROP', 'repo', repo, 'base', base, 'unit', unit, 'head', head, 'reason', reason or '', 'at', now)
+  return 'OK'
 end)
 
 -- ns_gate_claim: claims a queued gate for one worker slot.
@@ -442,9 +573,8 @@ redis.register_function('ns_requeue', function(keys, args)
   return { 'OK', tostring(token), new_entry_id }
 end)
 
--- ns_batch_void: marks batch void, removes from chain, returns members to landable.
-redis.register_function('ns_batch_void', function(keys, args)
-  local S, repo, base, batch_id, reason = args[1], args[2], args[3], args[4], args[5]
+-- land_batch_void: marks one batch void, removes it from the chain, returns its members to landable.
+local function land_batch_void(S, repo, base, batch_id, reason)
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
   local now = land_now_ms()
   redis.call('HSET', bkey, 'state', 'void', 'reason', reason or '')
@@ -475,7 +605,31 @@ redis.register_function('ns_batch_void', function(keys, args)
     'reason', reason or '',
     'at', tostring(now)
   )
+end
+
+-- ns_batch_void: marks batch void, removes from chain, returns members to landable.
+redis.register_function('ns_batch_void', function(keys, args)
+  local S, repo, base, batch_id, reason = args[1], args[2], args[3], args[4], args[5]
+  land_batch_void(S, repo, base, batch_id, reason)
   return 'OK'
+end)
+
+-- ns_chain_void (4.3, L16): a red batch leaves the chain (its members stay batched for red-batch
+-- attribution, 6.1) and every batch behind it is voided in the same call, members back to landable
+-- for a re-plan on the new base. Returns the voided ids in chain order.
+redis.register_function('ns_chain_void', function(keys, args)
+  local S, repo, base, batch_id, reason = args[1], args[2], args[3], args[4], args[5]
+  local chain_key = 'land:' .. repo .. ':' .. base .. ':chain'
+  local seq = redis.call('ZSCORE', chain_key, batch_id)
+  if not seq then return { 'NOTFOUND' } end
+  local behind = redis.call('ZRANGEBYSCORE', chain_key, '(' .. seq, '+inf')
+  redis.call('ZREM', chain_key, batch_id)
+  local out = { 'OK' }
+  for _, id in ipairs(behind) do
+    land_batch_void(S, repo, base, id, (reason and reason ~= '') and reason or ('behind-red:' .. batch_id))
+    table.insert(out, id)
+  end
+  return out
 end)
 
 -- ns_land_intent: the linearization point (2.3).
