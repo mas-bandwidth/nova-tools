@@ -55,6 +55,11 @@ func fixtureWrapper() int {
 	if err != nil || len(os.Args) != 2 || os.Args[1] != l.Card() {
 		return 4
 	}
+	if l.Label == os.Getenv("NOVA_LAUNCH_TEST_REFUSE_LABEL") {
+		fixtureLaunchAck("REFUSED not dealt")
+		return 4
+	}
+	fixtureLaunchAck("LAUNCHED")
 	dir := os.Getenv("NOVA_LAUNCH_TEST_DIR")
 	name := filepath.Join(dir, fmt.Sprintf("%s.%s.%d", l.Sprint, l.Label, l.Attempt))
 	body := fmt.Sprintf("%d %s %s\n", os.Getpid(), l.Token, strings.Join(os.Args, " "))
@@ -67,6 +72,47 @@ func fixtureWrapper() int {
 	// A card that runs on: only a kill ends it before the test is long over.
 	time.Sleep(4 * testWait())
 	return 0
+}
+
+func fixtureLaunchAck(status string) {
+	fd, err := strconv.Atoi(os.Getenv(LaunchAckFDEnv))
+	if err != nil || fd < 3 {
+		return
+	}
+	f := os.NewFile(uintptr(fd), "fixture-launch-ack")
+	fmt.Fprintln(f, status)
+	_ = f.Close()
+}
+
+// TestLaunchReportsAWrapperRefusal is nova-tools #3351's launch receipt
+// regression. A process that forks but immediately refuses the dealt attempt
+// is not a started card and must not get a LAUNCHED line.
+func TestLaunchReportsAWrapperRefusal(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	t.Setenv("NOVA_LAUNCH_TEST_DIR", dir)
+	lines := fixtureLines(2)
+	t.Setenv("NOVA_LAUNCH_TEST_REFUSE_LABEL", lines[1].Label)
+	var in strings.Builder
+	for _, l := range lines {
+		in.WriteString(l.String() + "\n")
+	}
+	var out strings.Builder
+	res, err := Launch(strings.NewReader(in.String()), &out, Config{Wrapper: exe})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Started != 1 || res.Refused != 1 {
+		t.Fatalf("Launch = %+v, want started=1 refused=1; output %q", res, out.String())
+	}
+	if strings.Contains(out.String(), "LAUNCHED "+lines[1].Card()) ||
+		!strings.Contains(out.String(), "REFUSED line=2 wrapper "+lines[1].Card()) ||
+		!strings.Contains(out.String(), "LAUNCH started=1 refused=1") {
+		t.Fatalf("refused wrapper output is not truthful: %q", out.String())
+	}
 }
 
 // testWait is the poll bound, NOVA_TEST_WAIT or thirty seconds.

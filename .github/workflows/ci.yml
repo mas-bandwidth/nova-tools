@@ -1571,8 +1571,8 @@ jobs:
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    # 6 = 2x the measured max lisp job, 158 s (studio, run 36007928793, 2026-09-24; suite 62-77 s studio, 66-110+ s space)
-    timeout-minutes: 6
+    # 15 = 2x the measured max lisp job, 430 s (studio at load 50-70, runs 36011449625/36011918432: checkout 107-157 s, suite up to 110 s)
+    timeout-minutes: 15
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
