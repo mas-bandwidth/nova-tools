@@ -247,6 +247,20 @@ share one and there is no --number flag to pass. cut without --kind is unchanged
 example:
   nova-pulse cut --kind read --repo mas-bandwidth/nova-tools --pr 812 --head 5f544272a1b0 --out ./queue/pending --queue ./queue
 
+index builds the per-repo context index at a clone's HEAD (#2498 S2), run at each
+landing: spec ID -> paragraph, test -> covered files, symbol -> definition and
+guarding tests. Each index is a directory of FNV-32a hash buckets (about 64 keys
+each, the counts in <head>/HEAD), so a lookup reads the one bucket its key hashes
+to, never a scan. A build writes <out>/<head>/ whole, then renames the one-line
+<out>/CURRENT last, so a cut reads one complete head; a damaged bucket refuses the
+cut. It never deletes; older head directories stay. cut --kind ... --index <dir>
+inlines, for each spec ID the title or body names, the paragraph, the guarding
+test and the files it covers, under a CONTEXT line.
+
+example:
+  nova-pulse index --repo ./nova-tools --out ./index/nova-tools
+  nova-pulse cut --kind fix --repo mas-bandwidth/nova-tools --issue 2498 --title "..." --body-file issue.md --index ./index/nova-tools --out ./queue/pending --queue ./queue
+
 sweep walks the approvals ledger: every read verdict is a row in <queue>/ledger.tsv,
 and each sweep enqueues the approved, green, undrafted, unheld ones exactly once,
 marks a moved head stale, and closes a merged or closed PR. --source replays it
@@ -375,6 +389,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return cmdCut(rest, stdout, stderr)
 	case "ci":
 		return cmdCI(rest, stdout, stderr)
+	case "index":
+		return cmdIndex(rest, stdout, stderr)
 	case "harvest":
 		return cmdHarvest(rest, stdout, stderr, now)
 	case "beat":
