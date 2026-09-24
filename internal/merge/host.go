@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -239,7 +240,7 @@ type GH struct {
 	Timeout time.Duration
 	Runner  Runner
 	// CI is the injectable CI verdict source GH.Checks reads. NewGH sets it to
-	// RedisFromEnv (ci:<owner/repo>:<sha>); WithCISource overrides it. It is
+	// RedisFromEnv (ci:<owner/repo>:<head>:<gid>); WithCISource overrides it. It is
 	// never GitHub's check-runs.
 	CI CISource
 }
@@ -431,7 +432,7 @@ func decodeOpenPRs(out string) ([]RebasePR, error) {
 	return prs, nil
 }
 
-// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<sha>
+// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<head>:<gid>
 // (the injectable source) answers first; when it says nothing -- absent, no
 // verdict, or unreadable -- the commit's GitHub check-runs answer, and the
 // result's Source is "from-github". A missing record is not a verdict.
@@ -443,13 +444,13 @@ func (h *GH) Checks(oid string) (Checks, error) {
 		value, ok, err := h.CI.Read(h.Repo, oid)
 		switch {
 		case err != nil:
-			why = CIKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
+			why = civerdict.GIDsKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
 		case ok:
 			c := Checks{Source: CIFromRedis}
 			c.AddRun("ci", ciState(value), oid)
 			return c, nil
 		default:
-			why = CIKey(h.Repo, oid) + " absent"
+			why = civerdict.GIDsKey(h.Repo, oid) + " absent"
 		}
 	}
 	c, err := h.checkRuns(oid)

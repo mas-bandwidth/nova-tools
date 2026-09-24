@@ -292,11 +292,11 @@ func TestPreflightTwoSchedulersRed(t *testing.T) {
 			ReviewReady: []HeadRecord{{Repo: "r", PR: 7, Head: "abc1234"}, {Repo: "r", PR: 8, Head: "def5678", CICard: true}}},
 			true, []string{"r#7 at abc1234 has no ci card and no runner-only record"}},
 		{"a land-ready receipt that came from a check-run", FleetInput{
-			LandReady: []LandReceipt{{Repo: "r", PR: 9, Head: "0123abc", Source: "check-run:test (ubuntu-latest)"}, {Repo: "r", PR: 10, Head: "4567def", Source: "ci:r:4567def"}}},
+			LandReady: []LandReceipt{{Repo: "r", PR: 9, Head: "0123abc", Source: "check-run:test (ubuntu-latest)"}, {Repo: "r", PR: 10, Head: "4567def", Source: "ci:r:4567def:gid1"}}},
 			true, []string{"r#9 at 0123abc land-ready from check-run:test (ubuntu-latest)"}},
 		{"one scheduler, every receipt from the key", FleetInput{Profiles: linuxGo,
 			ReviewReady: []HeadRecord{{Repo: "r", PR: 8, Head: "def5678", RunnerOnly: true}},
-			LandReady:   []LandReceipt{{Repo: "r", PR: 10, Head: "4567def", Source: "ci:r:4567def"}}},
+			LandReady:   []LandReceipt{{Repo: "r", PR: 10, Head: "4567def", Source: "ci:r:4567def:gid1"}}},
 			false, nil},
 	}
 	for _, tc := range cases {

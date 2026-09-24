@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
@@ -522,11 +523,20 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 		prAuthor := prMap["author"]
 		landBarStr := prMap["land_bar"]
 
-		ciMap, err := client.HGetAll(ctx, fmt.Sprintf("ci:%s:%s", repo, head)).Result()
+		base := prMap["base"]
+		if base == "" {
+			base = cardMap["base"]
+		}
+		var ciMap map[string]string
+		if base != "" {
+			ciMap, err = civerdict.ReadHead(ctx, client, repo, head, base)
+		} else {
+			ciMap, err = civerdict.ReadHead(ctx, client, repo, head)
+		}
 		if err != nil {
 			continue
 		}
-		ciVerdict := ciMap["verdict"]
+		ciVerdict := civerdict.Of(ciMap)
 
 		dispMap, err := client.HGetAll(ctx, fmt.Sprintf("s:%s:disp:%s:%s", p.Sprint, repo, pr)).Result()
 		if err != nil {

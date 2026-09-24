@@ -2,7 +2,7 @@ package consume
 
 // runner_test.go is control 33 of #2756 (10.7, 10.8.3) as nova-tools #3040
 // rev 4 names it: the pr-to-read rule of `nova-sprint route` copies runner-only
-// check rows from ev:github into the one key ci:<repo>:<sha>, keeps the
+// check rows from ev:github into the GID key ci:<repo>:<head>:<gid>, keeps the
 // highest attempt key (gen, check_run_id, status rank, at) with rerequested
 // as the rank -1 sentinel of a new generation, and adopts once every sprint PR
 // no card produced. The store is a throwaway redis-server with the nova_sprint
@@ -15,12 +15,15 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
 )
@@ -48,6 +51,11 @@ func newC33(t *testing.T) *c33Fix {
 	seedSprint(t, client, c33Sprint)
 	ctx := context.Background()
 	must(t, client.HSet(ctx, "s:"+c33Sprint+":policy", "runner_rows", c33Rows).Err())
+	must(t, client.HSet(ctx, civerdict.PolicyKey(c33Short, "dev"), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1").Err())
+	must(t, client.HSet(ctx, civerdict.TipKey(c33Short, "dev"), "sha", c33Head).Err())
+	// The check_runs name PR 7; its sprint record names the base the runner
+	// rows resolve their gid from (it is not in s:<S>:prs, so nothing adopts it).
+	must(t, client.HSet(ctx, fmt.Sprintf("s:%s:pr:%s:7", c33Sprint, c33Short), "head", c33Head, "base", "dev").Err())
 	f := &c33Fix{t: t, ctx: ctx, client: client, out: &bytes.Buffer{}}
 	f.rule = &PRToReadRule{Store: st, Sprint: c33Sprint, Consumer: "c33-route", Out: f.out,
 		Block: -1, Actor: "route",
@@ -89,9 +97,12 @@ func (f *c33Fix) apply(id, name, action, status, conclusion, at string) string {
 	return ""
 }
 
+// ci is the runner rows at the gid the lander expects for base dev at its tip.
 func (f *c33Fix) ci() map[string]string {
 	f.t.Helper()
-	m, err := f.client.HGetAll(f.ctx, "ci:"+c33Short+":"+c33Head).Result()
+	gid, err := civerdict.Expected(f.ctx, f.client, c33Short, "dev", c33Head)
+	must(f.t, err)
+	m, err := f.client.HGetAll(f.ctx, civerdict.RunnersKey(c33Short, c33Head, gid)).Result()
 	must(f.t, err)
 	return m
 }
@@ -100,7 +111,7 @@ func (f *c33Fix) attempt(row string) RunnerAttempt {
 	f.t.Helper()
 	a, ok := ReadRunnerAttempt(f.ci(), row)
 	if !ok {
-		f.t.Fatalf("ci:%s:%s has no runner:%s", c33Short, c33Head, row)
+		f.t.Fatalf("ci for %s@%s has no runner:%s", c33Short, c33Head, row)
 	}
 	return a
 }
@@ -208,8 +219,12 @@ func TestControl33PrToRead(t *testing.T) {
 		}
 		keys, err := f.client.Keys(f.ctx, "ci:*").Result()
 		must(t, err)
-		if !reflect.DeepEqual(keys, []string{"ci:" + c33Short + ":" + c33Head}) {
-			t.Fatalf("ci keys %v, want the one key ci:%s:%s", keys, c33Short, c33Head)
+		sort.Strings(keys)
+		expGID := civerdict.GID("single", "dev", c33Head, "req1", "pol1", "run1")
+		// Only the runners key: never the write-once receipt or its gids set.
+		wantKeys := []string{"ci:" + c33Short + ":" + c33Head + ":" + expGID + ":runners"}
+		if !reflect.DeepEqual(keys, wantKeys) {
+			t.Fatalf("ci keys %v, want %v", keys, wantKeys)
 		}
 		// RunnerReady reads only the ci record it is handed.
 		if ok, missing := RunnerReady(map[string]string{}, []string{"windows"}); ok || !reflect.DeepEqual(missing, []string{"windows"}) {
@@ -235,8 +250,8 @@ func TestControl33PrToRead(t *testing.T) {
 		if strings.Contains(out, "RUNNER") {
 			t.Fatalf("a check not in runner_rows printed %q", out)
 		}
-		if n, _ := f.client.Exists(f.ctx, "ci:"+c33Short+":"+c33Head).Result(); n != 0 {
-			t.Fatalf("a check not in runner_rows wrote ci:%s:%s: %v", c33Short, c33Head, f.ci())
+		if keys, _ := f.client.Keys(f.ctx, "ci:*").Result(); len(keys) != 0 {
+			t.Fatalf("a check not in runner_rows wrote ci keys: %v", keys)
 		}
 		if p := f.pending(); p != 0 {
 			t.Fatalf("pending %d after the pass, want 0", p)
@@ -333,8 +348,9 @@ func TestControl33PrToRead(t *testing.T) {
 		rt := &roundTrips{}
 		f.client.AddHook(rt)
 		out := f.pass()
-		// The XREADGROUP that returned the five entries, then exactly two
-		// round trips, then the next XREADGROUP.
+		// The XREADGROUP that returned the five entries, then exactly four
+		// round trips (the PR's base, the base's tip and policy, the FCALLs,
+		// the XACK), then the next XREADGROUP.
 		at := -1
 		for i, trip := range rt.trips {
 			if len(trip) != 1 || trip[0].Name() != "xreadgroup" {
@@ -345,10 +361,16 @@ func TestControl33PrToRead(t *testing.T) {
 				break
 			}
 		}
-		if at < 0 || at+3 >= len(rt.trips) {
-			t.Fatalf("no XREADGROUP returned the 5 entries followed by 3 round trips: %d trips", len(rt.trips))
+		if at < 0 || at+5 >= len(rt.trips) {
+			t.Fatalf("no XREADGROUP returned the 5 entries followed by 5 round trips: %d trips", len(rt.trips))
 		}
-		pipe, ack, next := rt.trips[at+1], rt.trips[at+2], rt.trips[at+3]
+		bases, pols, pipe, ack, next := rt.trips[at+1], rt.trips[at+2], rt.trips[at+3], rt.trips[at+4], rt.trips[at+5]
+		if len(bases) != 1 || bases[0].Name() != "hget" || fmt.Sprint(bases[0].Args()[1]) != "s:"+c33Sprint+":pr:"+c33Short+":7" {
+			t.Fatalf("first round trip after the read is %v, want one HGET of PR 7's base (three rows, one PR)", bases)
+		}
+		if len(pols) != 2 || pols[0].Name() != "hget" || pols[1].Name() != "hmget" {
+			t.Fatalf("second round trip after the read is %v, want the base's tip and policy in one pipeline", pols)
+		}
 		if len(pipe) != 3 {
 			t.Fatalf("round trip after the read has %d commands, want one pipeline of 3 FCALLs", len(pipe))
 		}
@@ -551,14 +573,15 @@ func TestJoinPRToRead(t *testing.T) {
 // TestStoreCICut: the cut route wires (Stella's hold 5 on #3532, Rowan's
 // hold 4 item 2). A branch base resolves through land:<repo>:<base>:tip; with
 // no tip the adoption WAITs (no tasks, no adopt record), so the same head
-// adopts with cut=1 once the tip is recorded; a CREATED cut keeps the runner
-// rows already on ci:<repo>:<head>.
+// adopts with cut=1 once the tip is recorded; the cut writes only the card, so
+// the runner rows at ci:<repo>:<head>:<gid>:runners are untouched.
 func TestStoreCICut(t *testing.T) {
 	f := newC33(t)
 	f.rule.CICut = StoreCICut(f.rule.Store, "route")
 	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":desired", "slots", "4", "paused", "0", "legs", "go").Err())
 	must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":policy", "readers", "1").Err())
 
+	must(t, f.client.Del(f.ctx, civerdict.TipKey(c33Short, "dev")).Err())
 	head := f.seedPR(7, "ctl-a", "false", "opened")
 	akey := "s:" + c33Sprint + ":adopt:" + c33Short + ":7"
 	for i := 0; i < 2; i++ {
@@ -576,21 +599,25 @@ func TestStoreCICut(t *testing.T) {
 
 	tip := strings.Repeat("b", 40)
 	must(t, f.client.HSet(f.ctx, "land:"+c33Short+":dev:tip", "sha", tip).Err())
-	rec := "ci:" + c33Short + ":" + head
-	must(t, f.client.HSet(f.ctx, rec, "runner:windows", `{"status":"completed"}`).Err())
+	gid, err := civerdict.Expected(f.ctx, f.client, c33Short, "dev", tip)
+	must(t, err)
+	runners := civerdict.RunnersKey(c33Short, head, gid)
+	must(t, f.client.HSet(f.ctx, runners, "runner:windows", `{"status":"completed"}`).Err())
 	out := f.pass()
 	if !strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=1", c33Short, head[:12])) || strings.Contains(out, "WAIT") {
 		t.Fatalf("tip set: pass printed %q, want ADOPT cut=1 at the same head", out)
 	}
-	got, err := f.client.HGetAll(f.ctx, rec).Result()
+	card, err := f.client.HMGet(f.ctx, "s:"+c33Sprint+":card:ci-7-"+head[:8], "state", "verdict", "base", "base_sha").Result()
 	must(t, err)
-	if got["verdict"] != "PENDING" || got["base"] != tip || got["runner:windows"] != `{"status":"completed"}` {
-		t.Fatalf("ci record %v, want PENDING at base %s with runner:windows kept", got, tip)
+	if card[0] != "queued" || card[1] != "PENDING" || card[2] != "dev" || card[3] != tip {
+		t.Fatalf("ci card state/verdict/base/base_sha = %v, want queued PENDING dev %s", card, tip)
 	}
-	card, err := f.client.HGet(f.ctx, "s:"+c33Sprint+":card:ci-7-"+head[:8], "state").Result()
-	must(t, err)
-	if card != "queued" {
-		t.Fatalf("ci card state %q, want queued", card)
+	// The cut writes only the card: the runner rows stay, no receipt appears.
+	if got, _ := f.client.HGet(f.ctx, runners, "runner:windows").Result(); got != `{"status":"completed"}` {
+		t.Fatalf("runner:windows after the cut = %q, want kept", got)
+	}
+	if n, _ := f.client.Exists(f.ctx, civerdict.Key(c33Short, head, gid), civerdict.GIDsKey(c33Short, head)).Result(); n != 0 {
+		t.Fatalf("the cut wrote %d receipt keys for %s, want 0", n, head[:8])
 	}
 	if cutAt, err := f.client.HGet(f.ctx, akey, "cut_at").Result(); err != nil || cutAt == "" {
 		t.Fatalf("adopt record cut_at %q err %v, want set", cutAt, err)
@@ -650,4 +677,132 @@ func TestPRToReadAdoptRechecksLive(t *testing.T) {
 	if n := len(f.tasks()); n != 1 {
 		t.Fatalf("after OK: %d tasks, want 1", n)
 	}
+}
+
+// TestRunnerRowThenCIEndWritesVerdict: Rowan's hold 5 item 1 on #3495. A
+// runner row arrives when the PR is pushed, before the ci card ends; it must
+// not occupy the write-once receipt ci:<repo>:<head>:<gid>, or ns_ci_end
+// answers ALREADY and the head never gets a verdict.
+func TestRunnerRowThenCIEndWritesVerdict(t *testing.T) {
+	f := newC33(t)
+	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":desired", "slots", "4", "paused", "0", "legs", "go").Err())
+	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":beat", "host", ctlBench, "at", "1").Err())
+	f.apply("901", "windows", "completed", "completed", "success", "2026-09-24T20:00:01Z")
+
+	st := f.rule.Store
+	res, err := ci.Cut(f.ctx, st, ci.CutRequest{Sprint: c33Sprint, Repo: c33Short, PR: 7, Head: c33Head,
+		Base: c33Head, BaseRef: "dev", Actor: "ctl"})
+	if err != nil || res.Status != "CREATED" {
+		t.Fatalf("ci cut: %v %v", res, err)
+	}
+	label := ci.Label(7, c33Head)
+	card := "s:" + c33Sprint + ":card:" + label
+	vals, err := f.client.HMGet(f.ctx, card, "attempt", "base_sha").Result()
+	must(t, err)
+	attempt, _ := vals[0].(string)
+	baseSHA, _ := vals[1].(string)
+	identity := fmt.Sprintf("%s/%s/%s/%s/%s", c33Sprint, label, baseSHA, ctlBench, attempt)
+	token := attempt + ".0123456789abcdef0123456789abcdef"
+	must(t, f.client.HSet(f.ctx, card, "state", "dealt", "bench", ctlBench, "identity", identity, "token", token, "token_sha", "abcdefabcdef").Err())
+	must(t, f.client.SMove(f.ctx, "s:"+c33Sprint+":idx:card:queued", "s:"+c33Sprint+":idx:card:dealt", label).Err())
+
+	end, err := ci.End(f.ctx, st, ci.EndRecord{Sprint: c33Sprint, Label: label, Token: token, Identity: identity,
+		Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper"})
+	if err != nil || end.Status != "ENDED" || end.Detail != "OK" {
+		t.Fatalf("ci end after a runner row = %v %v, want ENDED OK (not ALREADY)", end, err)
+	}
+	rec, err := civerdict.ReadHead(f.ctx, f.client, c33Short, c33Head, "dev")
+	must(t, err)
+	if civerdict.Of(rec) != civerdict.OK {
+		t.Fatalf("ReadHead after runner row and ci end = %v, want verdict OK", rec)
+	}
+	if got := RunnerRow(f.ci(), "windows"); got != RunnerStateReady {
+		t.Fatalf("runner:windows after ci end is %s, want READY", got)
+	}
+}
+
+// TestRunnerRowsResolveTheirBase: Rowan's hold 5 item 2 on #3495. A runner row
+// takes its base from the PR's sprint record and its gid from that base's tip
+// and policy; a stream-branch PR lands under its own base, and a missing PR
+// record, policy or tip refuses (NOBASE, NOPOLICY) and writes nothing, never
+// a row under a made-up identity (base dev, pol1/req1/run1, base_sha=head).
+func TestRunnerRowsResolveTheirBase(t *testing.T) {
+	const stream, head8x = "stream-x", "8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa"
+	publish := func(f *c33Fix, number string) string {
+		t.Helper()
+		_, err := ghevent.Publish(f.ctx, f.client, ghevent.Entry{Repo: c33Repo, Kind: "check_run", Number: number,
+			Head: head8x, Action: "completed", At: "2026-09-24T21:00:00Z", Sender: "github-actions",
+			Check: "windows", CheckRunID: "800", Status: "completed", Conclusion: "success"})
+		must(t, err)
+		out := f.pass()
+		if p := f.pending(); p != 0 {
+			t.Fatalf("pending %d after the pass, want 0", p)
+		}
+		return out
+	}
+	ciKeys := func(f *c33Fix) []string {
+		t.Helper()
+		keys, err := f.client.Keys(f.ctx, "ci:*:"+head8x+"*").Result()
+		must(t, err)
+		return keys
+	}
+	prKey := "s:" + c33Sprint + ":pr:" + c33Short + ":8"
+	streamTip := strings.Repeat("c", 40)
+
+	t.Run("stream_base", func(t *testing.T) {
+		f := newC33(t)
+		must(t, f.client.HSet(f.ctx, prKey, "head", head8x, "base", stream).Err())
+		must(t, f.client.HSet(f.ctx, civerdict.TipKey(c33Short, stream), "sha", streamTip).Err())
+		must(t, f.client.HSet(f.ctx, civerdict.PolicyKey(c33Short, stream), "policy_id", "polS", "required_set_id", "reqS", "runner_id", "runS").Err())
+		if out := publish(f, "8"); !strings.Contains(out, "RUNNER "+c33Short+"@8888aaaa windows g0/800 completed/success REPLACED") {
+			t.Fatalf("pass printed %q, want the RUNNER line", out)
+		}
+		want := civerdict.RunnersKey(c33Short, head8x, civerdict.GID("single", stream, streamTip, "reqS", "polS", "runS"))
+		if keys := ciKeys(f); !reflect.DeepEqual(keys, []string{want}) {
+			t.Fatalf("ci keys %v, want only %s (the stream base's identity)", keys, want)
+		}
+	})
+	t.Run("no_pr_record", func(t *testing.T) {
+		f := newC33(t)
+		if out := publish(f, "8"); !strings.Contains(out, "NOBASE "+c33Short+"@8888aaaa windows") || strings.Contains(out, "RUNNER") {
+			t.Fatalf("pass printed %q, want NOBASE and no RUNNER", out)
+		}
+		if keys := ciKeys(f); len(keys) != 0 {
+			t.Fatalf("no PR record wrote %v", keys)
+		}
+	})
+	t.Run("no_policy", func(t *testing.T) {
+		f := newC33(t)
+		must(t, f.client.HSet(f.ctx, prKey, "head", head8x, "base", stream).Err())
+		must(t, f.client.HSet(f.ctx, civerdict.TipKey(c33Short, stream), "sha", streamTip).Err())
+		if out := publish(f, "8"); !strings.Contains(out, "NOPOLICY "+c33Short+"@8888aaaa windows "+civerdict.PolicyKey(c33Short, stream)) {
+			t.Fatalf("pass printed %q, want NOPOLICY naming %s", out, civerdict.PolicyKey(c33Short, stream))
+		}
+		if keys := ciKeys(f); len(keys) != 0 {
+			t.Fatalf("no policy wrote %v", keys)
+		}
+	})
+	t.Run("no_tip", func(t *testing.T) {
+		f := newC33(t)
+		must(t, f.client.HSet(f.ctx, prKey, "head", head8x, "base", stream).Err())
+		must(t, f.client.HSet(f.ctx, civerdict.PolicyKey(c33Short, stream), "policy_id", "polS", "required_set_id", "reqS", "runner_id", "runS").Err())
+		if out := publish(f, "8"); !strings.Contains(out, "NOPOLICY "+c33Short+"@8888aaaa windows no tip in "+civerdict.TipKey(c33Short, stream)) {
+			t.Fatalf("pass printed %q, want NOPOLICY no tip", out)
+		}
+		if keys := ciKeys(f); len(keys) != 0 {
+			t.Fatalf("no tip wrote %v", keys)
+		}
+	})
+	t.Run("function_refuses_a_receipt_key", func(t *testing.T) {
+		f := newC33(t)
+		gid := civerdict.GID("single", "dev", c33Head, "req1", "pol1", "run1")
+		err := f.client.FCall(f.ctx, FunctionPRToReadRunner, []string{civerdict.Key(c33Short, head8x, gid)}, "windows",
+			`{"check_run_id":"1","action":"completed","status":"completed","conclusion":"success","at":"x"}`).Err()
+		if err == nil || !strings.Contains(err.Error(), ":runners") {
+			t.Fatalf("FCALL on the receipt key = %v, want a refusal naming :runners", err)
+		}
+		if keys := ciKeys(f); len(keys) != 0 {
+			t.Fatalf("a refused call wrote %v", keys)
+		}
+	})
 }

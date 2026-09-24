@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 )
 
 // The control-35 fixture (#2756 v6 section 8, control 35; nova-tools #3106):
@@ -28,7 +29,11 @@ func control35(t *testing.T) *miniredis.Miniredis {
 		"mergeable", "MERGEABLE", "stack_parent", "none", "land_bar", "8",
 		"reads_ok", "1", "holds_open", "1", "state", "reading",
 		"latest_comment_id", "501", "latest_record_id", "1790000000000-0")
-	mr.HSet("ci:nova-tools:"+c35Head, "verdict", "OK", "head", c35Head)
+	mr.HSet(civerdict.PolicyKey("nova-tools", "dev"), "policy_id", "pol1", "required_set_id", "req1", "runner_id", "run1")
+	mr.HSet("land:nova-tools:dev:tip", "sha", c35Head)
+	gid := civerdict.GID("single", "dev", c35Head, "req1", "pol1", "run1")
+	mr.HSet(civerdict.Key("nova-tools", c35Head, gid), "verdict", "OK", "head", c35Head)
+	mr.SAdd(civerdict.GIDsKey("nova-tools", c35Head), gid)
 	mr.HSet("s:"+c35Sprint+":disp:nova-tools:3200",
 		"stella@"+c35Head, "APPROVE 9 comment-501 501",
 		"emma@"+c35Old, "HOLD 4 comment-400 400")
@@ -110,7 +115,9 @@ func TestWhyNamesAStaleEvaluation(t *testing.T) {
 
 func TestWhyMissingIsNeverSuccess(t *testing.T) {
 	mr := control35(t)
-	mr.Del("ci:nova-tools:" + c35Head)
+	gid := civerdict.GID("single", "dev", c35Head, "req1", "pol1", "run1")
+	mr.Del(civerdict.Key("nova-tools", c35Head, gid))
+	mr.Del(civerdict.GIDsKey("nova-tools", c35Head))
 	mr.HDel("s:"+c35Sprint+":pr:nova-tools:3200", "draft")
 	out := why(t, mr)
 	mustLine(t, out, "ci MISSING@4139b79f")

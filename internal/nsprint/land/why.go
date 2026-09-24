@@ -15,7 +15,8 @@ type PR struct {
 	ID          ID
 	Sprint      string
 	Fields      map[string]string // s:<S>:pr:<repo>:<n>; empty when the record is absent
-	CI          map[string]string // ci:<repo>:<head>
+	CI          map[string]string // ci:<repo>:<head>:<gid>
+	CIGIDs      []string          // members of ci:<repo>:<head>:gids
 	Reads       []Read
 	Holds       []Hold
 	Friends     map[string]FriendState
@@ -40,7 +41,11 @@ func Why(p *PR, now time.Time) []string {
 	// ci
 	verdict := civerdict.Of(p.CI)
 	if verdict == "" {
-		verdict = civerdict.Missing
+		if len(p.CIGIDs) > 0 {
+			verdict = "stale"
+		} else {
+			verdict = civerdict.Missing
+		}
 	}
 	lines = append(lines, fmt.Sprintf("ci %s@%s", verdict, short(head)))
 	if !civerdict.Green(verdict) || head == "" {

@@ -3,7 +3,8 @@
 -- header. The file is one do-block so its locals never add to the shared
 -- chunk's local count.
 --
--- ns_prtoread_runner keeps, in ci:<repo>:<sha> field runner:<row>, the
+-- ns_prtoread_runner keeps, in ci:<repo>:<head>:<gid>:runners field
+-- runner:<row>, the
 -- attempt with the highest key (gen, check_run_id, status_rank, at), whatever
 -- its conclusion; status_rank is rerequested=-1 < queued=0 < in_progress=1 <
 -- completed=2. A rerequested entry opens a new generation (the sentinel
@@ -70,8 +71,12 @@ do
     return tostring(v)
   end
 
-  -- ns_prtoread_runner KEYS[1]=ci:<repo>:<sha> ARGV row attempt_json
-  -- attempt_json: {check_run_id, action, status, conclusion, at}.
+  -- ns_prtoread_runner KEYS[1]=ci:<repo>:<head>:<gid>:runners ARGV row
+  -- attempt_json; attempt_json: {check_run_id, action, status, conclusion, at}.
+  -- The caller resolves the gid (civerdict.ExpectedFrom over the PR's base,
+  -- the base tip and the base policy) and refuses when any is missing; this
+  -- function writes only KEYS[1]. The rows are mutable, so they never share
+  -- the write-once receipt ci:<repo>:<head>:<gid> (gate_receipt_write).
   -- Reply: { verdict, gen, check_run_id, status, conclusion } where verdict is
   -- REPLACED, RERUN or KEPT; for a KEPT entry the gen is the one it was
   -- placed in and the rest are the entry's own.
@@ -86,6 +91,11 @@ do
     if id == '' then
       return redis.error_reply('ERR ns_prtoread_runner: attempt has no check_run_id')
     end
+
+    if not string.match(key, '^ci:[^:]+:[^:]+:[0-9a-f]+:runners$') then
+      return redis.error_reply('ERR ns_prtoread_runner: key is not ci:<repo>:<head>:<gid>:runners')
+    end
+
     local field = 'runner:' .. row
     local s = nil
     local cur = redis.call('HGET', key, field)

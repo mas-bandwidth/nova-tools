@@ -8,6 +8,8 @@ do
 -- Keys 2.2, fences and intent cut 2.3, events 2.2/7.7.
 -- Every lua/ file shares one chunk, so locals carry a land_ prefix.
 
+-- From ci.lua through NS (loader.go: each file is its own do-block).
+local ci_sha256_hex, gate_receipt_write = NS.ci.sha256_hex, NS.ci.gate_receipt_write
 -- cap_budget_take and cap_budget_give are capacity.lua's (it sorts before
 -- this file), handed over through NS.capacity.
 local cap_budget_take, cap_budget_give = NS.capacity.cap_budget_take, NS.capacity.cap_budget_give
@@ -17,48 +19,6 @@ local function land_now_ms()
   return string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))
 end
 
--- gate_receipt_write (3.7): writes the write-once single or tip gid receipt.
--- ci:<repo>:<head>:<gid> and ci:<repo>:<base>:tip:<tip>:<gid>.
-local function gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test, at)
-  local ckey = 'ci:' .. repo .. ':' .. head .. ':' .. gid
-  if redis.call('EXISTS', ckey) == 1 then
-    return 'ALREADY'
-  end
-  at = at or land_now_ms()
-  redis.call('HSET', ckey,
-    'verdict', verdict,
-    'kind', kind,
-    'base', base,
-    'base_sha', base_sha,
-    'required_set_id', required_set_id,
-    'policy_id', policy_id,
-    'runner_id', runner_id,
-    'receipt', receipt,
-    'bench', bench or '',
-    'pkg', pkg or '',
-    'test', test or '',
-    'at', tostring(at)
-  )
-  redis.call('SADD', 'ci:' .. repo .. ':' .. head .. ':gids', gid)
-  if kind == 'tip' then
-    local tip_key = 'ci:' .. repo .. ':' .. base .. ':tip:' .. base_sha .. ':' .. gid
-    redis.call('HSET', tip_key,
-      'verdict', verdict,
-      'kind', kind,
-      'base', base,
-      'base_sha', base_sha,
-      'required_set_id', required_set_id,
-      'policy_id', policy_id,
-      'runner_id', runner_id,
-      'receipt', receipt,
-      'bench', bench or '',
-      'pkg', pkg or '',
-      'test', test or '',
-      'at', tostring(at)
-    )
-  end
-  return 'OK'
-end
 
 redis.register_function('ns_gate_receipt_write', function(keys, args)
   local repo, head, gid, verdict = args[1], args[2], args[3], args[4]
@@ -828,7 +788,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   local failing, flaky_rerun, core_s = args[14], args[15], args[16]
 
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
-  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'slot')
+  local b = redis.call('HMGET', bkey, 'attempt', 'token', 'state', 'entry_id', 'from_tip', 'class', 'members', 'slot')
   if not b[1] then return 'NOTFOUND' end
   if b[1] ~= tostring(attempt) or b[2] ~= tostring(token) then return 'STALE' end
 
@@ -858,6 +818,47 @@ redis.register_function('ns_gate_receipt', function(keys, args)
     'at', tostring(now)
   )
 
+  -- The gid receipt's kind is the batch's shape (#3139 3.3, 5.4, 8.4): the
+  -- selector's class for a ci single and a tip gate is full, so a full batch
+  -- of exactly one member is a single (its head, on from_tip) and a full batch
+  -- with no members is a tip gate (from_tip itself). Any other batch is a
+  -- train and writes no gid receipt. No field is filled with a default: a
+  -- gate with no from_tip writes none either.
+  local class, members, from_tip = b[6] or '', b[7] or '', b[5] or ''
+  local kind, head = nil, ''
+  if class == 'full' and from_tip ~= '' then
+    if members == '' then
+      kind, head = 'tip', from_tip
+    elseif not string.find(members, ',') then
+      kind, head = 'single', string.match(members, '^[^@]+@([^@,]+)$') or ''
+    end
+  end
+
+  if kind and head ~= '' then
+    local base_sha = from_tip
+    local pol_key = 'land:' .. repo .. ':' .. base .. ':policy'
+    local pol = redis.call('HMGET', pol_key, 'policy_id', 'required_set_id', 'runner_id')
+    local policy_id, required_set_id, runner_id = pol[1], pol[2], pol[3]
+    if policy_id and policy_id ~= '' and required_set_id and required_set_id ~= '' and runner_id and runner_id ~= '' and head ~= '' then
+      local raw = 'kind=' .. kind .. ',' .. base .. ',' .. base_sha .. ',' .. required_set_id .. ',' .. policy_id .. ',' .. runner_id
+      local gid = string.sub(ci_sha256_hex(raw), 1, 16)
+      local gverdict = 'FAIL'
+      if string.upper(verdict or '') == 'GREEN' or string.upper(verdict or '') == 'OK' then
+        gverdict = 'OK'
+      end
+      local pkg, test = '', ''
+      if failing and failing ~= '' then
+        local p, t = string.match(failing, '^([^%s]+)%s+(.+)$')
+        if p and t then
+          pkg, test = p, t
+        else
+          pkg = failing
+        end
+      end
+      gate_receipt_write(repo, head, gid, gverdict, kind, base, base_sha, required_set_id, policy_id, runner_id, rkey, bench or '', pkg, test, now)
+    end
+  end
+
   local new_st = string.lower(verdict)
   redis.call('HSET', bkey, 'state', new_st, 'receipt', rkey, 'train_head', train_head or '', 'train_tree', train_tree or '')
 
@@ -866,7 +867,7 @@ redis.register_function('ns_gate_receipt', function(keys, args)
   end
 
   -- Return budget debit for this slot
-  local slot = b[6]
+  local slot = b[8]
   if bench and bench ~= '' and slot and slot ~= '' then
     local m = redis.call('HGET', 'bench:' .. bench .. ':desired', 'machine')
     if not m or m == '' then m = redis.call('HGET', 'bench:' .. bench .. ':land', 'machine') end

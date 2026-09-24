@@ -8,6 +8,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -88,19 +89,13 @@ func ReadCIxy(ctx context.Context, st *store.Store, sprint string) (CIxy, error)
 			pairs = append(pairs, p)
 		}
 	}
-	recReads := make([]store.HashRead, len(pairs))
-	for i, p := range pairs {
-		recReads[i] = store.HashRead{Key: "ci:" + p.repo + ":" + p.head, Fields: []string{"verdict", "base"}}
-	}
-	recs, err := st.PipelineHMGet(ctx, recReads)
-	if err != nil {
-		return CIxy{}, err
-	}
 	xy := CIxy{Required: len(pairs)}
-	for i, p := range pairs {
-		// The key is per head; the base binding is in the record, and a
-		// verdict for this head on another base is not this pair's (10.3).
-		if str(recs[i][0]) == "OK" && str(recs[i][1]) == p.base {
+	for _, p := range pairs {
+		fields, err := civerdict.ReadHead(ctx, client, p.repo, p.head, p.base)
+		if err != nil {
+			return CIxy{}, err
+		}
+		if civerdict.Green(civerdict.Of(fields)) && fields["base"] == p.base {
 			xy.OK++
 		}
 	}
