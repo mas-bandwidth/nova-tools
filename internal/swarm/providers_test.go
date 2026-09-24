@@ -171,6 +171,16 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 		}
 	})
 
+	// Unsupported GOOS values return an error rather than falling back to Linux.
+	t.Run("unsupported-goos", func(t *testing.T) {
+		for _, unsupported := range []string{"windows", "freebsd", "openbsd", "netbsd", "plan9", "solaris", "unknown"} {
+			argv, err := LaunchArgv(providers[0].Name, unsupported)
+			if err == nil {
+				t.Errorf("LaunchArgv(%q, %q) returned argv %v with no error; want error for unsupported GOOS", providers[0].Name, unsupported, argv)
+			}
+		}
+	})
+
 	// Every provider in the table is actually reachable.
 	t.Run("table-not-empty", func(t *testing.T) {
 		if len(providers) == 0 {

@@ -84,9 +84,14 @@ func LaunchArgv(provider, goos string) ([]string, error) {
 		return nil, fmt.Errorf("unknown provider %q", provider)
 	}
 
-	harness := entry.LinuxHarness
-	if goos == "darwin" {
+	var harness string
+	switch goos {
+	case "darwin":
 		harness = entry.DarwinHarness
+	case "linux":
+		harness = entry.LinuxHarness
+	default:
+		return nil, fmt.Errorf("unsupported GOOS %q", goos)
 	}
 
 	argv := make([]string, len(entry.HarnessArgs))
