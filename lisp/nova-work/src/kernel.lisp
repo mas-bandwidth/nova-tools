@@ -246,13 +246,16 @@ reason or evidence; done/deferred leave only via reopen, never state.")
                     (not (and (stringp reason) (plusp (length reason))))
                     (or (absentp evidence) (null evidence)))
            (return-from %validate (values 10 "unknown to doing requires evidence or a reason"))))
-       ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
-       ;; dependent: a node with a need that is not terminal accepted cannot be
-       ;; taken into doing, and the refusal names the blocking node.
-       (let ((blocker (%dependency-blocker state id)))
-         (when blocker
-           (return-from %validate
-             (values 10 (format nil "~A needs ~A, which is not settled" id blocker))))))
+        ;; SPEC-WORK.md:1885,2110 -- an unmet dependency gate blocks the
+        ;; dependent: a node with a need that is not terminal accepted cannot be
+        ;; taken into doing, and the refusal names the blocking node.
+        ;; SPEC-WORK.md:4869 (rule 3): the refusal says "unmet need <id> <reason>"
+        ;; with no rule number.
+        (multiple-value-bind (blocker reason) (%dependency-blocker-with-reason state id)
+          (when blocker
+            (return-from %validate
+              (values 0 (format nil "unmet need ~A ~A"
+                                blocker (string-downcase (symbol-name reason))))))))
       (:state-to-done
        (unless (eq :o (wnode-branch node))
          (return-from %validate (values 10 (format nil "~A is in C" id))))
@@ -468,13 +471,17 @@ command loop is a defect)."
                  (values nil (format nil "~A FAIL request=~A: reused with a different payload"
                                      word rid)
                          1 nil))))))
-      ;; Validate against the current state as it would be with the event applied.
-      (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
-        (when rule
-          (return-from %submit
-            (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
-                                word (work-event-node requester) rule reason)
-                    1 nil))))
+       ;; Validate against the current state as it would be with the event applied.
+       (multiple-value-bind (rule reason) (%validate (kernel-state kernel) verb requester)
+         (when rule
+           (return-from %submit
+             (if (zerop rule)
+                 (values nil (format nil "~A FAIL node=~A: ~A"
+                                     word (work-event-node requester) reason)
+                         1 nil)
+                 (values nil (format nil "~A FAIL node=~A: rule ~D: ~A"
+                                     word (work-event-node requester) rule reason)
+                         1 nil)))))
       (let* ((before-state (node-state (kernel-state kernel) (work-event-node requester)))
              (session (unless (eq verb :state-to-doing)
                         (%session-event kernel verb requester)))

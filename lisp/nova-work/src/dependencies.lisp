@@ -33,6 +33,49 @@ blocks the dependent, and the refusal names the blocker."
          (find-if-not (lambda (dep) (%need-terminal-p state dep))
                       (wnode-deps n)))))
 
+(defun %need-met-recorded-p (state id)
+  "The recorded half of whether a need is met, with a reason token when it is not.
+Answers (values MET-P REASON). Uses only the tree and closed index, no
+verification cache. This is the write-path predicate rule 3's gate uses at
+admission verbs (SPEC-WORK.md:4869)."
+  (let ((n (%node-quiet state id)))
+    (cond
+      ((null n) (values nil :need-unavailable))
+      ((%need-closed-unaccepted-p state id) (values nil :need-closed-unaccepted))
+      ((eq :o (wnode-branch n))
+       (values nil (if (%need-revived-p state id) :need-reverted :need-open)))
+      (t (let ((row (%need-settle-row state id)))
+           (cond
+             ((null row) (values nil :need-unavailable))
+             ((not (eq (getf row :disposition) :done)) (values nil :need-unverified))
+             ((%need-container-p n)
+              (%need-container-recorded-p state n))
+             (t (values t nil))))))))
+
+(defun %need-container-recorded-p (state container-node)
+  "The container clause of %need-met-recorded-p: met when every direct required
+member is met, unmet otherwise. Answers (values MET-P REASON)."
+  (let ((members (%need-required-members state container-node)))
+    (if (null members)
+        (values nil :need-open)
+        (block container-check
+          (dolist (m members (values t nil))
+            (multiple-value-bind (met reason) (%need-met-recorded-p state m)
+              (unless met
+                (return-from container-check (values nil reason)))))))))
+
+(defun %dependency-blocker-with-reason (state id)
+  "The first need of ID that is not terminal accepted and its reason token, or
+NIL when every need is settled. Answers (values NEED-ID REASON). The reason
+is one of *NEEDS-REASONS*, derived from the recorded half only."
+  (let ((n (%node-quiet state id)))
+    (unless n (return-from %dependency-blocker-with-reason (values nil nil)))
+    (dolist (dep (wnode-deps n))
+      (multiple-value-bind (met reason) (%need-met-recorded-p state dep)
+        (unless met
+          (return-from %dependency-blocker-with-reason (values dep reason)))))
+    (values nil nil)))
+
 (defun %needs-settled-p (state id)
   "True when every need of ID is terminal accepted."
   (let ((n (%node-quiet state id)))
