@@ -16,10 +16,12 @@
 //
 // Every entry has the fields repo, kind, number, head, action, at, sender,
 // comment_id. kind is the X-GitHub-Event header, which is not in the JSON
-// body. Two kinds add their own fields, always all of them, empty included:
+// body. Three kinds add their own fields, always all of them, empty included:
 // issues adds labels (a JSON array of the issue's label names after the
 // change), body, state and state_reason; workflow_run adds run_id, workflow,
-// status and conclusion. An issue_comment payload has no pull-request head; when the
+// status and conclusion; check_run adds check (check_run.name), check_run_id
+// (check_run.id), status and conclusion (nova-tools #3040: pr-to-read keys
+// runner rows by the check name and orders attempts by id and status). An issue_comment payload has no pull-request head; when the
 // body carries a typed DISPOSITION line, head is the sha that line names,
 // read with the lander's parser after quotes and fences are stripped. A
 // comment that is not a typed line is still one entry, with an empty head.
@@ -66,8 +68,14 @@ type Entry struct {
 	StateReason string
 
 	// workflow_run only.
-	RunID      string
-	Workflow   string
+	RunID    string
+	Workflow string
+
+	// check_run only: the check's name and its id (a decimal string).
+	Check      string
+	CheckRunID string
+
+	// workflow_run and check_run.
 	Status     string
 	Conclusion string
 }
@@ -141,6 +149,10 @@ func Decode(event string, payload []byte) (Entry, error) {
 		if err := applyCheck(&e, p.CheckRun, "check_run"); err != nil {
 			return Entry{}, err
 		}
+		e.Check = strings.TrimSpace(p.CheckRun.Name)
+		e.CheckRunID = formatID(p.CheckRun.ID)
+		e.Status = strings.TrimSpace(p.CheckRun.Status)
+		e.Conclusion = strp(p.CheckRun.Conclusion)
 	case "check_suite":
 		if err := applyCheck(&e, p.CheckSuite, "check_suite"); err != nil {
 			return Entry{}, err
@@ -213,7 +225,7 @@ func Publish(ctx context.Context, rdb *redis.Client, e Entry) (string, error) {
 }
 
 // Fields is the stream entry's key set for e: the eight common fields, plus
-// the issues or workflow_run fields for those kinds.
+// the issues, workflow_run or check_run fields for those kinds.
 func Fields(e Entry) (map[string]interface{}, error) {
 	v := map[string]interface{}{
 		"repo":       e.Repo,
@@ -242,6 +254,11 @@ func Fields(e Entry) (map[string]interface{}, error) {
 	case "workflow_run":
 		v["run_id"] = e.RunID
 		v["workflow"] = e.Workflow
+		v["status"] = e.Status
+		v["conclusion"] = e.Conclusion
+	case "check_run":
+		v["check"] = e.Check
+		v["check_run_id"] = e.CheckRunID
 		v["status"] = e.Status
 		v["conclusion"] = e.Conclusion
 	}
@@ -467,6 +484,10 @@ type pullRequest struct {
 }
 
 type checkHead struct {
+	ID           int64   `json:"id"`   // check_run only
+	Name         string  `json:"name"` // check_run only
+	Status       string  `json:"status"`
+	Conclusion   *string `json:"conclusion"`
 	HeadSHA      string  `json:"head_sha"`
 	StartedAt    *string `json:"started_at"`
 	CompletedAt  *string `json:"completed_at"`

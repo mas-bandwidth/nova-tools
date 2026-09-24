@@ -525,7 +525,8 @@ jobs:
             [ -n "${studio_grp[$g]:-}" ] || continue
             packages="${studio_grp[$g]# }"
             n=$((g + 1))
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"macOS\",\"group\":\"macOS\"}")
+            # ARM64 ONLY (2026-09-24, dev push run 35999520176 at 7ce5488f): `self-hosted,macOS` also matched batman and superman (Intel iMac Pros, about 3x slower per core); 7/8 whole-tree shards were dealt there and cancelled at the 20-minute cap, the one on studio-nova-13 finished in 16 minutes. internal/ci: TestWholeTreeMacOSShardsRunOnARM64.
+            entries+=("{\"name\":\"$n/$STUDIO_SHARDS studio\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"ARM64\",\"group\":\"macOS\"}")
           done
 
           [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
@@ -753,7 +754,8 @@ jobs:
         # one entry for the CL test, and the shard travels in PKGS; the target tees
         # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
         # exactly as the inline command here did.
-        run: make test PKGS="${{ matrix.entry.packages }}"
+        # GOTEST_TIMEOUT: run 35999520176's studio-nova-13 shard failed only on Go's default 10m (cmd/nova-bus 600.3 s, cmd/nova-merge 600.5 s, 9,916 passes, 0 failing tests), so studio legs get 18m under the 20-minute push cap and 11m under the 12-minute PR/merge-group cap; space keeps Go's default 10m. internal/ci: TestShardGoTestTimeoutFitsTheJobCap.
+        run: make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="${{ matrix.entry.group == 'macOS' && github.event_name == 'push' && '18m' || matrix.entry.group == 'macOS' && '11m' || '10m' }}"
 
   test-race-queue:
     # THE QUEUE AND LEASE PACKAGE UNDER -race, and the one place the race

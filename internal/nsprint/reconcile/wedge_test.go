@@ -144,20 +144,25 @@ func wedgedSSHD(t *testing.T) (addr string, accepted <-chan struct{}) {
 
 // bannerDialer opens a real TCP session to a bench named in wedged and waits
 // for the ssh banner, as the ssh client does; any other bench takes its batch
-// at once, like fakeDialer.
+// at once, like fakeDialer. connected, when set, gets one event per session
+// once the client side holds the connection.
 type bannerDialer struct {
 	fakeDialer
-	wedged map[string]string // bench -> fixture sshd address
+	wedged    map[string]string // bench -> fixture sshd address
+	connected chan<- struct{}
 }
 
 func (d *bannerDialer) Dial(b deal.Bench) deal.Session {
 	if addr, ok := d.wedged[b.Name]; ok {
-		return bannerSession{bench: b.Name, addr: addr}
+		return bannerSession{bench: b.Name, addr: addr, connected: d.connected}
 	}
 	return d.fakeDialer.Dial(b)
 }
 
-type bannerSession struct{ bench, addr string }
+type bannerSession struct {
+	bench, addr string
+	connected   chan<- struct{}
+}
 
 // Run connects and reads the banner until its context ends. A banner that
 // never came is the client's pre-exec timeout ("Connection timed out during
@@ -166,9 +171,12 @@ func (s bannerSession) Run(ctx context.Context, _ []byte) error {
 	var nd net.Dialer
 	conn, err := nd.DialContext(ctx, "tcp", s.addr)
 	if err != nil {
-		return &deal.SessionError{Bench: s.bench, State: deal.SSHRefused, Exit: 255, Stderr: "ssh: connect to host: Connection refused"}
+		return &deal.SessionError{Bench: s.bench, State: deal.SSHRefused, Exit: 255, Stderr: "ssh: connect to host: Connection refused (" + err.Error() + ")"}
 	}
 	defer conn.Close()
+	if s.connected != nil {
+		s.connected <- struct{}{}
+	}
 	stop := context.AfterFunc(ctx, func() { _ = conn.Close() })
 	defer stop()
 	buf := make([]byte, 64)
@@ -247,7 +255,14 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 		t.Fatal(err)
 	}
 	lapsed := leaseOnClock(t, c, clk, l)
-	dialer := &bannerDialer{wedged: map[string]string{wedge: addr}}
+	// The client side's own event gates the clock (dev push run 35950929169,
+	// ubuntu-latest shard 1): the listener's accept fires as soon as the kernel
+	// completes the handshake, which can be before DialContext has returned to
+	// the session; a clock advanced then cancels the dial itself, Go reports a
+	// cancelled connect as a dial error, and the row read "refused" instead of
+	// the banner timeout this test is about (20/100 on one loaded Linux core).
+	connected := make(chan struct{}, 16)
+	dialer := &bannerDialer{wedged: map[string]string{wedge: addr}, connected: connected}
 	// When the deal pass has written every row and undealt the wedged batch,
 	// the lease must still have time left on its clock, and Redis must still
 	// hold it under this instance's token.
@@ -274,7 +289,8 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 		done <- passOut{res, err}
 	}()
 
-	// The wedge fixture accepted the session and the pass armed its bound.
+	// The wedge fixture accepted the session, the client holds it, and the
+	// pass armed its bound.
 	select {
 	case <-accepted:
 	case out := <-done:
@@ -283,9 +299,23 @@ func TestDealPassWedgedSshdDoesNotFenceOrStrand(t *testing.T) {
 		t.Fatal("the wedged sshd never saw a session")
 	}
 	select {
-	case <-clk.armed:
+	case <-connected:
+	case out := <-done:
+		t.Fatalf("pass ended before the session's client held its connection: %+v", out)
 	case <-time.After(eventWait()):
-		t.Fatal("no bench session was bounded by the lease: a wedged sshd holds the pass past the lease TTL")
+		t.Fatal("the session's client never held its connection to the wedged sshd")
+	}
+	// Both benches' sessions (ctl-a-ok and ctl-wedge) armed their bound before
+	// the clock moves: the pass opens them concurrently, and a session that
+	// first reads the lease after the advance finds no budget left and reports
+	// itself wedged (the ok bench's row read timeout, 4/200 on one loaded Linux
+	// core, once the connect race above was closed).
+	for armed := 0; armed < 2; armed++ {
+		select {
+		case <-clk.armed:
+		case <-time.After(eventWait()):
+			t.Fatalf("%d of 2 bench sessions were bounded by the lease: a wedged sshd holds the pass past the lease TTL", armed)
+		}
 	}
 	// The pass renewed at its start and the lease clock has not moved, so
 	// every session's bound is exactly the lease deadline less the margin.
