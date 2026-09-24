@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -282,70 +285,148 @@ func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
 // This build's fix to the spec: (allow network*) reaches every unix-domain socket, so
 // the SSH agent socket was connectable from inside the wall. A socket created outside
 // the wall must not be connectable from inside it, and SSH_AUTH_SOCK must be gone.
+//
+// The control is deterministic under load (#2958). The earlier form bound with
+// `nc -lU` and took "the socket file exists" as readiness, but bind(2) creates the
+// file before listen(2), so a busy machine could dial in that window and the control
+// failed with a refused connect. The listener is now this test binary re-executed with
+// an internal verb: it prints READY only after net.Listen has returned (bind AND
+// listen), serves every connection in order, and prints the line each client sent. The
+// walled attempt sits between two unwalled controls on the same listener, so "nothing
+// connected from inside the wall" is read from the accept order, not from a timeout.
 func TestTheAgentSocketIsUnreachable(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	if _, err := exec.LookPath("nc"); err != nil {
-		t.Skip("skipped: nc is not on this machine, and it is how a socket is bound and dialled here")
+		t.Skip("skipped: nc is not on this machine, and it is how a socket is dialled here")
 	}
 	// Test 16: no test reaches outside t.TempDir(). The socket therefore lives in this
 	// job's own outside directory, which is under t.TempDir() and in NEITHER list — and
 	// it is bound and dialled by RELATIVE name, with the process's cwd in that directory,
 	// exactly as profiles/darwin-check.sh does it. sun_path is 104 bytes and the absolute
 	// path of a t.TempDir() is longer, so an absolute bind fails silently and the one
-	// test this build's network fix exists for would pass for the wrong reason. The
-	// earlier form used os.MkdirTemp(""), which is outside t.TempDir().
-	//
-	// Two listeners, because `nc -lU` serves one connection and exits: the walled attempt
-	// must not consume the one the control needs.
-	listen := func(name string) {
+	// test this build's network fix exists for would pass for the wrong reason.
+	lines := startUnixListener(t, j.outside, "agent.sock")
+	next := func(what string) string {
 		t.Helper()
-		cmd := exec.Command("nc", "-lU", "./"+name)
-		cmd.Dir = j.outside
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("control: no listener could be started outside the wall: %v", err)
-		}
-		t.Cleanup(func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		})
-	}
-	waitForSocket := func(name string) bool {
-		for i := 0; i < 20; i++ {
-			if fi, err := os.Stat(filepath.Join(j.outside, name)); err == nil && fi.Mode()&os.ModeSocket != 0 {
-				return true
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatalf("control: the listener exited before %s", what)
 			}
-			time.Sleep(100 * time.Millisecond)
+			return l
+		case <-time.After(60 * time.Second):
+			t.Fatalf("control: no %s from the listener in 60 s", what)
 		}
-		return false
+		return ""
 	}
-	listen("agent.sock")
-	listen("agent-control.sock")
-	if !waitForSocket("agent.sock") || !waitForSocket("agent-control.sock") {
-		t.Skip("skipped: nc -lU did not bind on this machine, and a denial with no listener proves nothing")
-	}
-	control := exec.Command("nc", "-U", "./agent-control.sock", "-w", "1")
-	control.Dir = j.outside
-	control.Stdin = strings.NewReader("")
-	if err := control.Run(); err != nil {
-		t.Fatalf("control: the socket is not connectable outside the wall: %v", err)
+	if l := next("READY"); l != "READY" {
+		t.Fatalf("control: no listener could be bound outside the wall: %s", l)
 	}
 
 	sock := filepath.Join(j.outside, "agent.sock")
 	env := j.env("SSH_AUTH_SOCK="+sock, "SSH_AGENT_PID=1")
-	// The cwd inside the wall is the first --write, so the relative name reaches the same
-	// socket the control just used, with a sun_path of 26 bytes.
+	// The cwd inside the wall is the first --write, so the controls dial from there too:
+	// the same relative name, the same socket, a sun_path of 26 bytes. Each client sends
+	// one tagged line, and the listener echoes the tag of every connection it accepts.
+	dial := func(tag string) string { return "printf '" + tag + "\\n' | nc -U ../outside/agent.sock -w 1" }
+	control := func(tag string) {
+		t.Helper()
+		cmd := exec.Command("/bin/sh", "-c", dial(tag))
+		cmd.Dir = j.write
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("control: the socket is not connectable outside the wall (%s): %v %s", tag, err, out)
+		}
+		if got := next("ACCEPT " + tag); got != "ACCEPT "+tag {
+			if got == "ACCEPT walled" {
+				t.Fatal("a unix socket outside the wall was connectable from inside it: the listener accepted the walled client")
+			}
+			t.Fatalf("control: the listener saw %q, want %q", got, "ACCEPT "+tag)
+		}
+	}
+
+	control("control-before")
 	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
-		"/bin/sh", "-c", "nc -U ../outside/agent.sock -w 1 </dev/null")
+		"/bin/sh", "-c", dial("walled"))
 	if code == 0 {
 		t.Fatal("a unix socket outside the wall was connectable from inside it")
 	}
+	// The listener serves in accept order, and the walled client has exited, so had it
+	// connected its line would come before this control's.
+	control("control-after")
 	if !strings.Contains(errOut, "SANDBOX NOTE dropped") || !strings.Contains(errOut, "SSH_AUTH_SOCK") {
 		t.Fatalf("the dropped agent variables were not named before the command started: %q", errOut)
 	}
 	if code, _, _ := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
 		"/bin/sh", "-c", "test -z \"$SSH_AUTH_SOCK\" && test -z \"$SSH_AGENT_PID\""); code != 0 {
 		t.Fatal("SSH_AUTH_SOCK reached the child's environment")
+	}
+}
+
+// unixListenerVerb is the test binary's internal verb for TestTheAgentSocketIsUnreachable's
+// listener; TestMain dispatches it. It is a child process, not a goroutine, because the
+// socket is bound by a relative name from its own cwd and a test must not chdir.
+const unixListenerVerb = "test-unix-listener"
+
+// unixListenerNameEnv carries the socket's relative name to the listener child. It is an
+// environment field, not a positional argument: argv carries only the verb (law #2583).
+const unixListenerNameEnv = "NOVA_SANDBOX_TEST_UNIX_NAME"
+
+// startUnixListener runs the listener in dir and returns its stdout lines: READY once
+// bound and listening (or LISTEN-ERROR), then ACCEPT <tag> per connection, in order.
+func startUnixListener(t *testing.T, dir, name string) <-chan string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, unixListenerVerb)
+	cmd.Env = append(os.Environ(), unixListenerNameEnv+"="+name)
+	cmd.Dir = dir
+	cmd.Stdout = pw
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("control: no listener could be started outside the wall: %v", err)
+	}
+	_ = pw.Close()
+	lines := make(chan string, 16)
+	go func() {
+		defer close(lines)
+		defer pr.Close()
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return lines
+}
+
+// serveUnixForTest is the listener's body: bind and listen by relative name, say READY,
+// then accept one connection at a time and echo the first line each client sends.
+func serveUnixForTest(name string) int {
+	ln, err := net.Listen("unix", name)
+	if err != nil {
+		fmt.Printf("LISTEN-ERROR %v\n", err)
+		return 1
+	}
+	fmt.Println("READY")
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return 1
+		}
+		_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
+		line, _ := bufio.NewReader(c).ReadString('\n')
+		fmt.Printf("ACCEPT %s\n", strings.TrimSpace(line))
+		_ = c.Close()
 	}
 }
 
@@ -751,6 +832,9 @@ func repoRoot(t *testing.T) string {
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "probe-step" {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
+	}
+	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb {
+		os.Exit(serveUnixForTest(os.Getenv(unixListenerNameEnv)))
 	}
 	os.Exit(m.Run())
 }
