@@ -2245,6 +2245,15 @@
     #:staged-bytes-on-disk
     #:reconcile-capture-stage
     #:admit-staged-result
+    ;; E09-F04-01 link versus absorb (SPEC-WORK.md:7586-7617): link is the
+    ;; default; absorb needs its explicit mode, scope and authority.
+    #:capture-stage-absorb-allowed
+    #:capture-stage-intake-mode
+    #:capture-stage-absorb-repositories
+    #:capture-stage-absorb-authors
+    #:capture-stage-absorb-authority
+    #:validate-absorb-selection
+    #:capture-absorb-allowed-p
     ;; E02 `session export --state --at` (SPEC-WORK.md:3197-3223): the flag
     ;; validation, the pinned revision, the resident one-long-operation form and
     ;; the offline snapshot form.
