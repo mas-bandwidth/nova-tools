@@ -33,6 +33,7 @@ const (
 	FunctionClear   = "ns_bench_reset_clear"
 	DefaultGrace    = 5 * time.Second
 	BeatInterval    = 30 * time.Second
+	holdTimeout     = 10 * time.Second
 )
 
 type Card struct {
@@ -132,7 +133,17 @@ func Reset(ctx context.Context, c *redis.Client, req Request) (Result, error) {
 	stopped, stopErr := req.Stopper.Stop(ctx, bench, stopCards, req.Grace)
 	stopBeat()
 	if err := <-beatErr; err != nil {
-		return finish(Result{Code: 1, Bench: req.Bench, ID: id, Why: "fenced"}, began), nil
+		if errors.Is(err, ErrFenced) {
+			return finish(Result{Code: 1, Bench: req.Bench, ID: id, Why: "fenced"}, began), nil
+		}
+		// A transient Redis error or a cancelled context is not a takeover:
+		// hold the record with its receipt now instead of leaving it running
+		// until the takeover window. The hold is detached from ctx so a
+		// cancelled caller still leaves a held record; the hold Function itself
+		// answers FENCED if another run did take the record over.
+		hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), holdTimeout)
+		defer cancel()
+		return hold(hctx, c, req, res, "beat:"+oneLine(err), began)
 	}
 	if stopErr != nil {
 		return hold(ctx, c, req, res, "ssh:"+oneLine(stopErr), began)

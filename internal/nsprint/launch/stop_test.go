@@ -44,3 +44,30 @@ func TestCardStopSignalsOnlyExactAttemptGroups(t *testing.T) {
 		t.Fatalf("signals %v", f.signals)
 	}
 }
+
+// TestCardStopCommandProtocol pins the bench-side `card stop` contract the
+// reset's RemoteStopper parses (#3589 rowan hold 2): stdout holds only the
+// per-card lines, the summary goes to stderr, and a completed protocol with an
+// ALIVE card is a nil error (the command exits 0; ALIVE is data).
+func TestCardStopCommandProtocol(t *testing.T) {
+	f := &fakeGroups{ids: map[string][]int{"nova-card s/a/1": {11}, "nova-card s/c/3": {33}}, alive: map[int]bool{11: true, 33: true}, stubborn: map[int]bool{33: true}}
+	var out, errOut bytes.Buffer
+	err := StopCommand(context.Background(), bytes.NewBufferString("s a 1\ns b 2\ns c 3\n"), &out, &errOut, time.Second, f, func(context.Context, time.Duration) error { return nil })
+	if err != nil {
+		t.Fatalf("ALIVE must not fail the protocol: %v", err)
+	}
+	if want := "STOPPED s/a/1\nGONE s/b/2\nALIVE s/c/3\n"; out.String() != want {
+		t.Fatalf("stdout %q want only the per-card lines %q", out.String(), want)
+	}
+	if want := "STOP stopped=1 gone=1 alive=1\n"; errOut.String() != want {
+		t.Fatalf("stderr %q want %q", errOut.String(), want)
+	}
+	out.Reset()
+	errOut.Reset()
+	if err := StopCommand(context.Background(), bytes.NewBufferString("s a\n"), &out, &errOut, time.Second, f, nil); err == nil {
+		t.Fatal("a malformed line must fail the protocol")
+	}
+	if out.Len() != 0 || errOut.Len() != 0 {
+		t.Fatalf("a failed protocol wrote stdout=%q stderr=%q", out.String(), errOut.String())
+	}
+}

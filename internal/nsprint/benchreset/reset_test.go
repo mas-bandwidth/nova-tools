@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -12,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -51,6 +55,7 @@ func seedResetCards(t *testing.T, c *redis.Client, states ...string) []Card {
 	pipe := c.Pipeline()
 	pipe.SAdd(ctx, "benches", bench)
 	pipe.HSet(ctx, "bench:"+bench+":beat", "host", "example.invalid", "user", "tester", "at", "1")
+	pipe.HSet(ctx, "bench:"+bench+":state", "state", "UP") // dev deals only to UP benches
 	pipe.HSet(ctx, "bench:"+bench+":desired", "slots", "8")
 	var cards []Card
 	for i, state := range states {
@@ -262,4 +267,131 @@ func mustReply(t *testing.T, cmd *redis.Cmd, want string) []string {
 		t.Fatalf("reply=%v want=%s", reply, want)
 	}
 	return reply
+}
+
+// fakeProgram writes an executable bash script into a temp dir; RemoteStopper
+// runs it in place of ssh (testguard accepts a program under a temp dir).
+func fakeProgram(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-ssh")
+	if err := os.WriteFile(path, []byte("#!/bin/bash\n"+body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// TestRemoteStopperDrivesRealCardStop runs the built `nova-sprint card stop`
+// behind RemoteStopper through a fake ssh Program (#3589 rowan hold 2, item 1):
+// the real bench-side stdout must parse. No `nova-card` group with these
+// identities exists, so every card answers GONE and nothing is signalled.
+func TestRemoteStopperDrivesRealCardStop(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "nova-sprint")
+	build := exec.Command("go", "build", "-o", bin, "github.com/mas-bandwidth/nova-tools/cmd/nova-sprint")
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build nova-sprint: %v\n%s", err, out)
+	}
+	errFile := filepath.Join(t.TempDir(), "stderr")
+	program := fakeProgram(t, fmt.Sprintf(`last="${@: -1}"
+case "$last" in
+  *"nova-sprint card stop --stdin --grace "*) ;;
+  *) echo "unexpected remote command: $last" >&2; exit 97 ;;
+esac
+exec %q card stop --stdin --grace 10ms 2>%q
+`, bin, errFile))
+	cards := []Card{
+		{Sprint: "s-rstop-3589", Label: "card-a", Attempt: 1},
+		{Sprint: "s-rstop-3589", Label: "card-b", Attempt: 2},
+	}
+	got, err := RemoteStopper{Program: program}.Stop(context.Background(), deal.Bench{Name: "b-test", Host: "example.invalid", User: "tester"}, cards, 10*time.Millisecond)
+	if err != nil {
+		t.Fatalf("real card stop reply did not parse: %v", err)
+	}
+	if len(got) != len(cards) {
+		t.Fatalf("results %+v", got)
+	}
+	for i, r := range got {
+		if r.Card.Identity() != cards[i].Identity() || r.Status != "GONE" {
+			t.Fatalf("result %d = %+v", i, r)
+		}
+	}
+	summary, err := os.ReadFile(errFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(string(summary)) != "STOP stopped=0 gone=2 alive=0" {
+		t.Fatalf("stderr summary %q", summary)
+	}
+}
+
+// TestBenchResetAliveRequeuesSiblings drives Reset through RemoteStopper with
+// a bench that answers the card-stop protocol with one STOPPED and one ALIVE
+// card and exits 0 (#3589 rowan hold 2, item 2): the STOPPED card is requeued,
+// the ALIVE card stays running, and the record is held with why=alive:1, not
+// an ssh failure.
+func TestBenchResetAliveRequeuesSiblings(t *testing.T) {
+	c := resetRedis(t)
+	cards := seedResetCards(t, c, "running", "running")
+	ctx := context.Background()
+	program := fakeProgram(t, `n=0
+while read -r s l a; do
+  [ -z "$s" ] && continue
+  if [ "$n" -eq 0 ]; then echo "STOPPED $s/$l/$a"; else echo "ALIVE $s/$l/$a"; fi
+  n=$((n+1))
+done
+echo "STOP stopped=1 gone=0 alive=1" >&2
+exit 0
+`)
+	res, err := Reset(ctx, c, Request{Bench: "b-test", Actor: "stella", ID: "reset-alive", Stopper: RemoteStopper{Program: program}, Grace: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != 1 || res.Why != "alive:1" || res.Requeued != 1 || res.Alive != 1 {
+		t.Fatalf("result %+v", res)
+	}
+	first := c.HGet(ctx, "s:"+cards[0].Sprint+":card:"+cards[0].Label, "state").Val()
+	second := c.HGet(ctx, "s:"+cards[1].Sprint+":card:"+cards[1].Label, "state").Val()
+	if first != "queued" || second != "running" {
+		t.Fatalf("states first=%s second=%s", first, second)
+	}
+	h := c.HMGet(ctx, "bench:b-test:reset", "phase", "why").Val()
+	if fmt.Sprint(h[0]) != "held" || fmt.Sprint(h[1]) != "alive:1" {
+		t.Fatalf("reset record %v", h)
+	}
+}
+
+// TestBenchResetBeatErrorHolds: a beat error that is not a fence (here the
+// caller's context is cancelled mid-stop) holds the record with its receipt
+// instead of reporting fenced and leaving it running (#3589 rowan hold 2,
+// item 5).
+func TestBenchResetBeatErrorHolds(t *testing.T) {
+	c := resetRedis(t)
+	seedResetCards(t, c, "running")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stop := fakeStopper{status: "STOPPED", before: func([]Card) {
+		cancel()
+		time.Sleep(100 * time.Millisecond) // the beater sees ctx.Done first
+	}}
+	res, err := Reset(ctx, c, Request{Bench: "b-test", Actor: "stella", ID: "reset-beat", Stopper: stop, BeatEvery: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Code != 1 || !strings.HasPrefix(res.Why, "beat:") {
+		t.Fatalf("result %+v; want a hold with why=beat:..., not fenced", res)
+	}
+	bg := context.Background()
+	h := c.HMGet(bg, "bench:b-test:reset", "phase", "why").Val()
+	if fmt.Sprint(h[0]) != "held" || !strings.HasPrefix(fmt.Sprint(h[1]), "beat:") {
+		t.Fatalf("reset record %v", h)
+	}
+	found := false
+	for _, m := range c.XRevRangeN(bg, "cap:log", "+", "-", 10).Val() {
+		if fmt.Sprint(m.Values["kind"]) == "bench-reset-held" && strings.HasPrefix(fmt.Sprint(m.Values["why"]), "beat:") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("bench-reset-held receipt missing")
+	}
 }

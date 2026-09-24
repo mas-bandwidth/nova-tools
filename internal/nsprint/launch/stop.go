@@ -144,6 +144,22 @@ func Stop(ctx context.Context, in io.Reader, out io.Writer, grace time.Duration,
 	return sum, nil
 }
 
+// StopCommand is the bench-side `nova-sprint card stop` protocol. Stdout
+// carries exactly one `<STOPPED|GONE|ALIVE> <S>/<label>/<attempt>` line per
+// input card and nothing else, because the reset's RemoteStopper parses every
+// stdout line; the `STOP stopped= gone= alive=` summary goes to stderr. A nil
+// error means the protocol completed, so the command exits 0 even with ALIVE
+// cards: ALIVE is data the reset holds on, while a non-zero exit is read as a
+// failed session whose stdout cannot be trusted (#3589 rowan hold 2).
+func StopCommand(ctx context.Context, in io.Reader, stdout, stderr io.Writer, grace time.Duration, groups GroupManager, wait Waiter) error {
+	sum, err := Stop(ctx, in, stdout, grace, groups, wait)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stderr, "STOP stopped=%d gone=%d alive=%d\n", sum.Stopped, sum.Gone, sum.Alive)
+	return nil
+}
+
 const DefaultStopGrace = 5 * time.Second
 
 func waitContext(ctx context.Context, d time.Duration) error {

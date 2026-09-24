@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -131,13 +130,10 @@ func cmdCardStop(ctx context.Context, args []string, stdin io.Reader, stdout, st
 	if *grace <= 0 {
 		return refuse(stderr, "card stop", "--grace must be positive")
 	}
-	sum, err := launch.Stop(ctx, stdin, stdout, *grace, launch.OSGroupManager{}, nil)
-	if err != nil {
+	// Exit 0 whenever the protocol completed, ALIVE included: ALIVE is data the
+	// reset holds on, and a non-zero exit tells the reset the session failed.
+	if err := launch.StopCommand(ctx, stdin, stdout, stderr, *grace, launch.OSGroupManager{}, nil); err != nil {
 		return refuse(stderr, "card stop", err.Error())
-	}
-	fmt.Fprintf(stdout, "STOP stopped=%s gone=%s alive=%s\n", strconv.Itoa(sum.Stopped), strconv.Itoa(sum.Gone), strconv.Itoa(sum.Alive))
-	if sum.Alive > 0 {
-		return 1
 	}
 	return 0
 }
