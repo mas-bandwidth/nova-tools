@@ -165,6 +165,7 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	forge := newForge()
 	for _, b := range benches {
 		c.HSet(ctx, "bench:"+b+":beat", "host", b+".tailnet", "user", "nova")
+		c.HSet(ctx, "bench:"+b+":state", "state", "UP", "at", "1")
 		for i := 1; i <= 3; i++ {
 			label := fmt.Sprintf("%s-card%d", b, i)
 			seedEnded(t, c, b, label, "model", "DONE", sha(label))

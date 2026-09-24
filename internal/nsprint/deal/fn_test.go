@@ -179,6 +179,7 @@ func seedFleet(t *testing.T, c *redis.Client, sprint string, n int, benches map[
 		pipe.SAdd(ctx, "benches", b)
 		pipe.HSet(ctx, "bench:"+b+":desired", "slots", strconv.Itoa(slots))
 		pipe.HSet(ctx, "bench:"+b+":beat", "host", b, "at", "1")
+		pipe.HSet(ctx, "bench:"+b+":state", "state", "UP", "at", "1")
 	}
 	pipe.SAdd(ctx, "sprints", sprint)
 	pipe.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
@@ -389,6 +390,7 @@ func TestDealFunctionsFencedAndAtomic(t *testing.T) {
 		seedFleet(t, c, sprint, 6, map[string]int{"ctl-a": 64, "ctl-b": 64, "ctl-down": 64, "ctl-paused": 64})
 		seedLease(t, c, "live-token")
 		c.Del(ctx, "bench:ctl-down:beat")
+		c.HSet(ctx, "bench:ctl-down:state", "state", "DOWN") // #2046: UP is the fleet record, not the beat
 		c.HSet(ctx, "bench:ctl-paused:desired", "paused", "1")
 		c.HSet(ctx, "bench:ctl-a:desired", "legs", "go,lua")
 		c.HSet(ctx, "s:"+sprint+":card:card-00", "bench", "ctl-b")    // pinned elsewhere

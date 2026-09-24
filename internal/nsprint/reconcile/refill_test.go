@@ -86,6 +86,7 @@ func seedBench(t *testing.T, c *redis.Client, bench string, slots int) {
 	pipe.SAdd(ctx, "benches", bench)
 	pipe.HSet(ctx, "bench:"+bench+":desired", "slots", strconv.Itoa(slots))
 	pipe.HSet(ctx, "bench:"+bench+":beat", "host", bench, "at", "1")
+	pipe.HSet(ctx, "bench:"+bench+":state", "state", "UP", "at", "1")
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
 	}
