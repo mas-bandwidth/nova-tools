@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -192,6 +193,43 @@ func seedFleet(t *testing.T, c *redis.Client, sprint string, n int, benches map[
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestDealSkipsAvoidedBench pins both halves of classification's avoid
+// contract: the Go planner offers the card to the next eligible bench, and
+// ns_card_deal independently refuses the avoided one.
+func TestDealSkipsAvoidedBench(t *testing.T) {
+	c := dealRedis(t)
+	const sprint = "control-avoid"
+	seedFleet(t, c, sprint, 1, map[string]int{"X": 1, "Y": 1})
+	seedLease(t, c, "fence")
+	ctx := context.Background()
+	if err := c.HSet(ctx, "s:"+sprint+":card:card-00", "avoid", "X").Err(); err != nil {
+		t.Fatal(err)
+	}
+	card := Card{Sprint: sprint, Label: "card-00", Avoid: []string{"X"}}
+	plan := Plan(Input{Now: time.Now(), Benches: []Bench{
+		{Name: "X", Up: true, Slots: 1}, {Name: "Y", Up: true, Slots: 1},
+	}, Sprints: []Sprint{{Name: sprint, Share: 1, Pool: []Card{card}}}}, DefaultRefusedHold)
+	if len(plan) != 1 || plan[0].Bench.Name != "Y" || len(plan[0].Cards) != 1 {
+		t.Fatalf("plan = %+v, want card only on Y", plan)
+	}
+	token := "1.0123456789abcdef0123456789abcdef"
+	reply, err := c.FCall(ctx, "ns_card_deal", nil, "X", "fence", "ctl", "",
+		sprint, "card-00", "1", token, tokenSHA(token)).StringSlice()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reply) != 1 || reply[0] != "DEALT" {
+		t.Fatalf("deal on avoided X = %v, want DEALT with zero cards", reply)
+	}
+	res, err := newFnStore(c).Reserve(ctx, "fence", "Y", []Card{card})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || res[0].Bench != "Y" {
+		t.Fatalf("deal on Y = %+v, want one reservation", res)
 	}
 }
 

@@ -52,6 +52,12 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	for _, d := range Ancestors(p.ancestorPaths()...) {
 		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (literal %q))", d))
 	}
+	for _, d := range p.PathDirs {
+		if bad := badPathText(d); bad != "" {
+			return "", nil, fmt.Errorf("path dir %s %s", d, bad)
+		}
+		ancestors = append(ancestors, fmt.Sprintf("(allow file-read-metadata (subpath %q))", d))
+	}
 
 	var reads, noExec, writes []string
 	for i, r := range p.Reads {

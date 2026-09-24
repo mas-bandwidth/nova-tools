@@ -834,6 +834,7 @@ nova-decide review --repo <owner/name> --pr <n> [--card <file>]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
+                   [--prompt <file|sha8>] [--conf <jev.conf>|none] [--pr-dir <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
 ```
 
@@ -851,13 +852,20 @@ The five checks, and what each is for:
 
 | check | ok when | the case it exists for |
 |---|---|---|
-| `donewhen` | line 2 of the RESULT is the bare word `DONE` | a RESULT that has to qualify DONE has not finished |
+| `donewhen` | line 2 of the RESULT is the bare word `DONE` (a blank line under RESULT is skipped); with no RESULT line, every Go test the body's `DONE-WHEN:` names is added by the diff (a named test the diff does not add is `missing`: it may be on the base) | a RESULT that has to qualify DONE has not finished |
 | `selfcheck` | the added test exercises generated code **and** carries none of the self-check tells; `missing` on a pull request that is not a conformance cell, and fixtures under `testdata/` are not read (#2621) | schema#1507 landed on a 10/10 with `check(true, ...)` as its only assertion |
-| `paths` | every changed file is inside the card's `PATHS` globs | schema#1569 added a whole stub crate beside its one test file |
+| `paths` | every changed file is inside the card's `PATHS` globs; with no card, the body's `PATHS:` line is the bound (`dir/` means `dir/**`, a bare file name matches anywhere), and there only product code outside it fails -- a test-only file outside is the reader's one-point deduction, not a gate (#2536) | schema#1569 added a whole stub crate beside its one test file |
 | `claims` | every file the RESULT's `files:` line names is in the diff | a RESULT written from intent rather than from the diff |
+| `base` | off unless `--checks` names it: the read rubric's base gate. The pull request targets a trunk (`dev`, `main`, `fixed-table-form`) and is mergeable; a stacked base or a conflict is `base:fail`, an unread one `missing` (#2536) | 17 of the 397 friend-read heads of 2026-09-24 conflicted with trunk at the time of the read |
 | `ci` | off unless `--checks` names it. When it is on, `ci-ok` on the pull request's exact head is success. A red or missing `ci-ok` is `ci:fail` and the explain names the failing jobs. A run whose `head_sha` is not this head does not count (#2704) | nova-tools #2519 at `907546af` scored PASS 8 while `ci-ok` and shards 1/4 and 2/4 on space and studio were red; #2522 at `8359db4f` is the pass |
 
-A check with nothing to decide on answers **`missing`, never `fail`** — an absent card is not a failed card, and a missing check is neutral. **`ci`, when it is enabled, is the exception to that neutrality:** a rollup with no `ci-ok` at the head is a fail, because a missing answer would let a score above `--pass-above` PASS. The verdict, under the tuning: an enabled check that **failed** BOUNCEs; a score below `--bounce-below` (default 4) BOUNCEs; an unscored pull request is UNSURE; a score above `--pass-above` (default 7) PASSes; anything between is UNSURE. `--checks` is `checks_enabled`, the checks that may decide (default `donewhen,selfcheck,paths,claims,score`). `ci` is off in that list: schema has no `ci-ok` job, and a default run that required one bounced every schema pull request. The loop turns `ci` on by naming it. A disabled check still runs and prints as `off-<answer>` so the scorecard can say what it would have done. `cost=` is the call's tokens at `--usd-per-mtok-in/out`, and `$-` when no rate is given — TypeSafe has published none to us, and a guessed price is worse than an honest dash. `--skip-heads <file>` skips, before any call, a pull request whose head is in the file (the loop's record of heads it has posted on).
+**Gates cap the score (#2536).** When `ci` or `base` is enabled and answers fail, the score on the line is capped at 7, the read rubric's rule that a gate failure is never an 8; the ledger keeps the raw answer.
+
+**The prompt (#2536).** The one score question is asked with a prompt file: `--prompt <file|sha8>`, else the `prompt=` key of `--conf` (default `$NOVA_JEV_CONF`, for example `~/rowan-working/etc/jev.conf` on the Studio; unset or `none` reads no conf), else the embedded default, the seed (`fd94795e`), which stays the default until the tuning rule adopts a candidate over it (the 2026-09-24 run's best prompt `6b7343c3` is refused, so it ships only by name). A prompt and its pass threshold are tuned together: with `6b7343c3` and no `--pass-above`, the threshold is 8 (`jevcalib.TunedPassAbove`; at 7 this prompt passed 10.2% of the heads friends held), otherwise 7. Shipped prompts live in `internal/jevcalib/prompts/<sha8>.txt`; a prompt's `LEVEL` lines (none or ten) replace the ten score levels, and its `EXEMPLAR` lines are metadata, never sent. A named prompt that does not resolve refuses (`reason=bad-prompt`); it never falls back. The ledger row carries `prompt8`, and `rubric=` is the sha8 of the levels asked.
+
+**`--pr-dir <dir>` (#2536)** reads each pull request from `<dir>/<n>/` instead of gh: `view.json` in the `gh pr view --json` shape (`baseRefName` and `mergeable` optional), `diff.txt`, and `check-runs.json` (the commit check-runs document; without it `ci` answers missing). It makes no GitHub call and refuses `--post`: it is how the calibration set is scored through the real review path.
+
+A check with nothing to decide on answers **`missing`, never `fail`** — an absent card is not a failed card, and a missing check is neutral. **`ci`, when it is enabled, is the exception to that neutrality:** a rollup with no `ci-ok` at the head is a fail, because a missing answer would let a score above `--pass-above` PASS. The verdict, under the tuning: an enabled check that **failed** BOUNCEs; a score below `--bounce-below` (default 4) BOUNCEs; an unscored pull request is UNSURE; a score above `--pass-above` (default 7 with the default prompt, else 8 with `6b7343c3`) PASSes; anything between is UNSURE. `--checks` is `checks_enabled`, the checks that may decide (default `donewhen,selfcheck,paths,claims,score`). `ci` is off in that list: schema has no `ci-ok` job, and a default run that required one bounced every schema pull request. The loop turns `ci` on by naming it. A disabled check still runs and prints as `off-<answer>` so the scorecard can say what it would have done. `cost=` is the call's tokens at `--usd-per-mtok-in/out`, and `$-` when no rate is given — TypeSafe has published none to us, and a guessed price is worse than an honest dash. `--skip-heads <file>` skips, before any call, a pull request whose head is in the file (the loop's record of heads it has posted on).
 
 ```
 $ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
@@ -1548,7 +1556,7 @@ a `gh` read of the live queue that did not answer.
 ### rebase, react and classify — the lane's three ticks
 
 ```
-nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
+nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>] [--dry-run|--yes]
 nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
 nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
@@ -1560,7 +1568,9 @@ merges, this section describes a binary your bench does not have.
 `rebase --once` is the hand rebase loop's tick as a verb: one pass over the
 repository's open pull requests, and for each one the host calls `DIRTY` whose head
 branch is `rowan/<something>` — `rowan/replays-*` excluded, it has its own verb — a
-card cut and launched, unless `--markers` already holds a file for that number.
+plan names the pull request and launch command. The default writes nothing and exits 2
+asking for `--yes` or `--dry-run`; `--dry-run` prints the same plan and exits 0. Only
+`--yes` cuts and launches a card, unless `--markers` already holds a file for that number.
 `--markers` is the whole memory of the pass, so a pull request is carded once and not
 once per tick; `--out` is where the cards go; `--queue` is the queue whose state file
 numbers them, under its lock, so two cutters never share a number. `--base` is `dev`
@@ -3431,6 +3441,7 @@ nova-swarm note     --pool <dir> --task <id> --text <text>                      
 nova-swarm stop     --pool <dir>                                                            # stop new admissions; drain workers already running — never kill them
 nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 nova-swarm lint     --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <script> | --rules          # one card's mechanical shape, before any spend: no model, no probe, one file
+nova-swarm bench    prewarm --root <dir> --source <checkout> --repo <owner/name> --tip <full-sha>                # exact reference checkout plus module, build, test-binary and Lisp caches
 ```
 
 ### The card lint
@@ -3960,14 +3971,35 @@ That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and 
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
-### Shared Go caches for native workers
+### Shared build caches and exact-tip prewarm
 
 `nova-swarm native` creates `<root>/cache/go-mod` and `<root>/cache/go-build`
-and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. Slots using the
-same `--root` share these caches. It also sets `GOTOOLCHAIN=local`, so the bench
+and sets the child's `GOMODCACHE` and `GOCACHE` to those paths. It points ASDF
+at `<root>/cache/common-lisp/<tip>` for compiled FASLs without sharing the harness's
+general XDG cache or HOME. Slots using the same `--root` share these caches. It
+also sets `GOTOOLCHAIN=local`, so the bench
 must already have the Go toolchain the task requires. `--no-shared-caches`
 omits these settings and restores per-slot defaults. Retain shared caches when
 retiring an individual slot; they are separate from its job evidence.
+
+After the bench mirror has fetched a new tip, run this command locally on each
+bench, using that mirror checkout as `--source`:
+
+```text
+nova-swarm bench prewarm --root /the/swarm/root --source /the/bench/mirror/nova-tools --repo mas-bandwidth/nova-tools --tip <full-40-character-tip>
+```
+
+It resolves the exact commit locally, prepares the reference checkout under
+`<root>/ref/mas-bandwidth/nova-tools@<tip>`, runs module download, `make build`,
+a compile-only Go test pass and `make test-lisp`, then writes a receipt under
+`<root>/prewarm/`. A failed phase publishes no reference checkout or receipt.
+The command does not install the binary, fetch the mirror, change permissions,
+start a service or run on another host.
+
+Fleet adoption needs one further measurement: start a fresh job pinned to the
+same tip on each intended bench, run `make test`, and retain its elapsed-time
+receipt. S3's threshold is under 60 seconds on every bench. The local PREWARM
+line proves the preparation completed; it does not claim the fleet ran it.
 
 ### The bench toolchain inside the wall
 
@@ -5315,6 +5347,49 @@ What a first run gets wrong, and what each one wants:
 There is **no `quickstart` verb**. A one-word first run would have to invent a fixture path or publish a table nobody named. The three lines above are the first run, in an empty directory that already holds `table.txt`.
 
 **The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
+
+### lesson
+
+Every rendered build, fix, and read brief tells the card to read the repository's
+`docs/LESSONS.md` when present. It is reviewed data subordinate to the live
+brief and repository rules. The file is capped at 40 physical lines so a card
+can consume the whole active view. A read proposes the concrete failure and
+the action that would have prevented it; after the repository owner reviews
+the evidence, append the structured one-line row:
+
+```sh
+nova-sprint lesson append \
+  --repo ./nova-tools \
+  --id s9-001 \
+  --component brief \
+  --kind read \
+  --failure "card skipped repository lessons" \
+  --prevention "read the capped lessons file before review" \
+  --evidence "mas-bandwidth/nova-tools#2498" \
+  --status active \
+  --reviewed-by stella
+```
+
+The append verb never guesses a checkout or creates the active lessons file. Every field is
+required and must fit on one line without a Markdown table pipe. Lesson IDs
+are stable: an identical retry prints `LESSON UNCHANGED`; different content
+under an existing ID refuses. The append is published by atomic rename and
+refuses the 41st line. A holder-lifetime kernel lock (flock on Unix) on
+`nova-lessons.lock` in the checkout's git directory serializes the whole
+read/check/rename transaction, so concurrent successful appends cannot lose
+one another. The lock is never broken on age: a waiter queues behind a live
+holder for up to 30 seconds and then refuses as busy, and the kernel alone
+releases a holder that died. Append accepts `--status active`; retire a row with:
+
+```sh
+nova-sprint lesson supersede --repo ./nova-tools --id s9-001
+```
+
+Supersede first publishes the same row with status `superseded` to
+`docs/LESSONS-ARCHIVE.md`, then removes it from the capped active view. It
+creates the archive when needed; cards never load it. If interrupted between
+those writes, retry recognizes the archived row and finishes the removal.
+Archived IDs remain reserved, and an identical supersede retry is unchanged.
 
 ### xy
 
