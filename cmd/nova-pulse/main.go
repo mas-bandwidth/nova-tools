@@ -27,7 +27,7 @@ nova-pulse pool    --sources <file> --root <dir> [--out <pool.tsv>] [--timeout <
 nova-pulse pool-capacity [--machines <file>] [--benches <file>] [--roots <dirs>] [--queue <dir>] [--providers <file>] [--headroom <n>] [--out <metrics.tsv>] [--overwrite]
 nova-pulse cut     --pool <pool.tsv> --templates <dir> --out <dir> --root <dir> [--validate-contract] [--depends-on <cards>] [--max <n>]
 nova-pulse cut     --templates <dir> --out <dir> --repo <clone> (--issue <repo>#<n> | --rows <file.tsv> | --branch-from <repo>#<n>) [--base <branch>] [--cards <file.tsv>] [--max <n>]
-nova-pulse cut     --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>]
+nova-pulse cut     --kind read|fix|replay|spec|guard|recut --repo <o/n> --out <dir> --queue <dir> [--pr <n>] [--head <sha>] [--issue <n>] [--title <t>] [--body-file <f>] [--prior <text>] [--names <a,b>] [--spec-lines <L1-L2>] [--diff-file <f>] [--dir <dir>] [--hold-file <path>] [--from <tsv>]
 nova-pulse launch  --cards <cards.tsv> --root <dir> --slots <n> --deadline <s> --slots-store <dir> --owner <name> [--queue] [--benches <file>] [--bench <names>] [--machines <file>] [--runner <path>] [--swarm <path>] [--attempts <n>] [--routes <routes.tsv>] [--floor <f>] [--key-env <name>] [--base-url <url>] [--max <n>]
 nova-pulse fill    --ready <dir> --launched <dir> --machines <file> [--lanes <file>] [--session <id>] [--bench <name>]... [--local-bench <name>]... [--only <glob>]... [--slots-store <path>] [--slots-owner <name>] [--slots-bin <path>] [--max-load-per-core <f>] [--capacity <n>] [--launcher <path>] [--swarm-root <path>] [--deadline <s>] [--launch-grace <d>] [--interval <d>] [--stop <file>] [--once]
 nova-pulse harvest --id <pulse id> --root <dir> [--sources <file>] [--templates <dir>] [--launched <dir>] [--done <dir>] [--failed <dir>] [--max-body-bytes <n>] [--max <n>] [--decide] [--floor 0.9] [--key-env JEV_API_KEY] [--base-url <url>] [--commit]
@@ -280,6 +280,26 @@ share one and there is no --number flag to pass. cut without --kind is unchanged
 
 example:
   nova-pulse cut --kind read --repo mas-bandwidth/nova-tools --pr 812 --head 5f544272a1b0 --out ./queue/pending --queue ./queue
+
+cut --kind X --from <table> is the typed cut's small loop (#2021): one card per row of a
+kind-specific TSV, deduped against cards already in <queue>/{pending,launched,done,failed}
+and, with --dir <clone>, against the branches on that clone's origin (one
+git ls-remote --heads origin per run; a fix row whose issue already has a branch there,
+the open PR, is skipped). Three kinds, three row shapes:
+
+  fix   <repo><tab><issue><tab><title>[<tab><body-file><tab><prior>]
+  read  <repo><tab><pr><tab><head><tab><title>
+  guard <repo><tab><head>
+
+Every other kind refuses, because its row shape is not one record per row. Each skipped
+row prints CUT FROM SKIPPED kind=<kind> why=carded|origin <key> mark=|branch=<...>; the
+summary is CUT FROM kind=<kind> rows=<n> cut=<k> skipped=<m> carded=<a> origin=<b>, and
+the run exits 1 when any row was skipped (the validated cut's own pattern).
+
+example:
+  nova-pulse cut --kind fix  --from ./fix.tsv  --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools --dir .
+  nova-pulse cut --kind read --from ./read.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools
+  nova-pulse cut --kind guard --from ./guard.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools
 
 gate-facts is the G1/G2/G3 stamp harvest writes on a PR body: ci-ok at the head,
 merge-tree against --base, and the card PATHS versus git diff --name-only base...head.

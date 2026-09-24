@@ -122,6 +122,11 @@ var leftOwedExampleLines = map[string]string{
 	"nova-pulse pitstop set --state pause --except harvest --store 100.115.99.19:6380": "the pitstop set examples read and write the fleet Redis at 100.115.99.19:6380; the test's sandbox has no route to that address and a fixture cannot stand behind a real store",
 	"nova-pulse pitstop set --state resume --store 100.115.99.19:6380":                 "the pitstop set examples read and write the fleet Redis at 100.115.99.19:6380; the test's sandbox has no route to that address and a fixture cannot stand behind a real store",
 	"nova-pulse pitstop check launch --store 100.115.99.19:6380":                       "the pitstop check examples read the fleet Redis at 100.115.99.19:6380; the test's sandbox has no route to that address and a fixture cannot stand behind a real store",
+	// why: example-pulse lays down no fix.tsv/read.tsv/guard.tsv; issue2021_test.go
+	// drives --from against t.TempDir(), and the help lines are owed that fixture.
+	"nova-pulse cut --kind fix --from ./fix.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools --dir .": "the --from fixture is the kind-specific TSV the example-pulse does not lay down; the unit test in issue2021_test.go covers this verb, the help example is owed a fixture in testdata/",
+	"nova-pulse cut --kind read --from ./read.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools":       "the --from fixture is the kind-specific TSV the example-pulse does not lay down; the unit test in issue2021_test.go covers this verb, the help example is owed a fixture in testdata/",
+	"nova-pulse cut --kind guard --from ./guard.tsv --out ./queue/pending --queue ./queue --repo mas-bandwidth/nova-tools":     "the --from fixture is the kind-specific TSV the example-pulse does not lay down; the unit test in issue2021_test.go covers this verb, the help example is owed a fixture in testdata/",
 }
 
 // exampleBlockLines returns every command under an `example:` heading in a
