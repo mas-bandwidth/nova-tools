@@ -5326,6 +5326,49 @@ There is **no `quickstart` verb**. A one-word first run would have to invent a f
 
 **The Redis verbs need the `nova_sprint` function library on the server** (#3196). `nova-sprint fn load --redis <addr>` installs the library embedded in the binary with `FUNCTION LOAD REPLACE` and prints `LOADED nova_sprint sha=<sha>`; when the server already holds that exact source it loads nothing and prints `UNCHANGED nova_sprint sha=<sha>`, so a converge runs it every pass. `nova-sprint fn check --redis <addr>` changes nothing and prints `OK nova_sprint sha=<sha> ping=PONG` (exit 0), or `MISSING`, `STALE loaded=<sha> want=<sha>` or `NOPING` (exit 1): that exit is the bench-conform line for the fleet Redis. On `MISSING` or `STALE` it does not call `ns_ping` (`ping=skipped`), since the server's `ns_ping` is then not the embedded one and may write. The address authenticates the way every other `--redis` verb does.
 
+### lesson
+
+Every rendered build, fix, and read brief tells the card to read the repository's
+`docs/LESSONS.md` when present. It is reviewed data subordinate to the live
+brief and repository rules. The file is capped at 40 physical lines so a card
+can consume the whole active view. A read proposes the concrete failure and
+the action that would have prevented it; after the repository owner reviews
+the evidence, append the structured one-line row:
+
+```sh
+nova-sprint lesson append \
+  --repo ./nova-tools \
+  --id s9-001 \
+  --component brief \
+  --kind read \
+  --failure "card skipped repository lessons" \
+  --prevention "read the capped lessons file before review" \
+  --evidence "mas-bandwidth/nova-tools#2498" \
+  --status active \
+  --reviewed-by stella
+```
+
+The append verb never guesses a checkout or creates the active lessons file. Every field is
+required and must fit on one line without a Markdown table pipe. Lesson IDs
+are stable: an identical retry prints `LESSON UNCHANGED`; different content
+under an existing ID refuses. The append is published by atomic rename and
+refuses the 41st line. A holder-lifetime kernel lock (flock on Unix) on
+`nova-lessons.lock` in the checkout's git directory serializes the whole
+read/check/rename transaction, so concurrent successful appends cannot lose
+one another. The lock is never broken on age: a waiter queues behind a live
+holder for up to 30 seconds and then refuses as busy, and the kernel alone
+releases a holder that died. Append accepts `--status active`; retire a row with:
+
+```sh
+nova-sprint lesson supersede --repo ./nova-tools --id s9-001
+```
+
+Supersede first publishes the same row with status `superseded` to
+`docs/LESSONS-ARCHIVE.md`, then removes it from the capped active view. It
+creates the archive when needed; cards never load it. If interrupted between
+those writes, retry recognizes the archived row and finishes the removal.
+Archived IDs remain reserved, and an identical supersede retry is unchanged.
+
 ### xy
 
 The one line under the sprint table, `x/y z% -> ~eta`. It does not render the table.

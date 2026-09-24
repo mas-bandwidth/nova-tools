@@ -29,6 +29,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ctxindex"
@@ -38,6 +39,40 @@ import (
 
 // CutKinds are the kinds this cutter knows, in the order help prints them.
 var CutKinds = []string{"read", "fix", "replay", "spec", "rebase", "guard", "recut", "port", "docs-guard", "report"}
+
+// exemplarPRPrefix is the one place the reviewed-exemplar URL is spelled;
+// tests build every expected link from it instead of writing literal hosts
+// (TestNoRealNetworkHostsOnTheCIPath).
+const exemplarPRPrefix = "https://github.com/mas-bandwidth/nova-tools/pull/"
+
+// cardExemplarPRs is #2498 S6's reviewed-PR catalog at the generation boundary,
+// keyed by kind to the exemplar's nova-tools PR number. Keeping the mapping here
+// makes every real card carry its matching example; docs/EXEMPLARS.md explains
+// why each one was selected.
+var cardExemplarPRs = map[string]int{
+	"read":       3483,
+	"fix":        3061,
+	"replay":     2792,
+	"spec":       3162,
+	"rebase":     2794,
+	"guard":      2543,
+	"recut":      2918,
+	"port":       2751,
+	"docs-guard": 3140,
+	"report":     3337,
+}
+
+// exemplarURL is the link a card carries for a reviewed exemplar PR.
+func exemplarURL(pr int) string { return exemplarPRPrefix + strconv.Itoa(pr) }
+
+// cardExemplars maps each kind to its full exemplar link, built from cardExemplarPRs.
+var cardExemplars = func() map[string]string {
+	m := make(map[string]string, len(cardExemplarPRs))
+	for kind, pr := range cardExemplarPRs {
+		m[kind] = exemplarURL(pr)
+	}
+	return m
+}()
 
 // CutKindInput is everything `cut --kind` takes. Flag parsing lives in cmd/nova-pulse.
 type CutKindInput struct {
@@ -165,6 +200,7 @@ func CutKind(in CutKindInput) int {
 		fmt.Fprintf(in.Stderr, "CUT REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
+	rendered = withCardExemplar(in.Kind, rendered)
 	if in.Index != "" {
 		ix, err := ctxindex.Open(in.Index)
 		if err != nil {
@@ -200,6 +236,18 @@ func CutKind(in CutKindInput) int {
 	return 0
 }
 
+// withCardExemplar puts guidance immediately below the contract line, before
+// either renderer's task body. cutKindProblem already proved kind is supported,
+// so a missing map entry is a source defect held by the all-kinds regression.
+func withCardExemplar(kind, rendered string) string {
+	exemplar := cardExemplars[kind]
+	line := "Example to follow: " + exemplar + "\n"
+	if first, rest, ok := strings.Cut(rendered, "\n"); ok {
+		return first + "\n" + line + rest
+	}
+	return rendered + "\n" + line
+}
+
 // cutKindLane places the one typed card in its lane: a fix repairs a red bench
 // or a red PR and is red; a read is a small, already-approved PR and is green;
 // a replay or a spec is next. The step budget is the kind's own.
@@ -225,6 +273,8 @@ func cutKindProblem(in CutKindInput) string {
 	switch {
 	case !cutKindKnown(in.Kind):
 		return fmt.Sprintf("--kind %s is not one of %s (pass one of those kinds)", oneline.Field(in.Kind), strings.Join(CutKinds, "|"))
+	case cardExemplars[in.Kind] == "":
+		return fmt.Sprintf("--kind %s has no reviewed exemplar (add its verified PR to cardExemplars before cutting it)", oneline.Field(in.Kind))
 	case strings.TrimSpace(in.Repo) == "":
 		return "--repo is required; line 1 of every card names the repo (pass --repo <owner>/<name>)"
 	case strings.TrimSpace(in.Queue) == "":

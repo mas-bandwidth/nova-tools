@@ -13,6 +13,10 @@ Emma reads it, and Freddy is asked by name where a practice touches his swarm (2
 16). Templates read: cards 05 (edit), 08 and 09 (reads) of 2026-09-14, sec38 card-04. A
 promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](SPEC-SWARM.md)).
 
+`nova-pulse cut --kind` links the matching reviewed pull request from [Card
+exemplars](EXEMPLARS.md) in every task body as `Example to follow:`. The example demonstrates
+method and evidence; it does not override the card's pinned source, PATHS, test, or DONE-WHEN.
+
 **The practices `nova-swarm lint --card` checks mechanically, by their rule tokens.** A card
 writer meets these tokens on a `LINT DRIFT` line and has to know which practice they belong
 to; before 2026-09-18 they were written down nowhere at all (#1464), and a bench's clone of
