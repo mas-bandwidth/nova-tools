@@ -36,6 +36,9 @@ import (
 // agentsPath is the one page, relative to this package.
 const agentsPath = "../../AGENTS.md"
 
+// contributingPath is where the prose rules live (S11, nova-tools#2498).
+const contributingPath = "../../docs/CONTRIBUTING.md"
+
 // agentsLineCap is the ceiling. Every harness pays this at session start.
 const agentsLineCap = 120
 
@@ -48,13 +51,15 @@ var harnessFiles = []string{"CLAUDE.md"}
 // in SPEC-CI.md's index.
 var classRuleRe = regexp.MustCompile("(?m)^### `([^`]+)` — ")
 
-// TestAgentsPageNamesEveryClassRule is the front page's contract.
-func TestAgentsPageNamesEveryClassRule(t *testing.T) {
+// TestContributingPageNamesEveryClassRule holds the contract: CONTRIBUTING.md
+// carries the prose rules moved out of AGENTS.md (nova-tools#2498 S11) and must
+// name every class rule docs/SPEC-CI.md indexes, by rule name.
+func TestContributingPageNamesEveryClassRule(t *testing.T) {
 	t.Parallel()
 
-	page, err := os.ReadFile(agentsPath)
+	page, err := os.ReadFile(contributingPath)
 	if err != nil {
-		t.Fatalf("%s: %v; AGENTS.md is the one page a friend's harness reads before touching this repo — it is not optional", agentsPath, err)
+		t.Fatalf("%s: %v; docs/CONTRIBUTING.md carries the prose and class rules — it is not optional", contributingPath, err)
 	}
 	body := string(page)
 
@@ -71,9 +76,15 @@ func TestAgentsPageNamesEveryClassRule(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, name := range missing {
-		t.Errorf("%s does not name the class rule `%s`; a friend meets that rule as a red and reads its name off the refusal, so the front page must list it — add it to the ten, or to the by-name index beside them, and keep the full entry in %s",
-			agentsPath, name, specCIPath)
+		t.Errorf("%s does not name the class rule `%s`; a friend meets that rule as a red and reads its name off the refusal, so CONTRIBUTING.md must list it — add it to the ten, or to the by-name index beside them, and keep the full entry in %s",
+			contributingPath, name, specCIPath)
 	}
+}
+
+// TestAgentsPageNamesEveryClassRule preserves the historical test name while
+// asserting the contract in docs/CONTRIBUTING.md.
+func TestAgentsPageNamesEveryClassRule(t *testing.T) {
+	TestContributingPageNamesEveryClassRule(t)
 }
 
 // TestAgentsPageStaysUnderTheLineCap holds the ceiling.
