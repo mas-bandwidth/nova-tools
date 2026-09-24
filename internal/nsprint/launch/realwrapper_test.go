@@ -156,6 +156,64 @@ func TestLaunchRealWrapper(t *testing.T) {
 	}
 }
 
+// TestLaunchRealWrapperReportsNotDealtAsRefused covers the production
+// nova-card acknowledgement, rather than only the fixture protocol. A stale
+// launch line whose card is no longer dealt must not be counted as started.
+func TestLaunchRealWrapperReportsNotDealtAsRefused(t *testing.T) {
+	wrapper := buildRealWrapper(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := startLaunchRedis(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	id := card.Identity{Sprint: "refuse-real", Label: "card-no-longer-dealt", BaseSHA: "4956ccb8", Bench: "real-bench", Attempt: 1}
+	token := "1." + strings.Repeat("cd", 16)
+	if err := client.HSet(ctx, card.CardKey(id.Sprint, id.Label), map[string]string{
+		"state": "queued", "attempt": "1", "token": token, "token_sha": card.TokenSHA(token),
+		"identity": id.String(), "bench": id.Bench, "base_sha": id.BaseSHA,
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	jobs, results := filepath.Join(root, "jobs"), filepath.Join(root, "results")
+	for _, dir := range []string{jobs, results} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("NOVA_CARD_REDIS", addr)
+	t.Setenv("NOVA_CARD_BENCH", id.Bench)
+	t.Setenv("NOVA_CARD_HARNESS", self)
+	t.Setenv("NOVA_CARD_JOBS", jobs)
+	t.Setenv("NOVA_CARD_RESULTS", results)
+	t.Setenv("NOVA_CARD_CLOCK", "45m")
+	t.Setenv("NOVA_CARD_BEAT", "60s")
+	t.Setenv(realHarnessEnv, "done")
+
+	line := Line{Sprint: id.Sprint, Label: id.Label, Attempt: id.Attempt, Token: token}
+	var out strings.Builder
+	res, err := Launch(strings.NewReader(line.String()+"\n"), &out, Config{Wrapper: wrapper})
+	if err != nil || res.Started != 0 || res.Refused != 1 {
+		t.Fatalf("launch %+v err %v, want started=0 refused=1:\n%s", res, err, out.String())
+	}
+	if strings.Contains(out.String(), "LAUNCHED "+line.Card()) ||
+		!strings.Contains(out.String(), "REFUSED line=1 wrapper "+line.Card()) ||
+		!strings.Contains(out.String(), "LAUNCH started=0 refused=1") {
+		t.Fatalf("launch output is not truthful:\n%s", out.String())
+	}
+	if state := client.HGet(ctx, card.CardKey(id.Sprint, id.Label), "state").Val(); state != "queued" {
+		t.Fatalf("refused wrapper changed card state to %q", state)
+	}
+	for name, dir := range map[string]string{"jobs": jobs, "results": results} {
+		if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+			t.Fatalf("refused wrapper left %s entries %v (%v)", name, entries, err)
+		}
+	}
+}
+
 // jobsGoneWait bounds the wait for the wrapper to remove the job directory
 // after card end.
 const jobsGoneWait = 5 * time.Second
