@@ -55,6 +55,7 @@ var DefaultCatalog = []Entry{
 	E("internal/adoption", "evidence-based tool and verb adoption ledger", "go test ./internal/adoption", "go test ./internal/adoption"),
 	E("internal/board", "board structures and view rendering", "go test ./internal/board", "go test ./internal/board"),
 	E("internal/benchcount", "per-bench landed and useful counts", "go test ./internal/benchcount", "go test ./internal/benchcount"),
+	E("internal/benchsh", "the one bench script runner: ssh bash -s, script on stdin", "go test ./internal/benchsh", "go test ./internal/benchsh"),
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "append-only coordination bus", "go test ./internal/bus", "go test ./internal/bus"),
