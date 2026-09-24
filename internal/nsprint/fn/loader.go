@@ -19,8 +19,34 @@ const Library = "nova_sprint"
 //go:embed lua/*.lua
 var sources embed.FS
 
+// Prelude is the one chunk-level local of the assembled library: NS, the
+// table through which a file hands helpers to a file that sorts after it
+// (friend.lua -> redistribute*.lua as NS.friend, redistribute.lua ->
+// redistribute_assign.lua as NS.redistribute, task_claim.lua -> task_queue.lua
+// as NS.DEP).
+const Prelude = "local NS = {}\n"
+
+// MaxLocals is the most active locals the library's main function may hold.
+// Lua (and so Redis) refuses a function with more than 200; the headroom is
+// for the next merge. TestLibraryLocalsUnderLimit enforces it.
+const MaxLocals = 180
+
+// Each file is emitted as its header line ("-- lua/<name>.lua", which the
+// one-writer tests split sections on), a line "do", the file, and a line
+// "end -- lua/<name>.lua".
+const (
+	fileHeader = "-- "
+	blockOpen  = "do"
+	blockClose = "end -- "
+)
+
 // Source builds one library from all verb files. A verb is added by placing a
-// Lua file in lua/; no central Lua registry needs to change.
+// Lua file in lua/; no central Lua registry needs to change. Each file is
+// wrapped in its own do-block, so its top-level locals leave scope at its end:
+// the main function holds len(Prelude locals) + the largest file's locals at
+// once, not the sum over every file (Lua's limit is 200 active locals; the sum
+// passed it at #3487). A file shares nothing by bare local; what a later file
+// needs goes through NS.
 func Source() (string, error) {
 	names, err := fs.Glob(sources, "lua/*.lua")
 	if err != nil {
@@ -32,6 +58,7 @@ func Source() (string, error) {
 	sort.Strings(names)
 	var b strings.Builder
 	b.WriteString("#!lua name=" + Library + "\n")
+	b.WriteString(Prelude)
 	for _, name := range names {
 		fragment, err := sources.ReadFile(name)
 		if err != nil {
@@ -40,9 +67,9 @@ func Source() (string, error) {
 		if strings.TrimSpace(string(fragment)) == "" {
 			return "", fmt.Errorf("empty function file %s", name)
 		}
-		b.WriteString("\n-- " + name + "\n")
+		b.WriteString("\n" + fileHeader + name + "\n" + blockOpen + "\n")
 		b.Write(fragment)
-		b.WriteByte('\n')
+		b.WriteString("\n" + blockClose + name + "\n")
 	}
 	return b.String(), nil
 }

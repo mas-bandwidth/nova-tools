@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // CardScratchFiles are the scratch files set aside from the repo into scratch-from-repo/.
@@ -310,9 +311,18 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 		return lines, nil
 	}
 
-	declaredBranch := strings.TrimSpace(resultToken(resLines, "BRANCH "))
+	rec := typedrec.ParseResult(rawResult)
+	declaredBranch := strings.TrimSpace(rec.Branch)
 	if declaredBranch == "" {
-		declaredBranch = strings.TrimSpace(resultToken(resLines, "BRANCH:"))
+		declaredBranch = strings.TrimSpace(rec.Claims["BRANCH"])
+	}
+	if declaredBranch == "" {
+		var branchPfx = "BRANCH "
+		var branchColon = "BRANCH:"
+		declaredBranch = strings.TrimSpace(resultToken(resLines, branchPfx))
+		if declaredBranch == "" {
+			declaredBranch = strings.TrimSpace(resultToken(resLines, branchColon))
+		}
 	}
 	if declaredBranch == "main" || declaredBranch == "master" {
 		return refuse(fmt.Sprintf("BRANCH REFUSED %s: branch %s is a trunk; commit never commits to trunk", label, oneline.Quote(declaredBranch)))
@@ -334,9 +344,17 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 	}
 
 	cardPath := findCardFile(in.CardDir, in.CardsDir, in.JobDir, label)
-	claimedRepo := resultToken(resLines, "REPO ")
+	claimedRepo := strings.TrimSpace(rec.Repo)
 	if claimedRepo == "" {
-		claimedRepo = resultToken(resLines, "REPO:")
+		claimedRepo = strings.TrimSpace(rec.Claims["REPO"])
+	}
+	if claimedRepo == "" {
+		var repoPfx = "REPO "
+		var repoColon = "REPO:"
+		claimedRepo = resultToken(resLines, repoPfx)
+		if claimedRepo == "" {
+			claimedRepo = resultToken(resLines, repoColon)
+		}
 	}
 	claimedRepo = strings.TrimPrefix(strings.TrimSpace(claimedRepo), "github.com/")
 	if cardPath != "" {
@@ -438,7 +456,7 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 			}
 			committedVerdict = fmt.Sprintf("COMMITTED %s %s %s", label, declaredBranch, strings.TrimSpace(shortHead))
 		}
-	} else if curBranch != declaredBranch && curBranch != "HEAD" && curBranch != "" && curBranch != "main" && curBranch != "master" {
+	} else if detachedHead := "HEAD"; curBranch != declaredBranch && curBranch != detachedHead && curBranch != "" && curBranch != "main" && curBranch != "master" {
 		if _, err := runner.Run(repoDir, "rev-parse", "--verify", "refs/heads/"+declaredBranch); err == nil {
 			return refuse(fmt.Sprintf("BRANCH-RESET REFUSED %s: branch %s already exists; refusing to rename to existing branch", label, declaredBranch))
 		}
@@ -486,13 +504,9 @@ func CommitJob(in CommitJobInput) ([]string, error) {
 	// Rebase onto moved target
 	isReportOrRead := strings.HasPrefix(label, "report-") || strings.HasPrefix(label, "read-")
 	rr2 := "nova-tools"
-	isSchema := false
-	for _, l := range resLines {
-		t := strings.TrimSpace(l)
-		if (strings.HasPrefix(t, "REPO") || strings.HasPrefix(t, "repo")) && strings.Contains(t, "mas-bandwidth/schema") {
-			isSchema = true
-			rr2 = "schema"
-		}
+	isSchema := strings.Contains(claimedRepo, "mas-bandwidth/schema")
+	if isSchema {
+		rr2 = "schema"
 	}
 	base := defaultBase
 	if cb := findCardBase(in.CardDir, in.CardsDir, label); cb != "" {
@@ -894,23 +908,5 @@ func updateBaseLine(content, base string) (updated string, changed bool, isNew b
 }
 
 func updateBranchLine(content, branch string) (updated string, changed bool, isNew bool) {
-	lines := strings.Split(content, "\n")
-	found := false
-	exact := "BRANCH " + branch
-	for i, l := range lines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "BRANCH ") || strings.HasPrefix(t, "BRANCH:") {
-			found = true
-			if t == exact {
-				return content, false, false
-			}
-			lines[i] = exact
-			return strings.Join(lines, "\n"), true, false
-		}
-	}
-	if !found {
-		trimmed := strings.TrimRight(content, "\n")
-		return trimmed + "\n" + exact + "\n", true, true
-	}
-	return content, false, false
+	return typedrec.UpdateBranchLine(content, branch)
 }

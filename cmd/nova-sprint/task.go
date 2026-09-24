@@ -13,6 +13,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/disposition"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 )
@@ -258,28 +261,81 @@ func runTaskDone(ctx context.Context, args []string, out, errOut io.Writer) int 
 	actor := fs.String("actor", "", "")
 	idem := fs.String("idem", "", "")
 	as := fs.String("as", "", "")
+	// nova-tools #3092 rev 7: a review closes on the comment as posted. The
+	// shared parser (internal/nsprint/disposition) reads its typed line and
+	// ns_task_done records it with the close in one atomic call.
+	bodyFile := fs.String("body-file", "", "")
+	url := fs.String("url", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
 	if fs.NArg() > 0 {
 		return refuse(errOut, "task done", "takes flags, not positional arguments")
 	}
+	var typed *task.TypedLine
+	if *bodyFile != "" {
+		if *verdict != "" || *score != 0 || *head != "" {
+			return refuse(errOut, "task done", "--body-file carries verdict, score and head; drop --verdict, --score and --head")
+		}
+		body, err := os.ReadFile(*bodyFile)
+		if err != nil {
+			return refuse(errOut, "task done", err.Error())
+		}
+		res := disposition.Parse(string(body))
+		if res.Outcome != disposition.Record {
+			// A review closes on a record: prose, NORECORD and a malformed
+			// line all refuse the close.
+			_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res, *id)
+			return 2
+		}
+		if res.Line.Type != disposition.TypeDisposition {
+			_, _ = fmt.Fprintf(out, "REFUSED not-a-disposition id=%s\n", *id)
+			return 2
+		}
+		typed = &task.TypedLine{Type: string(res.Line.Type), Who: res.Line.Who, Head: res.Line.Head,
+			Verdict: res.Line.Verdict, Score: strconv.Itoa(res.Line.Score), Kind: res.Line.Kind,
+			Scope: res.Line.Scope, Reason: res.Line.Reason, URL: *url}
+		if typed.URL == "" {
+			typed.URL = *evidence
+		}
+		typed.CommentID = disposition.CommentID(typed.URL)
+	} else if *url != "" {
+		return refuse(errOut, "task done", "--url goes with --body-file")
+	}
 	st, err := openTaskStore(ctx, *redisAddr)
 	if err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
 	defer st.Close()
+	if typed != nil && typed.Verdict == "HOLD" && typed.Kind == "" {
+		// The classifier names another pull by number, so it needs the
+		// task's PR.
+		prText, err := st.Client().HGet(ctx, "s:"+*sprint+":task:"+*id, "pr").Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return refuse(errOut, "task done", err.Error())
+		}
+		pr, _ := strconv.Atoi(prText)
+		typed.KindDerived = disposition.Classify(typed.Reason, pr)
+	}
 	scoreText := ""
 	if *score != 0 {
 		scoreText = strconv.Itoa(*score)
 	}
-	status, err := task.Done(ctx, st, task.DoneRequest{
+	res, err := task.DoneTyped(ctx, st, task.DoneRequest{
 		Sprint: *sprint, ID: *id, Token: *token, Evidence: *evidence,
 		Verdict: *verdict, Score: scoreText, Head: *head, Actor: *actor, Idem: *idem, As: *as,
+		Typed: typed,
 	})
 	if err != nil {
 		return refuse(errOut, "task done", err.Error())
 	}
-	fmt.Fprintf(out, "DONE %s id=%s\n", status, *id)
-	return status.ExitCode()
+	switch {
+	case res.Status == task.DoneRefused:
+		_, _ = fmt.Fprintf(out, "REFUSED %s id=%s\n", res.Why, *id)
+	case len(res.Record) > 0:
+		_, _ = fmt.Fprintf(out, "DONE %s id=%s RECORD %s\n", res.Status, *id, strings.Join(res.Record, " "))
+	default:
+		_, _ = fmt.Fprintf(out, "DONE %s id=%s\n", res.Status, *id)
+	}
+	return res.Status.ExitCode()
 }

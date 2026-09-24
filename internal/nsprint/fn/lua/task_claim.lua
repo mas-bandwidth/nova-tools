@@ -8,8 +8,14 @@
 -- there is no blocked state; a task with an unmet dependency is waiting and
 -- never ready). It is declared here, in the first task file of the one
 -- library chunk, so push and done below can call it; task_queue.lua fills it
--- in. Every call happens at run time, after the whole chunk has loaded.
+-- in through NS.DEP (loader.go wraps every file in its own do-block). Every
+-- call happens at run time, after the whole chunk has loaded.
 local DEP = {}
+NS.DEP = DEP
+
+-- HD is hold.lua's table (it sorts before this file); ns_task_done calls
+-- HD.ingest, HD.resolve_who and HD.write_disp at run time.
+local HD = NS.HD
 
 local function now_ms()
   local t = redis.call('TIME')
@@ -226,11 +232,21 @@ end
 -- match or the call refuses; a review task's evidence must name a verdict, a
 -- score and a head equal to the task head. A repeated identical done exits 0;
 -- different evidence on a closed task exits 4.
+-- nova-tools #3092 rev 7: args 11-18 carry a typed DISPOSITION line parsed by
+-- internal/nsprint/disposition (task done --body-file): type, who, url,
+-- comment_id, kind, derived kind, scope, reason. A review close with a typed
+-- line records it through HD.ingest (hold.lua, ns_ingest_disposition's body)
+-- in this same call, before the close: a line whose who is not the task
+-- owner, or that ingest refuses, refuses the close with nothing written.
+-- Without a typed line (the legacy --verdict/--score/--head flags) the close
+-- keeps the base disposition value through HD.write_disp.
 local function task_done(keys, args)
   local S, id, token = args[1], args[2], args[3]
   local evidence, verdict, score, head = args[4], args[5], args[6], args[7]
   local actor, idem = args[8], args[9]
   local as = args[10] or ''
+  local typ, who, url, comment_id = args[11] or '', args[12] or '', args[13] or '', args[14] or ''
+  local kind_explicit, kind_derived, scope, reason = args[15] or '', args[16] or '', args[17] or '', args[18] or ''
   local key = 's:' .. S .. ':task:' .. id
 
   if redis.call('EXISTS', key) == 0 then
@@ -264,14 +280,31 @@ local function task_done(keys, args)
     return { 'NOEVIDENCE' }
   end
   local kind = redis.call('HGET', key, 'kind')
+  local friend = redis.call('HGET', key, 'owner')
+  local record = nil
   if is_review(kind) then
     if verdict == '' or score == '' or redis.call('HGET', key, 'head') ~= head then
       return { 'INVALID' }
     end
+    if typ ~= '' then
+      if typ ~= 'DISPOSITION' then
+        return { 'REFUSED', 'not-a-disposition' }
+      end
+      if HD.resolve_who(who) ~= friend then
+        return { 'REFUSED', 'who-not-owner' }
+      end
+      local repo = string.match(redis.call('HGET', key, 'repo') or '', '([^/]*)$')
+      record = HD.ingest(nil, { S, repo, redis.call('HGET', key, 'pr') or '', url, comment_id,
+        typ, who, head, verdict, score, kind_explicit, kind_derived, scope, reason })
+      if record[1] ~= 'RECORD' then
+        return record
+      end
+    end
+  elseif typ ~= '' then
+    return { 'REFUSED', 'not-a-review' }
   end
 
   local attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
-  local friend = redis.call('HGET', key, 'owner')
   local at = now_ms()
   redis.call('HSET', key, 'state', 'closed', 'evidence', evidence,
     'verdict', verdict, 'score', score, 'closed_at', tostring(at))
@@ -282,14 +315,15 @@ local function task_done(keys, args)
   redis.call('ZREM', 'friend:' .. friend .. ':starting', identity)
   redis.call('ZREM', 'friend:' .. friend .. ':living', identity)
   redis.call('SADD', 's:' .. S .. ':done:' .. friend, id)
-  if is_review(kind) then
-    local repo = redis.call('HGET', key, 'repo')
-    local pr = redis.call('HGET', key, 'pr')
-    redis.call('HSET', 's:' .. S .. ':disp:' .. repo .. ':' .. pr,
+  if is_review(kind) and not record then
+    HD.write_disp(S, redis.call('HGET', key, 'repo'), redis.call('HGET', key, 'pr'),
       friend .. '@' .. head, verdict .. ' ' .. score .. ' ' .. evidence)
   end
   receipt(S, 'task done', id, state, 'closed', attempt, redis.call('HGET', key, 'token_sha'), actor, '', '', evidence, idem, at)
   local ready = DEP.resolve(S, 'task:' .. id, false, actor, idem, at)
+  if record then
+    return { 'DONE', unpack(record) }
+  end
   return { 'DONE', tostring(ready) }
 end
 

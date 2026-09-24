@@ -1,8 +1,8 @@
 -- Friend state and the declared wake path (nova-tools #3101; spec #2756 v6
 -- 2.2, 4.4, 5.5). No shebang: loader.go prepends the single library header.
--- Locals carry an fs_ prefix because every lua/ file shares one chunk; this
--- file sorts before redistribute.lua, which calls fs_set, fs_clear and
--- fs_blocks.
+-- loader.go wraps this file in its own do-block, so its locals are its own;
+-- the helpers redistribute.lua and redistribute_assign.lua call (fs_set,
+-- fs_clear, fs_blocks and three state names) are exported below as NS.friend.
 --
 -- friend:<f>:state (hash) has ONE writer: the fs_set/fs_clear pair below,
 -- reached from outside only as ns_friend_state (and from the redistribute
@@ -271,3 +271,10 @@ end
 
 redis.register_function('ns_friend_state', fs_friend_state)
 redis.register_function('ns_friend_wakepath', fs_friend_wakepath)
+
+-- The cross-file surface (loader.go: every file is its own do-block, and NS
+-- is the one chunk-level local). redistribute*.lua sort after this file.
+NS.friend = {
+  FS_AWAY = FS_AWAY, FS_IDLE = FS_IDLE, FS_UNDER = FS_UNDER,
+  fs_blocks = fs_blocks, fs_set = fs_set, fs_clear = fs_clear,
+}

@@ -163,14 +163,6 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 	fmt.Fprintf(out, "RECONCILER instance=%s host=%s token_sha=%s ttl=%s\n",
 		lease.Instance(), lease.Host(), lease.TokenSHA(), lease.TTL())
 
-	fmt.Fprintf(out, "DUTIES %s\n", strings.Join(names, ","))
-
-	named := &namedDuties{errOut: errOut}
-	loop := &reconcile.Loop{
-		Lease:   lease,
-		Duties:  named.wrap(duties, names),
-		OnError: func(err error) { fmt.Fprintf(errOut, "nova-sprint reconcile: pass: %v\n", err) },
-	}
 	// The width duty (#3071, #3086): one width tick per pass under the lease,
 	// and a completion's replacement dealt in the same pass. It needs the
 	// measured rebalance ticks (p95 take latency); without them it is off and
@@ -181,8 +173,20 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 			Readers:        splitNames(*widthReaders),
 			Builders:       splitNames(*widthBuilders),
 			Coordinator:    *widthCoordinator,
-		}}
-		loop.Duties = append(loop.Duties, duty.Run)
+		}, PRs: &deal.GH{}}
+		duties = append(duties, duty.Run)
+		names = append(names, "width")
+	}
+
+	fmt.Fprintf(out, "DUTIES %s\n", strings.Join(names, ","))
+
+	named := &namedDuties{errOut: errOut}
+	loop := &reconcile.Loop{
+		Lease:   lease,
+		Duties:  named.wrap(duties, names),
+		OnError: func(err error) { fmt.Fprintf(errOut, "nova-sprint reconcile: pass: %v\n", err) },
+	}
+	if *widthTicks > 0 {
 		fmt.Fprintf(out, "WIDTH on rebalance_ticks=%d\n", *widthTicks)
 	} else {
 		fmt.Fprintln(out, "WIDTH off: no --width-rebalance-ticks")
