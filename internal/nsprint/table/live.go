@@ -98,11 +98,18 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 	type friendCmds struct {
 		row  *redis.SliceCmd
 		down *redis.StringCmd
+		// #3206 PR A: ns_friend_down writes a HASH {reason, actor, at}; the
+		// GET above fails WRONGTYPE on it (tolerated), so its reason and
+		// existence are read beside the legacy string.
+		downReason *redis.StringCmd
+		downExists *redis.IntCmd
 	}
 	fc := make([]friendCmds, len(cfg.Friends))
 	for i, name := range cfg.Friends {
 		fc[i].row = pipe.HMGet(ctx, "friend:"+name, "at", "up", "ready", "working", "done")
 		fc[i].down = pipe.Get(ctx, "friend:"+name+":down")
+		fc[i].downReason = pipe.HGet(ctx, "friend:"+name+":down", "reason")
+		fc[i].downExists = pipe.Exists(ctx, "friend:"+name+":down")
 	}
 	mget := pipe.MGet(ctx, "sprint:"+cfg.Sprint+":xy", "sprint:"+cfg.Sprint+":landed")
 	blocked := pipe.ZCard(ctx, "q:blocked")
@@ -127,6 +134,11 @@ func ReadLive(ctx context.Context, client redis.UniversalClient, cfg LiveConfig)
 		}
 		if got, err := fc[i].down.Result(); err == nil {
 			row.Down = flatten(got)
+		} else if fc[i].downExists.Val() == 1 {
+			row.Down = flatten(fc[i].downReason.Val())
+			if row.Down == "" {
+				row.Down = "down"
+			}
 		}
 		snap.Friends = append(snap.Friends, row)
 	}

@@ -454,9 +454,10 @@ nova-merge stop       --lane <dir>
 nova-merge dry-run    --lane <dir> [--max <n>]
 nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
 nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
+nova-merge rebase     --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>] [--dry-run|--yes]
 nova-merge version
 
-`wait` blocks in one full-context turn instead of watching GitHub by hand: it polls the same gh reader the lane uses for PR state and checks (`Host.PR` and `Host.Checks`, no new client) every `--interval` (default 30s) until the PR is merged (`MERGE WAIT MERGED pr=<n> base=<branch> sha=<merge sha> wall=<s>`, exit 0), a required check fails or the PR is closed unmerged (`MERGE WAIT RED pr=<n> check=<name> conclusion=<c> wall=<s>`, exit 2), or `--timeout` runs out (`MERGE WAIT TIMEOUT pr=<n> state=<state> pending=<names> wall=<s>`, exit 3). It prints exactly one line on stdout and nothing between polls, so a coordinator spends one turn per merge instead of one turn per `gh` call. A merge line names its base, and only a base of the lane's important base is a landing (nova-tools #229, 2026-09-12: #144 merged onto its docs-migration stack, not main, and #166 landed the delta): a `MERGED` line whose `base` is any other branch is a stack merge, never a landing.
+`wait` blocks in one full-context turn instead of watching GitHub by hand: it polls the same gh reader the lane uses for PR state and checks (`Host.PR` and `Host.Checks`, no new client) every `--interval` (default 30s) until the PR is merged (`MERGE WAIT MERGED pr=<n> base=<branch> sha=<merge sha> wall=<s>`, exit 0), a required check fails or the PR is closed unmerged (`MERGE WAIT RED pr=<n> check=<name> conclusion=<c> wall=<s>`, exit 1), or `--timeout` runs out (`MERGE WAIT TIMEOUT pr=<n> state=<state> pending=<names> wall=<s>`, exit 3). It prints exactly one line on stdout and nothing between polls, so a coordinator spends one turn per merge instead of one turn per `gh` call. A merge line names its base, and only a base of the lane's important base is a landing (nova-tools #229, 2026-09-12: #144 merged onto its docs-migration stack, not main, and #166 landed the delta): a `MERGED` line whose `base` is any other branch is a stack merge, never a landing.
 
 `wait` judges the head sha's own runs and no others (nova-tools #1014, 2026-09-17: a wait saw RED from a stale rollup while the head was still working). A check reader may answer a whole pull request rather than one commit, so each check result carries the `head_sha` it ran against and the verb narrows the rollup to the PR's current `headRefOid` before it counts: a completed failure on the head is RED, while a run that is in progress or queued -- and the pull request's merge-queue entry -- is pending. A conclusion on a sha the head has moved past, including an old merge-queue run's failed `ci-ok`, is ignored, and a merged pull request is `MERGED` regardless of what the stale rollup still says.
 
@@ -502,7 +503,7 @@ closes for `nova-bus`. The base **sha** a gate was taken against (rule 18) is
 naming `--base-sha`, and `--base-sha` on any verb but `gate` is refused naming
 `gate` (rule 20).
 
-**`dry-run` is a verb, not a flag.** In the prototype it is a global `--dry-run`
+**The lane's `dry-run` is a verb, not a flag.** In the prototype it is a global `--dry-run`
 that any verb accepts, including the mutating ones, and the cost of that is a
 mode a caller can leave on or off by accident on the one command that merges.
 Here the survey is its own verb with its own name: it performs every read `run`
@@ -511,6 +512,9 @@ performs, prints the whole plan rather than stopping at the first merge, and
 22), and `state.json` and the checkout are byte-identical afterwards. Nothing
 in `dry-run`'s code path can reach the mutating
 helper at all, which is a property a test can pin and a flag never is.
+`rebase` is outside a lane and has its own narrower confirmation contract:
+its default and `--dry-run` both list the external cards it would cut, while
+only an explicit `--yes` reaches the cutter and launcher (#3515).
 
 **`version` is the Conventions' line, plus this binary's own `build=`.** It
 prints `nova-merge <build identity> <goos>/<goarch> <go version>
@@ -538,7 +542,7 @@ see **exit codes**.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a lane created, an entry added, a read or gate recorded, a pass completed with nothing refused |
-| 1 | the verb ran and said **NO**: a merge that could not be landed, a merge that `RACED`, a publication the remote refused for a missing capability (`MERGE BLOCKED`), an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry, an `init` of a lane that exists |
+| 1 | the verb ran and said **NO**: a `wait` that observed a red check or closed-unmerged pull request, a merge that could not be landed, a merge that `RACED`, a publication the remote refused for a missing capability (`MERGE BLOCKED`), an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry, an `init` of a lane that exists |
 | 2 | could not run: missing flag, unreadable lane state, a lane directory that is not one, bad invocation, `gh` or `git` absent |
 
 **An entry that is merely waiting is not a failure.** Zero pending checks is

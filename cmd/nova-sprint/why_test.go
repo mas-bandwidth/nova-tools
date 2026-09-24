@@ -195,3 +195,18 @@ func TestLandStatus(t *testing.T) {
 		mustLine(t, stdout, want)
 	}
 }
+
+func TestLandVerbDispatch(t *testing.T) {
+	if code, _, stderr := runSprint("land", "nope"); code != 2 || !strings.Contains(stderr, "want status or flaky") {
+		t.Fatalf("land nope: exit=%d stderr=%q", code, stderr)
+	}
+	if code, _, stderr := runSprint("land", "flaky", "nope"); code != 2 || !strings.Contains(stderr, "want list or observe") {
+		t.Fatalf("land flaky nope: exit=%d stderr=%q", code, stderr)
+	}
+	if code, _, _ := runSprint("land", "flaky", "observe"); code != 2 {
+		t.Fatalf("observe without flags exit=%d, want 2", code)
+	}
+	if code, _, _ := runSprint("land", "flaky", "observe", "--redis", "127.0.0.1:1", "--sprint", "s", "--repo", "a:b", "--pkg", "p", "--test", "T", "--lane", "l"); code != 2 {
+		t.Fatalf("observe with colon repo exit=%d, want 2", code)
+	}
+}
