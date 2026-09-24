@@ -29,6 +29,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
+	"github.com/mas-bandwidth/nova-tools/internal/pulse/fillcfg"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -128,8 +129,11 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 		reader = sshCapacity{root: *swarmRoot}
 	default:
 		reader = storeProbeCapacity(storeProbeConfig{
-			Store:    *slotsStore,
-			Owner:    *slotsOwner,
+			Store: *slotsStore,
+			Owner: *slotsOwner,
+			// CAPACITY IS CONFIG (nx-e06): each bench's share is the machines
+			// registry's share= field, re-read every tick, never a file on the bench.
+			Shares:   fillcfg.Source{Machines: *machines}.Share,
 			SlotsBin: *slotsBin,
 			Root:     *swarmRoot,
 			Local:    local,

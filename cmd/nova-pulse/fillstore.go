@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
@@ -38,9 +39,13 @@ const defaultMaxLoadPerCore = 1.5
 
 // storeProbeConfig is everything the probe needs that is not the bench's name.
 type storeProbeConfig struct {
-	SSH      string          // the ssh binary; empty is `ssh`
-	Store    string          // the slot store path ON the bench
-	Owner    string          // the owner row in shares.tsv; empty is swarm-<bench>
+	SSH   string // the ssh binary; empty is `ssh`
+	Store string // the slot store path ON the bench
+	Owner string // the lease owner whose live slots are counted; empty is swarm-<bench>
+	// Shares answers a bench's configured share (nx-e06: capacity is config). The fill
+	// hands it the machines registry's share= field, re-read every tick; ok=false is a
+	// bench with no share configured, which answers the legacy formula by name.
+	Shares   func(bench string) (share int, ok bool, err error)
 	SlotsBin string          // the nova-swarm that lists the store's leases
 	Root     string          // the swarm root, for the legacy formula's disk term
 	Local    map[string]bool // benches read by this machine's own shell, never over ssh
@@ -59,15 +64,19 @@ func storeProbeCapacity(c storeProbeConfig) pulse.Capacity {
 	}
 }
 
-// probe runs the one line on the bench and hands back what it printed.
+// probe reads the bench's share from configuration, runs the one line on the bench and
+// hands back what it printed. The share is never read off the bench: no shares.tsv, no
+// ramp.tsv (nx-e06). The lease owner -- swarm-<bench> unless named -- is counted in Go by
+// pulse.StoreCapacity, so the script does not need it.
 func (c storeProbeConfig) probe(bench string) (string, error) {
-	owner := strings.TrimSpace(c.Owner)
-	if owner == "" {
-		// The seat the launcher already hands the bench. It is a convention this tool
-		// already writes down (flashLauncher's `swarm-<bench>`), not a new guess.
-		owner = "swarm-" + bench
+	if c.Shares == nil {
+		return "", fmt.Errorf("no share source configured for %s; the fill's capacity is the registry's share= field, refusing to guess one", bench)
 	}
-	script := storeScript(c.Store, owner, c.SlotsBin, c.Root)
+	share, ok, err := c.Shares(bench)
+	if err != nil {
+		return "", err
+	}
+	script := storeScript(c.Store, share, ok, c.SlotsBin, c.Root)
 	if c.Local[bench] {
 		return runProbeLocally(script)
 	}
@@ -139,62 +148,51 @@ func (c *capped) Write(p []byte) (int, error) {
 //	leases
 //	<nova-swarm slots list's own output, verbatim, for Go to count>
 //
-//	formula capacity=<n> cores=<n> load1=<f> why=<no-shares-file|no-row-for-owner>
+//	formula capacity=<n> cores=<n> load1=<f> why=no-share-in-config
 //	unreadable reason=<why> ...
 //
 // and nothing else, so the caller parses an answer rather than a shell transcript. `nproc`
 // and /proc are Linux; the fallbacks are darwin's `sysctl` (`vm.loadavg` prints
 // `{ 3.20 3.40 3.60 }`), because a bench is whatever the registry says is a bench.
 //
-// THE LEASE READ'S STATUS IS KEPT (Stella, #1945). It used to be
-// `h=$("$B" slots list ... | grep -c ...)`, whose status is grep's: a missing or failing
-// nova-swarm printed nothing, grep counted 0, the script succeeded, and a bench with every
-// slot leased answered `held=0` -- its whole share dealt to a machine with nothing free.
-// The output is captured first -- a plain command substitution, never a pipeline -- its
-// exit status checked, and then handed back VERBATIM so Go counts it (pulse.countLeases):
-// a shell that counts is a shell whose status belongs to grep. An EMPTY list, which is a
-// bench with its whole share free, stays an empty list.
+// THE SHARE IS CONFIG (nx-e06). It used to be an awk over the bench's own shares.tsv; it is
+// now the machines registry's share= field, read by the fill every tick and written into the
+// script as a number, so no file on the bench sizes the fill and an edited share moves the
+// cap on the next tick. The bench still answers what only the bench knows: its live leases,
+// its cores and its load.
 //
-// The ONE fallthrough to the formula is the documented no-store-row case: no shares.tsv at
-// all, or a readable shares.tsv with no row for this owner AND a lease read that SUCCEEDED.
-// It carries `why=` so it is never silent. A shares.tsv that is there and cannot be read, a
-// share that is not a whole number and a lease read that failed are refusals -- not a quiet
-// reversion to the number this change exists to stop using.
-func storeScript(store, owner, slotsBin, root string) string {
+// THE LEASE READ'S STATUS IS KEPT (Stella, #1945). The output is captured first -- a plain
+// command substitution, never a pipeline -- its exit status checked, and then handed back
+// VERBATIM so Go counts it (pulse.countLeases). An EMPTY list, which is a bench with its
+// whole share free, stays an empty list; a failed read is a refusal.
+//
+// The ONE fallthrough to the formula is a bench with no share configured. It carries `why=`
+// so it is never silent.
+func storeScript(store string, share int, haveShare bool, slotsBin, root string) string {
 	if strings.TrimSpace(slotsBin) == "" {
 		slotsBin = defaultSlotsBin
 	}
 	formula := legacyFormula(root) + `; echo "formula capacity=$a cores=$c load1=$l why=$w"; exit 0`
-	return strings.Join([]string{
+	lines := []string{
 		`S="` + shellDoubleQuoted(store) + `"`,
-		`O="` + shellDoubleQuoted(owner) + `"`,
 		`B="` + shellDoubleQuoted(slotsBin) + `"`,
-		// A MEASUREMENT NOBODY TOOK IS NOT A ZERO (Stella, R2). Both of these used to
-		// fall back to `0` when every reader failed, and `load1=0` passes any brake:
-		// a bench whose load nothing could read was dealt cards with the brake on.
-		// Unreadable is its own token now, and it travels to the caller as itself.
+		// A MEASUREMENT NOBODY TOOK IS NOT A ZERO (Stella, R2). Unreadable is its own
+		// token, and it travels to the caller as itself.
 		`c=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null)`,
 		`case "$c" in ''|*[!0-9]*) c=unreadable;; esac`,
 		`l=$(cut -d" " -f1 /proc/loadavg 2>/dev/null || sysctl -n vm.loadavg 2>/dev/null | awk '{print $2}')`,
 		`case "$l" in ''|*[!0-9.]*) l=unreadable;; esac`,
-		// No store on this bench at all: the documented fallback, positively detected,
-		// and it says which case it is.
-		`if [ ! -e "$S/shares.tsv" ]; then w=no-shares-file; ` + formula + `; fi`,
-		`if [ ! -r "$S/shares.tsv" ]; then echo "unreadable reason=shares-unreadable"; exit 0; fi`,
-		`sh=$(awk -F'\t' -v o="$O" '$1==o{print $2}' "$S/shares.tsv" 2>/dev/null)`,
-		// THE LEASE READ, AND ITS OWN EXIT STATUS. It is a plain command substitution,
-		// never a pipeline, so the status is the reader's and not grep's -- and it runs
-		// BEFORE the no-row fallback, so the one path back to the formula is only ever
-		// taken off a listing that succeeded.
+	}
+	if !haveShare || share < 0 {
+		return strings.Join(append(lines, `w=no-share-in-config; `+formula), "; ")
+	}
+	return strings.Join(append(lines,
 		`o=$("$B" slots list --store "$S" 2>/dev/null); rc=$?`,
 		`if [ "$rc" -ne 0 ]; then echo "unreadable reason=slots-list-exit rc=$rc"; exit 0; fi`,
-		`if [ -z "$sh" ]; then w=no-row-for-owner; ` + formula + `; fi`,
-		`case "$sh" in ''|*[!0-9]*) echo "unreadable reason=share-not-a-whole-number"; exit 0;; esac`,
-		// The listing goes back VERBATIM; the counting is Go's.
-		`echo "store share=$sh cores=$c load1=$l"`,
+		`echo "store share=`+strconv.Itoa(share)+` cores=$c load1=$l"`,
 		`echo "leases"`,
 		`printf '%s\n' "$o"`,
-	}, "; ")
+	), "; ")
 }
 
 // legacyFormula is capacityBody -- the number `fill` answered before the store -- with the
