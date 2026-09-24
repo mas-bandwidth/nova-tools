@@ -57,6 +57,10 @@ Nothing in the package may make Redis the authority; the record is.
 
 The second delivery is the binary that owns one local instance. Its verbs:
 
+- `serve` launches the instance in the foreground under the rules of the next
+  section: `--bind` names loopback and tailnet addresses only and has no
+  default, the password comes from nova-secrets and reaches `redis-server` on
+  stdin, and persistence is off with a fresh working directory per launch.
 - `status` reports whether the instance is reachable, what it is bound to, the
   owner and key counts, and the two safety facts — auth is required and
   **persistence** is off.
@@ -80,7 +84,15 @@ RDB and no AOF, so a restart is a clean slate by construction and the record
 in git is provably untouched. If a value must survive a restart, it does not
 belong in Redis.
 
-Bind nova-redis to localhost and the tailnet, take auth from nova-secrets, and keep persistence off
+`serve` is where these are enforced (nova-tools #2281). The tailnet is the
+Tailscale ranges, `100.64.0.0/10` and `fd7a:115c:a1e0::/48`; a wildcard,
+public or LAN address, or a hostname, is refused before anything starts. The
+password is read from `NOVA_REDIS_PASSWORD`, which `nova-secrets exec` fills;
+it is written into the config `redis-server` reads on stdin (`redis-server -`),
+dropped from the child's environment, and never written to a file. The config
+carries `save ""` and `appendonly no`, and each launch gets a fresh, empty
+working directory, so even a persistence file an earlier run left behind is
+never replayed.
 
 ## Rules
 
@@ -107,7 +119,7 @@ bound beyond localhost and the tailnet or with persistence on.
 
 ## Tests this spec demands
 
-These tests run against a miniredis fake standing in for the instance (already in the tree under `internal/redisq`, `internal/record`, `internal/ci`), with every fallback written into a `t.TempDir()`, no network socket anywhere, and each test proven able to fail by a mutation before it is trusted. The tree carries exactly one SPEC-REDIS test today — `TestNovaRedisSpecFirstSlice` in `internal/docs/redis_test.go:16` — and it asserts the *document* contains its contract terms (status, spill, recall, TTL, owner prefix, presence, check, localhost/tailnet, file fallback, the four uses), not that any software behaviour works; `internal/redisq` is the live-state half of `SPEC-STATE.md`, not this spec. There is no Layer 1 package, so behaviours 1–9 are ABSENT. The `nova-redis` binary's first slice (`cmd/nova-redis`, #2279) carries `spill`/`recall` with the owner and TTL gate and an injected clock, and `cmd/nova-redis/spill_test.go` proves 14, 16, 17 and 27 on its production path; the rest are ABSENT.
+These tests run against a miniredis fake standing in for the instance (already in the tree under `internal/redisq`, `internal/record`, `internal/ci`), with every fallback written into a `t.TempDir()`, no network socket anywhere, and each test proven able to fail by a mutation before it is trusted. The tree carries exactly one SPEC-REDIS test today — `TestNovaRedisSpecFirstSlice` in `internal/docs/redis_test.go:16` — and it asserts the *document* contains its contract terms (status, spill, recall, TTL, owner prefix, presence, check, localhost/tailnet, file fallback, the four uses), not that any software behaviour works; `internal/redisq` is the live-state half of `SPEC-STATE.md`, not this spec. There is no Layer 1 package, so behaviours 1–9 are ABSENT. The `nova-redis` binary's first slice (`cmd/nova-redis`, #2279) carries `spill`/`recall` with the owner and TTL gate and an injected clock, and `cmd/nova-redis/spill_test.go` proves 14, 16, 17 and 27 on its production path, and `serve` (#2281) with `cmd/nova-redis/serve_test.go` proves 22, 23, 24 and 25; the rest are ABSENT.
 
 1. `TestEphemeralCallNamesKeyOwnerAndFallback` — every ephemeral use names a key, an owner and a **file fallback** (L35–36).
 2. `TestEphemeralCallAdoptsInstanceWhenReachableElseFallback` — the same call adopts the local instance when reachable and degrades to the fallback when it is not (L36–38).
