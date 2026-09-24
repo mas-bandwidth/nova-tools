@@ -85,9 +85,28 @@ var workAudit = audit.Config{
 		// bytes holds set check's SET EVAL lines until the findings are printed; every
 		// line in it was already written through the escaped sites of setland.go.
 		`"bytes"`,
+		// The push verb's edges. redisq is the ready set both this binary and nova-swarm
+		// reach through; it takes a map of fields and returns an id, and every field it
+		// hands back reaches stdout through an oneline field on the PUSH line here.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
+		// crypto/rand and encoding/hex mint the directory mode's card id, which Redis
+		// mints for itself. They produce hex bytes and print nothing.
+		`"crypto/rand"`,
+		`"encoding/hex"`,
 		// path/filepath names the temp file --write-status renames over the work set,
-		// beside it in the same directory; it prints nothing.
+		// beside it in the same directory, and takes the push verb's card label off the
+		// --card path with Base and Ext. It writes nothing, and the label it yields is
+		// refused unless it matches [A-Za-z0-9._-]+ before it ever reaches a line.
 		`"path/filepath"`,
+		// regexp holds that one anchored label pattern and nothing else; it matches and
+		// prints nothing.
+		`"regexp"`,
+		// strconv renders --priority and the id fallback as digits. A number has nothing
+		// in it to escape, which is the audit's own numeric case.
+		`"strconv"`,
+		// safepath validates --stream so that directory-mode streams cannot escape the
+		// queue root; it matches and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

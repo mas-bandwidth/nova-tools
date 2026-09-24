@@ -179,6 +179,7 @@ usage:
   nova-work asks (--units <file> | --bus <dir> --as <name>) [--owner <friend>] [--max <n>] [--max-notes <n>]
                  [--max-bytes <n>] [--now <stamp>]
   nova-work events --redis <addr> [--repo <owner>/<name>] [--base <branch>] [--gh-poll 60s] [--bench <name>] [--log <path>] (--once | --deadline <duration>)
+  nova-work push --stream <kind> --lane <red|green|small|next> --card <file> (--redis <addr> | --dir <root>) [--priority <n>] [--needs <id>[,<id>...]]
 
 wire:
   one line in, one line out over the Unix socket --session names. The request
@@ -462,6 +463,7 @@ var legacyVerbs = map[string]func([]string, io.Writer, io.Writer) int{
 	"ready":        cmdReady,
 	"clip":         cmdClip,
 	"plan":         cmdPlan,
+	"push":         cmdPushNow,
 	"set":          cmdSet,
 	"next":         cmdNext,
 	"ask":          cmdAsk,
