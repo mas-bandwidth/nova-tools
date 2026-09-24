@@ -25,11 +25,12 @@ func TestLoadPRSurfacesExpectedPolicyReadError(t *testing.T) {
 		head   = "1111111111111111111111111111111111111111"
 		base   = "dev"
 	)
+	unit := "gh/mas-bandwidth/nova-tools/101"
 	id := land.ID{Repo: repo, N: prNum}
 
-	// Setup basic PR and sprint records
-	c.HSet(ctx, id.Key(sprint), "head", head, "base", base, "base_sha", "tip1")
-	c.HSet(ctx, "s:"+sprint+":policy", "readers", "1")
+	// The unit record and its PR pointer (2.2); no s:<S>:pr:* key.
+	c.HSet(ctx, land.UnitKey(sprint, unit), "repo", repo, "head", head, "base", base, "base_sha", "tip1", "pr", "101")
+	c.Set(ctx, land.PRUnitKey(sprint, repo, prNum), unit, 0)
 
 	t.Run("surfaces redis read error on policy lookup", func(t *testing.T) {
 		// Set a string value on the policy key so HMGet fails with WRONGTYPE
@@ -52,8 +53,11 @@ func TestLoadPRSurfacesExpectedPolicyReadError(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadPR failed: %v", err)
 		}
-		if len(p.CI) != 0 {
-			t.Fatalf("p.CI = %v; want empty map when policy absent", p.CI)
+		if len(p.CI) != 0 || !p.NoPolicy {
+			t.Fatalf("p.CI = %v NoPolicy=%v; want empty and nopolicy when policy absent", p.CI, p.NoPolicy)
+		}
+		if p.Unit != unit || p.ID != id {
+			t.Fatalf("resolved %q %v; want %q %v", p.Unit, p.ID, unit, id)
 		}
 	})
 }
