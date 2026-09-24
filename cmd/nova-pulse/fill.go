@@ -75,6 +75,10 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	repo := f.fs.String("repo", ".", "")
 	base := f.fs.String("base", "dev", "")
 	fillCap := f.fs.Int("fill-cap", pulse.FillCap, "")
+	baseSHA := f.fs.String("base-sha", "", "")
+	force := f.fs.Bool("force", false, "")
+	done := f.fs.String("done", "", "")
+	keys := f.fs.String("keys", "", "")
 	var benches benchFlag
 	var only benchFlag
 	var localBenches benchFlag
@@ -144,6 +148,10 @@ func cmdFill(args []string, stdout, stderr io.Writer, now time.Time) int {
 	return pulse.Fill(pulse.FillInput{
 		Ready:      *ready,
 		Launched:   *launched,
+		Done:       *done,
+		KeysFile:   *keys,
+		BaseSHA:    *baseSHA,
+		Force:      *force,
 		Lanes:      *lanes,
 		Machines:   *machines,
 		Session:    *session,

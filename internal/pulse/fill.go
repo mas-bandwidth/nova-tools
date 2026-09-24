@@ -252,6 +252,17 @@ type FillInput struct {
 	// Locked says this fill runs inside a caller that already holds the queue's lock (the
 	// `loop` verb, so it takes none of its own.
 	Locked bool
+	// Force says to re-execute a card even if its content key already has a DONE result.
+	// Active attempts retain their lease and fence and are never duplicated, even with Force.
+	Force bool
+	// BaseSHA is the base commit SHA for card content keys; empty defaults to repo HEAD or dev.
+	BaseSHA string
+	// Done is the queue/done directory where cached/completed cards are moved; empty is <queue>/done.
+	Done string
+	// KeysFile optionally specifies the path to keys.tsv directly; empty uses <queue>/keys.tsv.
+	KeysFile string
+	// KeyStore optionally overrides the key store; nil uses NewKeyStore(fillQueue(in)).
+	KeyStore *KeyStore
 }
 
 // Fill holds the loop: one fillTick per bench set, one FILL line per tick, until killed --
@@ -456,6 +467,15 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 		}
 	}
 
+	ks := in.KeyStore
+	if ks == nil {
+		if in.KeysFile != "" {
+			ks = NewKeyStoreFromFile(in.KeysFile)
+		} else {
+			ks = NewKeyStore(fillQueue(in))
+		}
+	}
+
 	// Round-robin: one card per bench in turn, passes repeat until every bench is at its
 	// capacity or the pool is empty. A card skipped as unknown or held consumes the card
 	// but not the bench's want, so the bench is offered the next pass rather than dropped
@@ -478,6 +498,49 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 					oneline.Field(filepath.Base(card)), oneline.Field(unmetDep), oneline.Field(reason)))
 				continue
 			}
+			base := filepath.Base(card)
+
+			// Content key check (Cards v2 #2507): resume by content key.
+			// The queue refuses to deal a card whose key already has a DONE result unless --force;
+			// active/live attempts retain their lease and fence and CANNOT be duplicated, including with --force.
+			var currentCK CardKey
+			if ks != nil {
+				if raw, err := os.ReadFile(card); err == nil {
+					baseSHA := in.BaseSHA
+					if baseSHA == "" {
+						baseSHA = ExtractCardBase(string(raw))
+					}
+					lane := cardLane(card)
+					currentCK = ComputeCardKey(string(raw), baseSHA, lane)
+					decision, rec := ks.CheckKey(currentCK, in.Force)
+					switch decision {
+					case DecisionActive:
+						held = append(held, fmt.Sprintf("FILL ACTIVE card=%s key=%s attempt=%s note=%q",
+							oneline.Field(base), oneline.Field(currentCK.String()),
+							oneline.Field(rec.AttemptID), "active attempt retains lease and fence; cannot duplicate"))
+						continue
+					case DecisionCached:
+						prStr := "-"
+						if rec != nil && rec.PR > 0 {
+							prStr = strconv.Itoa(rec.PR)
+						}
+						held = append(held, fmt.Sprintf("FILL CACHED card=%s pr=%s key=%s",
+							oneline.Field(base), prStr, oneline.Field(currentCK.String())))
+						doneDir := in.Done
+						if doneDir == "" {
+							doneDir = filepath.Join(fillQueue(in), "done")
+						}
+						_ = os.MkdirAll(doneDir, 0o755)
+						_ = os.Rename(card, filepath.Join(doneDir, base))
+						continue
+					case DecisionOlderBase:
+						held = append(held, fmt.Sprintf("FILL BASE-MOVED card=%s prior-base=%s current-base=%s key=%s note=%q",
+							oneline.Field(base), oneline.Field(rec.Base), oneline.Field(currentCK.BaseSHA),
+							oneline.Field(currentCK.String()), "done at older base; needs rebase or re-run"))
+						continue
+					}
+				}
+			}
 
 			lane := cardLane(card)
 			if lane != "" {
@@ -491,7 +554,6 @@ func fillTick(in FillInput, seats map[string]string, tick int) ([]string, tickRe
 					continue
 				}
 			}
-			base := filepath.Base(card)
 			moved := filepath.Join(in.Launched, base)
 			if err := os.Rename(card, moved); err != nil {
 				// Another tick or another hand took it first: the card is in exactly
