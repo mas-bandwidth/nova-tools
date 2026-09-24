@@ -43,17 +43,16 @@ func GetWidth(ctx context.Context, st *store.Store, as string) (Width, error) {
 		return Width{}, fmt.Errorf("width: as is required")
 	}
 	client := st.Client()
-	desired, err := client.HGet(ctx, "friend:"+as+":desired", "slots").Int()
+	pipe := client.Pipeline()
+	desiredCmd := pipe.HGet(ctx, "friend:"+as+":desired", "slots")
+	startingCmd := pipe.ZCard(ctx, "friend:"+as+":starting")
+	livingCmd := pipe.ZCard(ctx, "friend:"+as+":living")
+	if _, err := pipe.Exec(ctx); err != nil {
+		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
+	}
+	desired, err := desiredCmd.Int()
 	if err != nil {
 		return Width{}, fmt.Errorf("width: friend %s has no desired slots: %w", as, err)
 	}
-	starting, err := client.ZCard(ctx, "friend:"+as+":starting").Result()
-	if err != nil {
-		return Width{}, fmt.Errorf("width: friend %s starting: %w", as, err)
-	}
-	living, err := client.ZCard(ctx, "friend:"+as+":living").Result()
-	if err != nil {
-		return Width{}, fmt.Errorf("width: friend %s living: %w", as, err)
-	}
-	return WidthFrom(desired, int(starting), int(living)), nil
+	return WidthFrom(desired, int(startingCmd.Val()), int(livingCmd.Val())), nil
 }
