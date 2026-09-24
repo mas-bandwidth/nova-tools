@@ -626,11 +626,17 @@ local function land_batch_void(S, repo, base, batch_id, reason)
   )
 end
 
--- ns_batch_void: marks batch void, removes from chain, returns members to landable.
+-- ns_batch_void: marks batch void, removes from chain, returns members to landable. Checks writer
+-- gen and lease first ({REFUSED, reason}, nothing written), like every batcher write (2.3).
+-- args: S repo base batch_id lease reason.
 redis.register_function('ns_batch_void', function(keys, args)
-  local S, repo, base, batch_id, reason = args[1], args[2], args[3], args[4], args[5]
+  local S, repo, base, batch_id, lease_val, reason = args[1], args[2], args[3], args[4], args[5], args[6]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return { 'REFUSED', refusal }
+  end
   land_batch_void(S, repo, base, batch_id, reason)
-  return 'OK'
+  return { 'OK' }
 end)
 
 -- ns_chain_void (4.3, L16): a red batch leaves the chain (its members stay batched for red-batch

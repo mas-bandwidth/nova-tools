@@ -548,6 +548,29 @@ func TestBatcherLeaseLost(t *testing.T) {
 				t.Fatalf("batch %s state %q after stale void, want queued", ids[1], h["state"])
 			}
 
+			// Batch void (Stella HOLD 7 at 55479f63): the stale lease is refused before any write;
+			// the batch, the chain, its members and the event stream are unchanged.
+			evBefore, _ := f.client.XLen(f.ctx, "land:"+f.repo+":events").Result()
+			if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, ids[1], b.Lease, "stale"); err == nil || !strings.Contains(err.Error(), "ns_batch_void REFUSED "+tc.reason) {
+				t.Fatalf("stale batch void: %v, want ns_batch_void REFUSED %s", err, tc.reason)
+			}
+			h1 := batchHash(t, f, ids[1])
+			if h1["state"] != "queued" || h1["reason"] != "" {
+				t.Fatalf("batch %s after stale batch void: state %q reason %q, want queued", ids[1], h1["state"], h1["reason"])
+			}
+			if chain, _ := f.client.ZRange(f.ctx, land.ChainKey(f.repo, f.base), 0, -1).Result(); strings.Join(chain, ",") != ids[0]+","+ids[1] {
+				t.Fatalf("chain after stale batch void %v, want %v", chain, ids)
+			}
+			for _, m := range strings.Split(h1["members"], ",") {
+				u, _, _ := strings.Cut(m, "@")
+				if st := unitField(t, f, u, "state"); st != "batched" {
+					t.Fatalf("member %s state %q after stale batch void, want batched", u, st)
+				}
+			}
+			if evAfter, _ := f.client.XLen(f.ctx, "land:"+f.repo+":events").Result(); evAfter != evBefore {
+				t.Fatalf("stale batch void wrote %d events", evAfter-evBefore)
+			}
+
 			if tc.name == "gen" {
 				if err := f.client.Set(f.ctx, land.LeaseKey(f.repo, f.base), newLease, 0).Err(); err != nil {
 					t.Fatalf("lease: %v", err)
@@ -568,6 +591,13 @@ func TestBatcherLeaseLost(t *testing.T) {
 			}
 			if voided, err := nb.VoidRed(f.ctx, ids[0]); err != nil || len(voided) != 1 || voided[0] != ids[1] {
 				t.Fatalf("holder void: %v %v, want [%s]", voided, err, ids[1])
+			}
+			// The holder's batch void is accepted: the red batch goes void with its reason.
+			if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, ids[0], newLease, "holder"); err != nil {
+				t.Fatalf("holder batch void: %v", err)
+			}
+			if h := batchHash(t, f, ids[0]); h["state"] != "void" || h["reason"] != "holder" {
+				t.Fatalf("batch %s after holder batch void: %v", ids[0], h)
 			}
 		})
 	}

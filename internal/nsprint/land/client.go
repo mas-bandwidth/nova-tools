@@ -190,14 +190,18 @@ func CallRequeue(ctx context.Context, c *redis.Client, repo, base, batchID strin
 	return fmt.Sprint(res[1]), fmt.Sprint(res[2]), nil
 }
 
-// CallBatchVoid calls ns_batch_void.
-func CallBatchVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, reason string) error {
-	res, err := c.FCall(ctx, "ns_batch_void", nil, sprint, repo, base, batchID, reason).Text()
+// CallBatchVoid calls ns_batch_void (lease-fenced like every batcher write, 2.3): a stale caller
+// gets a *RefusedError and nothing is written.
+func CallBatchVoid(ctx context.Context, c *redis.Client, sprint, repo, base, batchID, leaseVal, reason string) error {
+	res, err := c.FCall(ctx, "ns_batch_void", nil, sprint, repo, base, batchID, leaseVal, reason).StringSlice()
 	if err != nil {
 		return err
 	}
-	if res != "OK" {
-		return fmt.Errorf("ns_batch_void failed: %s", res)
+	if len(res) >= 2 && res[0] == "REFUSED" {
+		return &RefusedError{Fn: "ns_batch_void", Reason: res[1]}
+	}
+	if len(res) == 0 || res[0] != "OK" {
+		return fmt.Errorf("ns_batch_void %s: %v", batchID, res)
 	}
 	return nil
 }
