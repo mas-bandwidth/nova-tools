@@ -27,6 +27,10 @@
   ;; through the same readers after a restart (nova-tools#1695), and the
   ;; kernel reads them through KERNEL-FLEET, KERNEL-ROUTES and
   ;; KERNEL-ALLOCATIONS below.
+  ;; The read-time needs view the session installs: the evidence, generations,
+  ;; responsible rows and engaged ids rule 1/rule 5 read, which the tree itself
+  ;; does not hold (src/needs.lisp). NIL where no session has supplied one.
+  needs-view
   ;; The single-writer kernel (SPEC-WORK.md:2603-2616): one command thread owns O
   ;; and C and applies mutations in order; readers never touch it. The queue
   ;; holds accepted commands, Q-LOCK/Q-CVAR guard the mailbox, THREAD is the
@@ -75,7 +79,7 @@ the answer back to the caller; BEFORE-APPLY-HOOK is the captured dynamic value
 of *BEFORE-APPLY-HOOK* at submit time, since special bindings are thread-local."
   request before-apply-hook results error done-p lock cvar)
 
-(defun make-kernel (&key state journal rev-base (friends '()))
+(defun make-kernel (&key state journal rev-base (friends '()) needs-view)
   "REV-BASE defaults to one past the state's own revision, so a kernel opened
 over a reconstructed state issues no id the history already holds
 (SPEC-WORK.md:1216-1218 keys a closed row <event-rev>:<id>; :1578 allows
@@ -93,6 +97,7 @@ below the state's revision is refused rather than silently reissued."
     (let ((k (%make-kernel :state state
                            :journal (or journal (make-ordering-journal))
                            :next-rev (or rev-base (1+ (state-revision state)))
+                           :needs-view needs-view
                            :controls (make-ctl)
                            ;; The operator-configured verifiers a receipt needs
                            ;; (SPEC-WORK.md:3859); see receipt-admission.lisp.

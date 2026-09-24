@@ -120,9 +120,11 @@ func TestCardHeaderMalformedTestDrawsTestNamed(t *testing.T) {
 }
 
 // NEGATIVE CONTROL for test-named: `TEST: none` is what the parser reads for a kind that
-// declares no gate (cardheader.go:91-94), so it is a declaration, not a defect.
+// declares no gate (cardheader.go:91-94), so it is a declaration, not a defect. The kind is
+// an ungated one (read): on a gated kind TEST: none is refused (TestIssue1853).
 func TestCardHeaderTestNoneDrawsNothing(t *testing.T) {
 	h := append([]string{}, fullHeader()...)
+	h[0] = "KIND: read"
 	h[2] = "TEST: none"
 	if fs := LintCardHeader(typedCard(h...), nil, true); len(fs) != 0 {
 		t.Fatalf("`TEST: none` is a declaration, drew %v", fs)
