@@ -547,5 +547,3 @@ func TestSNodeHelpers(t *testing.T) {
 		t.Errorf("nilNode checks failed")
 	}
 }
-
-

@@ -117,15 +117,15 @@ type Epic struct {
 
 // Verification contains verification metadata from the roadmap.
 type Verification struct {
-	MeasuredAt              string   `json:"measured_at,omitempty"`
-	Revision                string   `json:"revision,omitempty"`
-	Branch                  string   `json:"branch,omitempty"`
-	Suite                   string   `json:"suite,omitempty"`
-	SuiteResult             string   `json:"suite_result,omitempty"`
-	CriteriaRule            string   `json:"criteria_rule,omitempty"`
-	Rule                    string   `json:"rule,omitempty"`
-	VerifiedFeatures        int      `json:"verified_features,omitempty"`
-	VerifiedAcceptanceItems int      `json:"verified_acceptance_items,omitempty"`
+	MeasuredAt              string         `json:"measured_at,omitempty"`
+	Revision                string         `json:"revision,omitempty"`
+	Branch                  string         `json:"branch,omitempty"`
+	Suite                   string         `json:"suite,omitempty"`
+	SuiteResult             string         `json:"suite_result,omitempty"`
+	CriteriaRule            string         `json:"criteria_rule,omitempty"`
+	Rule                    string         `json:"rule,omitempty"`
+	VerifiedFeatures        int            `json:"verified_features,omitempty"`
+	VerifiedAcceptanceItems int            `json:"verified_acceptance_items,omitempty"`
 	RawFields               map[string]any `json:"raw_fields,omitempty"`
 }
 
