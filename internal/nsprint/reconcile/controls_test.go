@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -1202,6 +1203,9 @@ func newSprint(t *testing.T) (*store.Store, *redis.Client) {
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
+	// The owner converges the server, as ns-deploy does on the fleet: the
+	// card path never loads the library itself (#3551).
+	must(t, fn.Load(context.Background(), client))
 	// The reconciler lease this test acts under (#2726 owns its renewal).
 	must(t, client.HSet(context.Background(), "lease:reconciler", "instance", "ctl", "token", fence).Err())
 	return store.New(client), client
