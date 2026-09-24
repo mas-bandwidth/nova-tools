@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"reflect"
 	"sort"
@@ -197,6 +198,13 @@ func setBareRef(t *testing.T, bareDir, ref, msg string) string {
 	tree := strings.TrimSpace(string(treeOut))
 
 	commitCmd := exec.Command("git", "-C", bareDir, "commit-tree", tree, "-m", msg)
+	// The fixture names its own identity: a hosted runner has no global git
+	// user and an empty passwd name, so commit-tree refuses "empty ident name"
+	// there (dev push run 35950929169, ubuntu-latest shard 3). The last value
+	// of a duplicated key wins in exec.Cmd.Env.
+	commitCmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_NAME=Consume Test", "GIT_AUTHOR_EMAIL=consume-test@example.com",
+		"GIT_COMMITTER_NAME=Consume Test", "GIT_COMMITTER_EMAIL=consume-test@example.com")
 	commitOut, err := commitCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("commit-tree: %v (%s)", err, commitOut)

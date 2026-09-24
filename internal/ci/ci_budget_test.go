@@ -50,6 +50,37 @@ var offCLPathRe = regexp.MustCompile(`github\.event_name == 'push' \|\| github\.
 // number: `timeout-minutes: ${{ matrix.leg.timeout }}`.
 var perLegTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.leg\.timeout\s*\}\}\s*$`)
 
+// pushStudioTimeoutRe matches the sharded test job's ceiling: a larger cap for
+// the studio shards of a PUSH run only (the whole tree, dev and main), the CL
+// cap for every leg a pull request or merge group can start. Group 1 is the
+// push-studio cap, group 2 the CL cap. No pull request can reach group 1, so
+// the CL-path check reads group 2; TestPushStudioShardsCarryTheirOwnCeiling
+// pins group 1.
+var pushStudioTimeoutRe = regexp.MustCompile(`^    timeout-minutes:\s*\$\{\{\s*matrix\.entry\.group == 'macOS' && github\.event_name == 'push' && (\d+) \|\| (\d+)\s*\}\}\s*$`)
+
+// pushStudioCeiling is the push run's studio-shard cap, and its reason: on
+// 2026-09-24 dev push run 35950929169 (attempt 2, Studio load 3.5) ran sixteen
+// whole-tree studio shards at once and all sixteen were cancelled at twelve
+// minutes, 1/16 still testing after 6,252 passes in 75 packages. The push leg
+// now deals eight shards (one wave on eight runners) under this cap.
+const pushStudioCeiling = 20
+
+func TestPushStudioShardsCarryTheirOwnCeiling(t *testing.T) {
+	root := repoRoot(t)
+	src := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
+	for _, line := range strings.Split(jobBody(src, "test"), "\n") {
+		m := pushStudioTimeoutRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		if push, _ := strconv.Atoi(m[1]); push != pushStudioCeiling {
+			t.Errorf("the test job's push studio cap = %d, want %d", push, pushStudioCeiling)
+		}
+		return
+	}
+	t.Error("the test job declares no push-only studio cap; the whole-tree studio shards of run 35950929169 were all cancelled at the CL cap")
+}
+
 // legNameRe and legTimeoutRe read a matrix leg's name and its own ceiling.
 var (
 	legNameRe    = regexp.MustCompile(`^-\s*name:\s*(\S+)$`)
@@ -510,6 +541,13 @@ func jobTimeouts(src string) map[string]int {
 			}
 			continue
 		}
+		if m := pushStudioTimeoutRe.FindStringSubmatch(line); m != nil {
+			// The CL cap: the only branch a pull request or merge group reaches.
+			if n, err := strconv.Atoi(m[2]); err == nil {
+				out[cur] = n
+			}
+			continue
+		}
 		if perLegTimeoutRe.MatchString(line) {
 			for _, mins := range legTimeouts(jobBody(src, cur)) {
 				if mins > out[cur] {
@@ -662,5 +700,79 @@ func TestEveryTriggeringEventReachesACIOKVerdict(t *testing.T) {
 		if !strings.Contains(ciok, want) {
 			t.Errorf("ci-ok has no verdict step guarded for %s: the workflow triggers on it, so a run on that event would report success with no step run", ev)
 		}
+	}
+}
+
+// studioEntryRe matches the test-packages line that emits a whole-tree Go shard
+// for macOS (the studio legs); group 1 is its arch label.
+var studioEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"arch\\":\\"([^"\\]+)\\"`)
+
+// TestWholeTreeMacOSShardsRunOnARM64: dev push run 35999520176 (2026-09-24)
+// dealt 7/8 studio shards selected by `self-hosted,macOS` onto the Intel iMac
+// Pros (batman, superman), all cancelled at the 20-minute cap; the one on the
+// Studio finished in 16. A whole-tree Go shard on macOS carries ARM64.
+func TestWholeTreeMacOSShardsRunOnARM64(t *testing.T) {
+	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	found := 0
+	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
+		m := studioEntryRe.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		found++
+		if m[1] != "ARM64" {
+			t.Errorf("a macOS test shard selects arch %q, want ARM64 (run 35999520176: Intel Macs cancelled 7/8 shards): %s", m[1], strings.TrimSpace(line))
+		}
+	}
+	if found == 0 {
+		t.Error("test-packages emits no macOS shard entry this test can read")
+	}
+	if !strings.Contains(jobBody(src, "test"), `"${{ matrix.entry.arch }}"`) {
+		t.Error("the test job's runs-on does not carry matrix.entry.arch, so the ARM64 label selects nothing")
+	}
+}
+
+// goTestTimeoutRe reads the test job's per-leg `go test -timeout`: group 1 the
+// push studio value, group 2 the PR/merge-group studio value, group 3 the space
+// legs' value (minutes).
+var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="\$\{\{ matrix\.entry\.group == 'macOS' && github\.event_name == 'push' && '(\d+)m' \|\| matrix\.entry\.group == 'macOS' && '(\d+)m' \|\| '(\d+)m' \}\}"`)
+
+// TestShardGoTestTimeoutFitsTheJobCap: run 35999520176's Studio shard failed
+// only on Go's default 10m package timeout (cmd/nova-bus, cmd/nova-merge). Each
+// shard's go test timeout must be under its job cap, so Go names a hang before
+// the runner cancels the job; space legs keep Go's 10m under the CL cap.
+func TestShardGoTestTimeoutFitsTheJobCap(t *testing.T) {
+	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
+	var caps, tos []string
+	for _, line := range strings.Split(job, "\n") {
+		if m := pushStudioTimeoutRe.FindStringSubmatch(line); m != nil {
+			caps = m[1:]
+		}
+		if m := goTestTimeoutRe.FindStringSubmatch(line); m != nil {
+			tos = m[1:]
+		}
+	}
+	if caps == nil || tos == nil {
+		t.Fatalf("the test job lacks a readable cap (%v) or GOTEST_TIMEOUT (%v)", caps, tos)
+	}
+	caps = append(caps, caps[1]) // space legs run under the CL cap
+	for i, shape := range []string{"push studio", "PR/merge-group studio", "space"} {
+		c, _ := strconv.Atoi(caps[i])
+		to, _ := strconv.Atoi(tos[i])
+		if to >= c {
+			t.Errorf("%s: go test -timeout %dm is not under the job cap %dm", shape, to, c)
+		}
+	}
+}
+
+// TestMakefileHasNoTargetSpecificConditionalPKGS: under GNU make 3.81 (the
+// macOS runners' /usr/bin/make) one `<target>: PKGS ?= ...` line made
+// `test: PKGS := $(CL_PKGS)` override `make test PKGS=<shard>`, so every studio
+// shard of dev push run 35999520176 ran the whole tree.
+func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
+	src := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
+	re := regexp.MustCompile(`(?m)^[A-Za-z0-9_.-]+:\s*PKGS\s*\?=`)
+	if m := re.FindString(src); m != "" {
+		t.Errorf("Makefile carries %q; under make 3.81 it lets `test: PKGS :=` beat the shard's PKGS", m)
 	}
 }
