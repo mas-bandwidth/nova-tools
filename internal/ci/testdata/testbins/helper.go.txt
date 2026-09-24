@@ -1,0 +1,15 @@
+package fixture
+
+import (
+	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+)
+
+// The allowed shape: the helper links the built program into the fixture and
+// copies only where a link is impossible.
+func TestFixturePlacesByLink(t *testing.T) {
+	if err := testbin.Place("built", "placed"); err != nil {
+		t.Fatal(err)
+	}
+}

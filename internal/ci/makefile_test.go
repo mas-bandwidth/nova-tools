@@ -168,6 +168,29 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	}
 }
 
+// TestMakefilePreflightTarget verifies that Makefile declares the preflight
+// target (#2498 Item S4), that it is .PHONY, listed in help, and executes
+// tools/preflight.sh.
+func TestMakefilePreflightTarget(t *testing.T) {
+	root := repoRoot(t)
+	mk := parseMakefile(t, filepath.Join(root, "Makefile"))
+
+	if _, ok := mk.recipes["preflight"]; !ok {
+		t.Fatalf("Makefile declares no preflight target")
+	}
+	if !mk.phony["preflight"] {
+		t.Errorf("Makefile .PHONY does not name preflight")
+	}
+	help := strings.Join(mk.recipeFor("help"), "\n")
+	if !strings.Contains(help, "make preflight") {
+		t.Errorf("help target does not list make preflight:\n%s", help)
+	}
+	recipe := strings.Join(mk.recipeFor("preflight"), "\n")
+	if !strings.Contains(recipe, "tools/preflight.sh") {
+		t.Errorf("preflight recipe does not invoke tools/preflight.sh: %q", recipe)
+	}
+}
+
 // parsedMakefile is what the parser below reads out of a Makefile: its
 // variables, each target's prerequisites and recipe lines, and the .PHONY set.
 // It is a SMALL parser on purpose — enough of GNU make's syntax to read this

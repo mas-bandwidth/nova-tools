@@ -273,7 +273,11 @@ nova-self-talk help
 
 ### First run
 
-Name a file. There is no verb and no directory walk. `./pages` is a directory of yours; `cmd/nova-self-talk/testdata/example-pages` is one the size of a first run, and the tests run both lines against it.
+Name a file. There is no verb and no directory walk. `./pages` is a directory of yours; `cmd/nova-self-talk/testdata/example-pages` is one the size of a first run, and the tests run both lines against it. Make it first:
+
+```
+cp -R cmd/nova-self-talk/testdata/example-pages ./pages
+```
 
 ```
 $ nova-self-talk ./pages/journal.md
@@ -2042,6 +2046,19 @@ over in silence. A **second cut into the same `--out` appends** to `cards.tsv` r
 than overwriting it: two cuts into one queue are two batches of cards, and a row
 already in the table is not written twice, so cutting the same source again is the
 same table.
+
+**A template is portable, because `cut` does not choose the bench.** The card text
+is handed to the worker verbatim and the router picks the bench later, out of a
+mixed estate (hulk, vision, space and mini are linux; the Studio and the Air are
+darwin). Spell presence as `command -v <name>`, a version as that toolchain spells
+it (`go version`, `dotnet --version`, `java -version 2>&1`), and a fact only one
+platform reports by choosing with `uname` on the same line — `cores=$(if [
+"$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else nproc; fi)`. Do not measure
+a step with GNU `time(1)`; the harness writes the run's own timing line. The rule
+is SPEC-SWARM, "A template is portable, because the bench is not chosen when it is
+written", and `internal/ci`'s `cardtemplates` class test refuses the shipped
+templates that break it. `cmd/nova-pulse/testdata/templates/{read,fix}.md` are the
+worked examples.
 
 **Five checks run in order before a byte is written**, and the first that fails is
 the whole answer, exit 2, one line:
@@ -4210,7 +4227,7 @@ measurement.
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all ten verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
 
 `check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
 
@@ -4257,6 +4274,22 @@ ledger for each pool: the aggregate key does not contain a pool ID.
 This ledger is distinct from the `sum --swarm-root` daily ledger above. See
 `nova-tokens help` for `profiles`, `session` and ledger-reporting options.
 
+**The token ledger on Redis** (SPEC-STATE test 17, #2201). `ledger` indexes folded day files
+into the fleet Redis, one hash per day, and `report --redis` is the month as one GROUP BY
+over those hashes -- every one of the five types apart, a dash where no row reported a type,
+and equal to the folded day TSVs to the token. The day files stay the record.
+
+```
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens ledger --out ./days --month 2026-09 --redis <host:port> --password-env NOVA_REDIS_BENCH_PASSWORD
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens report --redis <host:port> --month 2026-09 --by tuple --password-env NOVA_REDIS_BENCH_PASSWORD
+```
+
+`tokens:ledger:<YYYY-MM-DD>` is a hash: each field is `["<card>","<model>","<repo>"]`, each
+value `{"provider","tokens","rough","sources"}` with `tokens` the five types in order and
+`null` for a type no source reported. Re-indexing a day replaces its hash in one MULTI/EXEC;
+a month reads its calendar days' keys in one pipelined round trip. The password is never a
+flag, and no variable is read unless `--password-env` names it.
+
 ## nova-play
 
 Shared reading annotations at the **margin layer**. Participants anchor notes to exact passages in a source text, reply to each other's notes, and resume across sessions. A changed source produces an explicit anchor conflict rather than silently moving notes. The contract is [docs/SPEC-PLAY.md](SPEC-PLAY.md).
@@ -4266,6 +4299,8 @@ Shared reading annotations at the **margin layer**. Participants anchor notes to
 Three lines: annotate a passage, read the notes back, reply to a friend. Every path is a flag — there is no default source, no default author, and no default annotation file.
 
 ```
+$ printf 'The keeper climbed the last stair before dawn.\nThe lantern room held a brass fitting.\nBelow, the harbour was still asleep.\n' > story.txt
+
 $ nova-play annotate --source story.txt --author Emma --passage "The lantern room held a brass fitting." --note "I wonder what alloy this is."
 ANNOTATE OK id=f24beb35f0df author=Emma created=2026-09-16T08:22:37Z
 
@@ -4517,10 +4552,22 @@ contract is [SPEC-SECRETS.md](SPEC-SECRETS.md).
 
 ### Gate a seat pull request
 
+A throwaway store to try it on: the base commit carries `recovery.pub` and one seat
+rule, the head commit edits `README.md`.
+
 ```sh
-nova-secrets gate --store . --base "$BASE_SHA" --head "$HEAD_SHA" \
-  --machines ./queue/control/machines.tsv
+cd "$(mktemp -d)" && git init -q && git config user.name you && git config user.email you@example.com
+echo age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata > recovery.pub
+printf 'creation_rules:\n  - path_regex: ^mini\\.yaml$\n    age: %s,%s\n' age158lrf2hlptfwl6fh280y6pq58vdmumnqzhk5vd669aqf37ca3sus9mcazh "$(cat recovery.pub)" > .sops.yaml
+echo 'the store' > README.md && git add -A && git commit -qm base
+echo 'one seat per machine' >> README.md && git commit -qam head
+printf 'mini\tmini.local\tdarwin/arm64\tbench\tmini\t10\t-\n' > ../machines.tsv
+nova-secrets gate --store . --base HEAD~1 --head HEAD --machines ../machines.tsv
 ```
+
+It prints `GATE APPROVE files=1 machines=../machines.tsv` at exit 0. In CI, `--store` is the
+secrets store checkout, `--base` and `--head` are the pull request's two shas, and
+`--machines` is the fleet registry (`./queue/control/machines.tsv`).
 
 The store's own review, as a verb: run it in CI on every pull request against the
 secrets store. It diffs the two refs with git and asks GitHub nothing. It prints
@@ -4592,8 +4639,8 @@ payload, `show` displays those saved bytes, and `send` checks the approval recei
 before contacting the provider. See [SPEC-OUTBOUND.md](SPEC-OUTBOUND.md).
 
 ```sh
-nova-post draft --channel email --target team --file ./message.md \
-  --drafts ./drafts --allowlist ./targets.tsv
+mkdir -p ./drafts && printf 'email\tteam\n' > ./targets.tsv && printf 'a first post for the first run.\n' > ./message.md
+nova-post draft --channel email --target team --file ./message.md --drafts ./drafts --allowlist ./targets.tsv
 nova-post show --draft <hash-from-draft> --drafts ./drafts
 ```
 
