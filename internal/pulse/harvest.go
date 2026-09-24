@@ -260,6 +260,17 @@ func Harvest(in HarvestInput) int {
 				state = "elsewhere"
 			}
 		}
+		// THE PLAN STEP's publication safeguard (#2590, #2861). Launch is the gate
+		// (planAdmitCards: a plan-mode pro card's first launch is a plan-only turn, and it
+		// executes only once PLAN.md passes). Harvest still refuses to push a plan-mode
+		// card whose PLAN.md is not approved, so the plan-only turn's own result, or a
+		// card launched some other way, holds instead of publishing.
+		planWhy := ""
+		if state == "done" {
+			if why, held := planHold(jobDir, c); held {
+				state, planWhy = "plan-hold", why
+			}
+		}
 		// Every folded job joins its root's status index whether it landed or not: a
 		// failed or abstained run's usage is part of the day's spend too (#1088).
 		indexDirs = append(indexDirs, jobDir)
@@ -270,6 +281,12 @@ func Harvest(in HarvestInput) int {
 			_ = writeSeen(in.Root, c, "mismatch")
 		case "unknown":
 			fmt.Fprintf(in.Stderr, "HARVEST HOLD label=%s reason=unknown-acceptance\n", field(c.Label))
+			if err := writeSeen(in.Root, c, "hold"); err != nil {
+				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: the hold could not be recorded: %s\n", field(c.Label), oneline.Err(err))
+				holdUnrecorded = true
+			}
+		case "plan-hold":
+			fmt.Fprintf(in.Stderr, "HARVEST HOLD label=%s reason=plan-step: %s\n", field(c.Label), oneline.Escape(planWhy))
 			if err := writeSeen(in.Root, c, "hold"); err != nil {
 				fmt.Fprintf(in.Stderr, "HARVEST REFUSED label=%s: the hold could not be recorded: %s\n", field(c.Label), oneline.Err(err))
 				holdUnrecorded = true

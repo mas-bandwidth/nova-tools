@@ -157,6 +157,20 @@ func Launch(in LaunchInput) int {
 	if code := refuseWideUnprovenFirstBatch(in.Stderr, in.Root, cards); code != 0 {
 		return code
 	}
+	// THE PLAN STEP at admission (#2590, #2861; Stella's holds on #3165 and #3182): a pro
+	// card in plan mode launches first as a plan-only turn, and launches to execute only
+	// once its PLAN.md passes PlanStepReady. Before routing, which may rewrite the model
+	// column and costs a model call a refused card should not spend.
+	admittedPlan, planRefused, err := planAdmitCards(in.Root, cards, in.Stderr)
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "PULSE REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
+	if planRefused > 0 && len(admittedPlan) == 0 {
+		fmt.Fprintf(in.Stdout, "PULSE PLAN admitted=0 refused=%d (plan-mode pro cards wait for %s)\n", planRefused, PlanOKLine)
+		return 0
+	}
+	cards = admittedPlan
 	// ROUTE (SPEC-DECIDE rule 8): with --routes, each card's worker is a typed decision, and
 	// the ROUTE line is logged beside the card and the time. Below the floor the card keeps
 	// its own model as the default worker and the line says so. Every card is routed, queued
