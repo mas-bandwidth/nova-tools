@@ -125,6 +125,7 @@ var DefaultCatalog = []Entry{
 	E("internal/testbin", "places a built program into a test dir", "go test ./internal/testbin", "go test ./internal/testbin"),
 	E("internal/testguard", "host seam and leak interception", "go test ./internal/testguard", "go test ./internal/testguard"),
 	E("internal/tokens", "token counter and budget tracker", "go test ./internal/tokens", "go test ./internal/tokens"),
+	E("internal/typedrec", "typed RESULT record contract, parser and legacy adapter", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/wake", "slot leases and heartbeat monitors", "go test ./internal/wake", "go test ./internal/wake"),
 	E("internal/workclient", "client bindings for nova-work daemon", "go test ./internal/workclient", "go test ./internal/workclient"),

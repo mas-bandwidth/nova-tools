@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // DependencyChecker checks whether a required dependency has been merged or landed.
@@ -197,47 +199,9 @@ func extractPRNumber(dep string) string {
 	return ""
 }
 
-// resultDoneLineRe matches a "RESULT <id> DONE" line with an exact DONE status
-// token as the final field — nothing after it, nothing between the id and it.
-var resultDoneLineRe = regexp.MustCompile(`^RESULT\s+\S+\s+DONE$`)
-
-// doneWithTokenRe matches a bare "DONE <token>" line (e.g. "DONE sha=1234567"),
-// requiring DONE as its own leading word, not a prefix of a longer word.
-var doneWithTokenRe = regexp.MustCompile(`^DONE\s+\S+$`)
-
-// keyDoneRe matches "STATUS: DONE" / "VERDICT: DONE" with an exact DONE value,
-// case-insensitively on the key.
-var keyDoneRe = regexp.MustCompile(`(?i)^(STATUS|VERDICT):\s*DONE$`)
-
 // isResultDone checks whether RESULT.md content authoritatively indicates DONE.
-// It requires an exact DONE status token — its own line, the final field of a
-// "RESULT <id> DONE" line, "DONE <token>", or "STATUS:"/"VERDICT: DONE" — and
-// rejects files that contain FAILED or merely mention "DONE" as a substring or
-// alongside other words (negations like "NOT DONE", near-misses like "DONEISH",
-// "ABANDONED", "CONDONED", or key/value noise like "DONE: false").
 func isResultDone(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	if bytes.Contains(data, []byte("FAILED")) {
-		return false
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "DONE" || trimmed == "**DONE**" {
-			return true
-		}
-		if doneWithTokenRe.MatchString(trimmed) {
-			return true
-		}
-		if resultDoneLineRe.MatchString(trimmed) {
-			return true
-		}
-		if keyDoneRe.MatchString(trimmed) {
-			return true
-		}
-	}
-	return false
+	return typedrec.Status(data) == typedrec.StatusDone
 }
 
 func isAllDigits(s string) bool {

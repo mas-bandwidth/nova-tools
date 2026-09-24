@@ -57,6 +57,7 @@ const (
 	FunctionPR        = "ns_harvest_pr"
 	FunctionStep      = "ns_harvest_step"
 	FunctionHarvested = "ns_card_harvested"
+	FunctionRefuse    = "ns_harvest_refuse"
 )
 
 // The durable harvest steps (card hash field harvest_step).
@@ -346,6 +347,37 @@ func oneLine(s string) string {
 // found or opened, its head read back, then the harvested transition. A card
 // that fails stays ended; the bench goes on to the next card until its clock.
 func harvestBench(ctx context.Context, st *store.Store, opt Options, l lease) ([]CardResult, []CardFailure, error) {
+	if labels, err := st.Client().SInter(ctx, "s:"+opt.Sprint+":bench:"+l.bench+":ended", "s:"+opt.Sprint+":idx:card:ended").Result(); err == nil {
+		sort.Strings(labels)
+		for _, label := range labels {
+			if len(opt.Labels) > 0 && !opt.Labels[label] {
+				continue
+			}
+			attempt, err := st.Client().HGet(ctx, "s:"+opt.Sprint+":card:"+label, "attempt").Result()
+			if err != nil || attempt == "" {
+				continue
+			}
+			resKey := "s:" + opt.Sprint + ":card:" + label + ":result:a" + attempt
+			resFields, err := st.Client().HMGet(ctx, resKey, "valid", "field", "defect").Result()
+			if err != nil || len(resFields) < 3 {
+				continue
+			}
+			valid, _ := resFields[0].(string)
+			field, _ := resFields[1].(string)
+			defect, _ := resFields[2].(string)
+			if valid == "0" {
+				fmt.Printf("HARVEST-REFUSED %s %s field=%s defect=%s\n", opt.Sprint, label, field, defect)
+				reply, err := st.Client().FCall(ctx, FunctionRefuse, nil, opt.Sprint, label, l.bench, l.instance, l.token, field, defect).Text()
+				if err != nil {
+					continue
+				}
+				if reply == "FENCED" {
+					return nil, nil, ErrFenced
+				}
+			}
+		}
+	}
+
 	info, cards, err := due(ctx, st, opt.Sprint, l.bench, opt.Limit)
 	if err != nil {
 		return nil, nil, err

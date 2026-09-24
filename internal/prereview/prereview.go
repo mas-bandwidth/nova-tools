@@ -37,6 +37,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // Result is one check's answer. Yes and No are decided; Missing is the answer
@@ -485,19 +486,14 @@ func doneCheck(pr PR, card Card) Check {
 		}
 		return Check{Missing, "the body has no line starting RESULT, so there is no DONE line to read (not a harvested card)"}
 	}
-	text := resultText(pr, card)
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	// A blank line under the RESULT line is formatting, not a missing DONE
-	// (16 of 24 bounces on 2026-09-24 were `RESULT line 2 is ""`): the DONE
-	// line is the first non-blank line after RESULT.
-	for len(lines) > 2 && strings.TrimSpace(lines[1]) == "" {
-		lines = append(lines[:1], lines[2:]...)
-	}
-	if len(lines) < 2 {
+	// (16 of 24 bounces on 2026-09-24 were `RESULT line 2 is ""`):
+	// typedrec.LineTwo reads the first non-blank line after RESULT.
+	got, present, done := typedrec.LineTwo(resultText(pr, card))
+	if !present {
 		return Check{Missing, "the RESULT has no second line"}
 	}
-	got := strings.TrimSpace(lines[1])
-	if got == "DONE" {
+	if done {
 		return Check{Yes, "RESULT line 2 is bare DONE"}
 	}
 	return Check{No, "RESULT line 2 is \"" + oneline.Escape(oneline.Cap(got, 80)) + "\", not bare DONE"}
