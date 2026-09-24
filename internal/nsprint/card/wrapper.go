@@ -75,6 +75,11 @@ type WrapperEnd struct {
 	Reason     string // done, crash, timeout, other
 	Exit       int    // the harness exit code; -1 when it was killed
 	ResultsDir string
+	// PushedSHA is the commit step's commit on the card branch, or "-"
+	// (nothing committed); "" is read as "-".
+	PushedSHA string
+	// Commit is the commit step's note: COMMITTED, NO-COMMIT or OVERSIZE <file>.
+	Commit string
 }
 
 // WrapperLedger is the Redis side of one attempt. Every method returns the
@@ -401,6 +406,19 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 	wall := now().Sub(began)
 	end.ResultsDir = results
 	rep.Outcome, rep.Reason, rep.Exit, rep.Wall, rep.Why = end.Outcome, end.Reason, end.Exit, wall, why
+	end.PushedSHA, end.Commit = NoCommit, "NO-COMMIT"
+	if end.Outcome == "DONE" {
+		// The commit step (#2932): <job>/out/repo onto the card branch, before copy out.
+		msg := resultLine(filepath.Join(job, "out"))
+		c, err := CommitOutput(filepath.Join(job, "out", "repo"), WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), msg, cfg.Bench)
+		if err != nil {
+			c = CommitResult{SHA: NoCommit, Note: "NO-COMMIT"}
+			if rep.Why == "" {
+				rep.Why = "commit step: " + err.Error()
+			}
+		}
+		end.PushedSHA, end.Commit = c.SHA, c.Note
+	}
 	if err := copyOut(job, results); err != nil {
 		// The job dir is kept: its results are the only copy.
 		rep.Code, rep.Why = WrapperExitCouldNot, "copy out: "+err.Error()
@@ -504,8 +522,8 @@ func copyFile(src, dst string) error {
 // writeWrapperLine records what end.record has no field for: the wall and the
 // harness's RESULT line (line 1 of out/RESULT.md, if it wrote one).
 func writeWrapperLine(results string, cfg WrapperConfig, end WrapperEnd, beats int, wall time.Duration) {
-	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d result=%s\n",
-		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), strconv.Quote(resultLine(results)))
+	line := fmt.Sprintf("WRAPPER card=%s outcome=%s reason=%s exit=%d beats=%d wall_ms=%d commit=%s result=%s\n",
+		cfg.card(), end.Outcome, end.Reason, end.Exit, beats, wall.Milliseconds(), strconv.Quote(end.Commit), strconv.Quote(resultLine(results)))
 	_ = os.WriteFile(filepath.Join(results, "wrapper.line"), []byte(line), 0o644)
 }
 

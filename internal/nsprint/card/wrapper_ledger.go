@@ -70,9 +70,13 @@ func (l *RedisLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	if now == nil {
 		now = time.Now
 	}
+	pushed := end.PushedSHA
+	if pushed == "" {
+		pushed = NoCommit
+	}
 	rec := EndRecord{
 		Identity: id, Outcome: end.Outcome, Reason: end.Reason, ExitCode: end.Exit,
-		TokenSHA: TokenSHA(l.Token), PushedSHA: "-", At: now().UTC().Format(time.RFC3339),
+		TokenSHA: TokenSHA(l.Token), PushedSHA: pushed, At: now().UTC().Format(time.RFC3339),
 	}
 	if err := WriteEndRecord(end.ResultsDir, rec); err != nil {
 		return WrapperExitCouldNot, err

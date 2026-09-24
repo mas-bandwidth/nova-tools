@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 const (
 	fakeHarnessEnv = "WRAPPER_FAKE_HARNESS" // done, fail or hang
 	fakeGateEnv    = "WRAPPER_FAKE_GATE"    // done and fail exit once this file exists
+	fakeOriginEnv  = "WRAPPER_FAKE_ORIGIN"  // repo mode clones this into out/repo
 )
 
 func TestMain(m *testing.M) {
@@ -41,6 +43,21 @@ func fakeHarness(mode string) int {
 	if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"), 0o644); err != nil {
 		fmt.Println("fake harness:", err)
 		return 9
+	}
+	if mode == "repo" {
+		// The #2932 commit step's input: a clone of the test's origin with
+		// uncommitted work and card scratch in it.
+		repo := filepath.Join(out, "repo")
+		if msg, err := exec.Command("git", "clone", "-q", os.Getenv(fakeOriginEnv), repo).CombinedOutput(); err != nil {
+			fmt.Println("fake harness clone:", err, string(msg))
+			return 9
+		}
+		for name, body := range map[string]string{"work.txt": "the card's work\n", "notes.txt": "scratch\n"} {
+			if err := os.WriteFile(filepath.Join(repo, name), []byte(body), 0o644); err != nil {
+				fmt.Println("fake harness:", err)
+				return 9
+			}
+		}
 	}
 	gate := os.Getenv(fakeGateEnv)
 	for {
