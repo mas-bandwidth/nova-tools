@@ -111,7 +111,8 @@ type Summary struct {
 	Routes      []Route
 	CICards     int
 	CIDone      int
-	CI          CICost // the ci cost line (ci.go, #3046)
+	CI          CICost   // the ci cost line (ci.go, #3046)
+	Land        LandCost // the lander's five numbers (land.go, #3139 B17)
 	Tasks       int
 	TasksDone   int
 	Receipts    int64
@@ -486,6 +487,9 @@ func Read(ctx context.Context, client *redis.Client, sprint string) (Summary, er
 	if err != nil {
 		return sum, err
 	}
+	if sum.Land, err = readLand(ctx, client, sprint, head); err != nil {
+		return sum, err
+	}
 	apart, err := readApart(ctx, client, key, sum.UsefulMin)
 	if err != nil {
 		return sum, err
@@ -568,6 +572,7 @@ func PrintLines(out io.Writer, s Summary) {
 	}
 	fmt.Fprintf(out, "FOLD CI sprint=%s cards=%d done=%d\n", s.Sprint, s.CICards, s.CIDone)
 	printCI(out, s.Sprint, s.CI)
+	printLand(out, s.Sprint, s.Land)
 	t := s.Total
 	fmt.Fprintf(out, "FOLD SPRINT sprint=%s cards=%d done=%d useful=%d landed=%d usd=%s usd_per_useful=%s usd_per_landed=%s unpriced=%d tasks=%d tasks_done=%d receipts=%d useful_min=%d\n",
 		s.Sprint, t.Cards, t.Done, t.Useful, t.Landed, usd(t),
