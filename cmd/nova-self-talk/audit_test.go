@@ -41,7 +41,7 @@ var selfTalkAudit = audit.Config{
 		// its own, and returns a STRING that this package prints -- rendered field by
 		// field through oneline.Field before it is returned.
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
-		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
+		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"regexp"`, `"strings"`,
 		// bounded prints the capped finding listings and the one MORE line that stands
 		// for what they did not print. Every line reaching it is rendered by a
 		// fmt.Sprintf in THIS package, which the classifier walks like any other print
@@ -50,6 +50,13 @@ var selfTalkAudit = audit.Config{
 		// to nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/selftalk"`,
+		// plainest.go (nova-tools #1468, third fix attempt) compiles the three
+		// plainest first-person absolutes as regexps and matches them against the
+		// flattened text. It returns Claims and Installations -- the same types
+		// selftalk exports -- so the run loop merges them with selftalk.Scan and
+		// ScanInstallation; the audit classifier walks the loop's print sites, which
+		// are already on the list above, and never sees a print site in plainest.go
+		// itself.
 	},
 	MinClassified: 10,
 }

@@ -40,6 +40,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/metrics"
 )
 
 // SSH states on the bench row (#2756 2.2 `bench:<b>:beat` ssh: ok, refused,
@@ -76,6 +78,12 @@ type Card struct {
 	Leg      string  // empty: any bench
 	Tier     string  // TierPriority or anything else (bulk)
 	Bench    string  // pinned by `card push --bench`; empty: any bench
+	// DependsOn is the card's DEPENDS-ON entries (card ids in its sprint or
+	// <owner>/<repo>#<n>); `-`, `none` or empty waits for nothing (#3066).
+	DependsOn []string
+	Repo      string // the card's REPO: a dependency card's PR with no repo is read here
+	Base      string // the card's BASE: a dependency is landed only when merged into it
+	WaitWhy   string // why the card is in s:<S>:waiting, as the last gate wrote it
 }
 
 // Bench is one registered bench as the pass sees it.
@@ -130,6 +138,9 @@ type Sprint struct {
 	Share        int  // weight against the other open sprints; 0 reads as 1
 	Backpressure bool // s:<S>:backpressure ON (or missing under a closed policy)
 	Pool         []Card
+	// Waiting is the queued cards in s:<S>:waiting: an unmet DEPENDS-ON when
+	// the last gate ran (#3066). Ready re-tests them every pass.
+	Waiting []Card
 }
 
 // Input is one consistent read of what the pass needs.
@@ -137,6 +148,9 @@ type Input struct {
 	Now     time.Time // Redis server time
 	Benches []Bench
 	Sprints []Sprint
+	// Deps is every card a pooled or waiting card names in DEPENDS-ON, keyed
+	// <S>/<label>; a card id the sprint does not have is absent (#3066).
+	Deps map[string]DepCard
 }
 
 // Batch is the cards planned for one bench in one pass.
@@ -316,6 +330,15 @@ type Pass struct {
 	Launcher Launcher // nil: BatchLauncher
 	Dialer   Dialer   // how a session to a bench is opened
 	Hold     time.Duration
+	// PRs answers a DEPENDS-ON entry's PR by REST (#3066); nil leaves every
+	// PR unknown, so a card that waits on one is never dealt.
+	PRs PRs
+	// Gate writes the pool <-> waiting moves; nil moves nothing in Redis, and
+	// a card that is not ready is still never planned.
+	Gate Gate
+	// Metrics receives the pool left, the leases held and one session
+	// latency per bench after every pass (nx-g61); nil exports nothing.
+	Metrics *metrics.Set
 }
 
 // BenchResult is what happened on one bench in one pass.
@@ -333,6 +356,11 @@ type BenchResult struct {
 type Result struct {
 	Benches []BenchResult
 	Rounds  int
+	// Waiting is every card the DEPENDS-ON gate held this pass, with why: an
+	// entry that can no longer land is named on every pass (#3066).
+	Waiting []Blocked
+	// Released counts waiting cards whose dependencies landed this pass.
+	Released int
 }
 
 // Launched counts reservations sent over a session that succeeded.
@@ -370,6 +398,25 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 		return Result{}, fmt.Errorf("deal: read: %w", err)
 	}
 	var res Result
+	// The DEPENDS-ON gate (#3066): only a card whose every dependency is
+	// landed on its base stays in the pool the plan reads.
+	gated, moves, blocked := Ready(ctx, in, p.PRs)
+	res.Waiting = blocked
+	for _, s := range in.Sprints {
+		m := moves[s.Name]
+		for _, mv := range m {
+			if mv.Verb == GateRelease {
+				res.Released++
+			}
+		}
+		if p.Gate == nil || len(m) == 0 {
+			continue
+		}
+		if err := p.Gate.Gate(ctx, token, s.Name, m); err != nil {
+			return res, fmt.Errorf("deal: gate %s: %w", s.Name, err)
+		}
+	}
+	in = gated
 	for round := 0; round < 2; round++ {
 		batches := Plan(in, hold)
 		if len(batches) == 0 {
@@ -421,7 +468,22 @@ func (p *Pass) Run(ctx context.Context) (Result, error) {
 			break
 		}
 	}
+	p.export(in)
 	return res, nil
+}
+
+// export sets the dealer's gauges from the input as the pass left it: the
+// cards still pooled over every sprint and the slots leased over every bench.
+func (p *Pass) export(in Input) {
+	pooled, leased := 0, 0
+	for _, s := range in.Sprints {
+		pooled += len(s.Pool)
+	}
+	for _, b := range in.Benches {
+		leased += b.Leased
+	}
+	p.Metrics.QueueDepth(metrics.Dealer, pooled)
+	p.Metrics.LeasesHeld(metrics.Dealer, leased)
 }
 
 // launch opens the bench's one session through the launcher and classifies it.
@@ -432,7 +494,9 @@ func (p *Pass) launch(ctx context.Context, l Launcher, b Batch, res []Reservatio
 		return br
 	}
 	open := &oneSession{dialer: p.Dialer, bench: b.Bench}
+	start := time.Now()
 	err := l.Launch(ctx, open.Open, b.Bench, res)
+	p.Metrics.ProviderLatency(metrics.Dealer, b.Bench.Name, time.Since(start))
 	br.Sessions = open.count()
 	switch {
 	case err == nil:
@@ -581,6 +645,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	}
 	pipe = c.Pipeline()
 	pools := make([]*redis.ZSliceCmd, len(sprintNames))
+	waits := make([]*redis.StringSliceCmd, len(sprintNames))
 	var live []int
 	for i, s := range sprintNames {
 		if sc[i].meta.Val()["status"] != "open" {
@@ -588,22 +653,30 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 		}
 		live = append(live, i)
 		pools[i] = pipe.ZRangeWithScores(ctx, "s:"+s+":pool", 0, int64(limit-1))
+		waits[i] = pipe.SMembers(ctx, "s:"+s+":waiting")
 	}
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Input{}, err
 	}
 	pipe = c.Pipeline()
 	type cardCmd struct {
-		sprint int
-		label  string
-		score  float64
-		cmd    *redis.SliceCmd
+		sprint  int
+		label   string
+		score   float64
+		waiting bool
+		cmd     *redis.SliceCmd
 	}
 	var cards []cardCmd
+	fields := []string{"state", "leg", "tier", "bench", "depends_on", "repo", "base", "wait_why", "priority"}
 	for _, i := range live {
 		for _, z := range pools[i].Val() {
 			label, _ := z.Member.(string)
-			cards = append(cards, cardCmd{i, label, z.Score, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, "state", "leg", "tier", "bench")})
+			cards = append(cards, cardCmd{i, label, z.Score, false, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, fields...)})
+		}
+		labels := waits[i].Val()
+		sort.Strings(labels)
+		for _, label := range labels {
+			cards = append(cards, cardCmd{i, label, 0, true, pipe.HMGet(ctx, "s:"+sprintNames[i]+":card:"+label, fields...)})
 		}
 	}
 	if len(cards) > 0 {
@@ -611,16 +684,71 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			return Input{}, err
 		}
 	}
-	bySprint := map[int][]Card{}
+	bySprint, waitBySprint := map[int][]Card{}, map[int][]Card{}
 	for _, cc := range cards {
 		v := cc.cmd.Val()
 		if str(v, 0) != "queued" {
 			continue
 		}
-		bySprint[cc.sprint] = append(bySprint[cc.sprint], Card{
+		card := Card{
 			Sprint: sprintNames[cc.sprint], Label: cc.label, Priority: cc.score,
 			Leg: str(v, 1), Tier: str(v, 2), Bench: str(v, 3),
-		})
+			DependsOn: splitDeps(str(v, 4)), Repo: str(v, 5), Base: str(v, 6), WaitWhy: str(v, 7),
+		}
+		if cc.waiting {
+			card.Priority, _ = strconv.ParseFloat(str(v, 8), 64)
+			waitBySprint[cc.sprint] = append(waitBySprint[cc.sprint], card)
+			continue
+		}
+		bySprint[cc.sprint] = append(bySprint[cc.sprint], card)
+	}
+	// The cards named in DEPENDS-ON, one pipelined round (#3066).
+	type depCmd struct {
+		key string
+		cmd *redis.SliceCmd
+	}
+	var depCmds []depCmd
+	seenDep := map[string]bool{}
+	for _, group := range []map[int][]Card{bySprint, waitBySprint} {
+		for _, cs := range group {
+			for _, cd := range cs {
+				for _, e := range cd.DependsOn {
+					if e == "" || e == "-" || e == "none" {
+						continue
+					}
+					if _, _, ok := parseRef(e); ok {
+						continue
+					}
+					k := cd.Sprint + "/" + e
+					if seenDep[k] {
+						continue
+					}
+					seenDep[k] = true
+					depCmds = append(depCmds, depCmd{k, nil})
+				}
+			}
+		}
+	}
+	if len(depCmds) > 0 {
+		sort.Slice(depCmds, func(a, b int) bool { return depCmds[a].key < depCmds[b].key })
+		pipe = c.Pipeline()
+		for i := range depCmds {
+			slash := strings.IndexByte(depCmds[i].key, '/')
+			S, label := depCmds[i].key[:slash], depCmds[i].key[slash+1:]
+			depCmds[i].cmd = pipe.HMGet(ctx, "s:"+S+":card:"+label, "state", "outcome", "repo", "base", "pr", "pushed_sha")
+		}
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return Input{}, err
+		}
+		in.Deps = map[string]DepCard{}
+		for _, d := range depCmds {
+			v := d.cmd.Val()
+			if len(v) == 0 || v[0] == nil {
+				continue
+			}
+			pr, _ := strconv.Atoi(str(v, 4))
+			in.Deps[d.key] = DepCard{Found: true, State: str(v, 0), Outcome: str(v, 1), Repo: str(v, 2), Base: str(v, 3), PR: pr, PushedSHA: str(v, 5)}
+		}
 	}
 	for _, i := range live {
 		policy, bp := sc[i].policy.Val(), sc[i].bp.Val()
@@ -631,7 +759,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 			// (fail-open) is OFF, "closed" is ON.
 			on = policy["backpressure_missing"] == "closed"
 		}
-		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on, Pool: bySprint[i]})
+		in.Sprints = append(in.Sprints, Sprint{Name: sprintNames[i], Share: shareN, Backpressure: on, Pool: bySprint[i], Waiting: waitBySprint[i]})
 	}
 	return in, nil
 }
@@ -645,6 +773,18 @@ func splitList(s string) []string {
 	var out []string
 	for _, f := range strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' }) {
 		out = append(out, f)
+	}
+	return out
+}
+
+// splitDeps reads a card's depends_on field: entries separated by commas
+// (SPEC-CARD clause 10), each trimmed.
+func splitDeps(s string) []string {
+	var out []string
+	for _, f := range strings.Split(s, ",") {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
 	}
 	return out
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/post"
+	"github.com/mas-bandwidth/nova-tools/internal/post/issue"
 )
 
 const usage = `nova-post: draft, show and send outward posts behind Glenn's approval (see docs/SPEC-OUTBOUND.md)
@@ -25,6 +26,10 @@ usage:
   nova-post show  --draft <hash> --drafts <dir>
   nova-post send  --draft <hash> --approval <receipt-id> --drafts <dir>
                   --bus <dir> --allowlist <file>
+  nova-post hook  --addr <host:port> --redis <host:port> [--user <acl-user>]
+                  [--path /webhook] [--secret-env NOVA_GITHUB_WEBHOOK_SECRET]
+                  [--password-env NOVA_REDIS_BENCH_PASSWORD]
+  nova-post issue --section <file> --owner <o> --repo <r>
   nova-post version
   nova-post help
 
@@ -42,6 +47,12 @@ usage:
   --draft <hash>    the payload hash the draft verb printed
   --approval <id>   the bus receipt id carrying APPROVE nova-post sha256=<hash>
   --bus <dir>       the bus the receipt is read from; required on send
+
+hook listens for GitHub webhook deliveries and appends each signed, carried
+one to the Redis stream ev:github (ping included). Every delivery's
+X-Hub-Signature-256 is checked against the secret in $NOVA_GITHUB_WEBHOOK_SECRET
+(or the variable --secret-env names); with it empty the verb refuses to start.
+--addr is loopback or a tailnet address, never a wildcard.
 
 exit codes: 0 the verb ran, 1 the gate or a provider said NO, 2 the invocation
 could not run. A credential is read only from the environment nova-secrets exec
@@ -88,6 +99,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runShow(args[1:], stdout, stderr)
 	case "send":
 		return runSend(args[1:], stdout, stderr)
+	case "hook":
+		return runHook(args[1:], stdout, stderr)
+	case "issue":
+		return runIssue(args[1:], stdout, stderr)
 	default:
 		return refuseLine(stderr, "bad-verb", fmt.Sprintf("unknown verb %q", oneline.Field(args[0])), 2)
 	}
@@ -230,4 +245,51 @@ func fail(stderr io.Writer, err error) int {
 		return refuseLine(stderr, r.Reason, r.Remedy, r.Exit)
 	}
 	return refuseLine(stderr, "internal-error", oneline.Err(err), 2)
+}
+
+func runIssue(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("nova-post issue", flag.ContinueOnError)
+	section := fs.String("section", "", "the section file")
+	owner := fs.String("owner", "", "the issue owner")
+	repo := fs.String("repo", "", "the issue repo")
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	if err := fs.Parse(args); err != nil {
+		return refuseLine(stderr, "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes), 2)
+	}
+	if fs.NArg() > 0 {
+		return refuseLine(stderr, "bad-flags", fmt.Sprintf("unexpected argument %q", oneline.Field(fs.Arg(0))), 2)
+	}
+	for _, req := range []struct{ name, value string }{
+		{"--section", *section}, {"--owner", *owner}, {"--repo", *repo},
+	} {
+		if req.value == "" {
+			return refuseLine(stderr, "missing-flag", req.name+" is required; refusing to guess", 2)
+		}
+	}
+
+	// Read the section file
+	raw, err := os.ReadFile(*section)
+	if err != nil {
+		return refuseLine(stderr, "bad-section", fmt.Sprintf("--section %s is unreadable: %s", oneline.Escape(*section), oneline.Err(err)), 2)
+	}
+
+	// Parse the section
+	sec, err := issue.ParseSection(string(raw))
+	if err != nil {
+		return refuseLine(stderr, "parse-section", fmt.Sprintf("cannot parse section: %s", oneline.Escape(err.Error())), 2)
+	}
+
+	// Validate required fields
+	if err := sec.Validate(); err != nil {
+		return refuseLine(stderr, "missing-field", fmt.Sprintf("section is missing a required field: %s", oneline.Escape(err.Error())), 2)
+	}
+
+	// Create a filedable issue
+	fi := issue.NewFilableIssue(sec, *owner, *repo)
+
+	// Print the filedable issue info
+	fmt.Fprintf(stdout, "ISSUE READY owner=%s repo=%s title=%s\n",
+		oneline.Field(fi.Owner), oneline.Field(fi.Repo), oneline.Field(fi.IssueTitle()))
+	return 0
 }

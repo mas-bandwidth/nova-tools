@@ -1,0 +1,9 @@
+# fixed-testbins-allowlist.txt -- existing offenders of the `testbins` class
+# test in docs/SPEC-CI.md. One row: file:line kind date reason.
+#
+# The file only shrinks. An entry that names no offender on the tree is refused
+# (`fix the copy; the allowlist only shrinks`), so fixing a copy means deleting
+# its row in the same change, and a new row parks nothing.
+#
+# There are no rows today: every copied built binary on the CI path places by
+# link through internal/testbin.Place.

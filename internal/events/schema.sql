@@ -4,7 +4,7 @@
 -- It is applied on every open, statement by statement in one transaction, and is idempotent:
 -- every table, index and view is IF NOT EXISTS and the version row is ON CONFLICT DO NOTHING.
 --
--- THE EVENT ID IS THE PRIMARY KEY of all three tables. Streams deliver at least once, so a
+-- THE EVENT ID IS THE PRIMARY KEY of every table (the three card tables and decisions). Streams deliver at least once, so a
 -- redelivered entry must be a no-op rather than a second row: that single fact is what makes
 -- "a hundred DONEs, kill the fold, restart, the count is a hundred" (Johnny's bar 3) a
 -- property of the schema. It is also why a replay of the whole stream into a fresh file
@@ -176,3 +176,74 @@ SELECT (SELECT count(DISTINCT label) FROM attempts)                             
        (SELECT round(sum(usd), 6) FROM attempts)                                     AS usd;
 
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT (version) DO NOTHING;
+
+-- Version 2 (nova-tools #2623): the decision record. A Jev routing decision is one `decide`
+-- entry on cards:done, and this table is where the fold keeps it: decide_log's columns under
+-- decide_log's names, so the calibration set reads the same as it did in that table, which
+-- is retired. `ts` is the entry's `at` and the BIGSERIAL id is the event id. `evidence`, a
+-- JSON document, is not on the stream (ids and counts only); its measured columns are.
+--
+-- Every string the decision may not carry and every optional number is NULLABLE with no
+-- default: an absent reason, refusal, outcome, confidence or token count is NULL, never ''
+-- or 0 (no evidence is not negative evidence). Counts and flags the writer always sends are
+-- NOT NULL. The table is IF NOT EXISTS, so a version-1 file gains it on its next open and a
+-- `fold --rebuild` fills it from the stream.
+CREATE TABLE IF NOT EXISTS decisions (
+    event_id             TEXT PRIMARY KEY,
+    label                TEXT    NOT NULL,
+    bench                TEXT    NOT NULL DEFAULT '',
+    model                TEXT    NOT NULL DEFAULT '',
+    route                TEXT    NOT NULL DEFAULT '',
+    pr                   TEXT    NOT NULL DEFAULT '',
+    head                 TEXT    NOT NULL DEFAULT '',
+    at                   TEXT    NOT NULL DEFAULT '',
+    day                  TEXT    NOT NULL DEFAULT '',
+    unit_id              TEXT    NOT NULL,
+    kind                 TEXT,
+    files                INTEGER NOT NULL DEFAULT 0,
+    packages             INTEGER NOT NULL DEFAULT 0,
+    lanes                INTEGER NOT NULL DEFAULT 0,
+    lane                 TEXT,
+    rung_tried           TEXT,
+    height               INTEGER NOT NULL DEFAULT 0,
+    confidence           REAL,
+    floor                REAL,
+    stepped_up           INTEGER NOT NULL DEFAULT 0,
+    escalated            INTEGER NOT NULL DEFAULT 0,
+    designated           INTEGER NOT NULL DEFAULT 0,
+    source               TEXT,
+    rowan_pick           TEXT,
+    reason               TEXT,
+    wait                 TEXT,
+    awaiting_termination INTEGER NOT NULL DEFAULT 0,
+    refusal              TEXT,
+    outcome              TEXT,
+    rung_succeeded       TEXT,
+    calls                INTEGER NOT NULL DEFAULT 0,
+    tokens_in            INTEGER,
+    tokens_out           INTEGER,
+    usd                  REAL,
+    usage_failed         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS decisions_kind_idx ON decisions (kind);
+CREATE INDEX IF NOT EXISTS decisions_unit_idx ON decisions (unit_id);
+CREATE INDEX IF NOT EXISTS decisions_day_idx  ON decisions (day);
+
+-- decisions_by_kind is what `nova-decide log --summary` used to be asked of the table: per
+-- unit kind, how many decisions, how many stepped up or escalated or were refused, and what
+-- they spent. A sum over nothing but NULL tokens is NULL, printed as a dash.
+CREATE VIEW IF NOT EXISTS decisions_by_kind AS
+SELECT COALESCE(kind, '')                                     AS kind,
+       count(*)                                               AS decisions,
+       count(DISTINCT unit_id)                                AS units,
+       sum(stepped_up)                                        AS stepped_up,
+       sum(escalated)                                         AS escalated,
+       sum(CASE WHEN refusal IS NOT NULL THEN 1 ELSE 0 END)   AS refused,
+       sum(calls)                                             AS calls,
+       sum(tokens_in)                                         AS tokens_in,
+       sum(tokens_out)                                        AS tokens_out
+  FROM decisions
+ GROUP BY COALESCE(kind, '');
+
+INSERT INTO schema_version (version) VALUES (2) ON CONFLICT (version) DO NOTHING;

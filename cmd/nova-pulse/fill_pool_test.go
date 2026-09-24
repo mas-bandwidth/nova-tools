@@ -18,7 +18,9 @@ import (
 	"time"
 )
 
-// poolRow is one fixture machine: its name, its roles field and its notes field.
+// poolRow is one fixture machine: its name, its roles field and its notes field. Its seat is
+// `swarm-<name>`, because since #2014 a bench a card can run on is a bench whose row names
+// the seat to run it under -- a row with no seat is refused by name and left out of the pool.
 type poolRow struct{ name, roles, notes string }
 
 // poolRegistry writes a fixture registry and answers its path.
@@ -31,7 +33,7 @@ func poolRegistry(t *testing.T, dir string, rows ...poolRow) string {
 		if notes == "" {
 			notes = "-"
 		}
-		b.WriteString(strings.Join([]string{r.name, r.name, "linux/x64", r.roles, "-", "8", notes}, "\t"))
+		b.WriteString(strings.Join([]string{r.name, r.name, "linux/x64", r.roles, "swarm-" + r.name, "8", notes}, "\t"))
 		b.WriteString("\n")
 	}
 	path := filepath.Join(dir, "machines.tsv")

@@ -39,7 +39,8 @@ func ParseCardDependencies(content string) []string {
 		dep = strings.TrimSpace(dep)
 		dep = strings.Trim(dep, `"'`)
 		dep = strings.TrimSpace(dep)
-		if dep != "" && !seen[dep] {
+		// "-" is the cut template's "no dependency" (FormatDependsOn), never a card id.
+		if dep != "" && dep != "-" && !seen[dep] {
 			seen[dep] = true
 			deps = append(deps, dep)
 		}
