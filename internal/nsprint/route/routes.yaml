@@ -183,6 +183,12 @@ routes:
     state: held
     flag: benched
     why: "not in the ranking; datacenter only; ROUTE-BENCHED flag (#2895)"
+  - route: dsflash
+    rung: flash
+    model: deepseek-v4-flash
+    via: deepseek
+    state: held
+    why: "not in the ranking; DeepSeek direct (api.deepseek.com), the swarm spread's deepseek flash provider (Glenn 2026-09-24 7:10 PM ET)"
   - route: orgptnano
     rung: flash
     model: openai/gpt-5-nano
@@ -394,6 +400,14 @@ routes:
     why: "second tier: Pareto-dominated by qwen3.6-plus and minimax-m3 (opencode), but Q +0.04 > 0, so held rather than dropped"
     faults: [CARD-WIRE, CARD-GATE, CARD-NOCTRL, CARD-STALE]
     faults_from: rung
+  - route: dspro
+    rung: pro
+    model: deepseek-v4-pro
+    via: deepseek
+    state: held
+    why: "not in the ranking; DeepSeek direct (api.deepseek.com), the swarm spread's deepseek pro provider (Glenn 2026-09-24 7:10 PM ET); same model as ocpro and ordspro, whose Q -0.64 was measured through the routers"
+    faults: [CARD-WIRE, CARD-STALE, CARD-BENCHPIN, CARD-GATE, CARD-NOCTRL, CARD-DOCGUARD]
+    faults_from: model
   - route: orkimicode
     rung: pro
     model: moonshotai/kimi-k2.7-code
@@ -530,3 +544,55 @@ overrides:
     routes: [ocqwenplus, orhaiku, ordspro]
     source: "rowan-new reports/fold-2026-09-22-landed-per-route.md, fold 2026-09-23: cost per LANDED code PR (v6 4.10), not this file's $-per-8+-scored ranking"
     why: "interim: the only routes that landed code were ocqwenplus $5.08/landed, orhaiku $5.50/landed and ordspro $16.38/landed; the 2026-09-23 02:31Z route change dropped ordspro and orhaiku here on $ per 9+ though they land; orqwenplus (same model as ocqwenplus, via openrouter) cost $119.90/landed, orkimi3 $98/landed, orminimax $31.55/landed; ocglm53, orglm53, orkimicode and orgemini25pro spent $198.81 on 53 PRs and landed none; ocminimax and ormimopro have no landed-PR evidence either way and are left off pending it"
+
+# spread: the swarm's per-card provider spread (Glenn 2026-09-24 7:10 PM ET:
+# "distribute across all routers ... By distributing across 4 providers, we
+# will work better at load"). One row per tier and provider, in the order the
+# pick indexes them: a card of tier T runs on provider
+# fnv32a(card label) mod (the tier's row count), and on that row's FIRST
+# route; the rest of the list are the documented alternates, best first, not
+# used by the pick. Deterministic and stateless: a retried card lands on the
+# same provider. Mercury is flash only; DeepSeek direct serves both tiers; the
+# opencode and openrouter rows carry non-DeepSeek models, for fairness.
+# A spread row may name a held route (Glenn chose the providers; the rule above
+# still governs every row's state and the rung lists) but never a dropped or
+# dead one, and its via must be the route's via. Parse refuses anything else,
+# and TestSpreadRoutesAreValid checks the embedded table.
+# provider -> via: deepseek -> deepseek, opencode -> opencode, openrouter ->
+# openrouter, mercury -> datacenter.
+spread:
+  - tier: flash
+    provider: deepseek
+    via: deepseek
+    routes: [dsflash]
+    why: "DeepSeek direct; not yet measured on this route"
+  - tier: flash
+    provider: opencode
+    via: opencode
+    routes: [ocglmflash]
+    why: "the one non-DeepSeek opencode flash route: 48 of 55 scored at 8+ (held, second tier on price)"
+  - tier: flash
+    provider: openrouter
+    via: openrouter
+    routes: [orqwen38, ormimo26, ormimo]
+    why: "the flash leaders that are not DeepSeek, in the table's efficiency order"
+  - tier: flash
+    provider: mercury
+    via: datacenter
+    routes: [mercury]
+    why: "Mercury is flash only; not yet measured"
+  - tier: pro
+    provider: deepseek
+    via: deepseek
+    routes: [dspro]
+    why: "DeepSeek direct; not yet measured on this route"
+  - tier: pro
+    provider: opencode
+    via: opencode
+    routes: [ocqwenplus, ocminimax]
+    why: "the two allowed pro routes, both opencode and not DeepSeek"
+  - tier: pro
+    provider: openrouter
+    via: openrouter
+    routes: [ormimo26pro, ormimopro, orglm53, orkimi3]
+    why: "held non-DeepSeek openrouter pro routes by efficiency, lower is better: 0.89, 0.98, 10.80, 11.38"

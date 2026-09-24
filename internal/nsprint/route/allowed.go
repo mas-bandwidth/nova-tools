@@ -8,8 +8,8 @@
 // The table is routes.yaml, embedded at build time, so a binary and the table
 // it enforces are one artifact. It replaces the two text lists the bash
 // launchers read (providers-flash.txt, providers-pro.txt). The file is a
-// small, strict YAML subset: full-line comments, top-level scalars, and three
-// block lists of flat maps (routes, types, overrides); values are plain,
+// small, strict YAML subset: full-line comments, top-level scalars, and four
+// block lists of flat maps (routes, types, overrides, spread); values are plain,
 // "quoted" or a [flow, list]. Anything else is refused at load, never guessed.
 package route
 
@@ -97,6 +97,7 @@ type Table struct {
 	byRoute      map[string]int
 	types        []TypeRow
 	overrides    []OverrideRow
+	spread       []SpreadRow
 	rungs        []string
 }
 
@@ -297,7 +298,7 @@ func Parse(src []byte) (*Table, error) {
 					t.Rule = s
 				}
 				section = ""
-			case "routes", "types", "overrides":
+			case "routes", "types", "overrides", "spread":
 				if val != "" {
 					return nil, fmt.Errorf("routes.yaml:%d: %s wants a block list below it", lineNo, key)
 				}
@@ -313,7 +314,7 @@ func Parse(src []byte) (*Table, error) {
 			}
 		case indent == 2 && strings.HasPrefix(trimmed, "- "):
 			if section == "" {
-				return nil, fmt.Errorf("routes.yaml:%d: list item outside routes, types or overrides", lineNo)
+				return nil, fmt.Errorf("routes.yaml:%d: list item outside routes, types, overrides or spread", lineNo)
 			}
 			key, val, err := keyValue(strings.TrimPrefix(trimmed, "- "))
 			if err != nil {
@@ -342,6 +343,8 @@ func Parse(src []byte) (*Table, error) {
 			err = t.addRow(it)
 		case "types":
 			err = t.addType(it)
+		case "spread":
+			err = t.addSpread(it)
 		default:
 			err = t.addOverride(it)
 		}
@@ -387,6 +390,9 @@ func Parse(src []byte) (*Table, error) {
 				return nil, fmt.Errorf("routes.yaml: overrides %s names %s, a rung %s route, on rung %s", o.Type, route, t.rows[i].Rung, o.Rung)
 			}
 		}
+	}
+	if err := t.checkSpread(); err != nil {
+		return nil, fmt.Errorf("routes.yaml: %v", err)
 	}
 	return t, nil
 }
@@ -759,6 +765,13 @@ func (t *Table) Tier(rung string) []Row {
 }
 
 // Launch is the model string the bench harness passes to nova-swarm native
-// --model: <via>/<model>, e.g. opencode/qwen3.6-plus or
-// openrouter/qwen/qwen3.8-flash.
-func (r Row) Launch() string { return r.Via + "/" + r.Model }
+// --model: <via>/<model>, e.g. opencode/qwen3.6-plus,
+// openrouter/qwen/qwen3.8-flash or deepseek/deepseek-v4-pro. The datacenter
+// via is the one exception: its model already names the harness's provider
+// (inception/mercury-2.5), so the model is the launch string as it stands.
+func (r Row) Launch() string {
+	if r.Via == ViaDatacenter {
+		return r.Model
+	}
+	return r.Via + "/" + r.Model
+}

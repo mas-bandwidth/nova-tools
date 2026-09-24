@@ -22,12 +22,23 @@ import (
 //	nova-sprint routes --check orgptnano --rung flash [--type read3 [--redis <host:port>]]
 //	nova-sprint routes --preamble ordspro
 //	nova-sprint routes --tier flash|pro
+//	nova-sprint routes --tier flash|pro --label <card label>
+//	nova-sprint routes --spread
 //
 // --tier prints the allowed routes of the tier a card names with ROUTE:
 // pro|flash, one "<route> <via>/<model>" line each in the table's efficiency
 // order (best first); a held or dropped route is never printed. The bench
 // harness (rowan-tools' nova-card-harness) runs the card on the
 // first line's model.
+//
+// --tier with --label prints the one route the swarm spread picks for that
+// card: "<route> <launch>", where the provider is fnv32a(label) mod the
+// tier's provider count over the table's spread rows (Glenn 2026-09-24: all
+// four providers, DeepSeek direct, OpenCode, OpenRouter and Mercury) and the
+// route is that provider's first. The launch string is <via>/<model>, except
+// Mercury's, whose model already names its provider (inception/mercury-2.5).
+// The route may be held: the spread's providers are chosen, not ranked.
+// --spread prints the whole spread table.
 //
 // --preamble prints the route's one-paragraph preamble (#2498 S8), built from
 // the attribution's fault classes the table carries for it, for a card front
@@ -47,7 +58,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "routes",
-		Summary: "print allowed_routes per rung and work type with the ranking numbers; --tier flash|pro prints that tier's allowed routes and launch models, best first; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
+		Summary: "print allowed_routes per rung and work type with the ranking numbers; --tier flash|pro prints that tier's allowed routes and launch models, best first, and with --label <card> the one spread route that card runs on; --spread prints the per-tier provider spread; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
 		Run:     cmdRoutes,
 	})
 }
@@ -61,15 +72,23 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	check := fs.String("check", "", "")
 	preamble := fs.String("preamble", "", "")
 	tier := fs.String("tier", "", "")
+	label := fs.String("label", "", "")
+	spread := fs.Bool("spread", false, "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro and --redis <host:port>")
+		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro [--label <card>], --spread and --redis <host:port>")
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "routes", "takes flags, not positional arguments")
 	}
-	if *tier != "" && (*check != "" || *typ != "" || *rung != "" || *preamble != "") {
-		return refuse(stderr, "routes", "--tier takes no other flag")
+	if *tier != "" && (*check != "" || *typ != "" || *rung != "" || *preamble != "" || *spread) {
+		return refuse(stderr, "routes", "--tier takes no other flag but --label")
+	}
+	if *label != "" && *tier == "" {
+		return refuse(stderr, "routes", "--label needs --tier flash or --tier pro")
+	}
+	if *spread && (*check != "" || *typ != "" || *rung != "" || *preamble != "") {
+		return refuse(stderr, "routes", "--spread takes no other flag")
 	}
 	if *preamble != "" && (*check != "" || *typ != "" || *rung != "") {
 		return refuse(stderr, "routes", "--preamble takes no other flag")
@@ -105,6 +124,19 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			return 1
 		}
 		fmt.Fprintf(stdout, "OK route=%s rung=%s type=%s\n", *check, *rung, dash(*typ))
+		return 0
+	case *spread:
+		_, err = io.WriteString(stdout, tab.RenderSpread())
+		if err != nil {
+			return refuse(stderr, "routes", err.Error())
+		}
+		return 0
+	case *tier != "" && *label != "":
+		r, _, err := tab.Pick(*tier, *label)
+		if err != nil {
+			return refuse(stderr, "routes", err.Error())
+		}
+		fmt.Fprintf(stdout, "%s %s\n", r.Route, r.Launch())
 		return 0
 	case *tier != "":
 		rows := tab.Tier(*tier)
