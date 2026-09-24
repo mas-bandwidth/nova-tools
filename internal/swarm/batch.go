@@ -168,6 +168,11 @@ type BatchInput struct {
 	// activity and process tree lifecycle are deterministic events rather than
 	// scheduler races.
 	snapshot func() activitySnapshot
+	// polled is called once the idle monitor has finished acting on a tick: every card
+	// sampled, every decision taken, every kill reaped. nil in production; a test that
+	// injects its clock uses it so "the monitor has read the store" is an event it waits
+	// for, never a race between its next write and the monitor's read (#2958).
+	polled func()
 }
 
 // batchClock is the batch's view of time: the idle window (Now), the whole-batch
@@ -630,6 +635,9 @@ func Batch(in BatchInput) int {
 					// lock would hold it for the whole grace and report every group as a
 					// survivor.
 					reapCardGroups(toReap)
+					if in.polled != nil {
+						in.polled()
+					}
 				}
 			}
 		}()
