@@ -8,6 +8,11 @@ do
 -- Keys 2.2, fences and intent cut 2.3, events 2.2/7.7.
 -- Every lua/ file shares one chunk, so locals carry a land_ prefix.
 
+-- From ci.lua through NS (loader.go: each file is its own do-block).
+local ci_sha256_hex, gate_receipt_write = NS.ci.sha256_hex, NS.ci.gate_receipt_write
+-- From capacity.lua through NS.
+local cap_budget_take, cap_budget_give = NS.capacity.budget_take, NS.capacity.budget_give
+
 local function land_now_ms()
   local t = redis.call('TIME')
   return string.format('%.0f', tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000))

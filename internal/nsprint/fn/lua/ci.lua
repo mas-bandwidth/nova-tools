@@ -11,7 +11,8 @@
 --
 -- Every lua/ file shares one chunk and Lua allows 200 locals in it, so only
 -- the two names land.lua shares (ci_sha256_hex, gate_receipt_write) are
--- chunk locals; the rest of this file is one do-block.
+-- file-level locals, exported as NS.ci at the end; the rest of this file is
+-- one do-block.
 --
 -- Execution state and verdict are distinct (10.5 item 5): a script that ran
 -- to its end ends DONE with verdict OK or FAIL; a wrapper failure ends FAILED
@@ -565,3 +566,7 @@ redis.register_function('ns_ci_end', ci_end)
 redis.register_function('ns_ci_rerun', ci_rerun)
 redis.register_function('ns_ci_dispose', ci_dispose)
 end
+
+-- The cross-file surface (loader.go: every file is its own do-block, and NS
+-- is the one chunk-level local). land.lua sorts after this file.
+NS.ci = { sha256_hex = ci_sha256_hex, gate_receipt_write = gate_receipt_write }

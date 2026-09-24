@@ -556,3 +556,7 @@ redis.register_function('ns_budget_renew', cap_budget_renew)
 redis.register_function('ns_budget_give', cap_budget_give)
 redis.register_function('ns_budget_debits', cap_budget_debits)
 redis.register_function('ns_sprint_plan', sprint_plan)
+
+-- The cross-file surface (loader.go: every file is its own do-block, and NS
+-- is the one chunk-level local). land.lua sorts after this file.
+NS.capacity = { budget_take = cap_budget_take, budget_give = cap_budget_give }
