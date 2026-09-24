@@ -107,6 +107,11 @@ redis.register_function('ns_unit_head', function(keys, args)
     end
   end
   redis.call('SADD', 's:' .. S .. ':units', unit)
+  if branch and branch ~= '' then
+    -- #3139 B2: the branch index the evaluator's mirror reconcile and webhook
+    -- heads resolve a ref through (refs/heads/<branch> -> unit), no scan.
+    redis.call('SET', 's:' .. S .. ':branchunit:' .. repo .. ':' .. branch, unit)
+  end
   if #changed > 0 then
     return { 'OK', tostring(seq), 'UNRESOLVED', unpack(changed) }
   end
@@ -205,6 +210,35 @@ end)
 -- ns_release: releases a hold. Decrements holds_open only when post_land was 0.
 redis.register_function('ns_release', function(keys, args)
   local S, unit, holder, released_by, release_kind, release_reason, release_url = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
+  -- Who may release (#3139 3.4, 3.5; arg 8 is the may-hold roster, csv):
+  --   the holder itself, any kind (superseded is only ever the holder's own);
+  --   repair-scoped by anyone, only for a hold that names a done_when test
+  --     (the evaluator checks the five 3.5 conditions before it calls this);
+  --   a login:<x> inbound hold by a friend's --releases record (3.4);
+  --   otherwise only a may-hold reader, and only while friend:<holder>:down.
+  if released_by ~= holder then
+    local hk = 's:' .. S .. ':hold:' .. unit .. ':' .. holder
+    if release_kind == 'superseded' then
+      return { 'REFUSED', 'superseded only by the holder' }
+    elseif release_kind == 'repair-scoped' then
+      local dw = redis.call('HGET', hk, 'done_when')
+      if not dw or dw == '' then
+        return { 'REFUSED', 'repair-scoped needs done_when' }
+      end
+    elseif not string.find(holder, '^login:') then
+      if redis.call('EXISTS', 'friend:' .. holder .. ':down') ~= 1 then
+        return { 'REFUSED', 'holder not down' }
+      end
+      local may = false
+      for r in string.gmatch(args[8] or '', '[^,%s]+') do
+        if r == released_by then may = true end
+      end
+      if not may then
+        return { 'REFUSED', 'releaser not may-hold' }
+      end
+    end
+  end
+
   local seq = redis.call('INCR', 'rec:seq')
   local hkey = 's:' .. S .. ':hold:' .. unit .. ':' .. holder
   local held = redis.call('HMGET', hkey, 'released_by', 'post_land')
@@ -238,6 +272,9 @@ redis.register_function('ns_read', function(keys, args)
   local S, unit, who, head, verdict, score, kind, files, done_when = args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]
   local seq = redis.call('INCR', 'rec:seq')
   local rkey = 's:' .. S .. ':read:' .. unit .. ':' .. who
+  -- #3139 B2: the unit's readers index, so the evaluator counts reads and
+  -- supersedes holds without a KEYS scan (2.2).
+  redis.call('SADD', 's:' .. S .. ':readers:' .. unit, who)
   local now = land_now_ms()
   redis.call('HSET', rkey,
     'seq', tostring(seq),
@@ -271,6 +308,64 @@ redis.register_function('ns_read', function(keys, args)
     end
   end
   return { 'OK', tostring(seq) }
+end)
+
+-- ns_ci_single (#3139 B2, 3.3, L31b): queues the one ci single for a unit's
+-- expected identity, once. args: repo, base, unit, head, gid. A receipt that
+-- already exists returns HAVE; an identity already queued returns ALREADY and
+-- writes nothing; otherwise the marker land:<repo>:ciq:<head>:<gid>, a token
+-- from the gate fence counter and one land:<repo>:gates entry (attempt 1).
+redis.register_function('ns_ci_single', function(keys, args)
+  local repo, base, unit, head, gid = args[1], args[2], args[3], args[4], args[5]
+  if redis.call('EXISTS', 'ci:' .. repo .. ':' .. head .. ':' .. gid) == 1 then
+    return { 'HAVE', '' }
+  end
+  local mk = 'land:' .. repo .. ':ciq:' .. head .. ':' .. gid
+  if not redis.call('SET', mk, unit, 'NX') then
+    return { 'ALREADY', redis.call('GET', mk) or '' }
+  end
+  local token = redis.call('INCR', 'land:' .. repo .. ':tok')
+  local now = land_now_ms()
+  local id = redis.call('XADD', 'land:' .. repo .. ':gates', '*',
+    'base', base, 'batch', 'ci:' .. gid, 'attempt', '1', 'token', tostring(token),
+    'unit', unit, 'head', head, 'gid', gid, 'kind', 'single', 'priority', 'ci')
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'CI QUEUED', 'repo', repo, 'base', base, 'unit', unit, 'head', head, 'gid', gid, 'at', now)
+  return { 'QUEUED', id, tostring(token) }
+end)
+
+-- ns_ref_seen (#3139 B2, 3.2, L32): the head of one ref as the evaluator saw it.
+-- args: repo, ref, sha, source (delivery: a webhook named it and the mirror
+-- was fetched; git: the reconcile read the mirror). A git read that finds the
+-- ref moved since the last record, with no delivery naming the new sha,
+-- writes INBOUND MISSED (event and land:<repo>:inbound missed count).
+redis.register_function('ns_ref_seen', function(keys, args)
+  local repo, ref, sha, source = args[1], args[2], args[3], args[4]
+  local k = 'land:' .. repo .. ':ref:' .. ref
+  local prev = redis.call('HGET', k, 'sha')
+  local now = land_now_ms()
+  redis.call('HSET', k, 'sha', sha, 'source', source, 'at', now)
+  if not prev then
+    return { 'NEW', '' }
+  end
+  if prev ~= sha and source == 'git' then
+    redis.call('HINCRBY', 'land:' .. repo .. ':inbound', 'missed', 1)
+    redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+      'event', 'INBOUND MISSED', 'repo', repo, 'ref', ref, 'sha', sha, 'prev', prev, 'at', now)
+    return { 'MISSED', prev }
+  end
+  if prev ~= sha then
+    return { 'MOVED', prev }
+  end
+  return { 'SEEN', prev }
+end)
+
+-- ns_inbound_beat (#3139 B2, 3.2): the land consumer's beat on
+-- ev:github:consumer:land after each drain. args: last delivery id, pending.
+redis.register_function('ns_inbound_beat', function(keys, args)
+  local now = land_now_ms()
+  redis.call('HSET', 'ev:github:consumer:land', 'last_id', args[1] or '', 'pending', args[2] or '0', 'at', now)
+  return { 'OK', now }
 end)
 
 -- ns_policy_set: writes base policy record.
