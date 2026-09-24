@@ -38,6 +38,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-play", "sandboxed evaluation CLI", "go test ./cmd/nova-play", "go test ./cmd/nova-play"),
 	E("cmd/nova-post", "PR and issue posting CLI", "go test ./cmd/nova-post", "go test ./cmd/nova-post"),
 	E("cmd/nova-pulse", "sprint telemetry and health CLI", "go test ./cmd/nova-pulse", "go test ./cmd/nova-pulse"),
+	E("cmd/nova-redis", "Redis scratch spill/recall CLI", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
 	E("cmd/nova-review", "review packet and verdict CLI", "go test ./cmd/nova-review", "go test ./cmd/nova-review"),
 	E("cmd/nova-sandbox", "OS-level process sandbox CLI", "go test ./cmd/nova-sandbox", "go test ./cmd/nova-sandbox"),
 	E("cmd/nova-secrets", "zero-leak secrets store CLI", "go test ./cmd/nova-secrets", "go test ./cmd/nova-secrets"),
