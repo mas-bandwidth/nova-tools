@@ -29,7 +29,8 @@ import (
 // legacy runner, which passes a prompt FILE to a harness selected by a worker
 // description. Here the model, the card text, the auth copy, the slot and the
 // deadline are all in the configuration, and the child is
-// `<binary> run --model <provider/model> --title <label> -- <card text>`.
+// `<binary> run --model <provider/model> --title <label> -- <card text>`, the shape the
+// providers table declares and swarm.LaunchArgvFor builds (nativeLaunchArgv).
 
 // nativeRunConfig is the frozen configuration of one native run.
 type nativeRunConfig struct {
@@ -106,6 +107,14 @@ type nativeRunConfig struct {
 	// `unmetered`.
 	tokens    int
 	unmetered bool
+	// usageInterval is how often the live sampler (startLiveSampler) reads the harness's
+	// database while the launch runs (rule 13d). cmdNative has already refused one under a
+	// second and one not shorter than the deadline, so what reaches here is a usable interval.
+	usageInterval time.Duration
+	// benchName is the name of this bench (e.g. hulk, vision); "" means resolve via os.Hostname.
+	benchName string
+	// stageTimeout is the hard timeout for staging (default 120s).
+	stageTimeout time.Duration
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -138,12 +147,25 @@ type nativeRunResult struct {
 	// that launch's own figures, never these: a job's rows are disjoint, so that adding
 	// them counts each launch once, and two launches reported at 40 and 70 under
 	// `--tokens 100` keep 40 and 70 in their rows while the line prints 110/100.
-	spent       int           // the observed sum over the whole job at the final read
-	observed    bool          // any budget column was a number at all
-	partial     bool          // some budget column was a dash: the plus on the line
+	spent    int  // the observed sum over the whole job at the final read
+	observed bool // any budget column was a number at all
+	partial  bool // some budget column was a dash: the plus on the line
+	// stopped is the `stopped=<tokens|max_turns|max_cache_read|unverifiable>` field of rule
+	// 13d, and "" for a card the machinery did not stop under that rule. It is a KEY OF ITS
+	// OWN (decision 17): `reason=terminated` stays what a TERM from outside prints, and the
+	// `reason=` inside the `usage=none` group stays the usage read's.
+	stopped string
+	// defect is the PROMPT-DEFECT line a card budget's stop owes. Rule 13d prints it on
+	// native's own stdout AFTER the NATIVE OK line and writes it into NO file.
+	defect      string
 	idleEnd     swarm.IdleEnd // the watch ended this card: how long it had been still, the step, and any refusal it never moved past
 	idled       bool          // the idle watch ended the run, not the deadline and not the child
 	blockedPath string        // the report the run wrote FOR a card that published none, "" when it wrote none
+	// usage is the LAST attempt's usage row, exactly as it was appended to usage.tsv. It
+	// is carried out of the run so the card-end event carries the numbers the row carries
+	// -- tokens_in, tokens_out, usd, provider, model -- rather than a second reading of
+	// the provider store that could disagree with the file (nova-tools #2563 item 1).
+	usage swarm.UsageRow
 }
 
 // THE ONE SEAM IN THE IDLE PATH, AND WHY IT HAD TO EXIST.
@@ -159,7 +181,7 @@ type nativeRunResult struct {
 // 16an on hulk while its own ci-ok was green, because ci.yml's CL tier shards only the
 // touched packages and never puts the machine under that load.
 //
-// These three vars are the whole fix on the production side. They are the real functions,
+// These vars are the whole fix on the production side. They are the real functions,
 // byte for byte, and nothing about the run's behaviour is decided by them being variables:
 // no call site changed except the name it is reached through, and no test sets them in a
 // run that is not testing the wait itself. A test may now hand the wait an idle end
@@ -170,6 +192,16 @@ var (
 	nativeWatchIdle = swarm.WatchIdle
 	nativeReap      = swarm.Reap
 	nativeKillGroup = swarm.KillGroup
+	// nativeDeadline is the fourth event the wait can be told about (issue #2993). The
+	// deadline test arranged it with real time -- `--deadline 3s` and a 5 s bound on the
+	// WHOLE run, setup and teardown included -- and on hosted macOS that run took 6.08 s
+	// and 6.13 s at 2a43d771 (3.04 s on the Studio) with the kill unchanged. The binary
+	// gets the real timer, byte for byte; a test hands the wait a deadline that fires when
+	// the tree it means to kill is actually there.
+	nativeDeadline = func(d time.Duration) (fire <-chan time.Time, stop func() bool) {
+		t := time.NewTimer(d)
+		return t.C, t.Stop
+	}
 )
 
 // nativeRun executes one frozen configuration and returns the recorded result and
@@ -177,6 +209,7 @@ var (
 // errOut). A refusal is a defect in the configuration the run can see before it
 // spends anything, and it names one reason.
 func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
+	startTime := time.Now()
 	// (0) ABSOLUTE PATHS. The slot and the root are turned absolute AND symlink-resolved at
 	// admission so a relative spelling cannot reach the wall (which refuses `--read ./x` and
 	// `--write x/...`), and so the run's own paths cannot disagree with each other: on darwin
@@ -243,6 +276,16 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	provider, ok := providerOf(cfg.model)
 	if !ok {
 		refuseNative(errOut, fmt.Sprintf("the model %q has no provider prefix (a native model is provider/model, one slash, both sides nonempty)", cfg.model))
+		return nativeRunResult{}, 2
+	}
+
+	// (2a) THE ONE LAUNCHER (tools-48, #2646). The harness argv comes from the providers
+	// table, never a literal here: the route's provider row (or the table's default row)
+	// gives the shape, and this run's binary, model, label and card fill it. A table that
+	// cannot be read is refused before any directory is made.
+	launch, err := nativeLaunchArgv(bin, cfg, provider)
+	if err != nil {
+		refuseNative(errOut, fmt.Sprintf("the providers table gave no argv for %s: %s", oneline.Field(cfg.model), oneline.Escape(err.Error())))
 		return nativeRunResult{}, 2
 	}
 
@@ -532,6 +575,74 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// caller can prove later that neither the card nor the binary changed under it.
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
+	// (4e) STAGING FROM BENCH MIRROR (issue #2882).
+	// Staging clones from the bench's local mirror (--reference or clone --shared)
+	// with a hard timeout (120 s) that ends the card RESULT: BLOCKED stage-timeout <bench> <secs>
+	// and writes the end record like any other card.
+	bench := cfg.benchName
+	if bench == "" {
+		if h, err := os.Hostname(); err == nil {
+			if idx := strings.Index(h, "."); idx != -1 {
+				h = h[:idx]
+			}
+			bench = h
+		}
+	}
+	if bench == "" {
+		bench = "bench"
+	}
+	stageOpts := swarm.StageOptions{
+		Card:      cfg.card,
+		TargetDir: filepath.Join(jobDir, "repo"),
+		JobDir:    jobDir,
+		BenchHome: cfg.benchHome,
+		BenchName: bench,
+		Timeout:   cfg.stageTimeout,
+	}
+	stageRes, stageErr := swarm.StageCard(stageOpts)
+	if stageErr != nil {
+		if stageRes.TimedOut {
+			secs := int(cfg.stageTimeout.Seconds())
+			if secs <= 0 {
+				if cfg.stageTimeout > 0 {
+					secs = 1
+				} else {
+					secs = int(swarm.DefaultStageTimeout.Seconds())
+				}
+			}
+			swarm.WriteStageTimeoutResult(jobDir, bench, secs)
+			// STAGE FAIL (issue #3050): the rowan-tools #187 launcher watches stdout for a
+			// STAGE OK/FAIL line and detaches 2s after seeing it; without one on every
+			// failure path (this one included) it waits out the full 135s and prints
+			// STAGE UNSEEN even though staging already ended.
+			fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s secs=%d reason=stage-timeout\n",
+				oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), secs)
+			writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], startTime, time.Now(), time.Time{}, -1, 1, "stage-timeout", errOut)
+			res := nativeRunResult{
+				rc:           -1,
+				cardSHA256:   hex.EncodeToString(cardHash[:]),
+				binarySHA256: binaryHash,
+				job:          jobDir,
+				wall:         "none",
+				configSHA:    configSHA,
+				tmp:          tmpDir,
+				end:          "stage-timeout",
+				wallSeconds:  time.Since(startTime).Seconds(),
+			}
+			return res, 1
+		}
+		// STAGE FAIL (issue #3050): see the timeout branch above for why this line has
+		// to be printed here rather than left to the caller's own NATIVE line.
+		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
+			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), oneline.Escape(stageErr.Error()))
+		refuseNative(errOut, stageErr.Error())
+		return nativeRunResult{}, 2
+	}
+	// STAGE OK (issue #3050): staging returned silently, so the rowan-tools #187 launcher
+	// -- which detaches 2s after seeing a STAGE OK/FAIL line on stdout instead of waiting
+	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
+	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
+		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
 
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
@@ -539,8 +650,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 	// allow rule is still a wall -- a card naming no repos runs inside it without the rule,
 	// and one naming repos is refused, never unwalled. A machine with no wall binary at all
 	// refuses unless --no-wall owns every read and write the child makes.
-	runPath := bin
-	runArgv := []string{"run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card)}
+	runPath := launch[0]
+	runArgv := launch[1:]
 	wall := cfg.sandbox
 	if wall == "" && !cfg.noWall {
 		found, err := exec.LookPath(swarm.SandboxBinary)
@@ -557,7 +668,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			return nativeRunResult{}, 2
 		}
 		runPath = wall
-		runArgv = nativeSandboxArgv(bin, cfg, dataHome, jobDir, tmpDir)
+		runArgv = nativeSandboxArgv(launch, cfg, dataHome, jobDir, tmpDir)
 	} else if len(cfg.repos) > 0 {
 		refuseNative(errOut, fmt.Sprintf("%s wall cannot express repo rule", oneline.Field(cfg.label)))
 		return nativeRunResult{}, 2
@@ -695,6 +806,38 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}
 	}
 	lastAttempt := 0
+
+	// THE LIVE SAMPLER (SPEC-SWARM rule 13d, issue #1545). It is started HERE, once for the
+	// whole job and not once per launch, because the budget it watches is the job's: "the
+	// observed sum is over the whole job, every launch counted from the first launch's
+	// start, so a retry begins with what the earlier launches spent and no retry resets
+	// anything". The data home is one per job, so a read of it is already the job's sum and
+	// this tool does no arithmetic across launches to get one.
+	//
+	// IT RUNS ONLY WHEN THERE IS SOMETHING TO WATCH. Under `--tokens unmetered` with no card
+	// budget "the deadline is the only stop", so a sample would open `sqlite3` every few
+	// seconds to answer a question nobody asked. That is a cost, not a behaviour: the
+	// NATIVE OK line's `budget=` comes from the FINAL read of each launch either way, which
+	// rule 13d is explicit about ("`<spent>` is the sum over every launch at the final read,
+	// never the sum at the stop").
+	//
+	// IT IS BESIDE THE SELECT BELOW AND NEVER INSIDE IT, so the deadline and a TERM end the
+	// card at their own instants whatever a read is doing (nativesample.go says why at
+	// length).
+	sampler := startLiveSampler("", 0, cfg, outLog)
+	if !cfg.unmetered && cfg.tokens > 0 || (cfg.worker != nil && cfg.worker.HasCardBudget()) {
+		sampler = startLiveSampler(dataHome, cfg.usageInterval, cfg, outLog)
+	}
+	defer sampler.Stop()
+
+	// THE JOB'S OWN FIGURES, folded from each launch's FINAL read as the launches end.
+	// jobObserved stays false until some launch's read answered with a number, so a job
+	// nothing was ever observed for prints `budget=-/<n>` and is never reported as under
+	// budget.
+	jobSpent, jobObserved, jobPartial := 0, false, false
+	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
+	// no floor, which is what the first launch has.
+	var previousLaunchEnd time.Time
 	for attempt := 1; ; attempt++ {
 		lastAttempt = attempt
 		before := fileSize(outLog)
@@ -716,7 +859,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		started := swarm.StartStamp(pgid)
 		done := make(chan error, 1)
 		go func() { done <- cmd.Wait() }()
-		deadline := time.NewTimer(cfg.deadline)
+		deadlineC, stopDeadline := nativeDeadline(cfg.deadline)
 		// THE IDLE WATCH (the wall-hang lane, 2026-09-19). `batch` has watched its cards
 		// for idleness since issue #593 -- log growth AND the process tree's CPU, so a
 		// `go test` that prints nothing for minutes is not mistaken for a dead card --
@@ -730,7 +873,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		}, stopWatch)
 		select {
 		case runErr := <-done:
-			deadline.Stop()
+			stopDeadline()
 			switch ee := runErr.(type) {
 			case nil:
 				res.rc = 0
@@ -739,7 +882,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			default:
 				res.rc = -1
 			}
-		case <-deadline.C:
+		case <-deadlineC:
 			nativeKillGroup(pgid, started)
 			<-done
 			res.rc = -1
@@ -755,7 +898,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// below already Reaps, and an idle end is the same kind of ending -- the
 			// machinery stopping a card that is not going to finish -- so it gets the same
 			// grace. The kill still happens; it happens second.
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
@@ -766,17 +909,34 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			// wait. The measured harness kept running after its own
 			// timeouts, so the run reaps the card instead of waiting for it
 			// to notice, and does not launch it again.
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.lost = true
 		case <-termCh:
-			deadline.Stop()
+			stopDeadline()
 			nativeReap(pgid, started, swarm.TerminateGrace)
 			<-done
 			res.rc = -1
 			res.terminated = true
+		case word := <-sampler.Fired():
+			// THE BUDGET FIRED (SPEC-SWARM rule 13d). "When it is true `native` ends the
+			// card the way it ends one on a TERM from outside: a terminate to the card's
+			// whole process group, a wait, then a kill of the group, after which no process
+			// of that group is alive, grandchildren and a harness that ignores the
+			// terminate included." That is swarm.Reap, which is the TERM case's own call
+			// one line above and NOT the deadline's immediate KillGroup: the terminate
+			// exists so the card has its one moment to publish, and rule 13d keeps what it
+			// published byte for byte.
+			stopDeadline()
+			swarm.Reap(pgid, started, swarm.TerminateGrace)
+			<-done
+			// `rc=-1` on the line, as it is for a deadline and for a TERM; the ROW's `rc`
+			// is a dash, which writeNativeUsage already writes for any rc below zero
+			// (rule 12's closed list, amended by decision 14).
+			res.rc = -1
+			res.stopped = word
 		}
 		close(stopWatch)
 		elapsed := time.Since(attemptStart)
@@ -798,9 +958,35 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 		} else if res.rc != 0 {
 			res.end = swarm.EndFailed
 		}
+		// A LAUNCH A BUDGET ENDED SAYS SO IN ITS OWN ROW (rule 13d): `end=budget` for a
+		// budget that fired, and `end=budget-unverifiable` for a source the tool stopped
+		// being able to see. It is THIS launch's end, and only the stopping launch carries
+		// it -- an earlier launch that died on a provider 5xx keeps its own word.
+		if res.stopped != "" {
+			res.end = swarm.EndBudget
+			if res.stopped == stoppedUnverifiable {
+				res.end = swarm.EndUnverifiable
+			}
+		}
 		// ONE USAGE ROW PER LAUNCH (issue #900), so the cost of a retried card is each
 		// attempt once, and a fast failure whose provider reported nothing keeps dashes.
-		res.usageReason, res.usageState = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, time.Now(), res.rc, attempt, res.end, errOut)
+		var launchUsage swarm.ProviderUsage
+		launchEnd := time.Now()
+		launchUsage, res.usageReason, res.usageState, res.usage = writeNativeUsage(cfg, dataHome, provider, cfg.model[len(provider)+1:], attemptStart, launchEnd, previousLaunchEnd, res.rc, attempt, res.end, errOut)
+		// The floor for the NEXT launch's window: its rows begin where this launch's ended,
+		// so that adding a job's rows counts each launch once (rule 13d).
+		previousLaunchEnd = launchEnd
+		// THE LINE IS THE JOB'S: this launch's final read is ADDED to what the earlier
+		// launches were finally reported to have used. Rule 13d's worked example is two
+		// launches at 40 and 70 under `--tokens 100`: the rows keep 40 and 70, and the line
+		// prints 110/100. A launch whose read reported nothing adds nothing and leaves the
+		// job's `observed` where it was, because a zero here would be a measurement the
+		// harness never made.
+		if sum, seen, part := launchUsage.Budget(); seen > 0 {
+			jobSpent += sum
+			jobObserved = true
+			jobPartial = jobPartial || part
+		}
 		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
 		// the terminated reason is carried out on the OK line.
 		if res.terminated {
@@ -817,16 +1003,62 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			}
 			break
 		}
+		// AND A BUDGET STOP IS THE END (rule 13d): "Nothing is launched again, by `native`
+		// or by a batch, and running the card once more is a person's act with a number of
+		// their own." So it breaks out above the retry, terminally.
+		if res.stopped != "" {
+			break
+		}
 		// Inherited grace retry. The tail and the elapsed time do not prove the
 		// provider never accepted the request. A lost response does not take
 		// this path.
 		_, launchFailure := swarm.ProviderLaunchFailure(tail)
 		if launchFailure && elapsed < grace && attempt < swarm.MaxProviderAttempts {
+			// ONCE MORE BEFORE ANY RELAUNCH (rule 13d): "The stop is rule 13's
+			// `spent >= n`, tested at every sample and once more before any relaunch."
+			// The first launch's spend is already in the job's data home, so a budget the
+			// earlier launches have ALREADY reached must not buy a third launch -- "a
+			// first launch that reached the budget alone is never launched again".
+			//
+			// THIS LAUNCH'S ROW IS ALREADY WRITTEN AND KEEPS ITS OWN WORD. This launch
+			// did not end on the budget -- it died on a provider 5xx -- so its row says
+			// what happened to it, and the `stopped=` on the LINE says why there is no
+			// launch after it. The two are different facts about different things, which
+			// is the whole of rule 13d's "the row is the launch's and the line is the
+			// job's".
+			// AND THE FINAL READS COUNT (stella's hold 6 on #1635): the job's spend just
+			// folded from this launch's final read is tested too, so a launch that died
+			// before its first sample cannot buy a relaunch past the budget.
+			if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+				res.stopped = word
+				break
+			}
 			time.Sleep(swarm.ProviderRetryDelay(attempt))
 			continue
 		}
 		break
 	}
+	// The card is over, so no further sample is wanted. Stop SIGNALS and never joins: a
+	// read in flight is abandoned where it stands (rule 13d).
+	sampler.Stop()
+	// WHAT THE LINE WILL PRINT. "Final" means the last thing the harness reported and
+	// nothing more: where every launch's final read answered, this is their sum; where one
+	// could not be made, that launch contributed nothing to it and the plus below says the
+	// figure is not the whole story.
+	res.spent, res.observed, res.partial = jobSpent, jobObserved, jobPartial
+	// AND WHERE NO FINAL READ ANSWERED AT ALL, the last sum a SAMPLE saw stands in, with
+	// the plus (rule 13d: "a final read that cannot be made leaves a dash in every column
+	// of the row it could not fill, the line then prints the last sum a sample saw with the
+	// plus, and nowhere does the tool say that all that was spent was seen"). A sample's
+	// figure is never allowed to pass for a final read, which is what the plus is for.
+	if !res.observed {
+		if spent, observed, _, _, _ := sampler.Observed(); observed {
+			res.spent, res.observed, res.partial = spent, true, true
+		}
+	}
+	// The PROMPT-DEFECT line the card budget owes, carried out to the caller to print after
+	// the NATIVE OK line.
+	res.defect = sampler.Defect()
 	log.Close()
 	harnessOut.Close()
 	// Issue #591: whether the harness left any record of itself is decided here -- AFTER both
@@ -917,6 +1149,18 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (nativeRunResult, int) {
 			fmt.Fprintf(errOut, "NATIVE NOTE: the blocked report could not be written: %s\n", oneline.Escape(err.Error()))
 		} else if wrote {
 			res.blockedPath = path
+		}
+	}
+	// UNKNOWNERROR AT ANY WALL IS THE PROVIDER'S (issue #2916). Past the launch grace the
+	// provider's own `UnknownError` / `err_xxxxxxxx` was filed as the card's failure and
+	// re-dealt to the same route. The machinery's own ends come first; what is left, when
+	// the harness's last words are the provider's, is handed back to the next route in
+	// $NOVA_SWARM_ROUTES with the failed one named for the re-deal to avoid.
+	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
+		if raw, err := os.ReadFile(outLog); err == nil {
+			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
+				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
+			}
 		}
 	}
 	// A CARD THAT ENDED BY ASKING OWES THE SAME REPORT (issue #2548). `opencode run` is
@@ -1144,13 +1388,14 @@ func sandboxHostRules(sandbox string) bool {
 }
 
 // nativeSandboxArgv is the wrap for a native run: the wall's flags, then --, then the
-// harness verbatim (SPEC-SANDBOX rule 12). The job directory is the first --write and the
+// harness verbatim (SPEC-SANDBOX rule 12) -- launch, the one launcher's argv, binary first. The job directory is the first --write and the
 // --cwd (rule 13); the data home is the second --write and the child's HOME (rule 9); the
 // temp directory is a --write so the child's TMPDIR is usable inside the wall; the
 // slot directory is the read set. Each repo the card named is a --repo allow rule, and a
 // recipient never appears: a bus send is denied by the wall itself, not granted by the
 // caller, so no allow rule is ever built for one.
-func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+func nativeSandboxArgv(launch []string, cfg nativeRunConfig, dataHome, jobDir, tmpDir string) []string {
+	bin := launch[0]
 	argv := []string{
 		"--read", cfg.slotDir,
 		"--write", jobDir,
@@ -1214,7 +1459,7 @@ func nativeSandboxArgv(bin string, cfg nativeRunConfig, dataHome, jobDir, tmpDir
 		argv = append(argv, "--repo", r)
 	}
 	argv = append(argv, "--")
-	argv = append(argv, bin, "run", "--model", cfg.model, "--title", cfg.label, "--", string(cfg.card))
+	argv = append(argv, launch...)
 	return argv
 }
 
@@ -1349,8 +1594,9 @@ func nativeReadRoots(cfg nativeRunConfig) []string {
 // keepNativeEnv says whether one inherited name survives into the native child: the names a
 // program needs (PATH, LANG, TERM), explicit Git pool identity variables (GIT_AUTHOR_NAME,
 // GIT_AUTHOR_EMAIL, GIT_COMMITTER_NAME, GIT_COMMITTER_EMAIL), the XDG_ and NOVA_SWARM_ families,
-// and any provider credential whose name carries KEY, TOKEN or SECRET. Everything else is the
-// caller's own noise and is dropped, so no path the caller happened to export reaches the child.
+// any harness configuration whose name starts with OPENCODE_, and any provider credential whose
+// name carries KEY, TOKEN or SECRET. Everything else is the caller's own noise and is dropped,
+// so no path the caller happened to export reaches the child.
 func keepNativeEnv(name string) bool {
 	switch name {
 	case "PATH", "LANG", "TERM":
@@ -1358,7 +1604,7 @@ func keepNativeEnv(name string) bool {
 	case "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL":
 		return true
 	}
-	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") {
+	if strings.HasPrefix(name, "XDG_") || strings.HasPrefix(name, "NOVA_SWARM_") || strings.HasPrefix(name, "OPENCODE_") {
 		return true
 	}
 	up := strings.ToUpper(name)
@@ -1516,8 +1762,16 @@ func sameDir(a, b string) bool {
 // attempt is summed once. A fast failure whose provider reported nothing keeps its dashes,
 // and `usd` stays a dash rather than becoming a zero. The `end` column names how the attempt
 // ended -- done, failed, or wall (issue #644's follow-up).
-func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end time.Time, rc, attempt int, endWord string, errOut io.Writer) (reason, path string) {
-	usage, note, storePath, rr := swarm.ReadCardUsage(dataHome, start, end)
+// THE ROW IS THE LAUNCH'S (rule 13d, "Two numbers, kept apart"). It returns the usage it
+// finally read as well, because the JOB's figure on the NATIVE OK line is the sum of these
+// launches' own final reads -- "a job's rows are disjoint, so that adding them counts each
+// launch once", and two launches reported at 40 and 70 keep 40 and 70 here while the line
+// prints 110. The caller folds; this function never sees the job's running sum.
+func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, start, end, notBefore time.Time, rc, attempt int, endWord string, errOut io.Writer) (usage swarm.ProviderUsage, reason, path string, written swarm.UsageRow) {
+	// notBefore is the EARLIER launch's end, and it is the floor that keeps this row
+	// disjoint from that one: without it the window's five-second widening reaches back over
+	// the previous launch's rows and counts them twice (usagecard.go says what that cost).
+	usage, note, storePath, rr := swarm.ReadCardUsageAfter(dataHome, start, end, notBefore)
 	rcCol := "-"
 	if rc >= 0 {
 		rcCol = strconv.Itoa(rc)
@@ -1553,12 +1807,12 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
 	if rr == "" {
-		return "", ""
+		return usage, "", "", row
 	}
 	if storePath == "" {
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
-	return rr, storePath
+	return usage, rr, storePath, row
 }
 
 // nativeRunSeq distinguishes invocations that share a process, which is what a
@@ -1687,6 +1941,22 @@ func sweepNativeJob(root, job string) error {
 		return fmt.Errorf("the job directory is not known")
 	}
 	return safepath.RemoveUnder(root, job)
+}
+
+// launchArgvFor is the one launcher, swarm.LaunchArgvFor: the providers table decides the
+// argv every native launch hands its harness. It is a variable only so a test can prove
+// that a launch asks it; nothing else ever assigns it.
+var launchArgvFor = swarm.LaunchArgvFor
+
+// nativeLaunchArgv is the harness argv of one native run, built by the one launcher from
+// the providers table (tools-48, #2646). The table's row for the route's provider gives the
+// shape -- the row swarm.DefaultLaunchRow when the table names no row of its own -- and
+// this run fills it: the binary resolved from --harness, the provider/model the run was
+// routed to, its label as the title, and the card text as the prompt.
+func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
+	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
+		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: string(cfg.card),
+	})
 }
 
 // providerOf splits a native model id on its single slash and reports whether it
