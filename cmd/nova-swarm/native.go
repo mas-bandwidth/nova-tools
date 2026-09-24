@@ -1386,9 +1386,10 @@ func harnessSpoke(path string) bool {
 }
 
 // wroteBytes says whether a path is a regular file holding at least one byte: the test
-// harnessState applies to a result, so an empty RESULT.md is nothing published.
+// harnessState applies to a result, so an empty RESULT.md is nothing published. Lstat, not
+// Stat: a planted symlink is not a published result (issue #233).
 func wroteBytes(path string) bool {
-	fi, err := os.Stat(path)
+	fi, err := os.Lstat(path)
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
 }
 
