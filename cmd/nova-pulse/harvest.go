@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/decide"
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 )
@@ -44,6 +46,13 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 	roots := f.fs.String("roots", "", "")
 	timer := f.fs.String("timer", "", "")
 	commitFlag := f.fs.Bool("commit", false, "")
+	// THE HARVEST'S EVENTS (nova-tools #2563 item 1). --events-store names the fleet Redis
+	// a bench harvest XADDs `harvested` and `pr` to. OPTIONAL: it defaults to the
+	// environment (NOVA_REDIS_ADDR, else NOVA_REDIS_HOST:NOVA_REDIS_PORT) and the whole
+	// emit is silently skipped unless NOVA_REDIS_BENCH_PASSWORD is in the environment too,
+	// where `nova-secrets exec --only` puts it. The password is never a flag, and no
+	// address is guessed. A harvest with no store is a harvest, exactly as before.
+	eventsStore := f.fs.String("events-store", "", "")
 
 	if !f.parse(args, stderr) {
 		return 2
@@ -150,6 +159,11 @@ func cmdHarvest(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Batch:        *batch,
 		Store:        pulse.StoreOptions{Addr: *store, User: *storeUser, PasswordEnv: *passwordEnv},
 	}
+	// The store is opened once per harvest, not once per job, and closed on every exit
+	// path. A writer that could not be opened emits nothing and fails nothing.
+	evw := events.OpenWriter(context.Background(), events.WriterOptions{Addr: *eventsStore, Log: stderr})
+	defer evw.Close()
+	in.Events = evw
 	if *decideOn {
 		client, err := decide.New(*baseURL, *keyEnv)
 		if err != nil {

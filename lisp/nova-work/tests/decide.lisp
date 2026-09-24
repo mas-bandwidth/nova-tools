@@ -75,6 +75,82 @@
     (check-equal 500 (decision-confidence decision) "the provider confidence is carried")
     (check-equal 900 (decision-floor decision) "the floor is carried")))
 
+;;;; Criteria E01-F03-02 -- "Keep containment as a forest and references as a
+;;;; separate graph" (docs/roadmaps/nova-work.sexp E01-F03 subfeature 2).
+;;;; The contract is docs/SPEC-WORK.md:876-881: `:children` is canonical
+;;;; containment, every node has at most one containment parent and the edges
+;;;; form a forest (:878); `:deps` and other pointers are references, a graph
+;;;; that carries no count (:880). A heavily-referenced shared node is still
+;;;; owned once, under its one containment parent, wherever else it is pointed at.
+
+(deftest "TestE01F03KeepContainmentAsAForest"
+    "docs/SPEC-WORK.md:876-881"
+    "expected=containment-edges-are-a-forest-one-parent-per-node-and-counted-once;references-are-a-separate-graph-that-carries-no-count"
+  (let* ((nodes '((:id "root"   :type :work-set :parent nil)
+                  (:id "shared" :type :task     :parent "root")
+                  (:id "user/a" :type :task     :parent "root" :deps ("shared"))
+                  (:id "user/b" :type :task     :parent "root" :deps ("shared"))
+                  (:id "user/c" :type :task     :parent "root" :deps ("shared"))))
+         (state (make-seed-state nodes)))
+    ;; Containment is a forest: the shared node is owned once under one parent,
+    ;; however many other nodes reference it (SPEC-WORK.md:878).
+    (check-equal "root" (node-parent state "shared")
+                 "the referenced node keeps its one containment parent")
+    (check-equal '() (node-children state "shared")
+                 "a reference gains the referenced node no containment children")
+    (check-equal 1 (node-open-count state "shared")
+                 "the shared node is counted once under its parent, not once per reference")
+    (check-equal '("shared" "user/a" "user/b" "user/c")
+                 (sort (node-children state "root") #'string<)
+                 "the containment forest lists exactly the four direct children of root")
+    ;; References are a separate graph: three dependents point at the one shared
+    ;; node over the reverse edge, and that edge carries no count (SPEC-WORK.md:880).
+    (check-equal '("user/a" "user/b" "user/c")
+                 (sort (node-dependents state "shared") #'string<)
+                 "the referencing nodes form the reverse reference edge")
+    (check-equal 5 (state-open-count state)
+                  "|O| counts each node once: references contribute no count")))
+
+;;;; Criterion E02-F01-01 -- "Load one resident O with structure and event log"
+;;;; (docs/roadmaps/nova-work.sexp E02-F01 subfeature 1).
+;;;; The contract is docs/SPEC-WORK.md:2458-2460: a supervised, long-lived
+;;;; session owns the parsed S, its stable-ID indexes, current event position,
+;;;; derived state and cached projections, and loads and validates once at
+;;;; session start -- subsequent verbs operate on those resident objects. One
+;;;; resident O therefore holds both the structure (parsed nodes) and the event
+;;;; log (the journal), and a mutation appends to that resident log rather than
+;;;; triggering a fresh parse.
+
+(deftest "TestE02F01LoadOneResidentOWith"
+    "docs/SPEC-WORK.md:2458-2460"
+    "expected=session-start-loads-one-resident-o-holding-both-structure-and-event-log;a-mutation-appends-to-the-resident-event-log"
+  (let* ((seed '((:id "acme/work"     :type :work-set :state :unknown)
+                  (:id "acme/work/f1" :type :feature  :parent "acme/work"    :state :unknown)
+                  (:id "acme/work/f1/t1" :type :task :parent "acme/work/f1" :state :todo)))
+         (sess (session-start :owner "emma" :state-seed seed :base "abc123"))
+         (kernel (session-kernel sess)))
+    ;; One resident O holds the parsed structure ...
+    (check-equal '("acme/work" "acme/work/f1" "acme/work/f1/t1")
+                 (state-node-ids (kernel-state kernel))
+                 "the resident O holds its parsed structure")
+    ;; ... and the event log beside it.
+    (ok (kernel-journal kernel) "the resident O holds its event log")
+    (check-equal '() (journal-order (kernel-journal kernel))
+                 "a fresh load carries no events yet")
+    ;; A mutation operates on the resident object: it appends one event to the
+    ;; resident log and the resident structure reads the applied result.
+    (multiple-value-bind (okp line)
+        (submit kernel (list :verb :state-to-doing :node "acme/work/f1/t1"
+                             :by "emma" :reason "started" :evidence '()
+                             :request "e02-f01-load-1"
+                             :stamp "2026-09-14T12:00:00Z" :clock :tool
+                             :generation-owner "gen-1"))
+      (ok okp "the mutation on the resident O is accepted: ~A" line))
+    (check-equal '("e02-f01-load-1") (journal-order (kernel-journal kernel))
+                 "the mutation appended one event to the resident event log")
+    (check-equal :doing (node-state (kernel-state kernel) "acme/work/f1/t1")
+                 "the resident structure reflects the applied event")))
+
 ;;; ------------------------------------------------------------------
 ;;; E10-F01 "Structured refusal and operation diagnostics" (ROADMAP.md:976):
 ;;; Provide bounded inspect/diagnose drill-down without secrets or private
@@ -166,3 +242,63 @@
                    "the size ask returns the state's revision as scope=")
       (ok (search (format nil "scope=~D" scope) line)
           "the revision is printed beside the count on the one QUERY OK line: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; E08-F02-04 "Use bounded typed JSON over a local Unix socket, exact
+;;; integer/time encoding and durable asynchronous operation IDs; reconcile
+;;; cross-platform endpoint requirements before lock" (ROADMAP.md:819).
+;;;
+;;; The bounded typed JSON wire, the integer-as-string and RFC 3339 time
+;;; encoding, and the durable asynchronous operation IDs are each already
+;;; carried and replayed by slice-08; the half this case pins is the LAST
+;;; sentence: the endpoint lock is reconciled across platform spellings NAME
+;;; before it is taken, never assumed. Two SPEC-WORK lines state it:
+;;;   docs/SPEC-WORK.md:184-185 -- "<session>.lock is a file only where
+;;;                               --session is a filesystem path: it is that
+;;;                               socket's canonical spelling with .lock
+;;;                               appended, in the socket's own directory."
+;;;   docs/SPEC-WORK.md:186-190 -- "On Windows the endpoint --session names is a
+;;;                               named pipe (..), which is not exclusive by
+;;;                               default .. that first-instance creation IS
+;;;                               the endpoint lock .. there is no
+;;;                               <session>.lock file on Windows."
+;;; ------------------------------------------------------------------
+
+(deftest "TestE08F02UseBoundedTypedJSONOver"
+    "docs/SPEC-WORK.md:184-190;2647-2648"
+    "expected=filesystem-socket-lock-is-canonical-dot-lock-in-its-own-directory;named-pipe-endpoint-has-no-lock-file;platform-spelling-named-not-assumed"
+  ;; The endpoint is one transport whose spelling is the platform's: a
+  ;; Unix-domain socket on a filesystem path, or the Windows named pipe
+  ;; \\.\pipe\<name>. Reconcile the endpoint lock for each BEFORE it is taken.
+  (let ((socket "/tmp/nova-work-e08f02/work.sock")
+        (pipe "\\\\.\\pipe\\nova-work-e08f02"))
+    ;; A filesystem socket's endpoint lock is a file: the socket's canonical
+    ;; spelling with .lock appended, in the socket's own directory (:184-185).
+    (check-string= "/tmp/nova-work-e08f02/work.sock.lock"
+                   (session-endpoint-lock-path socket)
+                   "a filesystem socket's endpoint lock is canonical-spelling.lock")
+    ;; The named pipe is the SAME endpoint under the Windows spelling (:2647-2648).
+    (ok (named-pipe-endpoint-p pipe) "the \\\\.\\pipe\\<name> spelling is recognised")
+    (ok (not (named-pipe-endpoint-p socket)) "a filesystem path is not a named pipe")
+    ;; A named-pipe endpoint carries no <session>.lock file at all: the
+    ;; first-instance create IS the lock, so no caller ever writes a .lock under
+    ;; \\.\pipe\ (:186-190).
+    (ok (null (session-endpoint-lock-path pipe))
+        "a named-pipe endpoint has no <session>.lock file: ~S"
+        (session-endpoint-lock-path pipe)))
+  ;; An existing socket reached through a symlinked --session is the SAME
+  ;; endpoint: both spellings key one <session>.lock, in the real socket's own
+  ;; directory, never a second lock beside the alias (:184-185).
+  (let* ((real-dir (namestring (truename (test-temp-dir "e08f02-real"))))
+         (alias-dir (namestring (truename (test-temp-dir "e08f02-alias"))))
+         (real (format nil "~Awork.sock" real-dir))
+         (alias (format nil "~Aalias.sock" alias-dir)))
+    (with-open-file (out real :direction :output :if-exists :supersede
+                              :if-does-not-exist :create))
+    (sb-posix:symlink real alias)
+    (check-string= (concatenate 'string real ".lock")
+                   (session-endpoint-lock-path alias)
+                   "a symlinked --session keys the real socket's .lock")
+    (check-string= (session-endpoint-lock-path real)
+                   (session-endpoint-lock-path alias)
+                   "an alias and its socket share one endpoint lock")))
