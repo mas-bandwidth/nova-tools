@@ -425,7 +425,7 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             SPACE_SHARDS=4
-            STUDIO_SHARDS=4
+            STUDIO_SHARDS=2 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
           elif [ "${{ github.event_name }}" = "merge_group" ]; then
             base="${{ github.event.merge_group.base_sha }}"
             STUDIO_SHARDS=2
@@ -1550,7 +1550,8 @@ jobs:
     # is the engine's own tree (docs/SPEC-WORK.md:290 fixes the language); its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on
     # any failing case, so the exit code is the product here. It is in the CL
-    # tier because it finishes in seconds, well inside the two-minute budget.
+    # tier, but no longer inside two minutes: the 579-case suite alone takes
+    # 62-110 s, and the cap is lispCeiling in internal/ci/ci_budget_test.go.
     # It runs on BOTH self-hosted platforms — the Linux space runners and the
     # macOS studio runners — because a failure that is really about SBCL or the
     # platform (journal fsync differs between Darwin and Linux) must be caught
@@ -1570,7 +1571,8 @@ jobs:
     # Labels are carried per entry as single-string variables: runs-on expressions
     # must resolve to a string, not to an array.
     runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    timeout-minutes: 2
+    # 15 = 2x the measured max lisp job, 430 s (studio at load 50-70, runs 36011449625/36011918432: checkout 107-157 s, suite up to 110 s)
+    timeout-minutes: 15
     steps:
       - name: remove stale build dirs from the shared runner
         # The self-hosted runners reuse the _work directory across jobs; a tree left
@@ -1654,7 +1656,7 @@ jobs:
       - name: nova-work acceptance
         # Loads the system from the checkout with the ASDF SBCL bundles — no
         # quicklisp, no download — and runs every acceptance case; the script
-        # exits non-zero on any failure. The 120 s budget is the job's
+        # exits non-zero on any failure. The budget is the job's
         # timeout-minutes above.
         run: make test-lisp
 
