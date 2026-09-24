@@ -139,6 +139,12 @@ func runOneSeatBenchStandard(t *testing.T, home, bin string) (string, int) {
 		"NOVA_PROBE_URL=https://probe.invalid/api.json",
 		// The bench's declared slot share (check 3g).
 		"NOVA_SLOT_SHARE=64",
+		// The disk floor is the HOST's, not the fixture's: `df` on a t.TempDir()
+		// answers for whatever disk the runner is on (21G on the Studio on
+		// 2026-09-24, dev run 36012558540), so a real floor made this test a
+		// probe of the runner. 0 keeps the row running and never drifting here;
+		// cmd/nova-pulse TestBenchStandardDiskFloorDrifts holds the row.
+		"NOVA_MIN_FREE_G=0",
 	)
 	raw, err := cmd.CombinedOutput()
 	code := 0
