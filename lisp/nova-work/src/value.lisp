@@ -190,8 +190,81 @@ each of its UTF-8 characters is counted exactly once."
           form)
     (t (error 'restricted-data-violation :value form))))
 
+(defun missing-read-bound (name)
+  "Refuse a bounded read that names no NAME bound: the bounds are required,
+never defaulted (SPEC-WORK.md \"The data\": a missing bound is `refusing to
+guess`). Used as the default form of each bound, so it runs only when the
+caller left the bound out."
+  (error 'restricted-data-violation
+         :value (format nil "refusing to guess: missing ~A" name)))
+
+(defun check-read-bound (name value)
+  "VALUE is a non-negative integer bound, or a refusal naming NAME."
+  (unless (and (integerp value) (>= value 0))
+    (error 'restricted-data-violation
+           :value (format nil "refusing to guess: ~A ~S is not a non-negative integer"
+                          name value)))
+  value)
+
+(defun refuse-over-bounds (text &key (max-bytes (missing-read-bound "max-bytes"))
+                                     (max-depth (missing-read-bound "max-depth"))
+                                     (max-nodes (missing-read-bound "max-nodes")))
+  "Refuse TEXT before the reader sees it when it exceeds MAX-BYTES UTF-8 octets,
+nests lists deeper than MAX-DEPTH, or holds more than MAX-NODES nodes. All three
+bounds are required. The scan is lexical: every open paren is one list node,
+every atom and string one node, and comment text is opaque up to the CR or LF
+that ends it (as REFUSE-EVALUATION-SYNTAX lexes it); so a hostile input is
+refused without being read and the reader never recurses past MAX-DEPTH."
+  (check-read-bound "max-bytes" max-bytes)
+  (check-read-bound "max-depth" max-depth)
+  (check-read-bound "max-nodes" max-nodes)
+  (let ((bytes (utf8-bytes-up-to text (length text))))
+    (when (> bytes max-bytes)
+      (error 'restricted-data-violation
+             :value (format nil "input ~D bytes exceeds max-bytes ~D" bytes max-bytes))))
+  (let ((depth 0) (nodes 0) (in-string nil) (escaped nil)
+        (len (length text)) (i 0))
+    (flet ((node ()
+             (incf nodes)
+             (when (> nodes max-nodes)
+               (error 'restricted-data-violation
+                      :value (format nil "nodes ~D exceeds max-nodes ~D" nodes max-nodes)))))
+      (loop while (< i len)
+            do (let ((ch (char text i)))
+                 (cond
+                   ((and in-string escaped) (setf escaped nil))
+                   ((and in-string (char= ch #\\)) (setf escaped t))
+                   ((char= ch #\") (if in-string
+                                        (setf in-string nil)
+                                        (progn (setf in-string t) (node))))
+                   (in-string nil)
+                   ((char= ch #\;)
+                    ;; A comment ends at CR or LF, exactly as
+                    ;; REFUSE-EVALUATION-SYNTAX ends it: stopping at LF only
+                    ;; would skip a form after `;c<CR>` that the reader sees.
+                    (loop while (and (< (1+ i) len)
+                                     (not (member (char text (1+ i)) '(#\Newline #\Return))))
+                          do (incf i)))
+                   ((char= ch #\()
+                    (incf depth)
+                    (when (> depth max-depth)
+                      (error 'restricted-data-violation
+                             :value (format nil "depth ~D exceeds max-depth ~D" depth max-depth)))
+                    (node))
+                   ((char= ch #\)) (decf depth))
+                   ((reader-whitespace-p ch) nil)
+                   (t
+                    (node)
+                    (loop while (and (< (1+ i) len)
+                                     (not (reader-token-boundary-p (char text (1+ i)))))
+                          do (incf i)))))
+               (incf i))))
+  text)
+
 (defun read-restricted (text)
-  "Read one restricted s-expression from TEXT. Counted in *PARSES*."
+  "Read one restricted s-expression from TEXT. Counted in *PARSES*.
+TEXT is already in memory; text read from a file goes through READ-BOUNDED,
+which requires the three bounds."
   (refuse-evaluation-syntax text)
   (let ((*read-eval* nil)
         (*package* (find-package '#:nova-work.read))
@@ -218,7 +291,16 @@ each of its UTF-8 characters is counted exactly once."
               (error 'restricted-data-violation
                      :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
           (incf *parses*)
-           (check-restricted form))))))
+          (check-restricted form))))))
+
+(defun read-bounded (text &key (max-bytes (missing-read-bound "max-bytes"))
+                               (max-depth (missing-read-bound "max-depth"))
+                               (max-nodes (missing-read-bound "max-nodes")))
+  "Read one restricted s-expression from file TEXT under the three required
+bounds (E01-F02-01): each is checked by REFUSE-OVER-BOUNDS before the reader
+runs, and a missing one is `refusing to guess`. Counted in *PARSES*."
+  (refuse-over-bounds text :max-bytes max-bytes :max-depth max-depth :max-nodes max-nodes)
+  (read-restricted text))
 
 (defun roadmap-bug-counts (form)
   "Extract bug counts from a roadmap s-expression FORM. Returns a plist with
