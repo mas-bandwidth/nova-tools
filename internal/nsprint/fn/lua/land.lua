@@ -58,15 +58,40 @@ redis.register_function('ns_gate_receipt_write', function(keys, args)
   return gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test)
 end)
 
+-- land_write_once: HSETNX one write-once reap field (nova-tools#3091). An empty or
+-- absent value writes nothing. A stored value that differs is kept, and the offer is
+-- HSETNXed into s:<S>:unresolved as <unit>:<field>-changed:<seq>.
+local function land_write_once(S, ukey, unit, seq, field, value, changed)
+  if not value or value == '' then
+    return
+  end
+  if redis.call('HSETNX', ukey, field, value) == 1 then
+    return
+  end
+  if redis.call('HGET', ukey, field) ~= value then
+    redis.call('HSETNX', 's:' .. S .. ':unresolved', unit .. ':' .. field .. '-changed:' .. tostring(seq), value)
+    table.insert(changed, field .. '-changed')
+  end
+end
+
 -- ns_unit_head: writes head and metadata for one unit, adds to s:<S>:units index,
 -- and increments rec:seq.
+-- nova-tools#3091: arg 15 card is the label of the card whose TASK: line names the
+-- unit; arg 16 is that card's PATHS canonicalized by the Go caller (pr.CanonJSON),
+-- empty when refused. On the create path (no unit hash before this call) it writes
+-- the sentinels last_read_at, approve_head and merged_at present-empty, so a stored
+-- value is never reset and a deleted field is never re-created. paths, card_type
+-- and cut_at are write-once from an existing card hash; no card leaves them absent.
+-- Reply { 'OK', seq } or { 'OK', seq, 'UNRESOLVED', '<field>-changed', ... }.
 redis.register_function('ns_unit_head', function(keys, args)
   local S, unit, repo, base, branch, head, base_sha = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
   local stack_parent, files, paths_hash, security, class = args[8], args[9], args[10], args[11], args[12]
   local pr, author = args[13], args[14]
+  local card, paths_json = args[15], args[16]
 
   local seq = redis.call('INCR', 'rec:seq')
   local ukey = 's:' .. S .. ':u:' .. unit
+  local created = redis.call('EXISTS', ukey) == 0
   local cur_st = redis.call('HGET', ukey, 'state')
   local new_st = cur_st
   if not cur_st or cur_st == '' or cur_st == 'opened' then
@@ -88,11 +113,27 @@ redis.register_function('ns_unit_head', function(keys, args)
     'seq', tostring(seq),
     'author', author or ''
   )
+  if created then
+    redis.call('HSET', ukey, 'last_read_at', '', 'approve_head', '', 'merged_at', '')
+  end
   if pr and pr ~= '' and pr ~= '0' then
     redis.call('HSET', ukey, 'pr', pr)
     redis.call('SET', 's:' .. S .. ':prunit:' .. repo .. ':' .. pr, unit)
   end
+  local changed = {}
+  if card and card ~= '' then
+    local ckey = 's:' .. S .. ':card:' .. card
+    if redis.call('EXISTS', ckey) == 1 then
+      local cv = redis.call('HMGET', ckey, 'card_type', 'cut_at')
+      land_write_once(S, ukey, unit, seq, 'paths', paths_json, changed)
+      land_write_once(S, ukey, unit, seq, 'card_type', cv[1], changed)
+      land_write_once(S, ukey, unit, seq, 'cut_at', cv[2], changed)
+    end
+  end
   redis.call('SADD', 's:' .. S .. ':units', unit)
+  if #changed > 0 then
+    return { 'OK', tostring(seq), 'UNRESOLVED', unpack(changed) }
+  end
   return { 'OK', tostring(seq) }
 end)
 
@@ -175,6 +216,12 @@ redis.register_function('ns_release', function(keys, args)
 end)
 
 -- ns_read: records a typed read/approval.
+-- nova-tools#3091: a counted read (verdict APPROVE or HOLD, who not jev, kind not ci)
+-- stamps the unit's last_read_at (Redis TIME seconds; replaces empty, then max) and a
+-- counted APPROVE its approve_head/approve_seq: an APPROVE at the unit's current head
+-- always wins; one at another head replaces only an empty value or one that is not the
+-- current head. A field that is absent stays absent. No unit hash: the read record is
+-- written, no unit field is, and the reply is { 'OK', seq, 'NOUNIT' }.
 redis.register_function('ns_read', function(keys, args)
   local S, unit, who, head, verdict, score, kind, files, done_when = args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]
   local seq = redis.call('INCR', 'rec:seq')
@@ -190,6 +237,27 @@ redis.register_function('ns_read', function(keys, args)
     'done_when', done_when or '',
     'at', tostring(now)
   )
+  local ukey = 's:' .. S .. ':u:' .. unit
+  if redis.call('EXISTS', ukey) == 0 then
+    return { 'OK', tostring(seq), 'NOUNIT' }
+  end
+  local v = string.upper(verdict or '')
+  local counted = (v == 'APPROVE' or v == 'HOLD') and string.lower(who or '') ~= 'jev' and (kind or '') ~= 'ci'
+  if counted then
+    local u = redis.call('HMGET', ukey, 'last_read_at', 'approve_head', 'head')
+    local now_s = math.floor(tonumber(now) / 1000)
+    if u[1] then
+      local stored = tonumber(u[1])
+      if u[1] == '' or (stored and now_s > stored) then
+        redis.call('HSET', ukey, 'last_read_at', string.format('%d', now_s))
+      end
+    end
+    if v == 'APPROVE' and u[2] then
+      if head == u[3] or u[2] == '' or u[2] ~= u[3] then
+        redis.call('HSET', ukey, 'approve_head', head, 'approve_seq', tostring(seq))
+      end
+    end
+  end
   return { 'OK', tostring(seq) }
 end)
 
@@ -670,7 +738,14 @@ redis.register_function('ns_land', function(keys, args)
   for i, m in ipairs(members) do
     local msha = merge_shas[i] or train_head
     redis.call('SET', 'landed:' .. repo .. ':' .. m.unit .. ':' .. m.head, msha .. ' ' .. batch_id .. ' ' .. receipt)
-    redis.call('HSET', 's:' .. S .. ':u:' .. m.unit, 'state', 'landed', 'merge_sha', msha, 'landed_head', m.head)
+    local ukey = 's:' .. S .. ':u:' .. m.unit
+    if redis.call('HGET', ukey, 'merged_at') == '' then
+      -- nova-tools#3091: merged_at (Redis TIME seconds) only while still empty.
+      redis.call('HSET', ukey, 'state', 'landed', 'merge_sha', msha, 'landed_head', m.head,
+        'merged_at', string.format('%d', math.floor(tonumber(now) / 1000)))
+    else
+      redis.call('HSET', ukey, 'state', 'landed', 'merge_sha', msha, 'landed_head', m.head)
+    end
     redis.call('ZREM', 's:' .. S .. ':landable:' .. repo .. ':' .. base, m.unit)
   end
 
