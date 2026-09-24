@@ -540,9 +540,9 @@ func TestControl32HeadChange(t *testing.T) {
 }
 
 // TestControlOpenHoldBlocksLandReady:
-// - blocks: open hold h1 blocks land-ready even with ci OK and reads at the bar.
-// - release: feeding dispositions through ns_ingest_disposition leaves h1 open
-//   until authorized release, after which the card goes land-ready.
+//   - blocks: open hold h1 blocks land-ready even with ci OK and reads at the bar.
+//   - release: feeding dispositions through ns_ingest_disposition leaves h1 open
+//     until authorized release, after which the card goes land-ready.
 func TestControlOpenHoldBlocksLandReady(t *testing.T) {
 	st, client := initTestRedis(t)
 	ctx := context.Background()
@@ -1066,12 +1066,12 @@ func TestConsumeTwoSeatsOneWriter(t *testing.T) {
 }
 
 // TestControlRequiredReads:
-// - multiple: readers=2, land_bar=8. Stella 9 -> 1/2. Johnny 7 (under bar) -> 1/2.
-//   Emma 8 at old head -> 1/2. Emma 8 at exact head -> land-ready. Redelivered -> no 2nd event.
-// - author_excluded: readers=1, land_bar=8. Rowan(author), jev, ghost excluded. Card author excluded.
-// - bar_per_pr: 4 PRs: bar 8 lands, bar 10 reads 0/1, no bar MISSING land_bar, no author MISSING author.
-// - security: readers=1, readers_security=2. Security paths vs regular paths. RequiredReads == required().
-// - short_eligible: full 9-step active state lifecycle on s:<S>:unresolved.
+//   - multiple: readers=2, land_bar=8. Stella 9 -> 1/2. Johnny 7 (under bar) -> 1/2.
+//     Emma 8 at old head -> 1/2. Emma 8 at exact head -> land-ready. Redelivered -> no 2nd event.
+//   - author_excluded: readers=1, land_bar=8. Rowan(author), jev, ghost excluded. Card author excluded.
+//   - bar_per_pr: 4 PRs: bar 8 lands, bar 10 reads 0/1, no bar MISSING land_bar, no author MISSING author.
+//   - security: readers=1, readers_security=2. Security paths vs regular paths. RequiredReads == required().
+//   - short_eligible: full 9-step active state lifecycle on s:<S>:unresolved.
 func TestControlRequiredReads(t *testing.T) {
 	st, client := initTestRedis(t)
 	ctx := context.Background()
