@@ -1567,7 +1567,7 @@ replaces: `onboarding.Execute`, `onboarding.Compare`, `onboarding.Shape` and a
 per line with the issue that owes it, checked in both directions -- a stale entry and an ORPHAN naming no section are both red -- so it only
 shrinks: an unlisted unexecuted section is red, and a listed section a test now
 executes with the one comparator is a stale entry and red too. Today: the
-twenty-four sections not yet converted (#1653, #1654, #1657, #1722).
+twenty-five sections not yet converted (#1653, #1654, #1657, #1722).
 **Its remedy line.** ``docs/TESTS.md has a `## <tool>` section and no test in
 cmd/<tool> compares it with onboarding.CompareTranscript(; the section is a
 promise no build checks. Convert it — run every `$` line of the `### First run`

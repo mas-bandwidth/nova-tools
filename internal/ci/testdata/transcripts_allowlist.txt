@@ -38,10 +38,11 @@ nova-secrets  # #1657 -- no firstrun_test.go at all
 nova-work     # #1657 -- collects what was printed into a set
 
 # #1722: the sections SPEC-TOOLWORK's work list names in no row (six filed with
-# #1722; nova-card, nova-sprint and nova-test gained sections on dev after it).
+# #1722; nova-card, nova-redis, nova-sprint and nova-test gained sections on dev after it).
 nova-card     # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-memory   # #1722 -- its firstrun_test.go executes README.md, not this section
 nova-play     # #1722 -- #1602 made it line for line with its own comparison, not the shared one
+nova-redis    # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-sprint   # #1722 -- compares through onboarding.Execute, not the shared comparator
 nova-swarm    # #1722 -- compares the event prefix and the field names, dropping every value
 nova-test     # #1722 -- compares through onboarding.Execute, not the shared comparator
