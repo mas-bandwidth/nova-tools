@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -407,9 +406,7 @@ func TestFleetStateOneRoundTrip(t *testing.T) {
 		c.SAdd(ctx, "benches", name)
 	}
 
-	start := time.Now()
 	rows, err := fleet.Read(ctx, c, "")
-	took := time.Since(start)
 	if err != nil {
 		t.Fatalf("read 64 benches: %v", err)
 	}
@@ -425,7 +422,6 @@ func TestFleetStateOneRoundTrip(t *testing.T) {
 			t.Fatalf("row %d state is %q, want DOWN (absent)", i, r.State)
 		}
 	}
-	t.Logf("read 64 benches in %v", took)
 }
 
 // TestFleetConfigDefaults verifies that when cfg:fleet is absent, down_after=30 and up_after=10 apply.
