@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make help        this list"
@@ -92,9 +92,17 @@ help:
 	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
+	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
+	@echo "make new-verb    scaffold a CLI verb skeleton (ARGS='<tool> <verb>')"
 
 map:
 	$(GO) run ./tools/agentsmap
+
+new-rule:
+	$(GO) run ./tools/newrule $(ARGS)
+
+new-verb:
+	$(GO) run ./tools/newverb $(ARGS)
 
 
 build:
@@ -229,3 +237,5 @@ check: build lint test test-e2e test-lisp
 # local build and a worker's notes land in, and nothing else.
 clean:
 	rm -rf ./bin ./scratch
+
+-include make/*.mk

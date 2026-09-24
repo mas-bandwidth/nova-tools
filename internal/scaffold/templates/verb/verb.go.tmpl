@@ -1,0 +1,22 @@
+package main
+
+import (
+	"flag"
+	"fmt"
+	"io"
+)
+
+// cmd[[ .CamelVerb ]] runs the [[ .Verb ]] verb of [[ .Tool ]].
+func cmd[[ .CamelVerb ]](args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("[[ .Verb ]]", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	verbose := fs.Bool("verbose", false, "enable verbose output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *verbose {
+		fmt.Fprintln(stdout, "[[ .Tool ]] [[ .Verb ]]: verbose enabled")
+	}
+	fmt.Fprintln(stdout, "[[ .Tool ]] [[ .Verb ]]: OK")
+	return 0
+}

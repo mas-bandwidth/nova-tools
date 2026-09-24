@@ -41,6 +41,10 @@ usage:
                       the test's own words -- instead of the whole log; exit 1
                       when the run said anything red, 0 when it said nothing.
                       Run ` + "`nova-ci failed --help`" + ` for its flags.
+  nova-ci new-rule [--root <checkout>] <rule-name>
+                      scaffold a new class rule skeleton: class test, fixture, and makefile
+  nova-ci new-verb [--root <checkout>] <tool> <verb>
+                      scaffold a new CLI verb skeleton: command, test, fixture, and makefile
 
 exit codes: 0 inside budget and nothing red, 1 failed found something red,
             2 a package is over budget or the invocation could not run (bad
@@ -76,6 +80,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "failed":
 		return cmdFailed(args[1:], stdout, stderr, ghForge)
+	case "new-rule":
+		return cmdNewRule(args[1:], stdout, stderr)
+	case "new-verb":
+		return cmdNewVerb(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
