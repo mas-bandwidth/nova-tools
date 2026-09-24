@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -65,7 +66,24 @@ type AcquireOptions struct {
 	Host     string        // the machine, for the table and the refusal line
 	TTL      time.Duration // DefaultTTL when zero
 	Instance string        // random when empty; a restart is a new instance
+	// Clock is the lease's local clock (#3322): when each renewal was sent,
+	// and the timer a bench session is bounded by. Nil is the wall clock; a
+	// test injects a fake one.
+	Clock Clock
 }
+
+// Clock is the lease's local clock. The lease deadline is the local time a
+// renewal was sent plus the TTL: Redis sets the TTL when the call executes,
+// which is never before it was sent, so the deadline is never late.
+type Clock interface {
+	Now() time.Time
+	After(d time.Duration) <-chan time.Time
+}
+
+type wallClock struct{}
+
+func (wallClock) Now() time.Time                         { return time.Now() }
+func (wallClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 // Lease is one instance's hold on lease:reconciler.
 type Lease struct {
@@ -74,6 +92,10 @@ type Lease struct {
 	host     string
 	token    string
 	ttl      time.Duration
+	clock    Clock
+
+	mu      sync.Mutex
+	renewed time.Time // local time the last successful renewal was sent
 }
 
 // Acquire takes lease:reconciler if no instance holds it. It never inspects a
@@ -94,6 +116,11 @@ func Acquire(ctx context.Context, st *store.Store, opt AcquireOptions) (*Lease, 
 		instance = randomHex(8)
 	}
 	nonce := randomHex(16)
+	clock := opt.Clock
+	if clock == nil {
+		clock = wallClock{}
+	}
+	sent := clock.Now()
 	reply, err := st.Client().FCall(ctx, fnAcquire, nil,
 		instance, nonce, opt.Host, strconv.Itoa(os.Getpid()), ttl.Milliseconds()).StringSlice()
 	if err != nil {
@@ -101,7 +128,7 @@ func Acquire(ctx context.Context, st *store.Store, opt AcquireOptions) (*Lease, 
 	}
 	switch {
 	case len(reply) >= 2 && reply[0] == "ACQUIRED":
-		return &Lease{st: st, instance: instance, host: opt.Host, token: reply[1], ttl: ttl}, nil
+		return &Lease{st: st, instance: instance, host: opt.Host, token: reply[1], ttl: ttl, clock: clock, renewed: sent}, nil
 	case len(reply) >= 5 && reply[0] == "HELD":
 		age, _ := strconv.ParseInt(reply[3], 10, 64)
 		left, _ := strconv.ParseInt(reply[4], 10, 64)
@@ -134,8 +161,53 @@ func (l *Lease) TTL() time.Duration { return l.ttl }
 // Renew extends the lease to its TTL. ErrFenced means another instance holds
 // it, or it lapsed; the caller must stop.
 func (l *Lease) Renew(ctx context.Context) error {
+	sent := l.now()
 	_, err := l.call(ctx, fnRenew, l.token, l.ttl.Milliseconds())
+	if err == nil {
+		l.renewedAt(sent)
+	}
 	return err
+}
+
+// Deadline is when this instance's hold lapses on the lease clock: the local
+// time the last successful renewal (acquire, renew, or the pass record) was
+// sent, plus the TTL. A write presented after it may be refused FENCED, so
+// every bench session in a pass is bounded inside it (#3322).
+func (l *Lease) Deadline() time.Time {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.renewed.IsZero() {
+		return time.Time{}
+	}
+	return l.renewed.Add(l.ttl)
+}
+
+// Remaining is the lease time left on the lease clock; zero or less when the
+// deadline has passed.
+func (l *Lease) Remaining() time.Duration {
+	d := l.Deadline()
+	if d.IsZero() {
+		return 0
+	}
+	return d.Sub(l.now())
+}
+
+// Clock is the lease's clock (the wall clock unless one was injected).
+func (l *Lease) Clock() Clock {
+	if l.clock == nil {
+		return wallClock{}
+	}
+	return l.clock
+}
+
+func (l *Lease) now() time.Time { return l.Clock().Now() }
+
+func (l *Lease) renewedAt(sent time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if sent.After(l.renewed) {
+		l.renewed = sent
+	}
 }
 
 // Release deletes the lease if this instance still holds it, so the next

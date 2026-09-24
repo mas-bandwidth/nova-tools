@@ -16,12 +16,12 @@ import (
 func init() {
 	register(Verb{
 		Name:    "ci",
-		Summary: "cut, show, rerun, dispose and status of ci cards and the ci:<repo>:<sha> verdict",
+		Summary: "cut, show, rerun, dispose, status and parity of ci cards and the ci:<repo>:<sha> verdict",
 		Run:     runCI,
 	})
 }
 
-const ciUsage = "want cut, show, rerun, dispose or status"
+const ciUsage = "want cut, show, rerun, dispose, status or parity"
 
 func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
@@ -38,6 +38,8 @@ func runCI(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runCIDispose(ctx, args[1:], out, errOut)
 	case "status":
 		return runCIStatus(ctx, args[1:], out, errOut)
+	case "parity":
+		return runCIParity(ctx, args[1:], out, errOut)
 	default:
 		return refuse(errOut, "ci", "unknown subverb "+args[0]+"; "+ciUsage)
 	}
@@ -203,4 +205,28 @@ func runCIStatus(ctx context.Context, args []string, out, errOut io.Writer) int 
 	}
 	fmt.Fprintln(out, s)
 	return 0
+}
+
+// runCIParity is #3041 (#2756 10.8.1): every head of a sprint PR that
+// Actions passed (completed workflow_run entries on ev:github) must be OK on
+// ci:<repo>:<sha>. It prints PARITY FAIL <head> per miss, then PARITY n/m,
+// and exits 1 on a miss or under --min heads (the gate is n/n, n >= 20).
+func runCIParity(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs := taskFlags("ci parity")
+	redisAddr := fs.String("redis", "", "")
+	sprint := fs.String("sprint", "", "")
+	minHeads := fs.Int("min", 20, "")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "ci parity", err.Error())
+	}
+	st, err := store.Open(ctx, *redisAddr)
+	if err != nil {
+		return refuse(errOut, "ci parity", err.Error())
+	}
+	defer st.Close()
+	p, err := ci.ReadParity(ctx, st, ci.ParityRequest{Sprint: *sprint, Min: *minHeads})
+	if err != nil {
+		return refuse(errOut, "ci parity", err.Error())
+	}
+	return ci.WriteParity(out, p)
 }

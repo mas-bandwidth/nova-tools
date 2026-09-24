@@ -1,13 +1,16 @@
 // Package route carries the router's allowed_routes table (#2895): which
 // provider routes a card may run on, per rung (flash, pro) and work type,
-// with the ranking numbers that put each route where it is.
+// with the ranking numbers that put each route where it is. An overrides row
+// is the one manual, interim exception: it replaces a rung's list outright
+// for one work type from different evidence than the ranking, and may name a
+// route the ranking holds or drops.
 //
 // The table is routes.yaml, embedded at build time, so a binary and the table
 // it enforces are one artifact. It replaces the two text lists the bash
 // launchers read (providers-flash.txt, providers-pro.txt). The file is a
-// small, strict YAML subset: full-line comments, top-level scalars, and two
-// block lists of flat maps (routes, types); values are plain, "quoted" or a
-// [flow, list]. Anything else is refused at load, never guessed.
+// small, strict YAML subset: full-line comments, top-level scalars, and three
+// block lists of flat maps (routes, types, overrides); values are plain,
+// "quoted" or a [flow, list]. Anything else is refused at load, never guessed.
 package route
 
 import (
@@ -66,6 +69,17 @@ type TypeRow struct {
 	Why        string
 }
 
+// OverrideRow replaces one rung's list outright for one work type: a manual,
+// interim exception (not derived by the rule) that may name a route this
+// table's rule holds or drops. Source is the different evidence it is drawn
+// from (never the ranking named at the top of the file, or it would belong
+// there instead). It is reconciled or removed at the next full re-rank.
+type OverrideRow struct {
+	Type, Rung  string
+	Routes      []string
+	Source, Why string
+}
+
 // Card is what the router checks: the card's rung, work type and route.
 type Card struct {
 	Rung, Type, Route string
@@ -77,6 +91,7 @@ type Table struct {
 	rows         []Row
 	byRoute      map[string]int
 	types        []TypeRow
+	overrides    []OverrideRow
 	rungs        []string
 }
 
@@ -100,8 +115,19 @@ func (t *Table) Types() []string {
 }
 
 // Allowed lists the routes a card of this rung and work type may run on, in
-// file order. workType "" is the rung's default list.
+// file order. workType "" is the rung's default list. A work type carrying
+// an overrides row replaces that list outright, minus any benched or dead
+// route it names (Check has the last word, even inside an override).
 func (t *Table) Allowed(rung, workType string) []string {
+	if o := t.overrideFor(rung, workType); o != nil {
+		var out []string
+		for _, route := range o.Routes {
+			if i, ok := t.byRoute[route]; ok && t.rows[i].Flag != FlagBenched && t.rows[i].Flag != FlagDead {
+				out = append(out, route)
+			}
+		}
+		return out
+	}
 	var out []string
 	for _, r := range t.rows {
 		if r.Rung == rung && (r.State == Allowed || (r.State == Held && t.added(rung, workType, r.Route))) {
@@ -109,6 +135,19 @@ func (t *Table) Allowed(rung, workType string) []string {
 		}
 	}
 	return out
+}
+
+// overrideFor returns the overrides row for this rung and work type, or nil.
+func (t *Table) overrideFor(rung, workType string) *OverrideRow {
+	if workType == "" {
+		return nil
+	}
+	for i := range t.overrides {
+		if t.overrides[i].Type == workType && t.overrides[i].Rung == rung {
+			return &t.overrides[i]
+		}
+	}
+	return nil
 }
 
 func (t *Table) added(rung, workType, route string) bool {
@@ -152,6 +191,17 @@ func (t *Table) Check(c Card) error {
 	if row.Rung != c.Rung {
 		return refuse(fmt.Sprintf("%s is a rung %s route", row.Route, row.Rung))
 	}
+	if o := t.overrideFor(c.Rung, c.Type); o != nil {
+		if row.Flag == FlagBenched || row.Flag == FlagDead {
+			return refuse(fmt.Sprintf("%s is %s: %s", row.Route, row.Flag, row.Why))
+		}
+		for _, or := range o.Routes {
+			if or == row.Route {
+				return nil
+			}
+		}
+		return refuse(fmt.Sprintf("%s is not on the %s override for rung %s: %s", row.Route, c.Type, c.Rung, o.Why))
+	}
 	switch row.State {
 	case Dropped:
 		return refuse(fmt.Sprintf("%s is dropped: %s", row.Route, row.Why))
@@ -191,6 +241,9 @@ func (t *Table) Render() string {
 			adds[i] = "+" + a
 		}
 		fmt.Fprintf(&b, "TYPE %s %s %s  %s\n", tr.Type, tr.Rung, strings.Join(adds, " "), tr.Why)
+	}
+	for _, o := range t.overrides {
+		fmt.Fprintf(&b, "OVERRIDE %s %s %s  source=%q  %s\n", o.Type, o.Rung, strings.Join(o.Routes, " "), o.Source, o.Why)
 	}
 	for _, rung := range t.rungs {
 		fmt.Fprintf(&b, "ALLOWED %s %s\n", rung, strings.Join(t.Allowed(rung, ""), " "))
@@ -234,7 +287,7 @@ func Parse(src []byte) (*Table, error) {
 					t.Rule = s
 				}
 				section = ""
-			case "routes", "types":
+			case "routes", "types", "overrides":
 				if val != "" {
 					return nil, fmt.Errorf("routes.yaml:%d: %s wants a block list below it", lineNo, key)
 				}
@@ -250,7 +303,7 @@ func Parse(src []byte) (*Table, error) {
 			}
 		case indent == 2 && strings.HasPrefix(trimmed, "- "):
 			if section == "" {
-				return nil, fmt.Errorf("routes.yaml:%d: list item outside routes or types", lineNo)
+				return nil, fmt.Errorf("routes.yaml:%d: list item outside routes, types or overrides", lineNo)
 			}
 			key, val, err := keyValue(strings.TrimPrefix(trimmed, "- "))
 			if err != nil {
@@ -274,10 +327,13 @@ func Parse(src []byte) (*Table, error) {
 	}
 	for i, it := range items {
 		var err error
-		if it["\x00section"] == "routes" {
+		switch it["\x00section"] {
+		case "routes":
 			err = t.addRow(it)
-		} else {
+		case "types":
 			err = t.addType(it)
+		default:
+			err = t.addOverride(it)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("routes.yaml:%d: %v", itemLines[i], err)
@@ -298,6 +354,27 @@ func Parse(src []byte) (*Table, error) {
 			}
 			if row.State == Dropped {
 				return nil, fmt.Errorf("routes.yaml: types %s adds %s, which is dropped; a dropped route re-enters by a measured A/B", tr.Type, a)
+			}
+		}
+	}
+	// An overrides row may legitimately name a dropped or held route (that is
+	// the point of the escape hatch), but every route it names must still be
+	// a real, same-rung row, and two overrides may not both claim one
+	// (rung, type) pair -- that would make Allowed/Check order-dependent.
+	seenOverride := map[string]bool{}
+	for _, o := range t.overrides {
+		key := o.Rung + "\x00" + o.Type
+		if seenOverride[key] {
+			return nil, fmt.Errorf("routes.yaml: overrides %s on rung %s appears twice", o.Type, o.Rung)
+		}
+		seenOverride[key] = true
+		for _, route := range o.Routes {
+			i, ok := t.byRoute[route]
+			if !ok {
+				return nil, fmt.Errorf("routes.yaml: overrides %s names unknown route %s", o.Type, route)
+			}
+			if t.rows[i].Rung != o.Rung {
+				return nil, fmt.Errorf("routes.yaml: overrides %s names %s, a rung %s route, on rung %s", o.Type, route, t.rows[i].Rung, o.Rung)
 			}
 		}
 	}
@@ -454,6 +531,48 @@ func (t *Table) addType(it map[string]string) error {
 		return fmt.Errorf("a types row needs type, rung, add and why")
 	}
 	t.types = append(t.types, tr)
+	return nil
+}
+
+func (t *Table) addOverride(it map[string]string) error {
+	var o OverrideRow
+	for key, raw := range it {
+		if key == "\x00section" {
+			continue
+		}
+		switch key {
+		case "type", "rung", "source", "why":
+			s, err := scalar(raw)
+			if err != nil {
+				return err
+			}
+			switch key {
+			case "type":
+				o.Type = s
+			case "rung":
+				o.Rung = s
+			case "source":
+				o.Source = s
+			case "why":
+				o.Why = s
+			}
+		case "routes":
+			if !strings.HasPrefix(raw, "[") || !strings.HasSuffix(raw, "]") {
+				return fmt.Errorf("routes wants a [flow, list] of routes")
+			}
+			for _, a := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(raw, "["), "]"), ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					o.Routes = append(o.Routes, a)
+				}
+			}
+		default:
+			return fmt.Errorf("unknown overrides key %q", key)
+		}
+	}
+	if o.Type == "" || o.Rung == "" || len(o.Routes) == 0 || o.Source == "" || o.Why == "" {
+		return fmt.Errorf("an overrides row needs type, rung, routes, source and why")
+	}
+	t.overrides = append(t.overrides, o)
 	return nil
 }
 

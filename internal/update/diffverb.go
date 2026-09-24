@@ -33,7 +33,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 		if len(f) != 4 {
 			return nil, fmt.Errorf("a row has %d fields, not 4", len(f))
 		}
-		rows[f[0]] = snapRow{f[0], f[1], f[2], f[3]}
+		rows[f[0]] = snapRow{name: f[0], stamp: f[1], revision: f[2], platform: f[3]}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("cannot read")

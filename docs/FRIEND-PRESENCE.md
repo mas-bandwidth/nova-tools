@@ -38,6 +38,14 @@ The name is yours as the bus roster spells it, in any case — the key is
 `friend:<name>` in lower case either way. Two windows of your own beating the
 same name is harmless: they write the same key.
 
+A window that knows two more facts may pass them, and a window that does not
+leaves them off. `--window <time>` is the cap's reset time, stored as given
+(`friend:<name>:window`); the beat does not invent that clock. `--width <n>`
+is how many children are in use now (`friend:<name>:width`), and zero is a
+real answer. Omitting either flag does not write that key and does not fail
+the beat. `presence` prints `window=` and `width=` on your phrase when the
+keys are there.
+
 ## The seat, and why it is the same one for everybody
 
 The password is never a flag, a file you open, or a word you paste. It reaches
@@ -69,7 +77,10 @@ friends: stella up 4s · johnny up 12s · emma AWAY 1h12m (last 09:41Z) · fredd
 ```
 
 `up` is a beat inside the TTL and its age; `AWAY` is a window that stopped, with
-how long ago and when; `none` is a name that has never beaten. Your own line
+how long ago and when; `none` is a name that has never beaten. A friend is
+present only while `friend:<name>` itself is alive: a missing key is absence
+(`none`, or `AWAY` when only the untimed memory remains) and a live key is
+present (`up`). Nothing fills that in from a hand file. Your own line
 should read `up <n>s` within 30 seconds of starting the command above. If it
 reads `none`, the beat did not start: `~/<your>-working/.beat.log` holds its
 one startup line and any complaint it has about the store.

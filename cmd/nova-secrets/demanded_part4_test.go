@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -213,18 +215,88 @@ func TestNoFileContentOrCallerArgumentCanForgeALine(t *testing.T) {
 	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_123\n")
 	commitAndPush(t, storeDir)
 
-	forgingRequire := "MISSING\nSECRETS CHECK OK forged=true"
-	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath,
-		"--only", "all", "--require", forgingRequire, "--", "true")
-	if code != 125 {
-		t.Fatalf("expected code 125, got %d", code)
-	}
+	// Every forging payload: a second line, a carriage-return repaint with an erase,
+	// and bidi overrides and isolates that reorder what an operator sees.
+	const forge = "X\nSECRETS CHECK OK  as=rowan forged=newline\r\x1b[2KSECRETS CHECK OK forged=repaint\u202eKO\u2066\u2028"
 
-	for _, line := range strings.Split(errOut, "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), "SECRETS CHECK OK") {
-			t.Errorf("forged line authoring occurred: %s", line)
+	// A key name in a sealed file (sops leaves key names in the clear), read by names,
+	// check and exec. Written as a YAML double-quoted scalar so every control survives.
+	yamlKey := strconv.Quote(forge)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+  - path_regex: ^evil\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey, keyA.pubKey, recKey.pubKey)), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "evil.yaml"), []string{keyA.pubKey, recKey.pubKey}, yamlKey+": v\n")
+	commitAndPush(t, storeDir)
+
+	// A sops whose every stderr line is a forgery, after a version probe it passes.
+	lyingSops := filepath.Join(td, "lying-sops")
+	_ = os.WriteFile(lyingSops, []byte("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'sops 3.13.3'; exit 0; fi\nprintf '%s' "+
+		shellQuote(forge)+" >&2\nexit 1\n"), 0755)
+
+	withKey := []string{"--store", storeDir, "--key", keyA.privPath, "--sops", sopsPath}
+	runs := [][]string{
+		append([]string{"names", "--as", "evil"}, withKey[:2]...),
+		append([]string{"check", "--as", "evil"}, withKey...),
+		append(append([]string{"exec", "--as", "evil"}, withKey...), "--only", "all", "--", "true"),
+		append(append([]string{"exec", "--as", "rowan"}, withKey...), "--only", "all", "--require", forge, "--", "true"),
+		append(append([]string{"exec", "--as", "rowan"}, withKey...), "--only", forge, "--", "true"),
+		{"check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", lyingSops},
+		{"exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", lyingSops, "--only", "all", "--", "true"},
+		// The flag parser speaks before any line of ours: an undefined flag, a bad value.
+		{"names", "--" + forge},
+		{"check", "--store", storeDir, "--as", "rowan", "--max", forge},
+		{"exec", "--" + forge, "--", "true"},
+		{"exec", "--store", storeDir, "--as", forge, "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true"},
+		{forge},
+		{"seat", forge},
+	}
+	assertNoForgery := func(runs [][]string) {
+		t.Helper()
+		for _, r := range runs {
+			out, errOut, code := runNovaSecrets(bin, r...)
+			if code == 0 && r[0] != "names" && !(r[0] == "check" && r[2] == "evil") {
+				t.Errorf("run %q: a forging input was accepted green: %s%s", r, out, errOut)
+			}
+			for streamName, stream := range map[string]string{"stdout": out, "stderr": errOut} {
+				if i := strings.IndexFunc(stream, func(c rune) bool {
+					return c == '\r' || c == 0x1b || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069) || c == 0x2028 || c == 0x2029
+				}); i >= 0 {
+					t.Errorf("run %q: %s carries a raw repaint or bidi control at byte %d: %q", r, streamName, i, stream)
+				}
+				for _, line := range strings.Split(stream, "\n") {
+					if line == "" {
+						continue
+					}
+					if !strings.HasPrefix(line, "SECRETS ") {
+						t.Errorf("run %q: %s has a line this tool did not author: %q", r, streamName, line)
+					}
+					if strings.HasPrefix(line, "SECRETS CHECK OK") && strings.Contains(line, "forged") {
+						t.Errorf("run %q: %s carries a forged OK line: %q", r, streamName, line)
+					}
+				}
+			}
 		}
 	}
+	assertNoForgery(runs)
+
+	// A file name in the store root carrying the payload, left untracked.
+	evilName := filepath.Join(storeDir, forge+".yaml")
+	if err := os.WriteFile(evilName, []byte("GH_TOKEN: ENC[AES256_GCM,data:x,iv:y,tag:z,type:str]\n"), 0644); err != nil {
+		t.Logf("this filesystem refuses the forging file name (%v); the other payload routes still run", err)
+	}
+
+	// With it in place, exec refuses naming it, escaped.
+	assertNoForgery([][]string{
+		append(append([]string{"exec", "--as", "rowan"}, withKey...), "--only", "all", "--", "true"),
+	})
+}
+
+// shellQuote renders s as one single-quoted sh word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'"'"'`) + "'"
 }
 
 // Test 20: TestAStaleWorkingCopyIsRefused
@@ -297,6 +369,85 @@ func TestAStaleWorkingCopyIsRefused(t *testing.T) {
 		t.Errorf("no upstream branch expected exec refusal 125, got %d: %s", code, errOut)
 	}
 	runCmd(t, storeDir, "git", "checkout", "main")
+
+	check := func(args ...string) (string, string, int) {
+		return runNovaSecrets(bin, append([]string{"check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath}, args...)...)
+	}
+	execTrue := func() (string, string, int) {
+		return runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true")
+	}
+
+	// 5. head= on the green run is HEAD's short sha, exactly.
+	short := strings.TrimSpace(runCmd(t, storeDir, "git", "rev-parse", "--short=7", "HEAD"))
+	out, errOut, code = check()
+	if code != 0 || !regexp.MustCompile(`(^| )head=`+short+`( |$)`).MatchString(strings.TrimSpace(out)) {
+		t.Errorf("green check must carry head=%s, got %d: %s%s", short, code, out, errOut)
+	}
+
+	// 6. HEAD BEHIND its remote-tracking ref: check exit 1 naming the pull, exec 125
+	// with the same line, and neither is green.
+	runCmd(t, storeDir, "git", "reset", "-q", "--hard", "HEAD~1")
+	_, checkErr, code := check()
+	if code != 1 || !strings.Contains(checkErr, "git -C "+storeDir+" pull --ff-only") {
+		t.Errorf("behind working copy expected check exit 1 naming git -C <store> pull --ff-only, got %d: %s", code, checkErr)
+	}
+	_, execErr, code := execTrue()
+	if code != 125 || !strings.Contains(execErr, "git -C "+storeDir+" pull --ff-only") {
+		t.Errorf("behind working copy expected exec 125 naming git -C <store> pull --ff-only, got %d: %s", code, execErr)
+	}
+
+	// 7. The mutation the spec names, run as a fixture: point the tracking ref at HEAD
+	// and both are green, so the refusal above was the ref comparison and nothing else.
+	behindHead := strings.TrimSpace(runCmd(t, storeDir, "git", "rev-parse", "HEAD"))
+	remoteHead := strings.TrimSpace(runCmd(t, storeDir, "git", "rev-parse", "refs/remotes/origin/main"))
+	runCmd(t, storeDir, "git", "update-ref", "refs/remotes/origin/main", behindHead)
+	if _, errOut, code = check(); code != 0 {
+		t.Errorf("tracking ref pointed at HEAD: check must be green, got %d: %s", code, errOut)
+	}
+	if _, errOut, code = execTrue(); code != 0 {
+		t.Errorf("tracking ref pointed at HEAD: exec must be green, got %d: %s", code, errOut)
+	}
+	runCmd(t, storeDir, "git", "update-ref", "refs/remotes/origin/main", remoteHead)
+	runCmd(t, storeDir, "git", "merge", "-q", "--ff-only", "refs/remotes/origin/main")
+
+	// 8. The case it does NOT catch, asserted so nobody believes otherwise: the remote
+	// moves on and nothing fetches. The tracking ref is stale with HEAD, so both are
+	// GREEN, by design; that is why every launcher pulls.
+	other := filepath.Join(td, "other")
+	remoteURL := strings.TrimSpace(runCmd(t, storeDir, "git", "remote", "get-url", "origin"))
+	runCmd(t, "", "git", "clone", "-q", remoteURL, other)
+	runCmd(t, other, "git", "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "--allow-empty", "-m", "remote moves on")
+	runCmd(t, other, "git", "push", "-q", "origin", "main")
+	if _, errOut, code = check(); code != 0 {
+		t.Errorf("an unfetched remote move is green by design, got %d: %s", code, errOut)
+	}
+	if _, errOut, code = execTrue(); code != 0 {
+		t.Errorf("an unfetched remote move is green by design on exec, got %d: %s", code, errOut)
+	}
+
+	// 9. A .git that is a FILE (a worktree): a refusal naming that fact on both verbs,
+	// never the stale-ref sentence and never "no .git".
+	wt := filepath.Join(td, "worktree")
+	runCmd(t, storeDir, "git", "worktree", "add", "-q", "-b", "wt", wt)
+	if fi, err := os.Lstat(filepath.Join(wt, ".git")); err != nil || fi.IsDir() {
+		t.Fatalf("the worktree fixture has no .git file: %v", err)
+	}
+	for _, v := range [][]string{
+		{"check", "--store", wt, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath},
+		{"exec", "--store", wt, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true"},
+	} {
+		want := 2
+		if v[0] == "exec" {
+			want = 125
+		}
+		_, errOut, code := runNovaSecrets(bin, v...)
+		if code != want || !strings.Contains(errOut, ".git is a file (a worktree or submodule)") {
+			t.Errorf("%s on a worktree: expected %d naming the .git file, got %d: %s", v[0], want, code, errOut)
+		}
+		if strings.Contains(errOut, "pull --ff-only") || strings.Contains(errOut, "no .git") {
+			t.Errorf("%s on a worktree named the wrong fact: %s", v[0], errOut)
+		}
+	}
 }
 
 // Test 21: TestADecryptedFileLeftInTheStoreIsRed
