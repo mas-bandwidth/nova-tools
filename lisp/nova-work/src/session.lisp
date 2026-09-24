@@ -246,6 +246,7 @@ rather than resumed."
   (parses 0 :type integer)
   (replays 0 :type integer)
   (emitted 0 :type integer)
+  (repair nil)
   (cache "" :type string)
   (verification nil))
 
@@ -289,13 +290,56 @@ Returns (values admitted-p reason exit-code)."
     (values t line 0)))
 
 (defun session-submit (sess request &key now)
-  "Submit REQUEST to SESS, checking admission first."
+  "Submit REQUEST to SESS, checking admission first. Under `session start
+--repair` a mutation goes through the repair gate before it reaches the
+kernel (SPEC-WORK.md:2430-2440)."
   (let ((verb (getf request :verb)))
     (multiple-value-bind (admitted-p reason exit-code)
         (session-check-admission sess verb :now now)
       (unless admitted-p
         (return-from session-submit (values nil reason exit-code)))
-      (submit (session-kernel sess) request))))
+      (if (and (session-repair sess)
+               (not (member verb '(:status :export))))
+          (%session-repair-submit sess request)
+          (submit (session-kernel sess) request)))))
+
+(defun %session-dry-run (kernel request)
+  "Apply REQUEST to a private copy of KERNEL's O through a private kernel's own
+writer and answer (values OK-P LINE EXIT-CODE CANDIDATE-STATE). The resident O,
+its journal and its revision are untouched: the validate-on-a-private-copy,
+then-publish shape of `atomic-batch-run` (src/transport.lisp)."
+  (let ((clone (make-kernel :state (copy-state (kernel-state kernel))
+                            :rev-base (kernel-next-rev kernel))))
+    (unwind-protect
+         (multiple-value-bind (okp line code) (submit clone request)
+           (values okp line code (kernel-state clone)))
+      ;; Stop the private kernel's command thread; it served one command.
+      (sb-thread:with-mutex ((kernel-q-lock clone))
+        (setf (kernel-closed-p clone) t)
+        (sb-thread:condition-broadcast (kernel-q-cvar clone))))))
+
+(defun %session-repair-submit (sess request)
+  "The repair session's mutation path (SPEC-WORK.md:2430-2440): the candidate
+is the resident O with the event applied, built on a private copy; it is
+published through the kernel's one writer only when `session-repair-gate`
+admits it, and refused at exit 1 with the `no repair` line otherwise, changing
+nothing. An admitted event updates the session's finding count, and at zero
+the session leaves repair and takes the ordinary gate thereafter."
+  (let ((kernel (session-kernel sess)))
+    (multiple-value-bind (okp line code candidate) (%session-dry-run kernel request)
+      (unless okp
+        (return-from %session-repair-submit (values nil line code)))
+      (multiple-value-bind (admitted rline rcode)
+          (session-repair-gate sess candidate :node (getf request :node))
+        (unless admitted
+          (return-from %session-repair-submit (values nil rline rcode))))
+      (multiple-value-bind (okp line code envelope) (submit kernel request)
+        (when okp
+          (setf (session-findings sess)
+                (length (cow-load-findings (kernel-state kernel))))
+          (when (zerop (session-findings sess))
+            (setf (session-repair sess) nil)))
+        (values okp line code envelope)))))
 
 (defun session-reconfirm (sess tip-sha &key now owner-record)
   "Reconfirm SESS against TIP-SHA and OWNER-RECORD on the branch.
@@ -347,6 +391,7 @@ Checks completion before until, tip == base, and OWNER generation/token."
                            (journal-token nil) (owner-record nil) (now nil)
                            (my-bench "") (lock-held t)
                            (socket-path nil) (serve nil) (foreground t)
+                           (repair nil)
                            (cache nil) (resolvers nil))
   "Start or resume a session. With SERVE the session becomes the resident
 process: it binds the local listener at SOCKET-PATH and serves reads, and with
@@ -369,20 +414,44 @@ returns while the daemon stays up (SPEC-WORK.md:268-310, :2256-2267)."
                                :journal (or journal (make-ordering-journal))))
                (cache-path (or cache ""))
                (verification (session-verification-from-cache cache-path resolvers))
-               (sess (make-session :path (or path "")
-                                   :owner (owner-owner record)
-                                   :generation (owner-generation record)
-                                   :token (owner-token record)
-                                   :until (owner-until record)
-                                   :state :live
-                                   :kernel k
-                                   :base base
-                                   :every every
-                                   :skew skew
-                                   :cache cache-path
-                                   :verification verification)))
-          (if serve
-              (start-session-server sess
-                                    :socket-path (or socket-path path)
-                                    :foreground foreground)
-              (values sess line 0))))))
+                (sess (make-session :path (or path "")
+                                    :owner (owner-owner record)
+                                    :generation (owner-generation record)
+                                    :token (owner-token record)
+                                    :until (owner-until record)
+                                    :state :live
+                                    :kernel k
+                                    :base base
+                                    :every every
+                                    :skew skew
+                                    :repair repair
+                                    :cache cache-path
+                                    :verification verification)))
+           (when repair
+             ;; A red set under --repair loads and validates the same way,
+             ;; names its findings, and exits 1 while any finding stands
+             ;; (SPEC-WORK.md:2430-2440). The source is never rewritten.
+             (setf (session-findings sess)
+                   (length (cow-load-findings (kernel-state k)))))
+           (if serve
+               (start-session-server sess
+                                     :socket-path (or socket-path path)
+                                     :foreground foreground)
+                (values sess line
+                        (if (and repair (plusp (session-findings sess))) 1 0)))))))
+
+(defun session-repair-gate (sess candidate-state &key node)
+  "The repair gate (SPEC-WORK.md:2430-2440): under `session start --repair` a
+candidate is admitted only when its whole-validation finding count is strictly
+below the session's current count, refused otherwise at exit 1 with the repair
+diff `<MUTATION> FAIL node=<id> findings=<n> was=<n>: no repair`. The candidate
+is the resident O as it would be with the event applied; neither the session's
+source nor the candidate is rewritten here (values admitted-p line exit-code)."
+  (let* ((current (session-findings sess))
+         (candidate (length (cow-load-findings candidate-state))))
+    (if (< candidate current)
+        (values t nil 0)
+        (values nil
+                (format nil "<MUTATION> FAIL node=~A findings=~D was=~D: no repair"
+                        (or node "<id>") candidate current)
+                1))))

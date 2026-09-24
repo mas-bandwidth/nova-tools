@@ -27,8 +27,11 @@ var mergeAudit = audit.Config{
 		"main.go|require|name":                                          "a required flag's name, a literal at every call site in this file",
 		"main.go|require|wants":                                         "the sentence saying what that flag WANTS, a literal at every call site in this file",
 		"pass.go|cmdRun|*loop":                                          "a time.Duration this binary's own flag package parsed; its String() is digits and unit letters and holds no separator",
+		"land.go|cmdLand|*loop":                                         "a time.Duration this binary's own flag package parsed; its String() is digits and unit letters and holds no separator",
+		"land.go|runLandVerb|int(in.loop.Seconds())":                    "a positive integer rendered as loop seconds; its Itoa is digits and holds no separator",
 		"verbs.go|cmdGate|s.name":                                       "a required flag's name, one of the three literals in the table declared above the site",
 		"verbs.go|cmdGate|s.wants":                                      "the sentence saying what that flag WANTS, one of the three literals in the same table",
+		"verbs.go|cmdGate|benchErr":                                     "an error already escaped through oneline.Field and oneline.Err inside gateBenchValidate in gatebench.go",
 		"main.go|done|f.verb":                                           "the verb's own name, a literal at every newFlags call site in this file",
 		"verbs.go|cmdInit|c.name":                                       "a flag's own name, one of the two literals \"base\" and \"lane-branch\" in the table above the site",
 		"pass.go|cmdRun|strconv.FormatFloat(*hours, 'g', -1, 64)":       "a float this binary's own flag package parsed, rendered as digits, a dot and an exponent letter",
@@ -48,8 +51,8 @@ var mergeAudit = audit.Config{
 		// The two batch sites are the shape this walk cannot see: a value built above the
 		// print site. Each has a behavioral test of its own in batch_test.go.
 		"batch.go|runBatch|batchLine(in, baseSHA, headSHA, members, dropped, append(skipped, step.name))": "the same fields as `line` below, rendered through oneline.Field inside batchLine, built at the --require-lisp refusal with the step that could not run appended to the skipped list; TestBatchRequireLispFailsWhenTheStepCannotRun asserts the whole line",
-		"batch.go|runBatch|line":        "the fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine including check= when checks=required; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
-		"batch.go|mergeMembers|in.name": "the batch's own --name, inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
+		"batch.go|runBatch|line":      "the fields shared by BATCH OK and BATCH FAIL, each rendered through oneline.Field inside batchLine including check= when checks=required; TestBatchOKNamesTheBaseTheHeadAndTheDroppedMember asserts that whole line byte for byte",
+		"batch.go|memberMessage|name": "the batch's own --name (mergeMembers and bisectBuild pass in.name), inside a COMMIT MESSAGE rather than a line of the grammar, and held to safepath.NameOK at the flag site: letters, digits, dot, dash and underscore, which TestBatchRefusesANameThatIsNotOnePathElement pins",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -86,6 +89,15 @@ var mergeAudit = audit.Config{
 		// SIMULATE POISON quotes.
 		`"github.com/mas-bandwidth/nova-tools/internal/goenv"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
+		// internal/merge/bench holds no writer of its own: Validate reads the machines
+		// registry and returns an error whose message is already escaped through
+		// oneline.Field and oneline.Err; it prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/merge/bench"`,
+		// hygiene holds no writer of its own (#1661): Check runs read-only git over a
+		// member's range and RETURNS findings; batch renders the one it names through
+		// oneline.Escape/Cap and %q before printing, and a matched secret's text is never
+		// in a finding at all.
+		`"github.com/mas-bandwidth/nova-tools/internal/hygiene"`,
 		// safepath holds no writer of its own: RemoveUnder only decides whether a path
 		// may be removed and returns an os error, which every caller renders through
 		// oneline.Escape or oneline.Err before printing. It cannot write past the
@@ -116,6 +128,13 @@ var mergeAudit = audit.Config{
 		// react.go publishes and reads through internal/ci, whose values are rendered
 		// through oneline before this package prints them.
 		`"github.com/mas-bandwidth/nova-tools/internal/ci"`,
+		// friendread owns the read event's spelling (Stream, EventRead), so the writer
+		// in readevent.go and the fold the 1 s table runs agree on the wire by one
+		// constant. It is a fold over caller-supplied entries and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/friendread"`,
+		// events owns the one stream's write contract; readevent.go takes only MaxLen,
+		// the approximate cap every writer trims the stream to, and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/events"`,
 		// internal/ci/slowtests is batch's reader of a `go test -json` stream, and it is
 		// THE SAME DECODER cmd/nova-ci reads CI's own stream with. It holds no writer:
 		// Parse decodes newline-delimited JSON into structs and returns them, and the
@@ -123,8 +142,10 @@ var mergeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"`,
 		// regexp holds no writer of its own: batch.go uses it to read a go.mod's `go`
 		// directive, the version `go version` printed, and the `go: downloading ...`
-		// notices it drops off the front of a failing step's output. Match and
-		// FindStringSubmatch are pure reads that return strings, and every one of them
+		// notices it drops off the front of a failing step's output; fold.go's one use
+		// matches the `supersedes #<n>` lines a fold body carries so --close-folded knows
+		// which pull requests the squash replaced. Match, FindStringSubmatch and
+		// FindAllStringSubmatch are pure reads that return strings, and every one of them
 		// reaches a line through oneline.Escape or oneline.Field.
 		// sync holds no writer of its own: react.go's one use is a sync.Once that installs
 		// go-redis's logger once for the process (#1609), and quietRedis drops every line
@@ -135,6 +156,10 @@ var mergeAudit = audit.Config{
 		// skipped set in one deterministic order, so two reads of one file print the
 		// same lines. It returns nothing and prints nothing.
 		`"sort"`,
+		// os/exec is already named above (simulate's child process); the fold verb reuses
+		// it the same way, to run the package test and the layout test of #560 in the
+		// fold's own scratch clone (docs/SPEC-MERGE.md "The fold (#1142)"), captured and
+		// reduced to one line through oneline.Cap at the error site.
 	},
 	MinClassified: 60,
 }
