@@ -742,3 +742,23 @@ func median(xs []float64) float64 {
 	}
 	return (s[m-1] + s[m]) / 2
 }
+
+// Tier lists the allowed routes of one rung, the rung a card names with its
+// ROUTE: pro|flash line, in file order, which is the table's efficiency order
+// within a rung (best first). A held or dropped route is never in it, nor a
+// benched or dead one, and no types row or override widens it: the bench
+// harness runs a card on the first row (nova-sprint routes --tier).
+func (t *Table) Tier(rung string) []Row {
+	var out []Row
+	for _, r := range t.rows {
+		if r.Rung == rung && r.State == Allowed && r.Flag != FlagBenched && r.Flag != FlagDead {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// Launch is the model string the bench harness passes to nova-swarm native
+// --model: <via>/<model>, e.g. opencode/qwen3.6-plus or
+// openrouter/qwen/qwen3.8-flash.
+func (r Row) Launch() string { return r.Via + "/" + r.Model }

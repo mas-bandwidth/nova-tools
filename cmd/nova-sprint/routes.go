@@ -21,6 +21,13 @@ import (
 //	nova-sprint routes --rung flash [--type recut]
 //	nova-sprint routes --check orgptnano --rung flash [--type read3 [--redis <host:port>]]
 //	nova-sprint routes --preamble ordspro
+//	nova-sprint routes --tier flash|pro
+//
+// --tier prints the allowed routes of the tier a card names with ROUTE:
+// pro|flash, one "<route> <via>/<model>" line each in the table's efficiency
+// order (best first); a held or dropped route is never printed. The bench
+// harness (rowan-tools fleet/files/nova-card-harness) runs the card on the
+// first line's model.
 //
 // --preamble prints the route's one-paragraph preamble (#2498 S8), built from
 // the attribution's fault classes the table carries for it, for a card front
@@ -40,7 +47,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "routes",
-		Summary: "print allowed_routes per rung and work type with the ranking numbers; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
+		Summary: "print allowed_routes per rung and work type with the ranking numbers; --tier flash|pro prints that tier's allowed routes and launch models, best first; --check <route> --rung <r> [--type <t>] answers one card (exit 1 REFUSED); --preamble <route> prints its preamble",
 		Run:     cmdRoutes,
 	})
 }
@@ -53,12 +60,16 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	typ := fs.String("type", "", "")
 	check := fs.String("check", "", "")
 	preamble := fs.String("preamble", "", "")
+	tier := fs.String("tier", "", "")
 	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
 	if err := fs.Parse(args); err != nil {
-		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route> and --redis <host:port>")
+		return refuse(stderr, "routes", err.Error()+"; it takes --rung, --type, --check <route>, --preamble <route>, --tier flash|pro and --redis <host:port>")
 	}
 	if fs.NArg() > 0 {
 		return refuse(stderr, "routes", "takes flags, not positional arguments")
+	}
+	if *tier != "" && (*check != "" || *typ != "" || *rung != "" || *preamble != "") {
+		return refuse(stderr, "routes", "--tier takes no other flag")
 	}
 	if *preamble != "" && (*check != "" || *typ != "" || *rung != "") {
 		return refuse(stderr, "routes", "--preamble takes no other flag")
@@ -94,6 +105,15 @@ func cmdRoutes(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			return 1
 		}
 		fmt.Fprintf(stdout, "OK route=%s rung=%s type=%s\n", *check, *rung, dash(*typ))
+		return 0
+	case *tier != "":
+		rows := tab.Tier(*tier)
+		if len(rows) == 0 {
+			return refuse(stderr, "routes", "tier "+*tier+" has no allowed routes; the tiers are flash and pro")
+		}
+		for _, r := range rows {
+			fmt.Fprintf(stdout, "%s %s\n", r.Route, r.Launch())
+		}
 		return 0
 	case *rung != "":
 		allowed := tab.Allowed(*rung, *typ)

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -90,6 +91,8 @@ type cardDoc struct {
 	Repo           string // owner/name
 	Kind           string
 	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
+	Route          string // ROUTE: pro|flash, the routes.yaml tier the bench harness picks its model from; absent is flash
+	Priority       string // PRIORITY: <integer>, the card's score in the pool ZSET; absent is 0
 	Payload        string
 }
 
@@ -125,6 +128,15 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	if err != nil {
 		return cardDoc{}, err
 	}
+	routeValue, routeDeclared := header["ROUTE"]
+	route, err := parseRoute(routeValue, routeDeclared)
+	if err != nil {
+		return cardDoc{}, err
+	}
+	priority, err := parsePriority(header["PRIORITY"])
+	if err != nil {
+		return cardDoc{}, err
+	}
 	repo, err := probeRepo(ctx, cloneURL(header))
 	if err != nil {
 		return cardDoc{}, err
@@ -145,8 +157,44 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 		Repo:           repo,
 		Kind:           kind,
 		Type:           header["TYPE"],
+		Route:          route,
+		Priority:       priority,
 		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
+}
+
+// The routes a card may carry: the rung of internal/nsprint/route/routes.yaml
+// the bench harness picks its model from (nova-sprint routes --tier <route>,
+// first allowed route). A card with no ROUTE line is flash.
+const (
+	RouteFlash = "flash"
+	RoutePro   = "pro"
+)
+
+// parseRoute accepts ROUTE: pro or ROUTE: flash. An absent line is flash; an
+// empty ROUTE: line or any other value is refused, never guessed.
+func parseRoute(value string, declared bool) (string, error) {
+	if !declared {
+		return RouteFlash, nil
+	}
+	switch value {
+	case RouteFlash, RoutePro:
+		return value, nil
+	}
+	return "", fmt.Errorf("ROUTE: %q is not pro or flash", value)
+}
+
+// parsePriority accepts PRIORITY: <integer>, the ZADD score card push gives
+// the card in the pool. An absent line is 0.
+func parsePriority(value string) (string, error) {
+	if value == "" {
+		return "0", nil
+	}
+	n, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("PRIORITY: %q is not an integer", value)
+	}
+	return strconv.FormatInt(n, 10), nil
 }
 
 // parseHeader reads the contract line and the contiguous KEY: value block
