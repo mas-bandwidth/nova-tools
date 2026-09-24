@@ -569,34 +569,24 @@ redis.register_function('ns_gate_receipt', function(keys, args)
     'at', tostring(now)
   )
 
-  local class = b[6]
-  local members = b[7]
-  local kind = nil
-  if class == 'single' or (class == 'full' and members and not string.find(members, ',')) then
-    kind = 'single'
-  elseif class == 'tip' then
-    kind = 'tip'
+  -- The gid receipt's kind is the batch's shape (#3139 3.3, 5.4, 8.4): the
+  -- selector's class for a ci single and a tip gate is full, so a full batch
+  -- of exactly one member is a single (its head, on from_tip) and a full batch
+  -- with no members is a tip gate (from_tip itself). Any other batch is a
+  -- train and writes no gid receipt. No field is filled with a default: a
+  -- gate with no from_tip writes none either.
+  local class, members, from_tip = b[6] or '', b[7] or '', b[5] or ''
+  local kind, head = nil, ''
+  if class == 'full' and from_tip ~= '' then
+    if members == '' then
+      kind, head = 'tip', from_tip
+    elseif not string.find(members, ',') then
+      kind, head = 'single', string.match(members, '^[^@]+@([^@,]+)$') or ''
+    end
   end
 
-  if kind then
-    local head = ''
-    local base_sha = b[5] or ''
-    if kind == 'single' then
-      if members and members ~= '' then
-        head = string.match(members, '^[^@]+@([^@,]+)') or (train_head or '')
-      else
-        head = train_head or ''
-      end
-    elseif kind == 'tip' then
-      head = train_head or ''
-      if head == '' then
-        head = b[5] or ''
-      end
-      if base_sha == '' then
-        base_sha = head
-      end
-    end
-
+  if kind and head ~= '' then
+    local base_sha = from_tip
     local pol_key = 'land:' .. repo .. ':' .. base .. ':policy'
     local pol = redis.call('HMGET', pol_key, 'policy_id', 'required_set_id', 'runner_id')
     local policy_id, required_set_id, runner_id = pol[1], pol[2], pol[3]

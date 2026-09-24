@@ -31,6 +31,8 @@ const (
 
 var (
 	ErrNoPolicy = errors.New("civerdict: no policy record")
+	// ErrNoTip is an expected identity asked for with no base or base tip sha.
+	ErrNoTip = errors.New("civerdict: no base tip")
 )
 
 // GID computes the 16-hex gate receipt identity (spec §2.2 / §3.7):
@@ -49,6 +51,15 @@ func Key(repo, head, gid string) string {
 // GIDsKey is the set of all GIDs gated for a head: ci:<owner/repo>:<head>:gids.
 func GIDsKey(repo, head string) string {
 	return "ci:" + strings.TrimSpace(repo) + ":" + strings.TrimSpace(head) + ":gids"
+}
+
+// RunnersKey holds a head's runner-only check rows (field runner:<row>) for
+// one expected gid: ci:<owner/repo>:<head>:<gid>:runners. The rows are
+// mutable (a rerun replaces an attempt), so they never share the write-once
+// receipt ci:<owner/repo>:<head>:<gid>: a row written first would make
+// gate_receipt_write answer ALREADY and the head would never get a verdict.
+func RunnersKey(repo, head, gid string) string {
+	return Key(repo, head, gid) + ":runners"
 }
 
 // PolicyKey is where the base policy record lives: land:<repo>:<base>:policy.
@@ -74,8 +85,19 @@ func Expected(ctx context.Context, c redis.Cmdable, repo, base, baseSHA string) 
 	policyID, _ := fields[0].(string)
 	requiredSetID, _ := fields[1].(string)
 	runnerID, _ := fields[2].(string)
+	return ExpectedFrom(base, baseSHA, policyID, requiredSetID, runnerID)
+}
+
+// ExpectedFrom is Expected over a policy record the caller already read
+// (policy_id, required_set_id, runner_id), so a batch can read every policy
+// in one pipeline. Any empty id is ErrNoPolicy; an empty base or baseSHA is
+// ErrNoTip. Neither is ever filled with a default.
+func ExpectedFrom(base, baseSHA, policyID, requiredSetID, runnerID string) (string, error) {
 	if policyID == "" || requiredSetID == "" || runnerID == "" {
 		return "", ErrNoPolicy
+	}
+	if strings.TrimSpace(base) == "" || strings.TrimSpace(baseSHA) == "" {
+		return "", ErrNoTip
 	}
 	return GID("single", base, baseSHA, requiredSetID, policyID, runnerID), nil
 }

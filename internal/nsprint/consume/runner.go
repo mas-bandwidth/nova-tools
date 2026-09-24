@@ -6,9 +6,10 @@ package consume
 // router needs its own group to see every event) and does two things:
 //
 //   - runner rows: a check_run whose name is a policy runner_rows row lands
-//     as field runner:<row> of the GID key ci:<repo>:<head>:<gid>, keeping the
-//     attempt with the highest key (gen, check_run_id, status rank, at)
-//     whatever its conclusion (ns_prtoread_runner, prtoread.lua);
+//     as field runner:<row> of ci:<repo>:<head>:<gid>:runners (the gid the
+//     lander expects for the PR's base, never the write-once receipt),
+//     keeping the attempt with the highest key (gen, check_run_id, status
+//     rank, at) whatever its conclusion (ns_prtoread_runner, prtoread.lua);
 //   - adoption: a sprint PR no card produced gets its ci cut and one review
 //     task per required reader at its head, once per head (adopt.go).
 //
@@ -47,7 +48,7 @@ const (
 	RunnerStateMissing = "MISSING" // anything else, an absent field included
 )
 
-// RunnerAttempt is the stored value of ci:<repo>:<head>:<gid> field runner:<row>.
+// RunnerAttempt is the stored value of ci:<repo>:<head>:<gid>:runners field runner:<row>.
 type RunnerAttempt struct {
 	Gen        int    `json:"gen"`
 	CheckRunID string `json:"check_run_id"`
@@ -59,7 +60,7 @@ type RunnerAttempt struct {
 	At         string `json:"at"`
 }
 
-// ReadRunnerAttempt decodes field runner:<row> of a ci record; false when the
+// ReadRunnerAttempt decodes field runner:<row> of a runners record; false when the
 // field is absent or not an attempt.
 func ReadRunnerAttempt(ci map[string]string, row string) (RunnerAttempt, bool) {
 	raw, ok := ci["runner:"+row]
@@ -90,7 +91,7 @@ func RunnerRow(ci map[string]string, row string) string {
 }
 
 // RunnerReady is the one readiness rule the lander and `land why` call over a
-// head's ci:<repo>:<head>:<gid> record: ok only when every named row is READY;
+// head's ci:<repo>:<head>:<gid>:runners record: ok only when every named row is READY;
 // missing names, in order, every row that is not (MISSING or FAIL; RunnerRow
 // says which).
 func RunnerReady(ci map[string]string, rows []string) (bool, []string) {
@@ -149,57 +150,41 @@ var ErrNoBaseTip = fmt.Errorf("%w: no base tip", ErrCutSkipped)
 
 // StoreCICut is the CICut `nova-sprint route` wires (#3040 rev 4, adoption
 // "gets its ci cut"): one ci.Cut per adopted head, against the base tip sha.
-// A base that is already a full sha is used as is; a branch name resolves
-// through the lander's land:<repo>:<base>:tip record (land.TipKey), so the
-// rule still makes no REST call.
-//
-// ns_ci_cut rewrites ci:<repo>:<head> from scratch (DEL, then PENDING), which
-// would drop the runner:<row> fields this rule's drain half already wrote for
-// that head. They are read in the same round trip as the base tip and put
-// back after a CREATED cut; this rule is their only writer and runs under the
-// route lease, so nothing lands between the two.
+// A base that is already a full sha is used as is, with BaseRef naming its
+// branch; a branch name is the BaseRef and resolves through the lander's
+// land:<repo>:<base>:tip record (land.TipKey), so the rule still makes no
+// REST call. ns_ci_cut writes only the card (#3139 rev 7 3.7), so the runner
+// rows at ci:<repo>:<head>:<gid>:runners are never touched by a cut.
 func StoreCICut(st *store.Store, actor string) func(context.Context, CICut) error {
 	return func(ctx context.Context, c CICut) error {
 		if !fullSHA(c.Head) {
 			return fmt.Errorf("%w: head %q is not a full sha", ErrCutSkipped, c.Head)
 		}
-		client := st.Client()
-		recKey := ci.RecordKey(c.Repo, c.Head)
-		tipKey := land.TipKey(c.Repo, c.Base)
-		pipe := client.Pipeline()
-		rec := pipe.HGetAll(ctx, recKey)
-		var tipCmd *redis.StringCmd
-		if !fullSHA(c.Base) {
-			tipCmd = pipe.HGet(ctx, tipKey, "sha")
-		}
-		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
-			return fmt.Errorf("ci cut %s: %w", recKey, err)
-		}
-		base := c.Base
-		if tipCmd != nil {
-			base = tipCmd.Val()
-			if !fullSHA(base) {
+		base, baseRef := c.Base, c.BaseRef
+		if !fullSHA(base) {
+			if baseRef == "" {
+				baseRef = base
+			}
+			tipKey := land.TipKey(c.Repo, baseRef)
+			tip, err := st.Client().HGet(ctx, tipKey, "sha").Result()
+			if err != nil && !errors.Is(err, redis.Nil) {
+				return fmt.Errorf("ci cut %s: %w", tipKey, err)
+			}
+			if !fullSHA(tip) {
 				return fmt.Errorf("%w: no tip sha in %s", ErrNoBaseTip, tipKey)
 			}
+			base = tip
 		}
-		rows := []any{}
-		for f, v := range rec.Val() {
-			if strings.HasPrefix(f, "runner:") {
-				rows = append(rows, f, v)
-			}
+		if baseRef == "" {
+			return fmt.Errorf("%w: no base branch for %s@%s", ErrCutSkipped, c.Repo, head8(c.Head))
 		}
 		r, err := ci.Cut(ctx, st, ci.CutRequest{Sprint: c.Sprint, Repo: c.Repo, PR: c.PR,
-			Head: c.Head, Base: base, Actor: actor})
+			Head: c.Head, Base: base, BaseRef: baseRef, Actor: actor})
 		if err != nil {
 			return err
 		}
 		if r.ExitCode() != ci.ExitOK {
 			return fmt.Errorf("%w: ns_ci_cut %s", ErrCutSkipped, r)
-		}
-		if r.Status == "CREATED" && len(rows) > 0 {
-			if err := client.HSet(ctx, recKey, rows...).Err(); err != nil {
-				return fmt.Errorf("ci cut %s: restore runner rows: %w", recKey, err)
-			}
 		}
 		return nil
 	}
@@ -373,8 +358,9 @@ func (p *PRToReadRule) drain(ctx context.Context, policy string, out *strings.Bu
 }
 
 type runnerCandidate struct {
-	repo, head, row string
-	cmd             *redis.Cmd
+	repo, head, number, row, arg string
+	base, gid                    string
+	cmd                          *redis.Cmd
 }
 
 // runnerAttemptArg is the attempt_json ns_prtoread_runner compares.
@@ -386,11 +372,18 @@ type runnerAttemptArg struct {
 	At         string `json:"at"`
 }
 
-// batch is one delivered batch in exactly two more round trips: one pipeline
-// of every candidate's ns_prtoread_runner in stream order (skipped when there
-// is none), then one XACK of every id in the batch. A failed pipeline acks
-// nothing, so the batch is retried from pending on the next pass; the
-// function is a no-op on a redelivered entry.
+// batch is one delivered batch in at most four more round trips: one
+// pipeline reading each candidate PR's base from its sprint record
+// s:<S>:pr:<repo>:<n>, one reading each base's tip and policy, one pipeline of
+// every resolved candidate's ns_prtoread_runner in stream order (the first
+// three are skipped when there is no candidate), then one XACK of every id in
+// the batch. The gid is civerdict.ExpectedFrom over that base, tip and
+// policy, so a row lands at ci:<repo>:<head>:<gid>:runners for the identity
+// the lander will expect. Nothing is filled with a default: a check with no
+// sprint PR record prints NOBASE, a base with no policy or no tip prints
+// NOPOLICY, and neither writes. A failed pipeline acks nothing, so the batch
+// is retried from pending on the next pass; the function is a no-op on a
+// redelivered entry.
 func (p *PRToReadRule) batch(ctx context.Context, msgs []redis.XMessage, policy string, out *strings.Builder) (int, error) {
 	if len(msgs) == 0 {
 		return 0, nil
@@ -398,7 +391,6 @@ func (p *PRToReadRule) batch(ctx context.Context, msgs []redis.XMessage, policy 
 	client := p.Store.Client()
 	rows := map[string]map[string]bool{}
 	var cands []*runnerCandidate
-	pipe := client.Pipeline()
 	ids := make([]string, 0, len(msgs))
 	for _, m := range msgs {
 		ids = append(ids, m.ID)
@@ -424,28 +416,115 @@ func (p *PRToReadRule) batch(ctx context.Context, msgs []redis.XMessage, policy 
 		if err != nil {
 			return 0, fmt.Errorf("pr-to-read: attempt %s: %w", m.ID, err)
 		}
-		c := &runnerCandidate{repo: repo, head: v("head"), row: row}
-		ciKey := civerdict.Key(repo, c.head, "expected")
-		c.cmd = pipe.FCall(ctx, FunctionPRToReadRunner, []string{ciKey}, row, string(arg))
-		cands = append(cands, c)
+		cands = append(cands, &runnerCandidate{repo: repo, head: v("head"), number: v("number"), row: row, arg: string(arg)})
 	}
-	if len(cands) > 0 {
-		if _, err := pipe.Exec(ctx); err != nil {
-			return 0, fmt.Errorf("pr-to-read: runner rows: %w", err)
-		}
-		for _, c := range cands {
-			reply, err := c.cmd.StringSlice()
-			if err != nil || len(reply) < 5 {
-				return 0, fmt.Errorf("pr-to-read: runner %s@%s %s: %v %v", c.repo, head8(c.head), c.row, reply, err)
-			}
-			fmt.Fprintf(out, "RUNNER %s@%s %s g%s/%s %s/%s %s\n", c.repo, head8(c.head), c.row,
-				reply[1], reply[2], reply[3], reply[4], reply[0])
-		}
+	written, err := p.runnerRows(ctx, cands, out)
+	if err != nil {
+		return 0, err
 	}
 	if err := client.XAck(ctx, ghevent.Stream, p.Group(), ids...).Err(); err != nil {
-		return len(cands), fmt.Errorf("pr-to-read: ack: %w", err)
+		return written, fmt.Errorf("pr-to-read: ack: %w", err)
 	}
-	return len(cands), nil
+	return written, nil
+}
+
+// runnerRows resolves each candidate's base and gid and writes the rows it
+// can; see batch for the round trips and the refusals.
+func (p *PRToReadRule) runnerRows(ctx context.Context, cands []*runnerCandidate, out *strings.Builder) (int, error) {
+	if len(cands) == 0 {
+		return 0, nil
+	}
+	client := p.Store.Client()
+	baseCmds := map[string]*redis.StringCmd{}
+	pipe := client.Pipeline()
+	for _, c := range cands {
+		if c.number == "" {
+			continue
+		}
+		k := "s:" + p.Sprint + ":pr:" + c.repo + ":" + c.number
+		if _, ok := baseCmds[k]; !ok {
+			baseCmds[k] = pipe.HGet(ctx, k, "base")
+		}
+	}
+	if len(baseCmds) > 0 {
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return 0, fmt.Errorf("pr-to-read: runner bases: %w", err)
+		}
+	}
+	type baseRead struct {
+		tip *redis.StringCmd
+		pol *redis.SliceCmd
+	}
+	byBase := map[string]*baseRead{}
+	pipe = client.Pipeline()
+	for _, c := range cands {
+		if c.number != "" {
+			if cmd := baseCmds["s:"+p.Sprint+":pr:"+c.repo+":"+c.number]; cmd != nil {
+				c.base = strings.TrimSpace(cmd.Val())
+			}
+		}
+		if c.base == "" {
+			continue
+		}
+		k := c.repo + "\x00" + c.base
+		if _, ok := byBase[k]; !ok {
+			byBase[k] = &baseRead{
+				tip: pipe.HGet(ctx, civerdict.TipKey(c.repo, c.base), "sha"),
+				pol: pipe.HMGet(ctx, civerdict.PolicyKey(c.repo, c.base), "policy_id", "required_set_id", "runner_id"),
+			}
+		}
+	}
+	if len(byBase) > 0 {
+		if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+			return 0, fmt.Errorf("pr-to-read: runner policy: %w", err)
+		}
+	}
+	var live []*runnerCandidate
+	pipe = client.Pipeline()
+	for _, c := range cands {
+		if c.base == "" {
+			fmt.Fprintf(out, "NOBASE %s@%s %s no sprint PR record for #%s\n", c.repo, head8(c.head), c.row, c.number)
+			continue
+		}
+		bc := byBase[c.repo+"\x00"+c.base]
+		pol := bc.pol.Val()
+		field := func(i int) string {
+			if i < len(pol) {
+				s, _ := pol[i].(string)
+				return s
+			}
+			return ""
+		}
+		gid, err := civerdict.ExpectedFrom(c.base, strings.TrimSpace(bc.tip.Val()), field(0), field(1), field(2))
+		switch {
+		case errors.Is(err, civerdict.ErrNoPolicy):
+			fmt.Fprintf(out, "NOPOLICY %s@%s %s %s\n", c.repo, head8(c.head), c.row, civerdict.PolicyKey(c.repo, c.base))
+			continue
+		case errors.Is(err, civerdict.ErrNoTip):
+			fmt.Fprintf(out, "NOPOLICY %s@%s %s no tip in %s\n", c.repo, head8(c.head), c.row, civerdict.TipKey(c.repo, c.base))
+			continue
+		case err != nil:
+			return 0, fmt.Errorf("pr-to-read: runner %s@%s: %w", c.repo, head8(c.head), err)
+		}
+		c.gid = gid
+		c.cmd = pipe.FCall(ctx, FunctionPRToReadRunner, []string{civerdict.RunnersKey(c.repo, c.head, gid)}, c.row, c.arg)
+		live = append(live, c)
+	}
+	if len(live) == 0 {
+		return 0, nil
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, fmt.Errorf("pr-to-read: runner rows: %w", err)
+	}
+	for _, c := range live {
+		reply, err := c.cmd.StringSlice()
+		if err != nil || len(reply) < 5 {
+			return 0, fmt.Errorf("pr-to-read: runner %s@%s %s: %v %v", c.repo, head8(c.head), c.row, reply, err)
+		}
+		fmt.Fprintf(out, "RUNNER %s@%s %s g%s/%s %s/%s %s\n", c.repo, head8(c.head), c.row,
+			reply[1], reply[2], reply[3], reply[4], reply[0])
+	}
+	return len(live), nil
 }
 
 func head8(h string) string {

@@ -3,10 +3,15 @@
 -- verdict record ci:<repo>:<head>:<gid> and one receipt in the sprint log in one
 -- atomic call (spec 2.1 rule 2). No shebang: loader.go prepends the header.
 --
--- The verdict record has two writers (10.3): ns_ci_cut and ns_ci_rerun set
--- verdict PENDING with the new attempt in the same call that cuts the card,
--- and ns_ci_end writes the terminal fields in the same call that ends the
--- card. ns_ci_dispose is the typed disposition on a FLAKY head (10.5 item 3).
+-- The verdict record is a write-once receipt (#3139 rev 7 3.7): ns_ci_cut
+-- and ns_ci_rerun write only the card (PENDING and the attempt live on
+-- s:<S>:card:<label>), and ns_ci_end writes a final verdict through
+-- gate_receipt_write in the same call that ends the card. ns_ci_dispose is the
+-- typed disposition on a FLAKY head (10.5 item 3).
+--
+-- Every lua/ file shares one chunk and Lua allows 200 locals in it, so only
+-- the two names land.lua shares (ci_sha256_hex, gate_receipt_write) are
+-- chunk locals; the rest of this file is one do-block.
 --
 -- Execution state and verdict are distinct (10.5 item 5): a script that ran
 -- to its end ends DONE with verdict OK or FAIL; a wrapper failure ends FAILED
@@ -28,6 +33,8 @@
 -- Parking cuts no item of its own, and a HOLD on a FLAKY head writes its fix
 -- item under <pr>:<head>:flaky-hold:<pkg>.
 
+local ci_sha256_hex, gate_receipt_write
+do
 local CI_FRONT = -1000000000
 
 local ci_sha256_k = {
@@ -41,7 +48,7 @@ local ci_sha256_k = {
   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 }
 
-local function ci_sha256_hex(msg)
+function ci_sha256_hex(msg)
   local band, bor, bxor, bnot = bit.band, bit.bor, bit.bxor, bit.bnot
   local ror, rshift, lshift = bit.ror, bit.rshift, bit.lshift
 
@@ -136,7 +143,7 @@ end
 
 -- gate_receipt_write (3.7): writes the write-once single or tip gid receipt.
 -- ci:<repo>:<head>:<gid> and ci:<repo>:<base>:tip:<tip>:<gid>.
-local function gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test, at)
+function gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test, at)
   local ckey = 'ci:' .. repo .. ':' .. head .. ':' .. gid
   if redis.call('EXISTS', ckey) == 1 then
     return 'ALREADY'
@@ -557,3 +564,4 @@ redis.register_function('ns_ci_cut', ci_cut)
 redis.register_function('ns_ci_end', ci_end)
 redis.register_function('ns_ci_rerun', ci_rerun)
 redis.register_function('ns_ci_dispose', ci_dispose)
+end

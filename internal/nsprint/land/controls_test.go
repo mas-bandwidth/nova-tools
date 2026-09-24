@@ -750,6 +750,10 @@ func TestL31c(t *testing.T) {
 //   - ns_ci_cut and ns_ci_rerun write no ci: key.
 //   - A second end for the same gid returns ALREADY.
 //   - An end on another base_sha leaves H ci stale and queues one single.
+//   - The gate's receipt kind follows the batch shape the selector makes: a
+//     full batch of one member writes kind=single, a full batch with no
+//     members (a tip gate) writes kind=tip at the tip and in the tip family,
+//     and a full train of two writes no gid receipt.
 //   - FAIL then rerun FAIL on same test: one FAIL receipt, none after first end.
 //   - FAIL then OK: no receipt until disposition rerun, whose OK writes OK.
 //   - An end with no policy record returns NOPOLICY and writes no ci: key.
@@ -766,6 +770,7 @@ func TestL31d(t *testing.T) {
 		f.client.SAdd(f.ctx, "benches", "bench-1")
 		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 
 		headH := "aaaa111122223333444455556666777788889999"
 		tipSHA := "1111111111111111111111111111111111111111"
@@ -860,8 +865,10 @@ func TestL31d(t *testing.T) {
 		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
 		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 
 		headH2 := "bbbb111122223333444455556666777788889999"
 		tipSHA := "1111111111111111111111111111111111111111"
@@ -919,7 +926,7 @@ func TestL31d(t *testing.T) {
 		}
 
 		batchID := "batch-c1"
-		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unitID+"@"+headH, "", "single", tipSHA, "in-c1")
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unitID+"@"+headH, "", land.ClassFull, tipSHA, "in-c1")
 		if err != nil {
 			t.Fatalf("batch plan: %v", err)
 		}
@@ -966,7 +973,7 @@ func TestL31d(t *testing.T) {
 			t.Fatalf("unit eval: %v", err)
 		}
 		batchOld := "batch-old"
-		tokOld, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchOld, f.lease, unitID+"@"+headH, "", "single", oldTipSHA, "in-old")
+		tokOld, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchOld, f.lease, unitID+"@"+headH, "", land.ClassFull, oldTipSHA, "in-old")
 		if err != nil {
 			t.Fatalf("batch plan: %v", err)
 		}
@@ -1008,13 +1015,90 @@ func TestL31d(t *testing.T) {
 
 		batchID := "batch-single-1"
 		membersCSV := fmt.Sprintf("%s@%s", unitID, headH)
-		_, _, err = land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, membersCSV, "", "single", currTipSHA, "in-single")
+		_, _, err = land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, membersCSV, "", land.ClassFull, currTipSHA, "in-single")
 		if err != nil {
 			t.Fatalf("batch plan single: %v", err)
 		}
 		bState, _ := f.client.HGet(f.ctx, land.BatchKey(f.repo, f.base, batchID), "class").Result()
-		if bState != "single" {
-			t.Fatalf("batch class: %s, want single", bState)
+		if bState != land.ClassFull {
+			t.Fatalf("batch class: %s, want %s (the selector's class for a ci single)", bState, land.ClassFull)
+		}
+	})
+
+	// Rowan's hold 5 item 3 on #3495: the selector emits only go, +vetwin,
+	// lisp and full, so a ci single is a full batch with one member and a tip
+	// gate is a full batch with no members. The gid receipt's kind follows
+	// that shape; a multi-member full batch writes no gid receipt.
+	t.Run("gate kind follows the batch shape: full single, full tip, full train", func(t *testing.T) {
+		f := newLandFixture(t, "nova-tools", "dev")
+		tipSHA := "2222222222222222222222222222222222222222"
+		pol, err := f.client.HMGet(f.ctx, civerdict.PolicyKey(f.repo, f.base), "policy_id", "required_set_id", "runner_id").Result()
+		if err != nil {
+			t.Fatalf("policy: %v", err)
+		}
+		polID, reqID, runID := pol[0].(string), pol[1].(string), pol[2].(string)
+
+		// A tip gate: class full, no members, gating from_tip itself.
+		tipBatch := "batch-tip-1"
+		if err := f.client.HSet(f.ctx, land.BatchKey(f.repo, f.base, tipBatch), "attempt", "1", "token", "71",
+			"state", "claimed", "from_tip", tipSHA, "class", land.ClassFull, "members", "").Err(); err != nil {
+			t.Fatalf("seed tip batch: %v", err)
+		}
+		res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, tipBatch, 1, "71", "GREEN", "bench-1", "worker-1", tipSHA, "tree-t", "in-tip", "", "", "", "", "10")
+		if err != nil || res != "OK" {
+			t.Fatalf("tip gate receipt: %s, %v", res, err)
+		}
+		tipGID := civerdict.GID("tip", f.base, tipSHA, reqID, polID, runID)
+		tipKey := "ci:" + f.repo + ":" + f.base + ":tip:" + tipSHA + ":" + tipGID
+		if rec, _ := f.client.HGetAll(f.ctx, tipKey).Result(); rec["kind"] != "tip" || rec["verdict"] != "OK" || rec["base_sha"] != tipSHA {
+			t.Fatalf("tip receipt %s = %v, want kind tip verdict OK base_sha %s", tipKey, rec, tipSHA)
+		}
+		if rec, _ := civerdict.Read(f.ctx, f.client, f.repo, tipSHA, tipGID); rec["kind"] != "tip" || rec["verdict"] != "OK" {
+			t.Fatalf("tip gate head receipt %s = %v, want kind tip verdict OK", civerdict.Key(f.repo, tipSHA, tipGID), rec)
+		}
+		if res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, tipBatch, 1, "71", "GREEN", "bench-1", "worker-1", tipSHA, "tree-t", "in-tip", "", "", "", "", "10"); err != nil || res != "ALREADY" {
+			t.Fatalf("second tip gate receipt: %s, %v; want ALREADY", res, err)
+		}
+		singleGID := civerdict.GID("single", f.base, tipSHA, reqID, polID, runID)
+		if n, _ := f.client.Exists(f.ctx, civerdict.Key(f.repo, tipSHA, singleGID)).Result(); n != 0 {
+			t.Fatalf("a tip gate wrote a kind=single receipt at %s", civerdict.Key(f.repo, tipSHA, singleGID))
+		}
+		if gids, _ := f.client.SMembers(f.ctx, civerdict.GIDsKey(f.repo, tipSHA)).Result(); len(gids) != 1 || gids[0] != tipGID {
+			t.Fatalf("gids for the tip = %v, want [%s]", gids, tipGID)
+		}
+
+		// A full batch of two members is a train: no gid receipt at either head.
+		headA := "eeee111122223333444455556666777788889999"
+		headB := "ffff111122223333444455556666777788889999"
+		for i, h := range []string{headA, headB} {
+			unit := fmt.Sprintf("gh/mas-bandwidth/nova-tools/%d", 120+i)
+			if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{Sprint: f.sprint, Unit: unit, Repo: f.repo,
+				Base: f.base, Branch: fmt.Sprintf("card-%d", 120+i), Head: h, BaseSHA: tipSHA}); err != nil {
+				t.Fatalf("unit head: %v", err)
+			}
+			if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unit, f.repo, f.base, 0); err != nil {
+				t.Fatalf("unit eval: %v", err)
+			}
+			if err := f.client.HSet(f.ctx, land.UnitKey(f.sprint, unit), "state", "landable", "files", fmt.Sprintf("p%d.go", i)).Err(); err != nil {
+				t.Fatalf("seed unit: %v", err)
+			}
+		}
+		train := "batch-train-1"
+		members := "gh/mas-bandwidth/nova-tools/120@" + headA + ",gh/mas-bandwidth/nova-tools/121@" + headB
+		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, train, f.lease, members, "", land.ClassFull, tipSHA, "in-train")
+		if err != nil {
+			t.Fatalf("batch plan train: %v", err)
+		}
+		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, train, 1, tok, "bench-1", "slot-2"); err != nil {
+			t.Fatalf("gate claim train: %v", err)
+		}
+		if res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, train, 1, tok, "GREEN", "bench-1", "worker-1", headB, "tree-2", "in-train", "", "", "", "", "10"); err != nil || res != "OK" {
+			t.Fatalf("train receipt: %s, %v", res, err)
+		}
+		for _, h := range []string{headA, headB} {
+			if n, _ := f.client.Exists(f.ctx, civerdict.GIDsKey(f.repo, h)).Result(); n != 0 {
+				t.Fatalf("a two-member full train wrote a gid receipt for %s", h)
+			}
 		}
 	})
 
@@ -1025,8 +1109,10 @@ func TestL31d(t *testing.T) {
 		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
 		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 
 		headH := "eeee111122223333444455556666777788889999"
 		tipSHA := "1111111111111111111111111111111111111111"
@@ -1078,8 +1164,10 @@ func TestL31d(t *testing.T) {
 		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
 		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 
 		headH := "ffff111122223333444455556666777788889999"
 		tipSHA := "1111111111111111111111111111111111111111"
@@ -1149,6 +1237,7 @@ func TestL31d(t *testing.T) {
 		f.client.SAdd(f.ctx, "benches", "bench-1")
 		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 
 		headH := "1212121212121212121212121212121212121212"
 		tipSHA := "1111111111111111111111111111111111111111"
@@ -1197,8 +1286,10 @@ func TestL31d(t *testing.T) {
 		f.client.SAdd(f.ctx, "benches", "bench-1", "bench-2")
 		f.client.HSet(f.ctx, "bench:bench-1:desired", "slots", "4", "machine", "bench-1", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-1:beat", "host", "bench-1", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-1:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 		f.client.HSet(f.ctx, "bench:bench-2:desired", "slots", "4", "machine", "bench-2", "paused", "0", "legs", "go")
 		f.client.HSet(f.ctx, "bench:bench-2:beat", "host", "bench-2", "at", "1")
+		f.client.HSet(f.ctx, "bench:bench-2:state", "state", "UP") // dev ci_healthy reads bench:<b>:state
 
 		headH := "5656565656565656565656565656565656565656"
 		tipSHA := "1111111111111111111111111111111111111111"
@@ -1304,50 +1395,6 @@ func TestL31d(t *testing.T) {
 		keysAfter, _ := f.client.Keys(f.ctx, "*").Result()
 		if len(keysBefore) != len(keysAfter) {
 			t.Fatalf("keys before=%d, after=%d; sprintci.Bench.Run wrote keys", len(keysBefore), len(keysAfter))
-		}
-	})
-
-	t.Run("tip gate writes both ci:<repo>:<tipSHA>:<gid> and ci:<repo>:<base>:tip:<tipSHA>:<gid>", func(t *testing.T) {
-		f := newLandFixture(t, "nova-tools", "dev")
-		tipSHA := "3333111122223333444455556666777788889999"
-		gid := civerdict.GID("tip", f.base, tipSHA, "req-1", "pol-1", "runner-1")
-		unitID := "gh/mas-bandwidth/nova-tools/105"
-		if _, err := land.CallUnitHead(f.ctx, f.client, land.UnitHeadParams{
-			Sprint: f.sprint, Unit: unitID, Repo: f.repo, Base: f.base,
-			Branch: "card-105", Head: tipSHA, BaseSHA: tipSHA,
-		}); err != nil {
-			t.Fatalf("unit head: %v", err)
-		}
-		if _, err := land.CallUnitEval(f.ctx, f.client, f.sprint, unitID, f.repo, f.base, 0); err != nil {
-			t.Fatalf("unit eval: %v", err)
-		}
-		batchID := "batch-tip-1"
-		tok, _, err := land.CallBatchPlan(f.ctx, f.client, f.sprint, f.repo, f.base, batchID, f.lease, unitID+"@"+tipSHA, "", "tip", tipSHA, "in-tip")
-		if err != nil {
-			t.Fatalf("batch plan: %v", err)
-		}
-		if _, err := land.CallGateClaim(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "bench-1", "slot-1"); err != nil {
-			t.Fatalf("gate claim: %v", err)
-		}
-		res, err := land.CallGateReceipt(f.ctx, f.client, f.repo, f.base, batchID, 1, tok, "GREEN", "bench-1", "worker-1", tipSHA, "tree-tip", "in-tip", "", "", "", "", "10")
-		if err != nil || res != "OK" {
-			t.Fatalf("gate receipt: %s, %v", res, err)
-		}
-		ckey := civerdict.Key(f.repo, tipSHA, gid)
-		if n, _ := f.client.Exists(f.ctx, ckey).Result(); n != 1 {
-			t.Fatalf("tip gate receipt %s exists = %d, want 1", ckey, n)
-		}
-		rec, _ := civerdict.Read(f.ctx, f.client, f.repo, tipSHA, gid)
-		if rec["verdict"] != "OK" || rec["kind"] != "tip" {
-			t.Fatalf("tip gate receipt = %+v, want OK tip", rec)
-		}
-		tipKey := fmt.Sprintf("ci:%s:%s:tip:%s:%s", f.repo, f.base, tipSHA, gid)
-		if n, _ := f.client.Exists(f.ctx, tipKey).Result(); n != 1 {
-			t.Fatalf("tip key %s exists = %d, want 1", tipKey, n)
-		}
-		tipRec, _ := f.client.HGetAll(f.ctx, tipKey).Result()
-		if tipRec["verdict"] != "OK" || tipRec["kind"] != "tip" {
-			t.Fatalf("tip key rec = %+v, want OK tip", tipRec)
 		}
 	})
 }

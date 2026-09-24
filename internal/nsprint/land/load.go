@@ -86,7 +86,7 @@ func LoadPR(ctx context.Context, c *redis.Client, sprint string, id ID) (*PR, er
 			}
 		}
 		gid, err := civerdict.Expected(ctx, c, id.Repo, base, baseSHA)
-		if err != nil && !errors.Is(err, civerdict.ErrNoPolicy) {
+		if err != nil && !errors.Is(err, civerdict.ErrNoPolicy) && !errors.Is(err, civerdict.ErrNoTip) {
 			return nil, fmt.Errorf("read %s: %w", civerdict.PolicyKey(id.Repo, base), err)
 		}
 		if gid != "" {

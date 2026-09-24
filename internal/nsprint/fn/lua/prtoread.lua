@@ -3,7 +3,8 @@
 -- header. The file is one do-block so its locals never add to the shared
 -- chunk's local count.
 --
--- ns_prtoread_runner keeps, in ci:<repo>:<head>:<gid> field runner:<row>, the
+-- ns_prtoread_runner keeps, in ci:<repo>:<head>:<gid>:runners field
+-- runner:<row>, the
 -- attempt with the highest key (gen, check_run_id, status_rank, at), whatever
 -- its conclusion; status_rank is rerequested=-1 < queued=0 < in_progress=1 <
 -- completed=2. A rerequested entry opens a new generation (the sentinel
@@ -70,8 +71,12 @@ do
     return tostring(v)
   end
 
-  -- ns_prtoread_runner KEYS[1]=ci:<repo>:<head>:<gid> ARGV row attempt_json
-  -- attempt_json: {check_run_id, action, status, conclusion, at}.
+  -- ns_prtoread_runner KEYS[1]=ci:<repo>:<head>:<gid>:runners ARGV row
+  -- attempt_json; attempt_json: {check_run_id, action, status, conclusion, at}.
+  -- The caller resolves the gid (civerdict.ExpectedFrom over the PR's base,
+  -- the base tip and the base policy) and refuses when any is missing; this
+  -- function writes only KEYS[1]. The rows are mutable, so they never share
+  -- the write-once receipt ci:<repo>:<head>:<gid> (gate_receipt_write).
   -- Reply: { verdict, gen, check_run_id, status, conclusion } where verdict is
   -- REPLACED, RERUN or KEPT; for a KEPT entry the gen is the one it was
   -- placed in and the rest are the entry's own.
@@ -87,24 +92,8 @@ do
       return redis.error_reply('ERR ns_prtoread_runner: attempt has no check_run_id')
     end
 
-    local repo, head, gid = string.match(key, '^ci:([^:]+):([^:]+):([^:]+)$')
-    if not gid or gid == 'expected' then
-      if not repo or not head then
-        repo, head = string.match(key, '^ci:([^:]+):([^:]+)$')
-      end
-      if repo and head then
-        local base = 'dev'
-        local pol_key = 'land:' .. repo .. ':' .. base .. ':policy'
-        local pol = redis.call('HMGET', pol_key, 'policy_id', 'required_set_id', 'runner_id')
-        local policy_id = (pol[1] and pol[1] ~= '') and pol[1] or 'pol1'
-        local required_set_id = (pol[2] and pol[2] ~= '') and pol[2] or 'req1'
-        local runner_id = (pol[3] and pol[3] ~= '') and pol[3] or 'run1'
-        local tip = redis.call('HGET', 'land:' .. repo .. ':' .. base .. ':tip', 'sha')
-        local base_sha = (tip and tip ~= '') and tip or head
-        local raw_gid = 'kind=single,' .. base .. ',' .. base_sha .. ',' .. required_set_id .. ',' .. policy_id .. ',' .. runner_id
-        gid = string.sub(ci_sha256_hex(raw_gid), 1, 16)
-        key = 'ci:' .. repo .. ':' .. head .. ':' .. gid
-      end
+    if not string.match(key, '^ci:[^:]+:[^:]+:[0-9a-f]+:runners$') then
+      return redis.error_reply('ERR ns_prtoread_runner: key is not ci:<repo>:<head>:<gid>:runners')
     end
 
     local field = 'runner:' .. row
@@ -125,19 +114,6 @@ do
         gen = gen, check_run_id = id, status = st, conclusion = concl,
         rereq_id = rid, rereq_at = rat, source = 'runner:' .. row, at = at,
       }))
-      if repo and head and gid then
-        redis.call('SADD', 'ci:' .. repo .. ':' .. head .. ':gids', gid)
-        redis.call('HSETNX', key, 'repo', repo)
-        redis.call('HSETNX', key, 'head', head)
-        redis.call('HSETNX', key, 'gid', gid)
-        redis.call('HSETNX', key, 'base', 'dev')
-        local tip = redis.call('HGET', 'land:' .. repo .. ':dev:tip', 'sha')
-        if tip and tip ~= '' then
-          redis.call('HSETNX', key, 'base_sha', tip)
-        else
-          redis.call('HSETNX', key, 'base_sha', head)
-        end
-      end
     end
 
     if action == 'rerequested' then
