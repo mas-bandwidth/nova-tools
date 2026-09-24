@@ -3,6 +3,7 @@ package land
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -69,6 +70,22 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 		}
 	}
 
+	// Supersede (§3.4, L29): a reader's APPROVE at the unit's current head
+	// releases that reader's own open HOLD at an older head before the holds
+	// condition is read. The reads come from the unit's readers index
+	// (s:<S>:readers:<unit>, ns_read), one pipeline, no KEYS scan (§2.2).
+	reads, err := unitReads(ctx, c, sprint, unit)
+	if err != nil {
+		return nil, fmt.Errorf("reads %s: %w", unit, err)
+	}
+	superseded, err := supersedeAtHead(ctx, c, sprint, unit, head, reads)
+	if err != nil {
+		return nil, fmt.Errorf("supersede %s: %w", unit, err)
+	}
+	if superseded > 0 {
+		u["holds_open"] = c.HGet(ctx, ukey, "holds_open").Val()
+	}
+
 	// 1. CI receipt for expected identity (GID lookup, §3.3 / §3.7 / L31b)
 	pkey := PolicyKey(repo, base)
 	pRec, err := c.HGetAll(ctx, pkey).Result()
@@ -112,8 +129,10 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 			res.Reason = "ci missing"
 		}
 
-		// Queue CI single if needed
-		queueCISingle(ctx, c, repo, base, unit, head, expectedGID)
+		// Queue the one CI single for this identity (deduplicated in ns_ci_single)
+		if _, err := QueueCISingle(ctx, c, repo, base, unit, head, expectedGID); err != nil {
+			return nil, fmt.Errorf("queue ci single %s: %w", unit, err)
+		}
 
 		res.Landable = false
 		res.WhoCanMove = "workers"
@@ -130,39 +149,16 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 		}
 	}
 
-	approvedReads := 0
-	if readersRequired > 0 {
-		// Count approvals at current head
-		readPattern := fmt.Sprintf("s:%s:read:%s:*", sprint, unit)
-		keys, _ := c.Keys(ctx, readPattern).Result()
-		for _, k := range keys {
-			parts := strings.Split(k, ":")
-			who := parts[len(parts)-1]
-			if strings.EqualFold(who, "jev") {
-				continue // JEV never counted
-			}
-			r, err := c.HGetAll(ctx, k).Result()
-			if err != nil {
-				continue
-			}
-			if r["head"] == head && r["verdict"] == "APPROVE" {
-				score, _ := strconv.Atoi(r["score"])
-				if score >= landBar {
-					approvedReads++
-				}
-			}
+	res.ReadsAtHead = countApprovals(reads, head, landBar)
+	if readersRequired > 0 && res.ReadsAtHead < readersRequired {
+		res.Landable = false
+		h8 := head
+		if len(h8) > 8 {
+			h8 = h8[:8]
 		}
-		res.ReadsAtHead = approvedReads
-		if approvedReads < readersRequired {
-			res.Landable = false
-			h8 := head
-			if len(h8) > 8 {
-				h8 = h8[:8]
-			}
-			res.Reason = fmt.Sprintf("reads %d/%d at %s", approvedReads, readersRequired, h8)
-			res.WhoCanMove = "readers"
-			return res, nil
-		}
+		res.Reason = fmt.Sprintf("reads %d/%d at %s", res.ReadsAtHead, readersRequired, h8)
+		res.WhoCanMove = "readers"
+		return res, nil
 	}
 
 	// 3. holds_open = 0 (§3.3)
@@ -228,17 +224,88 @@ func EvaluateUnit(ctx context.Context, c *redis.Client, sprint, unit string, pol
 	return res, nil
 }
 
-func queueCISingle(ctx context.Context, c *redis.Client, repo, base, unit, head, gid string) {
-	// Add entry to land:<repo>:gates if not already present
-	_ = c.XAdd(ctx, &redis.XAddArgs{
-		Stream: GatesStream(repo),
-		Values: map[string]interface{}{
-			"base":     base,
-			"unit":     unit,
-			"head":     head,
-			"gid":      gid,
-			"kind":     "single",
-			"priority": "ci",
-		},
-	}).Err()
+// QueueCISingle queues the one ci single for a unit's expected identity
+// through ns_ci_single (§3.3, L31b): QUEUED the first time, ALREADY on every
+// later pass for the same head and gid (nothing written), HAVE when the
+// receipt exists. The gates entry carries batch ci:<gid>, attempt 1 and a
+// token from land:<repo>:tok.
+func QueueCISingle(ctx context.Context, c *redis.Client, repo, base, unit, head, gid string) (string, error) {
+	res, err := c.FCall(ctx, "ns_ci_single", nil, repo, base, unit, head, gid).StringSlice()
+	if err != nil {
+		return "", err
+	}
+	if len(res) < 1 {
+		return "", fmt.Errorf("ns_ci_single: empty reply")
+	}
+	return res[0], nil
+}
+
+// ReadersKey is the unit's readers index (who has a read record), written
+// by ns_read.
+func ReadersKey(sprint, unit string) string {
+	return "s:" + sprint + ":readers:" + unit
+}
+
+type unitRead struct {
+	who  string
+	read map[string]string
+}
+
+// unitReads reads every read record on the unit through its readers index:
+// one SMEMBERS and one pipeline of HGETALLs.
+func unitReads(ctx context.Context, c *redis.Client, sprint, unit string) ([]unitRead, error) {
+	who, err := c.SMembers(ctx, ReadersKey(sprint, unit)).Result()
+	if err != nil || len(who) == 0 {
+		return nil, err
+	}
+	sort.Strings(who)
+	pipe := c.Pipeline()
+	cmds := make([]*redis.MapStringStringCmd, len(who))
+	for i, w := range who {
+		cmds[i] = pipe.HGetAll(ctx, ReadKey(sprint, unit, w))
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	out := make([]unitRead, 0, len(who))
+	for i, w := range who {
+		out = append(out, unitRead{who: w, read: cmds[i].Val()})
+	}
+	return out, nil
+}
+
+// countApprovals counts typed APPROVEs at head scoring >= landBar; JEV never counts.
+func countApprovals(reads []unitRead, head string, landBar int) int {
+	n := 0
+	for _, r := range reads {
+		if strings.EqualFold(r.who, "jev") {
+			continue
+		}
+		if r.read["head"] == head && r.read["verdict"] == "APPROVE" {
+			if score, _ := strconv.Atoi(r.read["score"]); score >= landBar {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// supersedeAtHead releases, for each reader whose APPROVE is at the unit's
+// current head, that reader's own open HOLD at another (so older) head. An
+// APPROVE at an older head never releases a HOLD at the current one.
+func supersedeAtHead(ctx context.Context, c *redis.Client, sprint, unit, head string, reads []unitRead) (int, error) {
+	n := 0
+	for _, r := range reads {
+		if r.read["verdict"] != "APPROVE" || r.read["head"] != head || head == "" {
+			continue
+		}
+		rel, err := SupersedeHoldsOnApprove(ctx, c, sprint, unit, r.who, head, func(newer, older string) bool {
+			return newer == head && older != head
+		})
+		if err != nil {
+			return n, err
+		}
+		n += len(rel)
+	}
+	return n, nil
 }

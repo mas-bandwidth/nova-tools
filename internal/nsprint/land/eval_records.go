@@ -2,6 +2,8 @@ package land
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -250,4 +252,201 @@ func RecordInboundObjection(ctx context.Context, c *redis.Client, sprint, unit, 
 func ReleaseInboundObjection(ctx context.Context, c *redis.Client, sprint, unit, login, releasedBy, reason string) (int64, error) {
 	holder := "login:" + login
 	return CallRelease(ctx, c, sprint, unit, holder, releasedBy, "inbound-release", reason, "")
+}
+
+// GitHubStream is the webhook stream (#2657, internal/ghevent.Stream) the
+// evaluator consumes as group InboundGroup.
+const (
+	GitHubStream  = "ev:github"
+	InboundGroup  = "land"
+	inboundMax    = 2000
+	inboundBatch  = 200
+	releaseLeader = "RELEASE"
+)
+
+// InboundResult is one drain of ev:github by the land consumer.
+type InboundResult struct {
+	Entries  int    // entries read and acknowledged
+	Heads    int    // unit heads written from the mirror after a delivery
+	Holds    int    // inbound objections recorded as login:<x> holds
+	Released int    // login:<x> holds released by the same login
+	NoBody   int    // comment or review entries that carried no body to classify
+	Pending  int64  // entries left unacknowledged (the beat's pending)
+	LastID   string // the last entry id read
+}
+
+// ConsumeInbound drains ev:github for repo as consumer group "land" (§3.1,
+// 3.2, 3.4): a pull_request opened/synchronize/reopened delivery fetches the
+// unit's branch into the mirror and writes the head from git (never from the
+// payload alone); an issue_comment, pull_request_review or pull_request whose
+// body opens with the hold keyword records a login:<sender> hold; a comment
+// opening RELEASE from the same login releases that login's hold. Nothing
+// here can make a unit landable. An entry that fails stays pending, and the
+// beat (ns_inbound_beat) carries the pending count, so the evaluator freezes
+// inbound-stale until it is handled.
+func ConsumeInbound(ctx context.Context, c *redis.Client, sprint, repo, mirrorDir, consumer string) (*InboundResult, error) {
+	if consumer == "" {
+		consumer = "eval"
+	}
+	res := &InboundResult{}
+	if err := c.XGroupCreateMkStream(ctx, GitHubStream, InboundGroup, "0").Err(); err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
+		return res, fmt.Errorf("inbound group: %w", err)
+	}
+	var errs []error
+	more := false
+	for _, start := range []string{"0", ">"} {
+		for {
+			if res.Entries >= inboundMax {
+				more = true
+				break
+			}
+			streams, err := c.XReadGroup(ctx, &redis.XReadGroupArgs{
+				Group: InboundGroup, Consumer: consumer, Streams: []string{GitHubStream, start},
+				Count: inboundBatch, Block: -1,
+			}).Result()
+			if errors.Is(err, redis.Nil) {
+				break
+			}
+			if err != nil {
+				return res, fmt.Errorf("inbound read: %w", err)
+			}
+			var msgs []redis.XMessage
+			for _, st := range streams {
+				msgs = append(msgs, st.Messages...)
+			}
+			if len(msgs) == 0 {
+				break
+			}
+			var acked []string
+			for _, m := range msgs {
+				res.LastID = m.ID
+				if err := inboundEntry(ctx, c, sprint, repo, mirrorDir, m, res); err != nil {
+					errs = append(errs, fmt.Errorf("inbound %s: %w", m.ID, err))
+					continue
+				}
+				acked = append(acked, m.ID)
+			}
+			if len(acked) > 0 {
+				if err := c.XAck(ctx, GitHubStream, InboundGroup, acked...).Err(); err != nil {
+					return res, fmt.Errorf("inbound ack: %w", err)
+				}
+				res.Entries += len(acked)
+			}
+			if start == "0" {
+				// Own pending entries are read once per pass; a failed one stays.
+				break
+			}
+		}
+	}
+	p, err := c.XPending(ctx, GitHubStream, InboundGroup).Result()
+	if err != nil {
+		return res, fmt.Errorf("inbound pending: %w", err)
+	}
+	res.Pending = p.Count
+	if more {
+		res.Pending++
+	}
+	if err := c.FCall(ctx, "ns_inbound_beat", nil, res.LastID, strconv.FormatInt(res.Pending, 10)).Err(); err != nil {
+		return res, fmt.Errorf("inbound beat: %w", err)
+	}
+	return res, errors.Join(errs...)
+}
+
+func inboundEntry(ctx context.Context, c *redis.Client, sprint, repo, mirrorDir string, m redis.XMessage, res *InboundResult) error {
+	v := func(k string) string { s, _ := m.Values[k].(string); return s }
+	r := v("repo")
+	if i := strings.LastIndex(r, "/"); i >= 0 {
+		r = r[i+1:]
+	}
+	if r != repo {
+		return nil
+	}
+	n, err := strconv.Atoi(v("number"))
+	if err != nil || n <= 0 {
+		return nil
+	}
+	unit, err := c.Get(ctx, PRUnitKey(sprint, repo, n)).Result()
+	if errors.Is(err, redis.Nil) || unit == "" {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	u, err := c.HMGet(ctx, UnitKey(sprint, unit), "head", "branch").Result()
+	if err != nil {
+		return err
+	}
+	head, _ := u[0].(string)
+	branch, _ := u[1].(string)
+	kind := v("kind")
+
+	if kind == "pull_request" && mirrorDir != "" && branch != "" {
+		switch v("action") {
+		case "opened", "synchronize", "reopened":
+			if _, err := FetchMirror(ctx, mirrorDir, 0, branch); err != nil {
+				return err
+			}
+			ref := "refs/heads/" + branch
+			refs, err := MirrorRefs(ctx, mirrorDir, []string{ref})
+			if err != nil {
+				return err
+			}
+			if sha := refs[ref]; sha != "" {
+				if _, err := CallRefSeen(ctx, c, repo, ref, sha, "delivery"); err != nil {
+					return err
+				}
+				if sha != head {
+					if _, err := HeadFromGit(ctx, c, sprint, repo, mirrorDir, ref, sha); err != nil {
+						return err
+					}
+					res.Heads++
+					head = sha
+				}
+			}
+		}
+	}
+
+	switch kind {
+	case "issue_comment", "pull_request_review", "pull_request":
+	default:
+		return nil
+	}
+	body := v("body")
+	login := v("sender")
+	if strings.TrimSpace(body) == "" || login == "" {
+		if kind != "pull_request" {
+			res.NoBody++
+		}
+		return nil
+	}
+	hkey := HoldKey(sprint, unit, "login:"+login)
+	held, err := c.HMGet(ctx, hkey, "seq", "released_by").Result()
+	if err != nil {
+		return err
+	}
+	seq, _ := held[0].(string)
+	releasedBy, _ := held[1].(string)
+	open := seq != "" && releasedBy == ""
+
+	if isObj, reason := ParseInboundObjection(kind, login, body); isObj {
+		if open {
+			return nil // one open hold per login; a redelivery never counts twice
+		}
+		if _, isHold, err := RecordInboundObjection(ctx, c, sprint, unit, head, login, reason); err != nil {
+			return err
+		} else if isHold {
+			res.Holds++
+		}
+		return nil
+	}
+	if open && kind != "pull_request" {
+		f := strings.Fields(body)
+		if len(f) > 0 && strings.ToUpper(strings.Trim(f[0], ":*#_")) == releaseLeader {
+			if _, err := ReleaseInboundObjection(ctx, c, sprint, unit, login, "login:"+login, strings.TrimSpace(body)); err != nil {
+				return err
+			}
+			res.Released++
+		}
+	}
+	return nil
 }

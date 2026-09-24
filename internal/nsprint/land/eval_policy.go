@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -72,9 +73,50 @@ func (bp *BasePolicy) RequiredSetID() string {
 	return hex.EncodeToString(h[:])
 }
 
-// RunnerID returns the runner identity string (§2.2, §5.5).
+// ToolsVersion is the nova-tools build the runner identity names. The
+// release build stamps it (-ldflags "-X .../land.ToolsVersion=<tag>");
+// unstamped, RunnerID reads the module version and VCS revision from the
+// build info, so runner_id tracks the build (§2.2 runner_id).
+var ToolsVersion = ""
+
+// RunnerID returns the runner identity string (§2.2, §5.5): nova-tools
+// version and go version.
 func RunnerID() string {
-	return fmt.Sprintf("nova-tools-v0.12.0/go-%s", runtime.Version())
+	return fmt.Sprintf("nova-tools-%s/go-%s", toolsVersion(debug.ReadBuildInfo), runtime.Version())
+}
+
+// toolsVersion is ToolsVersion, else the main module version when it is a
+// release, else the VCS revision (12 hex, "+dirty" when modified), else "devel".
+func toolsVersion(read func() (*debug.BuildInfo, bool)) string {
+	if ToolsVersion != "" {
+		return ToolsVersion
+	}
+	info, ok := read()
+	if !ok || info == nil {
+		return "devel"
+	}
+	if v := info.Main.Version; v != "" && v != "(devel)" {
+		return v
+	}
+	rev, dirty := "", false
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			dirty = s.Value == "true"
+		}
+	}
+	if rev == "" {
+		return "devel"
+	}
+	if len(rev) > 12 {
+		rev = rev[:12]
+	}
+	if dirty {
+		rev += "+dirty"
+	}
+	return rev
 }
 
 // LoadPolicy parses a YAML policy file without requiring external yaml dependencies.

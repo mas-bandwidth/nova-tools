@@ -19,6 +19,8 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 	repo := fs.String("repo", "", "Target repository")
 	policyPath := fs.String("policy", "", "Path to repo policy file")
 	once := fs.Bool("once", true, "Run single evaluation pass")
+	mirror := fs.String("mirror", "", "bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git when present; \"none\": no mirror reads)")
+	consumer := fs.String("consumer", "eval", "consumer name in ev:github group land")
 
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land eval", err.Error())
@@ -56,6 +58,17 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 	}
 
+	mirrorDir := *mirror
+	if mirrorDir == "none" {
+		mirrorDir = ""
+	} else if mirrorDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			if d := filepath.Join(home, "nova-bench", "mirror", *repo+".git"); isDir(d) {
+				mirrorDir = d
+			}
+		}
+	}
+
 	st, err := store.Open(ctx, *redisAddr)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint land eval: connect redis: %v\n", err)
@@ -70,7 +83,14 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 		}
 	}
 
-	evalCount, landableCount, err := land.EvalPass(ctx, st.Client(), *sprint, *repo, polRepo)
+	rep, err := land.RunEval(ctx, st.Client(), land.EvalConfig{
+		Sprint: *sprint, Repo: *repo, Policy: polRepo, MirrorDir: mirrorDir, Consumer: *consumer,
+	})
+	if rep != nil {
+		for _, m := range rep.Missed {
+			fmt.Fprintln(out, m)
+		}
+	}
 	if err != nil {
 		if strings.Contains(err.Error(), "fenced") || strings.Contains(err.Error(), "lease") {
 			fmt.Fprintf(errOut, "nova-sprint land eval: %v\n", err)
@@ -79,7 +99,17 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 		return refuse(errOut, "land eval", err.Error())
 	}
 
-	fmt.Fprintf(out, "EVAL repo=%s sprint=%s evaluated=%d landable=%d once=%v\n",
-		*repo, *sprint, evalCount, landableCount, *once)
+	in := rep.Inbound
+	if in == nil {
+		in = &land.InboundResult{}
+	}
+	fmt.Fprintf(out, "EVAL repo=%s sprint=%s evaluated=%d landable=%d inbound=%d heads=%d holds=%d released=%d nobody=%d missed=%d mirror=%t once=%v\n",
+		*repo, *sprint, rep.Evaluated, rep.Landable, in.Entries, in.Heads, in.Holds, in.Released, in.NoBody,
+		len(rep.Missed), mirrorDir != "", *once)
 	return 0
+}
+
+func isDir(p string) bool {
+	st, err := os.Stat(p)
+	return err == nil && st.IsDir()
 }

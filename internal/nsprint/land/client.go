@@ -127,9 +127,16 @@ func CallHold(ctx context.Context, c *redis.Client, sprint, unit, holder, head, 
 	return seq, postLand, nil
 }
 
-// CallRelease calls ns_release.
+// CallRelease calls ns_release with no may-hold roster: the holder's own
+// release, a repair-scoped one, or a login:<x> hold's (#3139 3.4, 3.5).
 func CallRelease(ctx context.Context, c *redis.Client, sprint, unit, holder, releasedBy, releaseKind, releaseReason, releaseURL string) (int64, error) {
-	res, err := c.FCall(ctx, "ns_release", nil, sprint, unit, holder, releasedBy, releaseKind, releaseReason, releaseURL).Slice()
+	return CallReleaseAs(ctx, c, sprint, unit, holder, releasedBy, releaseKind, releaseReason, releaseURL, nil)
+}
+
+// CallReleaseAs calls ns_release with the lane's may-hold roster (arg 8): a
+// down friend's hold is released only by a reader on it (3.4, L29c).
+func CallReleaseAs(ctx context.Context, c *redis.Client, sprint, unit, holder, releasedBy, releaseKind, releaseReason, releaseURL string, mayHold []string) (int64, error) {
+	res, err := c.FCall(ctx, "ns_release", nil, sprint, unit, holder, releasedBy, releaseKind, releaseReason, releaseURL, strings.Join(mayHold, ",")).Slice()
 	if err != nil {
 		return 0, err
 	}
