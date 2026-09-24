@@ -80,8 +80,6 @@ var specAllowlist = []allowlistEntry{
 var driftAllowlist = []allowlistEntry{
 	{file: "cmd/nova-merge/batch.go", fn: "bodyPaths", record: "SPEC-CARD", since: "92251bcc",
 		reason: "the card's PATHS header line in a swarm member's PR body, not a RESULT field"},
-	{file: "cmd/nova-merge/integrate.go", fn: "integrateSteps", record: "integrate-steps", since: "21f69fa8",
-		reason: "nova-merge's own step names (HEADS ... PR CI ... REVERIFY); PR is a step word, not the RESULT key"},
 	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
 		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
