@@ -54,6 +54,9 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	reason := f.fs.String("reason", "", "")
 	untypedComments := f.fs.String("untyped-comments", "", "")
 	redisAddr := f.fs.String("redis", "", "")
+	loop := f.fs.Duration("loop", 0, "")
+	allowedRed := f.fs.String("allowed-red", "", "")
+	friends := f.fs.String("friends", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -94,6 +97,9 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if *timeout < 1 || *timeout > maxTimeout {
 		f.problem(fmt.Sprintf("--timeout is a number of seconds this tool waits for gh before saying so, from 1 to %d, got %d", maxTimeout, *timeout))
 	}
+	if *loop < 0 {
+		f.problem(fmt.Sprintf("--loop is how long this waits between land passes, and is positive, got %s", *loop))
+	}
 	if !f.done(stderr) {
 		return 2
 	}
@@ -117,6 +123,9 @@ func cmdLand(args []string, stdout, stderr io.Writer, deps Deps) int {
 		reason:          strings.TrimSpace(*reason),
 		untypedComments: strings.TrimSpace(*untypedComments),
 		redis:           strings.TrimSpace(*redisAddr),
+		loop:            *loop,
+		allowedRed:      strings.TrimSpace(*allowedRed),
+		friends:         strings.TrimSpace(*friends),
 	}, stdout, stderr, deps)
 }
 
@@ -133,6 +142,9 @@ type landRun struct {
 	reason          string
 	untypedComments string
 	redis           string
+	loop            time.Duration
+	allowedRed      string
+	friends         string
 }
 
 func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
@@ -188,8 +200,17 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Escape(head.SourceWhy))
 	}
 	if head.Red > 0 || head.Pending > 0 || head.Total() == 0 {
-		return landRefused(stderr, fmt.Sprintf("pull request %d is not green (%s); the queue takes a batch CI has judged, and this one it has not",
-			in.pr, oneline.Field(head.Field())))
+		// --allowed-red exempts named red checks from blocking the land.
+		redPassesWithAllowed := false
+		if in.allowedRed != "" && head.Red > 0 && head.Pending == 0 && head.Total() > 0 {
+			if allRedAreAllowed(head.RedNames, in.allowedRed) {
+				redPassesWithAllowed = true
+			}
+		}
+		if !redPassesWithAllowed {
+			return landRefused(stderr, fmt.Sprintf("pull request %d is not green (%s); the queue takes a batch CI has judged, and this one it has not",
+				in.pr, oneline.Field(head.Field())))
+		}
 	}
 
 	// SPEC-DECIDE reading 3 (lines 1134-1136): land folds every member of the receipt again,
@@ -268,7 +289,7 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 			vs = append(vs, forgeVs...)
 		}
 
-		holds := merge.UnliftedHolds(vs, mPR.HeadOID, mPR.Author, rs)
+		holds := merge.UnliftedHolds(vs, mPR.HeadOID, merge.ReaderAuthor(mPR, rs), rs)
 		if len(holds) > 0 {
 			h := holds[0]
 			if h.Source == "comment-pending" {
@@ -332,6 +353,15 @@ func runLandVerb(in landRun, stdout, stderr io.Writer, deps Deps) int {
 	if in.untypedComments == "ignore" {
 		okLine += fmt.Sprintf(" untyped=ignored reason=%q", in.reason)
 	}
+	if in.loop != 0 {
+		okLine += fmt.Sprintf(" loop=%vs", int(in.loop.Seconds()))
+	}
+	if in.allowedRed != "" {
+		okLine += fmt.Sprintf(" allowed-red=%s", oneline.Field(in.allowedRed))
+	}
+	if in.friends != "" {
+		okLine += fmt.Sprintf(" friends=%s", oneline.Field(in.friends))
+	}
 	fmt.Fprintf(stdout, "%s\n", oneline.Escape(okLine))
 	return 0
 }
@@ -386,4 +416,27 @@ func dialLandRedis(addr string, deps Deps) *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr: addr,
 	})
+}
+
+// allRedAreAllowed reports whether every red check name is in the allowed-red list.
+func allRedAreAllowed(redNames []string, allowed string) bool {
+	if len(redNames) == 0 {
+		return true
+	}
+	allowedSet := make(map[string]bool)
+	for _, a := range strings.Split(allowed, ",") {
+		a = strings.TrimSpace(a)
+		if a != "" {
+			allowedSet[a] = true
+		}
+	}
+	if len(allowedSet) == 0 {
+		return false
+	}
+	for _, rn := range redNames {
+		if !allowedSet[rn] {
+			return false
+		}
+	}
+	return true
 }

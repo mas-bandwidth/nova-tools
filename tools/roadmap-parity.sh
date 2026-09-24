@@ -32,6 +32,11 @@ md_items=$(grep -c '^- \[ \]\|^- \[x\]' "$md")
 sexp_features=$(grep -o ':current-features [0-9]*' "$sexp" | grep -o '[0-9]*' | tail -n1)
 sexp_items=$(grep -o ':current-acceptance-items [0-9]*' "$sexp" | grep -o '[0-9]*' | tail -n1)
 
+sexp_bugs_open=$(grep -o ':current-bugs ([0-9]* [0-9]*)' "$sexp" | grep -o '[0-9][0-9]* [0-9][0-9]*' | awk '{print $1}')
+sexp_bugs_fixed=$(grep -o ':current-bugs ([0-9]* [0-9]*)' "$sexp" | grep -o '[0-9][0-9]* [0-9][0-9]*' | awk '{print $2}')
+sexp_bugs_open=${sexp_bugs_open:-0}
+sexp_bugs_fixed=${sexp_bugs_fixed:-0}
+
 open=$(grep -o '(' "$sexp" | wc -l | tr -d ' ')
 close=$(grep -o ')' "$sexp" | wc -l | tr -d ' ')
 
@@ -125,5 +130,5 @@ else
   crit_line="$crit_line (absent, skipped)"
 fi
 
-echo "PARITY features md=$md_features sexp=$sexp_features items md=$md_items sexp=$sexp_items parens=$open/$close $items_line $crit_line $status"
+echo "PARITY features md=$md_features sexp=$sexp_features items md=$md_items sexp=$sexp_items parens=$open/$close bugs=$sexp_bugs_open/$sexp_bugs_fixed $items_line $crit_line $status"
 [ "$status" = "OK" ]

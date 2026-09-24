@@ -357,9 +357,9 @@ func TestL30(t *testing.T) {
 		t.Fatalf("expected 1 enqueued before cutover, got %d", len(q.enqueued))
 	}
 
-	// 2. Cutover to nova-sprint: calls ns_writer
-	keys := []string{"land:" + repo + ":dev:writer", "land:" + repo + ":events"}
-	res, err := client.FCall(ctx, "ns_writer", keys, "nova-sprint", "stella").Slice()
+	// 2. Cutover to nova-sprint: calls ns_writer (args repo, base, to, by; the
+	// one writer B1's land.CallWriter also calls).
+	res, err := client.FCall(ctx, "ns_writer", nil, repo, "dev", "nova-sprint", "stella").Slice()
 	if err != nil {
 		t.Fatalf("ns_writer cutover: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestL30(t *testing.T) {
 	}
 
 	// 4. Rollback to old-loop: calls ns_writer
-	res, err = client.FCall(ctx, "ns_writer", keys, "old-loop", "emma").Slice()
+	res, err = client.FCall(ctx, "ns_writer", nil, repo, "dev", "old-loop", "emma").Slice()
 	if err != nil {
 		t.Fatalf("ns_writer rollback: %v", err)
 	}

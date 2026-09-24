@@ -1,12 +1,13 @@
 package main
 
 // The four fleet sub-verbs that retire the last four bench scripts (#1142, "everything
-// sketched becomes a tool"):
+// sketched becomes a tool"). The scripts are gone from the tree; only their names are
+// kept, so a friend who remembers one finds the verb that replaced it:
 //
-//	scripts/bench-standard.sh -> nova-pulse fleet standard
-//	scripts/bench-mirror.sh   -> nova-pulse fleet mirror
-//	scripts/ts-join-one.sh    -> nova-pulse fleet join
-//	scripts/fleet-sleep.sh    -> nova-pulse fleet sleep
+//	bench-standard.sh (retired) -> nova-pulse fleet standard
+//	bench-mirror.sh   (retired) -> nova-pulse fleet mirror
+//	ts-join-one.sh    (retired) -> nova-pulse fleet join
+//	fleet-sleep.sh    (retired) -> nova-pulse fleet sleep
 //
 // Flag parsing only: the work is internal/pulse/fleetstandard.go, fleetmirror.go,
 // fleetjoin.go and fleetsleep.go. Every path is a flag with no default -- a bench's home,

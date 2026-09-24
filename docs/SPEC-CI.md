@@ -1436,6 +1436,39 @@ without it.
 **Its narrowings.** Only the `nova-work` kernel and only `.lisp` files directly
 under `src/` and `tests/`. It reads the component list, not the load: whether the
 system as named *loads* is `make test-lisp`'s business.
+### `asd-closing-line` — no ASDF component shares its closing line
+
+**The rule.** No line in `lisp/nova-work/nova-work.asd` that names a
+`(:file ...)` component also carries the `:components`/system closing parens.
+Each component stands on its own line and the closers stand on lines of their
+own, so appending a component inserts lines before the closers instead of
+rewriting the line that carries them.
+**The hurt.** Each `:components` list carried its closing parens on the last
+component line (`(:file "tests/replays-fleet-stale-tokens")))`, so any two
+branches that each appended a component rewrote the same line. On 2026-09-19,
+`dev@23d9698b`: thirteen open nova-work pull requests all conflicted on
+`lisp/nova-work/nova-work.asd`, nine of the twelve measured on that file and on
+no other file at all. The resolution is always the union of both sides, but git
+cannot know that, so every pair conflicts forever at quadratic cost.
+**The test.** `TestNoAsdComponentSharesTheClosingLine`
+(`internal/ci/lispkernel_class_test.go`). It is a Go test rather than a lisp one
+on purpose: the shape is what makes concurrent branches merge, and the lisp job
+cannot see a merge conflict. It reads each line's code, not its text: `;`
+comments, `#|...|#` block comments and string contents are removed first, and a
+component line is shared when its code closes more parens than it opens, so a
+trailing `; note` after the closers cannot hide one and a commented-out line
+cannot fake one. `TestAsdSharedClosingLinesReadsCodeNotComments` pins that
+reading with negative and positive fixtures (a closer line followed by a
+comment, closers after `:depends-on`, parens inside a string, a shared line
+inside a block comment).
+**Its allowlist.** None. A shared closing line has no good case: the closers fit
+on a line of their own in every system.
+**Its remedy line.** The finding names the line and says it shares its component
+with the closing parens, so every pair of appending branches rewrites it: put
+each component on its own line and the closing parens on lines of their own.
+**Its narrowings.** Only `lisp/nova-work/nova-work.asd` and only lines naming
+`(:file ...)`. It reads the shape, not the order and not the load: whether the
+order loads is `make test-lisp`'s business.
 ### `one section` — docs/TESTS.md names each tool exactly once
 
 **The rule.** No two `## ` headings in `docs/TESTS.md` carry the same name. A
@@ -1519,6 +1552,55 @@ with the reason`.
 **Its narrowings.** Only the two packages where a bench name reaches a machine
 are read; a bench name that arrives as a different type, or through a package
 outside them, is the compiler's rule, not this one.
+
+### `namedpaths` — every path this repository names, it has
+
+**The rule.** A token in this repository's non-test Go source — in a string
+literal OR in a comment — or in `docs/*.md`, that begins with one of this
+repository's own top-level directories (`cmd`, `internal`, `docs`, `tools`,
+`scripts`, `testdata`, `fleet`, `infra`, `.github`) and carries a slash must
+name a file or a directory that is in the tree, or be named in the allowlist
+with its reason.
+**The hurt.** `cmd/nova-pulse/fleet_verbs.go:6` and
+`internal/pulse/fleetstandard.go:6` both named `bench-standard.sh` as though it
+sat under `scripts/`. The file is `tools/bench-standard.sh` and has been since
+it moved, so a friend
+following either comment found nothing — and nine such references were in the
+tree when the rule landed, because a path inside a comment or a string is just
+text to Go and nothing in CI had an opinion about it. Glenn's law of 2026-09-17
+is that prompts give positive instructions with EXACT paths; the learning loop
+says the text a friend reads IS the mechanism, so a dead path is not a typo, it
+is a friend's search.
+**The test.** `TestEveryNamedRepoPathExists`
+(`internal/ci/namedpaths_class_test.go`), with
+`TestTheNamedPathHeuristicReadsWhatItClaims`, which holds the reader to
+sixteen hand-written lines so a rule that quietly stopped matching anything
+cannot pass as a green run, and `TestTheNamedPathExistenceCheckReadsTheTree`,
+which holds the other half against this package's own directory.
+**Its allowlist.** `internal/ci/testdata/namedpaths_allowlist.txt`, one
+`<name> <reason>` per line, in three groups: the files a specification has
+PLANNED and nobody has written yet (33 today, most of them SPEC-CHAT's and
+SPEC-LOCAL's), the invented names a document uses to show the SHAPE of a path
+(`.github/scripts/foo.sh`, `docs/history`), and the paths that live in another
+tree — another repository, another branch, or a retired file. Checked in BOTH
+directions, and the second direction has two spellings: a listed name nothing
+writes any more is a stale row, and a listed name that is IN the tree now is the
+good red — the planned file was written, so the row goes on the same day.
+**Its remedy lines.** `<file>:<line>: <name> names no file or directory in this
+tree; a friend following it finds nothing -- correct the path, or add it to
+internal/ci/testdata/namedpaths_allowlist.txt with the reason it is not a real
+path`, and for the two stale spellings `delete the stale entry (the list only
+shrinks)` and `it is in the tree now; delete the entry`.
+**Its narrowings.** Test files and `testdata/` fixtures are not read — a
+fixture's whole job is to be an invented tree. A token that does not BEGIN a
+word is out, which is what keeps import paths, URLs and paths on a bench out. A
+glob, a template or a printf verb on either side takes the token out, so
+`docs/SPEC-*.md` and `internal/%s/doc.go` are patterns, not names. A
+package-qualified Go symbol (`internal/merge.Enqueuer.Enqueue`) and a bare
+exported name under a package directory (`internal/lockfile/TestLockRule1`) are
+read as symbols, not files, by Go's own upper-case signal. And a `testdata/…`
+name is looked for under EVERY package, because a fixture path is always written
+relative to the package that owns it.
 
 ### `prmerge` — nothing reaches the dev merge queue but a batch
 
@@ -1858,6 +1940,46 @@ injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb
 its neighbor in the same file) and it does not check that the shipped file uses
 only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
 
+### `lispduplicate` — the kernel defines each name once, and loads each slice once
+
+**The rule.** Two halves of one class: a definition the Lisp kernel makes twice.
+Within ONE file that `lisp/nova-work/nova-work.asd` names, a top-level `defun`,
+`defmacro`, `defgeneric`, `defparameter`, `defvar` or `defstruct` defines a name
+once; and `lisp/nova-work/tests/acceptance.lisp`'s `*acceptance-slices*` names
+each slice file once.
+**The hurt.** nova-tools #1612, on dev `11aa07a7`. Three duplicate definitions
+stood in the kernel and the class had no register at all, because the only gate
+the kernel had — `lisp/nova-work/run-tests.sh` — loaded under
+`(handler-bind ((warning #'muffle-warning)) ...)` and so could not see the
+failure it was causing: `sbcl --eval '(asdf:load-system :nova-work)'` printed
+`Duplicate definition for COPY-MACHINE found in one file`, ended in an unhandled
+`COMPILE-FILE-ERROR` on `src/fleet`, and exited 1 — while the suite reported
+`total=327 pass=327 fail=0` over a system that did not load. The second half was
+measured on the same tree: `*acceptance-slices*` held
+`slice-09-state-export-replays.lisp` three times and `slice-10-fleet.lisp`
+twice, so `total=335` was 314 distinct cases and 21 repeat runs of sixteen of
+them.
+**The test.** `TestNoKernelFileDefinesTheSameNameTwice` and
+`TestNoAcceptanceSliceIsLoadedTwice`
+(`internal/ci/lispduplicate_class_test.go`). Both are Go, in the fast tier, and
+need no SBCL: they read the same text the reader reads, and so catch the class
+BEFORE the load rather than after it.
+**Its allowlist.** None, in either half. The set of files read is the set
+`nova-work.asd` names through `(:file "…")`, so a file added tomorrow is held on
+the day it appears, and an unread file cannot break a load and is not read.
+**Its remedy line.** `… — SBCL reports this as "Duplicate definition ... found
+in one file", a full WARNING, which makes compile-file fail and
+`(asdf:load-system :nova-work)` exit 1. Keep one definition.`, and for the
+slices, `tests/acceptance.lisp lists <file> <n> times (entries …): the file is
+loaded that many times, every deftest in it is registered that many times, and
+the suite's total= counts each of its cases that many times. List it once.`
+**Its narrowings.** A redefinition ACROSS files is SBCL's style-warning, not a
+`COMPILE-FILE-ERROR` — the later file simply wins — so it is not this rule's
+business. Read-time conditionals are not duplicates: `#+sbcl (defun f …)` beside
+`#-sbcl (defun f …)` is one definition in any one build (`src/transport.lisp`
+has four such pairs), so a definition whose preceding non-blank line opens with
+`#+` or `#-` is skipped.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
@@ -1900,7 +2022,8 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 34. `TestWorkspaceCleanupDoesNotFailBeforeCheckout` — the workspace-cleanup step refuses an empty `GITHUB_WORKSPACE`, continues over an absent directory and over a workspace with no `.git` (the belt), so it never fails a job before checkout.
 35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
 36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
-37. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
+37. `TestNoKernelFileDefinesTheSameNameTwice` / `TestNoAcceptanceSliceIsLoadedTwice` — no file `nova-work.asd` names defines one top-level name twice, and `*acceptance-slices*` lists each slice file once (read as text, before any SBCL load).
+38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
 
 ## Parked class tests
 

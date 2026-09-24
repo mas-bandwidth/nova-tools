@@ -168,6 +168,11 @@ type BatchInput struct {
 	// activity and process tree lifecycle are deterministic events rather than
 	// scheduler races.
 	snapshot func() activitySnapshot
+	// polled is called once the idle monitor has finished acting on a tick: every card
+	// sampled, every decision taken, every kill reaped. nil in production; a test that
+	// injects its clock uses it so "the monitor has read the store" is an event it waits
+	// for, never a race between its next write and the monitor's read (#2958).
+	polled func()
 }
 
 // batchClock is the batch's view of time: the idle window (Now), the whole-batch
@@ -220,6 +225,18 @@ const maxHoldLines = 11
 // search of a card whose log has stopped growing. It is short enough that an idle kill lands
 // close to the timeout and long enough that it does not busy-spin over n files.
 const idlePollInterval = 100 * time.Millisecond
+
+// idleLogDribble is how many bytes a card's log must gain within one idle window before
+// the log alone counts as progress.
+//
+// The watch used to treat any size change as work (`size != lastSize`). The card can write
+// the files the monitor reads: native.log grows when the card prints, and harness.log sits
+// under the job directory which is `--write`. A child that appended one byte a poll, or
+// that rewrote the file shorter, reset the still-clock until the deadline (issue #1893).
+// Four kilobytes per window is a page of harness output, orders of magnitude above a
+// dribble and below a card that is actually stepping. A card working in silence is held
+// by the tree's CPU, which is a separate reading.
+const idleLogDribble int64 = 4096
 
 // Batch runs one batch through scatter, wait and gather and returns the process exit code:
 // 0 only when every card was done and none held, 1 otherwise, 2 when the admission could
@@ -445,6 +462,7 @@ func Batch(in BatchInput) int {
 			defer stopTicker()
 			lastSize := make([]int64, len(procs))
 			lastStore := make([]string, len(procs))
+			growFrom := make([]int64, len(procs))
 			var lastSample time.Time
 			for {
 				select {
@@ -492,8 +510,9 @@ func Batch(in BatchInput) int {
 						if size > 0 {
 							procs[i].moved = true
 						}
-						if size != lastSize[i] {
-							lastSize[i] = size
+						var logGrew bool
+						lastSize[i], growFrom[i], logGrew = idleLogProgress(size, lastSize[i], growFrom[i])
+						if logGrew {
 							procs[i].moved = true
 							active = true
 						}
@@ -562,8 +581,11 @@ func Batch(in BatchInput) int {
 							}
 						}
 						// THE ONE DECISION. A card is alive when ANY of the three moved.
+						// Any signal that moved the still-clock is also the new floor the log's
+						// next page is measured from (#1893).
 						if active {
 							procs[i].lastGrow = now
+							growFrom[i] = lastSize[i]
 							continue
 						}
 						// THE FIRST-TOKEN DEADLINE (nova-tools#917), and it is NOT the idle
@@ -613,6 +635,9 @@ func Batch(in BatchInput) int {
 					// lock would hold it for the whole grace and report every group as a
 					// survivor.
 					reapCardGroups(toReap)
+					if in.polled != nil {
+						in.polled()
+					}
 				}
 			}
 		}()
@@ -781,10 +806,12 @@ func Batch(in BatchInput) int {
 	// signal and one timer; it never waits for a card past the deadline. Alongside it, when
 	// --idle is set, one monitor re-reads each running card's own log -- <slot>/native.log
 	// when the child wrote one, else the job's harness.log -- AND its process tree's CPU
-	// time, and kills a card only when neither has moved for the idle window: a dead card is
-	// removed from the wait, so the batch returns on its slowest still-working card rather
-	// than burning the whole deadline, and a card whose harness is busy and silent -- a
-	// `go test` that prints nothing for minutes -- is not a dead card (issue #593).
+	// time, and kills a card only when neither has moved for the idle window. Log movement
+	// is a page of growth in the window, not any size change: a card can write those files
+	// (issue #1893). A dead card is removed from the wait, so the batch returns on its
+	// slowest still-working card rather than burning the whole deadline, and a card whose
+	// harness is busy and silent -- a `go test` that prints nothing for minutes -- is not
+	// a dead card (issue #593).
 
 	select {
 	case <-allDone:
@@ -1141,13 +1168,14 @@ func liftResult(job, label string, notes io.Writer) {
 
 // FindCardResult is THE ONE PLACE a card's published result is looked for: the job root
 // first (ResultPath, the name the legacy runner's records use), then `repo/` and one
-// directory below it, exactly as far as `liftResult` copies from (issue #594). It is
-// exported because `native` asks the same question before the batch ever gathers -- whether
-// the harness published anything at all (issue #591) -- and a second, shallower lookup there
-// would call a card that published under `repo/` silent about a run that worked. One lookup,
-// one answer, both sides.
+// directory below it, exactly as far as `liftResult` copies from (issue #594). A path that
+// is not a regular file is not a result: a planted symlink is not followed and a FIFO is
+// not a published report (issue #233). It is exported because `native` asks the same
+// question before the batch ever gathers -- whether the harness published anything at all
+// (issue #591) -- and a second, shallower lookup there would call a card that published
+// under `repo/` silent about a run that worked. One lookup, one answer, both sides.
 func FindCardResult(job string) (string, bool) {
-	if root := ResultPath(job); fileExists(root) {
+	if root := ResultPath(job); isRegularFile(root) {
 		return root, true
 	}
 	return findResultBelow(job, resultLiftDepth)
@@ -1179,7 +1207,7 @@ func findResultBelow(dir string, depth int) (string, bool) {
 		}
 	}
 	for _, name := range dirs {
-		if p := filepath.Join(dir, name, "RESULT.md"); fileExists(p) {
+		if p := filepath.Join(dir, name, "RESULT.md"); isRegularFile(p) {
 			return p, true
 		}
 	}
@@ -1337,6 +1365,12 @@ func scoreCard(root string, c batchCard, idleKilled, deadKilled, stallKilled boo
 	if deadKilled {
 		return "abstain", "result-after-deadline", "", ""
 	}
+	// A read verdict or a BRANCH whose run carries a known failure signature was not earned:
+	// the run failed mechanically (the toolchain, the packages, the fence or a permission),
+	// never by judgement, and the signature is checked before the result is scored done.
+	if sig, class, ok := failureSignatureInFile(filepath.Join(job, "harness-output.log")); ok {
+		return "abstain", fmt.Sprintf("signature sig=%q class=%s", sig, class), "", ""
+	}
 	if extra := len(one) - len(cardLine); extra > 0 {
 		return "done", "", "tail=" + strconv.Itoa(extra), two
 	}
@@ -1447,8 +1481,6 @@ func readCards(path string) ([]batchCard, error) {
 }
 
 // logSize is the byte length of a card's log file, or zero when the file is not there yet.
-// Growth is the only signal the idle monitor trusts: a card that has written nothing, or has
-// stopped writing, reads the same size twice and is on the clock.
 func logSize(path string) int64 {
 	fi, err := os.Stat(path)
 	if err != nil {
@@ -1529,6 +1561,20 @@ func walIndexHeader(path string) []byte {
 		return nil
 	}
 	return buf[:n]
+}
+
+// idleLogProgress is whether a new log size is work. last is the size at the previous
+// poll; from is the size when the still-clock last moved. A truncation is a new floor,
+// not work. Growth below idleLogDribble is a dribble the card can feed for free (#1893).
+func idleLogProgress(size, last, from int64) (newLast, newFrom int64, grew bool) {
+	switch {
+	case size < last:
+		return size, size, false
+	case size-from >= idleLogDribble:
+		return size, size, true
+	default:
+		return size, from, false
+	}
 }
 
 // cardUsagePath resolves one card's usage.tsv: the job directory beside RESULT.md first,
@@ -2172,6 +2218,11 @@ func allocateBenches(cards []batchCard, benchesPath, benchNames string) (map[str
 // vocabulary inside the step, the RESULT shape last and short, no capitalised contract
 // block and no launcher text.
 func cardShapeFailure(model, raw string) string {
+	// The TURNS: budget on an explore card is universal admission (issue #2035): it holds
+	// for every model, so it runs before the DeepSeek-only practice-17 checks below.
+	if reason := cardExploreMissingTurns(raw); reason != "" {
+		return reason
+	}
 	if !isDeepSeekModel(model) {
 		return ""
 	}

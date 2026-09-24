@@ -41,6 +41,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
@@ -340,6 +341,15 @@ func harvestBench(in HarvestInput) int {
 			continue
 		}
 		pushed++
+		// HARVESTED (nova-tools #2563 item 1): the card's commits are on the forge. It
+		// is emitted HERE, after the push returned and before anything that can still
+		// refuse, because the push is the durable fact -- a PR that fails to open below
+		// does not un-push the branch, and a fold that never heard `harvested` would
+		// show the work as still on a bench it has already left. The head is the FULL
+		// sha of the pushed ref, not the short one the receipt line carries.
+		sendBenchEvent(in.Events, events.Event{
+			Label: label, Bench: in.Bench, Kind: events.Harvested, Head: fullSHA(clone, ref),
+		})
 		pr, err := forge.FindPR(dest.repo, branch)
 		if err != nil {
 			failed++
@@ -355,6 +365,16 @@ func harvestBench(in HarvestInput) int {
 					field(in.Bench), field(label), field(branch), oneline.Err(err)))
 				continue
 			}
+			// PR (nova-tools #2563 item 1), inside the `pr == 0` branch ON PURPOSE:
+			// this verb is run again and again over the same bench, and FindPR
+			// answering with a number means an earlier pass already opened -- and
+			// already announced -- that pull request. Emitting on every pass would
+			// make one card's PR several in the fold, and `landed` would then have
+			// more candidates than there were cards.
+			sendBenchEvent(in.Events, events.Event{
+				Label: label, Bench: in.Bench, Kind: events.PullReq,
+				PR: strconv.Itoa(pr), Head: fullSHA(clone, ref),
+			})
 		}
 		prs++
 		markHarvested(shell, in.Bench, j.Dir)
@@ -374,6 +394,38 @@ func harvestBench(in HarvestInput) int {
 		return 1
 	}
 	return 0
+}
+
+// benchEventTimeout bounds every event this verb writes. A harvest holds no lease, but it
+// is the loop the whole fleet's work drains through, and a store that stopped answering must
+// cost seconds per pass, not a pass.
+const benchEventTimeout = 5 * time.Second
+
+// sendBenchEvent writes one entry under ITS OWN bounded context.
+//
+// THE BOUND IS PER ENTRY, NEVER PER HARVEST, and that is not a style choice. A bench harvest
+// fetches, pushes and opens pull requests for every finished job and runs for minutes; a
+// five-second deadline taken once at the top of the verb has expired long before the first
+// push returns, so every entry would have been refused `context deadline exceeded` -- on
+// exactly the busy passes the fold most needs to hear about, and silently, because an emit
+// never fails a harvest. Taking the context here, beside the one Send it bounds, is what
+// makes that mistake unavailable rather than merely fixed.
+func sendBenchEvent(w *events.Writer, e events.Event) {
+	ctx, cancel := context.WithTimeout(context.Background(), benchEventTimeout)
+	defer cancel()
+	w.Send(ctx, e)
+}
+
+// fullSHA is the 40-hex head an event carries: what `push` just put on the branch. The
+// receipt line prints the SHORT sha for a person to read, and the stream carries the long
+// one because the lander, the reads and the fold all join on an exact head. An unreadable
+// ref is an empty field rather than a guess -- the entry is still worth writing.
+func fullSHA(clone, ref string) string {
+	out, err := gitIn(clone, "rev-parse", ref)
+	if err != nil {
+		return ""
+	}
+	return lastLine(out)
 }
 
 func okOrRed(failed int) string {

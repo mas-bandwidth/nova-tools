@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -91,6 +92,19 @@ type HarvestInput struct {
 	// accept each verify the card fence epoch and a separate RUN action token
 	// at the effect owner's linearization. Nil keeps today's harvest.
 	Effect *HarvestEffect
+
+	// THE HARVEST'S TWO EVENTS (nova-tools #2563 item 1). A bench harvest is the one
+	// place that knows a card's branch actually reached the forge, so it writes
+	// `harvested` when the push lands and `pr` when it OPENS a pull request -- opens,
+	// not finds: a PR that already existed was opened by an earlier pass that already
+	// said so, and saying it twice would count one card's PR twice in the fold.
+	//
+	// Events is the store, resolved from --events-store and the environment. It is
+	// OPTIONAL in every sense: no address or no password is silence, and a store that
+	// is down costs one line on stderr. AN EMIT MAY NEVER FAIL A HARVEST -- the branch
+	// is pushed and the pull request is open whatever the stream says, so
+	// events.Writer has no error to return (internal/events/writer.go).
+	Events *events.Writer
 }
 
 // HarvestEffect is the harvest-side fence and token check. The owner does not
@@ -664,7 +678,7 @@ func contractLineMatch(job, contract string) bool {
 	if want == "" {
 		return false
 	}
-	raw, err := os.ReadFile(filepath.Join(job, "RESULT.md"))
+	raw, err := readResult(filepath.Join(job, "RESULT.md"))
 	if err != nil {
 		return false
 	}
@@ -741,13 +755,19 @@ func isV2CardContent(content string) bool {
 	return false
 }
 
+// readResult reads a job's RESULT.md. A symlink is not followed and a FIFO is not
+// opened: the worker owns the job directory (issue #233).
+func readResult(path string) ([]byte, error) {
+	return swarm.ReadRegular(path)
+}
+
 // classify reads a card's RESULT.md and returns its disposition and the push details.
 // done -> pushed unless the branch is main or a pro card lacks a red: line (refused).
 func classify(jobDir string, c CardRow, contract string) (state, branch, repo string, resultLines []string) {
 	if swarm.AcceptanceUnknown(jobDir) {
 		return "unknown", "", "", nil
 	}
-	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
+	raw, err := readResult(filepath.Join(jobDir, "RESULT.md"))
 	if err != nil {
 		return "abstain", "", "", nil
 	}
@@ -946,7 +966,7 @@ func classifyPool(root string, c CardRow, contract string) (state, branch, repo 
 	pool := filepath.Join(root, "pool")
 	for _, st := range []string{"done", "failed"} {
 		for _, id := range poolTaskIDs(pool, st, c.Label) {
-			raw, err := os.ReadFile(filepath.Join(pool, "reports", id, "RESULT.md"))
+			raw, err := readResult(filepath.Join(pool, "reports", id, "RESULT.md"))
 			if err != nil {
 				continue
 			}

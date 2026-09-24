@@ -1022,9 +1022,15 @@ the job's data home, mode 0600. Only the provider named by `--model` is checked:
 a config whose entry for THAT provider has no key in `--auth` is refused before
 anything runs, naming the provider and never the key; a provider whose options
 carry a `baseURL` and no `apiKey` (ollama on localhost) needs no key and is
-admitted without one, so its card runs walled on the local model. Every other
-provider in the file — a person's config names all of them — is copied verbatim
-and not checked, because this run never calls it.
+admitted without one, so its card runs walled on the local model. Its loopback
+`baseURL` host:port is carried into the wall as `--net-allow <host:port>`, so
+the local model stays reachable (the wall's no-promise grant,
+`(allow network-outbound (remote ip))`, does not reach `127.0.0.1`); a wall that
+cannot open that address is refused with one line naming it, never a silent
+`NATIVE OK`. Every other provider in the file — a person's config names all of
+them — is copied verbatim and not checked, because this run never calls it, and
+a harness that exits without its own report is scored `harness-silent`, never
+`OK`.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none. `native`
@@ -1582,6 +1588,27 @@ still gone at the deadline, because the wall is a kill of the group, not a reque
 decline. A token budget reached is the third end of a native card, and it is the
 TERM's cleanup with `stopped=tokens` on the line (rule 13d).
 
+**`native` prints a verdict on every launch that started, and never exits 255**
+(issue #2058). The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and
+`NATIVE REFUSED`. A launch that started the harness and then died — including a
+darwin OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md`,
+and exited 255 — prints exactly one `NATIVE INCOMPLETE` with the child's code
+on the line as `rc=255` and `why=rc`, never OK or REFUSED. **The process never
+itself exits 255.** Local `ssh(1)` exits 255 for any error; that is not proof
+the remote command never started, so the outcome is potentially UNKNOWN, and
+a retry waits on reconciliation (a bound execution receipt). A standalone
+unbound printed verdict is not reconciliation authority. A native that passed
+255 through made a fill loop treat a finished card as a transport failure and
+run it twice. The child's 255 is `rc=255` on the verdict line and the process
+exits 1 (the verb ran and said NO). A refusal before any child starts is
+`NATIVE REFUSED` at exit 2, as today. **Red test:**
+`TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255` — a fake harness that
+prints the FSEvents line, writes `RESULT.md` and exits 255: exactly one
+`NATIVE INCOMPLETE` with `rc=255` and `why=rc`, no OK/REFUSED, the process is
+1 not 255. **Negative:** `TestNativeOrdinaryCardsStillPrintOKAndIncomplete` —
+a card that ran and published is still `NATIVE OK` at exit 0; a silent harness
+is still `NATIVE INCOMPLETE`; neither process exits 255.
+
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,
 `requeue`, `note`, `finalize` and `reclaim` are the verbs that act; `supervise`
@@ -1666,9 +1693,12 @@ failure**: a card the machinery cannot reach is `unknown`, never failed.
   `harness.log` under its job directory, the runner's stdout pinned to a
   regular file — and the batch also reads the **CPU time of the card's whole
   process tree**, the runner's children and their children with it. **Idle
-  means no child activity**: a card is alive while any of its log grows, its
-  harness store moves or its tree's CPU time advances, and it is killed only
-  when *none* of them moved for `idle` seconds. On **2026-09-15** cards
+  means no child activity**: a card is alive while its log grows by a page
+  (4 KiB) within the window, its harness store moves or its tree's CPU time
+  advances, and it is killed only when *none* of them moved for `idle` seconds.
+  Any size change is not enough: the card can write those files, and a dribble
+  or a rewrite would otherwise occupy the slot until the deadline (issue
+  #1893). A truncation is a new floor, not work. On **2026-09-15** cards
   664-670 were killed `idle 300s` inside a `go test` that prints nothing for
   minutes, and the loop raised `--idle` to 900 s, which only delays the same
   kill (issue #593): a busy silent harness is working, and a sleeping one is
@@ -1809,7 +1839,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `harness-silent` | its harness wrote nothing at all — no word in the run's capture and no `RESULT.md`, at the job root or below it — so the card never ran (issue #591) |
 | `runner-refused` | its RUNNER exited before the harness started — no `NATIVE` line and no `harness-output.log` — so the non-zero exit code is the runner's, not the harness's; the runner's last line follows as `last=<line>` (issue #618) |
 | `rc=<n>` | ended non-zero and published no `RESULT.md`, at the job root or below it, and its harness DID run |
-| `idle=<s>` | was killed because neither its log nor its process tree moved for `<s>` seconds |
+| `idle=<s>` | was killed because neither its log (a page of growth in the window) nor its process tree moved for `<s>` seconds |
 | `stalled` | was killed because it produced NOTHING AT ALL -- no first token -- within `--stall-after` of launching; not the idle window, which needs a first sample to compare against (#917) |
 | `deadline` | was killed at the batch's deadline and published no `RESULT.md` |
 | `result-after-deadline` | published a matching `RESULT.md` that only landed because the deadline fired, so it is late, not done |
@@ -1817,6 +1847,7 @@ coordinator never opens a `RESULT.md` to learn why (issue #461):
 | `admission` | was refused at admission; the reason follows the token |
 | `input-limit` | was refused for size, by the provider's own structured signal (issue #163) |
 | `bench-unreachable` | ran on a bench the pull could not reach, so nothing about it is known here |
+| `signature` | carried a read verdict or a BRANCH whose run's `harness-output.log` holds a known failure signature — the toolchain, the packages, the fence or a permission — so the verdict was not earned; the signature and its class follow the token (see the failure-signature table below) |
 
 **The RESULT is the contract, and `harness-silent` is for a card that has none.**
 A `RESULT.md` whose line 1 matches the card is **`done` whatever the harness exit
@@ -1875,13 +1906,40 @@ an identical line prints no `tail` field. **A stall is `log=0`**: a card that
 ended with no output after the wall opened is counted on the `BATCH` line's
 `stalled=<n>` and reads its own emptiness on its line.
 
+**A read verdict or a BRANCH whose run carries a known failure signature is
+`ABSTAIN reason=signature sig="<signature>" class=<class>`, never `done`.** A
+`go test` that could not run — the toolchain missing, no packages named, the
+fence or a permission stopping it — is not evidence for a verdict, and a read
+that printed APPROVE while its run's tail said the toolchain was not available
+recorded a verdict the run did not earn (Glenn, 2026-09-16: reads on Space).
+The signature is read out of the job's `harness-output.log` — the run's own
+capture (issue #608), never `harness.log` — and is checked before the result
+is scored `done`; `verify` checks the same file beside `RESULT.md`. The table
+below lives in the spec and in the binary as one slice, and the two agree (a
+test reads the spec):
+
+| signature | class | remedy |
+|---|---|---|
+| `toolchain not available` | `toolchain` | pin the Go toolchain in go.mod, or install it |
+| `no packages to test` | `packages` | name the packages to test; an empty list proves nothing |
+| `auto-rejecting` | `fence` | the harness fence auto-rejected a path; re-run walled |
+| `permission denied` | `permission` | the sandbox refused a read or write; keep the work inside the job directory |
+| `command not found: go` | `toolchain` | install Go and put it on PATH before the run |
+| `cannot find package` | `packages` | the package path is wrong, or its module is not in go.mod |
+
 The copied-up result above is the same rule the bench pull holds under
 **Benches**, rule 3 of the pull (#581), and both print the one `BATCH NOTE`
 line. Replays this section demands, beside the tests #577 named:
 `idle-watch-counts-child-activity` (`TestIdleWatchCountsChildActivity`, landed
-in #603), `gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo`,
+in #603), `idle-watch-ends-a-dribble`
+(`TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog`, #1893),
+`gather-copies-result-up-from-repo` (`TestGatherCopiesResultUpFromRepo`,
 #603), `native-silent-harness-is-not-ok` (`TestNativeSilentHarnessIsNotOK`, PR
-#604), `native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
+#604), `native-harness-exit-255-prints-a-verdict`
+(`TestNativeHarnessExit255PrintsAVerdictAndDoesNotExit255`, #2058),
+`native-ordinary-cards-still-print-ok-and-incomplete`
+(`TestNativeOrdinaryCardsStillPrintOKAndIncomplete`, #2058),
+`native-tmpdir-is-outside-any-repo` (`TestNativeTmpDirIsOutsideAnyRepo`,
 #558), `local-route-is-one-slot` (two local-model cards in one batch: one runs,
 one is `ABSTAIN reason=admission local route is one slot`; open), and, for the
 range and the pre-run refusals (issue #618), `TestBatchAllocatesSlots`,
@@ -1902,7 +1960,7 @@ are the thing the packet replaced.
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -2250,8 +2308,13 @@ and answers from a fixture, inside `t.TempDir()`, red before green.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d) |
+| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input`, a `native` whose card was ended by its token budget or by a budget it could no longer verify (rule 13d), a `native` whose harness exited 255 (the child's code is `rc=255` on the verdict line; the process is 1, never 255: #2058) |
 | 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`, and `--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable pool, unreadable worker description, a key file that is absent or empty, a description whose `secret` variable is absent or empty in the runner's own environment (naming the variable and `nova-secrets exec --only <NAME>`), `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+
+**`native` never exits 255.** Local `ssh(1)` exits 255 for any error; that is
+not proof the remote command never started, so the outcome is potentially
+UNKNOWN and a retry waits on reconciliation. A harness that exited 255 is
+`rc=255 why=rc` on the `NATIVE INCOMPLETE` line and process exit 1 (#2058).
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and
@@ -2278,7 +2341,7 @@ BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 BENCH <name> slots=<n> done=<n> abstain=<n> in=<n|-> out=<n|-> usd=<x.xxxx>
 <label> slot=<n>: <line 2, verbatim, capped> log=<n> [tail=<n>] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|budget|budget-unverifiable|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>]
+<label> slot=<n>: ABSTAIN reason=<line1-mismatch|no-result|refused|fence|harness-silent|runner-refused|rc=<n>|idle=<s>|stalled|deadline|result-after-deadline|card-abstain|admission <why>|input-limit|bench-unreachable|signature> log=<n> [killed=<n>] [watched=<path>|job=<dir>|path=<p>|last=<line>|sig="<signature>" class=<toolchain|packages|fence|permission>]
 CARD <id> sha=<sha12> state=<done|abstain|unknown|refused> usd=<n.nnnn|-> line=<line 2, verbatim, capped> [wall=none]
 ADMIT REFUSED <label> <why>
 ADMIT REFUSED slot=<n> held-by=<id> pid=<n>
@@ -2313,6 +2376,7 @@ RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 NATIVE REFUSED: <reason>
 ADMIT REFUSED benchmark window open until <stamp>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
+NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc>
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 STATUS MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -4433,3 +4497,33 @@ and must not be swept. Six rules bind it:
 **What this does not change.** The bench slot store (`slots take` / `slots
 release`, above) is capacity accounting and is untouched: a run can hold a seat
 and still be refused its job directory, and that refusal is the correct answer.
+
+## Sparse checkout of PATHS packages (#2498 S10)
+
+*(Appended rather than written into **The same clone, once per swarm job**, so
+the line citations above this stay put.)*
+
+Staging for a card that declares `PATHS:` checks out the **minimal tree**:
+those packages and their in-module dependencies only. A package the card did
+not name is not materialized. The named package's tests still run. `PATHS:
+none`, or no `PATHS:` line, stays a full checkout. `prepare` does this into
+`<job>/repo` when it is given the reference checkout. When `CloneFrom` is
+empty and the card declares `PATHS:`, `prepare` sets it from the pool's
+reference checkout `ref/<owner>/<name>@<rev>` when that checkout is present.
+`SOURCE:` names the repo; `@<rev>` on that token names the rev, and a card
+that names no rev uses the one checkout present for that repo. No checkout
+there leaves the card to clone itself.
+
+A lookup that finds no in-module directories is a valid empty set: the PATHS
+and TEST cones are still checked out. An import that cannot be resolved is
+not empty. Staging refuses, and does not hand the worker a sparse tree that
+omits that dependency.
+
+**Red tests.** `TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage`: a
+fixture PATHS list does not materialize an unrelated package; the named
+package's tests still run. `TestPrepareStagesASparseJobClone`: prepare with
+`CloneFrom` stages that sparse tree under the job root.
+`TestSparseCheckoutRefusesAMissingInModuleImport`: a named package that
+imports an in-module package that is not there makes staging refuse.
+`TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS`: a PATHS list that
+names no Go package still checks out that path.

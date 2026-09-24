@@ -72,37 +72,15 @@ func runLandWriter(ctx context.Context, args []string, out, errOut io.Writer) in
 		}
 	}
 
-	writerKey := fmt.Sprintf("land:%s:%s:writer", *repo, *base)
-
 	if *to == "" {
-		vals, err := client.HGetAll(ctx, writerKey).Result()
-		if err != nil {
-			return refuse(errOut, "land writer", err.Error())
-		}
-		gen := vals["gen"]
-		owner := vals["owner"]
-		if gen == "" {
-			gen = "0"
-		}
-		if owner == "" {
-			owner = "old-loop"
-		}
-		fmt.Fprintf(out, "WRITER repo=%s base=%s gen=%s owner=%s\n", *repo, *base, oneline.Field(gen), oneline.Field(owner))
-		return 0
+		*to = "get"
 	}
-
-	keys := []string{
-		writerKey,
-		fmt.Sprintf("land:%s:events", *repo),
-		fmt.Sprintf("land:%s:%s:inflight", *repo, *base),
-	}
-	var fargs []interface{}
-	fargs = append(fargs, *to, actor)
+	fargs := []interface{}{*repo, *base, *to, actor}
 	if *inflight >= 0 {
 		fargs = append(fargs, strconv.Itoa(*inflight))
 	}
 
-	res, err := client.FCall(ctx, "ns_writer", keys, fargs...).Slice()
+	res, err := client.FCall(ctx, "ns_writer", nil, fargs...).Slice()
 	if err != nil {
 		return refuse(errOut, "land writer", err.Error())
 	}

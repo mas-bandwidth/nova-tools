@@ -159,9 +159,9 @@ const JobShell = "/bin/sh"
 // order. It is `/bin/sh -c <script> nova-pod <harness argv...>`: the script runs the harness
 // ("$@", each word exactly as the caller built it, e.g. nova-secrets exec --only ... --
 // nova-swarm native ...) with its log on the pod's stdout, appends the pod's usage row
-// (started, ended, rc; provider and model from the Pod; the cost columns stay dashes, since
-// the shell is not told what the provider billed) to the job's usage.tsv in
-// swarm.CardUsageColumns, writing the header only when the file is new, then runs
+// (started, ended, rc; provider and model from the Pod; `end` and the cost columns stay
+// dashes, since the shell is not told why the harness stopped or what the provider billed)
+// to the job's usage.tsv in swarm.CardUsageColumns, writing the header only when the file is new, then runs
 // `nova-work clip` last. The usage row and the clip run whatever the harness's exit code;
 // the container exits with the harness's code, or the clip's when the harness succeeded.
 func JobCommand(p Pod, harness []string) []string {
@@ -185,7 +185,7 @@ func JobCommand(p Pod, harness []string) []string {
 	b.WriteString("ended=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n")
 	b.WriteString("mkdir -p " + shq(p.JobDir) + " || exit 1\n")
 	b.WriteString("[ -e " + shq(usage) + " ] || printf '%s\\n' " + shq(strings.Join(swarm.CardUsageColumns, "\t")) + " >> " + shq(usage) + " || exit 1\n")
-	b.WriteString("printf '%s\\t%s\\t%s\\t%s\\t%s\\n' " + shq(strings.Join(fixed, "\t")) + " \"$started\" \"$ended\" \"$rc\" " +
+	b.WriteString("printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' " + shq(strings.Join(fixed, "\t")) + " \"$started\" \"$ended\" " + shq(swarm.Dash) + " \"$rc\" " +
 		shq(strings.Join(tail, "\t")) + " >> " + shq(usage) + " || exit 1\n")
 	b.WriteString("nova-work clip --worktree " + shq(p.Worktree) + " --branch " + shq(p.Branch) +
 		" --base " + shq(p.Base) + " --message " + shq("card "+p.Label) + " --result " + ResultFile +

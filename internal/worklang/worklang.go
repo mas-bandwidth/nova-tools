@@ -72,14 +72,28 @@ const (
 	Symbol
 )
 
-// Form is one restricted s-expression. Offset is the form's first byte, so a
-// refusal can name where in the file it happened.
+// Form is one restricted s-expression. Offset is the form's first byte and End
+// the byte just past its last, so a refusal can name where in the file it
+// happened -- and a WRITER can replace exactly the bytes one form occupies and
+// leave every other byte of the file alone.
 type Form struct {
 	Kind   Kind
 	Offset int
+	End    int
 	List   []Form
 	Value  string // keyword name (no colon) or decoded string
 	Int    int64
+}
+
+// Bytes returns the form's own bytes out of the source it was read from. It is
+// the writer's half of Offset/End: the one place a caller turns a form back
+// into the text the author wrote, rather than re-rendering it and losing the
+// spacing, the order and the comments beside it.
+func (f Form) Bytes(data []byte) []byte {
+	if f.Offset < 0 || f.End > len(data) || f.Offset >= f.End {
+		return nil
+	}
+	return data[f.Offset:f.End]
 }
 
 // IsKeyword reports whether f is the keyword named name (without the colon).
@@ -258,6 +272,7 @@ func (r *reader) list() (Form, error) {
 		}
 		if r.data[r.pos] == ')' {
 			r.pos++
+			out.End = r.pos
 			return out, nil
 		}
 		item, err := r.form()
@@ -280,7 +295,7 @@ func (r *reader) str() (Form, error) {
 			if err := r.node(start); err != nil {
 				return Form{}, err
 			}
-			return Form{Kind: String, Offset: start, Value: b.String()}, nil
+			return Form{Kind: String, Offset: start, End: r.pos, Value: b.String()}, nil
 		case '\\':
 			r.pos++
 			if r.pos >= len(r.data) {
@@ -311,7 +326,7 @@ func (r *reader) keyword() (Form, error) {
 	if err := r.node(start); err != nil {
 		return Form{}, err
 	}
-	return Form{Kind: Keyword, Offset: start, Value: name}, nil
+	return Form{Kind: Keyword, Offset: start, End: r.pos, Value: name}, nil
 }
 
 func (r *reader) integer() (Form, error) {
@@ -336,7 +351,7 @@ func (r *reader) integer() (Form, error) {
 	if err := r.node(start); err != nil {
 		return Form{}, err
 	}
-	return Form{Kind: Integer, Offset: start, Int: n}, nil
+	return Form{Kind: Integer, Offset: start, End: r.pos, Int: n}, nil
 }
 
 func isBoundary(c byte) bool {
