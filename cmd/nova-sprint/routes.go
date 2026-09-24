@@ -26,7 +26,7 @@ import (
 // --tier prints the allowed routes of the tier a card names with ROUTE:
 // pro|flash, one "<route> <via>/<model>" line each in the table's efficiency
 // order (best first); a held or dropped route is never printed. The bench
-// harness (rowan-tools fleet/files/nova-card-harness) runs the card on the
+// harness (rowan-tools' nova-card-harness) runs the card on the
 // first line's model.
 //
 // --preamble prints the route's one-paragraph preamble (#2498 S8), built from
