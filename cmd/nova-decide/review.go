@@ -288,8 +288,14 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 		}
 	}
 	checks := prereview.Mechanical(pr, card)
+	base := pr.Base
+	if base == "" {
+		base = string(prereview.BaseGateFromGH(pr.Mergeable, pr.MergeStateStatus))
+	}
 	d := prereview.Disposition{
+		Who: prereview.Who,
 		Repo: repo, PR: n, Head: pr.Head,
+		Rubric: prereview.RubricVersion(), Base: base,
 		Checks: checks.Field(), Reason: checks.Why(), Evidence: checks.Evidence(), Model: tune.Model,
 		PathsFrom: card.PathsFrom, SymbolFrom: card.SymbolFrom, CardPath: card.Path,
 		At: time.Now().UTC().Format(time.RFC3339),
@@ -343,18 +349,20 @@ type ghRunner struct{ path string }
 
 // prWire is the subset of `gh pr view --json` this pass reads.
 type prWire struct {
-	Number     int    `json:"number"`
-	HeadRefOid string `json:"headRefOid"`
-	Title      string `json:"title"`
-	Body       string `json:"body"`
-	Files      []struct {
+	Number           int    `json:"number"`
+	HeadRefOid       string `json:"headRefOid"`
+	Title            string `json:"title"`
+	Body             string `json:"body"`
+	Files            []struct {
 		Path string `json:"path"`
 	} `json:"files"`
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
 }
 
 // pullRequest fetches the public facts and the diff.
 func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
-	raw, err := g.run("pr", "view", strconv.Itoa(n), "-R", repo, "--json", "number,headRefOid,title,body,files")
+	raw, err := g.run("pr", "view", strconv.Itoa(n), "-R", repo, "--json", "number,headRefOid,title,body,files,mergeable,mergeStateStatus")
 	if err != nil {
 		return prereview.PR{}, fmt.Errorf("gh pr view %d: %w", n, err)
 	}
@@ -366,7 +374,12 @@ func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
 	if err != nil {
 		return prereview.PR{}, fmt.Errorf("gh pr diff %d: %w", n, err)
 	}
-	pr := prereview.PR{Repo: repo, Number: n, Head: w.HeadRefOid, Title: w.Title, Body: w.Body, Diff: string(diff)}
+	pr := prereview.PR{
+		Repo: repo, Number: n, Head: w.HeadRefOid, Title: w.Title, Body: w.Body, Diff: string(diff),
+		Base:             string(prereview.BaseGateFromGH(w.Mergeable, w.MergeStateStatus)),
+		Mergeable:        w.Mergeable,
+		MergeStateStatus: w.MergeStateStatus,
+	}
 	for _, f := range w.Files {
 		pr.Files = append(pr.Files, f.Path)
 	}
