@@ -70,6 +70,60 @@ type Card struct {
 	Affinity Affinity
 }
 
+// Issue is one fact the (:derive :from (:issues ...)) sweep reads: the
+// stable identifiers the kernel already uses, the slug the branch rule
+// substitutes, the URL the issue input names, and the :pr fact -- bool for
+// presence, number for the PR it points at -- that decides ink-or-out. An
+// issue missing any of these is refused by the caller before it reaches the
+// sweep, so the sweep never picks half-formed ones.
+type Issue struct {
+	Number   int64
+	Slug     string
+	URL      string
+	Repo     string
+	Label    string
+	State    string
+	HasPR    bool
+	PRNumber int64
+}
+
+// Branch is one fact the (:fold :over (:branches ...)) sweep reads: the name
+// of the sibling branch, the base it branched off, and whether it merged and
+// went green. The fold is green-only by default -- a non-green sibling is
+// excluded by the `:over` selector before it reaches the inputs list, so the
+// caller does not check green here.
+type Branch struct {
+	Name  string
+	Base  string
+	Green bool
+}
+
+// Facts is the closed fact source the expander reads: pinned issues and
+// pinned branches. The plan only carries the *shape* of a selector; the data
+// the selector filters lives here, passed in by the caller. A nil Facts means
+// a hand-written plan only, and a plan naming `:derive` or `:fold` in that
+// case is a refusal naming the missing source, never a silent empty sweep.
+type Facts struct {
+	Issues   []Issue
+	Branches []Branch
+}
+
+// ExpandPlan validates a hand-written plan, expands any (:derive) or (:fold)
+// the plan carries into the same Card pass as the hand-written (:node)s,
+// builds the needs/blocks graph, and returns one Card per node in plan order.
+// It refuses an absent need or a cycle (through the job graph's rules 2 and
+// 3), a `:derive` or `:fold` with no Facts source, an unknown `:from` or
+// `:over` selector key, a duplicate branch name, and a budget below its
+// floor -- always before a card is written.
+//
+// The variadic Facts parameter is additive: callers without a fact source
+// pass none, and a plan that never names `:derive` or `:fold` is unchanged;
+// callers that do sweep projects pass `ExpandPlan(plan, &worklang.Facts{...})`.
+// `:facts` remains unadmitted -- the rule form is a later slice, not this one.
+func ExpandPlan(plan *Plan, facts ...*Facts) ([]Card, error) {
+	return ExpandPlanWithSink(plan, nil, facts...)
+}
+
 // DeriveEvent is one derive event from the expander: a node derived from the
 // graph, carrying its node id, parent and rule.
 type DeriveEvent struct {
@@ -94,39 +148,60 @@ type ExpandSink interface {
 	Cut(CutEvent)
 }
 
-// unadmitted are the top-level forms the smallest first slice does not accept:
-// the hand-written :node only. Each is a refusal naming the form, never a
-// silent skip.
-var unadmitted = []string{"derive", "fold", "facts"}
-
-// ExpandPlan validates a hand-written plan, builds the needs/blocks graph and
-// returns one Card per node in plan order. It refuses an absent need or a
-// cycle (through the job graph's rules 2 and 3), an unadmitted top-level form,
-// a duplicate branch name, and a budget below its floor -- always before a card
-// is written.
-func ExpandPlan(plan *Plan) ([]Card, error) {
-	return ExpandPlanWithSink(plan, nil)
-}
-
 // ExpandPlanWithSink is ExpandPlan with an optional event sink. If sink is not
-// nil, one derive event is emitted per node in plan order.
-func ExpandPlanWithSink(plan *Plan, sink ExpandSink) ([]Card, error) {
+// nil, one derive event is emitted per card in plan order, derived and folded
+// cards included.
+func ExpandPlanWithSink(plan *Plan, sink ExpandSink, facts ...*Facts) ([]Card, error) {
 	if plan == nil {
 		return nil, refuse("", "no plan to expand; refusing to guess")
 	}
+	var factsSource *Facts
+	if len(facts) > 0 {
+		factsSource = facts[0]
+	}
+
+	// Walk the unknown top-level forms once. :facts stays unadmitted;
+	// :derive and :fold expand into the same Card pass as a hand-written
+	// :node. A :derive/:fold with no Facts source is a refusal naming the
+	// form, never a silent empty sweep.
+	var expanded []Node
 	for _, form := range plan.Unknown {
-		if form.Kind == List && len(form.List) > 0 && form.List[0].Kind == Keyword {
-			for _, name := range unadmitted {
-				if form.List[0].Value == name {
-					return nil, refuse(plan.File, fmt.Sprintf(
-						":%s is not in this slice; only hand-written :nodes expand", name))
-				}
+		if form.Kind != List || len(form.List) == 0 || form.List[0].Kind != Keyword {
+			continue
+		}
+		switch form.List[0].Value {
+		case "facts":
+			return nil, refuse(plan.File, ":facts is not in this slice; only hand-written :nodes expand")
+		case "derive":
+			if factsSource == nil {
+				return nil, refuse(plan.File, "a :derive is in the plan but no Facts source was passed; refusing to guess")
 			}
+			nodes, err := expandDerive(plan.File, form, factsSource.Issues)
+			if err != nil {
+				return nil, err
+			}
+			expanded = append(expanded, nodes...)
+		case "fold":
+			if factsSource == nil {
+				return nil, refuse(plan.File, "a :fold is in the plan but no Facts source was passed; refusing to guess")
+			}
+			nodes, err := expandFold(plan.File, form, factsSource.Branches)
+			if err != nil {
+				return nil, err
+			}
+			expanded = append(expanded, nodes...)
 		}
 	}
 
-	specs := make([]Card, 0, len(plan.Nodes))
+	specs := make([]Card, 0, len(plan.Nodes)+len(expanded))
 	for _, n := range plan.Nodes {
+		c, err := expandNode(plan.File, n)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, c)
+	}
+	for _, n := range expanded {
 		c, err := expandNode(plan.File, n)
 		if err != nil {
 			return nil, err
@@ -538,4 +613,389 @@ func ExpandDirWithSink(out string, cards []Card, sink ExpandSink) (int, error) {
 		}
 	}
 	return written, nil
+}
+
+// expandDerive reads one (:derive ...) form, filters the issue facts through
+// the (:from (:issues ...)) selector, and mints one Node per matched issue.
+// The :as template yields the node's id; `{n}` (the issue number), `{slug}
+// (the issue's slug) and `{url}` (the issue's URL) are substituted into :as,
+// :inputs, :output :branch and any other string the derive template names.
+// The wired Node goes through expandNode so a derived node carries the same
+// Card fields as a hand-written one, and an unknown selector key is a refusal
+// naming the key.
+func expandDerive(file string, form Form, issues []Issue) ([]Node, error) {
+	seen := map[string]bool{}
+	fields := map[string]Form{}
+	body := form.List[1:]
+	for i := 0; i+1 < len(body); i += 2 {
+		key := body[i]
+		val := body[i+1]
+		if key.Kind != Keyword {
+			return nil, refuse(file, fmt.Sprintf(
+				":derive expects a keyword at byte=%d; refusing to guess", key.Offset))
+		}
+		seen[key.Value] = true
+		fields[key.Value] = val
+	}
+	asForm, ok := fields["as"]
+	if !ok || asForm.Kind != String || asForm.Value == "" {
+		return nil, refuse(file, ":derive has no :as; refusing to guess")
+	}
+	kindForm, ok := fields["kind"]
+	if !ok || (kindForm.Kind != Keyword && kindForm.Kind != Symbol) || !isKnownKind(kindForm.Value) {
+		name := ""
+		if ok {
+			name = kindForm.Value
+		}
+		return nil, refuse(file, fmt.Sprintf(
+			":derive :kind %s is not one of %s; refusing to guess",
+			name, strings.Join(knownKinds[:6], ", ")))
+	}
+	fromForm, ok := fields["from"]
+	if !ok || fromForm.Kind != List || len(fromForm.List) == 0 {
+		return nil, refuse(file, ":derive has no :from; refusing to guess")
+	}
+	if !fromForm.List[0].IsKeyword("issues") {
+		return nil, refuse(file, ":derive :from must start with :issues; refusing to guess")
+	}
+	selector, err := parseIssueSelector(file, fromForm)
+	if err != nil {
+		return nil, err
+	}
+
+	var matched []Issue
+	for _, iss := range issues {
+		if selector.match(iss) {
+			matched = append(matched, iss)
+		}
+	}
+	out := make([]Node, 0, len(matched))
+	for _, iss := range matched {
+		subs := issueSubs(iss)
+		n := Node{
+			Fields:  map[string]Form{},
+			Unknown: map[string]Form{},
+		}
+		n.Fields["id"] = Form{
+			Kind:   String,
+			Offset: asForm.Offset,
+			Value:  templateReplace(asForm.Value, subs),
+		}
+		n.Fields["kind"] = Form{
+			Kind:   Keyword,
+			Offset: kindForm.Offset,
+			Value:  kindForm.Value,
+		}
+		for _, opt := range []string{"repo", "base", "inputs", "output", "budget", "affinity"} {
+			if !seen[opt] {
+				continue
+			}
+			n.Fields[opt] = substituteForm(fields[opt], subs)
+		}
+		out = append(out, n)
+	}
+	return out, nil
+}
+
+// expandFold reads one (:fold ...) form, filters the branch facts through the
+// (:over (:branches ...)) selector, and mints one Node whose :inputs name the
+// green branches as `:artifact` entries. A non-green sibling is excluded by
+// the selector before it reaches the inputs list -- the fold is green-only.
+// The wired Node carries the same Card fields as a hand-written node, and an
+// unknown selector key is a refusal naming the key.
+func expandFold(file string, form Form, branches []Branch) ([]Node, error) {
+	seen := map[string]bool{}
+	fields := map[string]Form{}
+	body := form.List[1:]
+	for i := 0; i+1 < len(body); i += 2 {
+		key := body[i]
+		val := body[i+1]
+		if key.Kind != Keyword {
+			return nil, refuse(file, fmt.Sprintf(
+				":fold expects a keyword at byte=%d; refusing to guess", key.Offset))
+		}
+		seen[key.Value] = true
+		fields[key.Value] = val
+	}
+	asForm, ok := fields["as"]
+	if !ok || asForm.Kind != String || asForm.Value == "" {
+		return nil, refuse(file, ":fold has no :as; refusing to guess")
+	}
+	kindForm, ok := fields["kind"]
+	if !ok || (kindForm.Kind != Keyword && kindForm.Kind != Symbol) || !isKnownKind(kindForm.Value) {
+		name := ""
+		if ok {
+			name = kindForm.Value
+		}
+		return nil, refuse(file, fmt.Sprintf(
+			":fold :kind %s is not one of %s; refusing to guess",
+			name, strings.Join(knownKinds[:6], ", ")))
+	}
+	overForm, ok := fields["over"]
+	if !ok || overForm.Kind != List || len(overForm.List) == 0 {
+		return nil, refuse(file, ":fold has no :over; refusing to guess")
+	}
+	if !overForm.List[0].IsKeyword("branches") {
+		return nil, refuse(file, ":fold :over must start with :branches; refusing to guess")
+	}
+	selector, err := parseBranchSelector(file, overForm)
+	if err != nil {
+		return nil, err
+	}
+
+	var matched []Branch
+	for _, br := range branches {
+		if selector.match(br) {
+			matched = append(matched, br)
+		}
+	}
+
+	n := Node{
+		Fields:  map[string]Form{},
+		Unknown: map[string]Form{},
+	}
+	n.Fields["id"] = Form{Kind: String, Offset: asForm.Offset, Value: asForm.Value}
+	n.Fields["kind"] = Form{Kind: Keyword, Offset: kindForm.Offset, Value: kindForm.Value}
+	if seen["repo"] {
+		n.Fields["repo"] = fields["repo"]
+	}
+	if seen["base"] {
+		n.Fields["base"] = fields["base"]
+	}
+	if seen["inputs"] {
+		// The inputs template names the shape of one input (e.g.
+		// `((:artifact "{branch}"))`); one entry is minted per matched
+		// branch, with `{branch}` substituted. A template carrying more
+		// than one element keeps the first shape only -- the test pins a
+		// single-element template.
+		inputsTpl := fields["inputs"]
+		var items []Form
+		if inputsTpl.Kind == List && len(inputsTpl.List) > 0 {
+			shape := inputsTpl.List[0]
+			items = make([]Form, 0, len(matched))
+			for _, br := range matched {
+				items = append(items, substituteForm(shape, branchSubs(br)))
+			}
+		}
+		n.Fields["inputs"] = Form{
+			Kind:   List,
+			Offset: inputsTpl.Offset,
+			List:   items,
+		}
+	}
+	if seen["output"] {
+		n.Fields["output"] = fields["output"]
+	}
+	if seen["budget"] {
+		n.Fields["budget"] = fields["budget"]
+	}
+	if seen["affinity"] {
+		n.Fields["affinity"] = fields["affinity"]
+	}
+	if len(matched) == 0 {
+		return []Node{n}, nil
+	}
+	return []Node{n}, nil
+}
+
+// issueSelector filters an issue by the keys the (:derive :from (:issues ...))
+// selector carries. An unknown selector key refuses; the issue is in the
+// sweep because the facts say so, not because a rule failed.
+type issueSelector struct {
+	repo  string
+	label string
+	state string
+	hasPR *bool
+}
+
+func (s issueSelector) match(i Issue) bool {
+	if s.repo != "" && i.Repo != s.repo {
+		return false
+	}
+	if s.label != "" && i.Label != s.label {
+		return false
+	}
+	if s.state != "" && i.State != s.state {
+		return false
+	}
+	if s.hasPR != nil && i.HasPR != *s.hasPR {
+		return false
+	}
+	return true
+}
+
+// parseSelectorBool reads a selector boolean. The spec writes it as the bare
+// symbol true or false (`:has-pr false`, `:green true`); any other token -- a
+// typo such as tru, a keyword, a string -- is not a boolean, so the caller
+// refuses it instead of reading it as false and selecting the opposite set.
+func parseSelectorBool(val Form) (bool, bool) {
+	if val.Kind != Symbol {
+		return false, false
+	}
+	switch val.Value {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	}
+	return false, false
+}
+
+func parseIssueSelector(file string, form Form) (issueSelector, error) {
+	var s issueSelector
+	body := form.List[1:]
+	for i := 0; i+1 < len(body); i += 2 {
+		key := body[i]
+		val := body[i+1]
+		if key.Kind != Keyword {
+			return s, refuse(file, fmt.Sprintf(
+				":derive :from expects keywords at byte=%d; refusing to guess", key.Offset))
+		}
+		switch key.Value {
+		case "repo":
+			s.repo = val.Value
+		case "label":
+			s.label = val.Value
+		case "state":
+			s.state = val.Value
+		case "has-pr":
+			b, ok := parseSelectorBool(val)
+			if !ok {
+				return s, refuse(file, fmt.Sprintf(
+					":derive :from :has-pr %s is not a boolean (want true or false); refusing to guess", renderVal(val)))
+			}
+			s.hasPR = &b
+		default:
+			return s, refuse(file, fmt.Sprintf(
+				":derive :from :%s is not a known selector key; refusing to guess", key.Value))
+		}
+	}
+	return s, nil
+}
+
+// branchSelector filters a branch by the keys the (:fold :over (:branches ...))
+// selector carries.
+type branchSelector struct {
+	prefix string
+	base   string
+	green  *bool
+}
+
+func (s branchSelector) match(b Branch) bool {
+	if s.prefix != "" && !strings.HasPrefix(b.Name, s.prefix) {
+		return false
+	}
+	if s.base != "" && b.Base != s.base {
+		return false
+	}
+	if s.green != nil && b.Green != *s.green {
+		return false
+	}
+	return true
+}
+
+func parseBranchSelector(file string, form Form) (branchSelector, error) {
+	var s branchSelector
+	body := form.List[1:]
+	for i := 0; i+1 < len(body); i += 2 {
+		key := body[i]
+		val := body[i+1]
+		if key.Kind != Keyword {
+			return s, refuse(file, fmt.Sprintf(
+				":fold :over expects keywords at byte=%d; refusing to guess", key.Offset))
+		}
+		switch key.Value {
+		case "prefix":
+			s.prefix = val.Value
+		case "base":
+			s.base = val.Value
+		case "green":
+			b, ok := parseSelectorBool(val)
+			if !ok {
+				return s, refuse(file, fmt.Sprintf(
+					":fold :over :green %s is not a boolean (want true or false); refusing to guess", renderVal(val)))
+			}
+			s.green = &b
+		default:
+			return s, refuse(file, fmt.Sprintf(
+				":fold :over :%s is not a known selector key; refusing to guess", key.Value))
+		}
+	}
+	return s, nil
+}
+
+// issueSubs returns the {n}, {slug}, {url} substitution table for one issue.
+// n is the issue's number, slug the issue's title-slug, url the issue URL --
+// the same names the (a) sweep template in docs/SPEC-WORKLANG.md uses.
+func issueSubs(i Issue) map[string]string {
+	return map[string]string{
+		"n":    fmt.Sprintf("%d", i.Number),
+		"slug": i.Slug,
+		"url":  i.URL,
+	}
+}
+
+// branchSubs returns the {branch} substitution table for one branch. The
+// fold's input template uses `{branch}` -- the shape in the spec example.
+func branchSubs(b Branch) map[string]string {
+	return map[string]string{
+		"branch": b.Name,
+	}
+}
+
+// templateReplace substitutes every `{key}` placeholder in s with the value
+// from subs. An unknown `{key}` is left verbatim so a missing template fact
+// remains visible in the printed card.
+func templateReplace(s string, subs map[string]string) string {
+	var b strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == '{' {
+			end := -1
+			for j := i + 1; j < len(s); j++ {
+				if s[j] == '}' {
+					end = j
+					break
+				}
+			}
+			if end > i {
+				key := s[i+1 : end]
+				if v, ok := subs[key]; ok {
+					b.WriteString(v)
+					i = end + 1
+					continue
+				}
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// substituteForm recurses into every string value of f and replaces
+// `{key}` placeholders. Lists are descended; Keywords, Symbols, Integers and
+// unknown kinds are returned unchanged so a placeholder inside a non-string
+// stays verbatim and a malformed template is visible in print.
+func substituteForm(f Form, subs map[string]string) Form {
+	switch f.Kind {
+	case String:
+		return Form{
+			Kind:   String,
+			Offset: f.Offset,
+			Value:  templateReplace(f.Value, subs),
+		}
+	case List:
+		out := make([]Form, len(f.List))
+		for i, el := range f.List {
+			out[i] = substituteForm(el, subs)
+		}
+		return Form{
+			Kind:   List,
+			Offset: f.Offset,
+			List:   out,
+		}
+	default:
+		return f
+	}
 }
