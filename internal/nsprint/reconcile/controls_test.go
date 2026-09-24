@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -19,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -656,31 +655,9 @@ func must(t *testing.T, err error) {
 
 func newSprint(t *testing.T) (*store.Store, *redis.Client) {
 	t.Helper()
-	if _, err := exec.LookPath("redis-server"); err != nil {
-		t.Skipf("redis-server unavailable; run this integration control on a Redis bench: %v", err)
-	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	must(t, err)
-	addr := l.Addr().String()
-	must(t, l.Close())
-	dir := t.TempDir()
-	logf, err := os.Create(filepath.Join(dir, "redis.log"))
-	must(t, err)
-	t.Cleanup(func() { _ = logf.Close() })
-	cmd := exec.Command("redis-server", "--bind", "127.0.0.1", "--port", strings.TrimPrefix(addr, "127.0.0.1:"),
-		"--save", "", "--appendonly", "no", "--dir", dir)
-	cmd.Stdout, cmd.Stderr = logf, logf
-	must(t, cmd.Start())
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = client.Close() })
-	deadline := time.Now().Add(30 * time.Second)
-	for client.Ping(context.Background()).Err() != nil {
-		if time.Now().After(deadline) {
-			t.Fatalf("redis-server at %s did not start", addr)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 	// The reconciler lease this test acts under (#2726 owns its renewal).
 	must(t, client.HSet(context.Background(), "lease:reconciler", "instance", "ctl", "token", fence).Err())
 	return store.New(client), client
