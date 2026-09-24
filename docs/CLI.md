@@ -834,6 +834,7 @@ nova-decide review --repo <owner/name> --pr <n> [--card <file>]
                    [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
+                   [--prompt <file|sha8>] [--conf <jev.conf>|none] [--pr-dir <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
 ```
 
@@ -851,11 +852,18 @@ The five checks, and what each is for:
 
 | check | ok when | the case it exists for |
 |---|---|---|
-| `donewhen` | line 2 of the RESULT is the bare word `DONE` | a RESULT that has to qualify DONE has not finished |
+| `donewhen` | line 2 of the RESULT is the bare word `DONE` (a blank line under RESULT is skipped); with no RESULT line, every Go test the body's `DONE-WHEN:` names is added by the diff (a named test the diff does not add is `missing`: it may be on the base) | a RESULT that has to qualify DONE has not finished |
 | `selfcheck` | the added test exercises generated code **and** carries none of the self-check tells; `missing` on a pull request that is not a conformance cell, and fixtures under `testdata/` are not read (#2621) | schema#1507 landed on a 10/10 with `check(true, ...)` as its only assertion |
-| `paths` | every changed file is inside the card's `PATHS` globs | schema#1569 added a whole stub crate beside its one test file |
+| `paths` | every changed file is inside the card's `PATHS` globs; with no card, the body's `PATHS:` line is the bound (`dir/` means `dir/**`, a bare file name matches anywhere), and there only product code outside it fails -- a test-only file outside is the reader's one-point deduction, not a gate (#2536) | schema#1569 added a whole stub crate beside its one test file |
 | `claims` | every file the RESULT's `files:` line names is in the diff | a RESULT written from intent rather than from the diff |
+| `base` | off unless `--checks` names it: the read rubric's base gate. The pull request targets a trunk (`dev`, `main`, `fixed-table-form`) and is mergeable; a stacked base or a conflict is `base:fail`, an unread one `missing` (#2536) | 17 of the 397 friend-read heads of 2026-09-24 conflicted with trunk at the time of the read |
 | `ci` | off unless `--checks` names it. When it is on, `ci-ok` on the pull request's exact head is success. A red or missing `ci-ok` is `ci:fail` and the explain names the failing jobs. A run whose `head_sha` is not this head does not count (#2704) | nova-tools #2519 at `907546af` scored PASS 8 while `ci-ok` and shards 1/4 and 2/4 on space and studio were red; #2522 at `8359db4f` is the pass |
+
+**Gates cap the score (#2536).** When `ci` or `base` is enabled and answers fail, the score on the line is capped at 7, the read rubric's rule that a gate failure is never an 8; the ledger keeps the raw answer.
+
+**The prompt (#2536).** The one score question is asked with a prompt file: `--prompt <file|sha8>`, else the `prompt=` key of `--conf` (default `$JEV_CONF`, else `~/rowan-working/etc/jev.conf`, the file `bin/jev-loop` is tuned by; `none` reads no conf), else the embedded default. Shipped prompts live in `internal/jevcalib/prompts/<sha8>.txt`; a prompt's `LEVEL` lines (none or ten) replace the ten score levels, and its `EXEMPLAR` lines are metadata, never sent. A named prompt that does not resolve refuses (`reason=bad-prompt`); it never falls back. The ledger row carries `prompt8`, and `rubric=` is the sha8 of the levels asked.
+
+**`--pr-dir <dir>` (#2536)** reads each pull request from `<dir>/<n>/` instead of gh: `view.json` in the `gh pr view --json` shape (`baseRefName` and `mergeable` optional), `diff.txt`, and `check-runs.json` (the commit check-runs document; without it `ci` answers missing). It makes no GitHub call and refuses `--post`: it is how the calibration set is scored through the real review path.
 
 A check with nothing to decide on answers **`missing`, never `fail`** — an absent card is not a failed card, and a missing check is neutral. **`ci`, when it is enabled, is the exception to that neutrality:** a rollup with no `ci-ok` at the head is a fail, because a missing answer would let a score above `--pass-above` PASS. The verdict, under the tuning: an enabled check that **failed** BOUNCEs; a score below `--bounce-below` (default 4) BOUNCEs; an unscored pull request is UNSURE; a score above `--pass-above` (default 7) PASSes; anything between is UNSURE. `--checks` is `checks_enabled`, the checks that may decide (default `donewhen,selfcheck,paths,claims,score`). `ci` is off in that list: schema has no `ci-ok` job, and a default run that required one bounced every schema pull request. The loop turns `ci` on by naming it. A disabled check still runs and prints as `off-<answer>` so the scorecard can say what it would have done. `cost=` is the call's tokens at `--usd-per-mtok-in/out`, and `$-` when no rate is given — TypeSafe has published none to us, and a guessed price is worse than an honest dash. `--skip-heads <file>` skips, before any call, a pull request whose head is in the file (the loop's record of heads it has posted on).
 
