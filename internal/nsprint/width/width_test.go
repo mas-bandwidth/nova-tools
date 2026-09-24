@@ -1159,3 +1159,148 @@ func TestWidthReadBoundFencedAtomic(t *testing.T) {
 		t.Fatalf("sprint:read_bound = %q; want 1", rb)
 	}
 }
+
+// TestWidthMoveConsumesSpare is the #3484 hold 1 control: sequential
+// ns_width_move calls in one pass (two senders, two sprints) never move more
+// tasks to a recipient than its original spare (deficit - eligible).
+func TestWidthMoveConsumesSpare(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	tv, err := client.Time(ctx).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := tv.UnixMilli()
+	client.HSet(ctx, "lease:reconciler", "token", "tok")
+	for _, s := range []string{"s1", "s2"} {
+		client.SAdd(ctx, "sprints", s)
+		client.HSet(ctx, "s:"+s, "status", "open")
+	}
+	for _, f := range []string{"A", "B", "C"} {
+		client.SAdd(ctx, "friends", f)
+		client.HSet(ctx, "friend:"+f+":beat", "at", "1")
+	}
+	for _, f := range []string{"A", "C"} {
+		client.HSet(ctx, "friend:"+f+":fillstate", "idle_unfilled", "5", "unfilled_since", strconv.FormatInt(now-60000, 10))
+	}
+	// B: deficit 3, eligible 1 -> spare 2.
+	client.HSet(ctx, "friend:B:fillstate", "deficit", "3", "eligible", "1", "fill_at", strconv.FormatInt(now, 10))
+	seed := func(s, f string, n int) {
+		for i := 0; i < n; i++ {
+			id := fmt.Sprintf("%s-%s-%d", f, s, i)
+			client.HSet(ctx, "s:"+s+":task:"+id, "state", "open", "kind", "work", "owner", f)
+			client.ZAdd(ctx, "s:"+s+":open:"+f, redis.Z{Score: float64(i), Member: id})
+		}
+	}
+	seed("s1", "A", 2)
+	seed("s2", "A", 2)
+	seed("s1", "C", 2)
+
+	total := 0
+	for _, c := range [][2]string{{"A", "s1"}, {"A", "s2"}, {"C", "s1"}} {
+		res, err := client.FCall(ctx, "ns_width_move", nil, "tok", c[0], "B", c[1], "30000", "width", "").Result()
+		if err != nil {
+			t.Fatalf("move %s->B %s: %v", c[0], c[1], err)
+		}
+		sl, ok := res.([]any)
+		if !ok || len(sl) < 2 || sl[0] != "OK" {
+			t.Fatalf("move %s->B %s: reply %v", c[0], c[1], res)
+		}
+		n, _ := strconv.Atoi(fmt.Sprint(sl[1]))
+		total += n
+	}
+	got := int(client.ZCard(ctx, "s:s1:open:B").Val() + client.ZCard(ctx, "s:s2:open:B").Val())
+	if total != 2 || got != 2 {
+		t.Fatalf("recipient spare 2: moves reported %d, B holds %d; want 2 and 2", total, got)
+	}
+	if e := client.HGet(ctx, "friend:B:fillstate", "eligible").Val(); e != "3" {
+		t.Fatalf("B eligible after moves = %q; want 3 (1 + 2 received)", e)
+	}
+	if u := client.HGet(ctx, "friend:A:fillstate", "idle_unfilled").Val(); u != "3" {
+		t.Fatalf("A idle_unfilled after giving 2 = %q; want 3", u)
+	}
+}
+
+// TestWidthFillNoPredictableToken is the #3484 hold 2 control: an unbounded
+// fill over 65 ready tasks never mints a token from time/index/slots/deficit.
+// Every claim's suffix is 32 hex from the caller's random parts; a claim with
+// no random part left is not made; a malformed part refuses the call.
+func TestWidthFillNoPredictableToken(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(ctx, addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	client.HSet(ctx, "s:s1", "status", "open")
+	client.SAdd(ctx, "sprints", "s1")
+	client.SAdd(ctx, "friends", "f1")
+	client.HSet(ctx, "friend:f1:desired", "slots", "70")
+	client.HSet(ctx, "friend:f1:beat", "at", "1")
+	for i := 0; i < 65; i++ {
+		id := fmt.Sprintf("t%02d", i)
+		client.HSet(ctx, "s:s1:task:"+id, "state", "open", "kind", "work", "owner", "f1")
+		client.ZAdd(ctx, "s:s1:open:f1", redis.Z{Score: float64(i), Member: id})
+	}
+
+	// Malformed part: refused before any write.
+	if _, err := client.FCall(ctx, "ns_width_fill", nil, "f1", "s1", "0", "f1", "", "0000000000000001").Result(); err == nil {
+		t.Fatal("fill with a 16-hex part: want an error, got none")
+	}
+	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 65 {
+		t.Fatalf("after refused fill, open = %d; want 65", n)
+	}
+
+	res, err := task.Fill(ctx, st, "f1", "s1", 0, "f1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.N != len(res.Tasks) || res.N > 64 || res.N == 0 {
+		t.Fatalf("fill n=%d tasks=%d; want 1..64 claims, one per random part", res.N, len(res.Tasks))
+	}
+	for i, tk := range res.Tasks {
+		parts := strings.SplitN(tk.Token, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim %d token %q: want <attempt>.<32 hex>", i+1, tk.Token)
+		}
+	}
+	// Top the parts up past 64 directly: claim 65 gets a 32-hex part too.
+	args := []any{"f1", "s1", "0", "f1", ""}
+	left := 65 - res.N
+	for i := 0; i < left; i++ {
+		p, err := task.RandomToken()
+		if err != nil {
+			t.Fatal(err)
+		}
+		args = append(args, p)
+	}
+	r2, err := client.FCall(ctx, "ns_width_fill", nil, args...).Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := r2.([]any)
+	if fmt.Sprint(v[1]) != strconv.Itoa(left) {
+		t.Fatalf("second fill claimed %v; want %d", v[1], left)
+	}
+	for i := 3; i+3 < len(v); i += 4 {
+		tok := fmt.Sprint(v[i+3])
+		parts := strings.SplitN(tok, ".", 2)
+		if len(parts) != 2 || len(parts[1]) != 32 || strings.Trim(parts[1], "0123456789abcdef") != "" {
+			t.Fatalf("claim token %q: want <attempt>.<32 hex>", tok)
+		}
+	}
+	if n := client.ZCard(ctx, "s:s1:open:f1").Val(); n != 0 {
+		t.Fatalf("after 65 claims, open = %d; want 0", n)
+	}
+}

@@ -13,6 +13,10 @@
 --                         idle_no_ready, idle_deps, idle_input, idle_unfilled,
 --                         peak, peak_at, unfilled_since, starting, living, at.
 --                         fill_at, fill_n written by ns_width_fill.
+--                         eligible (recipient) and idle_unfilled (sender)
+--                         consumed by ns_width_move as it moves, so the
+--                         next move in the same pass sees the spare that
+--                         is left, never the snapshot's (#3484 hold 1).
 
 local WD = {}
 
@@ -317,6 +321,20 @@ local function width_fill(keys, args)
   if max_claim > 0 and max_claim < limit then
     limit = max_claim
   end
+  -- Every claim token carries one caller-supplied 128-bit random part (32
+  -- lowercase hex). There is no fallback: a claim with no random part left
+  -- is not made (fail closed), and a malformed part refuses the whole call
+  -- before any write, so a token is never derivable from time or counts.
+  local nrand = #args - 5
+  if nrand < 0 then nrand = 0 end
+  for i = 6, #args do
+    if not string.match(args[i], '^[0-9a-f]+$') or #args[i] ~= 32 then
+      return redis.error_reply('fill: random part ' .. (i - 5) .. ' is not 32 hex')
+    end
+  end
+  if nrand < limit then
+    limit = nrand
+  end
   if limit <= 0 then
     return { 'OK', '0', tostring(deficit) }
   end
@@ -361,9 +379,6 @@ local function width_fill(keys, args)
           local head = redis.call('HGET', key, 'head') or ''
           if not WD.is_dedup(S, f, repo, pr, head, id) then
             local rand_part = args[6 + #claimed]
-            if not rand_part or rand_part == '' then
-              rand_part = string.format('%08x%08x%08x%08x', now, #claimed, slots, deficit)
-            end
             local prev_attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
             local attempt = prev_attempt + 1
             local token = tostring(attempt) .. '.' .. rand_part
@@ -523,6 +538,15 @@ local function width_move(keys, args)
         end
       end
     end
+  end
+
+  if moved > 0 then
+    -- Consume the spare this call used: the recipient's eligible grows by
+    -- the tasks it received and the sender's idle_unfilled shrinks by the
+    -- tasks it gave, so a later move in the same pass (another sender,
+    -- another sprint) sees b_spare - moved, never the snapshot again.
+    redis.call('HSET', 'friend:' .. to_f .. ':fillstate', 'eligible', tostring(b_eligible + moved))
+    redis.call('HSET', 'friend:' .. from_f .. ':fillstate', 'idle_unfilled', tostring(math.max(0, a_unfilled - moved)))
   end
 
   return { 'OK', tostring(moved) }
