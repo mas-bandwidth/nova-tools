@@ -78,7 +78,8 @@ local function fleet_hold(keys, args)
     'at', tostring(at))
 
   local since = (cur_state == 'HELD' and cur_since and cur_since ~= '') and cur_since or tostring(at)
-  redis.call('HSET', 'bench:' .. bench .. ':state',
+  local state_key = 'bench:' .. bench .. ':state'
+  redis.call('HSET', state_key,
     'state', 'HELD',
     'since', since,
     'reason', why,
@@ -109,7 +110,8 @@ local function fleet_release(keys, args)
 
   local at = fl_now_ms()
   redis.call('DEL', 'bench:' .. bench .. ':hold')
-  redis.call('HSET', 'bench:' .. bench .. ':state',
+  local state_key = 'bench:' .. bench .. ':state'
+  redis.call('HSET', state_key,
     'state', 'PROBING',
     'since', tostring(at),
     'oks', '0',
@@ -275,7 +277,8 @@ local function fleet_step(keys, args)
       new_reason = cur_reason
     end
 
-    redis.call('HSET', 'bench:' .. b .. ':state',
+    local state_key = 'bench:' .. b .. ':state'
+    redis.call('HSET', state_key,
       'state', new_state,
       'since', new_since,
       'misses', tostring(new_misses),

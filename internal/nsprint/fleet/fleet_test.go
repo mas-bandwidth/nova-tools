@@ -487,16 +487,21 @@ func TestFleetOneWriter(t *testing.T) {
 	holdWrites := 0
 	cfgWrites := 0
 
+	binds := regexp.MustCompile(`local\s+(\w+)\s*=\s*'bench:'\s*\.\.\s*\w+\s*\.\.\s*':state'`)
+
 	for _, sec := range sections[1:] {
 		name := sec[:strings.Index(sec, "\n")]
 		isFleetLua := name == "fleet.lua"
 
 		inFleetConfig := false
+		stateVars := map[string]bool{}
 		for i, line := range strings.Split(sec, "\n") {
-			if strings.HasPrefix(line, "local function fleet_config") {
-				inFleetConfig = true
-			} else if strings.HasPrefix(line, "local function ") || strings.HasPrefix(line, "function ") {
-				inFleetConfig = false
+			if strings.HasPrefix(line, "local function ") || strings.HasPrefix(line, "function ") {
+				inFleetConfig = strings.HasPrefix(line, "local function fleet_config")
+				stateVars = map[string]bool{}
+			}
+			if m := binds.FindStringSubmatch(line); m != nil {
+				stateVars[m[1]] = true
 			}
 
 			m := writes.FindStringSubmatch(line)
@@ -505,7 +510,7 @@ func TestFleetOneWriter(t *testing.T) {
 			}
 			target := strings.TrimSpace(m[2])
 
-			if strings.Contains(target, "':state'") {
+			if (strings.Contains(target, "'bench:'") && strings.Contains(target, "':state'")) || stateVars[target] {
 				stateWrites++
 				if !isFleetLua {
 					t.Errorf("lua/%s line %d writes bench:*:state (%s) outside fleet.lua", name, i+1, strings.TrimSpace(line))
