@@ -69,7 +69,7 @@ nova-work is in this release, and Glenn's bar is that it ships finished, dogfood
 
 - every blocker above closed with a landed fix and a test, not a rerun;
 - 22 of 22 tools clean in the dogfood, which today means the `docs/TESTS.md` drift closed;
-- nova-work's 231 criteria verified, which today stands at 155.
+- nova-work's 231 criteria verified, which today stands at 157.
 
 No date is promised here and no estimate is given. The numbers move when the evidence moves.
 
@@ -118,7 +118,7 @@ A row is a request waiting on an act only Glenn can do, with the exact command o
 Help AI friends coordinate work without repeatedly rebuilding the plan in their context.
 
 **Measured 2026-09-19 at `dev` [`4c793b55`](https://github.com/mas-bandwidth/nova-tools/commit/4c793b55a30160e5fe1ed45e25928f2c85dcfe5c).**
-**155 of 231 acceptance criteria verified (67%). 23 of 63 features verified (37%).**
+**157 of 231 acceptance criteria verified (68%). 24 of 63 features verified (38%).**
 A criterion is ticked here only when a named test proves it and that test passed at this exact revision. The run is `cd lisp/nova-work && ./run-tests.sh` — `NOVA-WORK SLICE1 total=336 pass=336 fail=0`. Every ticked criterion names its tests under the feature.
 The page said 0% until today. That was stale, not cautious: the work was there and the page had no way to show it. Each feature now carries `criteria verified / criteria total`, so a feature four-fifths done reads as four-fifths done instead of as nothing.
 
@@ -149,10 +149,10 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 | [Persistence, closed history and recovery](#e06) | 5 | 15/16 | 4/5 |
 | [Roadmap views and Fixed Tables pilot parity](#e07) | 6 | 10/20 | 1/6 |
 | [Coordinator protocol, friends and execution records](#e08) | 5 | 23/32 | 1/5 |
-| [Issue intake, migration and external boundaries](#e09) | 5 | 7/15 | 1/5 |
+| [Issue intake, migration and external boundaries](#e09) | 5 | 9/15 | 2/5 |
 | [Diagnostics, measurement and release gates](#e10) | 7 | 16/27 | 2/7 |
 | [Delegation](#e11) | 6 | 19/27 | 3/6 |
-| **Total** | **63** | **155/231** | **23/63** |
+| **Total** | **63** | **157/231** | **24/63** |
 
 ## Scope movement
 
@@ -920,7 +920,7 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 | Feature | Criteria verified | Verified |
 |---|:---:|:---:|
-| E09-F01 — Non-destructive issue inventory and capture | 1/3 | ❌ |
+| E09-F01 — Non-destructive issue inventory and capture | 3/3 | ✅ |
 | E09-F02 — Link mode and correspondence reconciliation | 1/3 | ❌ |
 | E09-F03 — Lossless resumable initial migration | 2/3 | ❌ |
 | E09-F04 — Explicit absorb operation and deletion gate | 0/3 | ❌ |
@@ -933,8 +933,8 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 Prerequisites: E06-F05.
 
-- [ ] Capture stable provider/repository/issue identity, revision and URL
-- [ ] Preserve body, comments, labels, relationships, attachments and pagination
+- [x] Capture stable provider/repository/issue identity, revision and URL
+- [x] Preserve body, comments, labels, relationships, attachments and pagination
 - [x] Keep inaccessible or unsupported fields explicit
 
 Source sections: Public issue correspondence survives intake; Source inventory; Archive completeness.

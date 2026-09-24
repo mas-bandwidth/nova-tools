@@ -719,6 +719,106 @@ func TestMaskingNeverHidesARealLink(t *testing.T) {
 	}
 }
 
+// fixedChannel is a test double that returns a predetermined ranking, so a
+// fusion test can know each chunk's per-channel rank without depending on the
+// scoring details of any real channel.
+type fixedChannel struct {
+	name string
+	res  []Scored
+}
+
+func (f fixedChannel) Name() string                      { return f.name }
+func (f fixedChannel) Query(text string, k int) []Scored { return f.res }
+
+// Pin the channel geometry BM25 smoothing, trigram Jaccard and reciprocal-rank
+// fusion dictate. These contracts live in docs/SPEC.md but had no direct tests.
+func TestIssue2306(t *testing.T) {
+	t.Run("BM25IdfNeverNegative", func(t *testing.T) {
+		// A term that appears in every document has DF == len(Chunks). The
+		// classic idf log(N/n) would be zero here; Lucene smoothing must stay
+		// strictly positive, because a corpus of related notes is full of
+		// common terms and a zero or negative idf scrambles rankings.
+		c, err := Build(fstest.MapFS{
+			"a.md": {Data: []byte("alpha beta gamma")},
+			"b.md": {Data: []byte("alpha delta epsilon")},
+		}, nil)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		if got := NewBM25(c).idf("alpha"); got <= 0 {
+			t.Errorf("idf for a term in every chunk = %v, want > 0", got)
+		}
+	})
+
+	t.Run("BM25Constants", func(t *testing.T) {
+		c, err := Build(fstest.MapFS{
+			"a.md": {Data: []byte("alpha beta gamma")},
+		}, nil)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		bm := NewBM25(c)
+		if bm.K1 != 1.2 {
+			t.Errorf("K1 = %v, want 1.2", bm.K1)
+		}
+		if bm.B != 0.75 {
+			t.Errorf("B = %v, want 0.75", bm.B)
+		}
+	})
+
+	t.Run("TrigramJaccardIsBounded", func(t *testing.T) {
+		c := build(t)
+		trig := NewTrigram(c)
+		got := trig.Query("anemometers", len(c.Chunks))
+		var foundWind bool
+		for _, s := range got {
+			if s.Score < 0 || s.Score > 1 {
+				t.Errorf("trigram score %v out of [0,1] for chunk %d", s.Score, s.Chunk)
+			}
+			if c.Chunks[s.Chunk].File == "notes/wind.md" {
+				foundWind = true
+			}
+		}
+		if !foundWind {
+			t.Errorf("morphology variant \"anemometers\" did not reach notes/wind.md; got %+v", got)
+		}
+	})
+
+	t.Run("FusionIsReciprocalRankOnly", func(t *testing.T) {
+		c, err := Build(fstest.MapFS{
+			"a.md": {Data: []byte("alpha beta gamma")},
+			"b.md": {Data: []byte("delta epsilon zeta")},
+		}, nil)
+		if err != nil {
+			t.Fatalf("Build: %v", err)
+		}
+		chA := fixedChannel{name: "A", res: []Scored{
+			{Chunk: 0, Rank: 0, Score: 10},
+			{Chunk: 1, Rank: 1, Score: 5},
+		}}
+		chB := fixedChannel{name: "B", res: []Scored{
+			{Chunk: 1, Rank: 0, Score: 7},
+			{Chunk: 0, Rank: 1, Score: 3},
+		}}
+		hits := Retrieve(c, []Channel{chA, chB}, "irrelevant", 2)
+		byFile := map[string]float64{}
+		for _, h := range hits {
+			byFile[h.File] = h.Fused
+		}
+		want := 1.0/60.0 + 1.0/61.0
+		const eps = 1e-12
+		for _, f := range []string{"a.md", "b.md"} {
+			got, ok := byFile[f]
+			if !ok {
+				t.Fatalf("missing hit for %s", f)
+			}
+			if diff := got - want; diff < -eps || diff > eps {
+				t.Errorf("%s fused = %v, want %v (reciprocal-rank sum)", f, got, want)
+			}
+		}
+	})
+}
+
 // The other direction, kept beside it so neither can be "fixed" by breaking the
 // other: these SHOULD be masked, and a checker that reports them is the diluted
 // one this change exists to repair.

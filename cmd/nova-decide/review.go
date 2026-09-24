@@ -41,8 +41,12 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	dryRun := fs.Bool("dry-run", false, "print the typed line and post nothing (the default)")
 	ledger := fs.String("ledger", "file", "where the verdict is written: file | redis | file,redis (redis is one kind=jev entry on cards:done per JEV line)")
 	store := fs.String("store", os.Getenv("NOVA_REDIS_ADDR"), "the fleet Redis host:port, for --ledger redis (env NOVA_REDIS_ADDR)")
-	storeUser := fs.String("store-user", "", "the Redis ACL user, for --ledger redis")
-	storePasswordEnv := fs.String("store-password-env", "NOVA_REDIS_BENCH_PASSWORD", "the environment variable holding the Redis password; the password is never a flag")
+	var storeUser string
+	fs.StringVar(&storeUser, "user", "", "the Redis ACL user, for --ledger redis")
+	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
+	var storePasswordEnv string
+	fs.StringVar(&storePasswordEnv, "password-env", "NOVA_REDIS_BENCH_PASSWORD", "the environment variable holding the Redis password; the password is never a flag")
+	fs.StringVar(&storePasswordEnv, "store-password-env", "NOVA_REDIS_BENCH_PASSWORD", "alias for --password-env")
 	stream := fs.String("stream", events.Stream, "the stream the Jev entries go to")
 	ledgerPath := fs.String("ledger-path", defaultLedgerPath(), "the JSONL ledger, for --ledger file")
 	noJev := fs.Bool("no-jev", false, "run the four mechanical checks only; ask no provider and spend nothing")
@@ -62,6 +66,9 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		if answerHelp(err, stdout, "review") {
+			return 0
+		}
 		return refuse(stderr, "REVIEW", "bad-flags", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
@@ -131,8 +138,8 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	var jevStream events.Emitter
 	if toRedis {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		em, closeStream, err := dialJevStream(ctx, events.Dial{Addr: *store, Username: *storeUser,
-			Password: os.Getenv(*storePasswordEnv), Stream: *stream})
+		em, closeStream, err := dialJevStream(ctx, events.Dial{Addr: *store, Username: storeUser,
+			Password: os.Getenv(storePasswordEnv), Stream: *stream})
 		cancel()
 		if err != nil {
 			return refuse(stderr, "REVIEW", "no-ledger", "--ledger redis: "+oneline.Cap(err.Error(), oneline.TailBytes))
@@ -288,8 +295,14 @@ func reviewOne(gh ghRunner, repo string, n int, cardPath string, asker prereview
 		}
 	}
 	checks := prereview.Mechanical(pr, card)
+	base := pr.Base
+	if base == "" {
+		base = string(prereview.BaseGateFromGH(pr.Mergeable, pr.MergeStateStatus))
+	}
 	d := prereview.Disposition{
+		Who:  prereview.Who,
 		Repo: repo, PR: n, Head: pr.Head,
+		Rubric: prereview.RubricVersion(), Base: base,
 		Checks: checks.Field(), Reason: checks.Why(), Evidence: checks.Evidence(), Model: tune.Model,
 		PathsFrom: card.PathsFrom, SymbolFrom: card.SymbolFrom, CardPath: card.Path,
 		At: time.Now().UTC().Format(time.RFC3339),
@@ -350,11 +363,13 @@ type prWire struct {
 	Files      []struct {
 		Path string `json:"path"`
 	} `json:"files"`
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
 }
 
 // pullRequest fetches the public facts and the diff.
 func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
-	raw, err := g.run("pr", "view", strconv.Itoa(n), "-R", repo, "--json", "number,headRefOid,title,body,files")
+	raw, err := g.run("pr", "view", strconv.Itoa(n), "-R", repo, "--json", "number,headRefOid,title,body,files,mergeable,mergeStateStatus")
 	if err != nil {
 		return prereview.PR{}, fmt.Errorf("gh pr view %d: %w", n, err)
 	}
@@ -366,7 +381,12 @@ func (g ghRunner) pullRequest(repo string, n int) (prereview.PR, error) {
 	if err != nil {
 		return prereview.PR{}, fmt.Errorf("gh pr diff %d: %w", n, err)
 	}
-	pr := prereview.PR{Repo: repo, Number: n, Head: w.HeadRefOid, Title: w.Title, Body: w.Body, Diff: string(diff)}
+	pr := prereview.PR{
+		Repo: repo, Number: n, Head: w.HeadRefOid, Title: w.Title, Body: w.Body, Diff: string(diff),
+		Base:             string(prereview.BaseGateFromGH(w.Mergeable, w.MergeStateStatus)),
+		Mergeable:        w.Mergeable,
+		MergeStateStatus: w.MergeStateStatus,
+	}
 	for _, f := range w.Files {
 		pr.Files = append(pr.Files, f.Path)
 	}

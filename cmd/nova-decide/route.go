@@ -96,6 +96,12 @@ var eventSinkOpener = func(addr, user, password string) (decide.LogSink, error) 
 	return decide.OpenEventSink(addr, user, password, "")
 }
 
+// downFriendsOpener reads which friends are marked down in the fleet store (#3397).
+// It is the seam a test replaces with a fake or miniredis check.
+var downFriendsOpener = func(ctx context.Context, addr, user, password string, reg *decide.Registry) (map[string]bool, []string, error) {
+	return decide.DownFriends(ctx, addr, user, password, reg)
+}
+
 // defaultPasswordEnv is the variable `nova-secrets exec --only
 // NOVA_REDIS_BENCH_PASSWORD` leaves the fleet store's password in, the same one
 // nova-pulse event reads.
@@ -126,8 +132,12 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	registry := fs.String("registry", "", "the registry of minds; the embedded ladder when absent")
 	logPath := fs.String("log", "", "append the decision to this JSON lines log")
 	store := fs.String("store", "", "the fleet Redis as host:port: write the decision as one decide event on cards:done, which the fold keeps in its decisions table")
-	storeUser := fs.String("user", "", "with --store: the ACL user")
-	passwordEnv := fs.String("password-env", defaultPasswordEnv, "with --store: the environment variable the password arrives in; never the password itself")
+	var storeUser string
+	fs.StringVar(&storeUser, "user", "", "with --store: the ACL user")
+	fs.StringVar(&storeUser, "store-user", "", "alias for --user")
+	var passwordEnv string
+	fs.StringVar(&passwordEnv, "password-env", defaultPasswordEnv, "with --store: the environment variable the password arrives in; never the password itself")
+	fs.StringVar(&passwordEnv, "store-password-env", defaultPasswordEnv, "alias for --password-env")
 	usagePath := fs.String("usage", "", "append what a provider call spent to this usage TSV, in the fleet's own columns")
 	floor := fs.Float64("floor", decide.DefaultFloor, "confidence floor; below it the answer steps UP a rung. Absent, the registry's floor for this unit's KIND answers, and the built-in default only where the kind has none")
 	stepUp := fs.Bool("step-up", false, "below the floor, re-ask the same question with that rung excluded from the criteria; every step is a logged decision")
@@ -265,8 +275,10 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		}
 		fileSink = opened
 	}
+	var downExcluded map[string]bool
+	var downList []string
 	if strings.TrimSpace(*store) != "" {
-		opened, err := eventSinkOpener(*store, *storeUser, os.Getenv(*passwordEnv))
+		opened, err := eventSinkOpener(*store, storeUser, os.Getenv(passwordEnv))
 		if err != nil {
 			if fileSink != nil {
 				fileSink.Close()
@@ -274,6 +286,19 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 			return openFailed(err)
 		}
 		eventSink = opened
+
+		down, list, err := downFriendsOpener(context.Background(), *store, storeUser, os.Getenv(passwordEnv), reg)
+		if err != nil {
+			if fileSink != nil {
+				fileSink.Close()
+			}
+			if eventSink != nil {
+				eventSink.Close()
+			}
+			return openFailed(err)
+		}
+		downExcluded = down
+		downList = list
 	}
 	var sink decide.LogSink
 	if fileSink != nil || eventSink != nil {
@@ -322,14 +347,14 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 	case *stepUp:
 		// The step-up is a SEQUENCE of decisions, and the caller gets all of
 		// them: the last is the answer, and every one of them is a row.
-		steps, routeErr = decide.RouteStepUp(context.Background(), client, reg, unit, effectiveFloor, *maxSteps)
+		steps, routeErr = decide.RouteStepUpExcluded(context.Background(), client, reg, unit, effectiveFloor, *maxSteps, downExcluded, downList)
 		if len(steps) > 0 {
 			res = steps[len(steps)-1]
 		}
 	case ask:
-		res, routeErr = decide.RouteJev(context.Background(), client, reg, unit, effectiveFloor)
+		res, routeErr = decide.RouteJevExcluded(context.Background(), client, reg, unit, effectiveFloor, downExcluded, downList)
 	default:
-		res, routeErr = decide.RouteRules(reg, unit, effectiveFloor)
+		res, routeErr = decide.RouteRulesExcluded(reg, unit, effectiveFloor, downExcluded, downList)
 	}
 	// Where the floor came from is the decision's own fact, and it travels with
 	// it onto the line and into every log row -- including the steps, each of

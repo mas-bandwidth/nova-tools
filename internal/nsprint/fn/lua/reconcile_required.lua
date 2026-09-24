@@ -1,6 +1,7 @@
 -- Reconciler transitions for card reclaim, orphan-effect, idempotency keys and
 -- the one-call assignment (#2930; #2756 3.2, 5.4, controls 8, 9, 23, 25).
--- Every function checks the reconciler fence (lease:reconciler token) before
+-- Every function but ns_idem_resolve (a friend's compare-and-set, see
+-- rr_fenced) checks the reconciler fence (lease:reconciler token) before
 -- it reads anything else, computes every guard before the first write, and
 -- writes the state, the index move, the receipt and the idem key in the same
 -- call. Windows are policy (milliseconds) passed by the caller; the clock is
@@ -21,7 +22,12 @@ local function rr_get(key, field)
   return tostring(v)
 end
 
--- The reconciler lease is the only writer allowed here (5.1). A missing
+-- The reconciler lease is the only writer allowed here (5.1), with one
+-- fenced exception: ns_idem_resolve, the friend-run `nova-sprint idem
+-- resolve`, holds no reconciler token and is fenced instead by
+-- compare-and-set on --was (it writes only an ambiguous:* value equal to
+-- --was byte for byte, and no machine function writes an ambiguous:* value
+-- after ns_idem_ambiguous sets it). For every other function, a missing
 -- lease or another instance's token refuses before any read or write.
 local function rr_fenced(token)
   local held = redis.call('HGET', 'lease:reconciler', 'token')
@@ -150,12 +156,35 @@ redis.register_function('ns_card_required', function(keys, args)
   return rr_reply(0, 'ORPHAN', attempt, r)
 end)
 
+-- The pending index: every pending:* idem key, scored by its begin time
+-- (Redis TIME ms). The expire sweep reads it past open_ms; commit,
+-- ambiguous, rejected and resolve each clear the key's member.
+local function rr_pending_idx(S)
+  return 's:' .. S .. ':idx:idem:pending'
+end
+
+-- The s:<S>:unresolved field an ambiguous key raises (pr-ambiguous:<repo>:<branch>).
+local function rr_unresolved_field(key)
+  if string.sub(key, 1, 3) == 'pr:' then return 'pr-ambiguous:' .. string.sub(key, 4) end
+  return 'ambiguous:' .. key
+end
+
+-- who of a pending:<who>:<at_ms> value (a value from before at_ms carried
+-- only pending:<who>).
+local function rr_pending_who(v)
+  local rest = string.sub(v, 9)
+  local who = string.match(rest, '^(.*):%d+$')
+  return who or rest
+end
+
 -- ns_idem_begin: record the intent to make an external effect under key,
--- create-only. Returns the stored value when the key already exists: a URL
--- (done), or pending:<who> (a crash between the effect and its record, which
--- the caller must resolve by lookup, never by a second effect).
--- Fenced like every function here: a stale or missing reconciler token
--- refuses before the idem hash is read or written.
+-- create-only: pending:<who>:<at_ms> (Redis TIME) and the key in the pending
+-- index. BEGUN returns the value it wrote, which the caller passes to
+-- ns_idem_ambiguous or ns_idem_rejected. An existing key returns its stored
+-- value: a URL (done), pending:* (in flight; the caller never opens again)
+-- or ambiguous:* (terminal for the machine until a friend resolves it).
+-- Fenced like every machine function here: a stale or missing reconciler
+-- token refuses before the idem hash is read or written.
 -- args: sprint, key, who, reconciler token
 redis.register_function('ns_idem_begin', function(keys, args)
   local S, key, who, rtoken = args[1], args[2], args[3] or '', args[4] or ''
@@ -164,19 +193,26 @@ redis.register_function('ns_idem_begin', function(keys, args)
   local idem = 's:' .. S .. ':idem'
   local prev = rr_get(idem, key)
   if prev ~= '' then return rr_reply(0, 'EXISTS', '', prev) end
-  redis.call('HSET', idem, key, 'pending:' .. who)
-  return rr_reply(0, 'BEGUN', '', '')
+  local now = rr_now()
+  local v = 'pending:' .. who .. ':' .. tostring(now)
+  redis.call('HSET', idem, key, v)
+  redis.call('ZADD', rr_pending_idx(S), now, key)
+  return rr_reply(0, 'BEGUN', '', v)
 end)
 
--- ns_idem_commit: record the effect's result once, with one receipt.
--- The same value again returns the stored receipt; a different value is 4.
+-- ns_idem_commit: record the effect's result once, with one receipt, and
+-- clear the key from the pending index. The same value again returns the
+-- stored receipt; a different value, or an ambiguous key (only a friend's
+-- ns_idem_resolve moves it), is 4 CONFLICT with no write.
 -- A stale or missing reconciler token refuses before any read or write.
 -- args: sprint, key, value, actor, reason, reconciler token
 redis.register_function('ns_idem_commit', function(keys, args)
   local S, key, value, actor, reason = args[1], args[2], args[3] or '', args[4] or '', args[5] or ''
   local rtoken = args[6] or ''
   if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
-  if key == '' or value == '' or string.sub(value, 1, 8) == 'pending:' then return rr_reply(1, 'USAGE', '', '') end
+  if key == '' or value == '' or string.sub(value, 1, 8) == 'pending:' or string.sub(value, 1, 10) == 'ambiguous:' then
+    return rr_reply(1, 'USAGE', '', '')
+  end
   local idem = 's:' .. S .. ':idem'
   local prev = rr_get(idem, key)
   if prev ~= '' and string.sub(prev, 1, 8) ~= 'pending:' then
@@ -186,7 +222,106 @@ redis.register_function('ns_idem_commit', function(keys, args)
   local now = rr_now()
   local r = rr_receipt(S, 'effect', key, prev, 'recorded', 0, '', actor, reason, value, key, now)
   redis.call('HSET', idem, key, value, key .. ':receipt', r)
+  redis.call('ZREM', rr_pending_idx(S), key)
   return rr_reply(0, 'OK', '', r)
+end)
+
+-- ns_idem_ambiguous: a pending key whose outcome cannot be known from Redis
+-- (the forge answered a 422 that does not prove "no PR", or the open is
+-- pending past open_ms) becomes ambiguous:<who>:<at_ms>, terminal for the
+-- machine: the key leaves the pending index, one pr-ambiguous item is raised
+-- (HSETNX) and one receipt written. was, when given, must equal the stored
+-- pending value. A replay on the ambiguous key returns the first receipt;
+-- a URL or an absent key is 2 STATE with no write.
+-- args: sprint, key, reconciler token, [was]
+redis.register_function('ns_idem_ambiguous', function(keys, args)
+  local S, key, rtoken, was = args[1], args[2] or '', args[3] or '', args[4] or ''
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
+  if key == '' then return rr_reply(1, 'USAGE', '', '') end
+  local idem = 's:' .. S .. ':idem'
+  local prev = rr_get(idem, key)
+  if string.sub(prev, 1, 10) == 'ambiguous:' then
+    return rr_reply(0, 'AMBIGUOUS', '', rr_get(idem, key .. ':receipt'))
+  end
+  if string.sub(prev, 1, 8) ~= 'pending:' or (was ~= '' and was ~= prev) then
+    return rr_reply(2, 'STATE', '', prev)
+  end
+  local now = rr_now()
+  local v = 'ambiguous:' .. rr_pending_who(prev) .. ':' .. tostring(now)
+  local r = rr_receipt(S, 'effect', key, prev, 'ambiguous', 0, '', 'reconciler', 'pr-ambiguous', v, key, now)
+  redis.call('HSET', idem, key, v, key .. ':receipt', r)
+  redis.call('ZREM', rr_pending_idx(S), key)
+  redis.call('HSETNX', 's:' .. S .. ':unresolved', rr_unresolved_field(key), r)
+  return rr_reply(0, 'AMBIGUOUS', '', r)
+end)
+
+-- ns_idem_rejected: the forge refused the open (a 422 on the validation
+-- allowlist), so no PR exists: the key and its pending-index member go, with
+-- one rejected-open receipt (status, msg). Nothing is raised in
+-- s:<S>:unresolved. was is the pending value this open began; the receipt
+-- is remembered under <key>:rejected as "<was> <receipt>", so a replay for
+-- the same was returns the first receipt and writes nothing, while a later
+-- begin on the key (the caller fixed its request) is a new open.
+-- An absent key or any other value is 2 STATE with no write.
+-- args: sprint, key, was, status, msg, reconciler token
+redis.register_function('ns_idem_rejected', function(keys, args)
+  local S, key, was, status, msg = args[1], args[2] or '', args[3] or '', args[4] or '', args[5] or ''
+  local rtoken = args[6] or ''
+  if rr_fenced(rtoken) then return rr_reply(3, 'FENCED', '', '') end
+  if key == '' or string.sub(was, 1, 8) ~= 'pending:' then return rr_reply(1, 'USAGE', '', '') end
+  local idem = 's:' .. S .. ':idem'
+  local done = rr_get(idem, key .. ':rejected')
+  if string.sub(done, 1, #was + 1) == was .. ' ' then
+    return rr_reply(0, 'REJECTED', '', string.sub(done, #was + 2))
+  end
+  local prev = rr_get(idem, key)
+  if prev ~= was then return rr_reply(2, 'STATE', '', prev) end
+  local now = rr_now()
+  local r = redis.call('XADD', 's:' .. S .. ':log', '*',
+    'kind', 'effect', 'id', key, 'from', prev, 'to', 'rejected-open',
+    'attempt', '0', 'token_sha', '', 'actor', 'reconciler', 'reason', 'rejected-open',
+    'evidence', msg, 'idem', key, 'key', key, 'status', status, 'msg', msg, 'at', tostring(now))
+  redis.call('HDEL', idem, key, key .. ':receipt')
+  redis.call('HSET', idem, key .. ':rejected', was .. ' ' .. r)
+  redis.call('ZREM', rr_pending_idx(S), key)
+  return rr_reply(0, 'REJECTED', '', r)
+end)
+
+-- ns_idem_resolve: a friend's typed resolution of an ambiguous key
+-- (`nova-sprint idem resolve`), the one writer of the ambiguous-to-URL or
+-- ambiguous-to-absent transition and the one function in this file that
+-- takes no reconciler token (see the header). Its fence is compare-and-set:
+-- it writes only when the stored value is ambiguous:* and equals was byte for
+-- byte. mode url records the URL (one resolved receipt, the pr-ambiguous item
+-- deleted); mode none deletes the key and the item (one receipt), so the next
+-- EnsurePR begins fresh. Any other stored value, including an ambiguous:*
+-- that differs from was, is 2 STATE with the stored value and no write.
+-- args: sprint, key, was, mode (url|none), url, who
+redis.register_function('ns_idem_resolve', function(keys, args)
+  local S, key, was, mode = args[1], args[2] or '', args[3] or '', args[4] or ''
+  local url, who = args[5] or '', args[6] or ''
+  if key == '' or was == '' or who == '' or (mode ~= 'url' and mode ~= 'none')
+    or (mode == 'url' and (url == '' or string.sub(url, 1, 8) == 'pending:' or string.sub(url, 1, 10) == 'ambiguous:'))
+    or (mode == 'none' and url ~= '') then
+    return rr_reply(1, 'USAGE', '', '')
+  end
+  local idem = 's:' .. S .. ':idem'
+  local prev = rr_get(idem, key)
+  if string.sub(prev, 1, 10) ~= 'ambiguous:' or prev ~= was then
+    return rr_reply(2, 'STATE', '', prev)
+  end
+  local now = rr_now()
+  local evidence = url
+  if mode == 'none' then evidence = 'none' end
+  local r = rr_receipt(S, 'effect', key, prev, 'resolved', 0, '', who, 'resolve-' .. mode, evidence, key, now)
+  if mode == 'url' then
+    redis.call('HSET', idem, key, url, key .. ':receipt', r)
+  else
+    redis.call('HDEL', idem, key, key .. ':receipt')
+  end
+  redis.call('HDEL', 's:' .. S .. ':unresolved', rr_unresolved_field(key))
+  redis.call('ZREM', rr_pending_idx(S), key)
+  return rr_reply(0, 'RESOLVED', '', r)
 end)
 
 -- ns_task_assign: route one ready task to one consumer (5.2 sweep, 5.3).

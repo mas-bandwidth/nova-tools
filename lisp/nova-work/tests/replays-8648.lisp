@@ -6,7 +6,7 @@
 ;;;;   regression-opens-repair-work                     :4943-4951,5782-5785
 ;;;;   reply-retired-only-under-verified-coverage       :6020-6024,6316-6325
 ;;;;   restore-is-isolated-and-dispatches-nothing       :6285-6290,5790-5793
-;;;;   reuse-only-valid-review                          :4851
+;;;;   reuse-only-valid-review                          :5565
 ;;;;   review-cycles-stay-visible                       :6368-6370
 ;;;;   TestE02F06PinCommonLispImplementationGo          :292-301,312-321
 ;;;;   TestE11F04PartialChildNeverClosesParent          :4655,4312
@@ -212,13 +212,13 @@
             "the missing reply is named by its kind: ~A" line)))))
 
 ;;; ------------------------------------------------------------------
-;;; reuse-only-valid-review                 SPEC-WORK.md:4851
+;;; reuse-only-valid-review                 SPEC-WORK.md:5565
 ;;; ------------------------------------------------------------------
 ;;;
 ;;; "Same-scope review is reusable; changed acceptance/dependencies invalidate
 ;;; it; independent friend gates cannot be replaced by reuse."
 
-(deftest "reuse-only-valid-review" "docs/SPEC-WORK.md:4851"
+(deftest "reuse-only-valid-review" "docs/SPEC-WORK.md:5565"
     "expected=same-scope-reused;changed-acceptance-invalidates;changed-deps-invalidate;friend-gate-not-reusable"
   (let ((review (make-scope-review :friend "stella" :scope '(:node "acme/work/f1")
                                    :head "abc123"

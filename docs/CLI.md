@@ -80,11 +80,11 @@ DOGFOOD RECORD OK tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z o
 $ nova-check dogfood ledger --cli ./docs/CLI.md --receipts ./dogfood-receipts
 DOGFOOD tool=nova-check verb=quickstart by=nobody at=- ok=- issue=- open=0
 DOGFOOD tool=nova-check verb=links by=Stella at=2026-09-18T09:00:00Z ok=yes issue=- open=0
-DOGFOOD OK verbs=106 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
+DOGFOOD OK verbs=105 dogfooded=1 by-nonauthor=1 open-edges=0 unfiled=0 unmatched=0
 
 $ nova-check dogfood gate --cli ./docs/CLI.md --receipts ./dogfood-receipts --require-all
 DOGFOOD GATE FAIL tool=nova-check verb=quickstart: not dogfooded by a non-author; a tool is done when somebody who did not write it has run it on real work
-DOGFOOD GATE FAIL verbs=106 findings=105 shown=20 unmatched=0
+DOGFOOD GATE FAIL verbs=105 findings=104 shown=20 unmatched=0
 ```
 
 **Reading it.** `ledger` prints one row per verb, in the list's order, and
@@ -359,6 +359,8 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
 nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
+nova-memory view   [--exclude <glob>]... [--max <n>] <file>...
+                                                                        the companion view: a chronological timeline of shared moments, sources never rewritten
 ```
 
 ### First run
@@ -827,8 +829,9 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 
 ```
 nova-decide review --repo <owner/name> --pr <n> [--card <file>]
-                   [--post|--dry-run] [--ledger file|redis] [--ledger-path <jsonl>]
-                   [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
+                   [--post|--dry-run] [--ledger file|redis|file,redis]
+                   [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
+                   [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
@@ -839,7 +842,7 @@ Every harvested pull request, before any friend sees it (#2565). It fetches the 
 **The line starts `JEV`, never `DISPOSITION`, and carries neither APPROVE nor HOLD.** Its verdict is `PASS`, `BOUNCE` or `UNSURE`. Both landers read a verdict by its *shape* from any scanned account — the bash lander's `verdict_of`/`scan_body` and the Go gate's `ParseComment` (`internal/merge/verdict.go`) take a `DISPOSITION ... verdict=HOLD` line from `rowan-claude` as a hold, and `bin/land-loop-schema` counts any `verdict=APPROVE ... score=N/10` line from a FRIENDS login — so the earlier `DISPOSITION who=jev ... verdict=HOLD` shape, posted from `rowan-claude`, would have been read as a HOLD on every pull request it held. Every body line is defanged the same way: upper-case verdict words are lowered, and no line starts with `DISPOSITION`, `HOLD` or `#`, or carries bold.
 
 ```
-JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
+JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
 ```
 
 The body under it is one line per check with its evidence, the token counts, and a sentence saying it lands nothing.
@@ -858,7 +861,7 @@ A check with nothing to decide on answers **`missing`, never `fail`** — an abs
 
 ```
 $ nova-decide review --repo mas-bandwidth/schema --pr 1488 --dry-run
-JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6 model=jev-latest cost=$- explain=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod
+JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6 model=jev-latest cost=$- explain=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod
 ```
 
 **The symbol check is two-sided, and one side alone gets it wrong.** "Does the file mention a generated symbol" says *yes* to schema#1459, which calls the real `tableFixedSelect` for half its assertions and writes `// Simulate exactly what FixedLoad does` for the other half. So the check asks for a generated symbol **and** the absence of a self-check tell, and every tell cites the pull request a friend read it out of. That is also its honest limit: it is calibrated on 122 cells of one repository's conformance legs, and a tell is a string a future card can avoid writing while doing the same thing. It bounces a card to a recut; it lands nothing.
@@ -867,7 +870,9 @@ JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=
 
 **One question, one call, one price.** `ScoreLevels` is ten levels in a fixed order: Jev is order-sensitive, so the same ten shuffled are a different question and a score from one ordering cannot be compared with one from another. A test pins the ordering by hash. The raw provider answer travels into the ledger beside the 1-10 that was printed, so that if the provider ever answers in level *indexes* rather than in the numbering the levels carry, both numbers are on the record and somebody can tell.
 
-`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). `--ledger redis` is the ev:cards `Kind=jev` event and **refuses today**, naming #2563, because that Emit is not on dev yet — a sink that silently does nothing is worse than one that says so.
+**Confidence, rubric version, and base gate on every line.** `conf=` is the provider's reported confidence (or `-` when unscored). `rubric=` is the 8-character sha256 prefix of `ScoreLevels` (`816c4381`), pinning which question levels produced the score. `base=ok|behind|conflict` is the base gate, derived from GitHub PR mergeability (`mergeable`, `mergeStateStatus`) or `git merge-tree` / `git merge-base`.
+
+`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). The ledger row carries `who=jev`, `conf`, `rubric`, `base`, and both raw and mapped scores. `--ledger redis` (or `--ledger file,redis`) writes one `kind=jev` entry on `cards:done` (the fleet Redis `--store`, default `NOVA_REDIS_ADDR`), with `--user` (alias `--store-user`) and `--password-env` (alias `--store-password-env`, default `NOVA_REDIS_BENCH_PASSWORD`).
 
 `--no-jev` runs the mechanical checks alone: no key is read, nothing is dialled, and the line prints `score=-` rather than a zero nobody gave, with `model=none cost=$0.0000`. `--record` writes each provider answer as a fixture and `--replay` reads them back, which is how the tests run: a Jev call costs money, so the 122-cell pass ran **once** (`internal/prereview/testdata/jev-2026-09-22/RUN.md` is that run's receipt) and everything since replays it.
 
@@ -2662,102 +2667,6 @@ found, with one `HARVEST LEFT reason=<r> cards=<n>` line per reason. A `--root` 
 not resolve on the bench is `HARVEST REFUSED` before anything moves — a quoted `'~/…'` is
 not expanded by this verb.
 
-### fleet certify
-
-```
-nova-pulse fleet certify --machines <file> (--machine <name> | --all | --status) --certs <file> [--workloads <dir>] [--standard <file>] [--build <version>] [--bin <dir>] [--repo <owner/name>] [--ssh <path>] [--if-stale] [--max-age <d>] [--log <file>] [--timeout <d>] [--dry-run]
-```
-
-`fleet survey` asks a machine what it **has**. `fleet certify` makes it **do** the work its
-roles imply — under the same wall a card gets — and writes down that it did.
-
-Why: on 2026-09-18 the first real Go card of the day died on hulk inside the swarm wall.
-`$HOME/sdk/go1.26.5` was not a readable root, so the only Go the card could reach was
-`/usr/bin/go` 1.22, which go.mod refuses by name. hulk met the provisioning standard and had
-passed every check ever run on it, because every one of them ran *outside* the wall over a
-plain ssh.
-
-A workload is a file, `<class>.card`, embedded in the tool or read from `--workloads`: front
-matter, one blank line, then the body the machine runs.
-
-```
-roles: bench
-expect: ^GO OK
-wall: yes
-reads: $HOME/sdk, $HOME/go, /usr, /bin
-
-set -eu
-...
-```
-
-`roles:` says which of `bench`, `runner`, `services`, `coordination` it applies to.
-`expect:` is a regexp held against what the machine said, line by line — **the verdict is
-what the machine said, never the exit code alone** — and the evidence kept is the whole line
-that matched. `wall: yes` runs the body inside `nova-sandbox` with a job directory of its
-own as the only `--write`, a `HOME` and a `--cwd` inside it, and each `reads:` root as a
-`--read`; a wall workload that names no reads is refused, because a toolchain outside the
-wall is the failure this verb exists to catch. `forge: runners|registry` is a question for
-the forge. `report: yes` makes a failure a `WARN` that gates nothing.
-
-The shipped classes, and the fault each one names:
-
-| class | roles | what it caught |
-|---|---|---|
-| `go-test` | bench | a two-file module built and tested inside the wall |
-| `wall-toolchain` | bench | hulk's card silently compiled a go1.26 module with go1.22 |
-| `c-build`, `cpp-build` | bench | compile **and run**, inside the wall |
-| `sbcl` | bench | `~/.local/bin/sbcl: Permission denied` inside the wall on two benches |
-| `git-push` | bench | a push into a bare repo made for the run and deleted after it |
-| `path-resolves` | all | `nova-merge` not on any non-interactive PATH; 18 stale `~/go/bin` shadows |
-| `go-on-path` | bench, runner | three machines had no `go` at all non-interactively |
-| `git-identity` | bench | `user.name`/`user.email` empty on all four Linux machines |
-| `services-reach` | bench | redis bound to 127.0.0.1; `space` resolving nowhere. The evidence names the address tried and tells `refused` from `denied (protected mode)` from `PONG` — only `PONG` is OK |
-| `runner-online` | runner | the forge says every `<machine>-nova-*` is online, and names the one that is not |
-| `runner-path` | runner | 16 `.path` files with no Go. Both systemd scopes and both unit namings, and the listener count held against the unit count — probing `--user` only called 16 system units unmanaged, and acting on it made 32 listeners for 16 units |
-| `registry-truth` | all | 16 online runners on a machine the registry called `bench,services` |
-| `diag-size` | runner | 15.7 GB of `_diag`, growing ~1.8 GB/day — the line carries MB, the age of the oldest log and the rate. A `WARN`, on purpose |
-| `loki-ready`, `redis-ping`, `postgres-ready` | services | the stack answers locally |
-| `bus-push`, `release-path` | coordination | the bus is clean and in sync; `nova-update` is on PATH |
-
-One row per machine per class is appended to `--certs`:
-
-```
-machine<TAB>build<TAB>standard-hash<TAB>class<TAB>verdict<TAB>evidence<TAB>at
-```
-
-`build` is read from the machine (`nova-merge version`) unless `--build` names one.
-`standard-hash` is the sha256 over the provisioning standard file **and** every workload's
-bytes, so either half moving expires every certificate written under the old pair.
-
-```
-$ nova-pulse fleet certify --machines ./machines.tsv --machine hulk --certs ./certs.tsv
-CERTIFY hulk go-test OK evidence="GO OK go version go1.26.5 linux/amd64 ok 0.004s"
-CERTIFY hulk wall-toolchain FAIL evidence="WALL TOOLCHAIN FAIL inside the wall go is go1.22.2 ..."
-CERTIFY FAIL machines=1 ok=12 fail=1 warn=0 skipped=0
-```
-
-Exit 1 on any FAIL, 2 on a refusal. A forge question with no forge wired is skipped with
-`CERTIFY NOTE machine=<m> class=<c> skipped=no-forge` and writes no row.
-
-**The fill asks before every card.** A card's class is its own `workload: <class>` line, or
-what its `LANG:`/`LEG:` line implies, or `go-test`. A card whose class has no *current*
-certificate on the bench it was dealt is refused and stays ready:
-
-```
-FILL REFUSED bench=hulk reason=uncertified workload=go-test remedy="nova-pulse fleet certify --machine hulk"
-```
-
-**Mechanized, not remembered.** `nova-update release adopt` certifies by default — an adopt
-changes the build and so invalidates every certificate — with `--certify <registry> --certs
-<file> --standard <file>`, or `--no-certify` to waive it out loud (`certified=waived` on the
-verdict). `--if-stale` skips a machine whose every class is current, where stale means the
-build or hash moved, the verdict was FAIL, or the row is older than `--max-age` (default
-24h). `fleet/launchd/com.rowan.fleet-certify.plist` runs `--all --if-stale` every six hours.
-
-`--status` reads the record and touches no machine, one line per machine and class, exit 1
-when any is stale, failed or missing. `--log <file>` writes one structured event per
-certificate through `internal/log`, the same stream `nova-pulse launch` writes.
-
 ### fleet add
 
 ```
@@ -3811,6 +3720,14 @@ entire tree the card started — grandchildren included, never just the leader �
 `usage.tsv` from what it had up to the kill, so the spend is known. A `SIGTERM` from outside
 (the manager) is handled the same way: the tree is reaped, `usage.tsv` is written, and the
 `NATIVE OK` line carries `reason=terminated` instead of a silent exit.
+
+**A launch that started always prints a verdict, and `native` never exits 255 (#2058).**
+The three words are `NATIVE OK`, `NATIVE INCOMPLETE` and `NATIVE REFUSED`. A darwin
+OpenCode that logged `Error starting FSEvents stream`, wrote `RESULT.md` and exited 255
+prints exactly one `NATIVE INCOMPLETE` with `rc=255` and `why=rc`, never OK or REFUSED.
+Passing 255 through made a fill loop retry a finished card. Local ssh(1) exits 255 for
+any error; that is not proof the remote command never started, so the outcome is
+potentially UNKNOWN and a retry waits on reconciliation. The process exits 1.
 
 ### First run
 

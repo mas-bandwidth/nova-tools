@@ -386,9 +386,9 @@ func TestACommentNeverReleasesAnything_DrivenFromParseComment(t *testing.T) {
 	}
 }
 
-// 10. Comment and review bodies are bounded to MaxCommentBodyBytes (64 KiB) during
-// projection and decoding (#2512): an oversized remote payload is safely clamped,
-// preventing unbounded heap allocation, while valid short comments pass without truncation.
+// 10. Comment and review bodies are bounded during projection and decoding (#2512) so an
+// oversized remote payload cannot cause unbounded heap allocation, but verdict lines are
+// read over the whole body up to MaxParseBodyBytes (#3443), never over a 64 KiB prefix.
 func TestCommentBodyProjectionAndDecodingIsBounded(t *testing.T) {
 	t.Parallel()
 	rs := sampleReviewers()
@@ -410,12 +410,13 @@ func TestCommentBodyProjectionAndDecodingIsBounded(t *testing.T) {
 		t.Fatalf("oversized comment with leading hold must be parsed, got: ok=%v verdict=%+v", okOver, vOver)
 	}
 
-	// C: Hold marker placed beyond MaxCommentBodyBytes is truncated and NOT recognized
+	// C: A hold line past 64 KiB is read (nova-tools #3443: the body is parsed whole up to
+	// MaxParseBodyBytes; #2512's prefix parse read this clear, which failed open).
 	fillerBeforeHold := strings.Repeat("z\n", (MaxCommentBodyBytes/2)+10) // exceeds 64 KiB
-	bodyHoldBeyondCap := fillerBeforeHold + "DISPOSITION who=stella head=" + head + " verdict=HOLD\nhidden beyond cap"
+	bodyHoldBeyondCap := fillerBeforeHold + "DISPOSITION who=stella head=" + head + " verdict=HOLD\npast 64 KiB"
 	vBeyond, okBeyond := ParseComment(503, "stella-astra", bodyHoldBeyondCap, "2026-09-19T10:00:00Z", rs, author, head, true)
-	if okBeyond && vBeyond.Word == "hold" {
-		t.Fatalf("hold token beyond MaxCommentBodyBytes must be truncated and not recognized as hold, got: %+v", vBeyond)
+	if !okBeyond || vBeyond.Word != "hold" || vBeyond.Who != "stella" {
+		t.Fatalf("a hold line past 64 KiB must be read as stella's hold, got: ok=%v %+v", okBeyond, vBeyond)
 	}
 
 	// D: ParseForgeVerdicts decodes oversized comments JSON safely via boundedBody
