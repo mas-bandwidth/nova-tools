@@ -58,7 +58,7 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	ghPath := fs.String("gh", "gh", "the gh executable")
 	table := fs.Bool("table", false, "also print one table row per pull request")
 	def := prereview.DefaultTuning()
-	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS; when absent, the prompt's own threshold (the default prompt's is jevcalib.DefaultPassAbove, 8), else 7")
+	passAbove := fs.Int("pass-above", def.PassAbove, "a score strictly above this can PASS; when absent, the prompt's own threshold (the tuned prompt 6b7343c3's is jevcalib.TunedPassAbove, 8), else 7")
 	bounceBelow := fs.Int("bounce-below", def.BounceBelow, "a score strictly below this BOUNCEs")
 	checksList := fs.String("checks", strings.Join(prereview.DefaultChecks, ","), "the checks that may decide (checks_enabled): donewhen,selfcheck,paths,claims,score; name ci to require ci-ok at the exact head")
 	inRate := fs.Float64("usd-per-mtok-in", 0, "the provider's input rate, US dollars per million tokens; 0 is unknown and prints cost=$-")
@@ -118,10 +118,10 @@ func runReview(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "REVIEW", "bad-prompt", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	// A prompt and its pass threshold are tuned together (#2536): the default
-	// prompt passes only above jevcalib.DefaultPassAbove, because at 7 it
-	// passed 13 of the 128 heads the friends held (10.2%). An explicit
-	// --pass-above always wins.
+	// A prompt and its pass threshold are tuned together (#2536): the tuned
+	// prompt passes only above jevcalib.TunedPassAbove, because at 7 it
+	// passed 13 of the 128 heads the friends held (10.2%); the default (the
+	// seed) keeps 7. An explicit --pass-above always wins.
 	explicit := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { explicit[f.Name] = true })
 	if !explicit["pass-above"] {

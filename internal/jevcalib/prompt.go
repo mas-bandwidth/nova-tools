@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -29,25 +30,37 @@ var promptFS embed.FS
 const SeedSha8 = "fd94795e"
 
 // DefaultSha8 is the prompt `nova-decide review` asks with when neither
-// --prompt nor a conf `prompt=` names one: the best prompt of the 2026-09-24
-// tuning run (rowan-new reports/jev-tuning-2026-09-24.tsv, iteration 7: the
-// friends' read rubric as the score question, start at 10 and deduct only for
-// a finding pointed to by file and line; testdata/pairs-2026-09-24.tsv holds
-// its scores beside the friends' lines).
-const DefaultSha8 = "6b7343c3"
+// --prompt nor a conf `prompt=` names one. It is the seed, the incumbent the
+// tuning rule judges candidates against, and it stays the default until the
+// rule (Decide) ADOPTs a candidate over it: a default the rule refuses would
+// ship a prompt the harness says is worse. The 2026-09-24 run's best prompt
+// (TunedSha8) is refused on the 133 held-out heads: at the rule's 8+ it passes
+// two heads the friends held against the seed's one
+// (falsepass-above-incumbent), and judged at its own threshold (9+) it fails
+// 86 landed heads against the seed's 84 (falsefail-above-incumbent).
+const DefaultSha8 = SeedSha8
 
-// DefaultPassAbove is the default prompt's pass threshold: a score strictly
-// above it can PASS. The prompt and the threshold were tuned together
-// (iteration 7: at 7 this prompt passed 13 of 128 friend holds, 10.2%; at 8,
-// none), so review applies it whenever the default prompt asks and no
-// --pass-above is given.
-const DefaultPassAbove = 8
+// TunedSha8 is the best prompt of the 2026-09-24 tuning run (rowan-new
+// reports/jev-tuning-2026-09-24.tsv, iteration 7: the friends' read rubric as
+// the score question, start at 10 and deduct only for a finding pointed to by
+// file and line; testdata/pairs-2026-09-24.tsv holds its scores beside the
+// friends' lines). It is shipped for `--prompt 6b7343c3` or a conf
+// `prompt=6b7343c3`, never as the default while the rule refuses it.
+const TunedSha8 = "6b7343c3"
 
-// PassAboveFor is the pass threshold a prompt was tuned with: DefaultPassAbove
-// for the default prompt, else fallback (prereview's default).
+// TunedPassAbove is the tuned prompt's pass threshold: a score strictly above
+// it can PASS. The prompt and the threshold were tuned together (iteration 7:
+// at 7 this prompt passed 13 of 128 friend holds, 10.2%; at 8, none), so
+// review applies it whenever the tuned prompt asks and no --pass-above is
+// given.
+const TunedPassAbove = 8
+
+// PassAboveFor is the pass threshold a prompt was tuned with: TunedPassAbove
+// for the tuned prompt, else fallback (prereview's default, which the seed was
+// always asked with).
 func PassAboveFor(p Prompt, fallback int) int {
-	if p.Sha8 == DefaultSha8 {
-		return DefaultPassAbove
+	if p.Sha8 == TunedSha8 {
+		return TunedPassAbove
 	}
 	return fallback
 }
@@ -167,8 +180,9 @@ func (p Prompt) Question() map[string]decide.Question {
 // ConfPrompt reads the `prompt=` key from a jev.conf file (key=value, '#'
 // comments, never sourced; the grammar bin/jev-loop's conf_get reads). It
 // returns "" when the file or the key is absent. A relative value is resolved
-// against the conf file's directory, so `prompt=jev-prompts/x.txt` beside
-// etc/jev.conf means etc/jev-prompts/x.txt.
+// against the conf file's directory with the OS separator, so
+// `prompt=jev-prompts/x.txt` beside etc/jev.conf means etc/jev-prompts/x.txt
+// (etc\jev-prompts\x.txt on Windows).
 func ConfPrompt(path string) (string, error) {
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
@@ -193,9 +207,10 @@ func ConfPrompt(path string) (string, error) {
 		}
 		val = strings.TrimSpace(v)
 	}
-	if val == "" || sha8RE.MatchString(val) || strings.HasPrefix(val, "/") {
+	if val == "" || sha8RE.MatchString(val) || filepath.IsAbs(val) || strings.HasPrefix(val, "/") {
 		return val, nil
 	}
-	dir := path[:strings.LastIndexByte(path, '/')+1]
-	return dir + val, nil
+	// filepath, not '/': on Windows the conf path is C:\...\jev.conf and a
+	// value may be written with either separator.
+	return filepath.Join(filepath.Dir(path), filepath.FromSlash(val)), nil
 }

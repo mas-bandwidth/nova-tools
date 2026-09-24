@@ -152,17 +152,18 @@ func TestReviewPromptFromConf(t *testing.T) {
 	}
 }
 
-// TestReviewDefaultPromptCarriesItsThreshold: the default prompt passes only
-// above 8 (the threshold it was tuned with); another prompt keeps 7; an
-// explicit --pass-above wins either way.
-func TestReviewDefaultPromptCarriesItsThreshold(t *testing.T) {
+// TestReviewTunedPromptCarriesItsThreshold: the tuned prompt passes only
+// above 8 (the threshold it was tuned with); the default (the seed) keeps 7;
+// an explicit --pass-above wins either way.
+func TestReviewTunedPromptCarriesItsThreshold(t *testing.T) {
 	for _, c := range []struct {
 		name    string
 		args    []string
 		verdict string
 	}{
-		{"default-prompt", nil, "UNSURE"},
-		{"default-prompt-explicit-7", []string{"--pass-above", "7"}, "PASS"},
+		{"tuned-prompt", []string{"--prompt", jevcalib.TunedSha8}, "UNSURE"},
+		{"tuned-prompt-explicit-7", []string{"--prompt", jevcalib.TunedSha8, "--pass-above", "7"}, "PASS"},
+		{"default-prompt", nil, "PASS"},
 		{"seed-prompt", []string{"--prompt", jevcalib.SeedSha8}, "PASS"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

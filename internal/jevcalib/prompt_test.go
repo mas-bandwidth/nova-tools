@@ -80,8 +80,14 @@ func TestEmbeddedPromptsAreNamedBySha8(t *testing.T) {
 	if err != nil || n < 2 {
 		t.Fatalf("walked %d prompts: %v", n, err)
 	}
-	if d := Default(); DefaultSha8 != "6b7343c3" || d.Sha8 != DefaultSha8 || len(d.Levels) != 10 {
-		t.Fatalf("default prompt sha8=%s levels=%d", d.Sha8, len(d.Levels))
+	// The default is the seed until the tuning rule adopts a candidate over
+	// it (TestTuningRuleOnFixtureDistribution/pairs-2026-09-24/rule refuses
+	// the tuned prompt); the tuned prompt still resolves by sha8.
+	if d := Default(); DefaultSha8 != SeedSha8 || d.Sha8 != SeedSha8 || d.Levels != nil {
+		t.Fatalf("default prompt sha8=%s levels=%d, want the seed %s", d.Sha8, len(d.Levels), SeedSha8)
+	}
+	if p, err := Resolve(TunedSha8); err != nil || len(p.Levels) != 10 || PassAboveFor(p, 7) != TunedPassAbove || PassAboveFor(Default(), 7) != 7 {
+		t.Fatalf("tuned prompt %s: err=%v levels=%d", TunedSha8, err, len(p.Levels))
 	}
 }
 
@@ -93,7 +99,10 @@ func TestConfPrompt(t *testing.T) {
 	conf := filepath.Join(dir, "jev.conf")
 	for _, c := range []struct{ body, want string }{
 		{"# c\npass_above=7\nprompt=6b7343c3 # the tuned one\n", "6b7343c3"},
-		{"prompt=prompts/x.txt\n", dir + "/prompts/x.txt"},
+		{"prompt=prompts/x.txt\n", filepath.Join(dir, "prompts", "x.txt")},
+		// A Windows-style relative value (the OS separator) resolves beside
+		// the conf with filepath, never by slicing at '/'.
+		{"prompt=" + filepath.FromSlash("jev-prompts/sub/x.txt") + "\n", filepath.Join(dir, "jev-prompts", "sub", "x.txt")},
 		{"prompt=/abs/x.txt\n", "/abs/x.txt"},
 		{"pass_above=7\n", ""},
 	} {
@@ -104,6 +113,18 @@ func TestConfPrompt(t *testing.T) {
 		if err != nil || got != c.want {
 			t.Fatalf("conf %q: got %q err=%v, want %q", c.body, got, err, c.want)
 		}
+	}
+	// The conf itself named by a relative, OS-separated path.
+	sub := filepath.Join(dir, "etc")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	subConf := filepath.Join(sub, "jev.conf")
+	if err := os.WriteFile(subConf, []byte("prompt="+filepath.FromSlash("jev-prompts/x.txt")+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ConfPrompt(subConf); err != nil || got != filepath.Join(sub, "jev-prompts", "x.txt") {
+		t.Fatalf("conf under etc: got %q err=%v", got, err)
 	}
 	if got, err := ConfPrompt(filepath.Join(dir, "absent.conf")); err != nil || got != "" {
 		t.Fatalf("absent conf: %q %v", got, err)

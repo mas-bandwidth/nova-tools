@@ -111,13 +111,18 @@ func TestTuningRuleOnFixtureDistribution(t *testing.T) {
 		})
 	}
 	t.Run("pairs-2026-09-24/rule", func(t *testing.T) {
-		v := Decide(Join(today, DefaultSha8), Join(today, SeedSha8), nil)
-		t.Log(v.Line(DefaultSha8, SeedSha8))
+		v := Decide(Join(today, TunedSha8), Join(today, SeedSha8), nil)
+		t.Log(v.Line(TunedSha8, SeedSha8))
 		// The tuned prompt is not a landing reader: on the 133 held-out heads
 		// it passes (8+) two the friends held against the seed's fewer, so
 		// the rule refuses it even though its bound (4.66%) is under 5%.
 		if v.Word != Refuse || v.Reason != "falsepass-above-incumbent" || v.Holdout != 133 {
 			t.Fatalf("verdict=%s reason=%s holdout=%d, want REFUSE falsepass-above-incumbent on 133", v.Word, v.Reason, v.Holdout)
+		}
+		// A refused prompt is never the default: the default stays the
+		// incumbent the rule judged against.
+		if DefaultSha8 != SeedSha8 {
+			t.Fatalf("default prompt %s, want the incumbent %s while the rule refuses %s", DefaultSha8, SeedSha8, TunedSha8)
 		}
 	})
 }
