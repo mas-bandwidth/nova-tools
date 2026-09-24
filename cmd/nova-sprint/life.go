@@ -36,7 +36,7 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, wake, roles, report, show or sweep")
+		return refuse(errOut, "friend", "want hello, bye, wake, roles, report, show, sweep, down or up")
 	}
 	switch args[0] {
 	case "hello":
@@ -53,8 +53,12 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runFriendShow(ctx, args[1:], out, errOut)
 	case "sweep":
 		return runFriendSweep(ctx, args[1:], out, errOut)
+	case "down":
+		return runFriendDown(ctx, true, args[1:], out, errOut)
+	case "up":
+		return runFriendDown(ctx, false, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, roles, report, show or sweep", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, wake, roles, report, show, sweep, down or up", args[0]))
 	}
 }
 
@@ -118,6 +122,10 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	}
 	if *as == "" {
 		return refuse(errOut, "friend hello", "--as is required")
+	}
+	if *slots != -1 {
+		fmt.Fprintf(errOut, "FRIEND CAPACITY %s: use nova-sprint capacity friend --as <actor> --machine <m> %s <slots>\n", *as, *as)
+		return 1
 	}
 	// #2929 rev 4: hello is a take and obeys the seat contract. Both refusals
 	// come before openLifeStore: no dial, no UP write, no beat, no receipt.

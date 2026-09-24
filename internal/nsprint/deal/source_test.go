@@ -27,6 +27,7 @@ func TestRedisSourceReadsTheSpecKeys(t *testing.T) {
 	c.SAdd(ctx, "benches", "ctl-a", "ctl-down")
 	c.HSet(ctx, "bench:ctl-a:desired", "slots", "8", "legs", "go,lua")
 	c.HSet(ctx, "bench:ctl-a:beat", "host", "ctl-a.tail", "user", "bench")
+	c.HSet(ctx, "bench:ctl-a:state", "state", "UP", "at", "1")
 	c.ZAdd(ctx, "bench:ctl-a:starting", redis.Z{Score: 1, Member: "x/1"})
 	c.ZAdd(ctx, "bench:ctl-a:living", redis.Z{Score: 1, Member: "x/2"}, redis.Z{Score: 1, Member: "x/3"})
 	c.HSet(ctx, RowKey("ctl-a"), "state", "refused", "at", "1700000000000")

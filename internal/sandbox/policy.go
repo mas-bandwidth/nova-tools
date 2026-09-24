@@ -92,6 +92,7 @@ type Policy struct {
 	ReadsNoExec []string // resolved, read-only, recursive, and NOT executable
 	Writes      []string // resolved, read+write, recursive; the first is load-bearing
 	OptRoots    []string // the platform's optional roots that EXIST on this machine
+	PathDirs    []string // existing directories from PATH granted file-read-metadata (issue #3501)
 	Cwd         string
 	Tmp         string
 	Home        string
@@ -149,6 +150,7 @@ func (p *Policy) ancestorPaths() []string {
 	paths := append(append([]string{}, p.Reads...), p.ReadsNoExec...)
 	paths = append(paths, p.Writes...)
 	paths = append(paths, p.OptRoots...)
+	paths = append(paths, p.PathDirs...)
 	return append(paths, p.Cwd, p.Tmp)
 }
 
@@ -716,7 +718,65 @@ func Build(in Input) (*Policy, []Refusal) {
 		}
 	}
 	p.OptRoots = OptionalRoots(p.Command)
+	lookIn := in.LookAt
+	if lookIn == "" {
+		lookIn = os.Getenv("PATH")
+	}
+	p.PathDirs = PathDirectories(lookIn, p.Reads, p.Writes, p.OptRoots)
 	return p, nil
+}
+
+// PathDirectories extracts existing directories from lookIn (PATH) that are not already
+// covered by fixed prefixes, optional roots, or the caller's reads/writes.
+// On darwin, these directories receive file-read-metadata so that commands installed
+// on PATH (e.g. ~/.local/bin) can be resolved and executed by name, while keeping
+// their file contents uninspectable (issue #3501).
+func PathDirectories(lookIn string, reads, writes, optRoots []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range filepath.SplitList(lookIn) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" || raw == "." {
+			continue
+		}
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			continue
+		}
+		fi, err := os.Stat(abs)
+		if err != nil || !fi.IsDir() {
+			continue
+		}
+		resolved, err := filepath.EvalSymlinks(abs)
+		if err != nil {
+			resolved = abs
+		}
+		// Skip if it is a caller home directory itself
+		isHome := false
+		for _, h := range callerHomes() {
+			if resolved == h || abs == h {
+				isHome = true
+				break
+			}
+		}
+		if isHome {
+			continue
+		}
+		for _, d := range []string{abs, resolved} {
+			if d == "" || d == "/" || seen[d] {
+				continue
+			}
+			if runtime.GOOS == "darwin" && underAny(d, fixedDarwinPrefixes) {
+				continue
+			}
+			if underAny(d, optRoots) || underAny(d, reads) || underAny(d, writes) {
+				continue
+			}
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // resolveCommand is the PATH lookup and the pre-flight of the exit-codes section. The

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -13,16 +14,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// The helpers in this file carry a cls prefix so the package's other control
-// files (okfriend_test.go, #2933) can declare their own without a clash.
-
 const (
 	clsBase = "09fbedc9"
-	clsTip  = "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
+	clsTip  = "7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a"
 )
 
-// clsRedis starts a throwaway redis-server for a control sprint (#2756
-// section 8) with the nova_sprint library loaded.
 func clsRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	addr := testutil.Start(t)
@@ -41,456 +37,333 @@ func clsMust(t *testing.T, err error) {
 	}
 }
 
-// clsSprint opens a control sprint with the given policy fields and two
-// fixture benches.
-func clsSprint(t *testing.T, client *redis.Client, sprint string, policy ...string) {
+func clsSprint(t *testing.T, c *redis.Client, sprint string, benches []string, policy ...string) {
 	t.Helper()
 	ctx := context.Background()
-	clsMust(t, client.HSet(ctx, "s:"+sprint, "status", "open").Err())
-	fields := append([]string{"readers", "1"}, policy...)
-	args := make([]any, len(fields))
-	for i, f := range fields {
-		args[i] = f
+	clsMust(t, c.HSet(ctx, "s:"+sprint, "status", "open").Err())
+	for i := 0; i+1 < len(policy); i += 2 {
+		clsMust(t, c.HSet(ctx, "s:"+sprint+":policy", policy[i], policy[i+1]).Err())
 	}
-	clsMust(t, client.HSet(ctx, "s:"+sprint+":policy", args...).Err())
-	clsMust(t, client.SAdd(ctx, "benches", "ctl-b1", "ctl-b2", "ctl-b3", "ctl-b4").Err())
+	for _, bench := range benches {
+		clsMust(t, c.SAdd(ctx, "benches", bench).Err())
+		clsMust(t, c.HSet(ctx, "bench:"+bench+":desired", "slots", "1", "legs", "").Err())
+		clsMust(t, c.HSet(ctx, "bench:"+bench+":beat", "host", bench).Err())
+	}
 }
 
-// clsEnd stands in for ns_card_end (#3011): the card at `attempt` on `bench`
-// ends with outcome and reason; the hash, the index move and one `ended`
-// receipt in one MULTI. A card that does not exist yet is created with the
-// fixture shape; an existing card (a requeue, a fix or recut card) keeps its
-// other fields.
-func clsEnd(t *testing.T, client *redis.Client, sprint, label string, attempt int, bench, outcome, reason string, extra ...string) {
+func clsEnd(t *testing.T, c *redis.Client, sprint, label string, attempt int, bench, outcome, reason string, extra ...string) string {
 	t.Helper()
 	ctx := context.Background()
 	key := "s:" + sprint + ":card:" + label
-	card, err := client.HGetAll(ctx, key).Result()
+	old, err := c.HGetAll(ctx, key).Result()
 	clsMust(t, err)
-	base := card["base_sha"]
-	if len(card) == 0 {
+	base := old["base_sha"]
+	if base == "" {
 		base = clsBase
 	}
-	if base == "" {
-		base = clsTip
+	fields := []any{"label", label, "state", "ended", "attempt", strconv.Itoa(attempt), "bench", bench,
+		"outcome", outcome, "reason", reason, "base_sha", base, "kind", "model", "leg", "go", "tier", "bulk",
+		"repo", "mas-bandwidth/nova-tools", "base", "dev", "paths", "internal/x", "depends_on", "", "priority", "5"}
+	for _, v := range extra {
+		fields = append(fields, v)
 	}
-	a := strconv.Itoa(attempt)
-	identity := fmt.Sprintf("%s/%s/%s/%s/%s", sprint, label, base[:min(8, len(base))], bench, a)
-	fields := []any{"state", "ended", "attempt", a, "identity", identity, "bench", bench,
-		"outcome", outcome, "reason", reason, "ended_at", "1", "base_sha", base}
-	if len(card) == 0 {
-		fields = append(fields, "kind", "model", "leg", "go", "tier", "1", "repo", "nova-tools", "base", "dev",
-			"paths", "internal/x/", "depends_on", "", "priority", "5", "author", "ctl-a", "retries", "0")
+	clsMust(t, c.HSet(ctx, key, fields...).Err())
+	for _, state := range []string{"queued", "dealt", "launched", "running", "superseded"} {
+		clsMust(t, c.SRem(ctx, "s:"+sprint+":idx:card:"+state, label).Err())
 	}
-	for _, e := range extra {
-		fields = append(fields, e)
-	}
-	_, err = client.TxPipelined(ctx, func(p redis.Pipeliner) error {
-		p.HSet(ctx, key, fields...)
-		for _, from := range []string{"queued", "dealt", "running"} {
-			p.SRem(ctx, "s:"+sprint+":idx:card:"+from, label)
-		}
-		p.ZRem(ctx, "s:"+sprint+":pool", label)
-		p.SAdd(ctx, "s:"+sprint+":idx:card:ended", label)
-		p.XAdd(ctx, &redis.XAddArgs{Stream: "s:" + sprint + ":log", Values: []any{
-			"kind", "card", "id", label, "from", "running", "to", "ended", "attempt", a,
-			"token_sha", "abcdefabcdef", "actor", "card-end", "reason", reason,
-			"evidence", identity, "idem", "end:" + identity, "at", "1"}})
-		return nil
-	})
+	clsMust(t, c.ZRem(ctx, "s:"+sprint+":pool", label).Err())
+	clsMust(t, c.SAdd(ctx, "s:"+sprint+":idx:card:ended", label).Err())
+	id, err := c.XAdd(ctx, &redis.XAddArgs{Stream: "s:" + sprint + ":log", Values: []any{
+		"kind", "card", "id", label, "from", "running", "to", "ended", "attempt", strconv.Itoa(attempt),
+		"actor", "card-end", "reason", reason, "at", "1"}}).Result()
 	clsMust(t, err)
+	clsMust(t, c.HSet(ctx, key, "end_receipt", id).Err())
+	return id
 }
 
-// clsPass runs one non-blocking classification pass.
-func clsPass(t *testing.T, client *redis.Client, sprint string) int {
+func clsClassifier(c *redis.Client, sprint, consumer string) *Classifier {
+	return &Classifier{Store: store.New(c), Sprint: sprint, Consumer: consumer, Actor: "classify", Block: -1,
+		Tip: func(context.Context, string, string) (string, error) { return clsTip, nil }}
+}
+
+func clsPass(t *testing.T, c *redis.Client, sprint string) []Classification {
 	t.Helper()
-	c := &Classifier{Store: store.New(client), Sprint: sprint, Consumer: "ctl-classify", Actor: "ok-to-friend",
-		Block: -1, Tip: func(context.Context, string, string) (string, error) { return clsTip, nil }}
-	n, err := c.Pass(context.Background())
+	rows, err := clsClassifier(c, sprint, "ctl-classify").PassResults(context.Background())
+	clsMust(t, err)
+	return rows
+}
+
+func clsCard(t *testing.T, c *redis.Client, sprint, label string) map[string]string {
+	t.Helper()
+	h, err := c.HGetAll(context.Background(), "s:"+sprint+":card:"+label).Result()
+	clsMust(t, err)
+	return h
+}
+
+func clsCount(t *testing.T, c *redis.Client, sprint, root, field string) int {
+	t.Helper()
+	n, err := c.HGet(context.Background(), "s:"+sprint+":classify:"+root, field).Int()
+	if err == redis.Nil {
+		return 0
+	}
 	clsMust(t, err)
 	return n
 }
 
-func clsCard(t *testing.T, client *redis.Client, sprint, label string) map[string]string {
+func clsItems(t *testing.T, c *redis.Client, sprint string) map[string]string {
 	t.Helper()
-	h, err := client.HGetAll(context.Background(), "s:"+sprint+":card:"+label).Result()
+	h, err := c.HGetAll(context.Background(), "s:"+sprint+":unresolved").Result()
 	clsMust(t, err)
 	return h
 }
 
-func clsUnresolved(t *testing.T, client *redis.Client, sprint string) map[string]string {
-	t.Helper()
-	h, err := client.HGetAll(context.Background(), "s:"+sprint+":unresolved").Result()
-	clsMust(t, err)
-	return h
-}
-
-// clsCards lists every card label in the sprint.
-func clsCards(t *testing.T, client *redis.Client, sprint string) []string {
-	t.Helper()
-	keys, err := client.Keys(context.Background(), "s:"+sprint+":card:*").Result()
-	clsMust(t, err)
-	var out []string
-	for _, k := range keys {
-		out = append(out, strings.TrimPrefix(k, "s:"+sprint+":card:"))
-	}
-	return out
-}
-
-// clsTransitions counts the classification receipts per `label to`.
-func clsTransitions(t *testing.T, client *redis.Client, sprint string) map[string]int {
-	t.Helper()
-	entries, err := client.XRange(context.Background(), "s:"+sprint+":log", "-", "+").Result()
-	clsMust(t, err)
-	out := map[string]int{}
-	for _, e := range entries {
-		if e.Values["kind"] == "card" && e.Values["actor"] == "ok-to-friend" {
-			out[fmt.Sprint(e.Values["id"])+" "+fmt.Sprint(e.Values["to"])]++
+func clsResult(rows []Classification, label string) string {
+	for _, row := range rows {
+		if row.Label == label {
+			return row.Result
 		}
 	}
-	return out
+	return ""
 }
 
-func clsInPool(t *testing.T, client *redis.Client, sprint, label string) (float64, bool) {
-	t.Helper()
-	score, err := client.ZScore(context.Background(), "s:"+sprint+":pool", label).Result()
-	if err == redis.Nil {
-		return 0, false
-	}
-	clsMust(t, err)
-	return score, true
-}
-
-// TestClassificationTable33 pins the 3.3 table: every outcome and reason
-// maps to exactly one action, budget class and interim budget, the budget is
-// read from s:<S>:policy, and one Redis pass per row writes that action.
 func TestClassificationTable33(t *testing.T) {
 	rows := []struct {
-		outcome, reason string
-		action          string
-		policy          string
-		budget          int
+		outcome, reason, action, counter, policy string
+		budget                                   int
 	}{
-		{"FAILED", "crash", ActionRequeue, "retry_crash", 2},
-		{"FAILED", "timeout", ActionRequeue, "retry_crash", 2},
-		{"FAILED", "idle-killed", ActionRequeue, "retry_crash", 2},
-		{"BLOCKED", "env", ActionRequeueEnv, "retry_env", 1},
-		{"BLOCKED", "base-moved", ActionRecut, "retry_base_moved", 1},
-		{"BLOCKED", "deps", ActionWaiting, "", 0},
-		{"FAILED", "tests-red", ActionFix, "retry_tests_red", 1},
-		{"ABSTAIN", "scope", ActionUnresolved, "", 0},
-		{"BLOCKED", "spec", ActionUnresolved, "", 0},
-		{"BLOCKED", "access", ActionUnresolved, "", 0},
-		{"FAILED", "other", ActionUnresolved, "", 0},
-		{"ABSTAIN", "other", ActionUnresolved, "", 0},
-		{"BLOCKED", "no-such-code", ActionUnresolved, "", 0},
-		{"FAILED", "", ActionUnresolved, "", 0},
-		{"DONE", "", ActionNone, "", 0},
+		{"FAILED", "crash", ActionRequeue, "fail", "retry_fail", 2},
+		{"FAILED", "timeout", ActionRequeue, "fail", "retry_fail", 2},
+		{"FAILED", "idle-killed", ActionRequeue, "fail", "retry_fail", 2},
+		{"BLOCKED", "env", ActionRequeueEnv, "env", "retry_env", 1},
+		{"BLOCKED", "base-moved", ActionRecut, "recut", "retry_recut", 1},
+		{"BLOCKED", "deps", ActionWaiting, "deps", "retry_deps", 1},
+		{"FAILED", "tests-red", ActionFix, "fix", "retry_fix", 1},
+		{"BLOCKED", "spec", ActionUnresolved, "", "", 0},
 	}
-	for _, r := range rows {
-		got := ClassifyOutcome(r.outcome, r.reason)
-		if got.Action != r.action || got.Policy != r.policy || got.Budget(nil) != r.budget {
-			t.Errorf("%s %s: got action=%q policy=%q budget=%d, want %q %q %d",
-				r.outcome, r.reason, got.Action, got.Policy, got.Budget(nil), r.action, r.policy, r.budget)
+	for _, row := range rows {
+		got := ClassifyOutcome(row.outcome, row.reason)
+		if got.Action != row.action || got.Class != row.counter || got.Policy != row.policy || got.Budget(nil) != row.budget {
+			t.Errorf("%s/%s = %+v", row.outcome, row.reason, got)
 		}
-	}
-	// The budget is policy, not code: a policy field overrides the interim
-	// default; a missing or unreadable field keeps it.
-	crash := ClassifyOutcome("FAILED", "crash")
-	if n := crash.Budget(map[string]string{"retry_crash": "5"}); n != 5 {
-		t.Errorf("retry_crash=5: budget %d", n)
-	}
-	if n := crash.Budget(map[string]string{"retry_crash": "0"}); n != 0 {
-		t.Errorf("retry_crash=0: budget %d", n)
-	}
-	if n := crash.Budget(map[string]string{"retry_crash": "x"}); n != 2 {
-		t.Errorf("retry_crash=x: budget %d, want the interim 2", n)
 	}
 
-	client := clsRedis(t)
-	const S = "control-3303a3a3"
-	clsSprint(t, client, S)
-	ctx := context.Background()
-	clsEnd(t, client, S, "c-crash", 1, "ctl-b1", "FAILED", "crash")
-	clsEnd(t, client, S, "c-env", 1, "ctl-b1", "BLOCKED", "env")
-	clsEnd(t, client, S, "c-base", 1, "ctl-b1", "BLOCKED", "base-moved")
-	clsEnd(t, client, S, "c-deps", 1, "ctl-b1", "BLOCKED", "deps", "blocked_on", "c-lib")
-	clsEnd(t, client, S, "c-red", 1, "ctl-b1", "FAILED", "tests-red")
-	clsEnd(t, client, S, "c-scope", 1, "ctl-b1", "ABSTAIN", "scope")
-	clsEnd(t, client, S, "c-access", 1, "ctl-b1", "BLOCKED", "access")
-	clsEnd(t, client, S, "c-other", 1, "ctl-b1", "FAILED", "other")
-	clsEnd(t, client, S, "c-done", 1, "ctl-b1", "DONE", "")
-	// A ci card's FAIL verdict follows 10.5, never tests-red.
-	clsEnd(t, client, S, "ci-c-x", 1, "ctl-b1", "FAILED", "tests-red", "kind", "script", "ci_for", "nova-tools#1 "+clsTip)
-	if n := clsPass(t, client, S); n != 10 {
-		t.Fatalf("pass handled %d events, want 10", n)
-	}
+	c := clsRedis(t)
+	const S = "control-table33"
+	clsSprint(t, c, S, []string{"X", "Y"})
+	clsEnd(t, c, S, "crash", 1, "X", "FAILED", "crash", "leg", "")
+	clsEnd(t, c, S, "env", 1, "X", "BLOCKED", "env", "leg", "")
+	clsEnd(t, c, S, "recut", 1, "X", "BLOCKED", "base-moved", "root", "recut-root")
+	clsEnd(t, c, S, "red", 1, "X", "FAILED", "tests-red", "root", "red-root")
+	clsEnd(t, c, S, "spec", 1, "X", "BLOCKED", "spec")
+	clsMust(t, c.HSet(context.Background(), "s:"+S+":card:live", "state", "queued").Err())
+	clsEnd(t, c, S, "wait", 1, "X", "BLOCKED", "deps", "depends_on", "live", "leg", "")
+	clsMust(t, c.HSet(context.Background(), "s:"+S+":pr:mas-bandwidth/nova-tools:41", "state", "closed").Err())
+	clsEnd(t, c, S, "closed", 1, "X", "BLOCKED", "deps", "depends_on", "mas-bandwidth/nova-tools#41")
+	clsEnd(t, c, S, "unknown", 1, "X", "BLOCKED", "deps", "depends_on", "mas-bandwidth/nova-tools#60")
+	clsEnd(t, c, S, "ci-red", 1, "X", "FAILED", "tests-red", "kind", "ci")
+	got := clsPass(t, c, S)
 
-	// Requeue rows: queued at the front of the pool, the failing bench avoided.
-	for _, label := range []string{"c-crash", "c-env"} {
-		c := clsCard(t, client, S, label)
-		score, ok := clsInPool(t, client, S, label)
-		if c["state"] != "queued" || !ok || score >= 0 || c["bench"] != "" || c["avoid_benches"] != "ctl-b1" {
-			t.Errorf("%s: state=%q pool=%v score=%v bench=%q avoid=%q, want queued at the front avoiding ctl-b1",
-				label, c["state"], ok, score, c["bench"], c["avoid_benches"])
+	if clsResult(got, "crash") != "REQUEUE" || clsCard(t, c, S, "crash")["avoid"] != "X" || clsCard(t, c, S, "crash")["bench"] != "" {
+		t.Errorf("crash row = %v %v", clsResult(got, "crash"), clsCard(t, c, S, "crash"))
+	}
+	if clsResult(got, "env") != "REQUEUE" || clsCard(t, c, S, "env")["why"] != "env " {
+		t.Errorf("env row = %v %v", clsResult(got, "env"), clsCard(t, c, S, "env"))
+	}
+	if clsResult(got, "recut") != "RECUT" || clsCard(t, c, S, "recut-root.recut1")["state"] != "queued" || clsCard(t, c, S, "recut")["state"] != "superseded" {
+		t.Errorf("recut row old=%v new=%v", clsCard(t, c, S, "recut"), clsCard(t, c, S, "recut-root.recut1"))
+	}
+	if clsResult(got, "red") != "FIX" || clsCard(t, c, S, "red-root.fix1")["kind"] != "fix" || clsCard(t, c, S, "red")["state"] != "ended" {
+		t.Errorf("fix row old=%v new=%v", clsCard(t, c, S, "red"), clsCard(t, c, S, "red-root.fix1"))
+	}
+	if clsResult(got, "wait") != "WAIT" || clsCard(t, c, S, "wait")["state"] != "queued" {
+		t.Errorf("wait row = %v %v", clsResult(got, "wait"), clsCard(t, c, S, "wait"))
+	}
+	waiting, _ := c.SIsMember(context.Background(), "s:"+S+":waiting", "wait").Result()
+	if !waiting {
+		t.Error("wait card is not parked")
+	}
+	for _, label := range []string{"spec", "closed", "unknown"} {
+		if clsResult(got, label) != "UNRESOLVED" || clsCard(t, c, S, label)["state"] != "ended" {
+			t.Errorf("%s = %s %v", label, clsResult(got, label), clsCard(t, c, S, label))
 		}
 	}
-	why, err := client.HGet(ctx, "bench:ctl-b1:why", "env go").Result()
-	clsMust(t, err)
-	if !strings.HasPrefix(why, "why: env go") {
-		t.Errorf("bench why line %q", why)
+	if why := clsCard(t, c, S, "closed")["why"]; !strings.Contains(why, "closed without merge") {
+		t.Errorf("closed why = %q", why)
 	}
-	// Recut and fix rows: a new front card at the tip, the old superseded.
-	for old, fresh := range map[string]string{"c-base": "recut-c-base", "c-red": "fix-c-red"} {
-		o, n := clsCard(t, client, S, old), clsCard(t, client, S, fresh)
-		score, ok := clsInPool(t, client, S, fresh)
-		if o["state"] != "superseded" || o["superseded_by"] != fresh {
-			t.Errorf("%s: state=%q superseded_by=%q", old, o["state"], o["superseded_by"])
-		}
-		if n["state"] != "queued" || n["base_sha"] != clsTip || n["depends_on"] != "" || !ok || score >= 0 || n["parent"] != old {
-			t.Errorf("%s: %v pool=%v score=%v, want queued at the front at the tip with no dependency", fresh, n, ok, score)
-		}
+	if why := clsCard(t, c, S, "unknown")["why"]; !strings.Contains(why, "unknown: no PR record") {
+		t.Errorf("unknown why = %q", why)
 	}
-	// Deps row: back to waiting with the named dependency added.
-	d := clsCard(t, client, S, "c-deps")
-	isWaiting, err := client.SIsMember(ctx, "s:"+S+":waiting", "c-deps").Result()
-	clsMust(t, err)
-	if d["state"] != "queued" || !isWaiting || d["depends_on"] != "c-lib" {
-		t.Errorf("c-deps: state=%q waiting=%v depends_on=%q", d["state"], isWaiting, d["depends_on"])
-	}
-	// No-retry rows: one unresolved item each under <label>:<reason>:<base_sha>.
-	items := clsUnresolved(t, client, S)
-	for _, key := range []string{"c-scope:scope:" + clsBase, "c-access:access:" + clsBase, "c-other:other:" + clsBase} {
-		if items[key] == "" {
-			t.Errorf("no unresolved item %s in %v", key, items)
-		}
-	}
-	// DONE and the ci card are not this handler's: no transition, no item, no fix card.
-	for _, label := range []string{"c-done", "ci-c-x"} {
-		if st := clsCard(t, client, S, label)["state"]; st != "ended" {
-			t.Errorf("%s moved to %q", label, st)
-		}
-	}
-	for _, label := range clsCards(t, client, S) {
-		if label == "fix-ci-c-x" {
-			t.Errorf("a ci card's FAIL cut a tests-red fix card")
-		}
-	}
-	for k := range items {
-		if strings.HasPrefix(k, "c-done:") || strings.HasPrefix(k, "ci-c-x:") {
-			t.Errorf("unresolved item %s for a card this handler does not classify", k)
-		}
+	if clsResult(got, "ci-red") != "SKIP ci" || clsCard(t, c, S, "ci-red")["state"] != "ended" {
+		t.Errorf("ci = %s %v", clsResult(got, "ci-red"), clsCard(t, c, S, "ci-red"))
 	}
 }
 
-// TestControl16Classification is control 16 of #2756: repeated BLOCKED spec
-// events for one card yield one unresolved item; FAILED tests-red yields one
-// fix card, then unresolved after its budget; FAILED crash requeues on a
-// different bench until its budget, then unresolved; BLOCKED env writes the
-// bench why line; the budgets are s:<S>:policy.
 func TestControl16Classification(t *testing.T) {
-	client := clsRedis(t)
+	c := clsRedis(t)
 	ctx := context.Background()
 
-	t.Run("spec three events one item", func(t *testing.T) {
-		const S = "control-16a16a16"
-		clsSprint(t, client, S)
-		// Three end events for one card before the consumer runs (a wrapper
-		// retrying its end call), then a coordinator re-push that blocks on
-		// spec again at attempt 2: still one item under the dedup key.
+	t.Run("one unresolved marker", func(t *testing.T) {
+		const S = "control-16-spec"
+		clsSprint(t, c, S, []string{"X"})
 		for i := 0; i < 3; i++ {
-			clsEnd(t, client, S, "s1", 1, "ctl-b1", "BLOCKED", "spec")
+			clsEnd(t, c, S, "s1", 1, "X", "BLOCKED", "spec")
 		}
-		clsPass(t, client, S)
-		clsEnd(t, client, S, "s1", 2, "ctl-b2", "BLOCKED", "spec")
-		clsPass(t, client, S)
-		items := clsUnresolved(t, client, S)
-		if len(items) != 1 || items["s1:spec:"+clsBase] == "" {
-			t.Fatalf("unresolved items %v, want exactly s1:spec:%s", items, clsBase)
-		}
-		if n := clsTransitions(t, client, S)["s1 unresolved"]; n != 2 {
-			t.Errorf("s1 unresolved receipts %d, want one per ended attempt (2)", n)
+		clsPass(t, c, S)
+		clsEnd(t, c, S, "s1", 2, "X", "BLOCKED", "spec")
+		clsPass(t, c, S)
+		if items := clsItems(t, c, S); len(items) != 1 || items["s1:spec:"+clsBase] == "" {
+			t.Fatalf("items = %v", items)
 		}
 	})
 
-	t.Run("tests-red one fix card then unresolved", func(t *testing.T) {
-		const S = "control-16b16b16"
-		clsSprint(t, client, S)
-		clsEnd(t, client, S, "r1", 1, "ctl-b1", "FAILED", "tests-red")
-		clsEnd(t, client, S, "r1", 1, "ctl-b1", "FAILED", "tests-red") // redelivered end
-		clsPass(t, client, S)
-		fix := clsCard(t, client, S, "fix-r1")
-		if fix["state"] != "queued" || fix["front"] != "1" || fix["base_sha"] != clsTip || fix["depends_on"] != "" {
-			t.Fatalf("fix-r1 = %v, want one front fix card at the tip with no dependency", fix)
+	t.Run("one fix then unresolved", func(t *testing.T) {
+		const S = "control-16-fix"
+		clsSprint(t, c, S, []string{"X"})
+		clsEnd(t, c, S, "r1", 1, "X", "FAILED", "tests-red")
+		clsPass(t, c, S)
+		if clsCard(t, c, S, "r1.fix1")["state"] != "queued" {
+			t.Fatal("fix1 was not cut")
 		}
-		// The fix card runs and its tests are red again: budget 1 is spent.
-		clsEnd(t, client, S, "fix-r1", 1, "ctl-b2", "FAILED", "tests-red")
-		clsPass(t, client, S)
-		for _, label := range clsCards(t, client, S) {
-			if label != "r1" && label != "fix-r1" {
-				t.Errorf("a second fix card %s was cut", label)
-			}
-		}
-		items := clsUnresolved(t, client, S)
-		if len(items) != 1 || items["fix-r1:tests-red:"+clsTip] == "" {
-			t.Errorf("unresolved items %v, want exactly fix-r1:tests-red:%s", items, clsTip)
-		}
-		if st := clsCard(t, client, S, "fix-r1")["state"]; st != "unresolved" {
-			t.Errorf("fix-r1 state %q, want unresolved", st)
-		}
-		if n := clsTransitions(t, client, S)["fix-r1 queued"]; n != 1 {
-			t.Errorf("fix-r1 created %d times", n)
+		clsEnd(t, c, S, "r1.fix1", 1, "X", "FAILED", "tests-red")
+		clsPass(t, c, S)
+		if clsCard(t, c, S, "r1.fix2")["state"] != "" || clsCard(t, c, S, "r1.fix1")["classified"] != "UNRESOLVED" {
+			t.Fatalf("second red cut another fix: %v", clsCard(t, c, S, "r1.fix2"))
 		}
 	})
 
-	t.Run("crash requeues twice on another bench then unresolved", func(t *testing.T) {
-		const S = "control-16c16c16"
-		clsSprint(t, client, S)
-		benches := []string{"ctl-b1", "ctl-b2", "ctl-b3"}
-		for i, bench := range benches {
-			// The deal pass honours avoid_benches (#2756 5.3); this control
-			// deals each attempt on a bench the card has not failed on.
-			if avoid := clsCard(t, client, S, "k1")["avoid_benches"]; strings.Contains(avoid, bench) {
-				t.Fatalf("attempt %d dealt on avoided bench %s (%q)", i+1, bench, avoid)
-			}
-			clsEnd(t, client, S, "k1", i+1, bench, "FAILED", "crash")
-			clsPass(t, client, S)
-			c := clsCard(t, client, S, "k1")
-			if i < 2 {
-				want := strings.Join(benches[:i+1], " ")
-				if c["state"] != "queued" || c["avoid_benches"] != want || c["retry_crash"] != strconv.Itoa(i+1) {
-					t.Fatalf("after crash %d: state=%q avoid=%q retry_crash=%q, want queued avoiding %q",
-						i+1, c["state"], c["avoid_benches"], c["retry_crash"], want)
-				}
-				continue
-			}
-			if c["state"] != "unresolved" {
-				t.Fatalf("after crash 3: state %q, want unresolved", c["state"])
-			}
+	t.Run("crash budget and avoids", func(t *testing.T) {
+		const S = "control-16-crash"
+		clsSprint(t, c, S, []string{"X", "Y", "Z"})
+		for i, bench := range []string{"X", "Y", "Z"} {
+			clsEnd(t, c, S, "k1", i+1, bench, "FAILED", "crash", "leg", "")
+			clsPass(t, c, S)
 		}
-		if items := clsUnresolved(t, client, S); len(items) != 1 || items["k1:crash:"+clsBase] == "" {
-			t.Errorf("unresolved items %v", items)
+		card := clsCard(t, c, S, "k1")
+		if card["state"] != "ended" || card["classified"] != "UNRESOLVED" || clsCount(t, c, S, "k1", "fail") != 3 {
+			t.Fatalf("crash card=%v counter=%d", card, clsCount(t, c, S, "k1", "fail"))
 		}
 	})
 
-	t.Run("env writes the bench why line", func(t *testing.T) {
-		const S = "control-16d16d16"
-		clsSprint(t, client, S)
-		clsEnd(t, client, S, "e1", 1, "ctl-b4", "BLOCKED", "env", "leg", "zig")
-		clsPass(t, client, S)
-		why, err := client.HGet(ctx, "bench:ctl-b4:why", "env zig").Result()
-		clsMust(t, err)
-		if !strings.HasPrefix(why, "why: env zig") || !strings.Contains(why, S+"/e1/1") {
-			t.Errorf("bench why line %q", why)
+	t.Run("env why and bench item", func(t *testing.T) {
+		const S = "control-16-env"
+		clsSprint(t, c, S, []string{"X", "Y"})
+		clsEnd(t, c, S, "e1", 1, "X", "BLOCKED", "env", "leg", "go")
+		clsPass(t, c, S)
+		if clsCard(t, c, S, "e1")["why"] != "env go" {
+			t.Errorf("why=%q", clsCard(t, c, S, "e1")["why"])
 		}
-		if item := clsUnresolved(t, client, S)["bench:ctl-b4:env:zig"]; item == "" {
-			t.Errorf("no unresolved bench item for ctl-b4 env zig")
-		}
-		c := clsCard(t, client, S, "e1")
-		if c["state"] != "queued" || c["avoid_benches"] != "ctl-b4" {
-			t.Errorf("e1 state=%q avoid=%q, want requeued off ctl-b4", c["state"], c["avoid_benches"])
-		}
-		// Budget 1: a second env block goes unresolved, not a third bench.
-		clsEnd(t, client, S, "e1", 2, "ctl-b1", "BLOCKED", "env", "leg", "zig")
-		clsPass(t, client, S)
-		if st := clsCard(t, client, S, "e1")["state"]; st != "unresolved" {
-			t.Errorf("e1 after second env: state %q, want unresolved", st)
-		}
-	})
-
-	t.Run("budgets come from the policy", func(t *testing.T) {
-		const S = "control-16e16e16"
-		// retry_crash 3 instead of 2, retry_tests_red 0 instead of 1.
-		clsSprint(t, client, S, "retry_crash", "3", "retry_tests_red", "0")
-		requeues := 0
-		for attempt := 1; attempt <= 5; attempt++ {
-			clsEnd(t, client, S, "k2", attempt, fmt.Sprintf("ctl-b%d", (attempt-1)%4+1), "FAILED", "timeout")
-			clsPass(t, client, S)
-			if clsCard(t, client, S, "k2")["state"] != "queued" {
-				break
-			}
-			requeues++
-		}
-		if requeues != 3 {
-			t.Errorf("retry_crash=3 gave %d requeues", requeues)
-		}
-		clsEnd(t, client, S, "r2", 1, "ctl-b1", "FAILED", "tests-red")
-		clsPass(t, client, S)
-		if c := clsCard(t, client, S, "fix-r2"); len(c) != 0 {
-			t.Errorf("retry_tests_red=0 still cut fix-r2: %v", c)
-		}
-		if st := clsCard(t, client, S, "r2")["state"]; st != "unresolved" {
-			t.Errorf("r2 state %q, want unresolved at budget 0", st)
+		if ok, _ := c.HExists(ctx, "s:"+S+":unresolved", "bench:X:env:go").Result(); !ok {
+			t.Error("missing bench env item")
 		}
 	})
 }
 
-// TestCIClassifiedRetryableOutcomes is the regression for nova-tools #3076: a
-// ci card (10.2) suppresses only the FAILED tests-red fix row. Its retryable
-// outcomes still follow the 3.3 table, so a crash requeues off the failing
-// bench and an env block requeues off the failing bench and writes the bench
-// why record, while its FAILED tests-red verdict stays ended with no fix.
-func TestCIClassifiedRetryableOutcomes(t *testing.T) {
-	client := clsRedis(t)
+func TestClassifyConcurrentDelivery(t *testing.T) {
+	c := clsRedis(t)
+	const S = "control-concurrent"
+	clsSprint(t, c, S, []string{"X", "Y"})
+	event := clsEnd(t, c, S, "red", 1, "X", "FAILED", "tests-red")
+	row := Classification{EventID: event, Label: "red"}
+	classifiers := []*Classifier{clsClassifier(c, S, "one"), clsClassifier(c, S, "two")}
+	var wg sync.WaitGroup
+	results := make([]string, 2)
+	errs := make([]error, 2)
+	for i := range classifiers {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			got, err := classifiers[i].handle(context.Background(), row, "1")
+			results[i], errs[i] = got.Result, err
+		}(i)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !((results[0] == "FIX" && results[1] == "DUP") || (results[1] == "FIX" && results[0] == "DUP")) {
+		t.Fatalf("results=%v, want FIX and DUP", results)
+	}
+	if clsCount(t, c, S, "red", "fix") != 1 || clsCard(t, c, S, "red.fix1")["state"] != "queued" {
+		t.Fatalf("counter=%d fix=%v", clsCount(t, c, S, "red", "fix"), clsCard(t, c, S, "red.fix1"))
+	}
+	entries, err := c.XRange(context.Background(), "s:"+S+":log", "-", "+").Result()
+	clsMust(t, err)
+	n := 0
+	for _, entry := range entries {
+		if entry.Values["kind"] == "card-classify" && entry.Values["id"] == "red" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("card-classify receipts=%d", n)
+	}
+	stale, err := c.XAdd(context.Background(), &redis.XAddArgs{Stream: "s:" + S + ":log", Values: map[string]any{
+		"kind": "card", "id": "red", "to": "ended", "attempt": "1"}}).Result()
+	clsMust(t, err)
+	got, err := classifiers[0].handle(context.Background(), Classification{EventID: stale, Label: "red"}, "1")
+	clsMust(t, err)
+	if got.Result != "SKIP stale" || clsCount(t, c, S, "red", "fix") != 1 {
+		t.Fatalf("stale=%q counter=%d", got.Result, clsCount(t, c, S, "red", "fix"))
+	}
+}
 
-	t.Run("ci crash requeues off the failing bench", func(t *testing.T) {
-		const S = "control-3076a3076"
-		clsSprint(t, client, S)
-		clsEnd(t, client, S, "ci-crash", 1, "ctl-b1", "FAILED", "crash",
-			"kind", "script", "ci_for", "nova-tools#1 "+clsTip)
-		if n := clsPass(t, client, S); n != 1 {
-			t.Fatalf("pass handled %d events, want 1", n)
+func TestClassifyPolicyBudgets(t *testing.T) {
+	t.Run("policy and no bench left", func(t *testing.T) {
+		c := clsRedis(t)
+		const S = "control-policy"
+		clsSprint(t, c, S, []string{"X", "Y", "Z", "W"}, "retry_fail", "3")
+		for i, bench := range []string{"X", "Y", "Z", "W"} {
+			clsEnd(t, c, S, "k", i+1, bench, "FAILED", "crash", "leg", "")
+			clsPass(t, c, S)
 		}
-		c := clsCard(t, client, S, "ci-crash")
-		score, ok := clsInPool(t, client, S, "ci-crash")
-		if c["state"] != "queued" || !ok || score >= 0 || c["bench"] != "" || c["avoid_benches"] != "ctl-b1" {
-			t.Errorf("ci-crash: state=%q pool=%v score=%v bench=%q avoid=%q, want queued at the front avoiding ctl-b1",
-				c["state"], ok, score, c["bench"], c["avoid_benches"])
-		}
-		if c["retry_crash"] != "1" {
-			t.Errorf("ci-crash retry_crash=%q, want 1", c["retry_crash"])
+		if clsCount(t, c, S, "k", "fail") != 4 || clsCard(t, c, S, "k")["classified"] != "UNRESOLVED" {
+			t.Fatalf("counter=%d card=%v", clsCount(t, c, S, "k", "fail"), clsCard(t, c, S, "k"))
 		}
 	})
 
-	t.Run("ci env block requeues and writes the bench why record", func(t *testing.T) {
-		const S = "control-3076b3076"
-		clsSprint(t, client, S)
-		clsEnd(t, client, S, "ci-env", 1, "ctl-b4", "BLOCKED", "env",
-			"kind", "script", "ci_for", "nova-tools#1 "+clsTip, "leg", "zig")
-		if n := clsPass(t, client, S); n != 1 {
-			t.Fatalf("pass handled %d events, want 1", n)
+	t.Run("avoid exhaustion and leg", func(t *testing.T) {
+		c := clsRedis(t)
+		const S = "control-no-bench"
+		clsSprint(t, c, S, []string{"X", "Y"}, "retry_fail", "3")
+		clsEnd(t, c, S, "k", 1, "X", "FAILED", "crash", "leg", "")
+		clsPass(t, c, S)
+		clsEnd(t, c, S, "k", 2, "Y", "FAILED", "crash", "leg", "")
+		clsPass(t, c, S)
+		card := clsCard(t, c, S, "k")
+		inPool, _ := c.ZScore(context.Background(), "s:"+S+":pool", "k").Result()
+		if card["state"] != "ended" || card["classified"] != "UNRESOLVED" || inPool != 0 || clsCount(t, c, S, "k", "fail") != 2 {
+			t.Fatalf("card=%v pool=%v counter=%d", card, inPool, clsCount(t, c, S, "k", "fail"))
 		}
-		why, err := client.HGet(context.Background(), "bench:ctl-b4:why", "env zig").Result()
-		clsMust(t, err)
-		if !strings.HasPrefix(why, "why: env zig") || !strings.Contains(why, S+"/ci-env/1") {
-			t.Errorf("bench why line %q", why)
-		}
-		if item := clsUnresolved(t, client, S)["bench:ctl-b4:env:zig"]; item == "" {
-			t.Errorf("no unresolved bench item for ctl-b4 env zig")
-		}
-		c := clsCard(t, client, S, "ci-env")
-		score, ok := clsInPool(t, client, S, "ci-env")
-		if c["state"] != "queued" || !ok || score >= 0 || c["avoid_benches"] != "ctl-b4" {
-			t.Errorf("ci-env: state=%q pool=%v score=%v avoid=%q, want requeued off ctl-b4",
-				c["state"], ok, score, c["avoid_benches"])
+		clsMust(t, c.HSet(context.Background(), "bench:X:desired", "legs", "go").Err())
+		clsMust(t, c.HSet(context.Background(), "bench:Y:desired", "legs", "lisp").Err())
+		clsEnd(t, c, S, "leg", 1, "X", "FAILED", "crash", "leg", "go")
+		clsPass(t, c, S)
+		if clsCard(t, c, S, "leg")["classified"] != "UNRESOLVED" {
+			t.Fatalf("leg card=%v", clsCard(t, c, S, "leg"))
 		}
 	})
 
-	t.Run("ci tests-red stays ended with no fix", func(t *testing.T) {
-		const S = "control-3076c3076"
-		clsSprint(t, client, S)
-		clsEnd(t, client, S, "ci-red", 1, "ctl-b1", "FAILED", "tests-red",
-			"kind", "script", "ci_for", "nova-tools#1 "+clsTip)
-		if n := clsPass(t, client, S); n != 1 {
-			t.Fatalf("pass handled %d events, want 1", n)
+	t.Run("pinned behavior", func(t *testing.T) {
+		c := clsRedis(t)
+		const S = "control-pin"
+		clsSprint(t, c, S, []string{"X"})
+		clsEnd(t, c, S, "crash", 1, "X", "FAILED", "crash", "pin", "X", "leg", "")
+		clsPass(t, c, S)
+		card := clsCard(t, c, S, "crash")
+		if card["state"] != "queued" || card["bench"] != "X" || card["avoid"] != "" {
+			t.Fatalf("pinned crash=%v", card)
 		}
-		if st := clsCard(t, client, S, "ci-red")["state"]; st != "ended" {
-			t.Errorf("ci-red moved to %q, want ended", st)
-		}
-		for _, label := range clsCards(t, client, S) {
-			if label == "fix-ci-red" {
-				t.Errorf("a ci card's FAIL cut a tests-red fix card")
-			}
+		clsEnd(t, c, S, "env", 1, "X", "BLOCKED", "env", "pin", "X", "leg", "go")
+		clsPass(t, c, S)
+		if clsCard(t, c, S, "env")["state"] != "ended" || clsCard(t, c, S, "env")["classified"] != "UNRESOLVED" || clsCount(t, c, S, "env", "env") != 0 {
+			t.Fatalf("pinned env=%v count=%d", clsCard(t, c, S, "env"), clsCount(t, c, S, "env", "env"))
 		}
 	})
+}
+
+func ExampleClassification() {
+	fmt.Println("label FAILED/crash -> REQUEUE")
+	// Output: label FAILED/crash -> REQUEUE
 }
