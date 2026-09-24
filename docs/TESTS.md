@@ -610,44 +610,20 @@ LOG OK rows=1 kinds=1 escalations=0 defeated=0 coverage=0/1 lat_rules=0,-,-
 
 ## nova-pulse
 
-Fixture: `cmd/nova-pulse/testdata/example-pulse`, a pulse root the size of a first run: three cards (gate, hash, fold), all on one `pro` model, and the `cards.tsv` that names them. `launch` counts the free slots under `<root>/pool` (here empty, so every slot is free), then hands the cards that fit to `nova-swarm batch` one model at a time. The fixture ships a stub `bin/nova-swarm` that records the batch argv, answers `version` as the real binary does — `launch` asks which nova-swarm it got before handing one a batch (#1760), and refuses a binary that cannot say — and exits 0, so the two `PULSE OK` lines below were produced by RUNNING launch on this fixture with that stub on PATH — no model call happens here, and no line reaches a network.
-
-A first sitting is three runs: one refusal (three cards into two slots), one whole pulse (three into three), and the queued form (three into two with `--queue`).
+Frozen: superseded by `nova-sprint`; `status`, `cut` and `harvest` remain.
+Fixture: `cmd/nova-pulse/testdata/`, a two-line `pool.tsv` (a read and a fix
+candidate) and a `templates` directory with `benches.tsv`, `read.md` and
+`fix.md`. Cut one card of each kind out of the fixture pool, into a fresh
+`./cards` and `./root` in the checkout. It reaches no network and makes no
+model call.
 
 ### First run
-
-```
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120
-PULSE REFUSED UNDER-SLOTS cards=3 free=2 (pass --queue, or wait)
-
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
-PULSE OK id=20260915T161450Z-pulse-e33494 n=3 free-before=3 queued=0 batches=1 deadline=120
-
-$ nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-PULSE OK id=20260915T161450Z-pulse-600cc3 n=3 free-before=2 queued=1 batches=1 deadline=120
-```
-
-### Cutting cards, and the pool
-
-Cut one card of each kind out of the fixture pool, into a fresh `./cards` and
-`./root` in the checkout. The fixture lives at `cmd/nova-pulse/testdata/`: a
-two-line `pool.tsv` (a read and a fix candidate) and a `templates` directory
-with `benches.tsv`, `read.md` and `fix.md`.
-
-`pool` runs against the same directory from the other end: a `sources.tsv`
-declaring one `roadmap` source, and that roadmap — two cells naming a card and
-one naming none. It reads the roadmap, skips the cell without a card, and writes
-the two candidates it found to `./root/pool.tsv`. Neither verb reaches a network
-and neither makes a model call.
 
 ```text
 $ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
 CUT ROUTE route=opencode/deepseek-v4-flash reason=flat
 CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
 CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
-
-$ nova-pulse pool --sources cmd/nova-pulse/testdata/sources.tsv --root ./root
-POOL OK sources=1 candidates=2 issues=0 audits=0 slices=0 roadmap=2 prs=0 work=0 next=0 plan=0 seen=0 took=0s out=root/pool.tsv
 ```
 
 ## nova-board

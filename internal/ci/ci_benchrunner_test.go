@@ -19,17 +19,10 @@ const benchRunnerBaseSHA = "ce8631be6"
 // build and has no row). It may only shrink: a site retired by #3350 or #3291
 // leaves this list and the allow file together.
 var benchRunnerAtBase = []string{
-	"cmd/nova-pulse/fill.go sshCapacity.Capacity",
-	"cmd/nova-pulse/fillstore.go storeProbeConfig.runProbeOverSSH",
-	"cmd/nova-pulse/fleet.go fleetSSHRunner.Run",
-	"cmd/nova-pulse/power.go powerSSHRunner.Run",
 	"cmd/nova-sprint/expire.go sshProber.Probe",
 	"internal/nsprint/deal/ssh.go remoteSession.Run",
-	"internal/pulse/fleet.go FleetRebootInput.ssh",
-	"internal/pulse/fleet.go checkFleetSeat",
 	"internal/pulse/fleet.go fleetSSH",
 	"internal/pulse/harvestbench.go sshShell.Run",
-	"internal/pulse/runners.go ServiceRestarter.Restart",
 	"internal/release/edges.go ExecSSH.Fetch",
 	"internal/release/edges.go ExecSSH.Run",
 	"internal/release/edges.go ExecSSH.Send",

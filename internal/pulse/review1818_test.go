@@ -16,12 +16,9 @@ package pulse
 import (
 	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
-	"time"
 )
 
 // #1818. The receipt: launch writes <root>/cards/<id>/cards.tsv, harvest --id reads
@@ -88,101 +85,6 @@ func TestHarvestRefusalNamesThePulseTable(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), filepath.Join("cards", "p-nope", "cards.tsv")) {
 		t.Fatalf("the refusal does not name the pulse table: %s", errb.String())
-	}
-}
-
-// #1821. The receipt: `--max 1` with three rows admitted all three (`n=3`).
-func TestLaunchHonoursMax(t *testing.T) {
-	root := t.TempDir()
-	argvLog := filepath.Join(root, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 3)
-
-	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 3, Deadline: "120", Max: 1, Now: theHour,
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; stderr=%s", code, errb)
-	}
-	if !strings.Contains(out, " n=1 ") {
-		t.Fatalf("--max 1 admitted more than one card: %q", out)
-	}
-	if !strings.Contains(errb, "PULSE NOTE max=1") {
-		t.Fatalf("a truncated pulse must say so: %q", errb)
-	}
-	admitted := pulseCardsPath(root, pulseID(t, out))
-	body, err := os.ReadFile(admitted)
-	if err != nil {
-		t.Fatalf("the admitted table: %v", err)
-	}
-	if rows := len(nonempty(string(body))); rows != 1 {
-		t.Fatalf("the batch was handed %d cards under --max 1:\n%s", rows, body)
-	}
-	_ = argvLog
-}
-
-// --max 0 still means all, the repo's own convention.
-func TestLaunchMaxZeroMeansAll(t *testing.T) {
-	root := t.TempDir()
-	fakeSwarm(t, filepath.Join(root, "argv.log"))
-	cards, _ := writeCards(t, root, 3)
-	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 3, Deadline: "120", Max: 0, Now: theHour,
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; %s", code, errb)
-	}
-	if !strings.Contains(out, " n=3 ") {
-		t.Fatalf("--max 0 must admit all three: %q", out)
-	}
-}
-
-// #1822. The receipt: slot 1 with NO lock file and a fresh native.log refused the pulse;
-// backdating the log's mtime, and nothing else, let it through.
-func TestLaunchSlotFreeFromLockFilesOnly(t *testing.T) {
-	root := t.TempDir()
-	fakeSwarm(t, filepath.Join(root, "argv.log"))
-	cards, _ := writeCards(t, root, 1)
-
-	pool := filepath.Join(root, "pool", "1")
-	if err := os.MkdirAll(pool, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pool, "native.log"), []byte("live\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	code, out, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 1, Deadline: "120",
-		Now: func() time.Time { return time.Now().UTC() },
-	})
-	if code != 0 {
-		t.Fatalf("a fresh native.log took a slot no lock file holds (SPEC-PULSE rule 8: never a log age); exit=%d stderr=%s", code, errb)
-	}
-	if !strings.Contains(out, "free-before=1") {
-		t.Fatalf("the slot must be free from its lock files: %q", out)
-	}
-}
-
-// The other direction, so the fix is not just "count everything free": a lock file that is
-// not state=free still holds its slot, log or no log.
-func TestLaunchLockFileStillHoldsItsSlot(t *testing.T) {
-	root := t.TempDir()
-	fakeSwarm(t, filepath.Join(root, "argv.log"))
-	cards, _ := writeCards(t, root, 1)
-
-	slots := filepath.Join(root, "pool", "slots")
-	if err := os.MkdirAll(slots, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(slots, "1.json"), []byte(`{"state":"live"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	code, _, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 1, Deadline: "120", Now: theHour,
-	})
-	if code != 2 || !strings.Contains(errb, "UNDER-SLOTS") {
-		t.Fatalf("a live lock must still hold its slot; exit=%d stderr=%q", code, errb)
 	}
 }
 
@@ -262,67 +164,6 @@ func TestHarvestPushesWhenTheRepoIsTheCardsOwn(t *testing.T) {
 	out, errb := runHarvest(t, root)
 	if !strings.Contains(out, "pushed=1") {
 		t.Fatalf("the card's own repo must still push:\n%s\n%s", out, errb)
-	}
-}
-
-// #1825. The receipt: a root path with a space in it produced a --then string that `sh -c`
-// splits in two, so harvest's --root became the first half. A `$`, `;` or backtick would
-// have run something else. The test runs the string through a real shell.
-func TestLaunchThenSurvivesAShellAndAPathWithASpace(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("--then is run with sh -c; the round trip needs a POSIX shell")
-	}
-	base := t.TempDir()
-	root := filepath.Join(base, "M space", "a;b $x", "root")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	argvLog := filepath.Join(base, "argv.log")
-	fakeSwarm(t, argvLog)
-	cards, _ := writeCards(t, root, 1)
-
-	code, _, errb := runLaunch(t, LaunchInput{
-		Cards: cards, Root: root, Slots: 1, Deadline: "30", Now: theHour,
-	})
-	if code != 0 {
-		t.Fatalf("exit=%d, want 0; %s", code, errb)
-	}
-
-	raw, err := os.ReadFile(argvLog)
-	if err != nil {
-		t.Fatal(err)
-	}
-	line := strings.TrimSpace(string(raw))
-	_, then, ok := strings.Cut(line, "--then ")
-	if !ok {
-		t.Fatalf("no --then in the batch argv: %q", line)
-	}
-
-	// What nova-swarm does with that string: sh -c. Swapping the verb for a printf lets
-	// a real shell do the word splitting and hand back the words it produced -- which is
-	// the only thing under test here. The flags and the values are untouched.
-	words, ok := strings.CutPrefix(then, "nova-pulse harvest ")
-	if !ok {
-		t.Fatalf("--then is not the harvest call: %q", then)
-	}
-	out, err := exec.Command("sh", "-c", `printf '%s\n' `+words).Output()
-	if err != nil {
-		t.Fatalf("sh could not run the --then fields: %v", err)
-	}
-	got := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-	if len(got) != 4 {
-		t.Fatalf("sh -c split the --then string into %d words, want 4 (--id <id> --root <root>): %q", len(got), got)
-	}
-	if got[0] != "--id" || got[2] != "--root" {
-		t.Fatalf("the harvest call is not --id <id> --root <root>: %q", got)
-	}
-	if got[3] != root {
-		t.Fatalf("--root reached harvest as %q, want %q (sh -c split the path)", got[3], root)
-	}
-	// Nothing in the path was executed, and nothing was expanded: `$x` and `;` are
-	// literal characters in a directory name, not shell.
-	if _, err := os.Stat(filepath.Join(base, "x")); err == nil {
-		t.Fatal("a metacharacter in the root path ran a command")
 	}
 }
 

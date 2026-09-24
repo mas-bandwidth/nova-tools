@@ -16,16 +16,12 @@ import (
 // TestControlCardResultsSurviveSweep is issue #2632. A control card's RESULT.md,
 // usage.tsv and report are published under
 // <results-root>/<label>/<runID>/<attempt>/, which is not the job directory.
-// --sweep-now, and the existing bench sweep (nova-pulse hygiene delete-job),
-// each leave that directory intact and the job directory gone. nova-pulse
+// --sweep-now leaves that directory intact and the job directory gone. nova-pulse
 // status reads the spend from the results root, not from the job that was deleted.
 func TestControlCardResultsSurviveSweep(t *testing.T) {
 	windowsIsNotABench(t)
 	t.Run("sweep-now", func(t *testing.T) {
 		controlCardSurvivesSweep(t, true)
-	})
-	t.Run("bench-sweep", func(t *testing.T) {
-		controlCardSurvivesSweep(t, false)
 	})
 }
 
@@ -57,24 +53,6 @@ func controlCardSurvivesSweep(t *testing.T, sweepNow bool) {
 	}
 
 	job := filepath.Join(slot, "jobs", label)
-	if !sweepNow {
-		if _, err := os.Stat(job); err != nil {
-			t.Fatalf("the bench sweep needs a job directory to delete: %v", err)
-		}
-		var hout, herr bytes.Buffer
-		code := pulse.Hygiene(pulse.HygieneInput{
-			Verb:   "delete-job",
-			Slot:   filepath.Base(slot),
-			Job:    label,
-			Home:   t.TempDir(),
-			Roots:  []string{root},
-			Stdout: &hout,
-			Stderr: &herr,
-		})
-		if code != 0 {
-			t.Fatalf("hygiene delete-job exits 0, got %d\n%s%s", code, hout.String(), herr.String())
-		}
-	}
 
 	if _, err := os.Stat(job); !os.IsNotExist(err) {
 		t.Fatalf("the job directory must be gone after the sweep, stat=%v", err)

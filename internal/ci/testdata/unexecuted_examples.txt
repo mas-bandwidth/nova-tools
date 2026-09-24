@@ -138,8 +138,6 @@ example: nova-play reply --source story.txt --id f24beb35f0df --author Stella --
 example: nova-play view story.txt
 example: nova-post help
 example: nova-post version
-example: nova-pulse launch --cards ./cards.tsv --root . --slots 2 --deadline 120 --queue
-example: nova-pulse launch --cards ./cards.tsv --root . --slots 3 --deadline 120
 example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
 example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
 example: nova-redis version

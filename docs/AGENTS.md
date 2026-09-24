@@ -10,4 +10,3 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `nova-sprint/` | nova-sprint verb guide | `go test ./internal/docs` | `go test ./internal/docs` |
 | `roadmaps/` | sprint roadmaps and milestones | `go test ./internal/docs` | `go test ./internal/docs` |
 | `schemas/` | event and payload schema definitions | `go test ./internal/docs` | `go test ./internal/docs` |
-| `spec-pulse/` | pulse sprint telemetry specifications | `go test ./internal/docs` | `go test ./internal/docs` |

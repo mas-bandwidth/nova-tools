@@ -35,10 +35,6 @@ const (
 	classOffBranch    jobClass = "off-branch"
 )
 
-// classFloor is the confidence a class decision must clear to stand alone; below
-// it the caller keeps the mechanical disposition the rules spell out.
-const classFloor = 0.5
-
 // harvestJob is one job discovered on the working layout or an old swarm root.
 type harvestJob struct {
 	dir   string
@@ -190,11 +186,6 @@ type workingOutcome struct {
 	line   string
 	pushed int
 	prs    int
-}
-
-func (out workingOutcome) with(class jobClass) workingOutcome {
-	out.class = class
-	return out
 }
 
 // one disposes exactly one job by its own two lines and the typed class.

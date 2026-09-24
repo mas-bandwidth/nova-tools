@@ -15,7 +15,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
-	"github.com/mas-bandwidth/nova-tools/internal/sprintci"
 )
 
 // TestL1 verifies control L1 (Issue #3139 rev 7 §11):
@@ -761,7 +760,6 @@ func TestL31c(t *testing.T) {
 //   - With ci_reruns 2, FAIL, rerun FAIL writes nothing and second rerun FAIL writes FAIL.
 //   - A harvested card's CICut carries its branch.
 //   - Preflight 7.16 is green on a gid source.
-//   - sprintci.Bench.Run writes no Redis key.
 func TestL31d(t *testing.T) {
 	t.Run("ns_ci_cut then ns_ci_end DONE OK creates receipt and makes head landable", func(t *testing.T) {
 		f := newLandFixture(t, "nova-tools", "dev")
@@ -1373,28 +1371,6 @@ func TestL31d(t *testing.T) {
 		line := preflight.CheckTwoSchedulers(in)
 		if line.Red {
 			t.Fatalf("preflight 7.16 is red on gid source: %s", line)
-		}
-	})
-
-	t.Run("sprintci.Bench.Run writes no Redis key", func(t *testing.T) {
-		f := newLandFixture(t, "nova-tools", "dev")
-		dealer, err := sprintci.New(4)
-		if err != nil {
-			t.Fatal(err)
-		}
-		b := &sprintci.Bench{
-			Name:   "bench-1",
-			Dealer: dealer,
-			Redis:  f.client.Options().Addr,
-		}
-		keysBefore, _ := f.client.Keys(f.ctx, "*").Result()
-		card := sprintci.Card{Repo: "nova-tools", PR: 1, SHA: "1111111111111111111111111111111111111111"}
-		dealer.Deal("bench-1", card)
-
-		b.Run(f.ctx, "nonexistent-card")
-		keysAfter, _ := f.client.Keys(f.ctx, "*").Result()
-		if len(keysBefore) != len(keysAfter) {
-			t.Fatalf("keys before=%d, after=%d; sprintci.Bench.Run wrote keys", len(keysBefore), len(keysAfter))
 		}
 	})
 }

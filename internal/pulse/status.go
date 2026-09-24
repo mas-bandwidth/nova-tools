@@ -341,13 +341,6 @@ func statusUsageRoots(in StatusInput) []string {
 	return splitList(in.Roots)
 }
 
-// collectUsage reads every bench's usage.tsv rows through the per-root status index
-// (statusindex.go): the first measured row of each file, which is what the rate arithmetic
-// folds. A root is refreshed only for the jobs whose directory mtime moved (#1088).
-func collectUsage(roots []string) []usageRow {
-	return usageRows(loadUsageFiles(roots))
-}
-
 func usageRows(files []usageFile) []usageRow {
 	var rows []usageRow
 	for _, f := range files {

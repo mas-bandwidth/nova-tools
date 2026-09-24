@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -135,12 +134,6 @@ func IsDraftOnly(label string) bool {
 	return false
 }
 
-// IsDoneLine reports whether line 2 of RESULT.md matches prefix 'DONE' with word boundary.
-// For example, 'DONE (both runs green)' and 'DONE: green' pass; 'DONEish' and 'ABSTAIN' do not.
-func IsDoneLine(line string) bool {
-	return reDoneVerdict.MatchString(strings.TrimSpace(line))
-}
-
 // harvestableVerdict is a RESULT line 2 the commit step rebases and harvests.
 // DONE is a finished card. FINDING-RED is a finished card whose verdict is the
 // finding (#2648): it rebases the same way, and the PR body is the RESULT, so
@@ -148,77 +141,6 @@ func IsDoneLine(line string) bool {
 func harvestableVerdict(line string) bool {
 	s := strings.TrimSpace(line)
 	return reDoneVerdict.MatchString(s) || reFindingRedVerdict.MatchString(s)
-}
-
-// DiscoverCommitJobs finds all job directories with a RESULT.md under root.
-func DiscoverCommitJobs(root string) []string {
-	var jobs []string
-	if fi, err := os.Stat(filepath.Join(root, "RESULT.md")); err == nil && !fi.IsDir() {
-		return []string{root}
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		return nil
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		p := filepath.Join(root, e.Name())
-		if fi, err := os.Stat(filepath.Join(p, "RESULT.md")); err == nil && !fi.IsDir() {
-			jobs = append(jobs, p)
-			continue
-		}
-		jobsSub := filepath.Join(p, "jobs")
-		if subEntries, err := os.ReadDir(jobsSub); err == nil {
-			for _, se := range subEntries {
-				if se.IsDir() {
-					jp := filepath.Join(jobsSub, se.Name())
-					if fi, err := os.Stat(filepath.Join(jp, "RESULT.md")); err == nil && !fi.IsDir() {
-						jobs = append(jobs, jp)
-					}
-				}
-			}
-		}
-	}
-	sort.Strings(jobs)
-	return jobs
-}
-
-// CommitStep runs the commit step on all discovered or provided jobs.
-func CommitStep(in CommitStepInput) ([]string, error) {
-	jobDirs := in.JobDirs
-	if len(jobDirs) == 0 && in.Dir != "" {
-		jobDirs = DiscoverCommitJobs(in.Dir)
-	}
-	var allLines []string
-	var firstErr error
-	for _, jd := range jobDirs {
-		lines, err := CommitJob(CommitJobInput{
-			JobDir:       jd,
-			CardDir:      in.CardDir,
-			CardsDir:     in.CardsDir,
-			MirrorDir:    in.MirrorDir,
-			BranchPrefix: in.BranchPrefix,
-			DefaultBase:  in.DefaultBase,
-			GitUser:      in.GitUser,
-			GitEmail:     in.GitEmail,
-			MaxFileSize:  in.MaxFileSize,
-			Clones:       in.Clones,
-			Runner:       in.Runner,
-			Stdout:       in.Stdout,
-		})
-		if err != nil {
-			if in.Stderr != nil {
-				fmt.Fprintln(in.Stderr, err)
-			}
-			if firstErr == nil {
-				firstErr = err
-			}
-		}
-		allLines = append(allLines, lines...)
-	}
-	return allLines, firstErr
 }
 
 // CommitJob executes the harvest commit step for a single job directory.

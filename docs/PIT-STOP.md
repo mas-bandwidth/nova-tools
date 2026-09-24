@@ -8,7 +8,7 @@ their specs and are only pointed to here.
 
 ## The detector
 
-The `CONTRACTION` line's verdict ([SPEC-PULSE.md](SPEC-PULSE.md), **Status**): `EXPANDING`
+The `CONTRACTION` line's verdict (SPEC-PULSE.md, **Status**): `EXPANDING`
 when any stream's ratio — cards `cut/done`, PRs `opened/merged`, issues `filed/closed` — is
 above 1 for two consecutive hours. `EXPANDING` says the spec work up front was not done
 properly or the practice is lax, and the coordinator names which on the record before another
@@ -48,7 +48,7 @@ card per bench, rerun as **one batch on the fixed tools**, and every card scores
 red line quoted and its `RESULT.md` line 1 equal to its contract — no abstain, no
 `harness-silent`, no `idle`, no false red in any package. That batch is the trust batch; its
 `BATCH` line is quoted in the closing note, the adoption receipt names the tool versions
-([SPEC-PULSE.md](SPEC-PULSE.md), `ADOPTION`), and only then does the queue widen again to the
+(SPEC-PULSE.md, `ADOPTION`), and only then does the queue widen again to the
 bench widths. A trust batch with one abstain is not the exit; it is the next fault.
 
 ## The record: 2026-09-15/16, the first
