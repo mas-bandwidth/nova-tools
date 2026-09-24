@@ -95,13 +95,16 @@ func ParseEnabled(list string) (map[string]bool, error) {
 // Disposition is one pull request's whole answer: the checks, the score, the
 // verdict the tuning made of them, and what the one call cost.
 type Disposition struct {
+	Who      string  `json:"who"`
 	Repo     string  `json:"repo"`
 	PR       int     `json:"pr"`
 	Head     string  `json:"head"`
 	Verdict  Verdict `json:"verdict"`
 	Score    int     `json:"score"`
 	RawScore float64 `json:"raw_score"`
-	Conf     float64 `json:"confidence"`
+	Conf     float64 `json:"conf"`
+	Rubric   string  `json:"rubric"`
+	Base     string  `json:"base"`
 	Checks   string  `json:"checks"`
 	Reason   string  `json:"reason"`
 	// Explain is the one line the verdict rests on.
@@ -252,7 +255,7 @@ func (d Disposition) costField() string {
 
 // Line renders the one typed line:
 //
-//	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
+//	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,ci:ok,score:N model=<model> cost=$x explain=<one line>
 //
 // It starts JEV and never DISPOSITION, and it carries neither APPROVE nor HOLD,
 // so neither lander can read it as a friend's verdict: the bash lander's
@@ -262,15 +265,26 @@ func (d Disposition) costField() string {
 // whitespace-free field; explain is prose, escaped, with no "=" left in it.
 func (d Disposition) Line() string {
 	score := fmt.Sprintf("%d", d.Score)
+	conf := fmt.Sprintf("%.2f", d.Conf)
 	if !d.Scored {
 		score = "-"
+		conf = "-"
+	}
+	rubric := d.Rubric
+	if rubric == "" {
+		rubric = RubricVersion()
+	}
+	base := d.Base
+	if base == "" {
+		base = "ok"
 	}
 	model := d.Model
 	if model == "" {
 		model = "none"
 	}
-	return fmt.Sprintf("JEV head=%s verdict=%s score=%s checks=%s model=%s cost=%s explain=%s",
+	return fmt.Sprintf("JEV head=%s verdict=%s score=%s conf=%s rubric=%s base=%s checks=%s model=%s cost=%s explain=%s",
 		oneline.Field(d.Head), oneline.Field(string(d.Verdict)), score,
+		conf, oneline.Field(rubric), oneline.Field(base),
 		oneline.Field(d.Checks), oneline.Field(model), d.costField(), reasonField(d.Explain))
 }
 
@@ -335,6 +349,15 @@ func AppendLedger(path string, d Disposition) error {
 	if strings.TrimSpace(path) == "" {
 		return nil
 	}
+	if d.Who == "" {
+		d.Who = Who
+	}
+	if d.Rubric == "" {
+		d.Rubric = RubricVersion()
+	}
+	if d.Base == "" {
+		d.Base = "ok"
+	}
 	if d.At == "" {
 		d.At = time.Now().UTC().Format(time.RFC3339)
 	}
@@ -352,6 +375,24 @@ func AppendLedger(path string, d Disposition) error {
 	defer f.Close()
 	if _, err := f.Write(append(row, '\n')); err != nil {
 		return fmt.Errorf("prereview: append ledger: %w", err)
+	}
+	return nil
+}
+
+// UnmarshalJSON unmarshals a ledger row, accepting legacy "confidence" as Conf.
+func (d *Disposition) UnmarshalJSON(data []byte) error {
+	type Alias Disposition
+	aux := struct {
+		*Alias
+		Confidence *float64 `json:"confidence"`
+	}{
+		Alias: (*Alias)(d),
+	}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if d.Conf == 0 && aux.Confidence != nil {
+		d.Conf = *aux.Confidence
 	}
 	return nil
 }

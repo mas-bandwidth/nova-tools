@@ -1,6 +1,7 @@
 package prereview_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -265,7 +266,7 @@ func TestJevLineIsNeverAFriendVerdict(t *testing.T) {
 		}
 		body := d.Comment()
 		first := strings.SplitN(body, "\n", 2)[0]
-		want := "JEV head=" + head + " verdict=" + string(v) + " score=9 checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,score:9 model=jev-latest cost=$- explain="
+		want := "JEV head=" + head + " verdict=" + string(v) + " score=9 conf=0.00 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:ok,score:9 model=jev-latest cost=$- explain="
 		if !strings.HasPrefix(first, want) {
 			t.Fatalf("first line = %q, want prefix %q", first, want)
 		}
@@ -684,5 +685,57 @@ func TestAppendLedgerCreatesParentDirectories(t *testing.T) {
 	}
 	if _, err := os.Stat(nestedPath); err != nil {
 		t.Fatalf("ledger file was not created: %v", err)
+	}
+}
+
+// TestJevLineGoldenFormat pins the shape of the JEV line and ledger row (#3394).
+// The JEV line carries:
+//
+//	JEV head=<sha40> verdict=PASS|BOUNCE|UNSURE score=N conf=<x> rubric=<sha8> base=ok|behind|conflict checks=... model=<model> cost=$x explain=<one line>
+func TestJevLineGoldenFormat(t *testing.T) {
+	d := prereview.Disposition{
+		Who:     prereview.Who,
+		Repo:    repo,
+		PR:      1488,
+		Head:    "8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3",
+		Verdict: prereview.Bounce,
+		Score:   6,
+		Conf:    0.21,
+		Rubric:  "816c4381",
+		Base:    "ok",
+		Checks:  "donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6",
+		Model:   "jev-latest",
+		Scored:  true,
+		Explain: "claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod",
+	}
+
+	const want = "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-fail,score:6 model=jev-latest cost=$- explain=claims: 1 of 2 files the RESULT claims are not in the diff: test/conformance/go/go.mod"
+	if got := d.Line(); got != want {
+		t.Fatalf("d.Line() =\n  %s\nwant =\n  %s", got, want)
+	}
+
+	path := filepath.Join(t.TempDir(), "ledger.jsonl")
+	if err := prereview.AppendLedger(path, d); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var row map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &row); err != nil {
+		t.Fatal(err)
+	}
+	if row["who"] != "jev" {
+		t.Errorf("ledger row who = %v, want jev", row["who"])
+	}
+	if row["conf"] != 0.21 {
+		t.Errorf("ledger row conf = %v, want 0.21", row["conf"])
+	}
+	if row["rubric"] != "816c4381" {
+		t.Errorf("ledger row rubric = %v, want 816c4381", row["rubric"])
+	}
+	if row["base"] != "ok" {
+		t.Errorf("ledger row base = %v, want ok", row["base"])
 	}
 }
