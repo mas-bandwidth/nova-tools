@@ -72,6 +72,43 @@ import (
 // this name and by nothing else.
 const JobLeaseName = ".lease"
 
+// ProviderBeatName is the file the supervisor touches each time it observes provider
+// bytes. The lease heartbeat only renews when this file has moved, so a hung socket
+// lets the lease expire rather than keeping it alive on a timer.
+const ProviderBeatName = ".provider-beat"
+
+// providerBeatRenews decides one heartbeat tick (feature 87). Before the beat file has
+// ever been seen (lastBeat zero, file absent) the tick renews: the card may still be
+// connecting. Once the file exists, the tick renews only when its mtime has moved past
+// the last one seen, and the new mtime is returned so the next tick compares against
+// it. A beat file that vanishes after being seen renews nothing.
+func providerBeatRenews(beatPath string, lastBeat time.Time) (bool, time.Time) {
+	st, err := os.Stat(beatPath)
+	if err != nil {
+		return lastBeat.IsZero(), lastBeat
+	}
+	if st.ModTime().After(lastBeat) {
+		return true, st.ModTime()
+	}
+	return false, lastBeat
+}
+
+// touchProviderBeat moves the beat file's mtime to now, creating the file first when it
+// is not there yet. Chtimes alone on an absent file fails silently, which left the
+// heartbeat with no file to read when the first usage sample already showed turns.
+func touchProviderBeat(jobDir string, now time.Time) error {
+	p := filepath.Join(jobDir, ProviderBeatName)
+	if err := os.Chtimes(p, now, now); err == nil {
+		return nil
+	}
+	f, err := os.OpenFile(p, os.O_WRONLY|os.O_CREATE, 0o644)
+	if err != nil {
+		return err
+	}
+	_ = f.Close()
+	return os.Chtimes(p, now, now)
+}
+
 // JobLeaseHeartbeat is how often a held lease's mtime is bumped. It is far under the ten
 // minutes the reaper allows a heartbeat to age, so a bench under load that misses a tick
 // or two still reads as live.
@@ -259,6 +296,13 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 	go func() {
 		defer beating.Done()
 		defer stopTicks()
+		// THE PROVIDER-BYTE RULE (feature 87). The lease renews only when the
+		// supervisor has observed provider bytes, signalled by a .provider-beat
+		// file the supervisor touches on each usage sample that shows new output.
+		// A hung socket sends no bytes, the beat file never moves, and the lease
+		// expires rather than being kept alive by a blind timer.
+		lastBeat := time.Time{}
+		beatPath := filepath.Join(jobDir, ProviderBeatName)
 		for {
 			select {
 			case <-done:
@@ -270,8 +314,21 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				if hooks.atBeat != nil {
 					hooks.atBeat <- struct{}{}
 				}
-				if err := os.Chtimes(path, now, now); err == nil {
-					continue
+				// Renew the mtime only when provider bytes have arrived. Before
+				// the first provider-beat file appears, renew on every tick (the
+				// card may still be connecting). Once the beat file exists, renew
+				// only when its mtime advances -- a hung socket means no advance.
+				// THE REPAIR ALWAYS RUNS: if Chtimes fails (file missing), the
+				// lease is re-published regardless of the beat, because a live job
+				// that lost its file must be protected again (#1585).
+				var renew bool
+				renew, lastBeat = providerBeatRenews(beatPath, lastBeat)
+				if renew {
+					if err := os.Chtimes(path, now, now); err == nil {
+						continue
+					}
+				} else if _, err := os.Stat(path); err == nil {
+					continue // file is there, just not time to renew
 				}
 				// THE REPAIR. Chtimes on a path that is not there does nothing and says
 				// nothing, which is how a live job lost its protection in #1585. Publish

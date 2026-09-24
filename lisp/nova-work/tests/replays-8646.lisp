@@ -168,3 +168,119 @@
     (check-equal :dispatched outcome "dispatch outcome")
     (ok (search "scoped-exception=retained" line)
         "valid scoped exception not retained: ~A" line)))
+
+;;; E02-F04-01 "Check base tip and owner token before every write"
+;;;   docs/SPEC-WORK.md:215-221 (rule 2, Holding): the owner reconfirms before
+;;;   every write, "first that the fetched tip is the session's base, then that
+;;;   OWNER on it still carries its generation and token", and the whole check
+;;;   is one predicate, `tip == base`, "made before the CAS of every push".
+(deftest "TestE02F04CheckBaseTipAndOwner" "docs/SPEC-WORK.md:215-221"
+    "expected=matching-tip-and-owner-token-reconfirm,advance-until;moved-tip-refused-RACED-and-fenced;changed-token-refused-owner-changed"
+  ;; A session whose fetched tip is its base and whose OWNER still carries its
+  ;; generation and token reconfirms green and advances `until`.
+  (let ((sess (session-start :owner "emma" :token "tok-1" :base "abc123"
+                             :state-seed '((:id "acme/work" :type :work-set :state :unknown))
+                             :now "2026-09-14T12:00:00Z" :every "30s" :skew "5s")))
+    (multiple-value-bind (okp line code)
+        (session-reconfirm sess "abc123"
+                           :now "2026-09-14T12:00:30Z"
+                           :owner-record (make-ownership-record
+                                          :owner "emma" :generation 1 :token "tok-1"))
+      (ok okp "a matching base tip and owner token did not reconfirm: ~A" line)
+      (check-equal 0 code "a matching reconfirm is not green")
+      (ok (search "until=2026-09-14T12:01:30Z" line)
+          "the reconfirm does not advance until: ~A" line)
+      (check-equal :live (session-state sess) "a matching reconfirm fenced the session")))
+  ;; A tip that is not the base is a tip this session did not write: the write
+  ;; is withheld, the session fences, and the line names both shas.
+  (let ((sess (session-start :owner "emma" :token "tok-1" :base "abc123"
+                             :state-seed '((:id "acme/work" :type :work-set :state :unknown))
+                             :now "2026-09-14T12:00:00Z" :every "30s" :skew "5s")))
+    (multiple-value-bind (okp line code)
+        (session-reconfirm sess "def456"
+                           :now "2026-09-14T12:00:30Z"
+                           :owner-record (make-ownership-record
+                                          :owner "emma" :generation 1 :token "tok-1"))
+      (ok (not okp) "a moved tip reconfirmed and would overwrite a foreign commit")
+      (check-equal 1 code "a raced reconfirm is not a refusal")
+      (ok (search "SESSION RACED" line) "the raced write does not print RACED: ~A" line)
+      (ok (search "expected=abc123" line) "the RACED line does not name the base: ~A" line)
+      (ok (search "found=def456" line) "the RACED line does not name the moved tip: ~A" line)
+      (check-equal :fenced (session-state sess) "a raced session did not fence")))
+  ;; An OWNER whose generation or token changed on the tip is refused even when
+  ;; the tip is still the base, before the write goes out.
+  (let ((sess (session-start :owner "emma" :token "tok-1" :base "abc123"
+                             :state-seed '((:id "acme/work" :type :work-set :state :unknown))
+                             :now "2026-09-14T12:00:00Z" :every "30s" :skew "5s")))
+    (multiple-value-bind (okp line code)
+        (session-reconfirm sess "abc123"
+                           :now "2026-09-14T12:00:30Z"
+                           :owner-record (make-ownership-record
+                                          :owner "emma" :generation 2 :token "tok-other"))
+      (ok (not okp) "a changed owner token reconfirmed and admitted the takeover")
+      (check-equal 1 code "an owner-changed reconfirm is not a refusal")
+      (ok (search "owner changed" line) "the owner change is not refused by name: ~A" line)
+      (check-equal :fenced (session-state sess) "an owner-changed session did not fence"))))
+
+;;; E08-F03-03 "Include coordinator identity and attribute model, bench, attempt
+;;;   and usage" (docs/roadmaps/nova-work.sexp, feature E08-F03).
+;;;   docs/SPEC-WORK.md:3379-3380 — "The coordinator is a friend in `friends`
+;;;   and is tracked by the same indexes as everyone else — her or his own
+;;;   tasks, executions, model, bench, usage and availability, through the same
+;;;   queries."
+;;;   docs/SPEC-WORK.md:3406-3408 — an execution instance is "linked to their
+;;;   friend, capability, canonical task and attempt, retaining requested and
+;;;   observed model, bench, status, deadline, provider handle and usage
+;;;   receipts": model, bench, attempt and usage are attributed, never collapsed.
+(deftest "TestE08F03IncludeCoordinatorIdentityAndAttribute"
+    "docs/SPEC-WORK.md:3379-3380,3406-3408"
+    "expected=coordinator-included-among-friends;model,bench,attempt,usage-attributed-distinctly"
+  ;; The coordinator's identity is one friend among `friends`, tracked by the
+  ;; same indexes as everyone else, not a second store of its own.
+  (let* ((fleet (make-fleet :friends '("rowan" "emma" "priya"))))
+    (ok (member "rowan" (fleet-friends fleet) :test #'string=)
+        "the coordinator's identity is not among the friends")
+    (check-equal 3 (length (fleet-friends fleet)) "a friend identity was dropped"))
+  ;; "Through the same queries" (:3380): the coordinator's own tasks are read
+  ;; through the one holder (friend) index every friend is read through, not a
+  ;; coordinator-only path. The coordinator and another friend each take a task
+  ;; on a real kernel; the same indexed query answers both, and the maintained
+  ;; index agrees with a full independent reconstruction.
+  (let* ((seed '((:id "r" :type :work-set :parent nil :state :unknown)
+                 (:id "r/f" :type :feature :parent "r" :state :unknown)
+                 (:id "r/f/coord" :type :task :parent "r/f" :state :doing)
+                 (:id "r/f/friend" :type :task :parent "r/f" :state :doing)
+                 (:id "r/f/free" :type :task :parent "r/f" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)
+                         :friends '("rowan" "emma" "priya"))))
+    (ok (member "rowan" (fleet-friends (kernel-fleet k)) :test #'string=)
+        "the kernel's session fleet does not carry the coordinator as a friend")
+    (take-lease k "r/f/coord" "rowan")
+    (take-lease k "r/f/friend" "emma")
+    (let ((index (state-holder-index (kernel-state k))))
+      (check-equal '("r/f/coord") (cdr (assoc "rowan" index :test #'equal))
+                   "the coordinator's task is not answered by the holder index query")
+      (check-equal '("r/f/friend") (cdr (assoc "emma" index :test #'equal))
+                   "another friend's task is not answered by the same query")
+      (check-equal 2 (length index)
+                   "the holder index carries a holder other than the two who took"))
+    (check-equal '() (state-index-mismatches (kernel-state k))
+                 "the coordinator's entry in the holder index disagrees with reconstruction"))
+  ;; An execution attributes model, bench, attempt and usage as distinct
+  ;; fields: the requested model is never the observed model, the bench and the
+  ;; attempt stay separate, and the usage receipt is retained, never guessed.
+  (let* ((execution (make-execution-reference
+                     :attempt 2 :requested-model "beta" :observed-model "astra"
+                     :harness "sbcl" :bench "local"
+                     :usage '(:input 10 :output 5))))
+    (check-equal 2 (getf execution :attempt) "the attempt was not attributed")
+    (check-equal "beta" (getf execution :requested-model)
+                 "the requested model was not attributed")
+    (check-equal "astra" (getf execution :observed-model)
+                 "the observed model was not attributed")
+    (check-equal "local" (getf execution :bench) "the bench was not attributed")
+    (ok (equal '(:input 10 :output 5) (getf execution :usage))
+        "the usage receipt was not attributed")
+    (ok (not (string= (getf execution :requested-model)
+                      (getf execution :observed-model)))
+        "requested and observed model collapsed into one field")))

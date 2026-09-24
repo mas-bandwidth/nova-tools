@@ -252,6 +252,78 @@ and only once per collection; a roadmap is refused, naming its one creator."
                       id (or repo "-"))
               0))))
 
+(defun %bug-child-id-p (id)
+  "True when ID names a bug child: starts with \"bug:\"."
+  (and (stringp id) (>= (length id) 4) (string= "bug:" (subseq id 0 4))))
+
+(defun decompose-node (kernel node &key into children acceptance found-during reason request stamp)
+  "Split NODE into INTO children. Each entry in CHILDREN is a plist with :id,
+:type, and optionally :acceptance. When a child id starts with `bug:`, it is a
+bug child and requires :found-during; a bug is not required so the parent's
+required set is unchanged; the scope revision advances by one. The same call
+without :found-during for a bug child is refused whole."
+  (declare (ignore stamp))
+  (let ((state (kernel-state kernel)))
+    (flet ((refuse (what &optional (code 2))
+             (return-from decompose-node
+               (values nil (format nil "DECOMPOSE FAIL node=~A: ~A" node what) code))))
+      (unless (and (stringp node) (plusp (length node)))
+        (refuse "bad node"))
+      (let ((parent-node (%node-or-nil state node)))
+        (unless parent-node
+          (refuse (format nil "no such node ~A" node) 1)))
+      (unless children
+        (refuse "no children"))
+      (let* ((rev (kernel-next-rev kernel))
+             (kids (copy-list (wnode-children (%node-quiet state node))))
+             (request (or request (format nil "decompose-~D" rev))))
+        (dolist (child children)
+          (let ((child-id (getf child :id))
+                (child-type (getf child :type))
+                (child-acceptance (getf child :acceptance))
+                (child-found-during (getf child :found-during)))
+            (unless (and (stringp child-id) (plusp (length child-id)))
+              (refuse "bad child id"))
+            (unless (member child-type '(:task :bug))
+              (refuse (format nil "bad child type ~A for ~A"
+                              (string-downcase (princ-to-string child-type)) child-id)))
+            (when (eq child-type :bug)
+              (unless (and (stringp child-found-during) (plusp (length child-found-during)))
+                (refuse (format nil "bug ~A is missing :found-during" child-id))))
+            (when (%node-quiet state child-id)
+              (refuse (format nil "rule 1: duplicate id ~A" child-id) 1))
+            (when (member child-id kids :test #'string=)
+              (refuse (format nil "child ~A already listed" child-id)))
+            (push child-id kids)))
+        (setf kids (nreverse kids))
+        (dolist (child children)
+          (let* ((child-id (getf child :id))
+                 (child-type (getf child :type))
+                 (child-required (not (eq child-type :bug)))
+                 (child-node (make-wnode :id child-id :type child-type
+                                         :parent node :children '()
+                                         :required child-required
+                                         :required-count 0 :required-open 0
+                                         :state :unknown :branch :o :open-count 0
+                                         :links nil :title +absent+
+                                         :category nil :private nil :version nil
+                                         :repo nil :view nil :meta-log '()
+                                         :settles 0 :revived "-")))
+            (%install-open-node state child-node)
+            ;; If a bug, set the found-during evidence on the meta-log
+            (when (eq child-type :bug)
+              (let ((fd (getf child :found-during)))
+                (push (list :op :structure :kind :bug-found-during
+                            :node child-id :found-during fd)
+                      (wnode-meta-log child-node))))))
+        (setf (wnode-children (%node-quiet state node)) kids)
+        (setf (wstate-revision state) (max (wstate-revision state) rev))
+        (setf (kernel-next-rev kernel) (1+ rev))
+        (values t
+                (format nil "DECOMPOSE OK node=~A request=~A change=decompose changed=~D rev=~D"
+                        node request (length children) rev)
+                0)))))
+
 ;;; ------------------------------------------------------------------
 ;;; `roadmap create`, the one creator of node and view (:3070-3082, :5344).
 ;;; ------------------------------------------------------------------
@@ -595,6 +667,197 @@ guesses an insertion point (:2865, :3063-3067, :5379)."
             (format nil "UNDO OK request=~A of=~A node=~A change=move" request request id)
             0)))
 
+
+;;; ------------------------------------------------------------------
+;;; `node require`, `baseline`, `discovery` and `prioritise`: the scope and
+;;; ordering verbs of E03-F03 (SPEC-WORK.md:2929, :1011, :1096-1100, :1147,
+;;; :3167-3180).
+;;; ------------------------------------------------------------------
+;;;
+;;; Each is a WRITER on the kernel's one command thread (kernel.lisp %submit),
+;;; exactly as `dep` is: an event of its own kind (:require, :baseline,
+;;; :discovery, :prioritise; field orders in state.lisp beside the apply-event
+;;; branches that replay them), the dedup answer asked of the journal BEFORE
+;;; any mutable-state precondition, the record written before the apply
+;;; (%oneshot-submit -> %install-envelope), and the event in the history that
+;;; `reconstruct-state` and `replay-journal` replay. Author, reason and request
+;;; id are required, as `dep`'s are. Scope edits stay ungated (SPEC-WORK.md:5018).
+
+(defparameter *scope-words*
+  '((:node-require . "NODE") (:baseline . "BASELINE")
+    (:discovery . "DISCOVERY") (:prioritise . "PRIORITISE")))
+
+(defun %scope-text-p (value)
+  (and (stringp value) (plusp (length (string-trim " " value)))))
+
+(defun %scope-rank-p (rank)
+  "An unsigned integer of at most eighteen digits (SPEC-WORK.md:3169)."
+  (and (integerp rank) (<= 0 rank 999999999999999999)))
+
+(defun %scope-shape-refusal (verb request)
+  "The invocation-shape refusal (exit 2) of one scope verb, or NIL. Asked before
+the dedup answer and before any mutable state, as `dep` asks its own."
+  (let ((node (getf request :node)))
+    (cond
+      ((not (%scope-text-p node)) "refusing to guess: --node")
+      ((not (%scope-text-p (getf request :by))) "refusing to guess: --as")
+      ((not (%scope-text-p (getf request :reason))) "refusing to guess: --reason")
+      ((not (%scope-text-p (getf request :request))) "refusing to guess: --request")
+      (t
+       (ecase verb
+         (:node-require
+          (unless (member (getf request :to :missing) '(t nil))
+            "--to must be true or false"))
+         (:baseline nil)
+         (:discovery
+          (let ((members (getf request :members)))
+            (unless (and (consp members) (every #'%scope-text-p members))
+              "--member: one or more node ids")))
+         (:prioritise
+          (let ((change (getf request :change))
+                (context (getf request :context :self))
+                (rank (getf request :rank)))
+            (cond ((not (member context '(:self :subtree)))
+                   "--context must be self or subtree")
+                  ((eq change :set)
+                   (unless (%scope-rank-p rank)
+                     "--set: an unsigned rank of at most eighteen digits"))
+                  ((eq change :clear)
+                   (when rank "--clear with a rank"))
+                  (t "one of --set or --clear is required")))))))))
+
+(defun %scope-fields (verb request)
+  "The event's own fields as the REQUEST states them, in state.lisp's order. A
+baseline's :members are the tool's, filled in after the dedup answer."
+  (let ((reason (getf request :reason)))
+    (ecase verb
+      (:node-require (list :to (if (getf request :to) :true :false) :reason reason))
+      (:baseline (list :members +absent+ :reason reason))
+      (:discovery (list :members (copy-list (getf request :members)) :reason reason))
+      (:prioritise
+       (list :change (getf request :change)
+             :context (getf request :context :self)
+             :rank (if (eq :set (getf request :change)) (getf request :rank) +absent+)
+             :reason reason)))))
+
+(defun %scope-kind (verb)
+  (ecase verb
+    (:node-require :require) (:baseline :baseline)
+    (:discovery :discovery) (:prioritise :prioritise)))
+
+(defun %scope-submit (kernel request)
+  "`node require`, `baseline`, `discovery` and `prioritise`, run on the kernel's
+one command thread. Answers (values OK-P LINE EXIT ENVELOPE)."
+  (let* ((verb (getf request :verb))
+         (word (cdr (assoc verb *scope-words*)))
+         (node (getf request :node)))
+    (%check-request-keys verb request)
+    (let ((refusal (%scope-shape-refusal verb request)))
+      (when refusal
+        (return-from %scope-submit
+          (values nil (format nil "~A FAIL node=~A: ~A; run: nova-work help"
+                              word (or node "-") refusal)
+                  2 nil))))
+    (let* ((state (kernel-state kernel))
+           (rid (getf request :request))
+           (by (getf request :by))
+           (fields (%scope-fields verb request))
+           (rev (kernel-next-rev kernel))
+           (n (%node-quiet state node)))
+      (flet ((event-of (fields)
+               (make-work-event
+                :kind (%scope-kind verb) :node node :by by :fields fields
+                :stamp (or (getf request :stamp) "2026-09-14T12:00:00Z")
+                :clock (or (getf request :clock) :tool)
+                :request rid
+                :generation-owner (or (getf request :generation-owner) by)
+                :rev rev :session-written-p nil))
+             (refuse (what &optional (code 1))
+               (return-from %scope-submit
+                 (values nil (format nil "~A FAIL node=~A: ~A" word node what) code nil)))
+             (note (what)
+               (return-from %scope-submit
+                 (values t (format nil "~A NOTE node=~A request=~A changed=0: ~A"
+                                   word node rid what)
+                         0 nil))))
+        (let ((digest (payload-digest (list (event-of fields)))))
+          ;; The replay answer comes BEFORE every mutable-state precondition: an
+          ;; identical recorded payload answers its original receipt whatever
+          ;; the set has done since, and the same id with a changed payload is
+          ;; refused rather than applied at the next revision.
+          (multiple-value-bind (verdict recorded) (%dedup-verdict kernel rid digest)
+            (case verdict
+              (:replay
+               (return-from %scope-submit
+                 (values t recorded 0
+                         (list :request rid :digest digest :events '() :replayed t))))
+              ((:unavailable :conflict)
+               (return-from %scope-submit
+                 (values nil (%dedup-refusal word rid verdict recorded) 1 nil)))))
+          ;; and only now the mutable state
+          (unless n (refuse (format nil "rule 2: no such node ~A" node)))
+          (ecase verb
+            (:node-require
+             (unless (wnode-parent n)
+               (refuse "a root is in no required set"))
+             (when (eq (and (wnode-required n) t) (and (getf request :to) t))
+               (note "the node is already there")))
+            (:baseline
+             (setf fields (list :members (%need-required-members state n)
+                                :reason (getf request :reason))))
+            (:discovery
+             (when (eq :roadmap (wnode-type n))
+               (refuse "a roadmap's set is its first axis's members; run: nova-work axis --add" 2))
+             (dolist (m (getf request :members))
+               (let ((mn (%node-quiet state m)))
+                 (unless (and mn (equal (wnode-parent mn) node))
+                   (refuse (format nil "~A is not a direct child" m)))))
+             (when (every (lambda (m) (wnode-required (%node-quiet state m)))
+                          (getf request :members))
+               (note "every member is already in the set")))
+            (:prioritise
+             (let ((old (getf (wnode-priority n) (getf fields :context))))
+               (when (if (eq :set (getf fields :change))
+                         (eql old (getf fields :rank))
+                         (absentp old))
+                 (note "the slot already holds that")))))
+          ;; ONE DURABLE RECORD PER MUTATION, on the one record-then-apply path.
+          (let ((event (event-of fields)))
+            (%oneshot-submit kernel rid digest
+                             (format nil "~A OK id=~D request=~A node=~A rev=~D pushed=- change=~(~A~) changed=1"
+                                     word rev rid node rev (%scope-kind verb))
+                             event word
+                             (list :verb verb :node node :request request))))))))
+
+(defun %scope-request (verb node as reason request stamp more)
+  (append (list :verb verb :node node :by as :reason reason :request request
+                :stamp stamp :clock :tool)
+          more))
+
+(defun node-require (kernel &key node (to nil to-p) as reason request stamp)
+  "`node require --to <true|false>`: move NODE into or out of its containment
+parent's required set; it detaches nothing (SPEC-WORK.md:1147)."
+  (submit kernel (%scope-request :node-require node as reason request stamp
+                                 (list :to (if to-p to :missing)))))
+
+(defun baseline (kernel &key node as reason request stamp)
+  "`baseline`: record NODE's required set as the tool computes it now, member by
+member (SPEC-WORK.md:1096-1100)."
+  (submit kernel (%scope-request :baseline node as reason request stamp '())))
+
+(defun discovery (kernel &key node members as reason request stamp)
+  "`discovery`: add each named direct child of NODE to its required set at the
+bottom of the listing (SPEC-WORK.md:1096-1100)."
+  (submit kernel (%scope-request :discovery node as reason request stamp
+                                 (list :members members))))
+
+(defun prioritise (kernel &key node set clear (context :self) as reason request stamp)
+  "`prioritise --node <id> (--set <rank> | --clear) [--context self|subtree]`
+(SPEC-WORK.md:3175): move one :priority slot and nothing else."
+  (submit kernel (%scope-request :prioritise node as reason request stamp
+                                 (append (list :change (cond (set :set) (clear :clear))
+                                               :context context)
+                                         (when set (list :rank set))))))
 
 ;;; ------------------------------------------------------------------
 ;;; folded from replays-render-priority.lisp (nova-tools #1102)

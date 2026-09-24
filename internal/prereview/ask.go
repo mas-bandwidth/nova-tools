@@ -2,6 +2,8 @@ package prereview
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -32,6 +34,13 @@ var ScoreLevels = []string{
 	"8: correct, in scope, exercises the generated code, control bites",
 	"9: correct, in scope, well-derived, negative control verified",
 	"10: exemplary: the law, the production path and a biting control, nothing else",
+}
+
+// RubricVersion is the sha8 of ScoreLevels (first 8 hex characters of sha256
+// of the canonical ScoreLevels joined with NUL, matching TestScoreLevelOrderIsPinned).
+func RubricVersion() string {
+	sum := sha256.Sum256([]byte(strings.Join(ScoreLevels, "\x00")))
+	return hex.EncodeToString(sum[:])[:8]
 }
 
 // ScoreQuestion is THE question set: exactly one score question. One question,

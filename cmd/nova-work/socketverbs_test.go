@@ -144,7 +144,6 @@ func TestTheLinesTheClientDoesNotSendAreRefusedByName(t *testing.T) {
 	}{
 		{[]string{"state", "load", "--from", "x", "--into", "y"}, "local reader"},
 		{[]string{"savepoint", "restore", "--savepoint", "x", "--into", "y"}, "local reader"},
-		{[]string{"report", "--session", "x", "--as", "r"}, "SPEC-AHEAD"},
 	}
 	for _, c := range cases {
 		t.Run(strings.Join(c.args[:2], " "), func(t *testing.T) {

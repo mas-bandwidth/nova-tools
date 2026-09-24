@@ -24,6 +24,14 @@ type FakeStream struct {
 
 	// Now is the clock Emit stamps an unstamped event with; a test may pin it.
 	Now func() time.Time
+
+	// FailEmit, when set, is the error every Emit returns instead of writing. It is
+	// the ONLY way to prove the contract the card-path writers are built on -- that a
+	// store which refuses an entry does not fail the card, the harvest or the landing
+	// -- so the fake carries a way to be broken on purpose (nova-tools #2563 item 1).
+	// It fails Emit alone: a fold reading a stream whose writer is broken is a
+	// different test.
+	FailEmit error
 }
 
 type fakeGroup struct {
@@ -57,6 +65,9 @@ func (f *FakeStream) Len() int {
 func (f *FakeStream) Emit(ctx context.Context, e Event) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
+	}
+	if f.FailEmit != nil {
+		return "", f.FailEmit
 	}
 	now := time.Now().UTC()
 	if f.Now != nil {

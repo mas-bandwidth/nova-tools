@@ -39,7 +39,11 @@ this section supersedes them.
   required coverage; matching SHA alone is insufficient.
 - `status` surveys recent runs (`status --since`): queue, cancellation drain,
   execution and end-to-end latency per run, with attempt identities and
-  prior failures preserved.
+  prior failures preserved. Implemented (nova-tools #2207) over a run store of
+  one `<run>.json` per run: `--store` and `--since` (an RFC 3339 instant or a
+  duration back from the clock) are required, one `STATUS RUN` line per run
+  queued at or after the boundary, then one `STATUS OK` summary with the count
+  left out as `older=`.
 - `failures` lists the bounded failing steps of a run with source-backed
   excerpts; full logs remain retrievable. Successful checks are
   distinguished from unexecuted, skipped or missing ones.
@@ -112,9 +116,9 @@ slice's `run`).
 
 These tests run against fake manifests, a temp-dir run store and a fake swarm/runner
 substrate; nothing reaches a network, a real runner or a real secret, and each test is
-proven able to fail (seen red) before it is trusted. `nova-test` is a **proposed** binary:
-`git ls-files` shows no `cmd/nova-test` and no implementation, so every behaviour below is
-the work that turns the two document-only tests in `internal/docs` (which assert that
+proven able to fail (seen red) before it is trusted. `cmd/nova-test` implements `status`
+only (15-18, in `cmd/nova-test/status_test.go`); every other behaviour below is the work
+that turns the two document-only tests in `internal/docs` (which assert that
 `docs/SPEC-TEST.md` *mentions* strings, not that anything behaves) into real coverage.
 
 1. `TestPlanPrintsConcretePlanBeforeExecution` — `plan` reads a versioned repository validation manifest and prints the concrete plan before execution (it never dispatches).

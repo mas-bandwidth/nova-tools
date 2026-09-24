@@ -100,7 +100,8 @@ func TestRouteRefusalStillPersistsTheCall(t *testing.T) {
 	reg := filepath.Join(dir, "registry.json")
 	body := `{"minds":[
 	  {"name":"low","lineage":"one","height":0,"availability":"available","ask":"card"},
-	  {"name":"high","lineage":"two","height":1,"availability":"available","ask":"bus"}
+	  {"name":"mid","lineage":"two","height":1,"availability":"available","ask":"card"},
+	  {"name":"high","lineage":"three","height":2,"availability":"available","ask":"bus"}
 	]}`
 	if err := os.WriteFile(reg, []byte(body), 0o600); err != nil {
 		t.Fatal(err)
@@ -109,6 +110,7 @@ func TestRouteRefusalStillPersistsTheCall(t *testing.T) {
 	log := filepath.Join(dir, "decide.jsonl")
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"route", "--unit-id", "u-ref", "--kind", "rebase", "--files", "2", "--packages", "1",
+		"--attempt", "low:failed:the bottom rung missed the cause",
 		"--registry", reg, "--usage", usage, "--log", log}, &stdout, &stderr)
 	if code != 2 {
 		t.Fatalf("exit = %d, want 2: there is no rung above the top one (stdout=%q stderr=%q)", code, stdout.String(), stderr.String())

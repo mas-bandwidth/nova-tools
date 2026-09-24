@@ -474,8 +474,11 @@ func CheckRESTBudget(in FleetInput) FleetLine {
 	if !r.Known {
 		return line(check, name, []string{"REST budget MISSING"}, "")
 	}
-	if r.CallsPerPass <= 0 || r.Cadence <= 0 {
+	if r.CallsPerPass < 0 || r.Cadence <= 0 {
 		return line(check, name, []string{"pr-to-read calls per pass or cadence MISSING"}, "")
+	}
+	if r.CallsPerPass == 0 {
+		return line(check, name, nil, "0 REST calls per pass (pr-to-read reads heads by git ls-remote)")
 	}
 	need := r.CallsPerPass * int(math.Ceil(float64(time.Hour)/float64(r.Cadence)))
 	if r.Remaining < need {

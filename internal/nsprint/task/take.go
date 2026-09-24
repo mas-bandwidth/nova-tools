@@ -6,8 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"strconv"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -53,9 +55,13 @@ func TakeAvailable(ctx context.Context, st *store.Store, as, sprint, id string, 
 		}
 		ids := []string{id}
 		if id == "" {
-			ids, err = client.ZRange(ctx, "s:"+name+":open:"+as, 0, -1).Result()
+			ranks, err := deal.RankTasks(ctx, st, name, as, io.Discard)
 			if err != nil {
-				return nil, fmt.Errorf("task take: queue %s/%s: %w", name, as, err)
+				return nil, fmt.Errorf("task take: rank %s/%s: %w", name, as, err)
+			}
+			ids = make([]string, len(ranks))
+			for i, r := range ranks {
+				ids[i] = r.ID
 			}
 		}
 		for _, taskID := range ids {

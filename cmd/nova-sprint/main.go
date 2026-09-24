@@ -1,10 +1,10 @@
-// nova-sprint table reads a consistent Redis snapshot or keeps the last
-// published table across a unit restart when the next render is pending.
+// nova-sprint table reads one consistent Redis snapshot per render and prints
+// it; it writes no file (#3326). A restarted unit re-renders from Redis on its
+// next tick, so there is no last table to keep.
 //
 // A launchd kickstart -k SIGTERMs the unit's process group. The refresh
 // the unit starts is put in its own session (POSIX setsid) so that signal
-// does not kill it, and a start whose next render is not ready reprints
-// the previous table instead of opening the published file empty.
+// does not kill it.
 //
 // Exit 0 ran, 2 could not run.
 package main
@@ -22,22 +22,28 @@ import (
 
 var version string
 
-const usage = `nova-sprint: the sprint table, kept across a unit restart (see docs/CLI.md)
+const usage = `nova-sprint: the sprint table, read from Redis (see docs/CLI.md)
 
 usage:
   nova-sprint version
   nova-sprint help
-  nova-sprint table --once (--fixture <file> [--out <file>] | --refresh pending --out <file>)
-  nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop] [--out <file>]
+  nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop]
   nova-sprint table --check --redis <addr>
+  nova-sprint table --layout live --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>] [--once | --loop]
+  nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
   nova-sprint refresh -- <command> [arg...]
 
-table --fixture prints that file byte for byte, and with --out publishes it.
-table --refresh pending does not open --out: the previous table stays, and
-the command prints it again. An empty render is not published.
-The Redis form reads one consistent FCALL_RO snapshot per render; --loop
-renders once per second. The function library must already be loaded.
+table reads one consistent FCALL_RO snapshot per render and prints it to
+stdout; --loop renders once per second. It writes no file: there is no
+--out, --fixture or --refresh pending, and a restart re-renders from Redis.
+Load the function library first with
+nova-sprint fn load --redis <addr> (fn check exits 1 while it is missing or stale).
 Control sprints are hidden unless named with --sprint.
+--layout live is Glenn's sprint table, the Go port of rowan-tools
+bin/sprint-table-redis (#2674): the same keys (friend:<f>, friend:<f>:down,
+sprint:<name>:xy and :landed, q:blocked, bench:*) and the same bytes.
+--compare waits for the file's next publish, renders from Redis, and prints
+MATCH (exit 0) or a unified diff (exit 1).
 --check reads an existing throwaway fixture store and compares exact output.
 
 refresh runs the command after -- in its own session (POSIX setsid) and
@@ -49,9 +55,9 @@ refresh leaving that group itself.
 exit codes: 0 ran, 2 could not run.
 
 example:
-  nova-sprint table --once --fixture table.txt
-  nova-sprint table --once --fixture table.txt --out sprint-table.txt
-  nova-sprint table --once --refresh pending --out sprint-table.txt
+  nova-sprint table --redis 127.0.0.1:6379 --once
+  nova-sprint table --redis 127.0.0.1:6379 --sprint control-a --once
+  nova-sprint table --check --redis 127.0.0.1:6379
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }

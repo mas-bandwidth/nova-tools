@@ -121,6 +121,37 @@ type Facts struct {
 // callers that do sweep projects pass `ExpandPlan(plan, &worklang.Facts{...})`.
 // `:facts` remains unadmitted -- the rule form is a later slice, not this one.
 func ExpandPlan(plan *Plan, facts ...*Facts) ([]Card, error) {
+	return ExpandPlanWithSink(plan, nil, facts...)
+}
+
+// DeriveEvent is one derive event from the expander: a node derived from the
+// graph, carrying its node id, parent and rule.
+type DeriveEvent struct {
+	Node   string
+	Parent string
+	Rule   string
+}
+
+// CutEvent is one cut event from the expander: a card cut, carrying its card
+// id, pool candidate, template and route.
+type CutEvent struct {
+	Card          string
+	PoolCandidate string
+	Template      string
+	Route         string
+}
+
+// ExpandSink receives derive and cut events from the expander. A nil sink
+// discards all events.
+type ExpandSink interface {
+	Derive(DeriveEvent)
+	Cut(CutEvent)
+}
+
+// ExpandPlanWithSink is ExpandPlan with an optional event sink. If sink is not
+// nil, one derive event is emitted per card in plan order, derived and folded
+// cards included.
+func ExpandPlanWithSink(plan *Plan, sink ExpandSink, facts ...*Facts) ([]Card, error) {
 	if plan == nil {
 		return nil, refuse("", "no plan to expand; refusing to guess")
 	}
@@ -227,6 +258,17 @@ func ExpandPlan(plan *Plan, facts ...*Facts) ([]Card, error) {
 		specs[i].Blocks = g.Blocks(id)
 		ready, _ := g.Ready(id)
 		specs[i].Ready = ready
+		if sink != nil {
+			parent := ""
+			if len(specs[i].Needs) > 0 {
+				parent = specs[i].Needs[0]
+			}
+			sink.Derive(DeriveEvent{
+				Node:   id,
+				Parent: parent,
+				Rule:   specs[i].Kind,
+			})
+		}
 	}
 	return specs, nil
 }
@@ -540,6 +582,13 @@ const CardFile = "card"
 // re-expansion after one fact changes appends only the new card and mints no
 // id: the directory name is the node's own stable id.
 func ExpandDir(out string, cards []Card) (int, error) {
+	return ExpandDirWithSink(out, cards, nil)
+}
+
+// ExpandDirWithSink is ExpandDir with an optional event sink. If sink is not
+// nil, one cut event is emitted per card actually written (existing cards are
+// skipped and emit no event).
+func ExpandDirWithSink(out string, cards []Card, sink ExpandSink) (int, error) {
 	written := 0
 	for _, c := range cards {
 		dir := filepath.Join(out, c.Node)
@@ -549,10 +598,19 @@ func ExpandDir(out string, cards []Card) (int, error) {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return written, err
 		}
-		if err := os.WriteFile(filepath.Join(dir, CardFile), RenderCard(c), 0o644); err != nil {
+		content := RenderCard(c)
+		if err := os.WriteFile(filepath.Join(dir, CardFile), content, 0o644); err != nil {
 			return written, err
 		}
 		written++
+		if sink != nil {
+			sink.Cut(CutEvent{
+				Card:          c.Node,
+				PoolCandidate: c.Affinity.Bench,
+				Template:      string(content),
+				Route:         c.Affinity.Route,
+			})
+		}
 	}
 	return written, nil
 }

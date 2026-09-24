@@ -36,7 +36,7 @@ var secretsAudit = audit.Config{
 		"main.go|runSealCLI|line":         "formatted SEAL OK line from internal/secrets.RunSeal",
 	},
 	Imports: []string{
-		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
+		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
