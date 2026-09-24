@@ -113,14 +113,18 @@ func TestPullRequestCheckRunAndDispositionEachBecomeOneEntry(t *testing.T) {
 			event: "check_run",
 			file:  "check_run.json",
 			want: map[string]string{
-				"repo":       "mas-bandwidth/nova-tools",
-				"kind":       "check_run",
-				"number":     "42",
-				"head":       "2222222222222222222222222222222222222222",
-				"action":     "completed",
-				"at":         "2026-09-22T16:46:02Z",
-				"sender":     "octocat",
-				"comment_id": "",
+				"repo":         "mas-bandwidth/nova-tools",
+				"kind":         "check_run",
+				"number":       "42",
+				"head":         "2222222222222222222222222222222222222222",
+				"action":       "completed",
+				"at":           "2026-09-22T16:46:02Z",
+				"sender":       "octocat",
+				"comment_id":   "",
+				"check":        "windows",
+				"check_run_id": "100",
+				"status":       "completed",
+				"conclusion":   "success",
 			},
 		},
 		{
@@ -487,3 +491,89 @@ func TestACarriedEventWithBadJSONWritesNothing(t *testing.T) {
 		t.Fatalf("ev:github len = %d, want 0", n)
 	}
 }
+
+func TestCheckRunEntryCarriesNameIDStatus(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name       string
+		file       string
+		wantAction string
+		wantCheck  string
+		wantID     string
+		wantStatus string
+		wantConcl  string
+		wantAt     string
+	}{
+		{
+			name:       "completed",
+			file:       "check_run.json",
+			wantAction: "completed",
+			wantCheck:  "windows",
+			wantID:     "100",
+			wantStatus: "completed",
+			wantConcl:  "success",
+			wantAt:     "2026-09-22T16:46:02Z",
+		},
+		{
+			name:       "rerequested",
+			file:       "check_run_rerequested.json",
+			wantAction: "rerequested",
+			wantCheck:  "windows",
+			wantID:     "100",
+			wantStatus: "completed",
+			wantConcl:  "success",
+			wantAt:     "2026-09-22T16:46:02Z",
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := fixture(t, tc.file)
+			e, err := Decode("check_run", b)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if e.Action != tc.wantAction {
+				t.Errorf("Action = %q, want %q", e.Action, tc.wantAction)
+			}
+			if e.Check != tc.wantCheck {
+				t.Errorf("Check = %q, want %q", e.Check, tc.wantCheck)
+			}
+			if e.CheckRunID != tc.wantID {
+				t.Errorf("CheckRunID = %q, want %q", e.CheckRunID, tc.wantID)
+			}
+			if e.Status != tc.wantStatus {
+				t.Errorf("Status = %q, want %q", e.Status, tc.wantStatus)
+			}
+			if e.Conclusion != tc.wantConcl {
+				t.Errorf("Conclusion = %q, want %q", e.Conclusion, tc.wantConcl)
+			}
+			if e.At != tc.wantAt {
+				t.Errorf("At = %q, want %q", e.At, tc.wantAt)
+			}
+			fields, err := Fields(e)
+			if err != nil {
+				t.Fatalf("Fields: %v", err)
+			}
+			for _, k := range []string{"check", "check_run_id", "status", "conclusion"} {
+				if _, ok := fields[k]; !ok {
+					t.Errorf("Fields missing key %q", k)
+				}
+			}
+			if fields["check"] != tc.wantCheck {
+				t.Errorf("fields[check] = %q, want %q", fields["check"], tc.wantCheck)
+			}
+			if fields["check_run_id"] != tc.wantID {
+				t.Errorf("fields[check_run_id] = %q, want %q", fields["check_run_id"], tc.wantID)
+			}
+			if fields["status"] != tc.wantStatus {
+				t.Errorf("fields[status] = %q, want %q", fields["status"], tc.wantStatus)
+			}
+			if fields["conclusion"] != tc.wantConcl {
+				t.Errorf("fields[conclusion] = %q, want %q", fields["conclusion"], tc.wantConcl)
+			}
+		})
+	}
+}
+

@@ -30,7 +30,7 @@ import (
 // routeNotWired names the rules the router does not run yet and the issue
 // that brings each; the start line prints them so a reader never assumes a
 // rule is running.
-const routeNotWired = "classify(#3076),pr-to-read(#2941),hold-to-fix(#2941)"
+const routeNotWired = "classify(#3076),hold-to-fix(#2941)"
 
 func init() {
 	register(Verb{
@@ -68,9 +68,10 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	host, _ := os.Hostname()
 	ok := &consume.OkFriend{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	report := &consume.Report{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
+	pr := &consume.PRToReadRule{Store: st, Sprint: *sprint, Consumer: instance, Out: out}
 	router := &consume.Router{
 		Store: st, Sprint: *sprint, Instance: instance, Host: host,
-		Rules: consume.Rules(ok, report, nil, nil, nil),
+		Rules: consume.Rules(ok, report, nil, pr, nil),
 	}
 	fmt.Fprintf(out, "ROUTE sprint=%s instance=%s lease=%s rules=%s not-wired=%s\n",
 		*sprint, instance, consume.LeaseKey(*sprint), strings.Join(router.Names(), ","), routeNotWired)

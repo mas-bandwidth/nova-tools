@@ -65,11 +65,17 @@ type Entry struct {
 	State       string
 	StateReason string
 
-	// workflow_run only.
-	RunID      string
-	Workflow   string
+	// workflow_run and check_run.
 	Status     string
 	Conclusion string
+
+	// workflow_run only.
+	RunID    string
+	Workflow string
+
+	// check_run only.
+	Check      string
+	CheckRunID string
 }
 
 // Decode reads one delivery. event is the X-GitHub-Event header.
@@ -140,6 +146,12 @@ func Decode(event string, payload []byte) (Entry, error) {
 	case "check_run":
 		if err := applyCheck(&e, p.CheckRun, "check_run"); err != nil {
 			return Entry{}, err
+		}
+		if p.CheckRun != nil {
+			e.Check = strings.TrimSpace(p.CheckRun.Name)
+			e.CheckRunID = formatID(p.CheckRun.ID)
+			e.Status = strings.TrimSpace(p.CheckRun.Status)
+			e.Conclusion = strp(p.CheckRun.Conclusion)
 		}
 	case "check_suite":
 		if err := applyCheck(&e, p.CheckSuite, "check_suite"); err != nil {
@@ -242,6 +254,11 @@ func Fields(e Entry) (map[string]interface{}, error) {
 	case "workflow_run":
 		v["run_id"] = e.RunID
 		v["workflow"] = e.Workflow
+		v["status"] = e.Status
+		v["conclusion"] = e.Conclusion
+	case "check_run":
+		v["check"] = e.Check
+		v["check_run_id"] = e.CheckRunID
 		v["status"] = e.Status
 		v["conclusion"] = e.Conclusion
 	}
@@ -467,7 +484,11 @@ type pullRequest struct {
 }
 
 type checkHead struct {
+	ID           int64   `json:"id"`
+	Name         string  `json:"name"`
 	HeadSHA      string  `json:"head_sha"`
+	Status       string  `json:"status"`
+	Conclusion   *string `json:"conclusion"`
 	StartedAt    *string `json:"started_at"`
 	CompletedAt  *string `json:"completed_at"`
 	CreatedAt    *string `json:"created_at"`

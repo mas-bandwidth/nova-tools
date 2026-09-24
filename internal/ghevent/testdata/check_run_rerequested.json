@@ -1,5 +1,5 @@
 {
-  "action": "completed",
+  "action": "rerequested",
   "check_run": {
     "id": 100,
     "name": "windows",
