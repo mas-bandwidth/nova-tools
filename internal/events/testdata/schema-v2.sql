@@ -1,10 +1,8 @@
 -- schema.sql is the fold: what `cards:done` becomes once it is a record rather than a queue.
 -- It is a FOLD of that one stream, not a second source of truth beside it: the stream is the
 -- record, and `nova-pulse fold --rebuild` recomputes this file from it at any moment.
--- It is applied on every open, statement by statement in one transaction (BEGIN IMMEDIATE ...
--- COMMIT), and is idempotent: every table and index is IF NOT EXISTS, every view is dropped
--- and recreated (so no file keeps an older view definition), and the version rows are
--- ON CONFLICT DO NOTHING. No statement touches a table's rows.
+-- It is applied on every open, statement by statement in one transaction, and is idempotent:
+-- every table, index and view is IF NOT EXISTS and the version row is ON CONFLICT DO NOTHING.
 --
 -- THE EVENT ID IS THE PRIMARY KEY of every table (the three card tables and decisions). Streams deliver at least once, so a
 -- redelivered entry must be a no-op rather than a second row: that single fact is what makes
@@ -90,19 +88,6 @@ CREATE INDEX IF NOT EXISTS attempts_bench_idx ON attempts (bench);
 CREATE INDEX IF NOT EXISTS reads_label_idx    ON reads (label);
 CREATE INDEX IF NOT EXISTS landings_label_idx ON landings (label);
 
--- Version 3 (nova-tools #3159): every view is rebuilt on open. The views are dropped here,
--- dependents first, and recreated below in the file's order, so a file opened under an older
--- schema carries this file's definitions after one open. decisions_by_kind is dropped and
--- recreated unchanged, so the one rule holds for every view.
-DROP VIEW IF EXISTS by_model_route;
-DROP VIEW IF EXISTS landed_by_model_route;
-DROP VIEW IF EXISTS card_model_route;
-DROP VIEW IF EXISTS by_bench;
-DROP VIEW IF EXISTS by_day;
-DROP VIEW IF EXISTS by_label;
-DROP VIEW IF EXISTS totals;
-DROP VIEW IF EXISTS decisions_by_kind;
-
 -- card_model_route is which model on which route ran a card: the first non-empty pair the
 -- card's own events carry, by event id, so it is one deterministic answer per label. The
 -- lander does not know the model, so a landing finds its model through this view.
@@ -123,41 +108,24 @@ SELECT COALESCE(c.model, '') AS model,
 
 -- by_model_route is the row Glenn asked for: cost per USEFUL card, per route, beside cost
 -- per OK card, so a dearer model that lands beats a cheap one that does not.
---
--- usd_per_landed is a lower bound unless every card in the group is priced (#3159): TEXT,
--- `>=<x> coverage=<p>% (<priced>/<cards>)` below 100% and `=<x> coverage=100.00% (<n>/<n>)`
--- at 100%, or NULL (the dash) when nothing landed or nothing is priced. A card is priced
--- when every attempt number it has carries at least one row with a non-NULL usd: a queued
--- or leased row never carries usd, so a per-row rule would price almost no card.
 CREATE VIEW IF NOT EXISTS by_model_route AS
-SELECT g.model, g.route, g."rows", g.ok, g.fail, g.done, g.tokens_in, g.tokens_out, g.usd, g.usd_per_ok,
-       g.landed, g.cards, g.priced_cards,
-       CASE WHEN g.landed > 0 AND g.usd_sum IS NOT NULL
-            THEN printf('%s%.2f coverage=%.2f%% (%d/%d)',
-                        CASE WHEN g.priced_cards = g.cards THEN '=' ELSE '>=' END,
-                        g.usd_sum / g.landed, 100.0 * g.priced_cards / g.cards, g.priced_cards, g.cards) END AS usd_per_landed
-  FROM (SELECT a.model                                                AS model,
-               a.route                                                AS route,
-               count(*)                                               AS "rows",
-               sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END)         AS ok,
-               sum(CASE WHEN a.kind = 'fail' THEN 1 ELSE 0 END)       AS fail,
-               sum(CASE WHEN a.kind IN ('ok','fail') THEN 1 ELSE 0 END) AS done,
-               sum(a.tokens_in)                                       AS tokens_in,
-               sum(a.tokens_out)                                      AS tokens_out,
-               round(sum(a.usd), 6)                                   AS usd,
-               CASE WHEN sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END) > 0
-                    THEN round(sum(a.usd) / sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END), 6) END AS usd_per_ok,
-               COALESCE(l.landed, 0)                                  AS landed,
-               count(DISTINCT a.label)                                AS cards,
-               count(DISTINCT CASE WHEN p.priced THEN a.label END)    AS priced_cards,
-               sum(a.usd)                                             AS usd_sum
-          FROM attempts a
-          LEFT JOIN landed_by_model_route l ON l.model = a.model AND l.route = a.route
-          LEFT JOIN (SELECT label,
-                            count(DISTINCT attempt) = count(DISTINCT CASE WHEN usd IS NOT NULL THEN attempt END) AS priced
-                       FROM attempts
-                      GROUP BY label) p ON p.label = a.label
-         GROUP BY a.model, a.route) g;
+SELECT a.model                                                AS model,
+       a.route                                                AS route,
+       count(*)                                               AS "rows",
+       sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END)         AS ok,
+       sum(CASE WHEN a.kind = 'fail' THEN 1 ELSE 0 END)       AS fail,
+       sum(CASE WHEN a.kind IN ('ok','fail') THEN 1 ELSE 0 END) AS done,
+       sum(a.tokens_in)                                       AS tokens_in,
+       sum(a.tokens_out)                                      AS tokens_out,
+       round(sum(a.usd), 6)                                   AS usd,
+       CASE WHEN sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END) > 0
+            THEN round(sum(a.usd) / sum(CASE WHEN a.kind = 'ok' THEN 1 ELSE 0 END), 6) END AS usd_per_ok,
+       COALESCE(l.landed, 0)                                  AS landed,
+       CASE WHEN COALESCE(l.landed, 0) > 0
+            THEN round(sum(a.usd) / l.landed, 6) END          AS usd_per_landed
+  FROM attempts a
+  LEFT JOIN landed_by_model_route l ON l.model = a.model AND l.route = a.route
+ GROUP BY a.model, a.route;
 
 CREATE VIEW IF NOT EXISTS by_bench AS
 SELECT bench                                                  AS bench,
@@ -197,24 +165,15 @@ SELECT a.label                                                  AS label,
  GROUP BY a.label;
 
 -- totals is the sprint table's own row: done, ok and fail from the fold, not from mtimes.
--- priced_cards and usd_per_landed follow by_model_route's rule (#3159), over every card.
 CREATE VIEW IF NOT EXISTS totals AS
-SELECT t.cards, t."rows", t.done, t.ok, t.fail, t.reads, t.landed, t.usd, t.priced_cards,
-       CASE WHEN t.landed > 0 AND t.usd_sum IS NOT NULL
-            THEN printf('%s%.2f coverage=%.2f%% (%d/%d)',
-                        CASE WHEN t.priced_cards = t.cards THEN '=' ELSE '>=' END,
-                        t.usd_sum / t.landed, 100.0 * t.priced_cards / t.cards, t.priced_cards, t.cards) END AS usd_per_landed
-  FROM (SELECT (SELECT count(DISTINCT label) FROM attempts)                                  AS cards,
-               (SELECT count(*) FROM attempts)                                               AS "rows",
-               (SELECT count(*) FROM attempts WHERE kind IN ('ok','fail'))                   AS done,
-               (SELECT count(*) FROM attempts WHERE kind = 'ok')                             AS ok,
-               (SELECT count(*) FROM attempts WHERE kind = 'fail')                           AS fail,
-               (SELECT count(*) FROM reads)                                                  AS reads,
-               (SELECT count(*) FROM landings)                                               AS landed,
-               (SELECT round(sum(usd), 6) FROM attempts)                                     AS usd,
-               (SELECT sum(usd) FROM attempts)                                               AS usd_sum,
-               (SELECT count(*) FROM (SELECT label FROM attempts GROUP BY label
-                  HAVING count(DISTINCT attempt) = count(DISTINCT CASE WHEN usd IS NOT NULL THEN attempt END))) AS priced_cards) t;
+SELECT (SELECT count(DISTINCT label) FROM attempts)                                  AS cards,
+       (SELECT count(*) FROM attempts)                                               AS "rows",
+       (SELECT count(*) FROM attempts WHERE kind IN ('ok','fail'))                   AS done,
+       (SELECT count(*) FROM attempts WHERE kind = 'ok')                             AS ok,
+       (SELECT count(*) FROM attempts WHERE kind = 'fail')                           AS fail,
+       (SELECT count(*) FROM reads)                                                  AS reads,
+       (SELECT count(*) FROM landings)                                               AS landed,
+       (SELECT round(sum(usd), 6) FROM attempts)                                     AS usd;
 
 INSERT INTO schema_version (version) VALUES (1) ON CONFLICT (version) DO NOTHING;
 
@@ -288,7 +247,3 @@ SELECT COALESCE(kind, '')                                     AS kind,
  GROUP BY COALESCE(kind, '');
 
 INSERT INTO schema_version (version) VALUES (2) ON CONFLICT (version) DO NOTHING;
-
--- Version 3 (nova-tools #3159): the views above are rebuilt on every open, and totals and
--- by_model_route carry $/landed as a lower bound with its coverage. No table changed.
-INSERT INTO schema_version (version) VALUES (3) ON CONFLICT (version) DO NOTHING;
