@@ -135,12 +135,23 @@ type lab struct {
 	now      time.Time
 	build    string
 	runner   merge.Runner
+	// testTree and testLayout are the fold verb's fake test runners (docs/SPEC-MERGE.md
+	// "The fold (#1142)"): the package test the repository names for the tree, and the
+	// layout test of #560. A nil one is the production subprocess.
+	testTree   func(dir string) error
+	testLayout func(dir string) error
 	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
 	// repository that is not there.
 	urlFor func(string) string
 	// heads is the batch fixture's pull request heads by number, so a batch test can
 	// say what the FORGE thinks of one member's own head (edge 25).
 	heads map[int]string
+	// forge, enqueue and failForge are `integrate`'s three edges beyond the lane host:
+	// the forge's write side, the merge queue's door, and the engine that names the test
+	// behind a red. Every one of them is a fake and none reaches a network.
+	forge     *merge.FakeIntegrateForge
+	enqueue   *fakeLandEnqueue
+	failForge ci.FailForge
 }
 
 func newLab(t *testing.T) *lab {
@@ -155,6 +166,8 @@ func newLab(t *testing.T) *lab {
 		work:     filepath.Join(dir, "work"),
 		lane:     filepath.Join(dir, "lane"),
 		host:     merge.NewFakeHost(),
+		forge:    merge.NewFakeIntegrateForge(),
+		enqueue:  &fakeLandEnqueue{},
 		launcher: &fakeLauncher{},
 		now:      time.Date(2026, 9, 11, 13, 0, 0, 0, time.UTC),
 		build:    "aaaaaaaaaaaa",
@@ -395,8 +408,17 @@ func (l *lab) deps() Deps {
 			return nil
 		},
 		NewRebaseList: func(string, time.Duration) merge.RebaseList { return l.host },
-		Launcher:      l.launcher,
-		BuildID:       func() string { return l.build },
+		NewIntegrateForge: func(string, time.Duration) merge.IntegrateForge {
+			return l.forge
+		},
+		NewEnqueueHost: func(string, time.Duration) merge.EnqueueHost { return l.enqueue },
+		NewFailForge: func(string, time.Duration) ci.FailForge {
+			return l.failForge
+		},
+		Launcher:   l.launcher,
+		BuildID:    func() string { return l.build },
+		TestTree:   l.testTree,
+		TestLayout: l.testLayout,
 		// react's two edges. Dial is the caller's own address -- every react test
 		// hands it a miniredis of its own -- and the forge is the fake.
 		BatchGate: labBatchGate(),

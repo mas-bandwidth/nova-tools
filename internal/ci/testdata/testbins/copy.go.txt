@@ -1,0 +1,16 @@
+package fixture
+
+import (
+	"os"
+	"testing"
+)
+
+func TestFixtureCopiesABuiltBinary(t *testing.T) {
+	raw, err := os.ReadFile("built")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("placed", raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}

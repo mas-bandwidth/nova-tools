@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -290,6 +291,13 @@ type observed struct {
 
 func (o *observed) Card(ctx context.Context) (card.WrapperCard, error) { return o.inner.Card(ctx) }
 
+// Claim passes through without an event: the claim is not a ledger record
+// the end-to-end control counts, and a card not dealt here never reaches it
+// (its hash is compared unchanged).
+func (o *observed) Claim(ctx context.Context, nonce string) (int, error) {
+	return claimOf(o.inner).Claim(ctx, nonce)
+}
+
 func (o *observed) Launched(ctx context.Context, branch, job string) (int, error) {
 	code, err := o.inner.Launched(ctx, branch, job)
 	o.events <- "launched"
@@ -351,4 +359,225 @@ func testWait() time.Duration {
 		}
 	}
 	return 30 * time.Second
+}
+
+// claimer is the wrapper's Redis claim (#3328). It is asserted, not named in
+// the interface, so this control compiles at dev and fails there on what
+// the wrapper does rather than on a missing symbol.
+type claimer interface {
+	Claim(ctx context.Context, nonce string) (int, error)
+}
+
+func claimOf(l card.WrapperLedger) claimer {
+	if c, ok := l.(claimer); ok {
+		return c
+	}
+	return noClaim{}
+}
+
+type noClaim struct{}
+
+func (noClaim) Claim(context.Context, string) (int, error) { return 0, nil }
+
+// TestWrapperClaimIsRedisNotMkdir is the DONE-WHEN control of #3328: the
+// attempt claim is Redis, not a job-dir Mkdir. Two RunWrapper calls race for
+// one dealt attempt (same token, same bench, same jobs root): exactly one gets
+// ns_card_launched 0; the other exits with the Redis refusal and creates no
+// directory under JobsRoot; the job dir does not exist until launched returned
+// 0. A leftover job dir from an earlier run no longer refuses a launched card:
+// it is cleared under JobsRoot through safepath.
+func TestWrapperClaimIsRedisNotMkdir(t *testing.T) {
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("race", func(t *testing.T) {
+		ctx := context.Background()
+		st, client := newSprint(t)
+		id := card.Identity{Sprint: "control-claim", Label: "card-race", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
+		token := attemptToken(1, fmt.Sprintf("%032x", 77))
+		seedCard(t, ctx, client, id, "dealt", token)
+		gate := filepath.Join(t.TempDir(), "gate")
+		t.Setenv(fakeHarnessEnv, "done")
+		t.Setenv(fakeGateEnv, gate)
+
+		h := newHarnessRun(t, id, self)
+		job := card.WrapperJobDir(h.cfg.JobsRoot, id.Sprint, id.Label, id.Attempt)
+		race := &raceLedger{
+			job:      job,
+			bothRead: make(chan struct{}),
+			won:      make(chan struct{}),
+			release:  make(chan struct{}),
+		}
+		reports := make(chan card.WrapperReport, 2)
+		for i := 0; i < 2; i++ {
+			inner := &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}
+			go func() { reports <- card.RunWrapper(ctx, h.cfg, &racer{inner: inner, race: race}) }()
+		}
+
+		// The loser returns while the winner is held just after launched
+		// returned 0, so any directory under JobsRoot now is the loser's.
+		var loser card.WrapperReport
+		select {
+		case loser = <-reports:
+		case <-time.After(testWait()):
+			t.Fatalf("no wrapper returned within %s; launched 0 calls: %d", testWait(), race.zeros())
+		}
+		if loser.Code != 4 || loser.Outcome != "" || !strings.Contains(loser.Why, "claim refused code=4") {
+			t.Fatalf("loser %s why=%q; want the Redis claim refusal (code 4, CONFLICT) and no outcome", loser.Line(), loser.Why)
+		}
+		if entries, _ := os.ReadDir(h.cfg.JobsRoot); len(entries) != 0 {
+			t.Fatalf("%v under the jobs root while the winner is held just after launched 0: the loser made a directory, or one was made before the claim", entries)
+		}
+		select {
+		case <-race.won:
+		case <-time.After(testWait()):
+			t.Fatalf("no wrapper got ns_card_launched 0 within %s; loser %s why=%q", testWait(), loser.Line(), loser.Why)
+		}
+		close(race.release)
+		if err := os.WriteFile(gate, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		winner := h.report(reports)
+
+		if n := race.zeros(); n != 1 {
+			t.Fatalf("%d wrappers got ns_card_launched 0, want exactly 1", n)
+		}
+		if why := race.dirBeforeLaunched(); why != "" {
+			t.Fatal(why)
+		}
+		if winner.Code != card.WrapperExitEnded || winner.Outcome != "DONE" {
+			t.Fatalf("winner %s why=%q; want ENDED DONE code=0", winner.Line(), winner.Why)
+		}
+		log := logBy(t, ctx, client, id.Sprint)
+		if n := len(log["launched"]); n != 1 {
+			t.Fatalf("%d launched records, want 1: %v", n, log["launched"])
+		}
+		if n := len(log["ended"]); n != 1 {
+			t.Fatalf("%d end records, want 1: %v", n, log["ended"])
+		}
+		hash := hashOf(t, ctx, client, id.Sprint, id.Label)
+		if hash["state"] != "ended" || hash["jobdir"] != job {
+			t.Fatalf("card hash %v, want ended with jobdir %s", hash, job)
+		}
+		if strings.Contains(hash["claim"], token) {
+			t.Fatalf("the claim carries the raw token: %q", hash["claim"])
+		}
+		h.assertNoJobDir()
+	})
+
+	t.Run("leftover-job-dir", func(t *testing.T) {
+		ctx := context.Background()
+		st, client := newSprint(t)
+		id := card.Identity{Sprint: "control-claim", Label: "card-leftover", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
+		token := attemptToken(1, fmt.Sprintf("%032x", 78))
+		seedCard(t, ctx, client, id, "dealt", token)
+		gate := filepath.Join(t.TempDir(), "gate")
+		if err := os.WriteFile(gate, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv(fakeHarnessEnv, "done")
+		t.Setenv(fakeGateEnv, gate)
+
+		h := newHarnessRun(t, id, self)
+		job := card.WrapperJobDir(h.cfg.JobsRoot, id.Sprint, id.Label, id.Attempt)
+		if err := os.MkdirAll(filepath.Join(job, "out"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(job, "out", "stale.txt"), []byte("an earlier run\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		rep := card.RunWrapper(ctx, h.cfg, &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token})
+		if rep.Code != card.WrapperExitEnded || rep.Outcome != "DONE" {
+			t.Fatalf("report %s why=%q; a leftover job dir must not refuse a launched card", rep.Line(), rep.Why)
+		}
+		if _, err := os.Stat(filepath.Join(h.results, "stale.txt")); err == nil {
+			t.Fatal("the leftover job dir's output was copied into this attempt's results")
+		}
+		if hash := hashOf(t, ctx, client, id.Sprint, id.Label); hash["state"] != "ended" {
+			t.Fatalf("card hash %v, want ended", hash)
+		}
+		h.assertNoJobDir()
+	})
+}
+
+// raceLedger is shared by the two racing wrappers. Card holds each caller
+// until both have read the card as dealt, so both reach the claim; the first
+// launched 0 is held until the test releases it.
+type raceLedger struct {
+	job      string
+	mu       sync.Mutex
+	reads    int
+	bothRead chan struct{}
+	zero     int
+	dirSeen  string
+	won      chan struct{}
+	release  chan struct{}
+}
+
+func (r *raceLedger) zeros() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.zero
+}
+
+func (r *raceLedger) dirBeforeLaunched() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.dirSeen
+}
+
+type racer struct {
+	inner card.WrapperLedger
+	race  *raceLedger
+}
+
+func (r *racer) Card(ctx context.Context) (card.WrapperCard, error) {
+	c, err := r.inner.Card(ctx)
+	r.race.mu.Lock()
+	r.race.reads++
+	if r.race.reads == 2 {
+		close(r.race.bothRead)
+	}
+	r.race.mu.Unlock()
+	select {
+	case <-r.race.bothRead:
+	case <-time.After(testWait()):
+	}
+	return c, err
+}
+
+func (r *racer) Claim(ctx context.Context, nonce string) (int, error) {
+	return claimOf(r.inner).Claim(ctx, nonce)
+}
+
+func (r *racer) Launched(ctx context.Context, branch, job string) (int, error) {
+	r.race.mu.Lock()
+	if _, err := os.Stat(r.race.job); err == nil && r.race.dirSeen == "" {
+		r.race.dirSeen = "the job dir " + r.race.job + " existed before ns_card_launched returned 0"
+	}
+	r.race.mu.Unlock()
+	code, err := r.inner.Launched(ctx, branch, job)
+	if err != nil || code != 0 {
+		return code, err
+	}
+	r.race.mu.Lock()
+	r.race.zero++
+	first := r.race.zero == 1
+	r.race.mu.Unlock()
+	if first {
+		close(r.race.won)
+		select {
+		case <-r.race.release:
+		case <-time.After(testWait()):
+		}
+	}
+	return code, err
+}
+
+func (r *racer) Beat(ctx context.Context) (int, error) { return r.inner.Beat(ctx) }
+
+func (r *racer) End(ctx context.Context, end card.WrapperEnd) (int, error) {
+	return r.inner.End(ctx, end)
 }

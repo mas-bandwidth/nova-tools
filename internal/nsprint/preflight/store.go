@@ -143,6 +143,11 @@ func checkRedis(ctx context.Context, c *redis.Client) Line {
 	persistence := pipe.Info(ctx, "persistence")
 	libs := pipe.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: fn.Library, WithCode: true})
 	_, _ = pipe.Exec(ctx)
+	for _, err := range []error{server.Err(), persistence.Err(), libs.Err()} {
+		if isNoPerm(err) {
+			return needsSeat(n, name, c, err)
+		}
+	}
 	var reds []string
 	if info, err := server.Result(); err != nil {
 		reds = append(reds, "cannot read INFO server: "+err.Error())

@@ -1,0 +1,9 @@
+#nova-sprint-plan v1
+# control 3: the last bench (c) is turned into a STRING after Go validation
+policy	backpressure_missing	closed
+policy	ci_reruns	1
+policy	readers	1
+policy	absent_after	60m
+bench	a	m1	5
+bench	b	m1	5
+bench	c	m2	5

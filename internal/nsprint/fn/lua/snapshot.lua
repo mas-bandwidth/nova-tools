@@ -62,6 +62,12 @@ local function append_row(out, bucket, name, sprints, now_ms)
   if missing == 1 then why[#why + 1] = 'missing: desired' end
   if up == 0 then why[#why + 1] = 'down: beat' end
   if stale > 0 then why[#why + 1] = 'stale: living >120s' end
+  if bucket == 'friend' then
+    -- friend:<f>:state (out-of-credits from the keeper, down from the
+    -- redistribute tick, #3047) is printed on the row it describes.
+    local state = redis.call('HGET', 'friend:' .. name .. ':state', 'state')
+    if state then why[#why + 1] = 'state: ' .. state end
+  end
   out[#out + 1] = bucket
   out[#out + 1] = name
   out[#out + 1] = tostring(up)

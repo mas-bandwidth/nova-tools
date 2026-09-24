@@ -76,7 +76,7 @@ func TestNativeArgvReadsHarnessDir(t *testing.T) {
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, nativeRunConfig{slotDir: slot}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	harnessDir := filepath.Dir(bin)
 	if !hasFlagPair(argv, "--read", harnessDir) {
 		t.Errorf("the wall argv does not read the harness directory %s:\n%s", harnessDir, strings.Join(argv, " "))
@@ -131,7 +131,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 		others = append(others, other)
 	}
 	cfg := nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}
-	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	// ONE LIST, TWO KINDS. An exec root goes on --read, which carries EXECUTE on both wall
 	// bodies; a read-only root goes on --read-noexec, which takes the execute away. The
 	// kind is the list's, and each root must be on ITS OWN flag and on no other -- a
@@ -181,7 +181,7 @@ func TestNativeArgvReadsTheBenchToolchainRoots(t *testing.T) {
 	if err := os.MkdirAll(goBin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	argv = nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv = nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, flag := range []string{"--read", "--read-noexec", "--write"} {
 		if hasFlagPair(argv, flag, goBin) {
 			t.Errorf("the wall argv grants ~/go/bin on %s:\n%s", flag, strings.Join(argv, " "))
@@ -224,7 +224,7 @@ func TestNativeArgvReadsTheDarwinToolchainRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := nativeRunConfig{slotDir: slot, benchHome: t.TempDir(), benchOS: "darwin"}
-	argv := nativeSandboxArgv(bin, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, cfg, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for _, r := range system {
 		// Every darwin system root is a RUNTIME the card runs, so every one of them is the
 		// exec-carrying kind -- and each reaches the argv RESOLVED, because the grant is
@@ -262,7 +262,7 @@ func TestNativeArgvSkipsAToolchainRootThatIsNotThere(t *testing.T) {
 		t.Fatal(err)
 	}
 	home := t.TempDir() // empty: not one root exists under it
-	argv := nativeSandboxArgv(bin, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
+	argv := nativeSandboxArgv([]string{bin}, nativeRunConfig{slotDir: slot, benchHome: home, benchOS: "linux"}, filepath.Join(slot, "data"), jobDir, filepath.Join(slot, "tmp", "a-label"))
 	for i, a := range argv {
 		if a != "--read" && a != "--read-noexec" {
 			continue

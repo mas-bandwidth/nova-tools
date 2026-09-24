@@ -71,6 +71,25 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	}
 }
 
+// (a2) The `example:` block is pasted top to bottom by a stranger in an empty directory, so
+// the first line that names ./pool must be the one that makes it (quickstart); a line that
+// reads ./pool before then exits 2 as pasted, whatever localize does for the test above.
+// No prose setup line outside the block: onboarding.ExampleLines never runs it (#1455).
+func TestUsageBannerExamplesMakeThePoolBeforeReadingIt(t *testing.T) {
+	for _, ex := range examples(t) {
+		f := strings.Fields(ex)
+		for _, a := range f {
+			if a != "./pool" {
+				continue
+			}
+			if len(f) < 2 || f[1] != "quickstart" {
+				t.Fatalf("the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
+			}
+			return
+		}
+	}
+}
+
 // (b) A bare invocation costs ONE line and names the door, rather than 60 lines of banner
 // on every flag typo.
 func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
