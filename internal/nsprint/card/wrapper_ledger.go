@@ -18,6 +18,8 @@ type RedisLedger struct {
 	Sprint string
 	Label  string
 	Token  string
+	// LaunchDeadline is enforced atomically by ns_card_launched.
+	LaunchDeadline time.Time
 	// Now stamps the end record's at field (the wrapper's clock, not Redis
 	// TIME); nil means time.Now.
 	Now func() time.Time
@@ -45,7 +47,7 @@ func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 
 // Launched is ns_card_launched: dealt to launched.
 func (l *RedisLedger) Launched(ctx context.Context, branch, jobDir string) (int, error) {
-	res, err := Launched(ctx, l.Store, LaunchRequest{Sprint: l.Sprint, Label: l.Label, Token: l.Token, Branch: branch, JobDir: jobDir})
+	res, err := Launched(ctx, l.Store, LaunchRequest{Sprint: l.Sprint, Label: l.Label, Token: l.Token, Branch: branch, JobDir: jobDir, Deadline: l.LaunchDeadline})
 	return res.Code, err
 }
 
@@ -70,9 +72,13 @@ func (l *RedisLedger) End(ctx context.Context, end WrapperEnd) (int, error) {
 	if now == nil {
 		now = time.Now
 	}
+	pushed := end.PushedSHA
+	if pushed == "" {
+		pushed = NoCommit
+	}
 	rec := EndRecord{
 		Identity: id, Outcome: end.Outcome, Reason: end.Reason, ExitCode: end.Exit,
-		TokenSHA: TokenSHA(l.Token), PushedSHA: "-", At: now().UTC().Format(time.RFC3339),
+		TokenSHA: TokenSHA(l.Token), PushedSHA: pushed, At: now().UTC().Format(time.RFC3339),
 	}
 	if err := WriteEndRecord(end.ResultsDir, rec); err != nil {
 		return WrapperExitCouldNot, err

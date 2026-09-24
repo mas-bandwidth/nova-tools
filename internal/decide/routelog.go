@@ -96,7 +96,8 @@ type Entry struct {
 	UsageFailed bool `json:"usage_failed,omitempty"`
 
 	// Excluded is the set of down friend rungs excluded from routing (#3397).
-	Excluded string `json:"excluded,omitempty"`
+	Excluded    string `json:"excluded,omitempty"`
+	DownChecked bool   `json:"down_checked"`
 
 	// Ms is the provider round trip in milliseconds, measured by the caller
 	// on a monotonic clock around the call alone; WallMs is the verb's start
@@ -137,6 +138,7 @@ func EntryFor(res RouteResult, u Unit, now time.Time) Entry {
 		AwaitingTermination: res.AwaitingTermination(),
 		Refusal:             res.Refusal,
 		Excluded:            excludedStr,
+		DownChecked:         res.DownChecked,
 		Calls:               res.Usage.Calls,
 		TokensIn:            tokens(res.Usage.HasInput, res.Usage.InputTokens),
 		TokensOut:           tokens(res.Usage.HasOutput, res.Usage.OutputTokens),

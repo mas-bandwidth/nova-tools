@@ -6,11 +6,20 @@
 //	s:<S>:u:<unit>                 hash   repo, base, branch, head, base_sha, stack_parent (sexp edge),
 //	                                      files, paths_hash, security, class, state, batch, gate, alone,
 //	                                      carried, drop_key (<head8>:<rec_seq>), drop_reason, landed_head,
-//	                                      merge_sha, pr (optional)
+//	                                      merge_sha, pr (optional); reap fields (nova-tools#3091, read by
+//	                                      internal/nsprint/pr): paths, card_type, cut_at write-once by
+//	                                      ns_unit_head from the card named by its arg 15 (paths canonical
+//	                                      JSON, card_type the TYPE: line, cut_at Redis TIME at
+//	                                      ns_card_push); last_read_at, approve_head (+ approve_seq)
+//	                                      present-empty on ns_unit_head's create path, then ns_read on a
+//	                                      counted read / APPROVE; merged_at present-empty, then ns_land
+//	                                      with state=landed, once
 //	s:<S>:units                    set    every unit id the sprint knows (ns_unit_head SADDs; the index
 //	                                      land status reads, so nothing is SCANned)
 //	s:<S>:prunit:<repo>:<n>        string the unit whose card names PR <n>, so why <repo>#<n> resolves
 //	                                      without a scan
+//	s:<S>:unresolved               hash   HSETNX only: <unit>:<field>-changed:<seq> when ns_unit_head
+//	                                      meets a write-once reap field with a different value
 //	s:<S>:landable:<repo>:<base>   zset   units, score tier*1e12 + first rec:seq: oldest first within
 //	                                      a priority tier (owner ruling); front negative
 //	rec:seq                        counter one global sequence stamped on every read, hold, release,

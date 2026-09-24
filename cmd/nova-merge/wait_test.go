@@ -44,8 +44,8 @@ func TestWaitFailingCheckPrintsRedWithCheckName(t *testing.T) {
 	l.host.PRs[13] = merge.PR{Number: 13, HeadOID: head}
 	l.host.SetCheckDetails(head, merge.CheckDetail{Name: "fast-lane", Conclusion: "failure"})
 	exit, stdout, _ := l.run("wait", "--repo", "o/n", "--pr", "13", "--timeout", "5m", "--interval", "1ms")
-	if exit != 2 {
-		t.Fatalf("red wait wants exit 2, got %d in %q", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("red wait wants exit 1, got %d in %q", exit, stdout)
 	}
 	lines := strings.Split(strings.TrimSpace(stdout), "\n")
 	if len(lines) != 1 || !strings.HasPrefix(lines[0], "MERGE WAIT RED pr=13 ") {

@@ -74,3 +74,29 @@ func TestReadDownFriends(t *testing.T) {
 		t.Errorf("DownFriends mismatch: got (%v, %v), want (%v, %v)", downSet2, downList2, downSet, downList)
 	}
 }
+
+func TestReadDownFriendsMapsSeatsAndSuppressesBroadcast(t *testing.T) {
+	reg, err := DefaultRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mr := miniredis.RunT(t)
+	for _, seat := range []string{"emma", "freddy", "johnny", "stella", "rowan"} {
+		mr.Set("friend:"+seat+":down", "1")
+	}
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	defer rdb.Close()
+	down, list, err := ReadDownFriends(context.Background(), rdb, reg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, rung := range []string{"emma", "freddy", "johnny", "astra", "fable", "all-friends"} {
+		if !down[rung] {
+			t.Errorf("%s not excluded: %v", rung, down)
+		}
+	}
+	want := []string{"emma:down", "freddy:down", "johnny:down", "rowan:down", "stella:down"}
+	if !reflect.DeepEqual(list, want) {
+		t.Errorf("list=%v want=%v", list, want)
+	}
+}

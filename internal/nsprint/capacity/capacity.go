@@ -14,6 +14,7 @@ package capacity
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -162,29 +163,26 @@ func (r RedisReader) Consumers(ctx context.Context) ([]Consumer, error) {
 	if r.Store == nil {
 		return nil, fmt.Errorf("capacity: nil store")
 	}
-	client := r.Store.Client()
-	friends, err := client.SMembers(ctx, "friends").Result()
-	if err != nil {
-		return nil, fmt.Errorf("capacity: read friends: %w", err)
+	pipe := r.Store.Client().Pipeline()
+	cmd := pipe.FCall(ctx, "ns_capacity_consumers", nil)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("capacity: read consumers: %w", err)
 	}
-	benches, err := client.SMembers(ctx, "benches").Result()
-	if err != nil {
-		return nil, fmt.Errorf("capacity: read benches: %w", err)
+	values, ok := cmd.Val().([]any)
+	if !ok || len(values)%4 != 0 {
+		return nil, fmt.Errorf("capacity: consumers reply %T length %d", cmd.Val(), len(values))
 	}
-	out := make([]Consumer, 0, len(friends)+len(benches))
-	for _, name := range friends {
-		c, err := readDesired(ctx, client, KindFriend, name)
-		if err != nil {
-			return nil, err
+	out := make([]Consumer, 0, len(values)/4)
+	for i := 0; i < len(values); i += 4 {
+		slots := 0
+		if text := fmt.Sprint(values[i+2]); text != "" {
+			var err error
+			slots, err = strconv.Atoi(text)
+			if err != nil {
+				return nil, fmt.Errorf("capacity: %s %s slots %q: %w", values[i], values[i+1], values[i+2], err)
+			}
 		}
-		out = append(out, c)
-	}
-	for _, name := range benches {
-		c, err := readDesired(ctx, client, KindBench, name)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
+		out = append(out, Consumer{Kind: fmt.Sprint(values[i]), Name: fmt.Sprint(values[i+1]), Slots: slots, Machine: fmt.Sprint(values[i+3])})
 	}
 	return out, nil
 }
@@ -241,7 +239,31 @@ func SetBench(ctx context.Context, st *store.Store, name, machine string, slots 
 	return setDesired(ctx, st, KindBench, name, machine, slots, actor, idem)
 }
 
+// DesiredOpts are the optional seventh and eighth args of
+// ns_capacity_desired (#3206 rev 4 PR A). Paused "" keeps the stored value,
+// "0" or "1" sets it. Register is accepted and implied: since #2934 every
+// desired write adds the friend to `friends` (no beat is written). The zero
+// value is the six-arg call.
+type DesiredOpts struct {
+	Paused   string
+	Register bool
+}
+
+// ErrUnregistered is the UNREGISTERED status of a capacity function (the
+// sprint plan's unknown consumer; ns_capacity_desired registers since #2934).
+var ErrUnregistered = errors.New("UNREGISTERED")
+
+// SetFriendWith is SetFriend with the paused and register args. An identical
+// write returns Status SAME and writes nothing.
+func SetFriendWith(ctx context.Context, st *store.Store, name, machine string, slots int, actor, idem string, opts DesiredOpts) (Result, error) {
+	return setDesiredWith(ctx, st, KindFriend, name, machine, slots, actor, idem, opts)
+}
+
 func setDesired(ctx context.Context, st *store.Store, kind, name, machine string, slots int, actor, idem string) (Result, error) {
+	return setDesiredWith(ctx, st, kind, name, machine, slots, actor, idem, DesiredOpts{})
+}
+
+func setDesiredWith(ctx context.Context, st *store.Store, kind, name, machine string, slots int, actor, idem string, opts DesiredOpts) (Result, error) {
 	if st == nil {
 		return Result{}, fmt.Errorf("capacity %s: nil store", kind)
 	}
@@ -255,8 +277,15 @@ func setDesired(ctx context.Context, st *store.Store, kind, name, machine string
 	if !plan.Allowed {
 		return Result{}, &CeilingError{Machine: machine, Sum: plan.Sum, Ceiling: plan.Ceiling}
 	}
-	reply, err := st.Client().FCall(ctx, FunctionDesired, nil,
-		kind, name, strconv.Itoa(slots), machine, actor, idem).Result()
+	fargs := []any{kind, name, strconv.Itoa(slots), machine, actor, idem}
+	if opts.Paused != "" || opts.Register {
+		register := "0"
+		if opts.Register {
+			register = "1"
+		}
+		fargs = append(fargs, opts.Paused, register)
+	}
+	reply, err := st.Client().FCall(ctx, FunctionDesired, nil, fargs...).Result()
 	if err != nil {
 		return Result{}, fmt.Errorf("capacity %s %s: %w", kind, name, err)
 	}
@@ -324,7 +353,9 @@ func parseDesiredReply(reply any, kind, name, machine string, slots int) (Result
 	}
 	status, _ := values[0].(string)
 	switch status {
-	case "SET":
+	case "SET", "SAME":
+	case "UNREGISTERED":
+		return Result{}, fmt.Errorf("capacity %s %s: %w", kind, name, ErrUnregistered)
 	case "CEILING":
 		result := Result{Status: status, Machine: machine, Slots: slots}
 		if len(values) > 2 {

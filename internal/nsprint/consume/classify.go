@@ -1,14 +1,9 @@
 package consume
 
-// classify.go is the 3.3 handler of the ok-to-friend consumer (#2756 3.3,
-// control 16; nova-tools #3038): every card that ends other than DONE is
-// classified deterministically by its reason code into one action, under the
-// dedup key `<label>:<reason>:<base_sha>` and the interim retry budgets of
-// s:<S>:policy. The table is Go (ClassifyOutcome); the budget check and every
-// write are one Redis Function call (ns_classify_end in
-// internal/nsprint/fn/lua/classify.lua) that also records the event under
-// its idempotency key and XACKs it, so a redelivered event changes nothing
-// (spec 2.1 rule 2, 5.4).
+// The rev-6 classifier for #3038 consumes every card-ended receipt in its own
+// group. Go gathers only hints and the git tip needed for follow-up cards;
+// ns_classify re-reads all authoritative Redis evidence and performs the one
+// atomic decision, charge, transition, receipt, idempotency write and XACK.
 
 import (
 	"context"
@@ -20,48 +15,31 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
 
-// GroupClassify is the classification consumer group on s:<S>:log and the
-// name of its proc line. It is a group of its own so the DONE path
-// (ok-to-friend) and this one each see every ended event; `nova-sprint
-// route` (#3036) runs both in one process.
-const GroupClassify = "ok-to-friend-classify"
-
-// Function names registered by internal/nsprint/fn/lua/classify.lua.
 const (
-	FunctionClassifyEnd  = "ns_classify_end"
-	FunctionClassifyPass = "ns_classify_pass"
+	GroupClassify    = "classify"
+	FunctionClassify = "ns_classify"
 )
 
-// The 3.3 actions.
 const (
-	ActionNone       = ""            // not this handler's: DONE, or a ci card's tests-red verdict (10.5)
-	ActionRequeue    = "requeue"     // front of the pool, the failing bench avoided
-	ActionRequeueEnv = "requeue-env" // as requeue, plus the bench why line and bench item
-	ActionRecut      = "recut"       // a front card at the tip; the old card superseded
-	ActionWaiting    = "waiting"     // back to waiting with the named dependency added
-	ActionFix        = "fix"         // a front fix card at the tip, no dependency; the old superseded
-	ActionUnresolved = "unresolved"  // an item for the cutter, no retry
+	ActionNone       = ""
+	ActionRequeue    = "requeue"
+	ActionRequeueEnv = "requeue-env"
+	ActionRecut      = "recut"
+	ActionWaiting    = "waiting"
+	ActionFix        = "fix"
+	ActionUnresolved = "unresolved"
 )
 
-// Rule is one row of the 3.3 table.
 type Rule struct {
-	Action string
-	// Class names the card's budget counter field `retry_<Class>`; one class
-	// is one budget (crash, timeout and idle-killed share one).
-	Class string
-	// Policy is the s:<S>:policy field that holds the budget; "" for a row
-	// with no retry.
-	Policy string
-	// Default is the interim budget when the policy does not set one.
-	Default int
+	Action, Class, Policy string
+	Default               int
 }
 
-// Budget is the row's retry budget: the policy field when it holds a
-// non-negative integer, else the interim default.
 func (r Rule) Budget(policy map[string]string) int {
 	if r.Policy == "" {
 		return 0
@@ -72,7 +50,6 @@ func (r Rule) Budget(policy map[string]string) int {
 	return r.Default
 }
 
-// ClassifyOutcome is the 3.3 table. An unknown reason is `other`.
 func ClassifyOutcome(outcome, reason string) Rule {
 	switch outcome {
 	case "DONE":
@@ -80,74 +57,71 @@ func ClassifyOutcome(outcome, reason string) Rule {
 	case "FAILED":
 		switch reason {
 		case "crash", "timeout", "idle-killed":
-			return Rule{Action: ActionRequeue, Class: "crash", Policy: "retry_crash", Default: 2}
+			return Rule{Action: ActionRequeue, Class: "fail", Policy: "retry_fail", Default: 2}
 		case "tests-red":
-			return Rule{Action: ActionFix, Class: "tests_red", Policy: "retry_tests_red", Default: 1}
+			return Rule{Action: ActionFix, Class: "fix", Policy: "retry_fix", Default: 1}
 		}
 	case "BLOCKED":
 		switch reason {
 		case "env":
 			return Rule{Action: ActionRequeueEnv, Class: "env", Policy: "retry_env", Default: 1}
 		case "base-moved":
-			return Rule{Action: ActionRecut, Class: "base_moved", Policy: "retry_base_moved", Default: 1}
+			return Rule{Action: ActionRecut, Class: "recut", Policy: "retry_recut", Default: 1}
 		case "deps":
-			return Rule{Action: ActionWaiting}
+			return Rule{Action: ActionWaiting, Class: "deps", Policy: "retry_deps", Default: 1}
 		}
 	}
 	return Rule{Action: ActionUnresolved}
 }
 
-// Classifier is the 3.3 handler for one sprint.
+type Classification struct {
+	EventID string
+	Label   string
+	Outcome string
+	Reason  string
+	Result  string
+}
+
 type Classifier struct {
 	Store    *store.Store
 	Sprint   string
-	Consumer string // this process instance's consumer name
+	Consumer string
 	Actor    string
-	Count    int64         // events per read; 0 means 100
-	Block    time.Duration // block of the first new-event read; 0 means 1 s, < 0 does not block
-	// Tip returns the current tip sha of base in repo, for a fix or recut
-	// card. nil cuts the card with an empty base_sha and cut_at_deal=1, so
-	// the deal pass cuts it at the tip it deals from.
-	Tip func(ctx context.Context, repo, base string) (string, error)
+	Count    int64
+	Block    time.Duration
+	Tip      func(context.Context, string, string) (string, error)
 }
 
 func (c *Classifier) logKey() string { return "s:" + c.Sprint + ":log" }
-
 func (c *Classifier) check() error {
 	if c == nil || c.Store == nil || c.Sprint == "" || c.Consumer == "" {
-		return fmt.Errorf("classify: store, sprint and consumer are required")
+		return errors.New("classify: store, sprint and consumer are required")
 	}
 	return nil
 }
 
-// Start creates the consumer group if the sprint has none yet and claims
-// every entry still pending under a previous instance (spec 5.4).
 func (c *Classifier) Start(ctx context.Context) error {
 	if err := c.check(); err != nil {
 		return err
 	}
 	client := c.Store.Client()
-	err := client.XGroupCreateMkStream(ctx, c.logKey(), GroupClassify, "0").Err()
-	if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
+	if err := client.XGroupCreateMkStream(ctx, c.logKey(), GroupClassify, "0").Err(); err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
 		return fmt.Errorf("classify: group: %w", err)
 	}
 	start := "0-0"
 	for {
-		_, next, err := client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
-			Stream: c.logKey(), Group: GroupClassify, Consumer: c.Consumer,
-			MinIdle: 0, Start: start, Count: 1000,
-		}).Result()
+		_, next, err := client.XAutoClaim(ctx, &redis.XAutoClaimArgs{Stream: c.logKey(), Group: GroupClassify,
+			Consumer: c.Consumer, MinIdle: 0, Start: start, Count: 1000}).Result()
 		if err != nil {
 			return fmt.Errorf("classify: reclaim pending: %w", err)
 		}
-		if next == "0-0" || next == "" {
+		if next == "" || next == "0-0" {
 			return nil
 		}
 		start = next
 	}
 }
 
-// Run starts the handler and passes until ctx ends.
 func (c *Classifier) Run(ctx context.Context) error {
 	if err := c.Start(ctx); err != nil {
 		return err
@@ -157,29 +131,32 @@ func (c *Classifier) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	return nil
+	return ctx.Err()
 }
 
-// Pass handles this instance's pending entries, then drains new events, and
-// writes proc:ok-to-friend-classify. It starts the group on first use.
 func (c *Classifier) Pass(ctx context.Context) (int, error) {
+	rows, err := c.PassResults(ctx)
+	return len(rows), err
+}
+
+func (c *Classifier) PassResults(ctx context.Context) ([]Classification, error) {
 	if err := c.Start(ctx); err != nil {
-		return 0, err
+		return nil, err
 	}
 	began := time.Now()
-	n, err := c.pass(ctx)
+	rows, err := c.pass(ctx)
 	msg := ""
 	if err != nil {
 		msg = err.Error()
 	}
-	if perr := c.Store.Client().FCall(ctx, FunctionClassifyPass, nil, GroupClassify,
-		strconv.FormatInt(time.Since(began).Milliseconds(), 10), strconv.Itoa(n), msg).Err(); perr != nil && err == nil {
+	if perr := c.Store.Client().FCall(ctx, FunctionClassify, nil, "pass",
+		strconv.FormatInt(time.Since(began).Milliseconds(), 10), strconv.Itoa(len(rows)), msg).Err(); perr != nil && err == nil {
 		err = fmt.Errorf("classify: proc: %w", perr)
 	}
-	return n, err
+	return rows, err
 }
 
-func (c *Classifier) pass(ctx context.Context) (int, error) {
+func (c *Classifier) pass(ctx context.Context) ([]Classification, error) {
 	count := c.Count
 	if count <= 0 {
 		count = 100
@@ -188,15 +165,15 @@ func (c *Classifier) pass(ctx context.Context) (int, error) {
 	if block == 0 {
 		block = time.Second
 	}
-	handled := 0
+	var out []Classification
 	pending, err := c.read(ctx, "0", count, -1)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	n, err := c.handleBatch(ctx, pending)
-	handled += n
+	rows, err := c.handleBatch(ctx, pending)
+	out = append(out, rows...)
 	if err != nil {
-		return handled, err
+		return out, err
 	}
 	wait := block
 	if len(pending) > 0 {
@@ -205,25 +182,23 @@ func (c *Classifier) pass(ctx context.Context) (int, error) {
 	for {
 		msgs, err := c.read(ctx, ">", count, wait)
 		if err != nil {
-			return handled, err
+			return out, err
 		}
 		if len(msgs) == 0 {
-			return handled, nil
+			return out, nil
 		}
-		n, err := c.handleBatch(ctx, msgs)
-		handled += n
+		rows, err = c.handleBatch(ctx, msgs)
+		out = append(out, rows...)
 		if err != nil {
-			return handled, err
+			return out, err
 		}
 		wait = -1
 	}
 }
 
 func (c *Classifier) read(ctx context.Context, id string, count int64, wait time.Duration) ([]redis.XMessage, error) {
-	streams, err := c.Store.Client().XReadGroup(ctx, &redis.XReadGroupArgs{
-		Group: GroupClassify, Consumer: c.Consumer, Streams: []string{c.logKey(), id},
-		Count: count, Block: wait,
-	}).Result()
+	streams, err := c.Store.Client().XReadGroup(ctx, &redis.XReadGroupArgs{Group: GroupClassify,
+		Consumer: c.Consumer, Streams: []string{c.logKey(), id}, Count: count, Block: wait}).Result()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
 	}
@@ -231,23 +206,17 @@ func (c *Classifier) read(ctx context.Context, id string, count int64, wait time
 		return nil, fmt.Errorf("classify: read %s: %w", id, err)
 	}
 	var out []redis.XMessage
-	for _, s := range streams {
-		out = append(out, s.Messages...)
+	for _, stream := range streams {
+		out = append(out, stream.Messages...)
 	}
 	return out, nil
 }
 
-// handleBatch acks every event that is not a card `ended` receipt in one
-// XACK, reads the ended cards and the policy in one pipeline, and handles
-// each ended event with one function call.
-func (c *Classifier) handleBatch(ctx context.Context, msgs []redis.XMessage) (int, error) {
+func (c *Classifier) handleBatch(ctx context.Context, msgs []redis.XMessage) ([]Classification, error) {
 	client := c.Store.Client()
 	var ignore []string
-	type ended struct {
-		id, label, attempt string
-		card               *redis.MapStringStringCmd
-	}
-	var events []*ended
+	var events []Classification
+	var attempts []string
 	for _, m := range msgs {
 		kind, _ := m.Values["kind"].(string)
 		to, _ := m.Values["to"].(string)
@@ -257,91 +226,107 @@ func (c *Classifier) handleBatch(ctx context.Context, msgs []redis.XMessage) (in
 			ignore = append(ignore, m.ID)
 			continue
 		}
-		events = append(events, &ended{id: m.ID, label: label, attempt: attempt})
+		events = append(events, Classification{EventID: m.ID, Label: label})
+		attempts = append(attempts, attempt)
 	}
 	if len(ignore) > 0 {
 		if err := client.XAck(ctx, c.logKey(), GroupClassify, ignore...).Err(); err != nil {
-			return 0, fmt.Errorf("classify: ack: %w", err)
+			return nil, fmt.Errorf("classify: ack ignored: %w", err)
 		}
 	}
-	if len(events) == 0 {
-		return 0, nil
-	}
-	pipe := client.Pipeline()
-	policyCmd := pipe.HGetAll(ctx, "s:"+c.Sprint+":policy")
-	for _, e := range events {
-		e.card = pipe.HGetAll(ctx, "s:"+c.Sprint+":card:"+e.label)
-	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		return 0, fmt.Errorf("classify: read cards: %w", err)
-	}
-	policy := policyCmd.Val()
-	handled := 0
-	for _, e := range events {
-		if err := c.handle(ctx, e.id, e.label, e.attempt, e.card.Val(), policy); err != nil {
-			return handled, err
+	var out []Classification
+	for i := range events {
+		row, err := c.handle(ctx, events[i], attempts[i])
+		if err != nil {
+			return out, err
 		}
-		handled++
+		out = append(out, row)
 	}
-	return handled, nil
+	return out, nil
 }
 
-// handle classifies one ended event. The Go side picks the row and, for a
-// fix or recut, the new card's label, base and payload; the function guards
-// the card state and the budget and writes the action atomically.
-func (c *Classifier) handle(ctx context.Context, eventID, label, attempt string, card, policy map[string]string) error {
-	rule := ClassifyOutcome(card["outcome"], card["reason"])
-	// A ci card (10.2) keeps its retryable outcomes: only its FAILED
-	// tests-red verdict is suppressed, so 10.5 never cuts a 3.3 fix card.
-	if len(card) == 0 || (isCIClassified(label, card) && rule.Action == ActionFix) {
-		rule = Rule{Action: ActionNone}
-	}
-	reason := card["reason"]
-	if reason == "" {
-		reason = "other"
-	}
-	newLabel, newBase, payload, title := "", "", "", ""
-	if rule.Action == ActionFix || rule.Action == ActionRecut {
-		prefix := "fix-"
-		if rule.Action == ActionRecut {
-			prefix = "recut-"
+func (c *Classifier) handle(ctx context.Context, row Classification, attempt string) (Classification, error) {
+	for tries := 0; tries < 3; tries++ {
+		client := c.Store.Client()
+		pipe := client.Pipeline()
+		cardCmd := pipe.HGetAll(ctx, "s:"+c.Sprint+":card:"+row.Label)
+		policyCmd := pipe.HGetAll(ctx, "s:"+c.Sprint+":policy")
+		if _, err := pipe.Exec(ctx); err != nil {
+			return row, fmt.Errorf("classify: read %s: %w", row.Label, err)
 		}
-		newLabel = prefix + label
-		if c.Tip != nil && rule.Budget(policy) > atoiZero(card["retry_"+rule.Class]) {
-			tip, err := c.Tip(ctx, card["repo"], card["base"])
-			if err != nil {
-				return fmt.Errorf("classify: tip of %s %s for %s: %w", card["repo"], card["base"], newLabel, err)
+		card, policy := cardCmd.Val(), policyCmd.Val()
+		row.Outcome, row.Reason = card["outcome"], card["reason"]
+		if row.Reason == "" {
+			row.Reason = "other"
+		}
+		root := card["root"]
+		if root == "" {
+			root = row.Label
+		}
+		rule := ClassifyOutcome(row.Outcome, card["reason"])
+		classState, err := client.HGetAll(ctx, "s:"+c.Sprint+":classify:"+root).Result()
+		if err != nil {
+			return row, fmt.Errorf("classify: read counter %s: %w", root, err)
+		}
+		used, _ := strconv.Atoi(classState[rule.Class])
+		expectN := used + 1
+		newLabel, newBase, title, payload := "", "", "", ""
+		if (rule.Action == ActionFix || rule.Action == ActionRecut) && used < rule.Budget(policy) && card["kind"] != "ci" {
+			suffix := ".fix"
+			if rule.Action == ActionRecut {
+				suffix = ".recut"
 			}
-			newBase = tip
+			newLabel = root + suffix + strconv.Itoa(expectN)
+			if c.Tip != nil {
+				newBase, err = c.Tip(ctx, card["repo"], card["base"])
+				if err != nil {
+					return row, fmt.Errorf("classify: tip of %s %s: %w", card["repo"], card["base"], err)
+				}
+			}
+			title = fmt.Sprintf("%s %s: %s %s at attempt %s on %s", strings.TrimPrefix(suffix, "."), row.Label,
+				row.Outcome, row.Reason, attempt, card["bench"])
+			payload = followupPayload(newLabel, rule.Action, card, newBase, title)
 		}
-		title = fmt.Sprintf("%s %s: %s %s at attempt %s on %s", strings.TrimSuffix(prefix, "-"), label,
-			card["outcome"], reason, attempt, card["bench"])
-		payload = classifyPayloadSHA(newLabel, label, reason, card["repo"], card["base"], newBase, card["paths"])
+		depsRaw := card["depends_on"]
+		deps := deal.DepEntries(depsRaw)
+		args := []any{"event", c.Sprint, row.EventID, row.Label, attempt, c.Actor, depsRaw, strconv.Itoa(len(deps))}
+		for _, dep := range deps {
+			if dep.Label != "" {
+				args = append(args, "c", dep.Label, "")
+			} else {
+				args = append(args, "r", dep.Repo, strconv.Itoa(dep.N))
+			}
+		}
+		args = append(args, strconv.Itoa(expectN), newLabel, newBase, payload, title)
+		reply, err := client.FCall(ctx, FunctionClassify, nil, args...).StringSlice()
+		if err != nil {
+			return row, fmt.Errorf("classify: %s attempt %s: %w", row.Label, attempt, err)
+		}
+		if len(reply) < 2 {
+			return row, fmt.Errorf("classify: %s malformed reply %v", row.Label, reply)
+		}
+		if reply[0] == "RETRY" {
+			continue
+		}
+		if reply[0] != "OK" && reply[0] != "DUP" {
+			return row, fmt.Errorf("classify: %s reply %v", row.Label, reply)
+		}
+		row.Result = reply[1]
+		if reply[0] == "DUP" {
+			row.Result = "DUP"
+		}
+		return row, nil
 	}
-	err := c.Store.Client().FCall(ctx, FunctionClassifyEnd, nil,
-		c.Sprint, GroupClassify, eventID, label, attempt, rule.Action, rule.Class,
-		strconv.Itoa(rule.Budget(policy)), reason, newLabel, newBase, payload, title, c.Actor).Err()
-	if err != nil {
-		return fmt.Errorf("classify: %s attempt %s: %w", label, attempt, err)
+	return row, fmt.Errorf("classify: %s changed during three attempts", row.Label)
+}
+
+func followupPayload(label, action string, card map[string]string, baseSHA, title string) string {
+	kind := card["kind"]
+	if action == ActionFix {
+		kind = "fix"
 	}
-	return nil
-}
-
-// isCIClassified: a ci card (10.2) carries ci_for; its FAIL verdict follows
-// the rerun and flaky policy of 10.5, never the tests-red row. It suppresses
-// only that fix row: retryable outcomes still follow the 3.3 table.
-func isCIClassified(label string, card map[string]string) bool {
-	return card["ci_for"] != "" || (card["kind"] == "script" && strings.HasPrefix(label, "ci-"))
-}
-
-func atoiZero(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
-// classifyPayloadSHA identifies a fix or recut card's content, so the same
-// cut from a redelivered event compares equal and a different one conflicts.
-func classifyPayloadSHA(fields ...string) string {
-	sum := sha256.Sum256([]byte(strings.Join(fields, "\x00")))
+	body := fmt.Sprintf("RESULT: %s\nKIND: %s\nREPO: %s\nBASE: %s\nbase-sha: %s\nPATHS: %s\nDEPENDS-ON: none\nDONE-WHEN: %s\n",
+		label, kind, card["repo"], card["base"], baseSHA, card["paths"], title)
+	sum := sha256.Sum256([]byte(body))
 	return hex.EncodeToString(sum[:])
 }

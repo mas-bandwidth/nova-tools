@@ -60,10 +60,22 @@ type Verdict struct {
 // FlakyRecord is the hash at flaky:<repo>:<pkg>.<test>: first_seen, lanes_hit,
 // issue, last_at.
 type FlakyRecord struct {
-	FirstSeen string
-	LanesHit  int
-	Issue     int
-	LastAt    string
+	FirstSeen  string
+	LanesHit   int
+	Issue      int
+	LastAt     string
+	LastLane   string
+	At         string
+	Token      string
+	Status     string
+	Extra      int
+	Reconciled bool
+}
+
+// Observation is one flaky test sighting. The store owns every Redis write;
+// the filer is only the remote issue adapter.
+type Observation struct {
+	Repo, Key, Lane, Title, Body, At string
 }
 
 // MemberResult is one member after the mergeable reads.
@@ -123,6 +135,19 @@ type Store interface {
 // Filer files one issue and returns its number.
 type Filer interface {
 	File(ctx context.Context, repo, title, body string) (int, error)
+}
+
+// LiveFiler also finds an earlier issue whose POST reply may have been lost.
+type LiveFiler interface {
+	Filer
+	Find(ctx context.Context, repo, marker string, since time.Time) (int, bool, error)
+}
+
+// LiveStore is the durable Redis implementation. Lane prefers it when both
+// the store and filer support reconciliation; Memory keeps the small legacy
+// Store contract for deterministic library tests.
+type LiveStore interface {
+	ObserveLive(ctx context.Context, observation Observation, filer LiveFiler) (FlakyRecord, bool, error)
 }
 
 // Clock is the lane's time. Sleep is the gap between UNKNOWN re-polls.
@@ -209,11 +234,21 @@ func (l Lane) Run(ctx context.Context, batch Batch) (Result, error) {
 	}
 	res.Class = merge.ExceptionGateRed
 	key := FlakyKey(batch.Repo, strings.TrimSpace(v.Package), strings.TrimSpace(v.Test))
-	at := l.Clock.Now().UTC().Format(time.RFC3339)
 	title, body := flakyIssue(key, batch, v)
-	rec, filed, err := l.Store.Observe(ctx, key, at, func() (int, error) {
-		return l.Filer.File(ctx, batch.Repo, title, body)
-	})
+	var rec FlakyRecord
+	var filed bool
+	if live, ok := l.Store.(LiveStore); ok {
+		filer, ok := l.Filer.(LiveFiler)
+		if !ok {
+			return res, fmt.Errorf("land: live store requires a reconciliation filer")
+		}
+		rec, filed, err = live.ObserveLive(ctx, Observation{Repo: batch.Repo, Key: key, Lane: batch.Name, Title: title, Body: body, At: l.Clock.Now().UTC().Format(time.RFC3339)}, filer)
+	} else {
+		at := l.Clock.Now().UTC().Format(time.RFC3339)
+		rec, filed, err = l.Store.Observe(ctx, key, at, func() (int, error) {
+			return l.Filer.File(ctx, batch.Repo, title, body)
+		})
+	}
 	if err != nil {
 		return res, err
 	}
