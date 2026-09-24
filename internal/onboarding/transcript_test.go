@@ -175,6 +175,14 @@ func TestPathNormReducesBothSidesToTheDocumentedSpelling(t *testing.T) {
 	}
 }
 
+func TestPathNormRecognizesACommaAfterThePath(t *testing.T) {
+	step := Step{Line: "$ nova-alpha where", Want: []string{"WHERE NOTE store=./cairns, using the documented location"}}
+	res := Result{Stdout: "WHERE NOTE store=/var/folders/T/x9/cairns, using the documented location\n"}
+	if problems := Compare(step, res, []Norm{Path("./cairns", "/var/folders/T/x9/cairns")}); len(problems) != 0 {
+		t.Errorf("a comma immediately after the declared path prevented normalization: %v", problems)
+	}
+}
+
 // Which stream a line is on is part of what a transcript promises, and a
 // command that wrote to both leaves the order a terminal showed them unknown.
 // The harness says so instead of picking one, because picking one is how a

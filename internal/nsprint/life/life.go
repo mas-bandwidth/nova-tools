@@ -52,6 +52,9 @@ type HelloRequest struct {
 	Session string
 	Actor   string
 	Idem    string
+	// Logins are `--login` aliases (#3092 rev 6); ns_friend_hello is the
+	// only writer of friends:login and refuses a clashing alias.
+	Logins []string
 }
 
 // HelloResult is one friend hello. Claims are the friend's own queued tasks
@@ -79,9 +82,12 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 	if req.Actor != req.As {
 		return HelloResult{}, fmt.Errorf("friend hello %s: actor %q is not --as; want --as equal to NOVA_FRIEND", req.As, req.Actor)
 	}
-	reply, err := st.Client().FCall(ctx, FunctionHello, nil,
-		req.As, req.Slots, req.Harness, req.Host, req.Session,
-		req.Machine, req.Actor, req.Idem).Result()
+	fargs := []any{req.As, req.Slots, req.Harness, req.Host, req.Session,
+		req.Machine, req.Actor, req.Idem}
+	for _, alias := range req.Logins {
+		fargs = append(fargs, alias)
+	}
+	reply, err := st.Client().FCall(ctx, FunctionHello, nil, fargs...).Result()
 	if err != nil {
 		return HelloResult{}, fmt.Errorf("friend hello %s: %w", req.As, err)
 	}
@@ -94,7 +100,11 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 		return HelloResult{}, fmt.Errorf("UNREGISTERED %s: nova-sprint capacity friend", req.As)
 	}
 	if status != "UP" {
-		return HelloResult{}, fmt.Errorf("friend hello %s: %s", req.As, status)
+		words := make([]string, 0, len(values))
+		for _, v := range values {
+			words = append(words, fmt.Sprint(v))
+		}
+		return HelloResult{}, fmt.Errorf("friend hello %s: %s", req.As, strings.Join(words, " "))
 	}
 	if len(values) < 2 {
 		return HelloResult{}, fmt.Errorf("friend hello %s: short UP reply", req.As)
