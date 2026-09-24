@@ -109,13 +109,15 @@ do
           'attempt', 'pushed_sha', 'identity', 'results', 'harvest_step')
         local state, outcome, kind, cbench = f[1] or '', f[2] or '', f[3] or '', f[4] or ''
         local pushed = f[8] or ''
+        local repo, attempt = f[5] or '', f[7] or ''
+        local res_key = 's:' .. S .. ':card:' .. label .. ':result:a' .. attempt
+        local valid = hv_hget(res_key, 'valid')
         -- pushed_sha '-' is a card that committed nothing (a read card, a
         -- probe, NO-COMMIT or OVERSIZE): it never belongs to harvest; its
         -- friend read is #3036's report rule (#2932 rev 4).
-        if state == 'ended' and outcome == 'DONE' and kind ~= 'script' and cbench == bench
-          and pushed ~= '' and pushed ~= '-' then
+        if (valid == '1' or valid == '') and state == 'ended' and outcome == 'DONE' and kind ~= 'script'
+          and cbench == bench and pushed ~= '' and pushed ~= '-' then
           if rows >= limit then break end
-          local repo, attempt = f[5] or '', f[7] or ''
           local branch = hv_branch(S, label, attempt)
           out[#out + 1] = label
           out[#out + 1] = repo
@@ -258,5 +260,47 @@ do
     redis.call('HSET', 's:' .. S .. ':prcard', repo .. '#' .. pr, label) -- pr-to-read skips card PRs (#3040)
     redis.call('HSET', idem_key, idem, receipt)
     return 'OK|' .. receipt
+  end)
+
+  -- ns_harvest_refuse S label bench instance token field defect
+  -- Marks a card whose result validation failed as refused:
+  -- state=refused, refused_field=field, refused_defect=defect, refused_at=at
+  -- Moves from ended to refused index, logs transition.
+  redis.register_function('ns_harvest_refuse', function(keys, args)
+    local S, label, bench, instance, token = args[1] or '', args[2] or '', args[3] or '', args[4] or '', args[5] or ''
+    local field, defect = args[6] or '', args[7] or ''
+    if S == '' or label == '' or bench == '' then
+      return 'USAGE'
+    end
+    if not hv_lease_ok(bench, instance, token) then
+      return 'FENCED'
+    end
+    local key = 's:' .. S .. ':card:' .. label
+    local state = hv_hget(key, 'state')
+    if state == '' then return 'NOTFOUND' end
+    if state == 'refused' then return 'OK' end
+
+    local at = hv_now_ms()
+    local attempt = hv_hget(key, 'attempt')
+    local token_sha = hv_hget(key, 'token_sha')
+    local log_key = 's:' .. S .. ':log'
+    local receipt = redis.call('XADD', log_key, '*',
+      'kind', 'card', 'id', label, 'from', state, 'to', 'refused',
+      'attempt', attempt, 'token_sha', token_sha, 'actor', 'card-harvest',
+      'reason', 'refused', 'evidence', 'field=' .. field .. ' defect=' .. defect,
+      'idem', 'refuse:' .. S .. ':' .. label .. ':' .. attempt, 'at', at)
+
+    redis.call('HSET', key,
+      'state', 'refused',
+      'refused_field', field,
+      'refused_defect', defect,
+      'refused_at', at,
+      'refused_receipt', receipt)
+
+    redis.call('SREM', 's:' .. S .. ':idx:card:' .. state, label)
+    redis.call('SADD', 's:' .. S .. ':idx:card:refused', label)
+    redis.call('SREM', 's:' .. S .. ':bench:' .. bench .. ':' .. state, label)
+    redis.call('SADD', 's:' .. S .. ':bench:' .. bench .. ':refused', label)
+    return 'OK'
   end)
 end

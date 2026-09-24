@@ -16,6 +16,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // HarvestInput is everything the harvest verb needs, held apart from command-line parsing
@@ -776,180 +777,13 @@ func classify(jobDir string, c CardRow, contract string) (state, branch, repo st
 
 // classifyResult folds one RESULT.md body by the card's own contract and verdict lines,
 // dispatching via an explicit versioned adapter to either schema v2 or legacy handling.
-// It binds expected schema version and attempt identity from the trusted card/job record
+// classifyResult parses and classifies RESULT.md against the contract,
+// routes v2 results through typed envelope validation,
+// preserves legacy compatibility for legacy cards,
 // and refuses version downgrade attempts.
 func classifyResult(c CardRow, contract, body string) (state, branch, repo string, resultLines []string) {
-	norm := strings.ReplaceAll(body, "\r\n", "\n")
-	lines := strings.Split(norm, "\n")
-	// PREFIX, not equality (issue #1823). The card generator can truncate the issue
-	// title, so the card's contract line may be a PREFIX of the RESULT.md line 1 rather
-	// than the whole of it -- docs/SPEC-SWARM.md:1482-1491, and `nova-swarm batch`'s own
-	// gather has scored it that way all along. Harvest compared with != and called a card
-	// the batch had already scored `done` a mismatch, so it was never pushed. Trailing
-	// spaces are trimmed on both sides first, exactly as the spec words it.
-	line1 := strings.TrimSpace(firstNonEmpty(lines))
-	want := strings.TrimRight(strings.TrimSpace(contract), " \t")
-	if want == "" || !strings.HasPrefix(strings.TrimRight(line1, " \t"), want) {
-		return "mismatch", "", "", lines
-	}
-
-	var rawSchema, rawCheck, rawAttempt string
-	for _, l := range lines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "## ") {
-			break
-		}
-		if strings.HasPrefix(t, "SCHEMA:") || strings.HasPrefix(t, "SCHEMA ") {
-			rawSchema = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "SCHEMA:"), "SCHEMA "))
-		}
-		if strings.HasPrefix(t, "CHECK:") || strings.HasPrefix(t, "CHECK ") {
-			rawCheck = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "CHECK:"), "CHECK "))
-		}
-		if strings.HasPrefix(t, "ATTEMPT:") || strings.HasPrefix(t, "ATTEMPT ") {
-			rawAttempt = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "ATTEMPT:"), "ATTEMPT "))
-		}
-	}
-
-	// Unknown schema is refused before any dispatch
-	if rawSchema != "" && rawSchema != "v2" {
-		return "mismatch", "", "", lines
-	}
-
 	expectedSchema, expectedAttempt := cardExpected(c)
-	if expectedSchema == "" {
-		if rawSchema == "v2" {
-			expectedSchema = "v2"
-		} else {
-			expectedSchema = "legacy"
-		}
-	}
-
-	if expectedSchema == "v2" {
-		// Version downgrade prevention: a v2 card cannot omit SCHEMA: v2 or CHECK
-		if rawSchema != "v2" || rawCheck == "" {
-			return "mismatch", "", "", lines
-		}
-		if rawAttempt != "" && expectedAttempt != "" && rawAttempt != expectedAttempt {
-			return "mismatch", "", "", lines
-		}
-		return classifyV2Result(c, contract, body, lines, expectedAttempt)
-	}
-
-	// Explicit legacy adapter
-	if rawSchema != "" && rawSchema != "legacy" {
-		return "mismatch", "", "", lines
-	}
-	return classifyLegacyResult(c, contract, body, lines)
-}
-
-// classifyLegacyResult handles cards without v2 schema markers.
-// It extracts BRANCH and REPO strictly from header lines before markdown sections,
-// ensuring evidence body text cannot override envelope fields.
-func classifyLegacyResult(c CardRow, contract, body string, lines []string) (state, branch, repo string, resultLines []string) {
-	if len(lines) < 2 {
-		return "mismatch", "", "", lines
-	}
-	line2 := strings.TrimSpace(lines[1])
-	if line2 == "" {
-		return "mismatch", "", "", lines
-	}
-	if strings.HasPrefix(line2, "ABSTAIN") {
-		return "abstain", "", "", lines
-	}
-	if strings.HasPrefix(line2, "BLOCKED") {
-		return "mismatch", "", "", lines
-	}
-	if !strings.HasPrefix(line2, "DONE") {
-		return "mismatch", "", "", lines
-	}
-	if len(lines) <= 2 {
-		return "mismatch", "", "", lines
-	}
-
-	// Envelope-only field extraction: scan lines after line 2 and before the first "## " section
-	for _, l := range lines[2:] {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(t, "## ") {
-			break
-		}
-		if strings.HasPrefix(t, "BRANCH ") {
-			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH "))
-		} else if strings.HasPrefix(t, "BRANCH: ") {
-			branch = strings.TrimSpace(strings.TrimPrefix(t, "BRANCH: "))
-		}
-		if strings.HasPrefix(t, "REPO ") {
-			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO "))
-			repo = strings.TrimPrefix(repo, "github.com/")
-		} else if strings.HasPrefix(t, "REPO: ") {
-			repo = strings.TrimSpace(strings.TrimPrefix(t, "REPO: "))
-			repo = strings.TrimPrefix(repo, "github.com/")
-		}
-	}
-	if branch == "" || branch == "main" || branch == "master" {
-		return "mismatch", branch, repo, lines
-	}
-	if c.Model == "pro" && !hasRedLine(lines) {
-		return "refused", branch, repo, lines
-	}
-	return "done", branch, repo, lines
-}
-
-// classifyV2Result handles schema v2 result envelopes.
-// All versioned envelopes (including ABSTAIN and BLOCKED) are strictly validated before state branching.
-// Effective fields are extracted strictly from the parsed envelope, never raw document lines.
-// DONE with a failed check is retained as "returned" (withholding push/landing eligibility).
-func classifyV2Result(c CardRow, contract, body string, lines []string, expectedAttempt string) (state, branch, repo string, resultLines []string) {
-	kind := kindFromContract(contract)
-	if kind == "" {
-		for _, l := range lines {
-			t := strings.TrimSpace(l)
-			if strings.HasPrefix(t, "## ") {
-				break
-			}
-			if strings.HasPrefix(t, "KIND:") || strings.HasPrefix(t, "KIND ") {
-				k := strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(t, "KIND:"), "KIND "))
-				if IsV2Kind(k) {
-					kind = k
-					break
-				}
-			}
-		}
-	}
-
-	// Validate envelope first before state branching
-	env, err := ValidateResultV2(body, kind)
-	if err != nil {
-		return "mismatch", "", "", lines
-	}
-
-	repo = strings.TrimPrefix(env.Repo, "github.com/")
-
-	if expectedAttempt != "" && env.Attempt != expectedAttempt {
-		return "mismatch", "", repo, lines
-	}
-
-	switch env.Status {
-	case "ABSTAIN":
-		return "abstain", "", repo, lines
-	case "BLOCKED":
-		return "mismatch", "", repo, lines
-	case "DONE":
-		if env.Check != "pass" {
-			// Returned: attempt finished with failed/not-run check.
-			// Retained unverified with check conclusion; withhold push/landing eligibility and friend authority.
-			return "returned", "", repo, lines
-		}
-		branch = env.Branch
-		if branch == "" || branch == "main" || branch == "master" {
-			return "mismatch", branch, repo, lines
-		}
-		if c.Model == "pro" && !hasRedLine(lines) {
-			return "refused", branch, repo, lines
-		}
-		return "done", branch, repo, lines
-	default:
-		return "mismatch", "", repo, lines
-	}
+	return typedrec.ClassifyResult(c.Model, contract, body, expectedSchema, expectedAttempt)
 }
 
 // classifyPool folds the pool layout beside the slot layout: launch admits cards
