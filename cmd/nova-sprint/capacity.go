@@ -75,7 +75,8 @@ func runCapacityDesired(ctx context.Context, kind string, args []string, out, er
 	fs.StringVar(actor, "actor", "", "")
 	idem := fs.String("idem", "", "")
 	// #3206 rev 4 PR A: --paused 0|1 sets the paused flag (omitted keeps it)
-	// and --register adds a friend to `friends` in the same call.
+	// and --register is accepted and implied (#2934: every capacity friend
+	// write adds the friend to `friends`).
 	paused := fs.String("paused", "", "")
 	register := fs.Bool("register", false, "")
 	if err := fs.Parse(args); err != nil {

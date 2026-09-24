@@ -7,9 +7,80 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
+
+func TestStage1CapacityIsTheOneWidthWriter(t *testing.T) {
+	addr := testutil.Start(t)
+	client := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { _ = client.Close() })
+	ctx := context.Background()
+	if err := fn.Load(ctx, client); err != nil {
+		t.Fatal(err)
+	}
+	client.Set(ctx, "friend:f:slots", 32, 0)
+	client.SAdd(ctx, "friends", "f")
+	client.HSet(ctx, "machine:m:ceiling", "slots", 40)
+	client.SAdd(ctx, "benches", "b")
+	client.HSet(ctx, "bench:b:desired", "slots", 8, "machine", "m", "paused", 0)
+
+	ceiling := func() preflight.Line {
+		for _, line := range preflight.StoreChecks(ctx, client, preflight.Options{}) {
+			if line.Name == "machine-ceiling" {
+				return line
+			}
+		}
+		t.Fatal("machine-ceiling preflight line missing")
+		return preflight.Line{}
+	}
+	if line := ceiling(); !line.Red || !strings.Contains(line.Why, "friend:f:slots") {
+		t.Fatalf("legacy preflight=%s", line.String())
+	}
+
+	var out, errOut bytes.Buffer
+	if code := runCapacity(ctx, []string{"friend", "--redis", addr, "--as", "ops", "--machine", "m", "f", "32"}, &out, &errOut); code != 0 {
+		t.Fatalf("capacity friend code=%d stderr=%q", code, errOut.String())
+	}
+	if !client.SIsMember(ctx, "friends", "f").Val() {
+		t.Fatal("capacity friend did not register f")
+	}
+	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
+		t.Fatalf("desired slots=%q", got)
+	}
+	if client.Exists(ctx, "friend:f:slots").Val() != 0 {
+		t.Fatal("capacity friend left legacy width")
+	}
+	entries := client.XRange(ctx, "cap:log", "-", "+").Val()
+	if len(entries) != 1 || entries[0].Values["actor"] != "ops" || entries[0].Values["legacy"] != "32" {
+		t.Fatalf("cap:log=%v", entries)
+	}
+	if line := ceiling(); line.Red {
+		t.Fatalf("post-migration preflight=%s", line.String())
+	}
+
+	t.Setenv(seatEnv, "f")
+	out.Reset()
+	errOut.Reset()
+	if code := runFriendHello(ctx, []string{"--redis", addr, "--as", "f", "--slots", "8", "--host", "m", "--once"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "nova-sprint capacity friend") {
+		t.Fatalf("hello --slots code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+	if got := client.HGet(ctx, "friend:f:desired", "slots").Val(); got != "32" {
+		t.Fatalf("refused hello changed desired=%q", got)
+	}
+
+	out.Reset()
+	errOut.Reset()
+	if code := runTaskWidth(ctx, []string{"--redis", addr, "--as", "f"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "desired=32") {
+		t.Fatalf("task width code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := runTaskWidth(ctx, []string{"--redis", addr, "--as", "f", "33"}, &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "CEILING m 41/40") {
+		t.Fatalf("task width 33 code=%d out=%q err=%q", code, out.String(), errOut.String())
+	}
+}
 
 // TestCapacityAsActorControlReceipt exercises the specified --as control flag
 // through the CLI, not merely through the Go capacity API. The actor must be

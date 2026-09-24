@@ -91,6 +91,9 @@ func ciCheck(pr PR) Check {
 	if !ValidHeadSHA(head) {
 		return Check{Missing, "no commit sha, so the rollup cannot be read at the exact head"}
 	}
+	if pr.ChecksUnread {
+		return Check{Missing, "the check rollup was not read at " + head}
+	}
 	latest := latestAtHead(pr.Checks, head)
 	reds := redJobNames(latest)
 	ci, ok := latest[ciOK]

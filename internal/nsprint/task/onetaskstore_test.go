@@ -2,7 +2,6 @@ package task_test
 
 import (
 	"context"
-	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -596,14 +595,18 @@ func TestOneTaskStoreControls(t *testing.T) {
 		if fx.client.HGet(fx.ctx, "friend:a:desired", "at").Val() != at || fx.client.XLen(fx.ctx, "cap:log").Val() != logLen {
 			t.Fatal("SAME wrote")
 		}
-		if _, err := set("newf", 2, capacity.DesiredOpts{}); !errors.Is(err, capacity.ErrUnregistered) {
-			t.Fatalf("unregistered = %v; want UNREGISTERED", err)
+		// #2934 on dev: the first desired write registers the friend, with
+		// or without Register, and writes no beat.
+		if r, err := set("newf", 2, capacity.DesiredOpts{}); err != nil || r.Status != "SET" {
+			t.Fatalf("first write = %+v %v; want SET registering newf", r, err)
 		}
-		if r, err := set("newf", 2, capacity.DesiredOpts{Register: true}); err != nil || r.Status != "SET" {
+		if r, err := set("newr", 2, capacity.DesiredOpts{Register: true}); err != nil || r.Status != "SET" {
 			t.Fatalf("register = %+v %v", r, err)
 		}
-		if !fx.member("friends", "newf") || fx.client.Exists(fx.ctx, "friend:newf:beat").Val() != 0 {
-			t.Fatal("register did not add to friends, or wrote a beat")
+		for _, f := range []string{"newf", "newr"} {
+			if !fx.member("friends", f) || fx.client.Exists(fx.ctx, "friend:"+f+":beat").Val() != 0 {
+				t.Fatalf("%s: write did not add to friends, or wrote a beat", f)
+			}
 		}
 	})
 }
