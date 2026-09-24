@@ -90,10 +90,10 @@ func TestReviewDryRunPrintsTheLineAndPostsNothing(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%s stdout=%s (a BOUNCE exits 3)", code, errb.String(), out.String())
 	}
 	line := out.String()
-	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6 model=jev-latest cost=$- explain=") {
+	if !strings.Contains(line, "JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 conf=0.21 rubric=816c4381 base=ok checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,base:off-missing,score:6 model=jev-latest cost=$- explain=") {
 		t.Fatalf("stdout = %q", line)
 	}
-	if !strings.Contains(line, "checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,score:6") {
+	if !strings.Contains(line, "checks=donewhen:ok,selfcheck:ok,paths:ok,claims:fail,ci:off-ok,base:off-missing,score:6") {
 		t.Fatalf("the checks are not on the line: %q", line)
 	}
 	if strings.Contains(argv(t, log), "pr comment") {
@@ -390,7 +390,7 @@ esac
 			if row["who"] != "jev" {
 				t.Errorf("ledger who = %v, want jev", row["who"])
 			}
-			if row["rubric"] != "816c4381" {
+			if row["rubric"] != "816c4381" { // the default prompt is the seed, which sends ScoreLevels (#2536)
 				t.Errorf("ledger rubric = %v, want 816c4381", row["rubric"])
 			}
 		})

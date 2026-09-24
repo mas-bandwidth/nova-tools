@@ -35,6 +35,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
 | `harvest/` | card result harvester and aggregation | `go test ./internal/harvest` | `go test ./internal/harvest` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
+| `jevcalib/` | Jev prompt files and the calibration rule | `go test ./internal/jevcalib` | `go test ./internal/jevcalib` |
 | `jobs/` | background job queues and state | `go test ./internal/jobs` | `go test ./internal/jobs` |
 | `keyshape/` | cryptographic key format verification | `go test ./internal/keyshape` | `go test ./internal/keyshape` |
 | `landed/` | did the work land in the base branch | `go test ./internal/landed` | `go test ./internal/landed` |
