@@ -109,6 +109,9 @@ type WrapperConfig struct {
 	ResultsRoot string // results live at <ResultsRoot>/<identity>
 	Clock       time.Duration
 	BeatEvery   time.Duration // zero means DefaultBeatEvery
+	// Started is called after Redis accepts the launched transition and
+	// before the job directory or harness is created.
+	Started func()
 
 	Now   func() time.Time
 	After func(time.Duration) <-chan time.Time
@@ -242,6 +245,9 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	code, err := ledger.Launched(ctx, WrapperBranch(cfg.Sprint, cfg.Label, cfg.Attempt), job)
 	if err != nil || code != 0 {
 		return refuse(ledgerCode(code, err), fmt.Sprintf("card launched refused code=%d%s", code, errSuffix(err)))
+	}
+	if cfg.Started != nil {
+		cfg.Started()
 	}
 	cleanup := func() {
 		if err := safepath.RemoveUnder(cfg.JobsRoot, job); err != nil {
