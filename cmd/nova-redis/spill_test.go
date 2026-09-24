@@ -29,6 +29,7 @@ type harness struct {
 	mr    *miniredis.Miniredis
 	clock *fakeClock
 	d     deps
+	dials int // how many times run() reached the dial seam
 }
 
 func newHarness(t *testing.T) *harness {
@@ -39,6 +40,7 @@ func newHarness(t *testing.T) *harness {
 	h.d = deps{
 		now: clock.now,
 		dial: func(addr, password string) redis.Cmdable {
+			h.dials++
 			c := redis.NewClient(&redis.Options{Addr: addr, Password: password})
 			t.Cleanup(func() { _ = c.Close() })
 			return c
@@ -48,11 +50,69 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
+// run drives run() with --addr pointed at the fake instance.
 func (h *harness) run(args ...string) (int, string, string) {
-	var out, errb bytes.Buffer
 	full := append([]string{args[0], "--addr", h.mr.Addr()}, args[1:]...)
-	code := run(full, &out, &errb, h.d)
+	return h.runBare(full...)
+}
+
+// runBare drives run() with exactly the arguments given: no --addr is added,
+// so a test can prove what a missing or empty address does.
+func (h *harness) runBare(args ...string) (int, string, string) {
+	var out, errb bytes.Buffer
+	code := run(args, &out, &errb, h.d)
 	return code, out.String(), errb.String()
+}
+
+// TestAddrRefusedWhenMissingOrEmpty: an address that is missing, empty, blank
+// or lacks a host or a port is refused (exit 2) BEFORE the dial seam is
+// reached, for spill and for recall. The Redis client would otherwise fill an
+// empty address in as localhost:6379, which is a guess the tool refuses to make.
+func TestAddrRefusedWhenMissingOrEmpty(t *testing.T) {
+	h := newHarness(t)
+	// A regression must fail here, never reach a real host: the seam counts
+	// the dial and hands back a client on the fake whatever address it got.
+	h.d.dial = func(addr, password string) redis.Cmdable {
+		h.dials++
+		c := redis.NewClient(&redis.Options{Addr: h.mr.Addr()})
+		t.Cleanup(func() { _ = c.Close() })
+		return c
+	}
+	verbs := map[string][]string{
+		"spill":  {"--owner", "rowan", "--name", "note", "--ttl", "1h", "--value", "hi"},
+		"recall": {"--owner", "rowan", "--name", "note"},
+	}
+	addrs := []struct {
+		label string
+		flag  []string
+		want  string
+	}{
+		{"missing", nil, "--addr is required"},
+		{"empty", []string{"--addr", ""}, "--addr"},
+		{"blank", []string{"--addr", "   "}, "--addr"},
+		{"no host", []string{"--addr", ":6379"}, "--addr"},
+		{"no port", []string{"--addr", "127.0.0.1"}, "--addr"},
+		{"empty port", []string{"--addr", "127.0.0.1:"}, "--addr"},
+		{"bad port", []string{"--addr", "127.0.0.1:redis"}, "--addr"},
+	}
+	for verb, rest := range verbs {
+		for _, a := range addrs {
+			args := append(append([]string{verb}, a.flag...), rest...)
+			code, stdout, stderr := h.runBare(args...)
+			if code != 2 {
+				t.Errorf("%s with %s --addr exits %d, want 2; stdout=%q stderr=%q", verb, a.label, code, stdout, stderr)
+			}
+			if !strings.Contains(stderr, a.want) || !strings.Contains(stderr, "run: nova-redis help") {
+				t.Errorf("%s with %s --addr must name --addr and the remedy; stderr=%q", verb, a.label, stderr)
+			}
+		}
+	}
+	if h.dials != 0 {
+		t.Errorf("a refused address reached the dial seam %d times; the refusal comes before the dial", h.dials)
+	}
+	if keys := h.mr.Keys(); len(keys) != 0 {
+		t.Errorf("a refused address stored %v; a refusal writes nothing", keys)
+	}
 }
 
 func TestSpillRefusedWithoutOwner(t *testing.T) {
@@ -128,16 +188,21 @@ func TestRecallRefusesAnExpiredKey(t *testing.T) {
 
 func TestEveryEphemeralKeyCarriesOwnerAndTTL(t *testing.T) {
 	h := newHarness(t)
-	attempts := [][]string{
-		{"spill", "--owner", "rowan", "--name", "a", "--ttl", "1h", "--value", "1"},
-		{"spill", "--owner", "stella", "--name", "b", "--ttl", "90m", "--value", "2"},
-		{"spill", "--owner", "rowan", "--name", "c", "--value", "3"},
-		{"spill", "--name", "d", "--ttl", "1h", "--value", "4"},
-		{"spill", "--owner", "rowan", "--name", "e", "--ttl", "0s", "--value", "5"},
-		{"spill", "--owner", "ro:wan", "--name", "f", "--ttl", "1h", "--value", "6"},
+	attempts := []struct {
+		args []string
+		want int
+	}{
+		{[]string{"spill", "--owner", "rowan", "--name", "a", "--ttl", "1h", "--value", "1"}, 0},
+		{[]string{"spill", "--owner", "stella", "--name", "b", "--ttl", "90m", "--value", "2"}, 0},
+		{[]string{"spill", "--owner", "rowan", "--name", "c", "--value", "3"}, 2},
+		{[]string{"spill", "--name", "d", "--ttl", "1h", "--value", "4"}, 2},
+		{[]string{"spill", "--owner", "rowan", "--name", "e", "--ttl", "0s", "--value", "5"}, 2},
+		{[]string{"spill", "--owner", "ro:wan", "--name", "f", "--ttl", "1h", "--value", "6"}, 2},
 	}
 	for _, a := range attempts {
-		h.run(a...)
+		if code, stdout, stderr := h.run(a.args...); code != a.want {
+			t.Errorf("%v exits %d, want %d; stdout=%q stderr=%q", a.args, code, a.want, stdout, stderr)
+		}
 	}
 	keys := h.mr.Keys()
 	if len(keys) != 2 {

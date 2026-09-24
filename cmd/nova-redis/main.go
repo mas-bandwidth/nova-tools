@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"sort"
 	"strconv"
@@ -48,8 +49,10 @@ usage:
   nova-redis version
   nova-redis help
 
-The key is <owner>:<name>. spill refuses a missing owner or a missing,
-zero or negative TTL (exit 2) and writes nothing; an unbounded key is a bug.
+The key is <owner>:<name>. Both verbs refuse a missing or empty --addr, or
+one without a host and a port (exit 2), before anything is dialled. spill
+refuses a missing owner or a missing, zero or negative TTL (exit 2) and
+writes nothing; an unbounded key is a bug.
 recall exits 1 on a missing or expired key: scratch is allowed to miss.
 Auth is read from NOVA_REDIS_PASSWORD, never from an argument.
 
@@ -144,6 +147,9 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if !parse(fs, args, stderr, "addr", "owner", "name", "ttl", "value") {
 		return 2
 	}
+	if err := validAddr(*addr); err != nil {
+		return refuse(stderr, " spill", err.Error())
+	}
 	ttl, err := time.ParseDuration(*ttlText)
 	if err != nil {
 		return refuse(stderr, " spill", fmt.Sprintf("--ttl %q is not a duration (try 10m)", *ttlText))
@@ -171,6 +177,9 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	name := fs.String("name", "", "key name")
 	if !parse(fs, args, stderr, "addr", "owner", "name") {
 		return 2
+	}
+	if err := validAddr(*addr); err != nil {
+		return refuse(stderr, " recall", err.Error())
 	}
 	if err := validKey(*owner, *name, time.Hour); err != nil {
 		return refuse(stderr, " recall", err.Error())
@@ -204,6 +213,27 @@ var (
 	errExpired   = errors.New("expired")
 	errUnbounded = errors.New("unbounded")
 )
+
+// validAddr refuses an address the tool would have to guess at. The Redis
+// client fills an empty address in as localhost:6379 and an empty host as the
+// local machine, so an address that is empty, blank, or lacks a host or a
+// numeric port is refused before anything is dialled.
+func validAddr(addr string) error {
+	if strings.TrimSpace(addr) == "" {
+		return errors.New("--addr is empty; give the instance as <host:port>, refusing to guess localhost")
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("--addr %q is not <host:port>; refusing to guess", addr)
+	}
+	if strings.TrimSpace(host) == "" || strings.ContainsAny(host, " \t\r\n") {
+		return fmt.Errorf("--addr %q names no host; refusing to guess localhost", addr)
+	}
+	if n, err := strconv.Atoi(port); err != nil || n < 1 || n > 65535 {
+		return fmt.Errorf("--addr %q needs a port from 1 to 65535; refusing to guess", addr)
+	}
+	return nil
+}
 
 // validKey is the one gate every write passes: an owner, a name and a TTL
 // above zero, or nothing is written.
