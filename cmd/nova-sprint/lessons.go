@@ -12,15 +12,26 @@ import (
 func init() {
 	register(Verb{
 		Name:    "lesson",
-		Summary: "append one owner-reviewed operational lesson to a repository's capped docs/LESSONS.md",
+		Summary: "append or supersede an owner-reviewed lesson in a repository's capped docs/LESSONS.md",
 		Run:     cmdLesson,
 	})
 }
 
 func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "append" {
-		return refuseVerb(stderr, "lesson", "want append --repo <dir> --id <id> --component <name> --kind <card-kind> --failure <text> --prevention <text> --evidence <ref> --status <active|superseded> --reviewed-by <owner>")
+	if len(args) == 0 {
+		return refuseVerb(stderr, "lesson", "want append or supersede; run nova-sprint help")
 	}
+	switch args[0] {
+	case "append":
+		return cmdLessonAppend(args[1:], stdout, stderr)
+	case "supersede":
+		return cmdLessonSupersede(args[1:], stdout, stderr)
+	default:
+		return refuseVerb(stderr, "lesson", "want append or supersede; run nova-sprint help")
+	}
+}
+
+func cmdLessonAppend(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("lesson append", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	repo := fs.String("repo", "", "")
@@ -33,7 +44,7 @@ func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
 	fs.StringVar(&l.Evidence, "evidence", "", "")
 	fs.StringVar(&l.Status, "status", "", "")
 	fs.StringVar(&l.ReviewedBy, "reviewed-by", "", "")
-	if err := fs.Parse(args[1:]); err != nil {
+	if err := fs.Parse(args); err != nil {
 		return refuseVerb(stderr, "lesson append", err.Error())
 	}
 	if fs.NArg() != 0 {
@@ -48,5 +59,28 @@ func cmdLesson(_ context.Context, args []string, stdout, stderr io.Writer) int {
 		status = "APPENDED"
 	}
 	fmt.Fprintf(stdout, "LESSON %s id=%s file=%s lines=%d/%d\n", status, l.ID, r.Path, r.Lines, lessons.MaxLines)
+	return 0
+}
+
+func cmdLessonSupersede(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("lesson supersede", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	repo := fs.String("repo", "", "")
+	id := fs.String("id", "", "")
+	if err := fs.Parse(args); err != nil {
+		return refuseVerb(stderr, "lesson supersede", err.Error())
+	}
+	if fs.NArg() != 0 {
+		return refuseVerb(stderr, "lesson supersede", "takes flags, not positional arguments")
+	}
+	r, err := lessons.Supersede(*repo, *id)
+	if err != nil {
+		return refuseVerb(stderr, "lesson supersede", err.Error())
+	}
+	status := "UNCHANGED"
+	if r.Moved {
+		status = "SUPERSEDED"
+	}
+	fmt.Fprintf(stdout, "LESSON %s id=%s file=%s archive=%s lines=%d/%d\n", status, *id, r.Path, r.ArchivePath, r.Lines, lessons.MaxLines)
 	return 0
 }

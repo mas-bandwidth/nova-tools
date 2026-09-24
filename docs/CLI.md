@@ -5338,12 +5338,23 @@ nova-sprint lesson append \
   --reviewed-by stella
 ```
 
-The verb never guesses a checkout or creates a lessons file. Every field is
+The append verb never guesses a checkout or creates the active lessons file. Every field is
 required and must fit on one line without a Markdown table pipe. Lesson IDs
 are stable: an identical retry prints `LESSON UNCHANGED`; different content
 under an existing ID refuses. The append is published by atomic rename and
-refuses the 41st line. Status is `active` or `superseded`; preserve the
-evidence when superseding a lesson.
+refuses the 41st line. A repository-local lock serializes the whole
+read/check/rename transaction, so concurrent successful appends cannot lose
+one another. Append accepts `--status active`; retire a row with:
+
+```sh
+nova-sprint lesson supersede --repo ./nova-tools --id s9-001
+```
+
+Supersede first publishes the same row with status `superseded` to
+`docs/LESSONS-ARCHIVE.md`, then removes it from the capped active view. It
+creates the archive when needed; cards never load it. If interrupted between
+those writes, retry recognizes the archived row and finishes the removal.
+Archived IDs remain reserved, and an identical supersede retry is unchanged.
 
 ### xy
 
