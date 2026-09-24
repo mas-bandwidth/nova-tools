@@ -513,3 +513,37 @@ func TestControl33PrToRead(t *testing.T) {
 		}
 	})
 }
+
+type fakeHalf struct {
+	started bool
+	n       int
+	err     error
+}
+
+func (h *fakeHalf) Start(context.Context) error { h.started = true; return nil }
+
+func (h *fakeHalf) Pass(context.Context) (int, error) { return h.n, h.err }
+
+// The one pr-to-read slot runs both halves: every half starts, the counts
+// add, and a hard error wins over a retryable one.
+func TestJoinPRToRead(t *testing.T) {
+	ctx := context.Background()
+	a, b := &fakeHalf{n: 2}, &fakeHalf{n: 3}
+	j := JoinPRToRead(a, nil, b)
+	must(t, j.Start(ctx))
+	if !a.started || !b.started {
+		t.Fatalf("started a=%v b=%v, want both", a.started, b.started)
+	}
+	if n, err := j.Pass(ctx); n != 5 || err != nil {
+		t.Fatalf("pass = %d %v, want 5 nil", n, err)
+	}
+	hard := errors.New("hard")
+	a.err, b.err = ErrNoReaders, hard
+	if _, err := j.Pass(ctx); !errors.Is(err, hard) {
+		t.Fatalf("pass err %v, want the hard error", err)
+	}
+	b.err = nil
+	if _, err := j.Pass(ctx); !errors.Is(err, ErrNoReaders) {
+		t.Fatalf("pass err %v, want ErrNoReaders", err)
+	}
+}
