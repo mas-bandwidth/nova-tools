@@ -338,15 +338,31 @@ func cardKeys(sprint, label string) []string {
 	return []string{CardKey(sprint, label), LogKey(sprint), IdemKey(sprint)}
 }
 
+// fcall calls a nova_sprint function that the library's owner has already
+// loaded. It sends FUNCTION LOAD only when the server answers that the
+// function is missing, then retries once (#3551): a bench seat may FCALL but
+// not FUNCTION, so the card path on a converged server never loads, and a
+// bench binary never REPLACEs the fleet's library with its own copy. On a
+// seat that may not load, a missing library is an error that names the
+// function and the converge (nova-sprint fn load, as the owner).
 func fcall(ctx context.Context, st *store.Store, name string, keys []string, args ...any) (fnReply, error) {
-	if err := fn.Load(ctx, st.Client()); err != nil {
-		return fnReply{}, err
-	}
 	raw, err := st.Client().FCall(ctx, name, keys, args...).Text()
+	if err != nil && functionMissing(err) {
+		if lerr := fn.Load(ctx, st.Client()); lerr != nil {
+			return fnReply{}, fmt.Errorf("%s is not loaded and this seat cannot load %s (converge it as the owner: nova-sprint fn load): %w", name, fn.Library, lerr)
+		}
+		raw, err = st.Client().FCall(ctx, name, keys, args...).Text()
+	}
 	if err != nil {
 		return fnReply{}, err
 	}
 	return parseReply(raw)
+}
+
+// functionMissing is the server's reply to FCALL of a name no loaded library
+// registers ("ERR Function not found").
+func functionMissing(err error) bool {
+	return strings.Contains(err.Error(), "Function not found")
 }
 
 func parseReply(raw string) (fnReply, error) {
