@@ -464,19 +464,14 @@ func TestRefillBlockWakesOnEvent(t *testing.T) {
 	if cnt, err := rf.Run(ctx, l); err != nil || cnt.Dealt != 2 {
 		t.Fatalf("restart refill: dealt %d err %v, want 2", cnt.Dealt, err)
 	}
-	type out struct {
-		c   reconcile.Counts
-		err error
-	}
-	done := make(chan out, 1)
-	go func() {
-		cnt, err := rf.Run(ctx, l)
-		done <- out{cnt, err}
-	}()
-	childDone(t, c, bench, starting(t, c, bench)[0])
-	got := <-done
-	if got.err != nil || got.c.Dealt != 1 {
-		t.Fatalf("blocked refill after one completion: dealt %d err %v, want 1", got.c.Dealt, got.err)
+	member := starting(t, c, bench)[0]
+	// Inject the completion after Run has refreshed the registry and ensured
+	// the consumer groups, immediately before its blocking read. The former
+	// goroutine race did not establish that ordering.
+	rf.BeforeRead = func() { childDone(t, c, bench, member) }
+	got, err := rf.Run(ctx, l)
+	if err != nil || got.Dealt != 1 {
+		t.Fatalf("blocked refill after one completion: dealt %d err %v, want 1", got.Dealt, err)
 	}
 	if n := leased(t, c, bench); n != 2 {
 		t.Fatalf("working %d, want min(slots 2, 1 + open 1) = 2", n)

@@ -147,6 +147,9 @@ type Refill struct {
 	Now func() time.Time
 	// AfterDeal, when set, sees every deal pass the duty ran and why.
 	AfterDeal func(Wake, deal.Result)
+	// BeforeRead, when set, runs immediately before the stream read. Tests use
+	// it to inject an event after the consumer is ready without a sleep race.
+	BeforeRead func()
 	// WriteMargin is the lease time kept back from the bench sessions for the
 	// pass's fenced writes (#3322); DefaultWriteMargin when zero.
 	WriteMargin time.Duration
@@ -210,6 +213,9 @@ func (r *Refill) Run(ctx context.Context, l *Lease) (Counts, error) {
 	block := time.Duration(-1)
 	if r.Block > 0 && !w.Dealing() && w.RouteReplay == 0 {
 		block = r.Block
+	}
+	if r.BeforeRead != nil {
+		r.BeforeRead()
 	}
 	if err := r.read(ctx, streams, consumer, block, &w); err != nil {
 		return Counts{}, fmt.Errorf("refill: read: %w", err)
