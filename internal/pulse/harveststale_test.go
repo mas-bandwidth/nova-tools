@@ -1,11 +1,9 @@
 package pulse
 
-// Issue #2032: harvest of a returned branch whose base is stale must never become a
-// PR. schema14 folded eight such branches; `git diff <target>..<branch>` showed 1,155
-// deletions and would have reverted nine merged PRs. The two-dot diff against the
-// CURRENT target must contain only the card's declared PATHS.
-
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -571,4 +569,49 @@ func TestStaleBaseComparesAPinnedOIDNotAMovingRef(t *testing.T) {
 	if !strings.Contains(err.Error(), "stray/extra.go") {
 		t.Fatalf("the refusal must name the offending path, got %q", err)
 	}
+}
+
+// TestHarvestCallsHygieneMatchGlob verifies that internal/pulse has no local copy
+// of the glob matcher: matchDeclared delegates to hygiene.MatchGlob (imported as
+// pathglob), and there is no matchDeclaredSegs or matchSegments function. A
+// second matcher would be a second definition (#2598 remainder, #2600).
+func TestHarvestCallsHygieneMatchGlob(t *testing.T) {
+	// 1. Verify matchDeclared matches through hygiene.MatchGlob by testing the
+	//    same cases the hygiene package tests.
+	matchCases := []struct {
+		glob, path string
+		want       bool
+	}{
+		{"internal/pulse/*.go", "internal/pulse/harveststale.go", true},
+		{"internal/pulse/*.go", "internal/pulse/harvest.go", true},
+		{"internal/pulse/*.go", "internal/hygiene/glob.go", false},
+		{"internal/pulse/**", "internal/pulse/sub/file.go", true},
+		{"internal/pulse", "internal/pulse/harveststale.go", true},
+		{"internal/pulse/", "internal/pulse/harveststale.go", true},
+	}
+	for _, tc := range matchCases {
+		if got := matchDeclared(tc.glob, tc.path); got != tc.want {
+			t.Errorf("matchDeclared(%q, %q) = %v, want %v", tc.glob, tc.path, got, tc.want)
+		}
+	}
+
+	// 2. Scan harveststale.go AST for a local matchDeclaredSegs or
+	//    matchSegments function. The function must not exist: the glob half
+	//    lives in hygiene.MatchGlob.
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "harveststale.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok {
+			return true
+		}
+		name := fn.Name.Name
+		if name == "matchDeclaredSegs" || name == "matchSegments" {
+			t.Errorf("harveststale.go contains local function %s; the glob half must live in hygiene.MatchGlob", name)
+		}
+		return true
+	})
 }
