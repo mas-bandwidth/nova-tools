@@ -293,7 +293,7 @@ record read by a verb (`nova-pulse fold --report`) rather than a walk over the `
 - **`nova-pulse status --fleet`** reads the `nodes`/`receipts` projection and the counters, not
   every job file, so the answer is a query, and prints the live unknown-call count beside them.
 - **`nova-merge queue`** writes CI and PR verdicts into `ci_pr_outcomes` as it decides them.
-- **`nova-tokens report`** is a query over `token_ledger`; the fold still writes the day TSVs.
+- **`nova-tokens report --redis`** is a query over the `tokens:ledger:<day>` hashes `nova-tokens ledger` writes; the fold still writes the day TSVs.
 - **`nova-swarm caps`** reads the in-flight sorted sets across provider, model and key;
   reservation is the one atomic script and the admission is the counter, not a note.
 - **the pull worker** reads `nova:queue:*` with `XREADGROUP` and `XACK`s on clip, replacing the
@@ -382,7 +382,7 @@ The slice-1 tests run against fakes: **miniredis** stands in for the Redis insta
 14. `TestStatusPrintsTheLiveUnknownCallCount` — `nova-pulse status` prints the live unknown-call count beside the cap counts.
 15. `TestAWatchSubscriberWakesOnAJobDoneEventWithinASecond` — publishing `nova:events:job` after a `RESULT.md` lands returns the subscriber once, inside a second, and it re-reads the file.
 16. `TestPresenceKeyExpiresAndLeavesNoTombstone` — `wake:presence:<bench>` holds `{as, until}`, the beat renews it, and a crashed line ages out with no tombstone.
-17. `TestTheMonthlyTokenReportFromPostgresEqualsTheFoldedTsv` — `nova-tokens report` over `token_ledger` equals the folded day TSVs, every type and every `(day, model, repo)`.
+17. `TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv` — `nova-tokens report --redis` over the `tokens:ledger:<day>` hashes equals the folded day TSVs, every type and every `(day, model, repo)` (#2201; the Postgres `token_ledger` of #3243 was recut on Redis under #2623).
 18. `TestRowFromMessageCarriesEveryField` — a `card_results` row carries every field: stream_id, label, bench, exit, result_line, job_path, commit, branch, pr, pushed_at, done_at, recorded_at.
 19. `TestRowFromMessageAcceptsTheStreamsAliasNames` — `pr`, `pushed_at` and `done_at` stay unknown (SQL NULL) when the result did not carry them.
 20. `TestRowFromMessageRefusesAResultWithNoLabel` — a result with no label is refused; a row needs a card.

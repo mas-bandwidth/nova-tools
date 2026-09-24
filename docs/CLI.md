@@ -2046,6 +2046,19 @@ than overwriting it: two cuts into one queue are two batches of cards, and a row
 already in the table is not written twice, so cutting the same source again is the
 same table.
 
+**A template is portable, because `cut` does not choose the bench.** The card text
+is handed to the worker verbatim and the router picks the bench later, out of a
+mixed estate (hulk, vision, space and mini are linux; the Studio and the Air are
+darwin). Spell presence as `command -v <name>`, a version as that toolchain spells
+it (`go version`, `dotnet --version`, `java -version 2>&1`), and a fact only one
+platform reports by choosing with `uname` on the same line — `cores=$(if [
+"$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else nproc; fi)`. Do not measure
+a step with GNU `time(1)`; the harness writes the run's own timing line. The rule
+is SPEC-SWARM, "A template is portable, because the bench is not chosen when it is
+written", and `internal/ci`'s `cardtemplates` class test refuses the shipped
+templates that break it. `cmd/nova-pulse/testdata/templates/{read,fix}.md` are the
+worked examples.
+
 **Five checks run in order before a byte is written**, and the first that fails is
 the whole answer, exit 2, one line:
 
@@ -4213,7 +4226,7 @@ measurement.
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all ten verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
 
 `check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
 
@@ -4259,6 +4272,22 @@ ledger for each pool: the aggregate key does not contain a pool ID.
 
 This ledger is distinct from the `sum --swarm-root` daily ledger above. See
 `nova-tokens help` for `profiles`, `session` and ledger-reporting options.
+
+**The token ledger on Redis** (SPEC-STATE test 17, #2201). `ledger` indexes folded day files
+into the fleet Redis, one hash per day, and `report --redis` is the month as one GROUP BY
+over those hashes -- every one of the five types apart, a dash where no row reported a type,
+and equal to the folded day TSVs to the token. The day files stay the record.
+
+```
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens ledger --out ./days --month 2026-09 --redis <host:port> --password-env NOVA_REDIS_BENCH_PASSWORD
+nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-tokens report --redis <host:port> --month 2026-09 --by tuple --password-env NOVA_REDIS_BENCH_PASSWORD
+```
+
+`tokens:ledger:<YYYY-MM-DD>` is a hash: each field is `["<card>","<model>","<repo>"]`, each
+value `{"provider","tokens","rough","sources"}` with `tokens` the five types in order and
+`null` for a type no source reported. Re-indexing a day replaces its hash in one MULTI/EXEC;
+a month reads its calendar days' keys in one pipelined round trip. The password is never a
+flag, and no variable is read unless `--password-env` names it.
 
 ## nova-play
 
