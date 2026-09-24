@@ -594,6 +594,19 @@ func (w Worker) HarnessConfig() []byte {
 				"models":  map[string]any{w.Model: map[string]any{}},
 			},
 		},
+		// THE SUBAGENT REFUSAL HOOK (issue #2533). A card that tries to spawn a
+		// subagent has the spawn refused by this hook and logged once. A spawned
+		// agent multiplies exploration tokens, hides its work from the log, and on
+		// a darwin bench goes silent under the wall and the card is killed as idle.
+		"hooks": map[string]any{
+			"before_tool_use": []map[string]any{
+				{
+					"match":   map[string]any{"tool_name": "task"},
+					"refuse":  true,
+					"message": "subagent spawn refused (NO-SUBAGENTS): a spawned agent multiplies exploration tokens, hides its work from the log, and on a darwin bench goes silent under the wall",
+				},
+			},
+		},
 	}
 	raw, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
