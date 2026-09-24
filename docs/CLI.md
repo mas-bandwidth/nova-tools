@@ -1548,7 +1548,7 @@ a `gh` read of the live queue that did not answer.
 ### rebase, react and classify — the lane's three ticks
 
 ```
-nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>]
+nova-merge rebase   --once --repo <owner>/<name> --markers <dir> --out <dir> --queue <dir> [--base <branch>] [--dry-run|--yes]
 nova-merge react    --redis <addr> [--lane <dir>] (--once | --deadline <seconds>) [--timeout <seconds>]
 nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
 ```
@@ -1560,7 +1560,9 @@ merges, this section describes a binary your bench does not have.
 `rebase --once` is the hand rebase loop's tick as a verb: one pass over the
 repository's open pull requests, and for each one the host calls `DIRTY` whose head
 branch is `rowan/<something>` — `rowan/replays-*` excluded, it has its own verb — a
-card cut and launched, unless `--markers` already holds a file for that number.
+plan names the pull request and launch command. The default writes nothing and exits 2
+asking for `--yes` or `--dry-run`; `--dry-run` prints the same plan and exits 0. Only
+`--yes` cuts and launches a card, unless `--markers` already holds a file for that number.
 `--markers` is the whole memory of the pass, so a pull request is carded once and not
 once per tick; `--out` is where the cards go; `--queue` is the queue whose state file
 numbers them, under its lock, so two cutters never share a number. `--base` is `dev`

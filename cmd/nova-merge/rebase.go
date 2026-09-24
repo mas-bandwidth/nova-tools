@@ -25,6 +25,8 @@ func cmdRebase(args []string, stdout, stderr io.Writer, deps Deps) int {
 	queue := f.fs.String("queue", "", "")
 	base := f.fs.String("base", "dev", "")
 	once := f.fs.Bool("once", false, "")
+	dryRun := f.fs.Bool("dry-run", false, "")
+	yes := f.fs.Bool("yes", false, "")
 	timeout := f.fs.Int("timeout", 120, "")
 	if !f.parse(args, stderr) {
 		return 2
@@ -37,7 +39,10 @@ func cmdRebase(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f.require("out", *out, "the directory the cut writes each rebase card into")
 	f.require("queue", *queue, "the queue directory whose state file numbers the cards, so two cutters never share one")
 	if !*once {
-		f.problem("--once is required; this pass cuts and launches the DIRTY pull requests it finds now and never loops on its own")
+		f.problem("--once is required; this pass plans the DIRTY pull requests it finds now and never loops on its own")
+	}
+	if *dryRun && *yes {
+		f.problem("--dry-run and --yes are alternatives: use --dry-run to inspect the plan or --yes to cut and launch it")
 	}
 	if *timeout < 1 || *timeout > maxTimeout {
 		f.problem(fmt.Sprintf("--timeout is a number of seconds this verb waits for gh or the launcher, from 1 to %d, got %d", maxTimeout, *timeout))
@@ -60,6 +65,11 @@ func cmdRebase(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return 2
 	}
 	list := deps.NewRebaseList(*repo, time.Duration(*timeout)*time.Second)
+	planOnly := !*yes
+	planLabel, planCode := "dry-run", 0
+	if !*dryRun && !*yes {
+		planLabel, planCode = "plan", 2
+	}
 	cut := func(c merge.RebaseCard) (string, error) {
 		var line bytes.Buffer
 		code := pulse.CutKind(pulse.CutKindInput{
@@ -77,7 +87,9 @@ func cmdRebase(args []string, stdout, stderr io.Writer, deps Deps) int {
 	}
 	return merge.Rebase(merge.RebaseInput{
 		Markers: *markers, Out: *out, List: list, Cut: cut, Launch: deps.Launcher,
-		Stdout: stdout, Stderr: stderr,
+		PlanOnly: planOnly, PlanLabel: planLabel, PlanCode: planCode,
+		LaunchPlan: "flash-native-bench.sh space <card> <card-name> 900",
+		Stdout:     stdout, Stderr: stderr,
 	})
 }
 
