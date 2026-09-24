@@ -170,6 +170,14 @@ type Status struct {
 	Width  string
 }
 
+// Present reports whether this friend is here. It is true only while the
+// TTL'd beat key, friend:<name>, was alive at the read. A missing key is
+// absent, and so is a key that has lapsed. The untimed friend:<name>:last
+// key dates an AWAY; it is not presence. none is neither key. Nothing in
+// this package reads a hand-written override in place of the beat key.
+// The key is the only evidence (#2675).
+func (s Status) Present() bool { return s.State == Up }
+
 // Read returns one Status per name, in the order given, from one MGet over
 // the presence key, its untimed memory, and the two optional keys of every
 // friend. One round trip, whatever the roster's length: the line is refreshed

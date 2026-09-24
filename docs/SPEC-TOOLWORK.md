@@ -1180,3 +1180,82 @@ specify the hold fold either: that is SPEC-DECIDE reading 3 (#1627), once, and �
 does not widen the wall: §2 names narrower roots per leg and refuses an unknown one. It
 does not make a mutant generator (Q8). It does not certify any Linux bench for a walled
 leg until §2 rule 7's list is closed.
+
+## Tests this spec demands
+
+These tests run against fakes throughout — a fake provider and a fake forge for the
+eligibility and lane halves, argv-log fakes for the sandbox, and a throwaway worktree plus
+`t.TempDir()` for every gate run — and no test reaches a network, a real key or a real
+
+1. Each is proven able to fail by a one-edit mutation before its green is trusted,
+matching the thirteen already-enumerated specs.
+
+2. `TestTrustPrintsTheComputedRecord` — `nova-pulse trust` shows the track record computed from `outcomes.jsonl`, nothing written by hand.
+3. `TestTheTrackRecordIsTheLastNGatedCards` — card N+1 pushes card 1 out of the record.
+4. `TestAKindWithNoTrackRecordIsOnTrial` — a code-changing kind with no record runs as trial.
+5. `TestEveryTrialResultNeedsARead` — an `ACCEPT OK` on trial carries `needs_read=yes`.
+6. `TestAnUnreadResultCountsForNeither` — ten accepted, none read: `cards=0/10` and `--set trusted` refused.
+7. `TestAHoldAfterAcceptOKIsAFail` — a HOLD landed after `ACCEPT OK` counts as a fail.
+8. `TestSetTrustedIsRefusedUnderNCards` — `TRUST REFUSED` with `cards=<n>/<N>` below N.
+9. `TestSetTrustedIsRefusedUnderThePassRate` — `pass=<x> need=<rate>` below the bound is refused.
+10. `TestMeetingTheBoundTrustsNothingUntilTheCoordinatorSaysSo` — the command alone is what trusts.
+11. `TestTheCoordinatorsPerResultReadIsSampledForATrustedKind` — `audit_rate` (default 0.1) samples reads with a fake random source.
+12. `TestATrustedResultStillNeedsAnApproveRecordToLand` — `batch` drops it without an approve by another line.
+13. `TestThreeFailsInARowResetToTrialAndEmptyTheRecord` — `TRUST RESET run_of_fails=3/3` printed by the third harvest.
+14. `TestSetTrialAndSetPausedAreNeverRefused` — tightening is never refused.
+15. `TestAPausedKindIsNotCut` — `cut` stops cutting a paused kind.
+16. `TestAPauseAfterLaunchAbstainsAtHarvest` — `ACCEPT ABSTAIN reason=paused`, pushes nothing.
+17. `TestNoVerbTakesANumberForTheRecord` — nothing but `harvest` appends `outcomes.jsonl`.
+18. `TestACardThatShipsItsOwnOutcomeIsAStrayFile` — a job that ships its own `OUTCOME` is `stray-file`.
+19. `TestTheDefaultsSayTheyAreUntuned` — `nova-pulse trust` prints `untuned` beside a default nobody changed.
+20. `TestRouteBelowFloorIsNotEligible` — a rung below the tuned floor does not dispatch.
+21. `TestAskedNotRunRungIsNotEligible` — `rung-is-asked-not-run` is not swarm-eligible.
+22. `TestNoProviderFallsBackToTheRuleTable` — `eligible=rules` when the rule table names a swarm rung.
+23. `TestNoProviderAndNoRuleSaysNotEligible` — `eligible=no why=no-provider-and-no-rule`, no dispatch.
+24. `TestAYesAt099ForAPausedKindCutsNothing` — a 0.99 answer cuts nothing for a paused kind.
+25. `TestAnInjectedIssueBodyChangesNoEligibility` — issue text cannot make a card eligible.
+26. `TestASecurityKindCardIsNeverSwarmEligibleByRoute` — a trusted kind and a provider yes at 0.99 still cut nothing.
+27. `TestHarvestWritesTheRouteOutcome` — `harvest` runs `nova-decide outcome` for every eligible card.
+28. `TestALaterHoldAppendsARedOutcome` — a later HOLD appends a second, red, outcome row.
+29. `TestAcceptRunsBeforeAnyPush` — the argv log holds no push for a rejected card.
+30. `TestAcceptNeverOpensResultMD` — a `RESULT.md` that is a FIFO does not hang the gate.
+31. `TestAcceptRejectsAVacuousTest` — a seed green without the change is `reason=vacuous-test`.
+32. `TestAcceptRejectsWhenNamedTestStaysGreen` — the `TEST:` not among the red is `named-test-not-red`.
+33. `TestAcceptNeverRerunsARed` — a red test is a finding, never a second run.
+34. `TestAcceptAbstainsOnABenchRed` — a `WALL` / refused-path line is `ABSTAIN reason=toolchain`.
+35. `TestAnUntrackedFileInTheWorkersCopyCannotTurnTheGateGreen` — the gate runs in its own tree.
+36. `TestARedTheCardDidNotTouchIsRunOnceAtBase` — pre-existing red against the pinned base is `ABSTAIN reason=base-red`.
+37. `TestAcceptMakesNoNetworkCall` — the run wrapped with network denied still passes.
+38. `TestADeletedBaseTestIsTestWeakened` — a deleted base test is `reason=test-weakened`.
+39. `TestASkipAddedToABaseTestIsTestWeakened` — a gained skip is `reason=test-weakened`.
+40. `TestATestEditBodyIsListedForTheReader` — a `TEST-EDIT:` change is listed by name on the PR.
+41. `TestSelftestEverySeedIsOneEdit` — a two-line seed is refused by count.
+42. `TestSelftestWrongTokenIsAFail` — the wrong reject token is `ACCEPT SEED … WRONG`, exit 1.
+43. `TestOKWithoutAControlOnFileIsRefused` — `ACCEPT OK` with no control on file is `control-stale`/`ABSTAIN`.
+44. `TestControlIDChangesWithTheBuild` — a new build is a new `control=<id>`.
+45. `TestACardThatWeakensTheGateIsRejected` — the base's selftest seeds run against the head's gate code: `reason=gate-weakened`.
+46. `TestCertifyRunsEveryProbeInsideTheWall` — the sandbox argv log holds one wrap per leg.
+47. `TestCertifyAbsentIsNotFailed` — an absent toolchain is a leg the bench cannot be routed.
+48. `TestACertPastUntilIsVoid` and `TestACertVoidsOnACounterChange` — `until=` and build/toolchain-change void the record.
+49. `TestAcceptAbstainsOnAnUncertifiedLeg` — a card whose legs are not certified is `reason=bench-uncertified`.
+50. `TestRouteRefusesABenchWithoutTheLeg` — a card is never sent to a bench not certified for its legs.
+51. `TestToolchainCCSetsDeveloperDirAndReadsNothingWider` — darwin `cc` reads nothing wider than `DEVELOPER_DIR`.
+52. `TestLegsTSVCoversEveryToolchainCIIInstalls` — every toolchain `ci.yml` installs has a row.
+53. `TestNativeDefaultsToTheGoLeg` — a card with no `LEGS:` gets `go`.
+54. `TestAnUnknownLegIsBadToolchain` — `SANDBOX REFUSED reason=bad_toolchain`.
+55. `TestWallNoneIsUncertifiedForACodeCard` — a `wall=none` record is uncertified for a code-changing card.
+56. `TestLaunchRefusesAPoolWithNoIdentity` — a pool with no identity row is refused at launch.
+57. `TestStagedCloneIgnoresTheBenchGitconfig` — `GIT_CONFIG_GLOBAL=/dev/null` and `NOSYSTEM=1` keep the bench's config out.
+58. `TestStageRefusesASymlinkOutOfTheJob` — no symlink resolving outside the job root.
+59. `TestKindsTableMatchesTheSpec` — `accept --kinds` names the kinds, steps and tokens of §5's table.
+60. `TestAcceptAbstainsOnAnUnknownKind` — a kind the table does not hold is refused by `cut` and abstained by `accept`.
+61. `TestLaunchRefusesAWideBatchWithNoAcceptedFirstCard` — one card of a new template runs alone (`first.tsv`).
+62. `TestRebaseRejectsOneChangedLineOutsideAConflict`, `TestSweepControlNamesTheRevertedSite`, `TestMutationKillRejectsATestTheMutantSurvives` — the new kinds' controls.
+63. `TestSwarmMemberWithoutAcceptOKIsDropped` — `BATCH DROP` with no `ACCEPT OK` for head.
+64. `TestBatchNamesTheMemberThatBreaksTheBuild` — the merged-tree build red names the member by bisection.
+65. `TestStatusCountsHeldPRs` — `nova-pulse status` counts held PRs.
+66. `TestCompareRejectsADroppedLine`, `TestCompareRejectsAMovedLine`, `TestCompareRejectsAnAlteredValue` — `onboarding.CompareTranscript` fails on each one-edit seed.
+67. `TestVolatileFieldOutsideTheTableIsRefused` — a test may name a `Volatile` field and not invent one.
+68. `TestEveryTranscriptIsExecutedLineForLine` — the class test fails for any tool whose package has no `CompareTranscript` call.
+69. `TestPlatformLineMustNameACILeg` — a `Platform:` line must name a leg `ci.yml` runs.
+70. `TestUnexecutedExamplesOnlyShrink` — a new unexecuted pasted example fails the class test.

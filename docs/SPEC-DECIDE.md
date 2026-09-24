@@ -1637,7 +1637,7 @@ H3. SPEC-AHEAD: #1624
    rows later the log cannot say whether that is true.
 
 H4. SPEC-AHEAD: #1625
-   **Routing happens in the launcher, so no brief can forget it.** `--route` (:343-349) stops being
+    **decide housekeeping: routing is a launcher step, not a line in a brief.** Routing happens in the launcher, so no brief can forget it. `--route` (:343-349) stops being
    opt-in:
    `nova-swarm batch`, `nova-swarm run` (#1486) and `nova-pulse launch` route every admitted card
    before it is assigned a model, in process, and print the card's `ROUTE` receipt line. A launch

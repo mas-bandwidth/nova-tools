@@ -231,6 +231,15 @@ $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-se
 fake-gh
 ```
 
+**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
+bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
+`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
+store file omits the `swarm-` prefix, and the darwin launcher used to ask for
+the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
+nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
+Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
+empty wave.
+
 ## nova-check
 
 Fixture: `cmd/nova-check/testdata/example-self`.
@@ -1045,6 +1054,8 @@ the stream first (`.github/workflows/ci.yml`).
 Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
 still be empty afterwards: the table is read from Redis and written nowhere
 (#3326), so none of these lines needs a server and none writes a file.
+
+`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is `nova-pulse sprint calibration` (`SUGGEST fix 90m`). `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is `nova-pulse sprint status --verbose` as the producer prints it: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
 
 ### First run
 

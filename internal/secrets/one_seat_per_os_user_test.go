@@ -82,9 +82,13 @@ func oneSeatBenchHome(t *testing.T, seatFiles ...string) (home, bin string) {
 	// is outside a granted root, and this test is about the seat count, not that rule.
 	goReal := filepath.Join(home, "sdk", "go-"+goVer, "bin", "go")
 	writeSeatBenchExe(t, goReal, "#!/bin/sh\necho 'go version "+goVer+" linux/amd64'\n")
-	sbclReal := filepath.Join(home, "sdk", "sbcl-test", "bin", "sbcl")
-	writeSeatBenchExe(t, sbclReal, "#!/bin/sh\nexit 0\n")
-	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal} {
+	// sbcl answers the pin (check 3d) and sqlite3 resolves under ~/sdk (check 3f),
+	// so the only thing this fixture can drift on is the seat (nova-tools#2053).
+	sbclReal := filepath.Join(home, "sdk", "sbcl-2.5.8", "bin", "sbcl")
+	writeSeatBenchExe(t, sbclReal, "#!/bin/sh\necho 'SBCL 2.5.8'\n")
+	sqliteReal := filepath.Join(home, "sdk", "sqlite3-3.46.0", "bin", "sqlite3")
+	writeSeatBenchExe(t, sqliteReal, "#!/bin/sh\necho '3.46.0'\n")
+	for name, real := range map[string]string{"go": goReal, "sbcl": sbclReal, "sqlite3": sqliteReal} {
 		if err := os.Symlink(real, filepath.Join(bin, name)); err != nil {
 			t.Fatal(err)
 		}
@@ -100,6 +104,10 @@ func oneSeatBenchHome(t *testing.T, seatFiles ...string) (home, bin string) {
 		}
 	}
 	writeSeatBenchExe(t, filepath.Join(home, "nova-bench", "harness-v1", "opencode"), "#!/bin/sh\nexit 0\n")
+	// The pro rung (check 3e).
+	if err := os.MkdirAll(filepath.Join(home, "nova-bench", "rungs", "pro"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	// The seat keys themselves, exactly the names the caller chose.
 	seatDir := filepath.Join(home, ".config", "nova-secrets")
 	if err := os.MkdirAll(seatDir, 0o700); err != nil {
@@ -129,6 +137,8 @@ func runOneSeatBenchStandard(t *testing.T, home, bin string) (string, int) {
 		"NOVA_WANT="+oneSeatBenchBins,
 		"NOVA_GO=go1.26.5",
 		"NOVA_PROBE_URL=https://probe.invalid/api.json",
+		// The bench's declared slot share (check 3g).
+		"NOVA_SLOT_SHARE=64",
 	)
 	raw, err := cmd.CombinedOutput()
 	code := 0

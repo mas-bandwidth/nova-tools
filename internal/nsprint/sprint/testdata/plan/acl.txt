@@ -1,0 +1,6 @@
+# The three fleet ACL rule strings, copied verbatim from rowan-tools fleet/redis.yml @ 4c7e317
+# (redis_users: bench, coordinator, viewer). One line per user: <name><TAB><rules>. Control 6 of
+# nova-tools #2380 creates each with ACL SETUSER <name> reset on ><password> <rules>.
+bench	~bench:* ~card:* ~lease:* ~q:* ~ev:* ~cards:* ~friend:* ~sprint:* ~task:* ~s:* ~cap:* ~machine:* ~proc:* ~friends ~benches ~sprints &wake:* +@read +@write +@stream +@hash +@string +@pubsub +@connection +fcall +fcall_ro +time -@dangerous
+coordinator	~* &* +@all -@dangerous +info +config|get
+viewer	~* &* +@read +@pubsub +@connection +info -@dangerous

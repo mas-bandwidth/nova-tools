@@ -425,6 +425,167 @@ esac
 fi
 rm -rf "$TMP_HW"
 
+# ---------------------------------------------------------------------------
+# (5) TestBenchStandardRowsSbclProRungSqlite3SlotShare (nova-tools #2053,
+#     recut of #2813)
+# ---------------------------------------------------------------------------
+# Four drift rows for the ways the benches actually differ: the sbcl pin
+# (version, and resolving under ~/sdk), the pro rung, sqlite3 resolving under
+# ~/sdk, and a declared NOVA_SLOT_SHARE. Each row is EXECUTED here, not
+# grepped: one conforming fake bench must print STANDARD OK, and each fake
+# bench that lacks exactly one thing must print that row's DRIFT line.
+#
+# No bench-user row: the bench user is per bench, a registry field (Glenn
+# 2026-09-20), so the conforming bench below runs as whoever runs this test
+# and must still be OK.
+TMP_R=$(mktemp -d 2>/dev/null || mktemp -d -t bench.XXXXXX)
+
+# rows_bench <dir>: lay down a bench that conforms on every check, with the
+# tools under ~/sdk/<tool>-<ver>/bin and symlinked from a PATH dir, the way a
+# standard bench keeps them.
+rows_bench() {
+  local d="$1" h="$1/home" b="$1/bin" name
+  mkdir -p "$h/go/pkg/mod" "$h/.local/bin" "$h/.config/nova-secrets" \
+    "$h/nova-bench/harness-v1" "$h/nova-bench/rungs/pro" "$b" \
+    "$h/sdk/go-go1.26.5/bin" "$h/sdk/sbcl-2.5.8/bin" "$h/sdk/sqlite3-3.46.0/bin"
+  printf '#!/bin/sh\necho "go version go1.26.5 linux/amd64"\n' > "$h/sdk/go-go1.26.5/bin/go"
+  printf '#!/bin/sh\necho "SBCL 2.5.8"\n' > "$h/sdk/sbcl-2.5.8/bin/sbcl"
+  printf '#!/bin/sh\necho "3.46.0 2024-05-23"\n' > "$h/sdk/sqlite3-3.46.0/bin/sqlite3"
+  chmod +x "$h/sdk/go-go1.26.5/bin/go" "$h/sdk/sbcl-2.5.8/bin/sbcl" "$h/sdk/sqlite3-3.46.0/bin/sqlite3"
+  ln -s "$h/sdk/go-go1.26.5/bin/go" "$b/go"
+  ln -s "$h/sdk/sbcl-2.5.8/bin/sbcl" "$b/sbcl"
+  ln -s "$h/sdk/sqlite3-3.46.0/bin/sqlite3" "$b/sqlite3"
+  printf '#!/bin/sh\necho 200\n' > "$b/curl"
+  printf '#!/bin/sh\nexit 0\n' > "$b/nova-secrets"
+  chmod +x "$b/curl" "$b/nova-secrets"
+  for name in nova-board nova-bus nova-check nova-fuse nova-memory nova-merge \
+              nova-pulse nova-review nova-secrets nova-self-talk nova-swarm \
+              nova-tokens nova-update nova-version nova-wake; do
+    printf '#!/bin/sh\necho v9.9.9-rows\n' > "$h/.local/bin/$name"
+  done
+  cat > "$h/.local/bin/nova-sandbox" <<'SANDBOX'
+#!/bin/sh
+if [ "${1:-}" = version ] || [ "${1:-}" = --version ]; then echo v9.9.9-rows; exit 0; fi
+while [ $# -gt 0 ]; do
+  if [ "$1" = -- ]; then shift; exec "$@"; fi
+  shift
+done
+exit 0
+SANDBOX
+  chmod +x "$h"/.local/bin/*
+  printf '#!/bin/sh\nexit 0\n' > "$h/nova-bench/harness-v1/opencode"
+  chmod +x "$h/nova-bench/harness-v1/opencode"
+  : > "$h/.config/nova-secrets/rows.key"
+}
+
+# rows_run <dir> [--no-share] [VAR=value ...]: run the script on that bench
+# with a clean environment and a closed PATH (the bench's bin first, then the
+# system dirs), and NOVA_SLOT_SHARE=64 unless --no-share leaves it unset or a
+# later VAR=value overrides it.
+rows_run() {
+  local d="$1" share="NOVA_SLOT_SHARE=64"; shift
+  if [ "${1:-}" = "--no-share" ]; then share="NOVA_ROWS_NO_SHARE=1"; shift; fi
+  env -i PATH="$d/bin:/usr/bin:/bin:/usr/sbin:/sbin" HOME="$d/home" \
+    NOVA_WANT=v9.9.9-rows NOVA_GO=go1.26.5 NOVA_PROBE_URL=https://probe.invalid/api.json \
+    GOTOOLCHAIN=local "$share" "$@" bash "$SCRIPT" 2>&1
+}
+
+# rows_expect <label> <rc> <out> <pattern>: the run exited 1 and printed a
+# DRIFT line matching the pattern.
+rows_expect() {
+  local label="$1" rc="$2" out="$3" pat="$4"
+  if [ "$rc" = "1" ] && printf '%s\n' "$out" | grep -qE "^DRIFT $pat"; then
+    ok "$label"
+  else
+    bad "$label (rc=$rc, want 1 and a line ^DRIFT $pat): $out"
+  fi
+}
+
+# (5a) the conforming bench is OK: every new row has its fixture.
+rows_bench "$TMP_R/ok"
+out_r=$(rows_run "$TMP_R/ok"); rc_r=$?
+if [ "$rc_r" = "0" ] && printf '%s\n' "$out_r" | grep -q '^STANDARD OK ' && ! printf '%s\n' "$out_r" | grep -q '^DRIFT'; then
+  ok "a bench with the sbcl pin, a pro rung, sqlite3 under ~/sdk and NOVA_SLOT_SHARE is STANDARD OK"
+else
+  bad "the conforming fake bench is not STANDARD OK (rc=$rc_r): $out_r"
+fi
+
+# (5b) sbcl row: a bench with no sbcl at all trips it. /usr/bin/sbcl on the
+# host would still trip the ~/sdk half, so any sbcl DRIFT line counts.
+rows_bench "$TMP_R/nosbcl"; rm -f "$TMP_R/nosbcl/bin/sbcl"
+out_r=$(rows_run "$TMP_R/nosbcl"); rc_r=$?
+rows_expect "a bench missing sbcl drifts on sbcl" "$rc_r" "$out_r" "sbcl "
+
+# (5c) sbcl pin: the version is the pin, not only presence (space ran
+# 2.6.0.debian while the fleet pins 2.5.8).
+rows_bench "$TMP_R/sbclver"
+printf '#!/bin/sh\necho "SBCL 2.6.0.debian"\n' > "$TMP_R/sbclver/home/sdk/sbcl-2.5.8/bin/sbcl"
+out_r=$(rows_run "$TMP_R/sbclver"); rc_r=$?
+rows_expect "sbcl 2.6.0.debian drifts on the pin" "$rc_r" "$out_r" "sbcl version \[SBCL 2\.6\.0\.debian\] want 2\.5\.8"
+out_r=$(rows_run "$TMP_R/sbclver" NOVA_SBCL=2.6.0.debian); rc_r=$?
+if printf '%s\n' "$out_r" | grep -q '^DRIFT sbcl version'; then
+  bad "NOVA_SBCL does not override the sbcl pin: $out_r"
+else
+  ok "NOVA_SBCL overrides the sbcl pin"
+fi
+
+# (5d) sbcl pin: the pinned sbcl resolves under ~/sdk, not beside it.
+rows_bench "$TMP_R/sbclpath"
+mkdir -p "$TMP_R/sbclpath/elsewhere"
+printf '#!/bin/sh\necho "SBCL 2.5.8"\n' > "$TMP_R/sbclpath/elsewhere/sbcl"
+chmod +x "$TMP_R/sbclpath/elsewhere/sbcl"
+rm -f "$TMP_R/sbclpath/bin/sbcl"; ln -s "$TMP_R/sbclpath/elsewhere/sbcl" "$TMP_R/sbclpath/bin/sbcl"
+out_r=$(rows_run "$TMP_R/sbclpath"); rc_r=$?
+rows_expect "an sbcl outside ~/sdk drifts on the sbcl path" "$rc_r" "$out_r" "sbcl at .* not under .*/sdk"
+
+# (5e) pro rung: a bench with no pro rung trips it (the Macs were flash-only,
+# 528 of 998 slots idle in a pro wave).
+rows_bench "$TMP_R/nopro"; rmdir "$TMP_R/nopro/home/nova-bench/rungs/pro"
+out_r=$(rows_run "$TMP_R/nopro"); rc_r=$?
+rows_expect "a bench with no pro rung drifts on it" "$rc_r" "$out_r" "pro rung missing"
+out_r=$(rows_run "$TMP_R/nopro" NOVA_PRO_RUNG="$TMP_R/nopro/home/nova-bench/harness-v1/opencode"); rc_r=$?
+if [ "$rc_r" = "0" ]; then
+  ok "NOVA_PRO_RUNG naming an executable rung satisfies the pro rung row"
+else
+  bad "NOVA_PRO_RUNG naming an executable rung still drifts (rc=$rc_r): $out_r"
+fi
+
+# (5f) sqlite3 row: a bench with no sqlite3 under ~/sdk trips it (space
+# resolved /usr/bin/sqlite3). A host with no sqlite3 at all trips it too.
+rows_bench "$TMP_R/nosqlite"; rm -f "$TMP_R/nosqlite/bin/sqlite3"
+out_r=$(rows_run "$TMP_R/nosqlite"); rc_r=$?
+rows_expect "a bench missing sqlite3 under ~/sdk drifts on sqlite3" "$rc_r" "$out_r" "sqlite3 "
+
+# (5g) sqlite3 row: a sqlite3 that resolves outside ~/sdk is named.
+rows_bench "$TMP_R/sqlpath"
+mkdir -p "$TMP_R/sqlpath/elsewhere"
+printf '#!/bin/sh\necho 3.46.0\n' > "$TMP_R/sqlpath/elsewhere/sqlite3"
+chmod +x "$TMP_R/sqlpath/elsewhere/sqlite3"
+rm -f "$TMP_R/sqlpath/bin/sqlite3"; ln -s "$TMP_R/sqlpath/elsewhere/sqlite3" "$TMP_R/sqlpath/bin/sqlite3"
+out_r=$(rows_run "$TMP_R/sqlpath"); rc_r=$?
+rows_expect "a sqlite3 outside ~/sdk drifts on the sqlite3 path" "$rc_r" "$out_r" "sqlite3 at .* not under .*/sdk"
+
+# (5h) slot share: a bench that does not declare NOVA_SLOT_SHARE trips it.
+rows_bench "$TMP_R/noshare"
+out_r=$(rows_run "$TMP_R/noshare" --no-share); rc_r=$?
+rows_expect "a bench with NOVA_SLOT_SHARE unset drifts on it" "$rc_r" "$out_r" "NOVA_SLOT_SHARE unset"
+
+# (5i) slot share: a declaration that is not a positive whole number is not a
+# declaration.
+out_r=$(rows_run "$TMP_R/noshare" NOVA_SLOT_SHARE=lots); rc_r=$?
+rows_expect "NOVA_SLOT_SHARE=lots drifts on it" "$rc_r" "$out_r" "NOVA_SLOT_SHARE=lots "
+out_r=$(rows_run "$TMP_R/noshare" NOVA_SLOT_SHARE=0); rc_r=$?
+rows_expect "NOVA_SLOT_SHARE=0 drifts on it" "$rc_r" "$out_r" "NOVA_SLOT_SHARE=0 "
+
+# (5j) the owner ruling on #2813: no bench-user row and no unread
+# NOVA_COORDINATOR line.
+if grep -qE 'NOVA_BENCH_USER|whoami|NOVA_COORDINATOR' "$SCRIPT"; then
+  bad "bench-standard.sh carries a bench-user row or NOVA_COORDINATOR: $(grep -nE 'NOVA_BENCH_USER|whoami|NOVA_COORDINATOR' "$SCRIPT")"
+else
+  ok "no bench-user row (the user is per bench, a registry field) and no NOVA_COORDINATOR line"
+fi
+rm -rf "$TMP_R"
+
 printf '1..%s\n' "$n"
 [ "$fails" = 0 ] || { printf 'FAILED\n'; exit 1; }
 printf 'PASSED\n'

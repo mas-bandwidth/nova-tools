@@ -1,0 +1,3 @@
+# Still-open sprint tasks. est is the stored estimate; SUGGEST fix replaces it.
+TASK id=gate-fix-holds kind=fix owner=johnny state=open est=120
+TASK id=wait-verb kind=fix owner=emma state=open est=120 depends=gate-fix-holds paths=cmd/nova-pulse/wait.go
