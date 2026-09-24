@@ -11,6 +11,7 @@ package consume
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -127,10 +128,17 @@ func (p *PRToReadRule) adopt(ctx context.Context, out *strings.Builder) (int, er
 		}
 		cut := "0"
 		if p.CICut != nil {
-			if err := p.CICut(ctx, CICut{Sprint: S, Repo: pr.repo, PR: pr.n, Head: head, Base: rec["base"]}); err != nil {
+			err := p.CICut(ctx, CICut{Sprint: S, Repo: pr.repo, PR: pr.n, Head: head, Base: rec["base"]})
+			switch {
+			case errors.Is(err, ErrCutSkipped):
+				// The reads still go out; the cut is retried at the next head
+				// or by the ci verb, never guessed.
+				fmt.Fprintf(out, "CUT-SKIP %s@%s %v\n", pr.id, head12(head), err)
+			case err != nil:
 				return adopted, fmt.Errorf("pr-to-read: ci cut %s at %s: %w", pr.id, head12(head), err)
+			default:
+				cut = "1"
 			}
-			cut = "1"
 		}
 		ref := pr.id
 		args := []any{S, pr.repo, strconv.Itoa(pr.n), head, p.Actor, cut, strconv.Itoa(len(readers))}

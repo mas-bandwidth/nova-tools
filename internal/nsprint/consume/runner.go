@@ -27,6 +27,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -129,6 +131,83 @@ func shortRepo(repo string) string {
 		return repo[i+1:]
 	}
 	return repo
+}
+
+// ErrCutSkipped is what a CICut returns when the cut cannot be made from
+// Redis alone (no base tip sha recorded yet, a head that is not a full sha, or
+// ns_ci_cut answered other than CREATED/EXISTS). The adoption goes ahead with
+// cut=0 and a CUT-SKIP line, as with a nil CICut, instead of stopping the
+// router: a missing cut is visible, never a routing outage.
+var ErrCutSkipped = errors.New("ci cut skipped")
+
+// StoreCICut is the CICut `nova-sprint route` wires (#3040 rev 4, adoption
+// "gets its ci cut"): one ci.Cut per adopted head, against the base tip sha.
+// A base that is already a full sha is used as is; a branch name resolves
+// through the lander's land:<repo>:<base>:tip record (land.TipKey), so the
+// rule still makes no REST call.
+//
+// ns_ci_cut rewrites ci:<repo>:<head> from scratch (DEL, then PENDING), which
+// would drop the runner:<row> fields this rule's drain half already wrote for
+// that head. They are read in the same round trip as the base tip and put
+// back after a CREATED cut; this rule is their only writer and runs under the
+// route lease, so nothing lands between the two.
+func StoreCICut(st *store.Store, actor string) func(context.Context, CICut) error {
+	return func(ctx context.Context, c CICut) error {
+		if !fullSHA(c.Head) {
+			return fmt.Errorf("%w: head %q is not a full sha", ErrCutSkipped, c.Head)
+		}
+		client := st.Client()
+		recKey := ci.RecordKey(c.Repo, c.Head)
+		tipKey := land.TipKey(c.Repo, c.Base)
+		pipe := client.Pipeline()
+		rec := pipe.HGetAll(ctx, recKey)
+		var tipCmd *redis.StringCmd
+		if !fullSHA(c.Base) {
+			tipCmd = pipe.HGet(ctx, tipKey, "sha")
+		}
+		if _, err := pipe.Exec(ctx); err != nil && err != redis.Nil {
+			return fmt.Errorf("ci cut %s: %w", recKey, err)
+		}
+		base := c.Base
+		if tipCmd != nil {
+			base = tipCmd.Val()
+			if !fullSHA(base) {
+				return fmt.Errorf("%w: no tip sha in %s", ErrCutSkipped, tipKey)
+			}
+		}
+		rows := []any{}
+		for f, v := range rec.Val() {
+			if strings.HasPrefix(f, "runner:") {
+				rows = append(rows, f, v)
+			}
+		}
+		r, err := ci.Cut(ctx, st, ci.CutRequest{Sprint: c.Sprint, Repo: c.Repo, PR: c.PR,
+			Head: c.Head, Base: base, Actor: actor})
+		if err != nil {
+			return err
+		}
+		if r.ExitCode() != ci.ExitOK {
+			return fmt.Errorf("%w: ns_ci_cut %s", ErrCutSkipped, r)
+		}
+		if r.Status == "CREATED" && len(rows) > 0 {
+			if err := client.HSet(ctx, recKey, rows...).Err(); err != nil {
+				return fmt.Errorf("ci cut %s: restore runner rows: %w", recKey, err)
+			}
+		}
+		return nil
+	}
+}
+
+func fullSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // PRToReadRule is the pr-to-read Handler of `nova-sprint route` (#3040).

@@ -547,3 +547,42 @@ func TestJoinPRToRead(t *testing.T) {
 		t.Fatalf("pass err %v, want ErrNoReaders", err)
 	}
 }
+
+// TestStoreCICut: the cut route wires (Stella's hold 5 on #3532). A branch
+// base resolves through land:<repo>:<base>:tip; with no tip the adoption
+// still sends its reads with cut=0 and a CUT-SKIP line; a CREATED cut keeps
+// the runner rows already on ci:<repo>:<head>.
+func TestStoreCICut(t *testing.T) {
+	f := newC33(t)
+	f.rule.CICut = StoreCICut(f.rule.Store, "route")
+	must(t, f.client.HSet(f.ctx, "bench:"+ctlBench+":desired", "slots", "4", "paused", "0", "legs", "go").Err())
+	must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":policy", "readers", "1").Err())
+
+	head := f.seedPR(7, "ctl-a", "false", "opened")
+	out := f.pass()
+	if !strings.Contains(out, fmt.Sprintf("CUT-SKIP %s#7@%s", c33Short, head[:12])) ||
+		!strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=0", c33Short, head[:12])) {
+		t.Fatalf("no tip: pass printed %q, want CUT-SKIP and ADOPT cut=0", out)
+	}
+
+	tip := strings.Repeat("b", 40)
+	must(t, f.client.HSet(f.ctx, "land:"+c33Short+":dev:tip", "sha", tip).Err())
+	newHead := strings.Repeat("c", 40)
+	rec := "ci:" + c33Short + ":" + newHead
+	must(t, f.client.HSet(f.ctx, rec, "runner:windows", `{"status":"completed"}`).Err())
+	must(t, f.client.HSet(f.ctx, "s:"+c33Sprint+":pr:"+c33Short+":7", "head", newHead).Err())
+	out = f.pass()
+	if !strings.Contains(out, fmt.Sprintf("ADOPT %s#7@%s cut=1", c33Short, newHead[:12])) || strings.Contains(out, "CUT-SKIP") {
+		t.Fatalf("tip set: pass printed %q, want ADOPT cut=1", out)
+	}
+	got, err := f.client.HGetAll(f.ctx, rec).Result()
+	must(t, err)
+	if got["verdict"] != "PENDING" || got["base"] != tip || got["runner:windows"] != `{"status":"completed"}` {
+		t.Fatalf("ci record %v, want PENDING at base %s with runner:windows kept", got, tip)
+	}
+	card, err := f.client.HGet(f.ctx, "s:"+c33Sprint+":card:ci-7-"+newHead[:8], "state").Result()
+	must(t, err)
+	if card != "queued" {
+		t.Fatalf("ci card state %q, want queued", card)
+	}
+}

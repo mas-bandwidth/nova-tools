@@ -7,7 +7,7 @@ package main
 //
 // Rules wired: ok-to-friend (#2933), report-to-read (#3036) and pr-to-read
 // (#2941 heads and reads, joined with #3040 runner rows and no-card PR
-// adoption from ev:github). Not wired yet, each one line here when its handler lands: the
+// adoption from ev:github, each adoption cutting its ci card). Not wired yet, each one line here when its handler lands: the
 // 3.3 classification (#3076, consume.Classifier is already a consume.Handler)
 // and hold-to-fix (#3092, consume.HoldToFix).
 //
@@ -70,9 +70,10 @@ func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
 	ok := &consume.OkFriend{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	report := &consume.Report{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor}
 	read := &consume.PRRead{Store: st, Sprint: *sprint, Consumer: instance, Instance: instance, Actor: *actor, Remote: consumePRReadRemote}
-	// The ci cut is nil here as it is for ok-to-friend: the ci verb (#2842)
-	// is not wired into route yet, so an adoption prints cut=0.
-	runner := &consume.PRToReadRule{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor, Out: out}
+	// An adoption cuts its ci card at the PR head (ns_ci_cut); a base tip the
+	// lander has not recorded prints CUT-SKIP and cut=0, never a stop.
+	runner := &consume.PRToReadRule{Store: st, Sprint: *sprint, Consumer: instance, Actor: *actor, Out: out,
+		CICut: consume.StoreCICut(st, *actor)}
 	pr := consume.JoinPRToRead(read, runner)
 	router := &consume.Router{
 		Store: st, Sprint: *sprint, Instance: instance, Host: host,
