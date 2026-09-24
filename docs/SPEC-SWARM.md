@@ -815,9 +815,11 @@ commit; the verb never fetches, guesses a branch or contacts a fleet host. It ma
 staging and runs four phases against that exact detached tree: modules, ordinary
 builds, compiled Go test binaries and ASDF FASLs. The phases use the same
 `<root>/cache/go-mod`, `<root>/cache/go-build` and
-`<root>/cache/common-lisp/<tip>` paths a native card receives. The tip key keeps
-two repository revisions' FASLs apart. The harness's general
-XDG cache and HOME remain per-card; only ASDF's compiled output is shared.
+`<root>/cache/common-lisp/<tip>` seed. Before a card starts, that exact-tip seed
+is copied into a private overlay under the card's job directory. The card reads
+and writes only its overlay, so an edited Lisp source cannot replace a sibling
+card's FASL or the shared seed. The harness's general XDG cache and HOME remain
+per-card.
 
 A new reference checkout stays under an owned temporary directory and is hidden
 until all four phases succeed. A failed phase names itself and publishes neither

@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout map
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e compile-lisp test-lisp check clean darwin-timeout map
 
 help:
 	@echo "make help        this list"
@@ -87,6 +87,7 @@ help:
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
+	@echo "make compile-lisp compile nova-work and its tests without running them"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
@@ -211,6 +212,9 @@ test-e2e:
 
 test-lisp:
 	./lisp/nova-work/run-tests.sh
+
+compile-lisp:
+	./lisp/nova-work/compile.sh
 
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
 # job, the friend sequences and the nova-work acceptance suite.

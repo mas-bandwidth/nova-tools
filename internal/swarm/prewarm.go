@@ -3,6 +3,7 @@ package swarm
 import (
 	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -45,6 +46,12 @@ type PrewarmResult struct {
 // LispCacheDir is the shared ASDF output directory under a swarm root.
 func LispCacheDir(root string) string { return filepath.Join(root, CacheDirName, "common-lisp") }
 
+// JobLispCacheDir is the private writable overlay for one card. It lives beside the
+// card's checkout, inside the already-owned job directory, and is reaped with that job.
+func JobLispCacheDir(sourceRoot string) string {
+	return filepath.Join(filepath.Dir(filepath.Clean(sourceRoot)), ".cache", "common-lisp")
+}
+
 // ASDFOutputTranslations points compiled Lisp output at the bench-shared cache without
 // sharing the harness's whole XDG cache or its per-card HOME.
 func ASDFOutputTranslations(root, sourceRoot string) string {
@@ -54,6 +61,17 @@ func ASDFOutputTranslations(root, sourceRoot string) string {
 	if head, err := gitOutput(sourceRoot, "rev-parse", "HEAD"); err == nil && fullHexSHA(strings.TrimSpace(head)) {
 		cachePath = filepath.Join(cachePath, strings.ToLower(strings.TrimSpace(head)))
 	}
+	return asdfOutputTranslations(cachePath, sourceRoot)
+}
+
+// JobASDFOutputTranslations sends a card's writes to its own overlay. The overlay is
+// seeded from the exact-tip prewarm cache before launch; cards never write that seed or
+// another card's compiled output.
+func JobASDFOutputTranslations(sourceRoot string) string {
+	return asdfOutputTranslations(JobLispCacheDir(sourceRoot), sourceRoot)
+}
+
+func asdfOutputTranslations(cachePath, sourceRoot string) string {
 	if resolved, err := filepath.EvalSymlinks(cachePath); err == nil {
 		cachePath = resolved
 	}
@@ -63,6 +81,90 @@ func ASDFOutputTranslations(root, sourceRoot string) string {
 	dir := filepath.ToSlash(filepath.Clean(cachePath)) + "/"
 	source := strings.TrimSuffix(filepath.ToSlash(filepath.Clean(sourceRoot)), "/") + "/"
 	return "(:output-translations (" + strconv.Quote(source) + " (" + strconv.Quote(dir) + " :implementation)) :ignore-inherited-configuration)"
+}
+
+// PrepareLispJobCache makes a private copy-on-write seed for one card. A missing prewarm
+// seed is valid and produces an empty overlay; the card will compile there without
+// contaminating any sibling.
+func PrepareLispJobCache(root, sourceRoot string) error {
+	dest := JobLispCacheDir(sourceRoot)
+	if fi, err := os.Lstat(dest); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("job Lisp cache %s is not a directory", dest)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	parent := filepath.Dir(dest)
+	if fi, err := os.Lstat(parent); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("job cache parent %s is not a directory", parent)
+		}
+	} else if os.IsNotExist(err) {
+		if err := os.Mkdir(parent, 0o755); err != nil {
+			return err
+		}
+	} else {
+		return err
+	}
+	tmp, err := os.MkdirTemp(parent, ".common-lisp-seed-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = safepath.RemoveUnder(parent, tmp) }()
+	if head, err := gitOutput(sourceRoot, "rev-parse", "HEAD"); err == nil && fullHexSHA(strings.TrimSpace(head)) {
+		seed := filepath.Join(LispCacheDir(root), strings.ToLower(strings.TrimSpace(head)))
+		if err := copyLispSeed(seed, tmp); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("copy exact-tip Lisp seed: %w", err)
+		}
+	}
+	if err := os.Rename(tmp, dest); err != nil {
+		return fmt.Errorf("publish job Lisp cache: %w", err)
+	}
+	return nil
+}
+
+func copyLispSeed(seed, dest string) error {
+	return filepath.WalkDir(seed, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(seed, path)
+		if err != nil || rel == "." {
+			return err
+		}
+		out := filepath.Join(dest, rel)
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return os.MkdirAll(out, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Lisp seed entry %s is not a regular file", path)
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		outFile, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
+		if err != nil {
+			in.Close()
+			return err
+		}
+		_, copyErr := io.Copy(outFile, in)
+		inCloseErr := in.Close()
+		closeErr := outFile.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		if inCloseErr != nil {
+			return inCloseErr
+		}
+		return closeErr
+	})
 }
 
 // Prewarm clones an exact tip into the reference path sparse staging already consumes, then
@@ -96,6 +198,7 @@ func Prewarm(in PrewarmInput) (PrewarmResult, error) {
 
 	ownerDir := filepath.Join(root, "ref", owner)
 	final := filepath.Join(ownerDir, name+"@"+tip)
+	receiptPath := filepath.Join(root, PrewarmReceiptDir, owner, name+"@"+tip+".receipt")
 	checkout := final
 	reused := false
 	if fi, statErr := os.Stat(final); statErr == nil {
@@ -126,6 +229,11 @@ func Prewarm(in PrewarmInput) (PrewarmResult, error) {
 			return PrewarmResult{}, fmt.Errorf("checkout exact tip %s: %w", tip, err)
 		}
 	}
+	// A repeated prewarm must earn a fresh receipt. Remove the prior success before
+	// any cache-producing work so a failed rerun cannot leave stale evidence behind.
+	if err := os.Remove(receiptPath); err != nil && !os.IsNotExist(err) {
+		return PrewarmResult{}, fmt.Errorf("invalidate prior prewarm receipt: %w", err)
+	}
 	if err := normalizeTrackedTimes(checkout); err != nil {
 		return PrewarmResult{}, fmt.Errorf("pin source mtimes to exact tip: %w", err)
 	}
@@ -143,7 +251,7 @@ func Prewarm(in PrewarmInput) (PrewarmResult, error) {
 		// Make consumes one dollar while expanding RUN in the recipe; two here hand
 		// go test the intended no-test regexp ^$ instead of ^ (which runs everything).
 		{Name: "test-binaries", Dir: checkout, Env: env, Argv: []string{"make", "test-full", "RUN=^$$", "PKGS=./cmd/... ./internal/..."}},
-		{Name: "lisp", Dir: checkout, Env: env, Argv: []string{"make", "test-lisp"}},
+		{Name: "lisp", Dir: checkout, Env: env, Argv: []string{"make", "compile-lisp"}},
 	}
 	run := in.Run
 	if run == nil {
@@ -161,7 +269,6 @@ func Prewarm(in PrewarmInput) (PrewarmResult, error) {
 		checkout = final
 	}
 	receipt := fmt.Sprintf("PREWARM OK repo=%s tip=%s phases=modules,build,test-binaries,lisp\n", repo, tip)
-	receiptPath := filepath.Join(root, PrewarmReceiptDir, owner, name+"@"+tip+".receipt")
 	if err := os.MkdirAll(filepath.Dir(receiptPath), 0o755); err != nil {
 		return PrewarmResult{}, fmt.Errorf("make prewarm receipt directory: %w", err)
 	}

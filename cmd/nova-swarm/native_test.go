@@ -1454,8 +1454,8 @@ func TestNativeSharedGoCaches(t *testing.T) {
 	if !strings.Contains(got, "GOTOOLCHAIN=local\n") {
 		t.Errorf("GOTOOLCHAIN is not local:\n%s", got)
 	}
-	if !strings.Contains(got, "ASDF_OUTPUT_TRANSLATIONS=") || !strings.Contains(got, filepath.Join(cacheDir, "common-lisp")) {
-		t.Errorf("ASDF_OUTPUT_TRANSLATIONS does not point at the shared Lisp cache:\n%s", got)
+	if !strings.Contains(got, "ASDF_OUTPUT_TRANSLATIONS=") || !strings.Contains(got, filepath.Join(jobDir, ".cache", "common-lisp")) {
+		t.Errorf("ASDF_OUTPUT_TRANSLATIONS does not point at the job's private Lisp overlay:\n%s", got)
 	}
 	// Each directory existed before the child ran: the record is written by the child, so
 	// its own stat is the proof the parent made them first. Windows has no POSIX mode bits,

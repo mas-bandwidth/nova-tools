@@ -38,7 +38,7 @@ func NPMCacheDir(root string) string { return filepath.Join(root, CacheDirName, 
 
 // CacheEnv is the cache environment the harness child carries: one cache root for every
 // job under one swarm root, so N workers do not each download the same toolchain and modules.
-// sourceRoot optionally names the job checkout ASDF maps into the stable Lisp cache.
+// sourceRoot optionally names the job checkout ASDF maps into its private Lisp overlay.
 func CacheEnv(root string, sourceRoot ...string) []string {
 	if strings.TrimSpace(root) == "" {
 		return nil
@@ -49,7 +49,7 @@ func CacheEnv(root string, sourceRoot ...string) []string {
 		"NPM_CONFIG_CACHE=" + NPMCacheDir(root),
 	}
 	if len(sourceRoot) > 0 && strings.TrimSpace(sourceRoot[0]) != "" {
-		out = append(out, "ASDF_OUTPUT_TRANSLATIONS="+ASDFOutputTranslations(root, sourceRoot[0]))
+		out = append(out, "ASDF_OUTPUT_TRANSLATIONS="+JobASDFOutputTranslations(sourceRoot[0]))
 	}
 	return out
 }

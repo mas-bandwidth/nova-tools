@@ -63,7 +63,7 @@ func TestPrewarmPublishesExactTipAfterEveryCachePhase(t *testing.T) {
 		{"go", "mod", "download"},
 		{"make", "build"},
 		{"make", "test-full", "RUN=^$$", "PKGS=./cmd/... ./internal/..."},
-		{"make", "test-lisp"},
+		{"make", "compile-lisp"},
 	}
 	var names []string
 	for i, c := range calls {
@@ -126,6 +126,61 @@ func TestPrewarmFailurePublishesNeitherCheckoutNorReceipt(t *testing.T) {
 	}
 }
 
+func TestPrewarmFailedRerunInvalidatesPriorReceipt(t *testing.T) {
+	source, tip := prewarmFixture(t)
+	root := filepath.Join(t.TempDir(), "pool")
+	input := PrewarmInput{Root: root, Source: source, Repo: "acme/tool", Tip: tip,
+		Run: func(PrewarmCommand) error { return nil }}
+	if _, err := Prewarm(input); err != nil {
+		t.Fatal(err)
+	}
+	receipt := filepath.Join(root, PrewarmReceiptDir, "acme", "tool@"+tip+".receipt")
+	if _, err := os.Stat(receipt); err != nil {
+		t.Fatalf("first prewarm receipt: %v", err)
+	}
+	input.Run = func(c PrewarmCommand) error {
+		if c.Name == "build" {
+			return errors.New("cold cache build failed")
+		}
+		return nil
+	}
+	if _, err := Prewarm(input); err == nil || !strings.Contains(err.Error(), "build") {
+		t.Fatalf("rerun error = %v, want build phase failure", err)
+	}
+	if _, err := os.Lstat(receipt); !os.IsNotExist(err) {
+		t.Fatalf("failed rerun left prior success receipt standing: stat err=%v", err)
+	}
+}
+
+func TestPrewarmGitChildrenDropSecrets(t *testing.T) {
+	source, tip := prewarmFixture(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	log := filepath.Join(t.TempDir(), "secret-child.log")
+	wrapper := "#!/bin/sh\nif [ -n \"$STELLA_REVIEW_TOKEN\" ]; then printf '%s\\n' \"$*\" >> \"$STELLA_REVIEW_LOG\"; fi\nexec \"$STELLA_REAL_GIT\" \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("STELLA_REVIEW_TOKEN", "must-not-reach-child")
+	t.Setenv("STELLA_REVIEW_LOG", log)
+	t.Setenv("STELLA_REAL_GIT", realGit)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := Prewarm(PrewarmInput{
+		Root: filepath.Join(t.TempDir(), "pool"), Source: source, Repo: "acme/tool", Tip: tip,
+		Run: func(PrewarmCommand) error { return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(log); err == nil && len(raw) > 0 {
+		t.Fatalf("secret-named variable reached git subprocesses:\n%s", raw)
+	} else if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
 func envHasPrefix(env []string, prefix string) bool {
 	for _, entry := range env {
 		if strings.HasPrefix(entry, prefix) {
@@ -144,10 +199,10 @@ func envValue(env []string, name string) string {
 	return ""
 }
 
-// The shared Lisp cache has to reach ordinary swarm children as well as the prewarm
-// process; otherwise the prewarm compiles FASLs that every fresh card ignores.
-func TestCacheEnvCarriesTheSharedLispCache(t *testing.T) {
-	source, tip := prewarmFixture(t)
+// Each child writes a private overlay beside its checkout. PrepareLispJobCache seeds it
+// from the shared exact-tip output before launch.
+func TestCacheEnvCarriesAPrivateLispOverlay(t *testing.T) {
+	source, _ := prewarmFixture(t)
 	root := t.TempDir()
 	if err := EnsureCacheDirs(root); err != nil {
 		t.Fatal(err)
@@ -156,8 +211,8 @@ func TestCacheEnvCarriesTheSharedLispCache(t *testing.T) {
 	if !envHasPrefix(env, "ASDF_OUTPUT_TRANSLATIONS=") {
 		t.Fatalf("CacheEnv has no ASDF_OUTPUT_TRANSLATIONS: %v", env)
 	}
-	if value := cacheEnvValue(t, env, "ASDF_OUTPUT_TRANSLATIONS"); !strings.Contains(value, filepath.ToSlash(filepath.Join(LispCacheDir(root), tip))) || !strings.Contains(value, filepath.ToSlash(source)) {
-		t.Fatalf("ASDF_OUTPUT_TRANSLATIONS=%q, want source %s mapped to shared tip cache %s", value, source, filepath.Join(LispCacheDir(root), tip))
+	if value := cacheEnvValue(t, env, "ASDF_OUTPUT_TRANSLATIONS"); !strings.Contains(value, filepath.ToSlash(JobLispCacheDir(source))) || !strings.Contains(value, filepath.ToSlash(source)) {
+		t.Fatalf("ASDF_OUTPUT_TRANSLATIONS=%q, want source %s mapped to private overlay %s", value, source, JobLispCacheDir(source))
 	}
 }
 
@@ -180,6 +235,53 @@ func TestStageJobTreePinsTrackedMtimeForCompiledCacheReuse(t *testing.T) {
 	}
 }
 
+func TestPrewarmTrackedSymlinkTargetMtimeIsUntouched(t *testing.T) {
+	source, _ := prewarmFixture(t)
+	target := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(target, []byte("outside"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(source, "outside-link")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	gitT(t, source, "add", "outside-link")
+	gitT(t, source, "commit", "-q", "-m", "tracked symlink")
+	tip := gitT(t, source, "rev-parse", "HEAD")
+	want := time.Unix(123456789, 0)
+	if err := os.Chtimes(target, want, want); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Prewarm(PrewarmInput{
+		Root: filepath.Join(t.TempDir(), "pool"), Source: source, Repo: "acme/tool", Tip: tip,
+		Run: func(PrewarmCommand) error { return nil },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.ModTime().Unix() != want.Unix() {
+		t.Fatalf("prewarm followed tracked symlink and changed external target mtime: got %v want %v", fi.ModTime(), want)
+	}
+}
+
+func TestPrepareLispJobCacheRefusesSymlinkOverlay(t *testing.T) {
+	root := t.TempDir()
+	job := filepath.Join(root, "job")
+	source := filepath.Join(job, JobRepo)
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	external := t.TempDir()
+	if err := os.Symlink(external, filepath.Join(job, ".cache")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := PrepareLispJobCache(root, source); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("PrepareLispJobCache through symlink error = %v, want refusal", err)
+	}
+}
+
 func TestASDFMappingReusesCompiledOutputAcrossFreshJobClone(t *testing.T) {
 	sbcl, err := exec.LookPath("sbcl")
 	if err != nil {
@@ -199,28 +301,46 @@ func TestASDFMappingReusesCompiledOutputAcrossFreshJobClone(t *testing.T) {
 	if err := os.MkdirAll(LispCacheDir(cacheRoot), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	load := func(repo string) string {
+	load := func(repo, translations string) string {
 		t.Helper()
 		cmd := exec.Command(sbcl, "--non-interactive",
 			"--eval", "(require :asdf)",
 			"--eval", fmt.Sprintf("(push #p%q asdf:*central-registry*)", filepath.ToSlash(repo)+"/"),
-			"--eval", "(asdf:load-system :warm)")
-		cmd.Env = append(os.Environ(), "ASDF_OUTPUT_TRANSLATIONS="+ASDFOutputTranslations(cacheRoot, repo))
+			"--eval", "(asdf:load-system :warm)",
+			"--eval", "(format t \"ANSWER=~A~%\" (warm::answer))")
+		cmd.Env = append(os.Environ(), "ASDF_OUTPUT_TRANSLATIONS="+translations)
 		out, runErr := cmd.CombinedOutput()
 		if runErr != nil {
 			t.Fatalf("load fixture from %s: %v\n%s", repo, runErr, out)
 		}
 		return string(out)
 	}
-	if first := load(source); !strings.Contains(first, "compiling file") {
+	if first := load(source, ASDFOutputTranslations(cacheRoot, source)); !strings.Contains(first, "compiling file") {
 		t.Fatalf("cold load did not compile the fixture:\n%s", first)
 	}
-	job := filepath.Join(root, "job", JobRepo)
-	if err := StageJobTree(source, job, nil); err != nil {
+	jobA := filepath.Join(root, "job-a", JobRepo)
+	jobB := filepath.Join(root, "job-b", JobRepo)
+	for _, job := range []string{jobA, jobB} {
+		if err := StageJobTree(source, job, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := PrepareLispJobCache(cacheRoot, job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if second := load(jobA, JobASDFOutputTranslations(jobA)); strings.Contains(second, "compiling file") {
+		t.Fatalf("fresh exact-tip clone recompiled instead of reusing shared FASL:\n%s", second)
+	}
+	mustWrite(t, filepath.Join(jobA, "warm.lisp"), "(defpackage #:warm (:use #:cl))\n(in-package #:warm)\n(defun answer () 7)\n")
+	newer := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(jobA, "warm.lisp"), newer, newer); err != nil {
 		t.Fatal(err)
 	}
-	if second := load(job); strings.Contains(second, "compiling file") {
-		t.Fatalf("fresh exact-tip clone recompiled instead of reusing shared FASL:\n%s", second)
+	if edited := load(jobA, JobASDFOutputTranslations(jobA)); !strings.Contains(edited, "ANSWER=7") {
+		t.Fatalf("edited card did not load its own code:\n%s", edited)
+	}
+	if sibling := load(jobB, JobASDFOutputTranslations(jobB)); !strings.Contains(sibling, "ANSWER=42") {
+		t.Fatalf("same-tip sibling loaded another card's edited FASL:\n%s", sibling)
 	}
 }
 

@@ -712,6 +712,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if cfg.worker != nil {
 		secretEnv = cfg.worker.Secret
 	}
+	jobRepo := filepath.Join(jobDir, swarm.JobRepo)
+	if cacheDir != "" {
+		if _, err := os.Stat(jobRepo); err == nil {
+			if err := swarm.PrepareLispJobCache(filepath.Dir(cacheDir), jobRepo); err != nil {
+				refuseNative(errOut, fmt.Sprintf("the private Lisp cache could not be prepared: %s", oneline.Escape(err.Error())))
+				return nativeRunResult{}, 2
+			}
+		}
+	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
 		id, err := swarm.LoadPoolIdentity(cfg.root)
@@ -1599,7 +1608,7 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 			"GOMODCACHE="+filepath.Join(cacheDir, "go-mod"),
 			"GOCACHE="+filepath.Join(cacheDir, "go-build"),
 			"GOTOOLCHAIN=local",
-			"ASDF_OUTPUT_TRANSLATIONS="+swarm.ASDFOutputTranslations(filepath.Dir(cacheDir), filepath.Join(jobDir, swarm.JobRepo)),
+			"ASDF_OUTPUT_TRANSLATIONS="+swarm.JobASDFOutputTranslations(filepath.Join(jobDir, swarm.JobRepo)),
 		)
 	}
 	// The wrappers go on before the secret is re-added, so the ONE process that keeps the

@@ -154,6 +154,13 @@ func Supervise(in SuperviseInput) int {
 	cmd := exec.Command(harness, argv...)
 	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logFile, logFile
+	jobRepo := filepath.Join(jobDir, JobRepo)
+	if _, err := os.Stat(jobRepo); err == nil {
+		if err := PrepareLispJobCache(p.Dir, jobRepo); err != nil {
+			logFile.Close()
+			return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the private Lisp cache could not be prepared: " + redactedReason(err)}, attest, 0, "")
+		}
+	}
 	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key, p.Dir)
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {

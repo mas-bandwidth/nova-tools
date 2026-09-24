@@ -113,7 +113,7 @@ func normalizeTrackedTimes(repo string) error {
 	}
 	cmd := exec.Command("git", "ls-files", "-z", "--")
 	cmd.Dir = repo
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
+	cmd.Env = append(goenv.WithoutSecrets(os.Environ()), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_TERMINAL_PROMPT=0")
 	raw, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("git ls-files: %w", err)
@@ -472,7 +472,7 @@ func sparseGit(dir string, args ...string) (string, error) {
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(goenv.WithoutSecrets(os.Environ()),
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_TERMINAL_PROMPT=0",
