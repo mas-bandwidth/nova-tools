@@ -83,6 +83,7 @@ var DefaultCatalog = []Entry{
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),
 	E("internal/harvest", "card result harvester and aggregation", "go test ./internal/harvest", "go test ./internal/harvest"),
 	E("internal/hygiene", "clean checkout and leak assertions", "go test ./internal/hygiene", "go test ./internal/hygiene"),
+	E("internal/jevcalib", "Jev prompt files and the calibration rule", "go test ./internal/jevcalib", "go test ./internal/jevcalib"),
 	E("internal/jobs", "background job queues and state", "go test ./internal/jobs", "go test ./internal/jobs"),
 	E("internal/keyshape", "cryptographic key format verification", "go test ./internal/keyshape", "go test ./internal/keyshape"),
 	E("internal/lanes", "lane cursor and dispatch isolation", "go test ./internal/lanes", "go test ./internal/lanes"),
