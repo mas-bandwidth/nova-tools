@@ -118,6 +118,9 @@ type PushRequest struct {
 	Actor      string
 	Idem       string
 	Est        string
+	// Needs are the ids in Sprint that must be closed before this task can
+	// be claimed (#2939). Empty needs leave PayloadSHA as it was.
+	Needs []string
 	// DependsOn is the task's DEPENDS-ON list (#3206 PR A, ruling #3516):
 	// conditions joined by ';' ("none" or empty for none). While any is
 	// unmet the task is waiting and in no ready queue.
@@ -201,6 +204,9 @@ func PayloadSHA(req PushRequest) string {
 		req.Head, req.Title, string(req.Effects), req.To,
 		strconv.FormatBool(req.Front), strconv.Itoa(req.Priority),
 		req.Est,
+	}
+	if len(req.Needs) > 0 {
+		parts = append(parts, "needs="+strings.Join(req.Needs, " "))
 	}
 	// #3206 PR A: appended only when set, so every payload without
 	// dependencies keeps its identity from before the field existed.
@@ -300,7 +306,7 @@ func PushChecked(ctx context.Context, st *store.Store, req PushRequest) (PushRes
 	reply, err := st.Client().FCall(ctx, FunctionPush, nil,
 		req.Sprint, req.ID, string(req.Kind), req.Title, string(req.Effects),
 		req.Repo, strconv.Itoa(req.PR), req.Head, req.Ref, req.To, front,
-		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est,
+		strconv.Itoa(req.Priority), req.PayloadSHA, req.Actor, req.Idem, req.Est, strings.Join(req.Needs, " "),
 		normalizeDepends(req.DependsOn), req.Author).Result()
 	if err != nil {
 		return PushResult{}, fmt.Errorf("task push %s: %w", req.ID, err)
