@@ -279,6 +279,13 @@ func TestGoNoticesAreNotTheFailure(t *testing.T) {
 	if got := firstLine(dropGoNotices(out), nil); got != "# example.com/batch/pkg/c" {
 		t.Errorf("the reason is %q; a `go: downloading` line is a notice and never the failure", got)
 	}
+	_, _, reason := stepFailure(batchStep{name: "build", command: "go build ./..."}, out, nil)
+	if strings.Contains(reason, "go: downloading") {
+		t.Errorf("BATCH FAIL reason = %q; a `go: downloading` line is a notice and never the failure", reason)
+	}
+	if !strings.Contains(reason, "undefined: X") {
+		t.Errorf("BATCH FAIL reason = %q; the compiler line must survive once the notices are dropped (#2499 item 3)", reason)
+	}
 	// A step whose output is ONLY notices still says what it said, rather than nothing.
 	only := "go: downloading go1.26 (linux/amd64)\n"
 	if got := firstLine(dropGoNotices(only), nil); got == "" || got == "(no output)" {

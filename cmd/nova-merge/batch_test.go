@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The landing gate's own tests. They drive cmdBatch through run(), against a REAL git
@@ -126,6 +127,36 @@ func TestBatchDropsTheConflictAndGoesRedOnTheFailingMember(t *testing.T) {
 		t.Errorf("the remote received %d new pushes; the batch pushes nothing", got-before)
 	}
 	absent(t, remoteRefs(l), "rowan/integration-1")
+}
+
+// #2499 item 3 / #2508. A member that does not compile turns the build red, and the
+// line that names it must quote the compiler line, not only `# package`. Since #1661 the
+// red member is bisected out and DROPPED out loud (owner ruling 2026-09-23 7:05 PM ET:
+// the stream rule, the drop is on the record, not a failure of the batch), so a batch
+// whose one red member is dropped is exit 0 with the drop line carrying the stderr.
+func TestBatchFailKeepsTheBuildStderr(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	dev := l.git(l.work, "rev-parse", "dev")
+	l.git(l.work, "checkout", "-q", "-B", "pr4", dev)
+	l.write("pkg/d/d.go", "package d\n\nfunc D() int { return Foo }\n")
+	sha := l.commit("pr 4 does not compile")
+	l.git(l.work, "push", "-q", "origin", sha+":refs/pull/4/head")
+	l.git(l.work, "checkout", "-q", "main")
+	l.heads[4] = sha
+	l.host.PRs[4] = merge.PR{Number: 4, HeadOID: sha, Base: "dev"}
+	l.host.SetCheckRuns(sha, merge.CheckDetail{Name: "ci-ok", Conclusion: "success", SHA: sha})
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-build-stderr", "--pr", "4",
+		"--repo", "o/n", "--root", filepath.Join(l.dir, "batch"), "--base", "dev", "--timeout", "5m")
+	if exit != 0 {
+		t.Fatalf("a batch whose red member is dropped is exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "BATCH DROP #4")
+	contains(t, stderr, "build red with this member merged")
+	contains(t, stderr, "undefined: Foo")
+	contains(t, stdout, "dropped=4")
+	absent(t, stdout, "BATCH FAIL")
 }
 
 // THE GREEN RUN, and the exact shape of the line a caller parses. #2 still conflicts and
@@ -343,6 +374,31 @@ func testStreamOutput(t *testing.T, raw string) string {
 	return b.String()
 }
 
+// Essential 6: When reading comments/reviews fails for one member (e.g. exceeded
+// output capture cap), drop that single member rather than refusing the entire batch.
+func TestBatchDropsUnreadableCommentMemberInsteadOfRefusingBatch(t *testing.T) {
+	t.Parallel()
+	l := batchRepo(t)
+	root := filepath.Join(l.dir, "batch")
+	revFile := testReviewerFile(t, l.dir, defaultReviewersTSV)
+
+	l.host.SetVerdictErr(1, fmt.Errorf("gh: command failed: output exceeded the 65536-byte output capture cap"))
+
+	exit, stdout, stderr := l.run("batch", "--name", "integration-cap-drop", "--pr", "1 2",
+		"--repo", "o/n", "--root", root, "--base", "dev", "--timeout", "5m",
+		"--reviewers", revFile)
+
+	if exit != 0 {
+		t.Fatalf("a batch with one unreadable member dropped and remaining member merged should exit 0, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+
+	contains(t, stderr, "BATCH DROP #1 reason=\"comments could not be read: gh: command failed: output exceeded the 65536-byte output capture cap\"")
+	contains(t, stderr, "BATCH MERGED #2")
+	contains(t, stdout, "BATCH OK name=integration-cap-drop")
+	contains(t, stdout, "members=2")
+	contains(t, stdout, "dropped=1")
+}
+
 // THE STEP THE TESTS DO NOT RUN IS STILL THE STEP THE GATE RUNS, and this is what says so.
 //
 // It reads the two lists rather than starting anything: the product's gate must carry the
@@ -558,6 +614,39 @@ func TestTestFailuresReadsTheJSONStream(t *testing.T) {
 	// text reader, and a gate that read it as empty would print no failing package at all.
 	if _, _, ok := testFailures("# example.com/batch/pkg/c\nc.go:3: undefined: X\nFAIL\texample.com/batch/pkg/c [build failed]\n"); ok {
 		t.Error("a build failure's plain text read as a JSON stream; it must fall back to the text reader")
+	}
+}
+
+// #2499 item 3 / #2508. go build writes `# package` then the compiler lines.
+// firstLine kept only the header, so a gate that failed in
+// bench/tools/realpacket-gen named the package and not `undefined: Foo`.
+func TestStepFailureKeepsTheBuildCompilerLine(t *testing.T) {
+	t.Parallel()
+	out := "# example.com/batch/bench/tools/realpacket-gen\n./main.go:3: undefined: Foo\n"
+	_, _, reason := stepFailure(batchStep{name: "build", command: "go build ./..."}, out, fmt.Errorf("exit status 1"))
+	if !strings.Contains(reason, "undefined: Foo") {
+		t.Errorf("reason = %q; a failing go build's compiler line must appear on the verdict, not only the # package header", reason)
+	}
+	if !strings.Contains(reason, "realpacket-gen") {
+		t.Errorf("reason = %q; the package header is still part of the captured stderr", reason)
+	}
+}
+
+// The BATCH FAIL reason is capped at oneline.TailBytes (500). A pathological
+// compiler dump cannot be the whole of a reader's context; the mark ...+<n>B
+// says when more was dropped.
+func TestStepFailureCapsTheBuildStderr(t *testing.T) {
+	t.Parallel()
+	if stepReasonBytes != oneline.TailBytes {
+		t.Errorf("stepReasonBytes = %d, want oneline.TailBytes=%d; the receipt names that cap", stepReasonBytes, oneline.TailBytes)
+	}
+	out := "# example.com/batch/pkg/d\n" + strings.Repeat("x", 2000) + "undefined: Foo\n"
+	_, _, got := stepFailure(batchStep{name: "build", command: "go build ./..."}, out, nil)
+	if len(got) > stepReasonBytes {
+		t.Errorf("reason is %d bytes, want at most stepReasonBytes=%d (oneline.TailBytes)", len(got), stepReasonBytes)
+	}
+	if !strings.Contains(got, "...+") || !strings.HasSuffix(got, "B") {
+		t.Errorf("a stderr longer than stepReasonBytes=%d must carry the cap mark ...+<n>B, got %q", stepReasonBytes, got)
 	}
 }
 

@@ -231,6 +231,15 @@ $ nova-secrets exec --store ./secrets --as other --key /Users/me/.config/nova-se
 fake-gh
 ```
 
+**The Studio's store file is `studio.yaml`, not `swarm-studio.yaml`.** Every Linux
+bench's store follows the `swarm-<name>.yaml` convention (`swarm-hulk.yaml`,
+`swarm-space.yaml`, `swarm-vision.yaml`, …). The Studio is the only bench whose
+store file omits the `swarm-` prefix, and the darwin launcher used to ask for
+the prefixed name — `swarm-studio.yaml` — and lost every card it took (80 of 80,
+nova-tools #2000). The launcher's seat name must resolve to `studio.yaml` on the
+Studio; a seat called `studio` that resolves to `swarm-studio.yaml` is a silent
+empty wave.
+
 ## nova-check
 
 Fixture: `cmd/nova-check/testdata/example-self`.
@@ -247,6 +256,11 @@ QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a
 $ nova-check kernel --file ./self/docs/SEED-CORE.md --max-bytes 4000
 KERNEL OK bytes=771 budget=4000
 ```
+
+The included `example-self` fixture has `SEED-CORE.md` but no `SEED.md`, so it
+cannot demonstrate `floors` by itself. That check compares a derived core with
+the matching source seed it came from; name a core and source pair you own rather
+than borrowing an unrelated `SEED.md` merely to make the command pass.
 
 ### hygiene, on a branch
 
@@ -730,6 +744,92 @@ NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=0
 Both refusals exit 2 and make no directory: `<slot>/jobs`, `<slot>/data` and `<slot>/tmp`
 do not exist afterwards. `budget=` follows `harness=` on every `NATIVE OK` line.
 
+### A budget nothing can observe, refused before anything is made
+
+A budget wants a source this tool can read (rule 13d). The source is the worker
+description's `usage`, and `opencode` — read with `sqlite3` — when there is no `--worker`:
+
+```
+$ nova-swarm native --tokens 100000 --worker ./usage-none.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+
+$ PATH=./empty nova-swarm native --tokens 100000 --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: a numeric --tokens is read from the harness's own database with `sqlite3 -readonly`, and sqlite3 is on no PATH entry of this bench; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Install sqlite3 on this bench, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+The card's own budget is read from the same source, so it meets the same refusal whatever
+`--tokens` says — `unmetered` included:
+
+```
+$ nova-swarm native --tokens unmetered --worker ./usage-none-max-turns.json --harness ./fakeharness --model fake/fake-model --card ./card.md --slot ./root/slot-1 --root ./root --deadline 30s --no-wall --slots-store ./store --owner me
+! NATIVE REFUSED: this worker description's max_turns wants a usage source this tool can read, and the worker description says `usage: none`, which reports nothing; a budget nothing can observe is a promise the tool cannot keep, so this launch is refused rather than run under a cap that would never fire. Give the description `usage: opencode`, or launch with --tokens unmetered and no max_turns or max_cache_read
+```
+
+`--tokens unmetered` with no such description runs under both conditions, as it does today.
+After every refusal above, `<slot>` is empty: nothing was made.
+
+### What the line reports against the number
+
+The fake harness writes a **real sqlite database** in the harness's own shape
+(`FAKE-USAGE-DB`, the five token counts in rule 12's order then `usd`, with `-` for a type
+the provider did not report). Under `--tokens 50000`, the `NATIVE OK` line's `budget=`:
+
+```
+# a harness that reported nothing
+harness=ok budget=-/50000
+# only tokens_in
+harness=ok budget=900+/50000
+# every column a reported zero
+harness=ok budget=0/50000
+# tokens_in 100, tokens_out 50, cache_write 9000, cache_read 90000, reasoning 7
+harness=ok budget=157/50000
+```
+
+The last is the whole of the sum rule: `tokens_in + tokens_out + reasoning` is 157, and the
+99,000 of cache stands in the usage row and never in the budget. A reported `0` is a
+measurement and prints `0/50000` — never `unmetered`. `--tokens unmetered` prints the word
+whatever the harness reported.
+
+### The stop
+
+A card that publishes a report, spends past `--tokens 100000` and then declines the
+terminate, under `--deadline 120s` so that the budget is what ends it:
+
+```
+$ nova-swarm native --tokens 100000 --usage-interval 1s … --deadline 120s
+NATIVE OK label=card job=./root/slot-1/jobs/card tmp=./root/slot-1/tmp/card rc=-1 wall=5.05s sandbox=none-by-flag card_sha256=8e1f… binary_sha256=ad88… config=ffdf555f harness=ok budget=100000/100000 stopped=tokens
+```
+
+Exit 1. The launch's own row carries `end=budget` and a dash for `rc`, while the line prints
+`rc=-1`:
+
+```
+$ cut -f1-8 ./root/slot-1/jobs/card/usage.tsv
+job	attempt	started	ended	end	rc	provider	model
+card	1	2026-09-19T13:16:05Z	2026-09-19T13:16:10Z	budget	-	fake	fake-model
+```
+
+And what the card published is kept byte for byte — the tool writes nothing into it:
+
+```
+$ grep -c PROMPT-DEFECT ./root/slot-1/jobs/card/RESULT.md
+0
+$ grep "findings:" ./root/slot-1/jobs/card/RESULT.md
+findings: 2
+```
+
+### The sample interval's floor and ceiling
+
+```
+$ nova-swarm native --tokens unmetered --usage-interval 900ms … --deadline 30s
+! nova-swarm native: --usage-interval is at least 1s, got 900ms; three failed reads in a row end a card budget-unverifiable, and under a second that is a moment's bad luck rather than a source that has stopped answering
+
+$ nova-swarm native --tokens unmetered --usage-interval 30s … --deadline 30s
+! nova-swarm native: --usage-interval is shorter than --deadline, got 30s against a deadline of 30s; at or past the deadline no sample would ever run and the budget could not fire
+```
+
+`1s` exactly is accepted — the floor is inclusive — and the ceiling is exclusive.
+
 ### First run
 
 ```
@@ -746,6 +846,13 @@ STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ## nova-tokens
 
 Fixture: `cmd/nova-tokens/testdata/example-bench` (copied into a temp directory first, because a first run WRITES; the bus lane is `example.com`).
+
+`fold` writes the token tables under `--out`, which must already exist; make it
+first:
+
+```sh
+mkdir -p ./out
+```
 
 ### First run
 
@@ -948,10 +1055,19 @@ No fixture: the graph file is created by the run itself under `--graph`, and eve
 line below is local — plain JSON nodes and `:deps` edges, no Redis, no remote, no
 network. A `:deps` cycle is refused at exit 2 before anything is written.
 
-The bounded reader for a `.work` plan. No fixture and no network: the plan is a
-file the run writes, and every line below is read from local bytes alone.
-`cmd/nova-work/firstrun_test.go` writes the plan and runs each `$` line against
-it, so the `./work.work` below is a fresh file per run.
+The bounded reader for a `.work` plan. No fixture and no network: create the
+exact local input before the transcript, then every line below reads local bytes
+alone:
+
+```sh
+printf '%s\n' '(:plan :version 1 (:node :id "n1" :kind docs))' > ./work.work
+```
+
+This minimal plan demonstrates `plan check`; `plan expand` also requires each
+node to declare `:output`.
+
+`cmd/nova-work/firstrun_test.go` performs that setup and runs each `$` line
+against it, so the `./work.work` below is a fresh file per run.
 
 ### First run
 
@@ -1045,6 +1161,8 @@ the stream first (`.github/workflows/ci.yml`).
 Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
 still be empty afterwards: the table is read from Redis and written nowhere
 (#3326), so none of these lines needs a server and none writes a file.
+
+`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is `nova-pulse sprint calibration` (`SUGGEST fix 90m`). `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is `nova-pulse sprint status --verbose` as the producer prints it: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
 
 ### First run
 
