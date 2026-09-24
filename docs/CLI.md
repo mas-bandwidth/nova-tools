@@ -827,8 +827,9 @@ OUTCOME unit=row-card-9 kind=row-test rung=pro result=green outcome=ok
 
 ```
 nova-decide review --repo <owner/name> --pr <n> [--card <file>]
-                   [--post|--dry-run] [--ledger file|redis] [--ledger-path <jsonl>]
-                   [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
+                   [--post|--dry-run] [--ledger file|redis|file,redis]
+                   [--store <host:port> [--user <acl user>] [--password-env NOVA_REDIS_BENCH_PASSWORD]]
+                   [--ledger-path <jsonl>] [--pass-above <n>] [--bounce-below <n>] [--checks <list>]
                    [--usd-per-mtok-in <x>] [--usd-per-mtok-out <x>] [--skip-heads <file>]
                    [--no-jev] [--table] [--record <dir>] [--replay <dir>]
 nova-decide review --repo <owner/name> --batch <file of pull request numbers>
@@ -867,7 +868,7 @@ JEV head=8d2213c7a6ea7ac0359e1020edaaa7914b8f8df3 verdict=BOUNCE score=6 checks=
 
 **One question, one call, one price.** `ScoreLevels` is ten levels in a fixed order: Jev is order-sensitive, so the same ten shuffled are a different question and a score from one ordering cannot be compared with one from another. A test pins the ordering by hash. The raw provider answer travels into the ledger beside the 1-10 that was printed, so that if the provider ever answers in level *indexes* rather than in the numbering the levels carry, both numbers are on the record and somebody can tell.
 
-`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). `--ledger redis` is the ev:cards `Kind=jev` event and **refuses today**, naming #2563, because that Emit is not on dev yet — a sink that silently does nothing is worse than one that says so.
+`--ledger file` appends one JSON object per verdict (the calibration record: a friend read at the same head is later a pair with it, and the weekly false-pass rate is counted off those pairs). `--ledger redis` (or `--ledger file,redis`) writes one `kind=jev` entry on `cards:done` (the fleet Redis `--store`, default `NOVA_REDIS_ADDR`), with `--user` (alias `--store-user`) and `--password-env` (alias `--store-password-env`, default `NOVA_REDIS_BENCH_PASSWORD`).
 
 `--no-jev` runs the mechanical checks alone: no key is read, nothing is dialled, and the line prints `score=-` rather than a zero nobody gave, with `model=none cost=$0.0000`. `--record` writes each provider answer as a fixture and `--replay` reads them back, which is how the tests run: a Jev call costs money, so the 122-cell pass ran **once** (`internal/prereview/testdata/jev-2026-09-22/RUN.md` is that run's receipt) and everything since replays it.
 
