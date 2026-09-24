@@ -67,7 +67,8 @@
                (:file "src/execution-reconcile")
                (:file "src/operation-records")
                (:file "src/undo-roadmap")
-               (:file "src/undo-roadmap-rows")))
+               (:file "src/undo-roadmap-rows")
+               ))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."
@@ -123,4 +124,5 @@
                 (:file "tests/replays-undo-roadmap")
                 (:file "tests/replays-undo-roadmap-rows")
                 (:file "tests/replays-785-dep")
-                (:file "tests/integrity")))
+                (:file "tests/integrity")
+                ))
