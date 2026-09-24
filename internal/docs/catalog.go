@@ -113,6 +113,7 @@ var DefaultCatalog = []Entry{
 	E("internal/roadmap", "roadmap epics, features, and criteria parser", "go test ./internal/roadmap", "go test ./internal/roadmap"),
 	E("internal/safepath", "path sanitization and sandboxing", "go test ./internal/safepath", "go test ./internal/safepath"),
 	E("internal/sandbox", "OS isolation primitives (seatbelt/landlock)", "go test ./internal/sandbox", "go test ./internal/sandbox"),
+	E("internal/scaffold", "scaffolding engine for class rules and CLI verbs", "go test ./internal/scaffold", "go test ./internal/scaffold"),
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
 	E("internal/specwork", "worklang spec compliance checks", "go test ./internal/specwork", "go test ./internal/specwork"),
@@ -145,6 +146,8 @@ var DefaultCatalog = []Entry{
 	E("tools/agentsmap", "AGENTS.md map generator CLI", "go test ./internal/docs", "make map"),
 	E("tools/analyzers", "vetlaw verb-law analyzers", "go test ./tools/analyzers/...", "make vet-laws"),
 	E("tools/ci", "CI helper and build scripts", "go test ./internal/ci", "make test"),
+	E("tools/newrule", "class rule scaffolding CLI", "go test ./tools/newrule", "go test ./tools/newrule"),
+	E("tools/newverb", "CLI verb scaffolding CLI", "go test ./tools/newverb", "go test ./tools/newverb"),
 	E("tools/testdur", "test duration analyzer and budget checker", "go test ./tools/testdur", "go test ./tools/testdur"),
 	E("tools/testmanifest", "exact named Go test manifest checker", "go test ./tools/testmanifest", "go test ./tools/testmanifest"),
 }

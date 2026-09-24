@@ -276,6 +276,11 @@ a lenient fake ships the real thing broken, so a fake refuses what the real one
 refuses. And **tests run on the benches**: build and test on the bench the card
 names before you call anything green.
 
+**Scaffolding verbs (nova-tools#2498 S5).** Lay down skeletons with files, makefile, harness,
+and a passing fixture under write confinement:
+- `nova-ci new-rule <name>` (or `make new-rule ARGS=<name>`): lays down a new class rule skeleton (`internal/ci/<name>_class_test.go`, fixture, `make/rule_<name>.mk`).
+- `nova-ci new-verb <tool> <verb>` (or `make new-verb ARGS='<tool> <verb>'`): lays down a new CLI verb skeleton (`cmd/<tool>/<verb>.go`, test, fixture, `make/verb_<tool>_<verb>.mk`).
+
 ## How work lands
 
 1. Branch from `dev`. All merges go into `dev`; `main` is fast-forwarded from

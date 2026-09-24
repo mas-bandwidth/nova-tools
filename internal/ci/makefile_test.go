@@ -264,8 +264,17 @@ func (mk *parsedMakefile) read(t *testing.T, path string, depth int) {
 			continue
 		}
 		if m := makeIncludeRe.FindStringSubmatch(trimmed); m != nil {
+			optional := strings.HasPrefix(trimmed, "-")
 			for _, inc := range strings.Fields(mk.expand(mk.vars, m[1])) {
-				mk.read(t, filepath.Join(filepath.Dir(path), inc), depth+1)
+				targetPath := filepath.Join(filepath.Dir(path), inc)
+				matches, err := filepath.Glob(targetPath)
+				if err == nil && len(matches) > 0 {
+					for _, match := range matches {
+						mk.read(t, match, depth+1)
+					}
+				} else if !optional {
+					mk.read(t, targetPath, depth+1)
+				}
 			}
 			continue
 		}
