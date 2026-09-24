@@ -39,8 +39,8 @@ const BeatInterval = time.Second
 // native array through FCALL.
 const liveSeparator = "\x1f"
 
-// HelloRequest is one friend hello. Slots is the desired capacity; -1 keeps
-// the current value. A raise beyond the machine ceiling is refused.
+// HelloRequest is one friend hello. Slots remains in the internal request shape
+// for Redis function compatibility; hello never writes desired capacity.
 type HelloRequest struct {
 	Sprint  string
 	As      string
@@ -62,11 +62,11 @@ type HelloResult struct {
 	Claims []task.Claim
 }
 
-// Hello registers a friend (cap:log friend-up on a return), refreshes
-// its beat and then immediately takes the friend's own assigned open work. The
-// take uses the guarded task.TakeAvailable, so capacity is enforced by the
-// same Redis Function that grants the fence token; no model tokens are spent
-// looking for work.
+// Hello refreshes a registered friend (cap:log friend-up on a return), then
+// immediately takes the friend's own assigned open work. The take uses the
+// guarded task.TakeAvailable, so capacity is enforced by the same Redis
+// Function that grants the fence token; no model tokens are spent looking for
+// work.
 func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult, error) {
 	if st == nil || req.As == "" {
 		return HelloResult{}, fmt.Errorf("friend hello: store and as are required")
@@ -89,6 +89,9 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 		return HelloResult{}, fmt.Errorf("friend hello %s: unexpected reply %T", req.As, reply)
 	}
 	status := fmt.Sprint(values[0])
+	if status == "UNREGISTERED" {
+		return HelloResult{}, fmt.Errorf("UNREGISTERED %s: nova-sprint capacity friend", req.As)
+	}
 	if status != "UP" {
 		return HelloResult{}, fmt.Errorf("friend hello %s: %s", req.As, status)
 	}

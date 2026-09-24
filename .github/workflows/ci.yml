@@ -444,6 +444,20 @@ jobs:
             [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
           fi
 
+          # THE TWO HEAVIEST PACKAGES NEVER SHARE A SHARD. Dealt round-robin from the
+          # sorted list, cmd/nova-bus and cmd/nova-merge sat eight apart and so shared
+          # 2/8 studio on every push: dev run 36012558540 (studio-nova-15, Studio load
+          # 51) ran nova-bus for 773 s beside nova-merge, which hit the 18m go test
+          # timeout with 287 PASS and 0 FAIL. Dealt first, they take shards 1 and 2
+          # (and space shards 1 and 2); every package is still covered once per OS.
+          heavy=" ./cmd/nova-merge ./cmd/nova-bus "
+          front=()
+          rest=()
+          for pkg in ${all[@]+"${all[@]}"}; do
+            case "$heavy" in *" $pkg "*) front+=("$pkg") ;; *) rest+=("$pkg") ;; esac
+          done
+          all=(${front[@]+"${front[@]}"} ${rest[@]+"${rest[@]}"})
+
           if [ "${#all[@]}" -eq 0 ]; then
             echo "nothing to test for this change"
             packages='[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"space"}]'
