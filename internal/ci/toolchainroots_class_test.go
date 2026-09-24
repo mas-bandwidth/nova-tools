@@ -6,15 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/pulse"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // benchStandardScript is the LINUX provisioning standard's one admin entry, and the file
-// that carries that standard's own copy of the toolchain roots. The DARWIN standard is
-// pulse.FleetStandardChecks's darwin table -- a Mac bench is checked by `nova-pulse fleet
-// standard`, whose checks are data per operating system, and never by this script, which
-// refuses to run anywhere but on a Linux bench.
+// that carries that standard's own copy of the toolchain roots. A Mac bench has no script
+// standard (the frozen `nova-pulse fleet standard` table went with nova-pulse), so the
+// darwin side of the agreement is the wall's list alone.
 const benchStandardScript = "tools/bench-standard.sh"
 
 // toolchainRootsMarker brackets that copy. A marker rather than a grep for the variable
@@ -61,7 +59,7 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 		// THE STANDARD'S SIDE, per OS: the same agreement, read from the place that operating
 		// system's benches are actually provisioned and checked from.
 		fromStandard := standardRoots(t, root, goos)
-		if strings.Join(fromStandard, " ") != strings.Join(fromWall, " ") {
+		if fromStandard != nil && strings.Join(fromStandard, " ") != strings.Join(fromWall, " ") {
 			t.Errorf("the %s provisioning standard and the wall name different toolchain roots:\n  standard (%s): %v\n  internal/swarm/toolchain.go: %v\nThey are ONE list. Edit both sides together.",
 				goos, standardSource(goos), fromStandard, fromWall)
 		}
@@ -123,8 +121,7 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 	}
 	// The LINUX standard must also CHECK its roots, not merely declare them: a bench missing
 	// one has to drift before a card discovers it. (A darwin root is reported and never
-	// drifted on -- a Mac with no .NET is a Mac with no .NET -- which is the darwin table's
-	// MatchNonempty, asserted in standardRoots.)
+	// drifted on -- a Mac with no .NET is a Mac with no .NET.)
 	if !strings.Contains(string(rawBenchStandard(t, root)), "drift \"toolchain root ") {
 		t.Errorf("%s declares the toolchain roots but never drifts on a missing one", benchStandardScript)
 	}
@@ -132,50 +129,18 @@ func TestBenchStandardAndTheWallNameTheSameToolchainRoots(t *testing.T) {
 
 // standardSource names the file a reader edits for one OS's side of the agreement.
 func standardSource(goos string) string {
-	if goos == "linux" {
-		return benchStandardScript + " and internal/pulse/fleetstandard.go"
-	}
-	return "internal/pulse/fleetstandard.go"
+	return benchStandardScript
 }
 
 // standardRoots is the provisioning standard's own list of toolchain roots for one OS, in
-// the order it names them.
-//
-// `nova-pulse fleet standard` is the standard for EVERY bench -- its checks are data, one
-// table per operating system -- so its table is read for both. A linux bench additionally
-// has tools/bench-standard.sh, which runs ON the bench, and its marked block is held against
-// the same names: three copies of one list is exactly the shape that let the standard and
-// the wall disagree in the first place, so all three are compared rather than two.
+// the order it names them: the marked block of tools/bench-standard.sh on linux, and nil on
+// an OS with no script standard.
 func standardRoots(t *testing.T, repo, goos string) []string {
 	t.Helper()
-	var names []string
-	for _, c := range pulse.FleetStandardChecks(goos, "", "", 25) {
-		if c.Root == "" {
-			continue
-		}
-		if c.Probe == "" || c.Match == "" {
-			t.Errorf("%s: the standard's check %s names the toolchain root %s with no probe or no matcher", goos, c.Name, c.Root)
-		}
-		// A linux root is DEMANDED and a darwin root is REPORTED: a Mac's toolchains are
-		// installed rather than unpacked into a home, so which trees exist is the machine's
-		// shape and drifting on one would make every Mac bench permanently red.
-		if goos == "linux" && c.Match != pulse.MatchEquals {
-			t.Errorf("linux: the standard reports the toolchain root %s instead of demanding it (match=%s); a linux bench missing a root kills every Go card on it", c.Root, c.Match)
-		}
-		if goos == "darwin" && c.Match != pulse.MatchNonempty {
-			t.Errorf("darwin: the standard DEMANDS the toolchain root %s (match=%s); a Mac's toolchains are installed, not provisioned into a home, so its roots are reported", c.Root, c.Match)
-		}
-		names = append(names, c.Root)
-	}
 	if goos != "linux" {
-		return names
+		return nil
 	}
-	fromScript := toolchainRootsInScript(t, string(rawBenchStandard(t, repo)))
-	if strings.Join(fromScript, " ") != strings.Join(names, " ") {
-		t.Errorf("the two linux standards name different toolchain roots:\n  %s: %v\n  internal/pulse/fleetstandard.go: %v\nThey are ONE list.",
-			benchStandardScript, fromScript, names)
-	}
-	return names
+	return toolchainRootsInScript(t, string(rawBenchStandard(t, repo)))
 }
 
 // rawBenchStandard is the linux standard's script.

@@ -48,58 +48,6 @@ func cleanResultSection(resultLines []string, report string) []string {
 	return typedrec.CleanResultSection(resultLines, report)
 }
 
-// findRedLine finds a red line in resultLines or report.
-func findRedLine(resultLines []string, report string) string {
-	for _, l := range resultLines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(strings.ToLower(t), "red:") || strings.HasPrefix(strings.ToLower(t), "red ") {
-			return t
-		}
-	}
-	for _, l := range strings.Split(report, "\n") {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(strings.ToLower(t), "red:") || strings.HasPrefix(strings.ToLower(t), "red ") {
-			return t
-		}
-		if strings.HasPrefix(strings.ToUpper(t), "EVIDENCE:") {
-			parts := strings.Split(t[len("EVIDENCE:"):], "|")
-			for _, p := range parts {
-				pt := strings.TrimSpace(p)
-				if strings.HasPrefix(strings.ToLower(pt), "red:") || strings.HasPrefix(strings.ToLower(pt), "red ") {
-					return pt
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// findGreenLine finds a green line in resultLines or report.
-func findGreenLine(resultLines []string, report string) string {
-	for _, l := range resultLines {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(strings.ToLower(t), "green:") || strings.HasPrefix(strings.ToLower(t), "green ") {
-			return t
-		}
-	}
-	for _, l := range strings.Split(report, "\n") {
-		t := strings.TrimSpace(l)
-		if strings.HasPrefix(strings.ToLower(t), "green:") || strings.HasPrefix(strings.ToLower(t), "green ") {
-			return t
-		}
-		if strings.HasPrefix(strings.ToUpper(t), "EVIDENCE:") {
-			parts := strings.Split(t[len("EVIDENCE:"):], "|")
-			for _, p := range parts {
-				pt := strings.TrimSpace(p)
-				if strings.HasPrefix(strings.ToLower(pt), "green:") || strings.HasPrefix(strings.ToLower(pt), "green ") {
-					return pt
-				}
-			}
-		}
-	}
-	return ""
-}
-
 // constructPRBody builds the full PR body text from RESULT.md + REPORT + provenance table.
 func constructPRBody(resultLines []string, report string, prov Provenance) string {
 	resSection := cleanResultSection(resultLines, report)

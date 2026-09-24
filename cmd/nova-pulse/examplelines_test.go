@@ -22,12 +22,9 @@ import (
 // not another command's banner.
 //
 // The banner is read AS SOURCE, the `usage` constant beside this test, so the
-// text under test is the text a reader pastes. The fixture the launch and the
-// pool/cut blocks name is laid down by the printed setup line, from a
-// checkout-shaped temp root holding cmd/nova-pulse/testdata. Each line then
-// runs through `sh -c` with the built binary and the fixture's own stub
-// `nova-swarm` first on PATH -- the "nova-swarm must be on your PATH"
-// precondition launch documents -- and standard input closed.
+// text under test is the text a reader pastes. Each line runs through `sh -c`
+// from a checkout-shaped temp root holding cmd/nova-pulse/testdata, with the
+// built binary first on PATH and standard input closed.
 //
 // A line this card cannot make run is named in leftOwedExampleLines with the
 // refusal that earned it. It is not asserted and it is not silently dropped:
@@ -42,25 +39,13 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 		t.Fatal("the usage banner's `example:` blocks hold no line; this test would pass by running nothing")
 	}
 
-	setup := fixtureSetupLine(usage)
-	if setup == "" {
-		t.Fatalf("the usage banner has no fixture setup line, so a stranger pasting the launch and\n"+
-			"pool/cut examples names inputs they have not made (nova-tools #1455: an example\n"+
-			"exiting 2 is a broken example). The missing line is:\n  %s", wantFixtureSetup)
-	}
-
 	bin := buildPulse(t)
 
 	root := t.TempDir()
-	// The checkout shape the setup line reads: cmd/nova-pulse/testdata, with the
-	// example-pulse fixture and the sources, pool and templates the blocks name
-	// from the checkout root. Every path written is inside this t.TempDir().
+	// The checkout shape the example reads: cmd/nova-pulse/testdata, with the pool and
+	// templates the block names from the checkout root. Every path written is inside this
+	// t.TempDir().
 	copyTree(t, "testdata", filepath.Join(root, "cmd", "nova-pulse", "testdata"))
-
-	if exit, out := runPulseLine(t, root, bin, setup); exit != 0 {
-		t.Fatalf("the fixture setup line exits %d, want 0:\n  %s\nfirst output line: %s",
-			exit, setup, pulseFirstLine(out))
-	}
 
 	ran, answered := 0, 0
 	for _, line := range lines {
@@ -88,37 +73,13 @@ func TestHelpExampleLinesRunAsPrinted(t *testing.T) {
 	}
 }
 
-// wantFixtureSetup is the line a reader is owed above the first block; the test
-// finds it by shape and fails naming this when the banner loses it.
-const wantFixtureSetup = "cp -R cmd/nova-pulse/testdata/example-pulse/. ./"
-
 // leftOwedExampleLines are the lines that could not be made to run inside this
 // card's two files, by name, each with the reason. They are FINDINGS, not
 // changes: the line is still printed as written, and RESULT.md's `Left owed`
 // says so. An entry lands here only when the card's two paths cannot give it
 // what it needs -- a live queue, a key, a bench, a network, or hours of wall
 // clock -- not because this test is unwilling to run it.
-var leftOwedExampleLines = map[string]string{
-	// why: --hours 6 is a six-hour shift over a live queue, policy, bus and
-	// swarm roots; no fixture queue stands behind the paths it names, and a
-	// unit test cannot run a six-hour loop.
-	"nova-pulse manager --policy ./queue/POLICY --queue ./queue --roots ./swarm-root,./swarm-root-space --bus ./bus --as Rowan --hours 6": "the shift runs six hours against a live queue, policy, bus and swarm roots; there is no fixture behind the paths and a test cannot run a six-hour loop",
-	// why: the run loop holds for six hours and its first tick calls gh for the
-	// gate; measured, it prints PULSE WIDTH and does not exit.
-	"nova-pulse run --queue ./queue --roots ./swarm-root,./swarm-root-space --repo mas-bandwidth/nova-tools --branch dev --hours 6": "the run loop holds six hours and its first tick calls gh for the gate; measured, it prints PULSE WIDTH and does not exit, so a test cannot assert it without inventing a network and a clock",
-	// why: the line acts on the real $HOME -- run reaps dead slots and drops the
-	// build cache -- so running it in a test would delete the caller's files.
-	"nova-pulse hygiene run --home \"$HOME\"": "the line acts on the real $HOME: run reaps dead slots and drops the build cache, so running it in a test would delete the caller's files",
-	// why: the lane sweep walks the caller's real $HOME/rowan-working/tmp; the
-	// test's HOME holds no lane clones, and a fixture cannot stand behind a
-	// stranger's working directory, so the line cannot exit 0 here.
-	"nova-pulse hygiene --lane-dirs \"$HOME/rowan-working/tmp\" --older-than 2d --dry-run": "the lane sweep walks the real $HOME/rowan-working/tmp, which the test's HOME does not hold; no fixture stands behind a stranger's working directory",
-	// why: survey runs tools/bench-standard.sh over ssh on every bench in
-	// ./fleet.tsv; the file does not exist and no test may reach a machine.
-	"nova-pulse index --repo ./nova-tools --out ./index/nova-tools": "index reads a git clone at the landed tip and testdata cannot hold a .git; TestCutOnAnIssueNamingASpecIDPrintsParagraphAndGuardingTest runs this line and the cut below against a fixture repo it commits",
-	"nova-pulse cut --kind fix --repo mas-bandwidth/nova-tools --issue 2498 --title \"...\" --body-file issue.md --index ./index/nova-tools --out ./queue/pending --queue ./queue": "it reads the index the line above builds from a git clone; TestCutOnAnIssueNamingASpecIDPrintsParagraphAndGuardingTest runs it against a fixture repo",
-	"nova-pulse fleet survey --benches ./fleet.tsv": "survey runs tools/bench-standard.sh over ssh on every bench in ./fleet.tsv; the file does not exist and no test may reach a machine",
-}
+var leftOwedExampleLines = map[string]string{}
 
 // exampleBlockLines returns every command under an `example:` heading in a
 // usage banner, in banner order, across every block. A line beginning with the
@@ -146,19 +107,6 @@ func exampleBlockLines(banner string) []string {
 		}
 	}
 	return out
-}
-
-// fixtureSetupLine returns the fixture setup line the blocks read, or "" when
-// the banner loses one. It matches the shape the printed line has rather than
-// its exact prose, so the banner stays the source of truth and this test runs
-// what it carries.
-func fixtureSetupLine(banner string) string {
-	for _, line := range strings.Split(banner, "\n") {
-		if trimmed := strings.TrimSpace(line); strings.HasPrefix(trimmed, "cp -R cmd/nova-pulse/testdata/example-pulse") {
-			return strings.Join(strings.Fields(trimmed), " ")
-		}
-	}
-	return ""
 }
 
 // buildPulse builds this command into the test's own directory, so the binary

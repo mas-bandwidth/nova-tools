@@ -2,18 +2,11 @@
 # bench-runners.allow (#2932): every ssh exec site outside internal/benchsh, one row per site keyed
 # `<file> <func>` (lines move; the key does not), then TAB shape TAB retiring issue. Shrink only:
 # a new site uses internal/benchsh (`bash -s --`, script on stdin), and a retired site deletes its row.
-cmd/nova-pulse/fill.go sshCapacity.Capacity	raw: -n, script as the remote command	#3350
-cmd/nova-pulse/fillstore.go storeProbeConfig.runProbeOverSSH	raw: -n, script as the remote command	#3350
-cmd/nova-pulse/fleet.go fleetSSHRunner.Run	bash -s (one argv word "bash -s")	#3350
-cmd/nova-pulse/power.go powerSSHRunner.Run	bash -s	#3350
 cmd/nova-sprint/expire.go sshProber.Probe	raw: `exec bash -c '<script>'` as the remote command, parsed by the login shell first (#2930 rev 5, landed after the spec's 4e338a9b inventory)	#3350
 cmd/nova-swarm/bench.go prober.remote	raw argv	#3350
 internal/nsprint/deal/ssh.go remoteSession.Run	raw: DefaultRemote `exec bash -lc '...'`, parsed by the login shell first; batch on stdin	#3350
-internal/pulse/fleet.go FleetRebootInput.ssh	raw: script is the remote command, parsed by the login shell (#3291 class)	#3350
-internal/pulse/fleet.go checkFleetSeat	bash -s, no testguard.RefuseHosts	#3350
 internal/pulse/fleet.go fleetSSH	bash -s	#3350
 internal/pulse/harvestbench.go sshShell.Run	bash -s	#3350
-internal/pulse/runners.go ServiceRestarter.Restart	raw: command string to the login shell (#3291 class)	#3291 (task fix-3291-pulse-one-bash-s-runner)
 internal/release/edges.go ExecSSH.Fetch	raw argv	#3350
 internal/release/edges.go ExecSSH.Run	raw argv (exec in runCommandCapped)	#3350
 internal/release/edges.go ExecSSH.Send	raw: `mkdir -p <dest> && tar -C <dest> -xf -`; tar on stdin	#3350

@@ -78,21 +78,6 @@ func TestJobDirMapsDashSlotToPulledBenchScratch(t *testing.T) {
 	}
 }
 
-func TestJobDirMapsBenchColonSlotToScratchName(t *testing.T) {
-	root := t.TempDir()
-	pulled := filepath.Join(root, "space-2", "jobs", "card-b")
-	if err := os.MkdirAll(pulled, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(pulled, "RESULT.md"), []byte("RESULT card-b\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	got := jobDir(root, "space:2", "card-b")
-	if got != pulled {
-		t.Fatalf("jobDir(root, \"space:2\", \"card-b\") = %s, want scratchName path %s", got, pulled)
-	}
-}
-
 func TestJobDirDashWithNoJobStaysAtZero(t *testing.T) {
 	root := t.TempDir()
 	got, n := resolveJobDir(root, "-", "card-a", "RESULT card-a")

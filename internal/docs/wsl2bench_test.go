@@ -27,7 +27,7 @@ import (
 
 const (
 	wsl2BootstrapPath = "../../tools/bench-wsl2.ps1"
-	wsl2FleetSpecPath = "../../docs/spec-pulse/03-fleet.md"
+	wsl2FleetSpecPath = "../../docs/BENCH-STANDARD-WINDOWS.md"
 )
 
 func TestWSL2BootstrapScriptCarriesTheOneStepSetup(t *testing.T) {

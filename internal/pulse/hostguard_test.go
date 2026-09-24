@@ -22,33 +22,6 @@ func arm(t *testing.T) {
 	})
 }
 
-// TestTheRealSSHRunnerPanicsUnderTheGuard is the hurt of 2026-09-18 written as
-// a test: a unit test that constructs production code and injects NO fake gets
-// production's own default, and production's default is a child `ssh`. Before
-// the guard this test ran that ssh -- against a name that cannot resolve here,
-// which is the only reason it was cheap; the certify verb's first cut ran the
-// real workloads on hulk and reached redis on space the same way.
-//
-// Under NOVA_TEST_NO_HOST the seam panics and names the command line, so the
-// defect reads as what it is -- a test holding the real thing -- instead of a
-// bench that was busy or a key that was missing.
-func TestTheRealSSHRunnerPanicsUnderTheGuard(t *testing.T) {
-	arm(t)
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("the real SSHRunner ran a child under the guard; an unfaked seam must refuse before it reaches a host")
-		}
-		msg, _ := r.(string)
-		for _, want := range []string{testguard.EnvNoHost, "ssh", "bench.invalid", "testguard.AllowHosts"} {
-			if !strings.Contains(msg, want) {
-				t.Errorf("the panic must name %q so the reader sees the command and the remedy; got %q", want, msg)
-			}
-		}
-	}()
-	_, _ = SSHRunner{}.Run(context.Background(), "bench.invalid", "uptime")
-}
-
 // TestTheRealBenchShellPanicsUnderTheGuard is the same hurt one verb along.
 // `nova-pulse harvest --bench` (#1367) landed on dev after this rule was
 // written and brought its own shipped BenchShell: sshShell.Run defaults to a

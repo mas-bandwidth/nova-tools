@@ -943,10 +943,9 @@ the table that pins the name heuristic against the three false positives its
 first sweep had (`IsSHA`, `HarnessSHA256`, `hasShebang`). The guard itself is
 `internal/testguard`, held by `TestUnsetGuardLetsTheSeamRun`,
 `TestArmedGuardNamesTheCommandAndTheRemedy`, `TestAFakeOnPATHIsNotAHost` and
-`TestAllowHostsIsScopedAndNests`; the fake-less red that bought the rule is
-`TestTheRealSSHRunnerPanicsUnderTheGuard`
-(`internal/pulse/hostguard_test.go`), which constructs the real `SSHRunner`,
-injects nothing, and ran a child `ssh` before the guard existed.
+`TestAllowHostsIsScopedAndNests`. The fake-less red that bought the rule
+constructed nova-pulse's real `SSHRunner`, injected nothing, and ran a child
+`ssh` before the guard existed; it went with the frozen nova-pulse fleet verbs.
 **Its allowlist.** `internal/ci/testdata/hostseam_allowlist.txt`, one
 `file:function  # reason` per row — six today, every one a function that reaches
 its host through another function in the tree that DOES call the guard (the

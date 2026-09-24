@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"unicode"
 
 	// Aliased: `hygiene` is already a type in this package (hygiene.go:94).
 	pathglob "github.com/mas-bandwidth/nova-tools/internal/hygiene"
@@ -272,30 +271,6 @@ func launchedCardFor(launched, label string) string {
 
 func parsePATHS(text string) (globs []string, declared bool) {
 	return typedrec.ParsePaths(text)
-}
-
-// splitDeclared cuts a PATHS: value into entries on COMMAS AND WHITESPACE BOTH
-// (#2547).
-//
-// `docs/WORKER-CARDS.md` and `internal/swarm/lintheader.go` spell the line
-// `PATHS: <glob>[, <glob>...]`, and splitting on commas alone is what that
-// grammar says. The cutter in the field writes the entries separated by spaces —
-// `PATHS: docs/EVAL-MERGE-QUEUE.md internal/docs/eval_merge_queue_test.go` — and
-// on 2026-09-22 that turned the whole line into ONE glob, which contains a space
-// and therefore matches no path in any repository. Every declared file then came
-// back as an offender, and fourteen finished cards were refused every pass with
-// a `files=` list identical to their own PATHS line.
-//
-// Reading both separators is not a widening of the guard. A repository path with
-// a space in it cannot be expressed by either grammar, so the only diffs the old
-// split could ever have cleared are diffs this one clears too; what it can no
-// longer do is silently judge a whole line as one unmatchable glob. The rule
-// that a card's bound is validated (`hygiene.ValidatePaths`, at `cut`) is
-// unchanged and lives where it always did.
-func splitDeclared(rest string) []string {
-	return strings.FieldsFunc(rest, func(r rune) bool {
-		return r == ',' || unicode.IsSpace(r)
-	})
 }
 
 func declaredCovers(globs []string, p string) bool {

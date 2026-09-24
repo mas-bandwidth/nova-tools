@@ -568,7 +568,7 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 
 ### Mapping durable slots to the card-attempt lifecycle (SPEC-AHEAD: #2045, #2040)
 
-[SPEC-PULSE's durable launch section](SPEC-PULSE.md#durable-launch-attempts-and-fleet-control-spec-ahead-2045-2040-2022)
+SPEC-PULSE's durable launch section
 is the one authoritative card-attempt lifecycle. Rules 17 and 18 below remain its swarm-side
 ownership mechanism rather than a competing lease authority: the reserved placeholder is
 `CLAIMED`, spawn is `STARTING`, and only the lifecycle's typed, fully bound acknowledgement

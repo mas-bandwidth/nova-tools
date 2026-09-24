@@ -257,59 +257,6 @@ func TestHarvestWorkingRefusesToPushAKeyShape(t *testing.T) {
 	}
 }
 
-// TestManagerOpenPRRefusesToPushAKeyShape: the manager tier pushed the branch and copied
-// the same lines into the PR body with no scan.
-func TestManagerOpenPRRefusesToPushAKeyShape(t *testing.T) {
-	root, specs, arglog := setupPulse(t)
-	fakeTool(t, specs, "git", fakeSpec{Log: arglog})
-	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 1, Equals: "pr", Stdout: "[]"}}})
-
-	queue := filepath.Join(root, "queue")
-	for _, d := range []string{"launched", "failed", "done"} {
-		if err := os.MkdirAll(filepath.Join(queue, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(queue, "launched", "leaky.md"), []byte("card\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	job := filepath.Join(root, "swarm", "jobs", "leaky")
-	if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	lines := []string{"RESULT leaky sha=abc", "DONE", "BRANCH rowan/leaky", "REPO owner/repo",
-		"red: TestThing", "out: " + secretFixture()}
-
-	var out bytes.Buffer
-	m := &manager{in: ManagerInput{Queue: queue, Stdout: &out, Stderr: &out}, out: bound(&out, 20)}
-	m.openPR("leaky.md", job, lines)
-
-	if m.prs != 0 {
-		t.Fatalf("the manager opened %d PRs for a card carrying a key shape", m.prs)
-	}
-	if !strings.Contains(out.String(), "MANAGER REFUSED") || !strings.Contains(out.String(), "secret-shape") {
-		t.Fatalf("no manager refusal line:\n%s", out.String())
-	}
-	for _, l := range arglogLines(t, arglog) {
-		if arglogPushed(l) || arglogOpenedOrEditedPR(l) {
-			t.Fatalf("the quarantined card reached the forge: %s", l)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(root, "swarm", "quarantine", "leaky.md")); err != nil {
-		t.Fatalf("the job was not quarantined: %v", err)
-	}
-	human, err := os.ReadFile(filepath.Join(queue, "HUMAN"))
-	if err != nil {
-		t.Fatalf("no HUMAN line in the queue: %v", err)
-	}
-	if !strings.Contains(string(human), "HUMAN task=secret") || strings.Contains(string(human), secretFixture()) {
-		t.Fatalf("HUMAN line: %s", human)
-	}
-	if strings.Contains(out.String(), secretFixture()) {
-		t.Fatal("the refusal printed the matched text")
-	}
-}
-
 // --- Johnny's second HOLD: an unread diff must refuse, never pass as clean ---------------
 
 // The guard used to fail OPEN: harvestDiff returned an empty diff on error, the RESULT.md
@@ -389,33 +336,6 @@ func TestHarvestWorkingRefusesAnUnreadDiff(t *testing.T) {
 	}
 	if _, err := os.Stat(job); err != nil {
 		t.Errorf("an unread diff quarantined the job; nothing was found, so it is left alone: %v", err)
-	}
-}
-
-func TestManagerRefusesAnUnreadDiff(t *testing.T) {
-	root, specs, arglog := setupPulse(t)
-	fakeTool(t, specs, "git", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 3, Equals: "diff", Exit: 128, Stderr: "fatal: bad revision"}}})
-	fakeTool(t, specs, "gh", fakeSpec{Log: arglog, Rules: []fakeRule{{Arg: 1, Equals: "pr", Stdout: "[]"}}})
-
-	queue := filepath.Join(root, "queue")
-	for _, d := range []string{"launched", "failed", "done"} {
-		if err := os.MkdirAll(filepath.Join(queue, d), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(queue, "launched", "clean.md"), []byte("card\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	job := filepath.Join(root, "swarm", "jobs", "clean")
-	if err := os.MkdirAll(filepath.Join(job, "repo"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	m := &manager{in: ManagerInput{Queue: queue, Stdout: &out, Stderr: &out}, out: bound(&out, 20)}
-	m.openPR("clean.md", job, []string{"RESULT clean sha=abc", "DONE", "BRANCH rowan/clean", "REPO owner/repo", "red: T"})
-	assertDiffUnread(t, "manager", "", out.String(), arglog)
-	if m.prs != 0 {
-		t.Fatalf("the manager opened %d PRs behind an unread diff", m.prs)
 	}
 }
 

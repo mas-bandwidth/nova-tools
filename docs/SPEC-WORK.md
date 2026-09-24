@@ -2646,7 +2646,7 @@ untouched, and the one older sentence the amendment replaces is the decisions-pe
 
 ## Rate and convergence, applied *(Rowan, on Glenn's word of 2026-09-15, #553)*
 
-The nine rules of [SPEC-PULSE.md](SPEC-PULSE.md)'s **Rate and convergence**, measured on
+The nine rules of SPEC-PULSE.md's **Rate and convergence**, measured on
 2026-09-15, hold for nova-work's resident session and never drift. For nova-work:
 
 - the resident session runs the same tick and pool floor over the tree (#500);

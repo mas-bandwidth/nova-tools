@@ -280,3 +280,7 @@ func readTail(path string, n int) string {
 	}
 	return s
 }
+
+// captureHeadBytes is how much of a harness capture the diagnosis reads. A capture holds a
+// whole transcript; the start-time failure this is looking for is in its first breath.
+const captureHeadBytes = 64 << 10
