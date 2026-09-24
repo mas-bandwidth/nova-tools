@@ -24,7 +24,7 @@ func (c laneCap) Capacity(bench string) (int, error) { return c[bench], nil }
 // laneLauncher records one line per launched card, bench then card.
 type laneLauncher struct{ calls []string }
 
-func (l *laneLauncher) Launch(bench, card string) error {
+func (l *laneLauncher) Launch(bench, seat, card string) error {
 	l.calls = append(l.calls, bench+" "+card)
 	return nil
 }
@@ -216,7 +216,7 @@ type failingLauncher struct {
 	calls int
 }
 
-func (l *failingLauncher) Launch(bench, card string) error { l.calls++; return l.err }
+func (l *failingLauncher) Launch(bench, seat, card string) error { l.calls++; return l.err }
 
 // deadCapacity refuses every capacity read, as an unreachable bench does.
 type deadCapacity struct{ err error }
@@ -320,7 +320,7 @@ type oneFailingLauncher struct {
 	seen  []string
 }
 
-func (l *oneFailingLauncher) Launch(bench, card string) error {
+func (l *oneFailingLauncher) Launch(bench, seat, card string) error {
 	l.calls++
 	l.seen = append(l.seen, filepath.Base(card))
 	if filepath.Base(card) == l.fail {

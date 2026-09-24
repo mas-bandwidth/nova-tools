@@ -146,7 +146,9 @@ func ProposeFloors(reg *Registry, entries []Entry) (FloorProposals, error) {
 				continue
 			}
 			if unitOK[unit] {
-				stood[kind] = append(stood[kind], e.Confidence)
+				if e.Confidence != nil {
+					stood[kind] = append(stood[kind], *e.Confidence)
+				}
 				continue
 			}
 			// Blank or pending outcome: the work has not settled.
@@ -159,8 +161,12 @@ func ProposeFloors(reg *Registry, entries []Entry) (FloorProposals, error) {
 			failed[kind]++
 			continue
 		}
+		// A provider row that carried no confidence is no sample of one: an
+		// absence proposes nothing, where a zero would drag the floor down.
 		if entrySettledSuccess(e) {
-			stood[kind] = append(stood[kind], e.Confidence)
+			if e.Confidence != nil {
+				stood[kind] = append(stood[kind], *e.Confidence)
+			}
 			continue
 		}
 		// Blank or pending: skip.

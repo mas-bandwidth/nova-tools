@@ -200,7 +200,7 @@ func (out workingOutcome) with(class jobClass) workingOutcome {
 // one disposes exactly one job by its own two lines and the typed class.
 func (r *workingRun) one(j harvestJob) workingOutcome {
 	clone := cloneDir(j.dir)
-	body, err := os.ReadFile(filepath.Join(j.dir, "RESULT.md"))
+	body, err := readResult(filepath.Join(j.dir, "RESULT.md"))
 	if err != nil {
 		return workingOutcome{class: classFailed, line: r.jobLine(j, classFailed, "-", "-", "-")}
 	}

@@ -21,7 +21,7 @@ func (c robinCap) Capacity(bench string) (int, error) { return c[bench], nil }
 // robinLauncher records one "bench card" line per launch, in launch order.
 type robinLauncher struct{ calls []string }
 
-func (l *robinLauncher) Launch(bench, card string) error {
+func (l *robinLauncher) Launch(bench, seat, card string) error {
 	l.calls = append(l.calls, bench+" "+filepath.Base(card))
 	return nil
 }

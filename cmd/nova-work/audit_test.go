@@ -26,6 +26,11 @@ var workAudit = audit.Config{
 	// same shape. It cannot return an unescaped string, so the tripwire counts it.
 	Escapers: []string{"oneline.Quote", "field"},
 	Imports: []string{
+		// bounded is the capped line writer the dogfood report (#2762) and visualize
+		// (#2883) print through: every line it takes is already escaped by the caller,
+		// and it escapes the remedy it writes. Listed before #2623 removed its last
+		// caller; restored with these two.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		// buildinfo answers which build this is; its Line renders every field through
 		// oneline.Field itself, and the version print site wraps the result in
 		// oneline.Escape so the tripwire sees the escape.
@@ -33,6 +38,11 @@ var workAudit = audit.Config{
 		// jobs holds the graph values this binary reads and prints through oneline
 		// fields; it writes nothing and reaches no network.
 		`"github.com/mas-bandwidth/nova-tools/internal/jobs"`,
+		// decide is the ladder `next` routes over. It is the seam onto
+		// nova-decide's own rules, it prints nothing itself, and every field of
+		// its answer that reaches a NEXT line goes through an oneline escape
+		// here -- the rung and the reason both.
+		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// swarm holds clip: it commits the card's branch, harvests the result and
 		// resets the worktree with git, printing nothing; every path it is handed
 		// comes from a flag and the one CLIP line goes through oneline fields.
@@ -40,6 +50,8 @@ var workAudit = audit.Config{
 		// worklang is the bounded plan reader; it parses bytes into values and every
 		// field it yields is printed through oneline.
 		`"github.com/mas-bandwidth/nova-tools/internal/worklang"`,
+		// workreconcile is the E09 proving run and reconciliation engine (Issue #2082).
+		`"github.com/mas-bandwidth/nova-tools/internal/workreconcile"`,
 		// workclient is the S1 socket wire: it dials the session socket and writes the
 		// request line, and writes nothing to stdout or stderr, so every byte a caller
 		// reads is still printed by an escaped site in this package.
@@ -68,20 +80,6 @@ var workAudit = audit.Config{
 		// names and prints nothing: every name it yields reaches stdout only through an
 		// oneline field on a SET line in this package.
 		`"encoding/json"`,
-		// record holds the durable card-result values and the store and consumer the
-		// record verbs drive. It writes only through the store; every row it formats
-		// goes out through record.FormatRow, which renders each field through
-		// oneline.Field.
-		`"github.com/mas-bandwidth/nova-tools/internal/record"`,
-		// bounded is the capped line writer `results` prints through; every line it
-		// takes is already a record.FormatRow, and it escapes the remedy it writes.
-		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
-		// context carries cancellation into the Redis consumer; it writes nothing.
-		`"context"`,
-		// time is the clock behind the deps seam and the durations --deadline and
-		// --since parse; the two durations a refusal names are rendered through
-		// oneline.Escape before they reach a line.
-		`"time"`,
 		// sort orders socketverbs.go's derived lists -- the sub-verbs a family
 		// refusal names and the whole socket verb set a test walks -- so that
 		// two runs print one line. It reorders strings this package already
@@ -94,9 +92,28 @@ var workAudit = audit.Config{
 		// bytes holds set check's SET EVAL lines until the findings are printed; every
 		// line in it was already written through the escaped sites of setland.go.
 		`"bytes"`,
+		// The push verb's edges. redisq is the ready set both this binary and nova-swarm
+		// reach through; it takes a map of fields and returns an id, and every field it
+		// hands back reaches stdout through an oneline field on the PUSH line here.
+		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
+		// crypto/rand and encoding/hex mint the directory mode's card id, which Redis
+		// mints for itself. They produce hex bytes and print nothing.
+		`"crypto/rand"`,
+		`"encoding/hex"`,
 		// path/filepath names the temp file --write-status renames over the work set,
-		// beside it in the same directory; it prints nothing.
+		// beside it in the same directory, and takes the push verb's card label off the
+		// --card path with Base and Ext. It writes nothing, and the label it yields is
+		// refused unless it matches [A-Za-z0-9._-]+ before it ever reaches a line.
 		`"path/filepath"`,
+		// regexp holds that one anchored label pattern and nothing else; it matches and
+		// prints nothing.
+		`"regexp"`,
+		// strconv renders --priority and the id fallback as digits. A number has nothing
+		// in it to escape, which is the audit's own numeric case.
+		`"strconv"`,
+		// safepath validates --stream so that directory-mode streams cannot escape the
+		// queue root; it matches and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/safepath"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
 	},
 	MinClassified: 10,

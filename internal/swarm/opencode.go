@@ -123,6 +123,52 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 	return foldOpenCodeRows(rows)
 }
 
+// LiveSampleLimit is what ONE live sample is given, whatever the interval (SPEC-SWARM rule
+// 13d): "a read is given 5 seconds whatever the interval, no sample starts while one is
+// unanswered, a read still unanswered at its limit is abandoned and counted as a failed
+// read". It is a fixed number rather than a function of the interval because at a short
+// interval three slow reads would end an honest card `budget-unverifiable`.
+const LiveSampleLimit = 5 * time.Second
+
+// ReadJobUsageLive is rule 13d's LIVE sample: the same statement readOpenCodeUsage runs,
+// against the same database at the same two spellings, and different from it in exactly two
+// ways that the rule names.
+//
+// IT WAITS FOR NO CHECKPOINT. "A sample reads what the database holds through whatever
+// write-ahead log lies beside it, which is the ordinary state of a database a live harness
+// has open, and it waits for no checkpoint; rule 13's five-second wait belongs to the final
+// read, made when the harness is gone." A live sample that waited for a checkpoint would
+// wait on a writer that is still running and has no reason to close its connection.
+//
+// AND IT IS BOUNDED BY LiveSampleLimit, not by the tool's 20-second query timeout: a sample
+// that hung for twenty seconds would be a sample that cannot run at a five-second interval.
+//
+// A DATABASE THAT IS NOT THERE IS NOT AN ERROR, exactly as in the final read: it is the
+// harness having reported nothing yet, which is an absence and not a failure. The three
+// cases rule 13d keeps apart -- nothing observed, a partial observation, a read that FAILS
+// -- are the caller's to tell apart, and this function's error is the third of them.
+func ReadJobUsageLive(dataHome string) (ProviderUsage, error) {
+	path, err := findOpenCodeStore(dataHome)
+	if err != nil {
+		return ProviderUsage{}, err
+	}
+	if path == "" {
+		return ProviderUsage{Values: map[string]string{}}, nil
+	}
+	if _, err := exec.LookPath(SQLiteBinary); err != nil {
+		return ProviderUsage{}, fmt.Errorf("%w: the usage source %s could not be read: %s is not on PATH, and `usage: opencode` reads that database with `%s -readonly`",
+			ErrNoSQLite, path, SQLiteBinary, SQLiteBinary)
+	}
+	rows, err := queryOpenCode(path, LiveSampleLimit)
+	if err != nil {
+		return ProviderUsage{}, err
+	}
+	if len(rows) == 0 {
+		return ProviderUsage{Values: map[string]string{}}, nil
+	}
+	return foldOpenCodeRows(rows)
+}
+
 // findOpenCodeStore is the first of the standard locations that holds a database, or an
 // empty path when none does. A location that exists but cannot be stat'd is an error, not a
 // silent absence: the path is this tool's own and a read that stopped is a fact.

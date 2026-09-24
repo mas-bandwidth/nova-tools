@@ -69,9 +69,48 @@ nova-work is in this release, and Glenn's bar is that it ships finished, dogfood
 
 - every blocker above closed with a landed fix and a test, not a rerun;
 - 22 of 22 tools clean in the dogfood, which today means the `docs/TESTS.md` drift closed;
-- nova-work's 231 criteria verified, which today stands at 155.
+- nova-work's 231 criteria verified, which today stands at 157.
 
 No date is promised here and no estimate is given. The numbers move when the evidence moves.
+
+
+## Standing rulings and the Glenn's-hands queue
+
+nova-tools [#2065](https://github.com/mas-bandwidth/nova-tools/issues/2065) (parent: the coordinator-handover tracking issue). Glenn's lens, 2026-09-20, verbatim: *"Everything that you have done as coordinator in the past few days, is something that Stella needs to be able to do easily."* A handover cannot carry what only one assistant's memory holds, so what Glenn has ruled, and what is waiting on an act only he can do, are records in this repo: before this section the rulings were verbatim quotes scattered through cairns and one assistant's memory files, and each request to Glenn was a chat message that scrolled away. Both registers are inputs to a handover. The rest of #2065's ask — `docs/RULINGS.md` or a sexp as the primary form, a verb to add a ruling from a quote, and `nova-pulse hands` showing the queue in the brief — is the follow-up; until it lands, this section is the record.
+
+### Standing rulings
+
+A ruling is applied as written until its superseded-by names a successor. A date of 2026-09-20 (cairn) is the day #2065 read the ruling out of the cairns and one assistant's memory; the words are the cairn form as #2065 quoted them, and the ruling's own verbatim words and date are to be attached by the rulings verb #2065 asks for. R-13 already carries its verbatim words and its own date. Who may apply: **coordinator** (Rowan today, Stella in a handover), **friends** (every friend, under the same rules).
+
+| ID | Date | Verbatim words | Scope | Who may apply | Superseded-by |
+|---|---|---|---|---|---|
+| R-01 | 2026-09-20 (cairn) | free route first with a short deadline, paid fallback | routing a card's work | coordinator | — |
+| R-02 | 2026-09-20 (cairn) | cheapest good model wins, log every route | model choice on any route | coordinator, friends | — |
+| R-03 | 2026-09-20 (cairn) | every bench runs any card (one bench standard) | the bench fleet | coordinator | — |
+| R-04 | 2026-09-20 (cairn) | fleet setup is zero manual steps | fleet onboarding | coordinator, friends | — |
+| R-05 | 2026-09-20 (cairn) | rent before buy | spend on machines | coordinator | — |
+| R-06 | 2026-09-20 (cairn) | never chase a moving dev, adopt at a frozen sha | adopting upstream | coordinator, friends | — |
+| R-07 | 2026-09-20 (cairn) | canary five before widening | rollout of a change | coordinator | — |
+| R-08 | 2026-09-20 (cairn) | a failed card is parked after two tries and raised | card lifecycle | coordinator | — |
+| R-09 | 2026-09-20 (cairn) | count nova-work from the sexp, not ROADMAP.md | the numbers on this page | coordinator, friends | — |
+| R-10 | 2026-09-20 (cairn) | friends fix what they find | friends' work | friends | — |
+| R-11 | 2026-09-20 (cairn) | the coordinator may force-push under lease to fix a break | repair of a break | coordinator | — |
+| R-12 | 2026-09-20 (cairn) | a lone two-parent merge of dev is acceptable for Lisp PRs (Emma), with Stella's scoped-policy caveat | the merge lane, Lisp PRs | coordinator | — |
+| R-13 | 2026-09-18 | *"drop the native windows CI runners. WSL only from now on."* (WSL-only; carried by [docs/SPEC-CI.md](docs/SPEC-CI.md) and `internal/docs/wsl2bench_test.go`) | benches and CI legs | coordinator, friends | — |
+| R-14 | 2026-09-20 (cairn) | friends' standing rules are the same as the coordinator's; Stella: UNKNOWN is never requeued; Johnny: what a wake may execute | friends' standing rules | friends | — |
+
+### The Glenn's-hands queue
+
+A row is a request waiting on an act only Glenn can do, with the exact command or decision wanted, why it is wanted, what it blocks, and its state. State is asked, done, or verified; verified names who verified it and how, and a row leaves the queue only on verified. The exact-command-or-decision field carries the command or decision word for word from its source, or says `unavailable` with where the words were and marks the row **incomplete**. An incomplete row is an index entry, not a request a handover can act on or verify: the only act on it is to re-ask Glenn for the exact wording and record it here, and it cannot move to done or verified until that field is filled. The 2026-09-20 set as #2065 carried it (why and blocks are the coordinator's reading of the ask; Glenn's answer replaces them). #2065 and the repo hold only these labels, not the words, so every row below is incomplete:
+
+| ID | Wanted | Exact command or decision | Why | Blocks | State |
+|---|---|---|---|---|---|
+| H-01 | the sshd limits commands run on the two Macs (handed over in chat; one failed silently, re-asked) | unavailable: the commands were handed over in chat on 2026-09-20 and are in no repo record; which one failed silently is not recorded either | the two Macs take bench work under sshd limits | the two Macs as benches | asked 2026-09-20; re-asked (one command failed silently); not verified; **incomplete** |
+| H-02 | the bench user ruling | unavailable: the decision asked for was a chat message on 2026-09-20 and is in no repo record | the user a bench acts as is ruled once for the fleet | bench setup past R-04's zero manual steps | asked 2026-09-20; not verified; **incomplete** |
+| H-03 | the one Go version | unavailable: which Go version was asked about was a chat message on 2026-09-20 and is in no repo record | every bench runs any card, so the fleet runs one Go version | a go.mod bump gating on every bench (#1500) | asked 2026-09-20; not verified; **incomplete** |
+| H-04 | scoped provider keys with caps for hetzner | unavailable: the key scopes and caps asked for were a chat message on 2026-09-20 and are in no repo record | paid routes run under caps, not open keys | hetzner as a provider under spend control | asked 2026-09-20; not verified; **incomplete** |
+| H-05 | a darwin-x64 harness download | unavailable: the download (harness, version, URL) asked for was a chat message on 2026-09-20 and is in no repo record | a darwin-x64 bench runs the harness like any bench | darwin-x64 in the bench fleet | asked 2026-09-20; not verified; **incomplete** |
+| H-06 | spend limits | unavailable: the limits and the routes they cover were a chat message on 2026-09-20 and are in no repo record | paid routes need a ceiling only Glenn can set | the spend cap holding on paid routes (#1545) | asked 2026-09-20; not verified; **incomplete** |
 
 
 ## nova-work
@@ -79,7 +118,7 @@ No date is promised here and no estimate is given. The numbers move when the evi
 Help AI friends coordinate work without repeatedly rebuilding the plan in their context.
 
 **Measured 2026-09-19 at `dev` [`4c793b55`](https://github.com/mas-bandwidth/nova-tools/commit/4c793b55a30160e5fe1ed45e25928f2c85dcfe5c).**
-**155 of 231 acceptance criteria verified (67%). 23 of 63 features verified (37%).**
+**157 of 231 acceptance criteria verified (68%). 24 of 63 features verified (38%).**
 A criterion is ticked here only when a named test proves it and that test passed at this exact revision. The run is `cd lisp/nova-work && ./run-tests.sh` — `NOVA-WORK SLICE1 total=336 pass=336 fail=0`. Every ticked criterion names its tests under the feature.
 The page said 0% until today. That was stale, not cautious: the work was there and the page had no way to show it. Each feature now carries `criteria verified / criteria total`, so a feature four-fifths done reads as four-fifths done instead of as nothing.
 
@@ -110,10 +149,10 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 | [Persistence, closed history and recovery](#e06) | 5 | 15/16 | 4/5 |
 | [Roadmap views and Fixed Tables pilot parity](#e07) | 6 | 10/20 | 1/6 |
 | [Coordinator protocol, friends and execution records](#e08) | 5 | 23/32 | 1/5 |
-| [Issue intake, migration and external boundaries](#e09) | 5 | 7/15 | 1/5 |
+| [Issue intake, migration and external boundaries](#e09) | 5 | 9/15 | 2/5 |
 | [Diagnostics, measurement and release gates](#e10) | 7 | 16/27 | 2/7 |
 | [Delegation](#e11) | 6 | 19/27 | 3/6 |
-| **Total** | **63** | **155/231** | **23/63** |
+| **Total** | **63** | **157/231** | **24/63** |
 
 ## Scope movement
 
@@ -881,7 +920,7 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 | Feature | Criteria verified | Verified |
 |---|:---:|:---:|
-| E09-F01 — Non-destructive issue inventory and capture | 1/3 | ❌ |
+| E09-F01 — Non-destructive issue inventory and capture | 3/3 | ✅ |
 | E09-F02 — Link mode and correspondence reconciliation | 1/3 | ❌ |
 | E09-F03 — Lossless resumable initial migration | 2/3 | ❌ |
 | E09-F04 — Explicit absorb operation and deletion gate | 0/3 | ❌ |
@@ -894,8 +933,8 @@ Verified criteria evidence at dev `4c793b55`, suite `lisp/nova-work/run-tests.sh
 
 Prerequisites: E06-F05.
 
-- [ ] Capture stable provider/repository/issue identity, revision and URL
-- [ ] Preserve body, comments, labels, relationships, attachments and pagination
+- [x] Capture stable provider/repository/issue identity, revision and URL
+- [x] Preserve body, comments, labels, relationships, attachments and pagination
 - [x] Keep inaccessible or unsupported fields explicit
 
 Source sections: Public issue correspondence survives intake; Source inventory; Archive completeness.

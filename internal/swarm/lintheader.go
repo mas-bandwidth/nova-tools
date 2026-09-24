@@ -40,8 +40,8 @@ import (
 //     below for why the case-sensitive `^[A-Z][A-Z-]*:` this used to be was a defect);
 //   - `PATHS: none` declares no paths; otherwise the value is comma-separated
 //     (cardheader.go:82-88);
-//   - `TEST: none` is a declaration; otherwise the value is exactly two fields, the
-//     second matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
+//   - `TEST: none` is a declaration where the kind allows it; otherwise the value is
+//     exactly two fields, the second matching `^Test[A-Za-z0-9_]*$` (cardheader.go:89-108);
 //   - KIND, PATHS and TEST are the three a gated card must carry (cardheader.go:138-150).
 //
 // THE PARSER IS CITED; THE VALIDATOR IS CALLED. `internal/pulse` still does not carry
@@ -194,6 +194,11 @@ func cardHeaderBlock(raw []byte) (block map[string]headerField, stranded map[str
 // cardTypedKeys is the five lines SPEC-TOOLWORK.md §5 rule 1 names, as a set.
 var cardTypedKeys = map[string]bool{"KIND": true, "PATHS": true, "TEST": true, "LEGS": true, "SOURCE": true}
 
+// ungatedKinds is the set of kinds that may carry TEST: none. It matches the third
+// column of internal/hygiene/kinds.txt (SPEC-TOOLWORK.md §5 rule 2: read, probe, text,
+// tone, report) until internal/pulse/kinds.go lands with the gate table.
+var ungatedKinds = map[string]bool{"read": true, "probe": true, "text": true, "tone": true, "report": true}
+
 // cardKeyCheck is the token that answers for each typed key. LEGS: and SOURCE: have no
 // token of their own, so a stranded or repeated one answers under `kind-declared`, which
 // is the token for "the typed header is not the header the gate will read".
@@ -327,7 +332,11 @@ func LintCardHeader(raw []byte, trust TrustState, required bool) []CardHeaderFin
 	case !test.found:
 		add("test-named", 1, "no TEST: line under the contract line")
 	case test.value == "none":
-		// a declaration: the kind declares no gate (cardheader.go:91-94)
+		// TEST: none is only a declaration for ungated kinds; gated kinds strictly
+		// require a reproducing test (SPEC-TOOLWORK.md §5 rule 1, rule 2).
+		if kind.value != "" && !ungatedKinds[kind.value] {
+			add("test-named", test.line, fmt.Sprintf("TEST: none is not allowed for kind %q; gated kinds require `TEST: <package> <TestName>`", kind.value))
+		}
 	case test.value == "":
 		add("test-named", test.line, "TEST: with no package and no test name after it")
 	default:

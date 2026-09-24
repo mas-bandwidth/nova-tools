@@ -198,3 +198,114 @@ func Parse(s string) (Fields, bool) {
 	}
 	return f, true
 }
+
+// Source is the structured view of WHERE a binary was built from. The version line has
+// always carried an unstructured "the stamp this build reports"; Source is what the stamp
+// is verified against: every stamp read at the gate -- apply --sha's postflight, the
+// snapshot, `moved`'s per-revision readback -- also reads this four-field shape and
+// refuses a binary that names a different checkout, a different revision, a dirty tree,
+// or a different build host than the manifest recorded. A build from the wrong
+// repository that happens to carry the requested linker stamp cannot pass (#2291,
+// SPEC-VERSION item 6).
+//
+// All four fields are always written together, so the round-trip is unambiguous: a Source
+// the reader can extract is one the writer wrote whole. A version line that carries some
+// but not all of the four is read as "no source": a half-present source is a source the
+// reader cannot verify, and a silent disagreement is worse than a refusal.
+type Source struct {
+	// Repository is the checkout the build came from, e.g. "github.com/owner/repo". A
+	// build from a different repository cannot pass even if the linker stamp matches.
+	Repository string
+	// Revision is the full SHA the build was cut at, or its 12-hex prefix. Two builds
+	// of two adjacent commits already disagree on this field, and a binary that names
+	// the wrong revision is a different build.
+	Revision string
+	// Dirty is true when the source tree carried uncommitted changes at build time. A
+	// release binary whose tree was dirty at the build is not the commit it names, and
+	// this field is what a reader verifies it against.
+	Dirty bool
+	// BuildHost is the hostname the build ran on. Two hosts cutting the same commit
+	// produce the same stamp but different artifacts, and this field is what tells
+	// them apart.
+	BuildHost string
+}
+
+// Extras returns the Source as a slice of key=value tokens, the shape Line takes as its
+// variadic extras. The four tokens appear in a fixed order -- repo, revision, dirty,
+// build_host -- so the writer and the reader cannot disagree about which field is
+// which. Dirty is ALWAYS emitted (true OR false), because a Source the reader can
+// extract is one the writer wrote whole, and a missing dirty field is a Source the
+// reader is forced to refuse (#2291).
+func (s Source) Extras() []string {
+	return []string{
+		"repo=" + s.Repository,
+		"revision=" + s.Revision,
+		"dirty=" + strconv.FormatBool(s.Dirty),
+		"build_host=" + s.BuildHost,
+	}
+}
+
+// LineWithSource is the version line the build stamps into a binary, with Source
+// metadata attached. It is the writer `apply --sha` uses on every binary it builds, so
+// the postflight can read source back with FindSource and verify it against the manifest
+// the build recorded.
+//
+// The four mandatory tokens come first, the four source tokens follow in Extras() order,
+// and any extras the caller wants to add (a file digest, a backend label) come after.
+// Writer and reader are the one pair this package has always been, so a Source round-
+// trips through Line and Parse into itself: a tool that adds a fact cannot break a
+// consumer that has never heard of it, and a reader that has never seen the source
+// metadata reads the four tokens it knows and ignores the rest (#1297).
+func LineWithSource(tool, stamped string, src Source, extras ...string) string {
+	all := append(src.Extras(), extras...)
+	return Line(tool, stamped, all...)
+}
+
+// sourceKeys is the set of keys FindSource reads from Extras.
+var sourceKeys = map[string]bool{"repo": true, "revision": true, "dirty": true, "build_host": true}
+
+// FindSource returns the Source the fields carry, or false. The four source keys are
+// the only ones FindSource reads: anything else in the extras -- nova-merge's
+// `build=<hex>`, nova-sandbox's `backend=` -- is ignored. A version line that carries
+// none of the four is reported with ok=false: old binaries, foreign tools, and a `go
+// install` from a tag never had this, and "no Source" is the honest answer. A version
+// line that carries SOME but not ALL of the four is ALSO reported with ok=false: a
+// partial source is a source the reader cannot verify, and the gate must refuse it
+// rather than guess at the missing field (#2291, SPEC-VERSION item 6).
+//
+// A malformed dirty token (anything other than "true" or "false") is refused: a value
+// like `dirty=maybe` is not a clean source and must not be silently accepted as
+// dirty=false. Duplicate source keys are also refused: two `repo=` entries in the
+// same line are a contradiction the reader cannot resolve.
+func (f Fields) FindSource() (Source, bool) {
+	// Count source keys to detect duplicates.
+	counts := map[string]int{}
+	for _, e := range f.Extras {
+		if k, _, found := strings.Cut(e, "="); found && sourceKeys[k] {
+			counts[k]++
+			if counts[k] > 1 {
+				return Source{}, false
+			}
+		}
+	}
+
+	repo, hasRepo := f.Extra("repo")
+	rev, hasRev := f.Extra("revision")
+	dirty, hasDirty := f.Extra("dirty")
+	host, hasHost := f.Extra("build_host")
+	if !hasRepo && !hasRev && !hasDirty && !hasHost {
+		return Source{}, false
+	}
+	if !hasRepo || !hasRev || !hasDirty || !hasHost {
+		return Source{}, false
+	}
+	if dirty != "true" && dirty != "false" {
+		return Source{}, false
+	}
+	return Source{
+		Repository: repo,
+		Revision:   rev,
+		Dirty:      dirty == "true",
+		BuildHost:  host,
+	}, true
+}

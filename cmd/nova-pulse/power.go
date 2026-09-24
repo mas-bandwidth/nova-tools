@@ -1,7 +1,8 @@
 package main
 
 // The Mac-bench power verbs, `nova-pulse wake` and `nova-pulse sleep` (card 9344, #1142).
-// They replace scripts/coordination/fleet-wake.sh and fleet-sleep.sh, which woke a sleeping
+// They replace the retired coordination scripts fleet-wake.sh and fleet-sleep.sh, which are
+// no longer in the tree; they woke a sleeping
 // iMac Pro by magic packet from the LAN bench and let it sleep again on idle. The Macs draw
 // 100 W each and the fleet runs on solar, so an idle bench sleeping is the point.
 //

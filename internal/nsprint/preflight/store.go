@@ -127,7 +127,9 @@ func parseStamp(s string) (time.Time, bool) {
 	return stamp(v), true
 }
 
-func secs(d time.Duration) string { return fmt.Sprintf("%ds", int64(d.Round(time.Second)/time.Second)) }
+func wholeSecs(d time.Duration) string {
+	return fmt.Sprintf("%ds", int64(d.Round(time.Second)/time.Second))
+}
 
 // 7.1: reachable, standalone, AOF on, nova_sprint loaded at the binary's
 // version. The ACL half of 7.1 is the deployment test of #2937.
@@ -141,6 +143,11 @@ func checkRedis(ctx context.Context, c *redis.Client) Line {
 	persistence := pipe.Info(ctx, "persistence")
 	libs := pipe.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: fn.Library, WithCode: true})
 	_, _ = pipe.Exec(ctx)
+	for _, err := range []error{server.Err(), persistence.Err(), libs.Err()} {
+		if isNoPerm(err) {
+			return needsSeat(n, name, c, err)
+		}
+	}
 	var reds []string
 	if info, err := server.Result(); err != nil {
 		reds = append(reds, "cannot read INFO server: "+err.Error())
@@ -219,7 +226,7 @@ func checkStateFiles(ctx context.Context, c *redis.Client, o Options) Line {
 			continue
 		}
 		if age := now().Sub(st.ModTime()); age < RetiredWindow {
-			reds = append(reds, fmt.Sprintf("retired %s modified %s ago", f, secs(age)))
+			reds = append(reds, fmt.Sprintf("retired %s modified %s ago", f, wholeSecs(age)))
 		}
 	}
 	sprints, err := sprintsFor(ctx, c, o.Sprint)
@@ -373,10 +380,10 @@ func checkLeases(ctx context.Context, c *redis.Client) Line {
 		beats += len(living[i].Val()) - stale
 		var why []string
 		if late > 0 {
-			why = append(why, fmt.Sprintf("%d starting past %s", late, secs(StartWindow)))
+			why = append(why, fmt.Sprintf("%d starting past %s", late, wholeSecs(StartWindow)))
 		}
 		if stale > 0 {
-			why = append(why, fmt.Sprintf("%d living beat past %s", stale, secs(BeatStale)))
+			why = append(why, fmt.Sprintf("%d living beat past %s", stale, wholeSecs(BeatStale)))
 		}
 		if len(why) > 0 {
 			reds = append(reds, fmt.Sprintf("%s %s %s (leased %d, living beats %d)", k.kind, k.name,
@@ -384,7 +391,7 @@ func checkLeases(ctx context.Context, c *redis.Client) Line {
 		}
 	}
 	return verdict(n, name, reds, fmt.Sprintf("%d consumers, leased %d, living beats %d, no reservation past %s and no beat past %s",
-		len(cs), leased, beats, secs(StartWindow), secs(BeatStale)))
+		len(cs), leased, beats, wholeSecs(StartWindow), wholeSecs(BeatStale)))
 }
 
 // 7.7: the reconciler lease is missing or stale, or its last pass is old. A
@@ -411,16 +418,16 @@ func checkReconciler(ctx context.Context, c *redis.Client) Line {
 		if at, ok := parseStamp(l["at"]); !ok {
 			reds = append(reds, "lease:reconciler has no at")
 		} else if age := now.Sub(at); age > ReconcilerTTL {
-			reds = append(reds, fmt.Sprintf("lease:reconciler stale (renewed %s ago, ttl %s)", secs(age), secs(ReconcilerTTL)))
+			reds = append(reds, fmt.Sprintf("lease:reconciler stale (renewed %s ago, ttl %s)", wholeSecs(age), wholeSecs(ReconcilerTTL)))
 		}
 	}
 	passAt, ok := parseStamp(proc.Val()["pass_at"])
 	if !ok {
 		reds = append(reds, "proc:reconciler has no pass_at")
 	} else if age := now.Sub(passAt); age > ReconcilerPass {
-		reds = append(reds, fmt.Sprintf("last pass %s ago (limit %s)", secs(age), secs(ReconcilerPass)))
+		reds = append(reds, fmt.Sprintf("last pass %s ago (limit %s)", wholeSecs(age), wholeSecs(ReconcilerPass)))
 	}
-	return verdict(n, name, reds, fmt.Sprintf("instance %s on %s, last pass %s ago", l["instance"], l["host"], secs(now.Sub(passAt))))
+	return verdict(n, name, reds, fmt.Sprintf("instance %s on %s, last pass %s ago", l["instance"], l["host"], wholeSecs(now.Sub(passAt))))
 }
 
 // 7.10: an id in an index set whose latest receipt names a different state.
