@@ -73,6 +73,76 @@ innocent PRs from the queue in one hour — the same class hit twice in one nigh
 6. Adding an entry to `testdata/fixed-waits-allowlist.txt` is refused, and
    removing one is allowed.
 
+## The CI class test against copied built binaries
+
+**The help line.** The class test is entered in the CI check roster and in help
+as the verb `testbins`:
+
+```
+testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
+```
+
+It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
+it is the fixture-copy audit made an official verb (#1142): the shared helper a
+fixture places a built program with is now the check a PR runs.
+
+**What it reads and what it writes.** It reads, as text, every `_test.go` under
+`internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
+with the file and the line: an `os.WriteFile` whose mode literal carries an
+execute bit and whose data argument is a variable the file fills from
+`os.ReadFile` -- the variable the parser resolves the identifier to, never its
+spelling, so a `raw` in one function does not taint another function's `raw`
+(an `io.Copy` into an `os.Create`/`os.OpenFile` of the same mode is
+the same shape). That shape copies a compiled executable into a fixture, and on
+macOS every fresh copy of an executable is a never-seen binary the system policy
+scanner assesses on its first exec; one is quick, but a package run places
+dozens at once and they queue behind the scanner for longer than a test waits.
+The allowed shape is `internal/testbin.Place`, which hard-links first and copies
+only where a link is impossible; a shell script written `0o755` is not the
+shape, because the interpreter is the executable and its bytes are never
+assessed. It writes nothing. Its only input besides the tree is
+`testdata/fixed-testbins-allowlist.txt`: the existing offenders, and that file
+may only shrink — a new entry is a refusal, not a place to park a copy.
+
+**Its one-line output.** On a clean tree it prints one line,
+`CI-TESTBIN OK tests=<n> allowlisted=<n> refused=0`, where `tests=` is the
+`_test.go` files read, `allowlisted=` the entries still on the allowlist, and
+`refused=` the copied built binaries found (always `0` on `OK`). On a refusal it
+prints one line per offender, `CI-TESTBIN file=<path> line=<n> kind=copy
+remedy="place built binaries with testbin.Place: link, never copy"`, then closes
+with `CI-TESTBIN FAIL tests=<n> allowlisted=<n> refused=<k>`; the count is the
+truth about the CI path whether or not the lines printed.
+
+**Its refusals (exit 2, one remedy line each).** A built executable copied into
+a fixture — `remedy="place built binaries with testbin.Place: link, never
+copy"`. A new line in the allowlist — `remedy="fix the copy; the allowlist only
+shrinks"`. A refusal names the file and the line, so the queue’s PR comment is
+the whole diagnosis.
+
+**The mistake it removes.** On 2026-09-17 internal/swarm’s
+`TestBatchAbstainNamesReason/result-after-deadline` failed on the merge gate’s
+darwin leg and on an idle iMac Pro: the package copied one built fake runner
+into dozens of fixtures and the copies queued behind the macOS policy scanner
+past the thirty seconds a test waits, and hard-linking the one fixture took the
+package from FAIL at 74 s to ok at 30 s. Every fixture now places a built
+program through `internal/testbin.Place`, and the class test refuses a new copy.
+
+**Red tests.**
+
+1. A fixture `_test.go` that reads a built binary with `os.ReadFile` and writes
+   the bytes `0o755` into a fixture is refused with its file and line, the
+   fixture read from a tree given on the command line and not by walking the
+   repository.
+2. The bytes may be handed to the `os.WriteFile` through a package-level map,
+   the way nova-wake’s `fakeBins` did; the taint follows the bytes and the copy
+   is refused.
+3. A shell script written `0o755` is allowed: the interpreter is the executable.
+   It stays allowed when another function in the same file copies a binary
+   through a variable of the same name: only the copy is refused.
+4. A test that places the built program through `testbin.Place` is allowed.
+5. Adding an entry to `testdata/fixed-testbins-allowlist.txt` is refused, and
+   removing one is allowed.
+
 ## The CI class test against unquoted paths in JSON and template literals
 
 **The help line.** The class test is entered in the CI check roster and in help
@@ -176,10 +246,32 @@ less — `remedy="--budget must be a whole number of seconds greater than zero"`
 missing or unreadable invocation is the tool’s own one-line refusal ending `run:
 nova-ci help`.
 
+**The budget is per platform.** The verb judges a LIVE run against the
+`--budget` it is handed; `docs/TEST-DURATIONS.md` is the recorded half, and
+since the record grew a `## Bench:` section per machine the ceiling a package is
+judged against there is ITS OWN PLATFORM'S. A section may state a
+`budget-factor:` in its heading -- what the same suite costs on that platform
+relative to the budget bench -- and its rows are judged at `60 s x factor` when
+the record's own check in `tools/testdur` is running on that
+`runtime.GOOS/GOARCH`. darwin/arm64's factor is 2.2, the whole-suite ratio
+measured on the Air (#1411). The `[budget]` bench's rows are judged at a plain
+sixty everywhere, and a platform with no section of its own falls back to that,
+so a platform is never silently unbudgeted. A `budget-factor:` that is not a
+positive number is a refusal and never a silent fallback, because a ceiling
+quietly set to the wrong number is worse than no ceiling: no ceiling at least
+reads as no ceiling. `tools/testdur` heads each table it prints with the
+platform it measured, so a regenerated table cannot be pasted under another
+bench's heading, and a bench's package table is the one directly under its
+heading -- a table under a `###` inside the section is prose, not a second
+measurement of the same packages.
+
 **The mistake it removes.** `nova-secrets` sat at 120 seconds in the suite and
 nothing noticed, because nothing summed the per-package elapsed time `go test
 -json` was already printing. A green that hides a doubling suite is the same
-mistake as a flaky wait, one layer up.
+mistake as a flaky wait, one layer up. The same mistake one layer out is a
+number RECORDED and enforced against nothing: `cmd/nova-wake` was recorded at
+62.9 s on the Air -- over a minute -- and until the per-platform ceiling above,
+nothing read it.
 
 **Red tests.** `internal/ci/slowtests/slowtests_test.go` feeds canned TestEvent
 lines through the parser and the summer, and `cmd/nova-ci/main_test.go` runs the
@@ -571,6 +663,37 @@ and a bound handed to fake-driven code as an INPUT is out of scope — only the
 shapes above are read. Full section: *The CI class test against fixed waits on
 the CI path*.
 
+### `testbins` — no built executable copied into a fixture
+
+**The rule.** A `_test.go` on the CI path places a built program into a fixture
+with `internal/testbin.Place`, which hard-links first and copies only where a
+link is impossible (another filesystem, Windows); an `os.WriteFile` with an
+execute bit of bytes read by `os.ReadFile`, or an `io.Copy` into an executable
+`os.Create`/`os.OpenFile`, is refused. `testbin.PlaceCopy` is the one exception,
+for a test whose subject is that the file is NOT the same binary.
+**The hurt.** 2026-09-17, internal/swarm's
+`TestBatchAbstainNamesReason/result-after-deadline` failed on the merge gate's
+darwin leg and on an idle iMac Pro: one built fake runner copied into dozens of
+fixtures queued behind the macOS policy scanner past the thirty seconds a test
+waits; hard-linking took the package from FAIL at 74 s to ok at 30 s (#1142).
+**The test.** `TestNoCopiedTestBinariesOnTheCIPath`
+(`internal/ci/ci_testbins_test.go`), with `TestTestbinsRefusesACopiedBinary`,
+`TestTestbinsRefusesAMapHeldCopy`, `TestTestbinsAllowsAShellScript`,
+`TestTestbinsAllowsThePlacedHelper`, `TestTestbinsAllowlistGrowsRefused`,
+`TestTestbinsOutputMatchesTheSpec`, `TestTestbinsVerbLineMatchesTheSpec` and
+`TestTestbinsAllowlistSurvivesShiftedLines` for the file-and-kind match.
+**Its allowlist.** `internal/ci/testdata/fixed-testbins-allowlist.txt` — empty,
+because every site places by link through `testbin.Place`; shrink-only.
+**Its remedy lines.** `remedy="place built binaries with testbin.Place: link,
+never copy"`, and `remedy="fix the copy; the allowlist only shrinks"` for a new
+row.
+**Its narrowings.** It follows the bytes within ONE file, so a copy through a
+helper in another file, or through `exec.Command("cp", …)`, is not seen; the
+mode must be an integer literal, so a mode held in a variable is not guessed at;
+and a shell script written `0o755` is allowed outright, because the interpreter
+is the executable. Full section: *The CI class test against copied built
+binaries*.
+
 ### `templates` — no unquoted filesystem path in a JSON or template literal
 
 **The rule.** A path placed inside a JSON or `text/template` string literal is
@@ -674,7 +797,9 @@ package over it is named every time.
 kept, sorted worst first and capped at three, purely so a finding can say where
 the time went. It sees one run on one machine, so a package that is fast on hulk
 and slow on windows-latest is two measurements, which is why the Windows sizes
-table exists. Full section: *The per-package test time budget*.
+table exists — and why the RECORD holds one `## Bench:` section per machine,
+each with its own ceiling, checked by `tools/testdur`'s own tests against
+`docs/TEST-DURATIONS.md`. Full section: *The per-package test time budget*.
 
 ### `failed` — a run's failing tests, not its log
 
@@ -745,6 +870,54 @@ path is not read. It follows `MkdirTemp` within one function, so a temp director
 passed in as an argument reads as computed (refused, and the remedy is the
 safepath route anyway). `os.Remove`, `RemoveAll` behind an interface, and a shell
 `rm` in a script are other rules' business.
+
+### `fieldsindex` — no unchecked index into a split result
+
+**The rule.** An index or slice expression on the result of `strings.Fields`,
+`strings.Split` or `bytes.Fields` must be preceded by a `len(x)` comparison in
+the same function. The length of that slice is decided by the DATA, not by the
+code: a line with fewer separators than the code expects yields a shorter slice,
+and the next subscript panics.
+**The hurt.** Emma's `#1390`: a commit-only cursor line split into two fields and
+the walker reached `fields[2:]`. The instance was one missing `len(fields) < 3`
+refusal; the class is every other place a splitter's answer is trusted to be as
+long as the code assumed. A panic is the worst shape for this — it takes the
+whole verb down, in a loop nobody is watching, on the one input nobody had.
+**The test.** `TestNoUncheckedFieldsIndex`
+(`internal/ci/fieldsindex_class_test.go`), with the rule proved over source in
+`internal/ci/fieldsindex_rule_test.go`:
+`TestFieldsIndexRefusesThePreFixCursor` (the shape of `#1390`),
+`TestFieldsIndexAcceptsTheFixedCursor`,
+`TestFieldsIndexAcceptsTheShapesThatCannotBeShort`,
+`TestFieldsIndexRefusesTheShapesThatCanBeShort` (the narrowings are narrow),
+`TestFieldsIndexKeyIsFileAndFunction` and
+`TestFieldsIndexAllowlistIsShrinkOnly`.
+**Its allowlist.** `internal/ci/testdata/fieldsindex_allowlist.txt`, one
+`file:function # reason` per row. The one offender the rule found on its first
+run was fixed rather than listed (`cmd/nova-wake/serve.go`, `server.spawn`, which
+indexed `strings.Fields(s.onNote)` with no length check of its own); two rows
+arrived with the rebase onto dev (`internal/friendread/count.go:Parse`,
+`internal/pulse/cut_template.go:OperativeRegion`), each in range by construction and
+each carrying its reason. Shrink-only in both directions, and every row must carry a
+reason.
+**Its remedy lines.** `<index|slice> expression on <x>, the result of <splitter>,
+with no len(<x>) comparison in <func>; add the length check and a refusal line,
+or an allowlist row in testdata/fieldsindex_allowlist.txt with the reason`; for a
+stale row, `delete the stale row (the list only shrinks)`.
+**Its narrowings.** The unnarrowed rule named 26 sites in 15 functions on its
+first run and 25 of them could not be short, so four shapes are read as measured:
+`len(x)` in the header of a `for` (the reverse walk `for i := len(x) - 1; i >= 0;
+i--`), `len(x)` inside the subscript itself (`x[len(x)-1]`), `switch len(x)`,
+and `range x`. A fifth is in range by construction: `strings.Split` with a
+non-empty **string literal** separator always returns at least one element, so
+`x[0]` and `x[1:]` on it are not read — a computed separator, which may be empty,
+gets no such pass, and neither does `strings.Fields`, which returns nothing for a
+blank string. The rule asks only that the length was LOOKED at in the same
+function: deciding which branch a comparison guards needs the control-flow graph,
+and a function that measures the slice and still indexes it wrongly is a
+different mistake from one that never measured it at all. A split result passed
+to another function, stored in a struct field, or indexed through a second
+variable is not followed. Non-test `.go` files under `cmd/` and `internal/` only.
 
 ### `hostseam` — no test reaches a host through an unfaked seam
 
@@ -1418,6 +1591,55 @@ from those files``.
 reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
 tag never stands in for a job that runs it. A tag assembled at run time, or
 passed through a variable the step does not expand inline, is not seen.
+### `cardtemplates` — no card template carries a command only one platform has
+
+**The rule.** A card template is the text a worker is handed verbatim; nothing
+rewrites it between `cut` and the shell. The estate is mixed — hulk, vision,
+space and mini are linux, the Studio and the Air are darwin — so a shipped
+template may spell only commands BOTH answer. The portable spellings are
+`command -v <name>` for presence, `go version`, `dotnet --version` and
+`java -version 2>&1` for the three toolchains that each spell it differently,
+and a `uname`-chosen pair (`sysctl -n hw.ncpu` on darwin, `nproc` elsewhere) for
+a fact only one platform reports. A card reports its work, not its machine:
+timing comes from the harness's own line, never from GNU `time(1)`.
+**The hurt.** Measured 2026-09-18 by the schema dogfood. The round-1 card
+templates spelt `/usr/bin/time -f`, `nproc`, `go --version` and `java
+--version`. All four are fine on hulk; the first card cut for the Air died
+inside the worker, minutes in, with a shell error that named nothing about
+portability — not at cut time, not at admission, where it would have cost
+nothing.
+**The test.** `TestNoCardTemplateCarriesAnOSSpecificCommand`
+(`internal/ci/ci_cardtemplates_test.go`), over the checker in
+`internal/ci/ci_cardtemplates.go`, which reads every `*.md` and `*.card` under
+`CardTemplateDirs` (`cmd/nova-pulse/testdata/templates`,
+`cmd/nova-swarm/testdata/templates`, `docs/templates`, `tools/templates`) as
+text. A directory that is not there yet is skipped; a run that reads NO
+template at all is red, because that is how the directory list goes stale.
+**Its allowlist.** `internal/ci/testdata/cardtemplate_allowlist.txt`, one
+`file spell date reason` per row — empty today, matched by file and spelling and never by line; shrink-only in both
+directions, so a row whose spelling has left is as red as a spelling with no
+row.
+**Its remedy lines.** One per rule, carried on the finding and printed with it:
+e.g. ``cores=$(if [ "$(uname -s)" = Darwin ]; then sysctl -n hw.ncpu; else
+nproc; fi)`` for `nproc`, ``go version — the go command has no --version and
+exits 2 with a usage wall`` for `go_version`, ``there is no /usr/bin/time on a
+stock Mac; report the harness's own timing line instead of measuring it in the
+card`` for `gnu_time`.
+**Its narrowings.** The rule list GROWS (the allowlist is the one that shrinks):
+it knows the spellings that have hurt us, not every difference between GNU and
+BSD userland. It is line-oriented and literal — a command assembled from
+variables, or spelt across two lines, is not seen — and a rule whose line also
+names its portable other half (`nproc` beside `hw.ncpu`, `readlink -f` with its
+own `||` fallback) is not refused, because that IS the portable spelling. The
+`readlink -f` fallback is checked per invocation: the `||` must follow that
+`readlink -f` before any `;`, `)`, pipe or `&&`, unquoted and at that
+command's own level (a `||` inside quotes, inside a nested `$(...)`, or after an
+unquoted `#` comment marker does not count), and `2>/dev/null` alone is
+refused, since it hides the failure but leaves the result empty. A `.tsv`
+beside the templates is a table and is not read. Prose that merely discusses a
+spelling is refused like any other line: a template is not the place to write
+about commands it does not run.
+
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
@@ -1498,9 +1720,13 @@ Cellar prefix is read off the launcher rather than guessed by
 
 **The rule.** `tools/bench-standard.sh` check **(3c)** resolves each of `go` and
 `sbcl` off PATH with `readlink -f` and drifts unless the real path lies under a
-read root the sandbox wall grants execute: the system read roots of
-`internal/sandbox/wrap_linux.go`, and `$HOME/sdk` from
-`internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
+read root the sandbox wall grants: the WHOLE linux system table
+(`linuxReadRoots` in `internal/sandbox/wrap_linux.go`, copied between the
+`NOVA_WALL_READ_ROOTS` markers — `/usr /bin /sbin /lib /lib64 /etc
+/run/systemd/resolve /opt /dev /proc`, every one landlock's read subset, which
+carries execute), the directory `/etc/resolv.conf` resolves to on this machine
+(the wall's `linuxRoots`, #1737; `NOVA_RESOLV_CONF` is the script's test seam
+for that file), and `$HOME/sdk` from `internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
 resolves to, the granted home, and the remedy — `$HOME/sdk/<tool>-<ver>/` — so
 the finding carries its own fix. `(3c)` is about EXECUTABILITY INSIDE THE WALL
 and is a separate line from `(3)`'s `sbcl not on PATH`, which is about presence:
@@ -1526,11 +1752,19 @@ layout and a HOME of its own. The negative half puts the tool at
 one DRIFT line carrying the remedy. The positive half puts it at
 `$HOME/sdk/<tool>-<ver>/bin` and demands NO line, which is the half that catches
 a check written as "always drift".
+`TestBenchStandardAndTheWallNameTheSameReadRoots` holds the script's marker
+block equal, in order, to `linuxReadRoots` read from the wall's source, and the
+root loop to reading it — the first cut of `(3c)` carried a hand-picked subset
+without `/etc`, `/run/systemd/resolve`, `/dev` or `/proc`, which rejects a
+conforming bench (Stella's hold on #1870).
+`TestBenchStandardGrantsTheResolverDirectoryTheWallGrants` is the dynamic root:
+a WSL2-shaped symlinked resolver config makes a tool under its directory
+accepted, and the same layout with no resolver pointing there drifts.
 **Its allowlist.** None. Both tools are held to the same rule by one loop; a
 tool that needs an exception is a tool the wall cannot run.
 **Its remedy line.** `<tool> on PATH is <p> -> <resolved>, under NO read root
-the sandbox wall grants (the system roots, and $HOME/sdk from
-internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install
+the sandbox wall grants (the system roots of internal/sandbox/wrap_linux.go,
+the resolver directory, and $HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install
 it under $HOME/sdk/<tool>-<ver>/ and point the PATH entry there`.
 **Its narrowings.** It reads PATH, so a card that calls a toolchain by absolute
 path never consulted it; it checks READABILITY OF THE PATH, not that the wall
@@ -1623,6 +1857,50 @@ over a one-verb fixture schema; it does not check the SHIPPED file for an
 injected unmarked verb (that is `TestShippedSchemaSurvivesAnInjectedUnmarkedVerb`,
 its neighbor in the same file) and it does not check that the shipped file uses
 only kinds this test knows (`TestShippedSchemaUsesOnlyKnownEventKinds`).
+
+### Tests this spec demands
+
+This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.
+
+Every class test reads this repository's own text — `.go` files, `.github/workflows/*.yml`, the `Makefile`, `docs/` — through the shared `repoTree(t)` (one `filepath.WalkDir` and one `go/parser` pass per test process); each rule carries `t.Parallel()`, filters the tree itself, and writes only to its own `t.TempDir()`, with allowlists under `internal/ci/testdata/` checked in both directions so they only shrink. Nothing reaches the network (forges and endpoints are fakes; real logs are fixtures), and each rule is proven able to fail by a planted offender before it is trusted.
+
+1. `TestNoFixedWaitsOnTheCIPath` — no `_test.go` on the CL path carries a fixed `time.Sleep` over 100 ms, a context/timer bound under ten seconds, or an elapsed-time assertion; the allowlist only shrinks.
+2. `TestNoUnquotedPathsInTemplateLiterals` — a filesystem path in a JSON or `text/template` literal is wrapped in `strconv.Quote` (or `oneline.Quote`); a raw `filepath.Join` or `C:\…` literal there is refused.
+3. `TestSlowTestsUnderBudgetIsOK` / `TestSlowTestsOverBudgetNamesThePackageAndSlowestTests` — a package whose summed `go test -json` elapsed time exceeds `--budget` (default 60 s) is a refusal that names the package and its slowest tests, worst first, capped at three.
+4. `TestAPlainGoTestLogNamesEveryFailingTestWithItsFileAndLine` (and its `failed` siblings) — a red run is read as the failing tests it holds (job, package, test, `file:line`, the test's own words), never as a raw log; a cancelled step, a timeout, a `NOTEST` and an unreadable (`NOLOG`) log each get a line, and a cancelled-only run stays exit 1.
+5. `TestNoRealNetworkHostsOnTheCIPath` — no `_test.go` on the CL path names a real host in a URL or bare `host:port`; endpoints are `httptest` or a local fake, and only `//go:build nightly`/`soak` files may reach the network.
+6. `TestGoEnvClassRuleHoldsOverTheRepository` — every `exec.Command("go", …)` in `cmd/` and `internal/` sets `cmd.Env` from `goenv.Clean(...)`, so a child `go` never inherits the caller's `GOFLAGS`/credentials.
+7. `TestRemoveAllOnlyOnTempOrThroughSafepath` — outside `internal/safepath`, `os.RemoveAll` may only take a variable returned by `os.MkdirTemp` in the same function; every other removal goes through `safepath.RemoveUnder`.
+8. `TestNoTestReachesAHostThroughAnUnfakedSeam` — every host seam calls `testguard.RefuseHosts` before starting the child, so a test holding production code refuses under `NOVA_TEST_NO_HOST` rather than reaching a bench.
+9. `TestNoTestComparesAPathAgainstASlashLiteral` — a path is never compared against a `/`-containing literal; compare `filepath.ToSlash(got)` or build the want side with `filepath.Join`.
+10. `TestToolRunsInTestsWriteIntoATempDir` — a test that runs a tool names every output path inside `t.TempDir()`, never a relative literal that lands in the tree.
+11. `TestNoTestGlobsTheSharedTempDir` — no `_test.go` lists (`Glob`/`ReadDir`) a directory built from `os.TempDir()`; it reads only its own `t.TempDir()`.
+12. `TestEveryNovaBusConsumerDropsProgressLines` — every package that starts `nova-bus` and reads its output routes lines through `bus.IsProgress(`/`Classify(` so progress never enters a parsed protocol stream.
+13. `TestNoMultiLineValueIsWrittenToAStepOutput` — a variable assigned from a one-item-per-line producer without a single-line guard may not be written to `$GITHUB_OUTPUT`/`$GITHUB_ENV`.
+14. `TestNoTestAssertsAWallClockBoundUnderTenSeconds` — no `_test.go` carries a literal duration under ten seconds where the test leans on the wall clock; thirty seconds is the generous bound, or `// wall-ok:`.
+15. `TestCIBuildTestLintCommandsGoThroughMake` — every build/test/vet/format command in `ci.yml` is a `make` invocation.
+16. `TestMakefileIsTheOneEntry` — the Makefile declares `build`, `test`, `test-full`, `lint`, `check`, `clean`, `help` as phony targets, with `check` the union of CI's gates.
+17. `TestDarwinMergeShardPlanIsDerivedFromMeasurements` — the darwin sizes, 40 s shard budget and `DARWIN_TIMEOUT` stay in one place, measured on a quiet host with a stated margin of two.
+18. `TestMergeGateDarwinLegDealsFromTheDarwinTable` — the merge gate's darwin leg reads the full darwin sizes column, takes its ceiling from `make -s darwin-timeout`, and deals unmeasured packages across every slot.
+19. `TestNoCacheStepRunsOnASelfHostedRunner` — every `actions/cache` step in `ci.yml` is `github-hosted`-only and every `setup-go` says `cache: false`.
+20. `TestEveryActionIsPinnedBySHA` — every `uses:` in `ci.yml` and `certification.yml` is `owner/action@<40-hex-sha>`.
+21. `TestEveryTriggeringEventReachesACIOKVerdict` — `ci-ok` has a verdict step gated for every triggering event (`pull_request`, `merge_group`, `push`, `workflow_dispatch`).
+22. `TestEveryCommandMeetsTheOnboardingStandard` — every `cmd/` tool's help ends in an `example:` block, a bare command refuses in one line, and `docs/TESTS.md` carries its `### First run` transcript.
+23. `TestEveryKernelSourceIsACompiledComponent` — every `.lisp` file under the `nova-work` kernel is named by a `:components` list or the shrink-only `notCompiled` ledger.
+24. `TestNoToolIsWrittenTwiceInTheTranscripts` — no two `## ` headings in `docs/TESTS.md` carry the same tool name.
+25. `TestEveryToolPrintsTheOneVersionLine` — every `cmd/nova-*` binary answers `version` with one line in the `internal/buildinfo` grammar.
+26. `TestTheVersionGrammarIsSpelledOutOnceInTheSpec` — `docs/SPEC.md` states that grammar once.
+27. `TestEveryBenchNameIsResolvedThroughTheRegistry` — a `bench string` in `internal/pulse`/`cmd/nova-pulse` is resolved through the `internal/fleet` registry before it reaches a machine.
+28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — no `gh pr merge` (or `--auto`) spelling reaches the dev queue but a batch; enqueue is `internal/merge.Enqueuer.Enqueue`.
+29. `TestEveryTestBuildTagIsRunBySomeScheduledJob` — every opt-in build tag a `_test.go` carries is named by a scheduled workflow's `go test -tags`.
+30. `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` — the net checker's `nightly`/`soak` exempt tags have a scheduled leg.
+31. `TestSomeScheduledJobRunsTheRaceDetector` — some scheduled job actually passes `-race`.
+32. `TestSelectPackagesAlwaysAddsInternalCI` / `TestMergeGateAlwaysAppendsInternalCI` — `./internal/ci` is added to the package set on every selection, not only as a fallback.
+33. `TestBenchStandardAndTheWallNameTheSameToolchainRoots` — the bench standard and the wall name one toolchain-root list per OS, each root with its kind, checked in both directions.
+34. `TestWorkspaceCleanupDoesNotFailBeforeCheckout` — the workspace-cleanup step refuses an empty `GITHUB_WORKSPACE`, continues over an absent directory and over a workspace with no `.git` (the belt), so it never fails a job before checkout.
+35. `TestSharedRepoTreeListsAndParsesTheRepository` — the shared tree is this repository, every `.go` file carries a usable syntax tree, and the loader runs exactly once.
+36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
+37. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists (the parked section exempted).
 
 ## Parked class tests
 
