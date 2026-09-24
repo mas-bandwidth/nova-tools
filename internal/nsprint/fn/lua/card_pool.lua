@@ -18,7 +18,9 @@ end
 -- keys: card, pool, waiting, log, idx queued
 -- args: label, payload_sha, priority, base, base_sha, paths, repo, kind,
 --       depends_on, card_type (the optional TYPE: line, nova-tools#3091;
---       empty: not stored), depends_on_typed, ready (0|1).
+--       empty: not stored), depends_on_typed, ready (0|1), route (the
+--       card's ROUTE: pro|flash tier; empty or absent: not stored).
+-- priority is the card's PRIORITY: line (0 when absent) and its pool score.
 -- ready is resolved by the Go caller (card.Push); a caller that omits it
 -- (the pre-#3503 ten-argument shape) gets pool only when depends_on is empty.
 -- The card also gets cut_at, Redis TIME seconds at this push (nova-tools#3091).
@@ -29,6 +31,7 @@ redis.register_function('ns_card_push', function(keys, args)
   local repo, kind, depends_on = args[7], args[8], args[9]
   local card_type = args[10]
   local depends_on_typed, ready_arg = args[11], args[12]
+  local route = args[13]
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -65,6 +68,10 @@ redis.register_function('ns_card_push', function(keys, args)
   if type(card_type) == 'string' and card_type ~= '' then
     table.insert(fields, 'card_type')
     table.insert(fields, card_type)
+  end
+  if type(route) == 'string' and route ~= '' then
+    table.insert(fields, 'route')
+    table.insert(fields, route)
   end
   redis.call('HSET', card, unpack(fields))
   redis.call('SADD', idx, label)
