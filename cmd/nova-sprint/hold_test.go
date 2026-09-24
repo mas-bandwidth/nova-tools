@@ -318,6 +318,10 @@ func TestIngestDeployedLines(t *testing.T) {
 			if r["verdict"] != "APPROVE" || r["score"] != "10" || r["head"] != "5c22281227787713632a1cd01f90ba9a2be61277" || !strings.HasSuffix(r["url"], r["comment_id"]) {
 				t.Fatalf("5802733875 read = %v", r)
 			}
+			u := e.c.HGetAll(ctx, "s:"+e.S+":u:"+unitOf(2804)).Val()
+			if u["last_read_at"] == "" || u["approve_head"] != r["head"] || u["approve_seq"] != r["seq"] {
+				t.Fatalf("5802733875 reap fields = %v", u)
+			}
 		}},
 		{"5802690236", "911f065c54d7abd33bcf54d56a668dcffbe594ae", "RECORD read", 2764, func(e *holdEnv) {
 			r := e.c.HGetAll(ctx, "s:"+e.S+":read:"+unitOf(2764)+":stella").Val()

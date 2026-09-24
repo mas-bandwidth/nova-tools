@@ -58,6 +58,29 @@ do
     return 's:' .. S .. ':hold:events'
   end
 
+  -- Typed ingest is a read producer, so it keeps the #3091 reap fields in
+  -- step with ns_read. Missing sentinels stay missing: the reap contract is
+  -- fail-closed and must not be reconstructed by a later writer.
+  local function update_reap_read_fields(ukey, who, head, verdict, kind, seq, at)
+    local v = string.upper(verdict or '')
+    local counted = (v == 'APPROVE' or v == 'HOLD') and
+      string.lower(who or '') ~= 'jev' and (kind or '') ~= 'ci'
+    if not counted then return end
+    local u = redis.call('HMGET', ukey, 'last_read_at', 'approve_head', 'head')
+    local now_s = math.floor(tonumber(at) / 1000)
+    if u[1] then
+      local stored = tonumber(u[1])
+      if u[1] == '' or (stored and now_s > stored) then
+        redis.call('HSET', ukey, 'last_read_at', string.format('%d', now_s))
+      end
+    end
+    if v == 'APPROVE' and u[2] then
+      if head == u[3] or u[2] == '' or u[2] ~= u[3] then
+        redis.call('HSET', ukey, 'approve_head', head, 'approve_seq', tostring(seq))
+      end
+    end
+  end
+
   -- ns_ingest_disposition: one typed line, already parsed by
   -- internal/nsprint/disposition (Go), becomes at most one record. Who and
   -- self are resolved here, against the registry and the unit's author.
@@ -112,6 +135,7 @@ do
       'seq', tostring(seq), 'head', head, 'verdict', verdict, 'score', score,
       'kind', kind, 'files', '', 'done_when', '', 'at', tostring(at),
       'url', url, 'comment_id', comment_id)
+    update_reap_read_fields(ukey, f, head, verdict, kind, seq, at)
     local hkey = 's:' .. S .. ':hold:' .. unit .. ':' .. f
 
     if verdict == 'APPROVE' then
