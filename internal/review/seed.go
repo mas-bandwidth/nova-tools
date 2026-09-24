@@ -128,11 +128,8 @@ func MutateSeed(ctx context.Context, opts SeedOptions) (*SeedResult, error) {
 	// and secret-named variables, so a parent still pointed at the job clone
 	// cannot pull those programs back onto the gate's tree.
 	defer func() { _ = safepath.RemoveUnder(tempRoot, wt) }()
-	if _, err := gitLine(ctx, repo, "clone", "--quiet", "--shared", "--no-checkout", repo, wt); err != nil {
-		return nil, fmt.Errorf("could not clone %s: %v", Short(head), err)
-	}
-	if _, err := gitLine(ctx, wt, "checkout", "--quiet", "--detach", head); err != nil {
-		return nil, fmt.Errorf("could not check out %s: %v", Short(head), err)
+	if err := cloneHead(ctx, repo, wt, head); err != nil {
+		return nil, err
 	}
 
 	pkgs := append([]string(nil), opts.Tests...)
@@ -468,6 +465,27 @@ func packageFailed(text string) bool {
 		}
 	}
 	return false
+}
+
+// cloneHead makes the private clone the seed runs in and checks out head. A
+// --timeout that passes while git is still cloning is the caller's clock, and the
+// refusal says so: on a loaded runner the clone alone can outlast a short deadline
+// (dev run 36012558540, Studio: "could not clone ...: signal: killed"), and a
+// killed git read as a broken repo is a lie about the head.
+func cloneHead(ctx context.Context, repo, wt, head string) error {
+	if _, err := gitLine(ctx, repo, "clone", "--quiet", "--shared", "--no-checkout", repo, wt); err != nil {
+		if ctx.Err() != nil {
+			return deadlineErr("the clone of " + Short(head))
+		}
+		return fmt.Errorf("could not clone %s: %v", Short(head), err)
+	}
+	if _, err := gitLine(ctx, wt, "checkout", "--quiet", "--detach", head); err != nil {
+		if ctx.Err() != nil {
+			return deadlineErr("the checkout of " + Short(head))
+		}
+		return fmt.Errorf("could not check out %s: %v", Short(head), err)
+	}
+	return nil
 }
 
 func deadlineErr(pkg string) error {
