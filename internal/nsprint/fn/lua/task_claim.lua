@@ -8,8 +8,10 @@
 -- there is no blocked state; a task with an unmet dependency is waiting and
 -- never ready). It is declared here, in the first task file of the one
 -- library chunk, so push and done below can call it; task_queue.lua fills it
--- in. Every call happens at run time, after the whole chunk has loaded.
+-- in through NS.DEP (loader.go wraps every file in its own do-block). Every
+-- call happens at run time, after the whole chunk has loaded.
 local DEP = {}
+NS.DEP = DEP
 
 local function now_ms()
   local t = redis.call('TIME')
