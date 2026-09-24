@@ -73,7 +73,7 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 	res, err := life.Hello(ctx, st, life.HelloRequest{
 		Sprint: sprint, As: friend, Slots: 1,
 		Harness: "codex", Host: "bench-a", Session: "sess-1",
-		Actor: "control15", Idem: "hello-1",
+		Actor: friend, Idem: "hello-1",
 	})
 	if err != nil {
 		t.Fatalf("friend hello: %v", err)
@@ -107,7 +107,7 @@ func TestControl15FriendReturnTakesWork(t *testing.T) {
 		t.Fatalf("consumed wake repeated: %q, %v", wake, err)
 	}
 	if _, err := life.Hello(ctx, st, life.HelloRequest{
-		As: friend, Slots: -1, Host: "bench-a", Session: "other-session",
+		As: friend, Slots: -1, Host: "bench-a", Session: "other-session", Actor: friend,
 	}); err == nil || !strings.Contains(err.Error(), "BUSY") {
 		t.Fatalf("second live hello = %v, want BUSY", err)
 	}
@@ -212,8 +212,8 @@ func TestFriendHelloRefusesMachineCeilingWithoutChangingDesired(t *testing.T) {
 	client.HSet(ctx, "friend:b:desired", "slots", 32, "machine", "studio", "paused", "0")
 
 	for _, req := range []life.HelloRequest{
-		{As: "a", Slots: 64, Host: "studio", Session: "a-1"},
-		{As: "b", Slots: 33, Host: "studio", Session: "b-1"},
+		{As: "a", Slots: 64, Host: "studio", Session: "a-1", Actor: "a"},
+		{As: "b", Slots: 33, Host: "studio", Session: "b-1", Actor: "b"},
 	} {
 		if _, err := life.Hello(ctx, st, req); err == nil || !strings.Contains(err.Error(), "CEILING") {
 			t.Fatalf("hello %s slots=%d: got %v, want CEILING refusal", req.As, req.Slots, err)
@@ -226,14 +226,14 @@ func TestFriendHelloRefusesMachineCeilingWithoutChangingDesired(t *testing.T) {
 		}
 	}
 	res, err := life.Hello(ctx, st, life.HelloRequest{
-		As: "a", Slots: -1, Host: "studio.local", Machine: "studio", Session: "a-preserve",
+		As: "a", Slots: -1, Host: "studio.local", Machine: "studio", Session: "a-preserve", Actor: "a",
 	})
 	if err != nil || res.Slots != 32 {
 		t.Fatalf("hello without --slots must preserve configured 32 slots: %+v, %v", res, err)
 	}
 	client.HSet(ctx, "machine:bench:ceiling", "slots", 1)
 	if _, err := life.Hello(ctx, st, life.HelloRequest{
-		As: "new", Slots: 1, Host: "bench.local", Machine: "bench", Session: "new-1",
+		As: "new", Slots: 1, Host: "bench.local", Machine: "bench", Session: "new-1", Actor: "new",
 	}); err != nil {
 		t.Fatalf("first hello with configured machine distinct from beat host: %v", err)
 	}

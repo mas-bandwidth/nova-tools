@@ -119,6 +119,15 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 	if *as == "" {
 		return refuse(errOut, "friend hello", "--as is required")
 	}
+	// #2929 rev 4: hello is a take and obeys the seat contract. Both refusals
+	// come before openLifeStore: no dial, no UP write, no beat, no receipt.
+	initiator := os.Getenv(seatEnv)
+	if initiator == "" {
+		return refuse(errOut, "friend hello", "want NOVA_FRIEND")
+	}
+	if *as != initiator {
+		return refuse(errOut, "friend hello", fmt.Sprintf("want --as equal to NOVA_FRIEND (NOVA_FRIEND=%s, --as %s)", initiator, *as))
+	}
 	if *host == "" {
 		var err error
 		*host, err = os.Hostname()
@@ -141,7 +150,7 @@ func runFriendHello(ctx context.Context, args []string, out, errOut io.Writer) i
 
 	res, err := life.Hello(ctx, st, life.HelloRequest{
 		Sprint: *sprint, As: *as, Slots: *slots, Harness: *harness,
-		Host: *host, Machine: *machine, Session: *session, Actor: "friend", Idem: "",
+		Host: *host, Machine: *machine, Session: *session, Actor: initiator, Idem: "",
 		Logins: logins,
 	})
 	if err != nil {
@@ -335,7 +344,8 @@ func runPresenceLoop(ctx context.Context, st *store.Store, p life.Presence, spri
 				fmt.Fprintf(errOut, "friend %s wake: %v\n", p.Friend, err)
 				continue
 			}
-			claims, err := task.TakeAvailable(signalCtx, st, p.Friend, sprint, "", 0, "friend", "")
+			// p.Friend is the initiator: hello refused any --as != NOVA_FRIEND.
+			claims, err := task.TakeAvailable(signalCtx, st, p.Friend, sprint, "", 0, p.Friend, "")
 			if err != nil {
 				fmt.Fprintf(errOut, "friend %s take: %v\n", p.Friend, err)
 				continue

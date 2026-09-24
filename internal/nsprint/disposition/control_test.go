@@ -30,7 +30,7 @@ func TestControl39(t *testing.T) {
 	head := strings.Repeat("a", 40)
 	c.HSet(ctx, "machine:ctl:ceiling", "slots", 64)
 	for _, f := range []string{"stella", "johnny", "rowan"} {
-		if _, err := life.Hello(ctx, store.New(c), life.HelloRequest{As: f, Slots: -1, Host: "ctl", Session: "ctl-" + f}); err != nil {
+		if _, err := life.Hello(ctx, store.New(c), life.HelloRequest{As: f, Actor: f, Slots: -1, Host: "ctl", Session: "ctl-" + f}); err != nil {
 			t.Fatal(err)
 		}
 	}

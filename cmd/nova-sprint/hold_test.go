@@ -55,6 +55,14 @@ func newHoldEnv(t *testing.T, sprint string) *holdEnv {
 
 func (e *holdEnv) run(args ...string) (int, string, string) {
 	e.t.Helper()
+	if len(args) > 1 && args[0] == "friend" && args[1] == "hello" {
+		// #2929 rev 4: hello's --as must equal the seat (NOVA_FRIEND).
+		for i := 2; i+1 < len(args); i++ {
+			if args[i] == "--as" {
+				e.t.Setenv(seatEnv, args[i+1])
+			}
+		}
+	}
 	var out, errb bytes.Buffer
 	code := run(append(args, "--redis", e.addr), &out, &errb)
 	return code, out.String(), errb.String()

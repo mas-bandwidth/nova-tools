@@ -77,6 +77,10 @@ func Hello(ctx context.Context, st *store.Store, req HelloRequest) (HelloResult,
 	if req.Slots < -1 {
 		return HelloResult{}, fmt.Errorf("friend hello: slots must be nonnegative or -1 to keep current")
 	}
+	// #2929 rev 4: hello is a take, so its actor must be the friend itself.
+	if req.Actor != req.As {
+		return HelloResult{}, fmt.Errorf("friend hello %s: actor %q is not --as; want --as equal to NOVA_FRIEND", req.As, req.Actor)
+	}
 	fargs := []any{req.As, req.Slots, req.Harness, req.Host, req.Session,
 		req.Machine, req.Actor, req.Idem}
 	for _, alias := range req.Logins {
