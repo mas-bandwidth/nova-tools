@@ -392,18 +392,22 @@ func classify422(body []byte) error {
 	if len(bytes.TrimSpace(body)) == 0 || json.Unmarshal(body, &reply) != nil || len(reply.Errors) == 0 {
 		return ErrForgeHasPR
 	}
+	if strings.HasPrefix(strings.TrimSpace(reply.Message), "A pull request already exists") {
+		return ErrForgeHasPR
+	}
 	for _, e := range reply.Errors {
-		if strings.HasPrefix(e.Message, "A pull request already exists") {
+		if strings.HasPrefix(strings.TrimSpace(e.Message), "A pull request already exists") {
 			return ErrForgeHasPR
 		}
 	}
 	msgs := make([]string, 0, len(reply.Errors))
 	for _, e := range reply.Errors {
 		invalidRef := e.Resource == "PullRequest" && e.Code == "invalid" && (e.Field == "base" || e.Field == "head")
-		if !invalidRef && !strings.HasPrefix(e.Message, "No commits between ") {
+		trimmedMsg := strings.TrimSpace(e.Message)
+		if !invalidRef && !strings.HasPrefix(trimmedMsg, "No commits between ") {
 			return ErrForgeHasPR
 		}
-		m := e.Message
+		m := trimmedMsg
 		if m == "" {
 			m = e.Resource + " " + e.Field + " " + e.Code
 		}

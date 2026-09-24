@@ -381,3 +381,14 @@ fixtures' length checks keep their original branch and their original absolute
                 (remove-test-run-root))))
     #+sbcl (sb-ext:exit :code code :abort nil)
     #-sbcl (progn code)))
+
+;;; A SHARED FIXTURE MACRO, IN THE PRELUDE (#1947). Test files load sorted by
+;;; name after this prelude, so a macro one file expands must be defined here,
+;;; not in a later-sorting file: tests/criterion-e08-f01-01.lisp expands this
+;;; and sorts before tests/request-line.lisp, which holds the function it calls
+;;; (CALL-WITH-SERVED-SESSION, resolved at run time, after every file loads).
+(defmacro with-served-session ((server socket &key (owner "rowan")) &body body)
+  `(call-with-served-session (lambda (,server ,socket)
+                               (declare (ignorable ,server ,socket))
+                               ,@body)
+                             :owner ,owner))

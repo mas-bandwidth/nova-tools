@@ -69,7 +69,7 @@ DARWIN_TIMEOUT ?= 300s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout
+.PHONY: help build fmt vet vet-laws vet-windows lint preflight test test-full test-short test-merge test-race test-e2e test-lisp check clean darwin-timeout map
 
 help:
 	@echo "make help        this list"
@@ -89,6 +89,11 @@ help:
 	@echo "make test-lisp   ./lisp/nova-work/run-tests.sh"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (what CI runs)"
 	@echo "make clean       remove ./bin and ./scratch"
+	@echo "make map         regenerate AGENTS.md and per-directory maps"
+
+map:
+	$(GO) run ./tools/agentsmap
+
 
 build:
 	$(GO) build ./...

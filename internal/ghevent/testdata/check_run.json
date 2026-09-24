@@ -1,6 +1,8 @@
 {
   "action": "completed",
   "check_run": {
+    "id": 4100000100,
+    "name": "windows",
     "head_sha": "2222222222222222222222222222222222222222",
     "status": "completed",
     "conclusion": "success",
