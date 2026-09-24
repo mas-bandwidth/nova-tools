@@ -106,6 +106,6 @@ internal/sprint/redis.go deleted with the frozen nova-pulse (2026-09-24); the li
 internal/sprint/refill.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/layout560_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-docs/spec-pulse/02-the-rules-numbered.md	history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
-docs/spec-pulse/03-fleet.md	history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
+docs/spec-pulse/02-the-rules-numbered.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
+docs/spec-pulse/03-fleet.md history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
 docs/spec-pulse/10 history 2026-09-24: nova-pulse spec folder deleted (#3625); the prose that names it stays as history
