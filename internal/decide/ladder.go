@@ -456,6 +456,8 @@ type RouteResult struct {
 	FloorFrom string
 	// Excluded is the set of down friend rungs excluded from routing (#3397).
 	Excluded []string
+	// DownChecked records whether this route consulted the fleet presence keys.
+	DownChecked bool
 }
 
 // ReadField renders the readers as one field: the names in order, or the dash,

@@ -105,7 +105,7 @@ func TestL1(t *testing.T) {
 				if planErr == nil {
 					// Randomly void some batches to keep chain churning
 					if r.Intn(3) == 0 {
-						_ = land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, bID, "prop-churn")
+						_ = land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, bID, f.lease, "prop-churn")
 					}
 				}
 			}
@@ -596,7 +596,7 @@ func TestL28(t *testing.T) {
 		if err := land.CallPubState(f.ctx, f.client, f.repo, f.base, "b28-4", "dead"); err != nil {
 			t.Fatalf("pub state dead: %v", err)
 		}
-		if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, "b28-4", "base-moved"); err != nil {
+		if err := land.CallBatchVoid(f.ctx, f.client, f.sprint, f.repo, f.base, "b28-4", f.lease, "base-moved"); err != nil {
 			t.Fatalf("batch void: %v", err)
 		}
 

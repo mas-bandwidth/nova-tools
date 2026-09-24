@@ -13,11 +13,11 @@ local function now_ms()
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
 
-local function receipt(kind, target, machine, slots, actor, idem, at)
+local function receipt(kind, target, machine, slots, actor, idem, at, legacy)
   redis.call('XADD', 'cap:log', '*',
     'kind', kind, 'target', target, 'machine', machine,
     'slots', tostring(slots), 'actor', actor or '', 'idem', idem or '',
-    'at', tostring(at))
+    'legacy', legacy or '', 'at', tostring(at))
 end
 
 local function desired_key(kind, name)
@@ -79,29 +79,40 @@ end
 -- cap:log receipt. capacity_desired and ns_sprint_plan both call it. It does no
 -- ceiling check and registers no name: each caller has already checked
 -- everything, so a write phase built from it cannot refuse part way.
-local function write_desired(kind, name, slots, machine, actor, idem, at)
+local function write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused)
   local key = desired_key(kind, name)
   local paused = redis.call('HGET', key, 'paused')
   if not paused then
     paused = '0'
   end
+  -- #3206 PR A: capacity_desired's optional paused arg; nil keeps the stored
+  -- value, as every other caller does.
+  if set_paused == '0' or set_paused == '1' then
+    paused = set_paused
+  end
   redis.call('HSET', key,
     'slots', tostring(slots), 'machine', machine, 'paused', paused, 'at', tostring(at))
-  receipt('capacity ' .. kind, kind .. ':' .. name, machine, slots, actor, idem, at)
+  receipt('capacity ' .. kind, kind .. ':' .. name, machine, slots, actor, idem, at, legacy)
 end
 
 -- capacity_desired: set friend:<f>:desired or bench:<b>:desired under the
--- machine ceiling. args = kind, name, slots, machine, actor, idem.
+-- machine ceiling. args = kind, name, slots, machine, actor, idem, and (#3206
+-- rev 4 PR A, both optional so six-arg callers are unchanged) paused ('' keeps
+-- the stored value, '0' or '1' sets it) and register ('1' is accepted and
+-- implied: since #2934 every write adds the name to its registry; no beat is
+-- written). The same slots, machine
+-- and paused as stored return SAME and write nothing.
 local function capacity_desired(keys, args)
   local kind, name = args[1], args[2]
   local slots, machine = tonumber(args[3]), args[4]
   local actor, idem = args[5], args[6]
+  local set_paused = args[7] or ''
 
   if kind ~= 'friend' and kind ~= 'bench' then
     return { 'INVALID', machine, '0', '0' }
   end
-  if kind == 'friend' and redis.call('SISMEMBER', 'friends', name) == 0 then
-    return { 'UNREGISTERED', machine, '0', '0' }
+  if set_paused ~= '' and set_paused ~= '0' and set_paused ~= '1' then
+    return { 'INVALID', machine, '0', '0' }
   end
   if not slots or slots < 0 then
     return { 'INVALID', machine, '0', '0' }
@@ -117,11 +128,27 @@ local function capacity_desired(keys, args)
     return { 'CEILING', machine, tostring(sum), tostring(ceiling) }
   end
 
-  local at = now_ms()
-  if kind == 'bench' then
-    redis.call('SADD', registry_set(kind), name)
+  local key = desired_key(kind, name)
+  local stored = redis.call('HMGET', key, 'slots', 'machine', 'paused')
+  local want_paused = set_paused
+  if want_paused == '' then
+    want_paused = stored[3] or '0'
   end
-  write_desired(kind, name, slots, machine, actor, idem, at)
+  if stored[1] == tostring(slots) and stored[2] == machine and (stored[3] or '0') == want_paused and
+      redis.call('SISMEMBER', registry_set(kind), name) == 1 then
+    return { 'SAME', machine, tostring(sum), tostring(ceiling) }
+  end
+
+  local at = now_ms()
+  local legacy = ''
+  if kind == 'friend' then
+    legacy = redis.call('GET', 'friend:' .. name .. ':slots') or ''
+  end
+  redis.call('SADD', registry_set(kind), name)
+  write_desired(kind, name, slots, machine, actor, idem, at, legacy, set_paused)
+  if kind == 'friend' then
+    redis.call('DEL', 'friend:' .. name .. ':slots')
+  end
   return { 'SET', machine, tostring(sum), tostring(ceiling) }
 end
 
@@ -302,7 +329,7 @@ local function sprint_plan(keys, args)
   local actor = 'plan:' .. s
   local idem = string.sub(sha, 1, 12)
   for _, r in ipairs(rows) do
-    write_desired(r.kind, r.name, r.slots, r.machine, actor, idem, at)
+    write_desired(r.kind, r.name, r.slots, r.machine, actor, idem, at, '')
   end
   redis.call('HSET', policy_key,
     'backpressure_missing', args[6], 'ci_reruns', args[7], 'readers', args[8],
@@ -311,6 +338,23 @@ local function sprint_plan(keys, args)
     'version', '1', 'sha', sha, 'body', body, 'rows', tostring(n),
     'routes_sha', routes_sha, 'applied_at', tostring(at), 'applied_by', applied_by)
   return { 'APPLIED', sha, tostring(n) }
+end
+
+-- capacity_consumers returns one flat snapshot of both registries and their
+-- desired hashes. Go invokes it as the sole command in one pipeline so the
+-- reader makes one round trip and no per-consumer calls.
+local function capacity_consumers(keys, args)
+  local out = {}
+  for _, kind in ipairs({ 'friend', 'bench' }) do
+    for _, name in ipairs(redis.call('SMEMBERS', registry_set(kind))) do
+      local key = desired_key(kind, name)
+      out[#out + 1] = kind
+      out[#out + 1] = name
+      out[#out + 1] = redis.call('HGET', key, 'slots') or ''
+      out[#out + 1] = redis.call('HGET', key, 'machine') or ''
+    end
+  end
+  return out
 end
 
 -- cap_budget_set sets machine:<m>:budget (cpu_milli, mem_mb).
@@ -505,10 +549,10 @@ end
 
 redis.register_function('ns_capacity_desired', capacity_desired)
 redis.register_function('ns_capacity_machine', capacity_machine)
+redis.register_function('ns_capacity_consumers', capacity_consumers)
 redis.register_function('ns_budget_set', cap_budget_set)
 redis.register_function('ns_budget_take', cap_budget_take)
 redis.register_function('ns_budget_renew', cap_budget_renew)
 redis.register_function('ns_budget_give', cap_budget_give)
 redis.register_function('ns_budget_debits', cap_budget_debits)
 redis.register_function('ns_sprint_plan', sprint_plan)
-

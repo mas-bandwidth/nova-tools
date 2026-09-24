@@ -16,15 +16,40 @@ redis.register_function('ns_gate_receipt_write', function(keys, args)
   return gate_receipt_write(repo, head, gid, verdict, kind, base, base_sha, required_set_id, policy_id, runner_id, receipt, bench, pkg, test)
 end)
 
+-- land_write_once: HSETNX one write-once reap field (nova-tools#3091). An empty or
+-- absent value writes nothing. A stored value that differs is kept, and the offer is
+-- HSETNXed into s:<S>:unresolved as <unit>:<field>-changed:<seq>.
+local function land_write_once(S, ukey, unit, seq, field, value, changed)
+  if not value or value == '' then
+    return
+  end
+  if redis.call('HSETNX', ukey, field, value) == 1 then
+    return
+  end
+  if redis.call('HGET', ukey, field) ~= value then
+    redis.call('HSETNX', 's:' .. S .. ':unresolved', unit .. ':' .. field .. '-changed:' .. tostring(seq), value)
+    table.insert(changed, field .. '-changed')
+  end
+end
+
 -- ns_unit_head: writes head and metadata for one unit, adds to s:<S>:units index,
 -- and increments rec:seq.
+-- nova-tools#3091: arg 15 card is the label of the card whose TASK: line names the
+-- unit; arg 16 is that card's PATHS canonicalized by the Go caller (pr.CanonJSON),
+-- empty when refused. On the create path (no unit hash before this call) it writes
+-- the sentinels last_read_at, approve_head and merged_at present-empty, so a stored
+-- value is never reset and a deleted field is never re-created. paths, card_type
+-- and cut_at are write-once from an existing card hash; no card leaves them absent.
+-- Reply { 'OK', seq } or { 'OK', seq, 'UNRESOLVED', '<field>-changed', ... }.
 redis.register_function('ns_unit_head', function(keys, args)
   local S, unit, repo, base, branch, head, base_sha = args[1], args[2], args[3], args[4], args[5], args[6], args[7]
   local stack_parent, files, paths_hash, security, class = args[8], args[9], args[10], args[11], args[12]
   local pr, author = args[13], args[14]
+  local card, paths_json = args[15], args[16]
 
   local seq = redis.call('INCR', 'rec:seq')
   local ukey = 's:' .. S .. ':u:' .. unit
+  local created = redis.call('EXISTS', ukey) == 0
   local cur_st = redis.call('HGET', ukey, 'state')
   local new_st = cur_st
   if not cur_st or cur_st == '' or cur_st == 'opened' then
@@ -46,11 +71,27 @@ redis.register_function('ns_unit_head', function(keys, args)
     'seq', tostring(seq),
     'author', author or ''
   )
+  if created then
+    redis.call('HSET', ukey, 'last_read_at', '', 'approve_head', '', 'merged_at', '')
+  end
   if pr and pr ~= '' and pr ~= '0' then
     redis.call('HSET', ukey, 'pr', pr)
     redis.call('SET', 's:' .. S .. ':prunit:' .. repo .. ':' .. pr, unit)
   end
+  local changed = {}
+  if card and card ~= '' then
+    local ckey = 's:' .. S .. ':card:' .. card
+    if redis.call('EXISTS', ckey) == 1 then
+      local cv = redis.call('HMGET', ckey, 'card_type', 'cut_at')
+      land_write_once(S, ukey, unit, seq, 'paths', paths_json, changed)
+      land_write_once(S, ukey, unit, seq, 'card_type', cv[1], changed)
+      land_write_once(S, ukey, unit, seq, 'cut_at', cv[2], changed)
+    end
+  end
   redis.call('SADD', 's:' .. S .. ':units', unit)
+  if #changed > 0 then
+    return { 'OK', tostring(seq), 'UNRESOLVED', unpack(changed) }
+  end
   return { 'OK', tostring(seq) }
 end)
 
@@ -61,6 +102,12 @@ redis.register_function('ns_unit_eval', function(keys, args)
   local st = redis.call('HGET', ukey, 'state')
   if st == 'landed' then
     return { 'REFUSED', 'landed' }
+  end
+  if st == 'dropped' then
+    local d = redis.call('HMGET', ukey, 'head', 'drop_head')
+    if d[1] and d[1] == d[2] then
+      return { 'REFUSED', 'dropped at head' }
+    end
   end
   redis.call('HSET', ukey, 'state', 'landable')
   local seq = tonumber(redis.call('HGET', ukey, 'seq') or 0)
@@ -133,6 +180,12 @@ redis.register_function('ns_release', function(keys, args)
 end)
 
 -- ns_read: records a typed read/approval.
+-- nova-tools#3091: a counted read (verdict APPROVE or HOLD, who not jev, kind not ci)
+-- stamps the unit's last_read_at (Redis TIME seconds; replaces empty, then max) and a
+-- counted APPROVE its approve_head/approve_seq: an APPROVE at the unit's current head
+-- always wins; one at another head replaces only an empty value or one that is not the
+-- current head. A field that is absent stays absent. No unit hash: the read record is
+-- written, no unit field is, and the reply is { 'OK', seq, 'NOUNIT' }.
 redis.register_function('ns_read', function(keys, args)
   local S, unit, who, head, verdict, score, kind, files, done_when = args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9]
   local seq = redis.call('INCR', 'rec:seq')
@@ -148,6 +201,27 @@ redis.register_function('ns_read', function(keys, args)
     'done_when', done_when or '',
     'at', tostring(now)
   )
+  local ukey = 's:' .. S .. ':u:' .. unit
+  if redis.call('EXISTS', ukey) == 0 then
+    return { 'OK', tostring(seq), 'NOUNIT' }
+  end
+  local v = string.upper(verdict or '')
+  local counted = (v == 'APPROVE' or v == 'HOLD') and string.lower(who or '') ~= 'jev' and (kind or '') ~= 'ci'
+  if counted then
+    local u = redis.call('HMGET', ukey, 'last_read_at', 'approve_head', 'head')
+    local now_s = math.floor(tonumber(now) / 1000)
+    if u[1] then
+      local stored = tonumber(u[1])
+      if u[1] == '' or (stored and now_s > stored) then
+        redis.call('HSET', ukey, 'last_read_at', string.format('%d', now_s))
+      end
+    end
+    if v == 'APPROVE' and u[2] then
+      if head == u[3] or u[2] == '' or u[2] ~= u[3] then
+        redis.call('HSET', ukey, 'approve_head', head, 'approve_seq', tostring(seq))
+      end
+    end
+  end
   return { 'OK', tostring(seq) }
 end)
 
@@ -180,33 +254,60 @@ redis.register_function('ns_writer', function(keys, args)
   return { 'OK', tostring(gen) }
 end)
 
--- ns_batch_plan: checks fences, membership, landed status, chain limit;
--- writes batch, sets members batched, enqueues gate, writes PLAN event.
+-- land_storage_split: the five storage-split paths under docs/roadmaps/ (4.1, amendment 5802461060).
+local function land_storage_split(p)
+  if p == 'docs/roadmaps/nova-work.sexp' or p == 'docs/roadmaps/ingest-map.sexp' then return true end
+  if string.match(p, '^docs/roadmaps/work/[^/]+%.sexp$') then return true end
+  if string.sub(p, 1, 20) == 'docs/roadmaps/blobs/' then return true end
+  return false
+end
+
+-- land_lease_refusal (2.3): the writer and lease check every batcher and publisher write runs
+-- first. Returns nil when writer owner is nova-sprint, the lease key holds lease_val, and
+-- lease_val's gen is the writer gen; otherwise the refusal reason, and the caller writes nothing.
+local function land_lease_refusal(repo, base, lease_val)
+  local writer = redis.call('HMGET', 'land:' .. repo .. ':' .. base .. ':writer', 'gen', 'owner')
+  if writer[2] ~= 'nova-sprint' then
+    return 'writer owner not nova-sprint'
+  end
+  local lease = redis.call('GET', 'land:' .. repo .. ':' .. base .. ':lease')
+  if not lease_val or lease_val == '' or lease ~= lease_val then
+    return 'lease mismatch'
+  end
+  local gen = string.match(lease_val, '^([^:]+):')
+  if gen ~= writer[1] then
+    return 'lease gen mismatch'
+  end
+  return nil
+end
+
+-- ns_batch_plan (4.4): in one call checks writer gen and lease, chain below chain_max, a unit id on
+-- every member (L27), every member landable with an empty batch (L1, L7), PATHS disjoint (L3), one
+-- class and the roadmap rule (L3b), alone units alone, stack parents earlier (L24). A failed check
+-- writes nothing. Then writes the batch (parent, from_tip, input_id), sets members batched, appends
+-- to the chain, XADDs the gate and a PLAN event. args: S repo base batch_id lease members_csv
+-- paths_csv class from_tip input_id [parent] [chain_max]; an empty batch_id is minted as b<seq>.
 redis.register_function('ns_batch_plan', function(keys, args)
   local S, repo, base, batch_id, lease_val, members_csv, paths_csv, class, from_tip, input_id =
     args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8], args[9], args[10]
+  local parent = args[11] or ''
+  local chain_max = tonumber(args[12] or '') or 4
+  class = (class and class ~= '') and class or 'go'
 
   -- 1. Writer and lease checks
-  local wkey = 'land:' .. repo .. ':' .. base .. ':writer'
-  local writer = redis.call('HMGET', wkey, 'gen', 'owner')
-  if writer[2] ~= 'nova-sprint' then
-    return { 'REFUSED', 'writer owner not nova-sprint' }
-  end
-  local lkey = 'land:' .. repo .. ':' .. base .. ':lease'
-  local lease = redis.call('GET', lkey)
-  if lease ~= lease_val then
-    return { 'REFUSED', 'lease mismatch' }
-  end
-  local gen = string.match(lease_val or '', '^([^:]+):')
-  if gen ~= writer[1] then
-    return { 'REFUSED', 'lease gen mismatch' }
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return { 'REFUSED', refusal }
   end
 
-  -- 2. Chain limit check (chain_max starts at 4)
+  -- 2. Chain limit check (chain_max starts at 4, 4.3)
   local chain_key = 'land:' .. repo .. ':' .. base .. ':chain'
   local chain_len = redis.call('ZCARD', chain_key)
-  if chain_len >= 4 then
+  if chain_len >= chain_max then
     return { 'REFUSED', 'chain_max' }
+  end
+  if parent ~= '' and not redis.call('ZSCORE', chain_key, parent) then
+    return { 'REFUSED', 'parent=' .. parent .. ' not in chain' }
   end
 
   -- 3. Parse and check members
@@ -214,10 +315,12 @@ redis.register_function('ns_batch_plan', function(keys, args)
     return { 'REFUSED', 'no members' }
   end
 
+  local units_key = 's:' .. S .. ':units'
   local members = {}
+  local pos = {}
   for m in string.gmatch(members_csv, '[^,]+') do
     local unit, head = string.match(m, '^([^@]+)@(.+)$')
-    if not unit or unit == '' or not head or head == '' then
+    if not unit or unit == '' or not head or head == '' or redis.call('SISMEMBER', units_key, unit) == 0 then
       return { 'REFUSED', 'member=' .. m .. ' no unit' }
     end
     -- Refuse if already landed (L7)
@@ -225,7 +328,7 @@ redis.register_function('ns_batch_plan', function(keys, args)
       return { 'REFUSED', 'member=' .. m .. ' already landed' }
     end
     local ukey = 's:' .. S .. ':u:' .. unit
-    local udata = redis.call('HMGET', ukey, 'state', 'batch', 'landed_head')
+    local udata = redis.call('HMGET', ukey, 'state', 'batch', 'landed_head', 'files', 'class', 'alone', 'stack_parent')
     if udata[1] == 'landed' or udata[3] == head then
       return { 'REFUSED', 'member=' .. m .. ' already landed' }
     end
@@ -235,22 +338,75 @@ redis.register_function('ns_batch_plan', function(keys, args)
     if udata[1] ~= 'landable' then
       return { 'REFUSED', 'member=' .. unit .. ' not landable' }
     end
-    table.insert(members, { unit = unit, head = head })
+    if pos[unit] then
+      return { 'REFUSED', 'member=' .. unit .. ' twice' }
+    end
+    table.insert(members, { unit = unit, head = head, files = udata[4] or '', class = udata[5] or '', alone = udata[6] or '', parent = udata[7] or '' })
+    pos[unit] = #members
   end
 
-  -- 4. Mint token and seq
+  -- 4. Shape: one class, disjoint PATHS, the roadmap rule, alone units alone, stack parents earlier.
+  local seen = {}
+  local paths = {}
+  for i, m in ipairs(members) do
+    if m.class ~= '' and m.class ~= class then
+      return { 'REFUSED', 'class=' .. m.unit .. ' ' .. m.class .. '!=' .. class }
+    end
+    if m.alone == '1' and #members > 1 then
+      return { 'REFUSED', 'alone=' .. m.unit }
+    end
+    for p in string.gmatch(m.files, '[^,]+') do
+      if seen[p] then
+        return { 'REFUSED', 'overlap=' .. p }
+      end
+      seen[p] = m.unit
+      table.insert(paths, p)
+      if class == 'roadmap' then
+        if string.sub(p, 1, 14) ~= 'docs/roadmaps/' then
+          return { 'REFUSED', 'roadmap-class=' .. p }
+        end
+      elseif land_storage_split(p) then
+        return { 'REFUSED', 'roadmap-path=' .. p }
+      end
+    end
+    local sp = m.parent
+    if sp ~= '' and sp ~= 'none' then
+      local ok = false
+      if pos[sp] and pos[sp] < i then
+        ok = true
+      elseif not pos[sp] then
+        local pdata = redis.call('HMGET', 's:' .. S .. ':u:' .. sp, 'state', 'batch')
+        if pdata[1] == 'landed' then
+          ok = true
+        elseif pdata[2] and pdata[2] ~= '' and redis.call('ZSCORE', chain_key, pdata[2]) then
+          ok = true
+        end
+      end
+      if not ok then
+        return { 'REFUSED', 'stack-parent=' .. sp .. ' member=' .. m.unit }
+      end
+    end
+  end
+  if (not paths_csv or paths_csv == '') and #paths > 0 then
+    paths_csv = table.concat(paths, ',')
+  end
+
+  -- 5. Mint token and seq
   local seq = redis.call('INCR', 'land:' .. repo .. ':' .. base .. ':batch:seq')
   local token = redis.call('INCR', 'land:' .. repo .. ':tok')
   local now = land_now_ms()
+  if not batch_id or batch_id == '' then
+    batch_id = 'b' .. tostring(seq)
+  end
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
 
   redis.call('HSET', bkey,
     'seq', tostring(seq),
-    'parent', '',
+    'parent', parent,
     'from_tip', from_tip or '',
     'members', members_csv,
     'paths', paths_csv or '',
-    'class', class or 'go',
+    'class', class,
     'state', 'queued',
     'attempt', '1',
     'token', tostring(token),
@@ -279,11 +435,73 @@ redis.register_function('ns_batch_plan', function(keys, args)
     'base', base,
     'batch', batch_id,
     'seq', tostring(seq),
+    'parent', parent,
     'token', tostring(token),
     'at', tostring(now)
   )
 
-  return { 'OK', tostring(token), entry_id }
+  return { 'OK', tostring(token), entry_id, batch_id }
+end)
+
+-- ns_batch_bind (4.2): sets from_tip (and input_id) on a chain batch planned before its parent had a
+-- train head. Only an empty from_tip is bound, only to the parent's train_head, and only while the
+-- batch is queued; anything else is STALE and writes nothing. Checks writer gen and lease first
+-- (REFUSED <reason>). args: repo base batch_id lease from_tip input_id.
+redis.register_function('ns_batch_bind', function(keys, args)
+  local repo, base, batch_id, lease_val, from_tip, input_id = args[1], args[2], args[3], args[4], args[5], args[6]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return 'REFUSED ' .. refusal
+  end
+  local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
+  local b = redis.call('HMGET', bkey, 'state', 'from_tip', 'parent')
+  if b[1] ~= 'queued' or (b[2] and b[2] ~= '') or not b[3] or b[3] == '' then
+    return 'STALE'
+  end
+  local pb = redis.call('HMGET', 'land:' .. repo .. ':' .. base .. ':batch:' .. b[3], 'state', 'train_head')
+  if (pb[1] ~= 'green' and pb[1] ~= 'landed') or not pb[2] or pb[2] == '' or pb[2] ~= from_tip then
+    return 'STALE'
+  end
+  redis.call('HSET', bkey, 'from_tip', from_tip, 'input_id', input_id or '')
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'BIND', 'repo', repo, 'base', base, 'batch', batch_id, 'from_tip', from_tip, 'at', land_now_ms())
+  return 'OK'
+end)
+
+-- ns_unit_drop (4.1, L26): drops a unit at one head with a reason; an optional task kind (rebase)
+-- is queued once on q:<author>. A second drop at the same head is ALREADY and queues nothing; a
+-- drop naming a head the unit no longer has is STALE. ns_unit_eval re-offers it only on a new head.
+-- Checks writer gen and lease first (REFUSED <reason>). args: S unit repo base lease head reason task.
+redis.register_function('ns_unit_drop', function(keys, args)
+  local S, unit, repo, base, lease_val, head, reason, task = args[1], args[2], args[3], args[4], args[5], args[6], args[7], args[8]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return 'REFUSED ' .. refusal
+  end
+  local ukey = 's:' .. S .. ':u:' .. unit
+  local u = redis.call('HMGET', ukey, 'state', 'head', 'drop_head', 'author', 'conflict_drops')
+  if not u[1] then return 'NOTFOUND' end
+  if u[1] == 'dropped' and u[3] == head then return 'ALREADY' end
+  if u[2] ~= head or u[1] == 'landed' or u[1] == 'landing' then return 'STALE' end
+  local seq = redis.call('INCR', 'rec:seq')
+  local now = land_now_ms()
+  local h8 = string.sub(head, 1, 8)
+  redis.call('HSET', ukey, 'state', 'dropped', 'drop_head', head, 'drop_key', h8 .. ':' .. tostring(seq),
+    'drop_reason', reason or '', 'batch', '')
+  if reason == 'conflict' then
+    local prev = u[5] or ''
+    local last = string.match(prev, '([^,]+)$') or ''
+    local cd = (last ~= '') and (last .. ',' .. now) or now
+    redis.call('HSET', ukey, 'conflict_drops', cd)
+  end
+  redis.call('ZREM', 's:' .. S .. ':landable:' .. repo .. ':' .. base, unit)
+  if task and task ~= '' and u[4] and u[4] ~= '' then
+    redis.call('XADD', 'q:' .. u[4], '*', 'kind', task, 'unit', unit, 'head', head, 'reason', reason or '',
+      'drop_key', h8 .. ':' .. tostring(seq))
+  end
+  redis.call('XADD', 'land:' .. repo .. ':events', 'MAXLEN', '~', '100000', '*',
+    'event', 'DROP', 'repo', repo, 'base', base, 'unit', unit, 'head', head, 'reason', reason or '', 'at', now)
+  return 'OK'
 end)
 
 -- ns_gate_claim: claims a queued gate for one worker slot.
@@ -451,9 +669,8 @@ redis.register_function('ns_requeue', function(keys, args)
   return { 'OK', tostring(token), new_entry_id }
 end)
 
--- ns_batch_void: marks batch void, removes from chain, returns members to landable.
-redis.register_function('ns_batch_void', function(keys, args)
-  local S, repo, base, batch_id, reason = args[1], args[2], args[3], args[4], args[5]
+-- land_batch_void: marks one batch void, removes it from the chain, returns its members to landable.
+local function land_batch_void(S, repo, base, batch_id, reason)
   local bkey = 'land:' .. repo .. ':' .. base .. ':batch:' .. batch_id
   local now = land_now_ms()
   redis.call('HSET', bkey, 'state', 'void', 'reason', reason or '')
@@ -484,7 +701,42 @@ redis.register_function('ns_batch_void', function(keys, args)
     'reason', reason or '',
     'at', tostring(now)
   )
-  return 'OK'
+end
+
+-- ns_batch_void: marks batch void, removes from chain, returns members to landable. Checks writer
+-- gen and lease first ({REFUSED, reason}, nothing written), like every batcher write (2.3).
+-- args: S repo base batch_id lease reason.
+redis.register_function('ns_batch_void', function(keys, args)
+  local S, repo, base, batch_id, lease_val, reason = args[1], args[2], args[3], args[4], args[5], args[6]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return { 'REFUSED', refusal }
+  end
+  land_batch_void(S, repo, base, batch_id, reason)
+  return { 'OK' }
+end)
+
+-- ns_chain_void (4.3, L16): a red batch leaves the chain (its members stay batched for red-batch
+-- attribution, 6.1) and every batch behind it is voided in the same call, members back to landable
+-- for a re-plan on the new base. Returns the voided ids in chain order. Checks writer gen and lease
+-- first ({REFUSED, reason}). args: S repo base batch_id lease reason.
+redis.register_function('ns_chain_void', function(keys, args)
+  local S, repo, base, batch_id, lease_val, reason = args[1], args[2], args[3], args[4], args[5], args[6]
+  local refusal = land_lease_refusal(repo, base, lease_val)
+  if refusal then
+    return { 'REFUSED', refusal }
+  end
+  local chain_key = 'land:' .. repo .. ':' .. base .. ':chain'
+  local seq = redis.call('ZSCORE', chain_key, batch_id)
+  if not seq then return { 'NOTFOUND' } end
+  local behind = redis.call('ZRANGEBYSCORE', chain_key, '(' .. seq, '+inf')
+  redis.call('ZREM', chain_key, batch_id)
+  local out = { 'OK' }
+  for _, id in ipairs(behind) do
+    land_batch_void(S, repo, base, id, (reason and reason ~= '') and reason or ('behind-red:' .. batch_id))
+    table.insert(out, id)
+  end
+  return out
 end)
 
 -- ns_land_intent: the linearization point (2.3).
@@ -679,7 +931,14 @@ redis.register_function('ns_land', function(keys, args)
   for i, m in ipairs(members) do
     local msha = merge_shas[i] or train_head
     redis.call('SET', 'landed:' .. repo .. ':' .. m.unit .. ':' .. m.head, msha .. ' ' .. batch_id .. ' ' .. receipt)
-    redis.call('HSET', 's:' .. S .. ':u:' .. m.unit, 'state', 'landed', 'merge_sha', msha, 'landed_head', m.head)
+    local ukey = 's:' .. S .. ':u:' .. m.unit
+    if redis.call('HGET', ukey, 'merged_at') == '' then
+      -- nova-tools#3091: merged_at (Redis TIME seconds) only while still empty.
+      redis.call('HSET', ukey, 'state', 'landed', 'merge_sha', msha, 'landed_head', m.head,
+        'merged_at', string.format('%d', math.floor(tonumber(now) / 1000)))
+    else
+      redis.call('HSET', ukey, 'state', 'landed', 'merge_sha', msha, 'landed_head', m.head)
+    end
     redis.call('ZREM', 's:' .. S .. ':landable:' .. repo .. ':' .. base, m.unit)
   end
 

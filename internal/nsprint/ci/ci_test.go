@@ -55,6 +55,7 @@ func newFixture(t *testing.T, benches ...string) *fixture {
 		client.SAdd(ctx, "benches", b)
 		client.HSet(ctx, "bench:"+b+":desired", "slots", "4", "machine", b, "paused", "0", "legs", "go")
 		client.HSet(ctx, "bench:"+b+":beat", "host", b, "at", "1")
+		client.HSet(ctx, "bench:"+b+":state", "state", "UP", "at", "1")
 	}
 	return f
 }

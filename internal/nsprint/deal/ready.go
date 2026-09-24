@@ -131,6 +131,32 @@ func parseRef(entry string) (repo string, n int, ok bool) {
 	return entry[:i], n, true
 }
 
+// DepEntry is one DEPENDS-ON entry in the same shape the dealer's gate uses.
+// A repository reference has Repo and N; every other spelling is a card Label.
+type DepEntry struct {
+	Label string
+	Repo  string
+	N     int
+}
+
+// DepEntries parses the card's stored depends_on value with the dealer's one
+// parser. Classification passes these shapes to Redis; Redis reads the actual
+// dependency evidence atomically with its classification write.
+func DepEntries(dependsOn string) []DepEntry {
+	var out []DepEntry
+	for _, entry := range splitDeps(dependsOn) {
+		if entry == "" || entry == "-" || entry == "none" {
+			continue
+		}
+		if repo, n, ok := parseRef(entry); ok {
+			out = append(out, DepEntry{Repo: repo, N: n})
+		} else {
+			out = append(out, DepEntry{Label: entry})
+		}
+	}
+	return out
+}
+
 type refKey struct {
 	repo string
 	n    int

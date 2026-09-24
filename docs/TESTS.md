@@ -983,6 +983,26 @@ $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
 ```
 
+## nova-redis
+
+No fixture and no instance: the lines below are the two refusals `spill`
+makes BEFORE it dials anything, so they read the same on every bench.
+`cmd/nova-redis/firstrun_test.go` runs each `$` line and compares the output.
+A write with no owner, or with no TTL, is refused and nothing is stored; the
+round trip against an instance (`spill`, `recall`, and `recall` refusing an
+expired key under a controlled clock) is in `cmd/nova-redis/spill_test.go`
+over a miniredis fake.
+
+### First run
+
+```text
+$ nova-redis spill --addr 127.0.0.1:6379 --name note --ttl 10m --value hi
+nova-redis spill: --owner is required; refusing to guess; run: nova-redis help
+
+$ nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 0s --value hi
+nova-redis spill: --ttl is required and must be above zero; an unbounded key is a bug; run: nova-redis help
+```
+
 ## nova-post
 
 The gate is draft, show, approve, send: the tool prepares and renders, and Glenn's

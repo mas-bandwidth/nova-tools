@@ -30,6 +30,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
@@ -37,10 +38,12 @@ import (
 // `--log ./decide.jsonl`, which is what the section's prose now says the `log`
 // line reads. It is pasted rather than produced by an extra run, because a step
 // this test invented would be a step the document does not show.
-const firstRunLog = `{"time":"2026-09-19T13:05:22Z","unit":"card-41","kind":"rebase","evidence":{"id":"card-41","kind":"rebase","files":2,"packages":1},"rung_tried":"flash","height":0,"confidence":0.9,"floor":0.65,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash","reason":"kind rebase starts at rung flash","wait":"-"}
+const firstRunLog = `{"time":"2026-09-19T13:05:22Z","unit":"card-41","kind":"rebase","evidence":{"id":"card-41","kind":"rebase","files":2,"packages":1},"rung_tried":"flash","height":0,"confidence":0.9,"floor":0.65,"stepped_up":false,"escalated":false,"source":"rules","rowan_pick":"flash","reason":"kind rebase starts at rung flash","wait":"-","down_checked":false}
 `
 
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
+	mr := miniredis.RunT(t)
+	t.Setenv("NOVA_REDIS_ADDR", mr.Addr())
 	executeTranscript(t, "First run")
 }
 

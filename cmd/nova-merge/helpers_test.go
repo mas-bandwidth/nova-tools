@@ -159,6 +159,7 @@ type lab struct {
 
 func newLab(t *testing.T) *lab {
 	t.Helper()
+	skipLabOnPRStudioLeg(t)
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git is not on this machine; every test here drives a real git against a bare fixture repository")
 	}
@@ -192,6 +193,29 @@ func newLab(t *testing.T) *lab {
 	// this test's own copy or a push would reach the fixture every other test reads.
 	l.git(l.work, "remote", "set-url", "origin", l.remote)
 	return l
+}
+
+// prStudioLegEnv is set by ci.yml's `test` job on a pull request's Studio (macOS) leg
+// only. cmd/nova-merge compiles the same files on darwin as on linux; it gets a PR macOS
+// leg only because it imports internal/bus, internal/sandbox and internal/swarm, so any
+// PR touching one of those (or anything else it imports) put the whole lab suite on a
+// loaded Studio. Measured 2026-09-24: 240 parallel lab tests at GOMAXPROCS=4 ran 660 s
+// and failed Go's 11m PR timeout (#3497 run 36010839171, 75 of 240 done) or were
+// cancelled at the 12-minute cap (#3547 run 36014606764, 117 of 240 done); on this Studio
+// at load 30 the package hit Go's 10m default with 76 of 311 tests passed. The lab
+// suite still runs in full on the same PR's Linux space leg, on every push to dev (8
+// Studio shards, 20-minute cap), in the merge group, and on hosted legs; the PR Studio
+// leg keeps every nova-merge test that needs no git lab.
+const prStudioLegEnv = "NOVA_CI_PR_STUDIO"
+
+// skipLabOnPRStudioLeg skips a git-lab test on a pull request's Studio leg (see
+// prStudioLegEnv). newLab calls it, so every lab test -- batchRepo, simulateRepo and
+// newIntegrateLab build on newLab -- follows one rule.
+func skipLabOnPRStudioLeg(t *testing.T) {
+	t.Helper()
+	if os.Getenv(prStudioLegEnv) == "1" {
+		t.Skip("git-lab test: skipped on a pull request's Studio leg (" + prStudioLegEnv + "=1); runs in full on the PR's Linux leg, on dev push's Studio shards and in the merge group")
+	}
 }
 
 // The process-wide fixture newLab copies: a `remote.git` with one commit on main and

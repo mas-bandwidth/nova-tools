@@ -45,10 +45,28 @@ const (
 var requiredKeys = []string{"BASE", "base-sha", "PATHS", "DEPENDS-ON", "DONE-WHEN"}
 
 var (
-	keyRE = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
-	idRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-	shaRE = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	keyRE    = regexp.MustCompile(`^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$`)
+	idRE     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	shaRE    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	streamRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,39}$`)
+	githubRE = regexp.MustCompile(`^([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)#([1-9][0-9]*)$`)
 )
+
+type dependencyKind string
+
+const (
+	dependencyCard   dependencyKind = "card"
+	dependencyGitHub dependencyKind = "github"
+	dependencyStream dependencyKind = "stream"
+	dependencyTask   dependencyKind = "task"
+)
+
+type dependency struct {
+	Kind  dependencyKind
+	Value string
+}
+
+func (d dependency) Typed() string { return string(d.Kind) + ":" + d.Value }
 
 // probeClient is the unauthenticated repository check. It does not follow
 // redirects. A 404, 401, or 403 is how a forge answers a private repository.
@@ -62,15 +80,17 @@ var probeClient = &http.Client{
 }
 
 type cardDoc struct {
-	Label     string
-	Base      string
-	BaseSHA   string
-	Paths     string
-	DependsOn string // comma-separated ids, empty when the card depends on nothing
-	Deps      []string
-	Repo      string // owner/name
-	Kind      string
-	Payload   string
+	Label          string
+	Base           string
+	BaseSHA        string
+	Paths          string
+	DependsOn      string // comma-separated ids, empty when the card depends on nothing
+	Deps           []dependency
+	TypedDependsOn string
+	Repo           string // owner/name
+	Kind           string
+	Type           string // optional TYPE: line, the Jev work type (code, docs, spec, ...); not KIND
+	Payload        string
 }
 
 func refused(reason string) VerbResult {
@@ -115,15 +135,17 @@ func lint(ctx context.Context, body []byte) (cardDoc, error) {
 	}
 	sum := sha256.Sum256(body)
 	return cardDoc{
-		Label:     label,
-		Base:      header["BASE"],
-		BaseSHA:   baseSHA,
-		Paths:     header["PATHS"],
-		DependsOn: depends,
-		Deps:      deps,
-		Repo:      repo,
-		Kind:      kind,
-		Payload:   hex.EncodeToString(sum[:]),
+		Label:          label,
+		Base:           header["BASE"],
+		BaseSHA:        baseSHA,
+		Paths:          header["PATHS"],
+		DependsOn:      depends,
+		Deps:           deps,
+		TypedDependsOn: typedDependencies(deps),
+		Repo:           repo,
+		Kind:           kind,
+		Type:           header["TYPE"],
+		Payload:        hex.EncodeToString(sum[:]),
 	}, nil
 }
 
@@ -180,35 +202,78 @@ func contractLabel(line string) string {
 	return fields[0]
 }
 
-// parseDepends accepts none and -, the two spellings of "depends on nothing".
-// Any other value is a comma-separated list of card ids.
-func parseDepends(label, value string) (string, []string, error) {
+// parseDepends accepts the one DEPENDS-ON vocabulary and assigns every entry
+// a type before it reaches Redis. An unprefixed entry is a same-sprint card id.
+func parseDepends(label, value string) (string, []dependency, error) {
 	if value == "none" || value == "-" {
 		return "", nil, nil
 	}
-	var ids []string
+	var deps []dependency
 	seen := map[string]bool{}
 	for _, part := range strings.Split(value, ",") {
-		id := strings.TrimSpace(part)
-		if id == "" {
+		entry := strings.TrimSpace(part)
+		if entry == "" {
 			return "", nil, errors.New("DEPENDS-ON has an empty entry")
 		}
-		if !idRE.MatchString(id) {
-			return "", nil, fmt.Errorf("DEPENDS-ON: %s is not a card id", id)
+		if entry == "none" || entry == "-" {
+			return "", nil, errors.New("DEPENDS-ON: none and - must stand alone")
 		}
-		if id == label {
+		dep, err := parseDependency(entry)
+		if err != nil {
+			return "", nil, err
+		}
+		if dep.Kind == dependencyCard && dep.Value == label {
 			return "", nil, errors.New("DEPENDS-ON names this card")
 		}
-		if seen[id] {
+		if seen[dep.Typed()] {
 			continue
 		}
-		seen[id] = true
-		ids = append(ids, id)
+		seen[dep.Typed()] = true
+		deps = append(deps, dep)
 	}
-	if len(ids) == 0 {
+	if len(deps) == 0 {
 		return "", nil, errors.New("DEPENDS-ON names no card")
 	}
-	return strings.Join(ids, ","), ids, nil
+	entries := make([]string, len(deps))
+	for i, dep := range deps {
+		entries[i] = dep.Value
+		if dep.Kind == dependencyStream {
+			entries[i] = "stream/" + dep.Value
+		} else if dep.Kind == dependencyTask {
+			entries[i] = "task:" + dep.Value
+		}
+	}
+	return strings.Join(entries, ","), deps, nil
+}
+
+func parseDependency(entry string) (dependency, error) {
+	if m := githubRE.FindStringSubmatch(entry); m != nil {
+		return dependency{Kind: dependencyGitHub, Value: entry}, nil
+	}
+	if slug, ok := strings.CutPrefix(entry, "stream/"); ok {
+		if !streamRE.MatchString(slug) {
+			return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not stream/<slug>", entry)
+		}
+		return dependency{Kind: dependencyStream, Value: slug}, nil
+	}
+	if id, ok := strings.CutPrefix(entry, "task:"); ok {
+		if !idRE.MatchString(id) {
+			return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not task:<id>", entry)
+		}
+		return dependency{Kind: dependencyTask, Value: id}, nil
+	}
+	if !idRE.MatchString(entry) {
+		return dependency{}, fmt.Errorf("DEPENDS-ON: %s is not a card id, owner/repo#n, stream/<slug>, or task:<id>", entry)
+	}
+	return dependency{Kind: dependencyCard, Value: entry}, nil
+}
+
+func typedDependencies(deps []dependency) string {
+	entries := make([]string, len(deps))
+	for i, dep := range deps {
+		entries[i] = dep.Typed()
+	}
+	return strings.Join(entries, ",")
 }
 
 func cloneURL(header map[string]string) string {
