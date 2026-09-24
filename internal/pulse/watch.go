@@ -38,6 +38,7 @@ type WatchInput struct {
 	Cap    time.Duration // the wall it never runs past
 	Now    func() time.Time
 	Sleep  func(time.Duration)
+	Events <-chan string // events from pub/sub; a message wakes one re-read, nil keeps polling only
 	Stdout io.Writer
 	Stderr io.Writer
 }
@@ -95,7 +96,17 @@ func Watch(in WatchInput) int {
 		return watchOK(in, changes, polls, start)
 	}
 	for {
-		in.Sleep(watchPollFloor)
+		if in.Events == nil {
+			in.Sleep(watchPollFloor)
+		} else {
+			select {
+			case <-time.After(watchPollFloor):
+			case <-in.Events:
+				// The event is a wake-up, not data; give tests a hook to mutate the
+				// estate between the wake and the re-read.
+				in.Sleep(0)
+			}
+		}
 		if in.Now().Sub(start) >= in.Cap {
 			fmt.Fprintf(in.Stdout, "WATCH CAP until=%s changes=%d polls=%d cap=%s\n",
 				oneline.Escape(in.Until), changes, polls, in.Cap)

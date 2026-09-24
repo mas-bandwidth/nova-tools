@@ -40,7 +40,8 @@ type StatusInput struct {
 	Day            string // YYYY-MM-DD the day window starts at; empty means today (UTC)
 	Max            int
 	Timeout        time.Duration
-	ExpandingHours int // the sustained window the EXPANDING verdict requires, in whole hours; <= 0 means 2
+	ExpandingHours int  // the sustained window the EXPANDING verdict requires, in whole hours; <= 0 means 2
+	Fleet          bool // read the nodes/receipts projection in the queue directory instead of opening job files
 	Stdout         io.Writer
 	Stderr         io.Writer
 	Now            func() time.Time
@@ -87,6 +88,9 @@ func Status(in StatusInput) int {
 	if err != nil {
 		return refusal(in.Stderr, "STATUS", fmt.Errorf("--day wants YYYY-MM-DD, got %q (say the day the window starts at)", in.Day))
 	}
+	if in.Fleet {
+		return statusFleet(in)
+	}
 	// The swarm's health is read BEFORE anything prints: a --batches that names nothing
 	// readable is a refusal, not a quiet zero folded into a report that already started.
 	var batches batchReading
@@ -120,6 +124,10 @@ func Status(in StatusInput) int {
 
 	fmt.Fprintf(out, "STATUS QUEUE pending=%d gated=%d launched=%d done=%d failed=%d\n",
 		queue.pending, queue.gated, queue.launched, queue.done, queue.failed)
+
+	// The unknown count is live; it prints beside the cap counts so the seat and
+	// the uncertainty are not silently dropped (SPEC-STATE.md §14).
+	fmt.Fprintf(out, "STATUS UNKNOWN count=%d\n", countLines(in.Queue, "UNKNOWN"))
 
 	// Gateway deaths are route failures, not card failures (#2634). QUEUE failed=
 	// stays the count of cards sitting in the failed directory; these two columns
@@ -674,6 +682,39 @@ func countLines(dir, name string) int {
 		}
 	}
 	return n
+}
+
+// statusFleet answers `status --fleet` from the queue's `nodes.tsv` and `receipts.tsv`
+// projection instead of walking the job directories under --roots. A missing projection
+// file is a refusal.
+func statusFleet(in StatusInput) int {
+	nodesPath := filepath.Join(in.Queue, "nodes.tsv")
+	receiptsPath := filepath.Join(in.Queue, "receipts.tsv")
+	nodes, nerr := countTSVRows(nodesPath)
+	if nerr != nil {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf("--fleet cannot read nodes projection %s", oneline.Err(nerr)))
+	}
+	receipts, rerr := countTSVRows(receiptsPath)
+	if rerr != nil {
+		return refusal(in.Stderr, "STATUS", fmt.Errorf("--fleet cannot read receipts projection %s", oneline.Err(rerr)))
+	}
+	fmt.Fprintf(in.Stdout, "STATUS FLEET nodes=%d receipts=%d\n", nodes, receipts)
+	return 0
+}
+
+// countTSVRows counts non-empty, non-comment data rows in a TSV file.
+func countTSVRows(path string) (int, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, l := range strings.Split(string(raw), "\n") {
+		if t := strings.TrimSpace(l); t != "" && !strings.HasPrefix(t, "#") {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func addCards(a, b int) int { return a + b }
