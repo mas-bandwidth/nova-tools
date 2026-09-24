@@ -980,6 +980,51 @@ silent drop."
 absorbed (SPEC-WORK.md:6232)."
   (null (archive-capture-gaps capture)))
 
+(defun archive-named-revision-p (revision)
+  "True when REVISION names a remote revision: a string with at least one
+non-whitespace character. NIL, a non-string, an empty string or a
+whitespace-only string names nothing, so the deletion gate never treats two
+of them as an unchanged source (SPEC-WORK.md:7602-7608)."
+  (and (stringp revision)
+       (string/= "" (string-trim '(#\Space #\Tab #\Newline #\Return #\Page
+                                   #\Linefeed)
+                                 revision))))
+
+(defun archive-deletion-gate (capture &key capture-revision source-revision
+                                           delete-result)
+  "The absorb deletion gate beside ARCHIVE-ABSORBABLE-P (SPEC-WORK.md:7596-7611).
+CAPTURE-REVISION is the named remote revision the capture was taken at,
+SOURCE-REVISION the revision the pre-delete recheck found, DELETE-RESULT the
+outcome of a delete attempt (NIL before one is made, :DELETED when the
+remote confirmed it). Returns three values: the deletion state, the pending
+reason (NIL unless the state is :PENDING) and the archive, which the gate
+always keeps.
+  :PENDING :MISSING-CONTENT -- the capture has gaps (:7598): unavailable or
+    unpreserved content leaves deletion pending, not silently skipped.
+  :PENDING :SOURCE-CHANGED  -- the source revision differs from the capture
+    revision, or either is unnamed -- NIL, empty or whitespace-only
+    (:7602-7608): reconcile and checkpoint
+    the added content first.
+  :PENDING :RECONCILE       -- the delete result is a failure, uncertain or
+    unknown (:7610-7611): the archive is preserved and reconciliation is
+    pending.
+  :ALLOWED                  -- every check passed and no delete was attempted.
+  :DELETED                  -- every check passed and the delete was confirmed.
+The checks run in that order, so no delete result overrides missing content
+or a source change."
+  (cond ((not (archive-absorbable-p capture))
+         (values :pending :missing-content capture))
+        ((not (and (archive-named-revision-p capture-revision)
+                   (archive-named-revision-p source-revision)
+                   (equal capture-revision source-revision)))
+         (values :pending :source-changed capture))
+        ((null delete-result)
+         (values :allowed nil capture))
+        ((eq delete-result :deleted)
+         (values :deleted nil capture))
+        (t
+         (values :pending :reconcile capture))))
+
 (defun author-retains-source-p (capture)
   "A mixed, external or unknown author retains its source issue."
   (and (member (archive-capture-author capture) '(:mixed :external :unknown))
