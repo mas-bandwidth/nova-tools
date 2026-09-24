@@ -49,6 +49,7 @@ var allowlist = []allowlistEntry{
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
 	{file: "internal/nsprint/card/lint.go", fn: "requiredKeys", record: "SPEC-CARD"},
 	{file: "internal/prereview/prereview.go", fn: "ParseCard", record: "SPEC-CARD"},
+	{file: "internal/prereview/prereview.go", fn: "doneCheck", record: "SPEC-CARD"},
 
 	// Issue-body card keys
 	{file: "internal/nsprint/file/file.go", fn: "requiredKeys", record: "Issue-body"},
@@ -64,6 +65,10 @@ var allowlist = []allowlistEntry{
 	{file: "internal/secrets/seal.go", fn: "RunSeal", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
+	{file: "cmd/nova-merge/batch.go", fn: "bodyPaths", record: "SPEC-CARD"},
+	{file: "cmd/nova-merge/integrate.go", fn: "integrateSteps", record: "integrate-steps"},
+	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict"},
+	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD"},
 
 	// part=B
 	{file: "internal/merge/verdict.go", fn: "ParseDispositionLine", record: "disposition", partB: true},
@@ -579,9 +584,9 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// Verify that there are exactly 23 allowlist entries
-		if len(allowlist) != 23 {
-			t.Errorf("expected 23 allowlist entries, got %d", len(allowlist))
+		// Verify that there are exactly 28 allowlist entries
+		if len(allowlist) != 28 {
+			t.Errorf("expected 28 allowlist entries, got %d", len(allowlist))
 		}
 	})
 }

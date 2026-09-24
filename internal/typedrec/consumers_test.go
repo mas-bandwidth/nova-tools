@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/consume"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
@@ -257,6 +258,7 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 		bin := filepath.Join(t.TempDir(), "nova-sprint")
 		cmdBuild := exec.Command("go", "build", "-o", bin, "./cmd/nova-sprint")
 		cmdBuild.Dir = root
+		cmdBuild.Env = goenv.Clean(os.Environ())
 		if out, err := cmdBuild.CombinedOutput(); err != nil {
 			t.Fatalf("build nova-sprint: %v\n%s", err, out)
 		}
@@ -398,7 +400,7 @@ func TestEveryConsumerRefusesMissingFieldByName(t *testing.T) {
 				"token_sha", "abcdefabcdef",
 				"actor", "card-harvest",
 				"reason", "harvested",
-				"evidence", "https://github.com/mas-bandwidth/nova-tools/pull/10",
+				"evidence", "https://example.com/mas-bandwidth/nova-tools/pull/10",
 				"idem", "harvest:" + label,
 				"at", "1234567890",
 			},
