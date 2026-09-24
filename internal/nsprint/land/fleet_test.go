@@ -232,12 +232,12 @@ func runFixtureFleet(t *testing.T, rdb *redis.Client, stub *testutil.GitHubStub,
 	}
 
 	type GateJob struct {
-		BenchName   string
-		Units       []FixtureUnit
-		FinishTime  time.Duration
-		Attempt     int
-		IsBisect    bool
-		BisectSolo  *FixtureUnit
+		BenchName  string
+		Units      []FixtureUnit
+		FinishTime time.Duration
+		Attempt    int
+		IsBisect   bool
+		BisectSolo *FixtureUnit
 	}
 
 	var activeGates []GateJob

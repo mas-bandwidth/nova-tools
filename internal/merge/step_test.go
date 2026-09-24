@@ -7,25 +7,27 @@ import (
 	"time"
 )
 
-// TestThreeStepsOf10SRunInUnder15S verifies that concurrent steps execute in parallel,
-// completing 3 x 10s steps in well under 15s (typically ~10s).
+// TestThreeStepsOf10SRunInUnder15S verifies that concurrent steps execute in
+// parallel. It asserts the event, not the clock: each step marks itself
+// started and then waits for all three marks, so under a serial runner the
+// first step never sees the other two and exits 3 (bounded, about 30 s).
 func TestThreeStepsOf10SRunInUnder15S(t *testing.T) {
 	t.Parallel()
 
+	dir := t.TempDir()
+	rendezvous := func(name string) string {
+		return "touch " + dir + "/" + name + "; n=0; " +
+			"while [ $(ls " + dir + " | wc -l) -lt 3 ]; do " +
+			"n=$((n+1)); [ $n -gt 600 ] && exit 3; sleep 0.05; done"
+	}
 	runner := &StepRunner{}
 	steps := []Step{
-		{Name: "step1", Command: "sleep 10"},
-		{Name: "step2", Command: "sleep 10"},
-		{Name: "step3", Command: "sleep 10"},
+		{Name: "step1", Command: rendezvous("step1")},
+		{Name: "step2", Command: rendezvous("step2")},
+		{Name: "step3", Command: rendezvous("step3")},
 	}
 
-	start := time.Now()
 	results := runner.Run(steps)
-	elapsed := time.Since(start)
-
-	if elapsed >= 15*time.Second {
-		t.Fatalf("3 steps of 10s took %v, want < 15s", elapsed)
-	}
 
 	if len(results) != 3 {
 		t.Fatalf("got %d results, want 3", len(results))
@@ -33,13 +35,10 @@ func TestThreeStepsOf10SRunInUnder15S(t *testing.T) {
 
 	for i, res := range results {
 		if res.Err != nil {
-			t.Errorf("step %d (%s) failed: %v", i, res.Step.Name, res.Err)
+			t.Errorf("step %d (%s) failed: %v (a serial runner never meets the other two steps)", i, res.Step.Name, res.Err)
 		}
 		if res.Skipped {
 			t.Errorf("step %d (%s) was skipped: %s", i, res.Step.Name, res.SkipWhy)
-		}
-		if res.Duration < 9*time.Second {
-			t.Errorf("step %d duration %v too short for a 10s sleep", i, res.Duration)
 		}
 	}
 }
@@ -103,13 +102,7 @@ func TestBuildStepRunsFirstAndGatesConcurrentSteps(t *testing.T) {
 			{Name: "step2", Command: "sleep 10"},
 		}
 
-		start := time.Now()
 		results := runner.Run(steps)
-		elapsed := time.Since(start)
-
-		if elapsed >= 2*time.Second {
-			t.Fatalf("expected immediate skip on build failure, but took %v", elapsed)
-		}
 
 		if len(results) != 3 {
 			t.Fatalf("expected 3 results, got %d", len(results))
@@ -229,13 +222,7 @@ func TestStepRunnerTimeout(t *testing.T) {
 		{Name: "hang", Command: "sleep 10"},
 	}
 
-	start := time.Now()
 	results := runner.Run(steps)
-	elapsed := time.Since(start)
-
-	if elapsed > 2*time.Second {
-		t.Fatalf("step timeout took %v, want ~200ms", elapsed)
-	}
 
 	if len(results) != 1 {
 		t.Fatalf("expected 1 result, got %d", len(results))

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -477,8 +478,9 @@ func LoadLiveGraph(ctx context.Context, dir, goos string, tags []string) (*Graph
 
 	cmd := exec.CommandContext(ctx, "go", args...)
 	cmd.Dir = dir
+	cmd.Env = goenv.Clean(os.Environ())
 	if goos != "" {
-		cmd.Env = append(os.Environ(), "GOOS="+goos)
+		cmd.Env = append(cmd.Env, "GOOS="+goos)
 	}
 	out, err := cmd.Output()
 	if err != nil {

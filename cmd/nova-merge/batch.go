@@ -100,7 +100,6 @@ var batchGate = func() []batchStep {
 	return out
 }()
 
-
 // crossVetStep is the cross vet's name, and it is a constant because it is THE ONE STEP A
 // UNIT TEST MUST NOT RUN.
 //
