@@ -18,9 +18,6 @@ func init() {
 		Summary: "read only width per friend and fleet: slots, working, deficit, eligible, idle",
 		Run:     runWidth,
 	})
-	registerReconcileDuty("width", func(st *store.Store) (reconcileDuty, error) {
-		return &width.Duty{Store: st}, nil
-	})
 }
 
 func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -97,6 +94,60 @@ func runWidth(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 
 	fmt.Fprintln(out, width.FleetLine(fleetWorking, fleetSlots, fleetDeficit))
+
+	readBound := false
+	if client.Get(ctx, "sprint:read_bound").Val() == "1" {
+		readBound = true
+	} else {
+		for _, s := range client.SMembers(ctx, "sprints").Val() {
+			if client.HGet(ctx, "s:"+s+":backpressure", "read_bound").Val() == "1" {
+				readBound = true
+				break
+			}
+		}
+	}
+	if !readBound {
+		readers := client.SMembers(ctx, "width:readers").Val()
+		if len(readers) == 0 {
+			readers = client.SMembers(ctx, "readers").Val()
+		}
+		if len(readers) > 0 {
+			allUpDeficitZero := true
+			hasUpReader := false
+			for _, r := range readers {
+				if client.Exists(ctx, "friend:"+r+":beat").Val() == 1 {
+					hasUpReader = true
+					fsData, ok, _ := width.ReadFillstate(ctx, st, r)
+					if !ok || fsData.Deficit > 0 {
+						allUpDeficitZero = false
+						break
+					}
+				}
+			}
+			if hasUpReader && allUpDeficitZero {
+				for _, s := range client.SMembers(ctx, "sprints").Val() {
+					for _, r := range readers {
+						for _, tid := range client.ZRange(ctx, "s:"+s+":open:"+r, 0, -1).Val() {
+							kind := client.HGet(ctx, "s:"+s+":task:"+tid, "kind").Val()
+							if kind == "read" || kind == "review" {
+								readBound = true
+								break
+							}
+						}
+						if readBound {
+							break
+						}
+					}
+					if readBound {
+						break
+					}
+				}
+			}
+		}
+	}
+	if readBound {
+		fmt.Fprintln(out, "READ-BOUND")
+	}
 	return 0
 }
 

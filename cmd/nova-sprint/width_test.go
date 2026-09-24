@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -106,6 +107,83 @@ func TestWidthVerbs(t *testing.T) {
 		code = run([]string{"width", "extra", "--redis", addr}, &stdout, &stderr)
 		if code != 2 {
 			t.Fatalf("width positional argument exit code=%d; want 2", code)
+		}
+	})
+
+	t.Run("V2", func(t *testing.T) {
+		addr := testutil.Start(t)
+		client := redis.NewClient(&redis.Options{Addr: addr})
+		t.Cleanup(func() { _ = client.Close() })
+		ctx := context.Background()
+		if err := fn.Load(ctx, client); err != nil {
+			t.Fatal(err)
+		}
+
+		sprint := "s1"
+		client.SAdd(ctx, "sprints", sprint)
+		client.ZAdd(ctx, "sprint:order", redis.Z{Score: 1, Member: sprint})
+		client.HSet(ctx, "s:"+sprint, "status", "open")
+
+		client.SAdd(ctx, "friends", "f1")
+		client.HSet(ctx, "friend:f1:desired", "slots", "1")
+		client.HSet(ctx, "friend:f1:beat", "at", "1")
+
+		for i := 1; i <= 5; i++ {
+			id := fmt.Sprintf("t%d", i)
+			client.ZAdd(ctx, "s:"+sprint+":open:f1", redis.Z{Score: float64(i), Member: id})
+			client.HSet(ctx, "s:"+sprint+":task:"+id, "state", "open", "kind", "work", "ref", id)
+		}
+
+		var out1, err1 bytes.Buffer
+		var out2, err2 bytes.Buffer
+		var code1, code2 int
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			code1 = run([]string{"task", "fill", "--as", "f1", "--sprint", sprint, "--redis", addr}, &out1, &err1)
+		}()
+		go func() {
+			defer wg.Done()
+			code2 = run([]string{"task", "fill", "--as", "f1", "--sprint", sprint, "--redis", addr}, &out2, &err2)
+		}()
+		wg.Wait()
+
+		if code1 != 0 || code2 != 0 {
+			t.Fatalf("concurrent fill exit codes: code1=%d err1=%q code2=%d err2=%q", code1, err1.String(), code2, err2.String())
+		}
+
+		var winnerOut, loserOut string
+		if strings.Contains(out1.String(), "n=1") {
+			winnerOut = out1.String()
+			loserOut = out2.String()
+		} else {
+			winnerOut = out2.String()
+			loserOut = out1.String()
+		}
+
+		if !strings.Contains(winnerOut, "FILL ") || !strings.Contains(winnerOut, "FILLED f1 n=1") {
+			t.Fatalf("winner output unexpected: %q", winnerOut)
+		}
+		if strings.Contains(loserOut, "FILL ") || !strings.Contains(loserOut, "FILLED f1 n=0") {
+			t.Fatalf("the C2 loser did not print FILLED f1 n=0: %q", loserOut)
+		}
+
+		// task fill with no --as exits 2 and prints no FILL line
+		var outNoAs, errNoAs bytes.Buffer
+		codeNoAs := run([]string{"task", "fill", "--sprint", sprint, "--redis", addr}, &outNoAs, &errNoAs)
+		if codeNoAs != 2 {
+			t.Fatalf("task fill no --as exit code=%d; want 2", codeNoAs)
+		}
+		if strings.Contains(outNoAs.String(), "FILL ") {
+			t.Fatalf("task fill no --as printed FILL line: %q", outNoAs.String())
+		}
+
+		// --max 0 exits 2
+		var outMax0, errMax0 bytes.Buffer
+		codeMax0 := run([]string{"task", "fill", "--as", "f1", "--max", "0", "--sprint", sprint, "--redis", addr}, &outMax0, &errMax0)
+		if codeMax0 != 2 {
+			t.Fatalf("task fill --max 0 exit code=%d; want 2", codeMax0)
 		}
 	})
 

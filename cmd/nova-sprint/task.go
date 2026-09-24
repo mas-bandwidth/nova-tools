@@ -195,7 +195,8 @@ func runTaskFill(ctx context.Context, args []string, out, errOut io.Writer) int 
 	as := fs.String("as", "", "")
 	sprint := fs.String("sprint", "", "")
 	max := fs.Int("max", 0, "")
-	_ = sprint
+	actor := fs.String("actor", "", "")
+	idem := fs.String("idem", "", "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "task fill", err.Error())
 	}
@@ -233,6 +234,13 @@ func runTaskFill(ctx context.Context, args []string, out, errOut io.Writer) int 
 	if st.Client().Exists(ctx, "friend:"+*as+":desired").Val() == 0 {
 		return refuse(errOut, "task fill", fmt.Sprintf("friend %s has no desired slots", *as))
 	}
-	fmt.Fprintf(out, "FILLED %s n=0 deficit=0\n", *as)
+	res, err := task.Fill(ctx, st, *as, *sprint, *max, *actor, *idem)
+	if err != nil {
+		return refuse(errOut, "task fill", err.Error())
+	}
+	for _, t := range res.Tasks {
+		fmt.Fprintf(out, "FILL %s kind=%s ref=%s token=%s\n", t.ID, t.Kind, t.Ref, t.Token)
+	}
+	fmt.Fprintf(out, "FILLED %s n=%d deficit=%d\n", *as, res.N, res.Deficit)
 	return 0
 }

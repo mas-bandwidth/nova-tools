@@ -30,6 +30,128 @@ function WD.fenced()
   return { 'FENCED', h[1] or '', h[2] or '' }
 end
 
+function WD.receipt(S, kind, id, from_state, to_state, attempt, token_sha, actor, reason, evidence, idem, at)
+  local log_key = 's:' .. S .. ':log'
+  redis.call('XADD', log_key, '*',
+    'kind', kind,
+    'id', id,
+    'from', from_state,
+    'to', to_state,
+    'attempt', tostring(attempt or 0),
+    'token_sha', token_sha or '',
+    'actor', actor or '',
+    'reason', reason or '',
+    'evidence', evidence or '',
+    'idem', idem or '',
+    'at', tostring(at)
+  )
+end
+
+function WD.is_read(kind)
+  return kind == 'read' or kind == 'review'
+end
+
+function WD.pr_producing(kind)
+  return kind == 'work' or kind == 'fix' or kind == 'build'
+end
+
+function WD.is_dedup(S, f, repo, pr, head, exclude_id)
+  if repo == '' or pr == '' or head == '' then
+    return false
+  end
+  if redis.call('HEXISTS', 's:' .. S .. ':disp:' .. repo .. ':' .. pr, f .. '@' .. head) == 1 then
+    return true
+  end
+  for _, tid in ipairs(redis.call('SMEMBERS', 's:' .. S .. ':done:' .. f)) do
+    if tid ~= exclude_id then
+      local tk = 's:' .. S .. ':task:' .. tid
+      if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
+        return true
+      end
+    end
+  end
+  for _, zkey in ipairs({ 'friend:' .. f .. ':starting', 'friend:' .. f .. ':living' }) do
+    for _, identity in ipairs(redis.call('ZRANGE', zkey, 0, -1)) do
+      local s, tid = string.match(identity, '^([^/]+)/(.+)/%d+$')
+      if s == S and tid ~= exclude_id then
+        local tk = 's:' .. S .. ':task:' .. tid
+        if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
+          return true
+        end
+      end
+    end
+  end
+  for _, tid in ipairs(redis.call('ZRANGE', 's:' .. S .. ':open:' .. f, 0, -1)) do
+    if tid ~= exclude_id then
+      local tk = 's:' .. S .. ':task:' .. tid
+      if redis.call('HGET', tk, 'repo') == repo and redis.call('HGET', tk, 'pr') == pr and redis.call('HGET', tk, 'head') == head then
+        return true
+      end
+    end
+  end
+  return false
+end
+
+-- WD.ready checks whether a task in sprint S is ready to be claimed or moved.
+function WD.ready(S, key)
+  local kind = redis.call('HGET', key, 'kind') or ''
+  if WD.is_read(kind) then
+    local repo = redis.call('HGET', key, 'repo') or ''
+    local pr = redis.call('HGET', key, 'pr') or ''
+    local head = redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'head') or ''
+    local want = redis.call('HGET', key, 'head') or ''
+    if head == '' or want == '' then
+      return false, 'head:missing'
+    end
+    if head ~= want then
+      return false, 'head:moved'
+    end
+  end
+  local deps = redis.call('HGET', key, 'depends_on') or ''
+  if deps ~= '' and deps ~= '-' and deps ~= 'none' then
+    for dep in string.gmatch(deps, '[^%s,]+') do
+      if dep ~= '' and dep ~= '-' and dep ~= 'none' then
+        local r, p = string.match(dep, '^([^#]+)#(%d+)$')
+        if r and p then
+          local pr_key = 's:' .. S .. ':pr:' .. r .. ':' .. p
+          if redis.call('HGET', pr_key, 'merged') ~= '1' then
+            return false, 'deps'
+          end
+          local pr_base = redis.call('HGET', pr_key, 'base') or ''
+          local task_base = redis.call('HGET', key, 'base') or redis.call('HGET', 's:' .. S, 'base') or ''
+          if pr_base ~= '' and task_base ~= '' and pr_base ~= task_base then
+            return false, 'deps'
+          end
+        else
+          local dk = 's:' .. S .. ':task:' .. dep
+          if redis.call('EXISTS', dk) == 1 then
+            if redis.call('HGET', dk, 'state') ~= 'closed' then
+              return false, 'deps'
+            end
+            local pr = redis.call('HGET', dk, 'pr') or ''
+            if pr ~= '' and pr ~= '0' then
+              local repo = redis.call('HGET', dk, 'repo') or ''
+              if redis.call('HGET', 's:' .. S .. ':pr:' .. repo .. ':' .. pr, 'merged') ~= '1' then
+                return false, 'deps'
+              end
+            end
+          else
+            local ck = 's:' .. S .. ':card:' .. dep
+            if redis.call('EXISTS', ck) == 1 then
+              if redis.call('HGET', ck, 'state') ~= 'landed' then
+                return false, 'deps'
+              end
+            else
+              return false, 'deps'
+            end
+          end
+        end
+      end
+    end
+  end
+  return true, ''
+end
+
 -- ns_width_write: writes friend:<f>:fillstate for every friend in the pass.
 -- args: fence token (lease:reconciler), then 14 fields per friend:
 --   f, slots, leased, working, deficit, eligible, idle_no_ready, idle_deps,
@@ -81,12 +203,254 @@ local function width_write(keys, args)
   return { 'OK' }
 end
 
+-- ns_width_fill: batch claim min(deficit, eligible, max) tasks for friend f.
+-- args: f, sprint, max, actor, idem, random_token1, random_token2, ...
+-- returns { 'OK', tostring(n), tostring(deficit_after), id1, kind1, ref1, token1, ... }
 local function width_fill(keys, args)
-  return { 'OK' }
+  local f = args[1]
+  local target_sprint = args[2] or ''
+  local max_claim = tonumber(args[3] or '0') or 0
+  local actor = args[4] or f
+  if actor == '' then actor = f end
+  local idem = args[5] or ''
+
+  local dkey = 'friend:' .. f .. ':desired'
+  if redis.call('EXISTS', dkey) == 0 then
+    return redis.error_reply('friend ' .. f .. ' has no desired slots')
+  end
+  if redis.call('HGET', dkey, 'paused') == '1' then
+    return { 'OK', '0', '0' }
+  end
+  if redis.call('SISMEMBER', 'friends', f) == 0 or redis.call('EXISTS', 'friend:' .. f .. ':beat') == 0 then
+    return { 'OK', '0', '0' }
+  end
+
+  local slots = tonumber(redis.call('HGET', dkey, 'slots') or '0')
+  if slots <= 0 then
+    return { 'OK', '0', '0' }
+  end
+
+  local starting = redis.call('ZCARD', 'friend:' .. f .. ':starting')
+  local living = redis.call('ZCARD', 'friend:' .. f .. ':living')
+  local leased = starting + living
+  local deficit = math.max(0, slots - leased)
+  if deficit <= 0 then
+    return { 'OK', '0', '0' }
+  end
+
+  local limit = deficit
+  if max_claim > 0 and max_claim < limit then
+    limit = max_claim
+  end
+  if limit <= 0 then
+    return { 'OK', '0', tostring(deficit) }
+  end
+
+  local sprints = {}
+  if target_sprint ~= '' then
+    if redis.call('HGET', 's:' .. target_sprint, 'status') == 'open' then
+      sprints[#sprints + 1] = target_sprint
+    end
+  else
+    local order = redis.call('ZRANGE', 'sprint:order', 0, -1)
+    local seen = {}
+    for _, s in ipairs(order) do
+      if not seen[s] and redis.call('HGET', 's:' .. s, 'status') == 'open' then
+        seen[s] = true
+        sprints[#sprints + 1] = s
+      end
+    end
+    for _, s in ipairs(redis.call('SMEMBERS', 'sprints')) do
+      if not seen[s] and redis.call('HGET', 's:' .. s, 'status') == 'open' then
+        seen[s] = true
+        sprints[#sprints + 1] = s
+      end
+    end
+  end
+
+  local claimed = {}
+  local now = WD.now_ms()
+
+  for _, S in ipairs(sprints) do
+    if #claimed >= limit then break end
+    local qkey = 's:' .. S .. ':open:' .. f
+    local task_ids = redis.call('ZRANGE', qkey, 0, -1)
+    for _, id in ipairs(task_ids) do
+      if #claimed >= limit then break end
+      local key = 's:' .. S .. ':task:' .. id
+      if redis.call('EXISTS', key) == 1 and redis.call('HGET', key, 'state') == 'open' and redis.call('ZSCORE', qkey, id) then
+        local ready = WD.ready(S, key)
+        if ready then
+          local repo = redis.call('HGET', key, 'repo') or ''
+          local pr = redis.call('HGET', key, 'pr') or ''
+          local head = redis.call('HGET', key, 'head') or ''
+          if not WD.is_dedup(S, f, repo, pr, head, id) then
+            local rand_part = args[6 + #claimed]
+            if not rand_part or rand_part == '' then
+              rand_part = string.format('%08x%08x%08x%08x', now, #claimed, slots, deficit)
+            end
+            local prev_attempt = tonumber(redis.call('HGET', key, 'attempt') or '0')
+            local attempt = prev_attempt + 1
+            local token = tostring(attempt) .. '.' .. rand_part
+            local token_sha = string.sub(redis.sha1hex(token), 1, 12)
+
+            redis.call('HSET', key,
+              'state', 'claimed',
+              'owner', f,
+              'attempt', tostring(attempt),
+              'token', token,
+              'token_sha', token_sha,
+              'claimed_at', tostring(now)
+            )
+            redis.call('ZREM', 's:' .. S .. ':ready', id)
+            redis.call('ZREM', qkey, id)
+            redis.call('SREM', 's:' .. S .. ':idx:task:open', id)
+            redis.call('SADD', 's:' .. S .. ':idx:task:claimed', id)
+            redis.call('ZADD', 'friend:' .. f .. ':starting', now, S .. '/' .. id .. '/' .. attempt)
+
+            WD.receipt(S, 'task take', id, 'open', 'claimed', attempt, token_sha, actor, '', '', idem, now)
+
+            local kind = redis.call('HGET', key, 'kind') or ''
+            local ref = redis.call('HGET', key, 'ref') or ''
+            if ref == '' then ref = redis.call('HGET', key, 'brief') or '' end
+            if ref == '' then ref = id end
+
+            claimed[#claimed + 1] = { S, id, kind, ref, token }
+          end
+        end
+      end
+    end
+  end
+
+  if #claimed > 0 then
+    redis.call('HSET', 'friend:' .. f .. ':fillstate', 'fill_at', tostring(now), 'fill_n', tostring(#claimed))
+  end
+
+  local new_deficit = math.max(0, slots - (leased + #claimed))
+  local out = { 'OK', tostring(#claimed), tostring(new_deficit) }
+  for _, c in ipairs(claimed) do
+    out[#out + 1] = c[2] -- id
+    out[#out + 1] = c[3] -- kind
+    out[#out + 1] = c[4] -- ref
+    out[#out + 1] = c[5] -- token
+  end
+  return out
 end
 
+-- ns_width_move: rebalance eligible build/fix tasks from A to B.
+-- args: fence, from_f, to_f, sprint, rebal_after_ms, actor, idem.
+-- returns { 'OK', tostring(moved_count) }
 local function width_move(keys, args)
-  return { 'OK' }
+  local fence = args[1]
+  if fence ~= '' and not WD.holds(fence) then
+    return WD.fenced()
+  end
+  local from_f = args[2]
+  local to_f = args[3]
+  local target_sprint = args[4] or ''
+  local rebal_after_ms = tonumber(args[5] or '30000') or 30000
+  local actor = args[6] or 'width'
+  local idem = args[7] or ''
+
+  local now = WD.now_ms()
+
+  -- Condition 1: from_f has idle_unfilled > 0 for longer than rebalance_after
+  local afs = redis.call('HGETALL', 'friend:' .. from_f .. ':fillstate')
+  local afs_map = {}
+  for i = 1, #afs, 2 do afs_map[afs[i]] = afs[i+1] end
+  local a_unfilled = tonumber(afs_map['idle_unfilled'] or '0') or 0
+  local a_unfilled_since = tonumber(afs_map['unfilled_since'] or '0') or 0
+  if a_unfilled <= 0 or a_unfilled_since == 0 or (now - a_unfilled_since) <= rebal_after_ms then
+    return { 'OK', '0' }
+  end
+
+  -- Condition 2: to_f is up
+  if redis.call('EXISTS', 'friend:' .. to_f .. ':beat') == 0 then
+    return { 'OK', '0' }
+  end
+
+  -- Condition 3: to_f fill_at is within rebalance_after of Redis TIME
+  local bfs = redis.call('HGETALL', 'friend:' .. to_f .. ':fillstate')
+  local bfs_map = {}
+  for i = 1, #bfs, 2 do bfs_map[bfs[i]] = bfs[i+1] end
+  local b_fill_at = tonumber(bfs_map['fill_at'] or '0') or 0
+  if b_fill_at == 0 or (now - b_fill_at) > rebal_after_ms then
+    return { 'OK', '0' }
+  end
+
+  -- Condition 4: to_f deficit > to_f eligible
+  local b_deficit = tonumber(bfs_map['deficit'] or '0') or 0
+  local b_eligible = tonumber(bfs_map['eligible'] or '0') or 0
+  local b_spare = b_deficit - b_eligible
+  if b_spare <= 0 then
+    return { 'OK', '0' }
+  end
+
+  local max_move = math.min(a_unfilled, b_spare)
+  if max_move <= 0 then
+    return { 'OK', '0' }
+  end
+
+  local sprints = {}
+  if target_sprint ~= '' then
+    sprints[#sprints + 1] = target_sprint
+  else
+    local order = redis.call('ZRANGE', 'sprint:order', 0, -1)
+    local seen = {}
+    for _, s in ipairs(order) do
+      if not seen[s] and redis.call('HGET', 's:' .. s, 'status') == 'open' then
+        seen[s] = true
+        sprints[#sprints + 1] = s
+      end
+    end
+    for _, s in ipairs(redis.call('SMEMBERS', 'sprints')) do
+      if not seen[s] and redis.call('HGET', 's:' .. s, 'status') == 'open' then
+        seen[s] = true
+        sprints[#sprints + 1] = s
+      end
+    end
+  end
+
+  local moved = 0
+  for _, S in ipairs(sprints) do
+    if moved >= max_move then break end
+    local from_q = 's:' .. S .. ':open:' .. from_f
+    local to_q = 's:' .. S .. ':open:' .. to_f
+    local task_entries = redis.call('ZRANGE', from_q, 0, -1, 'WITHSCORES')
+    for i = 1, #task_entries, 2 do
+      if moved >= max_move then break end
+      local id = task_entries[i]
+      local score = tonumber(task_entries[i+1])
+      local key = 's:' .. S .. ':task:' .. id
+      if redis.call('EXISTS', key) == 1 and redis.call('HGET', key, 'state') == 'open' then
+        local kind = redis.call('HGET', key, 'kind') or ''
+        if kind == '' or kind == 'work' or kind == 'fix' or kind == 'build' then
+          local ready = WD.ready(S, key)
+          if ready then
+            local repo = redis.call('HGET', key, 'repo') or ''
+            local pr = redis.call('HGET', key, 'pr') or ''
+            local head = redis.call('HGET', key, 'head') or ''
+            if not WD.is_dedup(S, to_f, repo, pr, head, nil) then
+              redis.call('ZREM', from_q, id)
+              redis.call('ZADD', to_q, score, id)
+              redis.call('HSET', key, 'owner', to_f)
+              redis.call('XADD', 's:' .. S .. ':log', '*',
+                'kind', 'width move',
+                'id', id,
+                'from', from_f,
+                'to', to_f,
+                'reason', 'underfull',
+                'at', tostring(now)
+              )
+              moved = moved + 1
+            end
+          end
+        end
+      end
+    end
+  end
+
+  return { 'OK', tostring(moved) }
 end
 
 redis.register_function('ns_width_write', width_write)

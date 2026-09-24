@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/deal"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
@@ -24,6 +26,7 @@ type Duty struct {
 	Policy         Policy
 	Actor          string
 	RebalanceAfter time.Duration
+	PRs            deal.PRs
 
 	mu sync.Mutex
 }
@@ -190,21 +193,32 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		taskCounts[f] = &friendTaskCounts{}
 	}
 
+	hasOpenRead := false
 	if len(allOpenTasks) > 0 {
 		pipe3 := client.Pipeline()
 		taskCmds := make([]*redis.SliceCmd, len(allOpenTasks))
 		for i, t := range allOpenTasks {
-			taskCmds[i] = pipe3.HMGet(ctx, "s:"+t.sprint+":task:"+t.id, "state", "kind", "depends_on", "repo", "pr", "head", "blocked_reason")
+			taskCmds[i] = pipe3.HMGet(ctx, "s:"+t.sprint+":task:"+t.id, "state", "kind", "depends_on", "repo", "pr", "head", "blocked_reason", "base")
 		}
 		if _, err := pipe3.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 			return reconcile.Counts{}, fmt.Errorf("width duty: round 3: %w", err)
 		}
 
+		seenDedup := make(map[string]bool)
 		for i, t := range allOpenTasks {
 			val := taskCmds[i].Val()
 			state := strVal(val, 0)
+			kind := strVal(val, 1)
 			dependsOn := strVal(val, 2)
+			repo := strVal(val, 3)
+			pr := strVal(val, 4)
+			head := strVal(val, 5)
 			reason := strVal(val, 6)
+			base := strVal(val, 7)
+
+			if state == "open" && (kind == "read" || kind == "review") {
+				hasOpenRead = true
+			}
 
 			tc := taskCounts[t.friend]
 			if state == "blocked" || state == "input" {
@@ -216,10 +230,47 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 			} else if reason == "deps" || state == "deps" {
 				tc.deps++
 			} else if dependsOn != "" && dependsOn != "-" && dependsOn != "none" {
-				// Task has unmerged dependencies
-				tc.deps++
+				isLanded := true
+				for _, dep := range splitDeps(dependsOn) {
+					if dep == "" || dep == "-" || dep == "none" {
+						continue
+					}
+					if d.PRs != nil {
+						if r, n, ok := parseDepRef(dep); ok {
+							ref, err := d.PRs.Ref(ctx, r, n)
+							if why := deal.LandedPR(ref, err, dep, base); why != "" {
+								isLanded = false
+								break
+							}
+							continue
+						}
+					}
+					isLanded = false
+					break
+				}
+				if !isLanded {
+					tc.deps++
+				} else {
+					ident := t.friend + "|" + repo + "|" + pr + "|" + head
+					if repo != "" && pr != "" && head != "" && seenDedup[ident] {
+						// dedup
+					} else {
+						if repo != "" && pr != "" && head != "" {
+							seenDedup[ident] = true
+						}
+						tc.eligible++
+					}
+				}
 			} else {
-				tc.eligible++
+				ident := t.friend + "|" + repo + "|" + pr + "|" + head
+				if repo != "" && pr != "" && head != "" && seenDedup[ident] {
+					// dedup
+				} else {
+					if repo != "" && pr != "" && head != "" {
+						seenDedup[ident] = true
+					}
+					tc.eligible++
+				}
 			}
 		}
 	}
@@ -229,6 +280,8 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		rebalAfter = 30 * time.Second
 	}
 	rebalAfterMs := rebalAfter.Milliseconds()
+
+	idleUnfilledMap := make(map[string]int)
 
 	// Build arguments for ns_width_write
 	writeArgs := []any{l.Token()}
@@ -274,6 +327,7 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 			unfilledSince = 0
 			idleUnfilled = 0
 		}
+		idleUnfilledMap[f] = idleUnfilled
 
 		peak := c.prevPeak
 		peakAt := c.prevPeakAt
@@ -312,7 +366,103 @@ func (d *Duty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, e
 		return reconcile.Counts{}, reconcile.ErrFenced
 	}
 
+	// Rebalance eligible build/fix tasks from underfull friends
+	actor := d.Actor
+	if actor == "" {
+		actor = DutyActor
+	}
+	for _, fromF := range friends {
+		if idleUnfilledMap[fromF] > 0 {
+			var targets []string
+			if len(d.Policy.Builders) > 0 {
+				targets = d.Policy.Builders
+			} else {
+				targets = friends
+			}
+			for _, toF := range targets {
+				if toF == fromF {
+					continue
+				}
+				toC := computed[toF]
+				if toC != nil && toC.up && toC.deficit > 0 {
+					for _, S := range openSprints {
+						_, _ = client.FCall(ctx, "ns_width_move", nil,
+							l.Token(), fromF, toF, S, strconv.FormatInt(rebalAfterMs, 10), actor, "").Result()
+					}
+				}
+			}
+		}
+	}
+
+	// READ-BOUND evaluation
+	readers := d.Policy.Readers
+	if len(readers) > 0 {
+		for _, r := range readers {
+			client.SAdd(ctx, "width:readers", r)
+		}
+	} else {
+		readers = client.SMembers(ctx, "width:readers").Val()
+		if len(readers) == 0 {
+			readers = client.SMembers(ctx, "readers").Val()
+		}
+	}
+	readBound := false
+	if len(readers) > 0 {
+		allDeficitZero := true
+		hasUpReader := false
+		for _, r := range readers {
+			rc := computed[r]
+			if rc != nil && rc.up {
+				hasUpReader = true
+				if rc.deficit > 0 {
+					allDeficitZero = false
+					break
+				}
+			}
+		}
+		if hasUpReader && allDeficitZero && hasOpenRead {
+			readBound = true
+		}
+	}
+	for _, S := range openSprints {
+		val := "0"
+		if readBound {
+			val = "1"
+		}
+		client.HSetNX(ctx, "s:"+S+":backpressure", "state", "OFF")
+		client.HSet(ctx, "s:"+S+":backpressure", "read_bound", val, "at", strconv.FormatInt(nowMs, 10))
+	}
+	if readBound {
+		client.Set(ctx, "sprint:read_bound", "1", 0)
+	} else {
+		client.Set(ctx, "sprint:read_bound", "0", 0)
+	}
+
 	return reconcile.Counts{}, nil
+}
+
+func parseDepRef(entry string) (repo string, n int, ok bool) {
+	i := strings.LastIndexByte(entry, '#')
+	if i <= 0 {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(entry[i+1:])
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return entry[:i], n, true
+}
+
+func splitDeps(s string) []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == ',' || r == '\t'
+	}) {
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func strVal(val []any, idx int) string {

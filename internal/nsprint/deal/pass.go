@@ -753,7 +753,7 @@ func (r RedisSource) Read(ctx context.Context) (Input, error) {
 	for _, i := range live {
 		policy, bp := sc[i].policy.Val(), sc[i].bp.Val()
 		shareN, _ := strconv.Atoi(policy["share"])
-		on := bp["state"] == "ON"
+		on := bp["state"] == "ON" || bp["read_bound"] == "1"
 		if len(bp) == 0 {
 			// #2756 5.3: a missing hash applies the declared policy; "open"
 			// (fail-open) is OFF, "closed" is ON.
