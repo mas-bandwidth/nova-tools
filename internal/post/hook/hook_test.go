@@ -125,7 +125,9 @@ func TestWebhookToEvGithub(t *testing.T) {
 				"repository":{"full_name":"mas-bandwidth/nova-tools"},"sender":{"login":"octocat"}}`,
 			want: map[string]string{"repo": "mas-bandwidth/nova-tools", "kind": "check_run", "number": "42",
 				"head": "2222222222222222222222222222222222222222", "action": "completed",
-				"at": "2026-09-22T16:46:02Z", "sender": "octocat", "comment_id": ""},
+				"at": "2026-09-22T16:46:02Z", "sender": "octocat", "comment_id": "",
+				// check_run adds its own four, empty included (nova-tools #3040).
+				"check": "", "check_run_id": "", "status": "", "conclusion": ""},
 		},
 	}
 
@@ -142,10 +144,17 @@ func TestWebhookToEvGithub(t *testing.T) {
 				t.Fatalf("ev:github has %d entries, want exactly 1", len(got))
 			}
 			e := got[0]
-			if len(e) != len(fieldNames) {
-				t.Errorf("entry has %d fields, want %d: %#v", len(e), len(fieldNames), e)
-			}
 			for _, k := range fieldNames {
+				if _, ok := tc.want[k]; !ok {
+					t.Fatalf("case %s does not name common field %s", tc.event, k)
+				}
+			}
+			// The eight common fields, plus the kind's own (check_run adds
+			// four); tc.want names every one.
+			if len(e) != len(tc.want) {
+				t.Errorf("entry has %d fields, want %d: %#v", len(e), len(tc.want), e)
+			}
+			for k := range tc.want {
 				g, ok := e[k]
 				if !ok {
 					t.Errorf("missing field %s", k)

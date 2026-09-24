@@ -121,6 +121,11 @@ func TestPullRequestCheckRunAndDispositionEachBecomeOneEntry(t *testing.T) {
 				"at":         "2026-09-22T16:46:02Z",
 				"sender":     "octocat",
 				"comment_id": "",
+				// check_run adds its check name, id, status and conclusion (#3040).
+				"check":        "windows",
+				"check_run_id": "4100000100",
+				"status":       "completed",
+				"conclusion":   "success",
 			},
 		},
 		{
@@ -485,5 +490,47 @@ func TestACarriedEventWithBadJSONWritesNothing(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("ev:github len = %d, want 0", n)
+	}
+}
+
+// A check_run entry names its check, its id, its status and its conclusion
+// (nova-tools #3040 rev 4 gap 7): pr-to-read keys runner rows by the check
+// name and orders attempts by (gen, check_run_id, status rank, at). A
+// rerequested delivery carries the old completed/success payload under the
+// same id, with at = its completed_at, per applyCheck.
+func TestCheckRunEntryCarriesNameIDStatus(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		file   string
+		action string
+	}{
+		{"check_run.json", "completed"},
+		{"check_run_rerequested.json", "rerequested"},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			t.Parallel()
+			e, err := Decode("check_run", fixture(t, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.Check != "windows" || e.CheckRunID != "4100000100" || e.Status != "completed" ||
+				e.Conclusion != "success" || e.At != "2026-09-22T16:46:02Z" || e.Action != tc.action {
+				t.Fatalf("entry = check %q id %q status %q conclusion %q at %q action %q; want windows 4100000100 completed success 2026-09-22T16:46:02Z %s",
+					e.Check, e.CheckRunID, e.Status, e.Conclusion, e.At, e.Action, tc.action)
+			}
+			v, err := Fields(e)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for k, want := range map[string]string{"check": "windows", "check_run_id": "4100000100",
+				"status": "completed", "conclusion": "success", "action": tc.action} {
+				if got, _ := v[k].(string); got != want {
+					t.Errorf("Fields[%s] = %q, want %q", k, got, want)
+				}
+			}
+			if len(v) != 12 {
+				t.Errorf("Fields has %d keys, want the 8 common and check, check_run_id, status, conclusion: %v", len(v), v)
+			}
+		})
 	}
 }
