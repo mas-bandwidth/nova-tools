@@ -162,29 +162,26 @@ func (r RedisReader) Consumers(ctx context.Context) ([]Consumer, error) {
 	if r.Store == nil {
 		return nil, fmt.Errorf("capacity: nil store")
 	}
-	client := r.Store.Client()
-	friends, err := client.SMembers(ctx, "friends").Result()
-	if err != nil {
-		return nil, fmt.Errorf("capacity: read friends: %w", err)
+	pipe := r.Store.Client().Pipeline()
+	cmd := pipe.FCall(ctx, "ns_capacity_consumers", nil)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, fmt.Errorf("capacity: read consumers: %w", err)
 	}
-	benches, err := client.SMembers(ctx, "benches").Result()
-	if err != nil {
-		return nil, fmt.Errorf("capacity: read benches: %w", err)
+	values, ok := cmd.Val().([]any)
+	if !ok || len(values)%4 != 0 {
+		return nil, fmt.Errorf("capacity: consumers reply %T length %d", cmd.Val(), len(values))
 	}
-	out := make([]Consumer, 0, len(friends)+len(benches))
-	for _, name := range friends {
-		c, err := readDesired(ctx, client, KindFriend, name)
-		if err != nil {
-			return nil, err
+	out := make([]Consumer, 0, len(values)/4)
+	for i := 0; i < len(values); i += 4 {
+		slots := 0
+		if text := fmt.Sprint(values[i+2]); text != "" {
+			var err error
+			slots, err = strconv.Atoi(text)
+			if err != nil {
+				return nil, fmt.Errorf("capacity: %s %s slots %q: %w", values[i], values[i+1], values[i+2], err)
+			}
 		}
-		out = append(out, c)
-	}
-	for _, name := range benches {
-		c, err := readDesired(ctx, client, KindBench, name)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, c)
+		out = append(out, Consumer{Kind: fmt.Sprint(values[i]), Name: fmt.Sprint(values[i+1]), Slots: slots, Machine: fmt.Sprint(values[i+3])})
 	}
 	return out, nil
 }

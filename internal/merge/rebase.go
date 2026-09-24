@@ -59,8 +59,14 @@ type RebaseInput struct {
 	List    RebaseList
 	Cut     RebaseCut
 	Launch  Launcher
-	Stdout  io.Writer
-	Stderr  io.Writer
+	// PlanOnly is the read-only form: list and filter exactly as an applying
+	// pass does, but never call Cut, write a marker, or call Launch.
+	PlanOnly   bool
+	PlanLabel  string // dry-run or plan, for the summary line
+	PlanCode   int    // 0 for --dry-run, 2 for an unconfirmed bare invocation
+	LaunchPlan string // the command template printed for each selected PR
+	Stdout     io.Writer
+	Stderr     io.Writer
 }
 
 // RebaseWanted is the selection the hand loop made: an open pull request whose branch is
@@ -80,11 +86,12 @@ func RebaseWanted(pr RebasePR) bool {
 	return true
 }
 
-// Rebase runs one pass: list, keep the DIRTY rowan/* pull requests with no marker, cut one
-// card and write one marker for each, launch each, and print one line. Exit 2 is a pass
-// that could not run at all; 0 is a pass that ran, whether it cut nothing or many.
+// Rebase runs one pass over DIRTY unmarked rowan/* pull requests. PlanOnly prints every
+// selection and cannot reach Cut, the marker write, or Launch. An applying pass cuts,
+// marks, and launches each selection. PlanCode lets the command distinguish an accepted
+// --dry-run (0) from the default unconfirmed plan (2).
 func Rebase(in RebaseInput) int {
-	if in.List == nil || in.Cut == nil {
+	if in.List == nil || (!in.PlanOnly && in.Cut == nil) {
 		fmt.Fprintf(in.Stderr, "REBASE REFUSED: this pass was given no pull request list or no cutter; wire both before running it\n")
 		return 2
 	}
@@ -100,6 +107,12 @@ func Rebase(in RebaseInput) int {
 		}
 		marker := filepath.Join(in.Markers, fmt.Sprintf("pr-%d", pr.Number))
 		if _, err := os.Stat(marker); err == nil {
+			continue
+		}
+		if in.PlanOnly {
+			fmt.Fprintf(in.Stdout, "REBASE PLAN PR #%d branch=%s launch=%s\n",
+				pr.Number, oneline.Field(pr.HeadRef), oneline.Field(in.LaunchPlan))
+			cards++
 			continue
 		}
 		card, err := in.Cut(RebaseCard{PR: pr.Number, HeadRef: pr.HeadRef, Title: pr.Title})
@@ -122,6 +135,18 @@ func Rebase(in RebaseInput) int {
 			}
 		}
 		cards++
+	}
+	if in.PlanOnly {
+		label := in.PlanLabel
+		if label == "" {
+			label = "plan"
+		}
+		fmt.Fprintf(in.Stdout, "REBASE %s cards=%d\n", label, cards)
+		if in.PlanCode != 0 {
+			fmt.Fprintln(in.Stderr, "REBASE REFUSED: the plan wrote nothing; pass --yes to cut and launch it, or --dry-run to accept the read-only plan")
+			return in.PlanCode
+		}
+		return 0
 	}
 	fmt.Fprintf(in.Stdout, "REBASE tick cards=%d\n", cards)
 	return 0
@@ -174,10 +199,22 @@ func (b BenchLauncher) timeout() time.Duration {
 	return 15 * time.Minute
 }
 
+// LaunchCommand is the production launcher's exact command shape. The rebase
+// confirmation plan uses this same builder with placeholders, so the command a
+// person approves cannot drift from the argv Launch executes.
+func (b BenchLauncher) LaunchCommand(card, name string) string {
+	command, args := b.launchShape(card, name)
+	return strings.Join(append([]string{command}, args...), " ")
+}
+
+func (b BenchLauncher) launchShape(card, name string) (string, []string) {
+	return b.command(), []string{b.bench(), b.runner(), card, name, b.deadline()}
+}
+
 // Launch starts one card and returns the launcher's own refusal, so a pass can note it.
 func (b BenchLauncher) Launch(card string) error {
 	name := strings.TrimSuffix(filepath.Base(card), filepath.Ext(card))
-	args := []string{b.bench(), b.runner(), card, name, b.deadline()}
+	command, args := b.launchShape(card, name)
 	if err := guard(args, ""); err != nil {
 		return err
 	}
@@ -187,8 +224,8 @@ func (b BenchLauncher) Launch(card string) error {
 	}
 	ctx, cancel := contextWithTimeout(b.timeout())
 	defer cancel()
-	if _, err := runner.Run(ctx, "", b.command(), args...); err != nil {
-		return fmt.Errorf("%s %s: %w", b.command(), strings.Join(args, " "), err)
+	if _, err := runner.Run(ctx, "", command, args...); err != nil {
+		return fmt.Errorf("%s %s: %w", command, strings.Join(args, " "), err)
 	}
 	return nil
 }

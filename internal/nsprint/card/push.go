@@ -41,7 +41,7 @@ func Push(ctx context.Context, client *redis.Client, sprint string, body []byte)
 		keys = append(keys, keyCard(sprint, dep))
 	}
 	reply, err := client.FCall(ctx, "ns_card_push", keys,
-		doc.Label, doc.Payload, "0", doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind, doc.DependsOn,
+		doc.Label, doc.Payload, "0", doc.Base, doc.BaseSHA, doc.Paths, doc.Repo, doc.Kind, doc.DependsOn, doc.Type,
 	).Text()
 	if err != nil {
 		return refused(err.Error())
