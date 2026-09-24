@@ -151,6 +151,8 @@ example: nova-review --version
 example: nova-sandbox --read /Users/me/pool/ref/nova-tools@abc123 \
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
 example: nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
+example: nova-secrets exec --only NOVA_REDIS_BENCH_PASSWORD -- nova-decide route --unit-id card-41 --kind rebase --no-jev --log ./decide.jsonl --store 127.0.0.1:6379
+example: nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379
 example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
 example: nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
 example: nova-secrets names --store ./secrets --as rowan

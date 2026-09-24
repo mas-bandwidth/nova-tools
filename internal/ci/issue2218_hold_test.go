@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -349,5 +350,58 @@ func TestIssue2218CILegsIncludeMatrixLegs(t *testing.T) {
 	legs := CILegsFromYAML(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")))
 	if !legs["linux"] || !legs["darwin"] {
 		t.Errorf("CILegsFromYAML(.github/workflows/ci.yml) = %v; want linux and darwin (the studio and merge-group darwin legs)", legs)
+	}
+}
+
+// Emma's HOLD 7 at f6491bd8, item 5: a banner's `example:` block is read
+// whole, whatever tool leads a line. cmd/nova-redis's block has
+// `nova-secrets exec ... -- nova-redis serve ...` as its second line, and the
+// first-run reader (onboarding.ExampleLines) stops there, so the nova-redis
+// lines under it went uncounted and their list rows read as stale. A line
+// continued with ` \` is one command, counted by its first line.
+func TestIssue2218HelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
+	banner := "usage: nova-foo serve\n\nexample:\n  nova-foo version\n  nova-secrets exec --only K -- nova-foo serve --port 1\n  nova-foo spill --ttl   10m \\\n           --value hi\n  nova-foo recall --name note\n\nnova-foo prose after the block is not an example\n"
+	got, err := BannerExampleLines(banner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"nova-foo version",
+		"nova-secrets exec --only K -- nova-foo serve --port 1",
+		"nova-foo spill --ttl 10m \\",
+		"nova-foo recall --name note",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("BannerExampleLines = %q; want %q (every indented line of the block, a continuation folded into its command, the prose after the blank line left out)", got, want)
+	}
+
+	root := t.TempDir()
+	writeGo(t, root, "cmd/nova-foo/main.go", "package main\n\nconst usage = "+strconv.Quote(banner)+"\n")
+	help, err := HelpBannerExamples(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range want {
+		if help["example: "+w] != "cmd/nova-foo/main.go" {
+			t.Errorf("HelpBannerExamples has no %q from cmd/nova-foo/main.go; got %v", "example: "+w, help)
+		}
+	}
+	if len(help) != len(want) {
+		t.Errorf("HelpBannerExamples = %v; want exactly the %d lines of the block", help, len(want))
+	}
+
+	// The real banner: every nova-redis line under the nova-secrets line is counted.
+	repo, err := HelpBannerExamples(repoRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range []string{
+		"example: nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve --bind 127.0.0.1,100.101.102.103 --port 6379",
+		"example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi",
+		"example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note",
+	} {
+		if repo[w] != "cmd/nova-redis/main.go" {
+			t.Errorf("HelpBannerExamples(repo)[%q] = %q; want cmd/nova-redis/main.go", w, repo[w])
+		}
 	}
 }

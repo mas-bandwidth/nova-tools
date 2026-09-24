@@ -234,13 +234,46 @@ func HelpExampleLines(usage, tool string) ([]string, error) {
 	return onboarding.ExampleLines(usage, tool)
 }
 
+// BannerExampleLines returns every line of a help banner's `example:` block,
+// whatever program leads it: the block is the run of non-blank indented lines
+// directly under the heading, and it ends at the first blank or unindented
+// line (the prose that follows). A line after one ending in ` \\` continues
+// that command and is not an example of its own, so a command is one row,
+// its first physical line, as the $ lines of the docs are. Whitespace inside a
+// line is collapsed, so a banner may align its flags. onboarding.ExampleLines is the first-run reader
+// and stops at the first line its tool does not lead; counting with it cut
+// cmd/nova-redis's block short at its second line (`nova-secrets exec ... --
+// nova-redis serve ...`), and the two nova-redis lines under it went uncounted.
+// A block with no indented line under the heading is an error.
+func BannerExampleLines(banner string) ([]string, error) {
+	_, tail, found := strings.Cut(banner, onboarding.ExampleHeading)
+	if !found {
+		return nil, fmt.Errorf("the banner has no `example:` block")
+	}
+	var out []string
+	continued := false
+	for _, line := range strings.Split(tail, "\n") {
+		if strings.TrimSpace(line) == "" || (line[0] != ' ' && line[0] != '\t') {
+			break
+		}
+		if !continued {
+			out = append(out, strings.Join(strings.Fields(line), " "))
+		}
+		continued = strings.HasSuffix(strings.TrimRight(line, " \t"), "\\")
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("the `example:` block holds no indented command line")
+	}
+	return out, nil
+}
+
 // HelpBannerExamples returns every `example:` line of every `help` banner a
 // tool under root/cmd carries, keyed "example: <line>" and mapped to the
 // source file that carries it, per SPEC-TOOLWORK §7 rule 7 ("every `example:`
 // line of every `help`"). A banner is a string literal (or a `+` chain of
 // them) in a non-test .go file of cmd/<tool>/ holding the `\nexample:\n`
-// heading; its lines are read through HelpExampleLines, exactly as the tool's
-// own banner tests read them, for the program the block's first line runs. A literal that is only the heading (a splice
+// heading; its lines are read through BannerExampleLines, every line of the
+// block whatever tool leads it. A literal that is only the heading (a splice
 // point such as nova-sprint's registry.go) carries no lines; any other banner
 // whose example block holds no command is an error naming its file, so a
 // banner is never silently left out of the count.
@@ -275,15 +308,7 @@ func HelpBannerExamples(root string) (map[string]string, error) {
 				if !found || strings.TrimSpace(tail) == "" {
 					continue
 				}
-				// The banner's own program is the first word under the
-				// heading: the tool itself, or `go` for a `go run` helper
-				// such as cmd/nova-ci/timing.go.
-				first, _, _ := strings.Cut(strings.TrimSpace(tail), "\n")
-				prog := tool
-				if f := strings.Fields(first); len(f) > 0 && f[0] != tool {
-					prog = f[0]
-				}
-				lines, err := HelpExampleLines(banner, prog)
+				lines, err := BannerExampleLines(banner)
 				if err != nil {
 					return nil, fmt.Errorf("help banner in %s: %w", rel, err)
 				}
