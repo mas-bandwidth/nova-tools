@@ -1063,7 +1063,47 @@ func sessionVerb(verb string, args []string, stdout, stderr io.Writer) int {
 			}
 		}
 	}
+	if verb == "session start" {
+		if journal := *strs["journal"]; journal != "" {
+			if pid, held := checkJournalHeld(journal); held {
+				fmt.Fprintf(stderr, "SESSION REFUSED session=%s: journal held by pid %s on %s\n", oneline.Field(socket), oneline.Field(pid), oneline.Field(journal))
+				return 1
+			}
+		}
+		if pid, held := checkSocketLocked(socket); held {
+			fmt.Fprintf(stderr, "SESSION FAIL session=%s: socket held by pid %s\n", oneline.Field(socket), oneline.Field(pid))
+			return 1
+		}
+	}
 	return ask(socket, b.String(), frameFor(verb, specs, strs, bools, mults), within, stdout, stderr)
+}
+
+// checkJournalHeld reports the pid a journal's .lock file names, raw; the caller
+// escapes it at the print site.
+func checkJournalHeld(journal string) (pid string, held bool) {
+	return lockPid(journal + ".lock")
+}
+
+// checkSocketLocked reports the pid a socket's .lock file names, raw; the caller
+// escapes it at the print site.
+func checkSocketLocked(socket string) (pid string, held bool) {
+	return lockPid(socket + ".lock")
+}
+
+// lockPid returns the first pid= value in a lock file (the first space-separated
+// token after "pid="), or held=false when the file is absent or names no pid.
+func lockPid(path string) (pid string, held bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "pid="); ok {
+			pid, _, _ = strings.Cut(rest, " ")
+			return pid, true
+		}
+	}
+	return "", false
 }
 
 // askTimeout is the wall-clock bound one exchange may spend. It is a variable
