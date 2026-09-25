@@ -342,10 +342,10 @@ func runLandMerge(ctx context.Context, args []string, out, errOut io.Writer) int
 		}
 		return orDash(strings.Join(out, ","))
 	}
-	fmt.Fprintf(out, "LAND MERGE repo=%s stream=%s pr=#%d head=%s merge=%s members=%d moved=%d missing=%d already=%t closed=%s unclosed=%s rest_calls=%d close_lines=%d skipped=%d closes_unread=%s issues_closed=%s issues_unclosed=%s\n",
+	fmt.Fprintf(out, "LAND MERGE repo=%s stream=%s pr=#%d head=%s merge=%s members=%d moved=%d missing=%d already=%t closed=%s unclosed=%s rest_calls=%d close_lines=%d skipped=%d closes_unread=%s issues_closed=%s issues_unclosed=%s release=%s\n",
 		*repo, l.Slug, l.PR, stream.Short(l.Head), stream.Short(rep.MergeSHA), len(l.Members), rep.Moved, rep.Missing, rep.Already,
 		orDash(strings.Join(closed, ",")), orDash(strings.Join(unclosed, ",")), calls, rep.Lines, len(rep.Skipped), orDash(strings.Join(unread, ",")),
-		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed))
+		issues(rep.IssuesClosed), issues(rep.IssuesUnclosed), orDash(rep.Release))
 	for _, s := range rep.Skipped {
 		fmt.Fprintf(errOut, "LAND MERGE SKIPPED %s\n", oneline.Field(s))
 	}

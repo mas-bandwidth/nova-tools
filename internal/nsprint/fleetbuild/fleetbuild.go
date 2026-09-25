@@ -1,19 +1,24 @@
 // Package fleetbuild is `nova-sprint fleet build` (#3310): one release, built
 // once on the builder, installed on every bench and on this machine, from the
-// fleet Redis rather than from a script's hardcoded lists.
+// fleet Redis rather than from a script's hardcoded lists. The build itself is
+// Compile (compile.go), run on the builder with its own Go caches (#4080).
 //
 // Redis holds the whole plan:
 //
 //	fleet:release   hash: version (v<x>.<y>.<z>-dev.<sha8>), commit (the full
 //	                sha of <sha8>), builder (the bench that builds), self (this
-//	                machine's bench name), tools (optional comma list, default
-//	                DefaultTools), platform:<bench> (<goos>-<goarch>) for every
-//	                bench, self included
+//	                machine's bench name), tools (the nova-* list the release
+//	                manifest named on the last run), platform:<bench>
+//	                (<goos>-<goarch>) for every bench, self included
 //	benches         set: the benches to install on
 //
-// and one pipeline reads it. The run: the builder builds the release for every
-// platform named (one build command, which skips a platform already built);
-// each bench rsyncs its platform's tools from the builder into a staging
+// and one pipeline reads it. Since #4050 nothing in it is typed: land merge
+// writes version and commit on every landing into dev (the stream package),
+// convergence fills builder, self and platform:<bench> from the bench registry
+// and the machines registry (converge.go), and the tools are the release
+// manifest's. The run: the builder builds the release for every platform
+// named (one build command, which skips a platform already built); the
+// manifest names the tools; each bench rsyncs its platform's tools from the builder into a staging
 // directory and renames them into its bin directory, then prints its
 // nova-sprint version line; this machine does the same locally. A bench whose
 // version line names the release gets its receipt, one pipeline of
@@ -48,14 +53,27 @@ const (
 	// BinDir and StageDir are relative to each machine's home.
 	BinDir   = ".local/bin"
 	StageDir = ".local/bin.new"
-	// DefaultBuildCmd builds <V> at <commit> on the builder for the named platforms.
-	DefaultBuildCmd = "space-build"
+	// LegacyBuildCmd is rowan-tools' space-build script, the build before
+	// #4080: run here as `<cmd> --host <builder> --version <v> --commit <sha>
+	// --platform <list>` when --build-cmd names it (or any other command). With
+	// no build command the build is CompileArgv: this package's Compile, run on
+	// the builder by its own nova-sprint, with the build's own Go caches.
+	LegacyBuildCmd = "space-build"
+	// ReleaseRepo and ReleaseBase are where a landing names a release: land
+	// merge of nova-tools into dev writes version and commit (#4050).
+	ReleaseRepo = "nova-tools"
+	ReleaseBase = "dev"
+	// DefaultTrain is the v<x>.<y>.<z> of a landing's version when
+	// fleet:release holds none yet; after that the stored version's train
+	// carries (fleet build set version=... moves it).
+	DefaultTrain = "v0.16.0"
 	// BenchTimeout bounds one bench's install; BuildTimeout the build.
 	BenchTimeout = 80 * time.Second
 	BuildTimeout = 20 * time.Minute
 )
 
-// DefaultTools are the tools installed when fleet:release names none.
+// DefaultTools are the tools a dry run names when fleet:release holds no
+// manifest list yet; a real run installs what the manifest lists.
 var DefaultTools = []string{"nova-sprint", "nova-swarm", "nova-card", "nova-wake"}
 
 var (
@@ -247,13 +265,23 @@ type Deployer struct {
 	Out      io.Writer
 }
 
-// BuildArgv is the one build command.
+// BuildArgv is the one build command: CompileArgv, or BuildCmd with
+// space-build's argv when one is named.
 func (d *Deployer) BuildArgv(p Plan) []string {
-	cmd := d.BuildCmd
-	if cmd == "" {
-		cmd = DefaultBuildCmd
+	if d.BuildCmd == "" {
+		return CompileArgv(p)
 	}
-	return []string{cmd, "--host", p.Builder, "--version", p.Version, "--commit", p.Commit,
+	return []string{d.BuildCmd, "--host", p.Builder, "--version", p.Version, "--commit", p.Commit,
+		"--platform", strings.Join(p.BuildPlatforms, ",")}
+}
+
+// CompileArgv runs `nova-sprint fleet build compile` on the builder in one ssh
+// session, with the nova-sprint the last fleet build installed there. Every
+// value is validated by MakePlan, so the remote command line holds no shell
+// metacharacter; the remote shell starts in the builder's home.
+func CompileArgv(p Plan) []string {
+	return []string{"ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", p.Builder,
+		BinDir + "/nova-sprint", "fleet", "build", "compile", "--version", p.Version, "--commit", p.Commit,
 		"--platform", strings.Join(p.BuildPlatforms, ",")}
 }
 
@@ -302,6 +330,7 @@ type Line struct {
 // Result is the run's outcome.
 type Result struct {
 	Built  bool
+	Tools  []string // the release manifest's tools, once built
 	Lines  []Line
 	FnLine string
 	FnOK   bool
@@ -391,8 +420,20 @@ func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
 		d.printf("BUILD FAIL builder=%s version=%s: %v: %s\n", p.Builder, p.Version, err, lastLine(out))
 		return r, nil
 	}
-	r.Built = true
 	d.printf("BUILD OK builder=%s version=%s platforms=%s: %s\n", p.Builder, p.Version, strings.Join(p.BuildPlatforms, ","), lastLine(out))
+	// The tools are the release manifest's (#4050): every nova-* the build
+	// produced, never a typed list, recorded on fleet:release.
+	tools, err := d.Manifest(ctx, p)
+	if err != nil {
+		d.printf("MANIFEST FAIL builder=%s version=%s: %v\n", p.Builder, p.Version, err)
+		return r, nil
+	}
+	p.Tools = tools
+	if err := d.Client.HSet(ctx, ConfigKey, "tools", strings.Join(tools, ",")).Err(); err != nil {
+		return r, fmt.Errorf("record tools: %w", err)
+	}
+	r.Built, r.Tools = true, tools
+	d.printf("MANIFEST tools=%d %s\n", len(tools), strings.Join(tools, ","))
 
 	r.Lines = make([]Line, len(p.Targets))
 	var wg sync.WaitGroup
@@ -435,7 +476,16 @@ func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
 		}
 	}
 	if !selfOK {
+		selfTarget := false
+		for _, t := range p.Targets {
+			selfTarget = selfTarget || t.Local
+		}
 		r.FnLine = "FN SKIPPED: " + p.Self + " did not install " + p.Version
+		if !selfTarget {
+			// A run on other benches only: this machine's library is not
+			// this run's to change, and skipping it is not a failure.
+			r.FnLine, r.FnOK = "FN SKIPPED: "+p.Self+" is not a target", true
+		}
 		d.printf("%s\n", r.FnLine)
 		return r, nil
 	}
@@ -447,4 +497,57 @@ func (d *Deployer) Deploy(ctx context.Context, p Plan) (Result, error) {
 	}
 	d.printf("%s\n", r.FnLine)
 	return r, nil
+}
+
+// ManifestName is the release manifest in each <V>/<platform>/ directory the
+// build publishes: one "<sha256>  <file>" line per file it produced.
+const ManifestName = "SHA256SUMS"
+
+// ParseManifest is the tools a manifest lists: every file named nova-<name>,
+// sorted. It refuses a manifest without nova-sprint, which proves each
+// install and runs fn deploy.
+func ParseManifest(s string) ([]string, error) {
+	seen := map[string]bool{}
+	var tools []string
+	for _, line := range strings.Split(s, "\n") {
+		f := strings.Fields(line)
+		if len(f) != 2 || len(f[0]) != 64 {
+			continue
+		}
+		name := strings.TrimPrefix(f[1], "*")
+		if toolRe.MatchString(name) && !seen[name] {
+			seen[name] = true
+			tools = append(tools, name)
+		}
+	}
+	sort.Strings(tools)
+	if !seen["nova-sprint"] {
+		return nil, refused("the manifest lists %d tools and not nova-sprint", len(tools))
+	}
+	return tools, nil
+}
+
+// Manifest reads the release manifest of the plan's first build platform
+// from the builder (a local read when the builder is this machine): the
+// command set is one per commit, so one platform's list is every platform's.
+func (d *Deployer) Manifest(ctx context.Context, p Plan) ([]string, error) {
+	if len(p.BuildPlatforms) == 0 {
+		return nil, refused("no build platform")
+	}
+	rel := ReleaseRoot + "/" + p.Version + "/" + p.BuildPlatforms[0] + "/" + ManifestName
+	var body string
+	if p.Builder == p.Self {
+		b, err := os.ReadFile(filepath.Join(d.Home, rel))
+		if err != nil {
+			return nil, err
+		}
+		body = string(b)
+	} else {
+		out, err := d.Runner.Run(ctx, []string{"ssh", "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", p.Builder, "cat " + rel})
+		if err != nil {
+			return nil, fmt.Errorf("%v: %s", err, lastLine(out))
+		}
+		body = out
+	}
+	return ParseManifest(body)
 }

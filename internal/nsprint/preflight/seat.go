@@ -62,9 +62,18 @@ func isNoPerm(err error) bool {
 // needsSeat is 7.1's line when the ACL refuses INFO or FUNCTION LIST: one
 // reason naming the seat, never three raw refusals.
 func needsSeat(n, name string, c *redis.Client, err error) Line {
+	cmd := "INFO, FUNCTION LIST or TIME"
+	msg := err.Error()
+	if strings.Contains(strings.ToLower(msg), "info") {
+		cmd = "INFO"
+	} else if strings.Contains(strings.ToLower(msg), "function") {
+		cmd = "FUNCTION LIST"
+	} else if strings.Contains(strings.ToLower(msg), "time") {
+		cmd = "TIME"
+	}
 	return Line{N: n, Name: name, Red: true, Why: fmt.Sprintf(
-		"needs the preflight ACL user: seat %s may not read INFO or FUNCTION LIST (%s); %s",
-		seatOf(c), firstLine(err.Error()), SeatHint)}
+		"needs the preflight ACL user: seat %s may not read %s (%s) [MISSING]; %s",
+		seatOf(c), cmd, firstLine(msg), SeatHint)}
 }
 
 func firstLine(s string) string {

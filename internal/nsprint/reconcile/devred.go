@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/webhook"
 )
 
 // The dev-red duty (nova-tools #3629): when a base branch's own CI at its
@@ -20,13 +21,13 @@ import (
 // green. Three dev-red episodes on 2026-09-24 each cost an hour and
 // re-merged every open PR because nothing held the base.
 //
-// Evidence, in order, one read each: the CI record ci:<repo>:<sha> (the
-// webhook or bench-run record of nova-tools #3597: a hash whose `verdict`
-// is OK or FAIL and whose `check` names the failing check); the gated
-// receipt ci:<repo>:<sha>:<gid> through internal/civerdict; then, until
-// #3597 lands, the forge's check state read through Forge at most once per
-// ForgeEvery per base. No evidence is no verdict: the hold neither sets nor
-// clears.
+// Evidence, in order, all from Redis: the CI record ci:<repo>:<sha> (a
+// hash whose `verdict` is OK or FAIL and whose `check` names the failing
+// check); the GitHub leg ci:<repo>:<sha>:gh that the ci-github consumer
+// writes from the webhook stream (internal/nsprint/webhook, #3597: gh green
+// is OK, red is FAIL naming gh_fail); the gated receipt
+// ci:<repo>:<sha>:<gid> through internal/civerdict. The duty never reads
+// GitHub. No evidence is no verdict: the hold neither sets nor clears.
 
 // BasesKey is the set of `<repo>/<base>` pairs the duty watches, written by
 // `nova-sprint dev-red watch`. Empty, the duty does nothing.
@@ -34,14 +35,6 @@ const BasesKey = "devred:bases"
 
 // CIRecordKey is the plain CI record of one commit, ci:<repo>:<sha> (#3597).
 func CIRecordKey(repo, sha string) string { return "ci:" + repo + ":" + sha }
-
-// ForgeBudgetKey is the per-base token for one forge read per ForgeEvery:
-// land:<repo>:<base>:ci:forge (SET NX PX), so a 1 s pass reads GitHub once
-// a minute, not once a second.
-func ForgeBudgetKey(repo, base string) string { return "land:" + repo + ":" + base + ":ci:forge" }
-
-// DefaultForgeEvery is the default forge read interval per base.
-const DefaultForgeEvery = 60 * time.Second
 
 // CIState is what the evidence says about one commit. Verdict is
 // civerdict.OK, "FAIL" or "" (no evidence). Check names the failing check,
@@ -75,10 +68,6 @@ type DevRed struct {
 	// Push pushes the fix task; the return is the task id as pushed (the
 	// receipt names it). Required: a nil Push is a duty that only reads.
 	Push func(ctx context.Context, t FixTask) (string, error)
-	// Forge reads the check state of one commit from the forge; nil reads
-	// Redis only. Budgeted per base by ForgeEvery.
-	Forge      func(ctx context.Context, repo, sha string) (CIState, error)
-	ForgeEvery time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
@@ -125,7 +114,8 @@ func short8(s string) string {
 // here is idempotent on the tip sha (HSETNX-shaped by the sha compare) and a
 // stale instance writing the same record is harmless, so the duty needs no
 // fence token; the lease bounds its time (#3805): no base starts with less
-// than the write margin left, and the forge read is cut at the lease budget.
+// than the write margin left. Every read is Redis (#3597), so no read needs
+// a budget of its own.
 func (d *DevRed) Run(ctx context.Context, l *Lease) (Counts, error) {
 	outs, err := d.pass(ctx, l)
 	if errors.Is(err, ErrFenced) {
@@ -177,7 +167,7 @@ func (d *DevRed) pass(ctx context.Context, l *Lease) ([]Outcome, error) {
 			}
 			return outs, fmt.Errorf("dev-red: %d of %d base(s) not started: %w", len(bases)-i, len(bases), err)
 		}
-		outs = append(outs, d.one(ctx, rb, l))
+		outs = append(outs, d.one(ctx, rb))
 	}
 	return outs, nil
 }
@@ -190,7 +180,7 @@ func (d *DevRed) now() time.Time {
 }
 
 // one is the duty for one base: tip, evidence, then hold, keep, or clear.
-func (d *DevRed) one(ctx context.Context, rb land.RepoBase, l *Lease) Outcome {
+func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 	o := Outcome{Repo: rb.Repo, Base: rb.Base}
 	c := d.Client
 	pipe := c.Pipeline()
@@ -207,7 +197,7 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase, l *Lease) Outcome {
 		return o
 	}
 	o.SHA = sha
-	st, err := d.evidence(ctx, rb, sha, l)
+	st, err := d.evidence(ctx, rb, sha)
 	if err != nil {
 		o.Err = err
 		return o
@@ -259,15 +249,21 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase, l *Lease) Outcome {
 	return o
 }
 
-// evidence reads the commit's CI state: the plain record, the gated
-// receipt, then the budgeted forge read.
-func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string, l *Lease) (CIState, error) {
+// evidence reads the commit's CI state: the plain record and the GitHub
+// leg in one pipeline, then the gated receipt. All of it is Redis; the
+// lease bounds the duty per base in pass, not per read.
+func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CIState, error) {
 	c := d.Client
-	rec, err := c.HGetAll(ctx, CIRecordKey(rb.Repo, sha)).Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return CIState{}, fmt.Errorf("read %s: %w", CIRecordKey(rb.Repo, sha), err)
+	pipe := c.Pipeline()
+	recCmd := pipe.HGetAll(ctx, CIRecordKey(rb.Repo, sha))
+	ghCmd := pipe.HGetAll(ctx, webhook.Key(rb.Repo, sha))
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return CIState{}, fmt.Errorf("read %s and its gh leg: %w", CIRecordKey(rb.Repo, sha), err)
 	}
-	if st, ok := stateOf(rec); ok {
+	if st, ok := stateOf(recCmd.Val()); ok {
+		return st, nil
+	}
+	if st, ok := ghStateOf(webhook.Parse(ghCmd.Val())); ok {
 		return st, nil
 	}
 	gated, err := civerdict.ReadHead(ctx, c, rb.Repo, sha, rb.Base)
@@ -277,32 +273,26 @@ func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string, l *
 	if st, ok := stateOf(gated); ok {
 		return st, nil
 	}
-	if d.Forge == nil {
-		return CIState{}, nil
+	return CIState{}, nil
+}
+
+// ghStateOf reads the GitHub leg: green is OK, red is FAIL naming the first
+// red check or workflow; pending or absent is no evidence.
+func ghStateOf(r webhook.Record) (CIState, bool) {
+	switch r.Word {
+	case webhook.Green:
+		return CIState{Verdict: civerdict.OK}, true
+	case webhook.Red:
+		check := r.Fail
+		if _, name, ok := strings.Cut(check, ":"); ok {
+			check = name
+		}
+		if check == "" {
+			check = "ci"
+		}
+		return CIState{Verdict: "FAIL", Check: check}, true
 	}
-	every := d.ForgeEvery
-	if every <= 0 {
-		every = DefaultForgeEvery
-	}
-	// The lease budget first, so a read the lease has no room for does not
-	// spend the base's forge token.
-	fctx, cancel, err := l.Budget(ctx, 0)
-	if err != nil {
-		return CIState{}, err
-	}
-	defer cancel()
-	got, err := c.SetNX(ctx, ForgeBudgetKey(rb.Repo, rb.Base), sha, every).Result()
-	if err != nil {
-		return CIState{}, fmt.Errorf("forge budget: %w", err)
-	}
-	if !got {
-		return CIState{}, nil
-	}
-	st, err := d.Forge(fctx, rb.Repo, sha)
-	if err != nil && ctx.Err() == nil && fctx.Err() != nil {
-		err = fmt.Errorf("forge read cut at the lease budget: %w", err)
-	}
-	return st, err
+	return CIState{}, false
 }
 
 // stateOf reads a CI hash: verdict OK or FAIL, and the failing name from

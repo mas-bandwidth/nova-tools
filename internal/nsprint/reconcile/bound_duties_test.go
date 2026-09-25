@@ -19,17 +19,20 @@ import (
 // boundTTL is the production lease TTL; the write margin is the default 1 s.
 const boundTTL = reconcile.DefaultTTL
 
-// slowDevRed is a dev-red duty over n watched bases with a tip and no CI
-// record, so every base makes one forge read; forge is that read.
-func slowDevRed(t *testing.T, ctx context.Context, c *redis.Client, n int, forge func(ctx context.Context, repo, sha string) (reconcile.CIState, error)) *reconcile.DevRed {
+// slowDevRed is a dev-red duty over n watched bases, each with a tip whose
+// CI record is red, so every base makes one fix-task push; push is that
+// push, the duty's one step outside its own Redis reads (#3597 left it no
+// forge read).
+func slowDevRed(t *testing.T, ctx context.Context, c *redis.Client, n int, push func(ctx context.Context, t reconcile.FixTask) (string, error)) *reconcile.DevRed {
 	t.Helper()
-	d := &reconcile.DevRed{Client: c, To: "rowan", Forge: forge,
-		Push: func(context.Context, reconcile.FixTask) (string, error) {
-			return "", errors.New("no push in this test")
-		}}
+	d := &reconcile.DevRed{Client: c, To: "rowan", Push: push}
+	sha := strings.Repeat("e", 40)
 	for i := 0; i < n; i++ {
 		repo := fmt.Sprintf("slow-%d", i)
-		if err := c.HSet(ctx, civerdict.TipKey(repo, "dev"), "sha", strings.Repeat("e", 40)).Err(); err != nil {
+		if err := c.HSet(ctx, civerdict.TipKey(repo, "dev"), "sha", sha).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.HSet(ctx, reconcile.CIRecordKey(repo, sha), civerdict.Field, "FAIL", "check", "TestSlow").Err(); err != nil {
 			t.Fatal(err)
 		}
 		d.Bases = append(d.Bases, land.RepoBase{Repo: repo, Base: "dev"})
@@ -65,16 +68,16 @@ func TestSlowDutyPassEndsInsideLease(t *testing.T) {
 		clk := newFakeClock(time.Unix(1_800_000_000, 0))
 		start := clk.Now()
 		calls := 0
-		d := slowDevRed(t, ctx, c, bases, func(context.Context, string, string) (reconcile.CIState, error) {
+		d := slowDevRed(t, ctx, c, bases, func(_ context.Context, ft reconcile.FixTask) (string, error) {
 			calls++
 			clk.Advance(step)
-			return reconcile.CIState{}, nil
+			return ft.ID, nil
 		})
 		if _, err := d.Pass(ctx); err != nil {
 			t.Fatal(err)
 		}
 		if took := clk.Now().Sub(start); calls != bases || took <= boundTTL {
-			t.Fatalf("unbounded: %d forge reads in %s; the fixture must overrun the %s TTL", calls, took, boundTTL)
+			t.Fatalf("unbounded: %d pushes in %s; the fixture must overrun the %s TTL", calls, took, boundTTL)
 		}
 	})
 
@@ -82,10 +85,10 @@ func TestSlowDutyPassEndsInsideLease(t *testing.T) {
 		st, c := controlRedis(t)
 		l, clk := fakeLease(t, ctx, st)
 		calls, lateRan := 0, false
-		d := slowDevRed(t, ctx, c, bases, func(context.Context, string, string) (reconcile.CIState, error) {
+		d := slowDevRed(t, ctx, c, bases, func(_ context.Context, ft reconcile.FixTask) (string, error) {
 			calls++
 			clk.Advance(step)
-			return reconcile.CIState{}, nil
+			return ft.ID, nil
 		})
 		late := func(context.Context, *reconcile.Lease) (reconcile.Counts, error) {
 			lateRan = true
@@ -100,7 +103,7 @@ func TestSlowDutyPassEndsInsideLease(t *testing.T) {
 		// left and dev-red stops. The loop renews before the next duty (the
 		// renewal lands here), so the quick late duty still runs.
 		if calls != 7 || !lateRan {
-			t.Fatalf("forge reads %d (want 7), late duty ran %v (want it run after the renewal)", calls, lateRan)
+			t.Fatalf("pushes %d (want 7), late duty ran %v (want it run after the renewal)", calls, lateRan)
 		}
 		if res.Took >= boundTTL || res.Took != 7*step {
 			t.Fatalf("pass took %s on the lease clock; want %s, inside the %s lease", res.Took, 7*step, boundTTL)
@@ -118,40 +121,6 @@ func TestSlowDutyPassEndsInsideLease(t *testing.T) {
 		}
 		if l.Fenced() {
 			t.Fatal("the lease was fenced; the pass record must land inside the lease")
-		}
-	})
-
-	t.Run("bounded: one slow forge read is cut at the budget", func(t *testing.T) {
-		st, c := controlRedis(t)
-		l, clk := fakeLease(t, ctx, st)
-		lateRan := false
-		d := slowDevRed(t, ctx, c, 1, func(ctx context.Context, _, _ string) (reconcile.CIState, error) {
-			// A read that would take 10 s on the lease clock.
-			for i := 0; i < 100 && ctx.Err() == nil; i++ {
-				clk.Advance(100 * time.Millisecond)
-				time.Sleep(time.Millisecond)
-			}
-			if ctx.Err() == nil {
-				return reconcile.CIState{Verdict: civerdict.OK}, nil
-			}
-			return reconcile.CIState{}, ctx.Err()
-		})
-		late := func(context.Context, *reconcile.Lease) (reconcile.Counts, error) {
-			lateRan = true
-			return reconcile.Counts{}, nil
-		}
-		lp := &reconcile.Loop{Lease: l, Duties: []reconcile.Duty{d.Run, late}, Names: []string{"dev-red", "late"}}
-		res, err := lp.Pass(ctx)
-		if err != nil {
-			t.Fatalf("pass: %v", err)
-		}
-		if res.Took >= boundTTL-500*time.Millisecond || res.Took < boundTTL-reconcile.DefaultWriteMargin {
-			t.Fatalf("pass took %s on the lease clock; want the read cut at %s", res.Took, boundTTL-reconcile.DefaultWriteMargin)
-		}
-		// Cut at the budget, the write margin is left: a quick duty after it
-		// still starts, and the pass records inside the lease.
-		if !strings.Contains(res.Err, "forge read cut at the lease budget") || !lateRan || l.Fenced() {
-			t.Fatalf("pass err %q (late ran %v, fenced %v); want the cut read recorded and the pass held", res.Err, lateRan, l.Fenced())
 		}
 	})
 }
@@ -195,10 +164,10 @@ func TestPreDutyRenewalFailureSkipsLaterDuties(t *testing.T) {
 	st, c := controlRedis(t)
 	l, clk := fakeLease(t, ctx, st)
 	calls, late1Ran, late2Ran := 0, false, false
-	d := slowDevRed(t, ctx, c, bases, func(context.Context, string, string) (reconcile.CIState, error) {
+	d := slowDevRed(t, ctx, c, bases, func(_ context.Context, ft reconcile.FixTask) (string, error) {
 		calls++
 		clk.Advance(step)
-		return reconcile.CIState{}, nil
+		return ft.ID, nil
 	})
 	late1 := func(context.Context, *reconcile.Lease) (reconcile.Counts, error) {
 		late1Ran = true
@@ -230,7 +199,7 @@ func TestPreDutyRenewalFailureSkipsLaterDuties(t *testing.T) {
 	// Before late1, pre-duty renewal was attempted and failed via the seam.
 	// Both late1 and late2 must not start.
 	if calls != 7 {
-		t.Fatalf("forge reads %d (want 7)", calls)
+		t.Fatalf("pushes %d (want 7)", calls)
 	}
 	if late1Ran || late2Ran {
 		t.Fatalf("late duties ran (late1=%v, late2=%v); want both skipped", late1Ran, late2Ran)
