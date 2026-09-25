@@ -35,6 +35,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 //go:embed land_stream.lua
@@ -243,38 +245,51 @@ func ReadAt(lines []string, head string) Read {
 	}
 	byWho := map[string]last{}
 	var order []string
+	atHead := func(who, h string) bool {
+		return who != "" && !strings.HasPrefix(who, "jev") && len(h) >= 7 && strings.HasPrefix(strings.ToLower(head), h)
+	}
 	for _, l := range lines {
-		f := strings.Fields(l)
-		if len(f) == 0 {
-			continue
-		}
-		kv := map[string]string{}
-		for _, w := range f[1:] {
-			if k, v, ok := strings.Cut(w, "="); ok {
-				kv[k] = strings.TrimRight(v, ":,;")
-			}
-		}
-		who := strings.ToLower(kv["who"])
-		h := strings.ToLower(kv["head"])
-		if who == "" || strings.HasPrefix(who, "jev") || len(h) < 7 || !strings.HasPrefix(strings.ToLower(head), h) {
-			continue
-		}
+		var who string
 		var cur last
-		switch f[0] {
-		case "SCORE":
-			cur.score = parseScore(kv["score"])
-		case "DISPOSITION":
-			if strings.EqualFold(kv["verdict"], "HOLD") {
-				cur.hold = true
-			} else if strings.EqualFold(kv["verdict"], "APPROVE") {
-				cur.score = parseScore(kv["score"])
-			} else {
+		// DISPOSITION lines go through the one typed parser (#2506 part B):
+		// a HOLD holds even when sloppily typed, an APPROVE counts only when
+		// the parser finds it valid.
+		if c, ok := typedrec.ParseDisposition(l); ok {
+			who = c.Who
+			if !atHead(who, c.Head) {
 				continue
 			}
-		case "HOLD":
-			cur.hold = true
-		default:
-			continue
+			switch {
+			case c.Verdict == "HOLD":
+				cur.hold = true
+			case c.Verdict == "APPROVE" && c.Valid:
+				cur.score = parseScore(c.Score)
+			default:
+				continue
+			}
+		} else {
+			f := strings.Fields(l)
+			if len(f) == 0 {
+				continue
+			}
+			kv := map[string]string{}
+			for _, w := range f[1:] {
+				if k, v, ok := strings.Cut(w, "="); ok {
+					kv[k] = strings.TrimRight(v, ":,;")
+				}
+			}
+			who = strings.ToLower(kv["who"])
+			if !atHead(who, strings.ToLower(kv["head"])) {
+				continue
+			}
+			switch f[0] {
+			case "SCORE":
+				cur.score = parseScore(kv["score"])
+			case "HOLD":
+				cur.hold = true
+			default:
+				continue
+			}
 		}
 		if _, seen := byWho[who]; !seen {
 			order = append(order, who)
