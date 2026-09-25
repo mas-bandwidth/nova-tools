@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
@@ -28,6 +29,10 @@ func init() {
 // fleetLibrary reads the loaded function library for --fleet; a test swaps
 // it for a Redis without FUNCTION LIST.
 var fleetLibrary = preflight.ReadLibrary
+
+// preflightProcs is 7.26's process snapshot (#3899); a test swaps it, since
+// the go test running this package's tests is itself a go test.
+var preflightProcs = preflight.ListProcs
 
 type repeated []string
 
@@ -86,6 +91,9 @@ func cmdPreflight(ctx context.Context, args []string, stdout, stderr io.Writer) 
 		Sprint: *sprint, PolicyFile: *policy, UnitEnv: unitEnv,
 		LauncherConfig: *launcher, Retired: retired,
 	})
+	// #3899: batch tests never run in the coordinator's session.
+	procs, perr := preflightProcs(ctx)
+	lines = append(lines, preflight.CheckLocalBatchTests(procs, perr, os.Getpid()))
 	for _, l := range lines {
 		fmt.Fprintln(stdout, l)
 	}

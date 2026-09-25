@@ -7,13 +7,18 @@
 //	    [--ci-wait 45m] [--tick 10s] [--ci-url <url>] [--rebuild]
 //
 // It builds the stream branch off the base tip (the members merged --no-ff
-// oldest first, one batch test, bisect and park on red), pushes it, opens ONE
-// stream PR, requests our own CI for the stream head (ci:pool; a bench's ci
+// oldest first), pushes it, opens ONE stream PR, requests our own CI for the stream head (ci:pool; a bench's ci
 // run writes the ci word on the stream PR's record), waits for that word,
 // and on green merges the stream PR with land merge's step, which moves every
 // member merging -> landed and closes them. A base that moved during CI is
 // rebuilt on the new tip first. A re-run resumes an open landing at its CI
 // wait; a red stream head stays red until --rebuild.
+//
+// The batch test is that CI request, claimed by a bench (nova-tools#3899):
+// land runs no go test on its own seat. --test is a local pre-test (one
+// batch test, bisect and park on red) for a seat that is not the
+// coordinator's; on the coordinator seat (NOVA_SPRINT_REDIS_USER=coordinator)
+// it is refused.
 //
 // One receipt line: LANDED (exit 0); LAND RED or LAND WAITING (exit 1, the
 // remedy named); a build that stopped prints LAND STOPPED with its state (exit 1).
@@ -32,6 +37,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ci"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/stream"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -67,6 +73,10 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	if fs.NArg() > 0 {
 		return refuse(errOut, verb, "takes flags, not "+strconv.Quote(fs.Arg(0)))
 	}
+	if *test != "" && os.Getenv(store.UserEnv) == preflight.PreflightSeat {
+		return refuse(errOut, verb, "--test runs the batch test on the coordinator seat, which runs none (#3899): drop --test; "+
+			"nova-sprint land makes the ci request (nova-sprint ci request) and a bench runs it (nova-sprint ci run)")
+	}
 	if !landRepoOK(*repo) || len(streams) == 0 {
 		return refuse(errOut, verb, "needs --repo <owner/repo> and --stream <s>")
 	}
@@ -87,7 +97,7 @@ func runLandWhole(ctx context.Context, args []string, out, errOut io.Writer) int
 	}
 	o := stream.RunOptions{
 		Options: stream.Options{Repo: *repo, Streams: streams, Base: *base, Branch: *branch, Remote: *remote,
-			Test: *test, TestTimeout: *testTimeout, MinScore: *minScore, By: *by,
+			Test: *test, TestTimeout: *testTimeout, NoTest: *test == "", MinScore: *minScore, By: *by,
 			Author: "Rowan <rowan@mas-bandwidth.com>", Log: out, GH: gh},
 		CIWait: *ciWait, Tick: *tick, Rebuild: *rebuild, Sleep: landRunSleep,
 		// The runner clones --ci-url, else stages from its mirror (never the

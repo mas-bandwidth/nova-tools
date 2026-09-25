@@ -182,9 +182,12 @@ func benchTurn(t *testing.T, addr string, before func()) *int {
 	return turns
 }
 
+// landArgs runs the fixture's batch test locally (--test, a seat that is not
+// the coordinator's) so the bisect parks #2; with no --test land runs none
+// and CI is the batch test (#3899, land_nolocal_test.go).
 func landArgs(addr, url, work string, g *mergeForge, extra ...string) []string {
 	return append([]string{"land", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--remote", url, "--ci-url", url,
-		"--mirror", "none", "--workdir", work, "--api", g.srv.URL, "--tick", "1ms"}, extra...)
+		"--mirror", "none", "--workdir", work, "--api", g.srv.URL, "--tick", "1ms", "--test", "test ! -e red.txt"}, extra...)
 }
 
 func TestLandBatchMergesOldestFirst(t *testing.T) {
