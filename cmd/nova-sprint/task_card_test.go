@@ -120,3 +120,61 @@ func TestTaskCardCLI(t *testing.T) {
 		t.Fatalf("land without --sha = %d %q", code, errOut)
 	}
 }
+
+// TestTaskMoveRefusesAPrimaryUnread (#3929, rowan-new specs/table-moves.md
+// 2026-09-25: a copy's OK is the only event that advances a primary): the
+// hand walk waiting -> ready -> working -> merging is refused at working for
+// a task no friend holds, and a friendless working task cannot be moved to
+// merging by hand; each refusal is exit 1 with nothing written. A friend's
+// take keeps its own path.
+func TestTaskMoveRefusesAPrimaryUnread(t *testing.T) {
+	f := newSeat(t)
+	t.Setenv("FRIEND_QUEUE_SPRINT", seatSprint)
+	t.Setenv("NOVA_FRIEND", "")
+	ctx := context.Background()
+	c := f.client
+	const s = "nova-sprint + merge + bus"
+	zc := func(w string) int64 { return c.ZCard(ctx, "ws:"+s+":"+w).Val() }
+
+	code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", "prim-1", "--stream", s, "--waiting",
+		"--kind", "build", "--ref", "nova-tools#3929", "--title", "a primary")
+	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "waiting" {
+		t.Fatalf("push = %d %q %q", code, out, errOut)
+	}
+	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "prim-1", "--to-where", "ready")
+	if m := cardLine.FindStringSubmatch(out); code != 0 || m == nil || m[4] != "ready" {
+		t.Fatalf("waiting -> ready = %d %q", code, out)
+	}
+	for _, to := range []string{"working", "merging"} {
+		code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "prim-1", "--to-where", to)
+		if code != 1 || !strings.HasPrefix(out, "TASK move REFUSED id=prim-1 why=") || (to == "working" && !strings.Contains(out, "NOCOPY")) {
+			t.Fatalf("ready -> %s by hand = %d %q", to, code, out)
+		}
+		if w := c.HGet(ctx, "task:prim-1", "where").Val(); w != "ready" || zc("ready") != 1 || zc(to) != 0 {
+			t.Fatalf("a refused move to %s wrote: where=%s", to, w)
+		}
+	}
+
+	// A friendless task already in working (a record from before the copies)
+	// cannot be moved to merging by hand either.
+	c.HSet(ctx, "task:prim-2", "stream", s, "state", "working", "kind", "build", "created_at", "1000")
+	c.ZAdd(ctx, "ws:"+s+":working", redis.Z{Score: 1000, Member: "prim-2"})
+	code, out, _ = runTaskCLI("move", "--actor", "rowan", "--id", "prim-2", "--to-where", "merging")
+	if code != 1 || !strings.Contains(out, "NOCOPY a primary enters merging only as a read copy's card end") {
+		t.Fatalf("working -> merging by hand = %d %q", code, out)
+	}
+	if zc("merging") != 0 {
+		t.Fatalf("a refused move wrote merging")
+	}
+
+	// A friend's take keeps its own path: ready -> working with the friend.
+	code, out, errOut = runTaskCLI("push", "--actor", "rowan", "--id", "held-1", "--stream", s, "--friend", "a",
+		"--kind", "build", "--ref", "nova-tools#3930", "--title", "a friend's task")
+	if code != 0 {
+		t.Fatalf("push held-1 = %d %q %q", code, out, errOut)
+	}
+	code, out, _ = runTaskCLI("take", "--actor", "a", "--id", "held-1")
+	if code != 0 || !strings.Contains(out, "held-1") || c.HGet(ctx, "task:held-1", "where").Val() != "working" {
+		t.Fatalf("friend take = %d %q", code, out)
+	}
+}

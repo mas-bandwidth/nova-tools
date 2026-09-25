@@ -52,7 +52,10 @@ func TestReadPostEventsMoveTasks(t *testing.T) {
 	const s = "landing: streams + lander"
 	read8 := "read-7-" + head[:8]
 	eventTask(t, c, "build-7-thing", s, "merging", 100, "pr", "7", "repo", "mas-bandwidth/nova-tools")
-	eventTask(t, c, read8, s, "working", 200, "ref", "nova-tools#7")
+	// the read task is the reader's (a friend take): a SCORE moves a
+	// friend-held task; a primary no friend holds enters merging only as a
+	// read copy's card end (#3929)
+	eventTask(t, c, read8, s, "working", 200, "ref", "nova-tools#7", "friend", "emma", "owner", "emma")
 	eventTask(t, c, "build-44-issue", "swarm: cards", "working", 300, "ref", "https://forge.invalid/mas-bandwidth/nova-tools/issues/44")
 	eventTask(t, c, "build-45-other", "swarm: cards", "working", 400, "ref", "nova-tools#45")
 	ids := []string{"build-7-thing", read8, "build-44-issue", "build-45-other"}
