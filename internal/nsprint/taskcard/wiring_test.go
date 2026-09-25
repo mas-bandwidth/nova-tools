@@ -22,6 +22,7 @@ import (
 // dispatches: this test binary with NOVA_WIRING_FAKE set. Without it, an
 // empty test.
 func TestWiringHelper(t *testing.T) {
+	t.Parallel()
 	switch os.Getenv("NOVA_WIRING_FAKE") {
 	case "":
 		return
@@ -44,6 +45,7 @@ func TestWiringHelper(t *testing.T) {
 // fsck walks are clean, and the Lua library names the old ledgers only in
 // the move file.
 func TestConsumerWiringEndToEnd(t *testing.T) {
+	t.Parallel()
 	c := start(t)
 	ctx := context.Background()
 	bench, friend := mustConsumer(t, "bench:b"), mustConsumer(t, "friend:f")

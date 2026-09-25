@@ -16,6 +16,7 @@ import (
 // it wrote, its primary goes back to waiting, the friend's working set is
 // empty, and the copy's lease was renewed while it ran (the start-ack beat).
 func TestServeCopyEndsFromTheChildsExit(t *testing.T) {
+	t.Parallel()
 	st, client := seedSeat(t, 2)
 	ctx := context.Background()
 	k := taskcard.Consumer{Kind: "friend", Name: "emma"}
