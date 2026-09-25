@@ -60,7 +60,8 @@ func TestRoutesTierPrintsAllowedOnly(t *testing.T) {
 // TestRoutesTierLabelPicksTheSpread: routes --tier <t> --label <card> prints
 // the one spread route the card runs on, "<route> <launch>", deterministic per
 // label; eight flash labels reach all four providers (Mercury launches as
-// inception/mercury-2.5) and six pro labels all three. --spread prints the
+// inception/mercury-2.5) and six pro labels both (OpenRouter is flash only
+// since #3949). --spread prints the
 // table; a bad tier, an empty label or --label without --tier prints nothing.
 func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 	want := map[string][]string{
@@ -71,7 +72,6 @@ func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 			"dsflash deepseek/deepseek-flash",
 		},
 		"pro": {
-			"orkimi3 openrouter/moonshotai/kimi-k3",
 			"dspro deepseek/deepseek-v4-pro",
 			"ocqwenplus opencode/qwen3.6-plus",
 		},
@@ -97,7 +97,7 @@ func TestRoutesTierLabelPicksTheSpread(t *testing.T) {
 		}
 	}
 	code, out, _ := runSprint("routes", "--spread")
-	if code != 0 || !strings.Contains(out, "mercury") || !strings.Contains(out, "dspro") || strings.Count(out, "\n") != 8 {
+	if code != 0 || !strings.Contains(out, "mercury") || !strings.Contains(out, "dspro") || strings.Count(out, "\n") != 7 {
 		t.Fatalf("--spread: exit %d\n%s", code, out)
 	}
 	for _, args := range [][]string{

@@ -32,10 +32,11 @@ import (
 // first line's model.
 //
 // --tier with --label prints the one route the swarm spread picks for that
-// card: "<route> <launch>", where the provider is fnv32a(label) mod the
-// tier's provider count over the table's spread rows (Glenn 2026-09-24: all
-// four providers, DeepSeek direct, OpenCode, OpenRouter and Mercury) and the
-// route is that provider's first. The launch string is <via>/<model>, except
+// card: "<route> <launch>", where the provider is the spread row owning slot
+// fnv32a(label) mod the sum of the tier's shares (Glenn 2026-09-24: all four
+// providers, DeepSeek direct, OpenCode, OpenRouter and Mercury; OpenRouter
+// is flash only and OpenCode owns two pro slots since #3949) and the route
+// is that provider's first. The launch string is <via>/<model>, except
 // Mercury's, whose model already names its provider (inception/mercury-2.5).
 // The route may be held: the spread's providers are chosen, not ranked.
 // --spread prints the whole spread table.
