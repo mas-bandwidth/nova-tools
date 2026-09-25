@@ -1378,3 +1378,16 @@ and explicit argv; paths or arguments containing spaces belong in a wrapper scri
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
 `--remote` and `--branch`. A busy snapshot wants the current writer to finish
 or a larger `--budget`; never remove a lock file to break a live lock.
+
+## nova-sprint
+
+`nova-sprint` manages sprints and route health monitoring (benchmarking and probing provider/model routes based on gateway death rates).
+
+### Usage
+
+```
+nova-sprint route health <provider/model> [--as <friend>] [--n <int>] [--threshold <float>] [--dry-run] [--check] [--probe pass|fail --receipt <id>] [--redis <addr>]
+```
+
+Exit codes: `0` OK / unbenched; `1` BENCH (benched now or already); `2` could not run (usage, bad route, Redis down, missing flag).
+
