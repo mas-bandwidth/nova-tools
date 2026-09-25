@@ -393,6 +393,7 @@ DIFFERENT line, so the morning names a person, not only a number.
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
 nova-update adoption --file <path> [--as <friend>] [--max <n>]
 nova-update release cut --repo <owner/name> --from <branch> --version <v> --changelog <path> [--sums <file>] [--security-read <id|url>] [--local-diff <checkout> [--paths-from <file>] | --paths-from <file>] [--cli <file>] [--receipts <dir>] [--no-dogfood-gate --reason <why>] [--dry-run] [--timeout <d>]
@@ -403,9 +404,12 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
 nova-update help
 ```
 
-Those ten usage lines are the string `nova-update help` prints, byte for byte: one string
+Those eleven usage lines are the string `nova-update help` prints, byte for byte: one string
 in the binary, so the spec and the help cannot drift apart; the five `release` lines are
-`release.Verbs`, spliced into that one string rather than copied beside it. `--kind <k>` is rule 19. No
+`release.Verbs`, spliced into that one string rather than copied beside it. `report --store <host:port>` is the fleet's view (#3880): it reads every registered bench's
+beat (`bench:<b>:beat`, field `build`, the nova-sprint version line the bench stamps each
+beat) in two pipelined round trips and prints one `REPORT DRIFT` line per beating bench not on
+the newest build, then one receipt; no ssh, no bus note, exit 1 on drift. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version snapshot …` reads the adopted manifest and reports its count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
