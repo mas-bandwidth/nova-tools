@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"io"
 	"net"
 	"os"
@@ -36,8 +36,7 @@ func cmdRedisCLI(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	if i < 0 || i == len(args)-1 {
 		return refuse(stderr, "redis-cli", "no command after --; "+redisCLIWants)
 	}
-	fs := flag.NewFlagSet("redis-cli", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
+	fs := verbflag.New("redis-cli")
 	addr := fs.String("redis", os.Getenv("NOVA_REDIS_ADDR"), "")
 	if err := fs.Parse(args[:i]); err != nil || fs.NArg() > 0 {
 		return refuse(stderr, "redis-cli", redisCLIWants)
