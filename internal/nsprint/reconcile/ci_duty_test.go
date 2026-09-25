@@ -2,14 +2,14 @@ package reconcile_test
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
-	"encoding/json"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 type fakeGHJobClient struct {
@@ -44,7 +44,7 @@ func TestCIDuty(t *testing.T) {
 			6: "runner lost",
 		},
 	}
-	
+
 	duty := &reconcile.CIDuty{
 		Store:  st,
 		GitHub: forge,
@@ -57,11 +57,11 @@ func TestCIDuty(t *testing.T) {
 				"full_name": "mas-bandwidth/nova-tools",
 			},
 			"check_run": map[string]interface{}{
-				"id": id,
-				"name": name,
-				"status": "completed",
+				"id":         id,
+				"name":       name,
+				"status":     "completed",
 				"conclusion": "failure",
-				"head_sha": head,
+				"head_sha":   head,
 				"pull_requests": []map[string]interface{}{
 					{"number": 42},
 				},
@@ -71,7 +71,7 @@ func TestCIDuty(t *testing.T) {
 		client.XAdd(ctx, &redis.XAddArgs{
 			Stream: ghevent.Stream,
 			Values: map[string]interface{}{
-				"event": "check_run",
+				"event":   "check_run",
 				"payload": string(b),
 			},
 		})
@@ -83,16 +83,16 @@ func TestCIDuty(t *testing.T) {
 	publishCheckRun(4, "abcdef", "build4")
 	publishCheckRun(5, "abcdef", "build5")
 	publishCheckRun(6, "abcdef", "build6")
-	
+
 	_, lines, err := duty.Pass(ctx, "test-instance")
 	if err != nil {
 		t.Fatalf("pass: %v", err)
 	}
-	
+
 	if len(forge.reruns) != 5 {
 		t.Fatalf("expected 5 reruns, got %v", forge.reruns)
 	}
-	
+
 	if len(lines) != 5 || !strings.Contains(lines[0], "ci:: rerun=1 reason=timeout budget spent") {
 		t.Fatalf("expected lines containing ci:: rerun=1 reason=..., got %v", lines)
 	}

@@ -61,22 +61,22 @@ func (d *CIDuty) Pass(ctx context.Context, instance string) (Counts, []string, e
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
 			ack = append(ack, msg.ID)
-			
+
 			event, _ := msg.Values["event"].(string)
 			payload, _ := msg.Values["payload"].(string)
 			if event == "" || payload == "" {
 				continue
 			}
-			
+
 			e, err := ghevent.Decode(event, []byte(payload))
 			if err != nil || e.Kind != "check_run" || e.Action != "completed" || e.Conclusion != "failure" {
 				continue
 			}
-			
+
 			if e.Number == "" || e.Head == "" || e.Check == "" || e.CheckRunID == "" {
 				continue
 			}
-			
+
 			// Is this a PR record's head?
 			isPRHead := false
 			for _, s := range sprints {
@@ -89,7 +89,7 @@ func (d *CIDuty) Pass(ctx context.Context, instance string) (Counts, []string, e
 			if !isPRHead {
 				continue
 			}
-			
+
 			// Second failure is red
 			rerunKey := "ci:infra:rerun:" + e.Repo + ":" + e.Head + ":" + e.Check
 			exists, err := client.Exists(ctx, rerunKey).Result()
@@ -99,37 +99,37 @@ func (d *CIDuty) Pass(ctx context.Context, instance string) (Counts, []string, e
 			if exists > 0 {
 				continue
 			}
-			
+
 			jobID, err := strconv.ParseInt(e.CheckRunID, 10, 64)
 			if err != nil {
 				continue
 			}
-			
+
 			log, err := d.GitHub.JobLog(ctx, e.Repo, jobID)
 			if err != nil {
 				continue
 			}
-			
+
 			reason, isInfra := isInfraLog(log)
 			if !isInfra {
 				continue
 			}
-			
+
 			err = d.GitHub.RerunFailedJob(ctx, e.Repo, jobID)
 			if err != nil {
 				continue
 			}
-			
+
 			client.Set(ctx, rerunKey, "1", 30*24*time.Hour)
 			lines = append(lines, fmt.Sprintf("ci:: rerun=1 reason=%s", reason))
 			counts.Routed++
 		}
 	}
-	
+
 	if len(ack) > 0 {
 		client.XAck(ctx, ghevent.Stream, "ci", ack...)
 	}
-	
+
 	return counts, lines, nil
 }
 
