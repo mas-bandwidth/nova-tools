@@ -19,10 +19,12 @@ func (s *Server) consumer() taskcard.Consumer {
 }
 
 // takeCopies is the seat's copy take (#3998): one read of the consumer's
-// free slots, then one `card work --as friend:<f>`: --fill when the seat's
-// free width covers every free slot, else --n <free width>. Each copy it
-// moved to working is dispatched; a copy whose dispatch fails is ended as a
-// fail with the reason. It returns how many it took. A seat that cannot
+// sets, then every working copy the seat has no child for (the deal duty's
+// card work --fill moved it there, #3999) is started under the token on its
+// record, and one `card work --as friend:<f>` takes the rest of the free
+// width from ready: --fill when the seat's free width covers every free
+// slot, else --n <free width>. A copy whose dispatch fails is ended as a
+// fail with the reason. It returns how many it started. A seat that cannot
 // take (the verbs not granted yet, no slots) takes nothing and prints why
 // once.
 func (s *Server) takeCopies(ctx context.Context, free int) int {
@@ -30,31 +32,58 @@ func (s *Server) takeCopies(ctx context.Context, free int) int {
 	as := s.consumer()
 	pipe := c.Pipeline()
 	slotsCmd := pipe.HGet(ctx, as.DesiredKey(), "slots")
-	workingCmd := pipe.ZCard(ctx, as.Key("working"))
+	workingCmd := pipe.ZRange(ctx, as.Key("working"), 0, -1)
 	readyCmd := pipe.ZCard(ctx, as.Key("ready"))
 	_, _ = pipe.Exec(ctx)
-	if readyCmd.Val() == 0 {
-		return 0
+	started := 0
+	for _, id := range workingCmd.Val() {
+		if started >= free {
+			return started
+		}
+		if !taskcard.IsCopy(id) || s.running(card.CopySprint+"/"+id) {
+			continue
+		}
+		token := c.HGet(ctx, taskcard.Key(id), "token").Val()
+		s.startOrFail(ctx, id, token)
+		started++
+	}
+	free -= started
+	if free <= 0 || readyCmd.Val() == 0 {
+		return started
 	}
 	slots, _ := strconv.Atoi(slotsCmd.Val())
-	fill := free >= slots-int(workingCmd.Val())
+	fill := free >= slots-len(workingCmd.Val())
 	w, err := taskcard.Work(ctx, c, as, s.cfg.Actor, free, fill)
 	if err != nil {
 		if msg := err.Error(); msg != s.copyErr {
 			s.copyErr = msg
 			fmt.Fprintf(s.cfg.Out, "SERVE %s card work: %v\n", s.cfg.Friend, err)
 		}
-		return 0
+		return started
 	}
 	s.copyErr = ""
 	for i, id := range w.IDs {
-		if err := s.startCopy(ctx, id, w.Tokens[i]); err != nil {
-			ch := &child{copy: id, claim: copyClaim(id, w.Tokens[i], "")}
-			s.receipt(ctx, "take", &ch.claim, "copy dispatch: "+oneLine(err.Error()))
-			s.endCopyWith(ctx, ch, taskcard.EndRequest{Why: "dispatch: " + oneLine(err.Error())})
-		}
+		s.startOrFail(ctx, id, w.Tokens[i])
 	}
-	return len(w.IDs)
+	return started + len(w.IDs)
+}
+
+// running says whether the seat has a child for key (<sprint>/<id>).
+func (s *Server) running(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, ok := s.children[key]
+	return ok
+}
+
+// startOrFail starts a copy's child; a dispatch that fails ends the copy
+// as a fail with the reason.
+func (s *Server) startOrFail(ctx context.Context, id, token string) {
+	if err := s.startCopy(ctx, id, token); err != nil {
+		ch := &child{copy: id, claim: copyClaim(id, token, "")}
+		s.receipt(ctx, "take", &ch.claim, "copy dispatch: "+oneLine(err.Error()))
+		s.endCopyWith(ctx, ch, taskcard.EndRequest{Why: "dispatch: " + oneLine(err.Error())})
+	}
 }
 
 // copyClaim is a copy's claim shape for the receipts and the child's
