@@ -148,3 +148,110 @@ func TestWrapperCommitsOutputOnCardBranch(t *testing.T) {
 		}
 	})
 }
+
+// newBaseOrigin is a bare origin whose dev holds one committed base.txt.
+func newBaseOrigin(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	origin := filepath.Join(dir, "origin.git")
+	gitIn(t, dir, "init", "-q", "--bare", origin)
+	seed := filepath.Join(dir, "seed")
+	gitIn(t, dir, "init", "-q", seed)
+	if err := os.WriteFile(filepath.Join(seed, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, seed, "add", "base.txt")
+	gitIn(t, seed, "commit", "-q", "-m", "base")
+	gitIn(t, seed, "push", "-q", origin, "HEAD:refs/heads/dev")
+	gitIn(t, dir, "--git-dir", origin, "symbolic-ref", "HEAD", "refs/heads/dev")
+	return origin
+}
+
+// TestWrapperCommitsNativeJobRepo is the quack-test defect of 2026-09-24 (space,
+// nc-flash-0924): nova-swarm native ran the card in <slot>/jobs/<label>, its clone at
+// <slot>/jobs/<label>/repo and its RESULT.md beside it, nothing under out, and the
+// wrapper line said commit="NO-COMMIT" for a DONE card with a real fix. The fake
+// harness reproduces that layout (a slot outside the wrapper's job, one committed base
+// and one changed file). Without the hand-off the wrapper still ends NO-COMMIT (the
+// defect); with the hand-off native now makes under NOVA_CARD_OUT, the wrapper commits
+// the fix on the attempt branch, end.record and the card hash carry pushed_sha, and the
+// wrapper line says COMMITTED with the card's RESULT line.
+func TestWrapperCommitsNativeJobRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git unavailable")
+	}
+	for _, tc := range []struct {
+		mode      string
+		committed bool
+	}{
+		{"native-nohandoff", false},
+		{"native", true},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			self, err := os.Executable()
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx := context.Background()
+			st, client := newSprint(t)
+			id := card.Identity{Sprint: "flash-0924", Label: "quack-fix", BaseSHA: "0123abcd", Bench: "wrap-bench", Attempt: 1}
+			token := attemptToken(1, strings.Repeat("d", 32))
+			seedCard(t, ctx, client, id, "dealt", token)
+			slot := filepath.Join(t.TempDir(), "nc-flash-0924-quack-fix-1")
+			gate := filepath.Join(t.TempDir(), "gate")
+			t.Setenv(fakeHarnessEnv, tc.mode)
+			t.Setenv(fakeGateEnv, gate)
+			t.Setenv(fakeOriginEnv, newBaseOrigin(t))
+			t.Setenv(fakeSlotEnv, slot)
+			h := newHarnessRun(t, id, self)
+			ledger := &observed{inner: &card.RedisLedger{Store: st, Sprint: id.Sprint, Label: id.Label, Token: token}, events: make(chan string, 64)}
+			got := make(chan card.WrapperReport, 1)
+			go func() { got <- card.RunWrapper(ctx, h.cfg, ledger) }()
+			h.waitFor(ledger, "launched")
+			h.waitFor(ledger, "beat")
+			if err := os.WriteFile(gate, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			rep := h.report(got)
+			if rep.Code != card.WrapperExitEnded || rep.Outcome != "DONE" {
+				t.Fatalf("report %s why=%q; want DONE ended", rep.Line(), rep.Why)
+			}
+			if _, err := os.Stat(filepath.Join(slot, "jobs", id.Label)); err != nil {
+				t.Fatalf("the fake native job is not in the slot: %v", err)
+			}
+			rec, err := card.ReadEndRecord(h.results)
+			if err != nil {
+				t.Fatal(err)
+			}
+			line, _ := os.ReadFile(filepath.Join(h.results, "wrapper.line"))
+			if !tc.committed {
+				if rec.PushedSHA != card.NoCommit || !strings.Contains(string(line), `commit="NO-COMMIT"`) {
+					t.Fatalf("without the hand-off: pushed_sha %q, wrapper.line %q; want the NO-COMMIT defect", rec.PushedSHA, line)
+				}
+				return
+			}
+			repo := filepath.Join(h.results, "repo")
+			branch := card.WrapperBranch(id.Sprint, id.Label, 1)
+			tip := gitIn(t, repo, "rev-parse", "refs/heads/"+branch)
+			if len(rec.PushedSHA) != 40 || rec.PushedSHA != tip {
+				t.Fatalf("end.record pushed_sha %q, want the %s commit %s", rec.PushedSHA, branch, tip)
+			}
+			if hs := hashOf(t, ctx, client, id.Sprint, id.Label); hs["pushed_sha"] != rec.PushedSHA {
+				t.Fatalf("card hash pushed_sha %q, want %s", hs["pushed_sha"], rec.PushedSHA)
+			}
+			if files := gitIn(t, repo, "show", "--name-only", "--format=", rec.PushedSHA); files != "base.txt" {
+				t.Fatalf("committed %q, want the changed base.txt only", files)
+			}
+			if parent := gitIn(t, repo, "log", "-1", "--format=%s", rec.PushedSHA+"^"); parent != "base" {
+				t.Fatalf("the commit's parent is %q, want the committed base", parent)
+			}
+			want := "RESULT: " + id.Sprint + "/" + id.Label + "/1 sha=000000000000"
+			if !strings.Contains(string(line), `commit="COMMITTED"`) || !strings.Contains(string(line), `result="`+want+`"`) {
+				t.Fatalf("wrapper.line %q; want COMMITTED and result %q", line, want)
+			}
+			if subject := gitIn(t, repo, "log", "-1", "--format=%s", rec.PushedSHA); subject != want {
+				t.Fatalf("commit message %q, want the RESULT line %q", subject, want)
+			}
+		})
+	}
+}
