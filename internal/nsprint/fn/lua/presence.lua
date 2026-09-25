@@ -34,6 +34,41 @@ local function pl_now_ms()
   return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
 end
 
+-- pl_utc_to_epoch_ms converts UTC date/time parts to epoch milliseconds.
+local function pl_utc_to_epoch_ms(y, m, d, H, M, S)
+  y = tonumber(y)
+  m = tonumber(m)
+  d = tonumber(d)
+  H = tonumber(H) or 0
+  M = tonumber(M) or 0
+  S = tonumber(S) or 0
+  if not y or not m or not d then return nil end
+  if m <= 2 then
+    y = y - 1
+    m = m + 12
+  end
+  local era = math.floor((y >= 0 and y or y - 399) / 400)
+  local yoe = y - era * 400
+  local doy = math.floor((153 * (m - 3) + 2) / 5) + d - 1
+  local doe = yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy
+  local days = era * 146097 + doe - 719468
+  return (days * 86400 + H * 3600 + M * 60 + S) * 1000
+end
+
+-- pl_parse_down_ms parses the @<UTC> timestamp in a friend down reason
+-- (<reason>@<UTC>, seconds or minutes precision) into epoch milliseconds.
+local function pl_parse_down_ms(str)
+  if type(str) ~= 'string' then return nil end
+  local clean = string.match(str, '^%s*(.-)%s*$')
+  local y, m, d, H, M, S = string.match(clean, '@(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d):(%d%d)Z$')
+  if not y then
+    y, m, d, H, M = string.match(clean, '@(%d%d%d%d)%-(%d%d)%-(%d%d)T(%d%d):(%d%d)Z$')
+    S = 0
+  end
+  if not y then return nil end
+  return pl_utc_to_epoch_ms(y, m, d, H, M, S)
+end
+
 local function pl_caplog(kind, subject, reason, actor, idem, at)
   redis.call('XADD', 'cap:log', 'MAXLEN', '~', 100000, '*',
     'kind', kind, 'subject', subject, 'reason', reason or '',
@@ -292,7 +327,8 @@ end
 -- then ONE HSET of friend:<f> with one at, and friend:<f>:last. up is 1 while
 -- friend:<f>:beat exists (written only by the seat's own hello/beat). A
 -- friend:<f> left over as another type is replaced. The row never expires:
--- an old at is what the table prints stale. args = friend, sprint, at.
+-- an old at is what the table prints stale. A newer seat beat clears
+-- friend:<f>:down and returns the cleared stamp (#3824). args = friend, sprint, at.
 local function friend_row(keys, args)
   local friend, sprint, at = args[1], args[2], args[3]
   if not friend or not string.match(friend, '^[a-z0-9][a-z0-9-]*$') or
@@ -308,7 +344,53 @@ local function friend_row(keys, args)
   if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
     slots = ''
   end
-  local up = redis.call('EXISTS', 'friend:' .. friend .. ':beat')
+  local beat_key = 'friend:' .. friend .. ':beat'
+  local beat_exists = redis.call('EXISTS', beat_key)
+  local up = beat_exists
+  local beat_at = nil
+  if beat_exists == 1 then
+    local beat_at_raw = redis.call('HGET', beat_key, 'at')
+    if beat_at_raw and beat_at_raw ~= '' then
+      beat_at = tonumber(beat_at_raw)
+    end
+  end
+
+  local down_key = 'friend:' .. friend .. ':down'
+  local down_type = redis.call('TYPE', down_key)
+  if type(down_type) == 'table' then
+    down_type = down_type['ok']
+  end
+  local down_str = nil
+  local down_ms = nil
+  if down_type == 'string' then
+    down_str = redis.call('GET', down_key)
+    down_ms = pl_parse_down_ms(down_str)
+  elseif down_type == 'hash' then
+    local reason = redis.call('HGET', down_key, 'reason')
+    if reason and reason ~= '' then
+      down_ms = pl_parse_down_ms(reason)
+      if down_ms then
+        down_str = reason
+      end
+    end
+    if not down_ms then
+      local at_ms = tonumber(redis.call('HGET', down_key, 'at'))
+      if at_ms then
+        down_ms = at_ms
+        down_str = (reason and reason ~= '') and (reason .. '@' .. tostring(at_ms)) or ('down@' .. tostring(at_ms))
+      end
+    end
+  end
+
+  local cleared_down = ''
+  local cleared_beat_at = ''
+  if down_ms and beat_at and beat_at > down_ms then
+    redis.call('DEL', down_key)
+    cleared_down = down_str or ''
+    cleared_beat_at = tostring(beat_at)
+    up = 1
+  end
+
   local row = 'friend:' .. friend
   local kind = redis.call('TYPE', row)
   if type(kind) == 'table' then
@@ -323,7 +405,7 @@ local function friend_row(keys, args)
     'width', tostring(working), 'done', tostring(done), 'slots', slots)
   redis.call('SET', row .. ':last', at)
   return { 'OK', tostring(up), tostring(ready), tostring(working),
-    tostring(waiting), tostring(done), slots }
+    tostring(waiting), tostring(done), slots, cleared_down, cleared_beat_at }
 end
 
 -- bench_release stops a bench's owned loop. Only the owning session may
