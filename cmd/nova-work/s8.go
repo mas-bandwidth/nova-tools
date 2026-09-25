@@ -104,9 +104,6 @@ func queryVerb(args []string, stdout, stderr io.Writer) int {
 		if err == flag.ErrHelp {
 			return printVerbHelp(stderr, "query")
 		}
-		if err == flag.ErrHelp {
-			return printVerbHelp(stderr, "query")
-		}
 		return refused(stderr, "query: "+err.Error())
 	}
 	if f.NArg() != 0 {

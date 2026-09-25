@@ -32,7 +32,10 @@ func printVerbHelp(stderr io.Writer, verb string) int {
 		}
 	}
 	if !found {
-		// Fallback if not found (e.g. some obscure verb not in usage string, though all 51 should be)
+		if verb == "proving-run" {
+			fmt.Fprintln(stderr, "  nova-work proving-run --nova-tools <path> [--schema <path>] [--sprint <path>] [--batch-size <n>] [--interrupt]")
+			return 2
+		}
 		fmt.Fprintf(stderr, "nova-work: no specific help for %q\n", oneline.Field(verb))
 	}
 	return 2
