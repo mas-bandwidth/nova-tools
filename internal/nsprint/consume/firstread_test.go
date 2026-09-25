@@ -208,8 +208,9 @@ func TestFirstReadPendingUntilAFriendIsUp(t *testing.T) {
 		"mas-bandwidth/nova-tools#3728@"+head).Result(); err != nil || score != 1758776760000 {
 		t.Fatalf("pending score = %v (%v), want the event time", score, err)
 	}
-	if got := f.out.String(); got != "READ-PENDING n=3728 need=1 have=0\n" {
-		t.Fatalf("output = %q, want one READ-PENDING line", got)
+	// The first pass joins the sprint's log, then records the pending read.
+	if got := f.out.String(); got != "PRREAD JOINED sprint=fr-pend from=0\nREAD-PENDING n=3728 need=1 have=0\n" {
+		t.Fatalf("output = %q, want the join and one READ-PENDING line", got)
 	}
 	f.out.Reset()
 	f.once()

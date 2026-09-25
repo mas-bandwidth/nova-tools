@@ -110,6 +110,10 @@ type WrapperCard struct {
 	// of a card that carries none; 0 is absent. See WallMax.
 	EstMin     float64
 	WallMaxMin float64
+	// Kind is the card hash's kind (a RESULT kind, or a runner kind; "" is a
+	// model card). The end step reads it to tell a code card, which must
+	// commit, from one that legitimately commits nothing (NoCommitKinds).
+	Kind string
 }
 
 // WrapperEnd is the exit class the wrapper hands to the ledger.
@@ -481,7 +485,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	if err := makeJobDir(cfg.JobsRoot, job); err != nil {
 		// The card is launched and the harness never ran: a crash, recorded.
-		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "job dir: "+err.Error(), cleanup)
+		return finish(ctx, cfg, ledger, &rep, c.Kind, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "job dir: "+err.Error(), cleanup)
 	}
 
 	// 3. The harness, in its own group, token-free: the program cfg.Harness
@@ -513,7 +517,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	if err := proc.start(); err != nil {
 		log.Close()
 		// The card is launched and the harness never ran: a crash, recorded.
-		return finish(ctx, cfg, ledger, &rep, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "harness start: "+err.Error(), cleanup)
+		return finish(ctx, cfg, ledger, &rep, c.Kind, job, results, began, now, WrapperEnd{Outcome: "FAILED", Reason: "crash", Exit: -1, WallMax: wallMax}, "harness start: "+err.Error(), cleanup)
 	}
 	exited := proc.exited()
 	// The wall cap runs from the harness start, whatever the beats say.
@@ -579,7 +583,7 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 	}
 	// A fenced beat ends here too: the ledger writes end.record before its
 	// end call, which is then fenced, and the record stays for the reconciler.
-	return finish(ctx, cfg, ledger, &rep, job, results, began, now, end, why, cleanup)
+	return finish(ctx, cfg, ledger, &rep, c.Kind, job, results, began, now, end, why, cleanup)
 }
 
 // makeJobDir makes <job>/out for a launched attempt. A directory already at
@@ -629,7 +633,7 @@ func (l *RedisLedger) Claim(ctx context.Context, nonce string) (int, error) {
 }
 
 // finish is step 6 and 7: copy out, record, end, delete.
-func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *WrapperReport, job, results string, began time.Time, now func() time.Time, end WrapperEnd, why string, cleanup func()) WrapperReport {
+func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *WrapperReport, kind, job, results string, began time.Time, now func() time.Time, end WrapperEnd, why string, cleanup func()) WrapperReport {
 	wall := now().Sub(began)
 	end.ResultsDir = results
 	rep.Outcome, rep.Reason, rep.Exit, rep.Wall, rep.Why = end.Outcome, end.Reason, end.Exit, wall, why
@@ -645,6 +649,18 @@ func finish(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger, rep *W
 			}
 		}
 		end.PushedSHA, end.Commit = c.SHA, c.Note
+		// A code card whose model said DONE and committed nothing ends
+		// done/fail reason no-commit in this same end, never a false ok that
+		// harvest (pushed_sha "-") would skip forever.
+		if nc, ok := NoCommitEnd(kind, filepath.Join(job, "out"), end); ok {
+			end = nc
+			rep.Outcome, rep.Reason = end.Outcome, end.Reason
+			if rep.Why == "" {
+				rep.Why = end.Why
+			} else {
+				rep.Why = end.Why + "; " + rep.Why
+			}
+		}
 	}
 	if err := copyOut(job, results); err != nil {
 		// The job dir is kept: its results are the only copy.

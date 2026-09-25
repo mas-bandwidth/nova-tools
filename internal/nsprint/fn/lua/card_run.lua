@@ -39,7 +39,10 @@ local function reason_ok(outcome, reason)
   if outcome == 'DONE' and reason == 'done' then return true end
   -- refused (#3194): the harness's own program refused the card before it ran
   -- (a NATIVE REFUSED line); the card's why carries that line.
-  if reason == 'crash' or reason == 'timeout' or reason == 'wall' or reason == 'idle-killed' or reason == 'tests-red' or reason == 'refused' then
+  -- no-commit: a code card whose model said DONE and committed nothing
+  -- (w_commit NO-COMMIT); the card's why says so.
+  if reason == 'crash' or reason == 'timeout' or reason == 'wall' or reason == 'idle-killed' or reason == 'tests-red' or reason == 'refused'
+      or reason == 'no-commit' then
     return outcome == 'FAILED'
   end
   if reason == 'env' or reason == 'base-moved' or reason == 'deps' or reason == 'spec' or reason == 'access' then

@@ -16,7 +16,9 @@ package card
 //     the card's RESULT.md to out (swarm.HandOffCardOut), so this step has one
 //     place to look whichever runner the bench used.
 //   - No out/repo, or nothing to commit, is pushed_sha "-" (NO-COMMIT): the
-//     card's friend read is the report rule (#3036), never harvest.
+//     card's friend read is the report rule (#3036), never harvest. A code
+//     card whose model said DONE and committed nothing ends FAILED reason
+//     no-commit (NoCommitEnd), in done/fail, never a done/ok nobody harvests.
 //   - There is no rebase and no mirror refresh: a moved base is the lander's
 //     update-branch (#3139).
 
@@ -27,6 +29,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // MaxCommitFile is the largest file the commit step commits (1 MB).
@@ -105,4 +109,43 @@ func CommitOutput(repo, branch, message, bench string) (CommitResult, error) {
 		return CommitResult{}, err
 	}
 	return CommitResult{SHA: sha, Note: "COMMITTED"}, nil
+}
+
+// NoCommitWhy is the end's why for a code card that said DONE and committed
+// nothing.
+const NoCommitWhy = "model said DONE but committed nothing (NO-COMMIT)"
+
+// NoCommitKinds are the card kinds that legitimately commit nothing: a
+// script card, a read and a report. Every other kind (fix, recut, port,
+// docs-guard, and a model card with no KIND) is a code card.
+var NoCommitKinds = []string{KindScript, typedrec.KindRead, typedrec.KindReport}
+
+// CodeKind reports whether a card of kind must commit to be done.
+func CodeKind(kind string) bool {
+	for _, k := range NoCommitKinds {
+		if k == kind {
+			return false
+		}
+	}
+	return true
+}
+
+// NoCommitEnd is the end step's no-commit rule (quack-0925d, 2026-09-25): a
+// code card the harness ended DONE, whose commit step found nothing to commit
+// (NO-COMMIT) and whose model's line 2 in <out>/RESULT.md is DONE, ends
+// FAILED reason no-commit with NoCommitWhy, so ns_card_end moves it to
+// done/fail in the same call. The model's RESULT.md (its DONE line) is left
+// as it is, for the result record. A card whose model said ABSTAIN or
+// BLOCKED, wrote no line 2, or is not a code card, or a commit step that
+// committed (or refused OVERSIZE), is returned unchanged with ok false.
+func NoCommitEnd(kind, out string, end WrapperEnd) (WrapperEnd, bool) {
+	if end.Outcome != "DONE" || end.Commit != "NO-COMMIT" || !CodeKind(kind) {
+		return end, false
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "RESULT.md"))
+	if err != nil || typedrec.SplitModel(raw, kind).Status != typedrec.StatusDone {
+		return end, false
+	}
+	end.Outcome, end.Reason, end.Why = "FAILED", "no-commit", NoCommitWhy
+	return end, true
 }

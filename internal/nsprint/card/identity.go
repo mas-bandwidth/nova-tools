@@ -92,7 +92,7 @@ func reasonOK(outcome, reason string) bool {
 	switch reason {
 	case "done":
 		return outcome == "DONE"
-	case "crash", "timeout", "wall", "idle-killed", "tests-red", "refused":
+	case "crash", "timeout", "wall", "idle-killed", "tests-red", "refused", "no-commit":
 		return outcome == "FAILED"
 	case "env", "base-moved", "deps", "spec", "access":
 		return outcome == "BLOCKED"

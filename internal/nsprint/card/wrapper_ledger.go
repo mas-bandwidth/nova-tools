@@ -32,7 +32,7 @@ var _ WrapperLedger = (*RedisLedger)(nil)
 // of a card that carries none (#3653).
 const CardConfigKey = "cfg:card"
 
-// Card reads state, bench, attempt, identity and est from the card hash, and
+// Card reads state, bench, attempt, identity, est and kind from the card hash, and
 // cfg:card wall_max_min, in one round trip. It writes nothing, so a refusal
 // before launched leaves the keyspace as it was. An unreadable cfg:card (no
 // key, or a bench user not allowed to read it) is an absent wall_max_min.
@@ -41,7 +41,7 @@ func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 		return WrapperCard{}, errors.New("no store")
 	}
 	pipe := l.Store.Client().Pipeline()
-	cardCmd := pipe.HMGet(ctx, CardKey(l.Sprint, l.Label), "state", "bench", "attempt", "identity", "est")
+	cardCmd := pipe.HMGet(ctx, CardKey(l.Sprint, l.Label), "state", "bench", "attempt", "identity", "est", "kind")
 	cfgCmd := pipe.HGet(ctx, CardConfigKey, "wall_max_min")
 	_, _ = pipe.Exec(ctx)
 	vals, err := cardCmd.Result()
@@ -56,6 +56,7 @@ func (l *RedisLedger) Card(ctx context.Context) (WrapperCard, error) {
 	return WrapperCard{
 		State: str(vals[0]), Bench: str(vals[1]), Attempt: attempt, Identity: str(vals[3]),
 		EstMin: positiveFloat(str(vals[4])), WallMaxMin: positiveFloat(cfgCmd.Val()),
+		Kind: str(vals[5]),
 	}, nil
 }
 
