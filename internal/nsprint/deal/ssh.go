@@ -104,15 +104,86 @@ func (o *oneSession) count() int {
 // start (connect, banner or key exchange), so the pass may return the batch
 // to the pool; any other failure is SSHError and the batch stays dealt for
 // the reconciler's start-ack rule (#2756 3.2).
+//
+// Stdout is what the remote verb printed (bounded): `card launch --stdin`
+// prints one LAUNCHED or REFUSED line per card there, and the deal pass keeps
+// the REFUSED lines as the why of the bench row and of each refused card
+// (#3700: the wrapper refused every launch in sprint quack-0925 and both whys
+// were empty, the refusals lost with the session's stdout).
 type SessionError struct {
 	Bench  string
 	State  string
 	Exit   int
 	Stderr string
+	Stdout string
 }
 
 func (e *SessionError) Error() string {
-	return fmt.Sprintf("ssh: %s: bench %s exit %d: %s", e.State, e.Bench, e.Exit, firstLine(e.Stderr))
+	return fmt.Sprintf("ssh: %s: bench %s exit %d: %s", e.State, e.Bench, e.Exit, stderrLine(e.Stderr))
+}
+
+// maxStdout bounds the stdout a session keeps: a batch line is under 200
+// bytes, so this holds hundreds of cards' LAUNCHED/REFUSED lines.
+const maxStdout = 64 << 10
+
+// capped keeps the first maxStdout bytes written to it and drops the rest.
+type capped struct{ b bytes.Buffer }
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := maxStdout - c.b.Len(); room > 0 {
+		if len(p) > room {
+			c.b.Write(p[:room])
+		} else {
+			c.b.Write(p)
+		}
+	}
+	return len(p), nil
+}
+
+// secretsBanner leads the line the bench's secrets wrapper prints on stderr
+// before the remote verb runs; it names no failure, so a why skips it.
+const secretsBanner = "SECRETS "
+
+// stderrLine is the first stderr line that says something: the secrets
+// banner is skipped (#3700: the row's why read only the banner).
+func stderrLine(s string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" && !strings.HasPrefix(l, secretsBanner) {
+			return l
+		}
+	}
+	return firstLine(s)
+}
+
+// Refusals reads `card launch --stdin` output: the REFUSED lines by the
+// batch line they name (REFUSED line=<n> ..., 1-based, the order Lines wrote
+// the reservations in), each verbatim, and whether the verb printed any
+// per-line answer (LAUNCHED or REFUSED line=) at all.
+func Refusals(stdout string) (map[int]string, bool) {
+	out := map[int]string{}
+	ran := false
+	for _, l := range strings.Split(stdout, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "LAUNCHED ") {
+			ran = true
+			continue
+		}
+		if !strings.HasPrefix(l, "REFUSED line=") {
+			continue
+		}
+		ran = true
+		rest := strings.TrimPrefix(l, "REFUSED line=")
+		end := strings.IndexByte(rest, ' ')
+		if end < 0 {
+			end = len(rest)
+		}
+		if n, err := strconv.Atoi(rest[:end]); err == nil && n > 0 {
+			if _, dup := out[n]; !dup {
+				out[n] = l
+			}
+		}
+	}
+	return out, ran
 }
 
 // Remote is the production Dialer: the system ssh (or Program), BatchMode, a
@@ -165,7 +236,9 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = bytes.NewReader(stdin)
 	var stderr bytes.Buffer
+	var stdout capped
 	cmd.Stderr = &stderr
+	cmd.Stdout = &stdout
 	err := cmd.Run()
 	if err == nil {
 		return nil
@@ -176,9 +249,11 @@ func (s *remoteSession) Run(ctx context.Context, stdin []byte) error {
 		exit = ee.ExitCode()
 	}
 	if ctx.Err() != nil {
-		return &SessionError{Bench: s.bench.Name, State: SSHError, Exit: exit, Stderr: "session exceeded " + run.String() + "; " + stderr.String()}
+		return &SessionError{Bench: s.bench.Name, State: SSHError, Exit: exit, Stderr: "session exceeded " + run.String() + "; " + stderr.String(),
+			Stdout: stdout.b.String()}
 	}
-	return &SessionError{Bench: s.bench.Name, State: Classify(exit, stderr.String()), Exit: exit, Stderr: stderr.String()}
+	return &SessionError{Bench: s.bench.Name, State: Classify(exit, stderr.String()), Exit: exit, Stderr: stderr.String(),
+		Stdout: stdout.b.String()}
 }
 
 // preExec are OpenSSH client messages that mean the session never reached the

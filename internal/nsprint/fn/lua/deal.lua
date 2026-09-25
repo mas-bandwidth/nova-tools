@@ -8,7 +8,9 @@
 -- ns_card_deal is ONE call per bench per pass for the whole batch, whatever
 -- sprints its cards come from (the pass shares a bench across open sprints,
 -- so the sprint travels with each card, not once per call). ns_card_undeal is
--- one call per returned batch. ns_bench_ssh writes the dealer's ssh cell.
+-- one call per returned batch. ns_bench_ssh writes the dealer's ssh cell;
+-- ns_card_why writes the launcher's refusal line on each refused card
+-- (#3700).
 -- ns_card_gate is one call per sprint per pass for the DEPENDS-ON gate
 -- (#3066): pool <-> waiting.
 --
@@ -70,6 +72,49 @@ local function deal_names(list, name)
   return false
 end
 
+-- The retry cap (nova-tools #3700): cfg:deal max_attempts, default 3. A
+-- missing, non-numeric or non-positive value is the default, never
+-- unbounded: sprint quack-0925 redealt the same 12 refused cards to attempt
+-- 23 in twelve minutes.
+local DEAL_MAX_ATTEMPTS = 3
+-- A why on the card or the bench row is one line, capped.
+local DEAL_WHY_CAP = 300
+
+local function deal_max_attempts()
+  local v = math.floor(tonumber(redis.call('HGET', 'cfg:deal', 'max_attempts') or '') or 0)
+  if v < 1 then
+    return DEAL_MAX_ATTEMPTS
+  end
+  return v
+end
+
+-- A card whose next attempt would exceed the cap leaves the pool for
+-- done/fail (state refused) through the one move, reason retries, why the
+-- last refusal line the deal pass wrote on it (or, when none, the attempts and
+-- the last reason), and one receipt; it is never dealt again. c is the
+-- card_deal HMGET below. Returns true when the card was capped.
+local function deal_cap(S, label, ck, c, tried, max, actor, idem, at)
+  local why = c[9]
+  if not why or why == '' then
+    why = 'retries: ' .. tried .. ' attempts reached cfg:deal max_attempts ' .. max ..
+      '; last reason ' .. tostring(c[10] or '-')
+  end
+  why = string.sub(why, 1, DEAL_WHY_CAP)
+  if CARD.move(ck, 'done', { state = 'refused', ok = 'fail', by = actor, why = 'retries',
+      fields = { 'reason', 'retries', 'why', why, 'why_at', tostring(at), 'refused_at', tostring(at) } }) then
+    return false
+  end
+  local pin = c[3] or ''
+  if pin ~= '' then
+    redis.call('ZREM', 's:' .. S .. ':bench:' .. pin .. ':queue', label)
+  end
+  redis.call('XADD', 's:' .. S .. ':log', '*',
+    'kind', 'card retries', 'id', label, 'from', 'queued', 'to', 'refused',
+    'attempt', tostring(tried), 'token_sha', '', 'actor', actor or '', 'reason', 'retries',
+    'evidence', why, 'idem', idem or '', 'at', tostring(at))
+  return true
+end
+
 -- Backpressure for one sprint, read once per call (#2756 5.3): ON flows only
 -- the priority tier; a missing hash applies the declared policy.
 local function deal_backpressure(S)
@@ -91,7 +136,9 @@ end
 -- <attempt>. prefix. A card whose attempt moved, that is no longer queued and
 -- pooled, whose sprint is not open or is pit-stopped, that is pinned to another bench, whose
 -- leg the bench does not run, whose tier backpressure holds, or whose token
--- or token_sha does not match that shape, is skipped.
+-- or token_sha does not match that shape, is skipped. A queued, pooled card
+-- of an open sprint whose attempt would exceed cfg:deal max_attempts is not
+-- dealt: deal_cap moves it to done/fail (#3700) and it takes no slot.
 -- The bench guard (registered, UP, not paused, free > 0) is checked once;
 -- free caps the batch. Returns FENCED, NONE <why>, or DEALT followed by
 -- S, label, attempt, token for each dealt card.
@@ -133,6 +180,7 @@ local function card_deal(keys, args)
   local at = deal_now_ms()
   local out = { 'DEALT' }
   local open, bp = {}, {}
+  local max_attempts = deal_max_attempts()
   for i = 5, #args, 5 do
     if free <= 0 then
       break
@@ -145,12 +193,16 @@ local function card_deal(keys, args)
       bp[S] = deal_backpressure(S)
     end
     local ck = 's:' .. S .. ':card:' .. label
-    local c = redis.call('HMGET', ck, 'state', 'attempt', 'bench', 'leg', 'tier', 'base_sha', 'avoid', 'priority')
+    local c = redis.call('HMGET', ck, 'state', 'attempt', 'bench', 'leg', 'tier', 'base_sha', 'avoid', 'priority',
+      'why', 'reason')
     -- In the pool (scored by created_at, like every view) is dealable; the
     -- bench queue keeps the card's deal priority, the record's field.
     local score = redis.call('ZSCORE', 's:' .. S .. ':pool', label) and (tonumber(c[8]) or 0)
     local pin = c[3] or ''
-    if open[S] and c[1] == 'queued' and score and attempt and
+    if open[S] and c[1] == 'queued' and score and attempt and attempt > max_attempts and
+        attempt == (tonumber(c[2]) or 0) + 1 then
+      deal_cap(S, label, ck, c, attempt - 1, max_attempts, actor, idem, at)
+    elseif open[S] and c[1] == 'queued' and score and attempt and
         attempt == (tonumber(c[2]) or 0) + 1 and
         string.sub(ctoken, 1, #tostring(attempt) + 1) == tostring(attempt) .. '.' and
         string.match(ctoken, '^%d+%.[0-9a-f]+$') and #ctoken == #tostring(attempt) + 33 and
@@ -243,7 +295,8 @@ local function bench_ssh(keys, args)
     return redis.error_reply('ns_bench_ssh: bench ' .. tostring(bench) .. ' is not registered')
   end
   local at = deal_now_ms()
-  redis.call('HSET', 'bench:' .. bench .. ':ssh', 'state', state, 'why', why or '', 'at', tostring(at))
+  why = string.gsub(string.sub(why or '', 1, DEAL_WHY_CAP), '[\r\n]', ' ')
+  redis.call('HSET', 'bench:' .. bench .. ':ssh', 'state', state, 'why', why, 'at', tostring(at))
   return { 'OK', tostring(at) }
 end
 
@@ -301,7 +354,38 @@ local function card_gate(keys, args)
   return { 'GATED', tostring(waited), tostring(released) }
 end
 
+-- ns_card_why(token, then per card: S, label, attempt, why)
+-- The deal pass's refusal line on each card it names (#3700): the card
+-- record's why (capped, one line) and why_at, written only when the card is
+-- still at that attempt, so a late write never lands on a newer attempt. The
+-- line is what the bench's `card launch --stdin` printed for the card
+-- (REFUSED line=<n> ...), or the session's own why when the batch never ran.
+-- Fenced. Returns FENCED or WHY <n>.
+local function card_why(keys, args)
+  local token = args[1]
+  local fenced = deal_fence(token)
+  if fenced then
+    return fenced
+  end
+  if (#args - 1) % 4 ~= 0 then
+    return redis.error_reply('ns_card_why: cards are S, label, attempt, why')
+  end
+  local at = deal_now_ms()
+  local n = 0
+  for i = 2, #args, 4 do
+    local S, label, attempt, why = args[i], args[i + 1], args[i + 2], args[i + 3]
+    local ck = 's:' .. S .. ':card:' .. label
+    if why ~= '' and redis.call('HGET', ck, 'attempt') == attempt then
+      why = string.gsub(string.sub(why, 1, DEAL_WHY_CAP), '[\r\n]', ' ')
+      redis.call('HSET', ck, 'why', why, 'why_at', tostring(at))
+      n = n + 1
+    end
+  end
+  return { 'WHY', tostring(n) }
+end
+
 redis.register_function('ns_card_deal', card_deal)
+redis.register_function('ns_card_why', card_why)
 redis.register_function('ns_card_gate', card_gate)
 redis.register_function('ns_card_undeal', card_undeal)
 redis.register_function('ns_bench_ssh', bench_ssh)
