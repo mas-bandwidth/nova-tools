@@ -348,6 +348,9 @@ func runCIRun(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case err == ci.ErrBlocked:
 		fmt.Fprintf(errOut, "nova-sprint ci run: %s; the request is back in the pool, fix the bench's mirror\n", res.Blocked)
 		return 1
+	case err == ci.ErrInfra:
+		fmt.Fprintf(errOut, "nova-sprint ci run: %s; the bench killed the check, the request is back in the pool for a rerun; look at what sends TERM on bench %s\n", res.Blocked, *bench)
+		return 1
 	case err != nil:
 		return refuse(errOut, "ci run", err.Error())
 	case !res.Claimed:

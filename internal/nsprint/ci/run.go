@@ -273,6 +273,16 @@ func Release(ctx context.Context, st *store.Store, repo, sha, token, reason stri
 	return call(ctx, st, FunctionRelease, repo, sha, token, reason, flag)
 }
 
+// ReleaseInfra hands a claimed request back to the pool after the bench
+// killed a check (BenchKilled): no evidence about the head. The record's
+// infra count goes up by one; while it is at most cfg:ci max_attempts the
+// attempt is given back (Detail "rerun"), after that it counts (Detail
+// "counted"), so a head that kills itself still reaches the cap and ends red
+// with the infra why instead of cycling through the pool for ever.
+func ReleaseInfra(ctx context.Context, st *store.Store, repo, sha, token, reason string) (Result, error) {
+	return call(ctx, st, FunctionRelease, repo, sha, token, reason, "infra")
+}
+
 // Mirrors is the repos with a bare mirror at <root>/<repo>.git, from one
 // directory read; nil when root is empty or unreadable.
 func Mirrors(root string) []string {
@@ -318,23 +328,33 @@ type RunResult struct {
 }
 
 // CheckResult is one check as it ran; Fail is the log's first FAIL line
-// when RC is not 0.
+// when RC is not 0. Killed is true when the only failure text is the bench's
+// `signal: terminated` (BenchKilled): infra, not evidence about the head.
 type CheckResult struct {
 	Name   string
 	RC     int
 	WallMS int64
 	Log    string
 	Fail   string
+	Killed bool
 }
 
 // ErrBlocked is Run's answer when the clone failed and the request was
 // released; the reason is on the record's blocked field.
 var ErrBlocked = errors.New("ci run blocked")
 
+// ErrInfra is Run's answer when the bench killed a check (BenchKilled): the
+// request was released for a rerun with no receipt for the killed check, and
+// the reason is on the record's blocked field (nova-tools #2958).
+var ErrInfra = errors.New("ci run infra")
+
 // Run claims one request, runs its checks and writes the receipts. It returns
 // Claimed false when the pool has nothing claimable, and ErrBlocked (with the
 // request released) when the clone at the sha failed. A check that fails
 // does not stop the rest: every check gets a receipt, so the red one is named.
+// A check the bench killed (BenchKilled) does stop them: it writes no
+// receipt, the request is released as infra (ReleaseInfra) and Run returns
+// ErrInfra, because a kill from outside says nothing about the head.
 func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error) {
 	var res RunResult
 	if opt.Bench == "" {
@@ -418,6 +438,21 @@ func Run(ctx context.Context, st *store.Store, opt RunOptions) (RunResult, error
 	for _, ch := range c.Checks {
 		cr := runCheck(ctx, opt, dir, logDir, env, ch)
 		res.Checks = append(res.Checks, cr)
+		if cr.Killed {
+			reason := "infra: " + ch.Name + ": signal: terminated"
+			t := time.Now()
+			r, err := ReleaseInfra(ctx, st, c.Repo, c.SHA, c.Token, reason)
+			res.StoreMS += time.Since(t).Milliseconds()
+			if err != nil {
+				return res, err
+			}
+			if r.Status != "RELEASED" {
+				return res, fmt.Errorf("release %s@%s %s: %s", c.Repo, c.SHA[:8], ch.Name, r.Status)
+			}
+			res.Blocked, res.Summary = reason, ""
+			fmt.Fprintf(out, "INFRA %s@%s %s signal: terminated %s %s log=%s\n", c.Repo, c.SHA[:8], ch.Name, r.Status, r.Detail, cr.Log)
+			return res, ErrInfra
+		}
 		t := time.Now()
 		r, err := WriteReceipt(ctx, st, ReceiptRecord{Repo: c.Repo, SHA: c.SHA, Check: ch.Name, Token: c.Token,
 			RC: cr.RC, WallMS: cr.WallMS, Log: cr.Log, Bench: opt.Bench, Lease: opt.Lease, Fail: cr.Fail})
@@ -565,6 +600,7 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []str
 	cr.WallMS = time.Since(began).Milliseconds()
 	if cr.RC != 0 {
 		cr.Fail = FirstFail(body)
+		cr.Killed = cr.RC != 124 && BenchKilled(body)
 	}
 	if len(body) > maxLog {
 		body = append([]byte("ci: log truncated to its last 4 MiB\n"), body[len(body)-maxLog:]...)
@@ -573,6 +609,25 @@ func runCheck(ctx context.Context, opt RunOptions, dir, logDir string, env []str
 		cr.Log = "unwritable:" + logPath
 	}
 	return cr
+}
+
+// BenchKilled is true when a red check's only failure text is the bench's:
+// some line is exactly `signal: terminated` (what `go test` prints for a test
+// binary SIGTERMed from outside) and no line starts `--- FAIL` or `panic:`.
+// A named failing test or a panic beside the kill is the head's red; a
+// `signal: terminated` inside a test's own log line is not the exact line.
+func BenchKilled(body []byte) bool {
+	killed := false
+	for _, l := range strings.Split(string(body), "\n") {
+		l = strings.TrimSpace(l)
+		switch {
+		case strings.HasPrefix(l, "--- FAIL"), strings.HasPrefix(l, "panic:"):
+			return false
+		case l == "signal: terminated":
+			killed = true
+		}
+	}
+	return killed
 }
 
 // FirstFail is the line a capped FAIL's why quotes: the first `--- FAIL`
