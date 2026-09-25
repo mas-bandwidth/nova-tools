@@ -63,15 +63,14 @@ func TestEvaluateOutputChangesXYAndAHandMarkedReceiptDoesNot(t *testing.T) {
 	bin := buildFake(t)
 	log := filepath.Join(t.TempDir(), "log")
 	t.Setenv("FAKE_LOG", log)
-	t.Setenv("FAKE_CAL", mustAbs(t, cal))
-	t.Setenv("FAKE_STATUS", mustAbs(t, filepath.Join("testdata", "status.txt")))
+	status := filepath.Join("testdata", "status.txt")
 	t.Setenv("FAKE_EVAL", evalA)
 	before := mustRead(t, marked)
 	fromTool := xy(t,
 		"--set", marked,
-		"--store", "example.invalid:6399",
+		"--calibration-out", cal,
+		"--open", status,
 		"--nova-work", bin,
-		"--nova-pulse", bin,
 	)
 	if fromTool != lineA {
 		t.Fatalf("nova-work's evaluate stdout printed %q, want %q", fromTool, lineA)
@@ -86,11 +85,8 @@ func TestEvaluateOutputChangesXYAndAHandMarkedReceiptDoesNot(t *testing.T) {
 	if strings.Contains(logged, "--write-status") {
 		t.Fatalf("xy asked nova-work to rewrite :status:\n%s", logged)
 	}
-	if !strings.Contains(logged, "sprint calibration") || !strings.Contains(logged, "sprint status") || !strings.Contains(logged, "--verbose") {
-		t.Fatalf("the sprint verb's calibration and status were not both asked:\n%s", logged)
-	}
 	t.Setenv("FAKE_EVAL", evalB)
-	if got := xy(t, "--set", unmarked, "--store", "example.invalid:6399", "--nova-work", bin, "--nova-pulse", bin); got != lineB {
+	if got := xy(t, "--set", unmarked, "--calibration-out", cal, "--open", status, "--nova-work", bin); got != lineB {
 		t.Fatalf("a new evaluate stdout with an open receipt printed %q, want %q", got, lineB)
 	}
 }
@@ -101,9 +97,7 @@ func TestStatusFractionIsNotXY(t *testing.T) {
 	bin := buildFake(t)
 	t.Setenv("FAKE_LOG", filepath.Join(t.TempDir(), "log"))
 	t.Setenv("FAKE_EVAL", mustAbs(t, filepath.Join("testdata", "evaluate.txt")))
-	t.Setenv("FAKE_CAL", mustAbs(t, filepath.Join("testdata", "calibration.txt")))
-	t.Setenv("FAKE_STATUS", mustAbs(t, filepath.Join("testdata", "status.txt")))
-	got := xy(t, "--set", mustAbs(t, filepath.Join("testdata", "set.sexp")), "--store", "example.invalid:6399", "--nova-work", bin, "--nova-pulse", bin)
+	got := xy(t, "--set", mustAbs(t, filepath.Join("testdata", "set.sexp")), "--calibration-out", filepath.Join("testdata", "calibration.txt"), "--open", filepath.Join("testdata", "status.txt"), "--nova-work", bin)
 	if strings.HasPrefix(got, "14/23 ") || strings.Contains(got, "~9h") {
 		t.Fatalf("the sprint status fraction became the line: %s", got)
 	}
@@ -113,7 +107,7 @@ func TestStatusFractionIsNotXY(t *testing.T) {
 }
 
 // TestProducerStatusVerboseOutputSuppliesOpenTasks feeds the stdout of
-// nova-pulse sprint status --verbose as the producer on #2624 prints it
+// a verbose sprint status as the producer on #2624 printed it, given as --open
 // (the fraction, then sprint.Verbose): C/O/W rows, not TASK lines. Each row
 // carries kind= and depends=. x/y stay the evaluate count. eta charges
 // SUGGEST fix for the two fix tasks and waits on the cross-lane edge, so
@@ -169,9 +163,7 @@ func TestProducerStatusVerboseOutputSuppliesOpenTasks(t *testing.T) {
 	bin := buildFake(t)
 	t.Setenv("FAKE_LOG", filepath.Join(t.TempDir(), "log"))
 	t.Setenv("FAKE_EVAL", mustAbs(t, filepath.Join("testdata", "evaluate.txt")))
-	t.Setenv("FAKE_CAL", mustAbs(t, filepath.Join("testdata", "calibration.txt")))
-	t.Setenv("FAKE_STATUS", status)
-	got := xy(t, "--set", mustAbs(t, filepath.Join("testdata", "set.sexp")), "--store", "example.invalid:6399", "--nova-work", bin, "--nova-pulse", bin)
+	got := xy(t, "--set", mustAbs(t, filepath.Join("testdata", "set.sexp")), "--calibration-out", filepath.Join("testdata", "calibration.txt"), "--open", status, "--nova-work", bin)
 	if strings.HasPrefix(got, "1/5 ") || strings.Contains(got, "~2.5h") {
 		t.Fatalf("the sprint status line became the eta: %s", got)
 	}
@@ -189,7 +181,6 @@ func TestKindCalibrationAndCrossLaneDependencyChangeETA(t *testing.T) {
 	bin := buildFake(t)
 	t.Setenv("FAKE_LOG", filepath.Join(t.TempDir(), "log"))
 	t.Setenv("FAKE_EVAL", mustAbs(t, filepath.Join("testdata", "evaluate.txt")))
-	t.Setenv("FAKE_CAL", mustAbs(t, filepath.Join("testdata", "calibration.txt")))
 	set := mustAbs(t, filepath.Join("testdata", "set.sexp"))
 
 	both := producerRows("fix", "gate-fix-holds")
@@ -227,8 +218,28 @@ func xyStatus(t *testing.T, bin, set, status string) string {
 	if err := os.WriteFile(path, []byte(status), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("FAKE_STATUS", path)
-	return xy(t, "--set", set, "--store", "example.invalid:6399", "--nova-work", bin, "--nova-pulse", bin)
+	return xy(t, "--set", set, "--calibration-out", filepath.Join("testdata", "calibration.txt"), "--open", path, "--nova-work", bin)
+}
+
+// TestXYRefusesTheDeletedNovaPulseSource is #3801: nova-pulse is deleted, so
+// xy never runs it. --store, --name and --nova-pulse are usage errors, and the
+// calibration and the open rows come from files only.
+func TestXYRefusesTheDeletedNovaPulseSource(t *testing.T) {
+	for _, flag := range [][]string{
+		{"--store", "example.invalid:6399"},
+		{"--name", "s1"},
+		{"--nova-pulse", "nova-pulse"},
+	} {
+		args := append([]string{"xy", "--evaluate-out", filepath.Join("testdata", "evaluate.txt")}, flag...)
+		code, _, stderr := runCLI(args...)
+		if code != 2 {
+			t.Fatalf("xy %s exit %d, want 2 (the nova-pulse source is deleted); stderr %s", flag[0], code, stderr)
+		}
+	}
+	code, _, stderr := runCLI("xy", "--evaluate-out", filepath.Join("testdata", "evaluate.txt"))
+	if code != 2 || strings.Contains(stderr, "nova-pulse") {
+		t.Fatalf("xy without --calibration-out/--open exit %d, stderr %q; want 2 naming the two files and not nova-pulse", code, stderr)
+	}
 }
 
 func TestXYRefusesWithoutItsSources(t *testing.T) {
@@ -348,7 +359,7 @@ func itoa(n int) string {
 }
 
 // buildFake compiles one stdlib program and returns its path. The test
-// points both --nova-work and --nova-pulse at it; it dispatches on argv.
+// points --nova-work at it; it answers set check from FAKE_EVAL.
 func buildFake(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -371,7 +382,7 @@ func buildFake(t *testing.T) string {
 	cmd.Env = goenv.Clean(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("building the nova-work/nova-pulse fake: %v\n%s", err, out)
+		t.Fatalf("building the nova-work fake: %v\n%s", err, out)
 	}
 	return bin
 }
@@ -397,10 +408,6 @@ func main() {
 	switch {
 	case len(os.Args) >= 3 && os.Args[1] == "set" && os.Args[2] == "check":
 		dump(os.Getenv("FAKE_EVAL"))
-	case len(os.Args) >= 3 && os.Args[1] == "sprint" && os.Args[2] == "calibration":
-		dump(os.Getenv("FAKE_CAL"))
-	case len(os.Args) >= 3 && os.Args[1] == "sprint" && os.Args[2] == "status":
-		dump(os.Getenv("FAKE_STATUS"))
 	default:
 		fmt.Fprintf(os.Stderr, "fake: unexpected %s\n", strings.Join(os.Args[1:], " "))
 		os.Exit(2)

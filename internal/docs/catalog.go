@@ -37,7 +37,6 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-merge", "batch gate and stream fold CLI", "go test ./cmd/nova-merge", "go test ./cmd/nova-merge"),
 	E("cmd/nova-play", "sandboxed evaluation CLI", "go test ./cmd/nova-play", "go test ./cmd/nova-play"),
 	E("cmd/nova-post", "PR and issue posting CLI", "go test ./cmd/nova-post", "go test ./cmd/nova-post"),
-	E("cmd/nova-pulse", "frozen: status page, card cut and harvest CLI", "go test ./cmd/nova-pulse", "go test ./cmd/nova-pulse"),
 	E("cmd/nova-redis", "Redis scratch spill/recall CLI", "go test ./cmd/nova-redis", "go test ./cmd/nova-redis"),
 	E("cmd/nova-review", "review packet and verdict CLI", "go test ./cmd/nova-review", "go test ./cmd/nova-review"),
 	E("cmd/nova-sandbox", "OS-level process sandbox CLI", "go test ./cmd/nova-sandbox", "go test ./cmd/nova-sandbox"),
@@ -103,7 +102,7 @@ var DefaultCatalog = []Entry{
 	E("internal/post", "GitHub PR and issue client", "go test ./internal/post", "go test ./internal/post"),
 	E("internal/prereview", "mechanical first pass over one pull request", "go test ./internal/prereview", "go test ./internal/prereview"),
 	E("internal/presence", "friend heartbeat keys with a TTL", "go test ./internal/presence", "go test ./internal/presence"),
-	E("internal/pulse", "status, cut and harvest engine for nova-pulse", "go test ./internal/pulse", "go test ./internal/pulse"),
+	E("internal/pulse", "the frozen nova-pulse engine (status, cut, harvest); no command has reached it since #3801", "go test ./internal/pulse", "go test ./internal/pulse"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/records", "database models and record formats", "go test ./internal/records", "go test ./internal/records"),
 	E("internal/redisq", "Redis transport queue", "go test ./internal/redisq", "go test ./internal/redisq"),
@@ -131,7 +130,7 @@ var DefaultCatalog = []Entry{
 	E("internal/workreconcile", "GitHub issue import and work reconcile", "go test ./internal/workreconcile", "go test ./internal/workreconcile"),
 
 	// docs/
-	E("docs/spec-pulse", "the card contract kept for nova-pulse cut (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
+	E("docs/spec-pulse", "the card contract the pulse cut engine writes (10-the-card-as-cut-writes-it.md); the rest of the spec folder deleted 2026-09-24", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/decide", "decision criteria and evaluation records", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/drafts", "in-flight design drafts and proposals", "go test ./internal/docs", "go test ./internal/docs"),
 	E("docs/fixtures", "doc examples and test fixtures", "go test ./internal/docs", "go test ./internal/docs"),

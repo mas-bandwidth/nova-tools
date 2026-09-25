@@ -18,4 +18,3 @@ cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolP
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --once --out sprint-table.txt
 cmd/nova-sprint/table_test.go:TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints $ nova-sprint table --check
 cmd/nova-wake/presence_test.go:TestTheCommandReferencePresenceExampleMatchesWhatTheToolPrints $ nova-wake presence --store 100.115.99.19:6380
-cmd/nova-pulse/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root

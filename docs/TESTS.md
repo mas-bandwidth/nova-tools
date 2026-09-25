@@ -585,24 +585,6 @@ LOG kind=rebase decisions=1 escalations=0 successes=0 failures=0 start_rung=flas
 LOG OK rows=1 kinds=1 escalations=0 defeated=0 coverage=0/1 lat_rules=0,-,-
 ```
 
-## nova-pulse
-
-Frozen: superseded by `nova-sprint`; `status`, `cut` and `harvest` remain.
-Fixture: `cmd/nova-pulse/testdata/`, a two-line `pool.tsv` (a read and a fix
-candidate) and a `templates` directory with `benches.tsv`, `read.md` and
-`fix.md`. Cut one card of each kind out of the fixture pool, into a fresh
-`./cards` and `./root` in the checkout. It reaches no network and makes no
-model call.
-
-### First run
-
-```text
-$ nova-pulse cut --pool cmd/nova-pulse/testdata/pool.tsv --templates cmd/nova-pulse/testdata/templates --out ./cards --root ./root
-CUT ROUTE route=opencode/deepseek-v4-flash reason=flat
-CUT ROUTE route=opencode/deepseek-v4-pro reason=flat
-CUT OK cards=2 skipped=0 zero=0 flat=2 metered=0 out=./cards
-```
-
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
@@ -1112,7 +1094,7 @@ Run by `cmd/nova-sprint/firstrun_test.go` in an empty directory, which must
 still be empty afterwards: the wide table is read from Redis and written nowhere
 (#3326), so none of these lines needs a server and none writes a file.
 
-`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is `nova-pulse sprint calibration` (`SUGGEST fix 90m`). `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is `nova-pulse sprint status --verbose` as the producer prints it: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
+`nova-sprint xy` fixtures are in the same `cmd/nova-sprint/testdata/`. `evaluate.txt` is nova-work `set check --evaluate` stdout (`SET DONE done=26` beside a single `holds=yes`). `calibration.txt` is the sprint calibration (`SUGGEST fix 90m`), passed as `--calibration-out`. `open.tsv` is two open fix tasks, one depending on the other, stored estimates 120. `set.sexp` hand-marks receipts done and landed. `status-verbose.txt` is a verbose sprint status as the producer printed it, passed as `--open`: a fraction, then C/O/W rows with `kind=` and `depends=`, no `TASK` lines. `cmd/nova-sprint/xy_test.go` runs the docs/CLI.md xy example from the repo root (`26/42 61% -> ~3h`) and checks that a different evaluate stdout changes x and y, that swapping the hand-marked receipt does not, that the producer rows are the open tasks, and that kind calibration and a cross-lane dependency change the eta.
 
 ### First run
 

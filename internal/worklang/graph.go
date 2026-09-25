@@ -27,7 +27,7 @@ type Status struct {
 func (s Status) accepted() bool { return s.Merged && s.Green && !s.Reverted }
 
 // State names a status for a row: open, merged, reverted, or accepted. A merged
-// node that is not yet green is the blocker nova-pulse harvest settles.
+// node that is not yet green is the blocker nova-sprint card harvest settles.
 func (s Status) State() string {
 	switch {
 	case s.Reverted:
@@ -270,11 +270,11 @@ func (g *Graph) ReadySet() []string {
 }
 
 // resolver names the join that settles a need. nova-merge queue lands an open
-// PR; once it has merged, nova-pulse harvest settles the green and re-evaluates
+// PR; once it has merged, nova-sprint card harvest settles the green and re-evaluates
 // dependents.
 func resolver(s Status) string {
 	if !s.Merged {
 		return "nova-merge queue"
 	}
-	return "nova-pulse harvest"
+	return "nova-sprint card harvest"
 }

@@ -177,7 +177,7 @@ preflight:
 # slowtests, exactly as the workflow did when this lived inline in ci.yml.
 #
 # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make
-# cmd/nova-swarm, cmd/nova-pulse and internal/swarm fast, on the Intel Mac
+# cmd/nova-swarm and internal/swarm fast, on the Intel Mac
 # benches (about 3x slower per core than the Studio), where the alert still
 # prints every CI-SLOW line but the budget is 300 s. Dated exception,
 # 2026-09-18; remove with those cards.

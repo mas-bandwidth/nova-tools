@@ -32,7 +32,8 @@ package main
 // The documented way a commit leaves is `git bundle create repo.bundle <branch>`
 // as the card's last step: one file, complete history for that branch, and
 // `git fetch ./repo.bundle <branch>` on the other side. docs/SPEC-SANDBOX.md
-// says so and cmd/nova-pulse/testdata/templates/fix.md ends with it.
+// says so; the fix card template nova-pulse cut rendered (deleted with it, #3801)
+// ended with it.
 
 import (
 	"fmt"

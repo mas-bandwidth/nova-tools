@@ -20,11 +20,11 @@ import (
 // exception set without reading the test.
 const benchNameAllowlistPath = "testdata/benchname_allowlist.txt"
 
-// benchNamePackages are the two packages where a bench name reaches a machine: the pulse
-// library, and the command that parses the flags and holds the ssh. Nothing outside them
+// benchNamePackages are the packages where a bench name reaches a machine: the pulse
+// library (its command, the frozen nova-pulse, was deleted by #3801). Nothing outside it
 // may take a bench name at all, which is a rule the compiler already keeps -- the launcher
 // and capacity seams are pulse's types.
-var benchNamePackages = []string{"internal/pulse", "cmd/nova-pulse"}
+var benchNamePackages = []string{"internal/pulse"}
 
 // benchNameResolvers are the calls that turn a NAME into a resolved machine. One of them in
 // the body is what this rule asks for: the registry's own guard, the registry lookup, or one
