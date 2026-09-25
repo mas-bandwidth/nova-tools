@@ -356,6 +356,21 @@ func runRoute(args []string, stdout, stderr io.Writer) int {
 		if err := allowed.RequireTable(wt.Type); err != nil {
 			return refuse(stderr, "ROUTE", "no-allowed-routes", oneline.Cap(err.Error(), oneline.TailBytes))
 		}
+		// THE ENFORCEMENT GAP (#2961, #3084). A card whose WORKTYPE: is set must
+		// not leave allowed=-: the route looks up allowed_routes[type] and
+		// refuses if the table has no row for the type, or if no table was given
+		// for a non-branch type. The label is only trusted once the >= 90%
+		// held-out bar is cleared, but where it IS set the route enforces it.
+		if decide.KnownWorkType(wt.Type) {
+			if allowed == nil {
+				return refuse(stderr, "ROUTE", "no-allowed-routes",
+					fmt.Sprintf("a card of type %s has its WORKTYPE: set but no allowed_routes table was given; pass --allowed-routes", wt.Type))
+			}
+			if len(allowed.For(wt.Type)) == 0 {
+				return refuse(stderr, "ROUTE", "no-allowed-routes",
+					fmt.Sprintf("allowed_routes has no row for %s: the WORKTYPE: on this card is set but the table admits no route for it", wt.Type))
+			}
+		}
 	}
 	switch {
 	case *stepUp:

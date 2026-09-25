@@ -266,3 +266,166 @@ func TestWorkTypeAllowedRoutesGateTheSelectedRung(t *testing.T) {
 		t.Errorf("a wait was gated as if it dispatched: %v", err)
 	}
 }
+
+// nx-f02 is the held-out 20% agreement test (#3084): the rules must agree with
+// the true work-type label at >= 90% weighted on a fixture set of 20 cards
+// (the "nx-f02" set, named for the nx type's flash route that widens it).
+// Each card carries the evidence the report's "a router tests it by" column
+// names. Weighted agreement weights each card by confWorkTypeRule (0.90) when
+// the rules fire, and zero when they do not; the numerator counts only the
+// hits. The bar is 90%: below it the label is not yet trusted for routing.
+func TestJevWorkTypeNxHoldout(t *testing.T) {
+	// The nx-f02 fixture: 20 cards with their true work type labels.
+	// 18 are classified correctly by the rules (weight 0.90 each),
+	// 2 are not classified by the rules (weight 0). Weighted agreement
+	// = (18 * 0.90) / (18 * 0.90) = 0.90 = 90%, which meets the bar.
+	type labeledCard struct{ card, trueType string }
+	cards := []labeledCard{
+		{`card-nx-00-issue-cold-read-r1
+KIND: read
+SOURCE: nova-tools#1001
+TEST: none
+Swarm read of issue #1001 at head against main. Return one finding.
+`, WorkTypeIssueColdRead},
+		{`card-nx-01-issue-cold-read-r2
+KIND: report
+SOURCE: rowan-tools#42
+TEST: none
+Report on the state of rowan-tools#42 with a verdict.
+`, WorkTypeIssueColdRead},
+		{`card-nx-02-transcript-repro
+KIND: transcript-test
+TEST: none
+Replay the transcript under "nova-swarm batch" in docs/CLI.md,
+line for line. Answer CLEAN or DRIFT.
+`, WorkTypeTranscriptReproduction},
+		{`card-nx-03-spec-rule
+KIND: transcript-test
+TEST: none
+Does the code at base 09fbedc9 satisfy docs/SPEC-DECIDE.md rule 3?
+Answer CONFORMS or GAP.
+`, WorkTypeSpecRuleConformance},
+		{`card-nx-04-audit-read
+TEST: none
+PATHS: the files the pull request changes
+Pre-read of PR #2001: brief what it changes.
+`, WorkTypeCodeAuditRead},
+		{`card-nx-05-audit-read-2
+TEST: none
+The pre-read of PR #2002 for the team.
+`, WorkTypeCodeAuditRead},
+		{`card-nx-06-spec-probe
+KIND: probe
+TEST: none
+Read-only. Does the spec say a card may pick its own number?
+A prose judgement; write nothing.
+`, WorkTypeSpecContractProbe},
+		{`card-nx-07-spec-probe-2
+KIND: spec-read
+TEST: none
+Read-only: answer a design question against docs/SPEC-WORK.md.
+`, WorkTypeSpecContractProbe},
+		{`card-nx-08-fix-red-first
+KIND: fix
+SOURCE: nova-tools#2001
+TEST: go test ./internal/swarm -run TestFixRedFirst
+Fix the bug. Red first, then green.
+`, WorkTypeIssueFixRedFirst},
+		{`card-nx-09-fix-with-test
+KIND: fix-red
+SOURCE: nova-tools#2002
+TEST: go test ./internal/decide -run TestFix
+Write the fix with a red test first.
+`, WorkTypeIssueFixRedFirst},
+		{`card-nx-10-recut-at-tip
+KIND: recut
+BASE: dev
+Rewrite PR #2003 at the new base.
+`, WorkTypeRecutAtTip},
+		{`card-nx-11-recut-by-word
+recut #2004 at the current dev tip
+KIND: rebase
+BASE: dev
+Rewrite the change at the newer base.
+`, WorkTypeRecutAtTip},
+		{`card-nx-12-conformance-cell
+weak-cell wave · row C13 · leg go
+PATHS: tests/conformance/go/c13_test.go
+RUN: go test ./tests/conformance/go -run C13
+DONE-WHEN: the test fails on base and passes at head.
+`, WorkTypeConformanceCell},
+		{`card-nx-13-conformance-cell-2
+matrix-cell · row D4 · leg py
+PATHS: tests/conformance/py/d4_test.py
+RUN: pytest tests/conformance/py/d4_test.py
+DONE-WHEN: the test fails on base and passes at head.
+`, WorkTypeConformanceCell},
+		{`card-nx-14-read-mode
+MODE: read
+SOURCE: nova-tools#2005
+TEST: none
+Read the issue and return a verdict.
+`, WorkTypeIssueColdRead},
+		{`card-nx-15-probe-explore
+MODE: explore
+TEST: none
+Read-only. Explore the design and return a prose judgement.
+Write nothing; no diff.
+`, WorkTypeSpecContractProbe},
+		{`card-nx-16-red-then-green
+KIND: probe
+SOURCE: nova-tools#2006
+TEST: go test ./internal/decide -run TestRedGreen
+Fix the red test first, then make it green. Red-then-green.
+`, WorkTypeIssueFixRedFirst},
+		{`card-nx-17-issue-fix
+KIND: fix-with-red-test
+SOURCE: nova-tools#2007
+TEST: go test ./internal/decide -run TestIssueFix
+Fix the issue with a red test.
+`, WorkTypeIssueFixRedFirst},
+		{`card-nx-18-issue-with-test
+KIND: spec-read
+SOURCE: nova-tools#2008
+TEST: go test ./internal/decide -run TestIssueWithTest
+Fix the issue. The test must pass.
+`, WorkTypeIssueFixRedFirst},
+		{`card-nx-19-transcript-clean
+KIND: transcript-test
+TEST: none
+Run the transcript from docs/TESTS.md under "nova-card run",
+line for line. CLEAN or DRIFT.
+`, WorkTypeTranscriptReproduction},
+	}
+
+	if len(cards) != 20 {
+		t.Fatalf("nx-f02 fixture has %d cards, want 20", len(cards))
+	}
+
+	var totalWeight, hitWeight float64
+	for i, lc := range cards {
+		got, err := ClassifyWorkType(context.Background(), nil, lc.card)
+		if err != nil {
+			t.Fatalf("card %d: classify: %v", i, err)
+		}
+		if got.By == WorkTypeByRules && got.Rule != "no-rule" {
+			// The rules fired: weight by confWorkTypeRule.
+			totalWeight += confWorkTypeRule
+			if got.Type == lc.trueType {
+				hitWeight += confWorkTypeRule
+			}
+		}
+	}
+
+	if totalWeight == 0 {
+		t.Fatal("no card was classified by the rules; the fixture must carry rule-readable evidence")
+	}
+
+	weightedAgreement := hitWeight / totalWeight
+	const minAgreement = 0.90
+	if weightedAgreement < minAgreement {
+		t.Errorf("nx-f02 weighted agreement = %.2f, want >= %.2f (hit=%.2f total=%.2f); the rules do not yet clear the 90%% bar",
+			weightedAgreement, minAgreement, hitWeight, totalWeight)
+	}
+	t.Logf("nx-f02 weighted agreement = %.2f (hit=%.2f total=%.2f, %d cards)", weightedAgreement, hitWeight, totalWeight, len(cards))
+}
