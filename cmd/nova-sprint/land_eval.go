@@ -21,9 +21,20 @@ func runLandEval(ctx context.Context, args []string, out, errOut io.Writer) int 
 	once := fs.Bool("once", true, "Run single evaluation pass")
 	mirror := fs.String("mirror", "", "bench mirror of the repo (default ~/nova-bench/mirror/<repo>.git when present; \"none\": no mirror reads)")
 	consumer := fs.String("consumer", "eval", "consumer name in ev:github group land")
+	shadow := fs.Bool("shadow", false, "compare SHADOW lines on stdin (lander --shadow) with the hand lander's CLOSE records, per PR (#3800)")
 
 	if err := fs.Parse(args); err != nil {
 		return refuse(errOut, "land eval", err.Error())
+	}
+	if *shadow {
+		addr := *redisAddr
+		if addr == "" {
+			addr = os.Getenv("NOVA_REDIS_ADDR")
+		}
+		if addr == "" {
+			addr = "127.0.0.1:6379"
+		}
+		return runLandEvalShadow(ctx, addr, landEvalInput(), out, errOut)
 	}
 
 	if *repo == "" {

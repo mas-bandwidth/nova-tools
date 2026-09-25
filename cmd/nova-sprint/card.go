@@ -18,13 +18,15 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// runCardPool runs card push, release, show, bench-side stop, and the card
-// model's fsck and ls (card_fsck.go); runCard (card_run.go) routes them here.
+// runCardPool runs card cut, push, release, show, bench-side stop, and the
+// card model's fsck and ls (card_fsck.go); runCard (card_run.go) routes them here.
 func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "card", "needs push, release, show or stop")
+		return refuse(stderr, "card", "needs cut, push, release, show or stop")
 	}
 	switch args[0] {
+	case "cut":
+		return cmdCardCut(ctx, args[1:], stdout, stderr)
 	case "push":
 		return cmdCardPush(ctx, args[1:], stdout, stderr)
 	case "release":
@@ -38,8 +40,62 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 	case "ls":
 		return cmdCardLs(ctx, args[1:], stdout, stderr)
 	default:
-		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release, show, stop, fsck or ls")
+		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants cut, push, release, show, stop, fsck or ls")
 	}
+}
+
+// cardCutSource is card cut's forge seam; tests replace it.
+var cardCutSource card.IssueSource = card.GHIssues{}
+
+// cmdCardCut is nova-tools#3623, the retired pulse cutter's job: one GitHub issue
+// becomes one card record in Redis (card.Cut: render, store the body at its
+// content address, push with the one card writer), with the S2 context block
+// inlined when --index names a ctxindex directory. It refuses an issue with no
+// STREAM (and no --stream), an unparsable DEPENDS-ON, and a missing PATHS or
+// DONE-WHEN before any write. One receipt line; exit 0 cut, 1 refused with
+// the remedy named, 2 usage.
+func cmdCardCut(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("card cut", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	sprint := fs.String("sprint", "", "")
+	addr := fs.String("redis", os.Getenv("NOVA_SPRINT_REDIS"), "")
+	repo := fs.String("repo", "", "")
+	issue := fs.Int("issue", 0, "")
+	spec := fs.Int("spec", 0, "")
+	index := fs.String("index", "", "")
+	stream := fs.String("stream", "", "")
+	base := fs.String("base", "", "")
+	if err := fs.Parse(args); err != nil || *sprint == "" || *addr == "" || *repo == "" || *issue <= 0 || *spec < 0 || fs.NArg() > 0 {
+		fmt.Fprintln(stderr, "nova-sprint card: cut wants --sprint <S> --repo <owner/name> --issue <n> and --redis <addr> (or NOVA_SPRINT_REDIS), optional --spec <n> --index <ctxindex dir> --stream <name> --base <branch>; run: nova-sprint help")
+		return 2
+	}
+	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	defer cancel()
+	who := fmt.Sprintf("%s/%s#%d", *sprint, *repo, *issue)
+	st, err := store.Open(ctx, *addr)
+	if err != nil {
+		fmt.Fprintf(stdout, "REFUSED card cut %s redis=down remedy=%s\n", who, oneline.Field("check --redis or NOVA_SPRINT_REDIS"))
+		return 1
+	}
+	defer st.Close()
+	c, res, err := card.Cut(ctx, st.Client(), cardCutSource, card.CutInput{
+		Sprint: *sprint, Repo: *repo, Issue: *issue, Spec: *spec, Index: *index, Stream: *stream, Base: *base,
+	})
+	if err != nil {
+		fmt.Fprintf(stdout, "REFUSED card cut %s why=%s\n", who, oneline.Field(err.Error()))
+		return 1
+	}
+	if res.Code != 0 {
+		fmt.Fprintf(stdout, "REFUSED card cut %s label=%s push=%d why=%s\n", who, c.Label, res.Code, oneline.Field(strings.TrimSpace(res.Stderr)))
+		return 1
+	}
+	place := "-"
+	if _, p, ok := strings.Cut(strings.TrimSpace(res.Stdout), "place="); ok {
+		place = p
+	}
+	fmt.Fprintf(stdout, "CARD CUT %s label=%s place=%s stream=%s contexts=%d origin=%s\n", who, c.Label, place,
+		oneline.Field(c.Stream), c.Contexts, c.Origin)
+	return 0
 }
 
 // cmdCardPush pushes every card named (files, every regular file of --dir in

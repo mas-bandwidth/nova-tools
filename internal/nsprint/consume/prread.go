@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,6 +16,9 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/line"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
@@ -91,6 +95,9 @@ type PRRead struct {
 	Remote   Remote        // the ls-remote seam
 	Every    time.Duration // ls-remote cadence, default 10 s
 	Block    time.Duration // stream read block; 0 means 1 s
+	// Mirror names the dir a head's diff is read from for the carry on a
+	// head change (#3806); nil is DefaultMirror, "" skips the carry.
+	Mirror func(repo string) string
 
 	Out        io.Writer
 	LastReason map[string]string
@@ -123,6 +130,9 @@ func (p *PRRead) check() error {
 	}
 	if p.Block == 0 {
 		p.Block = time.Second
+	}
+	if p.Mirror == nil {
+		p.Mirror = DefaultMirror
 	}
 	p.mu.Lock()
 	if p.LastReason == nil {
@@ -464,6 +474,9 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 		}
 
 		prNum, _ := strconv.Atoi(e.pr)
+		// A head whose diff is identical keeps its reads (#3806): the
+		// carried readers get no re-read.
+		carried := p.carry(ctx, e, prNum)
 		// Check prior readers at prev head
 		pipeTasks := client.Pipeline()
 		existsCmds := make([]*redis.IntCmd, len(friendsList))
@@ -495,7 +508,7 @@ func (p *PRRead) Pass(ctx context.Context) (int, error) {
 			if existsCmds[i].Val() > 0 {
 				oldTID := task.ReviewID(e.repo, prNum, e.prev, f)
 				cancels = append(cancels, f, oldTID)
-				if f == prAuthor || f == "jev" || openHoldHolders[f] {
+				if f == prAuthor || f == "jev" || openHoldHolders[f] || carried[f] {
 					continue
 				}
 				newTID := task.ReviewID(e.repo, prNum, e.head, f)
@@ -994,4 +1007,66 @@ func underRouteLease(ctx context.Context, st *store.Store, sprint, instance stri
 		_ = client.FCall(context.WithoutCancel(ctx), FunctionRouteLeaseRelease, nil, sprint, instance, token).Err()
 	}()
 	return fn(ctx)
+}
+
+// DefaultMirror is the bench mirror of repo, ~/nova-bench/mirror/<name>.git,
+// or "" when there is none (the carry is then skipped, never an error).
+func DefaultMirror(repo string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	d := filepath.Join(home, "nova-bench", "mirror", strings.TrimSuffix(prkey.Name(repo), ".git")+".git")
+	if fi, err := os.Stat(d); err == nil && fi.IsDir() {
+		return d
+	}
+	return ""
+}
+
+// carry runs the read carry on the head change e.prev -> e.head (#3806):
+// the typed lines at the old head move to the new one when the diff against
+// the base is byte-identical, and the returned set names the readers whose
+// read now stands at the new head. A PR with no unit record has no typed
+// line to carry and prints nothing; every other outcome prints one line:
+// CARRY CARRIED|REFUSED|NOTHING <line.Result.Line>, or CARRY SKIPPED <id>
+// why=<reason> (no mirror, a head the mirror lacks), after which the
+// re-reads are queued as before.
+func (p *PRRead) carry(ctx context.Context, e headEvent, prNum int) map[string]bool {
+	id := land.ID{Repo: e.repo, N: prNum}
+	if _, err := land.ResolvePR(ctx, p.Store.Client(), p.Sprint, id); err != nil {
+		name := prkey.Name(e.repo)
+		if name == e.repo {
+			return nil
+		}
+		id.Repo = name
+		if _, err := land.ResolvePR(ctx, p.Store.Client(), p.Sprint, id); err != nil {
+			return nil
+		}
+	}
+	dir := ""
+	if p.Mirror != nil {
+		dir = p.Mirror(e.repo)
+	}
+	if dir == "" {
+		fmt.Fprintf(p.out(), "CARRY SKIPPED %s why=no mirror of %s\n", id, e.repo)
+		return nil
+	}
+	res, err := line.CarryHead(ctx, p.Store.Client(), p.Sprint, id, dir, "", e.prev, e.head)
+	if err != nil {
+		fmt.Fprintf(p.out(), "CARRY SKIPPED %s why=%s\n", id, oneLine(err.Error()))
+		return nil
+	}
+	fmt.Fprintf(p.out(), "CARRY %s\n", res.Line(id))
+	if res.Outcome != line.Carried {
+		return nil
+	}
+	carried := make(map[string]bool, len(res.Who))
+	for _, f := range res.Who {
+		carried[f] = true
+	}
+	return carried
+}
+
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }

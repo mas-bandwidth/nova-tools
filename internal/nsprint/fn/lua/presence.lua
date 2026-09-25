@@ -15,6 +15,11 @@
 --   bench:<b>:live              set of card identities, same TTL
 --   bench:<b>:owner             fenced owner session, same TTL (single
 --                                    instance; a different session is BUSY)
+--   bench:<b>                   the host table row (host, load1, ncpu, at),
+--                                    no TTL: an old at prints stale (#3440)
+--   friend:<f>                  the friend table row (at, up, ready, queue,
+--                                    working, waiting, width, done, slots),
+--                                    no TTL, and friend:<f>:last (#3440)
 --   machine:<m>:ceiling         hash with slots, shared with capacity friend
 --   cap:log                     presence-change stream
 
@@ -199,7 +204,9 @@ end
 -- bench is free, so a stalled process never wedges it (stale expiry recovery).
 -- Absence-to-presence logs bench-up. The live set is rewritten each beat.
 -- args[17] is the TTL in ms the caller's loop promises (3 x its interval,
--- #3372); a missing or non-positive value keeps PL_BEAT_MS.
+-- #3372); a missing or non-positive value keeps PL_BEAT_MS. args[18] is the
+-- host row's at (RFC 3339 UTC) and args[19] the bench's ncpu; an empty
+-- args[18] writes no row (#3440).
 local function bench_beat(keys, args)
   local bench = args[1]
   if not bench or bench == '' then
@@ -253,10 +260,70 @@ local function bench_beat(keys, args)
     redis.call('PEXPIRE', live_key, ttl)
   end
   redis.call('HSET', 'bench:' .. bench .. ':beat', 'live', tostring(live_count))
+  -- The host table row (#3440), in the same call as the beat: host is the
+  -- bench name (the table shows a row only when host equals its key), at is
+  -- the caller's RFC 3339 stamp. Counts are not here: the table reads them
+  -- from the card views bench:<b>:cards:<w> (#3692). Fields other writers
+  -- keep on this hash (the dealer's) are left as they are.
+  local row_at, ncpu = args[18], args[19]
+  if row_at and row_at ~= '' then
+    redis.call('HSET', 'bench:' .. bench,
+      'host', bench, 'load1', load1 or '', 'ncpu', ncpu or '', 'at', row_at)
+  end
   if first == 0 then
     pl_caplog('bench-up', bench, '', actor, idem, at)
   end
   return { 'OK', session }
+end
+
+-- pl_count is SCARD of a friend-queue index set; a missing key or a key of
+-- another type counts 0, as bin/friend-row's cnt did.
+local function pl_count(key)
+  local n = redis.pcall('SCARD', key)
+  if type(n) ~= 'number' then
+    return 0
+  end
+  return n
+end
+
+-- friend_row writes one friend's sprint-table row (#3440, the atomic-row rule
+-- #3281): one read of the friend-queue index sets sprint:<S>:idx:<f>:open,
+-- working, waiting and closed, the declared slots and the seat's own beat,
+-- then ONE HSET of friend:<f> with one at, and friend:<f>:last. up is 1 while
+-- friend:<f>:beat exists (written only by the seat's own hello/beat). A
+-- friend:<f> left over as another type is replaced. The row never expires:
+-- an old at is what the table prints stale. args = friend, sprint, at.
+local function friend_row(keys, args)
+  local friend, sprint, at = args[1], args[2], args[3]
+  if not friend or not string.match(friend, '^[a-z0-9][a-z0-9-]*$') or
+      not sprint or sprint == '' or not at or at == '' then
+    return { 'INVALID' }
+  end
+  local ix = 'sprint:' .. sprint .. ':idx:' .. friend .. ':'
+  local ready = pl_count(ix .. 'open')
+  local working = pl_count(ix .. 'working')
+  local waiting = pl_count(ix .. 'waiting')
+  local done = pl_count(ix .. 'closed')
+  local slots = redis.pcall('HGET', 'friend:' .. friend .. ':desired', 'slots')
+  if type(slots) ~= 'string' or not string.match(slots, '^[0-9]+$') then
+    slots = ''
+  end
+  local up = redis.call('EXISTS', 'friend:' .. friend .. ':beat')
+  local row = 'friend:' .. friend
+  local kind = redis.call('TYPE', row)
+  if type(kind) == 'table' then
+    kind = kind['ok']
+  end
+  if kind ~= 'hash' and kind ~= 'none' then
+    redis.call('DEL', row)
+  end
+  redis.call('HSET', row, 'at', at, 'up', tostring(up),
+    'ready', tostring(ready), 'queue', tostring(ready),
+    'working', tostring(working), 'waiting', tostring(waiting),
+    'width', tostring(working), 'done', tostring(done), 'slots', slots)
+  redis.call('SET', row .. ':last', at)
+  return { 'OK', tostring(up), tostring(ready), tostring(working),
+    tostring(waiting), tostring(done), slots }
 end
 
 -- bench_release stops a bench's owned loop. Only the owning session may
@@ -283,6 +350,7 @@ redis.register_function('ns_friend_beat', friend_beat)
 redis.register_function('ns_friend_bye', friend_bye)
 redis.register_function('ns_friend_wake', friend_wake)
 redis.register_function('ns_friend_poll_wake', friend_poll_wake)
+redis.register_function('ns_friend_row', friend_row)
 redis.register_function('ns_bench_beat', bench_beat)
 redis.register_function('ns_bench_release', bench_release)
 end

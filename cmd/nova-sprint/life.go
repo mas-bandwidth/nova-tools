@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -25,7 +26,7 @@ import (
 func init() {
 	register(Verb{
 		Name:    "friend",
-		Summary: "hello, bye, serve, wake and roles for a friend; report a friend state, show friends, or run one ladder sweep",
+		Summary: "hello, bye, serve, wake, row and roles for a friend; report a friend state, show friends, or run one ladder sweep",
 		Run:     runFriend,
 	})
 	register(Verb{
@@ -37,7 +38,7 @@ func init() {
 
 func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "friend", "want hello, bye, serve, wake, roles, report, show, sweep, down or up")
+		return refuse(errOut, "friend", "want hello, bye, serve, wake, row, roles, report, show, sweep, down or up")
 	}
 	switch args[0] {
 	case "hello":
@@ -53,6 +54,8 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 			return runFriendServe(ctx, args[1:], out, errOut, true)
 		}
 		return runFriendWake(ctx, args[1:], out, errOut)
+	case "row":
+		return runFriendRow(ctx, args[1:], out, errOut)
 	case "roles":
 		return runFriendRoles(ctx, args[1:], out, errOut)
 	case "report":
@@ -66,7 +69,7 @@ func runFriend(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "up":
 		return runFriendDown(ctx, false, args[1:], out, errOut)
 	default:
-		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, roles, report, show, sweep, down or up", args[0]))
+		return refuse(errOut, "friend", fmt.Sprintf("unknown subverb %s; want hello, bye, serve, wake, row, roles, report, show, sweep, down or up", args[0]))
 	}
 }
 
@@ -294,6 +297,12 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 		Bench: *bench, Host: *host, User: *user, Load1: *load1, SSH: *ssh,
 		Probe: *probe, Launcher: *launcher, Why: *why, Session: *session,
 		Live: splitLive(*live), Actor: "bench", Facts: life.MeasureBench(*root),
+		RowAt: time.Now(), NCPU: runtime.NumCPU(),
+	}
+	// The host row's load (#3440): the flag when given, else measured each beat.
+	measureLoad := *load1 == ""
+	if measureLoad {
+		req.Load1 = life.Load1Now()
 	}
 	res, err := life.BenchBeat(ctx, st, req)
 	if err != nil {
@@ -313,7 +322,10 @@ func runBenchBeat(ctx context.Context, args []string, out, errOut io.Writer) int
 	defer stop()
 	return benchBeatLoop(signalCtx, ticker.C, life.BeatInterval, *bench, errOut,
 		func(ctx context.Context) (life.BenchResult, error) {
-			req.Facts = life.MeasureBench(*root)
+			req.Facts, req.RowAt = life.MeasureBench(*root), time.Now()
+			if measureLoad {
+				req.Load1 = life.Load1Now()
+			}
 			return life.BenchBeat(ctx, st, req)
 		})
 }
@@ -367,6 +379,73 @@ func benchBeatBackoff(last, interval time.Duration) time.Duration {
 		next = benchBeatMaxBackoff
 	}
 	return next
+}
+
+// runFriendRow writes friend:<f>, the friend's sprint-table row, once a
+// second through one connection (#3440; it replaces rowan-tools
+// bin/friend-row). Each pass is one ns_friend_row call. --once writes one
+// row and prints it. A failed pass backs off as bench beat does.
+func runFriendRow(ctx context.Context, args []string, out, errOut io.Writer) int {
+	fs, addr := lifeFlags("friend row")
+	as := fs.String("as", "", "friend whose row this is")
+	sprint := fs.String("sprint", "", "sprint whose friend-queue index sets are counted")
+	once := fs.Bool("once", false, "write one row and return without the 1 s loop")
+	if err := fs.Parse(args); err != nil {
+		return refuse(errOut, "friend row", err.Error())
+	}
+	if fs.NArg() != 0 {
+		return refuse(errOut, "friend row", "takes flags, not positional arguments")
+	}
+	if *as == "" || *sprint == "" {
+		return refuse(errOut, "friend row", "--as and --sprint are required")
+	}
+	st, err := store.OpenSingle(ctx, lifeAddr(*addr))
+	if err != nil {
+		return refuse(errOut, "friend row", err.Error())
+	}
+	defer st.Close()
+	pass := func(ctx context.Context) (life.FriendRowResult, error) {
+		return life.FriendRow(ctx, st, life.FriendRowRequest{Friend: *as, Sprint: *sprint})
+	}
+	res, err := pass(ctx)
+	if err != nil {
+		return refuse(errOut, "friend row", err.Error())
+	}
+	up := 0
+	if res.Up {
+		up = 1
+	}
+	fmt.Fprintf(out, "%s row up=%d ready=%d working=%d waiting=%d done=%d slots=%s at=%s\n",
+		res.Friend, up, res.Ready, res.Working, res.Waiting, res.Done, res.Slots, res.At)
+	if *once {
+		return 0
+	}
+	ticker := time.NewTicker(life.BeatInterval)
+	defer ticker.Stop()
+	signalCtx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	var backoff time.Duration
+	var next time.Time
+	for {
+		select {
+		case <-signalCtx.Done():
+			return 0
+		case now := <-ticker.C:
+			if now.Before(next) {
+				continue
+			}
+			if _, err := pass(signalCtx); err != nil {
+				if signalCtx.Err() != nil {
+					return 0
+				}
+				backoff = benchBeatBackoff(backoff, life.BeatInterval)
+				next = now.Add(backoff)
+				fmt.Fprintf(errOut, "friend %s row: %v; retry in %s\n", res.Friend, err, backoff)
+				continue
+			}
+			backoff, next = 0, time.Time{}
+		}
+	}
 }
 
 func runBenchRelease(ctx context.Context, args []string, out, errOut io.Writer) int {

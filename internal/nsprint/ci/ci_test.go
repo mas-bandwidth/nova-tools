@@ -481,11 +481,12 @@ func TestControl34ExecutionStateAndVerdict(t *testing.T) {
 }
 
 // TestCutRefusesARunnerOnlyLeg: ci cut refuses rather than cut a card no
-// bench can take (4.8, 10.4 item 3); a bench that declares no legs carries
-// none.
+// bench can take (4.8, 10.4 item 3): every bench declares legs and none
+// names this one. A bench that declares no legs runs every leg, the rule
+// deal.lua keeps (#3349), so it is not RUNNER-ONLY.
 func TestCutRefusesARunnerOnlyLeg(t *testing.T) {
 	f := newFixture(t, "ctl-a")
-	f.client.HDel(f.ctx, "bench:ctl-a:desired", "legs")
+	f.client.HSet(f.ctx, "bench:ctl-a:desired", "legs", "schema")
 	r, err := ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, BaseRef: "dev"})
 	if err != nil {
 		t.Fatal(err)
@@ -495,5 +496,13 @@ func TestCutRefusesARunnerOnlyLeg(t *testing.T) {
 	}
 	if len(f.record()) != 0 {
 		t.Fatal("a refused cut wrote the record")
+	}
+	f.client.HDel(f.ctx, "bench:ctl-a:desired", "legs")
+	r, err = ci.Cut(f.ctx, f.st, ci.CutRequest{Sprint: f.sprint, Repo: repo, PR: pr, Head: head, Base: base, BaseRef: "dev"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "CREATED" {
+		t.Fatalf("cut on a bench with no legs field = %v; want CREATED (empty legs runs every leg)", r)
 	}
 }

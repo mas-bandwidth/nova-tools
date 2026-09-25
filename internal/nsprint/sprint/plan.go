@@ -53,6 +53,12 @@ const (
 // appears exactly once in a plan.
 var PolicyKeys = []string{"backpressure_missing", "ci_reruns", "readers", "absent_after"}
 
+// HoldPolicyKeys are the hold router's two policy keys (#3798): who takes a
+// fix when the holder cannot, and who may release a down holder's hold. They
+// are optional, but a plan names both or neither, each a registered friend;
+// hold route refuses to run until s:<S>:policy has both.
+var HoldPolicyKeys = []string{"fix_to", "release_reader"}
+
 // PlanRow is one bench or friend row.
 type PlanRow struct {
 	Line    int
@@ -159,6 +165,15 @@ func ParsePlan(body []byte) (*Plan, []Finding) {
 			findings = append(findings, Finding{len(lines), fmt.Sprintf("policy %s is missing; each of %s appears once", key, strings.Join(PolicyKeys, ", "))})
 		}
 	}
+	fixLine, fixOK := p.policyLine["fix_to"]
+	readerLine, readerOK := p.policyLine["release_reader"]
+	if fixOK != readerOK {
+		line, missing := fixLine, "release_reader"
+		if readerOK {
+			line, missing = readerLine, "fix_to"
+		}
+		findings = append(findings, Finding{line, fmt.Sprintf("policy %s is missing; fix_to and release_reader appear together or not at all", missing)})
+	}
 	return p, findings
 }
 
@@ -190,6 +205,10 @@ func checkPolicy(key, value string) string {
 	case "absent_after":
 		if d, err := time.ParseDuration(value); err != nil || d < time.Minute || d > 24*time.Hour {
 			return fmt.Sprintf("policy %s %s is not a duration from 1m to 24h", key, value)
+		}
+	case "fix_to", "release_reader":
+		if value == "" || strings.ContainsAny(value, " :") {
+			return fmt.Sprintf("policy %s %q is not a friend name", key, value)
 		}
 	default:
 		return "unknown policy key " + key
@@ -310,6 +329,11 @@ func ValidatePlan(ctx context.Context, st *store.Store, p *Plan) ([]Finding, err
 	}
 
 	var findings []Finding
+	for _, key := range HoldPolicyKeys {
+		if f, ok := p.Policy[key]; ok && !registered[consumerKey{capacity.KindFriend, f}] {
+			findings = append(findings, Finding{p.policyLine[key], fmt.Sprintf("policy %s %s is not in friends (a plan never registers a name)", key, f)})
+		}
+	}
 	for _, r := range p.Rows {
 		if !registered[consumerKey{r.Kind, r.Name}] {
 			set := "benches"
@@ -427,6 +451,9 @@ func (a Applier) Apply(ctx context.Context, name string, body []byte, out, errOu
 	for _, r := range p.Rows {
 		args = append(args, r.Kind, r.Name, r.Machine, strconv.Itoa(r.Slots))
 	}
+	if _, ok := p.Policy["fix_to"]; ok {
+		args = append(args, p.Policy["fix_to"], p.Policy["release_reader"])
+	}
 	reply, err := a.Store.Client().FCall(ctx, FunctionPlan, nil, args...).StringSlice()
 	if err != nil {
 		text := err.Error()
@@ -514,8 +541,12 @@ func Show(ctx context.Context, st *store.Store, name string, out, errOut io.Writ
 		name, short(record["sha"]), record["rows"], appliedAt, record["applied_by"], short(record["routes_sha"]))
 	var drift []string
 	policy := policyCmd.Val()
-	for _, key := range PolicyKeys {
-		want, got := p.Policy[key], orDash(policy[key])
+	for _, key := range append(append([]string{}, PolicyKeys...), HoldPolicyKeys...) {
+		want, named := p.Policy[key]
+		if !named && !isRequired(key) {
+			continue
+		}
+		got := orDash(policy[key])
 		fmt.Fprintf(&b, "policy %s plan=%s store=%s\n", key, want, got)
 		if want != got {
 			drift = append(drift, fmt.Sprintf("DRIFT policy %s plan=%s store=%s", key, want, got))
@@ -554,6 +585,15 @@ func Show(ctx context.Context, st *store.Store, name string, out, errOut io.Writ
 		return 1
 	}
 	return 0
+}
+
+func isRequired(key string) bool {
+	for _, k := range PolicyKeys {
+		if k == key {
+			return true
+		}
+	}
+	return false
 }
 
 func orDash(s string) string {

@@ -129,7 +129,8 @@ func TestAStoreThatWillNotAnswerIsAnErrorAndNotAnEmptyRoom(t *testing.T) {
 }
 
 // TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent is #2675: a friend is
-// present only while friend:<name> itself is alive. A missing key is
+// present only while friend:<name> itself is alive -- the row's up and at
+// where the row loop writes one (#3447), the beat's TTL where it does not. A missing key is
 // absent, the untimed :last memory of a beat is still absent, a live key
 // is present, and the same key past its TTL is absent again. There is no
 // override file to consult when the key is gone.
@@ -148,12 +149,16 @@ func TestAMissingBeatKeyIsAbsentAndALiveKeyIsPresent(t *testing.T) {
 		t.Fatalf("missing key phrase = %q; want %q", got, "stella down")
 	}
 
-	// A table row -- the same hash with counts in it and no TTL -- is not a
-	// friend who is here: only a beat's expiry is.
-	st.SetHash(Key("stella"), 0, "at", at.UTC().Format(Stamp), "up", "1", "working", "3")
-	sts = mustRead(t, st, []string{"stella"})
-	if sts[0].Present() {
-		t.Fatal("a hash with no TTL is present; want absent (it is the table's row, not a beat)")
+	// The friend row (#3447) is presence by its own up and at, never by a
+	// TTL: up=0 is absent, up=1 with a fresh at is present. The row is the
+	// row loop's, so the beat below runs on a friend with no row.
+	st.SetHash(Key("walter"), 0, "at", at.UTC().Format(Stamp), "up", "0", "working", "3")
+	if sts = mustRead(t, st, []string{"walter"}); sts[0].Present() {
+		t.Fatal("a row that says up=0 is present; want absent")
+	}
+	st.SetHash(Key("walter"), 0, "up", "1")
+	if sts = mustRead(t, st, []string{"walter"}); !sts[0].Present() {
+		t.Fatal("a row that says up=1 with a fresh at is absent; want present")
 	}
 
 	// :last alone is the memory of a beat, not a friend who is here.

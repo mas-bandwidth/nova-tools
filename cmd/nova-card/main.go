@@ -19,12 +19,15 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
@@ -69,6 +72,9 @@ NATIVE REFUSED line (#3194); the clock running out is FAILED timeout.
 
 exit codes: 0 the end was recorded (any outcome), 1 configuration missing,
 2 could not run, 3 fenced, 4 not dealt to this bench, 6 Redis unavailable.
+A refusal before launched also leaves its one REFUSED line (never the token)
+on the sprint log, kind "wrapper refused", or, when Redis does not answer,
+appended to NOVA_CARD_RESULTS/refused/<sprint>/<label>/<attempt>.line (#3420).
 
 example:
   nova-card version
@@ -99,25 +105,34 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	if len(args) != 1 {
 		return refuse(stderr, "wants one card <sprint>/<label>/<attempt>")
 	}
+	ctx := context.Background()
 	line, err := readLaunchLine(stdin)
 	if err != nil {
+		if l, ok := cardFromArg(args[0]); ok {
+			recordRefusal(ctx, getenv, nil, true, l, card.WrapperReport{Code: 2, Card: l.Card(), Why: err.Error()})
+		}
 		return refuse(stderr, err.Error())
 	}
 	if line.Card() != args[0] {
 		// Neither side is echoed whole: the stdin line holds the token.
-		return refuse(stderr, "the launch line on stdin names "+line.Card()+", not "+oneline.Escape(args[0]))
+		why := "the launch line on stdin names " + line.Card() + ", not " + oneline.Escape(args[0])
+		recordRefusal(ctx, getenv, nil, true, line, card.WrapperReport{Code: 2, Card: line.Card(), Why: why})
+		return refuse(stderr, why)
 	}
 	cfg, err := config(line, getenv)
 	if err != nil {
 		ack("REFUSED " + err.Error())
-		fmt.Fprintln(stdout, card.WrapperReport{Code: card.WrapperExitUsage, Card: line.Card(), Why: err.Error()}.Line())
+		rep := card.WrapperReport{Code: card.WrapperExitUsage, Card: line.Card(), Why: err.Error()}
+		recordRefusal(ctx, getenv, nil, true, line, rep)
+		fmt.Fprintln(stdout, rep.Line())
 		return card.WrapperExitUsage
 	}
-	ctx := context.Background()
 	st, err := store.Open(ctx, getenv("NOVA_CARD_REDIS"))
 	if err != nil {
 		ack("REFUSED redis unavailable")
-		fmt.Fprintln(stdout, card.WrapperReport{Code: card.WrapperExitRedis, Card: line.Card(), Why: "redis: " + err.Error()}.Line())
+		rep := card.WrapperReport{Code: card.WrapperExitRedis, Card: line.Card(), Why: "redis: " + err.Error()}
+		recordRefusal(ctx, getenv, nil, false, line, rep)
+		fmt.Fprintln(stdout, rep.Line())
 		return card.WrapperExitRedis
 	}
 	defer st.Close()
@@ -130,6 +145,10 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 	rep := card.RunWrapper(ctx, cfg, ledger)
 	if rep.Code != card.WrapperExitEnded {
 		ack("REFUSED " + rep.Why)
+	}
+	if rep.Outcome == "" && rep.Code != card.WrapperExitEnded {
+		// Refused before launched: nothing else records it (#3420).
+		recordRefusal(ctx, getenv, st, false, line, rep)
 	}
 	fmt.Fprintln(stdout, rep.Line())
 	return rep.Code
@@ -227,6 +246,84 @@ func config(l launch.Line, getenv func(string) string) (card.WrapperConfig, erro
 		return cfg, fmt.Errorf("missing or bad %s", strings.Join(bad, ", "))
 	}
 	return cfg, nil
+}
+
+// RefusedLogKind is the sprint-log kind of a wrapper refusal record (#3420).
+// It wakes no reconciler pass (reconcile.Classify reads "card " and "task "
+// kinds only): the card is still dealt, and the refusal is evidence only.
+const RefusedLogKind = "wrapper refused"
+
+// refusalTimeout bounds the one Redis dial and XADD of a refusal record.
+const refusalTimeout = 3 * time.Second
+
+// recordRefusal keeps one line for a refusal before launched (#3420). The
+// launcher starts the wrapper detached with stdout and stderr /dev/null, so
+// the REFUSED line printed there reaches no one. The line (the report's line,
+// the bench and the time, never the token) goes to the sprint log
+// s:<S>:log as one entry of kind RefusedLogKind when Redis answers: st when
+// the wrapper has a connection, else a fresh dial of NOVA_CARD_REDIS when dial
+// is set. Otherwise it is appended to <NOVA_CARD_RESULTS>/refused/<S>/<label>/
+// <attempt>.line on the bench. With neither, nothing can be kept.
+func recordRefusal(ctx context.Context, getenv func(string) string, st *store.Store, dial bool, l launch.Line, rep card.WrapperReport) {
+	bench := getenv("NOVA_CARD_BENCH")
+	text := rep.Line() + " bench=" + oneline.Escape(bench) + " at=" + time.Now().UTC().Format(time.RFC3339)
+	why := rep.Why
+	if _, hex, ok := strings.Cut(l.Token, "."); ok && hex != "" {
+		text = strings.ReplaceAll(text, hex, "<token>")
+		why = strings.ReplaceAll(why, hex, "<token>")
+	}
+	ctx, cancel := context.WithTimeout(ctx, refusalTimeout)
+	defer cancel()
+	if st == nil && dial && getenv("NOVA_CARD_REDIS") != "" {
+		if s, err := store.Open(ctx, getenv("NOVA_CARD_REDIS")); err == nil {
+			defer s.Close()
+			st = s
+		}
+	}
+	if st != nil && st.Client() != nil {
+		err := st.Client().XAdd(ctx, &redis.XAddArgs{Stream: card.LogKey(l.Sprint), Values: []any{
+			"kind", RefusedLogKind, "id", l.Label, "attempt", strconv.Itoa(l.Attempt),
+			"bench", bench, "to", "refused", "code", strconv.Itoa(rep.Code),
+			"reason", why, "line", text, "actor", "nova-card",
+			"at", strconv.FormatInt(time.Now().Unix(), 10),
+		}}).Err()
+		if err == nil {
+			return
+		}
+	}
+	root := getenv("NOVA_CARD_RESULTS")
+	if !filepath.IsAbs(root) {
+		return
+	}
+	// l's sprint and label passed launch.ParseLine ([a-z0-9-]), so the path
+	// stays under root.
+	dir := filepath.Join(root, "refused", l.Sprint, l.Label)
+	if os.MkdirAll(dir, 0o755) != nil {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(dir, strconv.Itoa(l.Attempt)+".line"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(f, text)
+	_ = f.Close()
+}
+
+// cardFromArg reads argv's <sprint>/<label>/<attempt> when the launch line
+// could not be read, so that refusal is kept under the card argv names.
+// launch.ParseLine is the one validator of the three; the token field it is
+// given is a placeholder of the right shape and is dropped.
+func cardFromArg(arg string) (launch.Line, bool) {
+	f := strings.Split(arg, "/")
+	if len(f) != 3 {
+		return launch.Line{}, false
+	}
+	l, err := launch.ParseLine(strings.Join(f, " ") + " " + f[2] + "." + strings.Repeat("0", 32))
+	if err != nil {
+		return launch.Line{}, false
+	}
+	l.Token = ""
+	return l, true
 }
 
 func refuse(stderr io.Writer, why string) int {
