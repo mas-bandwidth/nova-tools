@@ -299,34 +299,34 @@ func WorkTypeProducesBranch(t string) bool {
 	return t == WorkTypeIssueFixRedFirst || t == WorkTypeRecutAtTip || t == WorkTypeConformanceCell
 }
 
-// RequireTable refuses a card whose type produces a branch when no
-// allowed_routes table was given: for a coding card the table IS the route
-// gate, and a gate that is absent is not a pass. It runs after the card is
-// classified and before any route is chosen.
+// RequireTable refuses a card whose work type is set when no
+// allowed_routes table was given or the table has no row for the type,
+// refusing to leave allowed=-.
 func (w WorkTypeRoutes) RequireTable(t string) error {
-	if w == nil && WorkTypeProducesBranch(t) {
-		return fmt.Errorf("a card of type %s produces a branch and its route is gated by allowed_routes[%s]; pass --allowed-routes", t, t)
+	if !KnownWorkType(t) {
+		return fmt.Errorf("unknown work type %s", t)
+	}
+	if w == nil {
+		return fmt.Errorf("an allowed_routes table is required for work type %s; pass --allowed-routes (refusing to leave allowed=-)", t)
+	}
+	if len(w.For(t)) == 0 {
+		return fmt.Errorf("allowed_routes has no row for %s: refusing to leave allowed=-", t)
 	}
 	return nil
 }
 
 // Admit is the gate on the SELECTED route: the rung the router chose, by its
 // name or the model id the registry gives it, must be one of allowed_routes[t].
-// With a table given, a type with no row admits nothing (an unclassified card
-// has no row: the table refuses a key outside the eight). With no table, only
-// a type that produces no branch passes (RequireTable). A route that is a wait
+// With a table given, a type with no row admits nothing. A route that is a wait
 // dispatches nothing and is not gated.
 func (w WorkTypeRoutes) Admit(t string, res RouteResult, reg *Registry) error {
 	if err := w.RequireTable(t); err != nil {
 		return err
 	}
-	if w == nil || !res.Dispatchable() {
+	if !res.Dispatchable() {
 		return nil
 	}
 	rs := w.For(t)
-	if len(rs) == 0 {
-		return fmt.Errorf("allowed_routes has no row for %s: no route is allowed for this card", t)
-	}
 	names := []string{res.Rung.Name}
 	model := "-"
 	if reg != nil {

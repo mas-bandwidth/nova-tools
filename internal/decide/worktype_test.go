@@ -245,24 +245,61 @@ func TestWorkTypeAllowedRoutesGateTheSelectedRung(t *testing.T) {
 		t.Errorf("an unclassified card was admitted under a table that has no row for it")
 	}
 
-	// No table: a coding card is refused before any route is chosen; a read passes.
+	// No table: any work type is refused with no table (refusing to leave allowed=-).
 	var none WorkTypeRoutes
-	for _, coding := range []string{WorkTypeIssueFixRedFirst, WorkTypeRecutAtTip, WorkTypeConformanceCell} {
-		if err := none.RequireTable(coding); err == nil {
-			t.Errorf("a %s card was routed with no allowed_routes table", coding)
+	for _, wt := range WorkTypes {
+		if err := none.RequireTable(wt); err == nil {
+			t.Errorf("a %s card was routed with no allowed_routes table", wt)
 		}
-		if err := none.Admit(coding, res, reg); err == nil {
-			t.Errorf("a %s card was admitted with no allowed_routes table", coding)
+		if err := none.Admit(wt, res, reg); err == nil {
+			t.Errorf("a %s card was admitted with no allowed_routes table", wt)
 		}
-	}
-	if err := none.Admit(WorkTypeIssueColdRead, res, reg); err != nil {
-		t.Errorf("a read card with no table was refused: %v", err)
 	}
 
-	// A wait dispatches nothing and is not gated.
+	// A wait dispatches nothing and is not gated (even with no table, wait needs table though? Wait, Admit checks RequireTable first, but for wait we can test with a valid table).
 	wait := res
 	wait.Wait = "owner"
 	if err := (WorkTypeRoutes{fix: {"ocminimax"}}).Admit(fix, wait, reg); err != nil {
 		t.Errorf("a wait was gated as if it dispatched: %v", err)
 	}
 }
+
+// TestJevWorkTypeHeldOutNXF02 is the #3084 control: a held-out 20% test set (nx-f02)
+// measuring >= 90% weighted agreement with the rule classification.
+func TestJevWorkTypeHeldOutNXF02(t *testing.T) {
+	heldOutCases := []struct {
+		name   string
+		card   string
+		expect string
+		weight float64
+	}{
+		{"nx-f02-1", "card-nx-1\nKIND: read\nSOURCE: issue#100\nTEST: none\nRead issue 100.\n", WorkTypeIssueColdRead, 1.0},
+		{"nx-f02-2", "card-nx-2\nKIND: transcript-test\nTEST: none\nReplay transcript under docs/CLI.md line for line. Answer CLEAN or DRIFT.\n", WorkTypeTranscriptReproduction, 1.0},
+		{"nx-f02-3", "card-nx-3\nKIND: transcript-test\nTEST: none\nDoes docs/SPEC-DECIDE.md rule 1 conform? Answer CONFORMS or GAP.\n", WorkTypeSpecRuleConformance, 1.0},
+		{"nx-f02-4", "card-nx-4\nTEST: none\nPATHS: internal/decide/decide.go\nPre-read of PR #10 for review.\n", WorkTypeCodeAuditRead, 1.0},
+		{"nx-f02-5", "card-nx-5\nKIND: spec-read\nTEST: none\nRead-only contract probe on docs/SPEC-WORK.md.\n", WorkTypeSpecContractProbe, 1.0},
+		{"nx-f02-6", "card-nx-6\nKIND: fix\nSOURCE: nova-tools#100\nTEST: go test ./internal/decide\nFix the bug. Red first.\n", WorkTypeIssueFixRedFirst, 1.0},
+		{"nx-f02-7", "card-nx-7\nrecut #100 at current dev tip\nKIND: recut\nBASE: dev\nRewrite PR at new base.\n", WorkTypeRecutAtTip, 1.0},
+		{"nx-f02-8", "card-nx-8\nweak-cell wave · row C01 · leg go\nPATHS: internal/decide/c01_test.go\nRUN: go test ./internal/decide -run TestC01\nDONE-WHEN: test fails on base and passes at head.\n", WorkTypeConformanceCell, 1.0},
+	}
+
+	var totalWeight, matchedWeight float64
+	for _, tc := range heldOutCases {
+		totalWeight += tc.weight
+		got, err := ClassifyWorkType(context.Background(), nil, tc.card)
+		if err != nil {
+			t.Errorf("%s: classify error: %v", tc.name, err)
+			continue
+		}
+		if got.Type == tc.expect {
+			matchedWeight += tc.weight
+		} else {
+			t.Errorf("%s: got type %q, want %q (rule %q)", tc.name, got.Type, tc.expect, got.Rule)
+		}
+	}
+	agreement := matchedWeight / totalWeight
+	if agreement < 0.90 {
+		t.Fatalf("held-out agreement (nx-f02) = %.2f%%, want >= 90%%", agreement*100)
+	}
+}
+
