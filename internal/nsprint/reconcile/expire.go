@@ -89,10 +89,14 @@ func ExpireStampField(sprint string) string { return "expire_at:" + sprint }
 
 // Expire is the expire duty. Client is the sprint store's Redis; Prober is
 // the bench evidence seam (nil gathers none, so no card leaves
-// reconcile-required through this duty).
+// reconcile-required through this duty). EvidenceMargin is the lease time
+// kept back from evidence sessions for the pass's fenced writes, like
+// Refill.WriteMargin for the deal pass; DefaultWriteMargin when zero.
 type Expire struct {
 	Client *redis.Client
 	Prober Prober
+
+	EvidenceMargin time.Duration
 
 	mu      sync.Mutex
 	sprints []string // the sprint index as the last gate read it
@@ -334,8 +338,10 @@ func (e *Expire) sweep(ctx context.Context, l *Lease, due, benches []string, now
 		}
 	}
 
-	// Step 3: evidence, one Prober call per bench, in parallel.
-	evidence := e.probe(ctx, beats, suspects)
+	// Step 3: evidence, one Prober call per bench, in parallel, each
+	// bounded by the lease budget so a slow or wedged sshd never fences
+	// the pass (#3802).
+	evidence := e.probe(ctx, l, beats, suspects)
 
 	// Step 4: one pipeline of resolutions: evidence first, then the window
 	// for every card evidence did not resolve. A card with no required_at
@@ -435,12 +441,19 @@ func reply(cmd *redis.Cmd) (int, string, error) {
 }
 
 // probe runs one Prober call per bench that has suspects, in parallel, each
-// bounded by ExpireDeadline. beats are the registered benches' beat hashes
-// (host, user) from step 1; a card on a bench outside the registry has
-// nothing to dial and gets no evidence.
-func (e *Expire) probe(ctx context.Context, beats map[string]*redis.SliceCmd, suspects []Suspect) map[string]Evidence {
+// bounded by the lease's remaining time less the evidence margin so a slow
+// or wedged sshd never fences the pass. beats are the registered benches'
+// beat hashes (host, user) from step 1; a card on a bench outside the
+// registry has nothing to dial and gets no evidence. When l is nil or the
+// budget is non-positive, probing is skipped (no evidence is not negative
+// evidence).
+func (e *Expire) probe(ctx context.Context, l *Lease, beats map[string]*redis.SliceCmd, suspects []Suspect) map[string]Evidence {
 	out := map[string]Evidence{}
 	if e.Prober == nil || len(suspects) == 0 {
+		return out
+	}
+	budget := e.evidenceBudget(l)
+	if budget <= 0 {
 		return out
 	}
 	byBench := map[string][]Suspect{}
@@ -457,7 +470,7 @@ func (e *Expire) probe(ctx context.Context, beats map[string]*redis.SliceCmd, su
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			pctx, cancel := context.WithTimeout(ctx, ExpireDeadline)
+			pctx, cancel := context.WithTimeout(ctx, budget)
 			defer cancel()
 			ev, err := e.Prober.Probe(pctx, bench, cards)
 			if err != nil {
@@ -476,6 +489,17 @@ func (e *Expire) probe(ctx context.Context, beats map[string]*redis.SliceCmd, su
 	return out
 }
 
+func (e *Expire) evidenceBudget(l *Lease) time.Duration {
+	if l == nil {
+		return 0
+	}
+	margin := e.EvidenceMargin
+	if margin <= 0 {
+		margin = DefaultWriteMargin
+	}
+	return l.Remaining() - margin
+}
+
 func str(v []any, i int) string {
 	if i < len(v) {
 		if s, ok := v[i].(string); ok {
@@ -485,5 +509,4 @@ func str(v []any, i int) string {
 	return ""
 }
 
-// ExpireDeadline bounds one bench's evidence session.
-const ExpireDeadline = 30 * time.Second
+
