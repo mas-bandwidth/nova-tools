@@ -78,6 +78,9 @@ func clsEnd(t *testing.T, c *redis.Client, sprint, label string, attempt int, be
 		"actor", "card-end", "reason", reason, "at", "1"}}).Result()
 	clsMust(t, err)
 	clsMust(t, c.HSet(ctx, key, "end_receipt", id).Err())
+	// The hand end wrote the fine state around the card move (#3692): fsck
+	// --repair re-points the card from its record, as after any drift.
+	clsMust(t, c.FCall(ctx, "ns_card_repair", nil, sprint).Err())
 	return id
 }
 

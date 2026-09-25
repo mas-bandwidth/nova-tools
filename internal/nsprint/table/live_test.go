@@ -61,7 +61,7 @@ func TestControl2674SprintLayout(t *testing.T) {
 			snap := table.FailedLive(cfg, nil)
 			if !c.noRedis {
 				var err error
-				client := liveStore(t, append(table.Fixture2674(), c.extra...))
+				client := liveStore(t, withCardViews(append(table.Fixture2674(), c.extra...), now))
 				if snap, err = table.ReadLive(context.Background(), client, cfg); err != nil {
 					t.Fatal(err)
 				}

@@ -2,6 +2,10 @@
 -- that one card into the pool only when every dependency has state landed
 -- and a 40-hex merge commit. It does not copy the waiting set across.
 
+-- Every state write here is NS.card (02_card_move.lua): push creates the
+-- record and moves it to waiting (then ready), release and land move it.
+local CARD = NS.card
+
 local function safe_id(s)
   return type(s) == 'string' and string.match(s, '^[A-Za-z0-9][A-Za-z0-9._-]*$') ~= nil
 end
@@ -15,7 +19,7 @@ local function now_s()
   return t[1]
 end
 
--- keys: card, pool, waiting, log, idx queued
+-- keys: card, pool, waiting, log, idx queued (NS.card writes the index)
 -- args: label, payload_sha, priority, base, base_sha, paths, repo, kind,
 --       depends_on, card_type (the optional TYPE: line, nova-tools#3091;
 --       empty: not stored), depends_on_typed, ready (0|1), route (the
@@ -25,13 +29,19 @@ end
 --       writes nothing; a named bench is stored as the card's bench field,
 --       the pin ns_card_deal honours (pin == '' or pin == bench).
 --       card's ROUTE: pro|flash tier; empty or absent: not stored), est
---       (the card's EST: line in minutes, #3653; empty or absent: not stored).
+--       (the card's EST: line in minutes, #3653; empty or absent: not stored),
+--       test (the card's TEST: line, #3689), stream (its STREAM: line: its
+--       ws:<stream>:<where> view) and origin (its ORIGIN: line, the GitHub
+--       issue it came from; #3692): args 16, 17, 18.
+-- The record is created with no place and moved to waiting by NS.card, then
+-- to ready when place is pool (the waiting -> ready move of a card whose
+-- dependencies are already met); the state index is NS.card's.
 -- priority is the card's PRIORITY: line (0 when absent) and its pool score.
 -- ready is resolved by the Go caller (card.Push); a caller that omits it
 -- (the pre-#3503 ten-argument shape) gets pool only when depends_on is empty.
 -- The card also gets cut_at, Redis TIME seconds at this push (nova-tools#3091).
 redis.register_function('ns_card_push', function(keys, args)
-  local card, pool, waiting, log, idx = keys[1], keys[2], keys[3], keys[4], keys[5]
+  local card, pool, waiting, log = keys[1], keys[2], keys[3], keys[4]
   local label, payload, priority = args[1], args[2], args[3]
   local base, base_sha, paths = args[4], args[5], args[6]
   local repo, kind, depends_on = args[7], args[8], args[9]
@@ -42,6 +52,11 @@ redis.register_function('ns_card_push', function(keys, args)
   local est = args[15]
   -- test (#3689): the card's TEST line, which the wrapper runs at card end.
   local test = args[16]
+  local stream, origin = args[17] or '', args[18] or ''
+  local S = string.match(card, '^s:([-a-z0-9]+):card:')
+  if not S or card ~= 's:' .. S .. ':card:' .. tostring(label) then
+    return redis.error_reply('ns_card_push: key ' .. tostring(card) .. ' is not s:<S>:card:<label>')
+  end
   if type(depends_on) ~= 'string' then
     depends_on = ''
   end
@@ -79,7 +94,6 @@ redis.register_function('ns_card_push', function(keys, args)
     'depends_on_typed', depends_on_typed,
     'priority', priority,
     'payload_sha', payload,
-    'state', 'queued',
     'cut_at', now_s()}
   if type(card_type) == 'string' and card_type ~= '' then
     table.insert(fields, 'card_type')
@@ -89,10 +103,6 @@ redis.register_function('ns_card_push', function(keys, args)
     table.insert(fields, 'route')
     table.insert(fields, route)
   end
-  if bench ~= '' then
-    table.insert(fields, 'bench')
-    table.insert(fields, bench)
-  end
   if type(est) == 'string' and est ~= '' then
     table.insert(fields, 'est')
     table.insert(fields, est)
@@ -101,12 +111,16 @@ redis.register_function('ns_card_push', function(keys, args)
     table.insert(fields, 'test')
     table.insert(fields, test)
   end
-  redis.call('HSET', card, unpack(fields))
-  redis.call('SADD', idx, label)
-  if place == 'pool' then
-    redis.call('ZADD', pool, priority, label)
-  else
-    redis.call('SADD', waiting, label)
+  if origin ~= '' then
+    table.insert(fields, 'origin')
+    table.insert(fields, origin)
+  end
+  local err = CARD.create(card, fields, { bench = bench, stream = stream, by = 'card-push' })
+  if not err and place == 'pool' then
+    err = CARD.move(card, 'ready', { by = 'card-push', why = 'push: no unmet dependency' })
+  end
+  if err then
+    return redis.error_reply('ns_card_push: ' .. err)
   end
   redis.call('XADD', log, '*',
     'kind', 'card',
@@ -142,13 +156,8 @@ redis.register_function('ns_card_release', function(keys, args)
       still = still + 1
     else
       local card = 's:' .. sprint .. ':card:' .. label
-      if releasable[label] and redis.call('HGET', card, 'state') == 'queued' then
-        redis.call('SREM', waiting, label)
-        local priority = redis.call('HGET', card, 'priority')
-        if type(priority) ~= 'string' or priority == '' then
-          priority = '0'
-        end
-        redis.call('ZADD', pool, priority, label)
+      if releasable[label] and redis.call('HGET', card, 'state') == 'queued' and
+          not CARD.move(card, 'ready', { by = 'card-release', why = 'release' }) then
         redis.call('XADD', log, '*',
           'kind', 'card',
           'id', label,
@@ -167,12 +176,13 @@ redis.register_function('ns_card_release', function(keys, args)
   return 'moved=' .. tostring(moved) .. ' waiting=' .. tostring(still)
 end)
 
--- keys: card, pool, waiting, log, idx queued, idx landed
+-- keys: card, pool, waiting, log, idx queued, idx landed (NS.card moves
+-- the label from its own state's index)
 -- args: label, merge_sha
 -- The merge commit is the landing. This does not move dependents; release does.
 redis.register_function('ns_card_land', function(keys, args)
   local card, pool, waiting = keys[1], keys[2], keys[3]
-  local log, idx_q, idx_l = keys[4], keys[5], keys[6]
+  local log = keys[4]
   local label, merge = args[1], args[2]
   if redis.call('EXISTS', card) == 0 then
     return 'ABSENT'
@@ -191,11 +201,10 @@ redis.register_function('ns_card_land', function(keys, args)
   if st == 'landed' then
     return 'CONFLICT'
   end
-  redis.call('HSET', card, 'state', 'landed', 'merge_sha', merge)
-  redis.call('ZREM', pool, label)
-  redis.call('SREM', waiting, label)
-  redis.call('SREM', idx_q, label)
-  redis.call('SADD', idx_l, label)
+  if CARD.move(card, 'done', { state = 'landed', ok = 'ok', fields = { 'merge_sha', merge },
+      by = 'card-land', why = 'merged' }) then
+    return 'REFUSED'
+  end
   redis.call('XADD', log, '*',
     'kind', 'card',
     'id', label,

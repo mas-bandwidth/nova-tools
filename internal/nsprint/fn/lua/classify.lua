@@ -27,10 +27,10 @@ do
     return false
   end
 
-  local function move(S, label, from_state, to_state)
-    redis.call('SREM', 's:' .. S .. ':idx:card:' .. from_state, label)
-    redis.call('SADD', 's:' .. S .. ':idx:card:' .. to_state, label)
-  end
+  -- Every card state write here is NS.card (02_card_move.lua): REQUEUE is
+  -- done/fail -> ready, WAIT done/fail -> waiting, RECUT supersedes (done ->
+  -- done/fail), and a FIX or RECUT follow-up is created and moved to ready.
+  local CARD = NS.card
 
   local function finish(S, event_id, result)
     redis.call('HSET', 's:' .. S .. ':idem', 'classify:' .. event_id, result)
@@ -197,9 +197,9 @@ do
       if not dealable(pin, next_avoid, leg) then
         return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, '')
       end
-      redis.call('HSET', ckey, 'state', 'queued', 'token', '', 'bench', pin, 'avoid', next_avoid)
-      move(S, label, 'ended', 'queued')
-      redis.call('ZADD', 's:' .. S .. ':pool', at - 10000000000000, label)
+      local refused = CARD.move(ckey, 'ready', { state = 'queued', bench = pin, by = actor, why = 'classify REQUEUE',
+        priority = at - 10000000000000, fields = { 'token', '', 'avoid', next_avoid } })
+      if refused then return { 'RETRY', refused } end
       record(S, ckey, classkey, label, event_id, 'REQUEUE', actor, at)
       return finish(S, event_id, 'REQUEUE')
     end
@@ -218,9 +218,9 @@ do
       if live == 0 then
         return unresolved(S, ckey, classkey, label, root, reason, base_sha, event_id, actor, at, 'deps landed')
       end
-      redis.call('HSET', ckey, 'state', 'queued', 'token', '', 'bench', pin)
-      move(S, label, 'ended', 'queued')
-      redis.call('SADD', 's:' .. S .. ':waiting', label)
+      local refused = CARD.move(ckey, 'waiting', { state = 'queued', bench = pin, by = actor, why = 'classify WAIT',
+        fields = { 'token', '' } })
+      if refused then return { 'RETRY', refused } end
       record(S, ckey, classkey, label, event_id, 'WAIT', actor, at)
       return finish(S, event_id, 'WAIT')
     end
@@ -229,20 +229,33 @@ do
       local nkey = 's:' .. S .. ':card:' .. new_label
       local new_kind = card[1] or 'model'
       if action == 'FIX' then new_kind = 'fix' end
-      redis.call('HSET', nkey, 'label', new_label, 'kind', new_kind, 'repo', card[10] or '',
+      if action == 'RECUT' then
+        local refused = CARD.move(ckey, 'done', { state = 'superseded', ok = 'fail', by = actor, why = 'classify RECUT',
+          fields = { 'superseded_by', new_label } })
+        if refused then return { 'RETRY', refused } end
+      end
+      local lineage = redis.call('HMGET', ckey, 'stream', 'origin')
+      local nfields = { 'label', new_label, 'kind', new_kind, 'repo', card[10] or '',
         'base', card[11] or '', 'base_sha', new_base, 'paths', card[12] or '', 'depends_on', '',
-        'priority', card[13] or '0', 'payload_sha', payload, 'state', 'queued', 'attempt', '0',
-        'retries', '0', 'root', root, 'tier', 'priority', 'front', '1', 'title', title)
+        'priority', card[13] or '0', 'payload_sha', payload, 'attempt', '0',
+        'retries', '0', 'root', root, 'tier', 'priority', 'front', '1', 'title', title }
+      if lineage[2] then
+        nfields[#nfields + 1] = 'origin'
+        nfields[#nfields + 1] = lineage[2]
+      end
       if action == 'FIX' then
-        redis.call('HSET', nkey, 'fixes', label)
+        nfields[#nfields + 1] = 'fixes'
+        nfields[#nfields + 1] = label
         redis.call('HSET', ckey, 'fixed_by', new_label)
       else
-        redis.call('HSET', nkey, 'supersedes', label)
-        redis.call('HSET', ckey, 'state', 'superseded', 'superseded_by', new_label)
-        move(S, label, 'ended', 'superseded')
+        nfields[#nfields + 1] = 'supersedes'
+        nfields[#nfields + 1] = label
       end
-      redis.call('SADD', 's:' .. S .. ':idx:card:queued', new_label)
-      redis.call('ZADD', 's:' .. S .. ':pool', at - 10000000000000, new_label)
+      local nerr = CARD.create(nkey, nfields, { stream = lineage[1] or '', by = actor })
+      if not nerr then
+        nerr = CARD.move(nkey, 'ready', { by = actor, why = 'classify ' .. action, priority = at - 10000000000000 })
+      end
+      if nerr then return redis.error_reply('ns_classify: ' .. nerr) end
       record(S, ckey, classkey, label, event_id, action, actor, at)
       return finish(S, event_id, action)
     end

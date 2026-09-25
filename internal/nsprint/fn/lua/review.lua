@@ -3,6 +3,9 @@
 -- Every function that writes checks lease:route:<S> instance against the caller's
 -- instance. If they differ, it returns { 'LEASE', holder } and writes nothing.
 do
+  -- The land-ready write is NS.card (02_card_move.lua): done -> done.
+  local CARD = NS.card
+
   local function now_ms()
     local t = redis.call('TIME')
     return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
@@ -135,11 +138,9 @@ do
       redis.call('HDEL', unres_key, short_field)
       local card_key = 's:' .. S .. ':card:' .. label
       local cur_state = redis.call('HGET', card_key, 'state')
-      if cur_state == 'review-ready' then
-        local at = tostring(now_ms())
-        redis.call('HSET', card_key, 'state', 'land-ready', 'land_ready_at', at)
-        redis.call('SREM', 's:' .. S .. ':idx:card:review-ready', label)
-        redis.call('SADD', 's:' .. S .. ':idx:card:land-ready', label)
+      local at = tostring(now_ms())
+      if cur_state == 'review-ready' and not CARD.move(card_key, 'done', { state = 'land-ready',
+          by = actor, why = 'reads', fields = { 'land_ready_at', at } }) then
         redis.call('XADD', 's:' .. S .. ':log', '*',
           'kind', 'card', 'id', label, 'from', 'review-ready', 'to', 'land-ready',
           'attempt', tostring(attempt or 0), 'token_sha', '', 'actor', actor or '',

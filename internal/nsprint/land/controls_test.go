@@ -800,6 +800,7 @@ func TestL31d(t *testing.T) {
 		token := attempt + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 
 		endRes, err := ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
@@ -890,6 +891,7 @@ func TestL31d(t *testing.T) {
 		token := attempt + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
@@ -1123,6 +1125,7 @@ func TestL31d(t *testing.T) {
 		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
@@ -1139,6 +1142,7 @@ func TestL31d(t *testing.T) {
 		token2 := vals2[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-2", "identity", identity2, "token", token2, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token2, Identity: identity2,
@@ -1178,6 +1182,7 @@ func TestL31d(t *testing.T) {
 		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
 			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "pkgA", Test: "TestA", Actor: "wrapper",
@@ -1193,6 +1198,7 @@ func TestL31d(t *testing.T) {
 		token2 := vals2[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-2", "identity", identity2, "token", token2, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 		rEnd2, _ := ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token2, Identity: identity2,
 			Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper",
@@ -1215,6 +1221,7 @@ func TestL31d(t *testing.T) {
 		token3 := vals3[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity3, "token", token3, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 		rEnd3, _ := ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token3, Identity: identity3,
 			Outcome: "DONE", Reason: "done", Verdict: "OK", Actor: "wrapper",
@@ -1248,6 +1255,7 @@ func TestL31d(t *testing.T) {
 		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 
 		r, err := ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
@@ -1300,6 +1308,7 @@ func TestL31d(t *testing.T) {
 		token := vals[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity, "token", token, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token, Identity: identity,
 			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "p", Test: "t", Actor: "wrapper",
@@ -1315,6 +1324,7 @@ func TestL31d(t *testing.T) {
 		token2 := vals2[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-2", "identity", identity2, "token", token2, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token2, Identity: identity2,
 			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "p", Test: "t", Actor: "wrapper",
@@ -1330,6 +1340,7 @@ func TestL31d(t *testing.T) {
 		token3 := vals3[1].(string) + ".0123456789abcdef0123456789abcdef"
 		f.client.HSet(f.ctx, key, "state", "dealt", "bench", "bench-1", "identity", identity3, "token", token3, "token_sha", "abcdefabcdef")
 		f.client.SMove(f.ctx, "s:"+f.sprint+":idx:card:queued", "s:"+f.sprint+":idx:card:dealt", label)
+		f.client.FCall(f.ctx, "ns_card_repair", nil, f.sprint) // the hand deal bypassed the card move (#3692)
 		ci.End(f.ctx, st, ci.EndRecord{
 			Sprint: f.sprint, Label: label, Token: token3, Identity: identity3,
 			Outcome: "DONE", Reason: "done", Verdict: "FAIL", Pkg: "p", Test: "t", Actor: "wrapper",

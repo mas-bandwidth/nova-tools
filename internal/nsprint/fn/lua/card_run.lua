@@ -17,6 +17,12 @@ end
 -- do-block (like harvest.lua), so its locals never add to the library's
 -- 200-local main-function limit (dev crossed it at 6bf01359, #3487).
 do
+-- Every state write here is NS.card (02_card_move.lua): launched and beat
+-- are working -> working, end is working -> done (ok when DONE and the
+-- attempt's typed result is not invalid, else fail), and a result stored
+-- invalid after a DONE end moves done/ok -> done/fail.
+local CARD = NS.card
+
 local function reply(code, status, attempt, receipt)
   if attempt == nil then attempt = '' end
   if receipt == nil then receipt = '' end
@@ -163,11 +169,16 @@ redis.register_function('ns_card_launched', function(keys, args)
     if not deadline_ms or deadline_ms < 1 then return reply(2, 'STATE', attempt, '') end
     if tonumber(at) >= deadline_ms then return reply(2, 'TIMEOUT', attempt, '') end
   end
+  local fields = { 'branch', branch, 'jobdir', jobdir, 'launched_at', at }
+  if wall_max_s ~= '' then
+    fields[#fields + 1] = 'wall_max_s'
+    fields[#fields + 1] = wall_max_s
+  end
+  if CARD.move(card_key, 'working', { state = 'launched', fields = fields, by = 'card-launched', why = 'launched' }) then
+    return reply(2, 'STATE', attempt, '')
+  end
   local receipt = xadd(log_key, label, 'dealt', 'launched', attempt, hget(card_key, 'token_sha'), 'card-launched', 'launched', branch, idem, at)
-  redis.call('HSET', card_key, 'state', 'launched', 'branch', branch, 'jobdir', jobdir, 'launched_at', at, 'launched_receipt', receipt)
-  if wall_max_s ~= '' then redis.call('HSET', card_key, 'wall_max_s', wall_max_s) end
-  redis.call('SREM', 's:' .. sprint .. ':idx:card:dealt', label)
-  redis.call('SADD', 's:' .. sprint .. ':idx:card:launched', label)
+  redis.call('HSET', card_key, 'launched_receipt', receipt)
   redis.call('HSET', idem_key, idem, receipt)
   return reply(0, 'OK', attempt, receipt)
 end)
@@ -189,12 +200,14 @@ redis.register_function('ns_card_beat', function(keys, args)
   local member = sprint .. '/' .. label .. '/' .. attempt
   local from = state
   if state == 'launched' then
+    if CARD.move(card_key, 'working', { state = 'running', fields = { 'beat_at', at }, by = 'card-beat', why = 'beat' }) then
+      return reply(2, 'STATE', attempt, '')
+    end
     redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-    redis.call('SREM', 's:' .. sprint .. ':idx:card:launched', label)
-    redis.call('SADD', 's:' .. sprint .. ':idx:card:running', label)
+  else
+    redis.call('HSET', card_key, 'beat_at', at)
   end
   redis.call('ZADD', 'bench:' .. bench .. ':living', at, member)
-  redis.call('HSET', card_key, 'state', 'running', 'beat_at', at)
   local idem = 'beat:' .. hget(card_key, 'identity') .. ':' .. at
   local receipt = xadd(log_key, label, from, 'running', attempt, hget(card_key, 'token_sha'), 'card-beat', 'beat', '-', idem, at)
   return reply(0, 'OK', attempt, receipt)
@@ -278,23 +291,21 @@ redis.register_function('ns_card_end', function(keys, args)
 
   local at = now_ms()
   local member = sprint .. '/' .. label .. '/' .. attempt
-  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
-  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
-  redis.call('SREM', 's:' .. sprint .. ':idx:card:' .. state, label)
-  redis.call('SADD', 's:' .. sprint .. ':idx:card:ended', label)
-  redis.call('SADD', 's:' .. sprint .. ':bench:' .. bench .. ':ended', label)
   local actor = 'card-resolve'
   if mode == 'token' then actor = 'card-end' end
+  -- DONE with a typed result that is not invalid is ok; any other end is fail.
+  local ok = 'fail'
+  if record_outcome == 'DONE' and hget(card_key .. ':result:a' .. attempt, 'valid') ~= '0' then ok = 'ok' end
+  if CARD.move(card_key, 'done', { state = 'ended', ok = ok, by = actor, why = record_reason,
+      fields = { 'outcome', record_outcome, 'reason', record_reason, 'exit', record_exit,
+        'pushed_sha', record_pushed, 'results', results, 'ended_at', at } }) then
+    return reply(2, 'STATE', attempt, '')
+  end
+  redis.call('ZREM', 'bench:' .. bench .. ':starting', member)
+  redis.call('ZREM', 'bench:' .. bench .. ':living', member)
+  redis.call('SADD', 's:' .. sprint .. ':bench:' .. bench .. ':ended', label)
   local receipt = xadd(log_key, label, state, 'ended', attempt, stored_sha, actor, record_reason, results, idem, at)
-  redis.call('HSET', card_key,
-    'state', 'ended',
-    'outcome', record_outcome,
-    'reason', record_reason,
-    'exit', record_exit,
-    'pushed_sha', record_pushed,
-    'results', results,
-    'ended_at', at,
-    'end_receipt', receipt)
+  redis.call('HSET', card_key, 'end_receipt', receipt)
   redis.call('HSET', idem_key, idem, receipt)
   return reply(0, 'OK', attempt, receipt)
 end)
@@ -441,6 +452,20 @@ redis.register_function('ns_card_result', function(keys, args)
   hset_args[9] = field
   hset_args[11] = defect
 
+  -- An invalid result of the attempt that ended DONE moves the card done/ok
+  -- -> done/fail BEFORE the result is stored. A refused move (drift) stores
+  -- nothing, logs the refusal to sprint:<S>:moves and returns 2|MOVE with
+  -- that receipt: the card stays where its sets say, and the wrapper sees a
+  -- non-zero code.
+  if valid ~= '1' and attempt == v_attempt and hget(card_key, 'where') == 'done' and hget(card_key, 'where_ok') == 'ok' then
+    local refused = CARD.move(card_key, 'done', { ok = 'fail', by = 'card-result', why = 'result ' .. field .. ' ' .. defect })
+    if refused then
+      local r = redis.call('XADD', 'sprint:' .. sprint .. ':moves', 'MAXLEN', '~', '100000', '*',
+        'id', card_key, 'stream', hget(card_key, 'stream'), 'from', 'done/ok', 'to', 'REFUSED',
+        'by', 'card-result', 'why', refused, 'at', at)
+      return reply(2, 'MOVE', attempt, r)
+    end
+  end
   redis.call('HSET', unpack(hset_args))
   return reply(0, 'OK', attempt, '')
 end)

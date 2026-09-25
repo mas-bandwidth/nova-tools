@@ -16,7 +16,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// runCardPool runs card push, release, show and bench-side stop; runCard (card_run.go) routes them here.
+// runCardPool runs card push, release, show, bench-side stop, and the card
+// model's fsck and ls (card_fsck.go); runCard (card_run.go) routes them here.
 func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		return refuse(stderr, "card", "needs push, release, show or stop")
@@ -30,8 +31,12 @@ func runCardPool(ctx context.Context, args []string, stdout, stderr io.Writer) i
 		return cmdCardStop(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "show":
 		return cmdCardShow(ctx, args[1:], stdout, stderr)
+	case "fsck":
+		return cmdCardFsck(ctx, args[1:], stdout, stderr)
+	case "ls":
+		return cmdCardLs(ctx, args[1:], stdout, stderr)
 	default:
-		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release, show or stop")
+		return refuse(stderr, "card", "unknown subcommand "+args[0]+"; it wants push, release, show, stop, fsck or ls")
 	}
 }
 

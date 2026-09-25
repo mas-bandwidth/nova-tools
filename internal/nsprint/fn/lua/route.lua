@@ -8,6 +8,9 @@
 -- result and acks). The locals are scoped to this block so the library's one
 -- chunk does not carry them.
 do
+  -- The review-ready write is NS.card (02_card_move.lua): done -> done.
+  local CARD = NS.card
+
   local function now_ms()
     local t = redis.call('TIME')
     return tonumber(t[1]) * 1000 + math.floor(tonumber(t[2]) / 1000)
@@ -173,6 +176,10 @@ do
         end
       end
       local at = now_ms()
+      -- The move is the first write: a refusal (drift) writes nothing.
+      local refused = CARD.move(card, 'done', { state = 'review-ready', by = actor, why = 'reads',
+        fields = { 'review_at', tostring(at) } })
+      if refused then return { 'RETRY', refused } end
       local ids = {}
       local idem = group .. ':' .. event_id
       local ref = redis.call('HGET', card, 'identity') or ''
@@ -186,9 +193,6 @@ do
           friend, true, priority, payload_sha, actor, idem, at)
         ids[#ids + 1] = status .. ' ' .. id
       end
-      redis.call('HSET', card, 'state', 'review-ready', 'review_at', tostring(at))
-      redis.call('SREM', 's:' .. S .. ':idx:card:harvested', label)
-      redis.call('SADD', 's:' .. S .. ':idx:card:review-ready', label)
       receipt(S, 'card', label, 'harvested', 'review-ready', attempt, actor, 'reads', table.concat(ids, ','), idem, at)
       result = table.concat(ids, ',')
     end
