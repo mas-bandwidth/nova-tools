@@ -5,6 +5,9 @@
 do
   -- The land-ready write is NS.card (02_card_move.lua): done -> done.
   local CARD = NS.card
+  -- A first read is pushed by NS.fq (friend_queue.lua), the one writer of a
+  -- friend queue task (#3773).
+  local FQ = NS.fq
 
   local function now_ms()
     local t = redis.call('TIME')
@@ -119,9 +122,10 @@ do
   -- writes it when it opens the PR) queues need read tasks at head, one per
   -- distinct UP friend (friend:<f> up=1, no friend:<f>:down), never an
   -- author or jev, least-loaded first (friend:<f> ready + working, then
-  -- name). The task is the friend queue's shape: task:<id> hash, q:<f>
-  -- stream entry `id`, sprint:<S>:idx:<f>:open (and ws:<stream>:ready when
-  -- the stream index holds the stream). The first reader's id is
+  -- name). Each read is pushed by FQ.push, exactly as `friend-queue push
+  -- --kind read --ref <PR URL> --title 'STREAM: <stream> | ...' --head
+  -- <head>` pushes it (#3773: a hash written here with state=ready was
+  -- invisible to friend-queue list, counts, take and cancel). The first reader's id is
   -- read-<n>-<head8> (the id ns_route_read and ns_route_pr_read use, so an
   -- existing one counts as that owner's read); a second distinct reader
   -- gets read-<n>-<head8>-<friend>. s:<S>:reads:<repo>#<n>@<head> (friend
@@ -197,7 +201,6 @@ do
       end)
     end
     local at = now_ms()
-    local ws = stream ~= '' and redis.call('SISMEMBER', 'ws:names', stream) == 1
     local out = {}
     local i = 1
     while nhave < need and i <= #pool do
@@ -207,34 +210,21 @@ do
       if redis.call('EXISTS', 'task:' .. id) == 1 then
         id = base .. '-' .. f
       end
-      if redis.call('EXISTS', 'task:' .. id) == 0 then
-        local state = 'open'
-        if ws then
-          state = 'ready'
-        end
-        local title = 'STREAM: ' .. stream .. ' | read ' .. name .. '#' .. pr .. ' at ' .. head8 .. ' (' .. label .. ')'
-        local xid = redis.call('XADD', 'q:' .. f, '*', 'id', id)
-        redis.call('HSET', 'task:' .. id,
-          'kind', 'read', 'ref', ref, 'repo', repo, 'pr', pr, 'head', head,
-          'owner', f, 'title', title, 'state', state, 'stream', stream, 'sprint', S,
-          'card', label, 'route', 'first-read', 'created_at', tostring(at), 'state_at', tostring(at),
-          'front', '0', 'queue', 'q:' .. f, 'xid', xid)
-        redis.call('SADD', 'sprint:' .. S .. ':tasks', id)
-        redis.call('SADD', 'sprint:' .. S .. ':idx:' .. f .. ':open', id)
-        if ws then
-          redis.call('ZADD', 'ws:' .. stream .. ':ready', at, id)
-          redis.call('XADD', 'ws:log', 'MAXLEN', '~', 100000, '*', 'id', id, 'stream', stream,
-            'from', '', 'to', state, 'by', actor, 'why', 'first read', 'at', tostring(at))
-        end
+      local title = 'STREAM: ' .. stream .. ' | read ' .. name .. '#' .. pr .. ' at ' .. head8 .. ' (' .. label .. ')'
+      local xid, why = FQ.push(S, id, f, 'read', ref, title, head, false, at)
+      if xid then
         redis.call('XADD', log, '*', 'kind', 'read queued', 'id', id, 'repo', repo, 'pr', pr,
           'head', head, 'to', f, 'card', label, 'load', tostring(load), 'actor', actor,
           'idem', 'first-read:' .. member .. ':' .. f, 'at', tostring(at))
         out[#out + 1] = f
         out[#out + 1] = id
       end
-      redis.call('HSETNX', rkey, f, id)
-      have[f] = true
-      nhave = nhave + 1
+      -- A read already pushed under this id counts; a refused push does not.
+      if xid or why == 'exists' then
+        redis.call('HSETNX', rkey, f, id)
+        have[f] = true
+        nhave = nhave + 1
+      end
     end
     if nhave < need then
       redis.call('ZADD', pending, 'NX', tonumber(event_at) or at, member)
