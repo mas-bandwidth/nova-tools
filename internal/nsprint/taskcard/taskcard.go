@@ -326,21 +326,43 @@ func Beat(ctx context.Context, c redis.Cmdable, id, as string) (int64, error) {
 
 // Expire moves every working task of the friends (every member of friends
 // when none is named) whose lease lapsed back to ready, why=lease lapsed,
-// and returns their ids.
+// and returns their ids. Reap is the same call with the unlinked ids too.
 func Expire(ctx context.Context, c redis.Cmdable, by string, friends ...string) ([]string, error) {
+	r, err := Reap(ctx, c, by, friends...)
+	return r.Expired, err
+}
+
+// Reaped is one ns_tcard_expire sweep (#3892): Expired are the working
+// tasks whose lease lapsed, moved back to ready; Unlinked are the ids that
+// left a friend's working set because their record is not that friend's
+// working task (closed, landed, done, another friend's, or no record).
+type Reaped struct {
+	Expired, Unlinked []string
+}
+
+// Reap is one ns_tcard_expire over the friends' working sets (every member
+// of friends when none is named): so friend:<f>:cards:working holds only
+// tasks a live lease holds, and the table's working column never counts a
+// finished task.
+func Reap(ctx context.Context, c redis.Cmdable, by string, friends ...string) (Reaped, error) {
 	args := []any{by}
 	for _, f := range friends {
 		args = append(args, f)
 	}
 	reply, err := c.FCall(ctx, FnExpire, nil, args...).Result()
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", FnExpire, err)
+		return Reaped{}, fmt.Errorf("%s: %w", FnExpire, err)
 	}
 	out, err := list(reply)
-	if err != nil || len(out) < 2 || out[0] != "EXPIRED" {
-		return nil, fmt.Errorf("%s: unexpected reply %v %v", FnExpire, out, err)
+	if err != nil || len(out) < 3 || out[0] != "EXPIRED" {
+		return Reaped{}, fmt.Errorf("%s: unexpected reply %v %v", FnExpire, out, err)
 	}
-	return out[2:], nil
+	n, nerr := strconv.Atoi(out[1])
+	m, merr := strconv.Atoi(out[2])
+	if nerr != nil || merr != nil || n < 0 || m < 0 || len(out) != 3+n+m {
+		return Reaped{}, fmt.Errorf("%s: unexpected reply %v", FnExpire, out)
+	}
+	return Reaped{Expired: out[3 : 3+n], Unlinked: out[3+n:]}, nil
 }
 
 // Ls is one ZRANGE: a stream's tasks at a where, oldest first.

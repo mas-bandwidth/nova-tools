@@ -57,7 +57,7 @@ done moves working -> merging when the task names a PR (its pr field or --pr), e
 land moves merging (or working) -> landed at the merge sha; land --stream moves every
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
-renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready.
+renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready and unlinks a finished task left in a friend's working set.
 fsck prints one line per drift and exits 1 when there is any.
 `
 
@@ -344,11 +344,12 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	case "front", "move":
 		return c.replace(ctx, st, sub, o, moved)
 	case "expire":
-		ids, err := taskcard.Expire(ctx, cl, *c.actor, c.friends...)
+		r, err := taskcard.Reap(ctx, cl, *c.actor, c.friends...)
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
-		_, _ = fmt.Fprintf(out, "TASK expire n=%d ids=%s ms=%d\n", len(ids), strings.Join(ids, ","), ms())
+		_, _ = fmt.Fprintf(out, "TASK expire n=%d ids=%s unlinked=%d unlinked_ids=%s ms=%d\n", len(r.Expired), strings.Join(r.Expired, ","),
+			len(r.Unlinked), strings.Join(r.Unlinked, ","), ms())
 		return 0
 	case "ls":
 		var ids []string
@@ -472,12 +473,14 @@ func counts(m map[string]int, places bool) string {
 // taskLeaseDuty is the reconciler's lease sweep over task cards (#3778, Glenn
 // 08:15 AM: "rowan working=65 while two children were alive"): every pass
 // moves each working task whose lease lapsed back to ready (ns_tcard_expire),
-// so a friend's working column counts only tasks a live child beats.
+// and unlinks from friend:<f>:cards:working every id whose record is not
+// that friend's working task (#3892: emma's 11 finished cards), so a
+// friend's working set holds only tasks a live lease holds.
 type taskLeaseDuty struct{ st *store.Store }
 
 func (d *taskLeaseDuty) Run(ctx context.Context, _ *reconcile.Lease) (reconcile.Counts, error) {
-	ids, err := taskcard.Expire(ctx, d.st.Client(), "reconciler")
-	return reconcile.Counts{Expired: len(ids)}, err
+	r, err := taskcard.Reap(ctx, d.st.Client(), "reconciler")
+	return reconcile.Counts{Expired: len(r.Expired), Reaped: len(r.Unlinked)}, err
 }
 
 func init() {

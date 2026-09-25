@@ -2,6 +2,7 @@ package taskcard_test
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -327,4 +328,94 @@ func TestLandStreamLandsEveryMergingMember(t *testing.T) {
 		t.Fatalf("m3 (not merging) moved to %s", w)
 	}
 	clean(t, c, "land stream")
+}
+
+// TestReapUnlinksFinishedFromWorking is #3892's reaper (emma showed 17
+// working with 5 live children: 11 finished cards never left
+// friend:emma:cards:working): one ns_tcard_expire sweep moves a working task
+// whose lease lapsed back to ready (the lease rule), and unlinks from the
+// working set a task whose record is landed or done and an id with no
+// record, each with a ws:log receipt; the live task stays, the finished
+// record keeps its own place, and fsck is clean after.
+func TestReapUnlinksFinishedFromWorking(t *testing.T) {
+	c := start(t)
+	ctx := context.Background()
+	ids := []string{"r-live", "r-lapsed", "r-done", "r-landed"}
+	for _, id := range ids {
+		if _, err := taskcard.Push(ctx, c, taskcard.PushRequest{ID: id, Stream: stream, Friend: "rowan", Sprint: sprint}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got, err := taskcard.Take(ctx, c, "rowan", 4, "rowan"); err != nil || len(got) != 4 {
+		t.Fatalf("take %v %v", got, err)
+	}
+	if _, err := taskcard.Beat(ctx, c, "r-live", "rowan"); err != nil {
+		t.Fatal(err)
+	}
+	c.HSet(ctx, "task:r-lapsed", "lease_until", time.Now().Add(-time.Minute).UnixMilli())
+	if _, err := taskcard.Done(ctx, c, "r-done", "rowan", "ok", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := taskcard.Land(ctx, c, "r-landed", "rowan", "0123456789abcdef0123456789abcdef01234567", "merged"); err != nil {
+		t.Fatal(err)
+	}
+	clean(t, c, "before the drift")
+	// The drift the table showed: finished records still in the working set,
+	// and an id whose record is gone.
+	working := taskcard.FriendKey("rowan", "working")
+	for _, id := range []string{"r-done", "r-landed"} {
+		created, _ := c.HGet(ctx, taskcard.Key(id), "created_at").Int64()
+		c.ZAdd(ctx, working, redis.Z{Score: float64(created), Member: id})
+	}
+	c.ZAdd(ctx, working, redis.Z{Score: 1, Member: "r-gone"})
+	if n := c.ZCard(ctx, working).Val(); n != 5 {
+		t.Fatalf("seeded working %d, want 5", n)
+	}
+	logBefore := c.XLen(ctx, "ws:log").Val()
+
+	r, err := taskcard.Reap(ctx, c, "reconciler")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(r.Expired, ",") != "r-lapsed" {
+		t.Fatalf("expired %v, want r-lapsed", r.Expired)
+	}
+	unlinked := append([]string(nil), r.Unlinked...)
+	sort.Strings(unlinked)
+	if strings.Join(unlinked, ",") != "r-done,r-gone,r-landed" {
+		t.Fatalf("unlinked %v, want r-done r-gone r-landed", r.Unlinked)
+	}
+	if got := c.ZRange(ctx, working, 0, -1).Val(); strings.Join(got, ",") != "r-live" {
+		t.Fatalf("rowan working %v, want only r-live", got)
+	}
+	if h := c.HGetAll(ctx, taskcard.Key("r-lapsed")).Val(); h["where"] != "ready" || h["why"] != "lease lapsed" {
+		t.Fatalf("lapsed record %v", h)
+	}
+	for id, where := range map[string]string{"r-done": "done", "r-landed": "landed"} {
+		if c.ZScore(ctx, taskcard.FriendKey("rowan", where), id).Err() != nil || c.HGet(ctx, taskcard.Key(id), "where").Val() != where {
+			t.Fatalf("%s left its own place %s", id, where)
+		}
+	}
+	// One receipt per move: the lease back to ready, three unlinks.
+	if n := c.XLen(ctx, "ws:log").Val() - logBefore; n != 4 {
+		t.Fatalf("ws:log grew by %d, want 4", n)
+	}
+	unlinks := 0
+	for _, m := range c.XRevRangeN(ctx, "ws:log", "+", "-", 4).Val() {
+		if m.Values["to"] != "unlinked" {
+			continue
+		}
+		unlinks++
+		if why, _ := m.Values["why"].(string); !strings.HasPrefix(why, "stray "+working+": ") {
+			t.Fatalf("unlink receipt %v", m.Values)
+		}
+	}
+	if unlinks != 3 {
+		t.Fatalf("%d unlink receipts, want 3", unlinks)
+	}
+	clean(t, c, "after the reap")
+	// A second sweep has nothing to do.
+	if r, err := taskcard.Reap(ctx, c, "reconciler"); err != nil || len(r.Expired)+len(r.Unlinked) != 0 {
+		t.Fatalf("second sweep %+v %v", r, err)
+	}
 }
