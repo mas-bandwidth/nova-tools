@@ -1352,6 +1352,18 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	emitCardEnd(context.Background(), events.WriterOptions{
 		Addr: *eventsStore, Log: stderr, Timeout: nativeEventTimeout,
 	}, cfg, res, verdict, benchName())
+	// THE CARD WRAPPER'S HAND-OFF (swarm cardout.go). Under nova-card the harness is
+	// handed NOVA_CARD_OUT, and the wrapper commits $NOVA_CARD_OUT/repo and reads
+	// $NOVA_CARD_OUT/RESULT.md; the card cloned into this job instead, in a slot the bench
+	// chose. The repo moves there after every report line and the card-end entry have read
+	// the job, and before --sweep-now can delete it. No NOVA_CARD_OUT is no hand-off.
+	if res.job != "" {
+		if h, err := swarm.HandOffCardOut(res.job, os.Getenv(swarm.CardOutEnv)); err != nil {
+			fmt.Fprintf(stderr, "NATIVE NOTE: the card's work was not handed to %s: %s\n", oneline.Field(swarm.CardOutEnv), oneline.Escape(err.Error()))
+		} else if h.Repo != "" {
+			fmt.Fprintf(stderr, "NATIVE NOTE: the card's repo was handed to %s (moved=%t)\n", oneline.Field(h.Repo), h.Moved)
+		}
+	}
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A

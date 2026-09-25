@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -23,6 +24,7 @@ const (
 	fakeHarnessEnv = "WRAPPER_FAKE_HARNESS" // done, fail or hang
 	fakeGateEnv    = "WRAPPER_FAKE_GATE"    // done and fail exit once this file exists
 	fakeOriginEnv  = "WRAPPER_FAKE_ORIGIN"  // repo mode clones this into out/repo
+	fakeSlotEnv    = "WRAPPER_FAKE_SLOT"    // native modes run the card in <slot>/jobs/<label>
 )
 
 func TestMain(m *testing.M) {
@@ -40,7 +42,11 @@ func fakeHarness(mode string) int {
 		fmt.Println(kv)
 	}
 	out := os.Getenv("NOVA_CARD_OUT")
-	if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"), 0o644); err != nil {
+	if strings.HasPrefix(mode, "native") {
+		if code := fakeNative(mode, out); code != 0 {
+			return code
+		}
+	} else if err := os.WriteFile(filepath.Join(out, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\n"), 0o644); err != nil {
 		fmt.Println("fake harness:", err)
 		return 9
 	}
@@ -71,6 +77,37 @@ func fakeHarness(mode string) int {
 	}
 	if mode == "fail" {
 		return 3
+	}
+	return 0
+}
+
+// fakeNative is today's native route (quack test, 2026-09-24): the card runs in
+// <slot>/jobs/<label>, a slot the bench harness picks outside the wrapper's job, its
+// STEP 1 clones there as repo (one committed base), its fix leaves one changed file,
+// and its RESULT.md is written beside the repo. mode native then makes the same
+// hand-off call nova-swarm native makes under NOVA_CARD_OUT; native-nohandoff is the
+// layout before the fix, with nothing under out.
+func fakeNative(mode, out string) int {
+	parts := strings.Split(os.Getenv("NOVA_CARD"), "/")
+	job := filepath.Join(os.Getenv(fakeSlotEnv), "jobs", parts[1])
+	repo := filepath.Join(job, "repo")
+	if msg, err := exec.Command("git", "clone", "-q", os.Getenv(fakeOriginEnv), repo).CombinedOutput(); err != nil {
+		fmt.Println("fake native clone:", err, string(msg))
+		return 9
+	}
+	if err := os.WriteFile(filepath.Join(repo, "base.txt"), []byte("base\nthe card's fix\n"), 0o644); err != nil {
+		fmt.Println("fake native:", err)
+		return 9
+	}
+	if err := os.WriteFile(filepath.Join(job, "RESULT.md"), []byte("RESULT: "+os.Getenv("NOVA_CARD")+" sha=000000000000\nfixed; tests pass\n"), 0o644); err != nil {
+		fmt.Println("fake native:", err)
+		return 9
+	}
+	if mode == "native" {
+		if _, err := swarm.HandOffCardOut(job, out); err != nil {
+			fmt.Println("fake native hand-off:", err)
+			return 9
+		}
 	}
 	return 0
 }
