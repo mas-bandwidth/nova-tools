@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land/fenced"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
@@ -35,7 +36,7 @@ func init() {
 	})
 	register(Verb{
 		Name:    "land",
-		Summary: "land status|flaky|stream|merge ...: lander status, flaky store, and the stream landing (land stream/merge, land status --repo)",
+		Summary: "land status|flaky|stream|merge|run|offer|list ...: lander status, flaky store, the stream landing (land stream/merge, land status --repo), and the fenced stream-PR lander (land run/offer/list, #2942)",
 		Run:     runLand,
 	})
 }
@@ -140,10 +141,18 @@ func unitHeader(u *land.Unit) string {
 
 func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if len(args) == 0 {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or run or offer or list (land run is the fenced stream-PR lander, #2942)")
 	}
 	if args[0] == "writer" {
 		return runLandWriter(ctx, args[1:], out, errOut)
+	}
+	switch args[0] {
+	case "run":
+		return runLandRun(ctx, args[1:], out, errOut)
+	case "offer":
+		return runLandOffer(ctx, args[1:], out, errOut)
+	case "list":
+		return runLandList(ctx, args[1:], out, errOut)
 	}
 	if args[0] == "eval" {
 		return runLandEval(ctx, args[1:], out, errOut)
@@ -164,7 +173,7 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 		return runLandStreamStatus(ctx, args[1:], out, errOut)
 	}
 	if args[0] != "status" {
-		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge (sprint land is the lander's verb, #2942)")
+		return refuse(errOut, "land", "want status or flaky or writer or eval or stream or merge or run or offer or list (land run is the fenced stream-PR lander, #2942)")
 	}
 	const usage = "land status [<unit>] --redis <addr> --sprint <S>"
 	addr, sprint, now, pos, err := readFlags("land status", args[1:])
@@ -209,6 +218,11 @@ func runLand(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	for _, line := range land.Status(snap, now) {
 		fmt.Fprintln(out, line)
+	}
+	if x, y, any, err := fenced.StreamsLanded(ctx, st.Client(), sprint); err != nil {
+		return refuse77(errOut, "land status", "read: "+err.Error(), usage)
+	} else if any {
+		fmt.Fprintf(out, "streams landed %d/%d\n", x, y)
 	}
 	return 0
 }
