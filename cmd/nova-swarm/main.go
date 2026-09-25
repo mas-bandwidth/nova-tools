@@ -59,7 +59,7 @@ usage:
   nova-swarm finalize  --pool <dir> --task <id>
   nova-swarm quickstart --pool <dir>
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
    nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
    nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
    nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
@@ -1023,11 +1023,16 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// with the working directory.
 	resultsRootFlag := f.fs.String("results-root", "", "")
 	sweepNow := f.fs.Bool("sweep-now", false, "")
-	// THE BENCH SLOT LEASE (nova-tools#1546). --slots-store names the store and --owner
-	// whose share the one lease per run counts against. BOTH ARE REQUIRED: see
-	// swarm.NoSlotsStoreRefusal for why there is no optional mode and no default.
-	slotsStore := f.fs.String("slots-store", "", "")
-	slotOwner := f.fs.String("owner", "", "")
+	// ONE SLOT LEDGER (nova-tools#3877). native takes NO bench slot lease: a bench's
+	// capacity is bench:<b>:desired in Redis, and the dealer is the one place a card is
+	// admitted or refused against it. The file ledger this verb used to lease from
+	// (~/nova-bench/slots) refused seven dealt cards on batman on 2026-09-25 with
+	// `SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the
+	// bench had room: two ledgers, two answers. --slots-store and --owner are still
+	// ACCEPTED so a caller built before this change is not refused on an unknown flag,
+	// and they are read by nothing.
+	_ = f.fs.String("slots-store", "", "")
+	_ = f.fs.String("owner", "", "")
 	// THE BUDGET (SPEC-SWARM rule 13d, issue #1545). "`native` takes `--tokens <n>` or
 	// `--tokens unmetered`; without it the verb is exit 2 naming the flag, and `0` is
 	// refused, exactly as on `add`." It is read by the SAME f.tokens that reads `add`'s,
@@ -1095,29 +1100,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	f.want(*deadline, "deadline", "the wall duration that kills the child (e.g. 60s, 5m)")
 	// THE WORD, READ WITH EVERY OTHER FLAG AND REFUSED WITH THEM (rule 13d). It sits in
 	// the collector so a caller who left out the budget AND the deadline is told both in
-	// one run; and it sits HERE, above every line below that touches the disk -- the slot
-	// store's lease take, and nativeRun's own job directory, data home and temp directory
-	// -- because 13d refuses "before any directory is made".
+	// one run; and it sits HERE, above every line below that touches the disk --
+	// nativeRun's own job directory, data home and temp directory -- because 13d
+	// refuses "before any directory is made".
 	budgetTokens, budgetUnmetered := f.tokens(*tokensWord)
 	if f.refused(stderr) {
-		return 2
-	}
-	// A LAUNCH WITHOUT A LEASE IS REFUSED (docs/SPEC-SWARM.md, "Bench slot leases";
-	// nova-tools#1546, and Johnny's hold on PR #1562). The first cut made the store
-	// OPTIONAL, so `native` without it ran exactly as before and took nothing -- which
-	// leaves the hole the issue was filed for wide open, because a launch that took no
-	// lease is a launch the bench cannot see, cannot count and cannot refuse. There is
-	// therefore NO default store, no store invented under --root or --slot, no owner
-	// guessed from the host or the label, no shares.tsv created on the way past, and no
-	// flag that turns this off. A bench that has no store yet makes one, once, by hand:
-	// `nova-swarm slots init`, which the remedy below names in full.
-	//
-	// It is ONE line, and it is deliberately not folded into the refusal collector above:
-	// the collector names every missing flag at once, and this is not a missing flag among
-	// others but the single sentence a caller needs to fix a launch that is otherwise
-	// complete.
-	if *slotsStore == "" || *slotOwner == "" {
-		fmt.Fprintln(stderr, swarm.NoSlotsStoreRefusal)
 		return 2
 	}
 	// CARD-8349: a card budget below the harness's MEASURED startup cost is
@@ -1220,43 +1207,6 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		cfg.worker = &w
 	}
-	// THE BENCH SLOT LEASE (nova-tools#1546). native takes ONE lease before the run
-	// starts and holds it for the run's deadline plus two minutes of grace, the same
-	// shape the dispatcher uses (internal/swarm/run.go). The lease is charged at the
-	// card kind's admission weight (#2033): a schema card that would overflow the
-	// remaining share is refused here, before any job directory is made. A take that
-	// grants nothing is a refusal, not a run, and no worker starts. The lease is released on every exit path,
-	// including a run that fails: the release is DEFERRED here, above every remaining
-	// return, so there is no exit from this function that leaves a seat held.
-	//
-	// IT RELEASES BY IDENTITY, not by owner and label (Stella's hold on PR #1562). The
-	// first cut handed `ReleaseSlotLeases(store, owner, label, false)` to the defer, and
-	// that removes EVERY lease matching the owner and the label -- so two native runs
-	// sharing a bench and a card name each gave away the other's live seat, and a run that
-	// refused before it started (a missing harness, say) deleted a lease it never took.
-	// `leaseIDs` is exactly what this invocation was granted and exactly what it hands back.
-	leasePID := os.Getpid()
-	dur := d + 2*time.Minute
-	kind := swarm.CardKindFromText(string(cardRaw))
-	weight := swarm.SlotAdmissionWeight(kind)
-	leaseIDs, held, share, free, holders, granted, lerr := swarm.TakeSlotLeasesKind(*slotsStore, *slotOwner, 1, kind, dur, lbl, time.Now().UTC(), leasePID)
-	if lerr != nil {
-		fmt.Fprintf(stderr, "nova-swarm native: the slot store could not be read: %s\n", oneline.Err(lerr))
-		return 2
-	}
-	if !granted {
-		if holders == "" {
-			holders = "-"
-		}
-		fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s\n",
-			oneline.Field(*slotOwner), weight, held, share, free, oneline.Escape(holders))
-		return 2
-	}
-	defer func() {
-		if _, err := swarm.ReleaseSlotLeasesByID(*slotsStore, leaseIDs, leasePID); err != nil {
-			fmt.Fprintf(stderr, "nova-swarm native: releasing the slot lease: %s\n", oneline.Err(err))
-		}
-	}()
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 && !res.lost && !res.unrecorded {
 		return code
@@ -1382,8 +1332,8 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 }
 
 // nativeEventTimeout bounds the card-end emit. It is short on purpose: the card is already
-// finished and its slot lease is still held, so a store that is not answering must cost
-// seconds, never the grace the lease has left.
+// finished and its dealt seat is still counted against the bench, so a store that is not
+// answering must cost seconds, never minutes.
 const nativeEventTimeout = 5 * time.Second
 
 // ------------------------------------------------------------------------------- helpers

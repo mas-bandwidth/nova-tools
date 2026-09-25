@@ -1002,7 +1002,7 @@ H4. **`MODE: script` is `--net-deny`.** MODE is read from the typed header
 ```
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--profiles <file> --profile <id>] [--model <id>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name> [--auth <file>]) [--slots <lo>-<hi>] [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--benches <file>] [--bench <name>[,<name>...]] [--no-wall]
-nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
+nova-swarm native   --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--usage-interval <s>] [--label <text>] [--auth <file>] [--worker <file>]
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
@@ -1013,7 +1013,7 @@ nova-swarm version
 nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
 nova-swarm lint      --card <file> [--max <n>] | --rules
 nova-swarm quickstart --pool <dir>
-nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered --slots-store <dir> --owner <name> [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
+nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--usage-interval <s>] [--label <text>] [--auth <file>] [--config <file>] [--worker <file>]
 nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
 nova-swarm help
 ```
@@ -2782,14 +2782,15 @@ A bench holds **slot leases**: the store is `<store>/slots` with one directory p
 
 **The launcher holds a lease per task.** `nova-swarm run --pool <dir> … --slots-store <dir> --owner <name>` takes one lease before each task starts, with `label=` the task id and `for=` the task's own deadline plus 2 minutes, and releases it the moment the task ends — `done`, `failed`, budget, or the supervisor's death, which frees it by the same live-pid fence. When the take is refused the dispatcher waits, polling every 10 s up to the task's deadline, and prints exactly one `RUN WAIT slots owner=<o> holders=<...>` line naming the holders; it never launches past the share. A dispatcher that dies leaves leases whose pid is gone, and the next take reaps them. Without `--slots-store` the launcher is unchanged. `nova-swarm status --pool <dir> --slots-store <dir> --owner <name>` prints one `STATUS SLOTS owner=<o> held=<h> share=<s>` line.
 
-**`native` requires a lease, and there is no way to ask it not to** (nova-tools#1546).
-`nova-swarm native --slots-store <dir> --owner <name>` are REQUIRED flags: the run takes
-exactly one lease before any job directory is made, holds it for the run's deadline plus
-two minutes of grace, and releases it on every exit path including a run that failed. A
-take that grants nothing prints one `SLOTS REFUSED owner=… want=<weight> held=… share=… free=…
-holders=…` line and exits 2, having started nothing. The weight is the card kind's admission
-weight, so a schema card on a share that fits only a read is refused before any job directory
-is made.
+**`native` takes no lease** (nova-tools#3877, superseding #1546 for this verb). A
+bench's capacity is `bench:<b>:desired` in Redis, and the dealer is the one place a card
+is admitted or refused against it: a card beyond it stays queued and nothing is written on
+the bench. `native` reads no slot store and writes none. Two ledgers gave two answers: on
+2026-09-25 the file store refused seven dealt cards on batman with
+`SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the bench had
+room. `--slots-store` and `--owner` are still accepted so an older caller is not refused on
+an unknown flag, and they are read by nothing. The store and the `slots` verbs below remain
+for `run`'s dispatcher until that path is retired too.
 
 **A holder releases BY IDENTITY, never by owner and label.** `TakeSlotLeases` returns the
 ids it granted — not a count — and a holder hands exactly those back to
@@ -2818,25 +2819,8 @@ second card on it. It is an operator's act at a prompt, typed by a person who kn
 the store cannot see; no card may pass it, and no manager, launcher or cleanup path passes
 it by default.
 
-Asked without either flag, `native` prints exactly one line and exits 2:
-
-```
-NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
-```
-
-There is no default store, no store invented under `--root` or `--slot`, no owner guessed
-from the host or the label, no `shares.tsv` created on the way past, and **no `--no-lease`
-flag**. The first cut of this made the store optional, so a `native` without it ran exactly
-as before and took nothing — which leaves rule 2 unmet, because a launch that took no lease
-is one the bench cannot see, cannot count and cannot refuse. That is a hole, not a default.
-
-The same rule reaches every caller that launches `native`. `nova-swarm batch` without a
-`--runner` of its own launches `native` for every card — locally and on a bench — so it
-takes the two flags and **refuses the whole batch with the same line, before any card
-runs**, rather than letting each card fail with it in turn. A batch that names its own
-`--runner` launches no `native` and is not held to this: the runner is somebody else's
-program and the bench cannot speak for what it takes. **The store path is resolved on the
-machine that runs the card**, which for a bench row is the bench.
+`nova-swarm batch` without a `--runner` of its own still takes the two flags and refuses
+the whole batch without them; the `native` it launches no longer leases from the store.
 
 **The store is the authority.** A launcher reads it before it runs and releases
 its lease after; the broker is the only writer. No owner keeps a private count

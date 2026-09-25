@@ -5,7 +5,7 @@ package main
 // rowan-tools' bash nova-card-harness did, as Go with Redis state. The card
 // wrapper reaches the same function in-process; this verb is the by-hand
 // and test entry. It reads the bench's card.env from the environment
-// (NOVA_CARD_REDIS, NOVA_CARD_BENCH, NOVA_BENCH_SEAT, NOVA_CARD_HARNESS_BIN,
+// (NOVA_CARD_REDIS, NOVA_CARD_BENCH, NOVA_CARD_HARNESS_BIN,
 // NOVA_CARD_DEADLINE, NOVA_CARD_TOKENS, HOME, and the store's
 // NOVA_SPRINT_REDIS_USER / NOVA_SPRINT_REDIS_PASSWORD_ENV), the four seat
 // keys the launcher carries, and NOVA_CARD_OUT / NOVA_CARD_JOB unless --out

@@ -2341,35 +2341,18 @@ BATCH ROUTE <model>@<auth-profile> cap=<n> peak=<n> held-back=<n>
 
 Measured 2026-09-17: above roughly 30–40 concurrent requests on one Muse contributor-free key the tail latency goes to infinity — hulk and vision returned zero results in thirteen minutes at load 0.5–2.0 — while `deepseek-flash` on the same bench in the same second answered in 11 s. A launcher with no cap turns a free tier's queue into spend.
 
-**`native` takes a bench slot lease, and refuses a launch it cannot lease (#1546).**
-`--slots-store <dir>` and `--owner <name>` are **required**. The run takes exactly one
-lease before any job directory is made, holds it for the deadline plus two minutes of
-grace, and releases it on every exit path, a failed run included. A take that grants
-nothing prints one `SLOTS REFUSED owner=… want=1 held=… share=… free=… holders=…` line and
-exits 2, having started nothing.
+**`native` takes no bench slot lease (#3877).** A bench's capacity is one number,
+`bench:<b>:desired` in Redis, and the one place a card is admitted or refused against it
+is the dealer: a card beyond it stays queued and nothing is written on the bench. `native`
+reads no slot store and writes none, so a bench with no `~/nova-bench/slots` runs a dealt
+card. The file ledger it used to lease from (#1546, #2033) was a second answer to the same
+question: on 2026-09-25 it refused seven dealt cards on batman with
+`SLOTS REFUSED owner=swarm-batman want=4 held=16 share=16` while Redis said the bench had
+room. `--slots-store` and `--owner` are still accepted, so a caller built before #3877 is
+not refused on an unknown flag, and they are read by nothing.
 
-**Capacity is refused at admission, not braked afterwards (#2033).** Card kinds carry a
-weight charged against the store's share at take, before the harness starts: a schema or
-fix-red card weighs 4 (it spawns make/cargo/dotnet); a read card weighs 1. A schema card
-on a share that fits only a read prints `SLOTS REFUSED … want=4` and starts nothing. A
-live-until lease whose pid is gone lists as `stranded=1` with its label so a manager can
-re-queue it. The load reading that used to fire at `CAPACITY cores=… load=… allowed=…`
-after the bench was already at load 172 is not the ceiling. Asked without either flag it prints one line and exits 2:
-
-```
-NATIVE REFUSED reason=no_slots_store: pass --slots-store <dir> --owner <name> (one seat: nova-swarm slots init --store <dir> --owner <name> --capacity 1 --share 1)
-```
-
-There is no default store, no owner guessed from the host or the label, no `shares.tsv`
-created on the way past, and no flag that turns it off — a launch that took no lease is one
-the bench cannot see, cannot count and cannot refuse. A bench's store is made once, by
-hand: `nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>`,
-which creates and never updates.
-
-`batch` without a `--runner` of its own runs every card through `native`, so it takes the
-same two flags and **refuses the whole batch with the same line before any card runs**. A
-batch with its own `--runner` launches no `native` and is not held to this. The store path
-is resolved on the machine that runs the card, which for a bench row is the bench.
+`batch` without a `--runner` of its own still asks for the two flags and refuses the
+whole batch without them; the store is no longer leased from by the `native` it launches.
 
 **The release is by identity.** `native` and `run` keep the lease ids `TakeSlotLeases`
 granted them and give back exactly those, pid-fenced. Releasing by owner and label would
