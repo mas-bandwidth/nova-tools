@@ -4,6 +4,10 @@ package main
 // under one lease (#2756 section 11 rows 2 and 5, 4.5; nova-tools #3036):
 //
 //	nova-sprint route --redis <addr> --sprint <S> [--actor <name>]
+//	nova-sprint route report --sprint <S> [--redis <addr>]
+//
+// route report (#3949) is route_report.go: the per-model ok, crash, refused,
+// wall, fail and open counts and mean wall of the sprint's cards.
 //
 // Rules wired: ok-to-friend (#2933), report-to-read (#3036) and pr-to-read
 // (#2941 heads and reads, joined with #3040 runner rows and no-card PR
@@ -37,12 +41,15 @@ const routeNotWired = "classify(#3076),hold-to-fix(#3092)"
 func init() {
 	register(Verb{
 		Name:    "route",
-		Summary: "run ok-to-friend, report-to-read, pr-to-read (and, once built, classify, hold-to-fix) for one sprint in one process under lease:route:<S>; a second instance exits 1 REFUSED",
+		Summary: "run ok-to-friend, report-to-read, pr-to-read (and, once built, classify, hold-to-fix) for one sprint in one process under lease:route:<S>; a second instance exits 1 REFUSED; route report --sprint <S> prints per-model ok/crash/refused/wall/fail/open and mean wall from the sprint's cards",
 		Run:     runRoute,
 	})
 }
 
 func runRoute(ctx context.Context, args []string, out, errOut io.Writer) int {
+	if len(args) > 0 && args[0] == "report" {
+		return runRouteReport(ctx, args[1:], out, errOut)
+	}
 	fs := taskFlags("route")
 	redisAddr := fs.String("redis", "", "")
 	sprint := fs.String("sprint", "", "")
