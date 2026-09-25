@@ -150,7 +150,7 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 		t.Fatalf("want 4 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
 	}
 	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=2 input=11 output=22 cache_write=4 cache_read=- reasoning=3")
-	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=4")
+	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=4 rows=5 indexed=3 missing=27")
 
 	// Re-indexing a day replaces it: the table is the day files' index, not an append log.
 	wantExit(t, invoke(t, "ledger", "--out", out, "--day", "2026-09-13", "--redis", dsn), 0)
@@ -219,6 +219,27 @@ func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
 	wantContains(t, r.stderr, "REPORT FAILED store=redis")
 	t.Setenv("LEDGER_TEST_PW", "sesame")
 	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
+	wantExit(t, r, 1)
+	wantContains(t, r.stdout, "REPORT NO month=2026-09 source=redis indexed=0")
+}
+
+// TestReportRedisNoIndexedDaysExitsOne and TestReportRedisPartialMonthNamesIndexedMissing
+// cover #3462: a month with no indexed calendar-day keys is REPORT NO exit 1, and a month
+// with only some days indexed names indexed and missing on the OK line.
+func TestReportRedisNoIndexedDaysExitsOne(t *testing.T) {
+	addr, _ := ledgerRedis(t)
+	r := invoke(t, "report", "--redis", addr, "--month", "2026-08")
+	wantExit(t, r, 1)
+	wantContains(t, r.stdout, "REPORT NO month=2026-08 source=redis indexed=0")
+}
+
+func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {
+	addr, mr := ledgerRedis(t)
+	// Seed only two of September's 30 days.
+	mr.HSet("tokens:ledger:2026-09-05", `["c","m","r"]`, `{"provider":"x","tokens":[10,20,null,null,3],"sources":"x:o"}`)
+	mr.HSet("tokens:ledger:2026-09-20", `["c2","m2","r2"]`, `{"provider":"y","tokens":[5,10,1,null,0],"sources":"y:o"}`)
+
+	r := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--by", "tuple")
 	wantExit(t, r, 0)
-	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=0 rows=0")
+	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=2 rows=2 indexed=2 missing=28")
 }
