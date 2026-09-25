@@ -232,7 +232,8 @@ end
 -- script's earlier writes when it errors, so no write happens until every
 -- check has passed; the write phase has no check that can refuse.
 -- args = sprint, sha, body, applied_by, routes_sha, backpressure_missing,
--- ci_reruns, readers, absent_after, n, then kind, name, machine, slots per row.
+-- ci_reruns, readers, absent_after, n, then kind, name, machine, slots per row,
+-- then optionally fix_to and release_reader (#3798), both registered friends.
 local function sprint_plan(keys, args)
   -- 1. Authority: only a seat whose ACL may HSET authz:sprint-plan applies a
   -- plan. The key is never written; it names the right.
@@ -243,8 +244,17 @@ local function sprint_plan(keys, args)
   -- 2. Check.
   local s, sha, body, applied_by, routes_sha = args[1], args[2], args[3], args[4], args[5]
   local n = tonumber(args[10])
-  if not s or s == '' or not sha or sha == '' or not n or #args ~= 10 + 4 * n then
+  if not s or s == '' or not sha or sha == '' or not n or (#args ~= 10 + 4 * n and #args ~= 12 + 4 * n) then
     return { 'INVALID', 'argv' }
+  end
+  local fix_to, release_reader = args[11 + 4 * n], args[12 + 4 * n]
+  for _, f in ipairs({ fix_to, release_reader }) do
+    if f == '' then
+      return { 'INVALID', 'hold policy' }
+    end
+    if redis.call('SISMEMBER', 'friends', f) == 0 then
+      return { 'UNREGISTERED', 'friend:' .. f }
+    end
   end
   local plan_key = 's:' .. s .. ':plan'
   local policy_key = 's:' .. s .. ':policy'
@@ -345,6 +355,9 @@ local function sprint_plan(keys, args)
   redis.call('HSET', policy_key,
     'backpressure_missing', args[6], 'ci_reruns', args[7], 'readers', args[8],
     'absent_after', args[9], 'at', tostring(at))
+  if fix_to then
+    redis.call('HSET', policy_key, 'fix_to', fix_to, 'release_reader', release_reader)
+  end
   redis.call('HSET', plan_key,
     'version', '1', 'sha', sha, 'body', body, 'rows', tostring(n),
     'routes_sha', routes_sha, 'applied_at', tostring(at), 'applied_by', applied_by)
