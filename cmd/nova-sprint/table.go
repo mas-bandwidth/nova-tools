@@ -136,13 +136,17 @@ type tableTick func(context.Context) (body string, code int, err error)
 // onto out, so a reader sees the old table or the new one, never half of one
 // (#3343). It returns when ctx is done.
 func tablePublishLoop(ctx context.Context, tick tableTick, loop bool, every time.Duration, out string, stdout, stderr io.Writer) int {
+	drawer := newTermDrawer(stdout, loop, out)
+	drawer.init()
+	defer drawer.close()
+
 	render := func() (int, error) {
 		body, code, err := tick(ctx)
 		if err != nil {
 			return 0, err
 		}
 		if out == "" {
-			if _, err := io.WriteString(stdout, body); err != nil {
+			if err := drawer.draw(body); err != nil {
 				return 0, err
 			}
 		} else if err := writeAtomic(out, body); err != nil {
