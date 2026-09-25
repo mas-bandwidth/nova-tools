@@ -24,6 +24,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -62,6 +63,22 @@ var consumeHarvestLog = func(line string) { fmt.Println(line) }
 // (CI-NET: no host in a test).
 var consumeHarvestSeams = func() (harvest.Forge, harvest.Pusher) {
 	return harvest.GitHub{Owner: "mas-bandwidth"}, harvest.SSHPusher{}
+}
+
+// consumeHarvestResultsRoot resolves the results root end records land under.
+// It checks the --results flag on reconcile when set, else NOVA_RESULTS_ROOT,
+// else ~/nova-bench/results.
+var consumeHarvestResultsRoot = func() string {
+	if reconcileResultsRoot != "" {
+		return reconcileResultsRoot
+	}
+	if env := os.Getenv("NOVA_RESULTS_ROOT"); env != "" {
+		return env
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "nova-bench", "results")
+	}
+	return ""
 }
 
 func init() {
@@ -466,9 +483,13 @@ type harvestDuty struct {
 	ctx    context.Context   // every worker's context; Stop cancels it
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	l      *reconcile.Lease
 }
 
 func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Counts, error) {
+	d.mu.Lock()
+	d.l = l
+	d.mu.Unlock()
 	sprints, err := consumeSprints(ctx, d.st, "")
 	if err == nil && len(sprints) > 0 {
 		var benches []string
@@ -485,6 +506,7 @@ func (d *harvestDuty) Run(ctx context.Context, l *reconcile.Lease) (reconcile.Co
 
 func (d *harvestDuty) start(ctx context.Context, l *reconcile.Lease, instance, bench string, sprints []string) {
 	d.mu.Lock()
+	d.l = l
 	if d.busy[bench] {
 		d.mu.Unlock()
 		return
@@ -519,6 +541,22 @@ func (d *harvestDuty) start(ctx context.Context, l *reconcile.Lease, instance, b
 				Bound: l, Margin: reconcile.DefaultWriteMargin,
 				OnLease: d.onLease, Log: d.log,
 			})
+			if wctx.Err() != nil || l.Fenced() {
+				return
+			}
+			var orphanForge harvest.OrphanForge
+			if of, ok := d.forge.(harvest.OrphanForge); ok {
+				orphanForge = of
+			}
+			root := consumeHarvestResultsRoot()
+			if root != "" && orphanForge != nil {
+				harvest.RunOrphans(wctx, d.st, harvest.OrphanOptions{
+					Sprint: s, Benches: []string{bench}, Instance: instance, Actor: "reconciler",
+					Forge: orphanForge, ResultsRoot: root,
+					Bound: l, Margin: reconcile.DefaultWriteMargin,
+					OnLease: d.onLease,
+				})
+			}
 		}
 	}()
 }
@@ -539,7 +577,8 @@ func (d *harvestDuty) onLease(bench, token string, held bool) {
 // returns the benches released that way.
 func (d *harvestDuty) Stop(ctx context.Context) []string {
 	d.mu.Lock()
-	if d.cancel != nil {
+	fenced := d.l != nil && d.l.Fenced()
+	if fenced && d.cancel != nil {
 		d.cancel()
 	}
 	d.mu.Unlock()
@@ -551,6 +590,11 @@ func (d *harvestDuty) Stop(ctx context.Context) []string {
 	select {
 	case <-waited:
 	case <-ctx.Done():
+		d.mu.Lock()
+		if d.cancel != nil {
+			d.cancel()
+		}
+		d.mu.Unlock()
 	}
 	d.mu.Lock()
 	held := make(map[string]string, len(d.held))

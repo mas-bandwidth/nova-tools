@@ -68,6 +68,14 @@ func (f *consumeForge) ReadPR(_ context.Context, repo string, n int) (harvest.PR
 	return harvest.PR{}, fmt.Errorf("fixture forge: no pull %d in %s", n, repo)
 }
 
+func (f *consumeForge) ClosePR(_ context.Context, _ string, _ int, _ string) error {
+	return nil
+}
+
+func (f *consumeForge) RenameBranch(_ context.Context, _, _, _ string) error {
+	return nil
+}
+
 // TestConsumerVerbsRunOnce is nova-tools #3323: each consumer runs under its
 // own `nova-sprint consume <group> once` verb and as a production duty of
 // `nova-sprint reconcile`. One fixture card walks the chain on a local Redis:
