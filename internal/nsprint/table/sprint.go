@@ -24,6 +24,10 @@
 //	benches                 SMEMBERS, the bench list; per member (#2389, each
 //	                        bench's own keys, never a bash-written row):
 //	bench:<b>:cards:<w>     ZCARD for w = ready, working (the card views, #3692)
+//	bench:<b>:cards:ok|fail ZCOUNT from the current sprint's start (every score is
+//	                        the card's created_at; the done column's scope below),
+//	                        all of the set with no sprint: done = ok + fail,
+//	                        ok% = ok / done (#3894)
 //	bench:<b>:beat          HMGET load1 at (the bench's own `bench beat` loop)
 //	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
 //	friend:<f>:cards:<w>    ZCARD for ready, working: the friend's cells are
@@ -136,11 +140,28 @@ type SprintSnapshot struct {
 // work writes (#2389): Ready and Working are the ZCARDs of its card views,
 // Load its beat's load1. Down says the beat is gone (its TTL is 3 beat
 // intervals) or older than hostBeatStale: the row still shows its cards.
+// OK and Fail are the cards that ended on the bench this sprint (#3894), the
+// sizes of bench:<b>:cards:ok|fail from the sprint's start; Unread says
+// one of those two counts did not come back, so done, ok, fail and ok% print
+// "?", never a false 0.
 type HostRow struct {
 	Name           string
 	Ready, Working int64
+	OK, Fail       int64
+	Unread         bool
 	Load           string
 	Down           bool
+}
+
+// Done is every card that ended on the bench: ok plus fail.
+func (r HostRow) Done() int64 { return r.OK + r.Fail }
+
+// okPct is ok over done as a whole percent, "-" while nothing is done.
+func okPct(ok, done int64) string {
+	if done == 0 {
+		return "-"
+	}
+	return strconv.FormatInt(100*ok/done, 10) + "%"
 }
 
 // hostBeatStale is how old a beat's own at may be before the row prints
@@ -227,14 +248,16 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 		}
 	}
 	type hostCmds struct {
-		ready, working *redis.IntCmd
-		beat           *redis.SliceCmd
+		ready, working, ok, fail *redis.IntCmd
+		beat                     *redis.SliceCmd
 	}
 	hosts := make([]hostCmds, len(r.benches))
 	for i, b := range r.benches {
 		hosts[i] = hostCmds{
 			ready:   pipe.ZCard(ctx, "bench:"+b+":cards:ready"),
 			working: pipe.ZCard(ctx, "bench:"+b+":cards:working"),
+			ok:      pipe.ZCount(ctx, "bench:"+b+":cards:ok", since, "+inf"),
+			fail:    pipe.ZCount(ctx, "bench:"+b+":cards:fail", since, "+inf"),
 			beat:    pipe.HMGet(ctx, "bench:"+b+":beat", "load1", "at"),
 		}
 	}
@@ -329,6 +352,9 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 	}
 	for i, b := range r.benches {
 		row := HostRow{Name: b, Ready: hosts[i].ready.Val(), Working: hosts[i].working.Val(), Load: "-", Down: true}
+		ok, okErr := hosts[i].ok.Result()
+		fail, failErr := hosts[i].fail.Result()
+		row.OK, row.Fail, row.Unread = ok, fail, okErr != nil || failErr != nil
 		if got, err := hosts[i].beat.Result(); err == nil && len(got) == 2 {
 			load, at := sanitize(pipeValue(got[0])), pipeValue(got[1])
 			if atMS, err := strconv.ParseInt(at, 10, 64); err == nil && now.UnixMilli()-atMS <= hostBeatStale.Milliseconds() {
@@ -467,19 +493,29 @@ func (s *SprintSnapshot) Render(now time.Time) string {
 
 	fmt.Fprintf(&b, "%-10s | %5s | %7s | %5s | %5s | %5s | %4s | %6s\n", "host", "ready", "working", "done", "ok", "fail", "ok%", "load")
 	b.WriteString(liveBenchRule)
-	var hq, hw int64
+	var hq, hw, hok, hfail int64
+	unread := false
 	for _, row := range s.Hosts {
 		load := row.Load
 		if row.Down {
 			load = "down"
 		}
-		// done/ok/fail are the swarm's counts, dashed while no swarm sprint
-		// runs (sprint-table-redis HOST_COUNTS=0, Glenn 2026-09-22 7:00 PM).
-		fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s | %6s\n", row.Name, row.Ready, row.Working, "-", "-", "-", "-", load)
-		hq, hw = hq+row.Ready, hw+row.Working
+		// done, ok, fail and ok% are the bench's ended cards this sprint
+		// (#3894): done = ok + fail, ok% = ok / done.
+		done, ok, fail, pct := strconv.FormatInt(row.Done(), 10), strconv.FormatInt(row.OK, 10), strconv.FormatInt(row.Fail, 10), okPct(row.OK, row.Done())
+		if row.Unread {
+			done, ok, fail, pct = "?", "?", "?", "?"
+			unread = true
+		}
+		fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s | %6s\n", row.Name, row.Ready, row.Working, done, ok, fail, pct, load)
+		hq, hw, hok, hfail = hq+row.Ready, hw+row.Working, hok+row.OK, hfail+row.Fail
 	}
 	b.WriteString(liveBenchRule)
-	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s |\n", "total", hq, hw, "-", "-", "-", "-")
+	td, tok, tfail, tpct := strconv.FormatInt(hok+hfail, 10), strconv.FormatInt(hok, 10), strconv.FormatInt(hfail, 10), okPct(hok, hok+hfail)
+	if unread {
+		td, tok, tfail, tpct = "?", "?", "?", "?"
+	}
+	fmt.Fprintf(&b, "%-10s | %5d | %7d | %5s | %5s | %5s | %4s |\n", "total", hq, hw, td, tok, tfail, tpct)
 	if s.Stale {
 		fmt.Fprintf(&b, "stale: %ds (Redis did not answer; rows are the last good read)\n", now.Unix()-s.LastGood.Unix())
 	}

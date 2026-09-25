@@ -79,20 +79,23 @@ func SprintFixture() [][]string {
 	}
 	cmds = append(cmds, []string{"SET", "s:fix:pitstop", "fixture"})
 	// Benches: six in the SET; studio has a fresh beat and cards but is not
-	// in it. Each bench's ready and working are its card views, its load its
+	// in it. Each bench's ready and working are its card views, its ok and
+	// fail its ended cards since s:fix opened (#3894; every bench also has
+	// one ok card from before the open, which never counts), its load its
 	// beat; the bash hash bench:<b> says 9/9/9.99 and must not show.
+	cmds = append(cmds, []string{"HSET", "s:fix", "status", "open", "opened_at", ms(-3 * time.Hour)})
 	for _, b := range []struct {
-		name           string
-		ready, working int
-		load           string
+		name                     string
+		ready, working, ok, fail int
+		load                     string
 	}{
-		{"batman", 0, 0, "0.89"},
-		{"hetzner", 2, 3, "0.19"},
-		{"hulk", 7, 0, "0.40"},
-		{"space", 1, 4, "1.04"},
-		{"superman", 0, 1, "1.02"},
-		{"vision", 0, 0, "0.72"},
-		{"studio", 9, 9, "3.00"},
+		{"batman", 0, 0, 0, 0, "0.89"},
+		{"hetzner", 2, 3, 3, 1, "0.19"},
+		{"hulk", 7, 0, 2, 0, "0.40"},
+		{"space", 1, 4, 1, 2, "1.04"},
+		{"superman", 0, 1, 0, 1, "1.02"},
+		{"vision", 0, 0, 0, 0, "0.72"},
+		{"studio", 9, 9, 9, 9, "3.00"},
 	} {
 		if b.name != "studio" {
 			cmds = append(cmds, []string{"SADD", "benches", b.name})
@@ -105,6 +108,13 @@ func SprintFixture() [][]string {
 		for k := 0; k < b.working; k++ {
 			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:working", strconv.Itoa(k + 1), fmt.Sprintf("card:%s-w%d", b.name, k)})
 		}
+		for k := 0; k < b.ok; k++ {
+			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ok", ms(-time.Duration(k+1) * time.Minute), fmt.Sprintf("card:%s-ok%d", b.name, k)})
+		}
+		for k := 0; k < b.fail; k++ {
+			cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:fail", ms(-time.Duration(k+1) * time.Minute), fmt.Sprintf("card:%s-fail%d", b.name, k)})
+		}
+		cmds = append(cmds, []string{"ZADD", "bench:" + b.name + ":cards:ok", ms(-4 * time.Hour), "card:" + b.name + "-before-open"})
 	}
 	// Friends: rowan up (done 14, 10 at the last clear), johnny down flag,
 	// emma up, stella's beat 30 s old; the friends SET also names ghost,
@@ -135,12 +145,15 @@ func SprintFixture() [][]string {
 }
 
 // FriendCards is n[i] task ids in friend:<name>:cards:<FriendWheres[i]>, as
-// ZADD commands scored by age.
+// ZADD commands scored by age: created_at from two hours before the fixture's
+// now, after s:fix opened (#3894), so the done column counts every one.
 func FriendCards(name string, n [3]int) [][]string {
 	var cmds [][]string
+	start := SprintFixtureNow().Add(-2 * time.Hour)
 	for i, w := range FriendWheres {
 		for k := 0; k < n[i]; k++ {
-			cmds = append(cmds, []string{"ZADD", FriendCardsKey(name, w), strconv.Itoa(k + 1), fmt.Sprintf("%s-%s-%d", name, w, k)})
+			score := strconv.FormatInt(start.Add(time.Duration(k+1)*time.Second).UnixMilli(), 10)
+			cmds = append(cmds, []string{"ZADD", FriendCardsKey(name, w), score, fmt.Sprintf("%s-%s-%d", name, w, k)})
 		}
 	}
 	return cmds
