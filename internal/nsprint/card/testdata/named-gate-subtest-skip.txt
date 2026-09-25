@@ -1,0 +1,2 @@
+=== RUN   TestGatePresent
+--- SKIP: TestGatePresent (0.01s)

@@ -704,3 +704,26 @@ is whole seconds and defaults to 60. The common mistake is forgetting the
 redirect: with an empty stdin the verb reads zero packages and prints
 `CI-SLOW OK packages=0 slowest=none`, which is why the test step always tees
 the stream first (`.github/workflows/ci.yml`).
+
+
+## nova-card
+
+### First run
+
+```text
+$ nova-card help
+nova-card: nova-sprint card manager (see docs/nova-sprint/CARD.md)
+
+usage:
+  nova-card help      print this banner
+  nova-card version   print build identity
+
+environment:
+  NOVA_CARD_REPO      the clone path where the harness executes
+  NOVA_CARD_BRANCH    the branch where the harness leaves its commit
+
+example:
+  nova-card help
+  nova-card version
+```
+
