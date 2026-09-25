@@ -535,6 +535,11 @@ var moreVerbFlags = map[string][]flagSpec{
 	},
 	"check": {
 		{name: "session"},
+		{name: "snapshot"},
+		{name: "max-bytes"},
+		{name: "max-depth"},
+		{name: "max-nodes"},
+		{name: "cache"},
 		{name: "max"},
 	},
 	"verify": {

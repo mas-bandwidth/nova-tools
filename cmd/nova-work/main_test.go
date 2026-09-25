@@ -343,7 +343,7 @@ func TestCLIDocCarriesTheHelpBlockByteForByte(t *testing.T) {
 		section = section[:j]
 	}
 	if !strings.Contains(section, usage) {
-		t.Fatal("docs/CLI.md's nova-work section does not carry the help block byte for byte")
+		t.Fatalf("docs/CLI.md's nova-work section does not carry the help block byte for byte: len(usage)=%d len(section)=%d", len(usage), len(section))
 	}
 }
 

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
+"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -68,12 +70,12 @@ func extractMarkdown(form worklang.Form) string {
 		_ = epicId
 
 		if i > 0 {
-			out.WriteString("\n<a id=\"" + strings.ToLower(epicId) + "\"></a>\n\n")
+			fmt.Fprintf(&out, "\n<a id=\"%s\"></a>\n\n", oneline.Escape(strings.ToLower(epicId)))
 		}
 
-		out.WriteString(fmt.Sprintf("### %s\n\n", epicTitle))
-		out.WriteString("| Feature | Criteria verified | Verified |\n")
-		out.WriteString("|---|:---:|:---:|\n")
+		fmt.Fprintf(&out, "### %s\n\n", oneline.Escape(epicTitle))
+		fmt.Fprint(&out, "| Feature | Criteria verified | Verified |\n")
+		fmt.Fprint(&out, "|---|:---:|:---:|\n")
 
 		features, _ := plistAny(epicNode.List, "features")
 		for _, featNode := range features.List {
@@ -87,10 +89,10 @@ func extractMarkdown(form worklang.Form) string {
 			if state.Total > 0 && state.Verified == state.Total {
 				status = "✅"
 			}
-			out.WriteString(fmt.Sprintf("| %s — %s | %d/%d | %s |\n", fId, fTitle, state.Verified, state.Total, status))
+			fmt.Fprintf(&out, "| %s — %s | %d/%d | %s |\n", oneline.Escape(fId), oneline.Escape(fTitle), state.Verified, state.Total, oneline.Escape(status))
 		}
 
-		out.WriteString("\n<details>\n<summary>Sub-features, prerequisites and acceptance scope</summary>\n\n")
+		fmt.Fprint(&out, "\n<details>\n<summary>Sub-features, prerequisites and acceptance scope</summary>\n\n")
 
 		for j, featNode := range features.List {
 			if featNode.Kind != worklang.List {
@@ -100,10 +102,10 @@ func extractMarkdown(form worklang.Form) string {
 			fTitle, _ := plistString(featNode.List, "title")
 
 			if j > 0 {
-				out.WriteString("\n")
+				fmt.Fprint(&out, "\n")
 			}
 
-			out.WriteString(fmt.Sprintf("**%s — %s**\n\n", fId, fTitle))
+			fmt.Fprintf(&out, "**%s — %s**\n\n", oneline.Escape(fId), oneline.Escape(fTitle))
 
 			depsList, _ := plistAny(featNode.List, "depends-on")
 			if depsList.Kind == worklang.List && len(depsList.List) > 0 {
@@ -113,9 +115,9 @@ func extractMarkdown(form worklang.Form) string {
 						deps = append(deps, d.Value)
 					}
 				}
-				out.WriteString(fmt.Sprintf("Prerequisites: %s.\n\n", strings.Join(deps, ", ")))
+				fmt.Fprintf(&out, "Prerequisites: %s.\n\n", oneline.Escape(strings.Join(deps, ", ")))
 			} else {
-				out.WriteString("Prerequisites: none.\n\n")
+				fmt.Fprint(&out, "Prerequisites: none.\n\n")
 			}
 
 			critList := featureCriteria[fId]
@@ -129,9 +131,9 @@ func extractMarkdown(form worklang.Form) string {
 				if cState == "verified" {
 					mark = "x"
 				}
-				out.WriteString(fmt.Sprintf("- [%s] %s\n", mark, cText))
+				fmt.Fprintf(&out, "- [%s] %s\n", oneline.Escape(mark), oneline.Escape(cText))
 			}
-			out.WriteString("\n")
+				fmt.Fprint(&out, "\n")
 
 			srcList, ok := plistAny(featNode.List, "source-sections")
 			if ok && srcList.Kind == worklang.List {
@@ -141,15 +143,15 @@ func extractMarkdown(form worklang.Form) string {
 						srcs = append(srcs, s.Value)
 					}
 				}
-				out.WriteString(fmt.Sprintf("Source sections: %s.\n\n", strings.Join(srcs, "; ")))
+				fmt.Fprintf(&out, "Source sections: %s.\n\n", oneline.Escape(strings.Join(srcs, "; ")))
 			}
 
 			fTests := featureTests[fId]
 			if fTests != "" {
-				out.WriteString(fmt.Sprintf("Verified criteria evidence at dev `%s`, suite `%s` (%s): %s.\n\n", revShort, suite, testsCount, fTests))
+				fmt.Fprintf(&out, "Verified criteria evidence at dev `%s`, suite `%s` (%s): %s.\n\n", oneline.Escape(revShort), oneline.Escape(suite), oneline.Escape(testsCount), oneline.Escape(fTests))
 			}
 		}
-		out.WriteString("</details>\n")
+		fmt.Fprint(&out, "</details>\n")
 	}
 
 	return out.String()
@@ -169,7 +171,7 @@ func readRoadmapSexp() (*worklang.Form, error) {
 func cmdRoadmapCheck(args []string, stdout, stderr io.Writer) int {
 	formPtr, err := readRoadmapSexp()
 	if err != nil {
-		fmt.Fprintf(stderr, "ROADMAP FAIL: %v\n", err)
+		fmt.Fprintf(stderr, "ROADMAP FAIL: %v\n", oneline.Err(err))
 		return 2
 	}
 	form := *formPtr
@@ -179,7 +181,7 @@ func cmdRoadmapCheck(args []string, stdout, stderr io.Writer) int {
 	rPath := "ROADMAP.md"
 	rData, err := os.ReadFile(rPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "ROADMAP FAIL: %v\n", err)
+		fmt.Fprintf(stderr, "ROADMAP FAIL: %v\n", oneline.Err(err))
 		return 2
 	}
 	rContent := string(rData)
@@ -202,7 +204,7 @@ func cmdRoadmapCheck(args []string, stdout, stderr io.Writer) int {
 	newRContent := rContent[:startIdx] + md + rContent[endIdx:]
 	err = os.WriteFile(rPath, []byte(newRContent), 0644)
 	if err != nil {
-		fmt.Fprintf(stderr, "ROADMAP FAIL writing: %v\n", err)
+		fmt.Fprintf(stderr, "ROADMAP FAIL writing: %v\n", oneline.Err(err))
 		return 2
 	}
 
