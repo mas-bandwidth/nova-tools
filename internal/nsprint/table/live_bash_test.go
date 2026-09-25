@@ -33,7 +33,7 @@ import (
 // ("up|down|stale"). testdata/redis-pipe.bash is the pipelined reader it
 // sources. A change to either is a change of contract and must change the pin.
 const (
-	bashOfRecordSHA256 = "8e172b6f1d9e9a04a4383762423c76ccc058cd6798781e6519dcf23707c9c8ba"
+	bashOfRecordSHA256 = "f2dac085c74006283f2c8948c6d5b01917d3c9e441e353ddcabb807f4975c84c"
 	redisPipeSHA256    = "cd5317acdead07a3a8464b1a78e3e06d3a68a74a4e3c3f3d81480cd55f7b1d56"
 )
 
