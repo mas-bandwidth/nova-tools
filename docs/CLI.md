@@ -4093,6 +4093,21 @@ writing and acking in one `ns_ci_github` call. `ci status --repo --sha`
 prints the leg under our own record. Nothing in nova-sprint reads a check
 state from GitHub or asks it to rerun one; a rerun is `ci request --again`.
 
+`github ingest --redis <addr> --lander <login>[,<login>] [--sprint <S>]
+[--consumer <seat>] [--once]` (#2657) is the one inbound path from GitHub
+into our records besides import: the `ingest` consumer group of `ev:github`
+updates the PR record `pr:<name>:<n>` from each `pull_request` delivery
+(head, with `ci=pending` on a new head; state open, closed or merged with
+`merge_sha`, the lander's `parked` and `landed` standing; a PR with no
+record is not ours and is only acked), and lands every card of an issue
+(`issue:<name>:<n>:cards`, written at card create from the card's origin;
+`--sprint` backfills that sprint's cards once at start) through the one
+card move when an `issues closed` delivery was sent by a `--lander` login
+as completed. Any other close is one entry on `gh:findings` and no card
+moves. Each entry is one `ns_gh_pr` or `ns_gh_issue_closed` call that
+writes and acks; it prints `INGEST applied= kept= unknown= landed=
+findings= skipped= reclaimed=`.
+
 `read digest --repo <r> --n <n>` records the diff identity of the head a
 typed line is taken at (`diff_sha256` on the unit record; the reader runs
 it at read time). `read carry --repo <r> --n <n>` compares it with the
