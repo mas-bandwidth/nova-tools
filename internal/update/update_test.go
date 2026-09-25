@@ -491,3 +491,22 @@ func mustArgv(t *testing.T, s string) []string {
 	}
 	return a
 }
+
+// #3518: local:<path> locator with a version-string installed column gets REPORT OK,
+// not REPORT UNKNOWN not_found. The installed column is a version string (v1.2.3) and
+// latest is local:/path/to/binary that prints that same version.
+func TestReportLocalLocatorWithVersionStringInstalled(t *testing.T) {
+	// The fake binary prints "tool v1.2.3", which versionKey extracts as "1.2.3".
+	binCmd := printer(t, "tool v1.2.3\n")
+	// installed is a version string, not a command; latest points to the real binary.
+	p := manifest(t, row("mytool", "tool", "v1.2.3", "local:"+binCmd, "none"))
+	code, out, errs := run(t, Environment{}, "report", "--file", p, "--host", "air")
+	if code != 0 {
+		t.Fatalf("want exit 0, got %d: out=%s errs=%s", code, out, errs)
+	}
+	need(t, out, "REPORT TOOL name=mytool", "version=1.2.3")
+	need(t, out, "REPORT OK checked=1 known=1 unknown=0")
+	if strings.Contains(out, "not_found") || strings.Contains(errs, "not_found") {
+		t.Fatalf("unexpected not_found in output: out=%s errs=%s", out, errs)
+	}
+}

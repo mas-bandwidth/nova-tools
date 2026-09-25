@@ -255,13 +255,20 @@ func recordedVersion(installed []string) (string, bool) {
 		return "", false
 	}
 	tok := installed[0]
-	if tok == "" || !digit.MatchString(tok[:1]) || !dotted.MatchString(tok) {
+	if tok == "" {
+		return "", false
+	}
+	v := tok
+	if strings.HasPrefix(v, "v") {
+		v = v[1:]
+	}
+	if v == "" || !digit.MatchString(v[:1]) || !dotted.MatchString(v) {
 		return "", false
 	}
 	if strings.ContainsAny(tok, `/\`) {
 		return "", false
 	}
-	return tok, true
+	return v, true
 }
 
 // ladder is the invocations one entry is asked for its version, in order. A manifest row
