@@ -3639,22 +3639,34 @@ itself signals only the unit's pid.
 [--once | --loop [<seconds>]] [--out <file>]` is the whole sprint table Glenn
 watches (#3530): the headline (`SPRINT TABLE *** PIT STOP ***` while
 `s:<name>:pitstop` or `sprint:<name>:pitstop` exists), the
-`<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block, the friend
-block and the host block, one blank line between them. The streams are the
+`<left>/<y> left, <z>% done -> ~<eta>m` line, the streams block and the
+consumer table, one blank line between them. The streams are the
 rows of `ws:order` (the ws index, #3662) with
-the ZCARDs of their `waiting`, `ready`, `working`, `reading`, `merging` and
-`landed` sets (`ws:<stream>:<where>`), one column each in that order (nothing
-folded: `reading` is its own column between `working` and `merging`); rows
+the ZCARDs of their `waiting`, `ready`, `working`, `review`, `reading`,
+`merging` and `landed` sets (`ws:<stream>:<where>`), one column each in that
+order (nothing folded: `review` is its own column between `working` and
+`reading`, and `reading` between `review` and `merging`); rows
 with all zeros are hidden. The total row sums each column. y is every task in
-those sets, left is y minus landed (a card in `reading` or `merging` is left,
-not done), and the ETA is left over the moves to `landed` in the
-last hour of `ws:log` (at least one an hour). The hosts are the `benches` SET
-(each bench's own keys, #2389: ready and working are the ZCARDs of
-`bench:<b>:cards:ready` and `:working`, load is `bench:<b>:beat` load1 from
-the bench's own `bench beat` loop; a bench whose beat is gone or older than
-60 s still shows its cards with load `down`), the friends the
-`--friends` roster or else the `friends` SET sorted, status `up` or `down`,
-done less the count stored at the last `table clear`. Every tick is ONE
+those sets, left is y minus landed (a card in `review`, `reading` or
+`merging` is left, not done), and the ETA is left over the moves to `landed`
+in the last hour of `ws:log` (at least one an hour). Below the total, one
+`LAND` line per open landing and one `REVIEW stream=<s> over=<n>
+oldest=<id> age=<d> max=<d>` line per stream holding cards in review longer
+than `cfg:review max_age` (seconds; one hour when unset; a card with no
+`review_at` counts as over). The consumer table (#4071) is ONE table for
+friends and benches: `consumer | ready | working | done | ok | fail | ok% |
+status | load`, one row per consumer named `<kind>:<name>` (`friend:emma`,
+`bench:hetzner`): the friends (the `--friends` roster, else the `friends`
+SET sorted), then the `benches` SET, then any other member of the
+`consumers` SET, each once, and a total row. Every cell is one ZCARD of
+`<kind>:<name>:cards:<set>` for set = `ready`, `working`, `ok`, `fail`; done
+is ok + fail and ok% is ok over done, derived, with no sprint window and no
+base from a `table clear`; a set that does not read prints `?`, never 0.
+status is `up` when the consumer's own beat (`<kind>:<name>:beat` at, ms)
+is under a minute old and `<kind>:<name>:down` does not exist, else `down`
+(the row still shows its cards); load is the beat's load1 (`-` for a beat
+with none, a friend's). The old `friend:<f>` row hash and `bench:<b>` hash
+are not read. Every tick is ONE
 pipeline (a second one only on the tick a set's membership changed), never
 KEYS or SCAN, zero GitHub. `--redis` defaults to `NOVA_SPRINT_REDIS`, then
 `NOVA_REDIS_ADDR`; `--sprint` to `NOVA_SPRINT`. `--loop 1` renders once a
@@ -3666,13 +3678,43 @@ loop` line. A tick whose read fails publishes the last good rows and a
 `stale:` line.
 
 `table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>]
-[--by <name>]` (#3637) zeroes the landed and done columns in under a second:
+[--by <name>]` (#3637) zeroes the landed column in under a second:
 it writes the checkpoint (every landed task with its fields, every friend's
 done count) and prints `CHECKPOINT`, then in one MULTI/EXEC moves every
 `ws:<s>:landed` member to closed (`task:<id>` state, one `ws:log` entry
-each), stores the done counts in `ws:done0` and the receipt in
-`ws:checkpoint`, and prints `CLEARED ... ms=<n>`. Waiting, ready, working,
-reading and merging are untouched.
+each), stores the done counts in `ws:done0` (which the table no longer
+reads) and the receipt in `ws:checkpoint`, and prints `CLEARED ... ms=<n>`.
+Waiting, ready, working, review, reading and merging and the consumer table
+are untouched.
+
+`review post --id <primary> --verdict recut|redeal|reassign:<consumer>|drop
+--why <text> [--to <consumer>] [--redis <addr>] [--actor <a>]` (#4072) is
+the one way out of review. A card whose consumer copy fails (`card end
+--fail`, with `--exit <rc>` and the result flags as evidence; a lapsed
+lease; a read copy's fail; a second read under 8, which also moves the
+author's copy from its ok set to its fail set) moves to `ws:<stream>:review`
+in the same call as the copy's move to `<kind>:<name>:cards:fail`, with the
+evidence on its record (`review_consumer`, `review_model`, `review_exit`,
+`review_line` the last typed line, `review_wall`, `review_pr`,
+`review_read`, `review_why`, `review_at`) and the mechanical first pass: the
+failure shape (`review_shape`: `exit-<rc>`, `lease-lapsed`, `read-fail`,
+`read-under-8-twice`, else the why's first word), its count for this card
+(`same_shape`) and for this consumer (`same_shape_consumer`), and a
+`REVIEW-JEV id=<id> consumer=<c> shape=<s> same_card=<n> same_consumer=<m>
+suggest=<verdict>` line (`review_jev`), a suggestion, never a verdict. A copy
+given back (`card cancel`, `card assign --revoke`, a down consumer's ready
+copies) is not a fail: its card returns. Nothing else moves a card out of
+review (a deal, a task move and a cancel are refused). The verdict is typed
+(anything else is a usage refusal, exit 2) and applied through the one move
+(`ns_cm_review`): `recut` returns the card to waiting, `redeal` to ready,
+`reassign:<consumer>` (or `--to`) cuts its copy on that consumer, `drop`
+moves it to landed with `outcome=dropped` and closes its origin issue with
+the `REVIEW verdict=<v> by=<actor>: <why>` line. That line is on the record
+(`review`) and is carried to the card's next copy, whose card file says why
+it is back. One receipt line: `REVIEW POST id=<id> verdict=<v> to=<where>
+copy=<copy|-> [issue=<repo#n|-> closed=yes|no] ms=<n>`, or `REVIEW POST
+REFUSED id=<id> why=<why>` with exit 1 (a card not in review, a consumer
+with no slots).
 
 `table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...>`
 renders the #2674 port of rowan-tools `bin/sprint-table-redis` (the keys

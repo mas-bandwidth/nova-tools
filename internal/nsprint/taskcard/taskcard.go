@@ -47,7 +47,7 @@ const (
 )
 
 // Wheres are the sets a task can be in, in the fsck reply's order.
-var Wheres = []string{"waiting", "ready", "working", "reading", "merging", "landed", "done", "parked"}
+var Wheres = []string{"waiting", "ready", "working", "review", "reading", "merging", "landed", "done", "parked"}
 
 // Key is a task's record.
 func Key(id string) string { return "task:" + id }

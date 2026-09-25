@@ -26,6 +26,9 @@ type CopyCard struct {
 	Repo, PR, Head, Base, BaseSHA    string
 	Paths, DoneWhen, Title, Origin   string
 	Stream, Finding, Route, Consumer string
+	// Review is the REVIEW line of the verdict that moved the primary out
+	// of review (#4072), carried to its next copy; "" when it never failed.
+	Review string
 }
 
 // CopyCardFrom reads a copy's record (HGETALL task:<copy>) as a CopyCard.
@@ -33,7 +36,7 @@ func CopyCardFrom(id string, rec map[string]string) CopyCard {
 	return CopyCard{ID: id, Primary: rec["primary"], Leg: rec["leg"], Kind: rec["kind"], Repo: rec["repo"],
 		PR: rec["pr"], Head: rec["head"], Base: rec["base"], BaseSHA: rec["base_sha"], Paths: rec["paths"],
 		DoneWhen: rec["done_when"], Title: rec["title"], Origin: rec["origin"], Stream: rec["stream"],
-		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"]}
+		Finding: rec["finding"], Route: rec["route"], Consumer: rec["consumer"], Review: rec["review"]}
 }
 
 var labelBad = regexp.MustCompile(`[^A-Za-z0-9._-]`)
@@ -154,6 +157,10 @@ func RenderCopy(c CopyCard) ([]byte, error) {
 	line("HEAD", c.Head)
 	b.WriteString("\n")
 	b.WriteString(body)
+	if r := oneLine(c.Review); r != "" {
+		// the last copy failed and a review sent the card on: this copy reads why
+		fmt.Fprintf(&b, "\nAn earlier copy of this card failed and went to review; the verdict:\n  %s\n", r)
+	}
 	return []byte(b.String()), nil
 }
 

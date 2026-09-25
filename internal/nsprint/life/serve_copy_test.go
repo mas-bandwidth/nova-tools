@@ -45,8 +45,9 @@ func TestServeCopyEndsFromTheChildsExit(t *testing.T) {
 	if cp["beat_at"] == "" {
 		t.Fatalf("the copy was never beaten: %v", cp)
 	}
-	if w := client.HGet(ctx, taskcard.Key("p1"), "where").Val(); w != "waiting" {
-		t.Fatalf("primary where=%s, want waiting after its copy failed", w)
+	// a copy's fail moves its primary to review with the evidence (#4072)
+	if w := client.HGet(ctx, taskcard.Key("p1"), "where").Val(); w != "review" {
+		t.Fatalf("primary where=%s, want review after its copy failed", w)
 	}
 	if n := client.ZCard(ctx, k.Key("working")).Val(); n != 0 {
 		t.Fatalf("friend:emma:cards:working holds %d after the close", n)

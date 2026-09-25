@@ -80,3 +80,24 @@ func TestReadCopyDealtToBenchRendersALintedCard(t *testing.T) {
 		t.Fatal("rendered a read copy with no base, base_sha, paths, pr or head")
 	}
 }
+
+// TestCopyCardCarriesTheReviewLine (#4072): a copy cut after a review
+// verdict carries the REVIEW line, and its card says why it is back.
+func TestCopyCardCarriesTheReviewLine(t *testing.T) {
+	t.Parallel()
+	rec := map[string]string{"primary": "p1", "leg": "work", "kind": "build", "repo": "mas-bandwidth/nova-tools",
+		"base": "dev", "base_sha": strings.Repeat("ab", 20), "paths": "internal/x.go", "done_when": "go test ./internal/x passes",
+		"title": "one verb", "review": "REVIEW verdict=recut by=rowan: PATHS too narrow: add internal/y"}
+	body, err := card.RenderCopy(card.CopyCardFrom("p1~2", rec))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(string(body), "\nAn earlier copy of this card failed and went to review; the verdict:\n"+
+		"  REVIEW verdict=recut by=rowan: PATHS too narrow: add internal/y\n") {
+		t.Fatalf("card:\n%s", body)
+	}
+	delete(rec, "review")
+	if body, _ := card.RenderCopy(card.CopyCardFrom("p1~1", rec)); strings.Contains(string(body), "review") {
+		t.Fatalf("a card that never failed names a review:\n%s", body)
+	}
+}
