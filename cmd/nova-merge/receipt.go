@@ -121,3 +121,15 @@ func receiptLinesInBody(body string) []string {
 	}
 	return out
 }
+
+// validRepoSlug is the shape of <owner>/<name>.
+func validRepoSlug(s string) error {
+	owner, name, ok := strings.Cut(s, "/")
+	if !ok || owner == "" || name == "" {
+		return fmt.Errorf("a repository is <owner>/<name>")
+	}
+	if strings.ContainsAny(owner, " /") || strings.ContainsAny(name, " /") {
+		return fmt.Errorf("a repository has no spaces and exactly one slash")
+	}
+	return nil
+}

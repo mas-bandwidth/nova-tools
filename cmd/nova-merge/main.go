@@ -50,7 +50,6 @@ usage:
   nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
   nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
   nova-merge receipt    --repo <owner>/<name> --pr <n> [--timeout <seconds>]
-  nova-merge receipt    --repo <owner>/<name> --pr <n> [--timeout <seconds>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
