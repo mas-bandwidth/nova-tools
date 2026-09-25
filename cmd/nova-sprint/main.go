@@ -29,7 +29,8 @@ usage:
   nova-sprint help
   nova-sprint table --redis <addr> [--sprint <name>] [--once | --loop]
   nova-sprint table --check --redis <addr>
-  nova-sprint table --layout live --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>] [--once | --loop]
+  nova-sprint table --layout live [--redis <addr>] [--sprint <name>] [--friends <a,b,...>] [--once | --loop [<seconds>]] [--out <file>] [--lock <key>]
+  nova-sprint table clear --checkpoint <file> [--redis <addr>] [--friends <a,b,...>] [--by <name>]
   nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
   nova-sprint refresh -- <command> [arg...]
 

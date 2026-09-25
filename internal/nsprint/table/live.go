@@ -210,36 +210,17 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	b.WriteString(liveBenchRule)
 	var tq, tw, td, to, tf int64
 	for _, row := range s.Benches {
-		f := row.Fields
-		if f["host"] != row.Key {
-			continue // a hash without its OWN host field (expired, partial) is not a row
-		}
-		// 60 s freshness on the bench's own beat; an unparseable at shows the row.
-		if at, ok := parseUTC(f["at"]); ok {
-			if age := now.Unix() - at.Unix(); age < 0 || age > 60 {
-				continue
-			}
-		}
-		queue := strconv.FormatInt(awkInt(f["queue"]), 10)
-		if dq, dat := f["dealer_queue"], f["dealer_at"]; dq != "" && dat != "" {
-			if at, ok := parseUTC(dat); ok {
-				if age := now.Unix() - at.Unix(); age >= 0 && age <= 30 {
-					queue = dq
-				}
-			}
-		}
-		working, done, ok, fail := awkInt(f["working"]), awkInt(f["done"]), awkInt(f["ok"]), awkInt(f["fail"])
-		load := f["load1"]
-		if load == "" {
-			load = "-"
+		c, show := row.cells(now)
+		if !show {
+			continue
 		}
 		var pct int64
-		if done > 0 {
-			pct = 100 * ok / done
+		if c.done > 0 {
+			pct = 100 * c.ok / c.done
 		}
-		fmt.Fprintf(&b, "%-10s | %5s | %7d | %5d | %5d | %5d | %3d%% | %6s\n", f["host"], queue, working, done, ok, fail, pct, load)
-		qn, _ := strconv.ParseInt(queue, 10, 64)
-		tq, tw, td, to, tf = tq+qn, tw+working, td+done, to+ok, tf+fail
+		fmt.Fprintf(&b, "%-10s | %5s | %7d | %5d | %5d | %5d | %3d%% | %6s\n", c.host, c.queue, c.working, c.done, c.ok, c.fail, pct, c.load)
+		qn, _ := strconv.ParseInt(c.queue, 10, 64)
+		tq, tw, td, to, tf = tq+qn, tw+c.working, td+c.done, to+c.ok, tf+c.fail
 	}
 	b.WriteString(liveBenchRule)
 	var tpct int64
@@ -284,9 +265,48 @@ func (s *LiveSnapshot) RenderLive(now time.Time) string {
 	return b.String()
 }
 
+// benchCells is one bench row's cells, the rules the bash applies.
+type benchCells struct {
+	host, queue, load       string
+	working, done, ok, fail int64
+}
+
+// cells applies the bash's row rules: a hash whose own host field is not its
+// key is no row; a beat (at) older than 60 s is no row (an unparseable at
+// shows the row); the dealer's queue count wins while dealer_at is at most
+// 30 s old; a missing load prints "-".
+func (row BenchRow) cells(now time.Time) (benchCells, bool) {
+	f := row.Fields
+	if f["host"] != row.Key {
+		return benchCells{}, false
+	}
+	if at, ok := parseUTC(f["at"]); ok {
+		if age := now.Unix() - at.Unix(); age < 0 || age > 60 {
+			return benchCells{}, false
+		}
+	}
+	c := benchCells{host: f["host"], queue: strconv.FormatInt(awkInt(f["queue"]), 10), load: f["load1"]}
+	if dq, dat := f["dealer_queue"], f["dealer_at"]; dq != "" && dat != "" {
+		if at, ok := parseUTC(dat); ok {
+			if age := now.Unix() - at.Unix(); age >= 0 && age <= 30 {
+				c.queue = dq
+			}
+		}
+	}
+	c.working, c.done, c.ok, c.fail = awkInt(f["working"]), awkInt(f["done"]), awkInt(f["ok"]), awkInt(f["fail"])
+	if c.load == "" {
+		c.load = "-"
+	}
+	return c, true
+}
+
 // friendStatus: down (the down flag) | ? (no row) | stale (older than
 // RowStale) | down (up != 1) | up. No ages (Glenn 2026-09-23 3:30 PM ET).
 func (s *LiveSnapshot) friendStatus(row FriendRow, now time.Time) string {
+	return friendState(row, now, s.Config.RowStale)
+}
+
+func friendState(row FriendRow, now time.Time, stale time.Duration) string {
 	if row.Down != "" {
 		return "down"
 	}
@@ -305,7 +325,6 @@ func (s *LiveSnapshot) friendStatus(row FriendRow, now time.Time) string {
 	if age < 0 {
 		age = 0
 	}
-	stale := s.Config.RowStale
 	if stale <= 0 {
 		stale = 10 * time.Second
 	}
