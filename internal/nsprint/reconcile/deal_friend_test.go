@@ -60,16 +60,15 @@ func (f *dealFixture) friend(t *testing.T, name string, slots int, live bool, wo
 	}
 }
 
-// cardEpoch is the fixtures' created_at origin: a real epoch-ms value, so
-// the one move (#3778), which reads a created_at under 1e11 as seconds,
-// keeps each card's age as its score.
-const cardEpoch int64 = 1_758_800_000_000
+// dealT0 is the epoch ms the fixture ages count from: the one move reads a
+// created_at under 1e11 as seconds (#3778), so ages are real epoch ms.
+const dealT0 = 1758800000000
 
 // ready writes one ready task on stream with age (created_at ms after
-// cardEpoch) and extra fields.
+// dealT0) and extra fields.
 func (f *dealFixture) ready(t *testing.T, id, stream string, age int64, extra ...any) {
 	t.Helper()
-	age += cardEpoch
+	age += dealT0
 	pipe := f.c.TxPipeline()
 	pipe.SAdd(f.ctx, "ws:names", stream)
 	pipe.HSet(f.ctx, "task:"+id, append([]any{"stream", stream, "state", "ready", "created_at", age, "kind", "build"}, extra...)...)
@@ -158,14 +157,14 @@ func TestDealFillsEveryOpenSlotInOneTick(t *testing.T) {
 	if n := f.zcard(t, "ws:"+s1+":working"); n != 4 {
 		t.Fatalf("ws:%s:working %d, want 4", s1, n)
 	}
-	if sc, err := f.c.ZScore(f.ctx, "ws:"+s1+":working", "a00").Result(); err != nil || sc != float64(cardEpoch+2000) {
+	if sc, err := f.c.ZScore(f.ctx, "ws:"+s1+":working", "a00").Result(); err != nil || sc != dealT0+2000 {
 		t.Fatalf("a00 working score %v %v, want its created_at 2000", sc, err)
 	}
 	h, _ := f.c.HMGet(f.ctx, "task:only-stella", "state", "why").Result()
 	if h[0] != "waiting" || h[1] != reconcile.NoConsumer {
 		t.Fatalf("only-stella state/why %v, want waiting/%s", h, reconcile.NoConsumer)
 	}
-	if sc, err := f.c.ZScore(f.ctx, "ws:"+s1+":waiting", "only-stella").Result(); err != nil || sc != float64(cardEpoch+1500) {
+	if sc, err := f.c.ZScore(f.ctx, "ws:"+s1+":waiting", "only-stella").Result(); err != nil || sc != dealT0+1500 {
 		t.Fatalf("only-stella waiting score %v %v, want 1500", sc, err)
 	}
 	for _, want := range []string{"DEAL emma took=3 open=3 from=" + s1, "DEAL rowan took=1 open=1 from=" + s1,

@@ -97,3 +97,64 @@ func TestHarvestPROpenedMovesTasksToMerging(t *testing.T) {
 		t.Fatalf("a fenced harvest moved a task: %s", got)
 	}
 }
+
+// TestHarvestRefusesAPRNoCardNames is #3915's comment (no card, no
+// landing): harvest records a PR only from the branch its card names; a
+// branch no card names, or a label with no card, is refused NOCOPY and
+// nothing is written (no reservation, no record, no task moved); the same
+// PR from the card's branch is accepted.
+func TestHarvestRefusesAPRNoCardNames(t *testing.T) {
+	c := startRedis(t)
+	ctx := context.Background()
+	const (
+		S, label, bench = "nocopy-0925", "card-600", "hulk"
+		repo, pr        = "mas-bandwidth/nova-tools", "88"
+		cards           = "swarm: cards"
+	)
+	head := strings.Repeat("c", 40)
+	c.HSet(ctx, "s:"+S+":card:"+label, "state", "ended", "bench", bench, "attempt", "1", "repo", repo,
+		"harvest_step", "pushed", "pushed_sha", head, "base", "dev", "base_sha", strings.Repeat("d", 40),
+		"stream", cards, "origin", "https://forge.invalid/mas-bandwidth/nova-tools/issues/600")
+	c.HSet(ctx, "lease:harvest:"+bench, "instance", "worker-1", "token", "tok")
+	c.SAdd(ctx, "ws:names", cards)
+	c.ZAdd(ctx, "ws:order", redis.Z{Score: 1, Member: cards})
+	c.HSet(ctx, "task:build-600-thing", "stream", cards, "state", "working", "created_at", "1000", "ref", "nova-tools#600")
+	c.ZAdd(ctx, ws.Key(cards, "working"), redis.Z{Score: 1000, Member: "build-600-thing"})
+	if err := c.FCall(ctx, "ns_task_refs", nil, "build-600-thing").Err(); err != nil {
+		t.Fatal(err)
+	}
+	call := func(label, branch string) string {
+		t.Helper()
+		r, err := c.FCall(ctx, harvest.FunctionPR, nil, S, bench, "worker-1", "tok", label, repo, branch, pr, head).Text()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	nothing := func(when string) {
+		t.Helper()
+		if n := c.Exists(ctx, "pr:nova-tools:"+pr).Val(); n != 0 {
+			t.Fatalf("%s: the PR record was written", when)
+		}
+		if v := c.HGet(ctx, "s:"+S+":idem", "pr:"+repo+":nova/"+S+"/"+label+"-a1").Val(); v != "" {
+			t.Fatalf("%s: reservation written %q", when, v)
+		}
+		if st := c.HGet(ctx, "task:build-600-thing", "state").Val(); st != "working" {
+			t.Fatalf("%s: a task moved to %s", when, st)
+		}
+	}
+	if r := call(label, "emma/600-by-hand"); !strings.HasPrefix(r, "NOCOPY|emma/600-by-hand is not s:"+S+":card:"+label) {
+		t.Fatalf("a branch no card names: %q, want NOCOPY", r)
+	}
+	nothing("foreign branch")
+	if r := call("card-601", "nova/"+S+"/card-601-a1"); !strings.HasPrefix(r, "NOCOPY|no card s:"+S+":card:card-601") {
+		t.Fatalf("a label with no card: %q, want NOCOPY", r)
+	}
+	nothing("no card")
+	if r := call(label, "nova/"+S+"/"+label+"-a1"); r != "PR|"+pr {
+		t.Fatalf("the card's own branch: %q", r)
+	}
+	if st := c.HGet(ctx, "task:build-600-thing", "state").Val(); st != "merging" {
+		t.Fatalf("the card's PR left its task %s", st)
+	}
+}

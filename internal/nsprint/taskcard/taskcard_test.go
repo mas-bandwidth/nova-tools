@@ -63,6 +63,10 @@ func start(t *testing.T) *redis.Client {
 	t.Helper()
 	_, c := wstest.Start(t)
 	c.SAdd(context.Background(), "friends", "rowan", "stella")
+	// both harnesses beat: a take needs a live friend beat (#3915)
+	for _, f := range []string{"rowan", "stella"} {
+		c.HSet(context.Background(), "friend:"+f+":beat", "session", "test", "at", time.Now().UnixMilli())
+	}
 	return c
 }
 

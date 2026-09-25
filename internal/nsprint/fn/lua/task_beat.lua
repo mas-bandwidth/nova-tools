@@ -200,5 +200,15 @@ local function task_expire(keys, args)
 end
 
 redis.register_function('ns_task_beat', task_beat)
+-- ns_task_beat_n(actor, idem, [S, id, token]...) -> one status per triple
+-- (task_beat's first word): a harness beats every live child's lease in one
+-- call per tick (nova-tools#3915), each triple fenced on its own token.
+redis.register_function('ns_task_beat_n', function(keys, args)
+  local out = {}
+  for i = 3, #args - 2, 3 do
+    out[#out + 1] = task_beat(keys, { args[i], args[i + 1], args[i + 2], args[1], args[2] })[1]
+  end
+  return out
+end)
 redis.register_function('ns_task_cancel', task_cancel)
 redis.register_function('ns_task_expire', task_expire)

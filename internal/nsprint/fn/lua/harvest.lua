@@ -289,9 +289,14 @@ do
       'pushed_sha', 'base', 'base_sha', 'stream', 'origin')
     local state, cbench, attempt, crepo, cur = f[1] or '', f[2] or '', f[3] or '', f[4] or '', f[5] or ''
     local pushed = f[6] or ''
-    if state == '' then return 'NOTFOUND|' end
-    if cbench ~= bench or crepo ~= repo or hv_branch(S, label, attempt) ~= branch then
+    -- No card, no landing (#3915): a PR whose branch no card names is not
+    -- work; NOCOPY writes nothing.
+    if state == '' then return 'NOCOPY|no card ' .. key end
+    if cbench ~= bench or crepo ~= repo then
       return 'CONFLICT|'
+    end
+    if hv_branch(S, label, attempt) ~= branch then
+      return 'NOCOPY|' .. branch .. ' is not ' .. key .. "'s branch " .. hv_branch(S, label, attempt)
     end
     if cur ~= 'pushed' and cur ~= 'intent' and cur ~= 'published' then
       return 'STEP|' .. cur

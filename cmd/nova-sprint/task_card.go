@@ -36,8 +36,9 @@ const taskCardUsage = `nova-sprint task: the task card verbs (#3778), one Redis 
 usage:
   nova-sprint task push    --actor <a> --id <id> [--stream <s>] [--friend|--to <f>] [--waiting | --depends-on <c>]
                            [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
+  nova-sprint task deal    --actor <a> --to <f> (--ids <id,id...> | --stream <s> --n <k>)
   nova-sprint task take    --actor <f> [--id <id>] [--n <k>]
-  nova-sprint task beat    --actor <f> --id <id>
+  nova-sprint task beat    --actor <f> (--id <id> | [--ids <id,id...>])
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
   nova-sprint task land    --actor <a> (--id <id> | --stream <s>) --sha <merge sha8>
   nova-sprint task cancel  --actor <a> --id <id> --why <text>
@@ -58,11 +59,15 @@ land moves merging (or working) -> landed at the merge sha; land --stream moves 
 member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per member (the
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready.
+deal assigns in bulk (#3915): ready, unowned tasks join friend:<f>:cards:ready in one call;
+only take moves a task to working, once, when the harness spawns its child (a friend whose
+beat is gone is refused NOBEAT); beat with no --id renews every lease the friend holds (or
+the --ids its live children hold) in one call.
 fsck prints one line per drift and exits 1 when there is any.
 `
 
 // cardAlways are the card subverbs no other task form has.
-var cardAlways = map[string]bool{"land": true, "ls": true, "fsck": true, "expire": true, "migrate": true}
+var cardAlways = map[string]bool{"land": true, "ls": true, "fsck": true, "expire": true, "migrate": true, "deal": true}
 
 // cardByID are the subverbs whose card form names one --id with --actor.
 var cardByID = map[string]bool{"done": true, "cancel": true, "block": true, "unblock": true, "front": true,
@@ -93,6 +98,9 @@ func isTaskCard(sub string, args []string) bool {
 	if sub == "take" {
 		return !flags["as"] // the one task store's take is --as <seat>
 	}
+	if sub == "beat" && !flags["id"] && !flags["token"] && !flags["as"] {
+		return true // the batched beat: every lease the friend holds (#3915)
+	}
 	if !cardByID[sub] || !flags["id"] {
 		return false
 	}
@@ -110,7 +118,7 @@ type cardCmd struct {
 	redis, actor, sprint, id, why, stream, friend   *string
 	kind, ref, origin, title, head, pr, repo, on    *string
 	evidence, sha, where, toFriend, toStream, toWhr *string
-	ok, truth                                       *string
+	ok, truth, ids                                  *string
 	n, batch                                        *int
 	waiting, front, help                            *bool
 	friends                                         multiFlag
@@ -143,6 +151,7 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 	c.toWhr = fs.String("to-where", "", "")
 	c.ok = fs.String("ok", "", "")
 	c.truth = fs.String("truth", "", "")
+	c.ids = fs.String("ids", "", "")
 	c.n = fs.Int("n", 1, "")
 	c.batch = fs.Int("batch", 200, "")
 	c.waiting = fs.Bool("waiting", false, "")
@@ -154,7 +163,7 @@ func runTaskCard(ctx context.Context, sub string, args []string, out, errOut io.
 		fs.Var(&c.friends, "friend", "")
 	} else {
 		fs.StringVar(c.friend, "friend", "", "")
-		if sub == "push" {
+		if sub == "push" || sub == "deal" {
 			fs.StringVar(c.friend, "to", "", "") // friend-queue push's spelling
 		}
 	}
@@ -197,8 +206,18 @@ func (c *cardCmd) missing(sub string) string {
 	}
 	var checks []string
 	switch sub {
-	case "push", "done", "cancel", "block", "unblock", "front", "move", "beat":
+	case "push", "done", "cancel", "block", "unblock", "front", "move":
 		checks = append(checks, need(c.actor, "actor"), need(c.id, "id"))
+	case "beat":
+		checks = append(checks, need(c.actor, "actor"))
+		if *c.id != "" && *c.ids != "" {
+			checks = append(checks, "want --id <id> or --ids <id,id...>, not both")
+		}
+	case "deal":
+		checks = append(checks, need(c.actor, "actor"), need(c.friend, "to"))
+		if (*c.ids == "") == (*c.stream == "") {
+			checks = append(checks, "want exactly one of --ids <id,id...> and --stream <s> --n <k>")
+		}
 	case "land":
 		checks = append(checks, need(c.actor, "actor"))
 		if (*c.id == "") == (*c.stream == "") {
@@ -291,7 +310,33 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 		}
 		_, _ = fmt.Fprintf(out, "TASK take n=%d ids=%s ms=%d\n", len(got), strings.Join(got, ","), ms())
 		return 0
+	case "deal":
+		got, err := taskcard.Deal(ctx, cl, *c.friend, *c.n, *c.actor, *c.stream, splitIDs(*c.ids)...)
+		if err != nil {
+			return refused(err)
+		}
+		_, _ = fmt.Fprintf(out, "TASK deal to=%s n=%d ids=%s ms=%d\n", *c.friend, len(got), strings.Join(got, ","), ms())
+		return 0
 	case "beat":
+		if *c.id == "" {
+			r, err := taskcard.BeatAll(ctx, cl, *c.actor, *c.actor, splitIDs(*c.ids)...)
+			if err != nil {
+				return refused(err)
+			}
+			ids := make([]string, 0, len(r.Refused))
+			for id := range r.Refused {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			for _, id := range ids {
+				_, _ = fmt.Fprintf(out, "REFUSED %s why=%s\n", id, quoteField(r.Refused[id]))
+			}
+			_, _ = fmt.Fprintf(out, "TASK beat as=%s renewed=%d refused=%d lease_until=%d ms=%d\n", *c.actor, r.Renewed, len(r.Refused), r.Until, ms())
+			if len(r.Refused) > 0 {
+				return 1
+			}
+			return 0
+		}
 		until, err := taskcard.Beat(ctx, cl, *c.id, *c.actor)
 		if err != nil {
 			return refused(err)
@@ -484,4 +529,15 @@ func init() {
 	registerReconcileDuty("task-lease", func(st *store.Store) (reconcileDuty, error) {
 		return &taskLeaseDuty{st: st}, nil
 	})
+}
+
+// splitIDs reads a comma-separated --ids list.
+func splitIDs(v string) []string {
+	var ids []string
+	for _, id := range strings.Split(v, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
 }

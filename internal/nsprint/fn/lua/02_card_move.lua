@@ -1548,9 +1548,14 @@ redis.register_function('ns_tcard_push', function(keys, args)
 end)
 
 -- ns_tcard_take(as, n, by, id...) -> TAKEN k then the ids, or REFUSED <why>
--- for a named id. No id: the n oldest of friend:<as>:cards:ready.
+-- for a named id. No id: the n oldest of friend:<as>:cards:ready. The
+-- harness calls it once when it spawns k children (n = k), never before: a
+-- friend whose beat is gone (friend:<as>:beat) is refused NOBEAT (#3915).
 redis.register_function('ns_tcard_take', function(keys, args)
   local as, n, by = args[1], tonumber(args[2]) or 1, args[3]
+  if not TK.live(TK.str(as)) then
+    return { 'REFUSED', 'NOBEAT friend:' .. TK.str(as) .. ':beat is gone: a take is at a child\'s spawn by a live harness (nova-sprint friend serve --as ' .. TK.str(as) .. ')' }
+  end
   local ids = {}
   for i = 4, #args do ids[#ids + 1] = args[i] end
   local named = #ids > 0
@@ -1633,6 +1638,113 @@ redis.register_function('ns_tcard_expire', function(keys, args)
   return out
 end)
 
+-- The friend half of the tables (nova-tools#3915, Glenn 2026-09-25 11:40 AM
+-- ET: "Can it be in bulk, but also be accurate?"). Two facts kept apart:
+-- the deal ASSIGNS in bulk (ready, unowned -> friend:<f>:cards:ready, one
+-- call per friend), and working is only what a child runs: the friend's
+-- harness takes k cards at the spawn of k children (ns_tcard_take, one
+-- call, each with a lease) and renews every live lease in one call
+-- (ns_tcard_beat_all); the task-lease duty (ns_tcard_expire) returns a lease
+-- nobody beats to ready. A take by a friend whose own beat is gone
+-- (friend:<f>:beat) is refused: no child can be running it.
+
+-- TK.live: the friend's harness beats (friend:<f>:beat, presence.lua and
+-- friend_serve.lua keep it with its TTL).
+function TK.live(friend)
+  return friend ~= '' and redis.call('EXISTS', 'friend:' .. friend .. ':beat') == 1
+end
+
+-- TK.taken: a consumer took this task (a take writes leased_at): the one
+-- proof that a child, not a coordinator's hand, held it.
+function TK.taken(p)
+  return p ~= nil and p.leased_at ~= ''
+end
+
+-- ns_tcard_deal(to, n, by, stream, id...) -> DEALT k then the ids, or
+-- REFUSED <why>. With ids: those (each ready and unowned, else refused and
+-- nothing written); without: the n oldest unowned of ws:<stream>:ready.
+-- Each moves ready -> ready with friend=to through the one move (the id
+-- joins friend:<to>:cards:ready, scored by its age), why=deal.
+redis.register_function('ns_tcard_deal', function(keys, args)
+  local to, n, by, stream = args[1] or '', tonumber(args[2]) or 0, args[3] or '', args[4] or ''
+  if to == '' or string.find(to, '[%s:]') then return { 'REFUSED', 'USAGE deal needs a friend' } end
+  if redis.call('SISMEMBER', 'friends', to) == 0 then
+    return { 'REFUSED', 'UNREGISTERED ' .. to .. ' is not in friends: nova-sprint capacity friend ' .. to }
+  end
+  local ids = {}
+  for i = 5, #args do ids[#ids + 1] = args[i] end
+  local o = { by = by, why = 'deal', friend = to }
+  if #ids > 0 then
+    for _, id in ipairs(ids) do
+      local p = TK.read(id)
+      if not p then return { 'REFUSED', 'NOTASK task:' .. id } end
+      if p.where ~= 'ready' then return { 'REFUSED', 'NOTREADY task:' .. id .. ' is ' .. p.where } end
+      if p.friend ~= '' and p.friend ~= to then
+        return { 'REFUSED', 'OWNER task:' .. id .. ' is ' .. p.friend .. "'s" }
+      end
+      local err = TK.move(id, 'ready', { by = by, why = 'deal', friend = to, dry = true })
+      if err then return { 'REFUSED', err } end
+    end
+  else
+    if stream == '' or n < 1 then return { 'REFUSED', 'USAGE deal needs ids, or a stream and n' } end
+    local batch, from = 64, 0
+    while #ids < n do
+      local page = redis.call('ZRANGE', 'ws:' .. stream .. ':ready', from, from + batch - 1)
+      if #page == 0 then break end
+      for _, id in ipairs(page) do
+        if #ids >= n then break end
+        local p = TK.read(id)
+        if p and p.friend == '' then ids[#ids + 1] = id end
+      end
+      from = from + batch
+    end
+  end
+  local out = { 'DEALT', '0' }
+  for _, id in ipairs(ids) do
+    local err = TK.move(id, 'ready', o)
+    if err then return { 'REFUSED', err } end
+    out[#out + 1] = id
+  end
+  out[2] = tostring(#out - 2)
+  return out
+end)
+
+-- ns_tcard_beat_all(as, by, id...) -> BEAT k lease_until, then per refused
+-- id: id, why. Every working task friend:<as>:cards:working holds (or only
+-- the named ids: the harness names its live children's) renews its lease in
+-- this one call.
+redis.register_function('ns_tcard_beat_all', function(keys, args)
+  local as = args[1] or ''
+  if as == '' then return { 'REFUSED', 'USAGE beat needs the friend' } end
+  local ids = {}
+  for i = 3, #args do ids[#ids + 1] = args[i] end
+  if #ids == 0 then ids = redis.call('ZRANGE', 'friend:' .. as .. ':cards:working', 0, -1) end
+  local at = cm_now()
+  local untl = tostring(at + TK.LEASE)
+  local n, refused = 0, {}
+  for _, id in ipairs(ids) do
+    local p = TK.read(id)
+    local why
+    if not p then
+      why = 'NOTASK'
+    elseif p.where ~= 'working' then
+      why = 'NOTWORKING ' .. p.where
+    elseif p.friend ~= as then
+      why = 'OWNER ' .. p.friend
+    end
+    if why then
+      refused[#refused + 1] = id
+      refused[#refused + 1] = why
+    else
+      redis.call('HSET', 'task:' .. id, 'lease_until', untl, 'beat_at', tostring(at))
+      n = n + 1
+    end
+  end
+  local out = { 'BEAT', tostring(n), untl }
+  for _, v in ipairs(refused) do out[#out + 1] = v end
+  return out
+end)
+
 -- ns_tcard_place(by, sprint, [id, where, ok, stream]...) -> per id: the
 -- where placed, or 'skip <why>'. task migrate's one-time writer.
 redis.register_function('ns_tcard_place', function(keys, args)
@@ -1708,7 +1820,7 @@ redis.register_function({ function_name = 'ns_tcard_fsck', flags = { 'no-writes'
   callback = function(keys, args) return TK.fsck(args[1] or '') end })
 
 NS.task = { move = TK.move, create = TK.create, place = TK.place, read = TK.read, stream_of = TK.stream_of,
-  ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF,
+  ms = TK.ms, where = TK.IS, where_of = TK.WHERE_OF, taken = TK.taken, live = TK.live,
   -- set(id, state, o): the move to the where a fine state names (cancelled is
   -- done/fail), writing that state: the sprint store's transitions.
   -- renew(id, at): a live holder's beat renews the task's lease.

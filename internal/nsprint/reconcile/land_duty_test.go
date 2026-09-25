@@ -140,7 +140,7 @@ type ldFixture struct {
 	d     *reconcile.LandDuty
 }
 
-// seedMember puts task t<n> at merging with age at (ms after cardEpoch), in
+// seedMember puts task t<n> at merging with age at (ms after dealT0), in
 // the task card shape (nova-tools #3778): the record's where pointer, and its
 // two views, ws:<s>:merging and friend:<owner>:cards:merging, both scored by
 // created_at, so the landing's one move finds the double link it checks. It
@@ -151,7 +151,7 @@ func (fx *ldFixture) seedMember(t *testing.T, s string, n int, at float64, owner
 	t.Helper()
 	ctx, c := fx.ctx, fx.c
 	id := fmt.Sprintf("t%d", n)
-	created := cardEpoch + int64(at)
+	created := dealT0 + int64(at)
 	for _, k := range []string{"ws:" + s + ":merging", "friend:" + owner + ":cards:merging"} {
 		c.ZAdd(ctx, k, redis.Z{Score: float64(created), Member: id})
 	}

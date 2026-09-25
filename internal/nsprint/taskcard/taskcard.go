@@ -38,6 +38,8 @@ const (
 	FnTake       = "ns_tcard_take"
 	FnDone       = "ns_tcard_done"
 	FnBeat       = "ns_tcard_beat"
+	FnBeatAll    = "ns_tcard_beat_all"
+	FnDeal       = "ns_tcard_deal"
 	FnExpire     = "ns_tcard_expire"
 	FnPlace      = "ns_tcard_place"
 	FnLandStream = "ns_tcard_land_stream"
@@ -322,6 +324,71 @@ func Beat(ctx context.Context, c redis.Cmdable, id, as string) (int64, error) {
 		return 0, fmt.Errorf("%s: unexpected reply %q", FnBeat, s)
 	}
 	return strconv.ParseInt(v, 10, 64)
+}
+
+// Deal assigns in bulk (#3915): the named ids, or the n oldest unowned of
+// ws:<stream>:ready, move ready -> ready with friend `to` (friend:<to>:cards:
+// ready) in one call. Working is untouched: only a take at a child's spawn
+// moves a card there. A refusal (an id not ready, another friend's, an
+// unregistered friend) is a *Refused and wrote nothing.
+func Deal(ctx context.Context, c redis.Cmdable, to string, n int, by, stream string, ids ...string) ([]string, error) {
+	args := []any{to, n, by, stream}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	reply, err := c.FCall(ctx, FnDeal, nil, args...).Result()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", FnDeal, err)
+	}
+	out, err := list(reply)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", FnDeal, err)
+	}
+	if len(out) == 2 && out[0] == "REFUSED" {
+		return nil, &Refused{Why: out[1]}
+	}
+	if len(out) < 2 || out[0] != "DEALT" {
+		return nil, fmt.Errorf("%s: unexpected reply %v", FnDeal, out)
+	}
+	return out[2:], nil
+}
+
+// BeatAllResult is one batched beat: how many leases were renewed, until
+// when (ms), and each named id the beat refused (id -> why).
+type BeatAllResult struct {
+	Renewed int
+	Until   int64
+	Refused map[string]string
+}
+
+// BeatAll renews, in one call, the lease of every working task friend `as`
+// holds, or of the named ids only (a harness names its live children's).
+func BeatAll(ctx context.Context, c redis.Cmdable, as, by string, ids ...string) (BeatAllResult, error) {
+	args := []any{as, by}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	reply, err := c.FCall(ctx, FnBeatAll, nil, args...).Result()
+	if err != nil {
+		return BeatAllResult{}, fmt.Errorf("%s: %w", FnBeatAll, err)
+	}
+	out, err := list(reply)
+	if err != nil {
+		return BeatAllResult{}, fmt.Errorf("%s: %w", FnBeatAll, err)
+	}
+	if len(out) == 2 && out[0] == "REFUSED" {
+		return BeatAllResult{}, &Refused{Why: out[1]}
+	}
+	if len(out) < 3 || out[0] != "BEAT" || (len(out)-3)%2 != 0 {
+		return BeatAllResult{}, fmt.Errorf("%s: unexpected reply %v", FnBeatAll, out)
+	}
+	r := BeatAllResult{Refused: map[string]string{}}
+	r.Renewed, _ = strconv.Atoi(out[1])
+	r.Until, _ = strconv.ParseInt(out[2], 10, 64)
+	for i := 3; i+1 < len(out); i += 2 {
+		r.Refused[out[i]] = out[i+1]
+	}
+	return r, nil
 }
 
 // Expire moves every working task of the friends (every member of friends

@@ -132,6 +132,51 @@ function TE.line(key, line)
   return added
 end
 
+-- No card, no landing (nova-tools#3915, Glenn 2026-09-25 1:50 PM ET: "how
+-- can we make sure the friends table is accurate"). A PR is work only when
+-- it names a copy a consumer took:
+--   the swarm's bench card the harvest opened it from (the record's label
+--   and sprint name s:<S>:card:<label>), or
+--   a task a take leased (NS.task.taken): the record's task field, the head
+--   branch or its last /-segment (the child has the id as NOVA_TASK_ID and
+--   in its brief), or a task naming the PR (ref:<repo>#<n>:tasks, a done
+--   with the PR); working with a live lease, or merging, landed or done.
+-- A read task is never the work's copy. Returns the copy's name, or nil and
+-- what was looked at. Reads only: one HMGET, one SMEMBERS, one read per
+-- candidate.
+TE.COPY_WHERE = { merging = true, landed = true, done = true }
+
+function TE.copy(repo, n)
+  local key = TE.prkey(repo, n)
+  local f = redis.call('HMGET', key, 'branch', 'label', 'sprint', 'task')
+  local branch, label, S, named = f[1] or '', f[2] or '', f[3] or '', f[4] or ''
+  if label ~= '' and S ~= '' and redis.call('EXISTS', 's:' .. S .. ':card:' .. label) == 1 then
+    return 'card:' .. S .. '/' .. label
+  end
+  local cands, seen = {}, {}
+  local function add(id)
+    if id and id ~= '' and not seen[id] then
+      seen[id] = true
+      cands[#cands + 1] = id
+    end
+  end
+  add(named)
+  add(branch)
+  add(string.match(branch, '([^/]+)$'))
+  for _, id in ipairs(TE.TR.ids({ TE.TR.bare(repo) .. '#' .. tonumber(n) })) do add(id) end
+  local now = TE.now()
+  for _, id in ipairs(cands) do
+    local p = NS.task.read(id)
+    if p and p.kind ~= 'read' and not string.match(id, '^read%-') and NS.task.taken(p) then
+      local w = p.where
+      if not p.placed then w = NS.task.where_of[p.state] or '' end
+      if TE.COPY_WHERE[w] then return 'task:' .. id end
+      if w == 'working' and (tonumber(p.lease_until) or 0) >= now then return 'task:' .. id end
+    end
+  end
+  return nil, 'branch=' .. (branch ~= '' and branch or '-') .. ' candidates=' .. #cands
+end
+
 -- ns_land_member(repo, slug, merge_sha, n, task, line, by, why, closes)
 -- One member of a merged stream landing, fenced by the landing: land:<repo>:
 -- <slug> must be merged at merge_sha (STALE otherwise, nothing written). It
@@ -174,16 +219,23 @@ end)
 -- line by a person (who not jev*) lands every task naming the PR or an issue
 -- in the record's closes, why the line's "with <repo>#<n> (<sha>)" when it
 -- has one; a SCORE line moves the read task read-<n>-<head8> working ->
--- merging.
---   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key}
+-- merging. A SCORE on a PR that names no copy (TE.copy) is refused NOCOPY
+-- and nothing is written.
+--   {'OK', lines, kind, moved, same, skipped, note...} | {'NOHEAD', key} |
+--   {'NOCOPY', repo#n, what was looked at}
 redis.register_function('ns_read_post', function(keys, args)
   local repo, n, line, now = args[1] or '', args[2] or '', args[3] or '', args[4] or ''
   local key = TE.prkey(repo, n)
   if (redis.call('HGET', key, 'head') or '') == '' then return { 'NOHEAD', key } end
-  local lines = redis.call('RPUSH', key .. ':lines', line)
   local first = string.match(line, '^[^\n]*')
-  redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
   local kind = string.match(first, '^(%S+)') or ''
+  -- a SCORE is what makes a PR landable: no copy, no score (#3915)
+  if kind == 'SCORE' then
+    local copy, looked = TE.copy(repo, n)
+    if not copy then return { 'NOCOPY', TE.TR.bare(repo) .. '#' .. n, looked } end
+  end
+  local lines = redis.call('RPUSH', key .. ':lines', line)
+  redis.call('HSET', key, 'last_line', first, 'last_line_at', now)
   local who = string.match(first, 'who=([^%s:;,]+)') or ''
   local head = string.match(first, 'head=(%x+)') or ''
   local r = { moved = 0, same = 0, skipped = 0, notes = {} }

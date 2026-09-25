@@ -41,13 +41,12 @@
 //	friends                 SMEMBERS when no roster is given; friend:<f> HMGET at, up
 //	friend:<f>:cards:<w>    ZCARD for ready, working: the friend's cells are
 //	                        the sizes of the sets its tasks move through (the card
-//	                        model, rowan-new specs/ws-index.md; nova-tools#3779);
-//	                        done adds merging and landed (#3778: finished work
-//	                        whose PR is merging or merged)
+//	                        model, rowan-new specs/ws-index.md; nova-tools#3779)
 //	friend:<f>:cards:<d>    ZCOUNT from the current sprint's start to +inf for
-//	                        d = done, merging, landed: done counts only this
-//	                        sprint's cards (#3883); ZCARD beside each for the
-//	                        done base of a `table clear`
+//	                        d = done, merging, landed: the done column is this
+//	                        sprint's finished work (#3883), whose PR may still be
+//	                        merging or merged (#3778); ZCARD of the same three
+//	                        beside it for the done base of a `table clear`
 //	sprint:order            ZRANGE -1 -1 when no sprint is named: the newest
 //	                        sprint opened is the current one
 //	s:<S>                   HGET opened_at, the current sprint's start (ms)
@@ -145,7 +144,7 @@ type SprintSnapshot struct {
 	Hosts      []HostRow
 	Friends    []FriendRow
 	DoneBase   map[string]string
-	// DoneAll is each friend's ZCARD friend:<f>:cards:done, every card it
+	// DoneAll is each friend's ZCARD friend:<f>:cards:done + merging + landed (#3778), every card it
 	// ever finished: the measure a `table clear` base (DoneBase) is taken in.
 	DoneAll map[string]int64
 	// DoneSprint is the sprint the done column is scoped to (#3883): the
@@ -321,7 +320,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			cells[i] = append(cells[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
 		}
 		for _, w := range FriendDoneWheres {
-			// Only this sprint's cards: every set is scored by created_at (#3883).
+			// Only this sprint's cards: every set is scored by created_at.
 			cells[i] = append(cells[i], pipe.ZCount(ctx, FriendCardsKey(f, w), since, "+inf"))
 			doneAll[i] = append(doneAll[i], pipe.ZCard(ctx, FriendCardsKey(f, w)))
 		}
@@ -451,7 +450,7 @@ func (r *SprintReader) readOnce(ctx context.Context, now time.Time) (*SprintSnap
 			all += n
 		}
 		if allOK {
-			snap.DoneAll[f] = all // done + merging + landed, the base `table clear` stores
+			snap.DoneAll[f] = all // the same three sets a `table clear` base counts
 		}
 		if downs[i].Val() > 0 {
 			row.Down = "down"

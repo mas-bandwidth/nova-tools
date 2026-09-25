@@ -34,6 +34,10 @@ func TestTaskCardDispatch(t *testing.T) {
 		{[]string{"ls"}, true},
 		{[]string{"migrate"}, true},
 		{[]string{"list", "--actor", "a"}, false},
+		{[]string{"deal", "--actor", "rowan", "--to", "a", "--stream", "s"}, true},
+		{[]string{"beat", "--actor", "a"}, true},
+		{[]string{"beat", "--actor", "a", "--ids", "x,y"}, true},
+		{[]string{"beat", "--as", "a", "--sprint", "S", "--id", "x", "--token", "t"}, false},
 	} {
 		if got := isTaskCard(tc.args[0], tc.args[1:]); got != tc.want {
 			t.Errorf("isTaskCard(%v) = %v, want %v", tc.args, got, tc.want)
@@ -59,6 +63,7 @@ func TestTaskCardCLI(t *testing.T) {
 	if m := cardLine.FindStringSubmatch(out); code != 0 || errOut != "" || m == nil || m[4] != "ready" {
 		t.Fatalf("push = %d %q %q", code, out, errOut)
 	}
+	c.HSet(ctx, "friend:a:beat", "session", "test") // a take needs the harness's live beat (#3915)
 	code, out, _ = runTaskCLI("take", "--actor", "a")
 	if code != 0 || !strings.HasPrefix(out, "TASK take n=1 ids=build-1 ms=") || zc("ready") != 0 || zc("working") != 1 {
 		t.Fatalf("take = %d %q", code, out)
@@ -118,5 +123,48 @@ func TestTaskCardCLI(t *testing.T) {
 	}
 	if code, _, errOut = runTaskCLI("land", "--actor", "a", "--id", "x"); code != 2 || !strings.Contains(errOut, "--sha is required") {
 		t.Fatalf("land without --sha = %d %q", code, errOut)
+	}
+}
+
+// TestTaskDealTakeBeatCLI is #3915 at the verbs: deal assigns in bulk into
+// the friend's ready set, take moves only what the harness spawns, beat with
+// no --id renews every lease the friend holds, each one call and one line.
+func TestTaskDealTakeBeatCLI(t *testing.T) {
+	f := newSeat(t)
+	t.Setenv("FRIEND_QUEUE_SPRINT", seatSprint)
+	t.Setenv("NOVA_FRIEND", "")
+	ctx := context.Background()
+	c := f.client
+	const s = "nova-sprint + merge + bus"
+	fz := func(w string) int64 { return c.ZCard(ctx, "friend:e:cards:"+w).Val() }
+	c.SAdd(ctx, "friends", "e")
+	for _, id := range []string{"d-1", "d-2", "d-3", "d-4"} {
+		if code, out, errOut := runTaskCLI("push", "--actor", "rowan", "--id", id, "--stream", s); code != 0 {
+			t.Fatalf("push %s = %d %q %q", id, code, out, errOut)
+		}
+	}
+	code, out, errOut := runTaskCLI("deal", "--actor", "rowan", "--to", "e", "--stream", s, "--n", "3")
+	if code != 0 || !strings.HasPrefix(out, "TASK deal to=e n=3 ids=d-1,d-2,d-3 ms=") || fz("ready") != 3 || fz("working") != 0 {
+		t.Fatalf("deal = %d %q %q", code, out, errOut)
+	}
+	code, out, _ = runTaskCLI("take", "--actor", "e", "--n", "2")
+	if code != 1 || !strings.Contains(out, "NOBEAT") || fz("working") != 0 {
+		t.Fatalf("take with no beat = %d %q", code, out)
+	}
+	c.HSet(ctx, "friend:e:beat", "session", "test")
+	code, out, _ = runTaskCLI("take", "--actor", "e", "--n", "2")
+	if code != 0 || !strings.HasPrefix(out, "TASK take n=2 ids=d-1,d-2 ms=") || fz("ready") != 1 || fz("working") != 2 {
+		t.Fatalf("take = %d %q", code, out)
+	}
+	code, out, _ = runTaskCLI("beat", "--actor", "e")
+	if code != 0 || !strings.HasPrefix(out, "TASK beat as=e renewed=2 refused=0 lease_until=") {
+		t.Fatalf("beat all = %d %q", code, out)
+	}
+	code, out, _ = runTaskCLI("beat", "--actor", "e", "--ids", "d-1,d-3")
+	if code != 1 || !strings.Contains(out, "REFUSED d-3 why=") || !strings.Contains(out, "renewed=1 refused=1") {
+		t.Fatalf("beat of a card not taken = %d %q", code, out)
+	}
+	if code, _, errOut = runTaskCLI("deal", "--actor", "rowan", "--to", "e"); code != 2 || !strings.Contains(errOut, "want exactly one of --ids") {
+		t.Fatalf("deal usage = %d %q", code, errOut)
 	}
 }
