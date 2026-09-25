@@ -5,8 +5,17 @@
 // coordinator's deploy chain and rowan-tools fleet-install-tools.sh; the plan
 // lives in Redis (internal/nsprint/fleetbuild).
 //
-//	fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--dry-run]
+//	fleet build [--redis <addr>] [--bench <b>[,<b>...]] [--build-cmd <path>] [--machines <file>] [--dry-run]
 //	fleet build set [--redis <addr>] <key>=<value>...
+//	fleet build duty [--redis <addr>] [--machines <file>] [--dry-run]
+//
+// Nothing in the plan is typed (#4050): land merge writes version and commit,
+// builder, self and platform:<bench> converge from the bench registry and the
+// machines registry (--machines, else $NOVA_FLEET_MACHINES) before each plan,
+// and the tools are the release manifest's. --redis goes anywhere on the
+// line, set's key=value pairs included. `duty` is one pass of the
+// reconciler's deploy duty: WOULD INSTALL per bench whose beat names another
+// version under --dry-run, else it starts `fleet build --bench <those>`.
 //
 // Exit 0 every target installed and fn deploy answered; 1 a refusal (the
 // line names the remedy) or a failed target; 2 usage; 5 Redis unreachable.
@@ -46,22 +55,63 @@ func buildRefused(errOut io.Writer, err error) int {
 	return 1
 }
 
-func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) int {
-	if len(args) > 0 && args[0] == "set" {
-		return runFleetBuildSet(ctx, args[1:], out, errOut)
+// fleetBuildCmd is the build command: $NOVA_FLEET_BUILD_CMD, else the
+// default found on PATH.
+func fleetBuildCmd() string {
+	if v := os.Getenv("NOVA_FLEET_BUILD_CMD"); v != "" {
+		return v
 	}
+	return fleetbuild.DefaultBuildCmd
+}
+
+// fleetMachines reads the machines registry at path, else at
+// $NOVA_FLEET_MACHINES; neither set reads none.
+func fleetMachines(path string) ([]fleetbuild.Machine, error) {
+	if path == "" {
+		path = os.Getenv(fleetbuild.MachinesEnv)
+	}
+	return fleetbuild.ReadMachinesFile(path)
+}
+
+func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := flag.NewFlagSet("fleet build", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	redisAddr := fs.String("redis", "", "")
 	benches := fs.String("bench", "", "")
-	buildCmd := fs.String("build-cmd", fleetbuild.DefaultBuildCmd, "")
+	buildCmd := fs.String("build-cmd", fleetBuildCmd(), "")
+	machines := fs.String("machines", "", "")
 	dry := fs.Bool("dry-run", false, "")
-	if err := fs.Parse(args); err != nil {
+	// --redis anywhere on the line (#4050): before, between or after the
+	// subverb and set's key=value pairs.
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
 		return refuse(errOut, "fleet build", err.Error())
 	}
-	if fs.NArg() != 0 {
+	if len(pos) > 0 && (pos[0] == "set" || pos[0] == "duty") {
+		var other []string
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name != "redis" && !(pos[0] == "duty" && (f.Name == "machines" || f.Name == "dry-run")) {
+				other = append(other, "--"+f.Name)
+			}
+		})
+		if len(other) > 0 {
+			return refuse(errOut, "fleet build "+pos[0], "does not take "+strings.Join(other, ", "))
+		}
+		if pos[0] == "set" {
+			return runFleetBuildSet(ctx, *redisAddr, pos[1:], out, errOut)
+		}
+		if len(pos) > 1 {
+			return refuse(errOut, "fleet build duty", "takes no positional arguments")
+		}
+		return runFleetBuildDuty(ctx, *redisAddr, *machines, *dry, out, errOut)
+	}
+	if len(pos) != 0 {
 		return refuse(errOut, "fleet build", "takes no positional arguments (fleet build set <key>=<value> writes the plan)")
+	}
+	ms, err := fleetMachines(*machines)
+	if err != nil {
+		return buildRefused(errOut, fmt.Errorf("machines registry: %v (--machines <file>, or unset %s)", err, fleetbuild.MachinesEnv))
 	}
 	var only []string
 	for _, b := range strings.Split(*benches, ",") {
@@ -77,6 +127,22 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 	cfg, err := fleetbuild.ReadConfig(ctx, st.Client())
 	if err != nil {
 		return unreachable(errOut, "fleet build", err.Error())
+	}
+	facts, err := fleetbuild.ReadFacts(ctx, st.Client())
+	if err != nil {
+		return unreachable(errOut, "fleet build", err.Error())
+	}
+	facts.Machines = ms
+	conv := fleetbuild.Converge(facts)
+	cfg = fleetbuild.Apply(cfg, conv)
+	if len(conv) > 0 {
+		if *dry {
+			fmt.Fprintf(out, "WOULD CONVERGE %s\n", fleetbuild.Fields(conv))
+		} else if err := fleetbuild.WriteConverged(ctx, st.Client(), conv); err != nil {
+			return unreachable(errOut, "fleet build", err.Error())
+		} else {
+			fmt.Fprintf(out, "CONVERGED %s\n", fleetbuild.Fields(conv))
+		}
 	}
 	plan, err := fleetbuild.MakePlan(cfg, only)
 	if err != nil {
@@ -129,23 +195,16 @@ func runFleetBuild(ctx context.Context, args []string, out, errOut io.Writer) in
 	return 1
 }
 
-func runFleetBuildSet(ctx context.Context, args []string, out, errOut io.Writer) int {
-	fs := flag.NewFlagSet("fleet build set", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	redisAddr := fs.String("redis", "", "")
-	if err := fs.Parse(args); err != nil {
-		return refuse(errOut, "fleet build set", err.Error())
-	}
-	if fs.NArg() == 0 {
+func runFleetBuildSet(ctx context.Context, redisAddr string, pairs []string, out, errOut io.Writer) int {
+	if len(pairs) == 0 {
 		return refuse(errOut, "fleet build set", "wants <key>=<value>...: version, commit, builder, self, tools, platform:<bench>")
 	}
-	st, err := openFleetStore(ctx, *redisAddr)
+	st, err := openFleetStore(ctx, redisAddr)
 	if err != nil {
 		return unreachable(errOut, "fleet build set", err.Error())
 	}
 	defer st.Close()
-	n, err := fleetbuild.SetFields(ctx, st.Client(), fs.Args())
+	n, err := fleetbuild.SetFields(ctx, st.Client(), pairs)
 	if errors.Is(err, fleetbuild.ErrRefused) {
 		return buildRefused(errOut, err)
 	}

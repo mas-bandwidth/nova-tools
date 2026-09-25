@@ -258,6 +258,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":landed").Result(); n != 2 {
 		t.Fatalf("landed %d", n)
 	}
+	landedRelease(t, ctx, c, addr, out)
 	if n, _ := c.ZCard(ctx, "ws:"+lsStream+":merging").Result(); n != 0 {
 		t.Fatalf("merging %d", n)
 	}
@@ -326,7 +327,7 @@ func TestLandStreamEndToEnd(t *testing.T) {
 	}
 	// A re-run is ALREADY and closes nothing twice.
 	code, out, _ = runSprint("land", "merge", "--redis", addr, "--repo", lsRepo, "--stream", lsStream, "--api", gh.srv.URL)
-	if code != 0 || !strings.Contains(out, "moved=0 missing=0 already=true closed=- unclosed=- rest_calls=0 close_lines=0 skipped=0 closes_unread=- issues_closed=- issues_unclosed=-") {
+	if code != 0 || !strings.Contains(out, "moved=0 missing=0 already=true closed=- unclosed=- rest_calls=0 close_lines=0 skipped=0 closes_unread=- issues_closed=- issues_unclosed=- release=-") {
 		t.Fatalf("re-run: %d\n%s", code, out)
 	}
 	fsck("re-run")
@@ -406,4 +407,39 @@ func TestLandVerbsRefuseUsage(t *testing.T) {
 	if code, _, errOut := runSprint("pr", "record", "--redis", mr.Addr(), "--repo", lsRepo, "--n", "5", "--ci", "green"); code != 2 || !strings.Contains(errOut, "REFUSED no record pr:nova-tools:5") {
 		t.Fatalf("new record without head: %d %s", code, errOut)
 	}
+}
+
+// landedRelease is the #4050 DONE-WHEN, run on the landing above: the merge
+// into dev left fleet:release version v0.16.0-dev.<merge sha8> and commit
+// <merge sha> (its receipt says so), and the reconciler's deploy duty, one
+// dry pass through `fleet build duty`, reports WOULD INSTALL for every bench
+// whose beat version differs and for no other.
+func landedRelease(t *testing.T, ctx context.Context, c *redis.Client, addr, receipt string) {
+	t.Helper()
+	merge := strings.Repeat("d", 40)
+	version := "v0.16.0-dev.dddddddd"
+	if !strings.Contains(receipt, " release="+version+"\n") {
+		t.Fatalf("the LAND MERGE receipt does not name the release:\n%s", receipt)
+	}
+	rel := c.HGetAll(ctx, "fleet:release").Val()
+	if rel["version"] != version || rel["commit"] != merge || rel["landed"] != "nova-tools#900" {
+		t.Fatalf("fleet:release after the landing = %v", rel)
+	}
+	c.SAdd(ctx, "benches", "hulk", "space", "batman", "vision")
+	for b, line := range map[string]string{
+		"hulk":   "nova-sprint v0.16.0-dev.7658e89c linux/amd64 go1.26.1",
+		"space":  "nova-sprint " + version + " linux/amd64 go1.26.1",
+		"batman": "nova-sprint 20260924090000-bbbbbbbbbbbb darwin/amd64 go1.26.1",
+	} {
+		c.HSet(ctx, "bench:"+b+":beat", "at", "1", "build", line)
+		c.Expire(ctx, "bench:"+b+":beat", time.Minute)
+	}
+	code, out, errOut := runSprint("fleet", "build", "duty", "--dry-run", "--redis", addr)
+	want := "FLEET DEPLOY WOULD INSTALL batman beat=20260924090000-bbbbbbbbbbbb want=" + version + "\n" +
+		"FLEET DEPLOY WOULD INSTALL hulk beat=v0.16.0-dev.7658e89c want=" + version + "\n" +
+		"FLEET DEPLOY DRY-RUN version=" + version + " commit=dddddddddddd drift=2 current=1 quiet=1\n"
+	if code != 0 || out != want {
+		t.Fatalf("fleet build duty --dry-run: %d\n%s%s\nwant:\n%s", code, out, errOut, want)
+	}
+	c.Del(ctx, "benches", "bench:hulk:beat", "bench:space:beat", "bench:batman:beat")
 }

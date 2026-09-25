@@ -40,6 +40,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fleetbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -696,6 +697,21 @@ func LandedWith(repo string, pr int) string {
 // call; it moves no task (LandMembers does, per member). already is true
 // when it was merged before.
 func SaveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA string) (already bool, err error) {
+	already, _, err = saveLanded(ctx, c, l, by, mergeSHA)
+	return already, err
+}
+
+// ReleasesOn says whether a landing of repo into base names a fleet release:
+// nova-tools into dev (#4050), with a full merge sha.
+func ReleasesOn(repo, base, mergeSHA string) bool {
+	return prkey.Name(repo) == fleetbuild.ReleaseRepo && base == fleetbuild.ReleaseBase && fullSHA.MatchString(mergeSHA)
+}
+
+var fullSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// saveLanded is SaveLanded, returning the release version it wrote to
+// fleet:release ("" when the landing names none or was merged before).
+func saveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA string) (already bool, release string, err error) {
 	members := make([]map[string]string, 0, len(l.Members))
 	for _, m := range l.Members {
 		members = append(members, map[string]string{"task": m.Task, "stream": m.Stream, "n": strconv.Itoa(m.N),
@@ -706,12 +722,23 @@ func SaveLanded(ctx context.Context, c redis.Scripter, l Landing, by, mergeSHA s
 		mem = []any{}
 	}
 	why := fmt.Sprintf("LANDED %s#%d %s at %s merge=%s members=%d", l.Repo, l.PR, l.Branch, short(l.Head), short(mergeSHA), len(l.Members))
-	res, err := eval(ctx, c, "landed", map[string]any{"repo": l.Repo, "slug": l.Slug, "now": now(), "by": by,
-		"merge_sha": mergeSHA, "pr": strconv.Itoa(l.PR), "why": why, "members": mem})
-	if err != nil {
-		return false, err
+	payload := map[string]any{"repo": l.Repo, "slug": l.Slug, "now": now(), "by": by,
+		"merge_sha": mergeSHA, "pr": strconv.Itoa(l.PR), "why": why, "members": mem}
+	if ReleasesOn(l.Repo, l.Base, mergeSHA) {
+		payload["release"] = map[string]string{"key": fleetbuild.ConfigKey, "train": fleetbuild.DefaultTrain,
+			"landed": LandedWith(l.Repo, l.PR)}
 	}
-	return res[0] == "ALREADY", nil
+	res, err := eval(ctx, c, "landed", payload)
+	if err != nil {
+		return false, "", err
+	}
+	if res[0] == "ALREADY" {
+		return true, "", nil
+	}
+	if len(res) > 1 {
+		release = res[1]
+	}
+	return false, release, nil
 }
 
 // FunctionLandMember is the nova_sprint library function that lands one

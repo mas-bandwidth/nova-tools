@@ -300,10 +300,15 @@ type MergeReport struct {
 	// close that the lander closed by REST, or could not (budget, error).
 	IssuesClosed   []int
 	IssuesUnclosed []int
+	// Release is the fleet:release version this merge wrote (a landing of
+	// nova-tools into dev, #4050), "" when it wrote none.
+	Release string
 }
 
 // Merge merges the stream PR when its record says ci=green and mergeable at
-// the landing's head and marks the landing merged; then, per member in one
+// the landing's head and marks the landing merged, writing fleet:release
+// version and commit in the same call when it lands nova-tools into dev
+// (#4050: the reconciler's deploy duty takes it from there); then, per member in one
 // fenced Lua call each, writes its CLOSE line on its record and moves every
 // task naming it or an issue it closes to landed (nova-tools#3779); then
 // closes the issues each member's body closes (GitHub does not on a merge
@@ -360,7 +365,7 @@ func Merge(ctx context.Context, c Client, o MergeOptions) (MergeReport, error) {
 			return rep, err
 		}
 		rep.MergeSHA = sha
-		rep.Already, err = SaveLanded(ctx, c, l, o.By, sha)
+		rep.Already, rep.Release, err = saveLanded(ctx, c, l, o.By, sha)
 		if err != nil {
 			return rep, err
 		}

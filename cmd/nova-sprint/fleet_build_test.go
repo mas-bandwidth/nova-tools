@@ -27,6 +27,8 @@ func (f *verbFakeBench) Run(ctx context.Context, argv []string) (string, error) 
 	switch {
 	case argv[0] == "space-build":
 		return "SPACE BUILD OK\n", nil
+	case argv[0] == "ssh" && strings.HasPrefix(argv[len(argv)-1], "cat "):
+		return strings.Repeat("a", 64) + "  nova-sprint\n" + strings.Repeat("b", 64) + "  nova-merge\n", nil
 	case argv[0] == "ssh":
 		return "nova-sprint " + v + " linux/amd64 go1.25.1\n", nil
 	case argv[0] == "rsync":
@@ -100,5 +102,21 @@ func TestFleetBuildVerbSetDryRunAndDeploy(t *testing.T) {
 	}
 	if code, _, _ := run("extra"); code != 2 {
 		t.Errorf("positional argument: code=%d, want 2", code)
+	}
+	// --redis anywhere on the line (#4050): after the pairs, before the
+	// subverb, as --redis=<addr>; set refuses a flag that is not its own.
+	for _, args := range [][]string{
+		{"build", "set", "self=studio", "--redis", mr.Addr()},
+		{"build", "--redis", mr.Addr(), "set", "self=studio"},
+		{"build", "set", "--redis=" + mr.Addr(), "self=studio"},
+	} {
+		var out, errOut bytes.Buffer
+		if code := runFleet(ctx, args, &out, &errOut); code != 0 || out.String() != "FLEET RELEASE SET fields=1\n" {
+			t.Errorf("%q: code=%d out=%q err=%q", args, code, out.String(), errOut.String())
+		}
+	}
+	var o, e bytes.Buffer
+	if code := runFleet(ctx, []string{"build", "set", "--dry-run", "self=studio", "--redis", mr.Addr()}, &o, &e); code != 2 || !strings.Contains(e.String(), "does not take --dry-run") {
+		t.Errorf("set --dry-run: code=%d err=%q", code, e.String())
 	}
 }

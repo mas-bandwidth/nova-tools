@@ -6,7 +6,9 @@
 // which deals on stream events and on the 10 s sweep, then each duty another
 // file registered through registerReconcileDuty: ok-to-friend and harvest
 // (consume.go), expire (expire.go), route (route_duty.go, #3323: reads, fixes
-// and merging over every open sprint). After each pass a `DUTY <name>` line
+// and merging over every open sprint), fleet-deploy (fleet_deploy_duty.go,
+// #4050: a landing's fleet:release deployed to the benches whose beat names
+// another version). After each pass a `DUTY <name>` line
 // says what each duty did (#3199: every duty under --once, a moving or
 // failing one in the loop).
 //
