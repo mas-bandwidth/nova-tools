@@ -21,6 +21,10 @@ type Counts struct {
 	Expired   int
 	Retried   int // ended cards fed back once (ns_card_retry)
 	Ambiguous int // pending idem keys flipped past open_ms (ns_idem_ambiguous)
+	// The route duty's moves (#3323), each also counted in Routed.
+	Reads   int // read tasks pushed to a reader's queue
+	Fixes   int // fix tasks pushed to an author's queue
+	Merging int // tasks moved to merging
 }
 
 func (c *Counts) add(o Counts) {
@@ -29,6 +33,18 @@ func (c *Counts) add(o Counts) {
 	c.Expired += o.Expired
 	c.Retried += o.Retried
 	c.Ambiguous += o.Ambiguous
+	c.Reads += o.Reads
+	c.Fixes += o.Fixes
+	c.Merging += o.Merging
+}
+
+// Zero is true when the pass moved nothing.
+func (c Counts) Zero() bool { return c == Counts{} }
+
+// Line is the counts as receipt words, in a fixed order.
+func (c Counts) Line() string {
+	return fmt.Sprintf("dealt=%d routed=%d expired=%d retried=%d ambiguous=%d reads=%d fixes=%d merging=%d",
+		c.Dealt, c.Routed, c.Expired, c.Retried, c.Ambiguous, c.Reads, c.Fixes, c.Merging)
 }
 
 // Duty is one reconciler duty (spec 5.2): deal (#2743), refill (#2935),
