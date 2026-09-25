@@ -2,14 +2,56 @@ package friendqueue
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
+
+// tripCounter is the round-trip counting hook of #3275: one single command
+// and one pipeline flush are each one round trip to the server.
+type tripCounter struct {
+	mu        sync.Mutex
+	singles   int
+	pipelines int
+}
+
+func (*tripCounter) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (c *tripCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		c.mu.Lock()
+		c.singles++
+		c.mu.Unlock()
+		return next(ctx, cmd)
+	}
+}
+
+func (c *tripCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		c.mu.Lock()
+		c.pipelines++
+		c.mu.Unlock()
+		return next(ctx, cmds)
+	}
+}
+
+func (c *tripCounter) trips() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.singles + c.pipelines
+}
+
+func (c *tripCounter) shape() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return fmt.Sprintf("%d single + %d pipeline", c.singles, c.pipelines)
+}
 
 // TestSeededStreamEntryAppearsAndPriorityTSVDoesNotOverrideIt is the read.
 // The dealer seeds q:<friend> (and q:<friend>:front) with task, kind and ref.
@@ -199,6 +241,79 @@ func TestClosedEntryInStreamHistoryDoesNotCountAsLiveQueued(t *testing.T) {
 	}
 	if n < 3 {
 		t.Fatalf("bulk stream len = %d; the closed entry must stay in the stream history", n)
+	}
+}
+
+// TestReadOf2000QueuedItemsIsAtMostTwoRoundTrips is the #3275 DONE-WHEN:
+// a Read of 2,000 live queued entries issues at most two round trips — both
+// streams in one pipeline, then every task:<id> hash in one pipeline. The
+// serial reader sent 2 + n round trips: at the Studio's 83 ms to the fleet
+// Redis, 2,025 entries cost 2.8 minutes of serial round trips. The counts
+// here are client-side: a pipeline flush is one trip however many commands
+// it carries.
+func TestReadOf2000QueuedItemsIsAtMostTwoRoundTrips(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	ctx := context.Background()
+
+	front, bulk, err := Keys("johnny")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 2000
+	const onFront = 50
+	// The dealer seeded 2,000 distinct tasks, the first onFront on the
+	// priority stream and the rest on the bulk one; every hash says
+	// johnny owns an open task. Seeding is itself batched: it happens
+	// before the hook is attached and is not part of the count.
+	place := rdb.Pipeline()
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("read-%04d", i)
+		stream := bulk
+		if i < onFront {
+			stream = front
+		}
+		place.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]interface{}{
+			"task": id, "kind": "read", "ref": "mas-bandwidth/nova-tools#" + id[5:],
+		}})
+	}
+	if _, err := place.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	hashes := rdb.Pipeline()
+	for i := 0; i < n; i++ {
+		hashes.HSet(ctx, taskPrefix+fmt.Sprintf("read-%04d", i), fieldOwner, "johnny", fieldState, stateOpen)
+	}
+	if _, err := hashes.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := &tripCounter{}
+	rdb.AddHook(rec)
+	got, err := Read(ctx, rdb, "johnny", "7777\tOVERRIDE\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Who != "johnny" {
+		t.Fatalf("who = %q, want johnny", got.Who)
+	}
+	if got.N() != n {
+		t.Fatalf("queue n = %d, want %d live queued tasks", got.N(), n)
+	}
+	if !got.Items[0].Front || got.Items[0].Stream != front {
+		t.Fatalf("first item %+v, want the priority stream first", got.Items[0])
+	}
+	if got.Items[onFront].Front {
+		t.Fatalf("item %d sits on the front stream: %+v", onFront, got.Items[onFront])
+	}
+	// The card's ceiling: the read of 2,000 queued items may not pass two
+	// round trips.
+	if trips := rec.trips(); trips > 2 {
+		t.Fatalf("Read of %d queued items issued %d round trips (%s); the ceiling is 2", n, trips, rec.shape())
+	}
+	if rec.pipelines != 2 || rec.singles != 0 {
+		t.Fatalf("read shape %s, want both streams and every hash in two pipelines", rec.shape())
 	}
 }
 

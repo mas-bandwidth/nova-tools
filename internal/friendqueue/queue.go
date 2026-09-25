@@ -100,6 +100,13 @@ func Keys(friend string) (front, bulk string, err error) {
 // exist is an empty queue, not an error. priorityTSV is the body of the
 // hand-written PRIORITY.tsv the column used to count. It is not parsed: a line
 // in it does not add an item and does not replace a stream entry.
+//
+// The read is two round trips, never 2 + n (#3275): both streams in one
+// pipeline, then every task:<id> hash in one second pipeline. At 83 ms a
+// round trip, the serial 2 + n reader spent 2.8 minutes on 2,025 entries;
+// two trips spend 166 ms whatever n is. A pipeline is not a multi-key step:
+// each command stands alone and none depends on another's write, so no Lua
+// and no transaction is owed.
 func Read(ctx context.Context, rdb redis.Cmdable, friend, priorityTSV string) (Queue, error) {
 	// The file is not a source. The argument stays so a caller that still
 	// holds the list passes it here, where it loses, instead of counting it.
@@ -115,53 +122,67 @@ func Read(ctx context.Context, rdb redis.Cmdable, friend, priorityTSV string) (Q
 	if err != nil {
 		return Queue{}, err
 	}
-	q := Queue{Who: name}
+	// Round trip 1: both streams at once. The front stream's entries are
+	// folded in first, so a task on both streams keeps its front entry.
+	pipe := rdb.Pipeline()
+	frontCmd := pipe.XRange(ctx, front, "-", "+")
+	bulkCmd := pipe.XRange(ctx, bulk, "-", "+")
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return Queue{}, err
+	}
+	frontMsgs, err := frontCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return Queue{}, fmt.Errorf("read %s: %w", front, err)
+	}
+	bulkMsgs, err := bulkCmd.Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return Queue{}, fmt.Errorf("read %s: %w", bulk, err)
+	}
 	seen := map[string]struct{}{}
-	for _, spec := range []struct {
-		stream string
-		front  bool
-	}{
-		{front, true},
-		{bulk, false},
-	} {
-		items, err := readStream(ctx, rdb, spec.stream, spec.front, seen)
+	q := Queue{Who: name}
+	q.Items = append(q.Items, streamItems(frontMsgs, front, true, seen)...)
+	q.Items = append(q.Items, streamItems(bulkMsgs, bulk, false, seen)...)
+	if len(q.Items) == 0 {
+		return q, nil
+	}
+	// Round trip 2: every task:<id> hash at once. The stream is placement
+	// history; the hash is current, so each kept entry answers against its
+	// own hash.
+	hashes := make(map[string]*redis.SliceCmd, len(q.Items))
+	pipe = rdb.Pipeline()
+	for _, it := range q.Items {
+		if _, done := hashes[it.Task]; done {
+			continue
+		}
+		hashes[it.Task] = pipe.HMGet(ctx, taskPrefix+it.Task, fieldOwner, fieldState)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return Queue{}, err
+	}
+	live := make([]Item, 0, len(q.Items))
+	for _, it := range q.Items {
+		ok, err := hashIsLiveQueued(name, hashes[it.Task])
 		if err != nil {
 			return Queue{}, err
 		}
-		q.Items = append(q.Items, items...)
-	}
-	live, err := keepLiveQueued(ctx, rdb, name, q.Items)
-	if err != nil {
-		return Queue{}, err
+		if ok {
+			live = append(live, it)
+		}
 	}
 	q.Items = live
 	return q, nil
 }
 
-// keepLiveQueued drops stream entries whose task:<id> hash is not this
-// friend's open task. The stream is placement history; the hash is current.
-func keepLiveQueued(ctx context.Context, rdb redis.Cmdable, friend string, items []Item) ([]Item, error) {
-	var out []Item
-	for _, it := range items {
-		ok, err := hashIsLiveQueued(ctx, rdb, friend, it.Task)
-		if err != nil {
-			return nil, err
-		}
-		if ok {
-			out = append(out, it)
-		}
-	}
-	return out, nil
-}
-
-func hashIsLiveQueued(ctx context.Context, rdb redis.Cmdable, friend, task string) (bool, error) {
-	key := taskPrefix + task
-	vals, err := rdb.HMGet(ctx, key, fieldOwner, fieldState).Result()
+// hashIsLiveQueued reads the fetched task:<id> hash: it counts when owner
+// names this friend and state is open. A missing hash, another owner, state
+// working, or state closed does not count.
+func hashIsLiveQueued(friend string, get *redis.SliceCmd) (bool, error) {
+	vals, err := get.Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return false, nil
 		}
-		return false, fmt.Errorf("read %s: %w", key, err)
+		return false, fmt.Errorf("read %s: %w", get.Args()[1], err)
 	}
 	owner, state := "", ""
 	if len(vals) > 0 {
@@ -180,14 +201,10 @@ func hashIsLiveQueued(ctx context.Context, rdb redis.Cmdable, friend, task strin
 	return state == stateOpen, nil
 }
 
-func readStream(ctx context.Context, rdb redis.Cmdable, stream string, front bool, seen map[string]struct{}) ([]Item, error) {
-	msgs, err := rdb.XRange(ctx, stream, "-", "+").Result()
-	if err != nil {
-		if errors.Is(err, redis.Nil) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("read %s: %w", stream, err)
-	}
+// streamItems folds one stream's entries into queue items, earliest first:
+// a task seen on an earlier stream is not replaced by this one, and an entry
+// with no task field is not a dealt task.
+func streamItems(msgs []redis.XMessage, stream string, front bool, seen map[string]struct{}) []Item {
 	var out []Item
 	for _, m := range msgs {
 		task := strings.TrimSpace(asString(m.Values[FieldTask]))
@@ -207,7 +224,7 @@ func readStream(ctx context.Context, rdb redis.Cmdable, stream string, front boo
 			Front:  front,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func asString(v any) string {
