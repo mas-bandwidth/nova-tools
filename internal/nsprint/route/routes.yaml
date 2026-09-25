@@ -43,6 +43,16 @@
 # the model has none it can act on, so the pro rung's pooled classes seen 3+
 # times stand in. TestProRoutesCarryAPreamble recomputes both from the
 # fixture. The A/B of preamble against none (30 cards) is not yet run.
+# pin (#3151): the one upstream provider an OpenRouter route's requests are
+# pinned to, sent as OpenRouter's provider block {order: [pin],
+# allow_fallbacks: false}, so the upstream that served a call is known and
+# the usage row's upstream column records it. Every openrouter route that can
+# run (allowed or held) carries one; parse refuses one that does not, and a
+# pin on any other via. Measured 2026-09-25 from OpenRouter's
+# /api/v1/models/<model>/endpoints: the cheapest endpoint by prompt price
+# that takes tools, is not a 4-bit quant (fp4, nvfp4, mxfp4) and was up 98%+
+# of the last day. Re-measure with the ranking; a pin that fails its route's
+# cards is a route problem the fold sees, never a silent fallback.
 source: "reports/model-efficiency-2026-09-22.md interim ranking 2026-09-23 12:16 AM Eastern"
 rule: "useful = 8+; drop = dead, or Q <= 0 with n >= 8 and useful < 3/4 of the rung median, or Pareto-dominated with Q <= 0; allow = measured (U >= 5) and efficiency within +0.01 of the rung's best third, unless benched; hold = the rest (too few, second tier, unranked, benched)"
 
@@ -52,6 +62,7 @@ routes:
     rung: flash
     model: qwen/qwen3.8-flash
     via: openrouter
+    pin: alibaba
     state: allowed
     run: 104
     scored: 63
@@ -67,6 +78,7 @@ routes:
     rung: flash
     model: deepseek/deepseek-v4.1-flash
     via: openrouter
+    pin: morph
     state: allowed
     run: 79
     scored: 45
@@ -82,6 +94,7 @@ routes:
     rung: flash
     model: xiaomi/mimo-v2.6-flash
     via: openrouter
+    pin: xiaomi
     state: allowed
     run: 81
     scored: 44
@@ -97,6 +110,7 @@ routes:
     rung: flash
     model: xiaomi/mimo-v2.5
     via: openrouter
+    pin: deepinfra
     state: allowed
     run: 112
     scored: 91
@@ -112,6 +126,7 @@ routes:
     rung: flash
     model: deepseek/deepseek-v4-flash
     via: openrouter
+    pin: baidu
     state: allowed
     run: 106
     scored: 96
@@ -158,6 +173,7 @@ routes:
     rung: flash
     model: z-ai/glm-5.3-flash
     via: openrouter
+    pin: sail-research
     state: held
     run: 77
     scored: 50
@@ -173,6 +189,7 @@ routes:
     rung: flash
     model: qwen/qwen3.7-flash
     via: openrouter
+    pin: alibaba
     state: held
     flag: benched
     why: "not in the ranking; ROUTE-BENCHED flag (#2895)"
@@ -275,6 +292,7 @@ routes:
     rung: pro
     model: moonshotai/kimi-k3
     via: openrouter
+    pin: wafer
     state: held
     run: 25
     scored: 12
@@ -310,6 +328,7 @@ routes:
     rung: pro
     model: xiaomi/mimo-v2.5-pro
     via: openrouter
+    pin: xiaomi
     state: held
     run: 25
     scored: 7
@@ -327,6 +346,7 @@ routes:
     rung: pro
     model: qwen/qwen3.6-plus
     via: openrouter
+    pin: alibaba
     state: dropped
     run: 43
     scored: 16
@@ -389,6 +409,7 @@ routes:
     rung: pro
     model: z-ai/glm-5.3
     via: openrouter
+    pin: baidu
     state: held
     run: 23
     scored: 10

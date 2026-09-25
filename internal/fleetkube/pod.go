@@ -141,6 +141,7 @@ func UsageRow(p Pod, start, end time.Time, rc int, cost swarm.ProviderUsage) swa
 		"ended":    end.UTC().Format(time.RFC3339),
 		"rc":       strconv.Itoa(rc),
 		"provider": dash(p.Provider), "model": dash(p.Model),
+		"upstream": dash(swarm.Upstream(nil, p.Provider, p.Model)),
 	}
 	for _, c := range swarm.TokenColumns {
 		row[c] = dash(cost.Values[c])
@@ -177,6 +178,7 @@ func JobCommand(p Pod, harness []string) []string {
 		tail = append(tail, swarm.Dash)
 	}
 	tail = append(tail, swarm.Dash) // usd
+	tail = append(tail, cell(dash(swarm.Upstream(nil, p.Provider, p.Model))))
 	var b strings.Builder
 	b.WriteString("[ $# -gt 0 ] || { echo 'nova-pod: the Job has no harness to run' >&2; exit 2; }\n")
 	b.WriteString("started=$(date -u +%Y-%m-%dT%H:%M:%SZ)\n")
