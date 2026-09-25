@@ -266,7 +266,8 @@ with its sweep of the tree or it does not land.
 `outputs`, `windows-pr`, `windows-sizes`, `windows-table`, `one-windows-leg`,
 `darwin-sizes`, `darwin-table`, `cache`, `pinned-actions`, `ci-ok`, `failed`,
 `benchname`, `nightly-tags`, `selection`, `toolchainroots`, `walltoolchain`, `hostseam`,
-`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`. Every entry — the ten above too — is written out in
+`kernel-components`, `asd-closing-line`, `ciworkspace`, `lisptemppath`, `admitkind`, `namedpaths`, `lispduplicate`, `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `forestwriter`, `forestscript`, `parallel`, `slowwaits`,
+`seatwrap`. Every entry — the ten above too — is written out in
 [SPEC-CI.md](SPEC-CI.md) under **The class tests** with its rule, the hurt
 that bought it, its allowlist, its remedy line and its narrowings. Read the entry, not
 the test. An allowlist only ever shrinks: a new row is a refusal, not a parking place.

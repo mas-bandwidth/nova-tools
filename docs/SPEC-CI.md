@@ -2219,6 +2219,41 @@ the test behind //go:build slow (nightly-slow.yml runs it)`; for a stale row,
 test and a poll that never sees its event are all invisible to it. The
 per-package budget (`slowtests`) and the measured table are the net under those.
 
+### `seatwrap` — no script wraps `nova-secrets exec` around a seat tool for its Redis password
+
+**The rule.** No shell file in the tree (a `.sh`, `.bash` or `.zsh` file, or an
+extensionless file with a sh/bash/zsh shebang) and no Markdown page under
+`docs/` runs `nova-secrets exec` with an `--only` list made only of Redis
+passwords (`NOVA_REDIS_*`, `REDISCLI_AUTH`) around `nova-sprint`, `nova-card`,
+`nova-swarm`, `nova-wake` or `redis-cli`. Those four tools take
+`--seat <name>` (or `NOVA_SEAT`) and read the Redis user and password from the
+seat's file themselves, through `internal/seatcred` on the library the exec
+verb runs on; `nova-sprint redis-cli --seat <name> -- <cmd...>` is the hand
+read, with the password in redis-cli's environment only.
+**The hurt.** Every Redis call the coordinator made went through two bash
+wrappers in a session scratchpad, one around redis-cli and one around
+nova-sprint, because nova-sprint on the coordinator seat could not read its own
+password; every hand fix, table render and bridge went through them, and a new
+session had to recreate them (nova-tools#4052). A wrapper line left in a script
+or a doc teaches the next session to rebuild it.
+**The test.** `TestNoSecretsExecWrapsASeatTool`, with its control
+`TestSeatWrapRuleSeesEachShape` (`internal/ci/seatwrap_class_test.go`), which
+pins the two retired wrappers, the multi-line `nova-wake beat` launch this
+change rewrote in `docs/FRIEND-PRESENCE.md` and two siblings as red, and a
+model-key wrapper, a tool outside the set and the `--seat` spellings as green.
+**Its allowlist.** None. The one offender in the tree when the rule landed,
+the beat launch in `docs/FRIEND-PRESENCE.md`, was rewritten to `--seat`.
+**Its remedy line.** `pass the tool --seat <name> (or set NOVA_SEAT) and, for a
+hand read, run nova-sprint redis-cli --seat <name> -- <cmd...>`.
+**Its narrowings.** A command is one line after backslash continuations are
+joined, so a wrapper split across a heredoc or a shell function is not seen;
+an `--only` that names any key other than a Redis password (a model key, a
+GitHub token) or is `all` or a variable is not flagged, because `--seat`
+delivers only the Redis login and that wrapper is still the way to deliver the
+rest; a wrapper around any other nova tool (`nova-tokens`, `nova-decide`,
+`nova-redis serve`) is not flagged until that tool takes `--seat`; and only
+`docs/` Markdown is read, so a README elsewhere is not.
+
 ### Tests this spec demands
 
 This list sits inside **The class tests** on purpose, as its last entry: half (b) of `TestSpecCIIndexesEveryClassTest` (`internal/docs/spec_ci_index_test.go`) reads every `Test…` name this section prints, so a test named below that is renamed or deleted turns that test red instead of leaving a line that describes a test that no longer runs.

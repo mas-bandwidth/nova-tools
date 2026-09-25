@@ -18,6 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/sprinttable"
 )
 
@@ -35,6 +36,11 @@ usage:
   nova-sprint table --compare <file> --redis <addr> --sprint <name> --friends <a,b,...> [--xy-file <file>]
   nova-sprint refresh -- <command> [arg...]
   nova-sprint <verb> [<subverb>] -h
+  nova-sprint redis-cli [--redis <addr>] -- <redis command...>
+
+Every verb takes --seat <name> (or NOVA_SEAT): the Redis user and password
+are read from that seat's file in the nova-secrets store, through the library
+nova-secrets exec runs on, with no wrapper (see docs/CLI.md).
 
 table reads one consistent FCALL_RO snapshot per render and prints it to
 stdout; --loop renders once per second. With --out <file> each tick publishes
@@ -73,6 +79,12 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 func run(args []string, stdout, stderr io.Writer) (code int) {
 	// -h on any verb or subverb: its usage line and flags on stdout, exit 2 (#3254).
 	defer verbflag.Recover(stdout, "nova-sprint", &code)
+	// --seat <name> (or NOVA_SEAT) anywhere before a "--": every verb reads its
+	// Redis login from that seat through nova-secrets' library (#4052).
+	args, err := seatcred.FromArgs(args, os.Getenv)
+	if err != nil {
+		return refuse(stderr, "", err.Error())
+	}
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; table renders, refresh detaches")
 	}

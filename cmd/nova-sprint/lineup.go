@@ -14,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/preflight"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,10 +47,18 @@ func init() {
 }
 
 func lineupClient(addr string) *redis.Client {
-	return redis.NewClient(&redis.Options{
+	opts := &redis.Options{
 		Addr: addr, Password: os.Getenv("NOVA_REDIS_BENCH_PASSWORD"),
 		DialTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, MaxRetries: -1,
-	})
+	}
+	// --seat / NOVA_SEAT (#4052): the seat's login, read in this process. A seat
+	// that cannot be read leaves the client unauthenticated, and its first
+	// command is refused NOAUTH naming the store.
+	if c, ok, err := seatcred.Active(); ok && err == nil {
+		opts.Username, opts.Password = c.User, ""
+		_ = c.Password.Use(func(pw string) error { opts.Password = pw; return nil })
+	}
+	return redis.NewClient(opts)
 }
 
 func cmdLineup(ctx context.Context, args []string, stdout, stderr io.Writer) int {

@@ -29,8 +29,8 @@ type Dial struct {
 	Stream   string
 }
 
-// Open dials the store and proves the connection once, so a bad address is a refusal at
-// start rather than a silent loop that folds nothing.
+// Open names the store and sends nothing (#3277): the first read or write dials, so a bad
+// address fails the caller's first batch instead of every open paying a PING round trip.
 func Open(ctx context.Context, d Dial) (*RedisStore, error) {
 	stream := strings.TrimSpace(d.Stream)
 	if stream == "" {
@@ -41,12 +41,16 @@ func Open(ctx context.Context, d Dial) (*RedisStore, error) {
 		Username: d.Username,
 		Password: d.Password,
 	})
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		_ = rdb.Close()
-		// The error is go-redis's and names the address, never the password.
-		return nil, fmt.Errorf("redis at %s: %w", d.Addr, err)
-	}
 	return &RedisStore{rdb: rdb, stream: stream, now: func() time.Time { return time.Now().UTC() }}, nil
+}
+
+// Reach sends one PING, for a caller that must refuse before costly work
+// rather than find the store down after it; Open itself sends nothing (#3277).
+func (s *RedisStore) Reach(ctx context.Context) error {
+	if err := s.rdb.Ping(ctx).Err(); err != nil {
+		return fmt.Errorf("redis at %s: %w", s.rdb.Options().Addr, err)
+	}
+	return nil
 }
 
 // StreamName is the stream this store reads and writes.

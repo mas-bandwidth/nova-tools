@@ -127,7 +127,7 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 		numbers = append(numbers, n)
 	}
 
-	st, err := store.Open(ctx, *redisAddr)
+	st, err := openReached(ctx, *redisAddr)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint lander: %v\n", err)
 		return 6

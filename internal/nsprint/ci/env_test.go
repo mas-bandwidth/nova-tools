@@ -22,14 +22,14 @@ func TestCheckEnvDropsTheSeatVariables(t *testing.T) {
 	in := []string{
 		"PATH=/usr/bin", "HOME=/h", "GOCACHE=/c", "GOFLAGS=-mod=mod", "TMPDIR=/t", "LANG=C", "USER=u",
 		"NOVA_SPRINT_REDIS_USER=bench", "NOVA_SPRINT_REDIS_PASSWORD_ENV=SEAT_PW", "SEAT_PW=v1",
-		"NOVA_REDIS_BENCH_PASSWORD=v2", "NOVA_SECRETS_FILE=v3", "REDISCLI_AUTH=v4", "NOVA_CI=1",
+		"NOVA_REDIS_BENCH_PASSWORD=v2", "NOVA_SECRETS_FILE=v3", "REDISCLI_AUTH=v4", "NOVA_SEAT=studio", "NOVA_CI=1",
 	}
 	env, dropped := ci.CheckEnv(in)
 	want := []string{"PATH=/usr/bin", "HOME=/h", "GOCACHE=/c", "GOFLAGS=-mod=mod", "TMPDIR=/t", "LANG=C", "USER=u", "NOVA_CI=1"}
 	if !reflect.DeepEqual(env, want) {
 		t.Fatalf("env = %v\nwant %v", env, want)
 	}
-	wantDropped := []string{"NOVA_REDIS_BENCH_PASSWORD", "NOVA_SECRETS_FILE", "NOVA_SPRINT_REDIS_PASSWORD_ENV", "NOVA_SPRINT_REDIS_USER", "REDISCLI_AUTH", "SEAT_PW"}
+	wantDropped := []string{"NOVA_REDIS_BENCH_PASSWORD", "NOVA_SEAT", "NOVA_SECRETS_FILE", "NOVA_SPRINT_REDIS_PASSWORD_ENV", "NOVA_SPRINT_REDIS_USER", "REDISCLI_AUTH", "SEAT_PW"}
 	if !reflect.DeepEqual(dropped, wantDropped) {
 		t.Fatalf("dropped = %v\nwant %v", dropped, wantDropped)
 	}

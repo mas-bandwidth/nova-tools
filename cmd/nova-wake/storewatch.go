@@ -125,7 +125,11 @@ func cmdWatchStore(fs *flag.FlagSet, verb, store, user, state, maxDur, onDeadlin
 	if strings.TrimSpace(user) == "" {
 		user = presence.DefaultUser
 	}
-	ev := wake.OpenEvGithub(addr, user, os.Getenv(presence.PasswordEnv))
+	user, password, err := presence.Login(user)
+	if err != nil {
+		return refused(stderr, oneline.Err(err))
+	}
+	ev := wake.OpenEvGithub(addr, user, password)
 	defer ev.Close()
 
 	start := clock.Now()

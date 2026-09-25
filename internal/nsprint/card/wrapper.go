@@ -417,10 +417,12 @@ func RunWrapper(ctx context.Context, cfg WrapperConfig, ledger WrapperLedger) Wr
 		return refuse(WrapperExitCouldNot, "launch deadline exceeded")
 	}
 
-	// 1. Refuse a card that is not ours before anything is written.
+	// 1. Refuse a card that is not ours before anything is written. This read
+	// is the first command on the store (Open sends none, #3277), so an
+	// unreachable Redis is refused here and named.
 	c, err := ledger.Card(ctx)
 	if err != nil {
-		return refuse(WrapperExitRedis, "card read: "+err.Error())
+		return refuse(WrapperExitRedis, "redis: card read: "+err.Error())
 	}
 	switch {
 	case c.State == "":

@@ -219,6 +219,7 @@ func TestLedgerRefusesWithoutRedisAndNamesAMissingDay(t *testing.T) {
 func TestLedgerReadsThePasswordFromTheVariableItIsToldToOnly(t *testing.T) {
 	addr, mr := ledgerRedis(t)
 	mr.RequireAuth("sesame")
+	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
 	t.Setenv("NOVA_REDIS_BENCH_PASSWORD", "sesame")
 	r := invoke(t, "report", "--redis", addr, "--month", "2026-09")
 	wantExit(t, r, 1)
@@ -252,4 +253,54 @@ func TestReportRedisPartialMonthNamesIndexedMissing(t *testing.T) {
 	r := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--by", "tuple")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=2 rows=2 indexed=2 missing=28")
+}
+
+// TestLedgerAndReportDialAsTheAclUser (#3461): the fleet Redis has its default user off and
+// the bench password is the ACL user bench's, so a seat password without its user is
+// WRONGPASS. `--user bench --password-env X` connects as bench for both verbs; the same seat
+// comes from NOVA_SPRINT_REDIS_USER when no --user is given (the one config nova-sprint
+// uses); a user whose password variable is empty is refused before any dial.
+func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
+	addr, mr := ledgerRedis(t)
+	mr.RequireUserAuth("bench", "sesame")
+	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
+	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "")
+	t.Setenv("LEDGER_TEST_PW", "sesame")
+	out := t.TempDir()
+	var c tokens.Counts
+	c.Set(tokens.Input, 10)
+	c.Set(tokens.Output, 20)
+	day := tokens.DayFile{Day: "2026-09-11", At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
+		Sources: []string{"openai:o"}, Rows: []tokens.DayRow{
+			{Date: "2026-09-11", Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+		}}
+	if err := day.Save(out); err != nil {
+		t.Fatal(err)
+	}
+
+	r := invoke(t, "report", "--redis", addr, "--month", "2026-09", "--password-env", "LEDGER_TEST_PW")
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "REPORT FAILED store=redis")
+
+	r = invoke(t, "ledger", "--out", out, "--day", "2026-09-11", "--redis", addr, "--user", "bench", "--password-env", "LEDGER_TEST_PW")
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "LEDGER OK day=2026-09-11 days=1")
+	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_TEST_PW")
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=1")
+
+	t.Setenv("NOVA_SPRINT_REDIS_USER", "bench")
+	t.Setenv("NOVA_SPRINT_REDIS_PASSWORD_ENV", "LEDGER_TEST_PW")
+	r = invoke(t, "report", "--redis", addr, "--month", "2026-09")
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "REPORT OK month=2026-09 source=redis groups=1")
+
+	t.Setenv("NOVA_SPRINT_REDIS_USER", "")
+	t.Setenv("LEDGER_EMPTY_PW", "")
+	r = invoke(t, "report", "--redis", addr, "--month", "2026-09", "--user", "bench", "--password-env", "LEDGER_EMPTY_PW")
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "--user bench but LEDGER_EMPTY_PW is empty; run under nova-secrets exec --only LEDGER_EMPTY_PW")
+	if strings.Contains(r.stderr+r.stdout, "sesame") {
+		t.Fatal("a refusal printed the password")
+	}
 }

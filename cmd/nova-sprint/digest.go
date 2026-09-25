@@ -81,6 +81,11 @@ func runDigest(ctx context.Context, args []string, out, errOut io.Writer) int {
 	}
 	defer st.Close()
 	d, err := digest.Read(ctx, st.Client(), digest.Options{Since: since, Until: until, Repos: repos})
+	if store.Unreachable(err) {
+		// Open sends nothing (#3277): the first read is the probe, and an
+		// unreachable store is the same refusal and exit as before.
+		return refuse(errOut, "digest", fmt.Sprintf("redis %s: %v", *addr, err))
+	}
 	if err != nil {
 		refuse(errOut, "digest", fmt.Sprintf("read: %v", err))
 		return 1

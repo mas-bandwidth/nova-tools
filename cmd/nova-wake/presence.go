@@ -169,6 +169,12 @@ func beatLoop(ctx context.Context, st presence.Store, name string, period, ttl t
 		if errors.As(err, &kt) {
 			return err
 		}
+		if i == 0 && err != nil {
+			// presence.Open sends nothing (#3277): the first beat is the
+			// probe, and a store it cannot reach is refused at start, not
+			// beaten at forever.
+			return err
+		}
 		switch {
 		case err != nil && err.Error() != failing:
 			failing = err.Error()

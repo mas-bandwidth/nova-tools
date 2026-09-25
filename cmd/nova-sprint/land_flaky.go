@@ -43,6 +43,9 @@ func runLandFlakyList(ctx context.Context, args []string, out, errOut io.Writer)
 	}
 	defer st.Close()
 	rows, err := land.NewRedisStore(st.Client(), "list").List(ctx, *repo)
+	if storeDown(errOut, "land flaky list", err) {
+		return 6
+	}
 	if err != nil {
 		return refuse(errOut, "land flaky list", err.Error())
 	}
@@ -95,6 +98,9 @@ func runLandFlakyObserve(ctx context.Context, args []string, out, errOut io.Writ
 		if errors.As(err, &pending) {
 			fmt.Fprintf(out, "FLAKY PENDING %s (%v)\n", key, pending.Err)
 			return 1
+		}
+		if storeDown(errOut, "land flaky observe", err) {
+			return 6
 		}
 		return refuse(errOut, "land flaky observe", err.Error())
 	}

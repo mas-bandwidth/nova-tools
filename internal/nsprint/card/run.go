@@ -285,10 +285,11 @@ func Run(ctx context.Context, st *store.Store, cfg RunConfig) RunReport {
 		sum := sha256.Sum256(body)
 		rep.SHA = hex.EncodeToString(sum[:])
 	} else {
-		// 1. The card hash, one pipeline.
+		// 1. The card hash, one pipeline. It is the first command on the store
+		// (Open sends none, #3277), so an unreachable Redis is refused here.
 		rows, err := st.PipelineHMGet(ctx, []store.HashRead{{Key: cardKey, Fields: []string{"payload_sha", "route", "repo", "base", "base_sha", "est"}}})
 		if err != nil {
-			return refuse("card read failed: " + err.Error())
+			return refuse("redis: card read failed: " + err.Error())
 		}
 		field = func(i int) string { s, _ := rows[0][i].(string); return strings.TrimSpace(s) }
 		want := field(0)
