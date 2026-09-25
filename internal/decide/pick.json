@@ -1,0 +1,25 @@
+{
+  "comment": "The friend-child pick table (Jev 2026-09-25). A friend's child -- the Claude seat `nova-sprint friend serve` spawns -- runs one model at one effort tier. The four efforts are the Anthropic tiers, cheapest first: haiku, sonnet, opus, fable. `models` maps each effort to the model id the child is launched with, and `picks` is the DEFAULT effort per task kind: what the table answers with --no-jev, and what the answer falls back to when Jev is absent, refuses or names an effort the table does not hold. The pick is ONE shared table, not one per friend: any friend running `nova-decide pick --kind <k>` gets the same effort and model for <k>, so the whole fleet adopts one choice for a kind. The version is the table's version: a pick line carries it so a reader can tell which table answered, and a table with no version is refused at load, never guessed.",
+  "version": 1,
+  "models": {
+    "haiku": "claude-haiku-5-1",
+    "sonnet": "claude-sonnet-5",
+    "opus": "claude-opus-5-5",
+    "fable": "claude-fable-5-1"
+  },
+  "picks": {
+    "rebase": "haiku",
+    "stack": "haiku",
+    "fixture-retarget": "haiku",
+    "fleet-chore": "haiku",
+    "dogfood": "haiku",
+    "transcript-test": "haiku",
+    "row-test": "haiku",
+    "fix-with-red-test": "sonnet",
+    "new-verb": "sonnet",
+    "cause-to-find": "sonnet",
+    "guard": "opus",
+    "spec": "opus",
+    "design": "fable"
+  }
+}

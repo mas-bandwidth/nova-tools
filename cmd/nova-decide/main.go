@@ -100,6 +100,14 @@ usage:
                      (what HAPPENED to a unit a decision routed; the kind and
                       the rung are read from that decision, never retyped)
 
+  nova-decide pick --kind <kind> [--table <path>] [--no-jev] [--floor <f>]
+                   [--base-url <url>] [--key-env <name>] [--usage <path>]
+                     (which friend-child model and effort (haiku/sonnet/opus/
+                      fable) a task kind runs at, from a versioned table; any
+                      friend adopts)
+  nova-decide pick --lines <file> [--table <path>]
+                     (one task kind per line: pick each from the table alone)
+
   --questions <file>  JSON object of name to question: {"type": "choice"|"score"|"noul",
                       "instructions": <text>, "criteria": {<option>: <description>} for
                       choice, [<level texts>] for score, absent for noul} (required;
@@ -285,6 +293,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return runReview(args[1:], stdout, stderr)
 		case "outcome":
 			return runOutcome(args[1:], stdout, stderr)
+		case "pick":
+			return runPick(args[1:], stdout, stderr)
 		}
 	}
 	fs := flag.NewFlagSet("nova-decide", flag.ContinueOnError)
