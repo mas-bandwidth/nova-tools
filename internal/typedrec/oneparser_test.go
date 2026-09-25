@@ -122,6 +122,10 @@ var driftAllowlist = []allowlistEntry{
 		reason: "the sprint table's own \"RED <n>\" error rows in a Render() body (#3253), not a RESULT RED field"},
 	{file: "internal/prereview/card.go", fn: "ParseTaskCard", record: "SPEC-CARD", since: "d76c1c4d",
 		reason: "the card's PATHS header in a Redis task hash title, like prereview.go ParseCard, read before any RESULT exists"},
+	{file: "internal/nsprint/line/store.go", fn: "Kinds", record: "DISPOSITION", since: "bd375bca",
+		reason: "the typed-line kind DISPOSITION in the store's Kinds list (#3874), a read record, not RESULT line 2"},
+	{file: "internal/nsprint/line/store.go", fn: "ReadKinds", record: "DISPOSITION", since: "bd375bca",
+		reason: "the read-kind DISPOSITION in the store's ReadKinds set (#3874), a read record, not RESULT line 2"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
