@@ -64,7 +64,7 @@ func SprintFixture() [][]string {
 			for k := int64(0); k < counts[j]; k++ {
 				id := fmt.Sprintf("t%d-%s-%d", i+1, state, k)
 				cmds = append(cmds, []string{"ZADD", "ws:" + s.Name + ":" + state, strconv.FormatInt(k+1, 10), id})
-				cmds = append(cmds, []string{"HSET", "task:" + id, "stream", s.Name, "state", state, "title", "task " + id, "owner", "rowan"})
+				cmds = append(cmds, []string{"HSET", "task:" + id, "stream", s.Name, "state", state, "title", "task " + id})
 			}
 		}
 	}

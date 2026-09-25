@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/reconcile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/taskcard"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/ws/wstest"
 )
@@ -19,9 +20,10 @@ import (
 const wrStream = "nova-sprint + merge + bus"
 
 // wrTask writes one task in the ws shape: its hash and the one set its state
-// names, scored by created_at.
+// names, scored by created_at (ms after cardEpoch).
 func wrTask(t *testing.T, c *redis.Client, id, state string, created int64, kv ...string) {
 	t.Helper()
+	created += cardEpoch
 	ctx := context.Background()
 	fields := []any{"stream", wrStream, "state", state, "created_at", created}
 	for _, f := range kv {
@@ -89,7 +91,7 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	}
 
 	ready, waiting := wrMembers(t, c, "ready"), wrMembers(t, c, "waiting")
-	if len(ready) != 2 || ready["B"] != 2000 || ready["F"] != 2003 {
+	if len(ready) != 2 || ready["B"] != float64(cardEpoch+2000) || ready["F"] != float64(cardEpoch+2003) {
 		t.Fatalf("ready %v, want B and F at their created_at scores", ready)
 	}
 	for _, id := range []string{"C", "E", "H", "J", "K"} {
@@ -97,8 +99,8 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 			t.Errorf("%s left waiting: waiting is %v", id, waiting)
 		}
 	}
-	if s, _ := c.HGet(ctx, "task:B", "state").Result(); s != "ready" {
-		t.Fatalf("task:B state %q, want ready", s)
+	if s, _ := c.HGet(ctx, "task:B", "where").Result(); s != "ready" {
+		t.Fatalf("task:B where %q, want ready (the pointer, #3778)", s)
 	}
 	want := `RESOLVE stream="nova-sprint + merge + bus" ready=2 still=5 on=mas-bandwidth/nova-tools#78,task:D unknown=o/r#99,task:ghost` + "\n"
 	if out.String() != want {
@@ -134,7 +136,8 @@ func TestWaitingResolvesWhenDepsLand(t *testing.T) {
 	if _, err := ws.Move(ctx, c, "D", "merging", "test", "pr"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ws.Move(ctx, c, "D", "landed", "test", "merged"); err != nil {
+	// landed needs the merge sha (#3778): the one move with the lander's sha
+	if _, err := taskcard.Land(ctx, c, "D", "test", "0123abcd", "merged"); err != nil {
 		t.Fatal(err)
 	}
 	counts, err = duty.Run(ctx, lease)

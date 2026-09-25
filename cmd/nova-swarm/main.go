@@ -46,7 +46,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --runner <cmd> --root <dir> [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
                        (without --runner, each card runs through nova-swarm native, and --slots-store <dir> --owner <name> are required)
   nova-swarm status    --pool <dir> [--slots-store <dir> --owner <name>] [--max <n>]
   nova-swarm stop      --pool <dir>
@@ -577,13 +577,22 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 	// refused in the same sentence wherever a caller meets them. What is CARRIED is the
 	// word as typed: rule 13d puts it "verbatim into every `native` argv", and `native` is
 	// the verb that decides what it means.
-	f.tokens(tokens)
+	//
+	// AN ABSENT WORD IS THE BATCH'S OWN REFUSAL (#3202): f.tokens's sentence is `add`'s
+	// ("a token budget for this job"), and the one a batch caller needs says the word is
+	// for EACH card and never divided, which is swarm.NoBatchTokensRefusal. It is said
+	// here, beside every other flag problem, so it reaches a caller of the binary and not
+	// only a caller of swarm.Batch.
+	noTokens := strings.TrimSpace(tokens) == ""
+	if !noTokens {
+		f.tokens(tokens)
+	}
 	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
 	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
 	// #636: --runner is one of two ways to run a local card; --harness (or a `local` row in
 	// --benches) runs it through this binary's own `native`, so neither alone is required.
 	if bench == "" && runner == "" && harness == "" && benches == "" {
-		f.add("--runner or --harness is required: --runner <cmd> starts once per card with label slot model card-path root, and --harness <path> runs each card through this binary's own `nova-swarm native`; refusing to guess")
+		f.add("--runner or --harness is required: --runner <cmd> starts once per card with label slot model card-path root tokens, and --harness <path> runs each card through this binary's own `nova-swarm native`; refusing to guess")
 	}
 	if bench != "" {
 		f.want(benches, "benches", "a table of one bench per row: name host root cores harness auth wall")
@@ -602,7 +611,10 @@ func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, ma
 		f.add(fmt.Sprintf("--idle wants a whole number of seconds, got %d; a card whose log has not grown this long is killed", idle))
 	}
 	routed := routeInput(f, route, stderr)
-	if f.refused(stderr) {
+	if noTokens {
+		fmt.Fprintln(stderr, swarm.NoBatchTokensRefusal)
+	}
+	if f.refused(stderr) || noTokens {
 		return 2
 	}
 	var w swarm.Worker

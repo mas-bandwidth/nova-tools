@@ -38,23 +38,33 @@ func (f *firstReadFixture) fqPush(id, to, kind, ref, title, head string) {
 
 var fqCreatedAt = regexp.MustCompile(`^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$`)
 
-// fqShape is a task's hash minus created_at (checked apart: the format, and
-// within a minute of now) plus its index memberships and stream entry count.
+// fqFields are the hash fields bin/friend-queue reads of a pushed task; a
+// task card (#3778) carries its pointer fields beside them.
+var fqFields = []string{"kind", "ref", "title", "owner", "state", "head", "front"}
+
+// fqShape is the fields bin/friend-queue reads of a task's hash (created_at
+// is checked apart: friend-queue's UTC seconds or the card's ms, within a
+// minute of now) plus its index memberships and stream entry count.
 func (f *firstReadFixture) fqShape(id, to string) map[string]string {
 	f.t.Helper()
-	h, err := f.client.HGetAll(f.ctx, "task:"+id).Result()
+	all, err := f.client.HGetAll(f.ctx, "task:"+id).Result()
 	if err != nil {
 		f.t.Fatal(err)
 	}
-	at := h["created_at"]
-	if !fqCreatedAt.MatchString(at) {
-		f.t.Fatalf("task:%s created_at = %q, want friend-queue's UTC seconds", id, at)
-	}
+	at := all["created_at"]
 	when, err := time.Parse("2006-01-02T15:04:05Z", at)
+	if ms, perr := strconv.ParseInt(at, 10, 64); perr == nil {
+		when, err = time.UnixMilli(ms), nil
+	} else if !fqCreatedAt.MatchString(at) {
+		f.t.Fatalf("task:%s created_at = %q, want friend-queue's UTC seconds or ms", id, at)
+	}
 	if err != nil || time.Since(when).Abs() > time.Minute {
 		f.t.Fatalf("task:%s created_at = %q (%v), want now", id, at, err)
 	}
-	delete(h, "created_at")
+	h := map[string]string{}
+	for _, k := range fqFields {
+		h[k] = all[k]
+	}
 	for _, set := range []string{"sprint:" + f.S + ":tasks", "sprint:" + f.S + ":idx:" + to + ":open",
 		"sprint:" + f.S + ":idx:" + to + ":waiting", "sprint:" + f.S + ":idx:" + to + ":working",
 		"sprint:" + f.S + ":idx:" + to + ":closed"} {
@@ -71,12 +81,13 @@ func (f *firstReadFixture) fqShape(id, to string) map[string]string {
 	return h
 }
 
-// TestFirstReadIsFriendQueueShape (#3773, DONE-WHEN): with the card's stream
-// in ws:names (the live 06:55Z condition that wrote state=ready), a first read
-// is pushed exactly as `friend-queue push --kind read` pushes: the hash
-// equals the reference push's minus created_at, the index sets and the one
-// q:<f> entry are the same, it is in no ws: set, and the table's queue column
-// (sprintcol, the friend row's live queue) counts it.
+// TestFirstReadIsFriendQueueShape (#3773, #3778): with the card's stream in
+// ws:names (the live 06:55Z condition that wrote state=ready), a first read
+// is a task card that bin/friend-queue still reads as its own push: the
+// fields it reads equal the reference push's, the index sets and the one
+// q:<f> entry are the same, and the table's queue column (sprintcol) counts
+// it; and it is a card: where=ready, in exactly ws:swarm:ready and
+// friend:emma:cards:ready, with one ws:log receipt.
 func TestFirstReadIsFriendQueueShape(t *testing.T) {
 	f := newFirstReadFixture(t, "fr-shape")
 	head := "cd4ad8d7aa11bb22cc33dd44ee55ff6600778899"
@@ -100,13 +111,19 @@ func TestFirstReadIsFriendQueueShape(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("first read shape differs from friend-queue push:\n got %v\nwant %v", got, want)
 	}
-	for _, st := range []string{"waiting", "ready", "working", "merging", "landed", "parked"} {
-		if _, err := f.client.ZScore(f.ctx, "ws:swarm:"+st, id).Result(); err != redis.Nil {
-			t.Fatalf("%s is in ws:swarm:%s; a friend queue task is in no ws: set", id, st)
+	for _, st := range []string{"waiting", "ready", "working", "merging", "landed", "done", "parked"} {
+		for _, k := range []string{"ws:swarm:" + st, "friend:emma:cards:" + st} {
+			_, err := f.client.ZScore(f.ctx, k, id).Result()
+			if in := err == nil; in != (st == "ready") {
+				t.Fatalf("%s in %s = %v; a first read is in exactly the ready sets", id, k, in)
+			}
 		}
 	}
-	if n, _ := f.client.XLen(f.ctx, "ws:log").Result(); n != 0 {
-		t.Fatalf("ws:log has %d entries, want none", n)
+	if w, _ := f.client.HGet(f.ctx, "task:"+id, "where").Result(); w != "ready" {
+		t.Fatalf("%s where = %q, want ready", id, w)
+	}
+	if n, _ := f.client.XLen(f.ctx, "ws:log").Result(); n != 1 {
+		t.Fatalf("ws:log has %d entries, want the push", n)
 	}
 
 	col, err := sprintcol.Open(f.client.Options().Addr)

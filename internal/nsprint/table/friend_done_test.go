@@ -35,7 +35,9 @@ func friendDoneCell(t *testing.T, snap *table.SprintSnapshot, now time.Time, fri
 // the all-time size of the set. A friend with 3 cards done before the open
 // and 2 after shows done=2; after sprint close and a new sprint open the
 // column reads 0 until a card is done. The sprints are opened and closed by
-// the real ns_sprint_open and ns_sprint_close on a throwaway server.
+// the real ns_sprint_open and ns_sprint_close on a throwaway server. The
+// done cell adds the friend's merging and landed sets (#3778), each counted
+// from the same start.
 func TestFriendDoneCountsOnlyThisSprint(t *testing.T) {
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr})
@@ -100,8 +102,29 @@ func TestFriendDoneCountsOnlyThisSprint(t *testing.T) {
 		t.Fatalf("steady tick took %d round trips, want 1", snap.RoundTrips)
 	}
 
+	// Done adds merging and landed (#3778), each scoped to this sprint the
+	// same way: a merging card from before the open does not count, a landed
+	// card after it does; the all-time base sums all three sets.
+	for w, z := range map[string]redis.Z{
+		"merging": {Score: float64(t0.Add(-time.Hour).UnixMilli()), Member: "s:s0:card:old-merging"},
+		"landed":  {Score: float64(t0.Add(150 * time.Second).UnixMilli()), Member: "s:s1:card:new-landed"},
+	} {
+		if err := client.ZAdd(ctx, table.FriendCardsKey("rowan", w), z).Err(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, r := range []*table.SprintReader{follow, named} {
+		snap := read(r, now)
+		if got := friendDoneCell(t, snap, now, "rowan"); got != "3" {
+			t.Fatalf("sprint %q with merging and landed: done=%s, want 3 (done 2 + landed 1 after opened_at):\n%s", r.Config.Sprint, got, snap.Render(now))
+		}
+		if snap.DoneAll["rowan"] != 7 {
+			t.Fatalf("sprint %q: all-time done %d, want 7 (done 5 + merging 1 + landed 1)", r.Config.Sprint, snap.DoneAll["rowan"])
+		}
+	}
+
 	// Close s1, open s2: the column reads 0 until a card is done.
-	if _, refused, err := sprint.SetClosed(ctx, st, "s1", t0.Add(time.Hour)); err != nil || refused != "" {
+	if _, _, refused, err := sprint.SetClosed(ctx, st, "s1", t0.Add(time.Hour)); err != nil || refused != "" {
 		t.Fatalf("close s1: %v %s", err, refused)
 	}
 	t2 := t0.Add(2 * time.Hour)

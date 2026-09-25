@@ -190,6 +190,10 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 	// the unit a mind is told to do and the unit it is recorded as doing are
 	// one decision, and another writer between them would make them two.
 	if *take {
+		// The forest is the kernel's to write (#3340): refused before the lock.
+		if isForestPath(*file) {
+			return forestRefused(stderr, " next", *file)
+		}
 		release, err := lockSet(*file)
 		if err != nil {
 			return refuse(stderr, " next", oneline.Err(err))
@@ -239,7 +243,7 @@ func cmdNext(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return refuse(stderr, " next", oneline.Err(err))
 		}
-		if err := writeInPlace(*file, out); err != nil {
+		if err := writeWorkSet(*file, out); err != nil {
 			return refuse(stderr, " next", oneline.Err(err))
 		}
 		took = fmt.Sprintf("%d", rec.N)

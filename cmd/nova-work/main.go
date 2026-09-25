@@ -684,6 +684,9 @@ func cmdDependencies(args []string, stdout, stderr io.Writer) int {
 	}
 
 	add := strings.TrimSpace(*node) != ""
+	if add && isForestPath(*graph) {
+		return forestRefused(stderr, " dependencies", *graph)
+	}
 	var nodes []jobs.Node
 	raw, err := os.ReadFile(*graph)
 	switch {
@@ -901,6 +904,9 @@ func cmdPlanExpand(args []string, stdout, stderr io.Writer) int {
 	}
 	if *out == "" {
 		return refuse(stderr, " plan expand", "--out is required; refusing to guess")
+	}
+	if isForestPath(*out) {
+		return forestRefused(stderr, " plan expand", *out)
 	}
 	limits := worklang.Limits{MaxBytes: *maxBytes, MaxDepth: *maxDepth, MaxNodes: *maxNodes}
 	data, err := os.ReadFile(*file)
