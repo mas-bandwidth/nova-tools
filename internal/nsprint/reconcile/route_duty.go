@@ -28,6 +28,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -42,6 +43,16 @@ const DefaultBar = 8
 // RouteGroup is the duty's consumer group on every s:<S>:hold:events.
 const RouteGroup = "route"
 
+// DefaultConsumerMaxIdle is how long a route consumer may sit idle with
+// nothing pending before the sweep deletes it (#3808: every reconciler
+// instance, each restart and each `reconcile --once` probe, reads under
+// its own name, and the group held 258 of them).
+const DefaultConsumerMaxIdle = time.Hour
+
+// consumerSweepEvery bounds the sweep to one XINFO CONSUMERS per stream per
+// minute per instance, plus one when the instance first meets the stream.
+const consumerSweepEvery = time.Minute
+
 // RouteDuty is the reconciler's route duty. Its Run is a Duty.
 type RouteDuty struct {
 	Client *redis.Client
@@ -53,9 +64,13 @@ type RouteDuty struct {
 	// SET, and when that is empty every friend in the `friends` SET. Only a
 	// friend with a live beat (friend:<f>:beat) is dealt a read.
 	Readers []string
+	// ConsumerMaxIdle is the sweep's idle bar; DefaultConsumerMaxIdle when
+	// zero.
+	ConsumerMaxIdle time.Duration
 
 	instance string
 	groups   map[string]bool
+	swept    map[string]time.Time // stream -> last consumer sweep
 	// done holds the labels and units whose move is final for this instance
 	// (created, duplicate, existing) so a pass calls no function for them.
 	done map[string]bool
@@ -78,6 +93,7 @@ func (d *RouteDuty) Run(ctx context.Context, l *Lease) (Counts, error) {
 	if d.instance != l.Instance() {
 		d.instance = l.Instance()
 		d.groups, d.done = map[string]bool{}, map[string]bool{}
+		d.swept = map[string]time.Time{}
 	}
 	res, err := d.Pass(ctx, l.Token())
 	c := Counts{Reads: len(res.Reads), Fixes: len(res.Fixes), Merging: len(res.Merging), Carried: len(res.Carried)}
@@ -91,6 +107,9 @@ func (d *RouteDuty) Pass(ctx context.Context, token string) (RouteResult, error)
 	res := RouteResult{Skips: map[string]int{}}
 	if d.groups == nil {
 		d.groups, d.done = map[string]bool{}, map[string]bool{}
+	}
+	if d.swept == nil {
+		d.swept = map[string]time.Time{}
 	}
 	sprints, err := openSprints(ctx, d.Client)
 	if err != nil {
@@ -263,14 +282,18 @@ func (d *RouteDuty) reads(ctx context.Context, token, S, stream string, readers 
 // function (a hold) or here (a note or repair, which route nothing).
 func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []string, res *RouteResult) error {
 	ev := "s:" + S + ":hold:events"
+	consumer := "reconciler-" + d.instance
 	if !d.groups[ev] {
 		err := d.Client.XGroupCreateMkStream(ctx, ev, RouteGroup, "0").Err()
 		if err != nil && !strings.HasPrefix(err.Error(), "BUSYGROUP") {
 			return fmt.Errorf("%s: group: %w", S, err)
 		}
+		// One consumer per instance, created once (#3808).
+		if err := d.Client.XGroupCreateConsumer(ctx, ev, RouteGroup, consumer).Err(); err != nil {
+			return fmt.Errorf("%s: consumer: %w", S, err)
+		}
 		d.groups[ev] = true
 	}
-	consumer := "reconciler-" + d.instance
 	var msgs []redis.XMessage
 	claimed, _, err := d.Client.XAutoClaim(ctx, &redis.XAutoClaimArgs{
 		Stream: ev, Group: RouteGroup, Consumer: consumer, MinIdle: 0, Start: "0-0", Count: DefaultEventCount,
@@ -317,6 +340,41 @@ func (d *RouteDuty) fixes(ctx context.Context, token, S, stream string, _ []stri
 			return fmt.Errorf("%s: ack: %w", S, err)
 		}
 	}
+	return d.sweepConsumers(ctx, S, ev, consumer)
+}
+
+// sweepConsumers deletes every consumer of the route group on ev, other than
+// this instance's, idle past ConsumerMaxIdle with nothing pending (a dead
+// instance's pending entries are claimed above first, so none is dropped).
+// It runs when the instance first meets ev and then once a minute.
+func (d *RouteDuty) sweepConsumers(ctx context.Context, S, ev, consumer string) error {
+	now := time.Now()
+	if at, ok := d.swept[ev]; ok && now.Sub(at) < consumerSweepEvery {
+		return nil
+	}
+	max := d.ConsumerMaxIdle
+	if max <= 0 {
+		max = DefaultConsumerMaxIdle
+	}
+	cs, err := d.Client.XInfoConsumers(ctx, ev, RouteGroup).Result()
+	if err != nil {
+		return fmt.Errorf("%s: consumers: %w", S, err)
+	}
+	pipe := d.Client.Pipeline()
+	n := 0
+	for _, c := range cs {
+		if c.Name == consumer || c.Pending > 0 || c.Idle < max {
+			continue
+		}
+		pipe.XGroupDelConsumer(ctx, ev, RouteGroup, c.Name)
+		n++
+	}
+	if n > 0 {
+		if _, err := pipe.Exec(ctx); err != nil {
+			return fmt.Errorf("%s: sweep consumers: %w", S, err)
+		}
+	}
+	d.swept[ev] = now
 	return nil
 }
 
