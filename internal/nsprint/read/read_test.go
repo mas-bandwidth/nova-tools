@@ -86,14 +86,14 @@ func seedRecord(t *testing.T, c *redis.Client, base, head string) {
 	}
 }
 
-// client is a throwaway redis-server with the nova_sprint library loaded: a
-// SCORE or CLOSE post is one library call (ns_read_post).
+// client is a throwaway redis-server with the nova_sprint library loaded:
+// a post is one ns_line_post call (a SCORE or CLOSE also moves its tasks).
 func client(t *testing.T) *redis.Client {
 	t.Helper()
 	c := redis.NewClient(&redis.Options{Addr: testutil.Start(t)})
 	t.Cleanup(func() { _ = c.Close() })
 	if err := fn.Load(context.Background(), c); err != nil {
-		t.Fatal(err)
+		t.Fatalf("load nova_sprint: %v", err)
 	}
 	return c
 }
@@ -360,6 +360,43 @@ func TestReadPostGitHubDownKeepsTheRedisLine(t *testing.T) {
 	}
 	if n, _ := c.LLen(context.Background(), read.LinesKey("nova-tools", "7")).Result(); n != 2 {
 		t.Fatalf("%d lines, want 2: the Redis write is the record", n)
+	}
+}
+
+// TestReadPostMeasuresScopeInTheMirror: the scope gate is measured from
+// the mirror diff against the record's PATHS (#3595): a typed scope:ok on a
+// diff outside PATHS is refused with nothing stored, the same line inside
+// PATHS is stored with scope measured, and no mirror leaves it typed.
+func TestReadPostMeasuresScopeInTheMirror(t *testing.T) {
+	ctx := context.Background()
+	for _, tc := range []struct {
+		outside bool
+		mirror  bool
+		code    int
+		want    string
+	}{
+		{true, true, 1, "why=gate scope typed ok but measured no (files outside PATHS: README.md); type the gate as measured; nothing stored"},
+		{false, true, 0, "gates=ci:ok,base:ok,scope:ok measured=base,scope"},
+		{true, false, 0, "gates=ci:ok,base:ok,scope:ok measured=base"},
+	} {
+		mirror, base, head := mirrorFixture(t, tc.outside)
+		if !tc.mirror {
+			mirror = ""
+		}
+		c := client(t)
+		seedRecord(t, c, base, head)
+		var stdout, stderr strings.Builder
+		code := read.PostMeasured(ctx, c, "nova-tools", "7", strings.ReplaceAll(line, "%s", head), mirror, nil, &stdout, &stderr)
+		if code != tc.code || !strings.Contains(stdout.String()+stderr.String(), tc.want) {
+			t.Fatalf("%+v: exit %d stdout %q stderr %q; want %q", tc, code, stdout.String(), stderr.String(), tc.want)
+		}
+		wantLines := int64(2)
+		if tc.code != 0 {
+			wantLines = 1
+		}
+		if n := c.LLen(ctx, read.LinesKey("nova-tools", "7")).Val(); n != wantLines {
+			t.Fatalf("%+v: %d lines, want %d", tc, n, wantLines)
+		}
 	}
 }
 
