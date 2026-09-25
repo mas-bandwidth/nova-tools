@@ -20,13 +20,30 @@ func keyTask(sprint, id string) string     { return "s:" + sprint + ":task:" + i
 func keyStream(sprint, slug string) string { return "s:" + sprint + ":stream:" + slug }
 
 // Push lints the card, then writes it into the pool or the waiting set.
-// Exit 2: a missing required line, a private repository, or Redis did not
+// Exit 2: a missing required line, a KIND that is not a RESULT or runner kind
+// (kinds.go), a private repository, or Redis did not
 // accept the write. A card, task or stream dependency with no record in the
 // sprint is refused, naming the record. A dependency that is not landed goes to
 // waiting, not the pool.
 func Push(ctx context.Context, client *redis.Client, sprint string, body []byte) VerbResult {
+	return PushWith(ctx, client, sprint, body, PushOptions{})
+}
+
+// PushOptions are card push's flags.
+type PushOptions struct {
+	// MapKind rewrites a classification KIND to its RESULT kind by KindMap
+	// (MapKind, kinds.go) before lint, so the payload sha is the sha of the
+	// card as stored, KIND line included.
+	MapKind bool
+}
+
+// PushWith is Push under opts.
+func PushWith(ctx context.Context, client *redis.Client, sprint string, body []byte, opts PushOptions) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")
+	}
+	if opts.MapKind {
+		body, _, _ = MapKind(body)
 	}
 	doc, err := lint(ctx, body)
 	if err != nil {

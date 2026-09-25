@@ -2011,10 +2011,12 @@ var launchArgvFor = swarm.LaunchArgvFor
 // the providers table (tools-48, #2646). The table's row for the route's provider gives the
 // shape -- the row swarm.DefaultLaunchRow when the table names no row of its own -- and
 // this run fills it: the binary resolved from --harness, the provider/model the run was
-// routed to, its label as the title, and the card text as the prompt.
+// routed to, its label as the title, and the card text as the prompt -- followed, for a
+// typed card, by the RESULT-FORMAT paragraph (swarm.CardPrompt, nova-tools#3651). The
+// card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
-		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: string(cfg.card),
+		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: swarm.CardPrompt(cfg.card),
 	})
 }
 
