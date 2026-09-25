@@ -1,7 +1,6 @@
 SPRINT TABLE
-blocked: 176
-landed: 209/682 30% -> ~31h
-sprint: 4967/5299 93% -> ~44m
+
+4967/5299 93% -> ~44m
 
 host       | ready | working |  done |    ok |  fail |  ok% |   load
 -----------+-------+---------+-------+-------+-------+------+-------

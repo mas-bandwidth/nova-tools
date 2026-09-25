@@ -279,10 +279,10 @@ while :; do
   # markers) so they print before the loop that builds the rest of the table even runs.
   top_xy=$(printf '%s\n' "$frows" | awk -F'\t' '$1=="xy"{print $2; exit}'); [ -n "$top_xy" ] || top_xy=-
   top_landed=$(printf '%s\n' "$frows" | awk -F'\t' '$1=="landed"{print $2; exit}'); [ -n "$top_landed" ] || top_landed=-
-  { echo "SPRINT TABLE"
-    top_blocked=$(head -1 "$OUT.$$.blocked" 2>/dev/null); echo "${top_blocked:-blocked: ?}"
-    format_landed "$top_landed"
-    sprint_line "$top_xy"
+  { # Glenn 2026-09-23 8:05 PM: the title carries the pit stop while the key is set (nova-tools#3371); rc() is the one Redis read path
+    ps=$(rc GET "sprint:fixes-2026-09-22:pitstop" 2>/dev/null); case "$ps" in ""|"(nil)") echo "SPRINT TABLE" ;; *) echo "SPRINT TABLE *** PIT STOP ***" ;; esac
+    echo
+    sprint_line "$top_xy" | sed "s/^sprint: //"   # Glenn 2026-09-23 7:05 PM: title, blank, x/y z% -> ETA; blocked and landed live in the streams block
     echo
     # Glenn 2026-09-22 6:58 PM: "clear everything in the host table. It's not relevant to the current friend
     # sprint." The bench rows come back (HOST_ROWS=1) when a swarm sprint runs.
