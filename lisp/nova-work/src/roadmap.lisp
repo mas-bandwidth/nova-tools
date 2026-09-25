@@ -29,12 +29,14 @@ references."
 chains is still a referrer."
   (and (member row-id (scope-roadmap-rows scope) :test #'string=) t))
 
-(defun scopes-on-move (scopes row-id &key (accept t))
+(defun scopes-on-move (scopes row-id &key (accept t) (by +absent+) (reason +absent+))
   "The scopes a `node move` of ROW-ID updates, in one envelope. When ACCEPT is
 true every scope referencing ROW-ID has its revision advanced by one and the
-returned events name each; an unrelated scope is returned unchanged. When
-ACCEPT is nil -- a refused move -- the original scopes are returned with an
-empty envelope: nothing moves. Returns (values SCOPES EVENTS ACCEPTED)."
+returned events name each -- its author (BY), its reason, the scope revision it
+incremented and the exact member delta (:references, the moved row) -- and an
+unrelated scope is returned unchanged. When ACCEPT is nil -- a refused move --
+the original scopes are returned with an empty envelope: nothing moves. Returns
+(values SCOPES EVENTS ACCEPTED)."
   (if (not accept)
       (values scopes '() nil)
       (let ((events '()) (updated '()))
@@ -44,7 +46,8 @@ empty envelope: nothing moves. Returns (values SCOPES EVENTS ACCEPTED)."
                 (incf (scope-roadmap-revision next))
                 (push (list :kind :scope :roadmap (scope-roadmap-id next)
                             :scope-revision (scope-roadmap-revision next)
-                            :references row-id)
+                            :references row-id
+                            :by by :reason reason)
                       events)
                 (push next updated))
               (push scope updated)))
@@ -727,6 +730,85 @@ configure is a conflict, never guessed (:3121-3123, :5996)."
                         request of roadmap)
                 0)))))
 
+(defun roadmap-row-undo (kernel &key roadmap of request)
+  "Undo a `roadmap row` by splicing the ordered preimage back, but only while
+the live view record still equals the event's `:after`; any intervening row
+change is a conflict, never guessed (:2873, :3130-3132). A remove's preimage is
+the ordered `:members` it came off and the `:retired` it went onto; an add's is
+those plus the `:revive-events` and the branch a revival moved, so undoing an
+add that revived a settled roadmap pops the revive and puts it back into C."
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state roadmap))
+         (view (and node (wnode-view node))))
+    (unless view
+      (return-from roadmap-row-undo
+        (values nil (format nil "UNDO FAIL request-of=~A: no roadmap view" of) 1)))
+    (let ((entry (gethash of (kernel-applied kernel))))
+      (unless (and entry (eq (getf entry :verb) :roadmap-row)
+                   (equal (getf entry :roadmap) roadmap))
+        (return-from roadmap-row-undo
+          (values nil (format nil "UNDO FAIL request-of=~A: no such roadmap row" of) 1)))
+      (let ((after (getf entry :after))
+            (live (list :members (copy-list (getf view :members))
+                        :retired (copy-list (getf view :retired))
+                        :revision (getf view :revision)
+                        :revive-events (copy-list (getf view :revive-events))
+                        :branch (and node (wnode-branch node)))))
+        (unless (loop for (field value) on after by #'cddr
+                      always (equal (getf live field) value))
+          (return-from roadmap-row-undo
+            (values nil
+                    (format nil "UNDO FAIL request-of=~A: conflict; the view moved" of)
+                    1)))
+        (let ((before (getf entry :before)))
+          (setf (getf view :members) (copy-list (getf before :members))
+                (getf view :retired) (copy-list (getf before :retired))
+                (getf view :revision) (getf before :revision))
+          (when (member :revive-events before)
+            (setf (getf view :revive-events)
+                  (copy-list (getf before :revive-events))))
+          (when (member :branch before)
+            (when node (setf (wnode-branch node) (getf before :branch))))
+          (push (list :op :undo :request request :undo-of of)
+                (getf view :log))
+          (values t
+                  (format nil "UNDO OK request=~A of=~A roadmap=~A change=row"
+                          request of roadmap)
+                  0))))))
+
+(defun roadmap-projection-undo (kernel &key roadmap of request)
+  "Undo a `roadmap projection --add|--remove` by splicing the ordered
+`:projections` back whole, but only while the live view record still equals the
+event's `:after` (:2873, :3130-3132). The removed plist is the only copy, so the
+preimage carries it entire and the undo restores it at its index."
+  (let* ((state (kernel-state kernel))
+         (node (%node-quiet state roadmap))
+         (view (and node (wnode-view node))))
+    (unless view
+      (return-from roadmap-projection-undo
+        (values nil (format nil "UNDO FAIL request-of=~A: no roadmap view" of) 1)))
+    (let ((entry (gethash of (kernel-applied kernel))))
+      (unless (and entry (eq (getf entry :verb) :roadmap-projection)
+                   (equal (getf entry :roadmap) roadmap))
+        (return-from roadmap-projection-undo
+          (values nil (format nil "UNDO FAIL request-of=~A: no such projection change" of) 1)))
+      (unless (equal (list :projections (copy-tree (getf view :projections))
+                           :revision (getf view :revision))
+                     (getf entry :after))
+        (return-from roadmap-projection-undo
+          (values nil
+                  (format nil "UNDO FAIL request-of=~A: conflict; the view moved" of)
+                  1)))
+      (let ((before (getf entry :before)))
+        (setf (getf view :projections) (copy-tree (getf before :projections))
+              (getf view :revision) (getf before :revision))
+        (push (list :op :undo :request request :undo-of of)
+              (getf view :log))
+        (values t
+                (format nil "UNDO OK request=~A of=~A roadmap=~A change=projection"
+                        request of roadmap)
+                0)))))
+
 ;;; ------------------------------------------------------------------
 ;;; The roadmap view record and the `roadmap row` / `roadmap projection`
 ;;; verbs (docs/SPEC-WORK.md:3095-3117, :3118-3129).
@@ -819,7 +901,13 @@ one `:roadmap-row` scope event. Answers (values OK-P LINE EXIT-CODE REVIVE-EVENT
              (return-from roadmap-row
                (values nil (format nil "ROADMAP FAIL node=~A: already a row" roadmap) 2 nil)))
            (let ((was-settled (roadmap-settled-p state roadmap))
-                 (revive nil))
+                 (revive nil)
+                 (before (list :members (copy-list members)
+                               :retired (copy-list (getf view :retired))
+                               :revision (getf view :revision)
+                               :revive-events (copy-list (getf view :revive-events))
+                               :branch (let ((rm (%node-quiet state roadmap)))
+                                         (and rm (wnode-branch rm))))))
              (setf (getf view :members) (append (copy-list members) (list member)))
              (incf (getf view :revision))
              (push (list :op :roadmap-row :change :row-add :member member
@@ -834,24 +922,42 @@ one `:roadmap-row` scope event. Answers (values OK-P LINE EXIT-CODE REVIVE-EVENT
                (let ((rm (%node-quiet state roadmap)))
                  (when (and rm (eq :c (wnode-branch rm)))
                    (setf (wnode-branch rm) :o))))
-             (values t
-                     (format nil "ROADMAP OK id=~A request=~A change=row-add changed=1 rev=~D"
-                             roadmap request (getf view :revision))
-                     0 revive)))
+             (let ((line (format nil "ROADMAP OK id=~A request=~A change=row-add changed=1 rev=~D"
+                                 roadmap request (getf view :revision))))
+               (when request
+                 (setf (gethash request (kernel-applied kernel))
+                       (list :verb :roadmap-row :roadmap roadmap :member member :op :add
+                             :reason (or reason +absent+) :line line :before before
+                             :after (list :members (copy-list (getf view :members))
+                                          :retired (copy-list (getf view :retired))
+                                          :revision (getf view :revision)
+                                          :revive-events (copy-list (getf view :revive-events))
+                                          :branch (let ((rm (%node-quiet state roadmap)))
+                                                    (and rm (wnode-branch rm)))))))
+               (values t line 0 revive))))
           (:remove
            (unless (member member members :test #'string=)
              (return-from roadmap-row
                (values nil (format nil "ROADMAP FAIL node=~A: no such row ~A" roadmap member) 2 nil)))
-           (setf (getf view :members) (remove member members :test #'string=))
-           (push member (getf view :retired))
-           (incf (getf view :revision))
-           (push (list :op :roadmap-row :change :row-remove :member member
-                       :reason (or reason +absent+))
-                 (getf view :log))
-           (values t
-                   (format nil "ROADMAP OK id=~A request=~A change=row-remove changed=1 rev=~D"
-                           roadmap request (getf view :revision))
-                   0 nil)))))))
+           (let ((before (list :members (copy-list members)
+                               :retired (copy-list (getf view :retired))
+                               :revision (getf view :revision))))
+             (setf (getf view :members) (remove member members :test #'string=))
+             (push member (getf view :retired))
+             (incf (getf view :revision))
+             (push (list :op :roadmap-row :change :row-remove :member member
+                         :reason (or reason +absent+))
+                   (getf view :log))
+             (let ((line (format nil "ROADMAP OK id=~A request=~A change=row-remove changed=1 rev=~D"
+                                 roadmap request (getf view :revision))))
+               (when request
+                 (setf (gethash request (kernel-applied kernel))
+                       (list :verb :roadmap-row :roadmap roadmap :member member :op :remove
+                             :reason (or reason +absent+) :line line :before before
+                             :after (list :members (copy-list (getf view :members))
+                                          :retired (copy-list (getf view :retired))
+                                          :revision (getf view :revision)))))
+               (values t line 0 nil)))))))))
 
 ;;; ------------------------------------------------------------------
 ;;; `roadmap projection --add|--remove` (docs/SPEC-WORK.md:3098-3103).
@@ -935,17 +1041,28 @@ a bad selection refuses `bad selection`. Answers (values OK-P LINE EXIT-CODE)."
          (unless existing
            (return-from roadmap-projection
              (values nil (format nil "ROADMAP FAIL node=~A: no such projection ~A" roadmap id) 2)))
-         (setf (getf view :projections)
-               (remove id (getf view :projections)
-                       :key (lambda (p) (getf p :id)) :test #'string=))
-         (incf (getf view :revision))
-         (push (list :op :roadmap-projection :change :projection-remove :projection id
-                     :reason (or reason +absent+))
-               (getf view :log))
-         (values t
-                 (format nil "ROADMAP OK id=~A request=~A change=projection-remove changed=1 rev=~D"
-                         roadmap request (getf view :revision))
-                 0))
+         (let ((before (list :projections (copy-tree (getf view :projections))
+                             :revision (getf view :revision)
+                             :projection (%roadmap-projection-payload existing)
+                             :index (position id (getf view :projections)
+                                              :key (lambda (p) (getf p :id)) :test #'string=))))
+           (setf (getf view :projections)
+                 (remove id (getf view :projections)
+                         :key (lambda (p) (getf p :id)) :test #'string=))
+           (incf (getf view :revision))
+           (push (list :op :roadmap-projection :change :projection-remove :projection id
+                       :reason (or reason +absent+))
+                 (getf view :log))
+           (let ((line (format nil "ROADMAP OK id=~A request=~A change=projection-remove changed=1 rev=~D"
+                               roadmap request (getf view :revision))))
+             (when request
+               (setf (gethash request (kernel-applied kernel))
+                     (list :verb :roadmap-projection :roadmap roadmap :projection id
+                           :op :remove :reason (or reason +absent+) :line line
+                           :before before
+                           :after (list :projections (copy-tree (getf view :projections))
+                                        :revision (getf view :revision)))))
+             (values t line 0))))
         (:add
          (unless (eq policy :markdown-table)
            (return-from roadmap-projection
@@ -967,25 +1084,72 @@ a bad selection refuses `bad selection`. Answers (values OK-P LINE EXIT-CODE)."
                                     :column-axis (or c +absent+)
                                     :fixed (or fx '())))
                   (payload (%roadmap-projection-payload projection)))
+             ;; A lost reply's retry replays its original receipt via the
+             ;; request id only when the id's prior entry is this same whole
+             ;; intent: the verb, the roadmap, an `--add`, the projection id,
+             ;; the full payload and the reason. Anything else under the id --
+             ;; a `--remove`, whose `:before :projection` holds the removed
+             ;; plist, another roadmap, another verb -- is a conflict that
+             ;; refuses and moves nothing.
+             (when request
+               (let ((prior (gethash request (kernel-applied kernel))))
+                 (when prior
+                   (if (and (eq (getf prior :verb) :roadmap-projection)
+                            (equal (getf prior :roadmap) roadmap)
+                            (eq (getf prior :op) :add)
+                            (equal (getf prior :projection) id)
+                            (equal (getf (getf prior :before) :projection) payload)
+                            (equal (getf prior :reason) (or reason +absent+)))
+                       (return-from roadmap-projection
+                         (values t (getf prior :line) 0))
+                       (return-from roadmap-projection
+                         (values nil
+                                 (format nil "ROADMAP FAIL node=~A: reused with a different payload"
+                                         roadmap)
+                                 1))))))
              (when existing
                (if (equal payload (%roadmap-projection-payload existing))
-                   (return-from roadmap-projection
-                     (values t
-                             (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=0 rev=~D"
-                                     roadmap request (getf view :revision))
-                             0))
+                   (let ((line (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=0 rev=~D"
+                                       roadmap request (getf view :revision))))
+                     ;; The receipt's `:before` carries the payload and index
+                     ;; in the shape a changed=1 add records, so the retry
+                     ;; guard above and `%roadmap-projection-redo` read one
+                     ;; shape; its `:projections`/`:revision` equal `:after`.
+                     (when request
+                       (let ((snap (list :projections (copy-tree (getf view :projections))
+                                         :revision (getf view :revision))))
+                         (setf (gethash request (kernel-applied kernel))
+                               (list :verb :roadmap-projection :roadmap roadmap :projection id
+                                     :op :add :reason (or reason +absent+) :line line
+                                     :before (append (copy-tree snap)
+                                                     (list :projection payload
+                                                           :index (position id (getf view :projections)
+                                                                            :key (lambda (p) (getf p :id))
+                                                                            :test #'string=)))
+                                     :after snap :changed 0))))
+                     (return-from roadmap-projection (values t line 0)))
                    (return-from roadmap-projection
                      (values nil (format nil "ROADMAP FAIL node=~A: duplicate projection ~A" roadmap id) 2))))
-             (setf (getf view :projections)
-                   (append (copy-list (getf view :projections)) (list projection)))
-             (incf (getf view :revision))
-             (push (list :op :roadmap-projection :change :projection-add :projection id
-                         :reason (or reason +absent+))
-                   (getf view :log))
-             (values t
-                     (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=1 rev=~D"
-                             roadmap request (getf view :revision))
-                     0))))))))
+             (let ((before (list :projections (copy-tree (getf view :projections))
+                                 :revision (getf view :revision)
+                                 :projection payload
+                                 :index (length (getf view :projections)))))
+               (setf (getf view :projections)
+                     (append (copy-list (getf view :projections)) (list projection)))
+               (incf (getf view :revision))
+               (push (list :op :roadmap-projection :change :projection-add :projection id
+                           :reason (or reason +absent+))
+                     (getf view :log))
+               (let ((line (format nil "ROADMAP OK id=~A request=~A change=projection-add changed=1 rev=~D"
+                                   roadmap request (getf view :revision))))
+                 (when request
+                   (setf (gethash request (kernel-applied kernel))
+                         (list :verb :roadmap-projection :roadmap roadmap :projection id
+                               :op :add :reason (or reason +absent+) :line line
+                               :before before
+                               :after (list :projections (copy-tree (getf view :projections))
+                                            :revision (getf view :revision)))))
+                 (values t line 0))))))))))
 
 ;;; ------------------------------------------------------------------
 ;;; The reads that keep a settled roadmap's head whole (:3124-3125).
@@ -1183,6 +1347,7 @@ at exit 2; zero applicable rows print `green=0 applicable=0` with no percentage.
                             id (or axis "-") (roadmap-name row-kind)
                             rows baseline cell-rows))
                 0)))))
+
 
 ;;; ------------------------------------------------------------------
 ;;; `cell` -- a roadmap coordinate's reference and scope mark
@@ -1552,3 +1717,134 @@ absent member refuses at exit 2 and writes nothing (docs/SPEC-WORK.md:3103-3113,
 ;;; The `:axis` verb is reversible: `axis --remove` of an added member, and
 ;;; `axis --add` of a removed one restoring its position and its cells
 ;;; (docs/SPEC-WORK.md:2863).
+
+;;; ------------------------------------------------------------------
+;;; `render --view` over a stored selection (docs/SPEC-WORK.md:3079-3085,
+;;; :3131-3136, :5834-5845)
+;;; ------------------------------------------------------------------
+;;;
+;;; A roadmap view is a node plus a view record; its `:projections` each carry
+;;; the display selection `:row-axis`, `:column-axis` and `:fixed`. `render
+;;; --view <id> --chat --projection <id>` reads that projection's stored
+;;; selection and not its file; without a projection a matrix names its
+;;; selection on the command line and a zero- or one-axis view needs none. The
+;;; two forms are exclusive. A matrix selection naming an unknown, missing or
+;;; duplicate axis or member refuses `bad selection`; it never reads the
+;;; projection's target.
+
+(defun roadmap-view-projection (view id)
+  "The projection ID in VIEW's `:projections`, or NIL."
+  (find id (getf view :projections)
+        :key (lambda (p) (getf p :id)) :test #'string=))
+
+(defun roadmap-view-axis-members (view axis)
+  "The declared members of AXIS in VIEW, in order. The `axis` verb owns the
+listing; an axis the view has not got answers NIL."
+  (cdr (assoc axis (getf view :axis-members) :test #'string=)))
+
+(defun %render-view-absent-p (axis)
+  "The stored spelling of an axis a zero- or one-axis projection does not name."
+  (or (null axis) (eq axis :absent)))
+
+(defun %render-view-refuse (what)
+  (values nil (format nil "RENDER FAIL: ~A" what) 2))
+
+(defun render-view-selection (view &key projection row-axis column-axis fixed)
+  "Resolve the stored display selection a `render --view --chat` reads
+(docs/SPEC-WORK.md:3133-3136). Answers (values SELECTION LINE CODE); SELECTION is
+`(:kind :rows :rows (...))` for a zero- or one-axis view or `(:kind :matrix
+:row-axis A :column-axis B :fixed ((X . M) ...) :row-members (...) :column-members
+(...))` for a matrix. A projection is read and never its file."
+  (let ((axes (getf view :axes)))
+    (when (and projection (or row-axis column-axis fixed))
+      (return-from render-view-selection
+        (%render-view-refuse "a projection and an explicit selection are exclusive")))
+    (when projection
+      (let ((p (roadmap-view-projection view projection)))
+        (unless p
+          (return-from render-view-selection
+            (%render-view-refuse "no such projection")))
+        (setf row-axis (getf p :row-axis)
+              column-axis (getf p :column-axis)
+              fixed (getf p :fixed))))
+    (when (%render-view-absent-p row-axis) (setf row-axis nil))
+    (when (%render-view-absent-p column-axis) (setf column-axis nil))
+    (cond
+      ;; Zero or one axis is rows with no cells: no selection is needed or
+      ;; admitted.
+      ((<= (length axes) 1)
+       (when (or row-axis column-axis fixed)
+         (return-from render-view-selection (%render-view-refuse "bad selection")))
+       (values (list :kind :rows :rows (copy-list (getf view :members))) nil 0))
+      (t
+       ;; Two or more axes are a matrix: it names its row and column axes.
+       (unless (and row-axis column-axis)
+         (return-from render-view-selection (%render-view-refuse "bad selection")))
+       (unless (and (member row-axis axes :test #'string=)
+                    (member column-axis axes :test #'string=)
+                    (not (string= row-axis column-axis)))
+         (return-from render-view-selection (%render-view-refuse "bad selection")))
+       (let* ((others (remove-if (lambda (a)
+                                   (or (string= a row-axis) (string= a column-axis)))
+                                 axes))
+              (seen '())
+              (pinned '()))
+         ;; `:fixed` names exactly one member of every axis but row and column.
+         (dolist (pair fixed)
+           (let ((axis (car pair))
+                 (member (if (consp (cdr pair)) (cadr pair) (cdr pair))))
+             (unless (and (member axis others :test #'string=)
+                          (not (member axis seen :test #'string=))
+                          (member member (roadmap-view-axis-members view axis)
+                                  :test #'string=))
+               (return-from render-view-selection (%render-view-refuse "bad selection")))
+             (push axis seen)
+             (push (cons axis member) pinned)))
+         (unless (= (length pinned) (length others))
+           (return-from render-view-selection (%render-view-refuse "bad selection")))
+         (values (list :kind :matrix
+                       :row-axis row-axis :column-axis column-axis
+                       :fixed (nreverse pinned)
+                       :row-members (copy-list (roadmap-view-axis-members view row-axis))
+                       :column-members (copy-list (roadmap-view-axis-members view column-axis)))
+                 nil 0))))))
+
+(defun render-view-body (view selection &key (state nil))
+  "The canonical bytes one stored selection renders. The `--chat` artifact's
+frame and byte bound are the render-target slice's (:3143). A private node and
+its descendants leave the render: with STATE the row's effective privacy (its
+own marker or any containment ancestor's, docs/SPEC-WORK.md:947-948, :3051) is
+the test, and without STATE the view's own `:private` list is."
+  (labels ((hidden-p (id)
+             (if state
+                 (effective-private-p state id)
+                 (member id (getf view :private) :test #'string=))))
+    (with-output-to-string (s)
+      (format s "revision: ~A~%" (getf view :revision))
+      (ecase (getf selection :kind)
+        (:rows
+         (dolist (row (getf selection :rows))
+           (unless (hidden-p row)
+             (format s "row=~A~%" row))))
+        (:matrix
+         (dolist (r (getf selection :row-members))
+           (unless (hidden-p r)
+             (dolist (c (getf selection :column-members))
+               (unless (hidden-p c)
+                 (format s "row=~A col=~A" r c)
+                 (dolist (pin (getf selection :fixed))
+                   (format s " ~A=~A" (car pin) (cdr pin)))
+                 (terpri s))))))))))
+
+(defun render-view (view &key projection row-axis column-axis fixed state)
+  "The `render --view <id> --chat` read of a stored selection
+(docs/SPEC-WORK.md:3131-3136). Answers (values BODY LINE CODE): BODY is the
+rendered selection on success, LINE the refusal otherwise, and CODE 0 or 2."
+  (multiple-value-bind (selection line code)
+      (render-view-selection view :projection projection
+                                  :row-axis row-axis
+                                  :column-axis column-axis
+                                  :fixed fixed)
+    (if line
+        (values nil line code)
+        (values (render-view-body view selection :state state) nil 0))))

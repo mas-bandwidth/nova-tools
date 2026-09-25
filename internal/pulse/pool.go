@@ -1,140 +1,110 @@
 package pulse
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// PoolInput holds everything the pool verb reads, apart from command-line parsing, so a
-// test can drive it with fake gh invocations on PATH.
-type PoolInput struct {
-	Sources string        // path to the declared sources TSV (kind, locator, template)
-	Root    string        // root directory holding seen.tsv and the default pool.tsv
-	Out     string        // path pool.tsv is written to; empty means <root>/pool.tsv
-	Timeout time.Duration // bound on every gh child, default 120s
-	Max     int           // bound on admitted candidates; 0 means no bound
-	Stdout  io.Writer
-	Stderr  io.Writer
+// admitted is one candidate's identity, written when pool admits it, so a later
+// hold can name the same source kind and id the next pool looks up.
+type admitted struct {
+	Kind    string
+	ID      string
+	Label   string
+	Attempt int
 }
 
-// source is one declared source line: a kind, a locator, and the default template.
-type source struct {
-	kind     string
-	locator  string
-	template string
-}
-
-// ghIssue is the subset of a GitHub issue the pool verb reads.
-type ghIssue struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	Labels []struct {
-		Name string `json:"name"`
-	} `json:"labels"`
-	Body string `json:"body"`
-}
-
-// poolPR is the subset of a GitHub pull request the pool verb reads.
-type poolPR struct {
-	Number  int    `json:"number"`
-	Title   string `json:"title"`
-	IsDraft bool   `json:"isDraft"`
-}
-
-// Pool enumerates bounded open work from the declared sources into pool.tsv. It runs no
-// model: every candidate is read through gh, git or the files the sources name. One
-// unreadable source is one refusal and no pool.tsv is written.
-func Pool(in PoolInput) int {
-	started := time.Now()
-	if in.Timeout <= 0 {
-		in.Timeout = 120 * time.Second
-	}
-	out := in.Out
-	if out == "" {
-		out = filepath.Join(in.Root, "pool.tsv")
-	}
-	srcs, err := readSources(in.Sources)
+func readIdentity(root string) ([]admitted, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "identity.tsv"))
 	if err != nil {
-		fmt.Fprintf(in.Stderr, "POOL REFUSED sources=%s: %s (fix the --sources file)\n",
-			oneline.Field(in.Sources), oneline.Err(err))
-		return 2
-	}
-	seen, err := readSeen(in.Root)
-	if err != nil {
-		fmt.Fprintf(in.Stderr, "POOL REFUSED root=%s: %s (fix seen.tsv)\n",
-			oneline.Field(in.Root), oneline.Err(err))
-		return 2
-	}
-
-	var rows []PoolRow
-	counts := map[string]int{}
-	seenCount := 0
-	planCount := 0
-
-	for _, s := range srcs {
-		cands, plan, cseen, err := poolSource(s, seen, in)
-		if err != nil {
-			refuseSource(in.Stderr, s, err)
-			return 2
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
-		seenCount += cseen
-		planCount += plan
-		for _, r := range cands {
-			if in.Max > 0 && len(rows) >= in.Max {
-				break
-			}
-			rows = append(rows, r)
-			counts[sourceCountKey(s.kind)]++
-		}
+		return nil, err
 	}
-
-	if err := writePool(out, rows); err != nil {
-		fmt.Fprintf(in.Stderr, "POOL REFUSED out=%s: %s (pass --out a writable path)\n",
-			oneline.Field(out), oneline.Err(err))
-		return 2
-	}
-
-	fmt.Fprintf(in.Stdout, "POOL OK sources=%d candidates=%d issues=%d audits=%d slices=%d roadmap=%d prs=%d work=%d next=%d plan=%d seen=%d took=%s out=%s\n",
-		len(srcs), len(rows),
-		counts["issue"], counts["audit"], counts["slice"], counts["roadmap"], counts["read"],
-		counts["work"], 0, planCount, seenCount,
-		time.Since(started).Round(time.Millisecond), oneline.Field(out))
-	return 0
-}
-
-// readSources reads the declared sources TSV: kind, locator, template per line.
-func readSources(path string) ([]source, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("unreadable: %w", err)
-	}
-	var srcs []source
-	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	var out []admitted
+	for _, line := range strings.Split(string(raw), "\n") {
+		parts := strings.Split(line, "\t")
+		if len(parts) < 4 {
 			continue
 		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 3 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
-			return nil, fmt.Errorf("line %d is not kind<TAB>locator<TAB>template", i+1)
-		}
-		srcs = append(srcs, source{kind: parts[0], locator: parts[1], template: parts[2]})
+		n, _ := strconv.Atoi(parts[3])
+		out = append(out, admitted{Kind: parts[0], ID: parts[1], Label: parts[2], Attempt: n})
 	}
-	return srcs, nil
+	return out, nil
 }
 
-// readSeen returns the set of (source,id) already carded, running or pr; a retry state is
-// not in the returned set, so a rewritten card is pooled again (rule 2).
+// identitiesFor finds every identity a label might name: the raw id, the
+// stored label, or the sanitized id. Two hits are a collision, not a guess.
+func identitiesFor(root, label string) ([]admitted, error) {
+	rows, err := readIdentity(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []admitted
+	for _, r := range rows {
+		if r.Label == label || r.ID == label || sanitizeID(r.ID) == label || sanitizeID(r.Label) == label {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+
+func lookupIdentity(root, label string) (kind, id string, attempt int, ok bool, err error) {
+	matches, err := identitiesFor(root, label)
+	if err != nil {
+		return "", "", 0, false, err
+	}
+	if len(matches) == 1 {
+		return matches[0].Kind, matches[0].ID, matches[0].Attempt, true, nil
+	}
+	if len(matches) > 1 {
+		return "", "", 0, false, fmt.Errorf("ambiguous identity for %s", label)
+	}
+	return "", "", 0, false, nil
+}
+
+// cardIdentity reads the IDENTITY line a launched card carries. That line is
+// the source, id, and attempt the card was admitted under, not a label guess.
+func cardIdentity(path string) (admitted, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return admitted{}, false
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		f := strings.Fields(line)
+		if len(f) != 4 || f[0] != "IDENTITY" {
+			continue
+		}
+		kind, id, attempt := "", "", 0
+		for _, tok := range f[1:] {
+			k, v, cut := strings.Cut(tok, "=")
+			if !cut {
+				continue
+			}
+			switch k {
+			case "kind":
+				kind = v
+			case "id":
+				id = v
+			case "attempt":
+				attempt, _ = strconv.Atoi(v)
+			}
+		}
+		if kind != "" && id != "" {
+			return admitted{Kind: kind, ID: id, Attempt: attempt}, true
+		}
+	}
+	return admitted{}, false
+}
+
+// readSeen returns the set of (source,id) already carded, running, pr, or held.
+// A retry state is not in the returned set, so a rewritten card is pooled again
+// (rule 2). A hold is not a retry: the provider read may have been accepted,
+// and the source stays out until a reconciler changes the seen state.
 func readSeen(root string) (map[string]bool, error) {
 	seen := map[string]bool{}
 	raw, err := os.ReadFile(filepath.Join(root, "seen.tsv"))
@@ -153,423 +123,9 @@ func readSeen(root string) (map[string]bool, error) {
 		if len(parts) < 3 {
 			continue
 		}
-		if parts[2] == "carded" || parts[2] == "running" || parts[2] == "pr" {
+		if parts[2] == "carded" || parts[2] == "running" || parts[2] == "pr" || parts[2] == "hold" {
 			seen[parts[0]+"\x00"+parts[1]] = true
 		}
 	}
 	return seen, nil
-}
-
-// poolSource reads one source's candidates. It returns the pooled rows, the plan count,
-// and the number already seen; a source it cannot read is an error.
-func poolSource(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, int, error) {
-	switch s.kind {
-	case "issues":
-		return poolIssues(s, seen, in, "issue")
-	case "audits":
-		return poolAudits(s, seen, in)
-	case "bus":
-		return poolBus(s, seen)
-	case "roadmap":
-		return poolRoadmap(s, seen)
-	case "prs":
-		return poolPRs(s, seen, in)
-	case "work":
-		return poolWork(s, seen)
-	default:
-		return nil, 0, 0, fmt.Errorf("unknown source kind %q (a source is issues, audits, bus, roadmap, prs or work)", s.kind)
-	}
-}
-
-func listIssues(locator string, in PoolInput) ([]ghIssue, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "issue", "list", "--repo", locator, "--state", "open", "--limit", "500", "--json", "number,title,labels,body")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gh issue list: %w", err)
-	}
-	var issues []ghIssue
-	if err := json.Unmarshal(out, &issues); err != nil {
-		return nil, fmt.Errorf("gh issue list: bad JSON: %w", err)
-	}
-	return issues, nil
-}
-
-func listPRs(locator string, in PoolInput) ([]poolPR, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), in.Timeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "gh", "pr", "list", "--repo", locator, "--state", "open", "--limit", "500", "--json", "number,title,isDraft")
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("gh pr list: %w", err)
-	}
-	var prs []poolPR
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, fmt.Errorf("gh pr list: bad JSON: %w", err)
-	}
-	return prs, nil
-}
-
-func poolIssues(s source, seen map[string]bool, in PoolInput, kind string) ([]PoolRow, int, int, error) {
-	issues, err := listIssues(s.locator, in)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	var rows []PoolRow
-	plan := 0
-	seenCount := 0
-	for _, iss := range issues {
-		labelled := hasLabel(iss, "card")
-		dogfood := isDogfood(iss.Body)
-		if slicesBody(iss.Body) && !dogfood {
-			plan++
-			continue
-		}
-		if !labelled && !dogfood {
-			continue
-		}
-		id := strconv.Itoa(iss.Number)
-		key := s.kind + "\x00" + id
-		if seen[key] {
-			seenCount++
-			continue
-		}
-		tpl := s.template
-		if t := bodyTemplate(iss.Body); t != "" {
-			tpl = t
-		}
-		rows = append(rows, PoolRow{Source: s.locator, ID: id, Kind: kind, Title: iss.Title, Template: tpl})
-	}
-	return rows, plan, seenCount, nil
-}
-
-func poolAudits(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, int, error) {
-	issues, err := listIssues(s.locator, in)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	var rows []PoolRow
-	seenCount := 0
-	for _, iss := range issues {
-		n := 0
-		for _, line := range strings.Split(iss.Body, "\n") {
-			if !strings.Contains(line, "MISSING:") && !strings.Contains(line, "DRIFT") {
-				continue
-			}
-			n++
-			id := fmt.Sprintf("%d#%d", iss.Number, n)
-			key := s.kind + "\x00" + id
-			if seen[key] {
-				seenCount++
-				continue
-			}
-			rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "audit", Title: iss.Title, Template: "drift"})
-		}
-	}
-	return rows, 0, seenCount, nil
-}
-
-func poolBus(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
-	if _, err := os.Stat(filepath.Join(s.locator, ".git")); err != nil {
-		return nil, 0, 0, fmt.Errorf("not a bus checkout (locator must be a git checkout)")
-	}
-	notesDir := filepath.Join(s.locator, "notes")
-	entries, err := os.ReadDir(notesDir)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("bus has no readable notes: %w", err)
-	}
-	var rows []PoolRow
-	seenCount := 0
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		raw, err := os.ReadFile(filepath.Join(notesDir, e.Name()))
-		if err != nil {
-			continue
-		}
-		body := string(raw)
-		if !slicesBody(body) {
-			continue
-		}
-		tpl := sliceTemplate(body)
-		if tpl == "" {
-			tpl = s.template
-		}
-		noteID := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
-		id := noteID + "#1"
-		if seen[s.kind+"\x00"+id] {
-			seenCount++
-			continue
-		}
-		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "slice", Title: noteTitle(body), Template: tpl})
-	}
-	return rows, 0, seenCount, nil
-}
-
-func poolRoadmap(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
-	raw, err := os.ReadFile(s.locator)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("roadmap unreadable: %w", err)
-	}
-	if !balanced(string(raw)) {
-		return nil, 0, 0, fmt.Errorf("does not parse as a roadmap")
-	}
-	body := string(raw)
-	var rows []PoolRow
-	seenCount := 0
-	idx := 0
-	for {
-		at := strings.Index(body[idx:], ":card")
-		if at < 0 {
-			break
-		}
-		start := idx + at
-		tpl := cardName(body[start+len(":card"):])
-		id := cellID(body[:start])
-		if tpl != "" {
-			key := s.kind + "\x00" + id
-			if seen[key] {
-				seenCount++
-			} else {
-				rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: tpl, Title: id, Template: tpl})
-			}
-		}
-		idx = start + len(":card")
-	}
-	return rows, 0, seenCount, nil
-}
-
-// poolPRs pools one read candidate per OPEN, NON-DRAFT pull request: the read half of the
-// loop harvest itself describes (SPEC-PULSE rule 13, "cuts a read card per PR"). A draft
-// is nowhere; every other PR is one candidate, deduped on (prs, number) like the issues
-// kind dedupes on (issues, number).
-func poolPRs(s source, seen map[string]bool, in PoolInput) ([]PoolRow, int, int, error) {
-	prs, err := listPRs(s.locator, in)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	var rows []PoolRow
-	seenCount := 0
-	for _, pr := range prs {
-		if pr.IsDraft {
-			continue
-		}
-		id := strconv.Itoa(pr.Number)
-		key := s.kind + "\x00" + id
-		if seen[key] {
-			seenCount++
-			continue
-		}
-		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: "read", Title: pr.Title, Template: s.template})
-	}
-	return rows, 0, seenCount, nil
-}
-
-// poolWork pools one candidate per open, unleased, unblocked bug or item node in
-// a nova-work checkout. The locator is the work root; nodes are read from
-// <root>/nodes.tsv, one tab-separated row per node: id, type (bug|item), state,
-// lease (empty when no launch holds it), blocked-by (empty when not waiting on a
-// merge), title, and an optional template override. A node is pooled only when
-// its state is open, its lease is empty and its blocked-by is empty; the row id
-// is the node id, so cut carries it on the card's line 1 and harvest can record
-// the attempt on the node.
-func poolWork(s source, seen map[string]bool) ([]PoolRow, int, int, error) {
-	path := s.locator
-	if fi, err := os.Stat(path); err != nil {
-		return nil, 0, 0, fmt.Errorf("work root unreadable: %w", err)
-	} else if fi.IsDir() {
-		path = filepath.Join(path, "nodes.tsv")
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("work nodes unreadable: %w", err)
-	}
-	var rows []PoolRow
-	seenCount := 0
-	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.TrimSpace(line) == "" || strings.HasPrefix(strings.TrimSpace(line), "#") {
-			continue
-		}
-		parts := strings.Split(line, "\t")
-		if len(parts) < 6 {
-			continue
-		}
-		id, typ, state, lease, blockedBy, title := parts[0], parts[1], parts[2], parts[3], parts[4], parts[5]
-		if typ != "bug" && typ != "item" {
-			continue
-		}
-		if !workOpen(state) || strings.TrimSpace(lease) != "" || strings.TrimSpace(blockedBy) != "" {
-			continue
-		}
-		if strings.TrimSpace(id) == "" {
-			continue
-		}
-		if strings.TrimSpace(title) == "" {
-			title = id
-		}
-		tpl := s.template
-		if len(parts) >= 7 && strings.TrimSpace(parts[6]) != "" {
-			tpl = strings.TrimSpace(parts[6])
-		}
-		key := s.kind + "\x00" + id
-		if seen[key] {
-			seenCount++
-			continue
-		}
-		rows = append(rows, PoolRow{Source: s.kind, ID: id, Kind: typ, Title: title, Template: tpl})
-	}
-	return rows, 0, seenCount, nil
-}
-
-// workOpen reports whether a work node state counts as open for the pool.
-func workOpen(state string) bool {
-	switch strings.ToLower(strings.TrimSpace(state)) {
-	case "open", "todo", "doing", "review":
-		return true
-	}
-	return false
-}
-
-func hasLabel(iss ghIssue, name string) bool {
-	for _, l := range iss.Labels {
-		if l.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-func isDogfood(body string) bool {
-	lower := strings.ToLower(body)
-	return strings.Contains(lower, "expected") && strings.Contains(lower, "smallest fix")
-}
-
-func slicesBody(body string) bool {
-	return strings.Contains(body, "slices:")
-}
-
-// bodyTemplate returns the template named by an issue body line `template: <name>`.
-func bodyTemplate(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		if strings.Contains(line, "template:") {
-			return strings.TrimSpace(strings.SplitN(line, "template:", 2)[1])
-		}
-	}
-	return ""
-}
-
-// sliceTemplate returns the template word after a slice's `template:` line, or "".
-func sliceTemplate(body string) string {
-	return bodyTemplate(body)
-}
-
-func noteTitle(body string) string {
-	for _, line := range strings.Split(body, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "# ") {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, "# "))
-		}
-	}
-	return "-"
-}
-
-// balanced reports whether the roadmap file's parentheses balance.
-func balanced(s string) bool {
-	depth := 0
-	for _, r := range s {
-		switch r {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth < 0 {
-				return false
-			}
-		}
-	}
-	return depth == 0
-}
-
-// cardName returns the word following ":card", trimming quotes and punctuation.
-func cardName(s string) string {
-	s = strings.TrimSpace(s)
-	if strings.HasPrefix(s, `"`) {
-		end := strings.Index(s[1:], `"`)
-		if end >= 0 {
-			return s[1 : 1+end]
-		}
-	}
-	return strings.SplitN(s, ")", 2)[0]
-}
-
-// cellID returns the nearest :id value preceding position p of a cell.
-func cellID(prefix string) string {
-	last := strings.LastIndex(prefix, ":id")
-	if last < 0 {
-		return "-"
-	}
-	rest := strings.TrimSpace(prefix[last+len(":id"):])
-	if strings.HasPrefix(rest, `"`) {
-		end := strings.Index(rest[1:], `"`)
-		if end >= 0 {
-			return rest[1 : 1+end]
-		}
-	}
-	return strings.Fields(rest)[0]
-}
-
-func refuseSource(w io.Writer, s source, err error) {
-	fmt.Fprintf(w, "POOL REFUSED source=%s:%s: %s (%s)\n",
-		oneline.Field(s.kind), oneline.Field(s.locator), oneline.Err(err), remedy(s.kind))
-}
-
-func remedy(kind string) string {
-	switch kind {
-	case "issues", "audits", "prs":
-		return "check gh auth and the repo name"
-	case "bus":
-		return "point --sources at a nova-bus checkout"
-	case "roadmap":
-		return "point --sources at a roadmap file that parses"
-	case "work":
-		return "point --sources at a nova-work checkout with nodes.tsv"
-	}
-	return "fix the source line"
-}
-
-func writePool(path string, rows []PoolRow) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	var b strings.Builder
-	for _, r := range rows {
-		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\t%s\n", r.Source, r.ID, r.Kind, r.Title, r.Template)
-	}
-	return os.WriteFile(path, []byte(b.String()), 0o644)
-}
-
-// sourceCountKey maps a source kind (declared in the sources TSV: issues, audits,
-// bus, roadmap, work) to the count slot the POOL line prints (issues=, audits=,
-// slices=, roadmap=, work=). The row's Kind is the card kind for the routing, the source
-// kind is the count: poolRoadmap writes the cell's :card as row.Kind, so cuts can
-// key rule 6 on row.Kind even when the cell's :card does not match the source kind;
-// we count by source kind because that is what the line says.
-func sourceCountKey(kind string) string {
-	switch kind {
-	case "issues":
-		return "issue"
-	case "audits":
-		return "audit"
-	case "bus":
-		return "slice"
-	case "roadmap":
-		return "roadmap"
-	case "prs":
-		return "read"
-	case "work":
-		return "work"
-	}
-	return kind
 }

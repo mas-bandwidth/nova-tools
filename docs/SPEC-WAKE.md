@@ -538,7 +538,10 @@ The last five are `serve`'s (rule 10); `WAKE HERE` and `WAKE PROBE` are
 the verdict line that ends the listing, and `AWAKE REFUSED` the shape for the
 things wrong about the world rather than the invocation (no `--bus`, a `--bus`
 that is not a git repository, a `--window` that is not positive, a negative
-`--max`). The four `FACT` lines are the awake grammar's presence record: four
+`--max`). Every one of those four ends in the door -- `; run: nova-wake help`
+-- because a refusal that does not say where the usage is costs the reader the
+whole banner to find out (#1451); the grammar above is unchanged, because the
+door sits inside `<reason>`. The four `FACT` lines are the awake grammar's presence record: four
 facts a harness must prove separately — **process** alive; **beat** (the bus
 heartbeat) written; **delivery** handled (the note was receipted); **wake**
 (the parent was notified, the model woke) — each `proven` or `unproven`.
@@ -621,7 +624,16 @@ every poll re-lists the same new notes, and on a recovery read under `--open`,
 and nowhere else. **This spec does not depend on `nova-bus` re-listing
 anything.** The bookkeeping tokens — `INBOX OPEN`, `INBOX OK`, `INBOX CURSOR`,
 `INBOX SCOPE`, `INBOX LEGACY` — are counted and not printed, because they say
-the same thing every poll. **Every other line this tool does not recognise is printed verbatim,
+the same thing every poll. The inner `nova-bus wait` a `--refresh` source runs
+adds three more on the same rule: its opening status line
+`WAIT as=<name> timeout=<d> interval=<d> cursor=<sha>`, its
+`WAIT TIMEOUT after=<d> polls=<n> cursor=<sha>`, and its
+`WAIT DONE reason=timeout rearm=required next=<cmd>`. All three say, in words,
+that NOTHING ARRIVED; they are the same every poll; and relaying one wakes the
+window at once and makes the verb unable to wait at all. A `WAIT DONE` with any
+other reason, and any other `WAIT` line — a refusal, or a shape from a future
+`nova-bus` this tool has not heard of — are not bookkeeping and still print.
+**Every other line this tool does not recognise is printed verbatim,
 under `WAKE BUS LINE`, and wakes the window.** That includes `INBOX REFUSED`,
 `INBOX FAIL`, `INBOX UNREADABLE`, `INBOX UNADDRESSED`, `INBOX SWITCH`, a `git`
 transcript, a line from a future version of `nova-bus` this tool has never heard
@@ -632,6 +644,23 @@ about once dropped an `INBOX REFUSED` line and gave the window thirty minutes of
 confident quiet over a bus that was refusing every read. The rule follows from
 that and is absolute: an allow-list decides what is *suppressed*, never what is
 *shown*, and a line this tool cannot classify is a line this tool prints.
+
+**Progress is not protocol, and is the one thing dropped before classification.**
+Glenn's rule has two halves: a program that takes longer than 0.1 s says what it
+is doing, on stderr — *and* a progress line never enters a protocol stream a
+consumer parses. `nova-bus`'s since-walk narrates
+`INBOX WALK commits=<n>/<total> notes=<n> elapsed=<s>` on stderr, exactly as the
+first half asks, and this tool reads both streams together, so on 2026-09-18 that
+line reached the classifier above — whose default case *prints* — and was relayed
+as `WAKE BUS LINE INBOX WALK …`, counted as a change in the world, and ended a
+poll before the mail the watcher was waiting for came down. So a line carrying a
+**progress prefix** is dropped before anything else and is counted nowhere:
+`read=` is the lines of the *protocol* this poll read, and a sentence about how
+far a walk has got is not one of them. This is not a filter on the status line
+and does not weaken the rule above — the allow-list still decides only what is
+*suppressed*; this decides what was never protocol to begin with. The prefixes
+are `internal/bus.ProgressPrefixes`, one registry both programs read, so a new
+progress line is one entry and is safe in every consumer at once.
 
 **A refused or error line never re-wakes and is never silent.** The first sighting
 of an unrecognised line is a change. A subsequent run that sees the *same* line
@@ -750,13 +779,14 @@ Therefore:
   <name>` with **no** `--advance`, where `<t>` is the time to the earliest due
   source, at most `--interval`: `wait` takes the checkout lock, fetches,
   fast-forwards, and returns the moment the inbox would list something new or
-  at `<t>` (SPEC.md, **wait**), and its lines are classified exactly as
-  `inbox`'s, because the two verbs share one listing. So new mail reaches a
-  non-advancing watcher within one poll, no cursor moves, nothing is consumed,
-  and the carried list is then read whole with `inbox --open --open-max
-  <carrying>` once per run on the first poll, so a cold watcher lists what it
-  is owed before what is new. `--refresh` and `--advance-cursor` together are
-  exit 2: one fetch per poll, never two.
+  at `<t>` (SPEC.md, **wait**);
+  its lines are classified exactly as `inbox`'s apart from the three `WAIT`
+  bookkeeping shapes named above, because the two verbs share one listing. So
+  new mail reaches a non-advancing watcher within one poll, no cursor moves,
+  nothing is consumed, and the carried list is then read whole with
+  `inbox --open --open-max <carrying>` once per run on the first poll, so a cold
+  watcher lists what it is owed before what is new. `--refresh` and
+  `--advance-cursor` together are exit 2: one fetch per poll, never two.
 - **`--advance-cursor` is specified here and was shipped under work list item 3a.**
   Advancement is an acknowledgement optimisation and not a prerequisite for delivery
   (Stella and Johnny, 2026-09-11), and a v1 that cannot move a cursor cannot lose a note.
@@ -3161,6 +3191,112 @@ cannot take is 2 and says which. The receipt a window sends with these numbers
 is *"a promise about the next ten minutes, not a report about the last one"*
 — so the tool's line carries `at=` and the window quotes it, and a READY formed
 from a plan has nothing to quote.
+
+## beat and presence — the friend heartbeat, at zero tokens (added 2026-09-22, nova-tools #2610)
+
+Everything above measures a line from what it WROTE: a cursor moved, a note
+landed, a report file appeared. All of it lags by a git fetch, and all of it
+goes quiet for the same two reasons — a friend who is working with nothing to
+say, and a friend who is not there. On 2026-09-22 that cost a day: four tasks
+were handed to a friend gone ten hours (last bus beat 05:28Z, noticed at
+15:40Z), three to a friend who had never had a window up at all, and a fourth
+friend's silence was diagnosed an hour after Glenn had seen it. Every fact
+existed; nothing surfaced them, and presence was reported from expectation.
+
+**The mechanism is a beat and no model.** A friend's harness startup runs
+
+```
+nova-wake beat --as <name> --store <host:port> [--every 30s] [--ttl 90s]
+        [--window <time>] [--width <n>]
+```
+
+which every `--every` writes, in one `MULTI`, the hash `friend:<name>` with field
+`at` = the current time in RFC3339 UTC and `PEXPIRE <ttl>`, and
+`friend:<name>:last` = the same stamp with no expiry (#2673). It
+reads nothing, watches nothing, and starts no turn: **a heartbeat that spends a
+token is a heartbeat somebody turns off**, which is why this is not a source of
+`watch` and never wakes anybody. `--once` writes one beat and returns, for a
+check or a test.
+
+**Two more fields, and only when the caller passes them.** `--window <time>`
+writes the field `window` = that time, the cap's reset, and `--width <n>`
+writes the field `width` = how many children are in use now, both in the same
+hash and so under the beat's TTL. The time is the caller's: the beat does not
+read a clock to invent a reset. A missing flag writes no field and does not
+fail the beat. Zero children is a real `--width` and is written; a friend whose
+width changes re-runs `beat` with the new number. `presence` prints
+`window=<time>` and `width=<n>` on an up friend's phrase when the fields are
+there, and prints neither when they are not.
+
+**Presence is Redis only** (#3144). The git message bus carries notes and never
+beats: `nova-bus wait` writes no `from-<name>/BEAT` and makes no `beat <name>`
+commit (79% of bus commits on 2026-09-23 were beats), and its `--beat` and
+`--beat-lease` flags are accepted and ignored with one `WAIT NOTE`.
+
+**The ending is the signal.** A window that exits, runs out of credit, is
+killed or loses its machine stops writing, and the key lapses inside the TTL.
+There is no shutdown hook, no goodbye note and nothing to forget to run — the
+three ways a friend actually goes away all look the same to the store, which is
+the property the bus beats never had. The TTL is three beats rather than two so
+one missed write is not a friend who left.
+
+**The untimed key is the memory of the beat.** An absent key says a friend is
+away but not since when, and AWAY with no duration is the report that cost the
+hour. `friend:<name>:last` carries no TTL and survives the expiry, so the line
+can date the silence.
+
+```
+nova-wake presence --store <host:port> [--bus <dir> | --participants <file> | --friends <a,b,c>]
+friends: emma down 1h12m (last 09:41Z) · freddy down · johnny up 12s width=8 · stella up 4s
+```
+
+One pipeline over every friend's hash (`HMGET at width window`, `PTTL`, and
+`GET` of `:last`), whatever the roster's length. A friend is `up` or `down`
+and nothing else. `up` is a beat inside the TTL with its age and the width it
+carried; `down` is the hash lapsed, with the age and clock time of the last
+beat, or a friend who has never beaten, with nothing after it. **The hash's
+live TTL is the presence and its `at` only dates it**: a value this build
+cannot parse reads `up` with no age rather than down.
+
+**A friend is present only while that beat is alive** (#2675). `friend:<name>`
+is also the hash the sprint table's row loop writes with no TTL, so the evidence
+is the TTL a beat gives the hash (`PTTL` > 0), not the hash's existence. A
+missing or untimed hash is absent — `down`, dated when `friend:<name>:last`
+remains — and a hash under a live beat TTL is present (`up`). The untimed key
+does not make them present, and nothing here reads a hand-written presence
+override. A friend who declines instrumentation is absent for exactly that
+reason: no beat.
+
+**The roster is the store's `friends` SET, never a copy.** One `SMEMBERS
+friends`, sorted, minus Glenn and Rowan; no scan of `friend:*`. `--bus <dir>`
+(its `participants.json`), `--participants` (that file) or `--friends` (by
+hand) names one instead. There is no built-in list, because the copy is what
+goes stale. An empty `friends` SET is a refusal, not an empty line.
+
+**A store that cannot be read is a refusal, not an empty room.** `presence`
+exits 2 with one line on stderr and prints no `friends:` line at all: four
+friends reported away is a fact and four friends not reported is good news, and
+this verb exists because good news was assumed once already. The beat is the
+mirror of it — `beat`'s loop never dies of a store that blinked, because a beat
+that exited on the first timeout would report its own friend as gone for the
+rest of the day. It says so once on stderr, keeps beating, and says so again
+only when the answer changes.
+
+**The password is never a flag.** It reaches `beat` as
+`NOVA_REDIS_BENCH_PASSWORD` through `nova-secrets exec --only
+NOVA_REDIS_BENCH_PASSWORD` and no other way, and the ACL user it authenticates
+as (`--user`, default `bench`) holds `~friend:*` and nothing wider. The startup
+line each friend adds to their own window is
+[docs/FRIEND-PRESENCE.md](FRIEND-PRESENCE.md).
+
+**What this does not do.** It does not say a friend is READING — a beat is a
+process, and a window whose model has stopped while its loop runs reads `up`.
+Output is what says a friend is reading, and the bus line is the one that sees
+it. It routes nothing: `#2593`'s router refuses to queue to an away friend and
+`#2592` sorts by who is here, and both of them READ this line. And it decides
+nothing about why: the tool has measured an absence, exactly as `probe` has
+measured a silence, and writes no cause.
+
 ## Tests this spec demands
 
 One test per rule above, named for the rule, beside the tests the work list names.

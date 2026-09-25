@@ -9,6 +9,9 @@ import (
 	"runtime"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // The fakes this package's tests put in front of PATH, sharing internal/pulse's fake
@@ -25,6 +28,8 @@ type fakeRule struct {
 	Equals     string `json:"equals,omitempty"`
 	Stdout     string `json:"stdout,omitempty"`
 	StdoutFile string `json:"stdoutFile,omitempty"`
+	Stderr     string `json:"stderr,omitempty"`
+	SleepMS    int    `json:"sleepMs,omitempty"`
 	Exit       int    `json:"exit,omitempty"`
 }
 
@@ -36,7 +41,7 @@ type fakeSpec struct {
 
 // fakeTools are the programs nova-pulse starts. A name with no spec in the test's
 // directory exits 97 and says so, which no real gh or git ever does.
-var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm"}
+var fakeTools = []string{"gh", "git", "nova-bus", "nova-pulse", "nova-swarm", "ssh"}
 
 var (
 	fakeRoot    string
@@ -60,7 +65,7 @@ func TestMain(m *testing.M) {
 	}())
 }
 
-// fakeBins builds the fake ONCE for the test binary and copies it under every name.
+// fakeBins builds the fake ONCE for the test binary and places it under every name.
 func fakeBins(t *testing.T) string {
 	t.Helper()
 	fakeBinOnce.Do(func() {
@@ -70,22 +75,19 @@ func fakeBins(t *testing.T) string {
 			return
 		}
 		cmd := exec.Command("go", "build", "-o", build, "../../internal/pulse/testdata/fakebin")
+		cmd.Env = goenv.Clean(os.Environ())
 		if raw, err := cmd.CombinedOutput(); err != nil {
 			fakeBinErr = fmt.Errorf("building the fake: %v\n%s", err, raw)
 			return
 		}
-		raw, err := os.ReadFile(filepath.Join(build, "fakebin"+exeSuffix()))
-		if err != nil {
-			fakeBinErr = err
-			return
-		}
+		built := filepath.Join(build, "fakebin"+exeSuffix())
 		bin := filepath.Join(fakeRoot, "bin")
 		if err := os.MkdirAll(bin, 0o755); err != nil {
 			fakeBinErr = err
 			return
 		}
 		for _, name := range fakeTools {
-			if err := os.WriteFile(filepath.Join(bin, name+exeSuffix()), raw, 0o755); err != nil {
+			if err := testbin.Place(built, filepath.Join(bin, name+exeSuffix())); err != nil {
 				fakeBinErr = err
 				return
 			}

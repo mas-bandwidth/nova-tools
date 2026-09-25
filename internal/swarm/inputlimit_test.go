@@ -596,3 +596,24 @@ func TestAProseLineIsNotAStructuredSignal(t *testing.T) {
 		}
 	}
 }
+
+// ISSUE #163: finish and the recovery pass read the STRUCTURED SIGNAL as a field, not a
+// heuristic over the transcript. A harness adapter wrote `INPUT LIMIT class=… value=…
+// limit=…` and died; the supervisor that watched it died before it could classify, so there
+// is no exit.json to name the class -- and the one function both finish and rule 17's
+// recovery pass call must still name it from the field. A job classed `input-limit` is never
+// retried, so a class lost here is a second identical launch the dispatcher never means to
+// make.
+func TestInputLimitEndReadsTheStructuredSignalAsAField(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "harness.log"), []byte("INPUT LIMIT class=token value=12345 limit=8192\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, quote := InputLimitEnd(dir, EndFailed, 1, "", nil)
+	if got != EndInputLimit {
+		t.Errorf("the structured signal is the field finish and the recovery pass read: end=%s, want %s", got, EndInputLimit)
+	}
+	if quote != "INPUT LIMIT class=token value=12345 limit=8192" {
+		t.Errorf("the quote is the structured line itself, got %q", quote)
+	}
+}

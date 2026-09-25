@@ -161,7 +161,18 @@ The kernel bounds a Unix-domain socket path (108 bytes on Linux), which a long
 TMPDIR can exceed, so try short roots first and create the first that works.
 Within each root the name is trimmed until <root>/<name>/l/w fits, because the
 sandbox's writable directory can itself sit far into a long path. A stale
-directory from an earlier run is cleared first so a rerun binds fresh."
+directory from an earlier run is cleared first so a rerun binds fresh.
+
+PREFIX must be unique to this run -- `test-short-tag` (harness.lisp) is the one
+way to spell that here. Every root tried below is SHARED with every other job
+on the box (/dev/shm first, on Linux), and the clearing step is a recursive
+delete of a path this function did not create. While the name came from a call
+to RANDOM that was not merely a collision: SBCL saves *RANDOM-STATE*
+into its core, so two fresh images agreed on the number exactly, and the second
+suite deleted the first suite's live socket directory out from under it
+(nova-tools#1699). The delete is kept, and narrowed to :validate t, because a
+rerun after a crash still needs it; with a per-run name it can now only ever
+reach this run's own bytes."
   (flet ((try-root (root)
            (when root
              (let* ((trimmed (string-right-trim "/" (namestring (pathname root))))
@@ -177,8 +188,9 @@ directory from an earlier run is cleared first so a rerun binds fresh."
                  (ignore-errors
                    (uiop:delete-directory-tree
                     (uiop:ensure-directory-pathname base)
-                    :validate nil :if-does-not-exist :ignore))
+                    :validate t :if-does-not-exist :ignore))
                  (when (ignore-errors (sb-posix:mkdir base #o700) t)
+                   (test-temp-register base)
                    base))))))
     (or (some #'try-root
               (list "/dev/shm"
@@ -207,12 +219,14 @@ directory from an earlier run is cleared first so a rerun binds fresh."
   (let* ((tmp (namestring (uiop:temporary-directory)))
          (cwd (sb-posix:getcwd))
          (*default-pathname-defaults* (pathname tmp))
+         ;; The name is this run's own tag, never `(random ...)`: SBCL's saved
+         ;; random state makes a fresh image repeat, so two suites on one host
+         ;; built the SAME socket directory here (nova-tools#1699).
+         (tag (test-short-tag "s05-endpoint"))
          (base (or (if (< (length tmp) 80)
-                       (concatenate 'string tmp (format nil "nw-~D" (random 1000000)))
-                       (short-socket-base (format nil "nw-~D" (random 1000000))))
-                   (if (< (length tmp) 80)
-                       (concatenate 'string tmp (format nil "n~D" (random 99999)))
-                       (format nil "nw-~D-~D" (sb-posix:getpid) (random 1000000)))))
+                       (test-temp-register (concatenate 'string tmp tag))
+                       (short-socket-base tag))
+                   (test-temp-register (concatenate 'string tmp tag))))
          (dir (concatenate 'string base "/s"))
          (sock (concatenate 'string dir "/w"))
          (wide (concatenate 'string base "/w"))
@@ -2288,5 +2302,26 @@ boundary refusal: exit 2, the line names it unsupported, and state is unmoved."
       (check-equal :late deffect "a late decline carries :effect :late")
       (check-equal reservations (leasebook-reservations dbook)
                    "a late decline releases no committed reservation")
-      (check-equal leases (leasebook-leases dbook)
-                   "a late decline releases no lease"))))
+(check-equal leases (leasebook-leases dbook)
+                    "a late decline releases no lease"))))
+
+(deftest "E03-F02-recorded-order-pinned" "docs/SPEC-WORK.md:330,339"
+    "expected=kind-fields-in-verb-defined-order"
+  (let* ((fields '(:to :doing :reason "test reason" :blocked-by "node1"
+                   :evidence ("ev1" "ev2")))
+         (event (make-work-event :kind :transition :node "nx/t1" :by "rowan"
+                                 :fields fields
+                                 :stamp "2026-01-01T00:00:00Z" :clock :tool
+                                 :request "req-1" :generation-owner "gen-1" :rev 1
+                                 :session-written-p t))
+         (form (event-record-form event)))
+    (let ((kind-fields (nthcdr 16 form)))
+      (check-equal 4 (/ (length kind-fields) 2) "four kind fields")
+      (check-equal :to (nth 0 kind-fields) ":to is first")
+      (check-equal :doing (nth 1 kind-fields) ":to's value follows")
+      (check-equal :reason (nth 2 kind-fields) ":reason after :to")
+      (check-equal "test reason" (nth 3 kind-fields) ":reason's value follows")
+      (check-equal :blocked-by (nth 4 kind-fields) ":blocked-by after :reason")
+      (check-equal "node1" (nth 5 kind-fields) ":blocked-by's value follows")
+      (check-equal :evidence (nth 6 kind-fields) ":evidence is last")
+      (check-equal '("ev1" "ev2") (nth 7 kind-fields) ":evidence's value follows"))))

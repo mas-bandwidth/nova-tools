@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -70,6 +71,25 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	}
 }
 
+// (a2) The `example:` block is pasted top to bottom by a stranger in an empty directory, so
+// the first line that names ./pool must be the one that makes it (quickstart); a line that
+// reads ./pool before then exits 2 as pasted, whatever localize does for the test above.
+// No prose setup line outside the block: onboarding.ExampleLines never runs it (#1455).
+func TestUsageBannerExamplesMakeThePoolBeforeReadingIt(t *testing.T) {
+	for _, ex := range examples(t) {
+		f := strings.Fields(ex)
+		for _, a := range f {
+			if a != "./pool" {
+				continue
+			}
+			if len(f) < 2 || f[1] != "quickstart" {
+				t.Fatalf("the usage example %q reads ./pool before any example makes it; put `nova-swarm quickstart --pool ./pool` above it", ex)
+			}
+			return
+		}
+	}
+}
+
 // (b) A bare invocation costs ONE line and names the door, rather than 60 lines of banner
 // on every flag typo.
 func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
@@ -128,5 +148,72 @@ func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
 	if strings.Join(want, "\n") != strings.Join(printed, "\n") {
 		t.Errorf("the README transcript and the tool disagree.\ntranscript:\n%s\n\nprinted:\n%s",
 			strings.Join(want, "\n"), strings.Join(printed, "\n"))
+	}
+}
+
+// (d) The `### First run` block of docs/TESTS.md is EXECUTED: every command in
+// it is run, in order, and each one's whole output is compared with the block
+// written under it -- same number of lines, same lines, same order. (c) above
+// compares only SHAPE, which lets an abridged or reordered transcript pass; this
+// test keeps the whole promise for nova-swarm the way cmd/nova-ci already does.
+//
+// NOTHING IS NORMALISED HERE, and that is a property of this transcript rather
+// than a shortcut: both documented commands read or make a pool whose path the
+// tool echoes back exactly as `./pool`, and neither prints a stamp, an id or a
+// duration. Every value on both lines reproduces, so onboarding.Execute is
+// handed no Norm and says as much under any line that disagrees.
+//
+// The transcript's `--pool ./pool` is written from wherever the reader's shell
+// stands, and quickstart MAKES that directory, so the test does not rewrite the
+// documented path: it moves to a temp directory where `./pool` is the test's to
+// create, and the tool echoes back the relative `./pool` it was handed.
+func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
+	root := repoRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-swarm")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-swarm", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) == 0 {
+		t.Fatal("the `### First run` block holds no nova-swarm command; this test would pass by running nothing")
+	}
+	// Both commands are the point of the section: quickstart makes the pool and
+	// names the next moves, status reports it empty. A transcript that has lost
+	// one of them still matches line for line and is still short of a first run.
+	if len(steps) != 2 {
+		t.Errorf("the `### First run` block runs %d commands, want 2: quickstart and status", len(steps))
+	}
+	t.Chdir(t.TempDir())
+	for _, p := range onboarding.Execute(steps, runDocumentedSwarm(t)) {
+		t.Error(p)
+	}
+}
+
+// runDocumentedSwarm calls this binary's own entry point with the documented
+// arguments, opening the file a `< path` redirect names. The transcript's paths
+// are relative to the directory the test now stands in, which is where the
+// document's reader types them.
+func runDocumentedSwarm(t *testing.T) onboarding.Runner {
+	t.Helper()
+	return func(s onboarding.Step) (onboarding.Result, error) {
+		stdin := io.Reader(strings.NewReader(""))
+		if s.Stdin != "" {
+			f, err := os.Open(s.Stdin)
+			if err != nil {
+				return onboarding.Result{}, err
+			}
+			defer f.Close()
+			stdin = f
+		}
+		var out, errb bytes.Buffer
+		code := run(s.Args, stdin, &out, &errb, time.Date(2026, 9, 11, 12, 0, 0, 0, time.UTC))
+		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
 	}
 }

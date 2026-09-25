@@ -253,3 +253,166 @@
                     (make-archive-capture :source-issue "acme/widget#7"
                                           :author :known :gaps '()))
                  "a complete capture is absorbable")))
+
+;;; ------------------------------------------------------------------
+;;; TestE09F04LeaveDeletionPendingOnMissing      docs/SPEC-WORK.md:7598
+;;;   acceptance criterion E09-F04-03 (docs/roadmaps/nova-work.sexp):
+;;;   "Leave deletion pending on missing content, source change or
+;;;   uncertain network result".
+;;; ------------------------------------------------------------------
+;;; Three prongs, each driven through archive-deletion-gate, the absorb
+;;; deletion gate beside archive-absorbable-p:
+;;;   - missing content (:7598): "Unavailable or unpreserved content is
+;;;     reported and leaves deletion pending, not silently skipped." Each
+;;;     of the six gap kinds leaves deletion :pending :missing-content.
+;;;   - source change (:7602-7608): capture at a named remote revision,
+;;;     recheck for source changes before deleting; "If the source changed,
+;;;     reconcile and checkpoint the added content first." A source revision
+;;;     differing from the capture revision (or an unnamed one) leaves
+;;;     deletion pending.
+;;;   - uncertain network result (:7610-7611): "A network failure or
+;;;     uncertain delete result preserves the archive and a pending
+;;;     reconciliation state." A :failed or :uncertain delete result (or any
+;;;     result the gate does not know) is :pending :reconcile with the
+;;;     archive preserved, never :deleted.
+;;; Split from nova-tools#2098 (which pinned the missing-content prong only).
+
+(deftest "TestE09F04LeaveDeletionPendingOnMissing" "docs/SPEC-WORK.md:7598"
+    "expected=missing-content-source-change-uncertain-delete-leave-deletion-pending;clean-capture-deletes"
+  (let ((clean (make-archive-capture :source-issue "acme/widget#7"
+                                     :author :known :gaps '())))
+    ;; Missing content: each of the six gap kinds is reported as an explicit
+    ;; gap and leaves deletion pending, even at an unchanged source revision
+    ;; with a confirmed delete result offered.
+    (dolist (kind *archive-gap-kinds*)
+      (let ((capture (make-archive-capture
+                      :source-issue "acme/widget#7"
+                      :author :known
+                      :gaps (list (make-archive-gap
+                                   :kind kind
+                                   :detail (format nil "missing ~(~A~)" kind)
+                                   :source-issue "acme/widget#7")))))
+        (check-equal t (archive-gaps-explicit-p capture)
+                     "missing content is reported as an explicit gap, not skipped")
+        (check-equal nil (archive-absorbable-p capture)
+                     "missing content leaves the capture unabsorbable")
+        (multiple-value-bind (state reason archive)
+            (archive-deletion-gate capture :capture-revision "r1"
+                                           :source-revision "r1")
+          (check-equal :pending state
+                       (format nil "missing ~(~A~) leaves deletion pending" kind))
+          (check-equal :missing-content reason "the pending reason names the missing content")
+          (check-equal t (eq capture archive) "the archive is preserved"))
+        (check-equal :pending
+                     (archive-deletion-gate capture :capture-revision "r1"
+                                                    :source-revision "r1"
+                                                    :delete-result :deleted)
+                     "a delete result never overrides missing content")))
+    ;; Source change: the recheck finds the source at a revision other than
+    ;; the captured one, so deletion stays pending until the added content is
+    ;; reconciled and checkpointed; an unnamed revision is no recheck at all.
+    (multiple-value-bind (state reason archive)
+        (archive-deletion-gate clean :capture-revision "r1" :source-revision "r2")
+      (check-equal :pending state "a changed source leaves deletion pending")
+      (check-equal :source-changed reason "the pending reason names the source change")
+      (check-equal t (eq clean archive) "the archive is preserved on a source change"))
+    (dolist (revs '((nil "r1") ("r1" nil) (nil nil)))
+      (check-equal :pending
+                   (archive-deletion-gate clean :capture-revision (first revs)
+                                                :source-revision (second revs))
+                   (format nil "an unnamed revision ~S leaves deletion pending" revs)))
+    ;; A blank revision names nothing: equal empty or whitespace-only
+    ;; revisions are no recheck at all, so deletion stays pending on a source
+    ;; change with the archive preserved, even with a confirmed delete offered.
+    (let ((tab (string #\Tab)) (newline (string #\Newline)))
+      (dolist (revs (list '("" "") '("  " "  ") (list tab tab)
+                          (list newline newline) '("" "r1") '("r1" "")
+                          '(" " "r1") '("r1" " ")))
+        (dolist (result '(nil :deleted))
+          (multiple-value-bind (state reason archive)
+              (archive-deletion-gate clean :capture-revision (first revs)
+                                           :source-revision (second revs)
+                                           :delete-result result)
+            (check-equal :pending state
+                         (format nil "a blank revision ~S (delete result ~S) leaves deletion pending"
+                                 revs result))
+            (check-equal :source-changed reason
+                         (format nil "a blank revision ~S is an unnamed revision" revs))
+            (check-equal t (eq clean archive)
+                         (format nil "a blank revision ~S preserves the archive" revs))))))
+    (check-equal :pending
+                 (archive-deletion-gate clean :capture-revision "r1"
+                                              :source-revision "r2"
+                                              :delete-result :deleted)
+                 "a delete result never overrides a source change")
+    ;; Uncertain network result: a failed or uncertain delete (or an unknown
+    ;; result) preserves the archive and leaves a pending reconciliation.
+    (dolist (result '(:failed :uncertain :timeout))
+      (multiple-value-bind (state reason archive)
+          (archive-deletion-gate clean :capture-revision "r1" :source-revision "r1"
+                                       :delete-result result)
+        (check-equal :pending state
+                     (format nil "a ~(~A~) delete result leaves deletion pending" result))
+        (check-equal :reconcile reason
+                     (format nil "a ~(~A~) delete result leaves a pending reconciliation" result))
+        (check-equal t (eq clean archive)
+                     (format nil "a ~(~A~) delete result preserves the archive" result))))
+    ;; Only a gap-free capture rechecked at its captured revision may be
+    ;; deleted, and only a confirmed result settles it as deleted.
+    (check-equal t (archive-absorbable-p clean) "a gap-free capture is absorbable")
+    (check-equal :allowed
+                 (archive-deletion-gate clean :capture-revision "r1" :source-revision "r1")
+                 "a clean capture at an unchanged source may be deleted")
+    (multiple-value-bind (state reason archive)
+        (archive-deletion-gate clean :capture-revision "r1" :source-revision "r1"
+                                     :delete-result :deleted)
+      (check-equal :deleted state "a confirmed delete settles the deletion")
+      (check-equal nil reason "a confirmed delete has no pending reason")
+      (check-equal t (eq clean archive) "the archive outlives the deletion"))))
+
+;;; ------------------------------------------------------------------
+;;; E01-F04-02 (docs/SPEC-WORK.md:888, :945-947) --- represent leaf
+;;; tasks separately from parent tasks and attempts.
+;;; ------------------------------------------------------------------
+;;; :888 makes features, tasks, attempts and leaf subtasks distinct units,
+;;; and :945-947 states the rule: "A task with no :children is a leaf
+;;; subtask ... a task with children is counted by its leaves, never
+;;; itself; so the four units ... are :feature, :task, the leaf :task,
+;;; and the :attempt event". A leaf subtask is therefore a kind of its
+;;; own, told apart from the parent :task and never confused with an
+;;; attempt, which is an event's field and not a node kind.
+
+(deftest "TestE01F04RepresentLeafTasksSeparatelyFrom" "docs/SPEC-WORK.md:888"
+    "expected=leaf-task-distinct-kind-from-parent-task;attempt-is-not-a-node-kind"
+  (let ((state (make-seed-state
+                '((:id "root"       :type :work-set :parent nil        :state :unknown)
+                  (:id "root/f"     :type :feature  :parent "root"     :state :unknown)
+                  (:id "root/f/p"   :type :task     :parent "root/f"   :state :doing)
+                  (:id "root/f/p/l" :type :task     :parent "root/f/p" :state :doing)
+                  (:id "root/f/l2"  :type :task     :parent "root/f"   :state :doing)))))
+    ;; A task with children is the parent :task; a task with none is a leaf
+    ;; subtask, a distinct kind read back from the model, never the same unit.
+    (check-equal :task (node-kind state "root/f/p")
+                 "a task with children is represented as the parent :task")
+    (check-equal :leaf-task (node-kind state "root/f/p/l")
+                 "a task with no children is represented as a leaf subtask")
+    (check-equal :leaf-task (node-kind state "root/f/l2")
+                 "every leaf subtask answers the leaf kind, never :task")
+    (check-equal :feature (node-kind state "root/f")
+                 "a container keeps its own kind, never inferred from a title")
+    (check-equal nil (equal (node-kind state "root/f/p")
+                            (node-kind state "root/f/p/l"))
+                 "the leaf kind differs from its parent task's kind")
+    ;; An attempt is a unit of its own and never a node kind: it rides an
+    ;; :evidence event's :attempt field, separate from the leaf task it
+    ;; addresses.
+    (let ((ev (make-work-event
+               :kind :evidence :node "root/f/p/l" :by "rowan"
+               :fields (list :pointer "p1" :criterion "c1" :against "a1"
+                             :generation "g4" :attempt "att-1")
+               :stamp "2026-09-20T00:00:00Z" :clock :tool :request "r1"
+               :generation-owner "g4" :rev 1)))
+      (check-string= "att-1" (getf (work-event-fields ev) :attempt)
+                     "the attempt is a field on the event, never a node kind")
+      (check-string= "root/f/p/l" (work-event-node ev)
+                     "the attempt's event addresses the leaf task, never replaces it"))))

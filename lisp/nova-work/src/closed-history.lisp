@@ -13,15 +13,29 @@
 ;;; ------------------------------------------------------------------
 
 (defun cow-load-findings (state)
-  "Rule 18 findings over a candidate root: every id named by a closed-index row
-while its node still reads :o -- an id in both C and O."
-  (let ((closed (make-hash-table :test #'equal))
+  "Rule 18 findings over a candidate root: every id whose *latest* closed-index
+row settles it while its node still reads :o -- an id in both C and O.
+
+SPEC-WORK.md:1630 -- \"Rule 18 below reads the same way: the finding is an id
+whose *latest* state puts it in both branches, never the history of an id that
+has honestly moved and kept its record\", and replay
+`revive-appends-and-counts-latest` (:6242) requires an id that settled and was
+revived to be counted once either way. C is append-only, so a revived id keeps
+its `:settle` row: reading *any* row naming an id therefore made every honest
+reopen a finding. `wstate-rows` is newest first (`state-closed-rows` reverses
+it), so the first row naming an id is that id's latest, and a `:revive` there
+is the kernel's own record that the id left C."
+  (let ((latest (make-hash-table :test #'equal))
         (findings '()))
     (dolist (row (wstate-rows state))
-      (setf (gethash (getf row :node) closed) t))
+      (let ((id (getf row :node)))
+        (unless (nth-value 1 (gethash id latest))
+          (setf (gethash id latest) (getf row :kind)))))
     (dolist (id (wstate-order state))
       (let ((node (%node-quiet state id)))
-        (when (and node (gethash id closed) (eq :o (wnode-branch node)))
+        (when (and node
+                   (eq :settle (gethash id latest))
+                   (eq :o (wnode-branch node)))
           (push id findings))))
     (nreverse findings)))
 

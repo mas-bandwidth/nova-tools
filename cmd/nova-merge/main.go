@@ -32,107 +32,98 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-merge: an ordered lane onto one base, with the races taken out (see docs/SPEC-MERGE.md)
+const usage = `nova-merge: the typed read, the gate record and the batch gate a stream lands on (see docs/SPEC-MERGE.md)
 
 usage:
   nova-merge version    print this build identity (--version also accepted)
-  nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
-  nova-merge add        --lane <dir> --pr <n> [--needs-read]
-  nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
-  nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
+  nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
   nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
-  nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
-  nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
-  nova-merge dry-run    --lane <dir> [--max <n>]
-  nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
-  nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
-  nova-merge stop       --lane <dir>
-  nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
+  nova-merge fold       --branches <file> --onto <base> --out <branch> [--lane <dir>]
+  nova-merge fold       --close-folded --pr <n>
+  nova-merge classify   --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
+  nova-merge batch      --name <name> --pr <list> --repo <owner>/<name> --root <dir> [--base <branch>] [--reference <mirror>] [--timeout <duration>] [--gomaxprocs <n>] [--require-lisp] [--no-require-checks] [--check-name <name>] [--receipt-file <path>] [--sibling <name>=<url>@<ref>]
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
 
-exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a merge that
-could not be landed, a merge that RACED, a publication the remote refused, an entry
-STOPPED, a pass that ended with at least one BLOCKED entry, an init of a lane that
-exists; 2 could not run: missing flag, unreadable lane state, a directory that is
-not a lane, bad invocation, git or gh absent.
+The per-PR lander role is retired (stream is the unit): init, quickstart, add,
+add-branch, run, status, dry-run, packet, stop, queue, wait, sweep, simulate, rebase,
+react, land, integrate, stack and receipt are gone. What stays is the evidence a stream
+lands on: read records a typed verdict at a head, gate records a local gate's verdict
+for a merge, classify asks one typed question about a failed merge-group run, batch
+merges N heads onto a base and runs the tests, and fold folds branches onto a base into
+one out-branch. Landing a stream onto dev is by hand until the stream-lander spec.
 
-AN ENTRY THAT IS MERELY WAITING IS NOT A FAILURE. Zero pending checks is not the
-same news as a red check, and a lane full of entries waiting on CI is a lane
-working exactly as intended: run exits 0 with waiting=<n>.
+batch IS THE LANDING GATE AND IT PUSHES NOTHING. It clones --repo under --root, merges
+each --pr head onto --base in the order given on a branch rowan/<name>, DROPS a head that
+will not merge and says so, and then builds, vets, tests and runs the lisp suite over
+what is left, one progress line per step on stderr with the elapsed time. Green is
+"BATCH OK name=<name> base=<sha> head=<sha> members=<list> dropped=<list> skipped=<list> checks=<required|waived> [check=<name>]"
+at exit 0, and red is the same line as BATCH FAIL naming the step, the failing packages,
+the failing tests and the step's captured stderr (capped at oneline.TailBytes) at exit 1. skipped= NAMES EVERY STEP THAT DID NOT RUN, so a green line
+never claims a suite it only ran part of; --require-lisp turns a skipped lisp step into a
+FAIL for a caller who needs it run, and a program that is not on PATH is also looked for
+under ~/sdk/<toolchain>/bin before the step is skipped. The toolchain is checked against
+the tree's go.mod BEFORE the first merge, so an old go on PATH is one refusal with the
+remedy rather than a red build step quoting a download notice. checks=required is the
+default: a member whose own head has no green required check is DROPPED BEFORE THE MERGE, because
+the gate runs on one operating system and CI runs on three and a member nobody has judged
+on its own would turn the whole batch red for its own fault. The check's name is ci-ok
+here, --check-name or .nova-merge required-check= elsewhere, and it is printed as check=
+on BATCH OK and BATCH DROP so a lane script can parse it. A member whose head is a
+batch's own branch (rowan/integration-*) or is named by a BATCH OK line in --receipt-file
+is admitted on the gate's own evidence instead.
+--no-require-checks waives the whole check and says so on the verdict line. Pushing that
+branch and opening the pull request is the caller's, who is
+the one who knows whether this is the batch they wanted. --base defaults to dev, which is
+where this repository's integration batches land; --root is rebuilt on every run, so give
+it a directory of the batch's own. --sibling <name>=<url>@<ref> (repeatable) clones that
+repository beside the job checkout (repo/) at the named branch or tag, so a tree whose
+tests look next door — schema's serialize.go at ../serialize.go — finds it after the
+rebuild. name is one path element (dots allowed); repo and tmp are reserved. The last @
+splits url from ref.
 
-No guessed anything, with one named exception. There is no default lane
-directory, no default repository and no default base; a missing one is exit 2 and
-refusing to guess. --timeout defaults to 120 seconds, because a subprocess
-timeout is how long this tool waits before saying so rather than a fact about a
-lane that only its owner can supply. --loop gets no default interval and --hours
-no default deadline for the opposite reason: a loop with no deadline is a lane
-that is stuck rather than working, and nobody outside can tell the two apart.
+THE GATE TESTS THE WAY CI TESTS. Its test step is the command .github/workflows/ci.yml
+runs -- go test -json -count=1 ./... -- over the whole merged tree, and its verdict
+is read from that -json stream by the same decoder cmd/nova-ci reads CI's with, so a batch
+that goes green here is a batch that ran what CI runs. The test step writes that whole
+stream to <root>/test-<round>.jsonl before it is condensed. Round is 1 the first time
+that root keeps one and the next free integer after that, so a re-run does not erase the
+stream a red left behind; the directory rebuilt each run is <root>/<name>, and the stream
+is not inside it. A red test step's reason begins with stream=<that path>. integration-4
+went green under a plain "go test ./..." and three CI legs then failed. The one thing not
+mirrored is CI's fair share of the machine, which is the machine's own fact and not a
+number this tool may write down: pass --gomaxprocs <n> on a bench that is also running
+CI, and the gate takes that many cores instead of all of them.
 
-INIT AND QUICKSTART PUSH. init creates the lane's record branch -- the name given
-to --lane-branch -- and, when the repository does not have it already, pushes it to
-origin of the repository --repo names: one commit holding .gitignore, author and
-committer nova-merge <nova-merge@localhost>, which is this tool's PLACEHOLDER
-identity and not a person or an account anywhere. That branch is the transport for
-every read and gate, so a lane is not usable without it; joined=false on INIT OK
-says this lane created and pushed it, joined=true says it was already there and
-nothing was pushed.
+exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a red batch, a fold
+that could not be made, a publication the remote refused; 2 could not run: missing flag,
+unreadable lane state, a directory that is not a lane, bad invocation, git or gh absent.
 
-REHEARSE FIRST, against a bare repository of your own:
+No guessed anything. There is no default lane directory, no default repository and
+no default base; a missing one is exit 2 and refusing to guess. --timeout defaults to
+120 seconds, because a subprocess timeout is how long this tool waits before saying so
+rather than a fact about a lane that only its owner can supply.
 
-  git init -q --bare ./rehearsal.git
-  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main \
-             --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
-
---remote only controls where git clones from and pushes to: the clone and the push
-writes go to the local bare remote you name with --remote, but hosted status and
-check reads can still occur against the repository named by --repo. --remote wants
-an ABSOLUTE path or a URL: git runs inside the lane directory, so a relative one
-resolves against the lane and the run is refused. Give the rehearsal a lane of its own --
-init creates a lane once, so rehearsing into the live lane's directory is INIT
-REFUSED on the line after. A bare repository with no --base branch in it prints one
-STATUS NOTE and base_state=UNKNOWN at exit 0, which is a rehearsal with no base to
-read rather than a failure. The two transcripts are in docs/TESTS.md, and both are run
-by this binary's tests.
-
-The repository, the base and the lane branch are properties of the LANE, written
-once by init. No other verb takes --repo, --base or --lane-branch, and the flag
-on gate that names the base SHA is spelled --base-sha so the two are never one
-word.
-
-ONE PREDICATE. An entry merges on the NEWEST gate record for (its head, the base
-sha read this pass) being green, that gate's merge being an object in the lane's
-clone whose parents are exactly that base and that head, the read condition, the
-four placement conditions, and -- on main -- no hosted red. Hosted green and a
-gate for the head alone are CANDIDATES: they earn the entry NEEDS-GATE, the
-build, and the gate command on RUN NOTE, and nothing else.
+The repository, the base and the lane branch are properties of the LANE, written once
+when the lane was made; read and gate read them from there. batch names --repo and
+--base because it reaches the forge without a lane. The flag on gate that names the
+base SHA is spelled --base-sha so the two are never one word.
 
 A read and a gate are each ONE IMMUTABLE FILE in the lane's branch, written to a
-durable outbox first and pushed by the tool in a compare-and-swap loop, so a
-reader on another machine records a verdict where every lane on that branch will
-fold it. state.json is the fold and the files are the truth: losing it loses the
-order and nothing else.
-
-The lane never edits an entry's content. A conflict is BLOCKED with every
-conflicting file named and the exact hand command on the line; no code path here
-writes a resolved file.
+durable outbox first and pushed by the tool in a compare-and-swap loop, so a reader
+on another machine records a verdict where every lane on that branch will fold it.
+state.json is the fold and the files are the truth: losing it loses the order and
+nothing else.
 
 example:
-  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
-  nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read
-  nova-merge status --lane ./rehearsal-lane
-  nova-merge packet --lane ./rehearsal-lane --who emma --all
-  nova-merge dry-run --lane ./rehearsal-lane
-
-Those five are one sitting against a bare repository of your own, in order: make the
-lane, queue an entry, look at it, ask what a
-reader would be handed, and see what a pass would do without doing it. ./rehearsal-lane
-is a path of yours and nothing is guessed from it.
+  nova-merge version
 `
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the
@@ -157,7 +148,23 @@ type Deps struct {
 	RepoURL func(repo string) string
 	NewHost func(repo string, timeout time.Duration) merge.Host
 	Runner  merge.Runner
-	BuildID func() string
+	// BatchGate is the suite `batch` runs, and a nil one -- which is what production()
+	// leaves it -- is the whole of batchGate. It is injected for ONE reason, written out
+	// at crossVetStep: the cross vet has to build the windows standard library before it
+	// can type-check anything, and a unit test that pays that inside `go test` spends the
+	// package's own -timeout on it and starves every parallel test behind it.
+	BatchGate []batchStep
+	BuildID   func() string
+	// Dial and Forge are the react verb's two edges: the pub/sub instance it subscribes
+	// to, and the forge it asks which PRs a base move made DIRTY. They are injected so a
+	// test drives a miniredis and a fake forge and reaches no network.
+	Dial func(addr string) *redis.Client
+	// TestTree runs the package test the repository names for the fold's scratch tree
+	// (docs/SPEC-MERGE.md "The fold (#1142)"): lisp/nova-work/run-tests.sh for a
+	// nova-work fold, go test for Go. TestLayout runs the layout test of #560 after it.
+	// Both are injected so a fold test uses a fake and reaches no toolchain.
+	TestTree   func(dir string) error
+	TestLayout func(dir string) error
 }
 
 func production() Deps {
@@ -168,7 +175,10 @@ func production() Deps {
 		NewHost: func(repo string, timeout time.Duration) merge.Host {
 			return merge.NewGH(repo, timeout, nil)
 		},
-		BuildID: buildID,
+		BuildID:    buildID,
+		Dial:       func(addr string) *redis.Client { return redis.NewClient(&redis.Options{Addr: addr}) },
+		TestTree:   realTestTree,
+		TestLayout: realTestLayout,
 	}
 }
 
@@ -199,7 +209,7 @@ func buildID() string {
 
 func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; `status --lane <dir>` is the one that only looks")
+		return refuse(stderr, "", "no verb given; run: nova-merge help")
 	}
 	verb, rest := args[0], args[1:]
 	switch verb {
@@ -217,30 +227,16 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return code
 	}
 	switch verb {
-	case "init":
-		return cmdInit(rest, stdout, stderr, deps, false)
-	case "quickstart":
-		return cmdInit(rest, stdout, stderr, deps, true)
-	case "add":
-		return cmdAdd(rest, stdout, stderr, deps, false)
-	case "add-branch":
-		return cmdAdd(rest, stdout, stderr, deps, true)
 	case "read":
 		return cmdRead(rest, stdout, stderr, deps)
 	case "gate":
 		return cmdGate(rest, stdout, stderr, deps)
-	case "run":
-		return cmdRun(rest, stdout, stderr, deps)
-	case "status":
-		return cmdStatus(rest, stdout, stderr, deps)
-	case "dry-run":
-		return cmdDryRun(rest, stdout, stderr, deps)
-	case "packet":
-		return cmdPacket(rest, stdout, stderr, deps)
-	case "stop":
-		return cmdStop(rest, stdout, stderr, deps)
-	case "wait":
-		return cmdWait(rest, stdout, stderr, deps)
+	case "fold":
+		return cmdFold(rest, stdout, stderr, deps)
+	case "classify":
+		return cmdClassify(rest, stdout, stderr, deps)
+	case "batch":
+		return cmdBatch(rest, stdout, stderr, deps)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", verb))
 }
@@ -256,23 +252,27 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		}
 		return false
 	}
-	creation := verb == "init" || verb == "quickstart"
-	// `wait` watches one pull request by polling the host, so it names the
-	// repository outright like `init` does; every other verb reads the lane's.
-	watch := verb == "wait"
+	// `batch` names the repository it clones outright; the lane verbs (read, gate,
+	// classify) read the repository, the base and the lane branch from the lane's state,
+	// written once when the lane was made.
 	for _, name := range []string{"repo", "lane-branch", "remote"} {
-		if name == "repo" && watch {
+		if name == "repo" && verb == "batch" {
 			continue
 		}
-		if !creation && has(name) {
-			return refuse(stderr, " "+verb, fmt.Sprintf("--%s belongs to `init`, which writes it into the lane once; every other verb reads it from the lane's state", name)), true
+		if has(name) {
+			return refuse(stderr, " "+verb, fmt.Sprintf("--%s is the lane's, written once when the lane was made; this verb reads it from the lane's state", name)), true
 		}
 	}
-	if !creation && has("base") {
-		if verb == "gate" {
-			return refuse(stderr, " gate", "--base is the lane's branch and belongs to `init`; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
+	if has("base") {
+		switch verb {
+		case "gate":
+			return refuse(stderr, " gate", "--base is the lane's branch; the base SHA a gate was taken against is --base-sha, a different word on purpose"), true
+		case "batch":
+			// batch builds an integration branch on top of a base it names; it owns no
+			// lane's.
+		default:
+			return refuse(stderr, " "+verb, "--base is the lane's, written once when the lane was made; a --base here would let two invocations disagree about where the lane lands"), true
 		}
-		return refuse(stderr, " "+verb, "--base belongs to `init`, which writes it into the lane once; a --base here would let two invocations disagree about where the lane lands"), true
 	}
 	if verb != "gate" && has("base-sha") {
 		return refuse(stderr, " "+verb, "--base-sha names the base a GATE was taken against and belongs to `gate`"), true

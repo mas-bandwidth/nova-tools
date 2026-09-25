@@ -32,6 +32,12 @@ var nodeKeys = map[string]bool{
 	"repo": true, "base": true, "inputs": true, "output": true, "budget": true,
 	"affinity": true, "as": true, "from": true, "over": true, "acceptance": true,
 	"title": true, "type": true,
+	// Amendment 1 (2026-09-18): the same keys a unit carries, so one grammar
+	// serves the plan form and the work-set form. Parse only -- the reader
+	// checks their shape in checkUnitField and schedules nothing.
+	"lane": true, "resources": true, "writes": true, "tools": true,
+	"collects": true, "warm": true, "attempts": true, "state": true,
+	"owner": true, "was": true, "deadline": true,
 }
 
 // Node is one `:node` of a plan: its known Fields and the unknown keys beside
@@ -129,6 +135,9 @@ func parseNode(file string, form Form) (Node, error) {
 			return n, refuse(file, fmt.Sprintf(
 				":kind %s is not one of %s; refusing to guess",
 				renderVal(val), strings.Join(knownKinds[:6], ", ")))
+		}
+		if err := checkUnitField(file, n.ID(), key, val); err != nil {
+			return n, err
 		}
 		if nodeKeys[key.Value] {
 			n.Fields[key.Value] = val

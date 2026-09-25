@@ -52,15 +52,47 @@ type Pass struct {
 	// every base below main right after a merge. A pending base WAITS -- nothing merges
 	// onto it -- and RUN NOTE names the gate run that proves it.
 	basePending bool
+
+	// PacketAnnotate, when set by `packet --decide`, returns one advisory classification
+	// line for a handed-over entry, or "" for none. It only labels the packet: the merge
+	// gate, the queue order and every action stay exactly as they were (rule 7).
+	PacketAnnotate func(e *Entry, c Classification, holds int) string
+
+	// Order is the queue's walk order when a <lane>/queue.json stands: the queued pull
+	// requests, then every branch. A nil Order is the lane's own order, which is what a
+	// lane with no queue file walks.
+	Order []string
+}
+
+// ordered is the order the pass walks: the queue order when one is set, and the lane's own
+// order otherwise.
+func (p *Pass) ordered() []*Entry {
+	if p.Order == nil {
+		return p.State.Entries()
+	}
+	byID := map[string]*Entry{}
+	for _, e := range p.State.Entries() {
+		byID[e.ID()] = e
+	}
+	out := make([]*Entry, 0, len(p.Order))
+	for _, id := range p.Order {
+		if e := byID[id]; e != nil {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // Result is what a pass did, for the exit code and the last line.
 type Result struct {
 	Merged  int
 	Dropped int
-	Blocked int
-	Waiting int
-	Stopped bool // something was refused, stopped or blocked: exit 1
+	// DroppedIDs are the pull requests this pass landed and took out of the lane, so the
+	// queue can retire them with the lane.
+	DroppedIDs []int
+	Blocked    int
+	Waiting    int
+	Stopped    bool // something was refused, stopped or blocked: exit 1
 	// Refused is THE TOOL COULD NOT LOOK -- the host or the remote did not answer -- and
 	// it is exit 2, not 1. Exit 1 is "the tool ran and said no", which is a different
 	// piece of news from "the tool could not find out", and a caller that cannot tell
@@ -212,7 +244,7 @@ func (p *Pass) BaseSHA() (string, error) {
 
 // walk is the ordered lane: classify, print, and merge AT MOST ONE.
 func (p *Pass) walk(baseSHA string, res *Result) {
-	entries := p.State.Entries()
+	entries := p.ordered()
 	list := bounded.Capped(p.Stdout, p.Max, "RUN", "entry",
 		fmt.Sprintf("nova-merge status --lane %s --max 0", p.Lane))
 	merged := false

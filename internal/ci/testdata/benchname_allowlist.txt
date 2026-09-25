@@ -1,0 +1,27 @@
+# The narrowings of the bench-name rule (internal/ci/benchname_class_test.go).
+#
+# THE RULE (Glenn's lock, 2026-09-18): runner hosts are CI-only. A function taking a bench
+# NAME must resolve it through the machines registry (internal/fleet) before that name
+# reaches a machine. These are the functions that do not, and why each one is a narrowing
+# and not a hole. One entry per line: <path>:<func> then the reason. The list only shrinks:
+# a function that has left, or that resolves its name now, is a red run.
+
+
+# `harvest --bench` resolves its name ONCE, at the verb's edge: harvestBench calls
+# requireBench (fleet.Registry.RequireBench) before the first ssh. These four are below
+# that guard and are reached through nothing else.
+internal/pulse/harvestbench.go:prTitle formats one harvested job's PR title and touches no machine; the bench is a word in the title's suffix
+internal/pulse/harvestbench.go:benchPRBody formats the PR body and touches no machine; the bench is a word in the provenance line
+internal/pulse/harvestbench.go:benchRepoURL builds the ssh://<bench><dir>/repo string the LOCAL clone fetches from; it opens nothing, and the name it formats is the one harvestBench's requireBench guard let past
+internal/pulse/harvestbench.go:markHarvested one `touch <dir>/.harvested` through the BenchShell seam, called only from harvestBench after its requireBench guard; the seam below it is sshShell.Run
+internal/pulse/harvestbench.go:sshShell.Run the raw ssh seam; the same road as cmd/nova-pulse's sshCapacity.Capacity -- it is constructed in exactly one place (harvestBench, when the caller injected no BenchShell) and reached only through that verb, which resolved the bench name first
+
+# `harvest --bench --batch` (harvestBatch, #2926) resolves its name ONCE, at the verb's edge:
+# it calls requireBench (fleet.Registry.RequireBench) before any store read or ssh. These
+# four are below that guard and are reached through nothing else.
+internal/pulse/harvestbatch.go:redisHarvestMemory.Refused reads the set cards:harvest:<bench>:refused from the fleet Redis and touches no machine; the bench is a word in the key, and harvestBatch calls it only after its requireBench guard
+internal/pulse/harvestbatch.go:redisHarvestMemory.Remember adds one (label, head) to cards:harvest:<bench>:refused in the fleet Redis and touches no machine; the bench is a word in the key, reached only from harvestBatch below its requireBench guard
+internal/pulse/harvestbatch.go:redisHarvestMemory.Report writes the pass's sprint-table row cards:harvest:<bench> in the fleet Redis and touches no machine; the bench is a word in the key, reached only from harvestBatch below its requireBench guard
+internal/pulse/harvestbatch.go:benchURL builds the ssh://<bench><path> string the LOCAL clone fetches the staged refs from; it opens nothing, and the name it formats is the one harvestBatch's requireBench guard let past (the same shape as benchRepoURL above)
+
+

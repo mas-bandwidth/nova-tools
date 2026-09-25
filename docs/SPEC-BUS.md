@@ -15,12 +15,13 @@ nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id
 
 **What each reads and writes.** `wait --on-note` reads the bus from `--bus`, fetches
 `--remote`/`--branch` on `--interval`, and reads the notes addressed to the caller
-by To: or Cc:, the wake being To: only (addr=to is the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing unless `--advance` is given, when it moves and
-pushes the caller's cursor as `inbox --advance` does. `receipt --verdict` reads the
-bus and roster, resolves `--re` against the open list, and writes one receipt note
-into the caller's lane — `Verdict: <APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text`
-body — plus the lane's `RECEIPTS` record, in one commit it pushes to `--remote` on
-`--branch`.
+by To: only, by To: or Cc: once `--cc` opts in, the wake being To: only (addr=to is
+the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing
+unless `--advance` is given, when it moves and pushes the caller's cursor as `inbox
+--advance` does. `receipt --verdict` reads the bus and roster, resolves `--re` against
+the open list, and writes one receipt note into the caller's lane — `Verdict:
+<APPROVE|HOLD|ADOPTED>`, `Re: <id>`, the `--text` body — plus the lane's `RECEIPTS`
+record, in one commit it pushes to `--remote` on `--branch`.
 
 **What `wait --on-note` prints.** The moment a To: note for the caller arrives it
 exits 0 with exactly one status line and the notes, and nothing else: no `INBOX
@@ -35,14 +36,15 @@ INBOX BODY END id=<id>
 ```
 
 Every field is named: the id, the sender, the repository-relative path, the body's
-byte count, and the existing frame fields. A service restart alone does not wake a
-harness parent — nothing in the unit's lifetime reaches the parent — so this slice
-waits in the foreground only: a FIFO is not durable, a file can overwrite pending
-notes, and `--advance` does not itself name the batch it acknowledges. `wait
---on-note` wakes a parent that is waiting inside its own turn, and the exit is the
-wake: a parent wakes on a note without ingesting the open list. Background delivery
-is deferred to a later section, which must pin a real notification adapter and an
-acknowledgement-token protocol before it makes any claim.
+byte count, and the existing frame fields. The verb runs as a systemd or launchd
+unit outside a TUI, so the unit restarts it after a harness cap; the exit is the
+wake, and a parent wakes on a note without ingesting the open list. A service restart
+alone does not wake a harness parent — nothing in the unit's lifetime reaches the
+parent — so this slice waits in the foreground only: a FIFO is not durable, a file
+can overwrite pending notes, and `--advance` does not itself name the batch it
+acknowledges. `wait --on-note` wakes a parent that is waiting inside its own turn.
+Background delivery is deferred to a later section, which must pin a real
+notification adapter and an acknowledgement-token protocol before it makes any claim.
 
 The verb also runs as a systemd or launchd unit outside a TUI, so the unit restarts
 it after a harness cap; the exit is the wake, and a parent wakes on a note without
@@ -169,3 +171,46 @@ reply header.
 7. `TestReplyRefusesAHandShapedHeader`: a fake bus and a draft carrying a `To:` line; exit 2 and one remedy line.
 8. `TestReplyAdvanceMovesTheCursorInTheReplyCommit`: a fake checkout; one commit holds both the reply note and the caller's advanced `CURSOR`.
 9. `TestReplyAdvanceWithDryRunIsRefused`: a fake checkout; exit 2 and one remedy line, and neither cursor nor note moves.
+
+## Tests this spec demands
+
+Every test runs against a fake remote, a fake checkout, a fake clock and a fake
+service/process probe; nothing reaches a network or a real secret, and each new
+test is proven able to fail before it is trusted. The verb groups are
+`wait --on-note` / `receipt --verdict` (absent) and `send --file` preflight /
+`reply` (already implemented).
+
+1. `TestWaitOnNotePrintsOnlyTheNote` — a To: note wakes exactly one `WAIT OK` status line and its `INBOX NOTE`/body, and no `INBOX OPEN` frame or carrying count ever prints.
+2. `TestWaitOnNoteWakesOnToOnly` — the wake is To: only (addr=to the default); a Cc: note is data, not a wake.
+3. `TestWaitOnNoteWritesNothingWithoutAdvance` — `wait --on-note` writes nothing unless `--advance` is given.
+4. `TestWaitOnNoteAdvanceMovesTheCursorLikeInbox` — with `--advance` it moves and pushes the caller's cursor as `inbox --advance` does.
+5. `TestWaitOnNoteNamesEveryField` — the wake output names the id, sender, repository-relative path, byte count and the existing frame fields.
+6. `TestWaitOnNoteNeverWakesOnAnEmptyTick` — an empty tick prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
+7. `TestWaitOnNoteRearmsAfterAHarnessCap` — a service manager restarts the unit at the cap and the restarted wait resumes with the note's arrival not lost.
+8. `TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap` — one note's body is bounded to `--max-bytes` (default 65536, hard ceiling 1048576).
+9. `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — one wake returns at most `--max-notes` notes (default 20, ceiling 1000) and at most `--max-bytes` body bytes, stopping at whichever bound is reached first.
+10. `TestASingleOversizeBodyIsANamedGapAndNeverALoop` — a body that would cross the remaining budget is left whole, not printed half, and a first body larger than the whole budget prints the `INBOX BODY OVERSIZE` gap line.
+11. `TestBodiesContinuationKeepsOriginalSnapshotAfterAdvanceAndNewTip` — past a bound the wake ends with the `INBOX BODIES … next=<token>` receipt; `--after <token>` returns the rest and no run repeats itself.
+12. `TestBodiesWithoutAdvanceMovesNoCursor` — without `--advance` no `CURSOR`/`OPEN`/`RECEIPTS`/`INDEX`/commit/push changes; with it the cursor advances only past the acknowledged batch.
+13. `TestWaitRefusesOnNoteWithoutItsRequiredFlags` — `--on-note` without `--timeout`/`--bus`/`--as`/`--remote`/`--branch` is exit 2 with one remedy line.
+14. `TestWaitRefusesOnNoteWithOpenOrFull` — `--on-note` with `--open` or `--full` is exit 2, `drop --open`.
+15. `TestReceiptVerdictWritesTheExactNoteShape` — `receipt --verdict` resolves `--re` and writes one `Verdict:`/`Re:`/`--text` note plus the lane's `RECEIPTS` record, in one commit pushed to `--remote`/`--branch`.
+16. `TestReceiptVerdictPrintsTheNamedLine` — `RECEIPT OK` names every field: verdict, re, recorded, already, commit, pushed, attempts.
+17. `TestReceiptVerdictNamesAlreadyHeard` — one `RECEIPT ALREADY` line per note already heard.
+18. `TestReceiptVerdictRefusesAnUnknownVerdict` — `--verdict` outside the three is exit 2 with one remedy line and no write.
+19. `TestReceiptVerdictRefusesWithoutReOrWithNote` — `--verdict` without `--re`, or with `--note`, is exit 2.
+20. `TestReceiptRefusesTextWithoutVerdict` — `--text` without `--verdict` is exit 2.
+21. `TestSendProcessNameIsDistinctFromWait` — `send` sets its own process name, distinct from the wait's.
+22. `TestPkillOnWaitLeavesASendAlive` — a `pkill -f` matching only the wait name leaves a running send alive.
+23. `TestSendAfterWaitBeatSucceeds` — `send` stages the caller's own uncommitted `from-<me>/BEAT` into its one note commit instead of aborting on a rebase.
+24. `TestSendFoldsUnpushedOwnBeatCommit` — a beat-only local commit ahead of the remote is carried out with the note, not refused.
+25. `TestSendRefusesAWrongBranchOrADirtyCheckout` — every other dirty path is still the refusal it always was, on one `SEND FAIL` line, and `SEND OK` still names its fields.
+26. `TestSendRefusesAHandWrittenId` — a hand-written `Id:` header is exit 2 with one remedy line and no new commit.
+27. `TestSendRefusesTwoIdsInRe` — a `Re:` line naming more than one id is exit 2 with one remedy line.
+28. `TestSendWarnsOnceOnADateItReplaces` — a `Date:` header is replaced and earns one `SEND NOTE` line.
+29. `TestSendDryRunPrintsTheShapedNoteAndWritesNothing` — `--dry-run` prints the framed `SEND DRAFT` note and commits and pushes nothing.
+30. `TestReplyFillsFromToReSubjectFromTheOriginal` — the reply's four headers come from the original note, never hand-shaped.
+31. `TestReplyRefusesAnUnknownRe` — `reply --re` naming no note is exit 2 and names `inbox --open`.
+32. `TestReplyRefusesAHandShapedHeader` — a draft carrying a header `reply` fills is exit 2 with one remedy line.
+33. `TestReplyAdvanceMovesTheCursorInTheReplyCommit` — `--advance` moves and pushes the cursor in the same commit as the reply.
+34. `TestReplyAdvanceWithDryRunIsRefused` — `reply --advance` with `--dry-run` is exit 2 and neither cursor nor note moves.

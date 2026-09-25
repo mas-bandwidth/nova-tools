@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // foldStamp is the clock every test hands run(), so that `at=` is a fixture and not a
@@ -192,15 +194,12 @@ const (
 	fakeSleep      = 30 * time.Second
 )
 
-// fakeSqlite3OnPath copies the test binary to <tmp>/bin/sqlite3[.exe], puts that directory
-// first on PATH, and hands the copy its mode through the environment.
+// fakeSqlite3OnPath places the test binary (by link, a copy only where a link is not
+// possible) at <tmp>/bin/sqlite3[.exe], puts that directory
+// first on PATH, and hands the placed program its mode through the environment.
 func fakeSqlite3OnPath(t *testing.T, mode string) {
 	t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(self)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +208,7 @@ func fakeSqlite3OnPath(t *testing.T, mode string) {
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	if err := os.WriteFile(filepath.Join(bin, name), raw, 0o755); err != nil {
+	if err := testbin.Place(self, filepath.Join(bin, name)); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))

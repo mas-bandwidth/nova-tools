@@ -15,9 +15,9 @@ reading any of it is `ssh` and `grep` by hand. This spec chooses one stack for a
 invents nothing: the lines go out through Go's own `log/slog` and the systemd journal, and the
 reading, shipping and alerting are open-source programs. Related: [SPEC.md](SPEC.md) (an event is
 exactly one line), [../internal/oneline](../internal/oneline/oneline.go) (the one escape),
-[SPEC-STATE.md](SPEC-STATE.md) (Postgres is the durable record; **logs are not the record**),
+[SPEC-STATE.md](SPEC-STATE.md) (the `cards:done` stream and its fold are the durable record; **logs are not the record**),
 [SPEC-SECRETS.md](SPEC-SECRETS.md), [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md),
-[SPEC-PULSE.md](SPEC-PULSE.md) (the loops), [SPEC-SWARM.md](SPEC-SWARM.md) (the harness),
+SPEC-PULSE.md (the loops), [SPEC-SWARM.md](SPEC-SWARM.md) (the harness),
 [SPEC-MERGE.md](SPEC-MERGE.md) (the queue).
 
 ## Part 1 — the choice, and why
@@ -42,8 +42,8 @@ the body of a harness log, and we do not need to, because the fields we ask ques
 fixed (Part 2) and the body is evidence we read rarely and can compress. Loki's label index is
 small and cheap; its rules are the same language as its queries, so the alert in Part 4 is a
 query a person already wrote by hand. Alloy replaces the hand-rolled shipper and is the OTel
-path when traces arrive. Grafana is the reader because it is one pane over Loki today and Tempo,
-Postgres and Prometheus later.
+path when traces arrive. Grafana is the reader because it is one pane over Loki today and Tempo
+and Prometheus later.
 
 **What would change the choice.** (a) A query that must full-text search arbitrary body text as
 the *common* case, not the rare one — then OpenSearch. (b) A fleet where a bench cannot reach
@@ -187,12 +187,16 @@ sum(count_over_time({source="nova-swarm", event="start"}[5m]))
 systemd journal (so every verb and every service is already a source), plus the two timer logs
 (`hygiene`, `mirror`) and the fill loop's log. Grafana pointed at Loki, with **one dashboard**:
 fleet width, queue depth, cards per hour, minutes per card, and free disk per bench. Nothing else
-changes; the files stay the record, Postgres stays the durable record, and the JSON lines are the
+changes; the files stay the record, the stream and its fold stay the durable record, and the JSON lines are the
 new second copy. Old readers (`ssh` and `grep`) still work, so the slice is additive.
 
 **The measure.** **Seconds to answer "why is card X hung"** — today an `ssh`, a `find` across
 benches, and a `grep` of several scratch dirs; the target is the Part 3 query, one pane, under
 five seconds. The slice is done when that number is printed, not when Loki is installed.
+
+**The build order.** Slice, dashboard, measure, red tests — the measure cannot print before the
+slice answers, the dashboard is the one pane the measure reads, and a red test that cannot run
+yet is a promise, not a proof.
 
 **The red tests** (one per promise, seen red first):
 
@@ -203,3 +207,65 @@ five seconds. The slice is done when that number is printed, not when Loki is in
   The hook lives beside the handler, so the refusal is a test of the emitter and not of review.
 - `the-hung-card-query-returns-the-card-s-last-event` — a card that `start`s and never `done`s;
   the Part 3 hung query returns that card's last event and its age.
+
+**The slice's checks of record** (nova-tools #2190; the demanded tests 31 to 34 below):
+
+- `TestSliceRunsLokiAlloyGrafanaOnSpace` — on `space`: Loki with local disk, one Alloy reading
+  the systemd journal plus the two timer logs and the fill loop's log.
+- `TestGrafanaHasTheOneDashboard` — Grafana pointed at Loki with one dashboard: fleet width,
+  queue depth, cards per hour, minutes per card, free disk per bench.
+- `TestSliceIsAdditive` — nothing else changes: the files stay the record, Postgres stays the
+  durable record, old readers (`ssh` and `grep`) still work.
+- `TestScopeAndMeasureUnderFiveSeconds` — the slice is done when "seconds to answer why is
+  card X hung" prints, one pane, under five seconds.
+
+**Where the slice's tests run.** On the bench (`space`), never on the CI path — the class rules
+refuse the live shape: `net` refuses a test that names a real host, `waits` refuses a fixed
+wall-clock wait, and `wall clock` refuses a bound under ten seconds. The within-five-seconds
+red test therefore polls for the line up to `NOVA_TEST_WAIT`, and the five seconds itself is
+the measure of record the bench prints, never a CI assertion — a bound under ten seconds
+asserts the machine's load, not the code. Each of the slice's tests is run against the bench
+before the slice exists, so each is seen red first; the demanded list below keeps its (ABSENT)
+markers until a test in this tree can carry each promise.
+
+## Tests this spec demands
+
+The logging primitive (`internal/log`) and the two wired emitters (`nova-work events`, `nova-pulse launch`) already run through injected clocks and guids against `bytes.Buffer` sinks, `miniredis`, a fake forge and `t.TempDir` paths — no network, no real `/proc`, no live Loki, and each was seen red first. The remaining emitters, the config and the slice tests are not written.
+
+1. `TestLineCarriesTheSpecFieldsAndNoMore` — one JSON object per state change, one line, and the object's keys are the spec's fifteen-field table exactly (ts, level, source, bench, verb, job, card, pr, run, slot, guid, event, msg, dur_ms, err), no key missing, none invented.
+2. `TestLineWritesAbsentIdsAsEmptyNotOmitted` — an id that is not this event's scope is `""` (or `0` for pr) and the key is still written, so `| json` never guesses.
+3. `TestLineEscapesMsgThroughOnelineField` — `msg` goes through `oneline`, so a newline in the sentence cannot add a second line.
+4. `TestLineEscapesErr` — `err` goes through `oneline`, the same one-line promise.
+5. `TestLineCarriesTheCallersLevel` — `level` is one of `DEBUG`/`INFO`/`WARN`/`ERROR`, defaulting to `INFO`.
+6. `TestRedactRemovesEverySecretShape` / `TestWriteRedactsEveryVariableField` — a secret VALUE is never logged; the field may name the secret, never its value, and the leak is caught inside the emitter before the line leaves the process, whatever field carried it.
+7. `TestRedactLeavesTheFieldsWeQueryWithAlone` — a git sha, a card id, a PR number and an ordinary sentence survive redaction.
+8. `TestWriteKeepsTheFixedVocabulary` — redaction never renames the writer's own vocabulary (ts, level, source, event).
+9. `TestEmitterWritesOneLinePerCardDone` (and `TestEmitterWritesChecksDoneAndDevMoved`) — every event the bus carries is also emitted as one structured line, the same kind vocabulary (`card-done`, `pr-checks-done`, `dev-moved`), one name two places.
+10. `TestEmitterIsSilentWhenTheBusIs` — a quiet poll publishes nothing and so emits nothing.
+11. `TestEmitterWritesNothingWithoutASink` — no sink means no lines: the emitter is additive, never a replacement.
+12. `TestEmitterRedactsASecretShapedValue` — a secret-shaped value off the stream never reaches the log.
+13. `TestEventsLogWritesTheFileWithTheLabels` — `--log` writes the file Alloy tails, every line carrying `source`/`verb`/`bench`/`event` plus the fixed fields, one JSON object per line.
+14. `TestEventsLogLeavesTheStdoutLineAlone` — the stdout event line is unchanged; the JSON line is written BESIDE it, never instead of it.
+15. `TestEventsRefusesALogPathItCannotOpen` — a `--log` path that cannot be opened is a refusal naming `--log` (exit 2), not a silent run with no log.
+16. `TestEventsWithoutALogWritesToStderr` — with no `--log` the lines go to stderr, which on a bench is the unit's journal (the source Alloy already reads).
+17. `TestEventsLogNeverCarriesASecret` — a secret-shaped card id off the stream never reaches the log file.
+18. `TestLaunchWritesTheJSONLineBesideTheStdoutLine` — the launch verb writes the `start`/`done` spine beside the `PULSE OK` stdout line, source `nova-pulse`, verb `launch`.
+19. `TestLaunchRefusalAndRetryEmitEvents` (ABSENT) — the launch verb emits `refuse` with the reason in `msg` when it declines (under-slots, bad runner, bad swarm), and `retry` on a provider start failure.
+20. `TestHygienePassEmitsStartActionDoneSpine` (ABSENT) — hygiene emits `start`, one event per action (`delete`/`keep` with the path and the rule that decided it), then `done` with `dur_ms`.
+21. `TestMirrorPassEmitsStartFetchSkipDoneSpine` (ABSENT) — mirror emits `start`, one event per action (`fetch`/`skip` with the ref and the verdict), then `done` with `dur_ms`; the old `~/hygiene.log` stays the fallback line.
+22. `TestPullWorkerEmitsStartClaimAndLeaseEvents` (ABSENT) — the pull worker emits `start` with the stream and lane it reads, `claim` with the card and its attempt, `reclaim` with the lapsed lease it took, `clip`/`ack` on a landed card.
+23. `TestPullWorkerRefuseAndRetryEvents` (ABSENT) — `refuse` when a card is too big or the input limit bites, `retry` on a reclaim.
+24. `TestHarnessRunEmitsStartToolCallDeadlineDone` (ABSENT) — `start` with the model, provider and card; one `tool_call` per call folded from `timeline.tsv` (its six columns become the fields); `deadline` when the budget ends; `abstain` when it declines; `done`/`fail` with the result and the token counts; `harness-output.log`/`harness.log` stay the pinned evidence.
+25. `TestMergeEnqueueAndGroupEvents` (ABSENT) — `enqueue` with the PR and head sha, `group_start` with the group name and the run id, `group_verdict` with the conclusion, the failing test and the poison verdict, and `park` when a PR is set aside with the reason and the age.
+26. `TestCoordinatorEmitsOneEventPerAction` (ABSENT) — the loops emit one event per action, not per turn: `harvest` per RESULT.md disposed, `sweep` per pool folded into the ledger, `fill` per card cut or refused (with the source and the dedup that stopped it); the turn's `WIDTH`/`MANAGER` line stays the one human line.
+27. `TestExpanderEmitsDeriveAndCutEvents` (ABSENT) — one `derive` per node derived (node id, parent, rule), one `cut` per card cut (card id, pool candidate, template, route); the journal stays the replayable truth.
+28. `TestPrivateBusBodyNeverLogged` (ABSENT) — a note's body is never logged; the note id, the scope and the receipt are.
+29. `TestAlloyPromotesTheFourLabels` (ABSENT) — Alloy promotes `source`, `bench`, `verb`, `event`; the other fields parse with `| json`.
+30. `TestRulerAlertsFireOnTheFourConditions` (ABSENT) — four rules: a bench under 25 GB free; a loop with no event for 15 minutes; a job past its deadline (a `start` older than its `budget` with no `done`); a group failure twice on one PR.
+31. `TestSliceRunsLokiAlloyGrafanaOnSpace` (ABSENT) — on `space`: Loki with local disk, one Alloy reading the systemd journal plus the two timer logs and the fill loop's log.
+32. `TestGrafanaHasTheOneDashboard` (ABSENT) — Grafana pointed at Loki with one dashboard: fleet width, queue depth, cards per hour, minutes per card, free disk per bench.
+33. `TestSliceIsAdditive` (ABSENT) — nothing else changes: files stay the record, the stream and its fold stay the durable record, old readers (`ssh` and `grep`) still work.
+34. `TestScopeAndMeasureUnderFiveSeconds` (ABSENT) — the slice is done when "seconds to answer why is card X hung" prints, one pane, under five seconds.
+35. `a-slog-line-from-a-verb-appears-in-loki-within-five-seconds-with-its-labels` (ABSENT) — run a verb that changes state; within five seconds `{source, verb, card}` returns the JSON line in Loki.
+36. `a-secret-value-in-a-message-is-refused-by-the-test-hook-before-it-leaves-the-process` — see 6; a known secret in a `msg` is refused before no line reaches the journal.
+37. `the-hung-card-query-returns-the-card-s-last-event` (ABSENT) — a card that `start`s and never `done`s; the Part 3 hung query returns that card's last event and its age.

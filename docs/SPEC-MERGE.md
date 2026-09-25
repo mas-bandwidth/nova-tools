@@ -1,54 +1,49 @@
 # nova-merge — specification
 
-`nova-merge` is one binary at the **merge layer**. It lands an **ordered lane**
-of entries — pull requests, or branches with no pull request at all — onto one
-base branch, one at a time, and it refuses to land anything whose evidence it
-cannot name.
+`nova-merge` is one binary at the **merge layer**. Since 2026-09-24 it keeps the
+**evidence a stream lands on** and nothing that lands one pull request at a time:
+a typed read at a head (`read`), a local gate's verdict for a merge (`gate`), a
+typed classification of a failed merge-group run (`classify`), a batch gate that
+merges N heads onto a base and runs the tests (`batch`), and a fold of branches
+onto a base into one out-branch (`fold`).
 
 This spec is normative. If the code and this document disagree, one of them has
 a bug, and the tests decide which. It stands beside
 [SPEC.md](SPEC.md), whose **Conventions** section — exit codes, no guessed
 paths, the one-line output grammar, the cap-and-count rule, `internal/oneline`
-and `internal/bounded` — applies here unchanged and is not restated. Where this
-tool needs something the Conventions do not cover, it is below and it says so.
-
-A lane in this shape landed 30-odd pull requests onto one base in a single
-morning. The form works, and it fails in every way a shell loop around
-`gh pr merge` fails. This tool is those failures closed, one rule each.
-
-| the failure, from one morning's record | the rule that closes it |
-|---|---|
-| `gh pr merge --auto` does not queue here — it merges immediately, and #922 went in red (Glenn, 2026-09-11: **never `--auto`**) | `--auto` is **refused structurally**, in the one function that runs a mutating command, before the command is built |
-| a merge landed while one check was still pending, so nothing had read the job that later went red | the merge condition counts **fail and pending separately** and requires zero of both |
-| a read was recorded and the author had pushed since, so the approve was for code nobody had | a read and a gate are **keyed to the entry's head**, and a stale one does not count |
-| a force-push would have made the base unreproducible | `--force`, `-f` and a bare `--force-with-lease` are refused in the same place as `--auto`; the one push the lane makes is a compare-and-swap, `--force-with-lease=<base ref>:<expected sha>`, which cannot rewrite anything (rule 4) |
-| a pull request whose base was not the lane's base was merged into the wrong branch | the base is **read back from the host** every pass and a mismatch stops that entry |
-| re-merging the base into every entry after every merge restarted every CI run: 26 entries × 70 jobs, queued at once (**2026-09-11 12:40Z, the storm**) | the base is re-merged **only into entries that CONFLICT with it** |
-| four conflicts in one morning, all real, all on one Java file the tip had changed; a mechanical resolver would have written a merge nobody read (**2026-09-11**) | the lane **never edits an entry's content**; a conflict is `BLOCKED` with its file list and a hand resolves it |
-| the hosted lane took 20 minutes to say what our own hardware says in two (Glenn's **two-minute rule**) | a **local gate** for the entry's current head counts as checks green |
-| a branch with no pull request had no way into the lane at all | `add-branch`, and a branch entry merges on a local gate plus its read |
-| two writers shared one temp name and left the state file at 0 bytes; the lane lost all 33 entries and every recorded read (**2026-09-11**) | every read-modify-write runs under **one kernel lock** (`flock`), through a **fixed temp name** and one rename, and nothing is written unless **both** the old and the new state parse |
-| a stale-lock check broke a lock that had vanished between the existence test and the stat; 3 of 20 concurrent writes were lost (**2026-09-11**) | the kernel releases the lock on death: **no stale rule, no age**; a second holder waits a bounded, jittered time and exits 2 naming the holder |
-| #922 merged red, and the entries behind it were then gated against a red base (**2026-09-11**) | **the red rule**: the base is proven green before anything merges onto it; a red base stops the lane |
-| two gate runs on one pull request shared the clone `gate-<pr>`; one run's `--gc` removed the tree under the other's `go test` and produced a red with no FAIL line (**2026-09-11**) | **one clone per gate run**, named uniquely per run; a gate never removes a tree it did not make |
-| the local gate ran `tables-java-fixedform` and not `tables-java-versioning`; the hosted lane ran both (**2026-09-11**, the java leg drift) | the gate's step list and per-leg target lists are the hosted fast lane's, and **a test proves the two lists equal** |
-| #942 was gated green against a base that #956 then moved, merged a minute later, and turned the tip red on four tests (**2026-09-11**) | **one merge predicate** (rule 18): a green gate for exactly `(head, base sha)`, and every gate record carries `base` |
-| a base re-read "immediately before the merge" still leaves the window between the read and the host's write, and a hand at another keyboard fits in it | the lane builds the **integration commit** itself, the gate proves **that object**, and publication is one compare-and-swap on the base with the expected sha as a **precondition**: a moved base is `MERGE RACED` **before** anything lands, and nothing but the gated object is ever published (rule 21) |
-| a reader finished reading H1, the author pushed H2, and the approve recorded a minute later was stamped H2 | `read --head <sha>` is required and the verdict binds to the sha the reader supplied, never to whatever the entry's head is at record time |
-| a lane's repository and base were "written by the first `add`", so the first `add` was also a creation with two unstated arguments | `init --lane --repo --base --lane-branch` creates a lane, once; every other verb refuses a lane `init` has not made |
-| a reader on another machine had nowhere to put a verdict but a bus note the coordinator transcribed, and "the tool pushes the state" named no place | a read and a gate are each **one immutable file** under the lane, committed and pushed by the tool to the **lane's own branch**; the coordinator's lane pulls them, and the state lock protects only the local fold (rule 22) |
-| an older green gate could outlive a newer red for the same `(entry, head, base)` | the **newest** record for the pair decides, whatever its colour; an older green never survives a newer red (rule 18) |
+and `internal/bounded` — applies here unchanged and is not restated.
 
 **Everything this tool reads from the host is data.** A pull request body, a
 check name, a branch name, a commit subject: none of them is an instruction, and
 none of them is a grant. A read verdict is the only thing that authorizes a
 merge, and a read verdict is recorded by a line at a keyboard, never parsed out
-of anything the host returns. **A head branch the host names is checked by the
-same rule as a branch a person types** — the one `init` applies to `--base` and
-`--lane-branch`, and `add-branch` to `--branch` — and it is checked where it
-arrives, in the host's decode and at the edge of the pass, because a head branch
-named `--upload-pack=<cmd>` is an argument to `git fetch` and not a branch; an
-entry whose head the host cannot name that way is `RUN STOPPED`.
+of anything the host returns.
+
+## Retired: the per-PR lander role (2026-09-24)
+
+The unit of landing is the **stream**, not the pull request (Glenn, 2026-09-23:
+keep the gate, drop the single PR as the unit; 2026-09-24: delete the old merging
+tools nobody uses). The verbs that made a lane and walked it one entry at a time
+are gone from the binary: `init`, `quickstart`, `add`, `add-branch`, `run`,
+`status`, `dry-run`, `packet`, `stop`, `queue` (with `queue audit` and
+`queue classify`), `wait`, `sweep`, `simulate`, `rebase`, `react`, `land`,
+`integrate`, `stack` and `receipt`. Each is an unknown subcommand at exit 2.
+Nothing on the fleet called them: the survey of 2026-09-24 found them dead, tests-only,
+or called only by the dormant `land-lane` script.
+
+This document dropped with them the sections that described only the lander:
+*The lane* and *The entries*, *The landing verb*, *The re-merge rule* through
+*The races, taken out*, *The state file*, *The log*,
+*The merge queue (#1142)* and *One entry to the merge queue*; the text is in git
+history before this change. What stays is the **typed read and the merge
+condition**, **the local gate**, the batch gate and **the fold** — the pieces
+the stream lander is built from. The numbered rules keep their numbers because
+code and tests cite them; a rule that names a retired verb describes the retired
+lander and binds nothing new. The next nova-merge spec makes this binary the
+stream lander (members = the stream's pull requests, base = dev) and says where
+read and gate records live (Redis, per the "GitHub is a git remote only" ruling).
+Until then, `read` and `gate` write into an existing lane directory, and a stream
+lands on dev by hand.
 
 ## The two laws
 
@@ -74,6 +69,11 @@ gate** below, where on `main` a hosted red still stops the entry whatever the
 gate says, and below `main` it is said by name on the merge line (rule 15).
 
 ## The rules, numbered
+
+The numbers are stable: code and tests cite them. A rule that names a retired
+verb (`run`, `status`, `add`, `init`, `land`, `queue`, ...) describes the retired
+per-PR lander and binds nothing new; the stream-lander spec renumbers nothing and
+says which of them carry.
 
 Every rule here is normative. Each has one line in **tests this spec demands**
 near the end, and the sections below say how each is met. The date on a rule is
@@ -442,75 +442,35 @@ the day it was learned.
 ## The verbs
 
 ```
-nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
-nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>] [--max <n>]
-nova-merge add        --lane <dir> --pr <n> [--needs-read]
-nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
-nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
-nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
-nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--planned-red <text>] [--admin] [--max <n>]
-nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
-nova-merge stop       --lane <dir>
-nova-merge dry-run    --lane <dir> [--max <n>]
-nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
-nova-merge wait       --repo <owner>/<name> --pr <n> --timeout <duration> [--interval <duration>]
+nova-merge read     --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>] [--redis <addr>]
+nova-merge gate     --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base-sha <sha> --merge <sha> --verdict green|red --summary <path>
+nova-merge fold     --branches <file> --onto <base> --out <branch> --lane <dir>
+nova-merge fold     --close-folded --pr <n>
+nova-merge classify --lane <dir> --run <id> [--base-url <url>] [--key-env <name>]
+nova-merge batch    --name <name> --pr <list> --repo <owner>/<name> --root <dir> (--reviewers <file> --lane <dir> | --no-require-holds --reason <text>) [--base <branch>] [...]
 nova-merge version
 
-`wait` blocks in one full-context turn instead of watching GitHub by hand: it polls the same gh reader the lane uses for PR state and checks (`Host.PR` and `Host.Checks`, no new client) every `--interval` (default 30s) until the PR is merged (`MERGE WAIT MERGED pr=<n> base=<branch> sha=<merge sha> wall=<s>`, exit 0), a required check fails or the PR is closed unmerged (`MERGE WAIT RED pr=<n> check=<name> conclusion=<c> wall=<s>`, exit 2), or `--timeout` runs out (`MERGE WAIT TIMEOUT pr=<n> state=<state> pending=<names> wall=<s>`, exit 3). It prints exactly one line on stdout and nothing between polls, so a coordinator spends one turn per merge instead of one turn per `gh` call. A merge line names its base, and only a base of the lane's important base is a landing (nova-tools #229, 2026-09-12: #144 merged onto its docs-migration stack, not main, and #166 landed the delta): a `MERGED` line whose `base` is any other branch is a stack merge, never a landing.
-
-`wait` judges the head sha's own runs and no others (nova-tools #1014, 2026-09-17: a wait saw RED from a stale rollup while the head was still working). A check reader may answer a whole pull request rather than one commit, so each check result carries the `head_sha` it ran against and the verb narrows the rollup to the PR's current `headRefOid` before it counts: a completed failure on the head is RED, while a run that is in progress or queued -- and the pull request's merge-queue entry -- is pending. A conclusion on a sha the head has moved past, including an old merge-queue run's failed `ci-ok`, is ignored, and a merged pull request is `MERGED` regardless of what the stale rollup still says.
-
-every verb takes [--lane <dir>]; every verb that runs git or gh also takes
-[--timeout <seconds>], default 120
+every verb that runs git or gh also takes [--timeout <seconds>], default 120
 ```
 
-The binary is `nova-merge`, and that is its only name.
+The binary is `nova-merge`, and that is its only name. `batch`'s whole flag list
+is in `docs/CLI.md` and is checked against the source by
+`internal/docs/cli_merge_batch_flags_test.go`.
 
-**No guessed anything, with one named exception.** There is no default lane
-directory, no default repository, no default base. A missing one is exit 2 and
-`refusing to guess`. The exception is `--timeout`, which defaults to **120
-seconds**, for the reason SPEC.md gives for `nova-bus --git-timeout`: a
-subprocess timeout is how long this tool waits before saying so, not a fact
-about a lane that only its owner can supply. `run --loop` gets no default
-interval and `run --hours` no default deadline for the opposite reason: a loop
-with no deadline is a lane that is stuck rather than working, and nobody outside
-can tell the two apart (Glenn, 2026-09-09: **every ask, child or read has a
-written deadline and a default action; never wait forever**).
+**No guessed anything.** There is no default lane directory, no default
+repository, no default base. A missing one is exit 2 and `refusing to guess`.
+`--timeout` defaults to **120 seconds**, for the reason SPEC.md gives for
+`nova-bus --git-timeout`: a subprocess timeout is how long this tool waits
+before saying so, not a fact about a lane that only its owner can supply.
 
-**`init --remote <url>` names the URL the lane clones from and pushes to, and a
-first run is told to rehearse with it.** (Additive, 2026-09-12, Stella's ruling on
-nova-tools #116: the flag is in the tool and was in no verb list here.) Without it
-the URL comes from `--repo` through the host, which means nothing about a lane
-could be exercised without a live repository, and git's own config was the only
-way in — so the *environment* could move where a lane pushes with no flag saying
-so. Given a bare repository of the caller's own it is the whole first run with
-nothing reaching a forge, which is what `docs/CLI.md`'s `### First run` shows before
-the live form, because `init` creating the lane branch **is a push** (rule 20,
-rule 22) and a first run that has not been told so is a first run that mutates a
-shared repository to say hello. It wants an absolute path or a URL: git runs in
-the lane directory, so a relative one resolves against the lane and the run is
-refused. It is `init`'s alone, for rule 20's reason — a lane's remote, like its
-repository and its base, is written once and not overridable by a flag afterwards.
-
-The repository and the base are properties of the **lane**, written into its
-state once, by `init` (rule 20), and never overridable by a flag afterwards.
-`add` and `add-branch` queue entries into a lane that exists; they create
-nothing. A `--base` on any verb but `init` would let two invocations disagree
-about where the lane lands, which is the same failure the fixed roster path
-closes for `nova-bus`. The base **sha** a gate was taken against (rule 18) is
+The repository, the base and the lane branch are properties of the **lane**,
+written into its state once, when the lane was made (rule 20), and never
+overridable by a flag afterwards; `read`, `gate`, `classify` and `fold` read
+them from there. `batch` names `--repo` and `--base` because it reaches the
+forge without a lane. The base **sha** a gate was taken against (rule 18) is
 `gate --base-sha`, a different word on purpose: `--base` on `gate` is refused
 naming `--base-sha`, and `--base-sha` on any verb but `gate` is refused naming
-`gate` (rule 20).
-
-**`dry-run` is a verb, not a flag.** In the prototype it is a global `--dry-run`
-that any verb accepts, including the mutating ones, and the cost of that is a
-mode a caller can leave on or off by accident on the one command that merges.
-Here the survey is its own verb with its own name: it performs every read `run`
-performs, prints the whole plan rather than stopping at the first merge, and
-**cannot write**: its fold is in memory over the lane tip it fetched (rule
-22), and `state.json` and the checkout are byte-identical afterwards. Nothing
-in `dry-run`'s code path can reach the mutating
-helper at all, which is a property a test can pin and a flag never is.
+`gate`.
 
 **`version` is the Conventions' line, plus this binary's own `build=`.** It
 prints `nova-merge <build identity> <goos>/<goarch> <go version>
@@ -523,34 +483,14 @@ because two builds of one tag are two files. Before this verb printed the four,
 it printed the file hash ALONE, standing where every other binary puts its
 identity.
 
-**`quickstart` is `init` followed by `status`** — the natural first run: it creates a
-lane then reports it, so a stranger's first line sees the lane it just made. It shares
-`init`'s one-creation rule and flags (rule 20), plus `--max <n>` for the status that
-follows, and prints `INIT OK` then the `STATUS` lines. `docs/CLI.md`'s `### First run`
-is written around it.
-
-`status`, `dry-run` and `packet` **report** and exit 0 whatever the lane holds. `run` is
-the verb that acts, and `run`'s exit code is about the pass, not about the lane:
-see **exit codes**.
-
 ## Exit codes
 
 | code | meaning |
 |------|---------|
-| 0 | the verb ran and passed: a lane created, an entry added, a read or gate recorded, a pass completed with nothing refused |
-| 1 | the verb ran and said **NO**: a merge that could not be landed, a merge that `RACED`, a publication the remote refused for a missing capability (`MERGE BLOCKED`), an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry, an `init` of a lane that exists |
-| 2 | could not run: missing flag, unreadable lane state, a lane directory that is not one, bad invocation, `gh` or `git` absent |
+| 0 | the verb ran and passed: a read or gate recorded, a batch green, a fold made |
+| 1 | the verb ran and said **NO**: a red batch, a fold that could not be made, a publication the remote refused |
+| 2 | could not run: missing flag, unreadable lane state, a lane directory that is not one, bad invocation, `gh` or `git` absent, a retired verb |
 
-**An entry that is merely waiting is not a failure.** Zero pending checks is
-not the same news as a red check, and a lane full of entries waiting on CI is a
-lane working exactly as intended. `run` exits 0 with `waiting=<n>` and exits 1
-only when something was **refused, stopped or blocked** — a red, a wrong base, a
-hold, a conflict, a red base, a push that would not land. A
-lane that exits 1 on every pass while CI runs is a lane whose caller stops
-reading the exit code, and the prototype had exactly that shape.
-
-A `run` that exits 1 **after** merging says so on its `MERGE OK` line and in
-its refusal: the merge is on the base, and the entry behind it is blocked.
 
 ## Output grammar
 
@@ -562,12 +502,6 @@ path, branch name, check name, commit subject and reason renders through
 line rather than two.
 
 ```
-INIT OK lane=<dir> repo=<owner>/<name> base=<branch> lane_branch=<name> joined=<true|false> version=1
-INIT REFUSED: <reason>
-INIT NOTE the repository's default branch could not be read from <url>, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15); nova-merge init --lane <dir> --default-branch <branch> records it, and --hosted-red names states the other arm outright
-ADD OK kind=<pr|branch> entry=<n-or-name> needs_read=<yes|no> lane=<prs>/<branches>
-ADD NOTE <entry> is already in the lane (needs_read=<yes|no>)
-ADD REFUSED: <reason>
 READ OK entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha12> current=<true|false|-> approvals=<n> holds=<n> stale=<n> file=<path> pushed=true
 READ FAIL entry=<n-or-name> who=<name> head=<sha12> file=<path> pushed=false: <reason>; re-run the same verb to push it
 READ REFUSED: <reason>
@@ -576,39 +510,6 @@ GATE OK entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> verdict=<green
 GATE FAIL entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> file=<path> pushed=false: <reason>; re-run the same verb to push it
 GATE REFUSED: <reason>
 GATE NOTE the record is pushed and this lane could not fold the branch afterwards: <reason>; the next run folds it
-RUN PASS n=<k> at=<stamp> build=<id> pulled=<n> planned_red=<text|-> hosted_red_policy=<blocks|names>
-RUN NEWER build=<id> on_disk=<id>: the binary changed; this loop ends after this pass; restart it by hand
-RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
-RUN STOPPED base=<branch>: the base is red (<n> failing); nothing merges onto a red base
-RUN ENTRY entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<merge|head|stale|-> state=<STATE>
-RUN STOPPED entry=<n-or-name>: <reason>
-RUN BLOCKED entry=<n-or-name> head=<sha12> files=<n>: <the hand command, clone to push>
-RUN REMERGE entry=<n-or-name> base=<branch> result=<clean|blocked> pushed=<true|false> files=<n>
-RUN BUILT entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> ref=refs/nova-merge/integration/<entry>/<sha>
-MERGE OK entry=<n-or-name> base=<branch> base_sha=<sha12> head=<sha12> merge=<sha12> gate=<path> admitted=<hosted|gate> read=<who,who|none-required> hosted_red=<names|-> published=<host|push> verified=<sha12>
-MERGE RACED entry=<n-or-name> base=<branch> expected=<sha12> found=<sha12> merge=<sha12>: the base moved after the gate; nothing was published; this pass stops
-MERGE BLOCKED entry=<n-or-name> base=<branch> missing=atomic_publication: <the remote's reason>; nothing was published; this pass stops
-MERGE FAIL entry=<n-or-name>: <reason>
-RUN OK lane=<n> merged=<n> dropped=<n> blocked=<n> waiting=<n>
-RUN MORE kind=<entry> shown=<n> total=<t> nova-merge status --lane <dir> --max 0
-RUN NOTE <the one remedy line>
-RUN REFUSED: <reason>
-STATUS ENTRY kind=<pr|branch> entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h stale=<n> gate=<merge|head|stale|-> state=<STATE> last=<stamp>
-STATUS OK prs=<n> branches=<n> base=<branch> base_state=<GREEN|RED|PENDING|PLANNED-RED> ready=<n> blocked=<n> waiting=<n> reads=<n>a/<n>h
-STATUS READ entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha12> current=<true|false> at=<stamp> file=<path>
-STATUS STOPPED reason=malformed_record file=<path>: <reason>; this path names no entry, so no entry's state in this lane can be reported; re-record it with the verb that wrote it
-STATUS NOTE <the reason this report is not current>: the base or its checks could not be read, the lane branch was not pulled, or the entry is not in this lane
-DRY PLAN pos=<k> entry=<n-or-name> admitted=<hosted|gate> gate=<merge|head|stale|-> read=<n>a/<n>h
-DRY OK surveyed=<n> would_merge=<n-or-name|-> stopped=<n> waiting=<n>
-PACKET ENTRY entry=<n-or-name> head=<sha12> last_read=<sha12|-> range=<r> holds=<n> gate=<merge|head|stale|-> checks=g<n>/p<n>/r<n> url=<url|->
-PACKET HOLD who=<name> head=<sha12>: <note>
-PACKET MORE kind=hold shown=<n> total=<t> nova-merge packet --lane <dir> --who <name> --all --max 0
-PACKET OK entries=<n> holds=<n>
-PACKET REFUSED: <reason>
-PACKET NOTE entry=<n-or-name> who=<name>: <the reason this entry is not handed to a reader, or it is blocked by a record the fold refused>
-PACKET STOPPED reason=malformed_record file=<path>: <reason>; this path names no entry, so no entry in this lane can be handed over; re-record it with the verb that wrote it
-STOP OK lane=<dir>
-REHEARSE FIRST, against a bare repository of your own:
 ```
 
 `RUN PASS` is the first line of every pass and it says what the pass looked at
@@ -679,66 +580,6 @@ is an index.
 **A refusal prints every independent problem in one go**, one line each, per
 this repo's guidance law: a `gate` invocation with a bad sha *and* a missing
 summary says both, because a caller can fix two things as easily as one.
-
-## The lane
-
-A lane is a directory, named by `--lane`. It holds:
-
-```
-<lane>/.git, .gitignore   the lane is a checkout of its own branch of the repository (rules 20, 22)
-<lane>/state.json     the ordered entries and the fold of the reads and gates  (untracked)
-<lane>/log            one append-only line per event, UTC-stamped              (untracked)
-<lane>/repo/          this lane's own clone, never a working copy of anybody's  (untracked)
-<lane>/reads/<entry>/<who>-<head12>-<at>-<rand6>.json         one read, immutable, tracked and pushed (rule 22)
-<lane>/outbox/<at>-<rand6>.json                              a record not yet confirmed at the remote tip (rule 22), untracked
-<lane>/checkout.lock  the checkout lock: one Git operation on this checkout at a time (rule 22)
-<lane>/gates/<entry>/<head12>-<base12>-<at>-<rand6>.json     one gate record, tracked and pushed (rule 22)
-<lane>/gates/<entry>/<head12>-<base12>-<at>-<rand6>.summary  its summary, tracked beside it
-<lane>/gates/<entry>/<head>/<step>.log   one log per gate step, kept past --gc (rule 17), untracked
-<lane>/state.lock     the state lock: a file the kernel locks per read-modify-write (rules 1 and 2)
-<lane>/run.lock       the pass lock: one `run` per lane; pid and stamp inside; kernel-released
-<lane>/slots/<n>.lock one kernel-locked file per gate slot (rule 14)
-<lane>/stop           present means: start nothing new and exit
-```
-
-Every one of these lives under `--lane`. Nothing this tool writes goes
-anywhere else, and nothing goes under `/tmp` (rule 13). The tracked files are
-the records and nothing else; a `git status` in a lane that is not mid-verb is
-clean.
-
-The clone is the lane's own and the tool creates it. **It is never a checkout
-somebody works in.** A lane that merged into a working copy would rewrite a
-line's HEAD under them, and the prototype's clone is already separate for
-exactly this reason; here it is a refusal: a `--lane` whose `repo/` is a git
-work tree with a dirty index, or whose `repo/` resolves (after following
-symlinks, per `nova-bus`'s `--bus` test) to any repository the tool did not
-clone itself, is exit 2.
-
-### The entries
-
-An entry is a pull request or a branch, and the two lists are separate in the
-state file on purpose — see **the state file**. Every entry carries:
-
-| field | meaning |
-|---|---|
-| `pr` or `branch` | which kind it is; exactly one is present |
-| `needs_read` | `yes` if a recorded read is required before it merges |
-| `reads` | the fold of `<lane>/reads/<entry>/` (rule 22): `who`, `verdict`, `note`, `at`, `head`, `file` — `head` is the sha the reader supplied with `--head`, never one the tool filled in |
-| `head` | the branch name (a PR) or the resolved `origin/<branch>` sha |
-| `oid` | the head **commit**, which is what a read is keyed to and the first half of what a gate is keyed to (the other half is the base sha, rule 18) |
-| `state` | the last pass's verdict: one of the states below |
-| `last` | when that verdict was reached |
-| `detail` | the one-line reason, for a state that has one |
-
-The states are `NEW`, `PENDING`, `NEEDS-READ`, `NEEDS-GATE`, `HOLD`, `RED`,
-`WRONG-BASE`, `FORK`, `CONFLICTING`, `REMERGED`, `BLOCKED`, `MERGEABLE-GREEN`,
-`UNKNOWN`. They are a closed set, and a pass that cannot place an entry in one
-of them prints `RUN STOPPED … : <reason>` rather than inventing a fourteenth.
-
-**The lane is ORDERED and the order is the order entries were added.** A pass
-walks it from the front and merges **at most one** entry, then stops: the base
-moved, so every entry behind it must be read again. A pass that merged two
-entries would be merging the second against a base no check had seen.
 
 ## The merge condition
 
@@ -824,6 +665,13 @@ per `(who, head)` the read condition takes the record with the newest `at`,
 and two with one `at` to the second fold **hold-last**, as rule 18 folds
 red-last; the tool deletes no record, and the lane branch's history keeps
 the hold.
+
+**Amended by [SPEC-DECIDE.md](SPEC-DECIDE.md) reading 3, *The hold check* (draft, 2026-09-19;
+#1572, #1627), which [SPEC-TOOLWORK.md](SPEC-TOOLWORK.md) §6 points to:** `batch`, `land`,
+`queue sweep` and `react` fold holds too — the lane's line-level APPROVE/HOLD records, and the
+forge's comments and reviews, which can only ADD a hold and never approve or release — and
+refuse a held member, read once at admission and again at the door; a scoped APPROVE releases
+only the hold ids it names, and no flag ignores a hold.
 
 **An approve from the author is not a read.** The prototype counts any recorded
 approve, which made a self-approve indistinguishable from a read — and the whole
@@ -951,295 +799,6 @@ A branch entry, or a pull request whose base is below `main`, merges on a
 green local gate plus its read, and needs no hosted run at all. Hosted CI runs
 only on `main` and nightly. This is Glenn's law from the top of the page, made
 into a rule the lane can apply per entry.
-
-## The re-merge rule — only what conflicts
-
-After a merge, the base has moved. Every entry behind it is now behind, and an
-entry that **conflicts** with the base gets no CI at all — the host will not run
-checks on a pull request it cannot merge — so it is stuck until somebody moves
-it.
-
-**So the base is re-merged into exactly the entries that CONFLICT with it, and
-into nothing else.**
-
-The prototype's first shape re-merged the base into **every** entry after every
-merge. That is the storm of **2026-09-11 12:40Z**: 26 entries each got a new
-commit, each new commit cancelled and restarted that entry's whole check matrix,
-and about 70 jobs per entry were queued at once. The lane spent the next
-half-hour watching runs it had itself invalidated, nothing went green, and the
-two-minute rule was violated by the tool whose job is to honour it. An entry
-that still merges cleanly needs nothing: its checks are valid, its merge commit
-will be computed by the host at merge time, and touching it throws away evidence
-that already exists.
-
-The re-merge of one entry:
-
-```
-fetch the base; fetch the entry's head
-check out the head in the lane's clone
-if the base is already an ancestor -> nothing to do
-merge the base
-  clean            -> commit and push the head (never forced)
-  any conflict     -> abort the merge; BLOCKED with the conflicting file list; move on
-```
-
-A blocked entry is `BLOCKED` with its reason, and the lane **moves on**: one
-entry that needs a hand does not stop the other thirty-two. The reason names
-every conflicting file, so `conflicts with fixed-table-form in
-test/java-tables/Versioning.java` is a sentence a reader can act on without
-opening anything, and `files=<n>` on `RUN REMERGE` is the count.
-
-**A branch entry's merge is never re-merged and never auto-resolved.** A branch
-entry's integration commit is built exactly as a pull request's (rule 18):
-`merge --no-ff` of `origin/<branch>` onto the base sha in the lane's clone, with
-a message naming the branch and its last commit's subject, kept under
-`refs/nova-merge/integration/`; it is gated by sha and published by the
-compare-and-swap push of rule 21. A branch that conflicts stops with its reason
-and waits for a hand.
-
-## The one mechanical conflict rule, withdrawn
-
-An earlier draft of this spec kept one mechanical conflict rule in two halves:
-a sorted union of a ship-target list, and a workflow hunk where both sides had
-only added steps. The prototype carries both, as `resolve_mechanical` and an
-embedded Python resolver. **This spec withdraws the rule. There is no
-mechanical resolve (rule 7).**
-
-The reason is the record. On 2026-09-11 the lane met four conflicts. All four
-were real: all on one Java file the tip had changed, none on either of the two
-files the rule named. A resolver that had matched would have been a resolver
-writing code nobody read into an entry. A resolver that did not match still
-had to be read, tested and kept parity with a file that belongs to another
-repository. The rule earned nothing on the day it was built for, and it is
-the one place in this tool where a mistake writes content.
-
-**So the lane never edits an entry's content.** A conflict is the host's word
-(`mergeable: CONFLICTING`), the entry becomes `BLOCKED`, `detail` names every
-conflicting file, and a hand resolves it: a child, in one clone of its own,
-never the lane's. The lane does not parse conflict markers, does not need
-`diff3`, and has no `mechanical` list in its state. There is no code path in
-`nova-merge` that writes a resolved file, and a test asserts it.
-
-## The refusals that are structural
-
-Four of this tool's rules are enforced in the **one function that runs a
-mutating command**, before the command is built, rather than by the callers
-remembering:
-
-| refused | because |
-|---|---|
-| `--auto` in any argument | `gh pr merge --auto` merges immediately here rather than queueing; #922 went in red that way on 2026-09-11 |
-| `--force`, `-f`, `--force-with-lease` | the lane never force-pushes; history the lane rewrote is history nobody can reproduce |
-| a merge of an entry not in the lane | the lane's authority is exactly its own list |
-| a merge of an entry whose base is not the lane's base | a merge into the wrong branch is not recoverable by a revert |
-
-Each is a refusal with its reason and the rule's date attached, at exit 1, and
-each is pinned by a test that asserts **the exit code and the text**, per this
-repository's CI doctrine: a check that cannot tell a failure from a refusal is
-not checking the contract it claims to.
-
-**Rule S (pit stop 4, 2026-09-16): the admin merge is refused unless it is a
-revert, and never over an open HOLD.** `run --admin` declares that this pass is
-a coordinator's hands reaching a protected base, and it grants nothing: for every
-entry it would merge, the pass refuses unless the pull request's title or body
-names a revert, and refuses whenever an open HOLD stands on the entry's own head
-or on a pull request its body carries (`carries #n`). #858 landed by `--admin`
-carrying #843/#848/#849 while Johnny's and Stella's HOLDs were open and its full
-Windows leg had never run; dev went red and #871 reverted it. The refusal is one
-sentence naming the hold or the missing revert, at exit 1, and the check stands in
-the one function that publishes, so it is the loop's merge step too: the loop
-reaches a merge only through `nova-merge run`, and no admin path exists outside
-this refusal.
-
-## The races, taken out
-
-**Two lanes on one base.** Two `run` processes, or one `run` and one hand
-`gh pr merge`, both merging into one base: each merges an entry its own checks
-verified against a base the other had already moved. The tool takes a **lock on
-the lane directory** for the whole of a pass (`flock` on `<lane>/run.lock`, a
-second, longer-lived lock than the state lock of rule 1; the pid and the stamp
-written inside; released by the kernel on death, rule 2), and a second `run` on
-the same lane exits 2 naming the holder. A lock is not a claim on the base:
-two lanes on **one base** through two lane directories is a configuration this
-tool cannot see, and a re-read of the base "immediately before the merge" does
-not close it either — another lane or a hand fits between that read and the
-host's write. So the window is closed **by the remote, as a precondition on
-the write** (rule 21):
-
-- **the object published is the object gated.** The tool never merges at the
-  host and never re-merges on the way to the push: the gate record names
-  `merge`, the lane's clone holds that object, and publication moves the base
-  ref to that sha and to nothing else. Two parents equal to `(base, head)` are
-  not the test — two merges of the same parents can differ in their trees —
-  the sha is.
-- **the base is a precondition the remote enforces, atomically.** The push is
-  `--force-with-lease=refs/heads/<base>:<expected base sha>`, the one lease
-  rule 4 allows: the remote compares its ref with the expected sha and moves
-  it only on equality. A plain push would accept any tip that is an ancestor
-  of the merge — the head itself, or the head's parent, both of which the
-  gate never saw as a base — and that is why the plain push is not used. A
-  host primitive that takes both an expected head and an expected base is
-  used instead when one exists; `gh` today offers `--match-head-commit` alone,
-  so the lease is the path today, and this spec says so.
-- **a moved base is a refusal, not a report.** When the lease is rejected the
-  tool prints `MERGE RACED entry=… expected=<sha12> found=<sha12>
-  merge=<sha12>`, logs it, exits 1, and **the pass stops there**: nothing was
-  published, the object stays under `refs/nova-merge/integration/` as
-  evidence, and the next pass builds a fresh integration commit on the moved
-  base and asks for its gate. There is no after-the-fact check, because the
-  only thing that can land is the thing that was tested.
-
-**A merge and a re-merge crossing.** A re-merge pushes a new commit onto an
-entry's head; a pass that had already read that entry's checks would merge a
-head whose checks are for the previous commit. So a pass re-reads the entry's
-`oid` immediately before merging and **refuses if it changed** since the pass
-read its checks — the same re-read that catches the author pushing mid-pass. A
-re-merge of the entry that is next to merge happens **in the pass's own order**,
-before its checks are read, never concurrently.
-
-**A read recorded for a stale head.** Closed by `read --head <sha>`: the
-verdict carries the sha the reader supplied, and a pass counts it only while
-that sha is the entry's `oid`; see **the read condition**. A stamp taken by the
-tool at record time would not close it — the push can land between the reading
-and the verb. The prototype leaves it open, and today's state file shows four
-approves on one entry recorded at 12:31Z and 12:35Z against a head whose `oid`
-is now something else.
-
-**A gate for a stale head, or a stale base.** Closed the same way, and half
-closed in the prototype: `gate_path` selects on `head == oid` exactly. This
-spec keeps it, adds the base half (rule 18: a green record whose `base` is not
-the current base sha is `gate=head`, a candidate, and the entry is
-`NEEDS-GATE`), and adds the symmetric refusal — a gate recorded for a head that
-is not the entry's current head is not merely ignored but reported, on
-`STATUS ENTRY`, as `gate=stale`, because a caller who ran the gate and then
-pushed should be told the gate was spent rather than left wondering why the lane
-is waiting.
-
-**A state file written by two verbs at once.** `add`, `read` and `gate` are
-run by hand while `run` loops, and six gate records can arrive in one second.
-A read or a gate is first its own file, never edited, committed and pushed by
-the tool (rule 22), so two records cannot collide on the branch; what can
-collide is the fold into `state.json`, and every write of that is a
-read-modify-write of one JSON file, so every write takes the same lane lock
-(rule 1). The write goes to `state.json.tmp`, the fixed name of rule 1, and
-lands by rename; nothing is written unless the old state
-parsed and the new state parses. Today's prototype, before its lock, had two
-writers on one shared temp name: the state was left at 0 bytes and the lane
-lost all 33 entries and every read. A verb that cannot take the lock within
-its `--timeout` exits 2 and says who holds it.
-
-**A lock broken under a live holder.** This tool has no stale-lock check to
-get wrong (rule 2): the lock is the kernel's, released when the holder dies,
-so a dead holder holds nothing and a live holder cannot be broken. The
-prototype's directory lock needed an age; its check read a vanished lock's
-age as infinite, called it stale, and broke the lock the next writer had just
-taken; 3 of 20 concurrent writes were lost that way. That is the argument for
-the kernel lock, not for a better age.
-
-**A red base under a green entry.** An entry's checks are evidence about the
-entry merged with the base the host computed at check time. If the base is
-red, that merge is red too, whatever the entry's own checks say, and the entry
-behind it is worse. So a pass reads the base's evidence first (rule 6) and
-stops before touching any entry when the base is red. The only way through is
-`--planned-red`, a person's name on the exception, printed on every pass.
-
-## The state file
-
-`<lane>/state.json`, decoded **strictly** — an unknown field is a refusal,
-because a state file whose `needs_read` key was typed `needs_reads` is a state
-file whose owner believes a read is required. `needs_read` is a closed
-vocabulary of exactly `yes` and `no`, and a missing or empty field refuses
-rather than silently reading as "no read required". (2026-09-12.)
-
-```json
-{
-  "version": 1,
-  "repo": "<owner>/<name>",
-  "base": "<branch>",
-  "lane_branch": "nova-merge/schema-main",
-  "default_branch": "main",
-  "hosted_red": "blocks",
-  "prs": [
-    {"pr": 951, "needs_read": "yes",
-     "reads": [{"who": "emma", "verdict": "approve", "note": "", "at": "2026-09-11T12:31:07Z",
-                "head": "cbde1fc6ba10c1430f9f90615c70706ea7aaa29e",
-                "file": "reads/951/emma-cbde1fc6ba10-20260911T123107Z-c4d5e6.json"}],
-     "head": "rowan/twin-full-width-lanes",
-     "oid": "cbde1fc6ba10c1430f9f90615c70706ea7aaa29e",
-     "state": "RED", "last": "2026-09-11T13:17:00Z",
-     "detail": "fixed form + versioning (java)",
-     "green": 24, "pending": 0, "red": 5}
-  ],
-  "branches": [
-    {"branch": "rowan/wire-probe", "needs_read": "no", "reads": [],
-     "head": "", "oid": "", "state": "NEEDS-GATE", "last": "", "detail": ""}
-  ],
-  "gates": [
-    {"pr": 949, "head": "<sha>", "base": "<sha>", "merge": "<sha>", "verdict": "green",
-     "summary": "gates/949/<head12>-<base12>-20260911T130019Z-a1b2c3.summary",
-     "at": "2026-09-11T13:00:19Z", "run": "a1b2c3",
-     "file": "gates/949/<head12>-<base12>-20260911T130019Z-a1b2c3.json"}
-  ]
-}
-```
-
-`version` is written by `init` and checked first: a number this binary does not
-know is exit 2 naming both numbers, before any other field is read. A gate
-record's `base` and `merge` and a read's `head` are full 40-character shas and
-all three are required; a record missing any does not decode (rules 18, 19 and
-21). `reads` and `gates` are the **fold** of the record files in the lane
-branch (rule 22): each carries `file`, the path of the record it came from,
-relative to the lane, and a fold replaces both lists wholesale from the files;
-**a record file that does not decode is never skipped**: the fold refuses it,
-`FOLD REFUSED file=<path>: <reason>`, the file is preserved untouched, and the
-entry whose directory holds it is `BLOCKED` for the pass — `MERGE BLOCKED
-entry=<id> reason=malformed_record file=<path>`, exit 1, no publication of
-that entry whatever its other records say, because the unreadable file may be
-the hold or the newer red — and a file whose path names no entry (scope
-indeterminate) stops the pass, `RUN STOPPED reason=malformed_record
-file=<path>`, before any entry is read; the remedy names the file and the
-verb that re-records it. (Stella, 2026-09-11: a malformed HOLD beside valid
-approvals vanished from the decision, and an older green survived an
-unreadable newer red; a printed NOTE does not make that safe.) The empty lane `init` writes is exactly
-this shape with the three lists empty.
-
-**The two entry lists are separate, and a gate carries `pr` or `branch` and
-never both.** A branch entry in the `prs` list would be parsed as a pull request
-by any older reader of this file, and a gate with both keys would match both
-selections. The prototype arrived at the same shape for the same reason, and it
-is worth stating as a rule: **a list whose items have two shapes is two lists.**
-
-The counts (`green`, `pending`, `red`) are numbers here and strings in the
-prototype, because `jq --arg` writes strings. A count that is a string compares
-as a string, and `"10" < "9"`. This spec makes them numbers.
-
-`default_branch` and `hosted_red` are the two facts rule 15 turns on (added
-2026-09-12). `default_branch` is the repository's default branch as a recorded
-fact, discovered by `init` from the remote's own HEAD or seeded with
-`--default-branch`; empty means the fact is not recorded, and an unrecorded
-fact takes the stronger arm. `hosted_red` is the policy stated outright,
-`blocks` or `names`; it is a closed vocabulary — an unknown value is a refusal
-at load, never an arm — and empty derives the arm from `default_branch`. The
-derivation is exactly rule 15's dated clause: `blocks` when the discovery of
-the default branch failed or did not answer (even when an older non-matching
-name is recorded), `blocks` when the base matches the recorded OR the freshly
-discovered default, and `names` only when a successful current discovery
-establishes a default the base is not. `--default-branch` may seed the recorded
-fact and skip `init`'s lookup, but it cannot disable the discovery the pass
-performs; a recorded fact is evidence, not perpetual proof.
-
-## The log
-
-`<lane>/log`, append-only, one line per event, `<UTC stamp> <text>`, never
-rotated by the tool and never rewritten. Every mutation is logged **before it
-runs** (`RUN <command>`) and its result after. A refusal is logged. A survey
-under `dry-run` logs nothing, which is what makes it a survey.
-
-The log is the lane's record of what it did and it is read by a person the
-morning after a storm. That is its whole specification: **one event per line,
-the stamp first, no filtering.** Glenn, 2026-09-10, after grep kept only the
-`NOTE` lines and lost the `REFUSED` one for thirty minutes: **never filter the
-status line.**
 
 ## What it deliberately does not do
 
@@ -1459,64 +1018,27 @@ is trusted.
 - `status` on `bin/merge-lane.sh`'s `lane.json` is exit 2 with `refusing to
   guess` and the `init` command, and writes nothing.
 
-## The merge queue (#1142), 2026-09-17
+## Sibling staging on a rebuilt root (2026-09-21)
 
-Every script and hand step sketched on the bench becomes an official verb, and the queue below owns the lane's order mechanically. **The mistake it removes, in one sentence.** It removes the night the queue was emptied and refilled by hand four times, the poison PR that dropped every innocent PR behind it, and the sweep that re-enqueued over a coordinator's hold.
+**The mistake it removes.** Schema's go tests resolve serialize runtimes as siblings of the checkout (`../serialize.go` from the job clone; nested packages walk further). `nova-merge batch` rebuilds `--root/<name>` every run, so those clones — and any watcher symlink the lane pinned beside `repo/` — vanish with the tree.
 
-**The verb line, as `help` prints it.**
+**The flag.** `--sibling <name>=<url>@<ref>` (repeatable) clones that repository beside `repo/` at the named branch or tag, after the job clone and before the merges. `name` is one `safepath.NameOK` path element (`serialize.go` is legal); `repo` and `tmp` are reserved for the batch's own checkout and temp dir. The last `@` splits url from ref, so an ssh URL is `git@host:path.git@v1.16.2`. A clone that cannot be made is `BATCH REFUSED`. Tests stage a `file://` fixture; they do not clone the real serialize repositories (nova-tools #2499 item 2 / #2508).
 
-```
-nova-merge queue    --lane <dir> (hold <reason>|release|skip <pr>...|unskip <pr>...|front <pr>|sweep) [--window <duration>] [--max <n>]
-nova-merge classify --lane <dir> --run <id> --verdict flaky-under-load|own-change|environment [--note <text>]
-```
+## Lessons — the dogfood pass of 2026-09-18
 
-**What it reads and what it writes.** It reads the lane's `state.json` and the lane branch's records through the fold, and the host through `Host.PR` and `Host.Checks` — no new client, and no re-derivation inside one sweep (one snapshot per pass). It writes `<lane>/queue.json` (`queued`, `skipped`, `parked`), `<lane>/hold` (present means held; its first line is the reason), and one immutable `classify` record per decision under `<lane>/classify/<run>-<at>-<rand6>.json`, pushed by the tool exactly as a read is (rule 22). Every queue write is a read-modify-write under rule 1's kernel lock through a fixed temp name; every path comes from `--lane` and nothing goes under `/tmp` (rule 13).
+A non-author drove `nova-merge batch`, `nova-merge queue` and `nova-merge react` against this repository at `dev` 65e23fb0 and wrote down every edge they fell off. **A friend's first-run stumble is a gift, and the repair is the tool.** Sixteen of them are in this section by their own numbers, with the thing each one cost; every one has a test that was seen red before it was trusted.
 
-**One queue, one hold file, one order.** The queue is the order `run` walks: `queued` is the ordered pull requests, and `skipped` and `parked` are the sets the sweep must not touch. `add` is still a person's decision and appends; `queue` is the mechanical hand that keeps the order, so no coordinator empties and refills it by hand. A hold is a person's, never the tool's.
+**The three that were verbs nobody had ever run.** **Edge 17**: `react` printed `REACT enqueue pr=<n>` at exit 0 and enqueued into `merge:queue`, a redis set NOTHING IN THE TREE READS — the reactor was handed a nil door and installed one of its own. The door is the caller's now, `--lane` is required, and react writes `<lane>/queue.json` through the same read-modify-write `queue skip` makes; `queue status` afterwards is the proof, and that is the test. It is the list the next batch is built from and it reaches no forge: the one entrance to the forge's merge queue is `Enqueuer`/`land` in the section above, which takes a batch and nothing else. **Edge 12**: `queue sweep` could never run against a real repository — `QueuePRs`, `PoisonFailures`, `ChangedPackages` and `IssueFor` existed only on the test fake, so both type assertions missed and every real invocation answered `no host, no sweep`. THE FAKE WAS THE ONLY IMPLEMENTATION, and the whole verb passed its tests. **Edge 25** (batch 7, the same week): the gate runs on one operating system and CI runs on three, so three members green under the gate were red on CI's windows legs and the batch pull request went red after the gate said OK; a member whose own head has no green required check is dropped before the merge, and `GOOS=windows go vet ./...` is a step. The check's name is `ci-ok` in this repository; `--check-name` or `.nova-merge` `required-check=` names it for a repo whose rollup is not that job (#2499), and `check=` is on `BATCH OK` and the check `BATCH DROP` so a lane script can parse it (#2508). *A seam only the fake implements is a verb nobody has run. A gate that checks fewer platforms than the forge is a gate that says green about a thing it did not check.*
 
-**`hold <reason>` and `release`.** `hold` writes the reason into `<lane>/hold`; while it exists the sweep and every enqueue (`add`, `front`, and a `run` that would enqueue) refuse at exit 2 with the remedy `nova-merge queue release  # <reason>`, so a sweep can never re-enqueue over a coordinator's hold. `release` removes the file and prints how long it stood. An empty reason is refused: a hold nobody can read is not a hold.
+**The three that failed in the one direction a failure here must never fail.** **Edge 9**: `pass.go` swallowed `LoadQueue`'s error, leaving the walk order nil — and a nil order means "walk everything", so a `queue.json` that did not parse SILENTLY UN-SKIPPED every skip and every parked poison. It refuses at exit 2 naming the file. The same hole had a second mouth: `WalkOrder` returned nil when every pull request was skipped, which reached the same "walk everything" without corrupting anything. **Edge 6**: `dry-run` walked `p.State.Entries()` while the pass walked `p.ordered()`, so the verb whose whole job is to print what a pass would do listed a skipped pull request in its plan. **Edge 8**: `merge.ReadHold` was called in exactly ONE place, the sweep, so a hold stopped the enqueue and not the pass that lands what is already queued — which is the half a person holding a lane actually means. *A failure must fail towards refusing, never towards acting; and two code paths that must agree about an order must read the same one.*
 
-**`skip <pr>...` and `unskip <pr>...`.** `skip` dequeues each named pull request and records it in `skipped`; a skipped pull request is never swept and never advanced. `unskip` removes it from `skipped` and appends it to `queued`; because a poison park is `skipped` plus a park record, `unskip` is the one way a parked pull request returns.
+**The two about one mechanism wearing two names.** **Edge 18**: two hold mechanisms and two skip sets, the lane's files and redis's `enqueue:hold`/`enqueue:skip`, with the same words — a held lane with the pull request skipped still printed `REACT enqueue`, and only the redis key stopped it. ONE QUEUE, ONE HOLD, ONE SKIP SET; the redis pair is deleted. **Edge 10**: `front` reordered numbers in a file and asked the forge whether the pull request was open and green first, which made the one local verb of the family need a network, a `gh` and a token — over a judgement `run` makes again on every pass. *Two mechanisms with one name are one mechanism nobody can reason about; and a verb that writes only its own file asks nobody.*
 
-**`front <pr>`.** `front` dequeues everything, enqueues the named pull request at position one, and re-enqueues the rest in their old order after it; the pass retires the named one first and the rest follow in the order they held, so the queue is never emptied and refilled by hand. `QUEUE FRONT` prints `position=1 displaced=<n>`; a pull request not open, not green, or not in the lane is refused.
+**The four about a line that told a reader the wrong thing.** **Edge 2**: `BATCH SKIP lisp` went to stderr and `BATCH OK` said nothing, so the one line a caller parses claimed a green gate over a suite that ran three of its four steps — `skipped=<list>` is on the verdict line, `--require-lisp` turns the skip into a FAIL, and a program off `PATH` is looked for under `~/sdk/<toolchain>/bin` first. **Edge 1**: an old `go` on `PATH` surfaced as `step=build reason="go: downloading go1.26 (linux/amd64)"` — a PROGRESS NOTICE naming nothing to fix, picked only because it was the first line that said anything; the toolchain is checked against `go.mod` before the first merge, and a notice is never the news. The same first-line cut then kept only `# package` from a red `go build`, so a failure in `bench/tools/realpacket-gen` named the package and not `undefined: Foo` (#2499 item 3 / #2508); `BATCH FAIL reason=` now keeps the captured stderr after those notices, capped at `oneline.TailBytes` (500). **Edge 3**: the help said the test step runs `-timeout 5m` and it has not since integration-4. **Edge 7**: nothing named the hold or the skip set, so a lane standing still under a hold read exactly like a lane with nothing to do; `queue status` is that line. *Every line a caller parses carries what the tool did NOT do as well as what it did.*
 
-**`sweep --window <duration>`.** The sweep walks every open pull request the host reports in the session window named by `--window` and enqueues each whose head run is green (zero fail, zero pending, at least one pass, rule 5) and that is not skipped, parked, dirty (`CONFLICTING`) or already queued. A stale red — a red run for a sha the head has moved past — is re-enqueued **only when the queue holds five entries or fewer**, and never otherwise; a red for the current head is never enqueued. A hold refuses the whole sweep, and `--window` has no default because a sweep with no window would enqueue the world.
+**The four about a tool that would not say no, or said too much.** **Edge 19**: `react` with neither `--once` nor `--deadline` ran a 60-second loop and exited 0 although its own help said one was required — refused by name, like `nova-work events`. **Edge 20**: one malformed payload killed the reactor at exit 1, although an unknown CHANNEL was already ignored; a payload that is not the JSON its channel promises is one `REACT DROP` line and a count on the closing line, and everything else still fails. **Edge 11**: `--who` on `queue hold` was undocumented and optional, and a hold without it said `by=unknown` — a hold whose owner nobody can ask is a hold nobody dares release; it is required, because this binary reads no environment variable and `$USER` is the caller's to pass. **Edge 16**: five raw `redis: … pool.go` lines landed on stderr ahead of the verb's own one-line refusal; the library's diagnostics are not this tool's grammar, and the logger is silenced before the first dial. *Refuse by name, survive a stranger's typo, and never make a reader read the library instead of the tool.*
 
-**The poison detector.** A pull request whose own merge-group run fails twice on one test, in a package that pull request changed, and whose `classify` decision is `own-change`, is poison: the sweep parks it — `skip` plus one issue naming the test, the package, the two run ids and the pull request — and no sweep ever re-enqueues it. A `flaky-under-load` or `environment` decision never parks, and `unskip` clears a park. `QUEUE PARK entry=<pr> test=<name> package=<path> runs=<n> issue=<url|->` is the one line.
-
-**`classify --run <id>`.** `classify` records one typed decision behind the merge group's floor — `flaky-under-load`, `own-change` or `environment` — keyed to the run id and the head sha, written and pushed as a record (rule 22) and folded beside the gates; the newest `at` for a run wins, a second classification is a second file, and the detector reads `own-change` to arm and the other two to disarm. It records a person's class and decides nothing.
-
-**The output, one line per verb.**
-
-```
-QUEUE HOLD reason=<text> path=<file> by=<who>
-QUEUE RELEASE held=<duration> path=<file>
-QUEUE SKIP entry=<pr> skipped=<n> queued=<n>
-QUEUE UNSKIP entry=<pr> skipped=<n> queued=<n>
-QUEUE FRONT entry=<pr> position=1 queued=<n> displaced=<n>
-QUEUE SWEEP window=<duration> scanned=<n> green=<n> queued=<n> already=<n> skipped=<n> dirty=<n> parked=<n> stale_red=<n> rerun=<n>
-QUEUE PARK entry=<pr> test=<name> package=<path> runs=<n> issue=<url|->
-QUEUE REFUSED: <reason>
-CLASSIFY OK run=<id> entry=<pr> verdict=<class> test=<name> by=<who> file=<path> pushed=true
-CLASSIFY FAIL run=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it
-CLASSIFY REFUSED: <reason>
-```
-
-**The refusals, exit 2, each with its one remedy line.** `queue` with no subcommand names every subverb; `hold` with an empty reason wants `nova-merge queue hold "<reason>"`; `skip` and `unskip` with no `<pr>` want `nova-merge queue skip <pr>...`; `front` on a pull request not in the lane wants `nova-merge add --lane <dir> --pr <n>`; any enqueue while held wants `nova-merge queue release`; `sweep` with no `--window` wants `--window <duration>`; `classify` with no `--run` or an unknown `--verdict` names the flag and the three classes; and any of them on a directory with no `state.json` gets rule 20's `refusing to guess` line and the `init` command.
-
-### Red tests
-
-A card writes these first, each seen red before it is trusted; the network, the bench and the clock are fakes in every one.
-
-1. `hold` then a sweep against a fake host and a fake clock: the sweep is exit 2 with the `release` remedy, the fake host receives no enqueue, and `<lane>/hold`'s first line is the reason.
-2. `skip 12 13`, then `unskip 13`: the order omits both, `skipped` holds 12, and a sweep over a fake window with 12 green does not enqueue it.
-3. `front 7` on a four-entry queue: one `QUEUE FRONT entry=7 position=1 displaced=3`, the order is `[7, a, b, c]`, and after the fake host reports 7 merged the rest keep their old order.
-4. A sweep over a fake host of ten open pull requests — green, stale red, current red, dirty, skipped, parked and already queued — counts each bucket and enqueues only the green one.
-5. A sweep with a stale red and a queue of six does not re-enqueue it; the same sweep with a queue of five does; a mutation that drops the bound turns the test red.
-6. The detector with a fake host: one test failed twice in a changed package plus an `own-change` classify parks the pull request (`QUEUE PARK` names test and issue) and a green re-sweep does not enqueue it, while a `flaky-under-load` classify never parks.
-7. `classify --run` against a fake remote: one immutable record, `CLASSIFY OK … pushed=true`, a second classification for the same run is a second file with the newest `at` winning, and an unknown `--verdict` is exit 2 naming the three classes.
-8. `queue` with no subverb, `hold ""`, `skip` with no `<pr>`, `front` on a missing pull request, `sweep` with no `--window` and `classify` with no `--run`: each exit 2 with its one remedy line, and the fake remote sees no push.
-9. Two concurrent `hold`/`skip`/`front`/`sweep` writers: every write lands, `queue.json` parses at every read, a killed writer leaves the old queue whole (rule 1), and the sweep window is measured by a fake clock, never the wall clock.
+**And one the merge group found, the same night.** The batch that carried these fixes went red on `test-hosted-merge (darwin, 1)` with `panic: test timed out after 1m40s` and TEN parallel tests reported at 14 s each — every one of them blocked in `Cmd.Wait` on a `git` child, none of them in a lock. Ten tests do not go slow together: those were the `t.Parallel()` tests, which Go resumes only after the SERIAL ones have finished, so the report says the serial tests had eaten 86 of the package's 100 seconds and left the rest of the package fourteen. What ate them was the gate's new `vet-windows` step, run inside `go test`: `GOOS=windows go vet ./...` must build the WINDOWS STANDARD LIBRARY into the cache before it can type-check anything — seconds on an idle 64-core bench, far more on a darwin runner sharing its machine with seven others — and four new batch tests each paid into it. **A unit test never pays for a cross-compile of the standard library.** The step stays in the product's gate, where it is paid once per bench and cached; the tests run that list minus that one step, and a test that reads both lists pins the step in the real one and pins that the exemption is that one name and no other. **And a CPU-heavy test that owns every fixture it touches takes `t.Parallel`**: serial was never a requirement of the batch tests, and wall clock in the serial phase is wall clock every other test in the package is waiting behind.
 
 ## Tests this spec demands
 

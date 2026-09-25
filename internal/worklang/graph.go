@@ -166,47 +166,19 @@ func edgeIDs(file, field string, f Form) ([]string, error) {
 	return out, nil
 }
 
-// refuseCycle is validator rule 3: a depth-first walk that names the exact cycle
-// it finds, so the refusal says which nodes deadlock rather than only that one
-// exists.
+// refuseCycle is validator rule 3: it names the exact cycle it finds, so the
+// refusal says which nodes deadlock rather than only that one exists. The walk is
+// FindCycles, the same one `set check` reports with: a plan is refused at its FIRST
+// cycle because a refused plan is never published, and a work set prints all of
+// them because a checker that stopped at the first would cost the caller one round
+// trip per defect. Two callers, one walk, so the two can never disagree about what
+// a cycle is.
 func (g *Graph) refuseCycle() error {
-	const (
-		white = 0
-		grey  = 1
-		black = 2
-	)
-	color := make(map[string]int, len(g.order))
-	var path []string
-	var visit func(id string) error
-	visit = func(id string) error {
-		switch color[id] {
-		case grey:
-			start := 0
-			for start < len(path) && path[start] != id {
-				start++
-			}
-			cycle := append(append([]string(nil), path[start:]...), id)
-			return refuse(g.file, fmt.Sprintf("rule 3: :needs edges contain a cycle: %s", strings.Join(cycle, " -> ")))
-		case black:
-			return nil
-		}
-		color[id] = grey
-		path = append(path, id)
-		for _, need := range g.needs[id] {
-			if err := visit(need); err != nil {
-				return err
-			}
-		}
-		path = path[:len(path)-1]
-		color[id] = black
+	cycles := FindCycles(g.order, g.needs)
+	if len(cycles) == 0 {
 		return nil
 	}
-	for _, id := range g.order {
-		if err := visit(id); err != nil {
-			return err
-		}
-	}
-	return nil
+	return refuse(g.file, fmt.Sprintf("rule 3: :needs edges contain a cycle: %s", strings.Join(cycles[0], " -> ")))
 }
 
 // Order returns every node id in seed order: admission, not readiness.

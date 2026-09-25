@@ -21,26 +21,43 @@ package jobs
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 )
+
+// Acceptance is the evidence that closes a unit (A14). Each entry names a
+// criterion with an id, kind, subject and predicate; the reader shape-checks
+// the closed sets and the kernel refuses a unit whose acceptance list is empty
+// once the set names acceptance.
+type Acceptance struct {
+	ID        string `json:"id"`
+	Kind      string `json:"kind"`
+	Subject   string `json:"subject"`
+	Predicate string `json:"predicate"`
+}
 
 // Node is one job in the graph. Merged and Green are the two facts that make a need
 // terminal accepted; a node that is neither is an open PR.
 type Node struct {
-	ID     string   `json:"id"`
-	Needs  []string `json:"needs,omitempty"`
-	Merged bool     `json:"merged,omitempty"`
-	Green  bool     `json:"green,omitempty"`
+	ID         string       `json:"id"`
+	Needs      []string     `json:"needs,omitempty"`
+	Merged     bool         `json:"merged,omitempty"`
+	Green      bool         `json:"green,omitempty"`
+	Acceptance []Acceptance `json:"acceptance,omitempty"`
 }
 
 // Graph is the job graph: the nodes in seed order, the forward needs edges and the
 // reverse blocks edges built by the same insert.
 type Graph struct {
-	order  []string
-	node   map[string]Node
-	needs  map[string][]string
-	blocks map[string][]string
+	order    []string
+	node     map[string]Node
+	needs    map[string][]string
+	blocks   map[string][]string
+	doneWhen string // report-only; never a gate on readiness (A9)
 }
 
 // Seed builds and validates a graph from nodes in seed order. It refuses a duplicate or
@@ -67,6 +84,7 @@ func Seed(nodes []Node) (*Graph, error) {
 	}
 	// rule 2: every need resolves, and the same insert writes the reverse edge.
 	for _, id := range g.order {
+		written := make(map[string]bool)
 		for _, dep := range g.node[id].Needs {
 			dep = strings.TrimSpace(dep)
 			if dep == "" {
@@ -75,6 +93,10 @@ func Seed(nodes []Node) (*Graph, error) {
 			if _, ok := g.node[dep]; !ok {
 				return nil, fmt.Errorf("rule 2: %s needs %s which does not exist", id, dep)
 			}
+			if written[dep] {
+				continue
+			}
+			written[dep] = true
 			g.needs[id] = append(g.needs[id], dep)
 			g.blocks[dep] = append(g.blocks[dep], id)
 		}
@@ -85,6 +107,38 @@ func Seed(nodes []Node) (*Graph, error) {
 	}
 	return g, nil
 }
+
+// SeedSet seeds a graph with a done-when report. The done-when is report-only
+// metadata (A9): it describes the set's finish line but never gates readiness.
+// Once the set names acceptance (any node carries it), a unit whose acceptance
+// list is empty is refused at load (A14).
+func SeedSet(doneWhen string, nodes []Node) (*Graph, error) {
+	hasAcceptance := false
+	for _, n := range nodes {
+		if len(n.Acceptance) > 0 {
+			hasAcceptance = true
+			break
+		}
+	}
+	if hasAcceptance {
+		for _, n := range nodes {
+			if len(n.Acceptance) == 0 {
+				return nil, fmt.Errorf("unit %q carries no acceptance; once a set names acceptance, every unit must carry it", n.ID)
+			}
+		}
+	}
+	g, err := Seed(nodes)
+	if err != nil {
+		return nil, err
+	}
+	g.doneWhen = doneWhen
+	return g, nil
+}
+
+// DoneWhen returns the set's finish-line report. It is report-only metadata
+// (A9): readiness is per-unit, and this value never gates a member whose own
+// needs are closed.
+func (g *Graph) DoneWhen() string { return g.doneWhen }
 
 // ParseNodes reads the node list from JSON: a bare array of nodes, or an object with a
 // "nodes" array. Bytes that are not a node list are a refusal, never a guess.
@@ -212,6 +266,97 @@ func (g *Graph) Accepted(id string) bool {
 }
 
 func (n Node) accepted() bool { return n.Merged && n.Green }
+
+// Accept marks id as terminal accepted: merged and green. It is the join that
+// satisfies a dependent node's need.
+func (g *Graph) Accept(id string) error {
+	n, ok := g.node[id]
+	if !ok {
+		return fmt.Errorf("node %q not found in graph", id)
+	}
+	n.Merged = true
+	n.Green = true
+	g.node[id] = n
+	return nil
+}
+
+// AcceptFile accepts id in the graph file at path and writes the graph back in seed
+// order. The file is read, seeded and the node found before anything is written, so
+// an unreadable or invalid graph, or an id the graph does not hold, leaves the file
+// byte-identical.
+func AcceptFile(path, id string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	g, err := ParseSeed(raw)
+	if err != nil {
+		return err
+	}
+	if err := g.Accept(id); err != nil {
+		return err
+	}
+	nodes := make([]Node, 0, g.Len())
+	for _, n := range g.Order() {
+		node, _ := g.Node(n)
+		nodes = append(nodes, node)
+	}
+	out, err := MarshalNodes(nodes)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0o644)
+}
+
+// NamesGraphFlag reports whether an accept line carries --graph, the flag only the
+// in-process graph form of nova-work accept takes. nova-work dispatches on it: a line
+// that names --graph is the graph form, every other accept line is the resident
+// session's socket verb. A bare "--" ends the flags.
+func NamesGraphFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		name := strings.TrimLeft(a, "-")
+		if name == a {
+			continue
+		}
+		if name == "graph" || strings.HasPrefix(name, "graph=") {
+			return true
+		}
+	}
+	return false
+}
+
+// AcceptArgs is nova-work accept --graph <path> --node <id> after the verb word: it
+// parses the line, refuses a missing --graph or --node or a stray argument, and
+// accepts the node through AcceptFile. It returns the accepted id. Every refusal,
+// whether of the line or of the graph, happens before the file is written, so the
+// file is byte-identical after an error.
+func AcceptArgs(args []string) (string, error) {
+	fs := flag.NewFlagSet("accept", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	graph := fs.String("graph", "", "the :deps graph file (required)")
+	node := fs.String("node", "", "the one node to accept (required)")
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() > 0 {
+		return "", fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if strings.TrimSpace(*graph) == "" {
+		return "", errors.New("--graph is required; refusing to guess")
+	}
+	id := strings.TrimSpace(*node)
+	if id == "" {
+		return "", errors.New("--node is required; refusing to guess")
+	}
+	if err := AcceptFile(*graph, id); err != nil {
+		return "", err
+	}
+	return id, nil
+}
 
 // State names a node's progress: open, merged, or accepted. A merged node that is not
 // yet green is the blocker nova-pulse harvest settles.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -124,15 +125,14 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 	other := bench(t, bare)
 	note(t, other, "bo-333333333333", "mid wait")
 
-	pushed := make(chan error, 1)
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		pushed <- push(other)
-	}()
+	// Pushed at the SYNC POINT and not after a sleep: the hook fires the moment the wait
+	// has polled, found nothing and is about to sleep, so the note cannot land before the
+	// wait is waiting and the wait cannot return before it lands. A sleep raced the first
+	// poll, and the deadline then had to be long enough for the race to come out right
+	// (#370). That order is the assertion, and a channel makes it rather than a clock.
+	pushed := pushAtSyncPoint(t, checkout, other)
 
-	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
-	took := time.Since(start)
 	if err := <-pushed; err != nil {
 		t.Fatal(err)
 	}
@@ -142,11 +142,11 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333").
 		mustContain(t, "stdout", "INBOX OK as=Ada")
+	// It returned ON THE NOTE and not on its deadline. `WAIT OK` above and the absence of
+	// `WAIT TIMEOUT` here are the whole of that claim: the tool says which of the two ended
+	// it, so the test does not need to time the call to know.
 	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
 		t.Fatalf("the wait timed out over a note that arrived:\n%s", r.stdout)
-	}
-	if took >= 30*time.Second {
-		t.Fatalf("the wait took %s, which is its whole timeout; it did not return on the note", took)
 	}
 	// The polls before the note are silent: a wait that printed a listing per poll would
 	// be a poller with extra steps, and the caller's transcript is what this verb is for.
@@ -190,24 +190,22 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	checkout, _ := busDir(t)
 	settled(t, checkout)
 
-	// Two seconds and not the few hundred milliseconds this needs on a quiet machine: the
-	// assertion under it is that the run did not come back BEFORE its deadline, and a
-	// deadline long enough to be told apart from the work around it is what makes that
-	// about the timeout rather than about the runner. It used to say the assertion was
-	// that the run polled more than once; that claim is a wall clock and now lives behind
-	// the perf tag, which is what the note further down is about.
-	const timeout = 2 * time.Second
-	start := time.Now()
+	// The deadline is SHORT, because nothing here is timed by this test any more. The two
+	// seconds this used to take were bought to make `time.Since(start)` tell the deadline
+	// apart from the work around it -- and that comparison is gone: the tool reports its
+	// own `after=`, so the claim "it did not come back early" is read out of the line the
+	// tool printed rather than measured by a harness the scheduler can park. What is left
+	// is real sleeping and nothing else, so it is cut to what proves the verb sleeps.
+	const timeout = 300 * time.Millisecond
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
-	took := time.Since(start)
 
-	r.mustContain(t, "stdout", "WAIT as=Ada timeout=2s interval=100ms cursor=").
+	r.mustContain(t, "stdout", "WAIT as=Ada timeout=300ms interval=100ms cursor=").
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "INBOX ") {
 		t.Fatalf("a wait that found nothing printed a listing:\n%s", r.stdout)
 	}
-	if took < timeout {
-		t.Fatalf("the wait returned after %s, before its %s deadline", took, timeout)
+	if after := afterOf(t, r.stdout); after < timeout {
+		t.Fatalf("the wait says it returned after %s, before its %s deadline:\n%s", after, timeout, r.stdout)
 	}
 	// It polled and said how many times: a tool that returns "nothing" without saying it
 	// looked is indistinguishable from one that did not look.
@@ -349,9 +347,7 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 	// Tomorrow, on the fixed clock: the line a reader draws when they mean "from today".
 	invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-09-10")...).mustCode(t, 0)
 
-	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
-	took := time.Since(start)
 
 	r.mustContain(t, "stdout", "INBOX SWITCH your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus ").
 		mustContain(t, "stdout", "--legacy-now --advance --remote \"origin\" --branch \"main\"").
@@ -363,11 +359,15 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 	if n := strings.Count(r.stdout, "your switch-day line"); n != 1 {
 		t.Fatalf("the line drawn forward was mentioned %d times, want 1:\n%s", n, r.stdout)
 	}
+	// "At once" is `WAIT OK` above and the absence of `WAIT TIMEOUT` here, which together
+	// say the call returned on the first poll and not on its thirty-second deadline. The
+	// ten-second wall clock that used to stand here said the same thing in a way that a
+	// loaded runner could make false.
 	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
 		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
 	}
-	if took > 10*time.Second {
-		t.Fatalf("the wait took %s to say the line hides everything; it is meant to say so at once", took)
+	if polls := pollsOf(t, r.stdout, "WAIT OK"); polls != 1 {
+		t.Fatalf("the wait polled %d times to say the line hides everything; it is meant to say so on the first:\n%s", polls, r.stdout)
 	}
 }
 
@@ -411,11 +411,9 @@ func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
 
 	other := bench(t, bare)
 	note(t, other, "bo-333333333333", "mid wait")
-	pushed := make(chan error, 1)
-	go func() {
-		time.Sleep(250 * time.Millisecond)
-		pushed <- push(other)
-	}()
+	// At the sync point, so the note lands while the wait is waiting rather than whenever
+	// a 250ms sleep and the first poll happen to fall on the machine running this.
+	pushed := pushAtSyncPoint(t, checkout, other)
 
 	args := []string{
 		"wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
@@ -450,13 +448,13 @@ func TestWaitWithoutAdvanceBlocksWhenCursorIsUnadvanced(t *testing.T) {
 	checkout, _ := busDir(t)
 	settled(t, checkout) // Ada is up to date: nothing new to wake on.
 
-	const timeout = 1 * time.Second
-	start := time.Now()
+	const timeout = 300 * time.Millisecond
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
-	took := time.Since(start)
 
-	if took < timeout {
-		t.Fatalf("wait returned after %s, before its %s deadline, with nothing new:\n%s", took, timeout, r.stdout)
+	// The tool's own `after=`, not this test's clock: what is under test is that the verb
+	// blocks rather than spinning, and the verb is the thing that knows how long it did.
+	if after := afterOf(t, r.stdout); after < timeout {
+		t.Fatalf("wait says it returned after %s, before its %s deadline, with nothing new:\n%s", after, timeout, r.stdout)
 	}
 	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "WAIT OK") {
@@ -476,34 +474,124 @@ func TestWaitWithoutAdvanceReturnsWhenNoteArrivesDuringWaitWithUnadvancedCursor(
 	other := bench(t, bare)
 	note(t, other, "bo-555555555555", "new note during wait")
 
-	// The note is pushed at a sync point, not after a sleep: the wait signals the
-	// hook the moment it has polled, found nothing new, and is about to sleep, so
-	// the note cannot arrive before the wait is actually waiting, and the wait
-	// cannot return before it arrives. That order is the assertion, made by the
-	// channel instead of a wall clock that races the poll (#370).
-	blocked := make(chan struct{})
-	var once sync.Once
-	hook := waitBlockedHook(func(dir string) {
-		if dir == checkout {
-			once.Do(func() { close(blocked) })
-		}
-	})
-	prev := testWaitBlockedHook.Swap(&hook)
-	defer testWaitBlockedHook.Store(prev)
+	pushed := pushAtSyncPoint(t, checkout, other)
 
-	pushed := make(chan error, 1)
-	go func() {
-		<-blocked
-		pushed <- push(other)
-	}()
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "5s")...).mustCode(t, 0)
+	// 30s and not the 5s this had: nothing here asserts an elapsed time, so a deadline
+	// costs exactly nothing when the machine is quick and is the only thing standing
+	// between this test and a red run when it is not. At 5s the merge group's
+	// windows-latest leg reported `WAIT TIMEOUT after=8.364s polls=2` -- the sync point
+	// had fired, and the push behind it did not finish inside the deadline.
+	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
 	if err := <-pushed; err != nil {
 		t.Fatal(err)
 	}
 
 	r.mustContain(t, "stdout", "WAIT OK new=1").
 		mustContain(t, "stdout", "INBOX NOTE id=bo-555555555555")
+	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
+		t.Fatalf("the wait timed out over a note pushed at its own sync point:\n%s", r.stdout)
+	}
+}
+
+// THE SYNC POINT, for every test that needs a note to arrive while a wait is waiting.
+//
+// A test that pushed after `time.Sleep(250ms)` was racing the first poll, and the whole
+// claim then rested on the deadline being long enough for the race to come out right on
+// whatever machine ran it. #370 replaced the sleep with a hook the tool calls at the exact
+// boundary a wait becomes blocked -- polled, found nothing, about to sleep -- and this is
+// that, made reusable and safe to call from a PARALLEL test.
+//
+// It has to be a registry rather than the plain Swap the first caller used. The hook is one
+// process-wide atomic; two parallel tests each swapping their own in and restoring "the
+// previous one" on the way out is the lost-update bug, and the loser's wait then sits out
+// its whole deadline with nobody to push to it. So ONE dispatcher is installed for the
+// process and every caller registers its own checkout under it.
+//
+// The returned channel carries the push's error, once. The caller reads it after the wait
+// returns, so a push that failed is a test failure and never a silent timeout.
+func pushAtSyncPoint(t *testing.T, checkout, other string) <-chan error {
+	t.Helper()
+	installWaitSyncPoint()
+
+	blocked := make(chan struct{})
+	var once sync.Once
+	syncPoints.mu.Lock()
+	syncPoints.at[checkout] = func() { once.Do(func() { close(blocked) }) }
+	syncPoints.mu.Unlock()
+	t.Cleanup(func() {
+		syncPoints.mu.Lock()
+		delete(syncPoints.at, checkout)
+		syncPoints.mu.Unlock()
+	})
+
+	pushed := make(chan error, 1)
+	go func() {
+		<-blocked
+		pushed <- push(other)
+	}()
+	return pushed
+}
+
+// afterOf is how long the TOOL says a wait took, read off its own closing line.
+//
+// The claim "this wait did not come back before its deadline" used to be made with
+// time.Since around the call, and that is the harness measuring the harness: a runner that
+// parks the test goroutine after the call returns inflates it, and one that parks it before
+// the call starts is the flake in the other direction. `after=` is the verb's own number,
+// taken between its own start and its own return, so the assertion is about the verb.
+func afterOf(t *testing.T, stdout string) time.Duration {
+	t.Helper()
+	i := strings.Index(stdout, "WAIT TIMEOUT")
+	if i < 0 {
+		i = strings.Index(stdout, "WAIT OK")
+	}
+	if i < 0 {
+		t.Fatalf("no WAIT TIMEOUT or WAIT OK line to read after= from:\n%s", stdout)
+	}
+	d, err := time.ParseDuration(field(t, stdout[i:], "after="))
+	if err != nil {
+		t.Fatalf("after= is not a duration: %v\n%s", err, stdout)
+	}
+	return d
+}
+
+// pollsOf is how many polls the tool says a wait made, off the line that ended it.
+func pollsOf(t *testing.T, stdout, line string) int {
+	t.Helper()
+	i := strings.Index(stdout, line)
+	if i < 0 {
+		t.Fatalf("no %s line to read polls= from:\n%s", line, stdout)
+	}
+	n, err := strconv.Atoi(field(t, stdout[i:], "polls="))
+	if err != nil {
+		t.Fatalf("polls= is not a number: %v\n%s", err, stdout)
+	}
+	return n
+}
+
+// syncPoints is the registry: one entry per checkout a test is waiting on.
+var syncPoints = struct {
+	mu sync.Mutex
+	at map[string]func()
+}{at: map[string]func(){}}
+
+var syncPointOnce sync.Once
+
+// installWaitSyncPoint puts the one dispatcher in place, once for the process. It is never
+// removed: with no entry for a bus dir it does nothing, so a test that has finished costs
+// a map lookup and a wait nobody registered for is untouched.
+func installWaitSyncPoint() {
+	syncPointOnce.Do(func() {
+		hook := waitBlockedHook(func(dir string) {
+			syncPoints.mu.Lock()
+			fire := syncPoints.at[dir]
+			syncPoints.mu.Unlock()
+			if fire != nil {
+				fire()
+			}
+		})
+		testWaitBlockedHook.Store(&hook)
+	})
 }
 
 // Issue #328: a coordinator who receipts a note and then waits is a reader whose only news
@@ -530,10 +618,8 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-555555555555",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 
-	const timeout = 1 * time.Second
-	start := time.Now()
+	const timeout = 300 * time.Millisecond
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String(), "--advance")...).mustCode(t, 0)
-	took := time.Since(start)
 
 	r.mustContain(t, "stdout", "WAIT ADVANCED from=").
 		mustContain(t, "stdout", " to=").
@@ -542,8 +628,8 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	if strings.Contains(r.stdout, "WAIT OK new=1") {
 		t.Fatalf("wait --advance returned WAIT OK on a note it had already receipted:\n%s", r.stdout)
 	}
-	if took < timeout {
-		t.Fatalf("wait --advance returned after %s, before its %s deadline, over only a heard note:\n%s", took, timeout, r.stdout)
+	if after := afterOf(t, r.stdout); after < timeout {
+		t.Fatalf("wait --advance says it returned after %s, before its %s deadline, over only a heard note:\n%s", after, timeout, r.stdout)
 	}
 	// The cursor moved over the heard note: its commit is the one this run read to, which
 	// is the parent of the cursor commit the advance itself made.
@@ -561,110 +647,40 @@ func TestWaitAdvanceSkipsHeardNotesAndBlocks(t *testing.T) {
 	}
 }
 
-// THE BEAT IS WRITTEN EVERY TICK. A waiting line's cursor does not move -- there was
-// nothing to read -- so a line whose cursor never moves reads asleep to `nova-wake awake`.
-// The BEAT is the file that moves anyway: rewritten on every poll, one line, the newest
-// stamp and the cursor the line is standing at. The write is unbounded; what is bounded is
-// the push, tested next. Here --beat is far longer than the wait, so nothing is pushed and
-// the only trace is the working-tree file, rewritten down to its last tick.
-func TestWaitWritesBeatEachTick(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
+// THE BUS CARRIES NOTES, NEVER BEATS (#3144). Until 2026-09-24 a wait rewrote
+// from-<lane>/BEAT every tick and pushed it as `beat <name>` every --beat: 393 of 500 bus
+// commits on 2026-09-23. Presence is friend:<name> in Redis, written by `nova-wake beat`.
+// A wait given the old --beat and --beat-lease, over many polls and many whole beats, makes
+// no beat commit, writes no BEAT file, and says once that the flags are retired.
+func TestWaitNeverCommitsABeat(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
-	checkout, _ := busDir(t)
+	checkout, bare := busDir(t)
 	settled(t, checkout)
+	before := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main"))
 
-	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
+	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms", "--beat-lease", "10m")...).mustCode(t, 0)
 
-	// Rewritten, not appended: one line, an RFC 3339 UTC stamp, the cursor sha, and a
-	// lease until=<stamp>.
-	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
-	fields := strings.Fields(beat)
-	if len(fields) != 3 {
-		t.Fatalf("BEAT is %q, want one line <stamp> <cursor> until=<stamp>", beat)
+	polls, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
+	if err != nil || polls < 2 {
+		t.Fatalf("polls=%d, want several so a beat had every chance to land:\n%s", polls, r.stdout)
 	}
-	if _, err := time.Parse(time.RFC3339Nano, fields[0]); err != nil {
-		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
+	if n := strings.Count(r.stderr, "WAIT NOTE --beat and --beat-lease are retired and ignored"); n != 1 {
+		t.Fatalf("the retirement note printed %d times, want once:\n%s", n, r.stderr)
 	}
-	cursor := strings.Fields(read(t, checkout, "from-ada/CURSOR"))
-	if len(cursor) == 0 || fields[1] != cursor[0] {
-		t.Fatalf("BEAT cursor %q does not match CURSOR %q", fields[1], read(t, checkout, "from-ada/CURSOR"))
-	}
-	if strings.Count(beat, "\n") != 0 {
-		t.Fatalf("BEAT is more than one line (rewritten, not appended):\n%q", beat)
-	}
-}
-
-// THE BEAT CARRIES A LEASE, and it is written on exit as well as on every tick. A wait
-// that returns hands the harness the note and then is done: between that return and the
-// next wait there is a gap where the manager process is alive but no beat is written, and
-// over a slow note the gap outruns --window and the line reads asleep to `nova-wake
-// awake`. So the exit beat extends until=now+--beat-lease out over that gap, and the
-// lease is what keeps a working manager cycle reading awake.
-func TestWaitWritesLeaseOnExit(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "1h")...).mustCode(t, 0)
-
-	beat := strings.TrimSpace(read(t, checkout, "from-ada/BEAT"))
-	fields := strings.Fields(beat)
-	if len(fields) != 3 || !strings.HasPrefix(fields[2], "until=") {
-		t.Fatalf("BEAT is %q, want <stamp> <cursor> until=<stamp>", beat)
-	}
-	stamp, err := time.Parse(time.RFC3339Nano, fields[0])
-	if err != nil {
-		t.Fatalf("BEAT stamp %q is not an RFC 3339 UTC stamp: %v", fields[0], err)
-	}
-	until, err := time.Parse(time.RFC3339Nano, strings.TrimPrefix(fields[2], "until="))
-	if err != nil {
-		t.Fatalf("BEAT until %q is not an RFC 3339 UTC stamp: %v", fields[2], err)
-	}
-	if d := until.Sub(stamp); d != 10*time.Minute {
-		t.Fatalf("the exit beat's lease is %s, want the 10m default: %q", d, beat)
-	}
-}
-
-// THE PUSH IS BOUNDED. A beat push costs somebody's server, so only the push is gated at
-// --beat, never the write: over a wait whose --beat is far longer than --interval the BEAT
-// is written on every poll but pushed only when a whole beat has elapsed. Here the beat is
-// short enough that a push MUST happen, and the assertion is that pushes never outrun the
-// polls -- a beat pushed once per poll would be a poller, not a beat.
-func TestWaitBeatPushBounded(t *testing.T) {
-	if testing.Short() {
-		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
-	}
-	t.Parallel()
-	hermetic(t)
-	checkout, _ := busDir(t)
-	settled(t, checkout)
-
-	r := invoke(t, "", waitFlags(checkout, "Ada", "1s", "--beat", "150ms")...).mustCode(t, 0)
-
-	pollCount, err := strconv.Atoi(field(t, r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):], "polls="))
-	if err != nil || pollCount < 1 {
-		t.Fatalf("polls=%d, want at least 1:\n%s", pollCount, r.stdout)
-	}
-
-	log := gitIn(t, checkout, "log", "--format=%s", "main")
-	beats := 0
-	for _, line := range strings.Split(log, "\n") {
-		if strings.Contains(line, "beat ada") {
-			beats++
+	for _, where := range []string{checkout, bare} {
+		if log := gitIn(t, where, "log", "--format=%s", "main"); strings.Contains(log, "beat ada") {
+			t.Fatalf("a wait committed a beat in %s:\n%s", where, log)
 		}
 	}
-	if beats < 1 {
-		t.Fatalf("a wait with --beat 150ms pushed no beat commit:\n%s", log)
+	if after := strings.TrimSpace(gitIn(t, bare, "rev-parse", "main")); after != before {
+		t.Fatalf("the bus moved from %s to %s under a wait that found nothing", before, after)
 	}
-	if beats > pollCount {
-		t.Fatalf("pushed %d beat commits over %d polls; the push is bounded by --beat, not once per tick:\n%s", beats, pollCount, log)
+	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "BEAT")); !os.IsNotExist(err) {
+		t.Fatalf("the wait wrote from-ada/BEAT: %v", err)
+	}
+	if out := strings.TrimSpace(gitIn(t, checkout, "status", "--porcelain", "--untracked-files=all")); out != "" {
+		t.Fatalf("the wait left the checkout dirty:\n%s", out)
 	}
 }
 
@@ -790,4 +806,100 @@ func splitShellWords(line string) []string {
 		words = append(words, cur.String())
 	}
 	return words
+}
+
+// FREDDY'S HARNESS DOES NOT WAKE, and it cannot loop either: it runs one tool call per turn
+// and branches on what came back. The three tests below are that harness's whole contract.
+//
+// --idle-exit is the code a TIMEOUT returns instead of 0, so "nothing arrived" and "a note
+// arrived" are two different numbers rather than two shapes of output to parse. The line
+// still says so, in the one WAIT TIMEOUT line a harness can grep, because an exit code that
+// appears nowhere in the transcript is a number somebody reads a bug into.
+func TestWaitIdleExitGivesATimeoutItsOwnCode(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "300ms", "--idle-exit", "3")...).mustCode(t, 3)
+	r.mustContain(t, "stdout", "WAIT as=Ada timeout=300ms interval=100ms cursor=").
+		mustContain(t, "stdout", "idle-exit=3").
+		mustContain(t, "stdout", "WAIT TIMEOUT after=").
+		mustContain(t, "stdout", "WAIT DONE reason=timeout")
+	// ONE line to grep, and the code is on it.
+	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
+	if got := field(t, line, "idle-exit="); got != "3" {
+		t.Fatalf("WAIT TIMEOUT says idle-exit=%q, want 3:\n%s", got, r.stdout)
+	}
+}
+
+// A NOTE IS STILL EXIT 0 with --idle-exit set: the flag names what a TIMEOUT returns and
+// nothing else. A harness that got 3 for a note would answer nothing and re-arm for ever.
+func TestWaitIdleExitDoesNotTouchAReturnOnANote(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// No cursor, so the fixture's two notes are news and the first poll returns at once.
+	invoke(t, "", waitFlags(checkout, "Ada", "30s", "--idle-exit", "3")...).
+		mustCode(t, 0).
+		mustContain(t, "stdout", "WAIT OK new=2").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345")
+}
+
+// --until IS THE DEADLINE THE HARNESS ALREADY HAS: a MOMENT, not a duration. It stands
+// beside --timeout and the earlier of the two ends the wait, so a caller whose session ends
+// at a known instant does not have to work out how long is left and does not overshoot it.
+func TestWaitUntilIsAnAbsoluteDeadlineAndTheEarlierOneWins(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: waits out a real wall-clock timeout; runs on the self-hosted legs and nightly")
+	}
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	// One second past the fixed clock these tests run on, against a --timeout of thirty:
+	// the instant is the earlier of the two and is therefore the one that ends the call.
+	until := now().Add(time.Second).Format(time.RFC3339)
+	r := invoke(t, "", waitFlags(checkout, "Ada", "30s", "--until", until)...).mustCode(t, 0)
+	r.mustContain(t, "stdout", "until="+until).
+		mustContain(t, "stdout", "WAIT TIMEOUT after=")
+	after := afterOf(t, r.stdout)
+	if after < time.Second {
+		t.Fatalf("the wait returned after %s, before the --until it was given:\n%s", after, r.stdout)
+	}
+	// Well under the --timeout it was also given: the two are not added and the longer one
+	// does not win.
+	if after > 15*time.Second {
+		t.Fatalf("the wait ran %s against --until %s and --timeout 30s; the instant did not bound it:\n%s", after, until, r.stdout)
+	}
+}
+
+// The invocations this verb refuses rather than guesses at. Every one of them is a harness
+// that would otherwise be told something untrue about its own deadline or its own exit code.
+func TestWaitRefusesAnUnusableUntilOrIdleExit(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	cases := []struct {
+		name  string
+		extra []string
+		want  string
+	}{
+		{"an --until that is not an instant", []string{"--until", "tomorrow"}, "is not an RFC 3339 instant"},
+		{"an --until already past", []string{"--until", "2026-09-09T12:00:00Z"}, "is now or in the past"},
+		{"--idle-exit 1, a refusal's code", []string{"--idle-exit", "1"}, "is this tool's own code"},
+		{"--idle-exit 2, an invocation's code", []string{"--idle-exit", "2"}, "is this tool's own code"},
+		{"--idle-exit above the shell's floor", []string{"--idle-exit", "126"}, "belong to the shell"},
+		{"a negative --idle-exit", []string{"--idle-exit", "-1"}, "is not an exit code this verb will use"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			invoke(t, "", waitFlags(checkout, "Ada", "300ms", c.extra...)...).
+				mustCode(t, 2).mustContain(t, "stderr", c.want)
+		})
+	}
 }

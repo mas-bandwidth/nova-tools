@@ -7,6 +7,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Work list 5: the host, and the one sentence that governs everything it returns --
@@ -38,6 +41,12 @@ type Checks struct {
 	RedNames     []string
 	Details      []CheckDetail
 	PendingNames []string
+	// Source is where the evidence came from: CIFromRedis (the verdict
+	// record), CIFromGitHub (check-runs, because the record said nothing), or
+	// "" for a host that does not say. SourceWhy is the record's state when
+	// the forge answered.
+	Source    string
+	SourceWhy string
 }
 
 // Bucket classifies one check's state the way the merge condition counts it.
@@ -94,7 +103,7 @@ func (c *Checks) AddRun(name, state, sha string) {
 // stale sha cannot make a head with a run in progress red (nova-tools #1014).
 func (c Checks) ForSHA(oid string) Checks {
 	oid = strings.TrimSpace(oid)
-	var out Checks
+	out := Checks{Source: c.Source, SourceWhy: c.SourceWhy}
 	for _, d := range c.Details {
 		if d.SHA == "" || oid == "" || d.SHA == oid {
 			out.AddRun(d.Name, d.Conclusion, d.SHA)
@@ -183,6 +192,9 @@ type PR struct {
 	Merged   bool
 	Closed   bool
 	MergeSHA string
+	// UpdatedAt is when the host last saw the pull request move, for the queue sweep's
+	// session window. Empty means the host did not report one.
+	UpdatedAt string
 }
 
 // Host is the edge between this tool and the forge. It is an interface for two reasons:
@@ -197,9 +209,14 @@ type Host interface {
 	// Checks reads a commit's check buckets. The base's evidence is read the same way
 	// an entry's is.
 	Checks(oid string) (Checks, error)
+	// MergeGroupRun reads one merge-group run's event, pull request, failed jobs and
+	// their '--- FAIL' test names, the evidence the classify decision judges.
+	MergeGroupRun(id int) (MergeRun, error)
 	// Ready takes a draft out of draft. It is a mutation, it is logged as one, and it
 	// only ever reaches an entry that is in the lane.
 	Ready(n int) error
+	// Verdicts reads the pull request's reviews and comments for the hold check (#1572).
+	Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error)
 	// AtomicMerge says whether this host offers a merge primitive taking BOTH an
 	// expected head and an expected base as preconditions. gh today does not: it takes
 	// --match-head-commit and nothing about the base.
@@ -209,19 +226,48 @@ type Host interface {
 	Merge(n int, headOID, baseSHA, mergeSHA string) error
 }
 
+// VerdictOpts configures options for parsing forge verdicts.
+type VerdictOpts struct {
+	Author          string
+	CurrentHead     string
+	Reviewers       *ReviewerSet
+	UntypedComments string // "ignore" or ""
+}
+
 // GH is the production host: one gh invocation per question, under the run's --timeout.
 type GH struct {
 	Repo    string
 	Timeout time.Duration
 	Runner  Runner
+	// CI is the injectable CI verdict source GH.Checks reads. NewGH sets it to
+	// RedisFromEnv (ci:<owner/repo>:<head>:<gid>); WithCISource overrides it. It is
+	// never GitHub's check-runs.
+	CI CISource
 }
 
-// NewGH returns a host that shells to gh against one repository.
-func NewGH(repo string, timeout time.Duration, runner Runner) *GH {
+// NewGH returns a host that shells to gh against one repository. The trailing
+// GHOption values are optional, so every existing NewGH(repo, timeout, runner)
+// call keeps compiling.
+func NewGH(repo string, timeout time.Duration, runner Runner, opts ...GHOption) *GH {
 	if runner == nil {
 		runner = Exec{}
 	}
-	return &GH{Repo: repo, Timeout: timeout, Runner: runner}
+	h := &GH{Repo: repo, Timeout: timeout, Runner: runner, CI: RedisFromEnv()}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(h)
+		}
+	}
+	return h
+}
+
+// GHOption configures a GH after NewGH has built it.
+type GHOption func(*GH)
+
+// WithCISource injects the CI verdict source GH.Checks reads, in place of the
+// Redis source RedisFromEnv builds. It is how a test proves no check-run is read.
+func WithCISource(src CISource) GHOption {
+	return func(h *GH) { h.CI = src }
 }
 
 func (h *GH) gh(args ...string) (string, error) {
@@ -238,9 +284,29 @@ func (h *GH) gh(args ...string) (string, error) {
 	return out, nil
 }
 
-// PR reads the fields the merge condition needs, in one call.
+// ghWhole is gh without execOutputCap on a successful call: for the captures on the
+// landing path a parser reads whole rather than a person -- a pull request's own JSON,
+// its comments, its reviews (#2455) -- a 64 KiB PREFIX is not a truncated answer this tool can work with, it is
+// JSON it cannot parse at all (nova-tools #2522). See RunUncapped for the mechanism and
+// for what still happens to a FAILING call's captured output.
+func (h *GH) ghWhole(args ...string) (string, error) {
+	if err := guard(args, ""); err != nil {
+		return "", err
+	}
+	ctx, cancel := contextWithTimeout(h.Timeout)
+	defer cancel()
+	out, err := runUncapped(ctx, h.Runner, "", "gh", args...)
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w: %s", strings.Join(args, " "), err, oneLineOf(out))
+	}
+	return out, nil
+}
+
+// PR reads the fields the merge condition needs, in one call. The answer is read whole
+// (ghWhole): a pull request's body can carry more than 64 KiB of typed history and text,
+// and a truncated PR json is not a shorter pull request, it is one decodePR cannot read.
 func (h *GH) PR(n int) (PR, error) {
-	out, err := h.gh("pr", "view", strconv.Itoa(n), "--repo", h.Repo, "--json",
+	out, err := h.ghWhole("pr", "view", strconv.Itoa(n), "--repo", h.Repo, "--json",
 		"number,author,baseRefName,headRefName,headRepositoryOwner,headRefOid,mergeable,isDraft,url,title,body,state,mergedAt,mergeCommit")
 	if err != nil {
 		return PR{}, err
@@ -295,6 +361,33 @@ func decodePR(out string, n int, repo string) (PR, error) {
 	}, nil
 }
 
+// CreatePR opens the one pull request a fold lands (docs/SPEC-MERGE.md "The fold
+// (#1142)"). It is not part of the Host interface the lane's pass uses: the fold reaches
+// it through a narrower interface of its own, so the merge path has no way to open one.
+func (h *GH) CreatePR(head, base, title, body string) (int, error) {
+	out, err := h.gh("pr", "create", "--repo", h.Repo, "--head", head, "--base", base,
+		"--title", title, "--body", body)
+	if err != nil {
+		return 0, err
+	}
+	// gh prints the pull request's URL; the number is its last path segment. A URL
+	// with no readable number is refused rather than guessed: FOLD OK names the PR.
+	u := strings.TrimSpace(out)
+	u = strings.TrimSuffix(u, "/")
+	if i := strings.LastIndex(u, "/"); i >= 0 {
+		if n, err := strconv.Atoi(u[i+1:]); err == nil {
+			return n, nil
+		}
+	}
+	return 0, fmt.Errorf("gh pr create did not name the pull request's number: %s", oneLineOf(out))
+}
+
+// ClosePR closes one folded pull request as superseded by the squash.
+func (h *GH) ClosePR(n int) error {
+	_, err := h.gh("pr", "close", strconv.Itoa(n), "--repo", h.Repo)
+	return err
+}
+
 // BranchOID resolves a branch entry's head through the host, so that a read-only verb
 // never depends on a clone's freshness (the prototype shelled into the clone).
 func (h *GH) BranchOID(branch string) (string, error) {
@@ -305,8 +398,74 @@ func (h *GH) BranchOID(branch string) (string, error) {
 	return strings.TrimSpace(out), nil
 }
 
-// Checks reads a commit's check runs and buckets them.
+// OpenPRs reads the repository's open pull requests, one row each, for the rebase cutter.
+// The merge state is the host's own word and no field here is an instruction.
+func (h *GH) OpenPRs() ([]RebasePR, error) {
+	out, err := h.gh("pr", "list", "--repo", h.Repo, "--state", "open", "--limit", "300", "--json",
+		"number,mergeStateStatus,headRefName,title,createdAt")
+	if err != nil {
+		return nil, err
+	}
+	return decodeOpenPRs(out)
+}
+
+// decodeOpenPRs is the arrival point of the open list: the host's JSON becomes the rows the
+// filter reads. A head branch becomes a git argument on a later verb, so it is checked
+// where it arrives, exactly as a single pull request's is.
+func decodeOpenPRs(out string) ([]RebasePR, error) {
+	var raw []struct {
+		Number           int    `json:"number"`
+		MergeStateStatus string `json:"mergeStateStatus"`
+		HeadRefName      string `json:"headRefName"`
+		Title            string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("gh pr list did not answer JSON this tool can read: %w", err)
+	}
+	prs := make([]RebasePR, 0, len(raw))
+	for _, r := range raw {
+		if err := ValidRefName(r.HeadRefName); err != nil {
+			return nil, fmt.Errorf("pull request %d's head branch is not a name this tool hands to git: %w", r.Number, err)
+		}
+		prs = append(prs, RebasePR{Number: r.Number, HeadRef: r.HeadRefName, Title: r.Title, MergeState: r.MergeStateStatus})
+	}
+	return prs, nil
+}
+
+// Checks reads a commit's CI evidence. The verdict record ci:<owner/repo>:<head>:<gid>
+// (the injectable source) answers first; when it says nothing -- absent, no
+// verdict, or unreadable -- the commit's GitHub check-runs answer, and the
+// result's Source is "from-github". A missing record is not a verdict.
+// ErrCIMissing is returned only when both say nothing.
 func (h *GH) Checks(oid string) (Checks, error) {
+	oid = strings.TrimSpace(oid)
+	why := "no ci source"
+	if h.CI != nil {
+		value, ok, err := h.CI.Read(h.Repo, oid)
+		switch {
+		case err != nil:
+			why = civerdict.GIDsKey(h.Repo, oid) + " unreadable: " + oneline.Err(err)
+		case ok:
+			c := Checks{Source: CIFromRedis}
+			c.AddRun("ci", ciState(value), oid)
+			return c, nil
+		default:
+			why = civerdict.GIDsKey(h.Repo, oid) + " absent"
+		}
+	}
+	c, err := h.checkRuns(oid)
+	if err != nil {
+		return Checks{}, fmt.Errorf("ci: %s, and the github check-runs could not be read: %w", why, err)
+	}
+	if c.Total() == 0 {
+		return Checks{}, fmt.Errorf("%w (%s, and github has no check-runs at %s)", ErrCIMissing, why, oid)
+	}
+	c.Source, c.SourceWhy = CIFromGitHub, why
+	return c, nil
+}
+
+// checkRuns reads a commit's GitHub check-runs and buckets them.
+func (h *GH) checkRuns(oid string) (Checks, error) {
 	out, err := h.gh("api", fmt.Sprintf("repos/%s/commits/%s/check-runs", h.Repo, oid),
 		"--jq", ".check_runs[] | [.name, (.conclusion // .status), .head_sha] | @tsv")
 	if err != nil {
@@ -338,4 +497,34 @@ func (h *GH) AtomicMerge() bool { return false }
 // Merge is never reached on this host, and says so rather than doing something weaker.
 func (h *GH) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	return fmt.Errorf("this host offers no merge primitive taking both an expected head and an expected base, so publication is the compare-and-swap push of rule 21; gh pr merge is never called")
+}
+
+// Verdicts reads this pull request's comments and its reviews, in two calls, and folds
+// each into the words the gate acts on. It is READ-ONLY and it mutates nothing.
+//
+// Both calls are read whole (ghWhole), not through the ordinary capped gh: a paginated
+// comment or review capture that carries a typed disposition near the end of a long
+// thread is not evidence this tool may read a 64 KiB prefix of and call complete
+// (nova-tools #2522 measured one such capture at 63,499 bytes).
+// The body is projected and bounded via --jq (.body[:MaxParseBodyBytes+1], in
+// characters) so that individual comment payloads cannot cause unbounded memory
+// consumption; that bound is far above GitHub's 65,536-character limit, and a body
+// cut by it is still over MaxParseBodyBytes, which the parser refuses as a hold
+// (nova-tools #3443), never reading a prefix as the whole body.
+func (h *GH) Verdicts(n int, opts ...VerdictOpts) ([]Verdict, error) {
+	comments, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/issues/%d/comments", h.Repo, n),
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), created_at, user: {login: .user.login}}]", MaxParseBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	reviews, err := h.ghWhole("api", "--paginate", fmt.Sprintf("repos/%s/pulls/%d/reviews", h.Repo, n),
+		"--jq", fmt.Sprintf("[.[] | {id, body: (.body[:%d]), state, submitted_at, commit_id, user: {login: .user.login}}]", MaxParseBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	var opt VerdictOpts
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
+	return ParseForgeVerdicts(comments, reviews, n, opt.Reviewers, opt.Author, opt.CurrentHead, opt.UntypedComments == "ignore")
 }

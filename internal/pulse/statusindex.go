@@ -28,7 +28,8 @@ var statusIndexReads int64
 // harness log, the store's own wal -- does; run and harvest append a finished job's rows as
 // they fold it, so a new job is in the index before the next tick reads it. A root with no
 // index is walked once and the index written, and a root with an index opens no job file at
-// all. `class` is RESULT.md's verdict, not the usage row's return code.
+// all. `class` is RESULT.md's verdict, or gateway when the attempt died with no
+// model turn, else the usage row's return code.
 const statusIndexName = "status-index.tsv"
 
 // indexEntry is one job's cached class, usage rows and the key that says they hold.
@@ -67,8 +68,9 @@ func (r indexRow) usage() (usageRow, bool) {
 
 // usageFile is one usage.tsv under a root as the per-root index remembers it.
 type usageFile struct {
-	path string
-	rows []indexRow
+	path  string
+	rows  []indexRow
+	class string
 }
 
 // first is the file's first measured row, the row status's rate arithmetic reads.
@@ -130,7 +132,7 @@ func refreshStatusIndex(root string) []usageFile {
 	}
 	files := make([]usageFile, 0, len(entries))
 	for rel, e := range entries {
-		files = append(files, usageFile{path: filepath.Join(root, rel), rows: e.rows})
+		files = append(files, usageFile{path: filepath.Join(root, rel), rows: e.rows, class: e.class})
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	return files
@@ -198,26 +200,14 @@ func fileStamp(path string) (mtime, size int64) {
 	return fi.ModTime().UnixNano(), fi.Size()
 }
 
-// resultClass is the class RESULT.md states -- abstain, blocked or done -- falling back to
-// the usage row's own return code when the job wrote no RESULT.md. The class is cached with
-// the rows so status never opens RESULT.md or the usage file twice for one finished job.
-func resultClass(jobDir string, rows []indexRow) string {
-	raw, err := os.ReadFile(filepath.Join(jobDir, "RESULT.md"))
-	if err == nil {
-		lines := strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n")
-		if len(lines) > 1 {
-			switch line2 := strings.TrimSpace(lines[1]); {
-			case strings.HasPrefix(line2, "ABSTAIN"):
-				return "abstain"
-			case strings.HasPrefix(line2, "BLOCKED"):
-				return "blocked"
-			case strings.HasPrefix(line2, "DONE"):
-				return "done"
-			}
-		}
+// resultClass is the class RESULT.md states -- abstain, blocked or done -- or gateway
+// when the attempt ended with no model turn, else the usage row's own return code.
+// The class is cached with the rows so a warm tick does not open the job again.
+func resultClass(jobDir string, usageRaw []byte, rows []indexRow) string {
+	if v := resultVerdict(jobDir); v != "" {
+		return v
 	}
-	class, _ := entrySummary(rows)
-	return class
+	return classifyNoVerdict(jobDir, usageRaw, rows)
 }
 
 // readIndexEntry parses one job's usage.tsv into its rows, carrying the cache key and
@@ -229,36 +219,62 @@ func readIndexEntry(path string) indexEntry {
 	e := indexEntry{key: indexKey(path)}
 	raw, err := os.ReadFile(path)
 	if err == nil {
+		var cols map[string]int
 		for _, l := range strings.Split(string(raw), "\n") {
-			if l == "" || strings.HasPrefix(l, "job") {
+			if l == "" {
+				continue
+			}
+			if strings.HasPrefix(l, "job") {
+				if cols == nil {
+					cols = usageColumns(strings.Split(l, "\t"))
+				}
 				continue
 			}
 			f := strings.Split(l, "\t")
 			e.rows = append(e.rows, indexRow{
-				started: cell(f, 2),
-				ended:   cell(f, 3),
-				rc:      cell(f, 4),
-				usd:     cell(f, 12),
-				tokens:  tokensCell(f),
+				started: cell(cols, f, "started"),
+				ended:   cell(cols, f, "ended"),
+				rc:      cell(cols, f, "rc"),
+				usd:     cell(cols, f, "usd"),
+				tokens:  tokensCell(cols, f),
 			})
 		}
 	}
-	e.class = resultClass(filepath.Dir(path), e.rows)
+	e.class = resultClass(filepath.Dir(path), raw, e.rows)
 	return e
 }
 
-// cell is field i of a usage row, "" when the row is short.
-func cell(f []string, i int) string {
-	if i >= len(f) {
+// usageColumns is one usage.tsv header line read into column positions, first occurrence
+// winning. This reader maps BY NAME like every other reader of the file -- cmd/nova-tokens's
+// readCardFile and parseProgressUsage in this package -- so a column inserted in the middle
+// moves nothing: SPEC-SWARM rule 13d (nova-tools#1545) puts `end` after `ended` and before
+// `rc`, and a hardcoded offset reads that word as the return code, `reasoning` as the
+// dollars, and drops tokens_out.
+func usageColumns(head []string) map[string]int {
+	cols := map[string]int{}
+	for i, name := range head {
+		name = strings.TrimSpace(name)
+		if _, seen := cols[name]; !seen {
+			cols[name] = i
+		}
+	}
+	return cols
+}
+
+// cell is the row's cell under a header name, "" when the file carries no such column or the
+// row is short.
+func cell(cols map[string]int, f []string, name string) string {
+	i, has := cols[name]
+	if !has || i >= len(f) {
 		return ""
 	}
 	return f[i]
 }
 
 // tokensCell is tokens_in + tokens_out for one row, "-" when neither is a number.
-func tokensCell(f []string) string {
-	in, errIn := strconv.Atoi(strings.TrimSpace(cell(f, 7)))
-	out, errOut := strconv.Atoi(strings.TrimSpace(cell(f, 8)))
+func tokensCell(cols map[string]int, f []string) string {
+	in, errIn := strconv.Atoi(strings.TrimSpace(cell(cols, f, "tokens_in")))
+	out, errOut := strconv.Atoi(strings.TrimSpace(cell(cols, f, "tokens_out")))
 	if errIn != nil && errOut != nil {
 		return "-"
 	}

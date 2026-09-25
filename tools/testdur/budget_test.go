@@ -2,9 +2,7 @@ package main
 
 import (
 	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"runtime"
 	"testing"
 )
 
@@ -20,31 +18,62 @@ const budgetSeconds = 60.0
 // the clock: a test that timed the suite here would be the slowest test in the repo,
 // and a bench under load would make it flap. The record is what a person updates, so
 // crossing the budget is a deliberate act with a red beside it.
+//
+// TWO CEILINGS, BOTH REAL.
+//
+//   - The `[budget]` bench's rows, at a plain sixty seconds, on every platform.
+//     That is the number CI's Linux legs run against and the one a change is
+//     answerable for wherever it was written.
+//   - The rows of the section matching the platform this test is RUNNING on, at
+//     that section's own `60 s x budget-factor`. #1411 recorded a darwin bench
+//     and enforced nothing against it, which left `cmd/nova-wake` at 62.9 s --
+//     over a minute -- with no ceiling at all. A recorded number nothing reads
+//     is a number that drifts.
+//
+// The factor is what keeps #1411's rule intact while giving the second bench
+// teeth: a change is still not answerable for another machine's ABSOLUTE
+// seconds, only for its own platform's, and the factor is what makes the two
+// comparable. platform_budget_test.go holds the shapes; this is the verdict.
 func TestFastSuiteUnderOneMinute(t *testing.T) {
-	path := filepath.Join("..", "..", "docs", "TEST-DURATIONS.md")
-	raw, err := os.ReadFile(path)
+	raw, err := os.ReadFile(durationsPath())
 	if err != nil {
 		t.Fatalf("the recorded durations are missing: %v", err)
 	}
-	rows := 0
-	for _, line := range strings.Split(string(raw), "\n") {
-		// The table rows are `| <package> | <seconds> | <slowest test> |`; the header
-		// and its dashes are the two rows whose second cell is not a number.
-		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
-		if len(cells) < 2 {
-			continue
-		}
-		pkg := strings.TrimSpace(cells[0])
-		secs, err := strconv.ParseFloat(strings.TrimSpace(cells[1]), 64)
-		if err != nil {
-			continue
-		}
-		rows++
-		if secs > budgetSeconds {
-			t.Errorf("%s takes %.1fs; the budget is %.0fs -- give the slow tests a sync point or move them behind `//go:build slow` (#516)", pkg, secs, budgetSeconds)
-		}
+	benches, _, err := parseRecord(string(raw))
+	if err != nil {
+		t.Fatalf("%s: %v", durationsPath(), err)
 	}
-	if rows == 0 {
-		t.Fatalf("%s holds no package rows; the measurement was not recorded", path)
+
+	here := runtime.GOOS + "/" + runtime.GOARCH
+	// The budget bench is always judged; the running platform's section is
+	// judged too when the record holds one and it is not the same section.
+	judged := []benchSection{}
+	budget, budgetSection, err := budgetFor(benches, "")
+	if err != nil {
+		t.Fatalf("%s: %v", durationsPath(), err)
+	}
+	judged = append(judged, budgetSection)
+	ceilings := map[string]float64{budgetSection.heading: budget}
+
+	mine, mineSection, err := budgetFor(benches, here)
+	if err != nil {
+		t.Fatalf("%s: %v", durationsPath(), err)
+	}
+	if mineSection.heading != budgetSection.heading {
+		judged = append(judged, mineSection)
+		ceilings[mineSection.heading] = mine
+	}
+
+	for _, section := range judged {
+		ceiling := ceilings[section.heading]
+		if len(section.rows) == 0 {
+			t.Fatalf("%s holds no package rows for %q; the measurement was not recorded", durationsPath(), section.heading)
+		}
+		for _, r := range section.rows {
+			if r.secs > ceiling {
+				t.Errorf("%s takes %.1fs on %s; the ceiling there is %.1fs -- give the slow tests a sync point or move them behind `//go:build slow` (#516)",
+					r.pkg, r.secs, section.heading, ceiling)
+			}
+		}
 	}
 }

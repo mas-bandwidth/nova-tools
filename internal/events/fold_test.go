@@ -1,0 +1,669 @@
+package events
+
+import (
+	"bytes"
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// openFold opens a fold file inside the test's own temp directory. Every path this package's
+// tests write is named here (AGENTS.md rule 10).
+func openFold(t *testing.T, name string) *DB {
+	t.Helper()
+	db, err := OpenDB(context.Background(), filepath.Join(t.TempDir(), name))
+	if err != nil {
+		t.Fatalf("opening the fold: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	return db
+}
+
+// emitOK writes n `ok` events for n cards, round-robin over two models and two benches so
+// the per-model-x-route and per-bench views have something to separate.
+func emitOK(t *testing.T, f *FakeStream, n int) {
+	t.Helper()
+	ctx := context.Background()
+	models := []string{"fable", "sonnet"}
+	benches := []string{"studio", "hulk"}
+	for i := 0; i < n; i++ {
+		_, err := f.Emit(ctx, Event{
+			Label:   fmt.Sprintf("card-%03d", i),
+			Attempt: 1,
+			Bench:   benches[i%len(benches)],
+			Model:   models[i%len(models)],
+			Route:   benches[i%len(benches)],
+			Kind:    OK,
+			USD:     Float64(0.10),
+			At:      at.Add(time.Duration(i) * time.Second),
+		})
+		if err != nil {
+			t.Fatalf("emitting event %d: %v", i, err)
+		}
+	}
+}
+
+// Johnny's bar 3, on the fake: a hundred DONEs are produced, the fold is killed half way
+// and restarted, and the count is a hundred. The restart runs under a DIFFERENT consumer
+// name, which is what a restarted process really is, so the reclaim has to be XAUTOCLAIM's
+// and not "my own pending list".
+func TestAHundredDonesSurviveAKillAndARestart(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	stream := NewFakeStream()
+	stream.Now = func() time.Time { return at }
+	emitOK(t, stream, 100)
+
+	db := openFold(t, "ev.sqlite")
+	first := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-a", Count: 10}
+	if err := first.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var folded Stats
+	for folded.Inserted < 50 {
+		s, err := first.Once(ctx)
+		if err != nil {
+			t.Fatalf("the first fold: %v", err)
+		}
+		folded.Add(s)
+	}
+	if folded.Inserted != 50 {
+		t.Fatalf("the first fold stopped at %d rows, want 50 (the kill is half way)", folded.Inserted)
+	}
+
+	// The kill. Nothing is closed, nothing is drained: the next process just starts.
+	second := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-b", Count: 10}
+	if err := second.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		s, err := second.Once(ctx)
+		if err != nil {
+			t.Fatalf("the restarted fold: %v", err)
+		}
+		if s.Read == 0 {
+			break
+		}
+		folded.Add(s)
+	}
+
+	count, err := db.Count(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 100 {
+		t.Fatalf("the fold holds %d rows after a kill and a restart, want 100 (Johnny's bar 3)", count)
+	}
+	if got := stream.PendingCount("fold"); got != 0 {
+		t.Fatalf("%d entries are still unacked; the fold acks what it has committed", got)
+	}
+	if folded.Skipped != 0 {
+		t.Fatalf("the fold skipped %d entries it could not read, want 0", folded.Skipped)
+	}
+}
+
+// killAck is the process that dies in the one-instruction window between the commit and the
+// XACK. Redis has the entry as delivered-and-unacked, SQLite already has the row, and the
+// restart must therefore fold it a second time and end with one row, not two.
+type killAck struct {
+	Reader
+	after int
+	seen  int
+}
+
+func (k *killAck) Ack(ctx context.Context, group string, ids ...string) error {
+	k.seen += len(ids)
+	if k.seen > k.after {
+		return fmt.Errorf("killed before the ack")
+	}
+	return k.Reader.Ack(ctx, group, ids...)
+}
+
+func TestARedeliveryAfterACommitIsANoOp(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	stream := NewFakeStream()
+	stream.Now = func() time.Time { return at }
+	emitOK(t, stream, 100)
+
+	db := openFold(t, "ev.sqlite")
+	dying := &killAck{Reader: stream, after: 50}
+	first := &Folder{Reader: dying, DB: db, Group: "fold", Consumer: "fold-a", Count: 10}
+	if err := first.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := first.Once(ctx); err != nil {
+			break // the ack that never happened: this is the kill
+		}
+	}
+	if got := stream.PendingCount("fold"); got == 0 {
+		t.Fatal("nothing is pending; the test did not reproduce a death between the commit and the ack")
+	}
+
+	second := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-b", Count: 10}
+	if err := second.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		s, err := second.Once(ctx)
+		if err != nil {
+			t.Fatalf("the restarted fold: %v", err)
+		}
+		if s.Read == 0 {
+			break
+		}
+	}
+	count, err := db.Count(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 100 {
+		t.Fatalf("the fold holds %d rows, want 100: the event id is the primary key and a redelivery adds nothing", count)
+	}
+}
+
+// A rebuild replays the whole stream into a fresh file, and the rows it writes are the rows
+// the incremental fold wrote -- byte for byte, because no row carries a fold timestamp.
+func TestRebuildProducesTheSameRowsAsTheIncrementalFold(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	stream := NewFakeStream()
+	stream.Now = func() time.Time { return at }
+	emitOK(t, stream, 100)
+	// A read, a landing and a decision too, so all four tables are compared and not only
+	// attempts.
+	for i := 0; i < 3; i++ {
+		d := decideEvent()
+		d.Label, d.Decision.UnitID = fmt.Sprintf("card-%03d", i), fmt.Sprintf("card-%03d", i)
+		if _, err := stream.Emit(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := stream.Emit(ctx, Event{Label: fmt.Sprintf("card-%03d", i), Kind: Read, Bench: "stella", PR: "2563", At: at}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stream.Emit(ctx, Event{Label: fmt.Sprintf("card-%03d", i), Kind: Landed, PR: "2563", Head: "5f544272a1b0", At: at}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	incremental := openFold(t, "incremental.sqlite")
+	folder := &Folder{Reader: stream, DB: incremental, Group: "fold", Consumer: "fold-a", Count: 7}
+	if err := folder.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	for {
+		s, err := folder.Once(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Read == 0 {
+			break
+		}
+	}
+
+	rebuilt := openFold(t, "rebuilt.sqlite")
+	stats, err := Rebuild(ctx, stream, rebuilt, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Inserted != 113 {
+		t.Fatalf("the rebuild wrote %d rows, want 113", stats.Inserted)
+	}
+
+	var a, b bytes.Buffer
+	if err := incremental.Dump(ctx, &a); err != nil {
+		t.Fatal(err)
+	}
+	if err := rebuilt.Dump(ctx, &b); err != nil {
+		t.Fatal(err)
+	}
+	if a.String() != b.String() {
+		t.Fatalf("the rebuild's rows differ from the fold's:\nfold:\n%s\nrebuild:\n%s", firstLines(a.String()), firstLines(b.String()))
+	}
+	if strings.Count(a.String(), "\n") != 115 { // two headers, 110 card rows and 3 decisions
+		t.Fatalf("the dump holds %d lines, want two headers and 113 rows", strings.Count(a.String(), "\n"))
+	}
+
+	// A rebuild over a file that already holds the rows is a second no-op, not a doubling.
+	again, err := Rebuild(ctx, stream, rebuilt, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Inserted != 0 {
+		t.Fatalf("a second rebuild wrote %d new rows, want 0", again.Inserted)
+	}
+}
+
+// The views are the point of the fold: the numbers a coordinator reads and the numbers the
+// sprint table will read instead of counting files.
+func TestViewsCountPerModelRoutePerBenchAndPerDay(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	stream := NewFakeStream()
+	stream.Now = func() time.Time { return at }
+	emitOK(t, stream, 10) // 5 fable/studio and 5 sonnet/hulk, ten cents each
+	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Fail, Bench: "studio", Model: "fable", Route: "studio", USD: Float64(0.05), At: at}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := stream.Emit(ctx, Event{Label: "card-000", Kind: Landed, PR: "2563", At: at}); err != nil {
+		t.Fatal(err)
+	}
+
+	db := openFold(t, "ev.sqlite")
+	folder := &Folder{Reader: stream, DB: db, Group: "fold", Consumer: "fold-a", Count: 100}
+	if err := folder.Start(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := folder.Once(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var report bytes.Buffer
+	if err := db.Report(ctx, &report, 0); err != nil {
+		t.Fatal(err)
+	}
+	got := report.String()
+	for _, want := range []string{
+		"# totals",
+		"# by_model_route",
+		"# by_bench",
+		"# by_day",
+		"usd_per_ok",
+		"usd_per_landed",
+		"2026-09-22",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report does not carry %q:\n%s", want, got)
+		}
+	}
+	// fable/studio: five ok, one fail, $0.55 over one landed card, all five cards priced
+	// (#3159: cards, priced_cards, then the figure with its coverage).
+	if !strings.Contains(got, "fable\tstudio\t6\t5\t1\t6\t0.55\t0.11\t1\t5\t5\t=0.55 coverage=100.00% (5/5)\n") {
+		t.Errorf("the fable/studio row is not the arithmetic this fold holds:\n%s", got)
+	}
+	// The row the sprint table reads: eleven done, ten ok, one fail, one landed.
+	if !strings.Contains(got, "10\t11\t11\t10\t1\t0\t1\t") {
+		t.Errorf("the totals row is not cards=10 rows=11 done=11 ok=10 fail=1 reads=0 landed=1:\n%s", got)
+	}
+}
+
+// An entry a writer got wrong is a skip with a count, never a stop: one bad writer must not
+// stop the fold for every other writer, and the number says how many were lost.
+func TestABadEntryIsSkippedAndCounted(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openFold(t, "ev.sqlite")
+	inserted, skipped, err := db.Apply(ctx, []Entry{
+		{ID: "1-0", Fields: okEvent().Fields()},
+		{ID: "2-0", Fields: map[string]string{"label": "card-2", "event": "eaten-by-a-bear"}},
+		{ID: "3-0", Fields: map[string]string{"label": "", "event": "ok"}},
+		// A cards:done entry written before the event fields were added: no `event`, so it is
+		// counted as skipped, never guessed into ok or fail.
+		{ID: "4-0", Fields: map[string]string{"label": "card-4", "bench": "studio", "exit": "0", "result": "OK"}},
+	})
+	if err != nil {
+		t.Fatalf("a batch holding a bad entry: %v", err)
+	}
+	if inserted != 1 || skipped != 3 {
+		t.Fatalf("inserted=%d skipped=%d, want 1 and 3", inserted, skipped)
+	}
+}
+
+// An absent cost folds to NULL, not 0: the dump prints a dash for it, a reported zero stays
+// 0, and a totals row over nothing priced is a dash rather than $0.
+func TestAMissingCostFoldsToNullNotZero(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	db := openFold(t, "ev.sqlite")
+	if _, _, err := db.Apply(ctx, []Entry{
+		{ID: "1-0", Fields: map[string]string{"label": "card-1", "event": "queued"}},
+		{ID: "2-0", Fields: map[string]string{"label": "card-2", "event": "ok", "usd": "0", "tokens_in": "0", "tokens_out": "0"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var nulls, zeros int
+	if err := db.db.QueryRowContext(ctx, `SELECT count(*) FROM attempts WHERE usd IS NULL AND tokens_in IS NULL AND tokens_out IS NULL`).Scan(&nulls); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.db.QueryRowContext(ctx, `SELECT count(*) FROM attempts WHERE usd = 0 AND tokens_in = 0 AND tokens_out = 0`).Scan(&zeros); err != nil {
+		t.Fatal(err)
+	}
+	if nulls != 1 || zeros != 1 {
+		t.Fatalf("NULL-cost rows=%d zero-cost rows=%d, want 1 and 1: the queued entry reported no cost, the ok entry reported zero", nulls, zeros)
+	}
+	var dump bytes.Buffer
+	if err := db.Dump(ctx, &dump); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(dump.String(), "attempts\t1-0\tcard-1\t0\t\t\t\tqueued\t-\t-\t-\t") {
+		t.Errorf("the dump does not print the absent cost as dashes:\n%s", dump.String())
+	}
+	if !strings.Contains(dump.String(), "attempts\t2-0\tcard-2\t0\t\t\t\tok\t0\t0\t0\t") {
+		t.Errorf("the dump does not keep the reported zero:\n%s", dump.String())
+	}
+
+	unpriced := openFold(t, "unpriced.sqlite")
+	if _, _, err := unpriced.Apply(ctx, []Entry{{ID: "1-0", Fields: map[string]string{"label": "card-1", "event": "ok"}}}); err != nil {
+		t.Fatal(err)
+	}
+	var report bytes.Buffer
+	if err := unpriced.Report(ctx, &report, 0); err != nil {
+		t.Fatal(err)
+	}
+	// cards rows done ok fail reads landed usd priced_cards usd_per_landed: the usd of a fold
+	// that holds no price is a dash, no card is priced, and $/landed is a dash too (#3159).
+	if !strings.Contains(report.String(), "1\t1\t1\t1\t0\t0\t0\t-\t0\t-\n") {
+		t.Errorf("the totals row prices an unpriced fold; want usd as a dash:\n%s", report.String())
+	}
+}
+
+func firstLines(s string) string {
+	lines := strings.SplitN(s, "\n", 6)
+	if len(lines) > 5 {
+		lines = lines[:5]
+	}
+	return strings.Join(lines, "\n")
+}
+
+// The $/landed lower bound (nova-tools #3159): a fold figure is exact only when every card
+// behind it is priced; below that it prints `>=<x> coverage=<p>% (<priced>/<cards>)`.
+
+const (
+	threeCardBound = ">=5.00 coverage=66.67% (2/3)"
+	threeCardExact = "=6.00 coverage=100.00% (3/3)"
+)
+
+// loadSQL runs one testdata SQL file against a fold file's connection.
+func loadSQL(t *testing.T, db *sql.DB, name string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(context.Background(), string(b)); err != nil {
+		t.Fatalf("loading %s: %v", name, err)
+	}
+}
+
+// noRow is what queryString reads when the query returns no row at all.
+const noRow = "(no row)"
+
+// queryString reads one text cell; a NULL reads as the dash.
+func queryString(t *testing.T, db *sql.DB, query string) string {
+	t.Helper()
+	var s sql.NullString
+	err := db.QueryRowContext(context.Background(), query).Scan(&s)
+	if errors.Is(err, sql.ErrNoRows) {
+		return noRow
+	}
+	if err != nil {
+		t.Fatalf("%s: %v", query, err)
+	}
+	if !s.Valid {
+		return "-"
+	}
+	return s.String
+}
+
+func TestFold20260922UsdPerLandedIsLowerBound(t *testing.T) {
+	t.Parallel()
+	db := openFold(t, "fold-2026-09-22.sqlite")
+	loadSQL(t, db.db, "fold-2026-09-22.sql")
+
+	// The fixture is the shape the spec names: 1902 cards, 10 unpriced, 11 landed, $619.03.
+	for query, want := range map[string]string{
+		`SELECT cards FROM totals`:                                        "1902",
+		`SELECT priced_cards FROM totals`:                                 "1892",
+		`SELECT landed FROM totals`:                                       "11",
+		`SELECT printf('%.2f', usd) FROM totals`:                          "619.03",
+		`SELECT count(*) FROM attempts WHERE usd IS NULL AND kind = 'ok'`: "10",
+	} {
+		if got := queryString(t, db.db, query); got != want {
+			t.Errorf("%s = %s, want %s", query, got, want)
+		}
+	}
+	got := queryString(t, db.db, `SELECT 'usd_per_landed' || usd_per_landed FROM totals`)
+	if want := "usd_per_landed>=56.28 coverage=99.47% (1892/1902)"; got != want {
+		t.Fatalf("the 2026-09-22 fold's $/landed\n got %q\nwant %q", got, want)
+	}
+}
+
+func TestFoldUsdPerLandedExactOnlyAtFullCoverage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("bound below 100%", func(t *testing.T) {
+		db := openFold(t, "bound.sqlite")
+		loadSQL(t, db.db, "three-card.sql")
+		for _, q := range []string{
+			`SELECT usd_per_landed FROM totals`,
+			`SELECT usd_per_landed FROM by_model_route WHERE model = 'fable' AND route = 'studio'`,
+		} {
+			if got := queryString(t, db.db, q); got != threeCardBound {
+				t.Errorf("%s = %q, want %q", q, got, threeCardBound)
+			}
+		}
+		if got := queryString(t, db.db, `SELECT cards || '/' || priced_cards FROM by_model_route`); got != "3/2" {
+			t.Errorf("by_model_route cards/priced_cards = %s, want 3/2", got)
+		}
+	})
+
+	t.Run("exact at 100%", func(t *testing.T) {
+		db := openFold(t, "exact.sqlite")
+		loadSQL(t, db.db, "three-card-priced.sql")
+		for _, q := range []string{
+			`SELECT usd_per_landed FROM totals`,
+			`SELECT usd_per_landed FROM by_model_route WHERE model = 'fable' AND route = 'studio'`,
+		} {
+			if got := queryString(t, db.db, q); got != threeCardExact {
+				t.Errorf("%s = %q, want %q", q, got, threeCardExact)
+			}
+		}
+	})
+
+	// A queued row never carries usd; the card is priced because attempt 1 has a priced row.
+	t.Run("queued and ok at one attempt is priced", func(t *testing.T) {
+		db := openFold(t, "queued.sqlite")
+		if _, err := db.db.Exec(`INSERT INTO attempts (event_id, label, attempt, model, route, kind, usd) VALUES
+			('1-0', 'c1', 1, 'fable', 'studio', 'queued', NULL),
+			('2-0', 'c1', 1, 'fable', 'studio', 'ok', 2.00),
+			('3-0', 'c2', 1, 'fable', 'studio', 'ok', 3.00);
+			INSERT INTO landings (event_id, label, kind) VALUES ('4-0', 'c1', 'landed');`); err != nil {
+			t.Fatal(err)
+		}
+		want := "=5.00 coverage=100.00% (2/2)"
+		for _, q := range []string{`SELECT usd_per_landed FROM totals`, `SELECT usd_per_landed FROM by_model_route`} {
+			if got := queryString(t, db.db, q); got != want {
+				t.Errorf("%s = %q, want %q", q, got, want)
+			}
+		}
+	})
+
+	// Attempt 2 was never priced, so the card's cost is unknown: the figure is a bound.
+	t.Run("an attempt with only NULL rows is unpriced", func(t *testing.T) {
+		db := openFold(t, "attempt2.sqlite")
+		if _, err := db.db.Exec(`INSERT INTO attempts (event_id, label, attempt, model, route, kind, usd) VALUES
+			('1-0', 'c1', 1, 'fable', 'studio', 'ok', 2.00),
+			('2-0', 'c1', 2, 'fable', 'studio', 'queued', NULL),
+			('3-0', 'c1', 2, 'fable', 'studio', 'fail', NULL),
+			('4-0', 'c2', 1, 'fable', 'studio', 'ok', 3.00);
+			INSERT INTO landings (event_id, label, kind) VALUES ('5-0', 'c2', 'landed');`); err != nil {
+			t.Fatal(err)
+		}
+		want := ">=5.00 coverage=50.00% (1/2)"
+		for _, q := range []string{`SELECT usd_per_landed FROM totals`, `SELECT usd_per_landed FROM by_model_route`} {
+			if got := queryString(t, db.db, q); got != want {
+				t.Errorf("%s = %q, want %q", q, got, want)
+			}
+		}
+	})
+
+	t.Run("nothing landed or nothing priced is the dash", func(t *testing.T) {
+		db := openFold(t, "dash.sqlite")
+		if _, err := db.db.Exec(`INSERT INTO attempts (event_id, label, attempt, kind, usd) VALUES ('1-0', 'c1', 1, 'ok', 2.00)`); err != nil {
+			t.Fatal(err)
+		}
+		if got := queryString(t, db.db, `SELECT usd_per_landed FROM totals`); got != "-" {
+			t.Errorf("nothing landed: usd_per_landed = %q, want the dash", got)
+		}
+		if _, err := db.db.Exec(`UPDATE attempts SET usd = NULL; INSERT INTO landings (event_id, label, kind) VALUES ('2-0', 'c1', 'landed')`); err != nil {
+			t.Fatal(err)
+		}
+		if got := queryString(t, db.db, `SELECT usd_per_landed FROM totals`); got != "-" {
+			t.Errorf("nothing priced: usd_per_landed = %q, want the dash", got)
+		}
+	})
+}
+
+// foldState is what an upgrade must keep: the versions, every table's row count, the views'
+// figures and the decision row itself.
+type foldState struct {
+	versions, counts, totals, byModelRoute, decision, byKind string
+}
+
+func readFoldState(t *testing.T, db *sql.DB) foldState {
+	t.Helper()
+	return foldState{
+		versions: queryString(t, db, `SELECT group_concat(version) FROM (SELECT version FROM schema_version ORDER BY version)`),
+		counts: queryString(t, db, `SELECT (SELECT count(*) FROM attempts) || ',' || (SELECT count(*) FROM reads) || ',' ||
+			(SELECT count(*) FROM landings) || ',' || (SELECT count(*) FROM decisions)`),
+		totals:       queryString(t, db, `SELECT usd_per_landed FROM totals`),
+		byModelRoute: queryString(t, db, `SELECT usd_per_landed FROM by_model_route`),
+		decision:     queryString(t, db, `SELECT quote(json_array(`+decisionRowColumns+`)) FROM decisions`),
+		byKind: queryString(t, db, `SELECT kind || ',' || decisions || ',' || units || ',' || stepped_up || ',' || escalated || ',' ||
+			refused || ',' || calls || ',' || quote(tokens_in) || ',' || quote(tokens_out) FROM decisions_by_kind`),
+	}
+}
+
+// decisionRowColumns is every column of the decisions table, so the row compares byte for byte.
+const decisionRowColumns = `event_id, label, bench, model, route, pr, head, at, day, unit_id, kind, files, packages,
+	lanes, lane, rung_tried, height, confidence, floor, stepped_up, escalated, designated, source, rowan_pick,
+	reason, wait, awaiting_termination, refusal, outcome, rung_succeeded, calls, tokens_in, tokens_out, usd,
+	usage_failed`
+
+// oldFold builds a fold file under an old schema with the three-card fixture, the way a live
+// file looks before its first open under this change.
+func oldFold(t *testing.T, schema string, decision bool) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "old.sqlite")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = raw.Close() }()
+	loadSQL(t, raw, schema)
+	loadSQL(t, raw, "three-card.sql")
+	if decision {
+		if _, err := raw.Exec(`INSERT INTO decisions (event_id, label, unit_id, kind, escalated) VALUES ('9-0', 'c1', 'u1', 'rebase', 1)`); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return path
+}
+
+func TestOpenDBUpgradesOldViews(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	reopen := func(t *testing.T, path string) foldState {
+		t.Helper()
+		db, err := OpenDB(ctx, path)
+		if err != nil {
+			t.Fatalf("reopening under the new schema: %v", err)
+		}
+		defer func() { _ = db.Close() }()
+		return readFoldState(t, db.db)
+	}
+
+	t.Run("v2", func(t *testing.T) {
+		path := oldFold(t, "schema-v2.sql", true)
+		raw, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := queryString(t, raw, `SELECT usd_per_landed FROM by_model_route`); got != "5" && got != "5.0" {
+			t.Fatalf("before the upgrade by_model_route.usd_per_landed = %q, want the old number 5", got)
+		}
+		wantByKind := "rebase,1,1,0,1,0,0,NULL,NULL"
+		if got := queryString(t, raw, `SELECT kind || ',' || decisions || ',' || units || ',' || stepped_up || ',' || escalated || ',' ||
+			refused || ',' || calls || ',' || quote(tokens_in) || ',' || quote(tokens_out) FROM decisions_by_kind`); got != wantByKind {
+			t.Fatalf("before the upgrade decisions_by_kind = %q, want %q", got, wantByKind)
+		}
+		wantDecision := queryString(t, raw, `SELECT quote(json_array(`+decisionRowColumns+`)) FROM decisions`)
+		wantCounts := queryString(t, raw, `SELECT (SELECT count(*) FROM attempts) || ',' || (SELECT count(*) FROM reads) || ',' ||
+			(SELECT count(*) FROM landings) || ',' || (SELECT count(*) FROM decisions)`)
+		_ = raw.Close()
+
+		got := reopen(t, path)
+		want := foldState{
+			versions: "1,2,3", counts: wantCounts, totals: threeCardBound, byModelRoute: threeCardBound,
+			decision: wantDecision, byKind: wantByKind,
+		}
+		if got != want {
+			t.Fatalf("after the upgrade\n got %+v\nwant %+v", got, want)
+		}
+		if again := reopen(t, path); again != want {
+			t.Fatalf("a second reopen is not a no-op\n got %+v\nwant %+v", again, want)
+		}
+	})
+
+	t.Run("v1", func(t *testing.T) {
+		path := oldFold(t, "schema-v1.sql", false)
+		raw, err := sql.Open("sqlite", path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := queryString(t, raw, `SELECT usd_per_landed FROM by_model_route`); got != "5" && got != "5.0" {
+			t.Fatalf("before the upgrade by_model_route.usd_per_landed = %q, want the old number 5", got)
+		}
+		_ = raw.Close()
+		got := reopen(t, path)
+		want := foldState{
+			versions: "1,2,3", counts: "3,0,1,0", totals: threeCardBound, byModelRoute: threeCardBound,
+			decision: noRow, byKind: noRow,
+		}
+		if got != want {
+			t.Fatalf("after the upgrade\n got %+v\nwant %+v", got, want)
+		}
+		if again := reopen(t, path); again != want {
+			t.Fatalf("a second reopen is not a no-op\n got %+v\nwant %+v", again, want)
+		}
+	})
+}
+
+// TestFoldFixturesAreTheOldSchemas pins the two schema fixtures to the commits the spec names
+// by their version lines, so a fixture cannot drift into the new schema by an edit.
+func TestFoldFixturesAreTheOldSchemas(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string][]string{
+		"schema-v1.sql": {"VALUES (1)"},
+		"schema-v2.sql": {"VALUES (1)", "VALUES (2)", "CREATE TABLE IF NOT EXISTS decisions"},
+	} {
+		b, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range want {
+			if !strings.Contains(string(b), w) {
+				t.Errorf("%s lacks %q", name, w)
+			}
+		}
+		if strings.Contains(string(b), "VALUES (3)") {
+			t.Errorf("%s carries version 3; it must be the old schema verbatim", name)
+		}
+	}
+}

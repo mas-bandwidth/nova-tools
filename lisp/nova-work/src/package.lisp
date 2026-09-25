@@ -30,12 +30,13 @@
    #:journal-uncertain-write-reason
    #:journal-held
    #:journal-held-path
-   ;; restricted data and canonical serialization
-   #:+absent+
-   #:absentp
-   #:canonical-string
-   #:canonical-print
-   #:read-restricted
+;; restricted data and canonical serialization
+    #:+absent+
+    #:absentp
+    #:canonical-string
+    #:canonical-print
+    #:read-restricted
+    #:roadmap-bug-counts
    ;; digest
    #:sha256-hex
    ;; events
@@ -65,6 +66,11 @@
    #:state-closed-rows
    ;; indexes: the write-maintained counters and indexes and their reconstruction
    #:reconstruct-state-index
+   #:cow-load-findings
+   #:cow-candidate-gate
+   #:cow-partition-holds-p
+   #:hand-write-closed-row
+   #:wstate-rows
    #:state-holder-index
    #:state-index-mismatches
    #:node-open-count
@@ -84,6 +90,9 @@
    #:state-lease-log
    #:take-lease
    #:release-lease
+   ;; rule 6: the reference edge as a verb (SPEC-WORK.md:4993-5031)
+   ;; rule 6, #785: the read-time needs view `DEP OK` reads (SPEC-WORK.md:5004)
+   #:kernel-needs-view
    #:working-count
    #:node-disposition
    #:roadmap-members
@@ -167,6 +176,9 @@
     #:session-submit
     #:session-check-admission
     #:session-reconfirm
+    #:session-findings
+    #:session-repair
+    #:session-repair-gate
     #:parse-rfc3339
     #:format-rfc3339
     #:parse-duration
@@ -300,14 +312,30 @@
     #:fetch-link
     #:*link-fetch-count*
     #:node-add
+    #:decompose-node
+    #:%bug-child-id-p
     #:node-repo
     #:repo-holder
     #:node-type
+    #:node-kind
     #:node-view
     #:node-parent
     #:node-children
     #:roadmap-create
     #:node-move
+    ;; `dep --add` / `dep --remove`: the edge as a verb (SPEC-WORK.md:987, :2362)
+    #:dep-edit
+    #:%dep-submit
+    #:node-structure-log
+    ;; the scope and ordering verbs (E03-F03, SPEC-WORK.md:2929)
+    #:node-require
+    #:baseline
+    #:discovery
+    #:prioritise
+    #:%scope-submit
+    #:node-required-p
+    #:node-baseline
+    #:node-priority
     ;; applicable/delegation replays (Go card 8132)
     #:note-id
     #:make-note
@@ -553,6 +581,8 @@
     #:session-endpoint-owner
     #:session-endpoint-socket-family
     #:endpoint-network-listener-p
+    #:named-pipe-endpoint-p
+    #:session-endpoint-lock-path
     #:local-socket-family
     #:current-account-uid
     ;; the local listener and the resident session server daemon
@@ -580,6 +610,11 @@
     #:session-server-stop
     #:serve-session-request
     #:default-session-request-handler
+    ;; the request line the CLI speaks, answered in the output grammar
+    ;; (src/request-line.lisp; SPEC-WORK.md:2642-2708)
+    #:request-line-verb
+    #:serve-request-line
+    #:session-fail-line
     #:session-identity-line
     ;; session status, stop and handoff (SPEC-WORK.md:304-308, :814-828)
     #:session-status-line
@@ -685,6 +720,7 @@
    ;; the framed length-prefixed JSON wire codec (nova-tools card 9132):
    ;; a 4-byte big-endian unsigned length, then that many UTF-8 JSON bytes.
    #:wire-utf8-octets
+   #:utf8-octets
    #:wire-utf8-string
    #:wire-json-escape
    #:wire-json-encode
@@ -708,6 +744,14 @@
    #:request-bundle-requests
    #:read-request-bundle
    #:session-replay
+   ;; the framed `hello` protocol-version handshake (SPEC-WORK.md:2662-2685)
+   #:wire-unframe
+   #:protocol-build-identity
+   #:protocol-version-list
+   #:protocol-hello-versions
+   #:protocol-hello-frame
+   #:protocol-hello-ok-text
+   #:protocol-hello-refused-text
    #:make-operation-registry
    #:operation-registry-p
    #:operation-registry-operations
@@ -732,6 +776,62 @@
    #:accept-record-of
    #:accept-journal-count
    #:recover-operation
+   ;; the local recovery journal and the restart reconciliation
+   ;; (SPEC-WORK.md:2728-2733, :2759-2760)
+   #:*operation-journal-initial-state*
+   #:operation-journal-ids
+   #:reconcile-operation-registry
+   #:open-durable-operation-registry
+   #:close-durable-operation-registry
+   ;; the clip transport over a real git remote (SPEC-WORK.md:2744-2750)
+   #:*clip-git-identity*
+   #:*clip-git-payload-path*
+   #:git-clip-remote
+   #:git-clip-remote-p
+   #:git-clip-remote-directory
+   #:git-clip-remote-ref
+   #:git-run
+   #:open-git-clip-remote
+   #:git-clip-write-payload
+   #:split-lines
+   #:git-clip-remote-history
+   #:git-clip-commit-message
+   #:clip-ok-line
+   #:clip-raced-line
+   #:clip-fail-line
+   #:run-clip-transport
+   #:session-stop-wait-for-clip
+   #:clip-launch-transport
+   #:clip-operation-observe
+   #:clip-git-timeout-duration
+   ;; the cancellation as a request of its own on the same journal
+   ;; (SPEC-WORK.md:2717-2720, :2740-2744)
+   #:cancel-record-p
+   #:make-cancel-record
+   #:registry-apply-cancel-record
+   #:registry-cancellation-of
+   #:registry-operation-cancel
+   ;; the event cursor and the bounded block `operation wait` is
+   ;; (SPEC-WORK.md:2736-2740, :2759)
+   #:*operation-event-cap*
+   #:*operation-wait-page*
+   #:*operation-terminal-states*
+   #:terminal-operation-state-p
+   #:operation-event-stream
+   #:operation-event-stream-p
+   #:operation-event-stream-count
+   #:operation-event-stream-cap
+   #:operation-cell
+   #:ensure-operation-event-stream
+   #:no-such-operation-line
+   #:operation-emit-event
+   #:operation-settle
+   #:operation-notify
+   #:operation-event-page
+   #:operation-row-line
+   #:durable-operation-wait
+   #:session-recovery-journal-path
+   #:open-session-operation-registry
    #:session-operation-list
    #:registry-operation-list
    #:work-session-cancellations
@@ -812,6 +912,8 @@
     ;; the roadmap verbs (E04 slice 1: create / configure, src/roadmap.lisp)
     #:roadmap-configure
     #:roadmap-configure-undo
+    #:roadmap-row-undo
+    #:roadmap-projection-undo
     #:roadmap-structure-events
     #:roadmap-view-revision
     #:roadmap-view-aggregation
@@ -842,6 +944,12 @@
     #:roadmap-rows-count
     #:roadmap-applicable-rows
     #:roadmap-applicable-count
+    ;; `render --view` over a stored selection (src/roadmap.lisp)
+    #:roadmap-view-projection
+    #:roadmap-view-axis-members
+    #:render-view-selection
+    #:render-view-body
+    #:render-view
     ;; render replays (nova-tools #362)
     #:make-render-session
     #:render-session-p
@@ -871,6 +979,15 @@
     #:path-absolute-p
     #:path-has-parent-segment-p
     #:render-symlink-escape-p
+    #:render-target-escape-p
+    ;; the filesystem implementation of the render-target seam
+    ;; (SPEC-WORK.md:3147-3157)
+    #:make-filesystem-render-session
+    #:filesystem-render-session
+    #:filesystem-render-session-p
+    #:filesystem-target-escapes-root-p
+    #:resolve-through-links
+    #:truename-string
     #:render-target-read
     #:render-target-write
     #:render-marker-offsets
@@ -1064,6 +1181,62 @@
     #:receipt-verifier-verify
     #:verifier-result
     #:verifier-result-valid-p
+    ;; the verifier result a receipt needs, admitted by the one writer
+    ;; (src/receipt-admission.lisp, SPEC-WORK.md:3857-3868)
+    #:verifier-registry
+    #:make-verifier-registry
+    #:verifier-registry-member
+    #:verifier-registry-count
+    #:parse-verifier-line
+    #:run-verifier-command
+    #:configure-verifier
+    #:kernel-verifier
+    #:kernel-verifiers
+    #:provenance-pointer-path
+    #:read-provenance-bytes
+    #:stage-receipt
+    #:staged-input-p
+    #:receipt-submit
+    #:stage-payload-file
+    ;; `savepoint create` over the real state, journal and files
+    ;; (src/savepoint-create.lisp, SPEC-WORK.md:7109-7190)
+    #:journal-scan
+    #:journal-scan-records
+    #:journal-scan-torn-p
+    #:scan-journal-file
+    #:journal-scan-cut
+    #:journal-file-identity
+    #:savepoint-capture-submit
+    #:savepoint-directory
+    #:savepoint-manifest-path
+    #:read-savepoint-manifest
+    #:savepoint-create
+    ;; `savepoint list`, `verify` and the isolated read-only `restore`
+    ;; (src/savepoint-restore.lisp, SPEC-WORK.md:2275-2278, :7165-7171)
+    #:savepoint-report
+    #:savepoint-report-manifest
+    #:savepoint-report-revision
+    #:savepoint-report-cut
+    #:savepoint-report-gap
+    #:savepoint-published-ids
+    #:savepoint-published-p
+    #:savepoint-age-seconds
+    #:savepoint-verify-published
+    #:savepoint-list-published
+    #:savepoint-restore-published
+    #:savepoint-compare-published
+    #:restored-savepoint
+    #:restored-savepoint-p
+    #:restored-savepoint-id
+    #:restored-savepoint-state
+    #:restored-savepoint-revision
+    #:restored-savepoint-replayed
+    #:restored-savepoint-replies
+    #:restored-savepoint-ownership-taken-p
+    #:restored-savepoint-dispatched-p
+    #:restored-savepoint-messages-replayed
+    #:admitted-receipts
+    #:admitted-receipt
     #:session-written-field
     #:assignment-offer
     #:assignment-acknowledge
@@ -1160,6 +1333,23 @@
     #:assertion-holds-p
     #:regression-evidence-p
     #:green-badge-p
+    ;; retain fixtures, revisions, fault points and expected/actual (SPEC-WORK.md:7057-7059)
+    #:regression-retention
+    #:make-regression-retention
+    #:regression-retention-p
+    #:regression-retention-fixtures
+    #:regression-retention-seed
+    #:regression-retention-engine-version
+    #:regression-retention-client-version
+    #:regression-retention-schema-version
+    #:regression-retention-fault-point
+    #:regression-retention-invocation
+    #:regression-retention-captured-revision
+    #:regression-retention-expected
+    #:regression-retention-actual
+    #:regression-retention-result
+    #:reconcile-retention
+    #:retention-complete-p
     ;; savepoint vs shared checkpoint (card 8641)
     #:savepoint
     #:make-savepoint
@@ -1243,6 +1433,7 @@
     #:archive-capture-gaps
     #:archive-gaps-explicit-p
     #:archive-absorbable-p
+    #:archive-deletion-gate
     #:author-retains-source-p
     ;; replays-8642: bounds-are-not-prompts
     #:launcher #:make-launcher
@@ -1412,6 +1603,17 @@
    #:capture-consistent-claim
    #:source-version-value
    #:source-capture-reconciled-p
+   ;; E07-F04-01 imported baseline (SPEC-WORK.md:7785-7786,7826-7827)
+   #:baseline-import-refused
+   #:import-baseline
+   #:imported-baseline-source-revision
+   #:imported-baseline-completion-unit
+   #:imported-baseline-members
+   #:imported-baseline-supersessions
+   #:baseline-provenance
+   #:baseline-supersede
+   #:baseline-add-report
+   #:baseline-accounting
    #:make-dispatch-packet
    #:make-dispatch-route
    #:dispatch-gates
@@ -1594,6 +1796,26 @@
     #:savepoint-load-gap
     #:savepoint-cut-sequence
     #:savepoint-content-ok-p
+    ;; the dedup root a savepoint's boundary record names (src/dedup-root.lisp,
+    ;; SPEC-WORK.md:7155-7164)
+    #:dedup-root-entries
+    #:write-dedup-root
+    #:read-dedup-root
+    #:dedup-root-holds-p
+    ;; the stable logical journal identity and the real journal rotation
+    ;; (src/journal-identity.lisp, src/journal-rotate.lisp, SPEC-WORK.md:471-482,
+    ;; :7176-7182)
+    #:*journal-identity-byte-source*
+    #:mint-journal-identity
+    #:header-journal-identity
+    #:journal-header-line
+    #:journal-root-header-sha
+    #:journal-logical-identity
+    #:journal-file-identities
+    #:header-covers-cut-p
+    #:journal-chain-covers-cut-p
+    #:rotate-file-journal
+    #:journal-rotation-locator
     ;; replays-8650 (nova-tools #362)
     #:migrate-state-schema
     #:declare-shared-prerequisite
@@ -1613,6 +1835,12 @@
     #:reconcile-inventory
     #:cost-breakdown
     #:subscription-covers-cash-p
+    ;; issue-correspondence (E09-F02-01, SPEC-WORK.md:7570-7572)
+    #:make-issue-correspondence
+    #:record-issue-link
+    #:correspondence-nodes
+    #:correspondence-url
+    #:correspondence-revision
     ;; replays-8651 (undo-redo, unknown-price-is-not-zero, unrelated-receipts)
     #:resolved-price
     #:reversible-verb-p
@@ -1687,9 +1915,27 @@
     #:prompt-profile-evidence
     #:prompt-profile-expiry
     #:prompt-profile-owner
+    #:prompt-profile-model
+    #:prompt-profile-harness
+    #:prompt-profile-work-type
     #:prompt-profile-state
     #:prompt-profile-status-line
     #:prompt-profile-invocation
+    #:make-profile-registry
+    #:profile-registry-profiles
+    #:profile-registry-journal
+    #:profile-triple
+    #:profile-registry-find
+    #:profile-registry-find-triple
+    #:register-profile
+    #:make-profile-edit-record
+    #:profile-edit-record-profile-name
+    #:profile-edit-record-version
+    #:profile-edit-record-fields
+    #:profile-edit-record-by
+    #:profile-edit-record-stamp
+    #:profile-edit
+    #:profile-edit-journal
     #:make-machine-record
     #:machine-record-id
     #:machine-record-name
@@ -1906,6 +2152,52 @@
     #:fetch-resolver-fact
     #:verify-qualifies-p
     #:verify
+    ;; the verification cache file (SPEC-WORK.md:1294-1325)
+    #:verification-fact-form
+    #:write-verification-cache
+    #:read-verification-cache
+    #:resolver-identities
+    #:persist-verification-cache
+    #:session-cache
+    #:session-verification
+    #:verification-session-cache-path
+    #:command-resolver
+    #:make-command-resolver
+    #:command-resolver-p
+    #:command-resolver-max-bytes
+    #:command-resolver-timeout
+    #:parse-resolver-output
+    #:run-resolver-command
+    ;; the CI lanes (SPEC-WORK.md:7089-7100,7235, src/verifier.lisp)
+    #:*per-change-suites*
+    #:*exhaustive-suites*
+    #:*per-change-target-seconds*
+    #:*per-change-ceiling-seconds*
+    #:acceptance-suite-lane
+    #:lane-blocks-gate
+    #:lane-suites
+    #:run-ci-lane
+    ;; the needs-met predicate and its five reason tokens (nova-tools #785,
+    ;; SPEC-WORK.md:4740-4866)
+    #:needs-view
+    #:make-needs-view
+    #:needs-view-p
+    #:needs-view-session
+    #:needs-view-evidence
+    #:needs-view-generations
+    #:needs-view-responsible
+    #:needs-view-engaged
+    #:needs-view-node-evidence
+    #:needs-view-node-generation
+    #:needs-view-node-responsible
+    #:needs-reason-token
+    #:need-met-p
+    #:node-needs-status
+    #:node-needs-met-p
+    #:node-engaged-p
+    #:standing-done-evidence
+    #:*need-default-generation*
+    #:state-node-ids
     ;; the kernel `decide` protocol and its one in-process fake (SPEC-DECIDE)
     #:decision
     #:make-decision
@@ -1964,9 +2256,43 @@
     #:capture-stage-input
     #:capture-stage-bytes
     #:capture-input-count
+    #:make-capture-input
+    #:capture-input-p
+    #:capture-input-id
+    #:capture-input-kind
+    #:capture-input-expected-revision
+    #:capture-input-bytes
+    #:capture-input-records
+    #:capture-input-source-pin
     #:capture-admit-result
     #:capture-result-of
     #:capture-wire-op
+    ;; the staged bytes on disk (SPEC-WORK.md:2752-2754, :2759-2760)
+    #:filesystem-capture-stage
+    #:filesystem-capture-stage-p
+    #:filesystem-capture-stage-root
+    #:filesystem-capture-stage-staged
+    #:filesystem-capture-stage-unverified
+    #:open-filesystem-capture-stage
+    #:staged-input-path
+    #:stage-record-p
+    #:make-stage-record
+    #:write-staged-file
+    #:read-staged-file
+    #:stage-source-bytes
+    #:staged-content
+    #:staged-bytes-on-disk
+    #:reconcile-capture-stage
+    #:admit-staged-result
+    ;; E09-F04-01 link versus absorb (SPEC-WORK.md:7586-7617): link is the
+    ;; default; absorb needs its explicit mode, scope and authority.
+    #:capture-stage-absorb-allowed
+    #:capture-stage-intake-mode
+    #:capture-stage-absorb-repositories
+    #:capture-stage-absorb-authors
+    #:capture-stage-absorb-authority
+    #:validate-absorb-selection
+    #:capture-absorb-allowed-p
     ;; E02 `session export --state --at` (SPEC-WORK.md:3197-3223): the flag
     ;; validation, the pinned revision, the resident one-long-operation form and
     ;; the offline snapshot form.
@@ -1980,7 +2306,76 @@
     #:state-export-wait
     #:snapshot-state-export
     #:export-wire-op
-    #:state-export-cancel-ack))
+    #:state-export-cancel-ack
+    ;; notes (the coordinator's notes replays)
+    #:note-scope
+    #:note-author
+    #:note-date
+    #:note-source
+    #:note-kind
+    #:note-text
+    #:note-constraint
+    #:note-uncertain
+    #:note-superseded
+    #:note-did-for
+    #:make-notes-config
+    #:make-notes-store
+    #:notes-notes
+    #:note-by-id
+    #:active-note-p
+    #:notes-active
+    #:notes-active-count
+    #:notes-write
+    #:notes-supersede
+    #:check-not-weaker-kind
+    #:make-replacement-note
+    ;; correspondence actions: pending/confirmed/failed outbound actions with
+     ;; request ids and receipts (SPEC-WORK.md:7576-7581; E09-F02-03)
+     #:outbound-action
+     #:outbound-action-p
+     #:outbound-action-request
+     #:outbound-action-issue
+     #:outbound-action-kind
+     #:outbound-action-state
+     #:outbound-action-receipt
+     #:outbound-action-payload
+     #:outbound-request-conflict
+     #:outbound-request-conflict-request
+     #:outbound-request-conflict-reason
+     #:make-correspondence-ledger
+     #:correspondence-ledger-actions
+     #:start-outbound
+     #:confirm-outbound
+     #:fail-outbound
+     #:outbound-state
+     #:outbound-receipt
+     #:reopen-ledger
+    ;; `execution reconcile` and `execution status` over the kernel's own
+    ;; controls (SPEC-WORK.md:3997-4019); see src/execution-reconcile.lisp
+    #:observation-manifest-id
+    #:execution-reconcile
+    #:execution-status
+    #:control-reconciliations
+    #:control-observations
+    #:control-target-ids
+    #:target-disposition
+    #:target-observed
+    #:target-observed-at
+    #:target-usage
+    ;; the durable long-operation record, its status, its cancellation and the
+    ;; recovery reconciliation (SPEC-WORK.md:2725-2760); see
+    ;; src/operation-records.lisp
+    #:kernel-operation-accept
+    #:kernel-operation-status
+    #:kernel-operation-list
+    #:kernel-operation-complete
+    #:kernel-operation-cancel
+    #:kernel-operation-reconcile
+    #:kernel-operation-interrupted
+    #:kernel-operation-records
+    #:kernel-operation-record
+    #:kernel-operation-ids
+    #:kernel-operation-result))
 
 (defpackage #:nova-work/tests
   (:use #:common-lisp #:nova-work)

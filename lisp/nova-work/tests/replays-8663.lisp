@@ -215,5 +215,128 @@
         (check-equal 1 code "the refusal is exit 1")
         (ok (search "ALLOC FAIL machine=m-a1" line) "the refusal names the machine: ~A" line)
         (ok (search "slots=1" line) "the refusal names the requested slots: ~A" line)
-        (ok (search "holder=n3" line) "the refusal names the holder: ~A" line)
-        (ok (search "capacity" line) "the refusal is the capacity one: ~A" line)))))
+         (ok (search "holder=n3" line) "the refusal names the holder: ~A" line)
+         (ok (search "capacity" line) "the refusal is the capacity one: ~A" line)))))
+
+;;; ------------------------------------------------------------------
+;;; TestE06F04ComparePriorCheckpointToCurrent    SPEC-WORK.md:7085
+;;;    criterion E06-F04-02 in docs/roadmaps/nova-work.sexp:
+;;;    "Compare prior checkpoint to current state and report gaps".
+;;;    The recovery row fixes the reading: "compare an isolated old
+;;;    restore against current state; a missing tail or an unavailable
+;;;    remote backup reported as a recovery gap". `savepoint compare`
+;;;    puts the prior checkpoint's revision and the current state's
+;;;    revision side by side, and reports as gaps every revision the
+;;;    current state holds beyond the prior checkpoint.
+;;; ------------------------------------------------------------------
+
+(deftest "TestE06F04ComparePriorCheckpointToCurrent" "docs/SPEC-WORK.md:7085"
+    "expected=prior-and-current-revisions-side-by-side;gap-revisions-named-one-each;unshared-not-shared;gap-count-not-a-fold"
+  (let* ((prior (make-savepoint
+                 :id "sp-prior" :schema "work-savepoint-v1" :local-revision 812
+                 :journal-id "abc" :replay-cut '(:sequence 420 :sha256 "h1")
+                 :boundary '(:sequence 390 :sha256 "h2") :manifest "sha-1"
+                 :image "state" :local-replies "replies" :age 3600
+                 :failed-backup nil))
+         (current (list :kind :session
+                        :revision 820
+                        :checkpoint 750
+                        :records (list (list :seq 1 :revision 700 :events '(1))
+                                       (list :seq 2 :revision 812 :events '(2))
+                                       (list :seq 3 :revision 819 :events '(3))
+                                       (list :seq 4 :revision 820 :events '(4)))))
+         (cmp (savepoint-compare prior :against current)))
+    ;; the prior checkpoint's revision and the current state's revision stand
+    ;; side by side; neither is folded into the other.
+    (check-equal 812 (getf cmp :local-revision)
+                 "the prior checkpoint's revision is named")
+    (check-equal 820 (getf cmp :against-revision)
+                 "the current state's revision is named beside it")
+    (check-equal 750 (getf cmp :shared-checkpoint)
+                 "the shared checkpoint stays a different field")
+    ;; the gaps are reported, one by one: every revision the current state holds
+    ;; beyond the prior checkpoint is named, never rounded into a count alone.
+    (check-equal '(819 820) (getf cmp :missing)
+                 "the work the current state holds beyond the prior checkpoint is reported as gaps")
+    ;; the work above the shared checkpoint still inside the prior checkpoint is
+    ;; reported as unshared, and the local savepoint is never the shared backup.
+    (check-equal '(812) (getf cmp :unshared)
+                 "the unshared work above the shared checkpoint is reported")
+    (check-equal nil (getf cmp :shared)
+                 "the local savepoint is not reported as the shared checkpoint")
+    ;; the comparison line names both revisions and reports each gap count.
+    (ok (search "rev=812" (getf cmp :line))
+        "the compare line names the prior revision: ~A" (getf cmp :line))
+    (ok (search "against=820" (getf cmp :line))
+        "the compare line names the current revision: ~A" (getf cmp :line))
+    (ok (search "checkpoint=750" (getf cmp :line))
+        "the compare line names the shared checkpoint separately: ~A" (getf cmp :line))
+    (ok (search "missing=2" (getf cmp :line))
+        "the compare line reports the gap count: ~A" (getf cmp :line))
+    (ok (search "unshared=1" (getf cmp :line))
+        "the compare line reports the unshared count: ~A" (getf cmp :line))))
+
+;;; ------------------------------------------------------------------
+;;; TestE02F06ProvideReproducibleBuildInstallAnd     SPEC-WORK.md:298-309
+;;; ------------------------------------------------------------------
+;;;
+;;; E02-F06 — Provide reproducible build/install and small
+;;; startup/status/shutdown smoke tests (ROADMAP.md:339). Stated at
+;;; docs/SPEC-WORK.md:298-309: the runtime packaging and its platforms are
+;;; pinned and tested before release (298-301); the build=<identity> field
+;;; says which build it is, so every running binary names the pinned runtime
+;;; (302-303); and the session's identity, bounds, state, and clip cadence are
+;;; explicit at start and readable at any time, and it is stopped explicitly
+;;; (304-309). This replay drives the pure session lifecycle the paragraph
+;;; promises: a reproducible build identity, an explicit start, a status that
+;;; reads every bound and the build, and an explicit stop that still answers.
+
+(deftest "TestE02F06ProvideReproducibleBuildInstallAnd" "docs/SPEC-WORK.md:298-309"
+    "expected=build-identity-reproducible-and-names-the-pinned-runtime;start-names-owner-and-generation;status-reads-every-bound-and-the-build;stop-fences-and-status-still-answers"
+  ;; (a) reproducible build: the build identity the running binary prints is
+  ;; deterministic across calls and names the pinned SBCL runtime
+  ;; (SPEC-WORK.md:302-303).
+  (let ((id1 (session-build-identity))
+        (id2 (session-build-identity)))
+    (ok (and (stringp id1) (plusp (length id1)))
+        "the build identity is empty: ~S" id1)
+    (check-string= id1 id2
+        "the build identity is not reproducible across two calls")
+    (ok (search (lisp-implementation-type) id1)
+        "the build identity does not name the pinned runtime: ~S" id1))
+  ;; (b) startup, status and shutdown on one session.
+  (multiple-value-bind (sess line code)
+      (session-start :path "acme/work" :owner "rowan"
+                     :now "2026-09-20T00:00:00Z")
+    ;; startup: the SESSION OK line names the owner and generation explicitly.
+    (check-equal 0 code "a session start answered a nonzero exit code")
+    (ok (search "SESSION OK" line) "start does not print SESSION OK: ~A" line)
+    (ok (search "owner=rowan" line) "start does not name the owner: ~A" line)
+    (ok (search "generation=1" line) "start does not name the generation: ~A" line)
+    ;; status: the SESSION OK status line reads every bound and names the build
+    ;; rather than remembering (SPEC-WORK.md:304-308).
+    (let ((status (session-status-line sess)))
+      (ok (search "SESSION OK" status) "status is not a SESSION OK line: ~A" status)
+      (ok (search "state=live" status) "status does not read the state: ~A" status)
+      (ok (search "build=" status) "status does not say which build it is: ~A" status)
+      (ok (search "every=" status) "status does not read every: ~A" status)
+      (ok (search "max-bytes=" status) "status does not read max-bytes: ~A" status)
+      (ok (search "closed-window=" status) "status does not read closed-window: ~A" status))
+    ;; shutdown: the session stops explicitly, fences itself and releases the
+    ;; owner (SPEC-WORK.md:308-309).
+    (multiple-value-bind (ok stop-lines)
+        (session-stop-lifecycle sess :no-clip t :now "2026-09-20T00:05:00Z")
+      (ok ok "the stop was refused: ~S" stop-lines)
+      (check-equal :fenced (session-state sess) "the stopped session is not fenced")
+      (check-equal "" (session-owner sess) "the stopped session still names an owner")))
+  ;; (c) a fenced session still answers status, so the harness that started it
+  ;; can read its shutdown (SPEC-WORK.md:252-266, session.lisp session-status).
+  (multiple-value-bind (sess line)
+      (session-start :path "acme/work" :owner "rowan" :now "2026-09-20T00:00:00Z")
+    (declare (ignore line))
+    (session-stop-lifecycle sess :no-clip t :now "2026-09-20T00:05:00Z")
+    (let ((after (session-status-line sess)))
+      (ok (search "SESSION OK" after)
+          "a fenced session does not answer status: ~A" after)
+      (ok (search "state=fenced" after)
+          "status does not read the fenced state after stop: ~A" after))))

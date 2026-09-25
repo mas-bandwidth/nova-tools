@@ -1,16 +1,26 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -218,6 +228,39 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 	})
 }
 
+// #1557: /usr/bin/c++ is an Xcode shim that reads /var/db/xcode_select_link.
+// The profile granted /var as a literal on the symlink, not a subpath, so the
+// shim died inside the wall with xcode-select's "unable to read data link" and
+// a worker read that as "no compiler installed". A C++ probe that compiles
+// outside the wall must compile inside it, with no extra --read.
+func TestCXXCompilesInsideTheWallOnDarwin(t *testing.T) {
+	needDarwin(t)
+	if _, err := os.Stat("/usr/bin/c++"); err != nil {
+		t.Skip("skipped: /usr/bin/c++ is not on this machine")
+	}
+	j := newJob(t)
+	src := filepath.Join(j.write, "probe.cpp")
+	if err := os.WriteFile(src, []byte("#include <iostream>\nint main(){ std::cout << \"ok\\n\"; return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outsideBin := filepath.Join(j.outside, "probe")
+	if out, err := exec.Command("/usr/bin/c++", "-o", outsideBin, src).CombinedOutput(); err != nil {
+		t.Skipf("skipped: /usr/bin/c++ does not compile outside the wall, so a denial inside it proves nothing: %s", out)
+	}
+	insideBin := filepath.Join(j.write, "probe")
+	code, out, errOut := j.tool(t, j.env(), "--write", j.write, "--", "/usr/bin/c++", "-o", insideBin, src)
+	if code != 0 {
+		t.Fatalf("c++ inside the wall exited %d; want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	if strings.Contains(errOut, "xcode_select_link") {
+		t.Fatalf("the wall still denies /var/db/xcode_select_link:\n%s", errOut)
+	}
+	code, out, errOut = j.tool(t, j.env(), "--write", j.write, "--", insideBin)
+	if code != 0 || !strings.Contains(out, "ok") {
+		t.Fatalf("the C++ probe did not run inside the wall: exit %d stdout %q stderr %s", code, out, errOut)
+	}
+}
+
 // zsh switches large heredocs from a pipe to a temporary file. On macOS it chooses
 // that file from TMPPREFIX, not TMPDIR; an inherited outside prefix therefore made a
 // legitimate report write fail at the wall even though its final destination was allowed.
@@ -242,70 +285,148 @@ func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
 // This build's fix to the spec: (allow network*) reaches every unix-domain socket, so
 // the SSH agent socket was connectable from inside the wall. A socket created outside
 // the wall must not be connectable from inside it, and SSH_AUTH_SOCK must be gone.
+//
+// The control is deterministic under load (#2958). The earlier form bound with
+// `nc -lU` and took "the socket file exists" as readiness, but bind(2) creates the
+// file before listen(2), so a busy machine could dial in that window and the control
+// failed with a refused connect. The listener is now this test binary re-executed with
+// an internal verb: it prints READY only after net.Listen has returned (bind AND
+// listen), serves every connection in order, and prints the line each client sent. The
+// walled attempt sits between two unwalled controls on the same listener, so "nothing
+// connected from inside the wall" is read from the accept order, not from a timeout.
 func TestTheAgentSocketIsUnreachable(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
 	if _, err := exec.LookPath("nc"); err != nil {
-		t.Skip("skipped: nc is not on this machine, and it is how a socket is bound and dialled here")
+		t.Skip("skipped: nc is not on this machine, and it is how a socket is dialled here")
 	}
 	// Test 16: no test reaches outside t.TempDir(). The socket therefore lives in this
 	// job's own outside directory, which is under t.TempDir() and in NEITHER list — and
 	// it is bound and dialled by RELATIVE name, with the process's cwd in that directory,
 	// exactly as profiles/darwin-check.sh does it. sun_path is 104 bytes and the absolute
 	// path of a t.TempDir() is longer, so an absolute bind fails silently and the one
-	// test this build's network fix exists for would pass for the wrong reason. The
-	// earlier form used os.MkdirTemp(""), which is outside t.TempDir().
-	//
-	// Two listeners, because `nc -lU` serves one connection and exits: the walled attempt
-	// must not consume the one the control needs.
-	listen := func(name string) {
+	// test this build's network fix exists for would pass for the wrong reason.
+	lines := startUnixListener(t, j.outside, "agent.sock")
+	next := func(what string) string {
 		t.Helper()
-		cmd := exec.Command("nc", "-lU", "./"+name)
-		cmd.Dir = j.outside
-		if err := cmd.Start(); err != nil {
-			t.Fatalf("control: no listener could be started outside the wall: %v", err)
-		}
-		t.Cleanup(func() {
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
-		})
-	}
-	waitForSocket := func(name string) bool {
-		for i := 0; i < 20; i++ {
-			if fi, err := os.Stat(filepath.Join(j.outside, name)); err == nil && fi.Mode()&os.ModeSocket != 0 {
-				return true
+		select {
+		case l, ok := <-lines:
+			if !ok {
+				t.Fatalf("control: the listener exited before %s", what)
 			}
-			time.Sleep(100 * time.Millisecond)
+			return l
+		case <-time.After(60 * time.Second):
+			t.Fatalf("control: no %s from the listener in 60 s", what)
 		}
-		return false
+		return ""
 	}
-	listen("agent.sock")
-	listen("agent-control.sock")
-	if !waitForSocket("agent.sock") || !waitForSocket("agent-control.sock") {
-		t.Skip("skipped: nc -lU did not bind on this machine, and a denial with no listener proves nothing")
-	}
-	control := exec.Command("nc", "-U", "./agent-control.sock", "-w", "1")
-	control.Dir = j.outside
-	control.Stdin = strings.NewReader("")
-	if err := control.Run(); err != nil {
-		t.Fatalf("control: the socket is not connectable outside the wall: %v", err)
+	if l := next("READY"); l != "READY" {
+		t.Fatalf("control: no listener could be bound outside the wall: %s", l)
 	}
 
 	sock := filepath.Join(j.outside, "agent.sock")
 	env := j.env("SSH_AUTH_SOCK="+sock, "SSH_AGENT_PID=1")
-	// The cwd inside the wall is the first --write, so the relative name reaches the same
-	// socket the control just used, with a sun_path of 26 bytes.
+	// The cwd inside the wall is the first --write, so the controls dial from there too:
+	// the same relative name, the same socket, a sun_path of 26 bytes. Each client sends
+	// one tagged line, and the listener echoes the tag of every connection it accepts.
+	dial := func(tag string) string { return "printf '" + tag + "\\n' | nc -U ../outside/agent.sock -w 1" }
+	control := func(tag string) {
+		t.Helper()
+		cmd := exec.Command("/bin/sh", "-c", dial(tag))
+		cmd.Dir = j.write
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("control: the socket is not connectable outside the wall (%s): %v %s", tag, err, out)
+		}
+		if got := next("ACCEPT " + tag); got != "ACCEPT "+tag {
+			if got == "ACCEPT walled" {
+				t.Fatal("a unix socket outside the wall was connectable from inside it: the listener accepted the walled client")
+			}
+			t.Fatalf("control: the listener saw %q, want %q", got, "ACCEPT "+tag)
+		}
+	}
+
+	control("control-before")
 	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
-		"/bin/sh", "-c", "nc -U ../outside/agent.sock -w 1 </dev/null")
+		"/bin/sh", "-c", dial("walled"))
 	if code == 0 {
 		t.Fatal("a unix socket outside the wall was connectable from inside it")
 	}
+	// The listener serves in accept order, and the walled client has exited, so had it
+	// connected its line would come before this control's.
+	control("control-after")
 	if !strings.Contains(errOut, "SANDBOX NOTE dropped") || !strings.Contains(errOut, "SSH_AUTH_SOCK") {
 		t.Fatalf("the dropped agent variables were not named before the command started: %q", errOut)
 	}
 	if code, _, _ := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
 		"/bin/sh", "-c", "test -z \"$SSH_AUTH_SOCK\" && test -z \"$SSH_AGENT_PID\""); code != 0 {
 		t.Fatal("SSH_AUTH_SOCK reached the child's environment")
+	}
+}
+
+// unixListenerVerb is the test binary's internal verb for TestTheAgentSocketIsUnreachable's
+// listener; TestMain dispatches it. It is a child process, not a goroutine, because the
+// socket is bound by a relative name from its own cwd and a test must not chdir.
+const unixListenerVerb = "test-unix-listener"
+
+// unixListenerNameEnv carries the socket's relative name to the listener child. It is an
+// environment field, not a positional argument: argv carries only the verb (law #2583).
+const unixListenerNameEnv = "NOVA_SANDBOX_TEST_UNIX_NAME"
+
+// startUnixListener runs the listener in dir and returns its stdout lines: READY once
+// bound and listening (or LISTEN-ERROR), then ACCEPT <tag> per connection, in order.
+func startUnixListener(t *testing.T, dir, name string) <-chan string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(self, unixListenerVerb)
+	cmd.Env = append(os.Environ(), unixListenerNameEnv+"="+name)
+	cmd.Dir = dir
+	cmd.Stdout = pw
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("control: no listener could be started outside the wall: %v", err)
+	}
+	_ = pw.Close()
+	lines := make(chan string, 16)
+	go func() {
+		defer close(lines)
+		defer pr.Close()
+		sc := bufio.NewScanner(pr)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	})
+	return lines
+}
+
+// serveUnixForTest is the listener's body: bind and listen by relative name, say READY,
+// then accept one connection at a time and echo the first line each client sends.
+func serveUnixForTest(name string) int {
+	ln, err := net.Listen("unix", name)
+	if err != nil {
+		fmt.Printf("LISTEN-ERROR %v\n", err)
+		return 1
+	}
+	fmt.Println("READY")
+	for {
+		c, err := ln.Accept()
+		if err != nil {
+			return 1
+		}
+		_ = c.SetReadDeadline(time.Now().Add(30 * time.Second))
+		line, _ := bufio.NewReader(c).ReadString('\n')
+		fmt.Printf("ACCEPT %s\n", strings.TrimSpace(line))
+		_ = c.Close()
 	}
 }
 
@@ -481,9 +602,26 @@ func TestCheckAndVersion(t *testing.T) {
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" && !strings.Contains(out, "backend=none") {
 		t.Fatalf("check named a backend on %s, where this build has none: %q", runtime.GOOS, out)
 	}
+	// `version` is SPEC.md's Conventions line -- the four tokens every binary in the
+	// set prints -- and then this tool's two named extras. It used to be a shape of
+	// its own, `SANDBOX VERSION tool=... version=...`, which no reader of a version
+	// line could take apart (#1297): the facts survive, the second shape does not.
 	code, out, _ = j.tool(t, j.env(), "version")
-	if code != 0 || !strings.Contains(out, "tool=nova-sandbox") {
+	if code != 0 {
 		t.Fatalf("version exit %d: %q", code, out)
+	}
+	f, ok := buildinfo.Parse(out)
+	if !ok {
+		t.Fatalf("version printed a line internal/buildinfo.Parse refuses: %q", out)
+	}
+	if f.Tool != "nova-sandbox" || f.Version == "" {
+		t.Fatalf("version does not name this tool and its build in fields one and two: %q", out)
+	}
+	if b, have := f.Extra("backend"); !have || b != sandbox.Backend {
+		t.Fatalf("version does not carry backend=%s: %q", sandbox.Backend, out)
+	}
+	if p, have := f.Extra("platform"); !have || p != runtime.GOOS {
+		t.Fatalf("version does not carry platform=%s: %q", runtime.GOOS, out)
 	}
 }
 
@@ -530,16 +668,18 @@ func TestUnbuiltPlatformsRefuse(t *testing.T) {
 	}
 }
 
-// realGit is the git a caller would use: /usr/bin/git on a Mac is an Xcode shim that
-// reads /var/db/xcode_select_link, which no root grants, so it fails inside the wall.
+// realGit is the git a caller would use. Homebrew's git is preferred when
+// present so the test is the same path a developer shell takes. /usr/bin/git
+// is an Xcode shim; the profile grants xcode_select_link (#1557), so the shim
+// is a working fallback inside the wall.
 func realGit(t *testing.T) string {
 	t.Helper()
-	for _, p := range []string{"/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git"} {
+	for _, p := range []string{"/opt/homebrew/bin/git", "/usr/local/bin/git", "/opt/local/bin/git", "/usr/bin/git"} {
 		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
 			return p
 		}
 	}
-	t.Skip("skipped: no git outside /usr/bin on this machine, and the Xcode shim cannot run inside the wall")
+	t.Skip("skipped: no git on this machine")
 	return ""
 }
 
@@ -573,6 +713,7 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "nova-sandbox")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
 	build.Dir = root
+	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the tool: %v\n%s", err, out)
 	}
@@ -605,6 +746,65 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	}
 }
 
+// #1557 HOLD: darwin-check.sh fills the template two ways. The tool generator
+// follows xcode_select_link into OptionalRoots; the hand filler did not, so a
+// reader running the script without NOVA_SANDBOX_FILL got the link literal
+// without the selected Xcode root, while cxx_compile required that root.
+func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
+	needDarwin(t)
+	var xcode []string
+	for _, r := range sandbox.OptionalRoots("/bin/echo") {
+		if strings.Contains(r, "Xcode.app") {
+			xcode = append(xcode, r)
+		}
+	}
+	if len(xcode) == 0 {
+		t.Skip("skipped: xcode-select's developer dir is already a fixed root or absent on this machine")
+	}
+
+	j := newJob(t)
+	p, bad := sandbox.Build(sandbox.Input{
+		Reads:  []string{j.read},
+		Writes: []string{j.write},
+		Home:   j.home,
+		Argv:   []string{"/bin/echo"},
+	})
+	if len(bad) > 0 {
+		t.Fatalf("generated policy refused: %v", bad)
+	}
+	generated, _, err := sandbox.DarwinProfile(p)
+	if err != nil {
+		t.Fatalf("generated profile: %v", err)
+	}
+
+	root := repoRoot(t)
+	script := filepath.Join(root, "profiles", "darwin-check.sh")
+	cmd := exec.Command("bash", script)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(),
+		"NOVA_CHECK_SCRATCH="+filepath.Join(t.TempDir(), "check"),
+		"NOVA_CHECK_DUMP_PROFILE=1",
+		"NOVA_CHECK_NO_NETWORK=1")
+	hand, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hand-filling darwin-check.sh: %v\n%s", err, hand)
+	}
+	handText := string(hand)
+
+	for _, r := range xcode {
+		grant := `(allow file-read* (subpath "` + r + `"))`
+		if !strings.Contains(generated, grant) {
+			t.Fatalf("the generated profile does not grant %s, which OptionalRoots named: %v", grant, xcode)
+		}
+		if !strings.Contains(handText, grant) {
+			t.Errorf("the hand-filled profile does not grant %s, which the generated profile has; the two filler modes drifted", grant)
+		}
+	}
+	if t.Failed() {
+		t.Logf("hand-filled profile:\n%s", handText)
+	}
+}
+
 // repoRoot walks up from this package to the module root, so the test can find the
 // script without a guessed path (SPEC.md: no guessed paths).
 func repoRoot(t *testing.T) string {
@@ -632,6 +832,9 @@ func repoRoot(t *testing.T) string {
 func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "probe-step" {
 		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
+	}
+	if len(os.Args) == 2 && os.Args[1] == unixListenerVerb {
+		os.Exit(serveUnixForTest(os.Getenv(unixListenerNameEnv)))
 	}
 	os.Exit(m.Run())
 }
@@ -744,16 +947,14 @@ func copyOfThisBinary(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(self)
-	if err != nil {
-		t.Fatal(err)
-	}
 	name := "nova-sandbox-copy"
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
 	copied := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(copied, b, 0o700); err != nil {
+	// A COPY, never a link: this helper exists to hand the probe a parent that is
+	// not this binary, and a hard link is this binary (internal/testbin.PlaceCopy).
+	if err := testbin.PlaceCopy(self, copied); err != nil {
 		t.Fatal(err)
 	}
 	return copied
@@ -863,6 +1064,299 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// It stays out of the banner: a verb a caller must not run is not offered to one.
 	if strings.Contains(usage, probeStepVerbName) {
 		t.Fatal("probe-step is in the usage banner")
+	}
+}
+
+// The parent half of the guard is an IDENTITY test, and this is that half on its own, with
+// no process in it: every case below is a file on disk and an answer that cannot move.
+//
+// It exists because the half used to be a comparison between two path STRINGS, and a string
+// is the wrong question twice over. It is too weak — a name says nothing about which FILE
+// wears it — and it is too brittle: the two paths reach the guard from different syscalls
+// that spell the same file differently (os.Executable() hands back the path as it was
+// passed to exec, the kernel's per-pid path is the resolved one; measured on darwin,
+// /tmp/x against /private/tmp/x), so the old form leaned on filepath.EvalSymlinks and
+// SWALLOWED its error. EvalSymlinks Lstats every component of the path; one component it
+// cannot read — a directory being removed, a call interrupted on a loaded machine, a step
+// the wall denies — and the comparison silently fell back to comparing spellings. A guard
+// whose answer depends on whether a directory walk finished is a guard that answers
+// differently under load, which is the shape of the defect this replaces. device+inode is
+// one stat each, it is what "the same binary" means, and it does not move.
+func TestTheParentGuardComparesFilesAndNotNames(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
+	}
+	dir := t.TempDir()
+	elsewhere := t.TempDir()
+	tool := filepath.Join(dir, "tool")
+	if err := os.WriteFile(tool, []byte("not really a tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// A COPY: the same bytes, a different file. This is the foreign parent, and it is the
+	// case that must be false under every load and from every direction. PlaceCopy, never
+	// Place: a hard link would BE this binary and the case would stop being false.
+	copied := filepath.Join(dir, "tool-copy")
+	if err := testbin.PlaceCopy(tool, copied); err != nil {
+		t.Fatal(err)
+	}
+	// A SYMLINK and a HARD LINK are the same file under another name, and a hard link is the
+	// honest answer: there is no sense in which it is a different image.
+	symlinked := filepath.Join(dir, "tool-symlink")
+	if err := os.Symlink(tool, symlinked); err != nil {
+		t.Fatal(err)
+	}
+	hardLinked := filepath.Join(dir, "tool-hardlink")
+	if err := os.Link(tool, hardLinked); err != nil {
+		t.Fatal(err)
+	}
+	// The same file reached through a DIFFERENT SPELLING of its directory: this is the case
+	// the string comparison got wrong whenever the symlink walk could not finish, and the
+	// one that made the legitimate probe's own child refusable.
+	alias := filepath.Join(elsewhere, "alias")
+	if err := os.Symlink(dir, alias); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such-tool")
+
+	for _, c := range []struct {
+		name, self, parent string
+		want               bool
+	}{
+		{"the same path", tool, tool, true},
+		{"a symlink to it", tool, symlinked, true},
+		{"a hard link to it", tool, hardLinked, true},
+		{"the same file spelled through another directory name", tool, filepath.Join(alias, "tool"), true},
+		{"a byte-for-byte copy", tool, copied, false},
+		{"a copy in the other direction", copied, tool, false},
+		{"a parent that is not there", tool, missing, false},
+		{"a self that is not there", missing, tool, false},
+		{"neither is there", missing, missing, false},
+	} {
+		if got := sameImage(c.self, c.parent); got != c.want {
+			t.Errorf("%s: sameImage(%q, %q) = %v, want %v", c.name, c.self, c.parent, got, c.want)
+		}
+	}
+}
+
+// fakeParent is a parent identity the test can MOVE between the guard's reads. It answers
+// every os.Getppid() and every image read from a script and counts both, so that a guard
+// which stopped asking after the first answer fails here rather than passing.
+type fakeParent struct {
+	pids   []int
+	images []string
+	errs   []error
+	// before[i] runs just before image read i answers, which is how a test changes the
+	// world inside the window the guard is being asked about.
+	before   []func()
+	pidCalls int
+	imgCalls int
+}
+
+func (f *fakeParent) getppid() int {
+	i := f.pidCalls
+	f.pidCalls++
+	if i >= len(f.pids) {
+		return f.pids[len(f.pids)-1]
+	}
+	return f.pids[i]
+}
+
+func (f *fakeParent) imageOf(int) (string, error) {
+	i := f.imgCalls
+	f.imgCalls++
+	if i < len(f.before) && f.before[i] != nil {
+		f.before[i]()
+	}
+	if i < len(f.errs) && f.errs[i] != nil {
+		return "", f.errs[i]
+	}
+	if i >= len(f.images) {
+		return f.images[len(f.images)-1], nil
+	}
+	return f.images[i], nil
+}
+
+// The ordering of the parent half, with the syscalls taken out of it: the pid, the image,
+// the pid AGAIN and the image AGAIN, and a refusal if anything moved between any two.
+//
+// The second image read is the one a pid cannot speak for: exec(2) replaces a process's
+// image IN PLACE and leaves its pid untouched, so a parent that is this binary when the
+// guard first looks can exec something else and still be the same number when the guard
+// looks again. A pid that did not move proves nothing about the image that ran.
+//
+// Nothing here touches a clock, a core or the network: the world changes only where a case
+// says it changes, and the call counts make the ORDER itself the assertion — a guard that
+// made up its mind after the first answer reads the image once and fails here.
+func TestTheParentGuardRereadsTheImageAndNotJustThePid(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the probe's parent guard is not built there, and os.SameFile there is a different identity")
+	}
+	dir := t.TempDir()
+	// image is the file the parent runs; self is a SECOND NAME for that same file, so a case
+	// can replace what lives at `image` without touching what `self` names. That is what makes
+	// "the second read is a fresh stat" an assertion rather than a hope.
+	image := filepath.Join(dir, "image")
+	if err := os.WriteFile(image, []byte("the tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	self := filepath.Join(dir, "self")
+	if err := os.Link(image, self); err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(dir, "other")
+	if err := os.WriteFile(other, []byte("the tool\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	missing := filepath.Join(dir, "no-such-image")
+	failed := errors.New("proc_pidpath(7): no such process")
+	// replaceImage is an exec in place with no exec in it: the same path, a different file.
+	replaceImage := func() {
+		if err := os.Remove(image); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(image, []byte("something else\n"), 0o700); err != nil {
+			t.Error(err)
+		}
+	}
+
+	for _, c := range []struct {
+		name               string
+		parent             fakeParent
+		want               string
+		wantPids, wantImgs int
+	}{
+		{
+			name:   "nothing moved",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, image}},
+			want:   "", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the parent is a copy from the first look",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{other}},
+			want:   "the parent process is not this binary", wantPids: 1, wantImgs: 1,
+		},
+		{
+			name:   "the pid moved between the two looks",
+			parent: fakeParent{pids: []int{7, 9}, images: []string{image, image}},
+			want:   "the parent process changed while the guard was reading it", wantPids: 2, wantImgs: 1,
+		},
+		{
+			// The pid never moves. Only the image does, which is what exec in place looks
+			// like from here, and what the pid re-read on its own could not see.
+			name:   "the same pid exec'd a different path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, other}},
+			want:   "the parent process changed the image it is running while the guard was reading it", wantPids: 2, wantImgs: 2,
+		},
+		{
+			// The same pid AND the same path, with a different file underneath it: the second
+			// read has to be a fresh stat or this case passes.
+			name:   "the same pid exec'd a different file at the same path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, image}, before: []func(){nil, replaceImage}},
+			want:   "the parent process changed the image it is running while the guard was reading it", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the first look cannot name the parent",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image}, errs: []error{failed}},
+			want:   "the parent process cannot be named", wantPids: 1, wantImgs: 1,
+		},
+		{
+			// The parent went away between the looks. A guard that had already made up its
+			// mind would never ask, so this case is the second read's own witness.
+			name:   "the second look cannot name the parent",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image}, errs: []error{nil, failed}},
+			want:   "the parent process cannot be named", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the second look is not an absolute path",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{image, "image"}},
+			want:   "the parent process is not named by an absolute path", wantPids: 2, wantImgs: 2,
+		},
+		{
+			name:   "the parent is a path that is not there",
+			parent: fakeParent{pids: []int{7, 7}, images: []string{missing}},
+			want:   "the parent process is not this binary", wantPids: 1, wantImgs: 1,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			// Each case gets the file back as it was, because one of them replaces it.
+			if err := os.Remove(image); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := os.Link(self, image); err != nil {
+				t.Fatal(err)
+			}
+			p := c.parent
+			if got := parentIsThisImage(self, p.getppid, p.imageOf); got != c.want {
+				t.Errorf("parentIsThisImage = %q, want %q", got, c.want)
+			}
+			if p.pidCalls != c.wantPids {
+				t.Errorf("the guard read the pid %d times, want %d", p.pidCalls, c.wantPids)
+			}
+			if p.imgCalls != c.wantImgs {
+				t.Errorf("the guard read the parent's image %d times, want %d", p.imgCalls, c.wantImgs)
+			}
+		})
+	}
+}
+
+// The same refusal as TestProbeStepIsTheInternalVerb's last case, made many times at once
+// while every core is busy: a guard that fails OPEN under load is a security defect and not
+// a flake, so the load belongs in the suite rather than in a note about how to reproduce it.
+//
+// There is no sleep, no deadline and no clock anywhere in it. The pool burns for exactly as
+// long as the children take — it is stopped by this test's cleanup, which testing runs after
+// the parallel subtests below have all finished — so the test costs a fraction of a second
+// on a fast machine and the same work on a slow one, and it asserts the same thing on both.
+func TestParentGuardRefusesACopiedParentUnderLoad(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: exec.Cmd.ExtraFiles is unsupported there, so no probe child can be given fd 3 at all")
+	}
+	j := newJob(t)
+	// ONE copy, exec'd many times: a fresh copy per child would race its own write against
+	// its own exec, and this test is about the guard rather than about ETXTBSY.
+	copied := copyOfThisBinary(t)
+	raw := []byte("0123456789abcdef")
+	nonce := hex.EncodeToString(raw)
+	env := probeNonceVar + "=" + nonce
+
+	stop := make(chan struct{})
+	var burning sync.WaitGroup
+	for i := 0; i < runtime.GOMAXPROCS(0); i++ {
+		burning.Add(1)
+		go func() {
+			defer burning.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+			}
+		}()
+	}
+	t.Cleanup(func() {
+		close(stop)
+		burning.Wait()
+	})
+
+	for i := 0; i < 8; i++ {
+		t.Run("child-"+strconv.Itoa(i), func(t *testing.T) {
+			t.Parallel()
+			// Each child gets its own file OUTSIDE any wall, so an acceptance is not just a
+			// wrong exit code: it is a truncated file, and the file says so.
+			target := filepath.Join(j.write, "under-load-"+strconv.Itoa(i))
+			if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			code, errOut := probeChild(t, copied, raw, env, nonce, "write_outside", target)
+			if code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+				t.Fatalf("a copied parent was accepted under load: exit %d, stderr %q", code, errOut)
+			}
+			if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+				t.Fatalf("a step refused under load still touched the file: %q, %v", string(got), err)
+			}
+		})
 	}
 }
 
@@ -1057,6 +1551,7 @@ func toolBinary(t *testing.T) string {
 	bin := filepath.Join(t.TempDir(), "nova-sandbox")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
 	build.Dir = repoRoot(t)
+	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the tool: %v\n%s", err, out)
 	}
@@ -1430,5 +1925,71 @@ func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.
 	// list. `<base>/secret/env` is the placement the wall is built around.
 	if code, _, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--secret", j.secret); code != 0 {
 		t.Fatalf("a secret outside both lists was exit %d: %s", code, errOut)
+	}
+}
+
+// --read-noexec IS A FLAG, and the reason it exists is the reason it is separate: a
+// `--read` root carries EXECUTE on both bodies -- landlock's read subset is
+// EXECUTE|READ_FILE|READ_DIR and the darwin profile grants process-exec* globally -- so a
+// cache or a data tree the job's own user can write to could be RUN from. Johnny's
+// security read of #1364 stopped `~/go/pkg/mod` being granted that way, and until this
+// flag existed `Policy.ReadsNoExec` and both wall bodies were unreachable from the argv:
+// the grant was implemented and could not be asked for.
+//
+// This test is the argv contract and runs on every platform, because a refusal is a
+// refusal everywhere: the flag is repeatable, it is on the banner, it takes a value, and
+// rule 5 refuses a path that is not there exactly as `--read` does.
+func TestReadNoExecIsAFlagOfTheBareForm(t *testing.T) {
+	j := newJob(t)
+	// The banner names it, or a caller cannot find it (ONBOARDING.md point 2).
+	if _, out, _ := j.tool(t, j.env(), "help"); !strings.Contains(out, "--read-noexec") {
+		t.Errorf("the banner does not name --read-noexec:\n%s", out)
+	}
+	// Rule 5: a path that is not there is a refusal, named by flag, and NOT created.
+	missing := filepath.Join(j.base, "no-such-cache")
+	code, _, errOut := j.tool(t, j.env(), "--read-noexec", missing, "--write", j.write, "--", "/bin/sh", "-c", "true")
+	if code != 125 || !strings.Contains(errOut, "reason=bad_read") || !strings.Contains(errOut, "--read-noexec") {
+		t.Fatalf("a --read-noexec that is not there was exit %d: %s", code, errOut)
+	}
+	if _, err := os.Stat(missing); err == nil {
+		t.Error("the tool CREATED the --read-noexec path; every path is yours and none is guessed")
+	}
+	// A flag with no value names itself and the form it wants (rule 16).
+	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--read-noexec"); code == 0 ||
+		!strings.Contains(errOut, "--read-noexec wants a value") {
+		t.Fatalf("a bare --read-noexec was exit %d: %s", code, errOut)
+	}
+}
+
+// The wall's two read sets, end to end on darwin: a script under --read-noexec is
+// READABLE and NOT EXECUTABLE, while the same script under --read runs. The OK line
+// carries the count as its own field, so a log says which kind of grant a run had.
+func TestReadNoExecReadsAndRefusesToExecuteOnDarwin(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	cache := filepath.Join(j.base, "cache")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(cache, "x.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho ran\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--read", j.read, "--read-noexec", cache, "--write", j.write, "--", "/bin/sh", "-c"}
+	code, out, errOut := j.tool(t, j.env(), append(args, "cat "+script)...)
+	if code != 0 || !strings.Contains(out, "echo ran") {
+		t.Fatalf("the --read-noexec tree is not readable inside the wall: exit %d, stdout %q, stderr %s", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "read-noexec=1") {
+		t.Errorf("the SANDBOX OK line does not count the no-exec reads: %q", errOut)
+	}
+	if code, _, _ := j.tool(t, j.env(), append(args, script)...); code == 0 {
+		t.Fatal("the script under --read-noexec EXECUTED inside the wall; readable is not executable")
+	}
+	// The control: the same file under --read runs, so the denial above is the no-exec
+	// grant and not a broken script.
+	ctl := []string{"--read", cache, "--write", j.write, "--", "/bin/sh", "-c", script}
+	if code, _, errOut := j.tool(t, j.env(), ctl...); code != 0 {
+		t.Fatalf("the control failed: the same script under --read did not run: exit %d, %s", code, errOut)
 	}
 }

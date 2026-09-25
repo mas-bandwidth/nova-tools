@@ -344,3 +344,202 @@
       "a fully evidenced automatic refresh was refused")
   (ok (not (refresh-allowed-p (make-refresh-admission :decision t :adapter t :evidence nil)))
       "a refresh with no evidence was allowed"))
+
+;;; ------------------------------------------------------------------
+;;; E07-F05-02 -- Record failures, repairs, denominator
+;;; movement and changed scope              docs/SPEC-WORK.md:7867
+;;; ------------------------------------------------------------------
+;;; docs/SPEC-WORK.md:7867 : "focus. Record failures and repairs as they occur.
+;;; At the retrospective, compare the same questions and acceptance scope
+;;; against the previous manual workflow, then change the spec."
+;;; The roadmap criterion E07-F05-02 asks that the kernel records the four
+;;; kinds of movement a retrospective must be able to read back: a failure it
+;;; names and refuses with no partial write, a repair (a row re-opened after its
+;;; removal) recorded with its own reason, a denominator move recorded against
+;;; the open rows, and a changed scope recorded as a scope event with its reason.
+
+(deftest "TestE07F05RecordFailuresRepairsDenominatorMovement" "docs/SPEC-WORK.md:7867"
+    "expected=failure-named-no-partial-write;repair-reopened-with-reason;denominator-move-recorded;scope-change-recorded-with-reason"
+  (let* ((seed '((:id "root"      :type :work-set :parent nil      :state :unknown)
+                  (:id "root/f0"   :type :feature  :parent "root"   :state :doing)
+                  (:id "root/f1"   :type :feature  :parent "root"   :state :doing)
+                  (:id "root/f2"   :type :feature  :parent "root"   :state :doing)))
+         (k (make-kernel :state (make-seed-state seed)
+                         :journal (make-ordering-journal) :rev-base 1)))
+    ;; An axisless roadmap with three rows is the scope under test.
+    (multiple-value-bind (okp line code)
+        (roadmap-create k :id "rm" :parent "root" :title "R" :row-kind :feature
+                        :aggregation :required-members
+                        :completion-policy :all-required-features
+                        :axes '() :permitted-roots '() :reason "new"
+                        :request "rm-1")
+      (ok okp "the roadmap was not created: ~A" line)
+      (check-equal 0 code "roadmap create exit"))
+    (dolist (m '("root/f0" "root/f1" "root/f2"))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member m :op :add :reason "row"
+                       :request (format nil "add-~A" m))
+        (ok okp "the row ~A was refused: ~A" m line)
+        (check-equal 0 code "row add exit")))
+    (check-equal 3 (roadmap-open-member-count (kernel-state k) "rm")
+                 "the denominator did not start at three open rows")
+
+    ;; failure recorded: a row add naming a missing member is refused by name and
+    ;; writes nothing -- the failure says what went wrong, no partial row.
+    (let ((log-before (length (roadmap-view-log (kernel-state k) "rm")))
+          (rev-before (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member "root/nope" :op :add
+                       :reason "x" :request "bad-1")
+        (ok (null okp) "the failed add was accepted")
+        (ok (search "no such member" line) "the failure does not name itself: ~A" line)
+        (check-equal 2 code "the failed add did not refuse at exit 2"))
+      (check-equal 3 (roadmap-open-member-count (kernel-state k) "rm")
+                   "the failed add moved the denominator")
+      (check-equal log-before (length (roadmap-view-log (kernel-state k) "rm"))
+                   "the failed add wrote a scope event")
+      (check-equal rev-before (roadmap-view-revision (kernel-state k) "rm")
+                   "the failed add moved the scope revision"))
+
+    ;; changed scope recorded: removing a row moves the revision and writes a
+    ;; scope event carrying the reason the scope changed.
+    (let ((rev-before (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member "root/f1" :op :remove
+                       :reason "superseded-by-f3" :request "rm-1")
+        (ok okp "the scope removal was refused: ~A" line)
+        (check-equal 0 code "scope removal exit"))
+      (ok (> (roadmap-view-revision (kernel-state k) "rm") rev-before)
+          "removing a row did not move the scope revision")
+      (check-equal 2 (roadmap-open-member-count (kernel-state k) "rm")
+                   "removing a row did not move the denominator")
+      (let ((head (first (roadmap-view-log (kernel-state k) "rm"))))
+        (check-equal :row-remove (getf head :change) "the removal is not recorded")
+        (check-equal "root/f1" (getf head :member) "the removal does not name its row")
+        (check-string= "superseded-by-f3" (getf head :reason)
+                       "the removal did not record its reason"))
+      (ok (member "root/f1" (roadmap-view-retired (kernel-state k) "rm") :test #'string=)
+          "the removed row was not recorded as retired"))
+
+    ;; repair recorded: re-adding the removed row is a repair that restores the
+    ;; denominator and is recorded with its own reason.
+    (let ((rev-before (roadmap-view-revision (kernel-state k) "rm")))
+      (multiple-value-bind (okp line code)
+          (roadmap-row k :roadmap "rm" :member "root/f1" :op :add
+                       :reason "reinstated-after-fix" :request "rm-fix")
+        (ok okp "the repair re-add was refused: ~A" line)
+        (check-equal 0 code "repair re-add exit"))
+      (check-equal 3 (roadmap-open-member-count (kernel-state k) "rm")
+                   "the repair did not restore the denominator")
+      (ok (> (roadmap-view-revision (kernel-state k) "rm") rev-before)
+          "the repair did not record a scope movement")
+      (let ((head (first (roadmap-view-log (kernel-state k) "rm"))))
+        (check-equal :row-add (getf head :change) "the repair is not recorded")
+        (check-equal "root/f1" (getf head :member) "the repair does not name its row")
+        (check-string= "reinstated-after-fix" (getf head :reason)
+                       "the repair did not record its reason")))))
+
+;;; ------------------------------------------------------------------
+;;; TestE01F03AllowOmittedRepeatedAndRecursively   SPEC-WORK.md:1555
+;;; ------------------------------------------------------------------
+;;; E01-F03 (ROADMAP.md:224) — allow omitted, repeated and recursively
+;;; nested work-set grouping layers without a prescribed depth.
+;;; docs/SPEC-WORK.md:1555: "These are examples, not grammars. A team may
+;;; omit, repeat or nest grouping layers as its work requires; validation
+;;; must not enforce a repository/epic/feature depth sequence."
+
+;; A grouping layer is named by its node kind, never by its depth, and the
+;; kernel's validation admits omitted, repeated and recursively nested layers.
+(defun %e01-f03-grouping-layer (state id)
+  "The node kind of ID under STATE, read by stable id rather than by a fixed
+number of parent hops (SPEC-WORK.md:1564-1566)."
+  (node-type state id))
+
+(deftest "TestE01F03AllowOmittedRepeatedAndRecursively" "docs/SPEC-WORK.md:1555"
+    "expected=deeper-witness-admitted;repeated-layers-by-kind-not-position;omitted-layers-admitted;depth-not-prescribed"
+  ;; The deeper witness repeats project, stream and feature layers and nests
+  ;; sub-features recursively: repository -> project -> project -> stream ->
+  ;; work-set -> stream -> epic -> feature -> feature -> feature -> task.
+  (let* ((deep '((:id "acme/repo" :type :work-set :parent nil :state :unknown)
+                 (:id "acme/repo/p1" :type :project :parent "acme/repo" :state :unknown)
+                 (:id "acme/repo/p1/p2" :type :project :parent "acme/repo/p1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1" :type :stream :parent "acme/repo/p1/p2" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws" :type :work-set :parent "acme/repo/p1/p2/s1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2" :type :stream :parent "acme/repo/p1/p2/s1/ws" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e" :type :epic :parent "acme/repo/p1/p2/s1/ws/s2" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e/f" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2" :type :feature :parent "acme/repo/p1/p2/s1/ws/s2/e/f/sf1" :state :unknown)
+                 (:id "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2/t" :type :task
+                      :parent "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2" :state :doing)))
+         (state (make-seed-state deep)))
+    (check-equal 11 (state-open-count state)
+                 "the deeper witness was not admitted whole")
+    (check-equal :task
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2/s1/ws/s2/e/f/sf1/sf2/t")
+                 "the leaf task is a task, read by id not by depth")
+    (check-equal :feature
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2/s1/ws/s2/e/f/sf1")
+                 "a sub-feature is :feature, not a distinct mandatory layer")
+    (check-equal :project
+                 (%e01-f03-grouping-layer state "acme/repo/p1/p2")
+                 "a repeated project layer is admitted one below another"))
+  ;; Omitted layers: the shallow repository -> feature -> task witness skips
+  ;; project/stream/epic and is admitted, so no layer is mandatory.
+  (let* ((shallow '((:id "acme/sh" :type :work-set :parent nil :state :unknown)
+                    (:id "acme/sh/f" :type :feature :parent "acme/sh" :state :unknown)
+                    (:id "acme/sh/f/t" :type :task :parent "acme/sh/f" :state :doing)))
+         (state (make-seed-state shallow)))
+    (check-equal 3 (state-open-count state)
+                 "the shallow witness with omitted layers was not admitted")
+    (check-equal :task (%e01-f03-grouping-layer state "acme/sh/f/t")
+                 "the shallow task is a task with the intermediate layers omitted"))
+  ;; No prescribed depth: a chain of 24 nested sub-features under one task is
+  ;; admitted exactly like a shallow one; depth is not a rank restriction.
+  (let* ((ids (loop for i from 0 to 24 collect (format nil "deep/~D" i)))
+         (seed (loop for i from 0 to 24
+                     for id in ids
+                     collect (list :id id
+                                   :type (if (= i 24) :task :feature)
+                                   :parent (and (plusp i) (nth (1- i) ids))
+                                   :state (if (= i 24) :doing :unknown)))))
+    (let ((state (make-seed-state seed)))
+      (check-equal 25 (state-open-count state)
+                   "the 25-level nested chain was not admitted")
+      (check-equal :task (%e01-f03-grouping-layer state "deep/24")
+                   "the deep chain's task is a task at depth 25, not refused"))))
+
+;;; ------------------------------------------------------------------
+;;; TestE11F06EscalationIsAPacketA                   SPEC-WORK.md:4654
+;;; ------------------------------------------------------------------
+;;; E11-F06-04 (ROADMAP.md:1149) — escalation-is-a-packet.
+;;; docs/SPEC-WORK.md:4654: "A hold, question or exception the child cannot
+;;; decide rises as a packet with its reason and revision; the stale pass prints
+;;; `escalated-age=` and `reread=` as information and reassigns nothing; an
+;;; `:effort` widening or an expensive-route exception carries the coordinator's
+;;; recorded reason."
+;;;
+;;; This replay asserts the second clause: the coordinator's stale pass reads a
+;;; persisted escalation and reassigns nothing, surfacing the escalation's age
+;;; and reread count as strictly informational fields on its receipt line.
+
+(deftest "TestE11F06EscalationIsAPacketA" "docs/SPEC-WORK.md:4654"
+    "expected=stale-pass-prints-escalated-age-and-reread-as-information-and-reassigns-nothing"
+  (let* ((row (make-escalation-row :rule "r7" :default :close-on-silence
+                                   :age 3600 :reread 2))
+         (rows (list row)))
+    (multiple-value-bind (read line) (stale-pass rows)
+      (ok (eq read rows)
+          "the stale pass reassigns nothing; it answers the same rows")
+      (ok (search "escalated-age=3600" line)
+          "the stale pass does not print escalated-age= with the persisted age: ~A" line)
+      (ok (search "reread=2" line)
+          "the stale pass does not print reread= with the persisted reread count: ~A" line)
+      (ok (search "reassigned=0" line)
+          "the stale pass did not say it reassigned nothing: ~A" line)
+      (check-equal "r7" (escalation-row-rule (first read))
+                   "the read changed the rule")
+      (check-equal :close-on-silence (escalation-row-default (first read))
+                   "the read changed the default")
+      (check-equal 3600 (escalation-row-age (first read))
+                   "the read changed the age"))))

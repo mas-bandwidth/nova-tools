@@ -236,7 +236,20 @@ func TestPortMissingFlagsRefuseBeforeHostCalls(t *testing.T) {
 	}
 }
 
-// 7. a kill leaves no --out; two concurrent runs to one --out leave one packet.
+// 7. a missing --lane refusal names --lane in the remedy.
+func TestPortMissingLaneRemedyNamesLane(t *testing.T) {
+	f := newPortFixture("")
+	code, _, errb := runPort(t, f, "--table", "port-gate", "--pr", "7")
+	if code != 2 {
+		t.Fatalf("code=%d stderr=%s", code, errb)
+	}
+	if !strings.Contains(errb, "PORT REFUSED") ||
+		!strings.Contains(errb, "refusing to guess; pass --lane <dir> --table <section> --pr <n>") {
+		t.Fatalf("lane remedy does not name --lane: %s", errb)
+	}
+}
+
+// 8. a kill leaves no --out; two concurrent runs to one --out leave one packet.
 func TestPortKilledRunLeavesNoOut(t *testing.T) {
 	dir := t.TempDir()
 	dest := filepath.Join(dir, "port.md")

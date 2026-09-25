@@ -40,6 +40,13 @@ func activityInterval(idle time.Duration) time.Duration {
 	return d
 }
 
+// activitySnapshot is one reading of a process tree's CPU activity: TreeCPU answers
+// the total CPU in nanoseconds across pid and its descendants, and whether the tree
+// holds any live process known to the sampler.
+type activitySnapshot interface {
+	TreeCPU(pid int) (uint64, bool)
+}
+
 // procSnapshot is one reading of this machine's process table, taken once and asked about
 // each card in turn. A platform that cannot read the table hands back a snapshot that knows
 // nothing, and TreeCPU's second return says so rather than pretending a zero: the monitor

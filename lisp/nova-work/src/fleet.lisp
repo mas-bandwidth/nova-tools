@@ -25,8 +25,21 @@ tests and do profiling. An unknown role is a refusal, never a guess.")
   "SPEC-WORK.md:3548 --- a field named any of these in a machine record is a
 credential; the record is refused whole and the value is not echoed.")
 
+;;; ONE `machine` struct, two constructors (nova-tools #1612). This file
+;;; defined it twice -- here and again at the head of the folded #1102 section
+;;; below -- with IDENTICAL slots and two constructor names. SBCL calls that
+;;; "Duplicate definition for COPY-MACHINE found in one file", a full WARNING
+;;; and not a style-warning, which makes `(asdf:load-system :nova-work)` FAIL:
+;;; the system loaded at all only because run-tests.sh muffled every warning.
+;;; `defstruct` takes as many `(:constructor ...)` options as it is given, so
+;;; both call shapes keep working from the one definition.
 (defstruct (machine (:constructor %make-machine
+                        (&key id name owner connect roles permits excludes limits facts))
+                    (:constructor make-machine
                         (&key id name owner connect roles permits excludes limits facts)))
+  "One CONFIG `:machine` member: equipment, never a work-tree node. Its roles,
+permits and excludes are declared facts; a probe or a heartbeat never writes
+them."
   id name owner connect roles permits excludes limits facts)
 
 (defstruct (fleet (:constructor %make-fleet ()))
@@ -1503,12 +1516,8 @@ numbers and bumps the machine generation; an allocation is never touched
 ;;; (SPEC-WORK.md:3557-3590)
 ;;; ------------------------------------------------------------------
 
-(defstruct (machine (:constructor make-machine
-                                  (&key id name owner connect roles permits excludes limits facts)))
-  "One CONFIG `:machine` member: equipment, never a work-tree node. Its roles,
-permits and excludes are declared facts; a probe or a heartbeat never writes
-them."
-  id name owner connect roles permits excludes limits facts)
+;;; `machine` was defined again here (nova-tools #1612). It is one struct with
+;;; two constructors at the head of this file now; `make-machine` is unchanged.
 
 (defstruct (fleet-session (:constructor make-fleet-session (&key who leases)))
   "The caller's view, held only so a replay can prove the ask writes nothing to
@@ -1543,17 +1552,25 @@ with their dates so the asker sees how old the declaration is."
         :limits (machine-limits machine)
         :admits kind
         :facts (machine-facts machine)
-        :declared-at (mapcar (lambda (fact) (getf fact :declared-at))
-                             (machine-facts machine))
+        :declared-at (let ((facts (machine-facts machine)))
+                       (cond ((null facts) nil)
+                             ;; A registration supplies the facts as one plist
+                             ;; with one declaration; a `--fact` change supplies
+                             ;; one entry per fact. Read both shapes.
+                             ((keywordp (car facts)) (getf facts :declared-at))
+                             (t (mapcar (lambda (fact) (getf fact :declared-at))
+                                        facts))))
         :line (fleet-row-line machine kind)))
 
 (defun fleet-for (session machines kind &key node)
   "Answer which machines admit KIND, in their configured order: their declared
 :roles and :permits admit it and their :excludes do not. With NODE, narrow to
 that one member; a member that excludes KIND is a refusal, never an empty answer
-a caller could read as no machine and fall through. The answer is a
-recommendation from declared facts and never a lease: it reserves nothing,
-dispatches nothing and writes nothing into SESSION (SPEC-WORK.md:3562-3590)."
+a caller could read as no machine and fall through, while a member that merely
+does not admit KIND is an empty answer, because every row printed under `--for`
+admits the kind. The answer is a recommendation from declared facts and never a
+lease: it reserves nothing, dispatches nothing and writes nothing into SESSION
+(SPEC-WORK.md:3562-3590)."
   (declare (ignore session))
   (if node
       (let ((machine (find node machines :key #'machine-id :test #'equal)))
@@ -1568,8 +1585,10 @@ dispatches nothing and writes nothing into SESSION (SPEC-WORK.md:3562-3590)."
                            :fail (format nil "QUERY FAIL ask=fleet rows=0 shown=0: ~A excludes ~A"
                                          node (string-downcase (princ-to-string kind)))
                            :exit-code 1))
+          ((machine-admits-p machine kind)
+           (make-fleet-ask :kind kind :rows (list (fleet-row machine kind))))
           (t
-           (make-fleet-ask :kind kind :rows (list (fleet-row machine kind))))))
+           (make-fleet-ask :kind kind :rows '()))))
       (make-fleet-ask
        :kind kind
        :rows (mapcar (lambda (machine) (fleet-row machine kind))
