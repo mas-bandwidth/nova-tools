@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"sort"
 	"strconv"
@@ -51,92 +50,13 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("missing required flags: %s; example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user",
 			strings.Join(missing, ", "))
 	}
-	if !IsValidAsName(asName) {
-		return 125, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
-	}
-
-	// 1. Store filesystem checks
-	sFi, err := os.Stat(storeDir)
-	if err != nil || !sFi.IsDir() {
-		return 125, fmt.Errorf("store %s is not a directory", storeDir)
-	}
-	gitDir := filepath.Join(storeDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return 125, fmt.Errorf("store %s has no .git directory", storeDir)
-	}
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return 125, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
-	}
-	targetFile := filepath.Join(storeDir, asName+".yaml")
-	if _, err := os.Stat(targetFile); err != nil {
-		return 125, fmt.Errorf("store file %s is absent", targetFile)
-	}
-
-	// 2. Invariant 8 git check and complete committed-artifact validation
-	st, headBlobs, indexData, failures, refusal := ValidateAdmissibleStore(storeDir)
-	if refusal != nil {
-		return 125, refusal
-	}
-	if len(failures) > 0 {
-		return 125, fmt.Errorf("store %s: %s", storeDir, failures[0].Reason)
-	}
-	headSHA := st.HeadSHA
-
-	entries, err := os.ReadDir(storeDir)
-	if err == nil {
-		for _, e := range entries {
-			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
-				if headBlobs != nil {
-					if _, ok := headBlobs[e.Name()]; !ok {
-						return 125, fmt.Errorf("uncommitted or untracked yaml file in store root: %s", e.Name())
-					}
-				}
-				if indexData != nil {
-					if _, ok := indexData.Entries[e.Name()]; !ok {
-						return 125, fmt.Errorf("untracked yaml file in store root: %s", e.Name())
-					}
-				}
-			}
-		}
-	}
-
-	// 3. Invariant 1 shape check (recovery.pub & .sops.yaml rules)
-	recKey, err := ReadRecoveryPub(storeDir)
-	if err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	sopsCfg, err := ParseSopsConfig(storeDir)
-	if err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	inv1Fails := CheckInvariant1(storeDir, sopsCfg, recKey)
-	if len(inv1Fails) > 0 {
-		return 125, fmt.Errorf("store %s: %s", storeDir, inv1Fails[0].Reason)
-	}
-
-	// 4. Key file mode check
-	if err := CheckInvariant6(keyPath); err != nil {
-		return 125, err
-	}
-
-	// 5. Sops binary check
-	if _, err := CheckSopsVersion(sopsPath); err != nil {
-		return 125, err
-	}
-
-	// 6. Decrypt target file
-	decData, err := DecryptFile(sopsPath, keyPath, targetFile)
+	// 1-7. The store, the seat's file and its key, checked and decrypted by the
+	// one path every in-process reader of a seat also takes (seatfile.go).
+	sf, err := OpenSeatFile(storeDir, asName, keyPath, sopsPath)
 	if err != nil {
 		return 125, err
 	}
-
-	// 7. Parse decrypted secrets
-	secretsMap, _, err := ParseDecryptedSecrets(decData)
-	if err != nil {
-		return 125, err
-	}
+	targetFile, headSHA, secretsMap := sf.Path, sf.HeadSHA, sf.Secrets
 
 	// 8. Apply --only
 	selectedSecrets := make(map[string]Secret)

@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"
+	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -25,38 +27,73 @@ type Store struct {
 // With UserEnv unset, Open connects as before, so a throwaway test Redis and a
 // bench that exports the bench password for other tools are unaffected; only
 // when that unauthenticated connection is refused NOAUTH while the password is
-// already in the environment does Open name the missing variable and the pair
-// (#3520) instead of passing the raw NOAUTH through.
+// already in the environment does the refusal name the missing variable and
+// the pair (#3520) instead of passing the raw NOAUTH through. Open sends
+// nothing (#3277), so that refusal is the first command's error.
 const (
-	UserEnv            = "NOVA_SPRINT_REDIS_USER"
-	PasswordEnvEnv     = "NOVA_SPRINT_REDIS_PASSWORD_ENV"
-	DefaultPasswordEnv = "NOVA_REDIS_BENCH_PASSWORD"
+	UserEnv            = redisauth.UserEnv
+	PasswordEnvEnv     = redisauth.PasswordEnvEnv
+	DefaultPasswordEnv = redisauth.DefaultPasswordEnv
 )
 
 func authFromEnv() (user, password string, err error) {
-	user = os.Getenv(UserEnv)
-	if user == "" {
-		return "", "", nil
+	// A seat given by --seat or NOVA_SEAT (nova-tools#4052) is read through
+	// nova-secrets' library in this process: its login wins, and the password
+	// goes to the client in memory, never into this process's environment.
+	if c, ok, err := seatcred.Active(); ok {
+		if err != nil {
+			return "", "", err
+		}
+		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
+		return c.User, password, nil
 	}
-	name := os.Getenv(PasswordEnvEnv)
-	if name == "" {
-		name = DefaultPasswordEnv
-	}
-	password = os.Getenv(name)
-	if password == "" {
-		return "", "", fmt.Errorf("%s=%s but %s is empty; run under nova-secrets exec --only %s", UserEnv, user, name, name)
-	}
-	return user, password, nil
+	return Auth("", "")
 }
 
-// NoUserHint is the refusal the fleet Redis needs when the default user is off
-// (#3520): the password is already in the environment but the ACL user is
-// unset, so the verb connected as the default user and was refused NOAUTH. The
-// line names the missing variable and the pair (user + password) in one line.
-func NoUserHint() string {
-	return UserEnv + " is unset but " + DefaultPasswordEnv + " is set; set the pair " +
-		UserEnv + "=bench and " + DefaultPasswordEnv + " (password from nova-secrets exec --only " +
-		DefaultPasswordEnv + ", never a flag)"
+// Auth is the environment seat (internal/nsprint/redisauth, #3461): user is the
+// ACL user, else UserEnv; passwordEnv the variable holding its password, else
+// PasswordEnvEnv, else DefaultPasswordEnv.
+func Auth(user, passwordEnv string) (string, string, error) { return redisauth.Auth(user, passwordEnv) }
+
+// NoUserHint is the #3520 refusal: password in the environment, ACL user unset.
+func NoUserHint() string { return redisauth.NoUserHint() }
+
+// noUserHook adds NoUserHint to a NOAUTH refusal (#3520). Open sends nothing
+// (#3277), so the refusal arrives on the caller's first command or batch; the
+// hook costs no round trip and is installed only when the user is unset while
+// the bench password is in the environment.
+type noUserHook struct{ addr string }
+
+func (h noUserHook) wrap(err error) error {
+	return fmt.Errorf("redis at %s: %w; %s", h.addr, err, NoUserHint())
+}
+
+func (noUserHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h noUserHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		err := next(ctx, cmd)
+		if isNoAuth(err) {
+			err = h.wrap(err)
+			cmd.SetErr(err)
+		}
+		return err
+	}
+}
+
+func (h noUserHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		for _, cmd := range cmds {
+			if isNoAuth(cmd.Err()) {
+				cmd.SetErr(h.wrap(cmd.Err()))
+			}
+		}
+		if isNoAuth(err) {
+			err = h.wrap(err)
+		}
+		return err
+	}
 }
 
 // isNoAuth reports a refusal for lack of authentication.
@@ -84,13 +121,11 @@ func open(ctx context.Context, addr string, poolSize int) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// No PING (#3277): go-redis dials on the first command, so the caller's
+	// first pipeline is the probe and an unreachable store fails there.
 	client := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, PoolSize: poolSize})
-	if err := client.Ping(ctx).Err(); err != nil {
-		_ = client.Close()
-		if user == "" && isNoAuth(err) && os.Getenv(DefaultPasswordEnv) != "" {
-			return nil, fmt.Errorf("redis at %s: %w; %s", addr, err, NoUserHint())
-		}
-		return nil, fmt.Errorf("redis at %s: %w", addr, err)
+	if user == "" && os.Getenv(DefaultPasswordEnv) != "" {
+		client.AddHook(noUserHook{addr: addr})
 	}
 	return &Store{client: client}, nil
 }

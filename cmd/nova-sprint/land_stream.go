@@ -86,6 +86,9 @@ func landGitHub(api string, budget int) (*stream.GitHub, error) {
 }
 
 func landExit(errOut io.Writer, verb string, err error) int {
+	if storeDown(errOut, verb, err) {
+		return 6
+	}
 	var ref *stream.Refusal
 	if errors.As(err, &ref) {
 		return refuse77(errOut, verb, ref.Why, ref.Remedy)

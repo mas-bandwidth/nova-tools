@@ -10,7 +10,6 @@ import (
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/land"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
 func runLandWorker(ctx context.Context, args []string, out, errOut io.Writer) int {
@@ -52,7 +51,7 @@ func runLandWorker(ctx context.Context, args []string, out, errOut io.Writer) in
 	// --redis, then NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR.
 	addr := lifeAddr(*redisAddr)
 
-	st, err := store.Open(ctx, addr)
+	st, err := openReached(ctx, addr)
 	if err != nil {
 		fmt.Fprintf(errOut, "nova-sprint land worker: %v\n", err)
 		return 6

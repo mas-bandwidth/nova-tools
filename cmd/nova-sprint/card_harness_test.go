@@ -60,8 +60,12 @@ func TestCardRunRefusesABadArgv(t *testing.T) {
 }
 
 func TestCardRunRefusesARedisItCannotReach(t *testing.T) {
+	// Open sends nothing (#3277): the card read is the first command, after
+	// the out dir, so the dirs are the test's own.
+	dir := t.TempDir()
 	var out, errOut bytes.Buffer
-	code := runCardRunEnv(context.Background(), []string{"--sprint", "s", "--label", "l", "--attempt", "1"}, &out, &errOut, cardRunEnv(nil))
+	code := runCardRunEnv(context.Background(), []string{"--sprint", "s", "--label", "l", "--attempt", "1"}, &out, &errOut,
+		cardRunEnv(map[string]string{"NOVA_CARD_OUT": dir + "/out", "NOVA_CARD_JOB": dir + "/job", "HOME": dir}))
 	if code != card.RunExitRefused || !strings.HasPrefix(out.String(), `REFUSED card run s/l/1 code=2 why="redis: `) {
 		t.Fatalf("code %d stdout %q stderr %q", code, out.String(), errOut.String())
 	}
