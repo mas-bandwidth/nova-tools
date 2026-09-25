@@ -517,11 +517,11 @@ func TestPreflightUnreadInputRefuses(t *testing.T) {
 	})
 }
 
-// TestLiveBeatShapeNamesLauncher (#3191): the fixture of the live beat hash
+// TestLiveBeatShapeFixtureNamesLauncher (#3191): the fixture of the live beat hash
 // as the bench beat writer emits it (with launcher=nova-sprint card launch)
 // goes through CheckBatchLauncher GREEN, and the same fixture with the
 // launcher field dropped is RED naming the bench.
-func TestLiveBeatShapeNamesLauncher(t *testing.T) {
+func TestLiveBeatShapeFixtureNamesLauncher(t *testing.T) {
 	// The seven live benches from the issue.
 	benches := []string{"studio", "hulk", "vision", "superman", "batman", "spacegame", "hetzner"}
 
