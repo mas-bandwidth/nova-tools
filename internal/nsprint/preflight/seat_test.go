@@ -141,3 +141,75 @@ func TestPreflightInfoNeedsPreflightUser(t *testing.T) {
 		}
 	}
 }
+
+// DONE-WHEN test for #3190: a fake store answering NOPERM to INFO, FUNCTION LIST or TIME
+// makes 7.1 print RED 7.1 with MISSING and the refused command, never GREEN, and exit 1.
+func TestStoreCheckNoPermIsRedNamingTheCommand(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	mr.SetTime(t0)
+
+	for _, deniedCmd := range []string{"info", "function", "time"} {
+		t.Run(deniedCmd, func(t *testing.T) {
+			c := redis.NewClient(&redis.Options{Addr: mr.Addr(), Username: "bench"})
+			defer c.Close()
+			c.AddHook(specificDenyHook{cmd: deniedCmd})
+
+			l := checkRedis(ctx, c)
+			if !l.Red || l.N != "7.1" {
+				t.Fatalf("7.1 with %s denied must be RED: %s", deniedCmd, l)
+			}
+			if !strings.Contains(l.Why, "MISSING") {
+				t.Fatalf("7.1 Why must contain MISSING: %s", l)
+			}
+			if !strings.Contains(strings.ToLower(l.Why), strings.ToLower(deniedCmd)) {
+				t.Fatalf("7.1 Why must name the refused command %q: %s", deniedCmd, l)
+			}
+			if ExitCode([]Line{l}) != 1 {
+				t.Fatal("RED 7.1 must exit 1")
+			}
+			if strings.Contains(l.String(), "GREEN") {
+				t.Fatal("7.1 must never be GREEN when denied")
+			}
+		})
+	}
+}
+
+type specificDenyHook struct {
+	cmd string
+}
+
+func (specificDenyHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (d specificDenyHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		if d.denied(cmd) {
+			cmd.SetErr(noperm(cmd))
+			return cmd.Err()
+		}
+		return next(ctx, cmd)
+	}
+}
+
+func (d specificDenyHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		var first error
+		for _, cmd := range cmds {
+			if d.denied(cmd) {
+				cmd.SetErr(noperm(cmd))
+				if first == nil {
+					first = cmd.Err()
+				}
+			}
+		}
+		if first != nil {
+			return first
+		}
+		return next(ctx, cmds)
+	}
+}
+
+func (d specificDenyHook) denied(cmd redis.Cmder) bool {
+	name := strings.ToLower(cmd.Name())
+	return name == d.cmd || (d.cmd == "function|list" && name == "function")
+}
