@@ -116,8 +116,10 @@ type Bisect interface {
 	Alone(ctx context.Context, batch Batch, v Verdict) (baseGreen bool, memberGreen []bool, err error)
 }
 
-// Forge reads one member's mergeable word: MERGEABLE, CONFLICTING, or UNKNOWN.
-type Forge interface {
+// Mergeability reads one member's mergeable word: MERGEABLE, CONFLICTING, or
+// UNKNOWN, from the member's record or the bench mirror, never the forge
+// (nova-tools#3967: land's member selection reads the record).
+type Mergeability interface {
 	Mergeable(ctx context.Context, repo string, number int) (string, error)
 }
 
@@ -170,7 +172,7 @@ func (WallClock) Sleep(d time.Duration) { time.Sleep(d) }
 type Lane struct {
 	Gate   Gate
 	Bisect Bisect
-	Forge  Forge
+	Merge  Mergeability
 	Land   Lander
 	Store  Store
 	Filer  Filer
@@ -194,7 +196,7 @@ func (l Lane) Run(ctx context.Context, batch Batch) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if l.Gate == nil || l.Bisect == nil || l.Forge == nil || l.Land == nil || l.Store == nil || l.Filer == nil || l.Clock == nil {
+	if l.Gate == nil || l.Bisect == nil || l.Merge == nil || l.Land == nil || l.Store == nil || l.Filer == nil || l.Clock == nil {
 		return Result{}, fmt.Errorf("land: gate, bisect, forge, lander, store, filer and clock are required")
 	}
 	if strings.TrimSpace(batch.Repo) == "" || len(batch.Members) == 0 {
@@ -317,7 +319,7 @@ func (l Lane) readMergeable(ctx context.Context, repo string, number int) (Membe
 			return MemberResult{}, false, err
 		}
 		start := l.Clock.Now()
-		state, err := l.Forge.Mergeable(ctx, repo, number)
+		state, err := l.Merge.Mergeable(ctx, repo, number)
 		l.Metrics.ProviderLatency(metrics.Lander, "forge", l.Clock.Now().Sub(start))
 		if err != nil {
 			return MemberResult{}, false, err

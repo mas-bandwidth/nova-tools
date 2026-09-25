@@ -115,9 +115,9 @@ func TestReadBriefVerbWritesTheBriefWithZeroGitHubCalls(t *testing.T) {
 	}
 }
 
-// TestReadPostVerbNoGitHub: the line lands in Redis with zero HTTP calls;
-// without --no-github and without a token the verb refuses (exit 1) naming
-// the remedy, before any write.
+// TestReadPostVerbNoGitHub: the line lands in Redis with zero HTTP calls,
+// with or without --no-github and with no token (#3967: a post is Redis
+// only).
 func TestReadPostVerbNoGitHub(t *testing.T) {
 	stub := testutil.StartGitHubStub(t)
 	t.Setenv("GH_TOKEN", "")
@@ -125,11 +125,11 @@ func TestReadPostVerbNoGitHub(t *testing.T) {
 	_, addr, head := readFixture(t)
 	typed := "HOLD who=rowan head=" + head + " score=6/10 gates=ci:pending,base:ok,scope:ok"
 	code, stdout, stderr := runSprint("read", "post", "--repo", "nova-tools", "--n", "3", "--line", typed, "--redis", addr)
-	if code != 1 || stdout != "" || !strings.Contains(stderr, "READ POST REFUSED repo=nova-tools n=3 why=no GH_TOKEN") || !strings.Contains(stderr, "--no-github") {
+	if code != 0 || !strings.Contains(stdout, "READ POST repo=nova-tools n=3 kind=HOLD lines=1 github_calls=0") {
 		t.Fatalf("no token: exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	code, stdout, stderr = runSprint("read", "post", "--repo", "nova-tools", "--n", "3", "--line", typed, "--no-github", "--redis", addr)
-	if code != 0 || !strings.Contains(stdout, "READ POST repo=nova-tools n=3 kind=HOLD lines=1 github_calls=0") {
+	if code != 0 || !strings.Contains(stdout, "READ POST repo=nova-tools n=3 kind=HOLD lines=2 github_calls=0") {
 		t.Fatalf("exit %d stdout %q stderr %q", code, stdout, stderr)
 	}
 	if stub.Calls() != 0 {
@@ -138,7 +138,7 @@ func TestReadPostVerbNoGitHub(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
 	lines, _ := c.LRange(context.Background(), read.LinesKey("nova-tools", "3"), 0, -1).Result()
-	if len(lines) != 1 || lines[0] != typed {
+	if len(lines) != 2 || lines[0] != typed || lines[1] != typed {
 		t.Fatalf("lines %q", lines)
 	}
 }

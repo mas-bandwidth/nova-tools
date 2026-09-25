@@ -31,6 +31,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
+	"github.com/redis/go-redis/v9"
 )
 
 // Redis Functions registered by internal/nsprint/fn/lua/harvest_orphans.lua.
@@ -39,9 +40,10 @@ const (
 	FunctionOrphanSettle = "ns_orphan_settle"
 )
 
-// OrphanForge is the GitHub the supersede step needs, by REST.
+// OrphanForge is the GitHub the supersede step needs, by REST: two writes,
+// the close-out of a superseded card's PR and branch. It never reads: the PR
+// is the one the card's record names (nova-tools#3967).
 type OrphanForge interface {
-	FindOpenPR(ctx context.Context, repo, branch string) (PR, bool, error)
 	// ClosePR comments on the PR, then closes it.
 	ClosePR(ctx context.Context, repo string, number int, comment string) error
 	// RenameBranch is idempotent: from absent and to present is success.
@@ -283,16 +285,17 @@ func supersede(ctx context.Context, st *store.Store, opt OrphanOptions, l lease,
 	if r.repo == "" {
 		return s, fmt.Errorf("%s: no repo on the card", r.label)
 	}
-	// The PR first: it is found by its head branch, which the rename moves.
-	pr, found, err := opt.Forge.FindOpenPR(ctx, r.repo, from)
-	if err != nil {
-		return s, fmt.Errorf("%s: find PR on %s: %w", r.label, from, err)
+	// The PR first: the one the attempt's idem key names (pr:<repo>:<branch>
+	// in s:<S>:idem, written when harvest recorded it), never a GitHub lookup.
+	prField, err := st.Client().HGet(ctx, "s:"+opt.Sprint+":idem", "pr:"+r.repo+":"+from).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return s, fmt.Errorf("%s: read the idem PR of %s: %w", r.label, from, err)
 	}
-	if found {
-		if err := opt.Forge.ClosePR(ctx, r.repo, pr.Number, supersedeComment(r, from, s.To)); err != nil {
-			return s, fmt.Errorf("%s: close PR %d: %w", r.label, pr.Number, err)
+	if n, _ := strconv.Atoi(strings.TrimSpace(prField)); n > 0 {
+		if err := opt.Forge.ClosePR(ctx, r.repo, n, supersedeComment(r, from, s.To)); err != nil {
+			return s, fmt.Errorf("%s: close PR %d: %w", r.label, n, err)
 		}
-		s.Closed = append(s.Closed, pr.Number)
+		s.Closed = append(s.Closed, n)
 	}
 	if err := opt.Forge.RenameBranch(ctx, r.repo, from, s.To); err != nil {
 		return s, fmt.Errorf("%s: rename %s to %s: %w", r.label, from, s.To, err)

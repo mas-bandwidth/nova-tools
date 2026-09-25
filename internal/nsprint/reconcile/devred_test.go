@@ -105,25 +105,20 @@ func TestDevRedPushesOneTaskOnceAndHolds(t *testing.T) {
 	}
 }
 
-// TestDevRedForgeReadIsBudgeted: with no Redis record, the forge is read
-// once per ForgeEvery per base, and its FAIL holds the base.
-func TestDevRedForgeReadIsBudgeted(t *testing.T) {
+// TestDevRedNoRecordIsNoEvidence: with no CI record and no gated receipt
+// the duty holds nothing and asks no one (#3967: CI state is ci:* and
+// ev:github, never a forge poll).
+func TestDevRedNoRecordIsNoEvidence(t *testing.T) {
 	ctx, c, p, d := devredFixture(t)
 	c.HSet(ctx, civerdict.TipKey("nova-tools", "dev"), "sha", redSHA)
-	reads := 0
-	d.Forge = func(_ context.Context, repo, sha string) (reconcile.CIState, error) {
-		reads++
-		return reconcile.CIState{Verdict: "FAIL", Check: "lint"}, nil
-	}
-	d.ForgeEvery = time.Hour
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 2; i++ {
 		outs, err := d.Pass(ctx)
-		if err != nil || outs[0].Err != nil {
+		if err != nil || outs[0].Err != nil || outs[0].Action != "NOEVIDENCE" {
 			t.Fatal(err, outs)
 		}
 	}
-	if reads != 1 || len(p.tasks) != 1 || p.tasks[0].Check != "lint" {
-		t.Fatalf("forge reads %d, tasks %d (%+v); want 1 and 1", reads, len(p.tasks), p.tasks)
+	if len(p.tasks) != 0 {
+		t.Fatalf("tasks %d on no evidence, want 0", len(p.tasks))
 	}
 }
 

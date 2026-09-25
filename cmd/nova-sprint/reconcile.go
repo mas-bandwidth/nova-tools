@@ -69,10 +69,11 @@ func registerReconcileDuty(name string, build func(st *store.Store) (reconcileDu
 	reconcileDuties = append(reconcileDuties, reconcileDutyBuilder{Name: name, Build: build})
 }
 
-// reconcileSeams are the deal pass's two host seams: the system ssh to each
-// bench and the forge by `gh api` REST. A test swaps in its fixture sshd and
-// forge map (CI-NET: no host in a test); nothing else in the loop changes.
-var reconcileSeams = func() (deal.Dialer, deal.PRs) { return deal.Remote{}, deal.GH{} }
+// reconcileSeams are the deal pass's two seams: the system ssh to each bench
+// and the DEPENDS-ON answers, nil for deal.Records over the store (Redis
+// only, never the forge, #3967). A test swaps in its fixture sshd and a map
+// (CI-NET: no host in a test); nothing else in the loop changes.
+var reconcileSeams = func() (deal.Dialer, deal.PRs) { return deal.Remote{}, nil }
 
 // stoppableDuty is a duty with work of its own past its Run (the harvest
 // workers, #3737): Stop ends it before the verb exits, until ctx ends.
@@ -86,6 +87,9 @@ type stoppableDuty interface {
 // the Stop of every duty with work of its own past its Run, for the way out.
 func productionDuties(st *store.Store, set *metrics.Set) (duties []reconcile.Duty, names []string, stops []stoppableDuty, err error) {
 	dialer, prs := reconcileSeams()
+	if prs == nil {
+		prs = deal.Records{C: st.Client()}
+	}
 	refill := &reconcile.Refill{
 		Client: st.Client(),
 		Deal:   &deal.Pass{Dialer: dialer, PRs: prs, Metrics: set},
@@ -191,7 +195,7 @@ func runReconcile(ctx context.Context, args []string, out, errOut io.Writer) int
 			Readers:        splitNames(*widthReaders),
 			Builders:       splitNames(*widthBuilders),
 			Coordinator:    *widthCoordinator,
-		}, PRs: &deal.GH{}}
+		}, PRs: deal.Records{C: st.Client()}}
 		duties = append(duties, duty.Run)
 		names = append(names, "width")
 	}

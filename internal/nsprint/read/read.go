@@ -17,12 +17,9 @@ import (
 	"bytes"
 	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -324,58 +321,12 @@ func CheckLine(line string) error {
 	return nil
 }
 
-// Poster mirrors one typed line as a PR comment through one REST call.
-// It is nil when --no-github is given, and it goes when #3595 lands.
-type Poster struct {
-	BaseURL string // GITHUB_API_URL or https://api.github.com
-	Owner   string
-	Token   string
-	HTTP    *http.Client
-}
-
-// Comment is the one REST call: POST /repos/<owner>/<repo>/issues/<n>/comments.
-func (p Poster) Comment(ctx context.Context, repo, n, body string) (int64, error) {
-	base := strings.TrimRight(p.BaseURL, "/")
-	if base == "" {
-		base = "https://api.github.com"
-	}
-	ep := base + "/repos/" + url.PathEscape(p.Owner) + "/" + url.PathEscape(repo) + "/issues/" + url.PathEscape(n) + "/comments"
-	payload, _ := json.Marshal(map[string]string{"body": body})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep, bytes.NewReader(payload))
-	if err != nil {
-		return 0, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	req.Header.Set("Content-Type", "application/json")
-	if p.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+p.Token)
-	}
-	client := p.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, err
-	}
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return 0, fmt.Errorf("github %d", resp.StatusCode)
-	}
-	var v struct {
-		ID int64 `json:"id"`
-	}
-	_ = json.Unmarshal(b, &v)
-	return v.ID, nil
-}
-
 // Post appends the typed line to pr:<repo>:<n>:lines and stamps the record
-// (last_line, last_line_at) in one MULTI, then mirrors it as one comment when
-// poster is not nil. Exit 0 posted, 1 refused, 2 could not run. The Redis
-// write is the record; a comment that fails after it is reported as such.
-func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Poster, stdout, stderr io.Writer) int {
+// (last_line, last_line_at) in one MULTI. Exit 0 posted, 1 refused, 2 could
+// not run. The Redis write is the record and the only write: a read is Redis
+// native, and the line reaches GitHub only as part of the landed close
+// (nova-tools#3967, THE BOUNDARY; the comment mirror is gone, #3595).
+func Post(ctx context.Context, c *redis.Client, repo, n, line string, stdout, stderr io.Writer) int {
 	if err := CheckLine(line); err != nil {
 		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s why=%v\n", repo, n, err)
 		return 1
@@ -398,15 +349,6 @@ func Post(ctx context.Context, c *redis.Client, repo, n, line string, poster *Po
 		return 2
 	}
 	kind := strings.Fields(line)[0]
-	if poster == nil {
-		fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0\n", repo, n, kind, rp.Val())
-		return 0
-	}
-	id, err := poster.Comment(ctx, repo, n, line)
-	if err != nil {
-		fmt.Fprintf(stderr, "READ POST REFUSED repo=%s n=%s kind=%s lines=%d redis=ok github=%v; the line is in Redis, re-run with --no-github or fix the token\n", repo, n, kind, rp.Val(), err)
-		return 1
-	}
-	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=1 comment=%d\n", repo, n, kind, rp.Val(), id)
+	fmt.Fprintf(stdout, "READ POST repo=%s n=%s kind=%s lines=%d github_calls=0\n", repo, n, kind, rp.Val())
 	return 0
 }

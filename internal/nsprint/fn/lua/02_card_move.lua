@@ -1399,14 +1399,32 @@ end)
 -- ns_tcard_push(id, where, by, why[, k, v]...) -> PUSHED <where> <xid> |
 -- REFUSED <why>. where is waiting or ready; stream, friend, sprint and front
 -- are options, every other k a record field (kind, ref, origin, title, head,
--- pr, repo, ...).
+-- pr, repo, ...). An import (the record carries issue_number: task push
+-- --issue <owner/repo#n>, nova-tools#3967) is one card per issue: the index
+-- taskref:<ref> names the task that holds the issue, and a second import of
+-- it is refused while that task is anywhere but done (#3911 comment).
 redis.register_function('ns_tcard_push', function(keys, args)
   local o = TK.opts(args, 5, { by = args[3], why = args[4] })
   o.where = args[2]
   local fields = o.fields
   o.fields = nil
+  local ref, imported = '', false
+  for i = 1, #fields - 1, 2 do
+    if fields[i] == 'ref' then ref = TK.str(fields[i + 1]) end
+    if fields[i] == 'issue_number' then imported = true end
+  end
+  if imported and ref ~= '' then
+    local held = TK.str(redis.call('GET', 'taskref:' .. ref))
+    if held ~= '' and held ~= args[1] and redis.call('EXISTS', 'task:' .. held) == 1 then
+      local w = TK.str(redis.call('HGET', 'task:' .. held, 'where'))
+      if w ~= 'done' then
+        return 'REFUSED DUPLICATE ' .. ref .. ' is task:' .. held .. ' at ' .. (w ~= '' and w or 'null') .. '; one card per issue'
+      end
+    end
+  end
   local err, info = TK.create(args[1], fields, o)
   if err then return 'REFUSED ' .. err end
+  if imported and ref ~= '' then redis.call('SET', 'taskref:' .. ref, args[1]) end
   return 'PUSHED ' .. info.to .. ' ' .. (info.xid ~= '' and info.xid or '-')
 end)
 

@@ -295,6 +295,9 @@ func TestSupersededOrphanRenamed(t *testing.T) {
 		b := "nova/" + sprint + "/" + l + "-a1"
 		forge.branches[b] = sha(l)
 		forge.open["nova-tools:"+b] = harvest.PR{Number: 700 + len(forge.open), Head: sha(l)}
+		// harvest recorded attempt 1's PR under its idem key: the record
+		// names the PR supersede closes (#3967: no GitHub lookup).
+		c.HSet(ctx, "s:"+sprint+":idem", "pr:nova-tools:"+b, forge.open["nova-tools:"+b].Number)
 	}
 	prNum := forge.open["nova-tools:nova/"+sprint+"/"+label+"-a1"].Number
 

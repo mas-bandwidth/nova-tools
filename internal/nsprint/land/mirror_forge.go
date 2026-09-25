@@ -9,22 +9,22 @@ import (
 	"strings"
 )
 
-// MirrorForge reads mergeability from a local mirror. GitHub's lazy REST
+// MirrorMerge reads mergeability from a local mirror. GitHub's lazy REST
 // mergeable field is deliberately not part of this adapter.
-type MirrorForge struct {
+type MirrorMerge struct {
 	GitDir string
 	Remote string
 	Base   string
 	Fetch  func(context.Context, string, int) error
 }
 
-func (f MirrorForge) git(ctx context.Context, args ...string) (string, error) {
+func (f MirrorMerge) git(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", f.GitDir}, args...)...)
 	b, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(b)), err
 }
 
-func (f MirrorForge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
+func (f MirrorMerge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
 	if f.GitDir == "" || number <= 0 {
 		return "", errors.New("land: mirror and positive PR number are required")
 	}

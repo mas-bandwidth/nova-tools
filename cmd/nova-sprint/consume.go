@@ -51,7 +51,7 @@ var consumeNotBuilt = map[string]string{
 }
 
 // consumePRReadRemote is the remote seam for pr-to-read, swapped in tests.
-var consumePRReadRemote consume.Remote = consume.GitRemote
+var consumePRReadRemote consume.Remote = consume.MirrorRemote
 
 // consumeHarvestLog receives the harvest duty's receipt lines (TAKEN
 // from=<instance> stale, #3737): the reconciler's stdout, its log.

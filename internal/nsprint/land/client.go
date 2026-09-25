@@ -24,7 +24,7 @@ var ErrNoUnit = errors.New("NOUNIT")
 // at a head that is not the unit's current head: nothing is written.
 var ErrStaleHead = errors.New("STALE")
 
-// Mergeable words, the forge's vocabulary (Forge).
+// Mergeable words, the vocabulary of Mergeability.
 const (
 	MergeableYes      = "MERGEABLE"
 	MergeableConflict = "CONFLICTING"

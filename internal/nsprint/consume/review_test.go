@@ -866,7 +866,7 @@ func TestPrToReadMakesNoRestCall(t *testing.T) {
 		Consumer: "test-norest",
 		Instance: "test-norest",
 		Actor:    "pr-to-read",
-		Remote:   GitRemote,
+		Remote:   MirrorRemote,
 	}
 
 	if err := pr.Once(ctx); err != nil {
@@ -933,7 +933,7 @@ func TestConsumeTwoSeatsOneWriter(t *testing.T) {
 			Consumer: "route-a",
 			Instance: "route-a",
 			Actor:    "route",
-			Remote:   GitRemote,
+			Remote:   MirrorRemote,
 		}
 		router := &Router{
 			Store:    st,
@@ -966,7 +966,7 @@ func TestConsumeTwoSeatsOneWriter(t *testing.T) {
 			Consumer: "seat-b",
 			Instance: "seat-b",
 			Actor:    "pr-to-read",
-			Remote:   GitRemote,
+			Remote:   MirrorRemote,
 		}
 
 		snapBefore := snapshotKeys(t, client, S)

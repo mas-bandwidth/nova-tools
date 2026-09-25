@@ -23,10 +23,10 @@ import (
 // Evidence, in order, one read each: the CI record ci:<repo>:<sha> (the
 // webhook or bench-run record of nova-tools #3597: a hash whose `verdict`
 // is OK or FAIL and whose `check` names the failing check); the gated
-// receipt ci:<repo>:<sha>:<gid> through internal/civerdict; then, until
-// #3597 lands, the forge's check state read through Forge at most once per
-// ForgeEvery per base. No evidence is no verdict: the hold neither sets nor
-// clears.
+// receipt ci:<repo>:<sha>:<gid> through internal/civerdict. Both are
+// Redis: CI verdicts arrive by webhook (ev:github, #3888) or from our own
+// runners (ci:*), never by polling the forge (nova-tools#3967, THE
+// BOUNDARY). No evidence is no verdict: the hold neither sets nor clears.
 
 // BasesKey is the set of `<repo>/<base>` pairs the duty watches, written by
 // `nova-sprint dev-red watch`. Empty, the duty does nothing.
@@ -34,14 +34,6 @@ const BasesKey = "devred:bases"
 
 // CIRecordKey is the plain CI record of one commit, ci:<repo>:<sha> (#3597).
 func CIRecordKey(repo, sha string) string { return "ci:" + repo + ":" + sha }
-
-// ForgeBudgetKey is the per-base token for one forge read per ForgeEvery:
-// land:<repo>:<base>:ci:forge (SET NX PX), so a 1 s pass reads GitHub once
-// a minute, not once a second.
-func ForgeBudgetKey(repo, base string) string { return "land:" + repo + ":" + base + ":ci:forge" }
-
-// DefaultForgeEvery is the default forge read interval per base.
-const DefaultForgeEvery = 60 * time.Second
 
 // CIState is what the evidence says about one commit. Verdict is
 // civerdict.OK, "FAIL" or "" (no evidence). Check names the failing check,
@@ -75,10 +67,6 @@ type DevRed struct {
 	// Push pushes the fix task; the return is the task id as pushed (the
 	// receipt names it). Required: a nil Push is a duty that only reads.
 	Push func(ctx context.Context, t FixTask) (string, error)
-	// Forge reads the check state of one commit from the forge; nil reads
-	// Redis only. Budgeted per base by ForgeEvery.
-	Forge      func(ctx context.Context, repo, sha string) (CIState, error)
-	ForgeEvery time.Duration
 	// Now is the clock; nil is time.Now.
 	Now func() time.Time
 }
@@ -241,8 +229,8 @@ func (d *DevRed) one(ctx context.Context, rb land.RepoBase) Outcome {
 	return o
 }
 
-// evidence reads the commit's CI state: the plain record, the gated
-// receipt, then the budgeted forge read.
+// evidence reads the commit's CI state: the plain record, then the gated
+// receipt. Redis only.
 func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CIState, error) {
 	c := d.Client
 	rec, err := c.HGetAll(ctx, CIRecordKey(rb.Repo, sha)).Result()
@@ -259,21 +247,7 @@ func (d *DevRed) evidence(ctx context.Context, rb land.RepoBase, sha string) (CI
 	if st, ok := stateOf(gated); ok {
 		return st, nil
 	}
-	if d.Forge == nil {
-		return CIState{}, nil
-	}
-	every := d.ForgeEvery
-	if every <= 0 {
-		every = DefaultForgeEvery
-	}
-	got, err := c.SetNX(ctx, ForgeBudgetKey(rb.Repo, rb.Base), sha, every).Result()
-	if err != nil {
-		return CIState{}, fmt.Errorf("forge budget: %w", err)
-	}
-	if !got {
-		return CIState{}, nil
-	}
-	return d.Forge(ctx, rb.Repo, sha)
+	return CIState{}, nil
 }
 
 // stateOf reads a CI hash: verdict OK or FAIL, and the failing name from

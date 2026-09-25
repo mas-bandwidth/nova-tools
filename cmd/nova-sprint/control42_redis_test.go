@@ -230,7 +230,7 @@ func TestControl42Redis(t *testing.T) {
 			gate := &c42Gate{}
 			lander := &c42Lander{}
 			clock := &c42Clock{now: time.Unix(0, 0)}
-			lane := land.Lane{Gate: gate, Bisect: c42Bisect{}, Forge: forge, Land: lander, Store: land.NewMemory(), Filer: &c42Filer{}, Clock: clock}
+			lane := land.Lane{Gate: gate, Bisect: c42Bisect{}, Merge: forge, Land: lander, Store: land.NewMemory(), Filer: &c42Filer{}, Clock: clock}
 			res, err := lane.Run(context.Background(), land.Batch{Repo: "nova-tools", Name: "c42", Members: []land.Member{{Number: 13, Head: strconv.Itoa(13)}}})
 			if err != nil {
 				t.Fatal(err)

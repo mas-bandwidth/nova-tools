@@ -124,7 +124,7 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(b))
 }
 
-func TestMirrorForgeMergeable(t *testing.T) {
+func TestMirrorMergeMergeable(t *testing.T) {
 	d := t.TempDir()
 	gitRun(t, d, "init", "-q")
 	gitRun(t, d, "switch", "-c", "dev")
@@ -155,7 +155,7 @@ func TestMirrorForgeMergeable(t *testing.T) {
 	conflict := gitRun(t, d, "rev-parse", "HEAD")
 	gitRun(t, d, "update-ref", "refs/nova-sprint/pull/2/head", conflict)
 	fetches := 0
-	f := land.MirrorForge{GitDir: d, Base: "dev", Fetch: func(context.Context, string, int) error { fetches++; return nil }}
+	f := land.MirrorMerge{GitDir: d, Base: "dev", Fetch: func(context.Context, string, int) error { fetches++; return nil }}
 	if got, err := f.Mergeable(context.Background(), "repo", 1); err != nil || got != "MERGEABLE" {
 		t.Fatalf("clean=%s err=%v", got, err)
 	}

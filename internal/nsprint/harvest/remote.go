@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os/exec"
 	"path"
-	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +17,8 @@ import (
 )
 
 // GitHub is the Forge over GitHub REST through `gh api` (GH_CONFIG_DIR picks
-// the account). A repo without an owner is under Owner.
+// the account): the PR open and nothing else (nova-tools#3967). A repo
+// without an owner is under Owner.
 type GitHub struct {
 	Bin   string // default "gh"
 	Owner string // default "mas-bandwidth"
@@ -82,47 +82,8 @@ func (p ghPull) pr() PR {
 		State: p.State, Merged: p.MergedAt != nil && *p.MergedAt != ""}
 }
 
-// ListPRs is the lookup before a create (#2932 step c): every PR, in any
-// state, whose head is <owner>:<branch>.
-func (g GitHub) ListPRs(ctx context.Context, repo, branch string) ([]PR, error) {
-	full, owner := g.full(repo)
-	out, err := g.api(ctx, "-X", "GET", "-f", "state=all", "-f", "head="+owner+":"+branch, "repos/"+full+"/pulls")
-	if err != nil {
-		return nil, err
-	}
-	var pulls []ghPull
-	if err := json.Unmarshal(out, &pulls); err != nil {
-		return nil, fmt.Errorf("pulls for %s: %w", branch, err)
-	}
-	var prs []PR
-	for _, p := range pulls {
-		if p.Head.Ref == branch {
-			prs = append(prs, p.pr())
-		}
-	}
-	return prs, nil
-}
-
-// FindOpenPR looks up the open PR whose head is branch (5.4 "PR open").
-func (g GitHub) FindOpenPR(ctx context.Context, repo, branch string) (PR, bool, error) {
-	full, owner := g.full(repo)
-	out, err := g.api(ctx, "-X", "GET", "-f", "state=open", "-f", "head="+owner+":"+branch, "repos/"+full+"/pulls")
-	if err != nil {
-		return PR{}, false, err
-	}
-	var pulls []ghPull
-	if err := json.Unmarshal(out, &pulls); err != nil {
-		return PR{}, false, fmt.Errorf("pulls for %s: %w", branch, err)
-	}
-	for _, p := range pulls {
-		if p.Head.Ref == branch {
-			return p.pr(), true, nil
-		}
-	}
-	return PR{}, false, nil
-}
-
-// OpenPR opens the PR once; the caller has already looked it up.
+// OpenPR opens the PR once: harvest's one GitHub call, an outward write of
+// the card's record; the caller has looked it up on ev:github, never GitHub.
 func (g GitHub) OpenPR(ctx context.Context, repo, branch, base, title, body string) (PR, error) {
 	full, _ := g.full(repo)
 	out, err := g.api(ctx, "-X", "POST", "-f", "title="+title, "-f", "head="+branch, "-f", "base="+base,
@@ -133,20 +94,6 @@ func (g GitHub) OpenPR(ctx context.Context, repo, branch, base, title, body stri
 	var p ghPull
 	if err := json.Unmarshal(out, &p); err != nil || p.Number == 0 {
 		return PR{}, fmt.Errorf("open PR on %s: unexpected reply", branch)
-	}
-	return p.pr(), nil
-}
-
-// ReadPR reads the PR back by REST; its head is the verified head.
-func (g GitHub) ReadPR(ctx context.Context, repo string, number int) (PR, error) {
-	full, _ := g.full(repo)
-	out, err := g.api(ctx, "repos/"+full+"/pulls/"+strconv.Itoa(number))
-	if err != nil {
-		return PR{}, err
-	}
-	var p ghPull
-	if err := json.Unmarshal(out, &p); err != nil || p.Number != number {
-		return PR{}, fmt.Errorf("read PR %d: unexpected reply", number)
 	}
 	return p.pr(), nil
 }

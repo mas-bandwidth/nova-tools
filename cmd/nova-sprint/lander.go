@@ -131,7 +131,7 @@ func runLander(ctx context.Context, args []string, out, errOut io.Writer) int {
 	gate, bisect, lander, filer := landerSeams(progs)
 	lane := land.Lane{
 		Gate: gate, Bisect: bisect, Land: lander, Filer: filer,
-		Forge:   recordForge{c: c, sprint: *sprint},
+		Merge:   recordMerge{c: c, sprint: *sprint},
 		Store:   redisFlaky{c: c},
 		Clock:   landerClock,
 		Metrics: metrics.Default,
@@ -193,15 +193,15 @@ func loadMembers(ctx context.Context, c *redis.Client, sprint, repo string, numb
 	return out, nil
 }
 
-// recordForge answers a member's mergeable word from its record, the field
+// recordMerge answers a member's mergeable word from its record, the field
 // ns_pr_eval writes (the record contract in internal/nsprint/land). An absent
 // or empty word is UNKNOWN, which the lane re-polls and then drops.
-type recordForge struct {
+type recordMerge struct {
 	c      *redis.Client
 	sprint string
 }
 
-func (f recordForge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
+func (f recordMerge) Mergeable(ctx context.Context, repo string, number int) (string, error) {
 	v, err := f.c.HGet(ctx, land.ID{Repo: repo, N: number}.Key(f.sprint), "mergeable").Result()
 	if errors.Is(err, redis.Nil) {
 		return "UNKNOWN", nil

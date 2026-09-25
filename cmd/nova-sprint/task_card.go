@@ -36,7 +36,7 @@ const taskCardUsage = `nova-sprint task: the task card verbs (#3778), one Redis 
 usage:
   nova-sprint task push    --actor <a> --id <id> [--stream <s>] [--friend|--to <f>] [--waiting | --depends-on <c>]
                            [--kind <k>] [--ref <repo#n>] [--origin <url>] [--title <t>] [--head <sha>] [--pr <n>] [--repo <r>] [--front]
-                           [--issue <file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
+                           [--issue <owner/repo#n>|<file|->] [--route pro|flash|friend] [--base <b>] [--base-sha <sha>] [--paths <p>]
   nova-sprint task take    --actor <f> [--id <id>] [--n <k>]
   nova-sprint task beat    --actor <f> --id <id>
   nova-sprint task done    --actor <a> --id <id> --evidence <text> [--pr <n>]
@@ -60,7 +60,11 @@ member of ws:<s>:merging and prints LANDED <id> ref=<repo#n> origin=<url> per me
 lander closes those PRs and issues with the CLOSE line). take starts a lease the child
 renews with beat every 60 s; expire moves a working task whose lease lapsed back to ready.
 fsck prints one line per drift and exits 1 when there is any.
-push --issue fills the card from the issue text (#3911): every KEY: line a card header
+push --issue <owner/repo#n> imports the issue (#3967): one read of the whole issue (title, body
+and its sha256, labels, timestamps, the typed comment lines, the open PRs that close it) onto the
+record as it enters waiting; a failed or incomplete copy, an open PR that closes the issue, or a
+live card for the same issue is refused and nothing is written. After waiting no verb reads GitHub
+until the landed close. push --issue <file|-> fills the card from the issue text (#3911): every KEY: line a card header
 carries (ROUTE WHO KIND TYPE REPO BASE base-sha PATHS TEST DEPENDS-ON DONE-WHEN EST PRIORITY
 SOURCE TASK STREAM ORIGIN) and the text as body; the flags override it. A pro or flash card
 lacking a field a swarm run needs is refused naming it. nova-sprint card render --id <id>
@@ -283,14 +287,29 @@ func (c *cardCmd) run(ctx context.Context, st *store.Store, sub string, out, err
 	o := taskcard.Opts{By: *c.actor, Why: *c.why, Sprint: *c.sprint}
 	switch sub {
 	case "push":
+		// --issue <owner/repo#n> is the import (#3967): the whole issue onto
+		// the record as it enters waiting, the card's one GitHub read.
+		ref, imported := *c.issue, false
+		if _, _, ok := taskcard.ParseIssueRef(ref); ok {
+			*c.issue, imported = "", true
+		}
 		spec, err := c.spec()
 		if err != nil {
 			return refuse(errOut, c.verb, err.Error())
 		}
-		r, err := taskcard.Push(ctx, cl, taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
+		req := taskcard.PushRequest{ID: *c.id, Stream: *c.stream, Friend: *c.friend,
 			Sprint: *c.sprint, Kind: *c.kind, Ref: *c.ref, Origin: *c.origin, Title: *c.title, Head: *c.head,
 			PR: *c.pr, Repo: *c.repo, DependsOn: *c.on, Front: *c.front, By: *c.actor, Why: *c.why,
-			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec})
+			Where: map[bool]string{true: "waiting", false: ""}[*c.waiting], Spec: spec}
+		var r taskcard.PushResult
+		if imported {
+			if req.Where == "" {
+				req.Where = "waiting"
+			}
+			r, err = taskcard.Import(ctx, cl, taskIssueSource(), ref, req)
+		} else {
+			r, err = taskcard.Push(ctx, cl, req)
+		}
 		if err != nil {
 			return refused(err)
 		}
@@ -450,6 +469,10 @@ func (c *cardCmd) spec() (*taskcard.Spec, error) {
 	}
 	return &s, nil
 }
+
+// taskIssueSource is the import's issue reader: GitHub by REST, the card's
+// one forge read (#3967); a test swaps in a fixture.
+var taskIssueSource = func() taskcard.IssueSource { return taskcard.GitHubIssues{} }
 
 // replace is front and move: the one move to the task's own where (front,
 // --to-friend, --to-stream) or to --to-where.

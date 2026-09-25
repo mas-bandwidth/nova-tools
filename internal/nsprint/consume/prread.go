@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/civerdict"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/card"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/task"
 	"github.com/redis/go-redis/v9"
@@ -38,15 +39,24 @@ const HarvestAuthor = "rowan"
 // DefaultOwner is the GitHub owner of a repo named without one.
 const DefaultOwner = "mas-bandwidth"
 
-// Remote is the ls-remote seam for checking heads on git remotes.
+// Remote is the ls-remote seam for checking PR heads.
 type Remote func(ctx context.Context, repo string) (map[int]string, error)
 
-// GitRemote runs git ls-remote refs/pull/*/head against repo.
-func GitRemote(ctx context.Context, repo string) (map[int]string, error) {
+// MirrorRemote reads refs/pull/*/head from the bench mirror of repo
+// (card.MirrorDir), never from GitHub (nova-tools#3967, THE BOUNDARY: the
+// card path reads the record and the mirror). A repo given as a path is that
+// repository. A host with no mirror of repo has no heads to offer: the head
+// arrives on the record (harvest) or by webhook (ev:github), never a poll.
+func MirrorRemote(ctx context.Context, repo string) (map[int]string, error) {
 	target := repo
-	if !strings.Contains(target, "://") && !strings.HasPrefix(target, "/") &&
-		!strings.HasPrefix(target, ".") && !strings.HasPrefix(target, "git@") {
-		target = "https://github.com/" + target + ".git"
+	if !strings.HasPrefix(target, "/") && !strings.HasPrefix(target, ".") {
+		target = card.MirrorDir(repo)
+		if target == "" {
+			return nil, nil
+		}
+		if _, err := os.Stat(target); errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
 	}
 	cmd := exec.CommandContext(ctx, "git", "ls-remote", target, "refs/pull/*/head")
 	out, err := cmd.Output()
@@ -113,7 +123,7 @@ func (p *PRRead) check() error {
 		p.Actor = "pr-to-read"
 	}
 	if p.Remote == nil {
-		p.Remote = GitRemote
+		p.Remote = MirrorRemote
 	}
 	if p.Every <= 0 {
 		p.Every = 10 * time.Second

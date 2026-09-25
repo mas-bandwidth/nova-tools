@@ -1,7 +1,7 @@
 // The ready verb registers itself through the S0 registry (registry.go), so
 // adding it never edits main.go. It reads one Snapshot from Redis and asks
-// the forge by REST through the dealer's seam (internal/nsprint/deal.GH);
-// it never writes (nova-tools #3109).
+// the records through the dealer's seam (internal/nsprint/deal.Records: Redis
+// only, never the forge, #3967); it never writes (nova-tools #3109).
 package main
 
 import (
@@ -22,8 +22,9 @@ func init() {
 	})
 }
 
-// readyForge is the forge seam; a test replaces it with a map (CI-NET).
-var readyForge = func() deal.PRs { return deal.GH{} }
+// readyForge is the records seam; nil is deal.Records over the verb's Redis.
+// A test replaces it with a map.
+var readyForge = func() deal.PRs { return nil }
 
 func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 	fs := taskFlags("ready")
@@ -45,7 +46,11 @@ func runReady(ctx context.Context, args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, "ready", err.Error())
 	}
-	verdicts := ready.Evaluate(ctx, snap, readyForge())
+	prs := readyForge()
+	if prs == nil {
+		prs = deal.Records{C: st.Client()}
+	}
+	verdicts := ready.Evaluate(ctx, snap, prs)
 
 	if *why != "" {
 		v, ok, err := ready.Find(verdicts, *why)

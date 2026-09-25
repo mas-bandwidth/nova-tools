@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
-// The REST calls name the exact endpoints, and the push script is idempotent
+// The REST call names the exact endpoint, and the push script is idempotent
 // against a real git remote: same sha is success, another sha is refused.
 func TestGitHubCallsAndIdempotentPush(t *testing.T) {
 	dir := t.TempDir()
@@ -31,27 +31,14 @@ esac
 	}
 	g := GitHub{Bin: gh}
 	ctx := context.Background()
-	if pr, ok, err := g.FindOpenPR(ctx, "nova-tools", "nova/s/l-a1"); err != nil || !ok || pr.Number != 7 {
-		t.Fatalf("find = %v %v %v", pr, ok, err)
-	}
-	if _, ok, _ := g.FindOpenPR(ctx, "nova-tools", "nova/s/other-a1"); ok {
-		t.Fatal("a PR on another head ref must not be found")
-	}
 	if pr, err := g.OpenPR(ctx, "nova-tools", "nova/s/m-a1", "dev", "t", "b"); err != nil || pr.Number != 8 {
 		t.Fatalf("open = %v %v", pr, err)
 	}
-	if pr, err := g.ReadPR(ctx, "nova-tools", 7); err != nil || pr.Head != "abc" {
-		t.Fatalf("read = %v %v", pr, err)
-	}
 	calls, _ := os.ReadFile(log)
-	for _, want := range []string{
-		"api -X GET -f state=open -f head=mas-bandwidth:nova/s/l-a1 repos/mas-bandwidth/nova-tools/pulls",
-		"-f head=nova/s/m-a1 -f base=dev -f body=b repos/mas-bandwidth/nova-tools/pulls",
-		"api repos/mas-bandwidth/nova-tools/pulls/7",
-	} {
-		if !strings.Contains(string(calls), want) {
-			t.Fatalf("calls %q lack %q", calls, want)
-		}
+	// The open is the one call: harvest reads nothing from GitHub (#3967).
+	if n := strings.Count(strings.TrimSpace(string(calls)), "\n") + 1; n != 1 ||
+		!strings.Contains(string(calls), "-f head=nova/s/m-a1 -f base=dev -f body=b repos/mas-bandwidth/nova-tools/pulls") {
+		t.Fatalf("calls %q, want the one POST", calls)
 	}
 
 	// The push script against a bare origin, run by bash directly.

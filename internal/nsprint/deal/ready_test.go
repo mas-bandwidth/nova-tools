@@ -4,13 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -257,31 +256,41 @@ func TestReadyNamesEveryEntry(t *testing.T) {
 	}
 }
 
-// TestGHRefReadsPullsThenIssues runs GH against a fake gh in the test's temp
-// directory: a PR answers from pulls/<n>; a 404 there reads issues/<n>.
-func TestGHRefReadsPullsThenIssues(t *testing.T) {
-	dir := t.TempDir()
-	fake := filepath.Join(dir, "gh")
-	script := `#!/bin/sh
-case "$2" in
-  repos/o/r/pulls/1) echo '{"merged":true,"state":"closed","base":"dev"}' ;;
-  repos/o/r/pulls/2) echo 'gh: Not Found (HTTP 404)' >&2; exit 1 ;;
-  repos/o/r/issues/2) echo closed ;;
-  *) echo 'gh: HTTP 502' >&2; exit 1 ;;
-esac
-`
-	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	g := GH{Program: fake}
+// TestRecordsRefReadsRedisOnly is the dealer's DEPENDS-ON answer from the
+// records (#3967): a PR from pr:<name>:<n> (landed, merged, closed, open,
+// with the base harvest wrote), an issue from the task that imported it
+// (landed or done/ok is closed), and a number with no record is an error the
+// gate reads as unknown, so the card waits: no forge is asked.
+func TestRecordsRefReadsRedisOnly(t *testing.T) {
+	mr := miniredis.RunT(t)
+	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = c.Close() })
 	ctx := context.Background()
-	if r, err := g.Ref(ctx, "o/r", 1); err != nil || !r.IsPR || !r.Merged || r.Base != "dev" {
-		t.Fatalf("pulls/1: %+v %v", r, err)
+	c.HSet(ctx, "pr:r:1", "state", "landed", "base", "dev")
+	c.HSet(ctx, "pr:r:2", "state", "open", "base", "dev")
+	c.HSet(ctx, "pr:r:3", "state", "closed", "base", "dev")
+	c.HSet(ctx, "pr:r:4", "merged_at", "1700000000", "base", "main")
+	c.Set(ctx, TaskRefKey("o/r#10"), "t10", 0)
+	c.HSet(ctx, "task:t10", "where", "landed", "where_ok", "ok")
+	c.Set(ctx, TaskRefKey("o/r#11"), "t11", 0)
+	c.HSet(ctx, "task:t11", "where", "working", "where_ok", "-")
+	g := Records{C: c}
+	for _, tc := range []struct {
+		n    int
+		want Ref
+	}{
+		{1, Ref{IsPR: true, Merged: true, State: "closed", Base: "dev"}},
+		{2, Ref{IsPR: true, State: "open", Base: "dev"}},
+		{3, Ref{IsPR: true, State: "closed", Base: "dev"}},
+		{4, Ref{IsPR: true, Merged: true, State: "closed", Base: "main"}},
+		{10, Ref{State: "closed"}},
+		{11, Ref{State: "open"}},
+	} {
+		if got, err := g.Ref(ctx, "o/r", tc.n); err != nil || got != tc.want {
+			t.Errorf("o/r#%d: %+v %v, want %+v", tc.n, got, err, tc.want)
+		}
 	}
-	if r, err := g.Ref(ctx, "o/r", 2); err != nil || r.IsPR || r.State != "closed" {
-		t.Fatalf("issue 2: %+v %v", r, err)
-	}
-	if _, err := g.Ref(ctx, "o/r", 3); err == nil || !strings.Contains(err.Error(), "502") {
-		t.Fatalf("a forge error must stay an error, got %v", err)
+	if _, err := g.Ref(ctx, "o/r", 12); err == nil || !strings.Contains(err.Error(), "no record of o/r#12") {
+		t.Fatalf("no record must stay unknown, got %v", err)
 	}
 }

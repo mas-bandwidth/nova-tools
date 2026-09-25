@@ -24,22 +24,24 @@
 //	a. push, skipped when the remote is already at pushed_sha; another sha
 //	   there is err=branch-moved and never a force push;
 //	b. an idem key naming PR n: the PR record pr:<repo>:<n> answers with its
-//	   head (no GitHub); a key with no record yet is a REST read of n; head
-//	   == pushed_sha (and head.ref == branch), else err=idem-mismatch (no
-//	   create, no receipt);
-//	c. look up before creating (state=all): one PR is verified and recorded,
-//	   two are err=pr-duplicate, a closed unmerged one is err=pr-closed;
+//	   head; a key with no record yet is answered by the webhook's
+//	   pull_request entries for n on ev:github; head == pushed_sha (and
+//	   head.ref == branch), else err=idem-mismatch (no create, no receipt);
+//	c. look up before creating: the pull_request entries on ev:github whose
+//	   head is pushed_sha; one PR is verified and recorded, two are
+//	   err=pr-duplicate, a closed one is err=pr-closed;
 //	d. none: intent, then the create; a 201 is verified and recorded, an
-//	   ambiguous reply (timeout, reset, 5xx, 422 exists) is read back by the
-//	   lookup at most len(Readback) times, else err=create-ambiguous with the
-//	   card left at intent and no second POST in this pass;
+//	   ambiguous reply (timeout, reset, 5xx, 422 exists) is read back from
+//	   ev:github at most len(Readback) times, else err=create-ambiguous with
+//	   the card left at intent and no second POST in this pass;
 //	e. the receipt (ns_card_harvested), after the PR record is read back
 //	   from Redis with head == pushed_sha.
 //
-// A card is harvested only through (e). GitHub is asked only for what only it
-// has: the PR number (the create or the lookup). The head is verified from
-// that same response and then lives in the record; no pass reads it back
-// from GitHub, and the lander reads the record, never GitHub.
+// A card is harvested only through (e). THE BOUNDARY (nova-tools#3967): the
+// create is harvest's one GitHub call, an outward write of our record; the
+// harvest never reads GitHub. The PR number and head come from the create's
+// own reply, the record, or the webhook's entries on ev:github (Redis), and
+// then live in the record; the lander reads the record, never GitHub.
 //
 // Bounded by the reconciler lease (#3737). Run as the reconciler's duty, a
 // pass is given the reconciler lease as Options.Bound: before each card it
@@ -64,6 +66,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/redis/go-redis/v9"
@@ -118,7 +121,7 @@ const (
 var ErrAmbiguous = errors.New("ambiguous forge reply")
 
 // DefaultReadback is the bounded readback after an ambiguous create: the
-// lookup repeated at most three times, at 1 s, 2 s and 4 s.
+// ev:github lookup repeated at most three times, at 1 s, 2 s and 4 s.
 var DefaultReadback = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
 // Defaults from the spec: the lease renews every 2 s with a 6 s TTL (2.2);
@@ -198,17 +201,45 @@ type PR struct {
 	Merged bool
 }
 
-// Lister is the lookup before a create (step c): every PR in any state whose
-// head is the branch. A Forge without it is looked up by FindOpenPR.
-type Lister interface {
-	ListPRs(ctx context.Context, repo, branch string) ([]PR, error)
+// Forge is GitHub by REST: the PR open, harvest's one GitHub call and an
+// outward write of our record. It has no read (nova-tools#3967).
+type Forge interface {
+	OpenPR(ctx context.Context, repo, branch, base, title, body string) (PR, error)
 }
 
-// Forge is GitHub by REST.
-type Forge interface {
-	FindOpenPR(ctx context.Context, repo, branch string) (PR, bool, error)
-	OpenPR(ctx context.Context, repo, branch, base, title, body string) (PR, error)
-	ReadPR(ctx context.Context, repo string, number int) (PR, error)
+// EventWindow is how many of the newest ev:github entries a lookup reads.
+const EventWindow = 2000
+
+// EventPRs are the PRs the webhook (ev:github, internal/ghevent) saw in repo
+// at head sha: its pull_request entries, the newest entry per number
+// deciding the state (a closed action is closed). Redis only: one XREVRANGE
+// of the newest EventWindow entries.
+func EventPRs(ctx context.Context, c redis.Cmdable, repo, sha string) ([]PR, error) {
+	full := fullRepo(repo)
+	msgs, err := c.XRevRangeN(ctx, ghevent.Stream, "+", "-", EventWindow).Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return nil, fmt.Errorf("read %s: %w", ghevent.Stream, err)
+	}
+	seen := map[int]bool{}
+	var out []PR
+	for _, m := range msgs {
+		v := func(k string) string { s, _ := m.Values[k].(string); return s }
+		if v("kind") != "pull_request" || !strings.EqualFold(v("repo"), full) || v("head") != sha {
+			continue
+		}
+		n, err := strconv.Atoi(v("number"))
+		if err != nil || n <= 0 || seen[n] {
+			continue
+		}
+		seen[n] = true
+		pr := PR{Number: n, Head: sha, State: "open"}
+		if v("action") == "closed" {
+			pr.State = "closed"
+		}
+		out = append(out, pr)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out, nil
 }
 
 // Pusher pushes card.PushedSHA to card.Branch from the bench. It must be
@@ -255,8 +286,9 @@ type Options struct {
 }
 
 // CardResult is one harvested card. Via is record (the idem key and its PR
-// record, no GitHub), idem (the idem key, PR read by REST), rest, readback or
-// opened: how the PR was found.
+// record), idem (the idem key, PR head from ev:github), event (ev:github
+// before a create), readback (ev:github after an ambiguous create) or opened
+// (the create's reply): how the PR was found. None reads GitHub.
 type CardResult struct {
 	Label, Branch string
 	PR            int
@@ -621,17 +653,6 @@ func verified(pr PR, c Card) bool {
 	return pr.Number > 0 && pr.Head == c.PushedSHA && (pr.Ref == "" || pr.Ref == c.Branch)
 }
 
-func lookup(ctx context.Context, f Forge, repo, branch string) ([]PR, error) {
-	if l, ok := f.(Lister); ok {
-		return l.ListPRs(ctx, repo, branch)
-	}
-	pr, found, err := f.FindOpenPR(ctx, repo, branch)
-	if err != nil || !found {
-		return nil, err
-	}
-	return []PR{pr}, nil
-}
-
 func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, info BenchInfo, c Card) (CardResult, error) {
 	want := "nova/" + opt.Sprint + "/" + c.Label + "-a" + c.Attempt
 	if c.Branch != want || c.Attempt == "" {
@@ -675,8 +696,8 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 	}
 	res := CardResult{Label: c.Label, Branch: c.Branch}
 
-	// b. The idem key names the PR: its record answers with the head (no
-	// GitHub); a key from before the record existed is read by REST once.
+	// b. The idem key names the PR: its record answers with the head; a key
+	// from before the record existed is answered from ev:github.
 	if c.IdemPR != "" {
 		n, err := strconv.Atoi(c.IdemPR)
 		if err != nil {
@@ -690,25 +711,31 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 			res.Via = "record"
 			return receipt(ctx, st, opt, l, c, res, PR{Number: n, Head: c.RecHead, Ref: c.Branch}, "")
 		}
-		pr, err := opt.Forge.ReadPR(ctx, c.Repo, n)
+		prs, err := EventPRs(ctx, st.Client(), c.Repo, c.PushedSHA)
 		if err != nil {
-			return res, fmt.Errorf("%s: read PR %d head: %w", c.Label, n, err)
+			return res, fmt.Errorf("%s: PR %d head: %w", c.Label, n, err)
+		}
+		pr := PR{Number: n}
+		for _, p := range prs {
+			if p.Number == n {
+				pr = p
+			}
 		}
 		if !verified(pr, c) {
-			return res, fail(CodeIdemMismatch, c.Label, "idem pr:%s:%s names PR %d at %s %s, not %s %s",
-				c.Repo, c.Branch, n, pr.Ref, short(pr.Head), c.Branch, short(c.PushedSHA))
+			return res, fail(CodeIdemMismatch, c.Label, "idem pr:%s:%s names PR %d with no record and no ev:github entry at %s %s (no GitHub read: resolve with nova-sprint idem resolve)",
+				c.Repo, c.Branch, n, c.Branch, short(c.PushedSHA))
 		}
 		res.Via = "idem"
 		return receipt(ctx, st, opt, l, c, res, pr, "")
 	}
 
-	// c. Look up before creating.
-	prs, err := lookup(ctx, opt.Forge, c.Repo, c.Branch)
+	// c. Look up before creating: the webhook's entries, never GitHub.
+	prs, err := EventPRs(ctx, st.Client(), c.Repo, c.PushedSHA)
 	if err != nil {
 		return res, fmt.Errorf("%s: find PR: %w", c.Label, err)
 	}
 	if len(prs) > 0 {
-		res.Via = "rest"
+		res.Via = "event"
 		return found(ctx, st, opt, l, c, res, prs, "")
 	}
 
@@ -739,7 +766,7 @@ func harvestCard(ctx context.Context, st *store.Store, opt Options, l lease, inf
 		if err := sleep(ctx, opt, d); err != nil {
 			return res, fmt.Errorf("%s: readback: %w", c.Label, err)
 		}
-		prs, err := lookup(ctx, opt.Forge, c.Repo, c.Branch)
+		prs, err := EventPRs(ctx, st.Client(), c.Repo, c.PushedSHA)
 		if err != nil || len(prs) == 0 {
 			continue
 		}
@@ -761,7 +788,7 @@ func found(ctx context.Context, st *store.Store, opt Options, l lease, c Card, r
 	}
 	pr := prs[0]
 	if pr.State == "closed" && !pr.Merged {
-		return res, fail(CodePRClosed, c.Label, "PR %d on %s is closed and not merged; no reopen, no second PR", pr.Number, c.Branch)
+		return res, fail(CodePRClosed, c.Label, "PR %d on %s is closed; no reopen, no second PR", pr.Number, c.Branch)
 	}
 	return publish(ctx, st, opt, l, c, res, pr, body)
 }

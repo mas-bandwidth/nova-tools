@@ -65,6 +65,49 @@ type zshForge struct {
 	lookups   int
 	reads     int
 	bodies    map[string]string // branch -> the body the PR was opened with
+	// hook is GitHub's webhook: a PR made is delivered to ev:github at once,
+	// or, when hidden, after hide readback waits (tick), as a late delivery.
+	hook    *redis.Client
+	pending []harvest.PR
+}
+
+// deliver puts pr on ev:github (the webhook) when the forge has a hook.
+func (f *zshForge) deliver(pr harvest.PR) {
+	if f.hook != nil {
+		action := "opened"
+		if pr.State == "closed" {
+			action = "closed"
+		}
+		deliverPR(f.hook, "nova-tools", pr.Number, pr.Head, action)
+	}
+}
+
+// tick is one readback wait: a hidden PR is delivered once hide waits passed.
+func (f *zshForge) tick() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.pending) == 0 {
+		return
+	}
+	if f.hide > 0 {
+		f.hide--
+		return
+	}
+	f.flush()
+}
+
+// deliverPending delivers every hidden PR now (the webhook arrived late).
+func (f *zshForge) deliverPending() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.flush()
+}
+
+func (f *zshForge) flush() {
+	for _, pr := range f.pending {
+		f.deliver(pr)
+	}
+	f.pending = nil
 }
 
 func newZshForge() *zshForge {
@@ -78,6 +121,7 @@ func (f *zshForge) put(pr harvest.PR) {
 		pr.State = "open"
 	}
 	f.prs[pr.Number] = pr
+	f.deliver(pr)
 }
 
 func (f *zshForge) ListPRs(_ context.Context, _, branch string) ([]harvest.PR, error) {
@@ -123,6 +167,11 @@ func (f *zshForge) OpenPR(_ context.Context, repo, branch, _, _, body string) (h
 	pr := harvest.PR{Number: f.next, Ref: branch, Head: pushedHead(branch), State: "open",
 		URL: fmt.Sprintf("https://github.com/mas-bandwidth/%s/pull/%d", repo, f.next)}
 	f.prs[pr.Number] = pr
+	if f.hide > 0 {
+		f.pending = append(f.pending, pr)
+	} else {
+		f.deliver(pr)
+	}
 	switch f.failReply {
 	case "timeout":
 		f.hidden = pr.Number
@@ -219,6 +268,7 @@ func newZshBench(t *testing.T, label string) *zshBench {
 func newZshBenchOn(t *testing.T, c *redis.Client, forge *zshForge, bench, label string) *zshBench {
 	t.Helper()
 	z := &zshBench{t: t, c: c, st: store.New(c), forge: forge, sprint: "control-2932", bench: bench, label: label}
+	forge.hook = c
 	z.branch = card.WrapperBranch(z.sprint, label, 1)
 	dir := t.TempDir()
 	z.origin = filepath.Join(dir, "origin.git")
@@ -279,6 +329,7 @@ func (z *zshBench) pass(faultAt string) harvest.BenchResult {
 		Pusher:   harvest.SSHPusher{SSH: z.ssh, Remote: originOf},
 		Sleep: func(_ context.Context, d time.Duration) error {
 			z.sleeps = append(z.sleeps, d)
+			z.forge.tick()
 			return nil
 		},
 	}
@@ -479,10 +530,10 @@ func TestHarvestZshBenchEndToEnd(t *testing.T) {
 			t.Fatalf("card %v idem %q; want it left at intent, nothing reserved", h, z.idem())
 		}
 		z.forge.failReply = ""
-		lookups := z.forge.lookups
+		z.forge.deliverPending() // the webhook arrives late, between passes
 		res = z.pass("")
-		if res.Err != nil || len(res.Cards) != 1 || res.Cards[0].Via != "rest" || z.forge.lookups != lookups+1 {
-			t.Fatalf("next pass = %+v lookups %d; want the lookup first, found, no second POST", res, z.forge.lookups-lookups)
+		if res.Err != nil || len(res.Cards) != 1 || res.Cards[0].Via != "event" || z.forge.creates != 1 || z.forge.lookups != 0 {
+			t.Fatalf("next pass = %+v creates %d lookups %d; want the ev:github lookup first, found, no second POST, no GitHub read", res, z.forge.creates, z.forge.lookups)
 		}
 		z.harvested(1)
 	})

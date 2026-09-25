@@ -2,15 +2,10 @@ package read_test
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -227,56 +222,24 @@ func TestReadBriefRefusals(t *testing.T) {
 	}
 }
 
-// commentCounter is the HTTP-call counter: it records every request and
-// answers a comment id.
-type commentCounter struct {
-	srv   *httptest.Server
-	calls atomic.Int64
-	path  string
-	body  string
-}
-
-func startCounter(t *testing.T) *commentCounter {
-	t.Helper()
-	cc := &commentCounter{}
-	cc.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		cc.calls.Add(1)
-		cc.path = r.Method + " " + r.URL.Path
-		b, _ := io.ReadAll(r.Body)
-		cc.body = string(b)
-		_, _ = w.Write([]byte(`{"id": 4242}`))
-	}))
-	t.Cleanup(cc.srv.Close)
-	return cc
-}
-
 const line = "SCORE who=rowan head=%s score=9/10 gates=ci:ok,base:ok,scope:ok\n1. fine (internal/x/x.go:3)"
 
-// TestReadPostStoresLineAndMirrorsOneComment: the line lands on the
-// record's lines list in Redis and, with a poster, exactly one REST call
-// makes the comment.
-func TestReadPostStoresLineAndMirrorsOneComment(t *testing.T) {
+// TestReadPostNoGitHubMakesZeroCalls: a post is Redis only (#3967): the
+// line on the record's list, zero HTTP calls.
+func TestReadPostNoGitHubMakesZeroCalls(t *testing.T) {
+	stub := testutil.StartGitHubStub(t)
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	seedRecord(t, c, base, head)
-	cc := startCounter(t)
-	poster := &read.Poster{BaseURL: cc.srv.URL, Owner: "mas-bandwidth", Token: "t", HTTP: cc.srv.Client()}
 	typed := strings.ReplaceAll(line, "%s", head)
 	var stdout, stderr strings.Builder
-	if code := read.Post(context.Background(), c, "nova-tools", "7", typed, poster, &stdout, &stderr); code != 0 {
+	if code := read.Post(context.Background(), c, "nova-tools", "7", typed, &stdout, &stderr); code != 0 {
 		t.Fatalf("exit %d stderr %q", code, stderr.String())
 	}
-	if got := cc.calls.Load(); got != 1 {
-		t.Fatalf("%d HTTP calls, want exactly 1", got)
+	if stub.Calls() != 0 {
+		t.Fatalf("%d HTTP calls on a post", stub.Calls())
 	}
-	if cc.path != "POST /repos/mas-bandwidth/nova-tools/issues/7/comments" {
-		t.Fatalf("request %q", cc.path)
-	}
-	var payload map[string]string
-	if err := json.Unmarshal([]byte(cc.body), &payload); err != nil || payload["body"] != typed {
-		t.Fatalf("comment body %q (%v)", cc.body, err)
-	}
-	if !strings.Contains(stdout.String(), "READ POST repo=nova-tools n=7 kind=SCORE lines=2 github_calls=1 comment=4242") {
+	if !strings.Contains(stdout.String(), "kind=SCORE lines=2 github_calls=0") {
 		t.Fatalf("receipt %q", stdout.String())
 	}
 	lines, err := c.LRange(context.Background(), read.LinesKey("nova-tools", "7"), 0, -1).Result()
@@ -289,25 +252,6 @@ func TestReadPostStoresLineAndMirrorsOneComment(t *testing.T) {
 	}
 }
 
-// TestReadPostNoGitHubMakesZeroCalls: --no-github is Redis only.
-func TestReadPostNoGitHubMakesZeroCalls(t *testing.T) {
-	stub := testutil.StartGitHubStub(t)
-	_, base, head := mirrorFixture(t, false)
-	c := client(t)
-	seedRecord(t, c, base, head)
-	typed := strings.ReplaceAll(line, "%s", head)
-	var stdout, stderr strings.Builder
-	if code := read.Post(context.Background(), c, "nova-tools", "7", typed, nil, &stdout, &stderr); code != 0 {
-		t.Fatalf("exit %d stderr %q", code, stderr.String())
-	}
-	if stub.Calls() != 0 {
-		t.Fatalf("%d HTTP calls with --no-github", stub.Calls())
-	}
-	if !strings.Contains(stdout.String(), "kind=SCORE lines=2 github_calls=0") {
-		t.Fatalf("receipt %q", stdout.String())
-	}
-}
-
 // TestReadPostRefusals: an untyped line, a line with no who= or head=, and
 // a PR with no record are refused (exit 1) with nothing written and no call.
 func TestReadPostRefusals(t *testing.T) {
@@ -315,11 +259,10 @@ func TestReadPostRefusals(t *testing.T) {
 	_, base, head := mirrorFixture(t, false)
 	c := client(t)
 	ctx := context.Background()
-	poster := &read.Poster{BaseURL: stub.URL, Owner: "mas-bandwidth", Token: "t"}
 	try := func(n, l, want string) {
 		t.Helper()
 		var stdout, stderr strings.Builder
-		code := read.Post(ctx, c, "nova-tools", n, l, poster, &stdout, &stderr)
+		code := read.Post(ctx, c, "nova-tools", n, l, &stdout, &stderr)
 		if code != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), "READ POST REFUSED") || !strings.Contains(stderr.String(), want) {
 			t.Fatalf("%q: exit %d stdout %q stderr %q; want exit 1 and %q", l, code, stdout.String(), stderr.String(), want)
 		}
@@ -336,26 +279,6 @@ func TestReadPostRefusals(t *testing.T) {
 	}
 	if stub.Calls() != 0 {
 		t.Fatalf("%d HTTP calls on refusals", stub.Calls())
-	}
-}
-
-// TestReadPostGitHubDownKeepsTheRedisLine: a failed comment mirror is
-// reported (exit 1) and the Redis line stays; the record is Redis.
-func TestReadPostGitHubDownKeepsTheRedisLine(t *testing.T) {
-	_, base, head := mirrorFixture(t, false)
-	c := client(t)
-	seedRecord(t, c, base, head)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "rate limited", 403) }))
-	defer srv.Close()
-	poster := &read.Poster{BaseURL: srv.URL, Owner: "mas-bandwidth", Token: "t", HTTP: srv.Client()}
-	typed := strings.ReplaceAll(line, "%s", head)
-	var stdout, stderr strings.Builder
-	code := read.Post(context.Background(), c, "nova-tools", "7", typed, poster, &stdout, &stderr)
-	if code != 1 || !strings.Contains(stderr.String(), "redis=ok github=github 403") {
-		t.Fatalf("exit %d stderr %q", code, stderr.String())
-	}
-	if n, _ := c.LLen(context.Background(), read.LinesKey("nova-tools", "7")).Result(); n != 2 {
-		t.Fatalf("%d lines, want 2: the Redis write is the record", n)
 	}
 }
 

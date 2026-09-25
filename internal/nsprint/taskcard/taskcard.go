@@ -187,6 +187,8 @@ type PushRequest struct {
 	// Spec, when set, is the card content (#3911): its fields go on the
 	// record, and a swarm route lacking one is refused at push, named.
 	Spec *Spec
+	// Extra are more record fields, name then value (Import's issue copy).
+	Extra []string
 }
 
 // PushResult is where the task was placed and its ready entry (q:<friend>).
@@ -229,6 +231,7 @@ func Push(ctx context.Context, c redis.Cmdable, r PushRequest) (PushResult, erro
 		}
 	}
 	o.Fields = append(o.Fields, spec...)
+	o.Fields = append(o.Fields, r.Extra...)
 	front := "0"
 	if r.Front {
 		front = "1"

@@ -17,11 +17,12 @@ import (
 // BASE, an issue closed, a stream landed, or a task done. Unresolved cards stay
 // in the waiting set; the set is not copied into the pool.
 func Release(ctx context.Context, client *redis.Client, sprint string) VerbResult {
-	return ReleaseWith(ctx, client, sprint, deal.GH{})
+	return ReleaseWith(ctx, client, sprint, deal.Records{C: client})
 }
 
-// ReleaseWith is Release with an explicit forge seam. One invocation is one
-// pass: duplicate GitHub references share one answer in that pass.
+// ReleaseWith is Release with an explicit records seam (deal.Records: Redis
+// only, #3967). One invocation is one pass: duplicate references share one
+// answer in that pass.
 func ReleaseWith(ctx context.Context, client *redis.Client, sprint string, refs deal.PRs) VerbResult {
 	if !sprintRE.MatchString(sprint) {
 		return refused("sprint name must match [a-z0-9-]{1,40}")

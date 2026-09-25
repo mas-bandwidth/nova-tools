@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/harvest"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -93,6 +95,21 @@ type fixtureForge struct {
 	reads    int
 	bodies   map[string]string // branch -> the body the PR was opened with
 	heads    map[string]string // branch -> sha pushed there
+	// hook, when set, is GitHub's webhook: every PR made is delivered to
+	// ev:github, where the harvest looks it up (#3967: never a GitHub read).
+	hook *redis.Client
+}
+
+// deliverPR is the webhook's pull_request entry on ev:github for PR n at
+// head in repo (internal/ghevent's field set).
+func deliverPR(c *redis.Client, repo string, n int, head, action string) {
+	full := repo
+	if !strings.Contains(full, "/") {
+		full = "mas-bandwidth/" + full
+	}
+	c.XAdd(context.Background(), &redis.XAddArgs{Stream: ghevent.Stream, Values: map[string]any{
+		"repo": full, "kind": "pull_request", "number": strconv.Itoa(n), "head": head, "action": action,
+		"at": "", "sender": "rowan", "comment_id": ""}})
 }
 
 func newForge() *fixtureForge {
@@ -105,6 +122,9 @@ func (f *fixtureForge) add(repo, branch, head string) harvest.PR {
 	pr := harvest.PR{Number: f.next, Head: head, URL: fmt.Sprintf("https://github.com/mas-bandwidth/%s/pull/%d", repo, f.next)}
 	f.byBranch[repo+":"+branch] = pr
 	f.byNumber[pr.Number] = pr
+	if f.hook != nil {
+		deliverPR(f.hook, repo, pr.Number, head, "opened")
+	}
 	return pr
 }
 
@@ -162,6 +182,7 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	up := []string{"ctl-a", "ctl-b", "ctl-c"}
 	benches := append([]string{"ctl-down"}, up...)
 	forge := newForge()
+	forge.hook = c
 	for _, b := range benches {
 		c.HSet(ctx, "bench:"+b+":beat", "host", b+".tailnet", "user", "nova")
 		c.HSet(ctx, "bench:"+b+":state", "state", "UP", "at", "1")
@@ -174,7 +195,8 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 	// Nothing to harvest: a ci card and a FAILED card on an UP bench.
 	seedEnded(t, c, "ctl-a", "ci-3011-deadbeef", "script", "DONE", sha("ci"))
 	seedEnded(t, c, "ctl-a", "ctl-a-failed", "model", "FAILED", sha("failed"))
-	// A worker opened this PR and died before recording it: found by REST.
+	// A worker opened this PR and died before recording it: found on
+	// ev:github (the webhook), never a GitHub read.
 	forge.add("nova-tools", "nova/"+sprint+"/ctl-c-card3-a1", sha("ctl-c-card3"))
 	// A worker opened this PR, recorded it (idem key, published, PR record)
 	// and died before the receipt: finished from the record, no GitHub read.
@@ -229,8 +251,8 @@ func TestControl13OneBenchDownOthersFinish(t *testing.T) {
 			via[cr.Label] = cr.Via
 		}
 	}
-	if via["ctl-c-card3"] != "rest" || via["ctl-a-card1"] != "opened" || via["ctl-b-card2"] != "record" {
-		t.Fatalf("via = %v; want ctl-c-card3 found by REST, ctl-a-card1 opened, ctl-b-card2 from its record", via)
+	if via["ctl-c-card3"] != "event" || via["ctl-a-card1"] != "opened" || via["ctl-b-card2"] != "record" {
+		t.Fatalf("via = %v; want ctl-c-card3 found on ev:github, ctl-a-card1 opened, ctl-b-card2 from its record", via)
 	}
 	if forge.opens != 7 {
 		t.Fatalf("opened %d PRs, want 7 (9 UP cards, one already open on GitHub, one recorded)", forge.opens)

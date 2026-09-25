@@ -12,8 +12,9 @@
 // <r> is owner/name or name: every subverb keys the PR record pr:<name>:<n>
 // by the bare name (internal/nsprint/prkey), the key pr record writes.
 //
-// brief writes the read brief; post stores the typed line and, until #3595
-// lands, mirrors it as one PR comment (REST) unless --no-github. digest
+// brief writes the read brief; post stores the typed line in Redis, the
+// only write (--no-github is the one mode and still accepted; no comment
+// mirror: nova-tools#3967, THE BOUNDARY). digest
 // records the diff identity of the head a line is typed at (diff_sha256 on
 // the unit record; the reader runs it at read time). carry compares that
 // with the unit's head now, read from the mirror (default
@@ -24,8 +25,7 @@
 // and a re-read is the one remedy.
 //
 // Exit 0 done (CARRIED, NOTHING, RECORDED, the brief or the post); 1
-// refused with the remedy on the line (REFUSED carry, no record, no
-// token); 2 usage, before Redis is touched.
+// refused with the remedy on the line (REFUSED carry, no record); 2 usage, before Redis is touched.
 package main
 
 import (
@@ -123,19 +123,7 @@ func runRead(ctx context.Context, args []string, out, errOut io.Writer) int {
 	case "brief":
 		return read.Brief(ctx, st.Client(), *repo, *n, *mirror, *outDir, out, errOut)
 	case "post":
-		var poster *read.Poster
-		if !*noGitHub {
-			token := os.Getenv("GH_TOKEN")
-			if token == "" {
-				token = os.Getenv("GITHUB_TOKEN")
-			}
-			if token == "" {
-				fmt.Fprintf(errOut, "READ POST REFUSED repo=%s n=%s why=no GH_TOKEN or GITHUB_TOKEN in the environment for the comment mirror; run under nova-secrets exec --only GH_TOKEN, or pass --no-github (Redis only)\n", *repo, *n)
-				return 1
-			}
-			poster = &read.Poster{BaseURL: os.Getenv("GITHUB_API_URL"), Owner: *owner, Token: token}
-		}
-		return read.Post(ctx, st.Client(), *repo, *n, *typed, poster, out, errOut)
+		return read.Post(ctx, st.Client(), *repo, *n, *typed, out, errOut)
 	}
 	return runReadCarry(ctx, st, sub, land.ID{Repo: *repo, N: num}, *sprint, *mirror, *head, *baseRef, out, errOut)
 }

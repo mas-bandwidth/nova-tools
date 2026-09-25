@@ -56,7 +56,7 @@ func TestControl42(t *testing.T) {
 	}}
 	lander := &recordLand{}
 	ln := land.Lane{
-		Gate: gate, Bisect: bisect, Forge: forge, Land: lander,
+		Gate: gate, Bisect: bisect, Merge: forge, Land: lander,
 		Store: store, Filer: filer, Clock: clock,
 	}
 

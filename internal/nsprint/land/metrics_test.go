@@ -20,7 +20,7 @@ func TestLandExportsMetrics(t *testing.T) {
 	ln := land.Lane{
 		Gate:   &scriptGate{verdicts: []land.Verdict{{OK: true}}},
 		Bisect: &scriptBisect{},
-		Forge: &scriptForge{seq: map[int][]string{
+		Merge: &scriptForge{seq: map[int][]string{
 			1: {"MERGEABLE"}, 2: {"MERGEABLE"}, 3: {"UNKNOWN", "UNKNOWN", "UNKNOWN"},
 		}},
 		Land: &recordLand{}, Store: land.NewMemory(), Filer: &scriptFiler{}, Clock: clock,

@@ -16,15 +16,16 @@ package deal
 //   - `-`, `none` or an empty field: waits for nothing;
 //   - a card id (a label in the same sprint): the card is `landed`
 //     (pr-to-read's merge commit on dev), or its PR is merged into the
-//     dependent card's base, read by REST; or the card ended DONE with no PR
+//     dependent card's base, read from its PR record; or the card ended DONE with no PR
 //     and no pushed commit (closed without a PR: nothing to land);
 //   - `<owner>/<repo>#<n>`: the PR is merged into the dependent card's base,
-//     or, when n is an issue, the issue is closed.
+//     or, when n is an issue, the issue is closed (its task landed); both
+//     read from Redis (Records), never the forge.
 //
 // OK, reviewed, verified or an open PR is not landed. A PR closed without
 // merging, a card cancelled or superseded unlanded, and a card id the sprint
 // does not have can no longer land: they are reported by name on every pass,
-// never silently passed over. A question the forge could not answer is
+// never silently passed over. A question the records cannot answer is
 // unknown and the card waits: no evidence is not negative evidence, and it is
 // not positive evidence either. A merged PR whose REST base is empty, or
 // whose dependent card names no BASE, is unknown for the same reason: fail
@@ -40,15 +41,13 @@ package deal
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
-	"github.com/mas-bandwidth/nova-tools/internal/testguard"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/prkey"
+	"github.com/redis/go-redis/v9"
 )
 
 // DepCard is what the gate needs of a card another card depends on: its
@@ -63,7 +62,7 @@ type DepCard struct {
 	PushedSHA string
 }
 
-// Ref is the forge's answer for one number: a PR (IsPR) with its merge state
+// Ref is the answer for one number: a PR (IsPR) with its merge state
 // and base, or an issue with its state.
 type Ref struct {
 	IsPR   bool
@@ -72,8 +71,8 @@ type Ref struct {
 	Base   string // the PR's base branch
 }
 
-// PRs is the dealer's one seam to the forge: the state of <repo>#<n>, read by
-// REST. GH is the real one; tests hand in a map (CI-NET: no host in a test).
+// PRs is the dealer's one seam for the state of <repo>#<n>. Records is the
+// real one and reads Redis only (#3967); tests hand in a map.
 type PRs interface {
 	Ref(ctx context.Context, repo string, n int) (Ref, error)
 }
@@ -100,7 +99,7 @@ type GateMove struct {
 }
 
 // Blocked is a card that is not dealt this pass and why: the entry, and what
-// the forge or the sprint says of it.
+// the records or the sprint say of it.
 type Blocked struct {
 	Sprint string
 	Label  string
@@ -171,7 +170,7 @@ type refAnswer struct {
 	err error
 }
 
-// resolver asks the forge each <repo>#<n> once per pass.
+// resolver asks the records each <repo>#<n> once per pass.
 type resolver struct {
 	prs   PRs
 	cache map[refKey]refAnswer
@@ -184,7 +183,7 @@ func (r *resolver) ref(ctx context.Context, repo string, n int) (Ref, error) {
 	}
 	var a refAnswer
 	if r.prs == nil {
-		a.err = errors.New("no forge seam")
+		a.err = errors.New("no records seam")
 	} else {
 		a.ref, a.err = r.prs.Ref(ctx, repo, n)
 	}
@@ -319,65 +318,65 @@ func Ready(ctx context.Context, in Input, prs PRs) (Input, map[string][]GateMove
 	return out, moves, blocked
 }
 
-// GHTimeout bounds one forge read. A forge that does not answer inside it
-// leaves the entry unknown and the card waiting.
-const GHTimeout = 60 * time.Second
-
-// GH is the real PRs seam: `gh api` over REST (never GraphQL), with the
-// caller's GH_CONFIG_DIR. repos/<r>/pulls/<n> answers a PR; a 404 there reads
-// the number as an issue.
-type GH struct {
-	// Program is the gh binary; empty is "gh" on PATH.
-	Program string
+// Records is the dealer's PRs seam (nova-tools#3967, THE BOUNDARY): every
+// answer is read from Redis, never the forge. A PR is its record pr:<name>:<n>
+// (prkey.Key; written by harvest when it opens the PR, moved to landed or
+// merged by the lander, base from harvest): merged when its state is landed
+// or merged or merged_at is set, closed when its state is closed, else open.
+// An issue is the task that imported it (TaskRefKey, written by task push
+// --issue): closed when that task is landed or done/ok, else open. A number
+// Redis has no record of is unknown and the card waits: import it (task push
+// --issue) or let harvest record the PR; the dealer never asks GitHub.
+type Records struct {
+	C redis.Cmdable
 }
 
-// Ref implements PRs.
-func (g GH) Ref(ctx context.Context, repo string, n int) (Ref, error) {
-	out, err := g.api(ctx, fmt.Sprintf("repos/%s/pulls/%d", repo, n), "{merged: .merged, state: .state, base: .base.ref}")
-	if err == nil {
-		var pr struct {
-			Merged bool   `json:"merged"`
-			State  string `json:"state"`
-			Base   string `json:"base"`
-		}
-		if err := json.Unmarshal(out, &pr); err != nil {
-			return Ref{}, fmt.Errorf("gh: %s#%d: %w", repo, n, err)
-		}
-		return Ref{IsPR: true, Merged: pr.Merged, State: pr.State, Base: pr.Base}, nil
+// TaskRefKey is the one-card-per-issue index ns_tcard_push writes for an
+// import: taskref:<owner/repo#n> names the task holding the issue.
+func TaskRefKey(ref string) string { return "taskref:" + ref }
+
+// Ref implements PRs from the records: one pipeline, two reads, and at most
+// one more for the importing task's where.
+func (r Records) Ref(ctx context.Context, repo string, n int) (Ref, error) {
+	if r.C == nil {
+		return Ref{}, errors.New("no Redis for the records")
 	}
-	if !strings.Contains(err.Error(), "404") && !strings.Contains(err.Error(), "Not Found") {
-		return Ref{}, err
-	}
-	out, err = g.api(ctx, fmt.Sprintf("repos/%s/issues/%d", repo, n), ".state")
+	full, err := prkey.Full(repo)
 	if err != nil {
 		return Ref{}, err
 	}
-	return Ref{State: strings.TrimSpace(string(out))}, nil
-}
-
-// api runs one `gh api <path> --jq <jq>`. It reaches the forge, so it calls
-// the test guard first.
-func (g GH) api(ctx context.Context, path, jq string) ([]byte, error) {
-	program := g.Program
-	if program == "" {
-		program = "gh"
+	pipe := r.C.Pipeline()
+	pr := pipe.HGetAll(ctx, prkey.Key(full, n))
+	task := pipe.Get(ctx, TaskRefKey(fmt.Sprintf("%s#%d", full, n)))
+	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return Ref{}, err
 	}
-	args := []string{"api", path, "--jq", jq}
-	testguard.RefuseHosts(program, args...)
-	ctx, cancel := context.WithTimeout(ctx, GHTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, program, args...)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+	if rec := pr.Val(); len(rec) > 0 {
+		out := Ref{IsPR: true, State: "open", Base: rec["base"]}
+		switch rec["state"] {
+		case "landed", "merged":
+			out.Merged, out.State = true, "closed"
+		case "closed":
+			out.State = "closed"
 		}
-		return nil, fmt.Errorf("gh api %s: %s", path, oneLine(msg))
+		if rec["merged_at"] != "" {
+			out.Merged, out.State = true, "closed"
+		}
+		return out, nil
 	}
-	return out, nil
+	if id := task.Val(); id != "" {
+		f, err := r.C.HMGet(ctx, "task:"+id, "where", "where_ok").Result()
+		if err != nil {
+			return Ref{}, err
+		}
+		where, _ := f[0].(string)
+		ok, _ := f[1].(string)
+		if where == "landed" || where == "done" && ok == "ok" {
+			return Ref{State: "closed"}, nil
+		}
+		return Ref{State: "open"}, nil
+	}
+	return Ref{}, fmt.Errorf("no record of %s#%d in Redis (import the issue with task push --issue; harvest records a PR)", full, n)
 }
 
 func oneLine(s string) string {
